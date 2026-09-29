@@ -35,6 +35,7 @@ function setup(argv: string[], overrides: Partial<InstallDeps> = {}): Setup {
 
 const read = (path: string) => readFileSync(path, "utf8");
 const claudeFile = (home: string, ...parts: string[]) => join(home, ".claude", ...parts);
+const codexFile = (home: string, ...parts: string[]) => join(home, ".codex", ...parts);
 
 function seedClaude(home: string, settings: unknown = { model: "opus" }) {
 	mkdirSync(claudeFile(home, "rules"), { recursive: true });
@@ -43,13 +44,15 @@ function seedClaude(home: string, settings: unknown = { model: "opus" }) {
 }
 
 describe("warden install", () => {
-	test("copies the compiled binary to ~/.local/bin/warden (755), no claude files without --claude", async () => {
+	test("copies the compiled binary to ~/.local/bin/warden (755); no agent detected → no agent files", async () => {
 		const { c, home, deps } = setup([]);
 		expect(await runInstall(c, deps)).toBe(0);
 		const target = join(home, ".local", "bin", "warden");
 		expect(read(target)).toBe("#!/bin/sh\necho warden\n");
 		expect(statSync(target).mode & 0o777).toBe(0o755);
 		expect(existsSync(join(home, ".claude"))).toBe(false);
+		expect(existsSync(join(home, ".codex"))).toBe(false);
+		expect(c.stdout.join("\n")).toContain("no Claude Code or Codex detected");
 	});
 
 	test("second run → binary unchanged", async () => {
@@ -163,6 +166,146 @@ describe("warden install", () => {
 		writeFileSync(claudeFile(home, "settings.json"), '{\n\t"model": "opus"\n}\n');
 		await runInstall(c, deps);
 		expect(read(claudeFile(home, "settings.json"))).toStartWith('{\n\t"model": "opus",\n\t"hooks"');
+	});
+
+	test("no flags: detected ~/.claude → Claude steps run", async () => {
+		const { c, home, deps } = setup(["--yes", "--json"]);
+		seedClaude(home);
+		expect(await runInstall(c, deps)).toBe(0);
+		const steps = JSON.parse(c.stdout.join("\n")).steps.map((s: { step: string }) => s.step);
+		expect(steps).toEqual(["binary", "skill", "settings", "argent-rules"]);
+		expect(existsSync(codexFile(home, "hooks.json"))).toBe(false);
+	});
+
+	test("no flags: detected ~/.codex → Codex hooks.json written after confirming; ~/.claude untouched", async () => {
+		const { c, home, deps, questions } = setup([]);
+		mkdirSync(codexFile(home), { recursive: true });
+		expect(await runInstall(c, deps)).toBe(0);
+		const hooks = JSON.parse(read(codexFile(home, "hooks.json"))).hooks;
+		expect(hooks.PreToolUse[0].matcher).toBe("mcp__argent__.*|mcp__plugin_goldie_argent__.*");
+		expect(hooks.PreToolUse[0].hooks[0].command).toBe("$HOME/.local/bin/warden hook pretool");
+		expect(hooks.SessionEnd[0].hooks[0]).toEqual({
+			type: "command",
+			command: "$HOME/.local/bin/warden hook session-end",
+			timeout: 3,
+		});
+		expect(questions).toEqual([`apply these changes to ${codexFile(home, "hooks.json")}?`]);
+		expect(existsSync(join(home, ".claude"))).toBe(false);
+		const out = c.stdout.join("\n");
+		expect(out).toContain("codex-hooks");
+		expect(out).toContain("/hooks");
+	});
+
+	test("no flags: both detected → both installed", async () => {
+		const { c, home, deps } = setup(["--yes", "--json"]);
+		seedClaude(home);
+		mkdirSync(codexFile(home), { recursive: true });
+		expect(await runInstall(c, deps)).toBe(0);
+		const steps = JSON.parse(c.stdout.join("\n")).steps.map((s: { step: string }) => s.step);
+		expect(steps).toEqual(["binary", "skill", "settings", "argent-rules", "codex-hooks"]);
+	});
+
+	test("--claude forces Claude only, even when Codex is detected", async () => {
+		const { c, home, deps } = setup(["--claude", "--yes"]);
+		mkdirSync(codexFile(home), { recursive: true });
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(existsSync(claudeFile(home, "settings.json"))).toBe(true);
+		expect(existsSync(codexFile(home, "hooks.json"))).toBe(false);
+	});
+
+	test("--codex forces Codex (creates ~/.codex/hooks.json) and skips Claude even when detected", async () => {
+		const { c, home, deps } = setup(["--codex", "--yes", "--json"]);
+		seedClaude(home);
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(JSON.parse(read(codexFile(home, "hooks.json"))).hooks.SessionEnd).toHaveLength(1);
+		expect(JSON.parse(read(claudeFile(home, "settings.json")))).toEqual({ model: "opus" });
+		const steps = JSON.parse(c.stdout.join("\n")).steps.map((s: { step: string }) => s.step);
+		expect(steps).toEqual(["binary", "codex-hooks"]);
+	});
+
+	test("--claude --codex installs both", async () => {
+		const { c, home, deps } = setup(["--claude", "--codex", "--yes"]);
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(existsSync(claudeFile(home, "settings.json"))).toBe(true);
+		expect(existsSync(codexFile(home, "hooks.json"))).toBe(true);
+	});
+
+	test("--codex honours $CODEX_HOME", async () => {
+		const { c, home, deps } = setup(["--codex", "--yes"]);
+		const custom = join(home, "cx");
+		c.env = { ...c.env, CODEX_HOME: custom };
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(existsSync(join(custom, "hooks.json"))).toBe(true);
+		expect(existsSync(codexFile(home, "hooks.json"))).toBe(false);
+	});
+
+	test("--codex preserves an existing hooks.json and is idempotent", async () => {
+		const { c, home, deps, questions } = setup(["--codex"]);
+		mkdirSync(codexFile(home), { recursive: true });
+		const existing = { hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "guard" }] }] } };
+		writeFileSync(codexFile(home, "hooks.json"), `${JSON.stringify(existing, null, 2)}\n`);
+		await runInstall(c, deps);
+		const after = read(codexFile(home, "hooks.json"));
+		const hooks = JSON.parse(after).hooks;
+		expect(hooks.PreToolUse).toHaveLength(2);
+		expect(hooks.PreToolUse[0]).toEqual(existing.hooks.PreToolUse[0]);
+		questions.length = 0;
+		c.argv = ["--codex", "--json"];
+		c.stdout.length = 0;
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(questions).toEqual([]);
+		expect(read(codexFile(home, "hooks.json"))).toBe(after);
+		expect(JSON.parse(c.stdout.join("\n")).steps[1]).toMatchObject({ step: "codex-hooks", status: "unchanged" });
+	});
+
+	test("--codex: warden hooks already in config.toml → unchanged, no hooks.json", async () => {
+		const { c, home, deps } = setup(["--codex", "--yes", "--json"]);
+		mkdirSync(codexFile(home), { recursive: true });
+		writeFileSync(
+			codexFile(home, "config.toml"),
+			[
+				"[[hooks.PreToolUse]]",
+				'matcher = "mcp__argent__.*"',
+				"[[hooks.PreToolUse.hooks]]",
+				'type = "command"',
+				'command = "warden hook pretool"',
+				"[[hooks.SessionEnd]]",
+				"[[hooks.SessionEnd.hooks]]",
+				'type = "command"',
+				'command = "warden hook session-end"',
+				"",
+			].join("\n")
+		);
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(existsSync(codexFile(home, "hooks.json"))).toBe(false);
+		expect(JSON.parse(c.stdout.join("\n")).steps[1]).toMatchObject({
+			step: "codex-hooks",
+			status: "unchanged",
+			path: codexFile(home, "config.toml"),
+		});
+	});
+
+	test("--codex --dry-run writes nothing but prints the diff", async () => {
+		const { c, home, deps, questions } = setup(["--codex", "--dry-run"]);
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(existsSync(codexFile(home))).toBe(false);
+		expect(questions).toEqual([]);
+		expect(c.stdout.join("\n")).toContain("hook session-end");
+	});
+
+	test("--codex non-interactive without --yes → skipped", async () => {
+		const { c, home, deps } = setup(["--codex", "--json"], { interactive: false });
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(existsSync(codexFile(home, "hooks.json"))).toBe(false);
+		expect(JSON.parse(c.stdout.join("\n")).steps[1]).toMatchObject({ step: "codex-hooks", status: "skipped" });
+	});
+
+	test("--codex: invalid hooks.json → error, untouched, exit 1", async () => {
+		const { c, home, deps } = setup(["--codex", "--yes"]);
+		mkdirSync(codexFile(home), { recursive: true });
+		writeFileSync(codexFile(home, "hooks.json"), "{ nope");
+		expect(await runInstall(c, deps)).toBe(1);
+		expect(read(codexFile(home, "hooks.json"))).toBe("{ nope");
 	});
 
 	test("no HOME → exit 1", async () => {

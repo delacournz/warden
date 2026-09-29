@@ -3,15 +3,17 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { err, ok, type Result } from "@warden/types/result";
 import type { Command, CommandContext } from "../context";
+import { type Agent, detectAgents } from "../hooks/agents";
 import { patchArgentRules } from "../hooks/argent-rules";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
+import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook, mergeCodexHooks } from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
 import { lineDiff } from "../hooks/text-diff";
 import { SKILL_MD as skill } from "../skill";
 
-const USAGE = "warden install [--claude] [--yes] [--dry-run] [--shim] [--json]";
+const USAGE = "warden install [--claude] [--codex] [--yes] [--dry-run] [--shim] [--json]";
 
-/** Hook commands reference the installed binary via `$HOME` so they work whatever PATH Claude runs with. */
+/** Hook commands reference the installed binary via `$HOME` so they work whatever PATH the agent runs with. */
 export const HOOK_BINARY = "$HOME/.local/bin/warden";
 
 /** How this process runs: a `bun build --compile` binary, or `bun src/cli.ts` from a checkout. */
@@ -24,11 +26,11 @@ export type InstallDeps = {
 	confirm: (question: string) => Promise<boolean>;
 };
 
-export type StepName = "binary" | "skill" | "settings" | "argent-rules";
+export type StepName = "binary" | "skill" | "settings" | "argent-rules" | "codex-hooks";
 export type StepStatus = "written" | "unchanged" | "skipped" | "declined" | "dry-run" | "error";
 export type StepReport = { step: StepName; status: StepStatus; path: string; detail?: string };
 
-type Flags = { claude: boolean; yes: boolean; dryRun: boolean; shim: boolean; json: boolean };
+type Flags = { claude: boolean; codex: boolean; yes: boolean; dryRun: boolean; shim: boolean; json: boolean };
 
 function report(step: StepName, status: StepStatus, path: string, detail?: string): StepReport {
 	return detail === undefined ? { step, status, path } : { step, status, path, detail };
@@ -114,7 +116,7 @@ async function guardedWrite(
 	return report(step, "written", path);
 }
 
-function parseSettings(text: string | undefined): Result<unknown> {
+function parseJson(text: string | undefined): Result<unknown> {
 	if (text === undefined || text.trim() === "") return ok(undefined);
 	try {
 		return ok(JSON.parse(text));
@@ -130,14 +132,42 @@ async function installSettings(
 	path: string
 ): Promise<StepReport> {
 	const before = readIfExists(path);
-	const parsed = parseSettings(before);
+	const parsed = parseJson(before);
 	if (!parsed.success) return report("settings", "error", path, parsed.error);
 	const merged = mergeClaudeSettings(parsed.data, HOOK_BINARY);
 	if (!merged.success) return report("settings", "error", path, merged.error);
 	if (!merged.data.changed) return report("settings", "unchanged", path);
+	return guardedWrite(ctx, deps, flags, "settings", path, before ?? "", formatJson(merged.data.settings, before));
+}
+
+/** Pretty JSON keeping the existing file's tab indentation. */
+function formatJson(value: unknown, before: string | undefined): string {
 	const indent = before !== undefined && /^\t/m.test(before) ? "\t" : 2;
-	const after = `${JSON.stringify(merged.data.settings, null, indent)}\n`;
-	return guardedWrite(ctx, deps, flags, "settings", path, before ?? "", after);
+	return `${JSON.stringify(value, null, indent)}\n`;
+}
+
+/**
+ * Codex: merge warden's hooks into `$CODEX_HOME/hooks.json`. Codex also reads `[hooks]` tables from
+ * `config.toml` (and merges both); warden hooks already declared there count as installed.
+ */
+async function installCodexHooks(
+	ctx: CommandContext,
+	deps: InstallDeps,
+	flags: Flags,
+	path: string,
+	configPath: string
+): Promise<StepReport> {
+	const toml = readIfExists(configPath);
+	if (codexTomlHasWardenHook(toml, "pretool") && codexTomlHasWardenHook(toml, "session-end")) {
+		return report("codex-hooks", "unchanged", configPath);
+	}
+	const before = readIfExists(path);
+	const parsed = parseJson(before);
+	if (!parsed.success) return report("codex-hooks", "error", path, parsed.error);
+	const merged = mergeCodexHooks(parsed.data, HOOK_BINARY);
+	if (!merged.success) return report("codex-hooks", "error", path, merged.error);
+	if (!merged.data.changed) return report("codex-hooks", "unchanged", path);
+	return guardedWrite(ctx, deps, flags, "codex-hooks", path, before ?? "", formatJson(merged.data.settings, before));
 }
 
 async function installArgentRules(
@@ -171,6 +201,7 @@ function parseFlags(argv: string[]): Result<Flags> {
 			args: argv,
 			options: {
 				claude: { type: "boolean" },
+				codex: { type: "boolean" },
 				yes: { type: "boolean", short: "y" },
 				"dry-run": { type: "boolean" },
 				shim: { type: "boolean" },
@@ -181,6 +212,7 @@ function parseFlags(argv: string[]): Result<Flags> {
 		});
 		return ok({
 			claude: values.claude === true,
+			codex: values.codex === true,
 			yes: values.yes === true,
 			dryRun: values["dry-run"] === true,
 			shim: values.shim === true,
@@ -200,10 +232,25 @@ const MARK: Record<StepStatus, string> = {
 	error: "✗",
 };
 
-async function install(ctx: CommandContext, deps: InstallDeps, flags: Flags, home: string): Promise<StepReport[]> {
+/** `--claude` / `--codex` force those agents; with neither, every detected agent. */
+function targetAgents(ctx: CommandContext, flags: Flags): Agent[] {
+	if (!flags.claude && !flags.codex) return detectAgents(ctx.env);
+	const agents: Agent[] = [];
+	if (flags.claude) agents.push("claude");
+	if (flags.codex) agents.push("codex");
+	return agents;
+}
+
+async function install(
+	ctx: CommandContext,
+	deps: InstallDeps,
+	flags: Flags,
+	home: string,
+	agents: Agent[]
+): Promise<StepReport[]> {
 	const binary = join(home, ".local", "bin", "warden");
 	const steps: StepReport[] = [await step("binary", binary, () => installBinary(binary, deps.runtime, flags))];
-	if (flags.claude) {
+	if (agents.includes("claude")) {
 		const claude = join(home, ".claude");
 		const skillPath = join(claude, "skills", "warden", "SKILL.md");
 		const settingsPath = join(claude, "settings.json");
@@ -212,7 +259,26 @@ async function install(ctx: CommandContext, deps: InstallDeps, flags: Flags, hom
 		steps.push(await step("settings", settingsPath, () => installSettings(ctx, deps, flags, settingsPath)));
 		steps.push(await step("argent-rules", rulesPath, () => installArgentRules(ctx, deps, flags, rulesPath)));
 	}
+	const hooksPath = codexHooksPath({ ...ctx.env, HOME: home });
+	const configPath = codexConfigPath({ ...ctx.env, HOME: home });
+	if (agents.includes("codex") && hooksPath && configPath) {
+		steps.push(await step("codex-hooks", hooksPath, () => installCodexHooks(ctx, deps, flags, hooksPath, configPath)));
+	}
 	return steps;
+}
+
+function installNotes(flags: Flags, agents: Agent[], steps: StepReport[], binaryPresent: boolean): string[] {
+	const notes: string[] = [];
+	if (agents.length === 0) {
+		notes.push("note: no Claude Code or Codex detected — installed the binary only (--claude / --codex to force)");
+	}
+	if (agents.length > 0 && !binaryPresent && !flags.dryRun) {
+		notes.push(`note: hooks call ${HOOK_BINARY}, which is not installed yet`);
+	}
+	if (steps.some((s) => s.step === "codex-hooks" && s.status === "written")) {
+		notes.push("note: Codex skips new hooks until trusted — run /hooks in Codex to review and trust warden's");
+	}
+	return notes;
 }
 
 /** `warden install` with injectable runtime detection + confirmation (tests use a temp HOME). */
@@ -227,12 +293,10 @@ export async function runInstall(ctx: CommandContext, deps: InstallDeps): Promis
 		ctx.err("warden install: $HOME is not set");
 		return 1;
 	}
-	const steps = await install(ctx, deps, flags.data, home);
+	const agents = targetAgents(ctx, flags.data);
+	const steps = await install(ctx, deps, flags.data, home, agents);
 	const binaryPresent = existsSync(join(home, ".local", "bin", "warden"));
-	const notes =
-		flags.data.claude && !binaryPresent && !flags.data.dryRun
-			? [`note: hooks call ${HOOK_BINARY}, which is not installed yet`]
-			: [];
+	const notes = installNotes(flags.data, agents, steps, binaryPresent);
 	if (flags.data.json) {
 		ctx.out(JSON.stringify({ steps, notes }, null, 2));
 	} else {
@@ -261,7 +325,8 @@ async function confirmPrompt(question: string): Promise<boolean> {
 
 export const installCommand: Command = {
 	name: "install",
-	summary: "install warden to ~/.local/bin; --claude adds the skill, hooks and argent rule",
+	summary:
+		"install warden to ~/.local/bin + hooks for detected agents (Claude Code: skill, hooks, argent rule; Codex: hooks)",
 	usage: USAGE,
 	run: (ctx) =>
 		runInstall(ctx, {

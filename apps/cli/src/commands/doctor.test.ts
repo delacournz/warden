@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MIGRATIONS } from "@warden/core/store";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
+import { mergeCodexHooks } from "../hooks/codex-hooks";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { type DoctorCheck, doctorCommand } from "./doctor";
 
@@ -65,6 +66,24 @@ describe("warden doctor", () => {
 		c.env = installEverything(c.cwd, c.env);
 		expect(await doctorCommand.run(c)).toBe(0);
 		expect(checks(c).filter((x) => x.status !== "ok")).toEqual([]);
+	});
+
+	test("codex-hook: not detected → ok; detected without hooks → warn; installed → ok", async () => {
+		const c = setup(["--json"]);
+		await doctorCommand.run(c);
+		expect(byName(c)["codex-hook"]).toMatchObject({ status: "ok", detail: "codex not detected" });
+		const codexDir = join(c.cwd, ".codex");
+		mkdirSync(codexDir, { recursive: true });
+		c.stdout.length = 0;
+		await doctorCommand.run(c);
+		expect(byName(c)["codex-hook"]?.status).toBe("warn");
+		expect(byName(c)["codex-hook"]?.detail).toContain("warden install --codex");
+		const merged = mergeCodexHooks(undefined, "$HOME/.local/bin/warden");
+		if (!merged.success) throw new Error(merged.error);
+		writeFileSync(join(codexDir, "hooks.json"), JSON.stringify(merged.data.settings));
+		c.stdout.length = 0;
+		await doctorCommand.run(c);
+		expect(byName(c)["codex-hook"]).toMatchObject({ status: "ok", detail: join(codexDir, "hooks.json") });
 	});
 
 	test("missing device tools only warn", async () => {

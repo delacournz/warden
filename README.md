@@ -13,7 +13,9 @@ Machine-wide leasing of **iOS simulators, Android emulators, ports and native ap
 ```bash
 bun install
 bun run --cwd apps/cli install:global   # local build of this checkout → ~/.local/bin/warden
-warden install --claude                  # skill + Claude hooks + argent rule (shows diff, asks first)
+warden install                           # binary + hooks for every detected agent (Claude Code / Codex); shows diff, asks first
+warden install --claude                  # force Claude Code only: skill + hooks + argent rule
+warden install --codex                   # force Codex only: hooks in $CODEX_HOME/hooks.json
 warden doctor
 ```
 
@@ -117,6 +119,8 @@ Optional `warden.config.json` at the repo root:
 
 With no config, warden detects a single project from `app.json` / `app.config.*` (pass `--bundle-id` for a dynamic config). It resolves builds in this order: already installed at this hash → `~/.warden/builds/<projectKey>/<platform>/<hash>` → legacy caches → EAS (`build:list --fingerprint-hash`, then download; waits for builds in flight; triggers the workflow only if `trigger` is set) → local build, which is verified against the fingerprint. A build lock stops two agents from downloading or building the same hash twice.
 
+`warden install` wires hooks into every agent it detects: Claude Code (`~/.claude` or `claude` on PATH) and Codex (`$CODEX_HOME` / `~/.codex` or `codex` on PATH). `--claude` / `--codex` force one (or both) regardless of detection. Every agent config change shows a diff and asks first (`--yes` skips, `--dry-run` only prints, a non-TTY without `--yes` skips). Merges are idempotent and keep all other config.
+
 ### Claude Code
 
 `warden install --claude` adds:
@@ -125,6 +129,24 @@ With no config, warden detects a single project from `app.json` / `app.config.*`
 - a **SessionEnd** hook, which **shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself (they were off when it first touched them), are shut down. A sim that was already running when the agent picked it up, such as your own Simulator.app one, is released but left on. On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim on its next argent call.
 - **Sessions that die without SessionEnd** (killed or terminal closed): their leases go stale after 30 min without a heartbeat. `warden gc` then shuts those sims down under the same rule. gc runs automatically in the background at most every 10 min, triggered by hook activity and by `claim`/`run` (`WARDEN_AUTO_GC=0` turns this off), as well as on demand.
 - the `~/.claude/skills/warden/SKILL.md` skill, plus a "claim via warden first" line in the argent `device_selection_rule`.
+
+### Codex
+
+`warden install --codex` merges the same two hooks into `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`; hooks already declared in `config.toml` `[[hooks.*]]` tables count as installed). Codex hooks use Claude's format and stdin JSON, and a PreToolUse exit 2 + stderr blocks the call, so `warden hook pretool|session-end` serves both agents unchanged:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{ "matcher": "mcp__argent__.*|mcp__plugin_goldie_argent__.*",
+                     "hooks": [{ "type": "command", "command": "$HOME/.local/bin/warden hook pretool", "timeout": 30 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "$HOME/.local/bin/warden hook session-end", "timeout": 3 }] }]
+  }
+}
+```
+
+- Codex **skips new or changed hooks until you trust them**: run `/hooks` in Codex once after installing.
+- Codex caps SessionEnd hooks at 3 s and always sends reason `other`, so the `/clear` keep-sims-running exception never applies there. Anything the SessionEnd hook can't finish in time is picked up by `warden gc` once the leases go stale.
+- For the skill in Codex, use `warden skill install`.
 
 ## Development
 

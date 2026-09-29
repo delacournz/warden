@@ -39,21 +39,27 @@ export function hasWardenHook(settings: unknown, name: HookName): boolean {
 export type MergedSettings = { settings: JsonObject; changed: boolean };
 
 /**
- * Add warden's hooks to Claude settings. Pure + idempotent: other keys and hooks are preserved,
- * a hook already present (by `warden hook <name>` command) is never duplicated.
- * `existing` undefined = no settings file yet.
+ * Add `specs` to a Claude-style hooks document (`{ hooks: { Event: [{ matcher?, hooks: [...] }] } }` —
+ * Claude's settings.json and Codex's hooks.json share it). Pure + idempotent: other keys and hooks are
+ * preserved, a hook already present (by `warden hook <name>` command) is never duplicated.
+ * `existing` undefined = no file yet; `file` names it in errors.
  */
-export function mergeClaudeSettings(existing: unknown, binary: string): Result<MergedSettings> {
+export function mergeWardenHooks(
+	existing: unknown,
+	binary: string,
+	specs: readonly WardenHookSpec[],
+	file: string
+): Result<MergedSettings> {
 	const base = existing === undefined ? {} : existing;
-	if (!isJsonObject(base)) return err("settings.json is not a JSON object");
+	if (!isJsonObject(base)) return err(`${file} is not a JSON object`);
 	const settings: JsonObject = structuredClone(base);
 	const rawHooks = settings.hooks ?? {};
-	if (!isJsonObject(rawHooks)) return err("settings.json `hooks` is not an object");
+	if (!isJsonObject(rawHooks)) return err(`${file} \`hooks\` is not an object`);
 	const hooks: JsonObject = rawHooks;
 	let changed = false;
-	for (const spec of WARDEN_HOOKS) {
+	for (const spec of specs) {
 		const groups = hooks[spec.event] ?? [];
-		if (!Array.isArray(groups)) return err(`settings.json \`hooks.${spec.event}\` is not an array`);
+		if (!Array.isArray(groups)) return err(`${file} \`hooks.${spec.event}\` is not an array`);
 		if (groups.some((g) => groupHasHook(g, spec.name))) continue;
 		const hook: JsonObject = { type: "command", command: `${binary} hook ${spec.name}`, timeout: spec.timeout };
 		groups.push(spec.matcher !== undefined ? { matcher: spec.matcher, hooks: [hook] } : { hooks: [hook] });
@@ -62,4 +68,9 @@ export function mergeClaudeSettings(existing: unknown, binary: string): Result<M
 	}
 	settings.hooks = hooks;
 	return ok({ settings, changed });
+}
+
+/** Add warden's hooks to `~/.claude/settings.json` (see `mergeWardenHooks`). */
+export function mergeClaudeSettings(existing: unknown, binary: string): Result<MergedSettings> {
+	return mergeWardenHooks(existing, binary, WARDEN_HOOKS, "settings.json");
 }

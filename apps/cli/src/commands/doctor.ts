@@ -5,7 +5,9 @@ import { isLeaseAlive, processAlive } from "@warden/core/liveness";
 import { androidTools } from "@warden/core/providers/android";
 import { MIGRATIONS, wardenHome } from "@warden/core/store";
 import type { Command, CommandContext } from "../context";
+import { codexDetected } from "../hooks/agents";
 import { hasWardenHook } from "../hooks/claude-settings";
+import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook } from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
 import { emit } from "../output";
 
@@ -86,6 +88,24 @@ function claudeHook(home: string): Probe {
 	});
 }
 
+/** Codex: optional — only checked when Codex is detected; hooks may live in hooks.json or config.toml. */
+function codexHook(ctx: CommandContext): Probe {
+	if (!codexDetected(ctx.env)) return { ok: true, detail: "codex not detected" };
+	const path = codexHooksPath(ctx.env);
+	const configPath = codexConfigPath(ctx.env);
+	if (!path || !configPath) return { ok: false, detail: "$HOME / $CODEX_HOME not set" };
+	return attempt(() => {
+		const hooks: unknown = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+		const toml = existsSync(configPath) ? readFileSync(configPath, "utf8") : undefined;
+		const missing = (["pretool", "session-end"] as const).filter(
+			(name) => !hasWardenHook(hooks, name) && !codexTomlHasWardenHook(toml, name)
+		);
+		return missing.length === 0
+			? { ok: true, detail: path }
+			: { ok: false, detail: `missing warden hook ${missing.join(", ")} — run \`warden install --codex\`` };
+	});
+}
+
 function skillPresent(home: string): Probe {
 	const path = join(home, ".claude", "skills", "warden", "SKILL.md");
 	return existsSync(path) ? { ok: true, detail: path } : { ok: false, detail: "run `warden install --claude`" };
@@ -117,6 +137,7 @@ export async function runChecks(ctx: CommandContext): Promise<DoctorCheck[]> {
 		check("emulator", "optional", emulatorProbe),
 		check("path", "optional", onPath(ctx, home)),
 		check("claude-hook", "optional", claudeHook(home)),
+		check("codex-hook", "optional", codexHook(ctx)),
 		check("skill", "optional", skillPresent(home)),
 		check("stale-leases", "optional", staleLeases(ctx)),
 	];
@@ -143,7 +164,7 @@ async function run(ctx: CommandContext): Promise<number> {
 
 export const doctorCommand: Command = {
 	name: "doctor",
-	summary: "check warden's setup: home, db, device tools, PATH, Claude hook + skill, stale leases",
+	summary: "check warden's setup: home, db, device tools, PATH, Claude/Codex hooks + skill, stale leases",
 	usage: USAGE,
 	run,
 };
