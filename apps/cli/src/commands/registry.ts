@@ -15,6 +15,7 @@ import { lsCommand } from "./ls";
 import { portCommand } from "./port";
 import { releaseCommand } from "./release";
 import { runCommand } from "./run";
+import { skillCommand } from "./skill";
 import { updateCommand } from "./update";
 import { versionCommand } from "./version";
 
@@ -34,6 +35,7 @@ export const COMMANDS: readonly Command[] = [
 	buildsCommand,
 	hookCommand,
 	installCommand,
+	skillCommand,
 	doctorCommand,
 	updateCommand,
 	versionCommand,

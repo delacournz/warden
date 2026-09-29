@@ -2,12 +2,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSyn
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { err, ok, type Result } from "@warden/types/result";
-import skill from "../assets/warden-skill.md" with { type: "text" };
 import type { Command, CommandContext } from "../context";
 import { patchArgentRules } from "../hooks/argent-rules";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
 import { errorMessage } from "../hooks/json";
 import { lineDiff } from "../hooks/text-diff";
+import { SKILL_MD as skill } from "../skill";
 
 const USAGE = "warden install [--claude] [--yes] [--dry-run] [--shim] [--json]";
 

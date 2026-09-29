@@ -17,6 +17,17 @@ warden install --claude                  # skill + Claude hooks + argent rule (s
 warden doctor
 ```
 
+Agent skill only, for Claude Code, Codex, Cursor and others via the [`skills`](https://github.com/vercel-labs/skills) CLI:
+
+```bash
+warden skill show | pbcopy                 # raw SKILL.md to paste by hand
+warden skill install                       # bunx skills add ~/.warden/skill --skill warden -g (this binary's copy)
+warden skill install --from github         # bunx skills add delacournz/warden --skill warden -g (updatable via `skills update`)
+warden skill install --project -a claude-code -y   # into the current project, one agent, no prompts
+```
+
+The skill's source is `skills/warden/SKILL.md`, which is embedded in the binary. `npx` is used when `bunx` isn't available; `--dry-run` prints the command.
+
 `~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`.
 
 ## Update

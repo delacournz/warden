@@ -8,7 +8,7 @@ The `warden` binary. `src/cli.ts` dispatches to `src/commands/<name>.ts` (regist
 - Parse flags with `node:util` `parseArgs`; every command supports `--json` via `output.ts` `emit()`.
 - Devices come from `providers.ts` `providerFor(platform, ctx, owner)`; claim flags + owner resolution in `claim-flags.ts`; lease selection (`<id…>|--udid|--mine|--session`) in `lease-select.ts`.
 - `hooks/`: Claude Code hook handlers (`claude-pretool.ts`: PreToolUse/SessionEnd), settings merge, argent rule patch, text diff. Hook failures never block a tool (exit 0).
-- `assets/`: text assets embedded in the binary (`warden-skill.md` via `import … with { type: "text" }`).
+- `assets/assets.d.ts`: `*.md` text-import typing. The skill lives at repo-root `skills/warden/SKILL.md`, embedded via `src/skill.ts`.
 - `warden install` never touches `~/.claude` without showing a diff + confirm (`--yes` / `--dry-run`); tests use a temp `HOME`.
 - `update/`: build info (`dev`/`local`/`release`, embedded via `--define __WARDEN_BUILD__=<json>`), semver, GitHub release lookup/download (gh), source build, atomic binary install with self-check.
 
