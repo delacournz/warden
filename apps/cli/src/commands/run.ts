@@ -1,7 +1,9 @@
 import { constants } from "node:os";
 import { parseArgs } from "node:util";
 import type { ClaimOutcome } from "@warden/core/claim";
-import { HEARTBEAT_INTERVAL_MS } from "@warden/core/config.defaults";
+import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@warden/core/config.defaults";
+import { processAlive } from "@warden/core/liveness";
+import { claimPorts, isPortFree, parsePortSpec } from "@warden/core/ports";
 import type { Owner } from "@warden/core/types";
 import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
 import {
@@ -31,22 +33,41 @@ export type RunDeps = {
 	onSignal: (signal: ForwardedSignal, handler: () => void) => () => void;
 	/** run `fn` every `ms`; returns stop */
 	every: (ms: number, fn: () => void) => () => void;
+	/** bind probe for `--port` ranges */
+	isPortFree: (port: number) => Promise<boolean>;
 };
 
 /** A port leased for the child, exported as `WARDEN_PORT_<i>`. */
 export type RunPort = { leaseId: string; port: number };
 
-/**
- * PORT WIRING POINT (WDN-4): lease one port per `--port FROM:SPAN` spec for `owner` (lease `pid`).
- * Returns [] until wired to core `ports.ts`.
- */
+/** Lease one port per `--port FROM:SPAN` spec for `owner` (lease `pid`); all-or-nothing. */
 export async function claimRunPorts(
-	_ctx: CommandContext,
-	_owner: Owner,
-	_specs: readonly string[],
-	_pid: number
+	ctx: CommandContext,
+	owner: Owner,
+	specs: readonly string[],
+	pid: number,
+	isFree: (port: number) => Promise<boolean>
 ): AsyncResult<RunPort[]> {
-	return ok([]);
+	const store = ctx.store();
+	const ports: RunPort[] = [];
+	for (const spec of specs) {
+		const range = parsePortSpec(spec);
+		const claimed = range.success
+			? await claimPorts(
+					store,
+					{ owner, ...range.data, ttlMs: DEFAULT_TTL_MS, pid, label: "warden run" },
+					{ now: ctx.now, pidAlive: processAlive, isPortFree: isFree }
+				)
+			: range;
+		if (!claimed.success) {
+			store.deleteLeases(ports.map((p) => p.leaseId));
+			return err(claimed.error);
+		}
+		for (const lease of claimed.data) {
+			if (lease.resource.kind === "port") ports.push({ leaseId: lease.id, port: lease.resource.port });
+		}
+	}
+	return ok(ports);
 }
 
 /** `[flags…, "--", cmd…]` → flags + command (everything after the first `--`). */
@@ -151,7 +172,7 @@ export function createRunCommand(deps: RunDeps): Command {
 			return 1;
 		}
 		const deviceLeaseIds = outcome.data.claimed.map((c) => c.lease.id);
-		const ports = await claimRunPorts(ctx, owner, args.data.ports, deps.pid);
+		const ports = await claimRunPorts(ctx, owner, args.data.ports, deps.pid, deps.isPortFree);
 		if (!ports.success) {
 			store.deleteLeases(deviceLeaseIds);
 			ctx.err(`warden run: ${ports.error}`);
@@ -186,6 +207,7 @@ function signalNumber(signal: string | null | undefined): number {
 
 export const defaultRunDeps: RunDeps = {
 	pid: process.pid,
+	isPortFree: (port) => isPortFree(port),
 	spawn(cmd, env) {
 		const proc = Bun.spawn(cmd, { env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
 		return {

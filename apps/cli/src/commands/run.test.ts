@@ -29,6 +29,7 @@ function harness(opts: { spawnThrows?: boolean } = {}): Harness {
 		finish: (code) => resolveExit(code),
 		deps: {
 			pid: 777,
+			isPortFree: async (port) => port !== 8091,
 			spawn: (cmd, env): ChildHandle => {
 				if (opts.spawnThrows) throw new Error("ENOENT: nope");
 				h.spawned.push({ cmd, env });
@@ -121,13 +122,28 @@ describe("warden run", () => {
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
-	test("accepts repeatable --port (wired later)", async () => {
+	test("leases one port per --port spec, exports WARDEN_PORT_<i>, releases on exit", async () => {
 		const c = setup(["ios", "--port", "8091:20", "--port", "3208:20", "--", "true"]);
 		const h = harness();
 		const running = createRunCommand(h.deps).run(c);
 		await waitFor(() => h.spawned.length > 0);
+		const env = h.spawned[0]?.env;
+		expect(env?.WARDEN_PORT_0).toBe("8092");
+		expect(env?.WARDEN_PORT_1).toBe("3208");
+		expect(env?.WARDEN_PORTS).toBe("8092,3208");
+		const portLeases = c.db.listLeases().filter((l) => l.resource.kind === "port");
+		expect(portLeases.map((l) => l.pid)).toEqual([777, 777]);
 		h.finish(0);
 		expect(await running).toBe(0);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("bad --port spec → exit 1, device leases released", async () => {
+		const c = setup(["ios", "--port", "nope", "--", "true"]);
+		const h = harness();
+		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(h.spawned).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
 	});
 
 	test("missing command → exit 1, nothing claimed", async () => {
