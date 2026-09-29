@@ -1,0 +1,12 @@
+{
+	"name": "@warden/tsconfig",
+	"version": "1.0.0",
+	"description": "Shared TypeScript configurations",
+	"files": [
+		"tsconfig.base.json",
+		"tsconfig.react.json"
+	],
+	"scripts": {
+		"check": "biome check ."
+	}
+}

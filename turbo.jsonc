@@ -1,0 +1,17 @@
+{
+	"$schema": "https://turbo.build/schema.json",
+	"concurrency": "30",
+	"tasks": {
+		"build": {
+			"dependsOn": ["^build"],
+			"cache": false,
+			"outputs": ["dist/**"]
+		},
+		"dev": { "persistent": true },
+		"typecheck": { "cache": false, "outputs": [] },
+		"lint": { "cache": false, "outputs": [] },
+		"fmt": { "cache": false, "outputs": [] },
+		"check": { "cache": false, "outputs": [] },
+		"test": { "cache": false, "outputs": [] }
+	}
+}
