@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Owner } from "@warden/core/types";
 import { fakeSimctl } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { fakeExec, type TestContext, testContext } from "../testing";
 import { gcCommand } from "./gc";
 
 let ctx: TestContext | undefined;
@@ -66,5 +66,27 @@ describe("warden gc", () => {
 	test("bad --idle → exit 1", async () => {
 		const c = setup(["--idle", "soon"], []);
 		expect(await gcCommand.run(c)).toBe(1);
+	});
+
+	test("forgets android records whose emulator is gone (unleased); keeps leased ones", async () => {
+		ctx = testContext(["--json"], {
+			now: () => NOW,
+			exec: fakeExec([["adb devices -l", { stdout: "List of devices attached\n\n" }]]),
+		});
+		ctx.db.recordDevice({ platform: "android", id: "emulator-5554", name: "warden-pixel-10-1" }, 0);
+		ctx.db.recordDevice({ platform: "android", id: "emulator-5556", name: "warden-pixel-10-2" }, 0);
+		ctx.db.insertLease(
+			{
+				resource: { kind: "device", platform: "android", id: "emulator-5556", name: "warden-pixel-10-2" },
+				owner: agent,
+				ttlMs: 60_000,
+			},
+			NOW
+		);
+		expect(await gcCommand.run(ctx)).toBe(0);
+		expect(ctx.db.listDevices("android").map((d) => d.id)).toEqual(["emulator-5556"]);
+		expect(JSON.parse(ctx.stdout.join("\n")).forgotten).toEqual([
+			{ platform: "android", id: "emulator-5554", name: "warden-pixel-10-1" },
+		]);
 	});
 });

@@ -1,10 +1,11 @@
 import { availableParallelism } from "node:os";
-import { defaultMax } from "@warden/core/allocate";
+import { defaultMax, profileSlug } from "@warden/core/allocate";
 import { type ClaimOutcome, claimDevices } from "@warden/core/claim";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@warden/core/config.defaults";
 import { parseDuration } from "@warden/core/duration";
 import { processAlive } from "@warden/core/liveness";
 import { detectOwner, type OwnerContext, readGitInfo } from "@warden/core/owner";
+import { listAvds } from "@warden/core/providers/android";
 import type { DeviceRequest, Owner, Platform } from "@warden/core/types";
 import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
 import type { CommandContext } from "./context";
@@ -99,18 +100,33 @@ export function leasePidFor(owner: Owner): number | undefined {
 	return owner.kind === "user" ? owner.pid : undefined;
 }
 
+/** Android `auto` profile → slug of the first AVD. */
+export function resolveAutoProfile(avds: readonly string[]): Result<string> {
+	const first = avds[0];
+	return first
+		? ok(profileSlug(first))
+		: err("no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
+}
+
 /** Run a device claim with the context's store + provider. */
-export function claimWithFlags(
+export async function claimWithFlags(
 	ctx: CommandContext,
 	owner: Owner,
 	flags: ClaimFlags,
 	pid: number | undefined
 ): AsyncResult<ClaimOutcome> {
+	let request = flags.request;
+	if (request.platform === "android" && request.profile === "auto") {
+		const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
+		const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
+		if (!profile.success) return profile;
+		request = { ...request, profile: profile.data };
+	}
 	return claimDevices({
 		store: ctx.store(),
-		provider: providerFor(flags.request.platform, ctx, owner),
+		provider: providerFor(request.platform, ctx, owner),
 		owner,
-		request: flags.request,
+		request,
 		ttlMs: flags.ttlMs,
 		...(flags.label !== undefined ? { label: flags.label } : {}),
 		...(pid !== undefined ? { pid } : {}),

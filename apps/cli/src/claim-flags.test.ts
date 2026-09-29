@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { DEFAULT_TTL_MS } from "@warden/core/config.defaults";
-import { leasePidFor, parseClaimFlags, resolveOwner } from "./claim-flags";
+import { leasePidFor, parseClaimFlags, resolveAutoProfile, resolveOwner } from "./claim-flags";
 import { type TestContext, testContext } from "./testing";
 
 let ctx: TestContext | undefined;
@@ -62,5 +62,15 @@ describe("resolveOwner", () => {
 		expect(user).toMatchObject({ kind: "user", pid: process.ppid });
 		expect(leasePidFor(user)).toBe(process.ppid);
 		expect(leasePidFor({ kind: "agent", sessionId: "x", cwd: "/" })).toBeUndefined();
+	});
+});
+
+describe("resolveAutoProfile", () => {
+	test("android auto → first AVD slug", () => {
+		expect(resolveAutoProfile(["Pixel_10", "Pixel_9_Pro_Store"])).toEqual({ success: true, data: "pixel-10" });
+	});
+
+	test("no AVDs → error", () => {
+		expect(resolveAutoProfile([]).success).toBe(false);
 	});
 });

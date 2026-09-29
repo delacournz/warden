@@ -19,6 +19,7 @@ type GcPlan = {
 	idleMs: number;
 	leased: Set<string>;
 	shutdown: ShutDevice[];
+	forgotten: ShutDevice[];
 	notes: string[];
 };
 
@@ -33,6 +34,14 @@ async function gcPlatform(ctx: CommandContext, platform: Platform, owner: Owner,
 		return;
 	}
 	const booted = new Set(inventory.data.filter((d) => d.state !== "shutdown").map((d) => d.id));
+	if (platform === "android") {
+		const listed = new Set(inventory.data.map((d) => d.id));
+		for (const r of records) {
+			if (listed.has(r.id) || plan.leased.has(`${platform}:${r.id}`)) continue;
+			ctx.store().forgetDevice(platform, r.id);
+			plan.forgotten.push({ platform, id: r.id, name: r.name });
+		}
+	}
 	const idle = records.filter(
 		(r) => booted.has(r.id) && !plan.leased.has(`${platform}:${r.id}`) && plan.now - r.lastUsedAt >= plan.idleMs
 	);
@@ -50,7 +59,8 @@ function parseIdle(raw: string | undefined): Result<number> {
 /**
  * Reclaim stale leases, then shut down warden-created devices (store `devices` table) that are
  * booted, unleased and idle longer than `--idle`. Foreign devices are never touched; nothing is
- * ever deleted. A platform whose provider fails is skipped with a note.
+ * ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
+ * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note.
  */
 async function run(ctx: CommandContext): Promise<number> {
 	let parsed: ReturnType<typeof parse>;
@@ -71,19 +81,20 @@ async function run(ctx: CommandContext): Promise<number> {
 	const leased = new Set(
 		store.listLeases().flatMap((l) => (l.resource.kind === "device" ? [`${l.resource.platform}:${l.resource.id}`] : []))
 	);
-	const plan: GcPlan = { now, idleMs: idle.data, leased, shutdown: [], notes: [] };
+	const plan: GcPlan = { now, idleMs: idle.data, leased, shutdown: [], forgotten: [], notes: [] };
 	const owner = resolveOwner(ctx);
 	for (const platform of PLATFORMS) await gcPlatform(ctx, platform, owner, plan);
 
-	const { shutdown, notes } = plan;
+	const { shutdown, forgotten, notes } = plan;
 	const text = [
 		`reclaimed ${reclaimed.length} stale lease${reclaimed.length === 1 ? "" : "s"}`,
 		shutdown.length > 0
 			? `shut down ${shutdown.map((d) => d.name).join(" ")} (idle > ${formatDuration(idle.data)})`
 			: "no idle devices",
+		...(forgotten.length > 0 ? [`forgot exited emulators ${forgotten.map((d) => d.name).join(" ")}`] : []),
 		...notes,
 	].join("\n");
-	emit(ctx, parsed.values.json === true, { reclaimed, shutdown, notes }, text);
+	emit(ctx, parsed.values.json === true, { reclaimed, shutdown, forgotten, notes }, text);
 	return 0;
 }
 
