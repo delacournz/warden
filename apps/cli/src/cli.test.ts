@@ -29,4 +29,13 @@ describe("cli", () => {
 		expect(code).toBe(0);
 		expect(ctx?.stdout[0]).toContain("warden ls");
 	});
+
+	test("aliases dispatch to their command", async () => {
+		const code = await main(["list", "--help"], (rest) => {
+			ctx = testContext(rest);
+			return ctx;
+		});
+		expect(code).toBe(0);
+		expect(ctx?.stdout[0]).toContain("warden devices");
+	});
 });

@@ -23,6 +23,7 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` |
 | who holds what | `warden ls` |
+| all sims / emulators (booted or not) + who leases them | `warden devices` (alias `warden list`) |
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a long lease alive | `warden heartbeat --mine` |
 | reclaim dead leases | `warden gc` |

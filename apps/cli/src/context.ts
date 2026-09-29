@@ -18,6 +18,7 @@ export type CommandContext = {
 
 export type Command = {
 	name: string;
+	aliases?: readonly string[];
 	summary: string;
 	usage: string;
 	run: (ctx: CommandContext) => Promise<number>;

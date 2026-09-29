@@ -26,7 +26,8 @@ warden claim ios --json                          # lease 1 sim (reuse → boot �
 warden claim android --profile pixel-10 --count 2
 warden claim ios --count 2 --wait 10m --ttl 1h --label e2e
 warden release --mine [--shutdown]               # or <leaseId…> | --udid X | --session S
-warden ls                                        # resource, state, owner, repo/worktree, age, heartbeat
+warden ls                                        # leases: resource, state, owner, repo/worktree, age, heartbeat
+warden devices [ios|android]                     # every sim/emulator (booted or not) + AVDs, warden-owned?, leased by (alias: list)
 warden check --udid <udid>                       # exit 2 if another owner holds it
 warden heartbeat --mine
 warden gc [--idle 20m]                           # reclaim stale leases, shut down idle warden devices

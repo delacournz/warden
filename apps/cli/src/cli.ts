@@ -25,7 +25,7 @@ export async function main(
 		process.stdout.write(`${helpText(COMMANDS)}\n`);
 		return name === undefined ? 1 : 0;
 	}
-	const command = COMMANDS.find((c) => c.name === name);
+	const command = COMMANDS.find((c) => c.name === name || c.aliases?.includes(name));
 	const ctx = makeContext(rest);
 	if (!command) {
 		ctx.err(`warden: unknown command "${name}"\n\n${helpText(COMMANDS)}`);
