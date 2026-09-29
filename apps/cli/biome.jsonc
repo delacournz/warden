@@ -3,6 +3,6 @@
 	"extends": "//",
 	"root": false,
 	"files": {
-		"includes": ["src/**/*"]
+		"includes": ["src/**/*", "scripts/**/*"]
 	}
 }

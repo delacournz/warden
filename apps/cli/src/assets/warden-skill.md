@@ -28,5 +28,6 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | keep a long lease alive | `warden heartbeat --mine` |
 | reclaim dead leases | `warden gc` |
 | setup problems | `warden doctor` |
+| update warden | `warden update` (`--check` to only look) |
 
 Leases expire after 30 min without a heartbeat (each argent call through the hook refreshes it).

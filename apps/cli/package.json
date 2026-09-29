@@ -8,13 +8,14 @@
 		"warden": "./src/cli.ts"
 	},
 	"scripts": {
-		"build": "bun build --compile src/cli.ts --outfile dist/warden",
-		"install:global": "bun run build && mkdir -p ~/.local/bin && install -m 755 dist/warden ~/.local/bin/warden",
-		"fmt": "biome format --write ./src",
-		"lint": "biome lint --write ./src",
-		"check": "biome check ./src",
+		"build": "bun scripts/build.ts",
+		"install:global": "bun src/cli.ts update",
+		"fmt": "biome format --write ./src ./scripts",
+		"lint": "biome lint --write ./src ./scripts",
+		"check": "biome check ./src ./scripts",
 		"typecheck": "tsc --noEmit",
-		"test": "bun test"
+		"test": "bun test",
+		"build:release": "bun scripts/build.ts --channel release"
 	},
 	"dependencies": {
 		"@warden/core": "workspace:*",

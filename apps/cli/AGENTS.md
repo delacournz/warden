@@ -10,7 +10,10 @@ The `warden` binary. `src/cli.ts` dispatches to `src/commands/<name>.ts` (regist
 - `hooks/`: Claude Code hook handlers (`claude-pretool.ts`: PreToolUse/SessionEnd), settings merge, argent rule patch, text diff. Hook failures never block a tool (exit 0).
 - `assets/`: text assets embedded in the binary (`warden-skill.md` via `import … with { type: "text" }`).
 - `warden install` never touches `~/.claude` without showing a diff + confirm (`--yes` / `--dry-run`); tests use a temp `HOME`.
+- `update/`: build info (`dev`/`local`/`release`, embedded via `--define __WARDEN_BUILD__=<json>`), semver, GitHub release lookup/download (gh), source build, atomic binary install with self-check.
 
 ## Build
-- `bun run build` → `dist/warden` (bun --compile)
-- `bun run install:global` → `~/.local/bin/warden`
+- `bun run build` → `dist/warden` (channel `local`, records this checkout; `scripts/build.ts`)
+- `bun run build:release` → `dist/warden-{darwin,linux}-{arm64,x64}` + `checksums.txt` (CI, on `v*` tags)
+- `bun run install:global` = `bun src/cli.ts update` → `~/.local/bin/warden`
+- Never compile without `scripts/build.ts` / `compileArgs` — a binary without build info can't update itself.

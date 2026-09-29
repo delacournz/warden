@@ -12,12 +12,30 @@ Machine-wide leasing of **iOS simulators, Android emulators, ports and native ap
 
 ```bash
 bun install
-bun run --cwd apps/cli install:global   # bun build --compile → ~/.local/bin/warden
+bun run --cwd apps/cli install:global   # local build of this checkout → ~/.local/bin/warden
 warden install --claude                  # skill + Claude hooks + argent rule (shows diff, asks first)
 warden doctor
 ```
 
 `~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`.
+
+## Update
+
+`warden update` does the right thing for however warden was built (`warden version` shows which):
+
+| Build | `warden update` |
+|-------|-----------------|
+| **dev**: running from source (`bun apps/cli/src/cli.ts update`) | compiles a `local` binary from this checkout → `~/.local/bin/warden` |
+| **local**: compiled from a checkout | rebuilds from the checkout it was built from, in place (`--release` switches to releases) |
+| **release**: downloaded from GitHub | `gh release view` → newer? download `warden-<os>-<arch>` → verify sha256 → self-check → swap in place |
+
+The binary is swapped atomically at the same path, so the next `warden` in your current shell runs the new version. No new shell or `source` is needed; if `PATH` resolves `warden` elsewhere, update warns you. Flags: `--check` (report only), `--force`, `--to <path>`, `--json`. Releases come from the private `delacournz/warden` repo through `gh` (auth required). Set `WARDEN_RELEASE_REPO` to use another repo.
+
+### Releasing
+
+1. Bump `version` in `apps/cli/package.json` and commit.
+2. `git tag v<version> && git push origin v<version>`.
+3. `.github/workflows/release.yml` checks that the tag matches the version, runs typecheck/check/test, builds `warden-{darwin,linux}-{arm64,x64}` plus `checksums.txt` (`bun run --cwd apps/cli build:release`) and publishes the GitHub release.
 
 ## Usage
 

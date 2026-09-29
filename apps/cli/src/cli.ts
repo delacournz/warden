@@ -25,6 +25,7 @@ export async function main(
 		process.stdout.write(`${helpText(COMMANDS)}\n`);
 		return name === undefined ? 1 : 0;
 	}
+	if (name === "--version" || name === "-V") return main(["version", ...rest], makeContext);
 	const command = COMMANDS.find((c) => c.name === name || c.aliases?.includes(name));
 	const ctx = makeContext(rest);
 	if (!command) {

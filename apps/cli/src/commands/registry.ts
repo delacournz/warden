@@ -13,6 +13,8 @@ import { lsCommand } from "./ls";
 import { portCommand } from "./port";
 import { releaseCommand } from "./release";
 import { runCommand } from "./run";
+import { updateCommand } from "./update";
+import { versionCommand } from "./version";
 
 export const COMMANDS: readonly Command[] = [
 	claimCommand,
@@ -29,4 +31,6 @@ export const COMMANDS: readonly Command[] = [
 	hookCommand,
 	installCommand,
 	doctorCommand,
+	updateCommand,
+	versionCommand,
 ];
