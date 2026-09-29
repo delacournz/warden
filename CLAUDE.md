@@ -5,7 +5,7 @@ See @AGENTS.md for full documentation.
 ## Quick Reference
 
 - **Stack**: Bun + Turborepo + TypeScript + Biome
-- **Port**: n/a (no apps yet)
+- **Binary**: `warden` (apps/cli, `bun run --cwd apps/cli install:global`)
 
 ## Commands
 

@@ -1,0 +1,24 @@
+{
+	"name": "@warden/core",
+	"version": "0.1.0",
+	"description": "warden core: lease store, allocation, device providers, build cache",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./*": "./src/*.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@warden/types": "workspace:*"
+	},
+	"devDependencies": {
+		"@warden/tsconfig": "workspace:*",
+		"typescript": "^5.9.3"
+	}
+}

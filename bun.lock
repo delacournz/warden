@@ -15,11 +15,37 @@
         "typescript": "^5.9.3",
       },
     },
+    "apps/cli": {
+      "name": "@warden/cli",
+      "version": "0.1.0",
+      "bin": {
+        "warden": "./src/cli.ts",
+      },
+      "dependencies": {
+        "@warden/core": "workspace:*",
+        "@warden/types": "workspace:*",
+      },
+      "devDependencies": {
+        "@warden/tsconfig": "workspace:*",
+        "typescript": "^5.9.3",
+      },
+    },
     "packages/biome-config": {
       "name": "@warden/biome-config",
       "version": "1.0.0",
       "peerDependencies": {
         "@biomejs/biome": "^2.0.0",
+      },
+    },
+    "packages/core": {
+      "name": "@warden/core",
+      "version": "0.1.0",
+      "dependencies": {
+        "@warden/types": "workspace:*",
+      },
+      "devDependencies": {
+        "@warden/tsconfig": "workspace:*",
+        "typescript": "^5.9.3",
       },
     },
     "packages/tsconfig": {
@@ -107,6 +133,10 @@
     "@types/node": ["@types/node@22.20.4", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-zJRE40jpHtKqE/C4fgHrAKQLJuSpzEnP9ff9Y7YtoR3Wd2pwqzlekDeEuUQXjRd+QCYnVnNwuJYmhdk9XV8gvA=="],
 
     "@warden/biome-config": ["@warden/biome-config@workspace:packages/biome-config"],
+
+    "@warden/cli": ["@warden/cli@workspace:apps/cli"],
+
+    "@warden/core": ["@warden/core@workspace:packages/core"],
 
     "@warden/tsconfig": ["@warden/tsconfig@workspace:packages/tsconfig"],
 

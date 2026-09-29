@@ -13,8 +13,10 @@
 ## Directory Structure
 
 ```
-apps/                 # apps (none yet — add via /dlc-scaffold-tanstack, /dlc-scaffold-tauri, /dlc-expo, /dlc-scaffold-elysia)
+apps/
+  cli/                # @warden/cli — the `warden` binary (commands, Claude hook)
 packages/
+  core/               # @warden/core — lease store, allocation, device providers, build cache
   biome-config/       # shared Biome config (root.jsonc, react.jsonc)
   tsconfig/           # shared tsconfig (tsconfig.base.json, tsconfig.react.json)
   types/              # shared utility types (Result, AsyncResult, ok, err)
