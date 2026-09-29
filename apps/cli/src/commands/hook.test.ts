@@ -1,6 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Owner } from "@warden/core/types";
 import { type TestContext, testContext } from "../testing";
 import { hookCommand } from "./hook";
@@ -58,17 +56,11 @@ describe("warden hook", () => {
 		expect(c.db.listLeases().map((l) => l.owner)).toEqual([other]);
 	});
 
-	test("session-start appends WARDEN_SESSION_ID to CLAUDE_ENV_FILE", async () => {
-		const c = setup(["session-start"], { session_id: "s1", hook_event_name: "SessionStart" });
-		const envFile = join(c.cwd, "claude.env");
-		c.env = { ...c.env, CLAUDE_ENV_FILE: envFile };
-		expect(await hookCommand.run(c)).toBe(0);
-		expect(readFileSync(envFile, "utf8")).toBe("export WARDEN_SESSION_ID='s1'\n");
-	});
-
 	test("unknown / missing subcommand → exit 1", async () => {
 		expect(await hookCommand.run(setup([], {}))).toBe(1);
 		ctx?.cleanup();
 		expect(await hookCommand.run(setup(["nope"], {}))).toBe(1);
+		ctx?.cleanup();
+		expect(await hookCommand.run(setup(["session-start"], {}))).toBe(1);
 	});
 });

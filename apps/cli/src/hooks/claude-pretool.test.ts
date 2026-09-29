@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DEFAULT_TTL_MS } from "@warden/core/config.defaults";
 import { openStore, type Store } from "@warden/core/store";
 import type { Owner } from "@warden/core/types";
-import { deviceTarget, type HookDeps, handlePreToolUse, handleSessionEnd, handleSessionStart } from "./claude-pretool";
+import { deviceTarget, type HookDeps, handlePreToolUse, handleSessionEnd } from "./claude-pretool";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
@@ -214,25 +214,5 @@ describe("handleSessionEnd", () => {
 		store.insertLease({ resource: { kind: "port", port: 1 }, owner: other, ttlMs: 1 }, now);
 		expect(handleSessionEnd("nope", deps()).exitCode).toBe(0);
 		expect(store.listLeases()).toHaveLength(1);
-	});
-});
-
-describe("handleSessionStart", () => {
-	test("exports WARDEN_SESSION_ID into CLAUDE_ENV_FILE", () => {
-		const writes: Array<[string, string]> = [];
-		const result = handleSessionStart(
-			{ session_id: "abc-123", hook_event_name: "SessionStart" },
-			{ envFile: "/tmp/env", appendFile: (path, text) => writes.push([path, text]) }
-		);
-		expect(result.exitCode).toBe(0);
-		expect(writes).toEqual([["/tmp/env", "export WARDEN_SESSION_ID='abc-123'\n"]]);
-	});
-
-	test("no env file or odd session id → no write", () => {
-		const writes: string[] = [];
-		const appendFile = (_: string, text: string) => writes.push(text);
-		expect(handleSessionStart({ session_id: "abc" }, { appendFile }).exitCode).toBe(0);
-		expect(handleSessionStart({ session_id: "a'b; rm -rf /" }, { envFile: "/e", appendFile }).exitCode).toBe(0);
-		expect(writes).toEqual([]);
 	});
 });

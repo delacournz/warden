@@ -73,7 +73,7 @@ With no config, warden detects a single project from `app.json` / `app.config.*`
 `warden install --claude` adds:
 
 - a **PreToolUse** hook on `mcp__argent__.*|mcp__plugin_goldie_argent__.*`. An unleased device is auto-claimed for the session, the session's own device gets a heartbeat, and a device leased by another owner is blocked (exit 2) with the owner and repo/worktree.
-- a **SessionStart** hook, which exports `WARDEN_SESSION_ID` for Bash, and a **SessionEnd** hook, which releases the session's leases.
+- a **SessionEnd** hook, which releases the session's leases. (`warden claim` run from the agent's Bash tool is owned by the same session via `CLAUDE_CODE_SESSION_ID`.)
 - the `~/.claude/skills/warden/SKILL.md` skill, plus a "claim via warden first" line in the argent `device_selection_rule`.
 
 ## Development

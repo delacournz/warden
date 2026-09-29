@@ -144,22 +144,3 @@ export function handleSessionEnd(raw: unknown, deps: HookDeps): HookResult {
 		return { exitCode: 0, stderr: `warden hook session-end: ${errorMessage(error)}` };
 	}
 }
-
-export type SessionStartDeps = { envFile?: string; appendFile: (path: string, text: string) => void };
-
-const SAFE_SESSION = /^[A-Za-z0-9._-]+$/;
-
-/**
- * SessionStart: export `WARDEN_SESSION_ID` via `$CLAUDE_ENV_FILE` so `warden claim` run from the
- * agent's Bash tool owns leases as this session — the same owner the PreToolUse hook sees.
- */
-export function handleSessionStart(raw: unknown, deps: SessionStartDeps): HookResult {
-	try {
-		const sessionId = isRecord(raw) ? stringField(raw, "session_id") : undefined;
-		if (!sessionId || !deps.envFile || !SAFE_SESSION.test(sessionId)) return { exitCode: 0 };
-		deps.appendFile(deps.envFile, `export WARDEN_SESSION_ID='${sessionId}'\n`);
-		return { exitCode: 0 };
-	} catch (error) {
-		return { exitCode: 0, stderr: `warden hook session-start: ${errorMessage(error)}` };
-	}
-}

@@ -1,22 +1,15 @@
-import { appendFileSync } from "node:fs";
 import { processAlive } from "@warden/core/liveness";
 import { readGitInfo } from "@warden/core/owner";
 import type { Command, CommandContext } from "../context";
-import {
-	type HookDeps,
-	type HookResult,
-	handlePreToolUse,
-	handleSessionEnd,
-	handleSessionStart,
-} from "../hooks/claude-pretool";
+import { type HookDeps, type HookResult, handlePreToolUse, handleSessionEnd } from "../hooks/claude-pretool";
 import { errorMessage } from "../hooks/json";
 
-const USAGE = "warden hook pretool|session-start|session-end   (reads Claude Code hook JSON on stdin)";
+const USAGE = "warden hook pretool|session-end   (reads Claude Code hook JSON on stdin)";
 
-type HookKind = "pretool" | "session-start" | "session-end";
+type HookKind = "pretool" | "session-end";
 
 function isHookKind(value: string | undefined): value is HookKind {
-	return value === "pretool" || value === "session-start" || value === "session-end";
+	return value === "pretool" || value === "session-end";
 }
 
 function hookDeps(ctx: CommandContext): HookDeps {
@@ -29,13 +22,6 @@ function dispatch(ctx: CommandContext, kind: HookKind, input: unknown): HookResu
 			return handlePreToolUse(input, hookDeps(ctx));
 		case "session-end":
 			return handleSessionEnd(input, hookDeps(ctx));
-		case "session-start": {
-			const envFile = ctx.env.CLAUDE_ENV_FILE;
-			return handleSessionStart(input, {
-				...(envFile ? { envFile } : {}),
-				appendFile: (path, text) => appendFileSync(path, text),
-			});
-		}
 	}
 }
 
@@ -43,7 +29,7 @@ function dispatch(ctx: CommandContext, kind: HookKind, input: unknown): HookResu
 async function run(ctx: CommandContext): Promise<number> {
 	const kind = ctx.argv[0];
 	if (!isHookKind(kind)) {
-		ctx.err(`warden hook: expected pretool|session-start|session-end\n${USAGE}`);
+		ctx.err(`warden hook: expected pretool|session-end\n${USAGE}`);
 		return 1;
 	}
 	let input: unknown;

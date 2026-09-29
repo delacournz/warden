@@ -21,11 +21,10 @@ describe("mergeClaudeSettings", () => {
 						hooks: [{ type: "command", command: `${BIN} hook pretool`, timeout: 30 }],
 					},
 				],
-				SessionStart: [{ hooks: [{ type: "command", command: `${BIN} hook session-start`, timeout: 10 }] }],
 				SessionEnd: [{ hooks: [{ type: "command", command: `${BIN} hook session-end`, timeout: 30 }] }],
 			},
 		});
-		expect(WARDEN_HOOKS.map((h) => h.event)).toEqual(["PreToolUse", "SessionStart", "SessionEnd"]);
+		expect(WARDEN_HOOKS.map((h) => h.event)).toEqual(["PreToolUse", "SessionEnd"]);
 	});
 
 	test("preserves other settings and existing hooks, appends without clobbering", () => {

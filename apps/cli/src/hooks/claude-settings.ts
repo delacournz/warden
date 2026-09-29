@@ -2,10 +2,10 @@ import { err, ok, type Result } from "@warden/types/result";
 import { ARGENT_MATCHER } from "./claude-pretool";
 import { isJsonObject, isRecord, type JsonObject } from "./json";
 
-export type HookName = "pretool" | "session-start" | "session-end";
+export type HookName = "pretool" | "session-end";
 
 export type WardenHookSpec = {
-	event: "PreToolUse" | "SessionStart" | "SessionEnd";
+	event: "PreToolUse" | "SessionEnd";
 	name: HookName;
 	matcher?: string;
 	timeout: number;
@@ -14,7 +14,6 @@ export type WardenHookSpec = {
 /** Hooks `warden install --claude` adds to `~/.claude/settings.json`. */
 export const WARDEN_HOOKS: readonly WardenHookSpec[] = [
 	{ event: "PreToolUse", name: "pretool", matcher: ARGENT_MATCHER, timeout: 30 },
-	{ event: "SessionStart", name: "session-start", timeout: 10 },
 	{ event: "SessionEnd", name: "session-end", timeout: 30 },
 ];
 
