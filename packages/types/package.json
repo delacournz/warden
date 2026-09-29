@@ -1,0 +1,18 @@
+{
+  "name": "@warden/types",
+  "version": "1.0.0",
+  "description": "Shared TypeScript utility types",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "fmt": "biome format --write ./src",
+    "lint": "biome lint --write ./src",
+    "check": "biome check ./src",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@warden/tsconfig": "workspace:*",
+    "typescript": "^5.9.3"
+  }
+}

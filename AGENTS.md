@@ -1,0 +1,72 @@
+# Warden
+
+> Bun + Turborepo monorepo. Apps in `apps/*`, shared packages in `packages/*`.
+
+## Stack / Dependencies
+
+- Bun (package manager, runtime, test runner)
+- Turborepo (task orchestration)
+- TypeScript (strict) via `@warden/tsconfig`
+- Biome (lint + format) via `@warden/biome-config`
+- prek (git hooks: biome check on commit, typecheck on push)
+
+## Directory Structure
+
+```
+apps/                 # apps (none yet — add via /dlc-scaffold-tanstack, /dlc-scaffold-tauri, /dlc-expo, /dlc-scaffold-elysia)
+packages/
+  biome-config/       # shared Biome config (root.jsonc, react.jsonc)
+  tsconfig/           # shared tsconfig (tsconfig.base.json, tsconfig.react.json)
+  types/              # shared utility types (Result, AsyncResult, ok, err)
+scripts/              # repo scripts (pre-commit biome)
+```
+
+## Key Patterns
+
+- Every package/app `biome.jsonc` uses `"extends": "//"`; rules only live in `packages/biome-config/root.jsonc`.
+- Packages extend `@warden/tsconfig/tsconfig.base.json` (composite); apps set `composite: false`.
+- React code extends `tsconfig.react.json`.
+- Errors returned as `Result` / `AsyncResult` discriminated unions from `@warden/types`.
+
+## File Naming
+
+| Type | Pattern |
+|------|---------|
+| Server fn module | `{domain}.api.ts` |
+| Schema | `{domain}.schema.ts` |
+| Client class | `clients/{domain}.ts` |
+| Middleware | `{name}.middleware.ts` |
+| Types | `{domain}.types.ts` |
+| Hooks | `{domain}.hook.ts` |
+| Tests | `{name}.test.ts(x)` colocated |
+| Data/defaults | `{name}.data.ts` / `{name}.defaults.ts` |
+
+## Rules
+
+1. Route context for shared data — fetch in `beforeLoad`, read via `useRouteContext()`
+2. TanStack Query is the cache — no global state stores
+3. No barrel exports — import directly from source files
+4. Colocate tests next to source
+5. TDD — failing test first, run `bun test <path>`
+6. No `any` — use discriminated unions
+7. Biome for lint + format
+8. prek hooks — biome on commit, typecheck on push
+
+## Checklists
+
+### Adding a package
+1. `packages/{name}/package.json` named `@warden/{name}` with `fmt`/`lint`/`check`/`typecheck`/`test` scripts
+2. `tsconfig.json` extending `@warden/tsconfig/tsconfig.base.json`
+3. `biome.jsonc` with `"extends": "//"`, `"root": false`
+4. `bun install`, then `bun run typecheck && bun run check`
+
+<!-- BEGIN:turborepo-agent-rules -->
+
+# This is NOT the Turborepo you know
+
+Turborepo configuration, task behavior, and CLI commands can vary between installed versions and may differ from your training data. Resolve the `turbo` package from this file's directory or relevant workspace; in monorepos, it may not be visible from the repository root. For example, run `node -p "require.resolve('turbo/package.json')"` from a workspace that depends on `turbo`.
+
+Read `docs/README.md` inside that installed package first, then read the relevant pages from its `docs/` directory before changing Turborepo configuration or commands. Heed deprecation notices. These bundled docs match the installed package version and are available without network access.
+
+This block is written and re-added by `turbo` before repository-scoped commands when an AI agent is detected. In the Turborepo source repository, its template is defined in `crates/turborepo-cli/src/cli/agent_guidance.rs`. Removing the managed block while updates are enabled means a later qualifying invocation will add it again. Set `"agentGuidance": false` in the root `turbo.json` or `turbo.jsonc` to opt out; this does not remove an existing block. Keep the block committed with your work to avoid an uncommitted change on the next agent invocation.
+<!-- END:turborepo-agent-rules -->
