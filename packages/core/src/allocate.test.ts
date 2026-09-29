@@ -165,6 +165,18 @@ describe("allocate", () => {
 		const plan = allocate({ inventory: [android], leases: [], request: req, now: NOW, pidAlive: noPid });
 		expect(plan.kind === "assign" && plan.steps[0]?.action).toBe("create");
 	});
+
+	test("golden devices are never allocated, adopted or counted in the pool", () => {
+		const golden = sim({ id: "G", name: "warden-golden-iphone-17-abc123def0", golden: true, wardenCreated: false });
+		const plan = allocate({
+			inventory: [golden],
+			leases: [],
+			request: { ...req, adopt: true, max: 1 },
+			now: NOW,
+			pidAlive: noPid,
+		});
+		expect(plan).toEqual({ kind: "assign", steps: [{ action: "create", name: "warden-iphone-17-1" }], stale: [] });
+	});
 });
 
 describe("helpers", () => {

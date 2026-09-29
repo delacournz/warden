@@ -75,6 +75,37 @@ describe("warden devices", () => {
 		]);
 	});
 
+	test("golden images are labelled, not counted as warden pool devices", async () => {
+		ctx = testContext(["ios", "--json"], {
+			exec: fakeExec([
+				[
+					"xcrun simctl list devices available -j",
+					{
+						stdout: simctlDevicesJson({
+							"iOS-26-5": [{ udid: "G", name: "warden-golden-iphone-17-abc123def0", state: "Shutdown" }],
+						}),
+					},
+				],
+			]),
+		});
+		expect(await devicesCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual([
+			{
+				platform: "ios",
+				name: "warden-golden-iphone-17-abc123def0",
+				id: "G",
+				state: "shutdown",
+				runtime: "iOS-26-5",
+				warden: false,
+				golden: true,
+			},
+		]);
+		ctx.stdout.length = 0;
+		ctx.argv = ["ios"];
+		await devicesCommand.run(ctx);
+		expect(ctx.stdout.join("\n")).toMatch(/warden-golden-iphone-17-abc123def0 .* golden/);
+	});
+
 	test("platform filter", async () => {
 		const c = setup(["ios", "--json"]);
 		expect(await devicesCommand.run(c)).toBe(0);

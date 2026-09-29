@@ -22,6 +22,8 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | N devices + ports for an e2e script (auto-release on exit) | `warden run ios --count N --port 8091:20 -- <cmd>` (env: `WARDEN_UDIDS`, `WARDEN_UDID_0…`, `WARDEN_PORT_0…`) |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` |
+| duplicate a shut-down sim (fast, no first boot) | `warden clone <udid\|name> [--name x]` |
+| pre-build the golden image new sims clone from | `warden golden ensure --profile iphone-17` |
 | who holds what | `warden ls` |
 | all sims / emulators (booted or not) + who leases them | `warden devices` (alias `warden list`) |
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |

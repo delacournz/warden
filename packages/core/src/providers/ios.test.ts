@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
 import { createIosProvider, parseSimctlDevices, parseSimctlDeviceTypes, parseSimctlRuntimes } from "./ios";
-import { SIMCTL_DEVICES_JSON, SIMCTL_DEVICETYPES_JSON, SIMCTL_RUNTIMES_JSON } from "./ios.fixture";
+import { SIMCTL_DEVICES_JSON, SIMCTL_DEVICETYPES_JSON, SIMCTL_RUNTIMES_JSON, simctlDevicesJson } from "./ios.fixture";
 import type { DeviceProvider } from "./provider.types";
 
 let dir: string;
@@ -73,6 +73,17 @@ describe("parseSimctlDevices", () => {
 		for (const d of result.data) expect(d.wardenCreated).toBe(false);
 	});
 
+	test("marks golden devices", () => {
+		const json = simctlDevicesJson({
+			"iOS-26-5": [
+				{ udid: "G", name: "warden-golden-iphone-17-abc123def0", state: "Shutdown" },
+				{ udid: "P", name: "warden-iphone-17-1", state: "Shutdown" },
+			],
+		});
+		const result = parseSimctlDevices(json);
+		expect(result.success && result.data.map((d) => d.golden)).toEqual([true, undefined]);
+	});
+
 	test("invalid JSON or shape → err", () => {
 		expect(parseSimctlDevices("nope").success).toBe(false);
 		expect(
@@ -92,6 +103,7 @@ describe("parseSimctlRuntimes / DeviceTypes", () => {
 			"com.apple.CoreSimulator.SimRuntime.iOS-26-3",
 			"com.apple.CoreSimulator.SimRuntime.iOS-26-1",
 		]);
+		expect(result.data.every((r) => typeof r.build === "string")).toBe(true);
 	});
 
 	test("device types parsed", () => {
@@ -164,6 +176,58 @@ describe("createIosProvider", () => {
 				lastUsedAt: 42,
 			},
 		]);
+	});
+
+	test("create clones via the clone strategy when given, records the device", async () => {
+		const calls: Call[] = [];
+		const clones: string[][] = [];
+		const p = createIosProvider(
+			{ exec: fake([], calls), store, env: {}, now: () => 42, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{
+				clone: async (name, profile, runtime) => {
+					clones.push([name, profile, runtime ?? "-"]);
+					return { success: true, data: { udid: "CLONED", runtime: "iOS-26-5" } };
+				},
+			}
+		);
+		const result = await p.create("warden-iphone-17-3", "iphone-17");
+		expect(result).toEqual({
+			success: true,
+			data: {
+				platform: "ios",
+				id: "CLONED",
+				name: "warden-iphone-17-3",
+				state: "shutdown",
+				wardenCreated: true,
+				profile: "iphone-17",
+				runtime: "iOS-26-5",
+			},
+		});
+		expect(clones).toEqual([["warden-iphone-17-3", "iphone-17", "-"]]);
+		expect(calls).toEqual([]);
+		expect(store.listDevices("ios").map((d) => d.id)).toEqual(["CLONED"]);
+	});
+
+	test("clone failure falls back to simctl create and logs why", async () => {
+		const logs: string[] = [];
+		const p = createIosProvider(
+			{
+				exec: fake([
+					["xcrun simctl list devicetypes -j", { stdout: SIMCTL_DEVICETYPES_JSON }],
+					["xcrun simctl list runtimes -j", { stdout: SIMCTL_RUNTIMES_JSON }],
+					["xcrun simctl create", { stdout: "FRESH\n" }],
+				]),
+				store,
+				env: {},
+				now: () => 42,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+				log: (line) => logs.push(line),
+			},
+			{ clone: async () => ({ success: false, error: "no xcodebuild" }) }
+		);
+		const result = await p.create("warden-iphone-17-3", "iphone-17");
+		expect(result.success && result.data.id).toBe("FRESH");
+		expect(logs.join("\n")).toContain("no xcodebuild");
 	});
 
 	test("create honours explicit runtime (suffix or version)", async () => {

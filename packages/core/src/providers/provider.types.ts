@@ -25,4 +25,6 @@ export type ProviderDeps = {
 	now: () => number;
 	/** the claimer — owner for any side leases a provider takes (e.g. Android console ports) */
 	owner: Owner;
+	/** progress notes (e.g. "cloning from golden…") — stderr in the CLI */
+	log?: (line: string) => void;
 };

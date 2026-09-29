@@ -5,6 +5,7 @@ import type { InventoryDevice } from "./types";
 export function markWardenDevices(inventory: InventoryDevice[], records: DeviceRecord[]): InventoryDevice[] {
 	const byId = new Map(records.map((r) => [`${r.platform}:${r.id}`, r]));
 	return inventory.map((device) => {
+		if (device.golden) return device;
 		const record = byId.get(`${device.platform}:${device.id}`);
 		if (record) {
 			const marked: InventoryDevice = { ...device, wardenCreated: true };

@@ -27,4 +27,9 @@ describe("markWardenDevices", () => {
 	test("foreign device untouched", () => {
 		expect(markWardenDevices([dev("U3", "iPhone 17")], [])[0]?.wardenCreated).toBe(false);
 	});
+
+	test("golden devices are not pool devices", () => {
+		const golden = { ...dev("G", "warden-golden-iphone-17-abc123def0"), golden: true };
+		expect(markWardenDevices([golden], [])[0]?.wardenCreated).toBe(false);
+	});
 });

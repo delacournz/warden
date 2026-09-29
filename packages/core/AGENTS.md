@@ -18,6 +18,7 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 | `duration.ts` / `config.defaults.ts` | `10m`-style durations; TTL 30m, idle 20m, heartbeat 30s, default profiles |
 | `providers/*.ts` | `DeviceProvider` impls (`ios`, `android`) on simctl / adb / emulator; Android console ports leased 5554–5584 |
 | `builds/*.ts` | app build cache: `config` (zod `warden.config.json`), `project-key`, `fingerprint`, `cache`, `eas`, `local`, `install`, `lock` (build lease), `resolve` (5-step resolver), `prune`, `ensure` |
+| `golden/*.ts` | golden iOS images: `golden` (key, names, staleness plan, migration/settle parsers, pure), `ios-golden` (build under `golden:ios` lease, clone, prune) |
 | `*.race-fixture.ts` | child-process fixtures for cross-process race tests |
 
 ## Rules
@@ -26,4 +27,5 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 - Import files directly (`@warden/core/store`), no barrels.
 - `WARDEN_HOME` overrides `~/.warden` (tests use temp dirs).
 - Schema changes: append to `MIGRATIONS` in `store.ts`; never edit a shipped entry.
-- Never run real simctl / adb / eas / xcodebuild in tests — inject `Exec`.
+- Never run real simctl / adb / eas / xcodebuild in tests — inject `Exec` (`golden/golden.testing.ts` = stateful fake simctl host).
+- Goldens (`warden-golden-*`, `InventoryDevice.golden`) are clone sources only: never allocate, adopt, gc or pool-count them. Bump `GOLDEN_RECIPE` when the build steps change.

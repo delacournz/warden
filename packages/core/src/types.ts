@@ -35,6 +35,8 @@ export type InventoryDevice = {
 	profile?: string;
 	/** runtime identifier or version, e.g. `iOS-26-5` */
 	runtime?: string;
+	/** a golden image (`warden-golden-*`): clone source only — never allocated, adopted, booted by gc or counted in a pool */
+	golden?: boolean;
 };
 
 export type DeviceRequest = {

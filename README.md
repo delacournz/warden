@@ -45,6 +45,8 @@ warden claim android --profile pixel-10 --count 2
 warden claim ios --count 2 --wait 10m --ttl 1h --label e2e
 warden release --mine [--shutdown]               # or <leaseId…> | --udid X | --session S
 warden ls                                        # leases: resource, state, owner, repo/worktree, age, heartbeat
+warden clone <udid|name> [--name x]              # duplicate a shut-down sim into the pool (seconds, no first boot)
+warden golden ensure|ls|prune [--all]            # golden images new sims are cloned from
 warden devices [ios|android]                     # every sim/emulator (booted or not) + AVDs, warden-owned?, leased by (alias: list)
 warden check --udid <udid>                       # exit 2 if another owner holds it
 warden heartbeat --mine
@@ -53,6 +55,23 @@ warden gc [--idle 20m]                           # reclaim stale leases, shut do
 warden port claim --from 8091 --span 20 --json
 warden port release --mine
 ```
+
+### Fast new simulators: golden images
+
+A brand-new simulator's first boot (Apple logo + progress bar) takes 1–10 min, and about 80% of that is the one-time data migration. The salient e2e measurements (SAL-GOLDEN):
+
+| Scenario | Time |
+|---|---|
+| fresh create + first boot | 146–239 s |
+| clone of a settled golden + boot | 3.7 s + 11.9 s |
+| 3 clones booted in parallel | ~20 s |
+
+So when `warden claim ios` needs a **new** pool device, it `simctl clone`s it from a **golden image**. That is a sim warden booted once, waited on until its data migration had finished (`DMLastMigrationResults`, since `bootstatus -b` can return early) and its CPU had settled, then shut down. The golden is built on first use and keyed by Xcode build + runtime + runtime build + device type + recipe, so an Xcode or runtime upgrade simply builds a new one (`warden golden prune` removes old ones). Clones are APFS copy-on-write (~30 MB each). If cloning fails, warden falls back to `simctl create`. Set `WARDEN_GOLDEN=0` to turn cloning off.
+
+- `warden golden ensure [--profile iphone-17]`: build ahead of time, so the first claim doesn't pay for it.
+- `warden clone <udid|name> [--name x]`: duplicate any **shut-down** sim, e.g. one you've set up by hand, into warden's pool. warden refuses a booted source rather than shutting it down.
+- Goldens are never allocated, adopted, booted by `gc` or counted in the pool, and `warden devices` labels them `golden`.
+- A pool device that already exists is always reused first; a second boot takes ~6.5 s.
 
 ### e2e scripts: `warden run`
 

@@ -19,6 +19,8 @@ export type DeviceRow = {
 	state: "booted" | "booting" | "shutdown" | "avd";
 	runtime?: string;
 	warden: boolean;
+	/** a golden image new sims are cloned from */
+	golden?: true;
 	lease?: { id: string; owner: string; where?: string };
 };
 
@@ -44,6 +46,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 			state: d.state,
 			...(d.runtime !== undefined ? { runtime: d.runtime } : {}),
 			warden: d.wardenCreated,
+			...(d.golden ? { golden: true as const } : {}),
 			...(lease ? { lease: leaseInfo(lease) } : {}),
 		};
 	});
@@ -98,7 +101,7 @@ async function run(ctx: CommandContext): Promise<number> {
 			r.id ?? "-",
 			r.state,
 			r.runtime ?? "-",
-			r.warden ? "yes" : "-",
+			r.golden ? "golden" : r.warden ? "yes" : "-",
 			r.lease ? `${r.lease.owner}${r.lease.where ? ` (${r.lease.where})` : ""}` : "-",
 		])
 	);

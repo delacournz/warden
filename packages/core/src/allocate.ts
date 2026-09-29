@@ -68,6 +68,7 @@ export function allocate({ inventory, leases, request, now, pidAlive }: Allocate
 	const matching = inventory.filter(
 		(d) =>
 			d.platform === request.platform &&
+			d.golden !== true &&
 			(d.wardenCreated || request.adopt === true) &&
 			profileMatches(d, request.profile) &&
 			runtimeMatches(d, request.runtime)
@@ -81,7 +82,7 @@ export function allocate({ inventory, leases, request, now, pidAlive }: Allocate
 		.map((device) => (device.state === "shutdown" ? { action: "boot", device } : { action: "reuse", device }));
 
 	const pool = inventory.filter(
-		(d) => d.platform === request.platform && d.wardenCreated && profileMatches(d, request.profile)
+		(d) => d.platform === request.platform && d.golden !== true && d.wardenCreated && profileMatches(d, request.profile)
 	);
 	const usedNames = new Set(pool.map((d) => d.name));
 	let room = request.max - pool.length;

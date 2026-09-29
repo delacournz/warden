@@ -3,9 +3,11 @@ import { appCommand } from "./app";
 import { buildsCommand } from "./builds";
 import { checkCommand } from "./check";
 import { claimCommand } from "./claim";
+import { cloneCommand } from "./clone";
 import { devicesCommand } from "./devices";
 import { doctorCommand } from "./doctor";
 import { gcCommand } from "./gc";
+import { goldenCommand } from "./golden";
 import { heartbeatCommand } from "./heartbeat";
 import { hookCommand } from "./hook";
 import { installCommand } from "./install";
@@ -22,6 +24,8 @@ export const COMMANDS: readonly Command[] = [
 	runCommand,
 	lsCommand,
 	devicesCommand,
+	cloneCommand,
+	goldenCommand,
 	checkCommand,
 	heartbeatCommand,
 	gcCommand,

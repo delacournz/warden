@@ -1,6 +1,7 @@
 import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
 import { profileSlug } from "../allocate";
 import { type Exec, execError } from "../exec";
+import { isGoldenName } from "../golden/golden";
 import type { DeviceState, InventoryDevice } from "../types";
 import type { DeviceProvider, ProviderDeps } from "./provider.types";
 
@@ -79,6 +80,7 @@ function toInventoryDevice(sim: RawSim, runtime: string): InventoryDevice {
 		wardenCreated: false,
 		runtime,
 	};
+	if (isGoldenName(sim.name)) device.golden = true;
 	if (sim.deviceTypeIdentifier?.startsWith(DEVICE_TYPE_PREFIX)) {
 		device.profile = profileSlug(sim.deviceTypeIdentifier.slice(DEVICE_TYPE_PREFIX.length));
 	}
@@ -89,6 +91,8 @@ export type SimRuntime = {
 	identifier: string;
 	name: string;
 	version: string;
+	/** runtime build, e.g. `23F5043` (`buildversion`) */
+	build?: string;
 	/** device type identifiers this runtime supports; undefined when simctl didn't say */
 	supportedDeviceTypes?: string[];
 };
@@ -120,6 +124,7 @@ function toSimRuntime(r: unknown): SimRuntime | undefined {
 		name: typeof r.name === "string" ? r.name : shortRuntime(r.identifier),
 		version: r.version,
 	};
+	if (typeof r.buildversion === "string") runtime.build = r.buildversion;
 	if (Array.isArray(r.supportedDeviceTypes)) {
 		runtime.supportedDeviceTypes = r.supportedDeviceTypes
 			.filter(isObject)
@@ -210,9 +215,25 @@ async function idempotent(exec: Exec, args: string[], alreadyState: string): Asy
 	return err(execError(cmd, result));
 }
 
+/** Makes a new sim by cloning a prepared image; returns its udid + short runtime. */
+export type IosCloneStrategy = (
+	name: string,
+	profile: string,
+	runtime: string | undefined
+) => AsyncResult<{ udid: string; runtime: string }>;
+
+export type IosProviderOptions = {
+	/** when set, `create` clones (e.g. from a golden) and falls back to `simctl create` on failure */
+	clone?: IosCloneStrategy;
+};
+
 /** iOS simulators on `xcrun simctl` (default CoreSimulator set). Boots headless — never opens Simulator.app. */
-export function createIosProvider(deps: ProviderDeps): DeviceProvider {
+export function createIosProvider(deps: ProviderDeps, options: IosProviderOptions = {}): DeviceProvider {
 	const { exec } = deps;
+	const record = (id: string, name: string, profile: string, runtime: string): InventoryDevice => {
+		deps.store.recordDevice({ platform: "ios", id, name, profile, runtime }, deps.now());
+		return { platform: "ios", id, name, state: "shutdown", wardenCreated: true, profile, runtime };
+	};
 	return {
 		platform: "ios",
 
@@ -222,6 +243,11 @@ export function createIosProvider(deps: ProviderDeps): DeviceProvider {
 		},
 
 		async create(name, profile, runtime) {
+			if (options.clone) {
+				const cloned = await options.clone(name, profile, runtime);
+				if (cloned.success) return ok(record(cloned.data.udid, name, profile, cloned.data.runtime));
+				deps.log?.(`clone failed (${cloned.error}) — creating ${name} fresh (slow first boot)`);
+			}
 			const typesOut = await simctl(exec, ["list", "devicetypes", "-j"]);
 			if (!typesOut.success) return typesOut;
 			const types = parseSimctlDeviceTypes(typesOut.data);
@@ -237,9 +263,7 @@ export function createIosProvider(deps: ProviderDeps): DeviceProvider {
 			if (!created.success) return created;
 			const id = created.data.trim();
 			if (!id) return err(`simctl create ${name}: no udid returned`);
-			const short = shortRuntime(target.data.runtime.identifier);
-			deps.store.recordDevice({ platform: "ios", id, name, profile, runtime: short }, deps.now());
-			return ok({ platform: "ios", id, name, state: "shutdown", wardenCreated: true, profile, runtime: short });
+			return ok(record(id, name, profile, shortRuntime(target.data.runtime.identifier)));
 		},
 
 		boot: (id) => idempotent(exec, ["boot", id], "Booted"),
