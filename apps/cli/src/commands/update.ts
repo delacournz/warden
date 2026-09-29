@@ -2,17 +2,16 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseArgs } from "node:util";
 import { type AsyncResult, err, ok } from "@warden/types/result";
-import type { Command, CommandContext } from "../context";
+import { type Command, defineCommand } from "../command";
+import type { CommandContext } from "../context";
 import { emit } from "../output";
+import { withSpinner } from "../spinner-context";
 import { type BuildInfo, currentBuild, describeBuild } from "../update/build-info";
 import { installBinary } from "../update/install-binary";
 import { assetName, downloadRelease, latestRelease, parseChecksums, pickAsset, releaseRepo } from "../update/release";
 import { buildFromSource, cliDir } from "../update/source-build";
 import { compareVersions } from "../update/version";
-
-const USAGE = "warden update [--check] [--release] [--force] [--to <path>] [--json]";
 
 /** Outside world for `warden update`, injectable for tests. */
 export type UpdateDeps = {
@@ -27,7 +26,7 @@ export type UpdateDeps = {
 	readSourceVersion?: (sourceDir: string) => string;
 };
 
-type Flags = { check: boolean; release: boolean; force: boolean; to?: string; json: boolean };
+type Flags = { check?: true; release?: true; force?: true; to?: string; json?: true };
 
 type UpdateReport =
 	| { status: "up-to-date"; current: string; latest: string; channel: BuildInfo["channel"] }
@@ -45,6 +44,31 @@ function sha256File(path: string): string {
 	return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+/** One step under a spinner: ✓ `succeeded(data)` on success, ✗ on failure (the error is reported by the caller). */
+function step<T>(
+	ctx: CommandContext,
+	text: string,
+	work: (ctx: CommandContext) => AsyncResult<T>,
+	succeeded: (data: T) => string
+): AsyncResult<T> {
+	return withSpinner(ctx, text, async (sctx, spinner) => {
+		const result = await work(sctx);
+		if (result.success) spinner.succeed(succeeded(result.data));
+		else spinner.fail();
+		return result;
+	});
+}
+
+/** Stage `binary` at `target` and run its self-check (`version --json`) before swapping it in. */
+function install(ctx: CommandContext, binary: string, target: string, version: string): AsyncResult<void> {
+	return step(
+		ctx,
+		`installing ${target}…`,
+		(sctx) => installBinary(sctx.exec, binary, target, version),
+		() => `installed ${version} (self-check ok)`
+	);
+}
+
 function defaultTarget(ctx: CommandContext, deps: UpdateDeps): string {
 	return deps.build.channel === "dev" ? join(ctx.env.HOME ?? "~", ".local", "bin", "warden") : deps.execPath;
 }
@@ -59,7 +83,12 @@ async function updateFromRelease(
 	const repo = releaseRepo(ctx.env);
 	const asset = assetName(deps.platform, deps.arch);
 	if (!asset.success) return asset;
-	const latest = await latestRelease(ctx.exec, repo);
+	const latest = await step(
+		ctx,
+		`checking the latest release on ${repo}…`,
+		(sctx) => latestRelease(sctx.exec, repo),
+		(release) => `latest release ${release.tag}`
+	);
 	if (!latest.success) return latest;
 	const base = { current: deps.build.version, latest: latest.data.version, channel: deps.build.channel };
 	const newer = compareVersions(latest.data.version, deps.build.version) > 0;
@@ -68,17 +97,27 @@ async function updateFromRelease(
 	if (flags.check) return ok({ status: newer ? "available" : "up-to-date", ...base });
 	const picked = pickAsset(latest.data, asset.data);
 	if (!picked.success) return picked;
+	const name = picked.data;
 
 	const dir = mkdtempSync(join(tmpdir(), "warden-update-"));
 	try {
-		const downloaded = await downloadRelease(ctx.exec, repo, latest.data, picked.data, dir);
+		const binary = join(dir, name);
+		const downloaded = await step(
+			ctx,
+			`downloading ${name} ${latest.data.tag}…`,
+			async (sctx): AsyncResult<void> => {
+				const fetched = await downloadRelease(sctx.exec, repo, latest.data, name, dir);
+				if (!fetched.success) return fetched;
+				const expected = parseChecksums(readFileSync(join(dir, "checksums.txt"), "utf8")).get(name);
+				const actual = sha256File(binary);
+				return expected === actual
+					? ok(undefined)
+					: err(`checksum mismatch for ${name} (expected ${expected ?? "none"}, got ${actual})`);
+			},
+			() => `downloaded ${name} ${latest.data.tag} (sha256 ok)`
+		);
 		if (!downloaded.success) return downloaded;
-		const binary = join(dir, picked.data);
-		const expected = parseChecksums(readFileSync(join(dir, "checksums.txt"), "utf8")).get(picked.data);
-		const actual = sha256File(binary);
-		if (expected !== actual)
-			return err(`checksum mismatch for ${picked.data} (expected ${expected ?? "none"}, got ${actual})`);
-		const installed = await installBinary(ctx.exec, binary, target, latest.data.version);
+		const installed = await install(ctx, binary, target, latest.data.version);
 		if (!installed.success) return installed;
 		return ok({
 			status: "updated",
@@ -105,10 +144,14 @@ async function updateFromSource(
 	const dir = mkdtempSync(join(tmpdir(), "warden-build-"));
 	try {
 		const outfile = join(dir, "warden");
-		ctx.err(`warden update: building ${sourceDir} …`);
-		const built = await buildFromSource(ctx.exec, sourceDir, version, outfile, ctx.now);
+		const built = await step(
+			ctx,
+			`building ${sourceDir}…`,
+			(sctx) => buildFromSource(sctx.exec, sourceDir, version, outfile, sctx.now),
+			(build) => `built ${describeBuild(build)}`
+		);
 		if (!built.success) return built;
-		const installed = await installBinary(ctx.exec, outfile, target, version);
+		const installed = await install(ctx, outfile, target, version);
 		if (!installed.success) return installed;
 		return ok({ status: "updated", ...base, path: target, build: describeBuild(built.data) });
 	} finally {
@@ -129,38 +172,41 @@ function plan(ctx: CommandContext, deps: UpdateDeps, flags: Flags, target: strin
 	return updateFromSource(ctx, deps, flags, build.sourceDir, target);
 }
 
-function reportText(report: UpdateReport): string {
+function reportText(ctx: CommandContext, report: UpdateReport): string {
+	const { color } = ctx.ui;
 	switch (report.status) {
 		case "up-to-date":
-			return `warden ${report.current} is up to date (latest ${report.latest})`;
+			return `${color.green(`warden ${report.current} is up to date`)} ${color.dim(`(latest ${report.latest})`)}`;
 		case "available":
-			return `update available: ${report.current} → ${report.latest} (run \`warden update\`)`;
-		case "updated":
-			return `${report.current === report.latest ? "warden rebuilt" : `warden updated ${report.current} → ${report.latest}`}: ${report.build}\ninstalled at ${report.path} — active now`;
+			return `${color.yellow(`update available: ${report.current} → ${report.latest}`)} ${color.dim("(run `warden update`)")}`;
+		case "updated": {
+			const headline =
+				report.current === report.latest ? "warden rebuilt" : `warden updated ${report.current} → ${report.latest}`;
+			return `${color.green(`${headline}: ${report.build}`)}\n${color.dim(`installed at ${report.path} — active now`)}`;
+		}
 	}
 }
 
-function parseFlags(argv: string[]): Flags {
-	const { values } = parseArgs({
-		args: argv,
-		options: {
-			check: { type: "boolean" },
-			release: { type: "boolean" },
-			force: { type: "boolean" },
-			to: { type: "string" },
-			json: { type: "boolean" },
-		},
-		allowPositionals: false,
-		strict: true,
-	});
-	const flags: Flags = {
-		check: values.check === true,
-		release: values.release === true,
-		force: values.force === true,
-		json: values.json === true,
-	};
-	if (values.to !== undefined) flags.to = values.to;
-	return flags;
+async function update(ctx: CommandContext, deps: UpdateDeps, flags: Flags): Promise<number> {
+	const { color } = ctx.ui;
+	const target = flags.to ?? defaultTarget(ctx, deps);
+	const report = await plan(ctx, deps, flags, target);
+	if (!report.success) {
+		ctx.err(color.red(`warden update: ${report.error}`));
+		return 1;
+	}
+	emit(ctx, flags.json === true, report.data, reportText(ctx, report.data));
+	if (report.data.status === "updated") {
+		const resolved = deps.which("warden", ctx.env.PATH);
+		if (resolved !== report.data.path) {
+			ctx.err(
+				color.yellow(
+					`note: your PATH resolves \`warden\` to ${resolved ?? "nothing"}, not ${report.data.path} — add its directory to PATH (then \`hash -r\`)`
+				)
+			);
+		}
+	}
+	return 0;
 }
 
 /**
@@ -171,37 +217,19 @@ function parseFlags(argv: string[]): Flags {
  * The binary is swapped atomically at the same path, so the current shell's next `warden` runs it.
  */
 export function createUpdateCommand(deps: UpdateDeps): Command {
-	async function run(ctx: CommandContext): Promise<number> {
-		let flags: Flags;
-		try {
-			flags = parseFlags(ctx.argv);
-		} catch (error) {
-			ctx.err(`warden update: ${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
-			return 1;
-		}
-		const target = flags.to ?? defaultTarget(ctx, deps);
-		const report = await plan(ctx, deps, flags, target);
-		if (!report.success) {
-			ctx.err(`warden update: ${report.error}`);
-			return 1;
-		}
-		emit(ctx, flags.json, report.data, reportText(report.data));
-		if (report.data.status === "updated") {
-			const resolved = deps.which("warden", ctx.env.PATH);
-			if (resolved !== report.data.path) {
-				ctx.err(
-					`note: your PATH resolves \`warden\` to ${resolved ?? "nothing"}, not ${report.data.path} — add its directory to PATH (then \`hash -r\`)`
-				);
-			}
-		}
-		return 0;
-	}
-	return {
+	return defineCommand({
 		name: "update",
 		summary: "update warden: rebuild from source (dev/local builds) or install the latest release",
-		usage: USAGE,
-		run,
-	};
+		register: (cmd, ctx, done) => {
+			cmd
+				.option("--check", "only report whether an update is available")
+				.option("--release", "install the latest GitHub release (also switches a dev/local build to it)")
+				.option("--force", "reinstall even when up to date")
+				.option("--to <path>", "install the binary here instead")
+				.option("--json", "machine-readable output")
+				.action(async (opts) => done(await update(ctx, deps, opts)));
+		},
+	});
 }
 
 export const updateCommand: Command = createUpdateCommand({

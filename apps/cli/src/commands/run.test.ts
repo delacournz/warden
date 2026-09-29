@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { HEARTBEAT_INTERVAL_MS } from "@warden/core/config.defaults";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
-import { type ChildHandle, createRunCommand, type RunDeps, splitCommand } from "./run";
+import { scriptedUi, type TestContext, testContext } from "../testing";
+import { type ChildHandle, createRunCommand, type RunDeps, splitCommand, splitOperands } from "./run";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -75,6 +75,18 @@ describe("splitCommand", () => {
 			cmd: ["bun", "test", "--", "x"],
 		});
 		expect(splitCommand(["ios"])).toEqual({ flags: ["ios"], cmd: [] });
+	});
+});
+
+describe("splitOperands", () => {
+	test("platform = the operand before --; the rest is the command", () => {
+		expect(splitOperands(["ios", "--", "a", "b"], ["ios", "a", "b"])).toEqual({
+			success: true,
+			data: { platformArg: "ios", cmd: ["a", "b"] },
+		});
+		expect(splitOperands(["--", "a"], ["a"])).toEqual({ success: true, data: { cmd: ["a"] } });
+		expect(splitOperands(["ios", "x", "--", "a"], ["ios", "x", "a"]).success).toBe(false);
+		expect(splitOperands(["ios", "a"], ["ios", "a"]).success).toBe(false);
 	});
 });
 
@@ -193,6 +205,81 @@ describe("warden run", () => {
 		expect(h.spawned).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("no build for fingerprint H");
+	});
+
+	test("everything after -- reaches the child untouched (options, --help, a second --)", async () => {
+		const c = setup(["ios", "--count", "2", "--", "bun", "test", "--x", "--help", "--count", "9", "--", "y"]);
+		const h = harness();
+		const running = createRunCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0);
+		expect(h.spawned[0]?.cmd).toEqual(["bun", "test", "--x", "--help", "--count", "9", "--", "y"]);
+		expect(c.db.listLeases()).toHaveLength(2);
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	test("options after the platform are parsed, the platform can come after options", async () => {
+		const c = setup(["--label", "x", "ios", "--count", "2", "--", "true"]);
+		const h = harness();
+		const running = createRunCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0);
+		expect(c.db.listLeases().map((l) => l.label)).toEqual(["x", "x"]);
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	test("--json: one JSON document on stdout", async () => {
+		const c = setup(["ios", "--json", "--", "true"]);
+		const h = harness();
+		const running = createRunCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out).toMatchObject({ cmd: ["true"], ports: [] });
+		expect(out.leases).toHaveLength(1);
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	test("no platform in a terminal → asks; spinner covers the claim and stops before the child spawns", async () => {
+		const c = setup(["--", "true"]);
+		const ui = scriptedUi({ interactive: true, select: ["ios"] });
+		c.ui = ui;
+		const h = harness();
+		const spawn = h.deps.spawn;
+		h.deps.spawn = (cmd, env) => {
+			ui.events.push("spawn");
+			return spawn(cmd, env);
+		};
+		const running = createRunCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0);
+		expect(ui.events[0]).toBe("select: Which platform?");
+		expect(ui.events[1]).toStartWith("spin: claiming 1 iphone-17 ios");
+		expect(ui.events.slice(-3)).toEqual([expect.stringMatching(/^ok: leased /), "stop", "spawn"]);
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	test("no platform, not a terminal → exit 1, nothing claimed", async () => {
+		const c = setup(["--", "true"]);
+		const h = harness();
+		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("missing platform");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("unknown option before -- → commander usage error, exit 1", async () => {
+		const c = setup(["ios", "--bogus", "--", "true"]);
+		const h = harness();
+		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
+		expect(h.spawned).toEqual([]);
+	});
+
+	test("--no-eas without --app → exit 1", async () => {
+		const c = setup(["ios", "--no-eas", "--", "true"]);
+		const h = harness();
+		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("need --app");
 	});
 
 	test("--project without --app → exit 1", async () => {

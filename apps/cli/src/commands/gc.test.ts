@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Owner } from "@warden/core/types";
 import { fakeSimctl } from "../simctl.testing";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { gcCommand } from "./gc";
 
 let ctx: TestContext | undefined;
@@ -63,9 +63,20 @@ describe("warden gc", () => {
 		expect(shutdowns.sort()).toEqual(["U1", "U3"]);
 	});
 
-	test("bad --idle → exit 1", async () => {
+	test("bad --idle / unknown option → exit 1", async () => {
 		const c = setup(["--idle", "soon"], []);
 		expect(await gcCommand.run(c)).toBe(1);
+		c.argv = ["--bogus"];
+		expect(await gcCommand.run(c)).toBe(1);
+	});
+
+	test("spinner covers the shutdowns; simctl progress would print above it", async () => {
+		const c = setup([], []);
+		const ui = scriptedUi();
+		c.ui = ui;
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(ui.events).toEqual(["spin: shutting down idle devices…", "stop"]);
+		expect(c.stdout.join("\n")).toContain("shut down warden-iphone-17-1");
 	});
 
 	test("forgets android records whose emulator is gone (unleased); keeps leased ones", async () => {
@@ -110,8 +121,11 @@ describe("warden gc", () => {
 
 	test("--quiet prints nothing; last run recorded", async () => {
 		const c = setup(["--quiet"], []);
+		const ui = scriptedUi();
+		c.ui = ui;
 		expect(await gcCommand.run(c)).toBe(0);
 		expect(c.stdout).toEqual([]);
+		expect(ui.events).toEqual([]);
 		expect(c.db.getMeta("last_gc_at")).toBe(String(NOW));
 	});
 });

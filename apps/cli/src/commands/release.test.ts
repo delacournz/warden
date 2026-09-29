@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Owner } from "@warden/core/types";
 import { fakeSimctl, OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { scriptedUi, type TestContext, testContext } from "../testing";
 import { releaseCommand } from "./release";
 
 let ctx: TestContext | undefined;
@@ -57,7 +57,10 @@ describe("warden release", () => {
 		lease(c, "U1");
 		lease(c, "FOREIGN");
 		c.argv = ["--mine", "--shutdown", "--json"];
+		const ui = scriptedUi();
+		c.ui = ui;
 		expect(await releaseCommand.run(c)).toBe(0);
+		expect(ui.events).toEqual(["spin: shutting down 2 device(s)…", "ok: shut down U1", "stop"]);
 		const shutdowns = calls.filter((x) => x[2] === "shutdown").map((x) => x[3]);
 		expect(shutdowns).toEqual(["U1"]);
 		const out = JSON.parse(c.stdout.join("\n"));
@@ -66,9 +69,26 @@ describe("warden release", () => {
 		expect(c.db.listDevices("ios")[0]?.lastUsedAt).toBe(c.now());
 	});
 
-	test("no selector / unknown id → exit 1", async () => {
+	test("--udid is repeatable; no spinner without --shutdown", async () => {
+		const c = setup([]);
+		lease(c, "U1");
+		lease(c, "U2");
+		lease(c, "U3");
+		const ui = scriptedUi();
+		c.ui = ui;
+		c.argv = ["--udid", "U1", "--udid", "U3", "--json"];
+		expect(await releaseCommand.run(c)).toBe(0);
+		expect(c.db.listLeases().map((l) => l.resource)).toMatchObject([{ id: "U2" }]);
+		expect(ui.events).toEqual([]);
+	});
+
+	test("no selector / unknown id / unknown option → exit 1", async () => {
 		const c = setup([]);
 		expect(await releaseCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("nothing selected");
+		c.argv = ["--mine", "--bogus"];
+		expect(await releaseCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
 		c.argv = ["l_nope"];
 		expect(await releaseCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("l_nope");

@@ -18,8 +18,13 @@
 		"build:release": "bun scripts/build.ts --channel release"
 	},
 	"dependencies": {
+		"@clack/prompts": "^1.8.1",
+		"@commander-js/extra-typings": "^15.0.0",
 		"@warden/core": "workspace:*",
-		"@warden/types": "workspace:*"
+		"@warden/types": "workspace:*",
+		"chalk": "^6.0.1",
+		"commander": "^15.0.0",
+		"ora": "^9.4.1"
 	},
 	"devDependencies": {
 		"@warden/tsconfig": "workspace:*",

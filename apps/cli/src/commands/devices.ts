@@ -1,14 +1,14 @@
-import { parseArgs } from "node:util";
 import { markWardenDevices } from "@warden/core/inventory";
 import { isLeaseAlive, processAlive } from "@warden/core/liveness";
 import { listAvds } from "@warden/core/providers/android";
 import { describeOwner, type Lease, ownerLocation, type Platform } from "@warden/core/types";
+import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
-import type { Command, CommandContext } from "../context";
+import { defineCommand } from "../command";
+import type { CommandContext } from "../context";
 import { emit, formatTable } from "../output";
 import { providerFor } from "../providers";
 
-const USAGE = "warden devices [ios|android] [--json]   (alias: warden list)";
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
 
 export type DeviceRow = {
@@ -34,7 +34,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 	const store = ctx.store();
 	const inventory = await providerFor(platform, ctx, resolveOwner(ctx)).inventory();
 	if (!inventory.success) {
-		ctx.err(`${platform}: skipped (${inventory.error})`);
+		ctx.err(ctx.ui.color.yellow(`${platform}: skipped (${inventory.error})`));
 		return [];
 	}
 	const rows: DeviceRow[] = markWardenDevices(inventory.data, store.listDevices(platform)).map((d) => {
@@ -54,7 +54,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 		const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
 		if (avds.success)
 			rows.push(...avds.data.map((name): DeviceRow => ({ platform, name, state: "avd", warden: false })));
-		else ctx.err(`android avds: skipped (${avds.error})`);
+		else ctx.err(ctx.ui.color.yellow(`android avds: skipped (${avds.error})`));
 	}
 	return rows;
 }
@@ -67,18 +67,17 @@ function compareRows(a: DeviceRow, b: DeviceRow): number {
 	);
 }
 
+function stateCell(color: ChalkInstance, state: DeviceRow["state"]): string {
+	if (state === "booted") return color.green(state);
+	if (state === "booting") return color.yellow(state);
+	return color.dim(state);
+}
+
 /** List every simulator / emulator on the machine, running or not, with warden ownership and leases. */
-async function run(ctx: CommandContext): Promise<number> {
-	let parsed: ReturnType<typeof parse>;
-	try {
-		parsed = parse(ctx.argv);
-	} catch (error) {
-		ctx.err(`warden devices: ${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
-		return 1;
-	}
-	const filter = parsed.positionals[0];
+async function devices(ctx: CommandContext, filter: string | undefined, json: boolean): Promise<number> {
+	const { color } = ctx.ui;
 	if (filter !== undefined && filter !== "ios" && filter !== "android") {
-		ctx.err(`warden devices: unknown platform "${filter}"\n${USAGE}`);
+		ctx.err(color.red(`warden devices: unknown platform "${filter}" (ios|android)`));
 		return 1;
 	}
 	const now = ctx.now();
@@ -93,30 +92,32 @@ async function run(ctx: CommandContext): Promise<number> {
 	for (const platform of platforms) rows.push(...(await platformRows(ctx, platform, leases)));
 	rows.sort(compareRows);
 
+	const none = color.dim("-");
 	const table = formatTable(
 		["PLATFORM", "NAME", "ID", "STATE", "RUNTIME", "WARDEN", "LEASED BY"],
 		rows.map((r) => [
 			r.platform,
-			r.name,
-			r.id ?? "-",
-			r.state,
-			r.runtime ?? "-",
-			r.golden ? "golden" : r.warden ? "yes" : "-",
-			r.lease ? `${r.lease.owner}${r.lease.where ? ` (${r.lease.where})` : ""}` : "-",
-		])
+			r.warden || r.golden ? color.bold(r.name) : r.name,
+			r.id ?? none,
+			stateCell(color, r.state),
+			r.runtime ?? none,
+			r.golden ? color.yellow("golden") : r.warden ? color.green("yes") : none,
+			r.lease ? `${r.lease.owner}${r.lease.where ? color.dim(` (${r.lease.where})`) : ""}` : none,
+		]),
+		color
 	);
-	emit(ctx, parsed.values.json === true, rows, rows.length > 0 ? table : "no devices");
+	emit(ctx, json, rows, rows.length > 0 ? table : color.dim("no devices"));
 	return 0;
 }
 
-function parse(argv: string[]) {
-	return parseArgs({ args: argv, options: { json: { type: "boolean" } }, allowPositionals: true, strict: true });
-}
-
-export const devicesCommand: Command = {
+export const devicesCommand = defineCommand({
 	name: "devices",
 	aliases: ["list"],
 	summary: "list every simulator / emulator (booted or not, plus Android AVDs) with warden ownership + leases",
-	usage: USAGE,
-	run,
-};
+	register: (cmd, ctx, done) => {
+		cmd
+			.argument("[platform]", "ios | android (default: both)")
+			.option("--json", "machine-readable output")
+			.action(async (platform, opts) => done(await devices(ctx, platform, opts.json === true)));
+	},
+});

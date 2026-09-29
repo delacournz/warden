@@ -50,5 +50,6 @@ describe("warden check", () => {
 	test("missing --udid → 1", async () => {
 		const c = setup([]);
 		expect(await checkCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--udid");
 	});
 });

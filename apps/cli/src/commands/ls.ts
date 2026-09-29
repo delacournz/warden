@@ -1,11 +1,9 @@
-import { parseArgs } from "node:util";
 import { formatDuration } from "@warden/core/duration";
 import { isLeaseAlive, processAlive } from "@warden/core/liveness";
 import { describeOwner, ownerLocation, type Resource } from "@warden/core/types";
-import type { Command, CommandContext } from "../context";
+import { defineCommand } from "../command";
+import type { CommandContext } from "../context";
 import { emit, formatTable } from "../output";
-
-const USAGE = "warden ls [--json]";
 
 export function describeResource(resource: Resource): string {
 	switch (resource.kind) {
@@ -18,16 +16,8 @@ export function describeResource(resource: Resource): string {
 	}
 }
 
-async function run(ctx: CommandContext): Promise<number> {
-	let json: boolean;
-	try {
-		json =
-			parseArgs({ args: ctx.argv, options: { json: { type: "boolean" } }, allowPositionals: false, strict: true })
-				.values.json === true;
-	} catch (error) {
-		ctx.err(`warden ls: ${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
-		return 1;
-	}
+function list(ctx: CommandContext, json: boolean): number {
+	const { color } = ctx.ui;
 	const now = ctx.now();
 	const leases = ctx
 		.store()
@@ -36,7 +26,7 @@ async function run(ctx: CommandContext): Promise<number> {
 	const rows = leases.map((l) => [
 		l.id,
 		describeResource(l.resource),
-		l.state,
+		l.state === "alive" ? color.green(l.state) : color.yellow(l.state),
 		describeOwner(l.owner),
 		ownerLocation(l.owner) ?? "",
 		l.label ?? "",
@@ -45,15 +35,16 @@ async function run(ctx: CommandContext): Promise<number> {
 	]);
 	const text =
 		leases.length === 0
-			? "no leases"
-			: formatTable(["LEASE", "RESOURCE", "STATE", "OWNER", "REPO/WORKTREE", "LABEL", "AGE", "HEARTBEAT"], rows);
+			? color.dim("no leases")
+			: formatTable(["LEASE", "RESOURCE", "STATE", "OWNER", "REPO/WORKTREE", "LABEL", "AGE", "HEARTBEAT"], rows, color);
 	emit(ctx, json, { leases }, text);
 	return 0;
 }
 
-export const lsCommand: Command = {
+export const lsCommand = defineCommand({
 	name: "ls",
 	summary: "list leases (resource, state, owner, repo/worktree, age, heartbeat)",
-	usage: USAGE,
-	run,
-};
+	register: (cmd, ctx, done) => {
+		cmd.option("--json", "machine-readable output").action((opts) => done(list(ctx, opts.json === true)));
+	},
+});

@@ -1,4 +1,5 @@
 import { availableParallelism } from "node:os";
+import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { defaultMax, profileSlug } from "@warden/core/allocate";
 import { type ClaimOutcome, claimDevices } from "@warden/core/claim";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@warden/core/config.defaults";
@@ -11,21 +12,31 @@ import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
 
-/** `parseArgs` options shared by `claim` and `run`. */
-export const CLAIM_OPTIONS = {
-	profile: { type: "string" },
-	runtime: { type: "string" },
-	count: { type: "string" },
-	max: { type: "string" },
-	wait: { type: "string" },
-	ttl: { type: "string" },
-	label: { type: "string" },
-	adopt: { type: "boolean" },
-	json: { type: "boolean" },
-} as const;
+/** Claim options shared by `claim` and `run` (typed by commander's extra-typings). */
+export function withClaimOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
+	cmd: Commander<Args, Opts, Globals>
+) {
+	return cmd
+		.option("--profile <slug>", "device profile, e.g. iphone-17 / pixel-10 (android default: first AVD)")
+		.option("--runtime <runtime>", "runtime: latest, iOS-26-5, 26.5 …")
+		.option("--count <n>", "how many devices", "1")
+		.option("--max <n>", "max warden devices of this profile (default: cores/4, cap 4)")
+		.option("--wait <duration>", "wait this long for a free device, e.g. 10m")
+		.option("--ttl <duration>", "lease TTL without heartbeat", "30m")
+		.option("--label <label>", "label shown in `warden ls`")
+		.option("--adopt", "allow allocating foreign (non-warden) devices")
+		.option("--json", "machine-readable output");
+}
 
-export const CLAIM_USAGE_FLAGS =
-	"[--profile iphone-17] [--runtime latest] [--count N] [--max N] [--wait 10m] [--ttl 30m] [--label x] [--adopt] [--json]";
+/** Platform from the argument, else (interactive terminal) a picker; undefined = cancelled. */
+export async function resolvePlatform(ctx: CommandContext, arg: string | undefined): Promise<Result<Platform>> {
+	if (arg !== undefined || !ctx.ui.interactive) return parsePlatform(arg);
+	const picked = await ctx.ui.select<Platform>("Which platform?", [
+		{ value: "ios", label: "iOS", hint: "simulators" },
+		{ value: "android", label: "Android", hint: "emulators" },
+	]);
+	return picked ? ok(picked) : err("cancelled");
+}
 
 export type ClaimFlagValues = {
 	profile?: string;

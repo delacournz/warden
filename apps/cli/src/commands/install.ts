@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { parseArgs } from "node:util";
 import { err, ok, type Result } from "@warden/types/result";
-import type { Command, CommandContext } from "../context";
+import { type Command, defineCommand } from "../command";
+import type { CommandContext } from "../context";
 import { type Agent, detectAgents } from "../hooks/agents";
 import { patchArgentRules } from "../hooks/argent-rules";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
@@ -11,26 +11,21 @@ import { errorMessage } from "../hooks/json";
 import { lineDiff } from "../hooks/text-diff";
 import { SKILL_MD as skill } from "../skill";
 
-const USAGE = "warden install [--claude] [--codex] [--yes] [--dry-run] [--shim] [--json]";
-
 /** Hook commands reference the installed binary via `$HOME` so they work whatever PATH the agent runs with. */
 export const HOOK_BINARY = "$HOME/.local/bin/warden";
 
 /** How this process runs: a `bun build --compile` binary, or `bun src/cli.ts` from a checkout. */
 export type Runtime = { kind: "compiled"; execPath: string } | { kind: "dev"; cliPath: string };
 
-export type InstallDeps = {
-	runtime: Runtime;
-	/** true when a human can answer `confirm` (stdin is a TTY) */
-	interactive: boolean;
-	confirm: (question: string) => Promise<boolean>;
-};
+/** Outside world for `warden install` beyond `CommandContext` (prompts come from `ctx.ui`). */
+export type InstallDeps = { runtime: Runtime };
 
 export type StepName = "binary" | "skill" | "settings" | "argent-rules" | "codex-hooks";
 export type StepStatus = "written" | "unchanged" | "skipped" | "declined" | "dry-run" | "error";
 export type StepReport = { step: StepName; status: StepStatus; path: string; detail?: string };
 
-type Flags = { claude: boolean; codex: boolean; yes: boolean; dryRun: boolean; shim: boolean; json: boolean };
+export type InstallFlags = { claude?: true; codex?: true; yes?: true; dryRun?: true; shim?: true; json?: true };
+type Flags = InstallFlags;
 
 function report(step: StepName, status: StepStatus, path: string, detail?: string): StepReport {
 	return detail === undefined ? { step, status, path } : { step, status, path, detail };
@@ -89,16 +84,34 @@ function installSkill(ctx: CommandContext, path: string, flags: Flags): StepRepo
 	return report("skill", "written", path);
 }
 
+/** Diff lines coloured like git: + green, - red, context dim. */
+function colorDiff(ctx: CommandContext, diff: string): string {
+	const { color } = ctx.ui;
+	return diff
+		.split("\n")
+		.map((line) => {
+			if (line.startsWith("--- ") || line.startsWith("+++ ")) return color.bold(line);
+			if (line === "@@") return color.cyan(line);
+			if (line.startsWith("+ ")) return color.green(line);
+			if (line.startsWith("- ")) return color.red(line);
+			return color.dim(line);
+		})
+		.join("\n");
+}
+
+/** Human mode: coloured diff on stdout. `--json`: plain diff on stderr (stdout is the JSON report). */
 function showDiff(ctx: CommandContext, flags: Flags, diff: string): void {
 	if (diff === "") return;
 	if (flags.json) ctx.err(diff);
-	else ctx.out(diff);
+	else ctx.out(colorDiff(ctx, diff));
 }
 
-/** Show the diff, then write only on --yes or an interactive "y". */
+/**
+ * Show the diff, then write only on --yes or an interactive "yes". Non-interactive without --yes
+ * skips the step (naming the flag); "no" declines it; a cancelled prompt skips just this step.
+ */
 async function guardedWrite(
 	ctx: CommandContext,
-	deps: InstallDeps,
 	flags: Flags,
 	step: StepName,
 	path: string,
@@ -108,8 +121,10 @@ async function guardedWrite(
 	showDiff(ctx, flags, lineDiff(before, after, path));
 	if (flags.dryRun) return report(step, "dry-run", path);
 	if (!flags.yes) {
-		if (!deps.interactive) return report(step, "skipped", path, "needs confirmation — re-run with --yes");
-		if (!(await deps.confirm(`apply these changes to ${path}?`))) return report(step, "declined", path);
+		if (!ctx.ui.interactive) return report(step, "skipped", path, "needs confirmation — re-run with --yes");
+		const answer = await ctx.ui.confirm(`apply these changes to ${path}?`);
+		if (answer === undefined) return report(step, "skipped", path, "cancelled");
+		if (!answer) return report(step, "declined", path);
 	}
 	mkdirSync(dirname(path), { recursive: true });
 	writeFileSync(path, after);
@@ -125,19 +140,14 @@ function parseJson(text: string | undefined): Result<unknown> {
 	}
 }
 
-async function installSettings(
-	ctx: CommandContext,
-	deps: InstallDeps,
-	flags: Flags,
-	path: string
-): Promise<StepReport> {
+async function installSettings(ctx: CommandContext, flags: Flags, path: string): Promise<StepReport> {
 	const before = readIfExists(path);
 	const parsed = parseJson(before);
 	if (!parsed.success) return report("settings", "error", path, parsed.error);
 	const merged = mergeClaudeSettings(parsed.data, HOOK_BINARY);
 	if (!merged.success) return report("settings", "error", path, merged.error);
 	if (!merged.data.changed) return report("settings", "unchanged", path);
-	return guardedWrite(ctx, deps, flags, "settings", path, before ?? "", formatJson(merged.data.settings, before));
+	return guardedWrite(ctx, flags, "settings", path, before ?? "", formatJson(merged.data.settings, before));
 }
 
 /** Pretty JSON keeping the existing file's tab indentation. */
@@ -152,7 +162,6 @@ function formatJson(value: unknown, before: string | undefined): string {
  */
 async function installCodexHooks(
 	ctx: CommandContext,
-	deps: InstallDeps,
 	flags: Flags,
 	path: string,
 	configPath: string
@@ -167,15 +176,10 @@ async function installCodexHooks(
 	const merged = mergeCodexHooks(parsed.data, HOOK_BINARY);
 	if (!merged.success) return report("codex-hooks", "error", path, merged.error);
 	if (!merged.data.changed) return report("codex-hooks", "unchanged", path);
-	return guardedWrite(ctx, deps, flags, "codex-hooks", path, before ?? "", formatJson(merged.data.settings, before));
+	return guardedWrite(ctx, flags, "codex-hooks", path, before ?? "", formatJson(merged.data.settings, before));
 }
 
-async function installArgentRules(
-	ctx: CommandContext,
-	deps: InstallDeps,
-	flags: Flags,
-	path: string
-): Promise<StepReport> {
+async function installArgentRules(ctx: CommandContext, flags: Flags, path: string): Promise<StepReport> {
 	const before = readIfExists(path);
 	if (before === undefined) return report("argent-rules", "skipped", path, "argent rules not installed");
 	const patch = patchArgentRules(before);
@@ -184,7 +188,7 @@ async function installArgentRules(
 			? report("argent-rules", "unchanged", path)
 			: report("argent-rules", "skipped", path, "no <device_selection_rule> block found");
 	}
-	return guardedWrite(ctx, deps, flags, "argent-rules", path, before, patch.text);
+	return guardedWrite(ctx, flags, "argent-rules", path, before, patch.text);
 }
 
 async function step(name: StepName, path: string, fn: () => StepReport | Promise<StepReport>): Promise<StepReport> {
@@ -192,34 +196,6 @@ async function step(name: StepName, path: string, fn: () => StepReport | Promise
 		return await fn();
 	} catch (error) {
 		return report(name, "error", path, errorMessage(error));
-	}
-}
-
-function parseFlags(argv: string[]): Result<Flags> {
-	try {
-		const { values } = parseArgs({
-			args: argv,
-			options: {
-				claude: { type: "boolean" },
-				codex: { type: "boolean" },
-				yes: { type: "boolean", short: "y" },
-				"dry-run": { type: "boolean" },
-				shim: { type: "boolean" },
-				json: { type: "boolean" },
-			},
-			allowPositionals: false,
-			strict: true,
-		});
-		return ok({
-			claude: values.claude === true,
-			codex: values.codex === true,
-			yes: values.yes === true,
-			dryRun: values["dry-run"] === true,
-			shim: values.shim === true,
-			json: values.json === true,
-		});
-	} catch (error) {
-		return err(error);
 	}
 }
 
@@ -256,13 +232,13 @@ async function install(
 		const settingsPath = join(claude, "settings.json");
 		const rulesPath = join(claude, "rules", "argent.md");
 		steps.push(await step("skill", skillPath, () => installSkill(ctx, skillPath, flags)));
-		steps.push(await step("settings", settingsPath, () => installSettings(ctx, deps, flags, settingsPath)));
-		steps.push(await step("argent-rules", rulesPath, () => installArgentRules(ctx, deps, flags, rulesPath)));
+		steps.push(await step("settings", settingsPath, () => installSettings(ctx, flags, settingsPath)));
+		steps.push(await step("argent-rules", rulesPath, () => installArgentRules(ctx, flags, rulesPath)));
 	}
 	const hooksPath = codexHooksPath({ ...ctx.env, HOME: home });
 	const configPath = codexConfigPath({ ...ctx.env, HOME: home });
 	if (agents.includes("codex") && hooksPath && configPath) {
-		steps.push(await step("codex-hooks", hooksPath, () => installCodexHooks(ctx, deps, flags, hooksPath, configPath)));
+		steps.push(await step("codex-hooks", hooksPath, () => installCodexHooks(ctx, flags, hooksPath, configPath)));
 	}
 	return steps;
 }
@@ -281,31 +257,45 @@ function installNotes(flags: Flags, agents: Agent[], steps: StepReport[], binary
 	return notes;
 }
 
-/** `warden install` with injectable runtime detection + confirmation (tests use a temp HOME). */
-export async function runInstall(ctx: CommandContext, deps: InstallDeps): Promise<number> {
-	const flags = parseFlags(ctx.argv);
-	if (!flags.success) {
-		ctx.err(`warden install: ${flags.error}\n${USAGE}`);
-		return 1;
+function mark(ctx: CommandContext, status: StepStatus): string {
+	const { color } = ctx.ui;
+	switch (status) {
+		case "written":
+		case "unchanged":
+			return color.green(MARK[status]);
+		case "dry-run":
+			return color.dim(MARK[status]);
+		case "skipped":
+		case "declined":
+			return color.yellow(MARK[status]);
+		case "error":
+			return color.red(MARK[status]);
 	}
+}
+
+function stepLine(ctx: CommandContext, s: StepReport): string {
+	const { color } = ctx.ui;
+	const detail = s.detail ? `  ${color.dim(`(${s.detail})`)}` : "";
+	return `${mark(ctx, s.status)} ${s.step.padEnd(12)} ${s.status.padEnd(9)} ${s.path}${detail}`;
+}
+
+/** `warden install` with an injectable runtime (tests use a temp HOME + scripted prompts). */
+export async function runInstall(ctx: CommandContext, deps: InstallDeps, flags: InstallFlags): Promise<number> {
+	const { color } = ctx.ui;
 	const home = ctx.env.HOME;
 	if (!home) {
-		ctx.err("warden install: $HOME is not set");
+		ctx.err(color.red("warden install: $HOME is not set"));
 		return 1;
 	}
-	const agents = targetAgents(ctx, flags.data);
-	const steps = await install(ctx, deps, flags.data, home, agents);
+	const agents = targetAgents(ctx, flags);
+	const steps = await install(ctx, deps, flags, home, agents);
 	const binaryPresent = existsSync(join(home, ".local", "bin", "warden"));
-	const notes = installNotes(flags.data, agents, steps, binaryPresent);
-	if (flags.data.json) {
+	const notes = installNotes(flags, agents, steps, binaryPresent);
+	if (flags.json) {
 		ctx.out(JSON.stringify({ steps, notes }, null, 2));
 	} else {
-		for (const s of steps) {
-			ctx.out(
-				`${MARK[s.status]} ${s.step.padEnd(12)} ${s.status.padEnd(9)} ${s.path}${s.detail ? `  (${s.detail})` : ""}`
-			);
-		}
-		for (const n of notes) ctx.out(n);
+		for (const s of steps) ctx.out(stepLine(ctx, s));
+		for (const n of notes) ctx.out(color.yellow(n));
 	}
 	return steps.some((s) => s.status === "error") ? 1 : 0;
 }
@@ -317,21 +307,22 @@ export function detectRuntime(main: string = Bun.main, execPath: string = proces
 		: { kind: "dev", cliPath: main };
 }
 
-/** Line prompt on the controlling terminal; anything but y/yes is "no". */
-async function confirmPrompt(question: string): Promise<boolean> {
-	const answer = prompt(`${question} [y/N]`);
-	return answer !== null && /^y(es)?$/i.test(answer.trim());
+export function createInstallCommand(deps: () => InstallDeps): Command {
+	return defineCommand({
+		name: "install",
+		summary:
+			"install warden to ~/.local/bin + hooks for detected agents (Claude Code: skill, hooks, argent rule; Codex: hooks)",
+		register: (cmd, ctx, done) => {
+			cmd
+				.option("--claude", "install for Claude Code (default: every detected agent)")
+				.option("--codex", "install for Codex (default: every detected agent)")
+				.option("-y, --yes", "apply agent-config changes without asking")
+				.option("--dry-run", "show what would change (diffs), write nothing")
+				.option("--shim", "running from source: link ~/.local/bin/warden to this checkout")
+				.option("--json", "machine-readable output (diffs go to stderr)")
+				.action(async (opts) => done(await runInstall(ctx, deps(), opts)));
+		},
+	});
 }
 
-export const installCommand: Command = {
-	name: "install",
-	summary:
-		"install warden to ~/.local/bin + hooks for detected agents (Claude Code: skill, hooks, argent rule; Codex: hooks)",
-	usage: USAGE,
-	run: (ctx) =>
-		runInstall(ctx, {
-			runtime: detectRuntime(),
-			interactive: process.stdin.isTTY === true,
-			confirm: confirmPrompt,
-		}),
-};
+export const installCommand: Command = createInstallCommand(() => ({ runtime: detectRuntime() }));

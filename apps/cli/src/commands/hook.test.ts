@@ -56,11 +56,23 @@ describe("warden hook", () => {
 		expect(c.db.listLeases().map((l) => l.owner)).toEqual([other]);
 	});
 
-	test("unknown / missing subcommand → exit 1", async () => {
-		expect(await hookCommand.run(setup([], {}))).toBe(1);
-		ctx?.cleanup();
-		expect(await hookCommand.run(setup(["nope"], {}))).toBe(1);
-		ctx?.cleanup();
+	test("unknown / missing subcommand → commander usage error, exit 1, nothing on stdout", async () => {
+		const missing = setup([], {});
+		expect(await hookCommand.run(missing)).toBe(1);
+		expect(missing.stdout).toEqual([]);
+		expect(missing.stderr.join("\n")).toContain("pretool");
+		missing.cleanup();
+		const unknown = setup(["nope"], {});
+		expect(await hookCommand.run(unknown)).toBe(1);
+		expect(unknown.stderr.join("\n")).toContain("unknown command 'nope'");
+		unknown.cleanup();
 		expect(await hookCommand.run(setup(["session-start"], {}))).toBe(1);
+	});
+
+	test("allowed tool call prints nothing", async () => {
+		const c = setup(["pretool"], { ...pretool(UDID), tool_name: "Bash", tool_input: { command: "ls" } });
+		expect(await hookCommand.run(c)).toBe(0);
+		expect(c.stdout).toEqual([]);
+		expect(c.stderr).toEqual([]);
 	});
 });

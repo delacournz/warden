@@ -1,18 +1,26 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { Chalk } from "chalk";
 import { WARDEN_RULE_LINE } from "../hooks/argent-rules";
-import { type TestContext, testContext } from "../testing";
-import { detectRuntime, type InstallDeps, runInstall } from "./install";
+import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
+import { createInstallCommand, detectRuntime, type InstallDeps, type Runtime } from "./install";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 const ARGENT = "<device_selection_rule>\nDecision order:\n\n1. **Explicit user intent**\n</device_selection_rule>\n";
 
-type Setup = { c: TestContext; home: string; deps: InstallDeps; questions: string[] };
+type Setup = { c: TestContext; home: string; deps: InstallDeps; questions: string[]; ui: ScriptedUi };
 
-function setup(argv: string[], overrides: Partial<InstallDeps> = {}): Setup {
+type SetupOpts = {
+	runtime?: Runtime;
+	interactive?: boolean;
+	/** scripted confirm answers (undefined = cancelled); default: yes to everything */
+	confirm?: Array<boolean | undefined>;
+};
+
+function setup(argv: string[], opts: SetupOpts = {}): Setup {
 	const c = testContext(argv);
 	ctx = c;
 	const home = join(c.cwd, "home");
@@ -20,18 +28,19 @@ function setup(argv: string[], overrides: Partial<InstallDeps> = {}): Setup {
 	c.env = { ...c.env, HOME: home };
 	const binary = join(c.cwd, "warden-built");
 	writeFileSync(binary, "#!/bin/sh\necho warden\n");
+	const ui = scriptedUi({ interactive: opts.interactive ?? true, confirm: opts.confirm ?? Array(8).fill(true) });
 	const questions: string[] = [];
-	const deps: InstallDeps = {
-		runtime: { kind: "compiled", execPath: binary },
-		interactive: true,
-		confirm: async (q) => {
-			questions.push(q);
-			return true;
-		},
-		...overrides,
+	const ask = ui.confirm;
+	ui.confirm = async (question, initial) => {
+		questions.push(question);
+		return ask(question, initial);
 	};
-	return { c, home, deps, questions };
+	c.ui = ui;
+	const deps: InstallDeps = { runtime: opts.runtime ?? { kind: "compiled", execPath: binary } };
+	return { c, home, deps, questions, ui };
 }
+
+const runInstall = (c: TestContext, deps: InstallDeps) => createInstallCommand(() => deps).run(c);
 
 const read = (path: string) => readFileSync(path, "utf8");
 const claudeFile = (home: string, ...parts: string[]) => join(home, ".claude", ...parts);
@@ -109,7 +118,7 @@ describe("warden install", () => {
 	});
 
 	test("declined confirmation leaves settings + rules untouched", async () => {
-		const { c, home, deps } = setup(["--claude", "--json"], { confirm: async () => false });
+		const { c, home, deps } = setup(["--claude", "--json"], { confirm: [false, false, false, false] });
 		seedClaude(home);
 		expect(await runInstall(c, deps)).toBe(0);
 		expect(JSON.parse(read(claudeFile(home, "settings.json")))).toEqual({ model: "opus" });
@@ -312,6 +321,77 @@ describe("warden install", () => {
 		const { c, deps } = setup([]);
 		c.env = { ...c.env, HOME: undefined };
 		expect(await runInstall(c, deps)).toBe(1);
+	});
+});
+
+describe("warden install (prompts + ui)", () => {
+	test("interactive: asks once per agent-config change, after its diff", async () => {
+		const { c, home, deps, ui } = setup(["--claude"]);
+		seedClaude(home);
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(ui.events).toEqual([
+			`confirm: apply these changes to ${claudeFile(home, "settings.json")}?`,
+			`confirm: apply these changes to ${claudeFile(home, "rules", "argent.md")}?`,
+		]);
+		const out = c.stdout.join("\n");
+		expect(out.indexOf(`--- ${claudeFile(home, "settings.json")}`)).toBeLessThan(
+			out.indexOf(`--- ${claudeFile(home, "rules", "argent.md")}`)
+		);
+	});
+
+	test("cancelled prompt skips only that step; later steps still asked", async () => {
+		const { c, home, deps, questions } = setup(["--claude", "--json"], { confirm: [undefined, true] });
+		seedClaude(home);
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(questions).toHaveLength(2);
+		expect(JSON.parse(read(claudeFile(home, "settings.json")))).toEqual({ model: "opus" });
+		expect(read(claudeFile(home, "rules", "argent.md"))).toContain(WARDEN_RULE_LINE);
+		const steps = JSON.parse(c.stdout.join("\n")).steps;
+		expect(steps[2]).toMatchObject({ step: "settings", status: "skipped", detail: "cancelled" });
+		expect(steps[3]).toMatchObject({ step: "argent-rules", status: "written" });
+	});
+
+	test("--json: diffs go to stderr, stdout is one JSON document", async () => {
+		const { c, home, deps } = setup(["--claude", "--yes", "--json"]);
+		seedClaude(home);
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).steps).toHaveLength(4);
+		expect(c.stderr.join("\n")).toContain("hook pretool");
+	});
+
+	test("human mode colours the diff (+ green, - red, context dim) and step marks", async () => {
+		const { c, home, deps, ui } = setup(["--claude", "--yes"]);
+		c.ui = { ...ui, color: new Chalk({ level: 1 }) };
+		seedClaude(home);
+		expect(await runInstall(c, deps)).toBe(0);
+		const out = c.stdout.join("\n");
+		expect(out).toContain(`\u001b[32m+ ${WARDEN_RULE_LINE}\u001b[39m`);
+		expect(out).toContain("\u001b[2m  Decision order:\u001b[22m");
+		expect(out).toContain('\u001b[31m-   "model": "opus"\u001b[39m');
+		expect(out).toContain("\u001b[32m✓\u001b[39m settings");
+	});
+
+	test("--json diffs stay plain even with colour on", async () => {
+		const { c, home, deps, ui } = setup(["--claude", "--yes", "--json"]);
+		c.ui = { ...ui, color: new Chalk({ level: 1 }) };
+		seedClaude(home);
+		await runInstall(c, deps);
+		expect([...c.stdout, ...c.stderr].join("\n")).not.toContain("\u001b[");
+	});
+
+	test("unknown option → commander usage error, exit 1, nothing written", async () => {
+		const { c, home, deps } = setup(["--bogus"]);
+		expect(await runInstall(c, deps)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
+		expect(existsSync(join(home, ".local"))).toBe(false);
+	});
+
+	test("-y is --yes", async () => {
+		const { c, home, deps, questions } = setup(["--claude", "-y"], { interactive: false });
+		seedClaude(home);
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(questions).toEqual([]);
+		expect(read(claudeFile(home, "rules", "argent.md"))).toContain(WARDEN_RULE_LINE);
 	});
 });
 

@@ -1,19 +1,15 @@
 import { resolve } from "node:path";
-import { parseArgs } from "node:util";
 import { type EnsureInput, ensureApp, type ProjectContext, projectContext } from "@warden/core/builds/ensure";
 import { computeFingerprint } from "@warden/core/builds/fingerprint";
 import type { EnsureResult } from "@warden/core/builds/resolve";
 import { processAlive } from "@warden/core/liveness";
 import type { Owner, Platform } from "@warden/core/types";
 import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
-import { parsePlatform, resolveOwner } from "../claim-flags";
-import type { Command, CommandContext } from "../context";
+import { parsePlatform, resolveOwner, resolvePlatform } from "../claim-flags";
+import { type Command, defineCommand } from "../command";
+import type { CommandContext } from "../context";
 import { emit } from "../output";
-
-const USAGE = [
-	"warden app ensure ios|android [--project dir] [--lease id | --udid X | --no-install] [--no-eas] [--no-build] [--bundle-id X] [--json]",
-	"warden app fingerprint [ios|android] [--project dir] [--bundle-id X] [--json]",
-].join("\n");
+import { withSpinner } from "../spinner-context";
 
 /** Effects `app ensure` needs beyond `CommandContext` — injectable for tests. */
 export type AppDeps = {
@@ -56,10 +52,12 @@ async function loadContext(
 async function fingerprint(ctx: CommandContext, project: ProjectContext, platform: Platform): AsyncResult<string> {
 	const hash = await computeFingerprint(ctx.exec, project.project, platform);
 	if (!hash.success) return hash;
-	log(ctx, "────────────────────────────────────────────────────────");
-	log(ctx, `${platform} fingerprint: ${hash.data}`);
+	const { color } = ctx.ui;
+	const rule = color.dim("────────────────────────────────────────────────────────");
+	log(ctx, rule);
+	log(ctx, `${platform} fingerprint: ${color.bold(hash.data)}`);
 	log(ctx, `project ${project.project.name} (${project.projectKey})`);
-	log(ctx, "────────────────────────────────────────────────────────");
+	log(ctx, rule);
 	return hash;
 }
 
@@ -130,100 +128,89 @@ export function pickDevice(
 	);
 }
 
-const ENSURE_OPTIONS = {
-	project: { type: "string" },
-	"bundle-id": { type: "string" },
-	lease: { type: "string" },
-	udid: { type: "string" },
-	"no-install": { type: "boolean" },
-	"no-eas": { type: "boolean" },
-	"no-build": { type: "boolean" },
-	json: { type: "boolean" },
-} as const;
+type ProjectOpts = { project?: string; bundleId?: string; json?: true };
 
-function parseEnsure(argv: string[]) {
-	return parseArgs({ args: argv, options: ENSURE_OPTIONS, allowPositionals: true, strict: true });
+type EnsureOpts = ProjectOpts & { lease?: string; udid?: string; install: boolean; eas: boolean; build: boolean };
+
+function projectOptions(opts: ProjectOpts): Pick<EnsureOptions, "project" | "bundleId"> {
+	return {
+		...(opts.project !== undefined ? { project: opts.project } : {}),
+		...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
+	};
 }
 
-function parseFingerprint(argv: string[]) {
-	return parseArgs({
-		args: argv,
-		options: { project: { type: "string" }, "bundle-id": { type: "string" }, json: { type: "boolean" } },
-		allowPositionals: true,
-		strict: true,
-	});
+function fail(ctx: CommandContext, sub: string, message: string): number {
+	ctx.err(ctx.ui.color.red(`warden app ${sub}: ${message}`));
+	return 1;
 }
 
-async function ensureCmd(ctx: CommandContext, deps: AppDeps, argv: string[]): Promise<number> {
-	const { values, positionals } = parseEnsure(argv);
-	const platform = parsePlatform(positionals[0]);
-	if (!platform.success) {
-		ctx.err(`warden app ensure: ${platform.error}\n${USAGE}`);
-		return 1;
-	}
+/** Fingerprint → installed / cache / EAS / local build, under a spinner (can take minutes). */
+async function ensureCmd(
+	ctx: CommandContext,
+	deps: AppDeps,
+	platformArg: string | undefined,
+	opts: EnsureOpts
+): Promise<number> {
+	const { color } = ctx.ui;
+	const platform = await resolvePlatform(ctx, platformArg);
+	if (!platform.success) return fail(ctx, "ensure", platform.error);
 	const owner = resolveOwner(ctx);
 	const device = pickDevice(ctx, owner, platform.data, {
-		...(values.udid !== undefined ? { udid: values.udid } : {}),
-		...(values.lease !== undefined ? { lease: values.lease } : {}),
-		noInstall: values["no-install"] === true,
+		...(opts.udid !== undefined ? { udid: opts.udid } : {}),
+		...(opts.lease !== undefined ? { lease: opts.lease } : {}),
+		noInstall: !opts.install,
 	});
-	if (!device.success) {
-		ctx.err(`warden app ensure: ${device.error}`);
-		return 1;
-	}
-	const res = await ensureAppFor(ctx, deps, owner, platform.data, device.data, {
-		...(values.project !== undefined ? { project: values.project } : {}),
-		...(values["bundle-id"] !== undefined ? { bundleId: values["bundle-id"] } : {}),
-		eas: values["no-eas"] !== true,
-		build: values["no-build"] !== true,
+	if (!device.success) return fail(ctx, "ensure", device.error);
+	const res = await withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {
+		const result = await ensureAppFor(sctx, deps, owner, platform.data, device.data, {
+			...projectOptions(opts),
+			eas: opts.eas,
+			build: opts.build,
+		});
+		if (result.success) spinner.succeed(`${platform.data} app ready (${result.data.source})`);
+		else spinner.fail(`${platform.data} app not ready`);
+		return result;
 	});
-	if (!res.success) {
-		ctx.err(`warden app ensure: ${res.error}`);
-		return 1;
-	}
+	if (!res.success) return fail(ctx, "ensure", res.error);
 	const r = res.data;
 	const where = device.data ? ` → ${r.installed ? "installed on" : "not installed on"} ${device.data}` : "";
-	emit(ctx, values.json === true, r, `${r.source}: ${r.appPath || "(already installed)"} [${r.hash}]${where}`);
+	emit(
+		ctx,
+		opts.json === true,
+		r,
+		`${color.green(r.source)}: ${r.appPath || "(already installed)"} ${color.dim(`[${r.hash}]`)}${where}`
+	);
 	return 0;
 }
 
-async function fingerprintCmd(ctx: CommandContext, argv: string[]): Promise<number> {
-	const { values, positionals } = parseFingerprint(argv);
+async function fingerprintCmd(
+	ctx: CommandContext,
+	platformArg: string | undefined,
+	opts: ProjectOpts
+): Promise<number> {
 	const platforms: Platform[] = [];
-	if (positionals[0] === undefined) platforms.push("ios", "android");
+	if (platformArg === undefined) platforms.push("ios", "android");
 	else {
-		const p = parsePlatform(positionals[0]);
-		if (!p.success) {
-			ctx.err(`warden app fingerprint: ${p.error}\n${USAGE}`);
-			return 1;
-		}
+		const p = parsePlatform(platformArg);
+		if (!p.success) return fail(ctx, "fingerprint", p.error);
 		platforms.push(p.data);
 	}
-	const project = await loadContext(
-		ctx,
-		{
-			...(values.project !== undefined ? { project: values.project } : {}),
-			...(values["bundle-id"] !== undefined ? { bundleId: values["bundle-id"] } : {}),
-		},
-		platforms.length === 1 ? platforms[0] : undefined
-	);
-	if (!project.success) {
-		ctx.err(`warden app fingerprint: ${project.error}`);
-		return 1;
-	}
+	const project = await loadContext(ctx, projectOptions(opts), platforms.length === 1 ? platforms[0] : undefined);
+	if (!project.success) return fail(ctx, "fingerprint", project.error);
 	const fingerprints: Partial<Record<Platform, string>> = {};
-	for (const platform of platforms) {
-		const hash = await fingerprint(ctx, project.data, platform);
-		if (!hash.success) {
-			ctx.err(`warden app fingerprint: ${hash.error}`);
-			return 1;
+	const failed = await withSpinner(ctx, `fingerprinting ${platforms.join(" + ")}…`, async (sctx) => {
+		for (const platform of platforms) {
+			const hash = await fingerprint(sctx, project.data, platform);
+			if (!hash.success) return hash.error;
+			fingerprints[platform] = hash.data;
 		}
-		fingerprints[platform] = hash.data;
-	}
-	const text = platforms.map((p) => `${p.padEnd(7)}  ${fingerprints[p]}`).join("\n");
+		return undefined;
+	});
+	if (failed !== undefined) return fail(ctx, "fingerprint", failed);
+	const text = platforms.map((p) => `${p.padEnd(7)}  ${ctx.ui.color.bold(fingerprints[p] ?? "")}`).join("\n");
 	emit(
 		ctx,
-		values.json === true,
+		opts.json === true,
 		{
 			project: project.data.project.name,
 			projectKey: project.data.projectKey,
@@ -236,24 +223,35 @@ async function fingerprintCmd(ctx: CommandContext, argv: string[]): Promise<numb
 }
 
 export function createAppCommand(deps: AppDeps): Command {
-	async function run(ctx: CommandContext): Promise<number> {
-		const [sub, ...rest] = ctx.argv;
-		try {
-			if (sub === "ensure") return await ensureCmd(ctx, deps, rest);
-			if (sub === "fingerprint") return await fingerprintCmd(ctx, rest);
-		} catch (error) {
-			ctx.err(`warden app: ${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
-			return 1;
-		}
-		ctx.err(`warden app: unknown subcommand "${sub ?? ""}"\n${USAGE}`);
-		return 1;
-	}
-	return {
+	return defineCommand({
 		name: "app",
 		summary: "fingerprint an Expo app and install the matching build (installed → cache → EAS → local build)",
-		usage: USAGE,
-		run,
-	};
+		register: (cmd, ctx, done) => {
+			cmd
+				.command("ensure")
+				.description(
+					"install the build matching the project's fingerprint on a device (installed → cache → EAS → build)"
+				)
+				.argument("[platform]", "ios | android (asked for when omitted in a terminal)")
+				.option("--project <dir>", "project directory (default: cwd)")
+				.option("--lease <id>", "device of this lease")
+				.option("--udid <udid>", "this device")
+				.option("--no-install", "only resolve the build into the cache")
+				.option("--no-eas", "don't download EAS builds")
+				.option("--no-build", "don't build locally on a cache miss")
+				.option("--bundle-id <id>", "override the bundle id / package")
+				.option("--json", "machine-readable output")
+				.action(async (platform, opts) => done(await ensureCmd(ctx, deps, platform, opts)));
+			cmd
+				.command("fingerprint")
+				.description("print the project's native fingerprint (both platforms by default)")
+				.argument("[platform]", "ios | android")
+				.option("--project <dir>", "project directory (default: cwd)")
+				.option("--bundle-id <id>", "override the bundle id / package")
+				.option("--json", "machine-readable output")
+				.action(async (platform, opts) => done(await fingerprintCmd(ctx, platform, opts)));
+		},
+	});
 }
 
 export const appCommand: Command = createAppCommand(defaultAppDeps);

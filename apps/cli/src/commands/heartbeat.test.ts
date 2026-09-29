@@ -34,10 +34,23 @@ describe("warden heartbeat", () => {
 		expect(ctx.db.getLease(b.id)?.heartbeatAt).toBe(2_000);
 	});
 
+	test("--udid selects device leases", async () => {
+		ctx = testContext([], { now: () => 5_000 });
+		const a = ctx.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "U1", name: "u1" }, owner: me, ttlMs: 10 },
+			0
+		);
+		ctx.argv = ["--udid", "U1", "--json"];
+		expect(await heartbeatCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ heartbeat: [a.id], unknown: [] });
+	});
+
 	test("unknown id / nothing selected → exit 1", async () => {
 		ctx = testContext(["l_gone"]);
 		expect(await heartbeatCommand.run(ctx)).toBe(1);
+		expect(ctx.stderr.join("\n")).toContain("no lease for l_gone");
 		ctx.argv = [];
 		expect(await heartbeatCommand.run(ctx)).toBe(1);
+		expect(ctx.stderr.join("\n")).toContain("nothing selected");
 	});
 });

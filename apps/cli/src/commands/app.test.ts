@@ -5,7 +5,7 @@ import { fakeApp } from "@warden/core/builds/builds.testing";
 import { getInstall, storeArtifact } from "@warden/core/builds/cache";
 import type { ExecResult } from "@warden/core/exec";
 import { OWNER_ENV } from "../simctl.testing";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { type AppDeps, createAppCommand } from "./app";
 
 let ctx: TestContext | undefined;
@@ -63,10 +63,20 @@ async function seed(c: TestContext): Promise<string> {
 describe("warden app fingerprint", () => {
 	test("both platforms by default, --json, hash logged loudly to stderr", async () => {
 		const c = setup(["fingerprint", "--json"]);
+		const ui = scriptedUi();
+		c.ui = ui;
 		expect(await createAppCommand(deps).run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
 		expect(out).toMatchObject({ project: "demo", fingerprints: { ios: HASH, android: `${HASH}ff` } });
-		expect(c.stderr.join("\n")).toContain(`ios fingerprint: ${HASH}`);
+		expect(ui.events[0]).toBe("spin: fingerprinting ios + android…");
+		expect(ui.events).toContain(`log: [warden] ios fingerprint: ${HASH}`);
+		expect(ui.events.at(-1)).toBe("stop");
+	});
+
+	test("one platform, text output", async () => {
+		const c = setup(["fingerprint", "android"]);
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(c.stdout.join("\n")).toBe(`android  ${HASH}ff`);
 	});
 });
 
@@ -151,10 +161,39 @@ describe("warden app ensure", () => {
 		expect(calls.some((cmdline) => cmdline.includes("eas-cli"))).toBe(false);
 	});
 
-	test("unknown subcommand / bad platform → exit 1", async () => {
+	test("unknown subcommand / bad platform / unknown option → exit 1", async () => {
 		const c = setup(["nope"]);
 		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("unknown command 'nope'");
 		c.argv = ["ensure", "windows"];
 		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain('unknown platform "windows"');
+		c.argv = ["ensure", "ios", "--bogus"];
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
+	});
+
+	test("no platform in a terminal → asks; spinner covers the ensure", async () => {
+		const c = setup(
+			["ensure", "--udid", "U1", "--json"],
+			[
+				["xcrun simctl install U1", {}],
+				["xcrun simctl get_app_container U1 com.demo", { stdout: "/x" }],
+			]
+		);
+		await seed(c);
+		const ui = scriptedUi({ interactive: true, select: ["ios"] });
+		c.ui = ui;
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(ui.events[0]).toBe("select: Which platform?");
+		expect(ui.events[1]).toBe("spin: ensuring the ios app…");
+		expect(ui.events.slice(-2)).toEqual(["ok: ios app ready (cache)", "stop"]);
+		expect(JSON.parse(c.stdout.join("\n")).source).toBe("cache");
+	});
+
+	test("no platform, not a terminal → exit 1", async () => {
+		const c = setup(["ensure", "--no-install"]);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("missing platform");
 	});
 });

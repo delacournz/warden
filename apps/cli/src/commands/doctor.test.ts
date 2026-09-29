@@ -2,9 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MIGRATIONS } from "@warden/core/store";
+import { Chalk } from "chalk";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
 import { mergeCodexHooks } from "../hooks/codex-hooks";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { type DoctorCheck, doctorCommand } from "./doctor";
 
 let ctx: TestContext | undefined;
@@ -128,5 +129,30 @@ describe("warden doctor", () => {
 		const out = c.stdout.join("\n");
 		expect(out).toContain("✓ db");
 		expect(out).toContain("! skill");
+	});
+
+	test("colour: ✓ green, ! yellow, ✗ red; --json stays plain", async () => {
+		const c = setup([]);
+		c.ui = { ...scriptedUi(), color: new Chalk({ level: 1 }) };
+		const file = join(c.cwd, "not-a-dir");
+		writeFileSync(file, "");
+		c.env = { ...c.env, WARDEN_HOME: join(file, "sub") };
+		await doctorCommand.run(c);
+		const out = c.stdout.join("\n");
+		expect(out).toContain("\u001b[32m✓\u001b[39m db");
+		expect(out).toContain("\u001b[33m!\u001b[39m skill");
+		expect(out).toContain("\u001b[31m✗\u001b[39m home");
+		c.cleanup();
+		const d = setup(["--json"]);
+		d.ui = { ...scriptedUi(), color: new Chalk({ level: 1 }) };
+		await doctorCommand.run(d);
+		expect(d.stdout.join("\n")).not.toContain("\u001b[");
+	});
+
+	test("unknown option → commander usage error, exit 1", async () => {
+		const c = setup(["--bogus"]);
+		expect(await doctorCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
+		expect(c.stdout).toEqual([]);
 	});
 });

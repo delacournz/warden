@@ -109,11 +109,42 @@ describe("warden skill install", () => {
 		expect(await createSkillCommand(harness({ exitCode: 3 }).deps).run(ctx)).toBe(3);
 	});
 
-	test("bad --from / subcommand → exit 1", async () => {
+	test("-a takes several agents; repeats accumulate", async () => {
+		const h = harness();
+		ctx = testContext(["install", "-a", "claude-code", "codex", "-a", "cursor", "--dry-run"]);
+		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toContain("-a claude-code -a codex -a cursor");
+	});
+
+	test("--dry-run --json → the command as one JSON document", async () => {
+		ctx = testContext(["install", "--dry-run", "--json", "--from", "github"]);
+		expect(await createSkillCommand(harness().deps).run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n")).command).toEqual([
+			"bunx",
+			"skills",
+			"add",
+			"delacournz/warden",
+			"--skill",
+			"warden",
+			"-g",
+		]);
+	});
+
+	test("bad --from → commander choices error, exit 1", async () => {
+		const h = harness();
 		ctx = testContext(["install", "--from", "gitlab"]);
-		expect(await createSkillCommand(harness().deps).run(ctx)).toBe(1);
-		ctx.cleanup();
+		expect(await createSkillCommand(h.deps).run(ctx)).toBe(1);
+		expect(ctx.stderr.join("\n")).toContain("Allowed choices are local, github");
+		expect(h.runs).toEqual([]);
+	});
+
+	test("unknown / missing subcommand → exit 1", async () => {
 		ctx = testContext(["nope"]);
 		expect(await createSkillCommand(harness().deps).run(ctx)).toBe(1);
+		expect(ctx.stderr.join("\n")).toContain("unknown command 'nope'");
+		ctx.cleanup();
+		ctx = testContext([]);
+		expect(await createSkillCommand(harness().deps).run(ctx)).toBe(1);
+		expect(ctx.stdout).toEqual([]);
 	});
 });

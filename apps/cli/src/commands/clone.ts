@@ -1,13 +1,13 @@
-import { parseArgs } from "node:util";
 import { profileSlug, wardenDeviceName } from "@warden/core/allocate";
 import { execError } from "@warden/core/exec";
 import { type GoldenSim, isGoldenName, parseAllSims } from "@warden/core/golden/golden";
 import { shortRuntime } from "@warden/core/providers/ios";
 import { err, ok, type Result } from "@warden/types/result";
-import type { Command, CommandContext } from "../context";
+import { defineCommand } from "../command";
+import type { CommandContext } from "../context";
 import { emit } from "../output";
+import { withSpinner } from "../spinner-context";
 
-const USAGE = "warden clone <udid|name> [--name <new name>] [--json]";
 const DEVICE_TYPE_PREFIX = "com.apple.CoreSimulator.SimDeviceType.";
 
 function findSource(sims: GoldenSim[], ref: string): Result<GoldenSim> {
@@ -38,19 +38,8 @@ function nextPoolName(sims: GoldenSim[], profile: string): string {
  * A booted source is refused: `simctl clone` needs it shut down, and warden never shuts down a
  * device it doesn't own.
  */
-async function run(ctx: CommandContext): Promise<number> {
-	let parsed: ReturnType<typeof parse>;
-	try {
-		parsed = parse(ctx.argv);
-	} catch (error) {
-		ctx.err(`warden clone: ${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
-		return 1;
-	}
-	const ref = parsed.positionals[0];
-	if (!ref || parsed.positionals.length > 1) {
-		ctx.err(`warden clone: expected one source simulator\n${USAGE}`);
-		return 1;
-	}
+async function clone(ctx: CommandContext, ref: string, opts: { name?: string; json?: true }): Promise<number> {
+	const { color } = ctx.ui;
 	const listCmd = ["xcrun", "simctl", "list", "devices", "-j"];
 	const listed = await ctx.exec(listCmd);
 	if (listed.exitCode !== 0) return fail(ctx, execError(listCmd, listed));
@@ -65,9 +54,14 @@ async function run(ctx: CommandContext): Promise<number> {
 		);
 	}
 	const profile = profileOf(source.data) ?? profileSlug(source.data.name);
-	const name = parsed.values.name ?? nextPoolName(sims.data, profile);
+	const name = opts.name ?? nextPoolName(sims.data, profile);
 	const cloneCmd = ["xcrun", "simctl", "clone", source.data.udid, name];
-	const cloned = await ctx.exec(cloneCmd);
+	const cloned = await withSpinner(ctx, `cloning ${source.data.name} → ${name}…`, async (_, spinner) => {
+		const result = await ctx.exec(cloneCmd);
+		if (result.exitCode === 0) spinner.succeed(`cloned ${name}`);
+		else spinner.fail("clone failed");
+		return result;
+	});
 	if (cloned.exitCode !== 0) return fail(ctx, execError(cloneCmd, cloned));
 	const udid = cloned.stdout.trim();
 	const runtime = shortRuntime(source.data.runtimeId);
@@ -75,30 +69,26 @@ async function run(ctx: CommandContext): Promise<number> {
 	const result = { udid, name, source: source.data.udid, profile, runtime, fromGolden: isGoldenName(source.data.name) };
 	emit(
 		ctx,
-		parsed.values.json === true,
+		opts.json === true,
 		result,
-		`${name} ${udid} (cloned from ${source.data.name}) — claim it with \`warden claim ios --profile ${profile}\``
+		`${color.green(`${color.bold(name)} ${udid}`)} ${color.dim(`(cloned from ${source.data.name})`)} — claim it with \`warden claim ios --profile ${profile}\``
 	);
 	return 0;
 }
 
 function fail(ctx: CommandContext, error: string): number {
-	ctx.err(`warden clone: ${error}`);
+	ctx.err(ctx.ui.color.red(`warden clone: ${error}`));
 	return 1;
 }
 
-function parse(argv: string[]) {
-	return parseArgs({
-		args: argv,
-		options: { name: { type: "string" }, json: { type: "boolean" } },
-		allowPositionals: true,
-		strict: true,
-	});
-}
-
-export const cloneCommand: Command = {
+export const cloneCommand = defineCommand({
 	name: "clone",
 	summary: "duplicate a shut-down iOS simulator into warden's pool (fast: no first boot)",
-	usage: USAGE,
-	run,
-};
+	register: (cmd, ctx, done) => {
+		cmd
+			.argument("<source>", "udid or name of the shut-down simulator to duplicate")
+			.option("--name <name>", "the clone's name (default: next free warden-<profile>-N)")
+			.option("--json", "machine-readable output")
+			.action(async (source, opts) => done(await clone(ctx, source, opts)));
+	},
+});

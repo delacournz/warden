@@ -1,57 +1,64 @@
-import { parseArgs } from "node:util";
 import { resolveOwner } from "../claim-flags";
-import type { Command, CommandContext } from "../context";
-import { shutdownReleasedDevices } from "../device-shutdown";
-import { isEmptySelector, SELECT_OPTIONS, selectLeases, selectorFrom } from "../lease-select";
+import { defineCommand } from "../command";
+import type { CommandContext } from "../context";
+import { type ShutdownOutcome, shutdownReleasedDevices } from "../device-shutdown";
+import {
+	isEmptySelector,
+	NOTHING_SELECTED,
+	type SelectOptionValues,
+	selectLeases,
+	selectorFrom,
+	withSelectOptions,
+} from "../lease-select";
 import { emit } from "../output";
+import { withSpinner } from "../spinner-context";
 
-const USAGE = "warden release <leaseId…> | --udid X | --mine | --session S [--shutdown] [--json]";
+type ReleaseOpts = SelectOptionValues & { shutdown?: true; json?: true };
 
-async function run(ctx: CommandContext): Promise<number> {
-	let parsed: ReturnType<typeof parse>;
-	try {
-		parsed = parse(ctx.argv);
-	} catch (error) {
-		ctx.err(`warden release: ${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
-		return 1;
-	}
-	const { values, positionals } = parsed;
-	const selector = selectorFrom(positionals, values);
+/** Release the selected leases; with `--shutdown`, first shut down the devices warden may shut down. */
+async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): Promise<number> {
+	const { color } = ctx.ui;
+	const selector = selectorFrom(ids, opts);
 	if (isEmptySelector(selector)) {
-		ctx.err(`warden release: nothing selected\n${USAGE}`);
+		ctx.err(color.red(`warden release: ${NOTHING_SELECTED}`));
 		return 1;
 	}
 	const { leases, unknown } = selectLeases(ctx, selector);
-	const { shutdown, notes } = values.shutdown
-		? await shutdownReleasedDevices(ctx, leases, resolveOwner(ctx))
-		: { shutdown: [], notes: [] };
+	const devices = leases.filter((l) => l.resource.kind === "device");
+	const { shutdown, notes }: ShutdownOutcome =
+		opts.shutdown && devices.length > 0
+			? await withSpinner(ctx, `shutting down ${devices.length} device(s)…`, async (sctx, spinner) => {
+					const outcome = await shutdownReleasedDevices(sctx, leases, resolveOwner(ctx));
+					spinner.succeed(
+						outcome.shutdown.length > 0 ? `shut down ${outcome.shutdown.join(" ")}` : "nothing to shut down"
+					);
+					return outcome;
+				})
+			: { shutdown: [], notes: [] };
 	const store = ctx.store();
 	store.deleteLeases(leases.map((l) => l.id));
 	const now = ctx.now();
 	for (const l of leases) if (l.resource.kind === "device") store.touchDevice(l.resource.platform, l.resource.id, now);
 
-	for (const u of unknown) ctx.err(`warden release: no lease for ${u}`);
+	for (const u of unknown) ctx.err(color.red(`warden release: no lease for ${u}`));
 	const text = [
-		leases.length === 0 ? "nothing released" : `released ${leases.map((l) => l.id).join(" ")}`,
-		...(shutdown.length > 0 ? [`shut down ${shutdown.join(" ")}`] : []),
-		...notes,
+		leases.length === 0
+			? color.yellow("nothing released")
+			: color.green(`released ${leases.map((l) => l.id).join(" ")}`),
+		...(shutdown.length > 0 ? [color.green(`shut down ${shutdown.join(" ")}`)] : []),
+		...notes.map((n) => color.yellow(n)),
 	].join("\n");
-	emit(ctx, values.json === true, { released: leases.map((l) => l.id), shutdown, unknown, notes }, text);
+	emit(ctx, opts.json === true, { released: leases.map((l) => l.id), shutdown, unknown, notes }, text);
 	return unknown.length > 0 ? 1 : 0;
 }
 
-function parse(argv: string[]) {
-	return parseArgs({
-		args: argv,
-		options: { ...SELECT_OPTIONS, shutdown: { type: "boolean" }, json: { type: "boolean" } },
-		allowPositionals: true,
-		strict: true,
-	});
-}
-
-export const releaseCommand: Command = {
+export const releaseCommand = defineCommand({
 	name: "release",
 	summary: "release leases (optionally shut down devices warden created)",
-	usage: USAGE,
-	run,
-};
+	register: (cmd, ctx, done) => {
+		withSelectOptions(cmd.argument("[leaseIds...]", "lease ids to release"))
+			.option("--shutdown", "also shut down devices warden created (or the lease owner booted)")
+			.option("--json", "machine-readable output")
+			.action(async (ids, opts) => done(await release(ctx, ids, opts)));
+	},
+});

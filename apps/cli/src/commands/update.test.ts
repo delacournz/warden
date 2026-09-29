@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@warden/core/exec";
-import { type TestContext, testContext } from "../testing";
+import { scriptedUi, type TestContext, testContext } from "../testing";
 import type { BuildInfo } from "../update/build-info";
 import { createUpdateCommand, type UpdateDeps } from "./update";
 
@@ -197,5 +197,60 @@ describe("warden update (from source)", () => {
 		c.argv = ["--to", to];
 		expect(await createUpdateCommand(deps).run(c)).toBe(0);
 		expect(existsSync(to)).toBe(true);
+	});
+});
+
+describe("warden update (ui)", () => {
+	test("spinners cover the release lookup, download + checksum and install self-check", async () => {
+		const { c, deps } = setup([], release());
+		const ui = scriptedUi();
+		c.ui = ui;
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(ui.events.filter((e) => e.startsWith("spin:") || e.startsWith("ok:"))).toEqual([
+			"spin: checking the latest release on delacournz/warden…",
+			"ok: latest release v0.3.0",
+			"spin: downloading warden-darwin-arm64 v0.3.0…",
+			"ok: downloaded warden-darwin-arm64 v0.3.0 (sha256 ok)",
+			`spin: installing ${deps.execPath}…`,
+			"ok: installed 0.3.0 (self-check ok)",
+		]);
+	});
+
+	test("source build runs under a spinner", async () => {
+		const { c, deps } = setup([], { channel: "local", version: "0.2.0", sourceDir: "/repo" }, { reports: "0.2.1" });
+		deps.readSourceVersion = () => "0.2.1";
+		const ui = scriptedUi();
+		c.ui = ui;
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(ui.events).toContain("spin: building /repo…");
+		expect(ui.events.some((e) => e.startsWith("ok: built 0.2.1 (local abc1234"))).toBe(true);
+	});
+
+	test("failed step → spinner fails, error on stderr", async () => {
+		const { c, deps } = setup([], release(), { checksum: "deadbeef" });
+		const ui = scriptedUi();
+		c.ui = ui;
+		expect(await createUpdateCommand(deps).run(c)).toBe(1);
+		expect(ui.events).toContain("fail: downloading warden-darwin-arm64 v0.3.0…");
+		expect(c.stderr.join("\n")).toContain("warden update: checksum mismatch");
+	});
+
+	test("--json: stdout is only the JSON report", async () => {
+		const { c, deps } = setup(["--json"], release());
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ status: "updated", latest: "0.3.0" });
+	});
+
+	test("unknown option → commander usage error, exit 1", async () => {
+		const { c, calls, deps } = setup(["--bogus"], release());
+		expect(await createUpdateCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
+		expect(calls).toEqual([]);
+	});
+
+	test("--to without a path → usage error", async () => {
+		const { c, deps } = setup(["--to"], release());
+		expect(await createUpdateCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("argument missing");
 	});
 });

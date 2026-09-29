@@ -1,14 +1,15 @@
-import type { Command } from "../context";
+import { defineCommand } from "../command";
 import { emit } from "../output";
 import { currentBuild, describeBuild } from "../update/build-info";
 
-export const versionCommand: Command = {
+export const versionCommand = defineCommand({
 	name: "version",
 	summary: "print warden's version and build channel (dev / local / release)",
-	usage: "warden version [--json]",
-	run: async (ctx) => {
-		const build = currentBuild();
-		emit(ctx, ctx.argv.includes("--json"), build, `warden ${describeBuild(build)}`);
-		return 0;
+	register: (cmd, ctx, done) => {
+		cmd.option("--json", "machine-readable output").action((opts) => {
+			const build = currentBuild();
+			emit(ctx, opts.json === true, build, `warden ${ctx.ui.color.bold(describeBuild(build))}`);
+			done(0);
+		});
 	},
-};
+});

@@ -3,7 +3,49 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@warden/core/exec";
 import { openStore, type Store } from "@warden/core/store";
+import { Chalk } from "chalk";
 import type { CommandContext } from "./context";
+import type { Choice, Spinner, Ui } from "./ui";
+
+/** Colourless UI with scripted prompt answers and a log of spinner events + questions asked. */
+export type ScriptedUi = Ui & {
+	events: string[];
+	confirmAnswers: Array<boolean | undefined>;
+	selectAnswers: Array<string | undefined>;
+};
+
+export function scriptedUi(
+	opts: { interactive?: boolean; confirm?: Array<boolean | undefined>; select?: Array<string | undefined> } = {}
+): ScriptedUi {
+	const ui: ScriptedUi = {
+		color: new Chalk({ level: 0 }),
+		interactive: opts.interactive ?? false,
+		events: [],
+		confirmAnswers: [...(opts.confirm ?? [])],
+		selectAnswers: [...(opts.select ?? [])],
+		spinner: (text): Spinner => {
+			ui.events.push(`spin: ${text}`);
+			return {
+				update: (t) => ui.events.push(`spin: ${t}`),
+				log: (line) => ui.events.push(`log: ${line}`),
+				succeed: (t) => ui.events.push(`ok: ${t ?? text}`),
+				fail: (t) => ui.events.push(`fail: ${t ?? text}`),
+				stop: () => ui.events.push("stop"),
+			};
+		},
+		confirm: async (message) => {
+			ui.events.push(`confirm: ${message}`);
+			return ui.confirmAnswers.shift();
+		},
+		select: async <T extends string>(message: string, choices: Choice<T>[]): Promise<T | undefined> => {
+			ui.events.push(`select: ${message}`);
+			const answer = ui.selectAnswers.shift();
+			return choices.find((c) => c.value === answer)?.value;
+		},
+		cancelled: (message) => ui.events.push(`cancelled: ${message}`),
+	};
+	return ui;
+}
 
 export type TestContext = CommandContext & {
 	stdout: string[];
@@ -29,6 +71,7 @@ export function testContext(argv: string[], overrides: Partial<CommandContext> =
 		store: () => db,
 		exec,
 		readStdin: async () => "",
+		ui: scriptedUi(),
 		...overrides,
 		stdout,
 		stderr,

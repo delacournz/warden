@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { scriptedUi, type TestContext, testContext } from "../testing";
 import { claimCommand } from "./claim";
 
 let ctx: TestContext | undefined;
@@ -60,5 +60,28 @@ describe("warden claim", () => {
 		expect(c.stderr.join("\n")).toContain("unknown platform");
 		const d = setup(["ios", "--bogus"]);
 		expect(await claimCommand.run(d)).toBe(1);
+	});
+
+	test("no platform in a terminal → asks; spinner covers the claim", async () => {
+		const c = setup(["--json"]);
+		const ui = scriptedUi({ interactive: true, select: ["ios"] });
+		c.ui = ui;
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(ui.events[0]).toBe("select: Which platform?");
+		expect(ui.events.some((e) => e.startsWith("ok: claimed"))).toBe(true);
+		expect(JSON.parse(c.stdout.join("\n")).leases).toHaveLength(1);
+	});
+
+	test("picker cancelled → exit 1, nothing claimed", async () => {
+		const c = setup([]);
+		c.ui = scriptedUi({ interactive: true, select: [undefined] });
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("unknown option → commander usage error, exit 1", async () => {
+		const c = setup(["ios", "--bogus"]);
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
 	});
 });

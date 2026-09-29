@@ -1,5 +1,4 @@
 import { constants } from "node:os";
-import { parseArgs } from "node:util";
 import type { EnsureResult } from "@warden/core/builds/resolve";
 import type { ClaimOutcome } from "@warden/core/claim";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@warden/core/config.defaults";
@@ -9,19 +8,20 @@ import type { Owner, Platform } from "@warden/core/types";
 import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
 import { maybeAutoGc } from "../autogc";
 import {
-	CLAIM_OPTIONS,
-	CLAIM_USAGE_FLAGS,
 	type ClaimFlags,
+	type ClaimFlagValues,
 	claimedJson,
 	claimWithFlags,
 	parseClaimFlags,
 	resolveOwner,
+	resolvePlatform,
+	withClaimOptions,
 } from "../claim-flags";
-import type { Command, CommandContext } from "../context";
+import { type Command, defineCommand } from "../command";
+import type { CommandContext } from "../context";
 import { emit } from "../output";
+import { withSpinner } from "../spinner-context";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor } from "./app";
-
-const USAGE = `warden run ios|android ${CLAIM_USAGE_FLAGS} [--port FROM:SPAN …] [--app [--project dir] [--no-eas] [--no-build] [--bundle-id X]] -- <cmd…>`;
 
 export type ForwardedSignal = "SIGINT" | "SIGTERM";
 
@@ -111,47 +111,50 @@ export function childEnv(
 	return env;
 }
 
-function parse(argv: string[]) {
-	return parseArgs({
-		args: argv,
-		options: {
-			...CLAIM_OPTIONS,
-			port: { type: "string", multiple: true },
-			app: { type: "boolean" },
-			project: { type: "string" },
-			"bundle-id": { type: "string" },
-			"no-eas": { type: "boolean" },
-			"no-build": { type: "boolean" },
-		},
-		allowPositionals: true,
-		strict: true,
-	});
+/** Commander option values of `warden run` (claim options + `--port` / `--app` family). */
+export type RunOpts = ClaimFlagValues & {
+	json?: true;
+	port: string[];
+	app?: true;
+	project?: string;
+	bundleId?: string;
+	/** false = `--no-eas` */
+	eas: boolean;
+	/** false = `--no-build` */
+	build: boolean;
+};
+
+type RunArgs = { flags: ClaimFlags; ports: string[]; json: boolean; app?: EnsureOptions };
+
+/**
+ * The child command is everything after the first `--` of the raw argv (commander drops the `--`
+ * itself); the operands before it are the optional platform.
+ */
+export function splitOperands(
+	argv: readonly string[],
+	operands: readonly string[]
+): Result<{ platformArg?: string; cmd: string[] }> {
+	const { cmd } = splitCommand(argv);
+	if (cmd.length === 0) return err("missing command after -- (warden run ios -- <cmd…>)");
+	const before = operands.slice(0, Math.max(0, operands.length - cmd.length));
+	if (before.length > 1) return err(`unexpected arguments before --: ${before.slice(1).join(" ")}`);
+	const [platformArg] = before;
+	return ok(platformArg === undefined ? { cmd } : { platformArg, cmd });
 }
 
-type RunArgs = { cmd: string[]; flags: ClaimFlags; ports: string[]; json: boolean; app?: EnsureOptions };
-
-/** argv → validated run args (claim flags, `--port` specs, command after `--`). */
-export function parseRunArgs(argv: readonly string[]): Result<RunArgs> {
-	const { flags: flagArgs, cmd } = splitCommand(argv);
-	if (cmd.length === 0) return err("missing command after --");
-	let parsed: ReturnType<typeof parse>;
-	try {
-		parsed = parse(flagArgs);
-	} catch (error) {
-		return err(error);
-	}
-	const flags = parseClaimFlags(parsed.positionals[0], parsed.values);
+/** Validated run args from the resolved platform + option values. */
+export function parseRunArgs(platform: Platform, opts: RunOpts): Result<RunArgs> {
+	const flags = parseClaimFlags(platform, opts);
 	if (!flags.success) return flags;
-	const v = parsed.values;
-	const args: RunArgs = { cmd, flags: flags.data, ports: v.port ?? [], json: v.json === true };
-	if (v.app) {
+	const args: RunArgs = { flags: flags.data, ports: opts.port, json: opts.json === true };
+	if (opts.app) {
 		args.app = {
-			eas: v["no-eas"] !== true,
-			build: v["no-build"] !== true,
-			...(v.project !== undefined ? { project: v.project } : {}),
-			...(v["bundle-id"] !== undefined ? { bundleId: v["bundle-id"] } : {}),
+			eas: opts.eas,
+			build: opts.build,
+			...(opts.project !== undefined ? { project: opts.project } : {}),
+			...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
 		};
-	} else if (v.project !== undefined || v["no-eas"] || v["no-build"] || v["bundle-id"] !== undefined) {
+	} else if (opts.project !== undefined || !opts.eas || !opts.build || opts.bundleId !== undefined) {
 		return err("--project / --no-eas / --no-build / --bundle-id need --app");
 	}
 	return ok(args);
@@ -190,7 +193,7 @@ async function supervise(
 		child = deps.spawn(cmd, env);
 	} catch (error) {
 		release();
-		ctx.err(`warden run: ${error instanceof Error ? error.message : String(error)}`);
+		ctx.err(ctx.ui.color.red(`warden run: ${error instanceof Error ? error.message : String(error)}`));
 		return 127;
 	}
 	const store = ctx.store();
@@ -207,58 +210,104 @@ async function supervise(
 	}
 }
 
-/** Claim → spawn child with leases in env → heartbeat → release on exit; exit code passthrough. */
-export function createRunCommand(deps: RunDeps): Command {
-	async function run(ctx: CommandContext): Promise<number> {
-		const args = parseRunArgs(ctx.argv);
-		if (!args.success) {
-			ctx.err(`warden run: ${args.error}\n${USAGE}`);
-			return 1;
-		}
-		const { cmd, flags, json } = args.data;
-		const store = ctx.store();
-		const owner = resolveOwner(ctx);
-		maybeAutoGc(ctx);
-		const outcome = await claimWithFlags(ctx, owner, flags, deps.pid);
-		if (!outcome.success) {
-			ctx.err(`warden run: ${outcome.error}`);
-			return 1;
-		}
-		const deviceLeaseIds = outcome.data.claimed.map((c) => c.lease.id);
-		const ports = await claimRunPorts(ctx, owner, args.data.ports, deps.pid, deps.isPortFree);
-		if (!ports.success) {
-			store.deleteLeases(deviceLeaseIds);
-			ctx.err(`warden run: ${ports.error}`);
-			return 1;
-		}
-		const leaseIds = [...deviceLeaseIds, ...ports.data.map((p) => p.leaseId)];
-		const release = () => {
-			store.deleteLeases(leaseIds);
-			const now = ctx.now();
-			for (const c of outcome.data.claimed) store.touchDevice(c.device.platform, c.device.id, now);
-		};
+type Claimed = { outcome: ClaimOutcome; ports: RunPort[]; env: Record<string, string | undefined> };
 
-		const env = childEnv(ctx.env, outcome.data, ports.data);
-		if (args.data.app) {
-			const app = await ensureRunApp(ctx, deps.ensureApp ?? defaultEnsureApp, owner, outcome.data, args.data.app, env);
-			if (!app.success) {
-				release();
-				ctx.err(`warden run: ${app.error}`);
-				return 1;
-			}
-		}
-		const summary = { leases: claimedJson(outcome.data), ports: ports.data, cmd };
-		if (json) emit(ctx, true, summary, "");
-		else ctx.err(`warden run: leased ${summary.leases.map((l) => `${l.udid} (${l.leaseId})`).join(", ")}`);
-		return supervise(ctx, deps, cmd, env, leaseIds, release);
+/** Claim devices + ports and (with `--app`) ensure the app; on any failure nothing stays leased. */
+async function claimAll(
+	ctx: CommandContext,
+	deps: RunDeps,
+	owner: Owner,
+	args: RunArgs
+): AsyncResult<Claimed & { release: () => void; leaseIds: string[] }> {
+	const store = ctx.store();
+	const outcome = await claimWithFlags(ctx, owner, args.flags, deps.pid);
+	if (!outcome.success) return outcome;
+	const deviceLeaseIds = outcome.data.claimed.map((c) => c.lease.id);
+	const ports = await claimRunPorts(ctx, owner, args.ports, deps.pid, deps.isPortFree);
+	if (!ports.success) {
+		store.deleteLeases(deviceLeaseIds);
+		return ports;
 	}
+	const leaseIds = [...deviceLeaseIds, ...ports.data.map((p) => p.leaseId)];
+	const release = () => {
+		store.deleteLeases(leaseIds);
+		const now = ctx.now();
+		for (const c of outcome.data.claimed) store.touchDevice(c.device.platform, c.device.id, now);
+	};
+	const env = childEnv(ctx.env, outcome.data, ports.data);
+	if (args.app) {
+		const app = await ensureRunApp(ctx, deps.ensureApp ?? defaultEnsureApp, owner, outcome.data, args.app, env);
+		if (!app.success) {
+			release();
+			return app;
+		}
+	}
+	return ok({ outcome: outcome.data, ports: ports.data, env, release, leaseIds });
+}
 
-	return {
+/** Claim (under a spinner) → spawn child with leases in env → heartbeat → release on exit; exit code passthrough. */
+async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string[], opts: RunOpts): Promise<number> {
+	const { color } = ctx.ui;
+	const fail = (message: string) => {
+		ctx.err(color.red(`warden run: ${message}`));
+		return 1;
+	};
+	const target = splitOperands(ctx.argv, operands);
+	if (!target.success) return fail(target.error);
+	const platform = await resolvePlatform(ctx, target.data.platformArg);
+	if (!platform.success) return fail(platform.error);
+	const args = parseRunArgs(platform.data, opts);
+	if (!args.success) return fail(args.error);
+	const { cmd } = target.data;
+	const owner = resolveOwner(ctx);
+	maybeAutoGc(ctx);
+	const { count, profile } = args.data.flags.request;
+	const claimed = await withSpinner(
+		ctx,
+		`claiming ${count} ${profile} ${platform.data} device(s)…`,
+		async (sctx, spinner) => {
+			const result = await claimAll(sctx, deps, owner, args.data);
+			if (result.success) spinner.succeed(`leased ${result.data.outcome.claimed.map((c) => c.device.name).join(", ")}`);
+			else spinner.fail("claim failed");
+			return result;
+		}
+	);
+	if (!claimed.success) return fail(claimed.error);
+	const { outcome, ports, env, release, leaseIds } = claimed.data;
+	const summary = { leases: claimedJson(outcome), ports, cmd };
+	if (args.data.json) emit(ctx, true, summary, "");
+	else ctx.err(color.dim(`warden run: leased ${summary.leases.map((l) => `${l.udid} (${l.leaseId})`).join(", ")}`));
+	return supervise(ctx, deps, cmd, env, leaseIds, release);
+}
+
+/** `warden run [platform] [claim options] [--port …] [--app …] -- <cmd…>` with injectable effects. */
+export function createRunCommand(deps: RunDeps): Command {
+	return defineCommand({
 		name: "run",
 		summary: "claim devices, run a command with WARDEN_UDIDS set, release on exit",
-		usage: USAGE,
-		run,
-	};
+		register: (cmd, ctx, done) => {
+			withClaimOptions(
+				cmd
+					.argument("[platform]", "ios | android (asked for when omitted in a terminal)")
+					.argument("[cmd...]", "the command to run, after --")
+			)
+				.option(
+					"--port <from:span>",
+					"lease a port from FROM..FROM+SPAN for the child (WARDEN_PORT_<i>); repeatable",
+					(value: string, previous: string[]) => [...previous, value],
+					[] as string[]
+				)
+				.option("--app", "install the project's app (fingerprint → cache → EAS → build) on each device first")
+				.option("--project <dir>", "--app: project directory (default: cwd)")
+				.option("--bundle-id <id>", "--app: override the bundle id / package")
+				.option("--no-eas", "--app: don't download EAS builds")
+				.option("--no-build", "--app: don't build locally on a cache miss")
+				.addHelpText("after", "\nExample:\n  warden run ios --count 2 --port 8091:20 -- bun e2e")
+				.action(async (platform, rest, opts) =>
+					done(await run(ctx, deps, platform === undefined ? rest : [platform, ...rest], opts))
+				);
+		},
+	});
 }
 
 function signalNumber(signal: string | null | undefined): number {

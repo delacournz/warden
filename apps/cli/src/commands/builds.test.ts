@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fakeApp } from "@warden/core/builds/builds.testing";
 import { listBuilds, storeArtifact } from "@warden/core/builds/cache";
 import { buildLockKey, buildResource } from "@warden/core/builds/lock";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { buildsCommand, inferPlatform } from "./builds";
 
 let ctx: TestContext | undefined;
@@ -107,6 +107,66 @@ describe("warden builds", () => {
 		expect(listBuilds(c.db)).toHaveLength(1);
 		c.argv = ["prune", "--max-size", "lots"];
 		expect(await buildsCommand.run(c)).toBe(1);
+	});
+
+	test("no subcommand → ls", async () => {
+		const c = setup([]);
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(c.stdout.join("\n")).toContain("no cached builds");
+		c.stdout.length = 0;
+		c.argv = ["--json"];
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ builds: [], totalBytes: 0 });
+	});
+
+	test("prune in a terminal: shows what goes, confirm yes → removed under a spinner", async () => {
+		const c = setup(["prune", "--max-size", "12"]);
+		const ui = scriptedUi({ interactive: true, confirm: [true] });
+		c.ui = ui;
+		const oldest = await seed(c, "a", 1);
+		await seed(c, "b", 2);
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(c.stderr.join("\n")).toContain("will remove k ios a (12B)");
+		expect(ui.events).toEqual(["confirm: Remove 1 cached build(s) (12B)?", "spin: pruning 1 build(s)…", "stop"]);
+		expect(existsSync(oldest)).toBe(false);
+		expect(listBuilds(c.db).map((b) => b.hash)).toEqual(["b"]);
+		expect(c.stdout.join("\n")).toContain("removed k ios a");
+	});
+
+	test("prune in a terminal: confirm no / cancel → exit 1, nothing removed", async () => {
+		for (const answer of [false, undefined]) {
+			const c = setup(["prune", "--max-size", "1"]);
+			const ui = scriptedUi({ interactive: true, confirm: [answer] });
+			c.ui = ui;
+			await seed(c, "a", 1);
+			expect(await buildsCommand.run(c)).toBe(1);
+			expect(ui.events.at(-1)).toBe("cancelled: Aborted.");
+			expect(listBuilds(c.db)).toHaveLength(1);
+			c.cleanup();
+			ctx = undefined;
+		}
+	});
+
+	test("prune --yes / nothing to remove → no prompt", async () => {
+		const c = setup(["prune", "--max-size", "1", "--yes"]);
+		const ui = scriptedUi({ interactive: true });
+		c.ui = ui;
+		await seed(c, "a", 1);
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db)).toEqual([]);
+		c.argv = ["prune"];
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(ui.events.some((e) => e.startsWith("confirm"))).toBe(false);
+	});
+
+	test("import runs under a spinner", async () => {
+		const c = setup(["import", "src/App.app", "--hash", "H1"]);
+		const ui = scriptedUi();
+		c.ui = ui;
+		fakeApp(join(c.cwd, "src"));
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(ui.events[0]).toStartWith("spin: importing");
+		expect(c.stdout.join("\n")).toContain("imported ios H1");
 	});
 
 	test("unknown subcommand → exit 1", async () => {

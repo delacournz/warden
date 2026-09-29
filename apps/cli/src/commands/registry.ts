@@ -1,4 +1,4 @@
-import type { Command } from "../context";
+import type { Command } from "../command";
 import { appCommand } from "./app";
 import { buildsCommand } from "./builds";
 import { checkCommand } from "./check";

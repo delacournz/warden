@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { fakeHost } from "@warden/core/golden/golden.testing";
-import { type TestContext, testContext } from "../testing";
+import { scriptedUi, type TestContext, testContext } from "../testing";
 import { cloneCommand } from "./clone";
 
 let ctx: TestContext | undefined;
@@ -36,7 +36,11 @@ describe("warden clone", () => {
 	test("--name picks the clone's name; source by udid", async () => {
 		const host = fakeHost({ sims: [{ udid: "SRC", name: "base", state: "Shutdown" }] });
 		const c = setup(["SRC", "--name", "feature-x"], host);
+		const ui = scriptedUi();
+		c.ui = ui;
 		expect(await cloneCommand.run(c)).toBe(0);
+		expect(ui.events).toEqual(["spin: cloning base → feature-x…", "ok: cloned feature-x", "stop"]);
+		expect(c.stdout.join("\n")).toContain("claim it with `warden claim ios --profile");
 		expect(host.sims.map((s) => s.name)).toEqual(["base", "feature-x"]);
 	});
 
@@ -45,6 +49,16 @@ describe("warden clone", () => {
 		const c = setup(["SRC"], host);
 		expect(await cloneCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("booted");
+		expect(host.sims).toHaveLength(1);
+	});
+
+	test("missing / extra source argument → exit 1", async () => {
+		const host = fakeHost({ sims: [{ udid: "SRC", name: "base", state: "Shutdown" }] });
+		const c = setup([], host);
+		expect(await cloneCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("missing required argument");
+		c.argv = ["SRC", "extra"];
+		expect(await cloneCommand.run(c)).toBe(1);
 		expect(host.sims).toHaveLength(1);
 	});
 

@@ -130,8 +130,12 @@ describe("warden devices", () => {
 		expect(c.stderr.join("\n")).toContain("android: skipped");
 	});
 
-	test("bad platform → exit 1", async () => {
-		expect(await devicesCommand.run(setup(["windows"]))).toBe(1);
+	test("bad platform / extra args → exit 1", async () => {
+		const c = setup(["windows"]);
+		expect(await devicesCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain('unknown platform "windows"');
+		c.argv = ["ios", "android"];
+		expect(await devicesCommand.run(c)).toBe(1);
 	});
 
 	test("is also reachable as `warden list`", () => {

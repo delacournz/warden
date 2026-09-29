@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-import { parseArgs } from "node:util";
 import { DEFAULT_MAX_CACHE_SIZE } from "@warden/core/builds/builds.defaults";
 import { listBuilds, storeArtifact } from "@warden/core/builds/cache";
 import { LOCAL_PROFILE, projectContext } from "@warden/core/builds/ensure";
@@ -9,66 +8,86 @@ import { processAlive } from "@warden/core/liveness";
 import type { Platform } from "@warden/core/types";
 import { err, ok, type Result } from "@warden/types/result";
 import { parsePlatform } from "../claim-flags";
-import type { Command, CommandContext } from "../context";
+import { defineCommand } from "../command";
+import type { CommandContext } from "../context";
 import { emit, formatTable } from "../output";
+import { withSpinner } from "../spinner-context";
 
-const USAGE = [
-	"warden builds ls [--json]",
-	"warden builds prune [--max-size 20G] [--dry-run] [--json]",
-	"warden builds import <path.app|path.apk> --hash H [--platform ios|android] [--project dir] [--profile p] [--bundle-id X] [--json]",
-].join("\n");
+function fail(ctx: CommandContext, sub: string, message: string): number {
+	ctx.err(ctx.ui.color.red(`warden builds ${sub}: ${message}`));
+	return 1;
+}
 
-function lsCmd(ctx: CommandContext, argv: string[]): number {
-	const { values } = parseArgs({ args: argv, options: { json: { type: "boolean" } }, strict: true });
+function lsCmd(ctx: CommandContext, json: boolean): number {
+	const { color } = ctx.ui;
 	const builds = listBuilds(ctx.store());
 	const now = ctx.now();
 	const rows = builds.map((b) => [
 		b.projectKey,
 		b.platform,
-		b.hash.slice(0, 12),
+		color.bold(b.hash.slice(0, 12)),
 		b.source,
 		b.profile,
 		formatSize(b.size),
 		`${formatDuration(Math.max(0, now - b.lastUsedAt))} ago`,
-		b.path,
+		color.dim(b.path),
 	]);
 	const total = builds.reduce((s, b) => s + b.size, 0);
 	const text =
 		builds.length === 0
-			? "no cached builds"
-			: `${formatTable(["PROJECT", "PLATFORM", "HASH", "SOURCE", "PROFILE", "SIZE", "LAST USED", "PATH"], rows)}\n\ntotal ${formatSize(total)}`;
-	emit(ctx, values.json === true, { builds, totalBytes: total }, text);
+			? color.dim("no cached builds")
+			: `${formatTable(["PROJECT", "PLATFORM", "HASH", "SOURCE", "PROFILE", "SIZE", "LAST USED", "PATH"], rows, color)}\n\ntotal ${color.bold(formatSize(total))}`;
+	emit(ctx, json, { builds, totalBytes: total }, text);
 	return 0;
 }
 
-function pruneCmd(ctx: CommandContext, argv: string[]): number {
-	const { values } = parseArgs({
-		args: argv,
-		options: { "max-size": { type: "string" }, "dry-run": { type: "boolean" }, json: { type: "boolean" } },
-		strict: true,
-	});
-	const max = parseSize(values["max-size"] ?? DEFAULT_MAX_CACHE_SIZE);
-	if (!max.success) {
-		ctx.err(`warden builds prune: ${max.error}`);
-		return 1;
+type PruneOpts = { maxSize?: string; dryRun?: true; yes?: true; json?: true };
+
+const describeBuild = (b: { projectKey: string; platform: string; hash: string; size: number }) =>
+	`${b.projectKey} ${b.platform} ${b.hash} (${formatSize(b.size)})`;
+
+/**
+ * LRU-prune the cache down to `--max-size`. In a terminal (without `--yes` / `--dry-run`) shows
+ * what goes and asks first.
+ */
+async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
+	const { ui } = ctx;
+	const { color } = ui;
+	const max = parseSize(opts.maxSize ?? DEFAULT_MAX_CACHE_SIZE);
+	if (!max.success) return fail(ctx, "prune", max.error);
+	const dryRun = opts.dryRun === true;
+	const prune = (dry: boolean) =>
+		pruneBuilds({
+			store: ctx.store(),
+			env: ctx.env,
+			maxBytes: max.data,
+			now: ctx.now(),
+			pidAlive: processAlive,
+			dryRun: dry,
+		});
+	const preview = prune(true);
+	if (!dryRun && ui.interactive && !opts.yes) {
+		if (preview.remove.length > 0) {
+			for (const b of preview.remove) ctx.err(color.yellow(`will remove ${describeBuild(b)}`));
+			const freed = preview.remove.reduce((sum, b) => sum + b.size, 0);
+			const answer = await ui.confirm(`Remove ${preview.remove.length} cached build(s) (${formatSize(freed)})?`);
+			if (answer !== true) {
+				ui.cancelled("Aborted.");
+				return 1;
+			}
+		}
 	}
-	const dryRun = values["dry-run"] === true;
-	const plan = pruneBuilds({
-		store: ctx.store(),
-		env: ctx.env,
-		maxBytes: max.data,
-		now: ctx.now(),
-		pidAlive: processAlive,
-		dryRun,
-	});
+	const plan = dryRun
+		? preview
+		: await withSpinner(ctx, `pruning ${preview.remove.length} build(s)…`, async () => prune(false));
 	const verb = dryRun ? "would remove" : "removed";
 	const text = [
-		...plan.remove.map((b) => `${verb} ${b.projectKey} ${b.platform} ${b.hash} (${formatSize(b.size)})`),
-		`${formatSize(plan.total)} → ${formatSize(plan.after)} (max ${formatSize(max.data)})`,
+		...plan.remove.map((b) => (dryRun ? color.yellow : color.green)(`${verb} ${describeBuild(b)}`)),
+		`${formatSize(plan.total)} → ${color.bold(formatSize(plan.after))} ${color.dim(`(max ${formatSize(max.data)})`)}`,
 	].join("\n");
 	emit(
 		ctx,
-		values.json === true,
+		opts.json === true,
 		{ dryRun, removed: plan.remove, totalBytes: plan.total, afterBytes: plan.after, maxBytes: max.data },
 		text
 	);
@@ -84,80 +103,79 @@ export function inferPlatform(path: string, flag: string | undefined): Result<Pl
 	return err(`can't tell the platform of ${path} — pass --platform ios|android`);
 }
 
-async function importCmd(ctx: CommandContext, argv: string[]): Promise<number> {
-	const { values, positionals } = parseArgs({
-		args: argv,
-		options: {
-			hash: { type: "string" },
-			platform: { type: "string" },
-			project: { type: "string" },
-			profile: { type: "string" },
-			"bundle-id": { type: "string" },
-			json: { type: "boolean" },
-		},
-		allowPositionals: true,
-		strict: true,
-	});
-	const [raw] = positionals;
-	if (raw === undefined || values.hash === undefined) {
-		ctx.err(`warden builds import: need <path> and --hash\n${USAGE}`);
-		return 1;
-	}
+type ImportOpts = {
+	hash: string;
+	platform?: string;
+	project?: string;
+	profile?: string;
+	bundleId?: string;
+	json?: true;
+};
+
+async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Promise<number> {
 	const artifact = resolve(ctx.cwd, raw).replace(/\/+$/, "");
-	const platform = inferPlatform(artifact, values.platform);
-	if (!platform.success) {
-		ctx.err(`warden builds import: ${platform.error}`);
-		return 1;
-	}
-	const start = values.project ? resolve(ctx.cwd, values.project) : ctx.cwd;
-	const bundle = values["bundle-id"];
+	const platform = inferPlatform(artifact, opts.platform);
+	if (!platform.success) return fail(ctx, "import", platform.error);
+	const start = opts.project ? resolve(ctx.cwd, opts.project) : ctx.cwd;
+	const bundle = opts.bundleId;
 	const project = await projectContext({
 		exec: ctx.exec,
 		env: ctx.env,
 		start,
 		...(bundle !== undefined ? { bundleId: { [platform.data]: bundle } } : {}),
 	});
-	if (!project.success) {
-		ctx.err(`warden builds import: ${project.error}`);
-		return 1;
-	}
-	const stored = await storeArtifact({
-		store: ctx.store(),
-		env: ctx.env,
-		projectKey: project.data.projectKey,
-		platform: platform.data,
-		profile: values.profile ?? project.data.project.eas?.profile ?? LOCAL_PROFILE,
-		hash: values.hash,
-		artifact,
-		source: "import",
-		now: ctx.now(),
-	});
-	if (!stored.success) {
-		ctx.err(`warden builds import: ${stored.error}`);
-		return 1;
-	}
+	if (!project.success) return fail(ctx, "import", project.error);
+	const stored = await withSpinner(ctx, `importing ${raw} into the build cache…`, () =>
+		storeArtifact({
+			store: ctx.store(),
+			env: ctx.env,
+			projectKey: project.data.projectKey,
+			platform: platform.data,
+			profile: opts.profile ?? project.data.project.eas?.profile ?? LOCAL_PROFILE,
+			hash: opts.hash,
+			artifact,
+			source: "import",
+			now: ctx.now(),
+		})
+	);
+	if (!stored.success) return fail(ctx, "import", stored.error);
 	const b = stored.data;
-	emit(ctx, values.json === true, b, `imported ${b.platform} ${b.hash} → ${b.path} (${formatSize(b.size)})`);
+	emit(
+		ctx,
+		opts.json === true,
+		b,
+		`${ctx.ui.color.green("imported")} ${b.platform} ${b.hash} → ${b.path} ${ctx.ui.color.dim(`(${formatSize(b.size)})`)}`
+	);
 	return 0;
 }
 
-async function run(ctx: CommandContext): Promise<number> {
-	const [sub, ...rest] = ctx.argv;
-	try {
-		if (sub === "ls" || sub === undefined) return lsCmd(ctx, rest);
-		if (sub === "prune") return pruneCmd(ctx, rest);
-		if (sub === "import") return await importCmd(ctx, rest);
-	} catch (error) {
-		ctx.err(`warden builds: ${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
-		return 1;
-	}
-	ctx.err(`warden builds: unknown subcommand "${sub}"\n${USAGE}`);
-	return 1;
-}
-
-export const buildsCommand: Command = {
+export const buildsCommand = defineCommand({
 	name: "builds",
 	summary: "list, prune (LRU) and import cached native app builds",
-	usage: USAGE,
-	run,
-};
+	register: (cmd, ctx, done) => {
+		cmd
+			.command("ls", { isDefault: true })
+			.description("list cached builds (the default)")
+			.option("--json", "machine-readable output")
+			.action((opts) => done(lsCmd(ctx, opts.json === true)));
+		cmd
+			.command("prune")
+			.description("remove least-recently-used builds until the cache fits --max-size (build-locked ones stay)")
+			.option("--max-size <size>", `cache size limit, e.g. 20G (default ${DEFAULT_MAX_CACHE_SIZE})`)
+			.option("--dry-run", "only show what would be removed")
+			.option("--yes", "don't ask before removing")
+			.option("--json", "machine-readable output")
+			.action(async (opts) => done(await pruneCmd(ctx, opts)));
+		cmd
+			.command("import")
+			.description("copy a local .app / .apk into the cache under a fingerprint hash")
+			.argument("<path>", "path.app | path.apk")
+			.requiredOption("--hash <hash>", "fingerprint hash to file it under")
+			.option("--platform <platform>", "ios | android (default: from the extension)")
+			.option("--project <dir>", "project directory (default: cwd)")
+			.option("--profile <profile>", "build profile (default: the project's EAS profile, else local)")
+			.option("--bundle-id <id>", "override the bundle id / package")
+			.option("--json", "machine-readable output")
+			.action(async (path, opts) => done(await importCmd(ctx, path, opts)));
+	},
+});

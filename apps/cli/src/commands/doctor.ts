@@ -1,17 +1,15 @@
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { parseArgs } from "node:util";
 import { isLeaseAlive, processAlive } from "@warden/core/liveness";
 import { androidTools } from "@warden/core/providers/android";
 import { MIGRATIONS, wardenHome } from "@warden/core/store";
-import type { Command, CommandContext } from "../context";
+import { defineCommand } from "../command";
+import type { CommandContext } from "../context";
 import { codexDetected } from "../hooks/agents";
 import { hasWardenHook } from "../hooks/claude-settings";
 import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook } from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
 import { emit } from "../output";
-
-const USAGE = "warden doctor [--json]";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 /** core failures make doctor exit 1; optional ones only warn */
@@ -145,26 +143,37 @@ export async function runChecks(ctx: CommandContext): Promise<DoctorCheck[]> {
 
 const MARK: Record<CheckStatus, string> = { ok: "✓", warn: "!", fail: "✗" };
 
-async function run(ctx: CommandContext): Promise<number> {
-	let json = false;
-	try {
-		const { values } = parseArgs({ args: ctx.argv, options: { json: { type: "boolean" } }, strict: true });
-		json = values.json === true;
-	} catch (error) {
-		ctx.err(`warden doctor: ${errorMessage(error)}\n${USAGE}`);
-		return 1;
+function mark(ctx: CommandContext, status: CheckStatus): string {
+	const { color } = ctx.ui;
+	switch (status) {
+		case "ok":
+			return color.green(MARK.ok);
+		case "warn":
+			return color.yellow(MARK.warn);
+		case "fail":
+			return color.red(MARK.fail);
 	}
+}
+
+async function doctor(ctx: CommandContext, json: boolean): Promise<number> {
+	const { color } = ctx.ui;
 	const checks = await runChecks(ctx);
 	const ok = checks.every((c) => c.status !== "fail");
 	const width = Math.max(...checks.map((c) => c.name.length));
-	const text = checks.map((c) => `${MARK[c.status]} ${c.name.padEnd(width)}  ${c.detail}`).join("\n");
+	const text = checks
+		.map((c) => {
+			const detail = c.status === "ok" ? color.dim(c.detail) : c.detail;
+			return `${mark(ctx, c.status)} ${c.name.padEnd(width)}  ${detail}`;
+		})
+		.join("\n");
 	emit(ctx, json, { ok, checks }, text);
 	return ok ? 0 : 1;
 }
 
-export const doctorCommand: Command = {
+export const doctorCommand = defineCommand({
 	name: "doctor",
 	summary: "check warden's setup: home, db, device tools, PATH, Claude/Codex hooks + skill, stale leases",
-	usage: USAGE,
-	run,
-};
+	register: (cmd, ctx, done) => {
+		cmd.option("--json", "machine-readable output").action(async (opts) => done(await doctor(ctx, opts.json === true)));
+	},
+});

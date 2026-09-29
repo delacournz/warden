@@ -106,6 +106,14 @@ describe("warden port release", () => {
 		expect(ports(c)).toEqual([]);
 	});
 
+	test("--lease takes several ids", async () => {
+		const c = make([]);
+		await run(["claim", "--from", FROM, "--count", "3"], c);
+		const [a, b] = c.db.listLeases();
+		expect((await run(["release", "--lease", a?.id ?? "", b?.id ?? ""], c)).code).toBe(0);
+		expect(ports(c)).toHaveLength(1);
+	});
+
 	test("--lease ids and --mine", async () => {
 		const c = make([]);
 		await run(["claim", "--from", FROM, "--count", "3"], c);
@@ -163,16 +171,27 @@ describe("warden port ls", () => {
 });
 
 describe("warden port (usage)", () => {
-	test("no/unknown subcommand → exit 1 with usage", async () => {
-		expect((await run([])).code).toBe(1);
-		const { code, c } = await run(["nope"]);
+	test("no subcommand → help on stderr, exit 1", async () => {
+		const { code, c } = await run([]);
 		expect(code).toBe(1);
-		expect(c.stderr.join("\n")).toContain("warden port claim");
+		const help = c.stderr.join("\n");
+		expect(help).toContain("claim");
+		expect(help).toContain("release");
+		expect(help).toContain("ls");
 	});
 
-	test("summary + usage filled in", () => {
-		expect(portCommand.summary).not.toBe("TODO");
-		expect(portCommand.usage).toContain("warden port release");
-		expect(portCommand.usage).toContain("warden port ls");
+	test("unknown subcommand / option → commander usage error, exit 1", async () => {
+		const unknown = await run(["nope"]);
+		expect(unknown.code).toBe(1);
+		expect(unknown.c.stderr.join("\n")).toContain("unknown command 'nope'");
+		const bogus = await run(["ls", "--bogus"]);
+		expect(bogus.code).toBe(1);
+		expect(bogus.c.stderr.join("\n")).toContain("unknown option '--bogus'");
+	});
+
+	test("--help → exit 0, stdout lists the subcommand's options", async () => {
+		const { code, c } = await run(["release", "--help"]);
+		expect(code).toBe(0);
+		expect(c.stdout.join("\n")).toContain("--lease <id...>");
 	});
 });

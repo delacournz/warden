@@ -1,5 +1,6 @@
 import { bunExec, type Exec } from "@warden/core/exec";
 import { openStore, type Store } from "@warden/core/store";
+import { terminalUi, type Ui } from "./ui";
 
 /** Everything a command touches from the outside world — injectable for tests. */
 export type CommandContext = {
@@ -14,14 +15,8 @@ export type CommandContext = {
 	store: () => Store;
 	exec: Exec;
 	readStdin: () => Promise<string>;
-};
-
-export type Command = {
-	name: string;
-	aliases?: readonly string[];
-	summary: string;
-	usage: string;
-	run: (ctx: CommandContext) => Promise<number>;
+	/** colours, spinners, prompts */
+	ui: Ui;
 };
 
 export function defaultContext(argv: string[]): CommandContext {
@@ -39,13 +34,6 @@ export function defaultContext(argv: string[]): CommandContext {
 		},
 		exec: bunExec,
 		readStdin: () => Bun.stdin.text(),
-	};
-}
-
-/** Stub for commands not built yet. */
-export function notImplemented(name: string): Command["run"] {
-	return async (ctx) => {
-		ctx.err(`warden ${name}: not implemented yet`);
-		return 1;
+		ui: terminalUi(process.env),
 	};
 }
