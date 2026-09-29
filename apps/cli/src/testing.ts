@@ -21,7 +21,7 @@ export function testContext(argv: string[], overrides: Partial<CommandContext> =
 	const exec: Exec = async () => ({ exitCode: 0, stdout: "", stderr: "" });
 	return {
 		argv,
-		env: { WARDEN_HOME: dir, HOME: dir },
+		env: { WARDEN_HOME: dir, HOME: dir, WARDEN_AUTO_GC: "0" },
 		cwd: dir,
 		now: () => 1_000_000,
 		out: (line) => stdout.push(line),

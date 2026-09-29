@@ -1,6 +1,9 @@
 import { processAlive } from "@warden/core/liveness";
 import { readGitInfo } from "@warden/core/owner";
+import { maybeAutoGc } from "../autogc";
 import type { Command, CommandContext } from "../context";
+import { shutdownReleasedDevices } from "../device-shutdown";
+import { deviceState } from "../device-state";
 import { type HookDeps, type HookResult, handlePreToolUse, handleSessionEnd } from "../hooks/claude-pretool";
 import { errorMessage } from "../hooks/json";
 
@@ -13,10 +16,18 @@ function isHookKind(value: string | undefined): value is HookKind {
 }
 
 function hookDeps(ctx: CommandContext): HookDeps {
-	return { store: ctx.store, now: ctx.now, pidAlive: processAlive, gitInfo: readGitInfo };
+	return {
+		store: ctx.store,
+		now: ctx.now,
+		pidAlive: processAlive,
+		gitInfo: readGitInfo,
+		deviceState: (platform, id) => deviceState(ctx.exec, ctx.env, platform, id),
+		shutdown: (leases, owner) => shutdownReleasedDevices(ctx, leases, owner),
+		maybeGc: () => maybeAutoGc(ctx),
+	};
 }
 
-function dispatch(ctx: CommandContext, kind: HookKind, input: unknown): HookResult {
+function dispatch(ctx: CommandContext, kind: HookKind, input: unknown): Promise<HookResult> {
 	switch (kind) {
 		case "pretool":
 			return handlePreToolUse(input, hookDeps(ctx));
@@ -39,7 +50,7 @@ async function run(ctx: CommandContext): Promise<number> {
 		ctx.err(`warden hook ${kind}: bad stdin JSON (${errorMessage(error)}) — allowing`);
 		return 0;
 	}
-	const result = dispatch(ctx, kind, input);
+	const result = await dispatch(ctx, kind, input);
 	if (result.stdout) ctx.out(result.stdout);
 	if (result.stderr) ctx.err(result.stderr);
 	return result.exitCode;
@@ -47,7 +58,7 @@ async function run(ctx: CommandContext): Promise<number> {
 
 export const hookCommand: Command = {
 	name: "hook",
-	summary: "Claude Code hooks: lease argent devices per session, release on session end",
+	summary: "Claude Code hooks: lease argent devices per session; on session end shut down what it booted + release",
 	usage: USAGE,
 	run,
 };

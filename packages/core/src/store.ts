@@ -64,6 +64,8 @@ export const MIGRATIONS: readonly string[] = [
 		installed_at INTEGER NOT NULL,
 		PRIMARY KEY (platform, device_id, bundle_id)
 	);`,
+	`ALTER TABLE leases ADD COLUMN booted_by_owner INTEGER;
+	CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`,
 ];
 
 export function ownerKey(owner: Owner): string {
@@ -83,6 +85,7 @@ export type NewLease = {
 	ttlMs: number;
 	label?: string;
 	pid?: number;
+	bootedByOwner?: boolean;
 };
 
 /** A device warden created (sim) or launched (emulator). */
@@ -105,6 +108,7 @@ type LeaseRow = {
 	heartbeat_at: number;
 	ttl_ms: number;
 	pid: number | null;
+	booted_by_owner: number | null;
 };
 
 type DeviceRow = {
@@ -128,6 +132,7 @@ function toLease(row: LeaseRow): Lease {
 	};
 	if (row.label !== null) lease.label = row.label;
 	if (row.pid !== null) lease.pid = row.pid;
+	if (row.booted_by_owner) lease.bootedByOwner = true;
 	return lease;
 }
 
@@ -180,10 +185,11 @@ export class Store {
 		};
 		if (input.label !== undefined) lease.label = input.label;
 		if (input.pid !== undefined) lease.pid = input.pid;
+		if (input.bootedByOwner) lease.bootedByOwner = true;
 		this.db
 			.query(
-				`INSERT INTO leases (id, resource_key, resource, owner_key, owner, label, acquired_at, heartbeat_at, ttl_ms, pid)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO leases (id, resource_key, resource, owner_key, owner, label, acquired_at, heartbeat_at, ttl_ms, pid, booted_by_owner)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				lease.id,
@@ -195,9 +201,25 @@ export class Store {
 				now,
 				now,
 				lease.ttlMs,
-				lease.pid ?? null
+				lease.pid ?? null,
+				lease.bootedByOwner ? 1 : null
 			);
 		return lease;
+	}
+
+	/** Record that this lease's owner booted its device (claim boot/create, hook saw it shut down). */
+	markBootedByOwner(id: string): void {
+		this.db.query("UPDATE leases SET booted_by_owner = 1 WHERE id = ?").run(id);
+	}
+
+	getMeta(key: string): string | undefined {
+		return this.db.query<{ value: string }, [string]>("SELECT value FROM meta WHERE key = ?").get(key)?.value;
+	}
+
+	setMeta(key: string, value: string): void {
+		this.db
+			.query("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+			.run(key, value);
 	}
 
 	getLease(id: string): Lease | undefined {

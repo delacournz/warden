@@ -7,6 +7,7 @@ import { processAlive } from "@warden/core/liveness";
 import { claimPorts, isPortFree, parsePortSpec } from "@warden/core/ports";
 import type { Owner, Platform } from "@warden/core/types";
 import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
+import { maybeAutoGc } from "../autogc";
 import {
 	CLAIM_OPTIONS,
 	CLAIM_USAGE_FLAGS,
@@ -217,6 +218,7 @@ export function createRunCommand(deps: RunDeps): Command {
 		const { cmd, flags, json } = args.data;
 		const store = ctx.store();
 		const owner = resolveOwner(ctx);
+		maybeAutoGc(ctx);
 		const outcome = await claimWithFlags(ctx, owner, flags, deps.pid);
 		if (!outcome.success) {
 			ctx.err(`warden run: ${outcome.error}`);

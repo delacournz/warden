@@ -6,6 +6,7 @@ import {
 	type AgentOwner,
 	type DeviceResource,
 	describeOwner,
+	type Lease,
 	type Owner,
 	ownerLocation,
 	type Platform,
@@ -21,6 +22,12 @@ export type HookDeps = {
 	now: () => number;
 	pidAlive: PidAlive;
 	gitInfo: (cwd: string) => GitInfo | undefined;
+	/** current state of a device (undefined = unknown); decides whether the session is the one booting it */
+	deviceState: (platform: Platform, id: string) => Promise<"booted" | "shutdown" | undefined>;
+	/** shut down what the shutdown policy allows for these ending leases */
+	shutdown: (leases: Lease[], owner: Owner) => Promise<{ shutdown: string[]; notes: string[] }>;
+	/** kick off a background `warden gc` if one hasn't run recently (never throws, never waits) */
+	maybeGc: () => void;
 };
 
 /** PreToolUse matcher for argent's device tools (plain + plugin-namespaced MCP servers). */
@@ -81,22 +88,44 @@ function agentOwner(input: PreToolInput, deps: HookDeps): AgentOwner {
 	return owner;
 }
 
+/** Device off right now? Then this session is about to boot it (e.g. argent boot-device) — it owns shutting it down. */
+async function sessionWillBoot(deps: HookDeps, platform: Platform, id: string): Promise<boolean> {
+	try {
+		return (await deps.deviceState(platform, id)) === "shutdown";
+	} catch {
+		return false;
+	}
+}
+
+function nudgeGc(deps: HookDeps): void {
+	try {
+		deps.maybeGc();
+	} catch {
+		// best effort — gc also runs on claims and on demand
+	}
+}
+
 /**
- * PreToolUse for argent device tools. Unleased device → lease it to this Claude session; own lease →
- * heartbeat; stale lease → reclaim; another live owner → block (exit 2). Never blocks on warden's own
- * failures — a broken warden must not break the agent.
+ * PreToolUse for argent device tools. Unleased device → lease it to this Claude session (noting
+ * whether the session is the one booting it); own lease → heartbeat; stale lease → reclaim; another
+ * live owner → block (exit 2). Never blocks on warden's own failures — a broken warden must not
+ * break the agent.
  */
-export function handlePreToolUse(raw: unknown, deps: HookDeps): HookResult {
+export async function handlePreToolUse(raw: unknown, deps: HookDeps): Promise<HookResult> {
 	try {
 		const input = parsePreTool(raw);
 		if (!input || !ARGENT_TOOL.test(input.toolName) || input.deviceId === undefined) return { exitCode: 0 };
 		const target = deviceTarget(input.deviceId);
 		if (target.kind === "skip") return { exitCode: 0 };
+		nudgeGc(deps);
 
 		const me: AgentOwner = { kind: "agent", sessionId: input.sessionId, cwd: input.cwd };
 		const store = deps.store();
-		const now = deps.now();
 		const probe: DeviceResource = { kind: "device", platform: target.platform, id: target.id, name: target.id };
+		const current = store.findLeaseByResource(probe);
+		const claiming = !current || (!sameOwner(current.owner, me) && !isLeaseAlive(current, deps.now(), deps.pidAlive));
+		const bootedByOwner = claiming ? await sessionWillBoot(deps, target.platform, target.id) : false;
+		const now = deps.now();
 		return store.transaction((): HookResult => {
 			const existing = store.findLeaseByResource(probe);
 			if (existing && sameOwner(existing.owner, me)) {
@@ -114,6 +143,7 @@ export function handlePreToolUse(raw: unknown, deps: HookDeps): HookResult {
 					owner: agentOwner(input, deps),
 					ttlMs: DEFAULT_TTL_MS,
 					label: HOOK_LABEL,
+					...(bootedByOwner ? { bootedByOwner: true } : {}),
 				},
 				now
 			);
@@ -124,22 +154,39 @@ export function handlePreToolUse(raw: unknown, deps: HookDeps): HookResult {
 	}
 }
 
-/** SessionEnd: release every lease this Claude session holds (devices are left running). */
-export function handleSessionEnd(raw: unknown, deps: HookDeps): HookResult {
+/**
+ * SessionEnd: shut down the session's devices the shutdown policy allows (warden-created, or booted
+ * by this session) so nothing is left running, then release every lease the session holds. On
+ * `/clear` (reason `clear`) devices stay up — the conversation restarts but the work usually goes on
+ * with the same sim, which the new session re-claims on its next argent call.
+ */
+export async function handleSessionEnd(raw: unknown, deps: HookDeps): Promise<HookResult> {
 	try {
 		const sessionId = isRecord(raw) ? stringField(raw, "session_id") : undefined;
-		if (!sessionId) return { exitCode: 0 };
+		if (!sessionId || !isRecord(raw)) return { exitCode: 0 };
+		const owner: AgentOwner = { kind: "agent", sessionId, cwd: "" };
 		const store = deps.store();
+		const leases = store.listLeasesByOwner(owner);
+		const lines: string[] = [];
+		if (stringField(raw, "reason") !== "clear") {
+			try {
+				const devices = leases.filter((l) => l.resource.kind === "device");
+				const outcome = devices.length > 0 ? await deps.shutdown(devices, owner) : { shutdown: [], notes: [] };
+				if (outcome.shutdown.length > 0) lines.push(`warden: shut down ${outcome.shutdown.join(" ")}`);
+				lines.push(...outcome.notes.map((n) => `warden: ${n}`));
+			} catch (error) {
+				lines.push(`warden: shutdown failed (${errorMessage(error)}) — releasing anyway`);
+			}
+		}
 		const now = deps.now();
-		const released = store.transaction(() => {
-			const leases = store.listLeasesByOwner({ kind: "agent", sessionId, cwd: "" });
+		store.transaction(() => {
 			store.deleteLeases(leases.map((l) => l.id));
 			for (const l of leases) {
 				if (l.resource.kind === "device") store.touchDevice(l.resource.platform, l.resource.id, now);
 			}
-			return leases.map((l) => l.id);
 		});
-		return released.length > 0 ? { exitCode: 0, stdout: `warden: released ${released.join(" ")}` } : { exitCode: 0 };
+		if (leases.length > 0) lines.unshift(`warden: released ${leases.map((l) => l.id).join(" ")}`);
+		return lines.length > 0 ? { exitCode: 0, stdout: lines.join("\n") } : { exitCode: 0 };
 	} catch (error) {
 		return { exitCode: 0, stderr: `warden hook session-end: ${errorMessage(error)}` };
 	}

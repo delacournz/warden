@@ -54,7 +54,7 @@ The binary is swapped atomically at the same path, so the next `warden` in your 
 warden claim ios --json                          # lease 1 sim (reuse → boot → create), booted + ready
 warden claim android --profile pixel-10 --count 2
 warden claim ios --count 2 --wait 10m --ttl 1h --label e2e
-warden release --mine [--shutdown]               # or <leaseId…> | --udid X | --session S
+warden release --mine [--shutdown]               # or <leaseId…> | --udid X | --session S; --shutdown = warden-created or self-booted sims
 warden ls                                        # leases: resource, state, owner, repo/worktree, age, heartbeat
 warden clone <udid|name> [--name x]              # duplicate a shut-down sim into the pool (seconds, no first boot)
 warden golden ensure|ls|prune [--all]            # golden images new sims are cloned from
@@ -122,7 +122,8 @@ With no config, warden detects a single project from `app.json` / `app.config.*`
 `warden install --claude` adds:
 
 - a **PreToolUse** hook on `mcp__argent__.*|mcp__plugin_goldie_argent__.*`. An unleased device is auto-claimed for the session, the session's own device gets a heartbeat, and a device leased by another owner is blocked (exit 2) with the owner and repo/worktree.
-- a **SessionEnd** hook, which releases the session's leases. (`warden claim` run from the agent's Bash tool is owned by the same session via `CLAUDE_CODE_SESSION_ID`.)
+- a **SessionEnd** hook, which **shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself (they were off when it first touched them), are shut down. A sim that was already running when the agent picked it up, such as your own Simulator.app one, is released but left on. On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim on its next argent call.
+- **Sessions that die without SessionEnd** (killed or terminal closed): their leases go stale after 30 min without a heartbeat. `warden gc` then shuts those sims down under the same rule. gc runs automatically in the background at most every 10 min, triggered by hook activity and by `claim`/`run` (`WARDEN_AUTO_GC=0` turns this off), as well as on demand.
 - the `~/.claude/skills/warden/SKILL.md` skill, plus a "claim via warden first" line in the argent `device_selection_rule`.
 
 ## Development

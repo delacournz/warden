@@ -162,6 +162,8 @@ async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 	if (item.action !== "reuse" || device.state === "shutdown") {
 		const booted = await provider.boot(device.id);
 		if (!booted.success) return { ok: booted, leaseId: lease.id };
+		store.markBootedByOwner(lease.id);
+		lease = { ...lease, bootedByOwner: true };
 	}
 	const ready = await provider.waitReady(device.id, readyMs);
 	if (!ready.success) return { ok: ready, leaseId: lease.id };

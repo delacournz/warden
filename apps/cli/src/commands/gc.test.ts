@@ -89,4 +89,29 @@ describe("warden gc", () => {
 			{ platform: "android", id: "emulator-5554", name: "warden-pixel-10-1" },
 		]);
 	});
+
+	test("stale lease of a crashed session → device shut down if that session booted it; foreign running one left alone", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "F", name: "iPhone 17" },
+				owner: agent,
+				ttlMs: 1,
+				bootedByOwner: true,
+			},
+			0
+		);
+		expect(await gcCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.shutdown.map((d: { id: string }) => d.id)).toContain("F");
+		expect(calls.filter((x) => x[2] === "shutdown").map((x) => x[3])).toContain("F");
+	});
+
+	test("--quiet prints nothing; last run recorded", async () => {
+		const c = setup(["--quiet"], []);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(c.stdout).toEqual([]);
+		expect(c.db.getMeta("last_gc_at")).toBe(String(NOW));
+	});
 });

@@ -19,6 +19,8 @@ export type Lease = {
 	heartbeatAt: number;
 	ttlMs: number;
 	pid?: number;
+	/** the owner booted this device (it was off when leased) — so it's theirs to shut down on release */
+	bootedByOwner?: boolean;
 };
 
 export type DeviceState = "booted" | "shutdown" | "booting";

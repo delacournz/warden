@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { maybeAutoGc } from "../autogc";
 import {
 	CLAIM_OPTIONS,
 	CLAIM_USAGE_FLAGS,
@@ -25,6 +26,7 @@ async function run(ctx: CommandContext): Promise<number> {
 		return 1;
 	}
 	const owner = resolveOwner(ctx);
+	maybeAutoGc(ctx);
 	const outcome = await claimWithFlags(ctx, owner, flags.data, leasePidFor(owner));
 	if (!outcome.success) {
 		ctx.err(`warden claim: ${outcome.error}`);

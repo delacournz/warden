@@ -77,6 +77,27 @@ describe("leases", () => {
 	});
 });
 
+describe("bootedByOwner + meta", () => {
+	test("lease remembers its owner booted the device", () => {
+		const lease = store.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "U1", name: "n" }, owner, ttlMs: 1000, bootedByOwner: true },
+			1
+		);
+		expect(store.getLease(lease.id)?.bootedByOwner).toBe(true);
+		const plain = store.insertLease({ resource: { kind: "port", port: 1 }, owner, ttlMs: 1 }, 1);
+		expect(store.getLease(plain.id)?.bootedByOwner).toBeUndefined();
+		store.markBootedByOwner(plain.id);
+		expect(store.getLease(plain.id)?.bootedByOwner).toBe(true);
+	});
+
+	test("meta get/set", () => {
+		expect(store.getMeta("last_gc_at")).toBeUndefined();
+		store.setMeta("last_gc_at", "5");
+		store.setMeta("last_gc_at", "6");
+		expect(store.getMeta("last_gc_at")).toBe("6");
+	});
+});
+
 describe("devices", () => {
 	test("record, list, touch, forget", () => {
 		store.recordDevice(

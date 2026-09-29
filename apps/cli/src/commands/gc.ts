@@ -1,15 +1,16 @@
 import { parseArgs } from "node:util";
 import { DEFAULT_IDLE_MS } from "@warden/core/config.defaults";
 import { formatDuration, parseDuration } from "@warden/core/duration";
-import { processAlive } from "@warden/core/liveness";
+import { isLeaseAlive, processAlive } from "@warden/core/liveness";
 import type { Owner, Platform } from "@warden/core/types";
 import { ok, type Result } from "@warden/types/result";
 import { resolveOwner } from "../claim-flags";
 import type { Command, CommandContext } from "../context";
+import { shutdownReleasedDevices } from "../device-shutdown";
 import { emit } from "../output";
 import { providerFor } from "../providers";
 
-const USAGE = "warden gc [--idle 20m] [--json]";
+const USAGE = "warden gc [--idle 20m] [--quiet] [--json]";
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
 
 type ShutDevice = { platform: Platform; id: string; name: string };
@@ -57,7 +58,9 @@ function parseIdle(raw: string | undefined): Result<number> {
 }
 
 /**
- * Reclaim stale leases, then shut down warden-created devices (store `devices` table) that are
+ * Stale leases (owner died without releasing, e.g. a Claude session killed before SessionEnd) are
+ * reclaimed, and their devices shut down when the shutdown policy allows (warden-created, or booted
+ * by that owner). Then shut down warden-created devices (store `devices` table) that are
  * booted, unleased and idle longer than `--idle`. Foreign devices are never touched; nothing is
  * ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
  * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note.
@@ -77,12 +80,25 @@ async function run(ctx: CommandContext): Promise<number> {
 	}
 	const store = ctx.store();
 	const now = ctx.now();
+	const owner = resolveOwner(ctx);
+	const stale = store.listLeases().filter((l) => l.resource.kind === "device" && !isLeaseAlive(l, now, processAlive));
+	const orphaned = await shutdownReleasedDevices(ctx, stale, owner);
 	const reclaimed = store.reclaimStale(now, processAlive);
 	const leased = new Set(
 		store.listLeases().flatMap((l) => (l.resource.kind === "device" ? [`${l.resource.platform}:${l.resource.id}`] : []))
 	);
-	const plan: GcPlan = { now, idleMs: idle.data, leased, shutdown: [], forgotten: [], notes: [] };
-	const owner = resolveOwner(ctx);
+	const plan: GcPlan = {
+		now,
+		idleMs: idle.data,
+		leased,
+		shutdown: stale.flatMap((l) =>
+			l.resource.kind === "device" && orphaned.shutdown.includes(l.resource.id)
+				? [{ platform: l.resource.platform, id: l.resource.id, name: l.resource.name }]
+				: []
+		),
+		forgotten: [],
+		notes: orphaned.notes,
+	};
 	for (const platform of PLATFORMS) await gcPlatform(ctx, platform, owner, plan);
 
 	const { shutdown, forgotten, notes } = plan;
@@ -94,6 +110,8 @@ async function run(ctx: CommandContext): Promise<number> {
 		...(forgotten.length > 0 ? [`forgot exited emulators ${forgotten.map((d) => d.name).join(" ")}`] : []),
 		...notes,
 	].join("\n");
+	store.setMeta("last_gc_at", String(now));
+	if (parsed.values.quiet) return 0;
 	emit(ctx, parsed.values.json === true, { reclaimed, shutdown, forgotten, notes }, text);
 	return 0;
 }
@@ -101,7 +119,7 @@ async function run(ctx: CommandContext): Promise<number> {
 function parse(argv: string[]) {
 	return parseArgs({
 		args: argv,
-		options: { idle: { type: "string" }, json: { type: "boolean" } },
+		options: { idle: { type: "string" }, json: { type: "boolean" }, quiet: { type: "boolean" } },
 		allowPositionals: false,
 		strict: true,
 	});

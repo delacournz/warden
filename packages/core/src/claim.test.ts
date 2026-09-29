@@ -114,6 +114,7 @@ describe("claimDevices", () => {
 		expect(c?.lease.label).toBe("e2e");
 		expect(provider.calls).toEqual(["ready 1"]);
 		expect(store.listLeases().map((l) => l.id)).toEqual([c?.lease.id ?? ""]);
+		expect(store.listLeases()[0]?.bootedByOwner).toBeUndefined();
 	});
 
 	test("boots a shutdown warden device", async () => {
@@ -122,6 +123,8 @@ describe("claimDevices", () => {
 		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
 		expect(provider.calls).toEqual(["boot 1", "ready 1"]);
 		expect(result.success && result.data.claimed[0]?.device.state).toBe("booted");
+		expect(store.listLeases()[0]?.bootedByOwner).toBe(true);
+		expect(result.success && result.data.claimed[0]?.lease.bootedByOwner).toBe(true);
 	});
 
 	test("creates when pool has room; lease is on the real udid, not the placeholder", async () => {
@@ -134,6 +137,7 @@ describe("claimDevices", () => {
 		const leases = store.listLeases();
 		expect(leases).toHaveLength(1);
 		expect(leases[0]?.resource).toEqual({ kind: "device", platform: "ios", id: "NEW1", name: "warden-iphone-17-1" });
+		expect(leases[0]?.bootedByOwner).toBe(true);
 	});
 
 	test("never hands out a device leased by someone else", async () => {
