@@ -167,4 +167,38 @@ describe("warden run", () => {
 		expect(await createRunCommand(h.deps).run(c)).toBe(1);
 		expect(h.spawned).toEqual([]);
 	});
+
+	test("--app ensures the app on each claimed device before spawning; exports WARDEN_APP_*", async () => {
+		const c = setup(["ios", "--count", "2", "--app", "--project", "apps/x", "--no-eas", "--", "true"]);
+		const h = harness();
+		const seen: string[] = [];
+		h.deps.ensureApp = async (_ctx, _owner, platform, deviceId, opts) => {
+			seen.push(`${platform} ${deviceId} ${opts.project} eas=${opts.eas} build=${opts.build}`);
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		const running = createRunCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0);
+		expect(seen.sort()).toEqual(["ios U1 apps/x eas=false build=true", "ios U2 apps/x eas=false build=true"]);
+		expect(h.spawned[0]?.env.WARDEN_APP_PATH).toBe("/c/A.app");
+		expect(h.spawned[0]?.env.WARDEN_APP_HASH).toBe("H");
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	test("--app failure → leases released, exit 1, child never spawned", async () => {
+		const c = setup(["ios", "--app", "--port", "8091:20", "--", "true"]);
+		const h = harness();
+		h.deps.ensureApp = async () => ({ success: false, error: "no build for fingerprint H" });
+		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(h.spawned).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+		expect(c.stderr.join("\n")).toContain("no build for fingerprint H");
+	});
+
+	test("--project without --app → exit 1", async () => {
+		const c = setup(["ios", "--project", "x", "--", "true"]);
+		const h = harness();
+		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(c.db.listLeases()).toEqual([]);
+	});
 });

@@ -15,7 +15,8 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@warden/types": "workspace:*"
+		"@warden/types": "workspace:*",
+		"zod": "^4.4.3"
 	},
 	"devDependencies": {
 		"@warden/tsconfig": "workspace:*",

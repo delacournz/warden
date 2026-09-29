@@ -44,6 +44,26 @@ export const MIGRATIONS: readonly string[] = [
 		last_used_at INTEGER NOT NULL,
 		PRIMARY KEY (platform, id)
 	);`,
+	`CREATE TABLE builds (
+		project_key TEXT NOT NULL,
+		platform TEXT NOT NULL,
+		profile TEXT NOT NULL,
+		hash TEXT NOT NULL,
+		path TEXT NOT NULL,
+		source TEXT NOT NULL,
+		size INTEGER NOT NULL,
+		created_at INTEGER NOT NULL,
+		last_used_at INTEGER NOT NULL,
+		PRIMARY KEY (project_key, platform, hash)
+	);
+	CREATE TABLE installs (
+		platform TEXT NOT NULL,
+		device_id TEXT NOT NULL,
+		bundle_id TEXT NOT NULL,
+		hash TEXT NOT NULL,
+		installed_at INTEGER NOT NULL,
+		PRIMARY KEY (platform, device_id, bundle_id)
+	);`,
 ];
 
 export function ownerKey(owner: Owner): string {
