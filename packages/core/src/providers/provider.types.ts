@@ -1,7 +1,7 @@
 import type { AsyncResult } from "@warden/types/result";
 import type { Exec } from "../exec";
 import type { Store } from "../store";
-import type { InventoryDevice, Platform } from "../types";
+import type { InventoryDevice, Owner, Platform } from "../types";
 
 /**
  * A device backend (iOS simulators, Android emulators). Providers report raw devices with
@@ -23,4 +23,6 @@ export type ProviderDeps = {
 	store: Store;
 	env: Record<string, string | undefined>;
 	now: () => number;
+	/** the claimer — owner for any side leases a provider takes (e.g. Android console ports) */
+	owner: Owner;
 };
