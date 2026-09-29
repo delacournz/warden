@@ -13,10 +13,17 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 | `owner.ts` | detect owner: hook session → CI → session env → parent pid; git repo/worktree |
 | `inventory.ts` | mark warden-created devices (store record or `warden-<profile>-N` name) |
 | `exec.ts` | injectable process runner (`Exec`) |
-| `providers/*.ts` | `DeviceProvider` impls (`ios`, `android`) on simctl / adb / emulator |
+| `claim.ts` | `claimDevices`: txn(reclaim → allocate → lease, pending placeholders for creates) then boot/create outside txn; all-or-nothing |
+| `ports.ts` | `parsePortSpec`, `isPortFree` (bind probe), `claimPorts` (probe outside txn, lease inside), `releasePorts` |
+| `duration.ts` / `config.defaults.ts` | `10m`-style durations; TTL 30m, idle 20m, heartbeat 30s, default profiles |
+| `providers/*.ts` | `DeviceProvider` impls (`ios`, `android`) on simctl / adb / emulator; Android console ports leased 5554–5584 |
+| `builds/*.ts` | app build cache: `config` (zod `warden.config.json`), `project-key`, `fingerprint`, `cache`, `eas`, `local`, `install`, `lock` (build lease), `resolve` (5-step resolver), `prune`, `ensure` |
+| `*.race-fixture.ts` | child-process fixtures for cross-process race tests |
 
 ## Rules
 - Pure logic takes `now` + `pidAlive` + `exec` as inputs — no hidden clocks/processes in tests.
 - Never shut down/erase a device warden didn't create or lease.
 - Import files directly (`@warden/core/store`), no barrels.
 - `WARDEN_HOME` overrides `~/.warden` (tests use temp dirs).
+- Schema changes: append to `MIGRATIONS` in `store.ts`; never edit a shipped entry.
+- Never run real simctl / adb / eas / xcodebuild in tests — inject `Exec`.

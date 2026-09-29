@@ -19,7 +19,7 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | Need | Command |
 |------|---------|
 | one sim / emulator | `warden claim ios --json` · `warden claim android --json` |
-| N devices + ports for an e2e script (auto-release on exit) | `warden run ios --count N --port 8091:20 -- <cmd>` (env: `WARDEN_UDIDS`, `WARDEN_PORT`) |
+| N devices + ports for an e2e script (auto-release on exit) | `warden run ios --count N --port 8091:20 -- <cmd>` (env: `WARDEN_UDIDS`, `WARDEN_UDID_0…`, `WARDEN_PORT_0…`) |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` |
 | who holds what | `warden ls` |
