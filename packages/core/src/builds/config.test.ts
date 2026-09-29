@@ -1,0 +1,137 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEFAULT_BUILD_COMMAND } from "./builds.defaults";
+import { bundleIdFor, CONFIG_FILE, loadProject, parseWardenConfig } from "./config";
+
+let dir: string;
+const env = { HOME: "/home/me" };
+
+beforeEach(() => {
+	dir = mkdtempSync(join(tmpdir(), "warden-config-"));
+});
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+function write(path: string, data: unknown): void {
+	mkdirSync(join(dir, path, ".."), { recursive: true });
+	writeFileSync(join(dir, path), typeof data === "string" ? data : JSON.stringify(data));
+}
+
+describe("parseWardenConfig", () => {
+	test("applies defaults", () => {
+		const res = parseWardenConfig({
+			projects: [{ name: "app", bundleId: { ios: "com.x.app" }, eas: {} }],
+		});
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.projects[0]).toEqual({
+			name: "app",
+			root: ".",
+			bundleId: { ios: "com.x.app" },
+			eas: { profile: "development-simulator", trigger: false },
+		});
+	});
+
+	test("rejects bad shapes with a path", () => {
+		const cases: unknown[] = [
+			{},
+			{ projects: [] },
+			{ projects: [{ name: "", bundleId: {} }] },
+			{ projects: [{ name: "a", bundleId: { ios: 1 } }] },
+			{ projects: [{ name: "a", bundleId: {}, eas: { trigger: "yes" } }] },
+			{ projects: [{ name: "a", bundleId: {}, nope: true }] },
+		];
+		for (const raw of cases) {
+			const res = parseWardenConfig(raw);
+			expect(res.success).toBe(false);
+			if (!res.success) expect(res.error).toContain(CONFIG_FILE);
+		}
+	});
+});
+
+describe("loadProject", () => {
+	test("config at repo root, project picked by containing dir", () => {
+		write(CONFIG_FILE, {
+			projects: [
+				{ name: "web", root: "apps/web", bundleId: {} },
+				{
+					name: "salient",
+					root: "apps/salient/app",
+					bundleId: { ios: "nz.x.salient", android: "nz.x.salient" },
+					fingerprint: { command: "bun run --silent fingerprint:{platform}" },
+					eas: { workflow: ".eas/workflows/dev-build.yml" },
+					build: { ios: "bun ios" },
+				},
+			],
+		});
+		mkdirSync(join(dir, "apps/salient/app/src"), { recursive: true });
+		const res = loadProject({ start: join(dir, "apps/salient/app/src"), env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data).toEqual({
+			name: "salient",
+			root: join(dir, "apps/salient/app"),
+			bundleId: { ios: "nz.x.salient", android: "nz.x.salient" },
+			fingerprintCommand: "bun run --silent fingerprint:{platform}",
+			eas: { profile: "development-simulator", workflow: ".eas/workflows/dev-build.yml", trigger: false },
+			build: { ios: "bun ios", android: DEFAULT_BUILD_COMMAND.android },
+			cacheDirs: ["/home/me/.cache/salient-dev-builds"],
+			origin: "config",
+		});
+	});
+
+	test("ambiguous: several projects, none containing start → error; --name picks", () => {
+		write(CONFIG_FILE, {
+			projects: [
+				{ name: "a", root: "a", bundleId: {} },
+				{ name: "b", root: "b", bundleId: {} },
+			],
+		});
+		expect(loadProject({ start: dir, env }).success).toBe(false);
+		const named = loadProject({ start: dir, env, name: "b" });
+		expect(named.success && named.data.root).toBe(join(dir, "b"));
+	});
+
+	test("single project is used from anywhere under the config", () => {
+		write(CONFIG_FILE, { projects: [{ name: "a", root: "app", bundleId: { ios: "x" } }] });
+		const res = loadProject({ start: dir, env });
+		expect(res.success && res.data.name).toBe("a");
+	});
+
+	test("auto-detects app.json bundle ids; eas.json enables EAS", () => {
+		write("app.json", {
+			expo: { slug: "demo", ios: { bundleIdentifier: "com.demo" }, android: { package: "com.demo.a" } },
+		});
+		write("eas.json", {});
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.name).toBe("demo");
+		expect(res.data.bundleId).toEqual({ ios: "com.demo", android: "com.demo.a" });
+		expect(res.data.eas).toEqual({ profile: "development-simulator", trigger: false });
+		expect(res.data.origin).toBe("app.json");
+		expect(res.data.cacheDirs).toEqual([]);
+	});
+
+	test("app.config.ts without bundle id → clear error; --bundle-id fixes it", () => {
+		write("app.config.ts", "export default {}");
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("--bundle-id");
+		const withFlag = loadProject({ start: dir, env, stopAt: dir, bundleId: { ios: "com.flag" } });
+		if (!withFlag.success) throw new Error(withFlag.error);
+		expect(withFlag.data.bundleId).toEqual({ ios: "com.flag" });
+		expect(withFlag.data.origin).toBe("app.config");
+		expect(withFlag.data.eas).toBeUndefined();
+	});
+
+	test("nothing found → error", () => {
+		expect(loadProject({ start: dir, env, stopAt: dir }).success).toBe(false);
+	});
+
+	test("bundleIdFor", () => {
+		write(CONFIG_FILE, { projects: [{ name: "a", bundleId: { ios: "x" } }] });
+		const res = loadProject({ start: dir, env });
+		if (!res.success) throw new Error(res.error);
+		expect(bundleIdFor(res.data, "ios")).toEqual({ success: true, data: "x" });
+		expect(bundleIdFor(res.data, "android").success).toBe(false);
+	});
+});

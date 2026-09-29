@@ -1,0 +1,14 @@
+{
+	"extends": "@warden/tsconfig/tsconfig.base.json",
+	"compilerOptions": {
+		"composite": false,
+		"outDir": "./dist",
+		"types": [
+			"bun"
+		]
+	},
+	"include": [
+		"src",
+		"scripts"
+	]
+}

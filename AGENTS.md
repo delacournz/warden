@@ -1,6 +1,6 @@
 # Warden
 
-> Bun + Turborepo monorepo. Apps in `apps/*`, shared packages in `packages/*`.
+> `warden` CLI: machine-wide leasing of iOS sims, Android emulators, ports and app builds for agents/users. Bun + Turborepo monorepo. Apps in `apps/*`, shared packages in `packages/*`. Usage: [README.md](README.md). Plan: [docs/plans/wdn-warden-cli.md](docs/plans/wdn-warden-cli.md).
 
 ## Stack / Dependencies
 
@@ -13,8 +13,10 @@
 ## Directory Structure
 
 ```
-apps/                 # apps (none yet — add via /dlc-scaffold-tanstack, /dlc-scaffold-tauri, /dlc-expo, /dlc-scaffold-elysia)
+apps/
+  cli/                # @warden/cli — the `warden` binary (commands, Claude hook)
 packages/
+  core/               # @warden/core — lease store, allocation, device providers, build cache
   biome-config/       # shared Biome config (root.jsonc, react.jsonc)
   tsconfig/           # shared tsconfig (tsconfig.base.json, tsconfig.react.json)
   types/              # shared utility types (Result, AsyncResult, ok, err)
@@ -26,7 +28,10 @@ scripts/              # repo scripts (pre-commit biome)
 - Every package/app `biome.jsonc` uses `"extends": "//"`; rules only live in `packages/biome-config/root.jsonc`.
 - Packages extend `@warden/tsconfig/tsconfig.base.json` (composite); apps set `composite: false`.
 - React code extends `tsconfig.react.json`.
-- Errors returned as `Result` / `AsyncResult` discriminated unions from `@warden/types`.
+- Errors returned as `Result` / `AsyncResult` discriminated unions from `@warden/types/result`.
+- sqlite `BEGIN IMMEDIATE` (`store.transaction`) is the cross-process mutex — no lockfiles.
+- Never shut down / erase / install on a device warden didn't create or lease (foreign = read-only).
+- Side effects (`exec`, clock, pid liveness, stdin, spawn) are injected; tests use temp `WARDEN_HOME`.
 
 ## File Naming
 

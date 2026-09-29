@@ -1,0 +1,33 @@
+{
+	"name": "@warden/cli",
+	"version": "0.1.0",
+	"description": "warden CLI: machine-wide device + port leasing for agents and users",
+	"type": "module",
+	"private": true,
+	"bin": {
+		"warden": "./src/cli.ts"
+	},
+	"scripts": {
+		"build": "bun scripts/build.ts",
+		"install:global": "bun src/cli.ts update",
+		"fmt": "biome format --write ./src ./scripts",
+		"lint": "biome lint --write ./src ./scripts",
+		"check": "biome check ./src ./scripts",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"build:release": "bun scripts/build.ts --channel release"
+	},
+	"dependencies": {
+		"@clack/prompts": "^1.8.1",
+		"@commander-js/extra-typings": "^15.0.0",
+		"@warden/core": "workspace:*",
+		"@warden/types": "workspace:*",
+		"chalk": "^6.0.1",
+		"commander": "^15.0.0",
+		"ora": "^9.4.1"
+	},
+	"devDependencies": {
+		"@warden/tsconfig": "workspace:*",
+		"typescript": "^5.9.3"
+	}
+}
