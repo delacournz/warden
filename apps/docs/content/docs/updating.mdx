@@ -1,0 +1,25 @@
+---
+title: Updating & releasing
+description: warden update for every build channel, and how releases are cut.
+icon: RefreshCw
+---
+
+`warden update` does the right thing for however warden was built (`warden version` shows which):
+
+| Build | `warden update` |
+|-------|-----------------|
+| **dev** — running from source | compiles a `local` binary from this checkout → `~/.local/bin/warden` |
+| **local** — compiled from a checkout | rebuilds from the checkout it was built from, in place (`--release` switches to releases) |
+| **release** — downloaded from GitHub | `gh release view` → newer? download `warden-<os>-<arch>` → verify sha256 → self-check → swap in place |
+
+The binary is swapped atomically at the same path, so the next `warden` in your current shell runs the new version — no new shell needed. If `PATH` resolves `warden` elsewhere, update warns you.
+
+Flags: `--check` (report only), `--force`, `--to <path>`, `--json`. Releases come from the private `delacournz/warden` repo through `gh` (auth required); set `WARDEN_RELEASE_REPO` to use another.
+
+## Releasing
+
+<Steps>
+<Step>Bump `version` in `apps/cli/package.json` and commit.</Step>
+<Step>`git tag v<version> && git push origin v<version>`.</Step>
+<Step>`.github/workflows/release.yml` checks the tag matches the version, runs typecheck / check / test, builds `warden-{darwin,linux}-{arm64,x64}` plus `checksums.txt`, and publishes the GitHub release.</Step>
+</Steps>

@@ -1,0 +1,33 @@
+---
+title: Golden images
+description: Clone new simulators from a settled golden for ~16 s boots.
+icon: Layers
+---
+
+A brand-new simulator's first boot takes 1–10 min, and about 80% of that is the one-time data migration. Measured:
+
+| Scenario | Time |
+|---|---|
+| fresh create + first boot | 146–239 s |
+| clone of a settled golden + boot | 3.7 s + 11.9 s |
+| 3 clones booted in parallel | ~20 s |
+
+So when `warden claim ios` needs a **new** pool device, it clones it (`simctl clone`) from a **golden image**: a sim warden booted once, waited on until its data migration finished (`DMLastMigrationResults`, since `bootstatus -b` can return early) and its CPU settled, then shut down.
+
+- The golden is built on first use and keyed by Xcode build + runtime + runtime build + device type + recipe. An Xcode or runtime upgrade simply builds a new one.
+- Clones are APFS copy-on-write (~30 MB each).
+- If cloning fails, warden falls back to `simctl create`. `WARDEN_GOLDEN=0` turns cloning off.
+- A pool device that already exists is always reused first; a second boot takes ~6.5 s.
+- Goldens are never allocated, adopted, booted by `gc` or counted in the pool; `warden devices` labels them `golden`.
+
+## Commands
+
+```bash
+warden golden ensure --profile iphone-17   # build ahead of time, so the first claim doesn't pay
+warden golden ls
+warden golden prune                        # delete stale goldens; --all deletes every one
+```
+
+## Cloning your own sim
+
+`warden clone <udid|name> [--name x]` duplicates any **shut-down** sim — e.g. one you've set up by hand — into warden's pool. warden refuses a booted source rather than shutting it down.

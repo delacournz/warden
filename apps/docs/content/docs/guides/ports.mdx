@@ -1,0 +1,28 @@
+---
+title: Ports
+description: Lease TCP ports from a range, bind-probed and never handed out twice.
+icon: Network
+---
+
+```bash
+warden port claim --from 8091 --span 20 --json
+warden port release --mine
+```
+
+`port claim` leases free port(s) from `FROM..FROM+SPAN` and prints one port per line. Each candidate is bind-probed, so a port something else is already listening on is skipped even if it has no lease. Leases follow the same owner + liveness rules as devices.
+
+| Flag | Default | |
+|---|---|---|
+| `--from <port>` | `8091` | first port of the range |
+| `--span <n>` | `20` | range size |
+| `--count <n>` | `1` | how many ports |
+| `--ttl <duration>` | `30m` | lease TTL without heartbeat |
+| `--label <label>` | | shown in `warden port ls` |
+
+`port release` takes `<port…>`, `--lease <id…>` or `--mine`, and only releases your own leases unless you pass `--force`.
+
+## Dev servers
+
+```bash
+PORT=$(warden port claim --from 3000 --span 50) bun run dev
+```

@@ -1,0 +1,33 @@
+---
+title: warden.config.json
+description: Optional per-repo config for app builds.
+icon: Settings
+---
+
+Optional, at the repo root. Without it, warden detects a single Expo project from `app.json` / `app.config.*`.
+
+```json title="warden.config.json"
+{
+  "projects": [{
+    "name": "salient",
+    "root": "apps/salient/app",
+    "bundleId": { "ios": "com.example.salient", "android": "com.example.salient" },
+    "fingerprint": { "command": "bun run --silent fingerprint:{platform}" },
+    "eas": { "profile": "development-simulator", "workflow": ".eas/workflows/dev-build.yml", "trigger": false },
+    "build": { "ios": "bunx expo run:ios --no-install --no-bundler" }
+  }]
+}
+```
+
+<TypeTable
+  type={{
+    name: { type: "string", description: "Project name, used in the cache key." },
+    root: { type: "string", description: "Project directory, relative to the repo root." },
+    bundleId: { type: "{ ios?: string; android?: string }", description: "Bundle id / package. Required for a dynamic app.config." },
+    "fingerprint.command": { type: "string", description: "Command that prints the fingerprint. `{platform}` is substituted." },
+    "eas.profile": { type: "string", description: "EAS build profile to look up builds under." },
+    "eas.workflow": { type: "string", description: "EAS workflow file to trigger on a miss." },
+    "eas.trigger": { type: "boolean", description: "Trigger the workflow when no EAS build matches.", default: "false" },
+    build: { type: "{ ios?: string; android?: string }", description: "Local build command per platform, used as the last resort." },
+  }}
+/>

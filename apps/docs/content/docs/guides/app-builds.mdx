@@ -1,0 +1,34 @@
+---
+title: App builds
+description: Install the native build matching your Expo fingerprint — from the device, cache, EAS or a local build.
+icon: Package
+---
+
+```bash
+warden app fingerprint ios
+warden app ensure ios --udid <udid> --json
+# { "appPath": "…", "hash": "…", "source": "installed" | "cache" | "eas" | "build", "installed": true }
+```
+
+## Resolution order
+
+<Steps>
+<Step>**Installed** — the device already has this fingerprint hash.</Step>
+<Step>**Cache** — `~/.warden/builds/<projectKey>/<platform>/<hash>`, then legacy caches. All worktrees of a repo share one cache.</Step>
+<Step>**EAS** — `build:list --fingerprint-hash`, then download. Waits for builds already in flight; triggers the workflow only if `eas.trigger` is set.</Step>
+<Step>**Local build** — verified against the fingerprint.</Step>
+</Steps>
+
+A build lock stops two agents from downloading or building the same hash twice.
+
+## Project detection
+
+With no config, warden detects a single project from `app.json` / `app.config.*` (pass `--bundle-id` for a dynamic config). For monorepos or custom commands, add a [`warden.config.json`](/docs/reference/configuration).
+
+## Managing the cache
+
+```bash
+warden builds ls
+warden builds prune --max-size 20G        # LRU; build-locked entries stay
+warden builds import App.app --hash <h>   # file a local build under a fingerprint
+```

@@ -1,0 +1,59 @@
+---
+title: Installation
+description: Build the binary, wire up agent hooks, and check your setup.
+icon: Download
+---
+
+<Steps>
+<Step>
+
+### Build the binary
+
+From a checkout of the warden repo:
+
+```bash
+bun install
+bun run --cwd apps/cli install:global   # local build of this checkout → ~/.local/bin/warden
+```
+
+`~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`.
+
+</Step>
+<Step>
+
+### Install hooks for your agents
+
+```bash
+warden install            # binary + hooks for every detected agent; shows a diff, asks first
+warden install --claude   # force Claude Code only: skill + hooks + argent rule
+warden install --codex    # force Codex only: hooks in $CODEX_HOME/hooks.json
+```
+
+Every agent-config change shows a diff and asks first. `--yes` skips the prompt, `--dry-run` only prints, and a non-TTY without `--yes` skips. Merges are idempotent and keep all other config. See [Agents](/docs/guides/agents) for what gets installed.
+
+</Step>
+<Step>
+
+### Check it
+
+```bash
+warden doctor
+```
+
+`doctor` checks warden's home, the db, device tools (`xcrun simctl`, `adb`, `emulator`), `PATH`, Claude/Codex hooks and skill, and stale leases.
+
+</Step>
+</Steps>
+
+## Agent skill only
+
+For Claude Code, Codex, Cursor and others via the [`skills`](https://github.com/vercel-labs/skills) CLI:
+
+```bash
+warden skill show | pbcopy                         # raw SKILL.md to paste by hand
+warden skill install                               # this binary's embedded copy, global
+warden skill install --from github                 # delacournz/warden, updatable via `skills update`
+warden skill install --project -a claude-code -y   # into the current project, one agent, no prompts
+```
+
+The skill's source is `skills/warden/SKILL.md`, embedded in the binary. `npx` is used when `bunx` isn't available; `--dry-run` prints the command.

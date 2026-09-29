@@ -1,0 +1,6 @@
+.output
+.nitro
+.tanstack
+.vite
+.source
+src/routeTree.gen.ts

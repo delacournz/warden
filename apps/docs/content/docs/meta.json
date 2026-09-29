@@ -1,0 +1,16 @@
+{
+	"title": "warden",
+	"pages": [
+		"---Getting started---",
+		"index",
+		"installation",
+		"concepts",
+		"---Guides---",
+		"...guides",
+		"---Reference---",
+		"...reference",
+		"---Project---",
+		"updating",
+		"contributing"
+	]
+}

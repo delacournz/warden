@@ -1,0 +1,40 @@
+---
+title: Concepts
+description: Leases, owners, liveness, and which devices warden will touch.
+icon: BookOpen
+---
+
+## Leases
+
+A lease is an exclusive claim on one **resource** — a device (iOS sim or Android emulator, by udid / serial) or a TCP port. Every lease has an id, an owner, an optional label, `acquiredAt`, `heartbeatAt`, a TTL and, where known, a pid.
+
+All leases live in one sqlite database, `~/.warden/warden.db`, in WAL mode. Every claim runs inside `BEGIN IMMEDIATE`, which is the cross-process mutex: two processes claiming at the same instant are serialised, and the second sees the first's lease.
+
+## Owners
+
+warden works out who is asking:
+
+| Owner | Detected from |
+|---|---|
+| **agent** | hook stdin, `CLAUDE_CODE_SESSION_ID`, `WARDEN_SESSION_ID` |
+| **ci** | `CI`, `GITHUB_RUN_ID` |
+| **user** | the parent shell's pid |
+
+The repo and worktree are recorded with the lease, so `warden ls` and a blocked hook can tell you *which* worktree holds a device.
+
+## Liveness
+
+A lease is alive while **its pid is alive or its heartbeat is within the TTL** (default 30 min). Stale leases — pid dead *and* heartbeat expired — are reclaimed on every claim and by `warden gc`.
+
+Keep long work alive with `warden heartbeat --mine`. Each argent call through the agent hook refreshes the heartbeat automatically, and `warden run` heartbeats every 30 s.
+
+## Which devices warden touches
+
+- warden creates and reuses its own **`warden-<profile>-N`** simulators in the default CoreSimulator set, and launches Android emulators with `-read-only`.
+- A booted device with no lease that warden didn't create is **foreign** — your Simulator.app, another tool's sim. It is never allocated unless you pass `--adopt`, and never shut down, erased or installed on.
+- The pool grows on demand up to `--max` devices per profile (default: cores / 4, capped at 4).
+- `warden gc` shuts down idle warden devices after 20 min. It never deletes them.
+
+## Shutdown policy
+
+Only sims warden **created**, or that the lease owner **booted itself** (they were off when it first touched them), are shut down on release. A sim that was already running when it was picked up is released but left on.

@@ -1,0 +1,23 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+	"extends": "//",
+	"root": false,
+	"files": {
+		"includes": ["src/**/*", "!src/routeTree.gen.ts"]
+	},
+	"css": {
+		"parser": { "tailwindDirectives": true }
+	},
+	"overrides": [
+		{
+			// TanStack Router derives routes from filenames; `__root`, `$`,
+			// `{$}[.]md` and `llms[.]txt` are its conventions, not kebab-case.
+			"includes": ["src/routes/**/*"],
+			"linter": {
+				"rules": {
+					"style": { "useFilenamingConvention": "off" }
+				}
+			}
+		}
+	]
+}

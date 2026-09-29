@@ -1,0 +1,30 @@
+---
+title: Environment variables
+description: Variables warden reads, and the ones warden run sets.
+icon: Variable
+---
+
+## Read by warden
+
+| Variable | Effect |
+|---|---|
+| `WARDEN_HOME` | state directory (default `~/.warden`): db, builds, skill |
+| `WARDEN_SESSION_ID` | treat the caller as this agent session |
+| `CLAUDE_CODE_SESSION_ID` | Claude Code session, detected as the owner |
+| `CI`, `GITHUB_RUN_ID` | detected as a CI owner |
+| `WARDEN_GOLDEN=0` | don't clone new sims from golden images |
+| `WARDEN_AUTO_GC=0` | turn off background auto-gc |
+| `WARDEN_BACKGROUND=0` | turn off every detached worker (auto-gc, SessionEnd shutdown) |
+| `WARDEN_RELEASE_REPO` | GitHub repo `warden update` downloads releases from (default `delacournz/warden`) |
+| `CODEX_HOME` | Codex config directory (default `~/.codex`) |
+
+## Set by `warden run`
+
+| Variable | Value |
+|---|---|
+| `WARDEN_UDIDS` | every claimed udid / serial |
+| `WARDEN_UDID_<i>` | the i-th device |
+| `WARDEN_LEASE_IDS` | every lease id |
+| `WARDEN_PORTS` | every leased port |
+| `WARDEN_PORT_<i>` | the i-th `--port` lease |
+| `WARDEN_APP_PATH`, `WARDEN_APP_HASH` | with `--app`: installed build + fingerprint |

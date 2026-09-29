@@ -1,0 +1,38 @@
+{
+	"name": "@warden/docs",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"sideEffects": false,
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"start": "bun .output/server/index.mjs",
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@tanstack/react-router": "1.170.27",
+		"@tanstack/react-start": "1.168.44",
+		"fumadocs-core": "16.15.1",
+		"fumadocs-mdx": "15.3.1",
+		"fumadocs-ui": "npm:@fumadocs/base-ui@16.15.1",
+		"lucide-react": "^1.31.0",
+		"react": "19.2.3",
+		"react-dom": "19.2.3"
+	},
+	"devDependencies": {
+		"@tailwindcss/vite": "^4.3.3",
+		"@types/mdx": "^2.0.14",
+		"@types/react": "19.2.18",
+		"@types/react-dom": "^19.2.4",
+		"@vitejs/plugin-react": "^6.0.5",
+		"nitro": "3.0.260610-beta",
+		"tailwindcss": "^4.3.3",
+		"typescript": "^6.0.3",
+		"vite": "^8.2.1"
+	}
+}

@@ -1,0 +1,41 @@
+---
+title: e2e scripts
+description: Claim devices and ports for a script with warden run, released on exit.
+icon: Play
+---
+
+`warden run` is the primary integration for any repo's e2e script:
+
+```bash
+warden run ios --count 2 --port 8091:20 --port 3208:20 [--app] -- bun run e2e
+```
+
+It claims the devices and ports, then runs the command with these set:
+
+| Variable | Value |
+|---|---|
+| `WARDEN_UDIDS` | every claimed udid / serial, comma-separated |
+| `WARDEN_UDID_<i>` | the i-th device |
+| `WARDEN_LEASE_IDS` | every lease id |
+| `WARDEN_PORTS` | every leased port |
+| `WARDEN_PORT_<i>` | the port leased for the i-th `--port` |
+| `WARDEN_APP_PATH` / `WARDEN_APP_HASH` | with `--app`: the installed build and its fingerprint |
+
+It heartbeats every 30 s, forwards SIGINT / SIGTERM, releases everything on exit and passes the exit code through.
+
+## Installing the app first
+
+With `--app`, warden first ensures the project's dev build is installed on each device — see [App builds](/docs/guides/app-builds).
+
+```bash
+warden run ios --count 2 --app --project apps/mobile -- bun run e2e
+```
+
+`--no-eas` skips EAS downloads; `--no-build` refuses to build locally on a cache miss.
+
+## Reading the env in a script
+
+```ts title="e2e/run.ts"
+const udids = (process.env.WARDEN_UDIDS ?? "").split(",").filter(Boolean);
+const metroPort = Number(process.env.WARDEN_PORT_0);
+```

@@ -6,6 +6,7 @@ See @AGENTS.md for full documentation.
 
 - **Stack**: Bun + Turborepo + TypeScript + Biome
 - **Binary**: `warden` (apps/cli, `bun run --cwd apps/cli install:global`)
+- **Docs**: apps/docs (Fumadocs), `bun run --cwd apps/docs dev` → :3210
 
 ## Commands
 

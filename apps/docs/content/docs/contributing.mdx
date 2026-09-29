@@ -1,0 +1,43 @@
+---
+title: Contributing
+description: Repo layout, conventions and commands.
+icon: GitPullRequest
+---
+
+Bun + Turborepo monorepo, TypeScript strict, Biome for lint + format, prek git hooks (biome on commit, typecheck on push).
+
+<Files>
+  <Folder name="apps" defaultOpen>
+    <File name="cli — @warden/cli, the warden binary (commands, hooks)" />
+    <File name="docs — @warden/docs, this site (Fumadocs + TanStack Start)" />
+  </Folder>
+  <Folder name="packages" defaultOpen>
+    <File name="core — lease store, allocation, device providers, build cache" />
+    <File name="types — Result / AsyncResult" />
+    <File name="biome-config, tsconfig — shared config" />
+  </Folder>
+  <Folder name="skills/warden">
+    <File name="SKILL.md — embedded in the binary" />
+  </Folder>
+</Files>
+
+## Commands
+
+```bash
+bun run test        # turbo: core + cli (incl. cross-process race tests)
+bun run typecheck
+bun run check       # biome
+bun run --cwd apps/docs dev   # this site on :3210 (PORT overrides)
+```
+
+## Conventions
+
+- sqlite `BEGIN IMMEDIATE` (`store.transaction`) is the cross-process mutex — no lockfiles.
+- Never shut down / erase / install on a device warden didn't create or lease. Foreign devices are read-only.
+- Side effects (`exec`, clock, pid liveness, stdin, spawn) are injected; tests use a temp `WARDEN_HOME`.
+- Errors are `Result` / `AsyncResult` discriminated unions from `@warden/types/result`. No `any`, no barrel exports.
+- TDD: failing test first, colocated `{name}.test.ts`, `bun test <path>`.
+
+## Editing these docs
+
+Pages are MDX under `apps/docs/content/docs`; sidebar order lives in each folder's `meta.json`. Every page is also served as Markdown at `<url>.md`, and the whole site at `/llms.txt` and `/llms-full.txt`.

@@ -1,0 +1,32 @@
+---
+title: Introduction
+description: Machine-wide leasing of iOS simulators, Android emulators, ports and native app builds.
+icon: ShieldCheck
+---
+
+Several agents, Orca worktrees, repos and humans share one Mac's simulators, emulators and dev-server ports. Without coordination, two worktrees running e2e at once grab the same sims, an agent taps on your Simulator.app, and a Metro server lands on a port another one already holds.
+
+`warden` is one global CLI that owns a **lease registry**. A device or port leased by one owner is never handed to another.
+
+## What it does
+
+- **Leases** live in one sqlite db (`~/.warden/warden.db`, WAL). Claims run under `BEGIN IMMEDIATE`, which serialises them across processes — no lockfiles.
+- **Owners** are a Claude/Codex session, CI, or a user shell. The repo and worktree are recorded for messages.
+- **Liveness**: a lease stays alive while its pid is alive or its heartbeat is within the TTL (default 30 min). Stale leases are reclaimed on every claim and by `warden gc`.
+- **Devices**: warden creates and reuses its own `warden-<profile>-N` simulators and launches `-read-only` emulators. It never allocates, shuts down or erases a device it didn't create, unless you pass `--adopt`.
+- **Builds**: Expo fingerprint → installed → local cache → EAS → local build. All worktrees of a repo share one cache.
+
+## 30-second tour
+
+```bash
+warden claim ios --json          # lease a booted, ready sim
+warden ls                        # who holds what
+warden release --mine --shutdown # done: release + stop sims warden booted
+```
+
+<Cards>
+  <Card title="Installation" href="/docs/installation" />
+  <Card title="Concepts" href="/docs/concepts" />
+  <Card title="Agents" href="/docs/guides/agents" />
+  <Card title="CLI reference" href="/docs/reference/cli" />
+</Cards>

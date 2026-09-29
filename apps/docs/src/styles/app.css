@@ -1,0 +1,14 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+/* One accent — amber — for every interactive and every marker, on Fumadocs' neutral base. */
+:root {
+	--color-fd-primary: oklch(0.666 0.179 58.318);
+	--color-fd-primary-foreground: oklch(0.985 0 0);
+}
+
+.dark {
+	--color-fd-primary: oklch(0.769 0.188 70.08);
+	--color-fd-primary-foreground: oklch(0.21 0.006 285.885);
+}

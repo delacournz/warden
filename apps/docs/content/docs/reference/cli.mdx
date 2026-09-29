@@ -1,0 +1,137 @@
+---
+title: CLI
+description: Every warden command and flag. All commands accept --json.
+icon: Terminal
+---
+
+## Quick reference
+
+| Need | Command |
+|------|---------|
+| one sim / emulator | `warden claim ios --json` · `warden claim android --json` |
+| N devices + ports for a script | `warden run ios --count N --port 8091:20 -- <cmd>` |
+| a free port | `warden port claim --json` |
+| dev build installed on the device | `warden app ensure ios --udid <udid> --json` |
+| duplicate a shut-down sim | `warden clone <udid\|name> [--name x]` |
+| pre-build the golden image | `warden golden ensure --profile iphone-17` |
+| who holds what | `warden ls` |
+| every sim / emulator + who leases it | `warden devices` (alias `warden list`) |
+| is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
+| keep a long lease alive | `warden heartbeat --mine` |
+| reclaim dead leases | `warden gc` |
+| setup problems | `warden doctor` |
+| update warden | `warden update` (`--check` to only look) |
+
+## Devices
+
+### `warden claim [platform]`
+
+Lease iOS sims / Android emulators — reuse, boot or create — booted and ready. `platform` is `ios | android`, asked for when omitted in a terminal.
+
+| Flag | Default | |
+|---|---|---|
+| `--profile <slug>` | `iphone-17` / first AVD | device profile, e.g. `iphone-17`, `pixel-10` |
+| `--runtime <runtime>` | `latest` | `latest`, `iOS-26-5`, `26.5` … |
+| `--count <n>` | `1` | how many devices |
+| `--max <n>` | cores/4, cap 4 | max warden devices of this profile |
+| `--wait <duration>` | | wait this long for a free device, e.g. `10m` |
+| `--ttl <duration>` | `30m` | lease TTL without heartbeat |
+| `--label <label>` | | shown in `warden ls` |
+| `--adopt` | | allow allocating foreign (non-warden) devices |
+
+### `warden release [leaseIds...]`
+
+Release leases, selected by id, `--udid <udid...>`, `--mine` or `--session <id>`. `--shutdown` also shuts down devices warden created (or the lease owner booted).
+
+### `warden run [platform] -- <cmd...>`
+
+Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes every `claim` flag, plus:
+
+| Flag | |
+|---|---|
+| `--port <from:span>` | lease a port for the child (`WARDEN_PORT_<i>`); repeatable |
+| `--app` | install the project's app on each device first |
+| `--project <dir>` | `--app`: project directory (default: cwd) |
+| `--bundle-id <id>` | `--app`: override the bundle id / package |
+| `--no-eas` / `--no-build` | `--app`: skip EAS downloads / local builds |
+
+See [e2e scripts](/docs/guides/e2e).
+
+### `warden ls`
+
+List leases: resource, state, owner, repo/worktree, age, heartbeat.
+
+### `warden devices [platform]` (alias `list`)
+
+Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases.
+
+### `warden clone <source>`
+
+Duplicate a shut-down iOS simulator (udid or name) into warden's pool. `--name` defaults to the next free `warden-<profile>-N`.
+
+### `warden golden ensure | ls | prune`
+
+Golden iOS images new sims are cloned from. `ensure [--profile] [--runtime]` builds once or reuses; `prune` deletes stale goldens (`--all` every golden, `-y` skips the prompt). See [Golden images](/docs/guides/golden-images).
+
+### `warden check`
+
+Exit 0 if a device (`--udid`) is free or yours, **2** if another owner holds it. `--session <id>` checks against that agent session instead of the caller.
+
+### `warden heartbeat [leaseIds...]`
+
+Refresh heartbeats so leases don't go stale. Same selectors as `release`.
+
+### `warden gc`
+
+Reclaim stale leases and shut down unleased warden devices idle for `--idle` (default `20m`). Never deletes. `--quiet` prints nothing (used by background auto-gc).
+
+## Ports
+
+### `warden port claim`
+
+`--from` (8091), `--span` (20), `--count` (1), `--ttl` (30m), `--label`. Prints one port per line. See [Ports](/docs/guides/ports).
+
+### `warden port release [ports...]`
+
+By port, `--lease <id...>` or `--mine`. `--force` releases leases held by someone else.
+
+## Builds
+
+### `warden app fingerprint [platform]`
+
+Print the project's native fingerprint (both platforms by default). `--project`, `--bundle-id`.
+
+### `warden app ensure [platform]`
+
+Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--no-eas`, `--no-build`, `--project`, `--bundle-id`. See [App builds](/docs/guides/app-builds).
+
+### `warden builds ls | prune | import`
+
+- `prune [--max-size 20G] [--dry-run] [--yes]` — remove least-recently-used builds until the cache fits; build-locked ones stay.
+- `import <path.app|path.apk> --hash <h> [--platform] [--project] [--profile] [--bundle-id]` — copy a local build into the cache.
+
+## Setup
+
+### `warden install`
+
+Install warden to `~/.local/bin` plus hooks for detected agents. `--claude`, `--codex`, `-y/--yes`, `--dry-run`, `--shim` (running from source: link `~/.local/bin/warden` to this checkout).
+
+### `warden skill show | install`
+
+`install --from local|github`, `--project`, `-a/--agent <agent...>`, `--copy`, `-y`, `--dry-run`.
+
+### `warden hook pretool | session-end`
+
+The agent hook entrypoints. Called by Claude Code / Codex, not by hand.
+
+### `warden doctor`
+
+Check home, db, device tools, `PATH`, Claude/Codex hooks + skill, and stale leases.
+
+### `warden update`
+
+`--check`, `--release`, `--force`, `--to <path>`. See [Updating](/docs/updating).
+
+### `warden version`
+
+Print the version and build channel (`dev` / `local` / `release`).

@@ -15,6 +15,7 @@
 ```
 apps/
   cli/                # @warden/cli — the `warden` binary (commands, Claude hook)
+  docs/               # @warden/docs — Fumadocs + TanStack Start docs site (content/docs/*.mdx), :3210
 packages/
   core/               # @warden/core — lease store, allocation, device providers, build cache
   biome-config/       # shared Biome config (root.jsonc, react.jsonc)
