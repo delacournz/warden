@@ -8,7 +8,7 @@ import { type AsyncResult, err, ok } from "@warden/types/result";
 import { withBuildLock } from "../builds/lock";
 import { type Exec, execError } from "../exec";
 import type { PidAlive } from "../liveness";
-import { parseSimctlDeviceTypes, parseSimctlRuntimes, resolveCreateTarget } from "../providers/ios";
+import { lookupCreateTarget } from "../providers/ios";
 import type { Store } from "../store";
 import type { Owner } from "../types";
 import {
@@ -84,15 +84,7 @@ const log = (deps: GoldenDeps, line: string) => deps.log?.(`golden: ${line}`);
 
 /** Xcode build + the device type / runtime `simctl create` would use for this profile. */
 export async function readGoldenTarget(deps: GoldenDeps, profile: string, runtime?: string): AsyncResult<GoldenTarget> {
-	const typesOut = await simctl(deps, ["list", "devicetypes", "-j"]);
-	if (!typesOut.success) return typesOut;
-	const types = parseSimctlDeviceTypes(typesOut.data);
-	if (!types.success) return types;
-	const runtimesOut = await simctl(deps, ["list", "runtimes", "-j"]);
-	if (!runtimesOut.success) return runtimesOut;
-	const runtimes = parseSimctlRuntimes(runtimesOut.data);
-	if (!runtimes.success) return runtimes;
-	const target = resolveCreateTarget(types.data, runtimes.data, profile, runtime);
+	const target = await lookupCreateTarget(deps.exec, profile, runtime);
 	if (!target.success) return target;
 	const xcode = await run(deps.exec, ["xcodebuild", "-version"]);
 	if (!xcode.success) return xcode;

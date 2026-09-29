@@ -10,6 +10,11 @@ export function selfCommand(): string[] {
 	return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
 }
 
+/** `WARDEN_BACKGROUND=0` turns off every detached worker (auto-gc, SessionEnd shutdown) — work then runs inline or not at all. */
+export function backgroundAllowed(env: Record<string, string | undefined>): boolean {
+	return env.WARDEN_BACKGROUND !== "0";
+}
+
 /** Fire-and-forget: detached, no stdio, never awaited — outlives the hook that started it. */
 export function spawnDetached(cmd: string[], env: Record<string, string | undefined>): void {
 	const [bin, ...args] = cmd;
@@ -28,7 +33,7 @@ export function maybeAutoGc(
 	self: string[] = selfCommand(),
 	run: (cmd: string[]) => void = (cmd) => spawnDetached(cmd, { ...process.env, ...ctx.env })
 ): void {
-	if (ctx.env.WARDEN_AUTO_GC === "0") return;
+	if (ctx.env.WARDEN_AUTO_GC === "0" || !backgroundAllowed(ctx.env)) return;
 	const store = ctx.store();
 	const now = ctx.now();
 	const due = store.transaction(() => {

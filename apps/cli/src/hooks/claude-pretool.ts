@@ -28,6 +28,11 @@ export type HookDeps = {
 	shutdown: (leases: Lease[], owner: Owner) => Promise<{ shutdown: string[]; notes: string[] }>;
 	/** kick off a background `warden gc` if one hasn't run recently (never throws, never waits) */
 	maybeGc: () => void;
+	/**
+	 * Start a detached worker that shuts down + releases this session's devices; true if started.
+	 * SessionEnd hooks are time-capped (Codex: ~3 s) and a sim shutdown can take longer.
+	 */
+	endInBackground: (sessionId: string) => boolean;
 };
 
 /** PreToolUse matcher for argent's device tools (plain + plugin-namespaced MCP servers). */
@@ -154,11 +159,21 @@ export async function handlePreToolUse(raw: unknown, deps: HookDeps): Promise<Ho
 	}
 }
 
+function startWorker(deps: HookDeps, sessionId: string): boolean {
+	try {
+		return deps.endInBackground(sessionId);
+	} catch {
+		return false;
+	}
+}
+
 /**
  * SessionEnd: shut down the session's devices the shutdown policy allows (warden-created, or booted
  * by this session) so nothing is left running, then release every lease the session holds. On
  * `/clear` (reason `clear`) devices stay up — the conversation restarts but the work usually goes on
- * with the same sim, which the new session re-claims on its next argent call.
+ * with the same sim, which the new session re-claims on its next argent call. When there are devices
+ * to shut down the work goes to a detached worker (`warden release --session S --shutdown`, which
+ * shuts down before releasing) so the hook returns inside the agent's time cap; inline otherwise.
  */
 export async function handleSessionEnd(raw: unknown, deps: HookDeps): Promise<HookResult> {
 	try {
@@ -168,7 +183,15 @@ export async function handleSessionEnd(raw: unknown, deps: HookDeps): Promise<Ho
 		const store = deps.store();
 		const leases = store.listLeasesByOwner(owner);
 		const lines: string[] = [];
-		if (stringField(raw, "reason") !== "clear") {
+		const keepRunning = stringField(raw, "reason") === "clear";
+		const hasDevices = leases.some((l) => l.resource.kind === "device");
+		if (!keepRunning && hasDevices && startWorker(deps, sessionId)) {
+			return {
+				exitCode: 0,
+				stdout: `warden: shutting down + releasing session ${sessionId} devices in the background`,
+			};
+		}
+		if (!keepRunning) {
 			try {
 				const devices = leases.filter((l) => l.resource.kind === "device");
 				const outcome = devices.length > 0 ? await deps.shutdown(devices, owner) : { shutdown: [], notes: [] };

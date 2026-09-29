@@ -215,6 +215,23 @@ async function idempotent(exec: Exec, args: string[], alreadyState: string): Asy
 	return err(execError(cmd, result));
 }
 
+/** `simctl list devicetypes/runtimes` → the device type + runtime `simctl create` should use for this profile. */
+export async function lookupCreateTarget(
+	exec: Exec,
+	profile: string,
+	runtime: string | undefined
+): AsyncResult<{ type: SimDeviceType; runtime: SimRuntime }> {
+	const typesOut = await simctl(exec, ["list", "devicetypes", "-j"]);
+	if (!typesOut.success) return typesOut;
+	const types = parseSimctlDeviceTypes(typesOut.data);
+	if (!types.success) return types;
+	const runtimesOut = await simctl(exec, ["list", "runtimes", "-j"]);
+	if (!runtimesOut.success) return runtimesOut;
+	const runtimes = parseSimctlRuntimes(runtimesOut.data);
+	if (!runtimes.success) return runtimes;
+	return resolveCreateTarget(types.data, runtimes.data, profile, runtime);
+}
+
 /** Makes a new sim by cloning a prepared image; returns its udid + short runtime. */
 export type IosCloneStrategy = (
 	name: string,
@@ -248,17 +265,8 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 				if (cloned.success) return ok(record(cloned.data.udid, name, profile, cloned.data.runtime));
 				deps.log?.(`clone failed (${cloned.error}) — creating ${name} fresh (slow first boot)`);
 			}
-			const typesOut = await simctl(exec, ["list", "devicetypes", "-j"]);
-			if (!typesOut.success) return typesOut;
-			const types = parseSimctlDeviceTypes(typesOut.data);
-			if (!types.success) return types;
-			const runtimesOut = await simctl(exec, ["list", "runtimes", "-j"]);
-			if (!runtimesOut.success) return runtimesOut;
-			const runtimes = parseSimctlRuntimes(runtimesOut.data);
-			if (!runtimes.success) return runtimes;
-			const target = resolveCreateTarget(types.data, runtimes.data, profile, runtime);
+			const target = await lookupCreateTarget(exec, profile, runtime);
 			if (!target.success) return target;
-
 			const created = await simctl(exec, ["create", name, target.data.type.identifier, target.data.runtime.identifier]);
 			if (!created.success) return created;
 			const id = created.data.trim();

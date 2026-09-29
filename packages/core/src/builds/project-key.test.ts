@@ -92,6 +92,9 @@ describe("readProjectKey", () => {
 		};
 		expect(await readProjectKey(exec, "/w")).toEqual({ success: true, data: "github.com/o/r:." });
 		const none: Exec = async () => ({ exitCode: 128, stdout: "", stderr: "not a git repo" });
-		expect(await readProjectKey(none, "/tmp/x")).toEqual({ success: true, data: "path:/tmp/x" });
+		expect(await readProjectKey(none, "/nonexistent-warden-test/x")).toEqual({
+			success: true,
+			data: "path:/nonexistent-warden-test/x",
+		});
 	});
 });

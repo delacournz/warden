@@ -46,6 +46,7 @@ function deps(): HookDeps {
 		maybeGc: () => {
 			gcTriggers++;
 		},
+		endInBackground: () => false,
 	};
 }
 
@@ -290,6 +291,38 @@ describe("handleSessionEnd", () => {
 			throw new Error("simctl gone");
 		};
 		expect((await handleSessionEnd({ session_id: "s1", reason: "exit" }, d)).exitCode).toBe(0);
+		expect(store.listLeases()).toEqual([]);
+	});
+
+	test("background worker available → hand off shutdown + release and return at once (Codex caps SessionEnd at ~3 s)", async () => {
+		deviceStates.set(UDID, "shutdown");
+		await handlePreToolUse(input({ udid: UDID }), deps());
+		const handedOff: string[] = [];
+		const d = deps();
+		d.endInBackground = (sessionId) => {
+			handedOff.push(sessionId);
+			return true;
+		};
+		const result = await handleSessionEnd({ session_id: "s1", reason: "other" }, d);
+		expect(handedOff).toEqual(["s1"]);
+		expect(shutdowns).toEqual([]);
+		expect(store.listLeases()).toHaveLength(1);
+		expect(result.stdout).toContain("background");
+	});
+
+	test("nothing to shut down → no worker, just release", async () => {
+		store.insertLease(
+			{ resource: { kind: "port", port: 8091 }, owner: { kind: "agent", sessionId: "s1", cwd: "/" }, ttlMs: 1 },
+			now
+		);
+		const d = deps();
+		let spawned = false;
+		d.endInBackground = () => {
+			spawned = true;
+			return true;
+		};
+		await handleSessionEnd({ session_id: "s1", reason: "other" }, d);
+		expect(spawned).toBe(false);
 		expect(store.listLeases()).toEqual([]);
 	});
 });

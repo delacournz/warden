@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { DEFAULT_PROFILE } from "@warden/core/config.defaults";
-import { ensureGolden, listGoldens, pruneGoldens } from "@warden/core/golden/ios-golden";
+import { ensureGolden, type GoldenDeps, listGoldens, pruneGoldens } from "@warden/core/golden/ios-golden";
 import { resolveOwner } from "../claim-flags";
 import type { Command, CommandContext } from "../context";
 import { goldenDeps, type Sleep } from "../golden-deps";
@@ -26,6 +26,41 @@ function parse(argv: string[]) {
 	});
 }
 
+type Values = ReturnType<typeof parse>["values"];
+
+async function ensure(ctx: CommandContext, deps: GoldenDeps, values: Values): Promise<number> {
+	const golden = await ensureGolden(deps, values.profile ?? DEFAULT_PROFILE.ios, values.runtime);
+	if (!golden.success) return fail(ctx, golden.error);
+	const { name, udid, built } = golden.data;
+	emit(ctx, values.json === true, golden.data, `${name} ${udid} (${built ? "built" : "reused"})`);
+	return 0;
+}
+
+async function ls(ctx: CommandContext, deps: GoldenDeps, values: Values): Promise<number> {
+	const goldens = await listGoldens(deps);
+	if (!goldens.success) return fail(ctx, goldens.error);
+	const table = formatTable(
+		["NAME", "UDID", "STATE", "RUNTIME", "AVAILABLE"],
+		goldens.data.map((g) => [g.name, g.udid, g.state, g.runtimeId.split(".").pop() ?? "", g.isAvailable ? "yes" : "no"])
+	);
+	emit(ctx, values.json === true, goldens.data, goldens.data.length > 0 ? table : "no golden images");
+	return 0;
+}
+
+async function prune(ctx: CommandContext, deps: GoldenDeps, values: Values): Promise<number> {
+	const pruned = await pruneGoldens(deps, { all: values.all === true });
+	if (!pruned.success) return fail(ctx, pruned.error);
+	const text = pruned.data.length > 0 ? `deleted ${pruned.data.map((g) => g.name).join(" ")}` : "nothing to prune";
+	emit(ctx, values.json === true, pruned.data, text);
+	return 0;
+}
+
+const SUBCOMMANDS: Record<string, (ctx: CommandContext, deps: GoldenDeps, values: Values) => Promise<number>> = {
+	ensure,
+	ls,
+	prune,
+};
+
 /**
  * Golden iOS images: one first-booted, settled, shut-down sim per Xcode + runtime + device type.
  * `warden claim` clones new pool devices from it (seconds) instead of a fresh first boot (minutes).
@@ -39,52 +74,12 @@ export function createGoldenCommand(opts: { sleep?: Sleep } = {}): Command {
 			ctx.err(`warden golden: ${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
 			return 1;
 		}
-		const { values, positionals } = parsed;
-		const json = values.json === true;
-		const deps = goldenDeps(ctx, resolveOwner(ctx), opts.sleep);
-		switch (positionals[0]) {
-			case "ensure": {
-				const golden = await ensureGolden(deps, values.profile ?? DEFAULT_PROFILE.ios, values.runtime);
-				if (!golden.success) return fail(ctx, golden.error);
-				emit(
-					ctx,
-					json,
-					golden.data,
-					`${golden.data.name} ${golden.data.udid} (${golden.data.built ? "built" : "reused"})`
-				);
-				return 0;
-			}
-			case "ls": {
-				const goldens = await listGoldens(deps);
-				if (!goldens.success) return fail(ctx, goldens.error);
-				const table = formatTable(
-					["NAME", "UDID", "STATE", "RUNTIME", "AVAILABLE"],
-					goldens.data.map((g) => [
-						g.name,
-						g.udid,
-						g.state,
-						g.runtimeId.split(".").pop() ?? "",
-						g.isAvailable ? "yes" : "no",
-					])
-				);
-				emit(ctx, json, goldens.data, goldens.data.length > 0 ? table : "no golden images");
-				return 0;
-			}
-			case "prune": {
-				const pruned = await pruneGoldens(deps, { all: values.all === true });
-				if (!pruned.success) return fail(ctx, pruned.error);
-				emit(
-					ctx,
-					json,
-					pruned.data,
-					pruned.data.length > 0 ? `deleted ${pruned.data.map((g) => g.name).join(" ")}` : "nothing to prune"
-				);
-				return 0;
-			}
-			default:
-				ctx.err(`warden golden: expected ensure | ls | prune\n${USAGE}`);
-				return 1;
+		const sub = SUBCOMMANDS[parsed.positionals[0] ?? ""];
+		if (!sub) {
+			ctx.err(`warden golden: expected ensure | ls | prune\n${USAGE}`);
+			return 1;
 		}
+		return sub(ctx, goldenDeps(ctx, resolveOwner(ctx), opts.sleep), parsed.values);
 	}
 	return {
 		name: "golden",

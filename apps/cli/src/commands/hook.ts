@@ -1,6 +1,6 @@
 import { processAlive } from "@warden/core/liveness";
 import { readGitInfo } from "@warden/core/owner";
-import { maybeAutoGc } from "../autogc";
+import { backgroundAllowed, maybeAutoGc, selfCommand, spawnDetached } from "../autogc";
 import type { Command, CommandContext } from "../context";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { deviceState } from "../device-state";
@@ -24,6 +24,14 @@ function hookDeps(ctx: CommandContext): HookDeps {
 		deviceState: (platform, id) => deviceState(ctx.exec, ctx.env, platform, id),
 		shutdown: (leases, owner) => shutdownReleasedDevices(ctx, leases, owner),
 		maybeGc: () => maybeAutoGc(ctx),
+		endInBackground: (sessionId) => {
+			if (!backgroundAllowed(ctx.env)) return false;
+			spawnDetached([...selfCommand(), "release", "--session", sessionId, "--shutdown"], {
+				...process.env,
+				...ctx.env,
+			});
+			return true;
+		},
 	};
 }
 
