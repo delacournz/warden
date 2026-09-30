@@ -93,6 +93,17 @@
         "typescript": "^5.9.3",
       },
     },
+    "scripts/demo": {
+      "name": "@warden/demo",
+      "version": "0.1.0",
+      "dependencies": {
+        "@warden/types": "workspace:*",
+      },
+      "devDependencies": {
+        "@warden/tsconfig": "workspace:*",
+        "typescript": "^5.9.3",
+      },
+    },
   },
   "overrides": {
     "mdast-util-to-markdown": "2.1.2",
@@ -449,6 +460,8 @@
     "@warden/cli": ["@warden/cli@workspace:apps/cli"],
 
     "@warden/core": ["@warden/core@workspace:packages/core"],
+
+    "@warden/demo": ["@warden/demo@workspace:scripts/demo"],
 
     "@warden/docs": ["@warden/docs@workspace:apps/docs"],
 

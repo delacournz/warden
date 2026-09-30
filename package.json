@@ -13,11 +13,14 @@
 		"lint": "turbo lint",
 		"fmt": "turbo fmt",
 		"test": "turbo test",
+		"demo:compose": "bun scripts/demo/compose.ts",
+		"demo:fixture": "bun scripts/demo/fixture.ts",
 		"nuke": "rm -rf node_modules ./apps/**/node_modules ./packages/**/node_modules && bun install --no-cache -f"
 	},
 	"workspaces": [
 		"apps/*",
-		"packages/*"
+		"packages/*",
+		"scripts/demo"
 	],
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.14",

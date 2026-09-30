@@ -1,0 +1,9 @@
+{
+	"extends": "@warden/tsconfig/tsconfig.base.json",
+	"compilerOptions": {
+		"composite": false,
+		"noEmit": true,
+		"types": ["bun"]
+	},
+	"include": ["*.ts"]
+}

@@ -1,0 +1,23 @@
+{
+	"name": "@warden/demo",
+	"version": "0.1.0",
+	"description": "Demo video compositor: warden batch --record dir -> landing-page mp4/webm/poster",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"compose": "bun compose.ts",
+		"fixture": "bun fixture.ts",
+		"fmt": "biome format --write .",
+		"lint": "biome lint --write .",
+		"check": "biome check .",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@warden/types": "workspace:*"
+	},
+	"devDependencies": {
+		"@warden/tsconfig": "workspace:*",
+		"typescript": "^5.9.3"
+	}
+}

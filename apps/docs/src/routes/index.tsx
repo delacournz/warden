@@ -5,7 +5,7 @@ import type { ReactElement, ReactNode } from "react";
 import { CopyCommand } from "@/components/copy-command";
 import { GroupedList, GroupedRow } from "@/components/grouped-list";
 import { BootChart } from "@/components/landing/boot-chart";
-import { DeviceShelf } from "@/components/landing/device-shelf";
+import { DemoVideo } from "@/components/landing/demo-video";
 import { WardenIcon } from "@/components/warden-icon";
 import { baseOptions } from "@/lib/layout.shared";
 import { appDescription, appName, githubUrl } from "@/lib/shared";
@@ -32,9 +32,9 @@ function Section({ title, lede, children }: { title: string; lede: ReactNode; ch
 }
 
 /**
- * The landing page is warden's own device shelf. The first viewport states the
- * two promises — isolation and speed — and demonstrates both on the shelf;
- * the page then proves speed on a measured time axis, lays out the lease
+ * The first viewport states warden's two promises — isolation and speed — and
+ * demonstrates both in a recorded five-simulator `warden batch` run; the page
+ * then proves speed on a measured time axis, lays out the lease
  * rules as a grouped list, shows the agent hooks, and closes on install.
  */
 function Home(): ReactElement {
@@ -71,7 +71,7 @@ function Home(): ReactElement {
 							</div>
 						</div>
 					</div>
-					<DeviceShelf />
+					<DemoVideo />
 				</section>
 
 				<Section
