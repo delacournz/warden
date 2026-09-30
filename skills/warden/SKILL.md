@@ -22,6 +22,8 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | N devices + ports for an e2e script (auto-release on exit) | `warden run ios --count N --port 8091:20 -- <cmd>` (env: `WARDEN_UDIDS`, `WARDEN_UDID_0…`, `WARDEN_PORT_0…`) |
 | A list of independent jobs (flows, scenes) across N devices | `warden batch ios --count N --jobs-from <file\|-> [--serve <cmd> --serve-ready tcp:PORT] -- <cmd {job} {udid}>` (per job: `WARDEN_UDID`, `WARDEN_JOB`, `WARDEN_JOB_SEQ`) |
 | a batch saved in `warden.config.json` `batches` | `warden batch <preset> [flags override it] [-- <cmd> overrides its cmd]` |
+| which e2e flows a change needs (git diff → import graph) | `warden affected [suite] --base main --explain` (`--json`, `--strict`) |
+| run only those flows on leased devices; exit 1 if a required one fails | `warden e2e [suite] --base main --count N` (`--dry-run` to preview) |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` |
 | duplicate a shut-down sim (fast, no first boot) | `warden clone <udid\|name> [--name x]` |

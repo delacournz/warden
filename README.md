@@ -97,7 +97,7 @@ warden run ios --count 2 --port 8091:20 --port 3208:20 [--app] -- bun run e2e
 ### Batches: `warden batch`
 
 ```bash
-ls flows | warden batch ios --count 5 --max 5 --port 8091:20 --serve "bun run metro" --serve-ready tcp:8091 --jobs-from - --retry 1 -- argent flow run {job} --device {udid}
+ls flows | warden batch ios --count 5 --max 5 --port 8091:20 --serve "bun run metro" --serve-ready tcp:8091 --jobs-from - --retry 1 -- bun run e2e:flow {job} --device {udid}
 ```
 
 `warden batch` claims N devices and runs a job queue across them, one worker per device: `{job}`, `{udid}`, `{worker}` and `{seq}` are substituted into the command, which also gets `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_JOB` and `WARDEN_JOB_SEQ`. `--serve` starts a long-lived process (Metro) first and waits for `--serve-ready`. A live grid tracks every device, and `--record <dir>` (iOS) captures each simulator, the grid and a `batch.json` timeline (`scripts/demo/compose.ts` tiles them into one video). It exits 0 only when every job passed.
@@ -125,6 +125,15 @@ warden batch salient-e2e --count 2 -- bun e2e {job}   # passed flags and -- <cmd
 ```
 
 Flags you pass override the preset (commander defaults don't). `--jobs` / `--jobs-from` replace its jobs source, and `-- <cmd>` replaces `cmd`. With `project`, serve, jobs and `jobsFrom.command` run in that project's root, relative preset paths resolve against it and `app` installs that project's build. Without `project`, the preset's cwd is the config file's directory. CLI paths resolve against your cwd. `env` is added to serve and job env. `label` defaults to the preset name and applies to the port leases too. Fewer jobs than `count` claims one device per job.
+
+### Affected e2e: `warden affected` / `warden e2e`
+
+```bash
+warden affected mobile --base origin/main --explain   # which flows this branch needs, and why
+warden e2e mobile --base origin/main --count 2        # run them on leased devices; exit 1 if a required one fails
+```
+
+An `e2e.<suite>` in `warden.config.json` maps flow files to the screens they drive (`entries`) and globs (`paths`). Warden takes the git diff against the merge-base, walks each flow's import graph with the TypeScript resolver (tsconfig `paths`, workspace packages, per-platform `.ios` / `.android` files, type-only imports dropped), and runs only the flows a changed file reaches, with `runAll` globs (lockfile, native dirs) selecting everything. `warden e2e` runs them like `warden batch`, each `passes` times, and writes `e2e-report.json`. See the [Affected e2e guide](apps/docs/content/docs/guides/affected-e2e.mdx).
 
 ### App builds
 

@@ -1,4 +1,11 @@
 {
 	"title": "Guides",
-	"pages": ["agents", "e2e", "ports", "golden-images", "app-builds"]
+	"pages": [
+		"agents",
+		"e2e",
+		"affected-e2e",
+		"ports",
+		"golden-images",
+		"app-builds"
+	]
 }

@@ -1,6 +1,6 @@
 ---
 title: warden.config.json
-description: Optional per-repo config for app builds and saved batches.
+description: Optional per-repo config for app builds, saved batches and affected e2e suites.
 icon: Settings
 ---
 
@@ -32,7 +32,7 @@ Optional, at the repo root. Without it, warden detects a single Expo project fro
   }}
 />
 
-The file needs `projects`, `batches` or both. With only `batches`, app builds fall back to detecting `app.json` / `app.config.*`.
+The file needs at least one of `projects`, `batches` and `e2e`. With only `batches`, app builds fall back to detecting `app.json` / `app.config.*`.
 
 ## Batches
 
@@ -74,6 +74,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
     ports: { type: "string[]", description: "`FROM:SPAN` port specs (`WARDEN_PORT_<i>`)." },
     app: { type: "boolean", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env)." },
     retry: { type: "number", description: "Re-run a failed job up to N times on the same device.", default: "0" },
+    passes: { type: "number", description: "A job passes only after N consecutive green runs on its device.", default: "1" },
     env: { type: "Record<string, string>", description: "Added to the serve and job env." },
     serve: { type: "string", description: "Long-lived `sh -c` command started before the jobs." },
     serveReady: { type: "string", description: "`http://…`, `tcp:PORT` or `file:PATH` (relative to the preset's cwd)." },
@@ -82,5 +83,63 @@ The preset's cwd is its project's root, or the config file's directory when ther
     jobsFrom: { type: 'string | "-" | { command: string }', description: "A file of jobs (one per line), `-` for stdin, or a `sh -c` command whose stdout lines are the jobs (nonzero exit fails the batch)." },
     record: { type: "string", description: "iOS: record every simulator and the TUI into this dir." },
     logs: { type: "string", description: "Per-job log dir." },
+  }}
+/>
+
+## e2e
+
+`e2e` maps a suite name to the flows [`warden affected`](/docs/reference/cli#warden-affected-suite) selects and [`warden e2e`](/docs/reference/cli#warden-e2e-suite) runs. See [Affected e2e](/docs/guides/affected-e2e) for how selection works. Every path and glob is relative to the config file.
+
+```json title="warden.config.json"
+{
+  "e2e": {
+    "mobile": {
+      "flowsDir": "flows",
+      "runner": ["<flow-runner>", "run", "{flowPath}", "--device", "{udid}"],
+      "platform": "ios",
+      "routerRoot": "apps/mobile/src/app",
+      "maxDepth": 3,
+      "runAll": ["bun.lock", "apps/mobile/ios/**"],
+      "flows": {
+        "qa-login": { "entries": ["apps/mobile/src/app/(auth)/login.tsx"] },
+        "store-*": { "required": false }
+      }
+    }
+  }
+}
+```
+
+<TypeTable
+  type={{
+    flowsDir: { type: "string", description: "Required. Directory of flow YAML files (searched recursively; dot dirs and `__baselines__` skipped)." },
+    runner: { type: "string[]", description: "Required. Per-flow argv; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted. Runs in the config file's directory." },
+    platform: { type: '"ios" | "android"', description: "Default platform. Without it `warden affected` reports both and `warden e2e` needs `--platform`." },
+    base: { type: "string", description: "Ref changes are measured against (merge-base with HEAD).", default: '"main"' },
+    tsconfig: { type: "string", description: "tsconfig for files with no `tsconfig.json` between them and the config file." },
+    routerRoot: { type: "string", description: "File-based router directory: `_layout` files above an entry count as entries." },
+    maxDepth: { type: "number", description: "Import hops from an entry that still select a flow.", default: "unlimited" },
+    runAll: { type: "string[]", description: "Globs: a matching change selects every flow." },
+    ignore: { type: "string[]", description: "Globs: matching changes are ignored." },
+    always: { type: "string[]", description: "Flow ids / globs that always run." },
+    unmapped: { type: '"run" | "skip"', description: "Flows with no `entries` / `paths`: run every time, or only via `runAll` / `always`.", default: '"run"' },
+    required: { type: "boolean", description: "Default `required` for flows.", default: "true" },
+    passes: { type: "number", description: "Consecutive green runs a flow needs.", default: "1" },
+    retry: { type: "number", description: "Re-run a failed flow up to N times.", default: "0" },
+    count: { type: "number", description: "Devices to claim." },
+    profile: { type: "string", description: "Device profile." },
+    app: { type: "boolean", description: "Ensure the app on every device first." },
+    flows: { type: "Record<string, Flow>", description: "Per flow id or glob; see below." },
+  }}
+/>
+
+`flows.<id|glob>`:
+
+<TypeTable
+  type={{
+    entries: { type: "string[]", description: "Files the flow drives; their imports, transitively, select it." },
+    paths: { type: "string[]", description: "Globs that select the flow." },
+    platforms: { type: '("ios" | "android")[]', description: "Default: from the id (`-ios-`), then the `launch` map, else both." },
+    required: { type: "boolean", description: "A failure fails `warden e2e`; `false` = reported only." },
+    maxDepth: { type: "number", description: "Overrides the suite's `maxDepth`." },
   }}
 />

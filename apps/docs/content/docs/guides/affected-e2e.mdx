@@ -1,0 +1,99 @@
+---
+title: Affected e2e
+description: Run only the e2e flows a change needs, picked from the git diff and the TypeScript import graph, and gate on the required ones.
+icon: GitBranch
+---
+
+A full e2e suite is slow; most changes touch a few screens. `warden affected` works out which flows a branch needs, and `warden e2e` runs just those on leased devices and fails when a required one fails.
+
+```bash
+warden affected mobile --base origin/main --explain   # what would run, and why
+warden e2e mobile --base origin/main --count 2        # run it: exit 0 = every required flow passed
+```
+
+Flows stay in your flow runner's own YAML files; warden only picks them, leases devices, runs your `runner` command once per flow, and reports.
+
+## How flows are picked
+
+1. **Changed files.** Everything that differs from `merge-base(<base>, HEAD)`: commits on the branch, staged and unstaged edits, untracked files, both sides of a rename. `--files a,b` skips git.
+2. **`runAll`.** A change to a lockfile, native project or bundler config selects every flow.
+3. **`paths`.** Globs on a flow select it when a changed file matches.
+4. **Import graph.** Each flow lists its `entries` — the screens or routes it drives. Warden follows their imports, resolved the way the TypeScript compiler does (each file's nearest `tsconfig.json`: `paths`, `baseUrl`, `extends`, `customConditions`; workspace packages followed to their source). A changed file anywhere in that graph selects the flow.
+   - **Per platform.** React Native platform files resolve per platform (`x.ios.tsx` → `x.native.tsx` → `x.tsx`), so an `.android.tsx` change only selects Android flows.
+   - **Runtime imports only.** `import type` / `export type` are dropped, as the bundler drops them.
+   - **Router layouts.** With `routerRoot`, every `_layout` above an entry counts as an entry too (file-based routers render them around the route).
+   - **`maxDepth`** limits how many import hops from an entry still count. Apps with hub modules (a session context, a shared API client) otherwise reach almost everything from every screen; `3` is a good start.
+5. **Flow files.** A changed flow selects itself; a changed fragment selects every flow that `run:`s it.
+6. **`always`** flows run every time, and so do flows with no `entries` / `paths` unless `unmapped` is `"skip"`.
+
+A flow runs on the platforms named in its config, else the `ios` / `android` token in its id (`store-ios-02-chats`), else its per-platform `launch` map, else both.
+
+`--explain` prints the reason for each flow, including the shortest import chain:
+
+```text
+ios  2 of 11 flow(s)  (base origin/main, 3 changed file(s))
+  ● qa-chat-attachment  required
+      import   src/modules/chats/composer.tsx
+               src/app/(app)/chats/[chat_id].tsx → src/modules/chats/thread.tsx → src/modules/chats/composer.tsx
+  ● store-ios-03-chat-thread  optional
+      import   src/modules/chats/composer.tsx
+  skipped: qa-offline-banner, store-ios-01-my-day, …
+  reached no flow: src/modules/voice/voice-auth.ts
+```
+
+"Reached no flow" lists changed files no flow covers — gaps in the map. `--strict` exits 3 when there are any.
+
+## Configuring a suite
+
+```json title="warden.config.json"
+{
+  "e2e": {
+    "mobile": {
+      "flowsDir": "flows",
+      "runner": ["<flow-runner>", "run", "{flowPath}", "--device", "{udid}"],
+      "platform": "ios",
+      "tsconfig": "apps/mobile/tsconfig.json",
+      "routerRoot": "apps/mobile/src/app",
+      "maxDepth": 3,
+      "runAll": ["bun.lock", "patches/**", "apps/mobile/app.config.ts", "apps/mobile/ios/**", "apps/mobile/android/**"],
+      "ignore": ["**/*.md", "**/*.test.ts"],
+      "passes": 2,
+      "count": 2,
+      "flows": {
+        "qa-chat-attachment": { "entries": ["apps/mobile/src/app/(app)/chats/[chat_id].tsx"] },
+        "qa-offline-*": { "entries": ["apps/mobile/src/app/+native-intent.ts"], "paths": ["apps/mobile/src/modules/linking/**"] },
+        "store-*": { "required": false }
+      }
+    }
+  }
+}
+```
+
+A flow's id is its path under `flowsDir` without the extension. Keys in `flows` are ids or globs; a flow's exact key and every matching glob merge (`entries` / `paths` add up, the exact key's `required` / `platforms` / `maxDepth` win). All paths are relative to the config file. See the [field reference](/docs/reference/configuration#e2e).
+
+## Running and gating
+
+`warden e2e` is [`warden batch`](/docs/guides/e2e#batches-one-job-per-device) with the job list coming from the selection. Every batch and claim flag works (`--count`, `--serve`, `--serve-ready`, `--app`, `--record` …); the suite's `count`, `profile`, `retry`, `passes` and `app` fill in anything you don't pass.
+
+- Each flow runs as `runner` with `{flow}` (id), `{flowPath}` (absolute file), `{udid}`, `{worker}` and `{seq}` substituted, in the config file's directory.
+- `passes: 2` makes a flow pass only after two consecutive green runs on the same device (`WARDEN_PASS` = 0, 1), which catches flows that only pass from a lucky start state.
+- `required: false` flows are reported but never fail the gate. `--required-only` runs just the required ones.
+- `e2e-report.json` (in the batch dir, and at `--report <file>`) lists every flow with its reasons, attempts and verdict. `--json` prints it.
+- Nothing affected → exit 0 without claiming a device. `--dry-run` selects and explains, then stops.
+
+### In CI
+
+```bash
+git fetch origin main
+warden e2e mobile --base origin/main --count 2 --report e2e-report.json
+```
+
+The same command runs locally or in a pre-push hook. Parsed imports are cached under `$WARDEN_HOME/affected`, so repeat runs only re-read changed files.
+
+### Feeding a batch preset
+
+`warden affected` prints one flow id per line, so it also works as a preset's job source:
+
+```json
+"jobsFrom": { "command": "warden affected mobile --platform ios --base origin/main" }
+```

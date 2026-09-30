@@ -12,6 +12,8 @@ icon: Terminal
 | N devices + ports for a script | `warden run ios --count N --port 8091:20 -- <cmd>` |
 | One job per device, queued | `warden batch ios --count N --jobs-from jobs.txt -- <cmd {job} {udid}>` |
 | a saved batch from `warden.config.json` | `warden batch <preset> [flags] [-- <cmd>]` |
+| which e2e flows a change needs | `warden affected [suite] --base main --explain` |
+| run them and gate on the required ones | `warden e2e [suite] --base main --count N` |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` |
 | duplicate a shut-down sim | `warden clone <udid\|name> [--name x]` |
@@ -67,6 +69,7 @@ Claim devices and fan a job queue out over them, one worker per device; the comm
 |---|---|
 | `--jobs <list>` / `--jobs-from <file\|->` | the jobs: comma-separated, or one per line |
 | `--retry <n>` | re-run a failed job up to N times on the same device |
+| `--passes <n>` | a job passes only after N consecutive green runs on its device (`WARDEN_PASS`) |
 | `--serve <sh-cmd>` | a long-lived process (e.g. Metro) started before the jobs, killed at the end |
 | `--serve-ready <probe>` | wait for `http://…`, `tcp:PORT` or `file:PATH` first |
 | `--serve-timeout <duration>` | give up waiting for `--serve-ready` (default `10m`) |
@@ -93,6 +96,33 @@ warden batch salient-e2e --count 2 --jobs qa-login -- bun e2e {job} --device {ud
 An operand that is neither `ios`, `android` nor a preset fails with the list of presets.
 
 Exits 0 only when every job passed. See [Batches](/docs/guides/e2e#batches-one-job-per-device).
+
+### `warden affected [suite]`
+
+List the flows of `e2e.<suite>` (optional with one suite) that the changes since `merge-base(--base, HEAD)` need: one id per line.
+
+| Flag | |
+|---|---|
+| `--base <ref>` | compare against this ref (default: the suite's `base`, `main`) |
+| `--platform <platform>` | `ios \| android` (default: the suite's `platform`, else both) |
+| `--files <list>` | comma-separated changed files (relative to cwd) instead of git |
+| `--required-only` | only `required` flows |
+| `--explain` | why each flow was picked, with the import chain |
+| `--strict` | exit 3 when a changed file reaches no flow |
+| `--json` | selections, reasons, skipped and unreached files |
+
+See [Affected e2e](/docs/guides/affected-e2e).
+
+### `warden e2e [suite]`
+
+Select like `warden affected`, then run the flows like `warden batch` — the suite's `runner` once per flow — and gate: exit 0 when every required flow passed, 1 otherwise, 130 when interrupted. Takes every `batch` flag except the job flags, the `affected` selection flags, plus:
+
+| Flag | |
+|---|---|
+| `--dry-run` | select and explain, run nothing |
+| `--report <file>` | also write `e2e-report.json` here |
+
+The suite's `count`, `profile`, `retry`, `passes` and `app` apply unless the flag is passed. Nothing affected → exit 0 without claiming.
 
 ### `warden ls`
 
