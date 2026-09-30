@@ -10,6 +10,15 @@
 	},
 	"overrides": [
 		{
+			// Reduced motion must beat every component's own transition.
+			"includes": ["src/styles/app.css"],
+			"linter": {
+				"rules": {
+					"complexity": { "noImportantStyles": "off" }
+				}
+			}
+		},
+		{
 			// TanStack Router derives routes from filenames; `__root`, `$`,
 			// `{$}[.]md` and `llms[.]txt` are its conventions, not kebab-case.
 			"includes": ["src/routes/**/*"],
