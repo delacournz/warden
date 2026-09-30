@@ -24,7 +24,7 @@ describe("parseWardenConfig", () => {
 			projects: [{ name: "app", bundleId: { ios: "com.x.app" }, eas: {} }],
 		});
 		if (!res.success) throw new Error(res.error);
-		expect(res.data.projects[0]).toEqual({
+		expect(res.data.projects?.[0]).toEqual({
 			name: "app",
 			root: ".",
 			bundleId: { ios: "com.x.app" },

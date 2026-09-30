@@ -1,5 +1,6 @@
 import type { Command } from "../command";
 import { appCommand } from "./app";
+import { batchCommand } from "./batch";
 import { buildsCommand } from "./builds";
 import { checkCommand } from "./check";
 import { claimCommand } from "./claim";
@@ -23,6 +24,7 @@ export const COMMANDS: readonly Command[] = [
 	claimCommand,
 	releaseCommand,
 	runCommand,
+	batchCommand,
 	lsCommand,
 	devicesCommand,
 	cloneCommand,

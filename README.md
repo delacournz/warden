@@ -94,6 +94,38 @@ warden run ios --count 2 --port 8091:20 --port 3208:20 [--app] -- bun run e2e
 
 `warden run` claims the devices and ports, then runs the command with `WARDEN_UDIDS`, `WARDEN_UDID_<i>`, `WARDEN_LEASE_IDS`, `WARDEN_PORTS` and `WARDEN_PORT_<i>` set. It heartbeats every 30 s, forwards SIGINT/SIGTERM, releases everything on exit and passes the exit code through. With `--app`, it first ensures the dev build is installed on each device (`WARDEN_APP_PATH` / `WARDEN_APP_HASH`).
 
+### Batches: `warden batch`
+
+```bash
+ls flows | warden batch ios --count 5 --max 5 --port 8091:20 --serve "bun run metro" --serve-ready tcp:8091 --jobs-from - --retry 1 -- argent flow run {job} --device {udid}
+```
+
+`warden batch` claims N devices and runs a job queue across them, one worker per device: `{job}`, `{udid}`, `{worker}` and `{seq}` are substituted into the command, which also gets `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_JOB` and `WARDEN_JOB_SEQ`. `--serve` starts a long-lived process (Metro) first and waits for `--serve-ready`. A live grid tracks every device, and `--record <dir>` (iOS) captures each simulator, the grid and a `batch.json` timeline (`scripts/demo/compose.ts` tiles them into one video). It exits 0 only when every job passed.
+
+Save a batch in `warden.config.json` and run it by name:
+
+```json
+{
+  "batches": {
+    "salient-e2e": {
+      "project": "salient", "platform": "ios", "count": 5, "max": 5, "profile": "iphone-17",
+      "ports": ["8091:20"], "app": true, "retry": 1,
+      "env": { "E2E_SESSION_FILE": "e2e-artifacts/batch/session.json" },
+      "serve": "bun scripts/e2e/run-ios.ts --session", "serveReady": "file:e2e-artifacts/batch/session.json", "serveTimeout": "20m",
+      "jobsFrom": { "command": "bun scripts/e2e/select-flows.ts --list --offline" },
+      "cmd": ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
+    }
+  }
+}
+```
+
+```bash
+warden batch salient-e2e                        # the preset as-is
+warden batch salient-e2e --count 2 -- bun e2e {job}   # passed flags and -- <cmd> override it
+```
+
+Flags you pass override the preset (commander defaults don't). `--jobs` / `--jobs-from` replace its jobs source, and `-- <cmd>` replaces `cmd`. With `project`, serve, jobs and `jobsFrom.command` run in that project's root, relative preset paths resolve against it and `app` installs that project's build. Without `project`, the preset's cwd is the config file's directory. CLI paths resolve against your cwd. `env` is added to serve and job env. `label` defaults to the preset name and applies to the port leases too. Fewer jobs than `count` claims one device per job.
+
 ### App builds
 
 ```bash

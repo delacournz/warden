@@ -1,0 +1,13 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`render header with overall progress + one row per device 1`] = `
+"warden batch  █████░░░░░░░░░░░░░░░  1/4  ✓0 ✗1  1m5s
+0 warden-iphone-17-1  ▶ qa-login                       1m5s  ✓0   ✗0   ░░░░░░░░
+1 warden-iphone-17-2  ▶ qa-search                      1m1s  ✓0   ✗1   ██░░░░░░"
+`;
+
+exports[`render idle devices, retries and the final state 1`] = `
+"warden batch  █████░░░░░░░░░░░░░░░  1/4  ✓0 ✗1  1m5s  ✗ failed
+0 warden-iphone-17-1  ▶ qa-login (retry 1)               1m  ✓0   ✗0   ░░░░░░░░
+1 warden-iphone-17-2  · idle                                 ✓0   ✗1   ██░░░░░░"
+`;

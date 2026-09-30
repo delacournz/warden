@@ -10,6 +10,8 @@ icon: Terminal
 |------|---------|
 | one sim / emulator | `warden claim ios --json` · `warden claim android --json` |
 | N devices + ports for a script | `warden run ios --count N --port 8091:20 -- <cmd>` |
+| One job per device, queued | `warden batch ios --count N --jobs-from jobs.txt -- <cmd {job} {udid}>` |
+| a saved batch from `warden.config.json` | `warden batch <preset> [flags] [-- <cmd>]` |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` |
 | duplicate a shut-down sim | `warden clone <udid\|name> [--name x]` |
@@ -56,6 +58,41 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--no-eas` / `--no-build` | `--app`: skip EAS downloads / local builds |
 
 See [e2e scripts](/docs/guides/e2e).
+
+### `warden batch [platform|preset] [-- <cmd...>]`
+
+Claim devices and fan a job queue out over them, one worker per device; the command runs once per job with `{job}`, `{udid}`, `{worker}` and `{seq}` substituted. Takes every `run` flag, plus:
+
+| Flag | |
+|---|---|
+| `--jobs <list>` / `--jobs-from <file\|->` | the jobs: comma-separated, or one per line |
+| `--retry <n>` | re-run a failed job up to N times on the same device |
+| `--serve <sh-cmd>` | a long-lived process (e.g. Metro) started before the jobs, killed at the end |
+| `--serve-ready <probe>` | wait for `http://…`, `tcp:PORT` or `file:PATH` first |
+| `--serve-timeout <duration>` | give up waiting for `--serve-ready` (default `10m`) |
+| `--record <dir>` | iOS: record every simulator and the TUI (`batch.json`, `tui.cast`, `dev-<i>.mp4`) |
+| `--logs <dir>` | per-job logs |
+| `--no-tui` | plain log lines instead of the live grid |
+
+`--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed.
+
+If the first operand is the name of a preset in [`warden.config.json`](/docs/reference/configuration#batches) `batches` (found by walking up from the cwd to the git root), that preset supplies the platform and defaults:
+
+- Flags you actually pass override the preset; commander defaults (`--count 1`, `--retry 0`, `--serve-timeout 10m`…) do not.
+- `--jobs` / `--jobs-from` replace the preset's `jobs` / `jobsFrom`.
+- `-- <cmd>` replaces the preset's `cmd`; without it the preset's `cmd` runs.
+- Relative paths in the preset resolve against the preset's cwd (its `project` root, else the config file's directory); paths passed on the command line resolve against your cwd.
+- Serve, jobs and a `jobsFrom.command` run in the preset's cwd.
+- The label defaults to the preset name.
+
+```bash
+warden batch salient-e2e                # everything from the preset
+warden batch salient-e2e --count 2 --jobs qa-login -- bun e2e {job} --device {udid}
+```
+
+An operand that is neither `ios`, `android` nor a preset fails with the list of presets.
+
+Exits 0 only when every job passed. See [Batches](/docs/guides/e2e#batches-one-job-per-device).
 
 ### `warden ls`
 

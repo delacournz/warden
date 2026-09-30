@@ -1,6 +1,6 @@
 ---
 title: warden.config.json
-description: Optional per-repo config for app builds.
+description: Optional per-repo config for app builds and saved batches.
 icon: Settings
 ---
 
@@ -29,5 +29,58 @@ Optional, at the repo root. Without it, warden detects a single Expo project fro
     "eas.workflow": { type: "string", description: "EAS workflow file to trigger on a miss." },
     "eas.trigger": { type: "boolean", description: "Trigger the workflow when no EAS build matches.", default: "false" },
     build: { type: "{ ios?: string; android?: string }", description: "Local build command per platform, used as the last resort." },
+  }}
+/>
+
+The file needs `projects`, `batches` or both. With only `batches`, app builds fall back to detecting `app.json` / `app.config.*`.
+
+## Batches
+
+`batches` maps a name to a saved [`warden batch`](/docs/reference/cli#warden-batch-platformpreset----cmd) invocation, run with `warden batch <name>`. Each field mirrors the flag of the same name. Flags you pass on the command line override the preset, and `-- <cmd>` overrides `cmd`. `ios` and `android` can't be used as names.
+
+```json title="warden.config.json"
+{
+  "projects": [{ "name": "salient", "root": "apps/salient/app", "bundleId": { "ios": "com.example.salient" } }],
+  "batches": {
+    "salient-e2e": {
+      "project": "salient",
+      "platform": "ios", "count": 5, "max": 5, "profile": "iphone-17",
+      "ports": ["8091:20"], "app": true, "retry": 1,
+      "env": { "E2E_SESSION_FILE": "e2e-artifacts/batch/session.json" },
+      "serve": "bun scripts/e2e/run-ios.ts --session",
+      "serveReady": "file:e2e-artifacts/batch/session.json",
+      "serveTimeout": "20m",
+      "jobsFrom": { "command": "bun scripts/e2e/select-flows.ts --list --offline" },
+      "cmd": ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
+    }
+  }
+}
+```
+
+The preset's cwd is its project's root, or the config file's directory when there is no `project`. Serve, the jobs and `jobsFrom.command` run there, and relative paths in the preset resolve against it.
+
+<TypeTable
+  type={{
+    platform: { type: '"ios" | "android"', description: "Required." },
+    cmd: { type: "string[]", description: "Required. Per-job argv; `{job}` `{udid}` `{worker}` `{seq}` are substituted." },
+    project: { type: "string", description: "A `projects[].name`: its root is the preset's cwd, and `app` installs its build." },
+    count: { type: "number", description: "Devices to claim.", default: "1" },
+    max: { type: "number", description: "Max warden devices of this profile." },
+    profile: { type: "string", description: "Device profile, e.g. `iphone-17`." },
+    runtime: { type: "string", description: "Runtime, e.g. `latest`, `26.5`." },
+    label: { type: "string", description: "Label on the device and port leases.", default: "the preset name" },
+    ttl: { type: "string", description: "Lease TTL without heartbeat.", default: "30m" },
+    wait: { type: "string", description: "Wait this long for free devices." },
+    ports: { type: "string[]", description: "`FROM:SPAN` port specs (`WARDEN_PORT_<i>`)." },
+    app: { type: "boolean", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env)." },
+    retry: { type: "number", description: "Re-run a failed job up to N times on the same device.", default: "0" },
+    env: { type: "Record<string, string>", description: "Added to the serve and job env." },
+    serve: { type: "string", description: "Long-lived `sh -c` command started before the jobs." },
+    serveReady: { type: "string", description: "`http://…`, `tcp:PORT` or `file:PATH` (relative to the preset's cwd)." },
+    serveTimeout: { type: "string", description: "Give up waiting for `serveReady`.", default: "10m" },
+    jobs: { type: "string[]", description: "The jobs. At most one of `jobs` / `jobsFrom`." },
+    jobsFrom: { type: 'string | "-" | { command: string }', description: "A file of jobs (one per line), `-` for stdin, or a `sh -c` command whose stdout lines are the jobs (nonzero exit fails the batch)." },
+    record: { type: "string", description: "iOS: record every simulator and the TUI into this dir." },
+    logs: { type: "string", description: "Per-job log dir." },
   }}
 />

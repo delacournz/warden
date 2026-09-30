@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { err, ok, type Result } from "@warden/types/result";
 import { z } from "zod";
+import { batchPresetSchema, RESERVED_PRESET_NAMES } from "../batch/preset.schema";
 import type { Platform } from "../types";
 import { DEFAULT_BUILD_COMMAND, DEFAULT_EAS_PROFILE, LEGACY_CACHE_DIRS } from "./builds.defaults";
 
@@ -34,7 +35,35 @@ export const projectConfigSchema = z
 	})
 	.strict();
 
-export const wardenConfigSchema = z.object({ projects: z.array(projectConfigSchema).min(1) }).strict();
+export const wardenConfigSchema = z
+	.object({
+		projects: z.array(projectConfigSchema).min(1).optional(),
+		/** named `warden batch` presets */
+		batches: z.record(z.string().min(1), batchPresetSchema).optional(),
+	})
+	.strict()
+	.superRefine((config, issue) => {
+		if (config.projects === undefined && config.batches === undefined) {
+			issue.addIssue({ code: "custom", message: "set projects and/or batches", path: [] });
+		}
+		const names = new Set((config.projects ?? []).map((p) => p.name));
+		for (const [name, preset] of Object.entries(config.batches ?? {})) {
+			if (RESERVED_PRESET_NAMES.includes(name)) {
+				issue.addIssue({
+					code: "custom",
+					message: `"${name}" is a platform, pick another name`,
+					path: ["batches", name],
+				});
+			}
+			if (preset.project !== undefined && !names.has(preset.project)) {
+				issue.addIssue({
+					code: "custom",
+					message: `no project "${preset.project}" in projects[]`,
+					path: ["batches", name, "project"],
+				});
+			}
+		}
+	});
 
 export type ProjectConfig = z.infer<typeof projectConfigSchema>;
 export type WardenConfig = z.infer<typeof wardenConfigSchema>;
@@ -180,6 +209,21 @@ export type LoadProjectInput = {
 	bundleId?: Project["bundleId"];
 };
 
+/** The nearest `warden.config.json` walking up from `start` (to `stopAt`), parsed; undefined = none. */
+export function findWardenConfig(
+	start: string,
+	stopAt?: string
+): Result<{ dir: string; config: WardenConfig } | undefined> {
+	const dir = ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined).find((d) =>
+		existsSync(join(d, CONFIG_FILE))
+	);
+	if (dir === undefined) return ok(undefined);
+	const raw = readJson(join(dir, CONFIG_FILE));
+	if (!raw.success) return raw;
+	const config = parseWardenConfig(raw.data);
+	return config.success ? ok({ dir, config: config.data }) : config;
+}
+
 /**
  * Find the project for `start`: nearest `warden.config.json` walking up (to `stopAt`), else the
  * nearest Expo app (`app.json` / `app.config.*`). `--bundle-id` overrides the configured id.
@@ -188,9 +232,16 @@ export function loadProject(input: LoadProjectInput): Result<Project> {
 	const start = resolve(input.start);
 	const override = input.bundleId ?? {};
 	const dirs = ancestors(start, input.stopAt ? resolve(input.stopAt) : undefined);
-	const configDir = dirs.find((d) => existsSync(join(d, CONFIG_FILE)));
-	if (configDir !== undefined) {
-		const project = projectFromConfigFile(configDir, start, input);
+	const found = findWardenConfig(start, input.stopAt);
+	if (!found.success) return found;
+	const projects = found.data?.config.projects;
+	if (found.data && projects) {
+		const configDir = found.data.dir;
+		const project = selectProject(
+			projects.map((p) => fromConfig(p, configDir, input.env)),
+			start,
+			input.name
+		);
 		return project.success ? ok({ ...project.data, bundleId: { ...project.data.bundleId, ...override } }) : project;
 	}
 	for (const dir of dirs) {
@@ -207,18 +258,6 @@ function ancestors(start: string, stop: string | undefined): string[] {
 		out.push(dir);
 		if (dir === stop || dirname(dir) === dir) return out;
 	}
-}
-
-function projectFromConfigFile(dir: string, start: string, input: LoadProjectInput): Result<Project> {
-	const raw = readJson(join(dir, CONFIG_FILE));
-	if (!raw.success) return raw;
-	const config = parseWardenConfig(raw.data);
-	if (!config.success) return config;
-	return selectProject(
-		config.data.projects.map((p) => fromConfig(p, dir, input.env)),
-		start,
-		input.name
-	);
 }
 
 export function bundleIdFor(project: Project, platform: Platform): Result<string> {

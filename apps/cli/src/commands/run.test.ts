@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { HEARTBEAT_INTERVAL_MS } from "@warden/core/config.defaults";
+import { type ChildHandle, splitCommand, splitOperands } from "../lease-session";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { type ChildHandle, createRunCommand, type RunDeps, splitCommand, splitOperands } from "./run";
+import { createRunCommand, type RunDeps } from "./run";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
