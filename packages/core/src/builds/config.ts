@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { err, ok, type Result } from "@warden/types/result";
 import { z } from "zod";
+import { e2eSuiteSchema } from "../affected/affected.schema";
 import { batchPresetSchema, RESERVED_PRESET_NAMES } from "../batch/preset.schema";
 import type { Platform } from "../types";
 import { DEFAULT_BUILD_COMMAND, DEFAULT_EAS_PROFILE, LEGACY_CACHE_DIRS } from "./builds.defaults";
@@ -40,11 +41,13 @@ export const wardenConfigSchema = z
 		projects: z.array(projectConfigSchema).min(1).optional(),
 		/** named `warden batch` presets */
 		batches: z.record(z.string().min(1), batchPresetSchema).optional(),
+		/** named `warden affected` / `warden e2e` suites */
+		e2e: z.record(z.string().min(1), e2eSuiteSchema).optional(),
 	})
 	.strict()
 	.superRefine((config, issue) => {
-		if (config.projects === undefined && config.batches === undefined) {
-			issue.addIssue({ code: "custom", message: "set projects and/or batches", path: [] });
+		if (config.projects === undefined && config.batches === undefined && config.e2e === undefined) {
+			issue.addIssue({ code: "custom", message: "set projects, batches and/or e2e", path: [] });
 		}
 		const names = new Set((config.projects ?? []).map((p) => p.name));
 		for (const [name, preset] of Object.entries(config.batches ?? {})) {

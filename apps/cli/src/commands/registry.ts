@@ -1,4 +1,5 @@
 import type { Command } from "../command";
+import { affectedCommand } from "./affected";
 import { appCommand } from "./app";
 import { batchCommand } from "./batch";
 import { buildsCommand } from "./builds";
@@ -7,6 +8,7 @@ import { claimCommand } from "./claim";
 import { cloneCommand } from "./clone";
 import { devicesCommand } from "./devices";
 import { doctorCommand } from "./doctor";
+import { e2eCommand } from "./e2e";
 import { gcCommand } from "./gc";
 import { goldenCommand } from "./golden";
 import { heartbeatCommand } from "./heartbeat";
@@ -25,6 +27,8 @@ export const COMMANDS: readonly Command[] = [
 	releaseCommand,
 	runCommand,
 	batchCommand,
+	affectedCommand,
+	e2eCommand,
 	lsCommand,
 	devicesCommand,
 	cloneCommand,

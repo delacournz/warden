@@ -47,6 +47,24 @@ describe("parseWardenConfig", () => {
 			if (!res.success) expect(res.error).toContain(CONFIG_FILE);
 		}
 	});
+
+	test("e2e suites alone are a valid config, with defaults", () => {
+		const res = parseWardenConfig({
+			e2e: { mobile: { flowsDir: "flows", runner: ["run", "{flowPath}"], flows: { a: { entries: ["x.tsx"] } } } },
+		});
+		if (!res.success) throw new Error(res.error);
+		const suite = res.data.e2e?.mobile;
+		expect(suite?.base).toBe("main");
+		expect(suite?.unmapped).toBe("run");
+		expect(suite?.passes).toBe(1);
+		expect(suite?.flows.a).toEqual({ entries: ["x.tsx"], paths: [] });
+	});
+
+	test("rejects a bad e2e suite", () => {
+		const res = parseWardenConfig({ e2e: { mobile: { flowsDir: "flows", runner: [] } } });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("e2e.mobile.runner");
+	});
 });
 
 describe("loadProject", () => {
