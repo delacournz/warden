@@ -31,6 +31,7 @@ export const batchPresetSchema = z
 		ports: z.array(portSpec).optional(),
 		app: z.boolean().optional(),
 		retry: z.number().int().min(0).optional(),
+		passes: z.number().int().min(1).optional(),
 		/** added to the serve + job env */
 		env: z.record(z.string(), z.string()).optional(),
 		serve: z.string().min(1).optional(),

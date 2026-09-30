@@ -1,6 +1,7 @@
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { expandArgv, jobSlug, parseJobLines, parseJobList } from "@warden/core/batch/expand";
 import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@warden/core/batch/preset";
 import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "@warden/core/batch/schedule";
@@ -77,6 +78,7 @@ export type BatchOpts = ClaimFlagValues &
 		jobs?: string;
 		jobsFrom?: string;
 		retry: string;
+		passes: string;
 		serve?: string;
 		serveReady?: string;
 		serveTimeout: string;
@@ -92,6 +94,8 @@ type BatchArgs = LeaseArgs & {
 	json: boolean;
 	jobs: BatchJobsSource;
 	retry: number;
+	/** consecutive green runs a job needs (each a fresh spawn on the same device) */
+	passes: number;
 	/** where serve, the jobs and a `jobsFrom.command` run */
 	cwd: string;
 	/** preset `env`, added to the serve + job env */
@@ -150,6 +154,8 @@ export function parseBatchArgs(
 	const jobs = parseJobsSource(opts, cwd, base.jobs);
 	if (!jobs.success) return jobs;
 	if (!/^\d+$/.test(opts.retry)) return err(`--retry must be an integer >= 0, got "${opts.retry}"`);
+	if (!/^\d+$/.test(opts.passes) || Number(opts.passes) < 1)
+		return err(`--passes must be an integer >= 1, got "${opts.passes}"`);
 	const serve = parseServe(opts, cwd);
 	if (!serve.success) return serve;
 	if (opts.record !== undefined && platform !== "ios") return err("--record is iOS-only");
@@ -159,6 +165,7 @@ export function parseBatchArgs(
 		json: opts.json === true,
 		jobs: jobs.data,
 		retry: Number(opts.retry),
+		passes: Number(opts.passes),
 		tui: opts.tui,
 		cwd: base.cwd ?? cwd,
 		env: base.env ?? {},
@@ -268,8 +275,9 @@ function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { 
 	const { terminal } = deps;
 	const live = args.tui && terminal.isTTY;
 	const width = live ? terminal.columns : 100;
+	// header + one row per device + the cursor row the grid's trailing newline leaves
 	const cast = args.record
-		? createCast({ width, height: view.current.devices.length + 1, startedAt: ctx.now() })
+		? createCast({ width, height: view.current.devices.length + 2, startedAt: ctx.now() })
 		: undefined;
 	const sinks: Array<{ screen: LiveScreen; color: boolean; last?: string }> = [];
 	if (live) sinks.push({ screen: liveScreen(terminal.write), color: ctx.ui.color.level > 0 });
@@ -318,36 +326,62 @@ async function startRecordings(deps: BatchDeps, dir: string, devices: Device[]):
 	return ok(recordings);
 }
 
-/** The per-job `run` for `runBatch`: expand the argv, spawn with the job env + log, track it for SIGINT. */
-function jobRunner(
-	deps: BatchDeps,
-	cmd: string[],
-	env: Record<string, string | undefined>,
-	cwd: string,
-	logDir: string,
-	running: Set<ProcHandle>
-) {
-	return async (w: BatchWorker, job: string, seq: number): Promise<number> => {
+/** Per-job argv before `{job}` `{udid}` `{worker}` `{seq}` expansion (default: the batch command). */
+export type ArgvFor = (job: string) => string[];
+
+type JobRunnerOptions = {
+	cmd: string[];
+	hooks: SessionHooks;
+	env: Record<string, string | undefined>;
+	cwd: string;
+	logDir: string;
+	passes: number;
+	running: Set<ProcHandle>;
+	interrupted: () => boolean;
+};
+
+/**
+ * The per-job `run` for `runBatch`: expand the argv, spawn with the job env + log, track it for
+ * SIGINT. With `passes` > 1 the job is spawned again after each green run (`WARDEN_PASS`, one log
+ * per pass); the first red run is the attempt's exit code.
+ */
+function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
+	const spawnOnce = async (w: BatchWorker, job: string, seq: number, pass: number): Promise<number> => {
 		const jobEnv = {
-			...env,
+			...o.env,
 			WARDEN_UDID: w.udid,
 			WARDEN_WORKER: String(w.worker),
 			WARDEN_JOB: job,
 			WARDEN_JOB_SEQ: String(seq),
+			WARDEN_PASS: String(pass),
 		};
-		const log = join(logDir, `${w.worker}-${seq}-${jobSlug(job)}.log`);
+		const suffix = o.passes > 1 ? `.pass${pass}` : "";
+		const log = join(o.logDir, `${w.worker}-${seq}-${jobSlug(job)}${suffix}.log`);
+		const argv = o.hooks.argvFor ? o.hooks.argvFor(job) : o.cmd;
 		let proc: ProcHandle;
 		try {
-			proc = deps.spawn(expandArgv(cmd, { job, udid: w.udid, worker: w.worker, seq }), { env: jobEnv, log, cwd });
+			proc = deps.spawn(expandArgv(argv, { job, udid: w.udid, worker: w.worker, seq }), {
+				env: jobEnv,
+				log,
+				cwd: o.cwd,
+			});
 		} catch {
 			return 127;
 		}
-		running.add(proc);
+		o.running.add(proc);
 		try {
 			return await proc.exited;
 		} finally {
-			running.delete(proc);
+			o.running.delete(proc);
 		}
+	};
+	return async (w: BatchWorker, job: string, seq: number): Promise<number> => {
+		for (let pass = 0; pass < o.passes; pass++) {
+			const code = await spawnOnce(w, job, seq, pass);
+			if (code !== 0) return code;
+			if (o.interrupted()) return 130;
+		}
+		return 0;
 	};
 }
 
@@ -378,6 +412,12 @@ async function report(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, r: 
 	}
 }
 
+/** How a batch session ended: its exit code, and — once the jobs ran — the summary and where it lives. */
+export type SessionResult = { code: number; batchDir?: string; summary?: BatchSummary };
+
+/** Extras for callers building on batch (`warden e2e`). */
+export type SessionHooks = { argvFor?: ArgvFor; name?: string };
+
 /** Everything after the claim: serve → recordings → jobs → stop serve → stop recordings → batch.json → release. */
 async function supervise(
 	ctx: CommandContext,
@@ -385,8 +425,10 @@ async function supervise(
 	args: BatchArgs,
 	jobs: string[],
 	cmd: string[],
-	session: LeaseSession
-): Promise<number> {
+	session: LeaseSession,
+	hooks: SessionHooks & { name: string }
+): Promise<SessionResult> {
+	const { name } = hooks;
 	const batchId = deps.newId();
 	const batchDir = args.record ?? join(wardenHome(ctx.env), "batches", batchId);
 	const logDir = args.logs ?? join(batchDir, "logs");
@@ -405,9 +447,9 @@ async function supervise(
 	const interrupted = () => controller.signal.aborted;
 	let serve: ProcHandle | undefined;
 	let recordings: Recording[] = [];
-	const fail = (message: string) => {
-		ctx.err(ctx.ui.color.red(`warden batch: ${message}`));
-		return interrupted() ? 130 : 1;
+	const fail = (message: string): SessionResult => {
+		ctx.err(ctx.ui.color.red(`warden ${name}: ${message}`));
+		return { code: interrupted() ? 130 : 1 };
 	};
 	/** workers are done: serve first, then the recordings (the contract's stop order) */
 	const teardown = async () => {
@@ -439,15 +481,15 @@ async function supervise(
 			now: ctx.now,
 			signal: controller.signal,
 			onEvent: screen.event,
-			run: jobRunner(deps, cmd, env, args.cwd, logDir, running),
+			run: jobRunner(deps, { cmd, env, cwd: args.cwd, logDir, passes: args.passes, running, interrupted, hooks }),
 		});
 		const endedAt = ctx.now();
 		screen.end();
 		await teardown();
 		const run: BatchRun = { batchId, batchDir, logDir, cmd, devices, total: jobs.length, startedAt, endedAt, summary };
 		await report(ctx, deps, args, screen.cast ? { ...run, cast: screen.cast } : run);
-		if (interrupted()) return 130;
-		return summary.ok ? 0 : 1;
+		if (interrupted()) return { code: 130, batchDir, summary };
+		return { code: summary.ok ? 0 : 1, batchDir, summary };
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	} finally {
@@ -503,6 +545,7 @@ function presetOpts(preset: BatchPreset): Partial<BatchOpts> {
 		label: preset.label,
 		port: preset.ports,
 		retry: str(preset.retry),
+		passes: str(preset.passes),
 		serve: preset.serve,
 		serveReady: preset.serveReady,
 		serveTimeout: preset.serveTimeout,
@@ -566,24 +609,55 @@ async function batch(
 	if (!args.success) return fail(args.error);
 	const jobs = await loadJobs(ctx, deps, args.data);
 	if (!jobs.success) return fail(jobs.error);
-	const lease = clampToJobs(args.data, jobs.data.length);
-	if (lease !== args.data)
-		ctx.err(color.dim(`warden batch: ${jobs.data.length} job(s) → claiming ${jobs.data.length} device(s)`));
+	return (await runSession(ctx, deps, args.data, jobs.data, cmd)).code;
+}
+
+/** Claim (at most one device per job, under a spinner) → supervise → release. */
+export async function runSession(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	jobs: string[],
+	cmd: string[],
+	hooks: SessionHooks = {}
+): Promise<SessionResult> {
+	const { color } = ctx.ui;
+	const name = hooks.name ?? "batch";
+	const lease = clampToJobs(args, jobs.length);
+	if (lease !== args) ctx.err(color.dim(`warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`));
 	const owner = resolveOwner(ctx);
 	maybeAutoGc(ctx);
-	const { count, profile } = lease.flags.request;
+	const { count, profile, platform } = lease.flags.request;
 	const claimed = await withSpinner(
 		ctx,
 		`claiming ${count} ${profile} ${platform} device(s)…`,
 		async (sctx, spinner) => {
-			const result = await claimAll(sctx, deps, owner, lease, "batch");
+			const result = await claimAll(sctx, deps, owner, lease, name);
 			if (result.success) spinner.succeed(`leased ${result.data.outcome.claimed.map((c) => c.device.name).join(", ")}`);
 			else spinner.fail("claim failed");
 			return result;
 		}
 	);
-	if (!claimed.success) return fail(claimed.error);
-	return supervise(ctx, deps, lease, jobs.data, cmd, claimed.data);
+	if (!claimed.success) {
+		ctx.err(color.red(`warden ${name}: ${claimed.error}`));
+		return { code: 1 };
+	}
+	return supervise(ctx, deps, lease, jobs, cmd, claimed.data, { ...hooks, name });
+}
+
+/** Queue options shared by `warden batch` and `warden e2e`. */
+export function withBatchOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
+	cmd: Commander<Args, Opts, Globals>
+) {
+	return cmd
+		.option("--retry <n>", "re-run a failed job up to N times on the same device", "0")
+		.option("--passes <n>", "a job passes after N consecutive green runs on its device", "1")
+		.option("--serve <sh-cmd>", "start this (sh -c, own process group) before the jobs; killed at the end")
+		.option("--serve-ready <probe>", "wait for http://…, tcp:PORT or file:PATH before starting jobs")
+		.option("--serve-timeout <duration>", "--serve-ready: give up after this long", "10m")
+		.option("--record <dir>", "iOS: record every simulator + the TUI into DIR (batch.json, tui.cast, dev-<i>.mp4)")
+		.option("--logs <dir>", "per-job logs (default: <record dir>/logs or $WARDEN_HOME/batches/<id>/logs)")
+		.option("--no-tui", "plain log lines instead of the live grid");
 }
 
 /**
@@ -595,25 +669,20 @@ export function createBatchCommand(deps: BatchDeps): Command {
 		name: "batch",
 		summary: "claim N devices, fan a job queue out over them (one worker per device), release at the end",
 		register: (cmd, ctx, done) => {
-			withLeaseOptions(
-				withClaimOptions(
-					cmd
-						.argument(
-							"[platform]",
-							"ios | android (asked for when omitted in a terminal), or a warden.config.json batches preset"
-						)
-						.argument("[cmd...]", "per-job command after --; {job} {udid} {worker} {seq} are substituted")
+			withBatchOptions(
+				withLeaseOptions(
+					withClaimOptions(
+						cmd
+							.argument(
+								"[platform]",
+								"ios | android (asked for when omitted in a terminal), or a warden.config.json batches preset"
+							)
+							.argument("[cmd...]", "per-job command after --; {job} {udid} {worker} {seq} are substituted")
+					)
 				)
 			)
 				.option("--jobs <list>", "comma-separated jobs")
 				.option("--jobs-from <file>", "one job per line from a file, or - for stdin")
-				.option("--retry <n>", "re-run a failed job up to N times on the same device", "0")
-				.option("--serve <sh-cmd>", "start this (sh -c, own process group) before the jobs; killed at the end")
-				.option("--serve-ready <probe>", "wait for http://…, tcp:PORT or file:PATH before starting jobs")
-				.option("--serve-timeout <duration>", "--serve-ready: give up after this long", "10m")
-				.option("--record <dir>", "iOS: record every simulator + the TUI into DIR (batch.json, tui.cast, dev-<i>.mp4)")
-				.option("--logs <dir>", "per-job logs (default: <record dir>/logs or $WARDEN_HOME/batches/<id>/logs)")
-				.option("--no-tui", "plain log lines instead of the live grid")
 				.addHelpText(
 					"after",
 					"\nExamples:\n  warden batch ios --count 3 --jobs a,b,c,d -- bun e2e --flow {job} --device {udid}\n  warden batch e2e --count 2    # batches.e2e from warden.config.json, --count overridden"

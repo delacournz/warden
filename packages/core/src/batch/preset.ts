@@ -30,6 +30,7 @@ export type BatchPreset = {
 	ports?: string[];
 	app?: boolean;
 	retry?: number;
+	passes?: number;
 	env?: Record<string, string>;
 	serve?: string;
 	/** `file:` paths made absolute */
