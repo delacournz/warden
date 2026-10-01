@@ -1,8 +1,8 @@
-import { DEFAULT_IDLE_MS } from "@warden/core/config.defaults";
-import { formatDuration, parseDuration } from "@warden/core/duration";
-import { isLeaseAlive, processAlive } from "@warden/core/liveness";
-import type { Owner, Platform } from "@warden/core/types";
-import { ok, type Result } from "@warden/types/result";
+import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
+import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
+import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
+import type { Owner, Platform } from "@delacour/warden-core/types";
+import { ok, type Result } from "@delacour/warden-types/result";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";

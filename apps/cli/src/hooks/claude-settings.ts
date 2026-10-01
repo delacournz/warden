@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@warden/types/result";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 import { ARGENT_MATCHER } from "./claude-pretool";
 import { isJsonObject, isRecord, type JsonObject } from "./json";
 

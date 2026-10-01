@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Lease, Owner } from "@warden/core/types";
+import type { Lease, Owner } from "@delacour/warden-core/types";
 import { type TestContext, testContext } from "../testing";
 import { portCommand } from "./port";
 

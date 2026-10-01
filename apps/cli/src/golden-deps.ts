@@ -1,6 +1,6 @@
-import type { GoldenDeps } from "@warden/core/golden/ios-golden";
-import { processAlive } from "@warden/core/liveness";
-import type { Owner } from "@warden/core/types";
+import type { GoldenDeps } from "@delacour/warden-core/golden/ios-golden";
+import { processAlive } from "@delacour/warden-core/liveness";
+import type { Owner } from "@delacour/warden-core/types";
 import type { CommandContext } from "./context";
 
 export type Sleep = (ms: number) => Promise<void>;

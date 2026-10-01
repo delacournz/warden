@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type Exec, execError } from "../exec";
 import type { Platform } from "../types";

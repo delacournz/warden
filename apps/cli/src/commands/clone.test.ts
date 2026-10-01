@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fakeHost } from "@warden/core/golden/golden.testing";
+import { fakeHost } from "@delacour/warden-core/golden/golden.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { cloneCommand } from "./clone";
 

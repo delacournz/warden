@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG_FILE } from "@warden/core/builds/config";
-import type { ExecOptions, ExecResult } from "@warden/core/exec";
+import { CONFIG_FILE } from "@delacour/warden-core/builds/config";
+import type { ExecOptions, ExecResult } from "@delacour/warden-core/exec";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createBatchCommand } from "./batch";

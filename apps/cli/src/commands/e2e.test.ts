@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { makeSuiteRepo } from "@warden/core/affected/fixture.testing";
-import { bunExec, type Exec } from "@warden/core/exec";
+import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
+import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { harness } from "./batch.testing";

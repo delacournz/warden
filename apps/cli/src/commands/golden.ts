@@ -1,5 +1,5 @@
-import { DEFAULT_PROFILE } from "@warden/core/config.defaults";
-import { ensureGolden, listGoldens, pruneGoldens } from "@warden/core/golden/ios-golden";
+import { DEFAULT_PROFILE } from "@delacour/warden-core/config.defaults";
+import { ensureGolden, listGoldens, pruneGoldens } from "@delacour/warden-core/golden/ios-golden";
 import { resolveOwner } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";

@@ -2,9 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Exec, ExecResult } from "@warden/core/exec";
+import type { Exec, ExecResult } from "@delacour/warden-core/exec";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import type { BuildInfo } from "../update/build-info";
+import { installOrigin, recordInstallOrigin } from "../update/install-origin";
+import type { Fetch } from "../update/npm-registry";
+import { makeTgz } from "../update/tar.testing";
 import { createUpdateCommand, type UpdateDeps } from "./update";
 
 let ctx: TestContext | undefined;
@@ -74,6 +77,40 @@ function fakeExec(opts: FakeOpts, calls: string[][]): Exec {
 	};
 }
 
+const REGISTRY = "https://registry.npmjs.org";
+type RegistryOpts = { latest?: string; binary?: string; integrity?: string; down?: boolean };
+
+/** Fake npm registry: `latest` dist-tag, the darwin-arm64 platform version, and its tarball. */
+function registryFetch(opts: RegistryOpts = {}, calls: string[] = []): Fetch {
+	const latest = opts.latest ?? "0.3.0";
+	const tgz = makeTgz([
+		{ name: "package/package.json", content: "{}" },
+		{ name: "package/bin/warden", content: opts.binary ?? "NPM-BINARY" },
+	]);
+	const integrity = opts.integrity ?? `sha512-${createHash("sha512").update(tgz).digest("base64")}`;
+	const routes: Record<string, () => Response> = {
+		[`${REGISTRY}/@delacour/warden/latest`]: () => Response.json({ version: latest }),
+		[`${REGISTRY}/@delacour/warden-darwin-arm64/${latest}`]: () =>
+			Response.json({ version: latest, dist: { tarball: "https://tarballs/warden-darwin-arm64.tgz", integrity } }),
+		"https://tarballs/warden-darwin-arm64.tgz": () => new Response(tgz),
+	};
+	return async (url) => {
+		calls.push(url);
+		if (opts.down) throw new Error("ENOTFOUND registry.npmjs.org");
+		return routes[url]?.() ?? new Response("not found", { status: 404 });
+	};
+}
+
+/** gh fails (not installed / no access to the private repo); everything else like `fakeExec`. */
+function ghDownExec(opts: FakeOpts, calls: string[][]): Exec {
+	const inner = fakeExec(opts, calls);
+	return async (cmd, execOpts) => {
+		if (cmd[0] !== "gh") return inner(cmd, execOpts);
+		calls.push([...cmd]);
+		return { exitCode: 1, stdout: "", stderr: "HTTP 404: Not Found" };
+	};
+}
+
 function setup(argv: string[], build: BuildInfo, fake: FakeOpts = {}) {
 	const calls: string[][] = [];
 	ctx = testContext(argv);
@@ -89,6 +126,9 @@ function setup(argv: string[], build: BuildInfo, fake: FakeOpts = {}) {
 		arch: "arm64",
 		execPath,
 		which: () => execPath,
+		fetch: async (url) => {
+			throw new Error(`unexpected fetch ${url}`);
+		},
 	};
 	return { c: ctx, calls, deps, execPath };
 }
@@ -138,6 +178,140 @@ describe("warden update (release binary)", () => {
 		deps.which = () => "/opt/homebrew/bin/warden";
 		expect(await createUpdateCommand(deps).run(c)).toBe(0);
 		expect(c.stderr.join("\n")).toContain("/opt/homebrew/bin/warden");
+	});
+});
+
+describe("warden update (npm package install)", () => {
+	const npmBinary =
+		"/opt/homebrew/lib/node_modules/@delacour/warden/node_modules/@delacour/warden-darwin-arm64/bin/warden";
+
+	test("npm global → prints the npm upgrade command, touches nothing", async () => {
+		const { c, calls, deps } = setup([], release());
+		deps.execPath = npmBinary;
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		const out = c.stdout.join("\n");
+		expect(out).toContain("npm global install of @delacour/warden");
+		expect(out).toContain("npm i -g @delacour/warden@latest");
+		expect(calls).toEqual([]);
+	});
+
+	test("npx run → re-run install from the latest package (--json)", async () => {
+		const { c, calls, deps } = setup(["--json", "--release"], release());
+		deps.execPath = "/Users/me/.npm/_npx/ab12/node_modules/@delacour/warden-darwin-arm64/bin/warden";
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+			status: "managed",
+			current: "0.2.0",
+			channel: "release",
+			install: { kind: "npx" },
+			command: "npx @delacour/warden@latest install",
+		});
+		expect(calls).toEqual([]);
+	});
+
+	test("--to still installs a standalone release binary from an npm install", async () => {
+		const { c, deps } = setup([], release());
+		deps.execPath = npmBinary;
+		const to = join(c.cwd, "standalone", "warden");
+		c.argv = ["--to", to];
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(readFileSync(to, "utf8")).toBe("NEW-BINARY");
+	});
+});
+
+describe("warden update (npm registry)", () => {
+	function npmSetup(argv: string[], build: BuildInfo = release(), registry: RegistryOpts = {}, fake: FakeOpts = {}) {
+		const out = setup(argv, build, { reports: registry.latest ?? "0.3.0", ...fake });
+		const fetches: string[] = [];
+		out.deps.fetch = registryFetch(registry, fetches);
+		return { ...out, fetches };
+	}
+
+	test("a copy installed via npx updates from npm: latest → platform tarball → sha512 → swap in place", async () => {
+		const { c, calls, deps, execPath, fetches } = npmSetup([]);
+		recordInstallOrigin(c.env, execPath, "npm");
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(readFileSync(execPath, "utf8")).toBe("NPM-BINARY");
+		expect(fetches).toEqual([
+			`${REGISTRY}/@delacour/warden/latest`,
+			`${REGISTRY}/@delacour/warden-darwin-arm64/0.3.0`,
+			"https://tarballs/warden-darwin-arm64.tgz",
+		]);
+		expect(calls.some((cmd) => cmd[0] === "gh")).toBe(false);
+		expect(c.stdout.join("\n")).toContain("warden updated 0.2.0 → 0.3.0: 0.3.0 (npm @delacour/warden@0.3.0)");
+	});
+
+	test("--check only reports; no tarball download", async () => {
+		const { c, deps, execPath, fetches } = npmSetup(["--check", "--json"]);
+		recordInstallOrigin(c.env, execPath, "npm");
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ status: "available", current: "0.2.0", latest: "0.3.0" });
+		expect(fetches).toEqual([`${REGISTRY}/@delacour/warden/latest`]);
+		expect(readFileSync(execPath, "utf8")).toBe("OLD-BINARY");
+	});
+
+	test("up to date → nothing downloaded; --force reinstalls", async () => {
+		const { c, deps, execPath, fetches } = npmSetup([], release("0.3.0"));
+		recordInstallOrigin(c.env, execPath, "npm");
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(c.stdout.join("\n")).toContain("up to date");
+		expect(fetches).toHaveLength(1);
+		c.argv = ["--force", "--json"];
+		c.stdout.length = 0;
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ status: "updated", latest: "0.3.0" });
+		expect(readFileSync(execPath, "utf8")).toBe("NPM-BINARY");
+	});
+
+	test("GitHub releases unreachable → falls back to npm and remembers it", async () => {
+		const { c, deps, execPath } = npmSetup([]);
+		const calls: string[][] = [];
+		c.exec = ghDownExec({ reports: "0.3.0" }, calls);
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(calls[0]?.[0]).toBe("gh");
+		expect(readFileSync(execPath, "utf8")).toBe("NPM-BINARY");
+		expect(c.stderr.join("\n")).toContain("trying npm");
+		expect(installOrigin(c.env, execPath)).toBe("npm");
+	});
+
+	test("integrity mismatch → exit 1, binary untouched", async () => {
+		const { c, deps, execPath } = npmSetup([], release(), { integrity: "sha512-AAAA" });
+		recordInstallOrigin(c.env, execPath, "npm");
+		expect(await createUpdateCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("integrity mismatch");
+		expect(readFileSync(execPath, "utf8")).toBe("OLD-BINARY");
+	});
+
+	test("new binary fails its self-check → exit 1, binary untouched", async () => {
+		const { c, deps, execPath } = npmSetup([], release(), {}, { reports: "0.2.0" });
+		recordInstallOrigin(c.env, execPath, "npm");
+		expect(await createUpdateCommand(deps).run(c)).toBe(1);
+		expect(readFileSync(execPath, "utf8")).toBe("OLD-BINARY");
+	});
+
+	test("GitHub and npm both unreachable → exit 1 naming both", async () => {
+		const { c, deps } = npmSetup([], release(), { down: true });
+		c.exec = ghDownExec({}, []);
+		expect(await createUpdateCommand(deps).run(c)).toBe(1);
+		const stderr = c.stderr.join("\n");
+		expect(stderr).toContain("HTTP 404");
+		expect(stderr).toContain("ENOTFOUND");
+	});
+
+	test("spinners cover the npm lookup, download + integrity and install self-check", async () => {
+		const { c, deps, execPath } = npmSetup([]);
+		recordInstallOrigin(c.env, execPath, "npm");
+		const ui = scriptedUi();
+		c.ui = ui;
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(ui.events.filter((e) => e.startsWith("spin:") || e.startsWith("ok:"))).toEqual([
+			"spin: checking the latest @delacour/warden on npm…",
+			"ok: latest @delacour/warden 0.3.0",
+			"spin: downloading @delacour/warden-darwin-arm64@0.3.0…",
+			"ok: downloaded @delacour/warden-darwin-arm64@0.3.0 (sha512 ok)",
+			`spin: installing ${execPath}…`,
+			"ok: installed 0.3.0 (self-check ok)",
+		]);
 	});
 });
 

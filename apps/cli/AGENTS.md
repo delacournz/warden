@@ -1,4 +1,4 @@
-# @warden/cli
+# @delacour/warden
 
 The `warden` binary. `src/cli.ts` dispatches to `src/commands/<name>.ts` (registered in `commands/registry.ts`).
 
@@ -12,10 +12,12 @@ The `warden` binary. `src/cli.ts` dispatches to `src/commands/<name>.ts` (regist
 - `hooks/`: agent hook handlers (`claude-pretool.ts`: PreToolUse/SessionEnd, shared by Claude Code and Codex: same stdin JSON + exit-2 blocking), hook-config merge (`claude-settings.ts` `mergeWardenHooks`; `codex-hooks.ts` for `$CODEX_HOME/hooks.json`), agent detection (`agents.ts`), argent rule patch, text diff. Hook failures never block a tool (exit 0).
 - `assets/assets.d.ts`: `*.md` text-import typing. The skill lives at repo-root `skills/warden/SKILL.md`, embedded via `src/skill.ts`.
 - `warden install` targets detected agents (or `--claude` / `--codex`) and never touches `~/.claude` / `~/.codex` without showing a diff + confirm (`--yes` / `--dry-run`); tests use a temp `HOME` (detection reads `ctx.env.PATH`, never the process PATH).
-- `update/`: build info (`dev`/`local`/`release`, embedded via `--define __WARDEN_BUILD__=<json>`), semver, GitHub release lookup/download (gh), source build, atomic binary install with self-check.
+- `update/`: build info (`dev`/`local`/`release`, embedded via `--define __WARDEN_BUILD__=<json>`), semver, GitHub release lookup/download (gh), source build, atomic binary install with self-check, npm install detection (`package-install.ts`: npx / bunx / npm / bun / pnpm global / project, read off the binary's `node_modules/@delacour/warden-<target>/` path → `update` prints the upgrade command, `install` links global installs instead of copying). npx/bunx copies are recorded in `$WARDEN_HOME/install-origin.json` (`install-origin.ts`) and update from the npm registry (`npm-registry.ts`: latest → platform tarball → sha512 integrity → `tar.ts` extract), which is also the fallback when GitHub releases can't be reached.
+- `npm/`: the npm distribution. `platforms.ts` (release targets, package names), `manifests.ts` (generated `package.json`s), `shim.ts` + `shim-main.ts` (the node `warden` bin that runs the platform package's binary; bundled for node, so node APIs only).
 
 ## Build
 - `bun run build` → `dist/warden` (channel `local`, records this checkout; `scripts/build.ts`)
 - `bun run build:release` → `dist/warden-{darwin,linux}-{arm64,x64}` + `checksums.txt` (CI, on `v*` tags)
+- `bun run build:npm` (after `build:release`) → `dist/npm/warden-<target>/` (`@delacour/warden-<target>`: binary, `os`/`cpu` pinned) + `dist/npm/warden/` (`@delacour/warden`: node shim bin + exact-version optionalDependencies). The release workflow publishes them; this `package.json` stays `private` because the published manifest is generated.
 - `bun run install:global` = `bun src/cli.ts update` → `~/.local/bin/warden`
 - Never compile without `scripts/build.ts` / `compileArgs` — a binary without build info can't update itself.

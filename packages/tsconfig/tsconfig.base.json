@@ -14,6 +14,6 @@
 		"skipLibCheck": true,
 		"strict": true,
 		"target": "es2022",
-		"customConditions": ["@warden/source"]
+		"customConditions": ["@delacour/warden-source"]
 	}
 }

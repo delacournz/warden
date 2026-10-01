@@ -1,15 +1,19 @@
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { isLeaseAlive, processAlive } from "@warden/core/liveness";
-import { androidTools } from "@warden/core/providers/android";
-import { MIGRATIONS, wardenHome } from "@warden/core/store";
+import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
+import { androidTools } from "@delacour/warden-core/providers/android";
+import { MIGRATIONS, wardenHome } from "@delacour/warden-core/store";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { codexDetected } from "../hooks/agents";
 import { hasWardenHook } from "../hooks/claude-settings";
 import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook } from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
+import { NPM_PACKAGE } from "../npm/platforms";
 import { emit } from "../output";
+import { type BuildInfo, currentBuild } from "../update/build-info";
+import { type InstallOrigin, installOrigin } from "../update/install-origin";
+import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 /** core failures make doctor exit 1; optional ones only warn */
@@ -63,16 +67,47 @@ async function tool(ctx: CommandContext, cmd: string[], missing: string): Promis
 	}
 }
 
+function executable(path: string): boolean {
+	try {
+		accessSync(path, constants.X_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Hooks run `$HOME/.local/bin/warden`; the shell may find `warden` there or elsewhere (e.g. an npm global bin). */
 function onPath(ctx: CommandContext, home: string): Probe {
 	const bin = join(home, ".local", "bin");
 	const binary = join(bin, "warden");
+	if (!executable(binary)) return { ok: false, detail: `${binary} missing — run \`warden install\` (hooks call it)` };
 	return attempt(() => {
-		accessSync(binary, constants.X_OK);
-		const dirs = (ctx.env.PATH ?? "").split(delimiter);
-		return dirs.includes(bin)
-			? { ok: true, detail: binary }
+		const dirs = (ctx.env.PATH ?? "").split(delimiter).filter(Boolean);
+		if (dirs.includes(bin)) return { ok: true, detail: binary };
+		const other = dirs.map((dir) => join(dir, "warden")).find(executable);
+		return other
+			? { ok: true, detail: `${binary} (hooks); \`warden\` on PATH → ${other}` }
 			: { ok: false, detail: `${bin} is not on PATH (hooks still work: they use $HOME/.local/bin/warden)` };
 	});
+}
+
+/** How this warden was installed and how it upgrades. Informational: always ok. */
+export function installProbe(build: BuildInfo, execPath: string, origin?: InstallOrigin): Probe {
+	if (build.channel === "dev") {
+		return {
+			ok: true,
+			detail: `running from source ${build.sourceDir} — \`warden update\` builds ~/.local/bin/warden`,
+		};
+	}
+	const managed = detectPackageInstall(execPath);
+	if (managed) return { ok: true, detail: `${describePackageInstall(managed)} — upgrade: ${upgradeCommand(managed)}` };
+	if (origin === "npm") {
+		return {
+			ok: true,
+			detail: `${build.channel} binary ${execPath} (from npm) — \`warden update\` upgrades it from ${NPM_PACKAGE} on npm`,
+		};
+	}
+	return { ok: true, detail: `${build.channel} binary ${execPath} — \`warden update\` upgrades it` };
 }
 
 function claudeHook(home: string): Probe {
@@ -133,6 +168,11 @@ export async function runChecks(ctx: CommandContext): Promise<DoctorCheck[]> {
 		check("simctl", "optional", simctl),
 		check("adb", "optional", adbProbe),
 		check("emulator", "optional", emulatorProbe),
+		check(
+			"install",
+			"optional",
+			installProbe(currentBuild(), process.execPath, installOrigin(ctx.env, process.execPath))
+		),
 		check("path", "optional", onPath(ctx, home)),
 		check("claude-hook", "optional", claudeHook(home)),
 		check("codex-hook", "optional", codexHook(ctx)),
@@ -172,7 +212,8 @@ async function doctor(ctx: CommandContext, json: boolean): Promise<number> {
 
 export const doctorCommand = defineCommand({
 	name: "doctor",
-	summary: "check warden's setup: home, db, device tools, PATH, Claude/Codex hooks + skill, stale leases",
+	summary:
+		"check warden's setup: home, db, device tools, install method, PATH, Claude/Codex hooks + skill, stale leases",
 	register: (cmd, ctx, done) => {
 		cmd.option("--json", "machine-readable output").action(async (opts) => done(await doctor(ctx, opts.json === true)));
 	},

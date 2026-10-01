@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
-import type { AsyncResult, Result } from "@warden/types/result";
-import { err, ok } from "@warden/types/result";
+import type { AsyncResult, Result } from "@delacour/warden-types/result";
+import { err, ok } from "@delacour/warden-types/result";
 import { isLeaseAlive, type PidAlive } from "./liveness";
 import type { Store } from "./store";
 import { ownerKey } from "./store";

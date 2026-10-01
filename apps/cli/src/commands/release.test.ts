@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Owner } from "@warden/core/types";
+import type { Owner } from "@delacour/warden-core/types";
 import { fakeSimctl, OWNER_ENV } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { releaseCommand } from "./release";

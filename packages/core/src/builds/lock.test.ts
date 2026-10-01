@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { err, ok } from "@warden/types/result";
+import { err, ok } from "@delacour/warden-types/result";
 import { openStore, type Store } from "../store";
 import type { Owner } from "../types";
 import { type BuildLockDeps, buildLockKey, liveBuildLocks, withBuildLock } from "./lock";

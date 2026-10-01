@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { err, ok, type Result } from "@warden/types/result";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 
 /** `--serve-ready`: what "serve is up" means. */
 export type ReadySpec =

@@ -1,5 +1,5 @@
 {
-  "extends": "@warden/tsconfig/tsconfig.base.json",
+  "extends": "@delacour/warden-tsconfig/tsconfig.base.json",
   "compilerOptions": { "outDir": "./dist", "types": ["bun"] },
   "include": ["src"]
 }

@@ -1,5 +1,5 @@
 {
-	"name": "@warden/core",
+	"name": "@delacour/warden-core",
 	"version": "0.1.0",
 	"description": "warden core: lease store, allocation, device providers, build cache",
 	"type": "module",
@@ -15,11 +15,11 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@warden/types": "workspace:*",
+		"@delacour/warden-types": "workspace:*",
 		"zod": "^4.4.3",
 		"typescript": "^5.9.3"
 	},
 	"devDependencies": {
-		"@warden/tsconfig": "workspace:*"
+		"@delacour/warden-tsconfig": "workspace:*"
 	}
 }

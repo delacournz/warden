@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fakeApp } from "@warden/core/builds/builds.testing";
-import { getInstall, storeArtifact } from "@warden/core/builds/cache";
-import type { ExecResult } from "@warden/core/exec";
+import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
+import { getInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
+import type { ExecResult } from "@delacour/warden-core/exec";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { type AppDeps, createAppCommand } from "./app";

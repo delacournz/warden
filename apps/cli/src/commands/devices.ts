@@ -1,7 +1,7 @@
-import { markWardenDevices } from "@warden/core/inventory";
-import { isLeaseAlive, processAlive } from "@warden/core/liveness";
-import { listAvds } from "@warden/core/providers/android";
-import { describeOwner, type Lease, ownerLocation, type Platform } from "@warden/core/types";
+import { markWardenDevices } from "@delacour/warden-core/inventory";
+import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
+import { listAvds } from "@delacour/warden-core/providers/android";
+import { describeOwner, type Lease, ownerLocation, type Platform } from "@delacour/warden-core/types";
 import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";

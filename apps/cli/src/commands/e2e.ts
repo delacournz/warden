@@ -1,9 +1,9 @@
 import { join } from "node:path";
-import type { Affected } from "@warden/core/affected/affected";
-import type { E2eSuiteConfig } from "@warden/core/affected/affected.schema";
-import type { SelectedFlow, Selection } from "@warden/core/affected/select";
-import type { Platform } from "@warden/core/types";
-import { err, ok, type Result } from "@warden/types/result";
+import type { Affected } from "@delacour/warden-core/affected/affected";
+import type { E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
+import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
+import type { Platform } from "@delacour/warden-core/types";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 import { type ClaimFlagValues, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";

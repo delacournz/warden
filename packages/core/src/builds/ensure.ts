@@ -1,4 +1,4 @@
-import { type AsyncResult, ok } from "@warden/types/result";
+import { type AsyncResult, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import type { PidAlive } from "../liveness";
 import type { Store } from "../store";

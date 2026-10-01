@@ -1,6 +1,6 @@
-import { formatDuration } from "@warden/core/duration";
-import { isLeaseAlive, processAlive } from "@warden/core/liveness";
-import { describeOwner, ownerLocation, type Resource } from "@warden/core/types";
+import { formatDuration } from "@delacour/warden-core/duration";
+import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
+import { describeOwner, ownerLocation, type Resource } from "@delacour/warden-core/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, formatTable } from "../output";

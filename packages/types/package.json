@@ -1,5 +1,5 @@
 {
-  "name": "@warden/types",
+  "name": "@delacour/warden-types",
   "version": "1.0.0",
   "description": "Shared TypeScript utility types",
   "type": "module",
@@ -12,7 +12,7 @@
     "test": "bun test"
   },
   "devDependencies": {
-    "@warden/tsconfig": "workspace:*",
+    "@delacour/warden-tsconfig": "workspace:*",
     "typescript": "^5.9.3"
   },
   "exports": {

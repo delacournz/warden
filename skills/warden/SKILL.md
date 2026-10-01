@@ -34,6 +34,7 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | keep a long lease alive | `warden heartbeat --mine` |
 | reclaim dead leases | `warden gc` |
 | setup problems | `warden doctor` |
-| update warden | `warden update` (`--check` to only look) |
+| `warden` not installed | `npm i -g @delacour/warden && warden install` (one-shot: `npx @delacour/warden install`) |
+| update warden | `warden update` (`--check` to only look; for npm/bun installs it prints the upgrade command) |
 
 Leases expire after 30 min without a heartbeat (each argent call through the hook refreshes it).

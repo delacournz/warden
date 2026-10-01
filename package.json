@@ -1,5 +1,5 @@
 {
-	"name": "@warden/source",
+	"name": "@delacour/warden-source",
 	"version": "0.1.0",
 	"type": "module",
 	"private": true,
@@ -25,8 +25,8 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.14",
 		"@j178/prek": "^0.3.5",
-		"@warden/biome-config": "workspace:*",
-		"@warden/tsconfig": "workspace:*",
+		"@delacour/warden-biome-config": "workspace:*",
+		"@delacour/warden-tsconfig": "workspace:*",
 		"@types/bun": "^1.3.8",
 		"@types/node": "^22.15.0",
 		"turbo": "^2.8.2",

@@ -1,6 +1,6 @@
-import { isPortFree } from "@warden/core/ports";
-import type { Platform } from "@warden/core/types";
-import { ok, type Result } from "@warden/types/result";
+import { isPortFree } from "@delacour/warden-core/ports";
+import type { Platform } from "@delacour/warden-core/types";
+import { ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import {
 	type ClaimFlagValues,

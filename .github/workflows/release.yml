@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write # npm provenance
 
 jobs:
   release:
@@ -16,6 +17,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
 
       - run: bun install --frozen-lockfile
 
@@ -38,3 +44,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" apps/cli/dist/warden-* apps/cli/dist/checksums.txt --title "$GITHUB_REF_NAME" --generate-notes
+
+      # Repository / homepage / bugs links go into the manifests only once the repo is public.
+      - name: Stage npm packages
+        env:
+          WARDEN_NPM_REPO_LINKS: ${{ github.event.repository.private == false && '1' || '0' }}
+        run: bun run --cwd apps/cli build:npm
+
+      # Platform packages first so @delacour/warden's optionalDependencies resolve the moment it lands.
+      # Already-published versions are skipped, so a re-run finishes a partial publish.
+      # npm only signs provenance for public source repos.
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          provenance=""
+          if [ "$REPO_PRIVATE" = "false" ]; then provenance="--provenance"; fi
+          for dir in apps/cli/dist/npm/warden-*/ apps/cli/dist/npm/warden/; do
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version > /dev/null 2>&1; then
+              echo "$name@$version already published, skipping"
+              continue
+            fi
+            npm publish "./$dir" --access public $provenance
+          done

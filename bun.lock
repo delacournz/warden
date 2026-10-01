@@ -3,20 +3,20 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@warden/source",
+      "name": "@delacour/warden-source",
       "devDependencies": {
         "@biomejs/biome": "^2.5.14",
+        "@delacour/warden-biome-config": "workspace:*",
+        "@delacour/warden-tsconfig": "workspace:*",
         "@j178/prek": "^0.3.5",
         "@types/bun": "^1.3.8",
         "@types/node": "^22.15.0",
-        "@warden/biome-config": "workspace:*",
-        "@warden/tsconfig": "workspace:*",
         "turbo": "^2.8.2",
         "typescript": "^5.9.3",
       },
     },
     "apps/cli": {
-      "name": "@warden/cli",
+      "name": "@delacour/warden",
       "version": "0.1.0",
       "bin": {
         "warden": "./src/cli.ts",
@@ -24,19 +24,19 @@
       "dependencies": {
         "@clack/prompts": "^1.8.1",
         "@commander-js/extra-typings": "^15.0.0",
-        "@warden/core": "workspace:*",
-        "@warden/types": "workspace:*",
+        "@delacour/warden-core": "workspace:*",
+        "@delacour/warden-types": "workspace:*",
         "chalk": "^6.0.1",
         "commander": "^15.0.0",
         "ora": "^9.4.1",
       },
       "devDependencies": {
-        "@warden/tsconfig": "workspace:*",
+        "@delacour/warden-tsconfig": "workspace:*",
         "typescript": "^5.9.3",
       },
     },
     "apps/docs": {
-      "name": "@warden/docs",
+      "name": "@delacour/warden-docs",
       "version": "0.1.0",
       "dependencies": {
         "@fontsource-variable/onest": "^5.3.1",
@@ -63,44 +63,44 @@
       },
     },
     "packages/biome-config": {
-      "name": "@warden/biome-config",
+      "name": "@delacour/warden-biome-config",
       "version": "1.0.0",
       "peerDependencies": {
         "@biomejs/biome": "^2.0.0",
       },
     },
     "packages/core": {
-      "name": "@warden/core",
+      "name": "@delacour/warden-core",
       "version": "0.1.0",
       "dependencies": {
-        "@warden/types": "workspace:*",
+        "@delacour/warden-types": "workspace:*",
         "typescript": "^5.9.3",
         "zod": "^4.4.3",
       },
       "devDependencies": {
-        "@warden/tsconfig": "workspace:*",
+        "@delacour/warden-tsconfig": "workspace:*",
       },
     },
     "packages/tsconfig": {
-      "name": "@warden/tsconfig",
+      "name": "@delacour/warden-tsconfig",
       "version": "1.0.0",
     },
     "packages/types": {
-      "name": "@warden/types",
+      "name": "@delacour/warden-types",
       "version": "1.0.0",
       "devDependencies": {
-        "@warden/tsconfig": "workspace:*",
+        "@delacour/warden-tsconfig": "workspace:*",
         "typescript": "^5.9.3",
       },
     },
     "scripts/demo": {
-      "name": "@warden/demo",
+      "name": "@delacour/warden-demo",
       "version": "0.1.0",
       "dependencies": {
-        "@warden/types": "workspace:*",
+        "@delacour/warden-types": "workspace:*",
       },
       "devDependencies": {
-        "@warden/tsconfig": "workspace:*",
+        "@delacour/warden-tsconfig": "workspace:*",
         "typescript": "^5.9.3",
       },
     },
@@ -170,6 +170,20 @@
     "@clack/prompts": ["@clack/prompts@1.8.1", "", { "dependencies": { "@clack/core": "1.5.1", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-dlT1m5e/0yUL0kRNcQn7yGLVThkgbB0Ga/1AmfDDC/8ik6AIiSf2QLQO2zPYvefsHP0aFgxO93cVLCCfDp7kzQ=="],
 
     "@commander-js/extra-typings": ["@commander-js/extra-typings@15.0.0", "", { "peerDependencies": { "commander": "~15.0.0" } }, "sha512-yeJlba62xqmkgELUsn7356MEnzLLu/fw2x4lofFqGnXh6YysRdEs2BaLeLtg1+KU0AXvMeqQvTTp+3hBEBK+EA=="],
+
+    "@delacour/warden": ["@delacour/warden@workspace:apps/cli"],
+
+    "@delacour/warden-biome-config": ["@delacour/warden-biome-config@workspace:packages/biome-config"],
+
+    "@delacour/warden-core": ["@delacour/warden-core@workspace:packages/core"],
+
+    "@delacour/warden-demo": ["@delacour/warden-demo@workspace:scripts/demo"],
+
+    "@delacour/warden-docs": ["@delacour/warden-docs@workspace:apps/docs"],
+
+    "@delacour/warden-tsconfig": ["@delacour/warden-tsconfig@workspace:packages/tsconfig"],
+
+    "@delacour/warden-types": ["@delacour/warden-types@workspace:packages/types"],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.28.2", "", { "os": "aix", "cpu": "ppc64" }, "sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ=="],
 
@@ -454,20 +468,6 @@
     "@ungap/structured-clone": ["@ungap/structured-clone@1.4.0", "", {}, "sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ=="],
 
     "@vitejs/plugin-react": ["@vitejs/plugin-react@6.1.1", "", { "dependencies": { "@rolldown/pluginutils": "^1.0.1" }, "peerDependencies": { "@rolldown/plugin-babel": "^0.1.7 || ^0.2.0", "babel-plugin-react-compiler": "^1.0.0", "oxc-transform-react": "^0.145.0", "vite": "^8.0.0" }, "optionalPeers": ["@rolldown/plugin-babel", "babel-plugin-react-compiler", "oxc-transform-react"] }, "sha512-yxLaQV9gkhS8ezJqCM6+ndU7mDY6gqAg75NQ+0IjwEI8IYOmQCgkRwHKVSfWXW076DsqMo0Dk+0FK1U+M5RgFw=="],
-
-    "@warden/biome-config": ["@warden/biome-config@workspace:packages/biome-config"],
-
-    "@warden/cli": ["@warden/cli@workspace:apps/cli"],
-
-    "@warden/core": ["@warden/core@workspace:packages/core"],
-
-    "@warden/demo": ["@warden/demo@workspace:scripts/demo"],
-
-    "@warden/docs": ["@warden/docs@workspace:apps/docs"],
-
-    "@warden/tsconfig": ["@warden/tsconfig@workspace:packages/tsconfig"],
-
-    "@warden/types": ["@warden/types@workspace:packages/types"],
 
     "@yuku-analyzer/binding-android-arm64": ["@yuku-analyzer/binding-android-arm64@0.8.7", "", { "os": "android", "cpu": "arm64" }, "sha512-pzJ++UMCZEV4s6SP3Ryvj+snWP8s7aTXFkSXRyeBF4RSALftPzfqYssHdGOmOH2QnRAtyOhhg64tdjeSGJvYRg=="],
 
@@ -1071,6 +1071,8 @@
 
     "@babel/traverse/@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
 
+    "@delacour/warden-docs/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
+
     "@tailwindcss/node/lightningcss": ["lightningcss@1.32.0", "", { "dependencies": { "detect-libc": "^2.0.3" }, "optionalDependencies": { "lightningcss-android-arm64": "1.32.0", "lightningcss-darwin-arm64": "1.32.0", "lightningcss-darwin-x64": "1.32.0", "lightningcss-freebsd-x64": "1.32.0", "lightningcss-linux-arm-gnueabihf": "1.32.0", "lightningcss-linux-arm64-gnu": "1.32.0", "lightningcss-linux-arm64-musl": "1.32.0", "lightningcss-linux-x64-gnu": "1.32.0", "lightningcss-linux-x64-musl": "1.32.0", "lightningcss-win32-arm64-msvc": "1.32.0", "lightningcss-win32-x64-msvc": "1.32.0" } }, "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ=="],
 
     "@tailwindcss/node/magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
@@ -1088,8 +1090,6 @@
     "@tailwindcss/oxide-wasm32-wasi/tslib": ["tslib@2.8.1", "", { "bundled": true }, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
 
     "@tanstack/router-generator/magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
-
-    "@warden/docs/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
     "ora/chalk": ["chalk@5.6.2", "", {}, "sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA=="],
 

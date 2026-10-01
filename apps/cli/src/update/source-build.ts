@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import type { Exec } from "@warden/core/exec";
-import { execError } from "@warden/core/exec";
-import { type AsyncResult, err, ok } from "@warden/types/result";
+import type { Exec } from "@delacour/warden-core/exec";
+import { execError } from "@delacour/warden-core/exec";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type BuildInfo, DEFINE_KEY } from "./build-info";
 
 export type EmbeddedBuild = Exclude<BuildInfo, { channel: "dev" }>;

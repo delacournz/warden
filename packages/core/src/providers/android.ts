@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { profileSlug } from "../allocate";
 import { DEFAULT_TTL_MS } from "../config.defaults";
 import { type ExecOptions, execError } from "../exec";

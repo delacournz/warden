@@ -1,27 +1,38 @@
 ---
 title: Installation
-description: Build the binary, wire up agent hooks, and check your setup.
+description: Install warden from npm or build it from source, wire up agent hooks, and check your setup.
 icon: Download
 ---
+
+<Callout type="warn">
+The npm release of `@delacour/warden` is pending. These commands are the intended install path and work once the first version is published. Until then, [build from source](#from-source).
+</Callout>
 
 <Steps>
 <Step>
 
-### Build the binary
-
-From a checkout of the warden repo:
+### Install warden
 
 ```bash
-bun install
-bun run --cwd apps/cli install:global   # local build of this checkout → ~/.local/bin/warden
+npm i -g @delacour/warden && warden install    # or: bun add -g @delacour/warden && warden install
 ```
 
-`~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`.
+`warden install` links `~/.local/bin/warden` (what the hooks call) to the global package, so `npm i -g @delacour/warden@latest` upgrades both.
+
+For a one-shot run with nothing installed globally:
+
+```bash
+npx @delacour/warden install     # or: bunx @delacour/warden install
+```
+
+This copies the binary to `~/.local/bin/warden` and wires the hooks. It only puts `warden` on your `PATH` if `~/.local/bin` is already on it, which macOS doesn't do by default. If `warden` isn't found afterwards, use the global install. To update a one-shot install, run `warden update`, which fetches it from npm, or re-run `npx @delacour/warden@latest install`.
+
+The package is a small node shim plus one prebuilt binary per platform (`@delacour/warden-{darwin,linux}-{arm64,x64}`, an optional dependency). macOS and Linux on arm64 and x64 are supported; Windows isn't.
 
 </Step>
 <Step>
 
-### Install hooks for your agents
+### Choose agents
 
 ```bash
 warden install            # binary + hooks for every detected agent; shows a diff, asks first
@@ -40,10 +51,22 @@ Every agent-config change shows a diff and asks first. `--yes` skips the prompt,
 warden doctor
 ```
 
-`doctor` checks warden's home, the db, device tools (`xcrun simctl`, `adb`, `emulator`), `PATH`, Claude/Codex hooks and skill, and stale leases.
+`doctor` checks warden's home, the db, device tools (`xcrun simctl`, `adb`, `emulator`), how warden was installed (and how to upgrade it), `PATH`, Claude/Codex hooks and skill, and stale leases.
 
 </Step>
 </Steps>
+
+## From source
+
+From a checkout of the warden repo:
+
+```bash
+bun install
+bun run --cwd apps/cli install:global   # local build of this checkout → ~/.local/bin/warden
+warden install
+```
+
+`~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`. `warden update` rebuilds from the checkout.
 
 ## Agent skill only
 

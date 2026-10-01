@@ -15,7 +15,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { ok, type Result } from "@warden/types/result";
+import { ok, type Result } from "@delacour/warden-types/result";
 import { type Batch, parseBatch } from "./batch";
 import { computeLayout, type Layout, palette, renderTopLayer, renderUnderlay } from "./layout";
 
@@ -241,7 +241,7 @@ export function buildFiltergraph(tl: Timeline, opts: FiltergraphOptions): Filter
 		}
 	});
 
-	const tail = [...draws, `tpad=stop_mode=clone:stop_duration=${tl.hold}`, "format=yuv420p"];
+	const tail = [...draws, `fps=${fps}`, `tpad=stop_mode=clone:stop_duration=${tl.hold}`, "format=yuv420p"];
 	chains.push(`[comp]${tail.join(",")}[out]`);
 	const graph = chains.join(";\n");
 
@@ -281,6 +281,9 @@ export function buildFiltergraph(tl: Timeline, opts: FiltergraphOptions): Filter
 	];
 	return { args, graph, texts, underlay, top };
 }
+
+/** Real ms kept after the last job, so the final ✓ and n/n counter are on screen before the hold. */
+const TAIL_MS = 2500;
 
 const quiet = ["-nostdin", "-y", "-hide_banner", "-loglevel", "error"];
 
@@ -509,7 +512,7 @@ async function compose(o: ComposeOptions): Promise<void> {
 			phoneAspect: phone.w / phone.h,
 			terminalAspect: termSize.w / termSize.h,
 		});
-		const tl = buildTimeline(batch, { duration: o.duration, hold: o.hold });
+		const tl = buildTimeline(batch, { duration: o.duration, hold: o.hold, tailMs: TAIL_MS });
 		const inter = join(workDir, "inter.mp4");
 		const fg = buildFiltergraph(tl, { layout, font, fps: 30, workDir, videos, gif, output: inter });
 		await writePng(renderUnderlay(layout), layout, join(workDir, "underlay.rgba"), fg.underlay);

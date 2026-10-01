@@ -10,11 +10,13 @@ icon: RefreshCw
 |-------|-----------------|
 | **dev** — running from source | compiles a `local` binary from this checkout → `~/.local/bin/warden` |
 | **local** — compiled from a checkout | rebuilds from the checkout it was built from, in place (`--release` switches to releases) |
-| **release** — downloaded from GitHub | `gh release view` → newer? download `warden-<os>-<arch>` → verify sha256 → self-check → swap in place |
+| **release** — downloaded from GitHub | `gh release view` → newer? download `warden-<os>-<arch>` → verify sha256 → self-check → swap in place. If GitHub releases can't be reached (no `gh`, no repo access), it falls back to npm |
+| **release** — copied by `npx`/`bunx @delacour/warden install` | npm registry: `@delacour/warden/latest` → newer? download `@delacour/warden-<os>-<arch>` → verify sha512 `dist.integrity` → self-check → swap in place |
+| **npm** — `@delacour/warden` via npm / bun / pnpm / npx / bunx | prints the package manager's upgrade command (`npm i -g @delacour/warden@latest`, `bun add -g @delacour/warden@latest`, `npx @delacour/warden@latest install`, …) and leaves `node_modules` alone. `--to <path>` still installs a standalone release binary |
 
 The binary is swapped atomically at the same path, so the next `warden` in your current shell runs the new version — no new shell needed. If `PATH` resolves `warden` elsewhere, update warns you.
 
-Flags: `--check` (report only), `--force`, `--to <path>`, `--json`. Releases come from the private `delacournz/warden` repo through `gh` (auth required); set `WARDEN_RELEASE_REPO` to use another.
+Flags: `--check` (report only), `--force`, `--to <path>`, `--json`. Releases come from the private `delacournz/warden` repo through `gh` (auth required); set `WARDEN_RELEASE_REPO` to use another, and `WARDEN_NPM_REGISTRY` for another npm registry.
 
 ## Releasing
 
@@ -22,4 +24,5 @@ Flags: `--check` (report only), `--force`, `--to <path>`, `--json`. Releases com
 <Step>Bump `version` in `apps/cli/package.json` and commit.</Step>
 <Step>`git tag v<version> && git push origin v<version>`.</Step>
 <Step>`.github/workflows/release.yml` checks the tag matches the version, runs typecheck / check / test, builds `warden-{darwin,linux}-{arm64,x64}` plus `checksums.txt`, and publishes the GitHub release.</Step>
+<Step>The same workflow stages the npm packages (`bun run --cwd apps/cli build:npm`) and publishes `@delacour/warden-<os>-<arch>`, then `@delacour/warden`, with public access. It needs an `NPM_TOKEN` secret that can publish to the `@delacour` scope. Versions already on npm are skipped. While the repo is private, packages publish without provenance or repository links; both switch on once it's public.</Step>
 </Steps>

@@ -8,11 +8,10 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { bunExec } from "@warden/core/exec";
+import { bunExec } from "@delacour/warden-core/exec";
 import cliPackage from "../package.json" with { type: "json" };
+import { RELEASE_TARGETS } from "../src/npm/platforms";
 import { buildFromSource, compileArgs, sourceCommit } from "../src/update/source-build";
-
-const RELEASE_TARGETS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"] as const;
 
 const cliRoot = resolve(import.meta.dir, "..");
 const sourceDir = resolve(cliRoot, "..", "..");

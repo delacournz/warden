@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_TTL_MS } from "@warden/core/config.defaults";
-import { openStore, type Store } from "@warden/core/store";
-import type { Owner } from "@warden/core/types";
+import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
+import { openStore, type Store } from "@delacour/warden-core/store";
+import type { Owner } from "@delacour/warden-core/types";
 import { deviceTarget, type HookDeps, handlePreToolUse, handleSessionEnd } from "./claude-pretool";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";

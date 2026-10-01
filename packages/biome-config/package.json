@@ -1,5 +1,5 @@
 {
-	"name": "@warden/biome-config",
+	"name": "@delacour/warden-biome-config",
 	"version": "1.0.0",
 	"description": "Shared Biome configurations",
 	"exports": {

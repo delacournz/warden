@@ -1,5 +1,5 @@
-import { processAlive } from "@warden/core/liveness";
-import { readGitInfo } from "@warden/core/owner";
+import { processAlive } from "@delacour/warden-core/liveness";
+import { readGitInfo } from "@delacour/warden-core/owner";
 import { backgroundAllowed, maybeAutoGc, selfCommand, spawnDetached } from "../autogc";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";

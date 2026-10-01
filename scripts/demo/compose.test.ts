@@ -118,7 +118,7 @@ describe("buildFiltergraph", () => {
 	});
 
 	test("ends by holding the final frame then yuv420p", () => {
-		expect(fg.graph).toMatch(/tpad=stop_mode=clone:stop_duration=3,format=yuv420p\[out\]$/);
+		expect(fg.graph).toMatch(/fps=30,tpad=stop_mode=clone:stop_duration=3,format=yuv420p\[out\]$/);
 		expect(fg.args).toEqual(expect.arrayContaining(["-map", "[out]"]));
 	});
 });

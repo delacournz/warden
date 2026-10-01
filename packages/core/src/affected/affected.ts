@@ -1,5 +1,5 @@
 import { isAbsolute, join, relative } from "node:path";
-import { type AsyncResult, err, ok } from "@warden/types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { CONFIG_FILE, findWardenConfig } from "../builds/config";
 import type { Exec } from "../exec";
 import type { Platform } from "../types";

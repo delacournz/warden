@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Exec, ExecResult } from "@warden/core/exec";
-import { openStore, type Store } from "@warden/core/store";
+import type { Exec, ExecResult } from "@delacour/warden-core/exec";
+import { openStore, type Store } from "@delacour/warden-core/store";
 import { Chalk } from "chalk";
 import type { CommandContext } from "./context";
 import type { Choice, Spinner, Ui } from "./ui";

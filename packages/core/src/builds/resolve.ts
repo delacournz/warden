@@ -1,4 +1,4 @@
-import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 
 /** Where `ensure` found the app. */
 export type ResolveSource = "installed" | "cache" | "eas" | "build";

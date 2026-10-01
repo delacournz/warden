@@ -1,4 +1,4 @@
-import { type AsyncResult, err, ok } from "@warden/types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 
 export type ChangeStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "type-changed";

@@ -1,4 +1,4 @@
-# @warden/core
+# @delacour/warden-core
 
 Lease registry + allocation + device providers + build cache. No CLI code here (that's `apps/cli`).
 
@@ -24,7 +24,7 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 ## Rules
 - Pure logic takes `now` + `pidAlive` + `exec` as inputs — no hidden clocks/processes in tests.
 - Never shut down/erase a device warden didn't create or lease.
-- Import files directly (`@warden/core/store`), no barrels.
+- Import files directly (`@delacour/warden-core/store`), no barrels.
 - `WARDEN_HOME` overrides `~/.warden` (tests use temp dirs).
 - Schema changes: append to `MIGRATIONS` in `store.ts`; never edit a shipped entry.
 - Never run real simctl / adb / eas / xcodebuild in tests — inject `Exec` (`golden/golden.testing.ts` = stateful fake simctl host).

@@ -1,5 +1,5 @@
-import { isLeaseAlive, processAlive } from "@warden/core/liveness";
-import { describeOwner, ownerLocation, sameOwner } from "@warden/core/types";
+import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
+import { describeOwner, ownerLocation, sameOwner } from "@delacour/warden-core/types";
 import { resolveOwner, sessionOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";

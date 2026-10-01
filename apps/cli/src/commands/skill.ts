@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Option } from "@commander-js/extra-typings";
-import { wardenHome } from "@warden/core/store";
+import { wardenHome } from "@delacour/warden-core/store";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit } from "../output";

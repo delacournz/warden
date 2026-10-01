@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { Result } from "@warden/types/result";
+import type { Result } from "@delacour/warden-types/result";
 import { ARGENT_MATCHER } from "./claude-pretool";
 import {
 	type HookName,

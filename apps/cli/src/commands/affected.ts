@@ -1,10 +1,10 @@
 import { join } from "node:path";
-import { type Affected, type AffectedInput, computeAffected } from "@warden/core/affected/affected";
-import type { Reason, Selection } from "@warden/core/affected/select";
-import { parseJobList } from "@warden/core/batch/expand";
-import { wardenHome } from "@warden/core/store";
-import type { Platform } from "@warden/core/types";
-import { type AsyncResult, ok, type Result } from "@warden/types/result";
+import { type Affected, type AffectedInput, computeAffected } from "@delacour/warden-core/affected/affected";
+import type { Reason, Selection } from "@delacour/warden-core/affected/select";
+import { parseJobList } from "@delacour/warden-core/batch/expand";
+import { wardenHome } from "@delacour/warden-core/store";
+import type { Platform } from "@delacour/warden-core/types";
+import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
 import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";

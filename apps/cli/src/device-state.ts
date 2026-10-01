@@ -1,7 +1,7 @@
-import type { Exec } from "@warden/core/exec";
-import { parseAllSims } from "@warden/core/golden/golden";
-import { androidTools, parseAdbDevices } from "@warden/core/providers/android";
-import type { Platform } from "@warden/core/types";
+import type { Exec } from "@delacour/warden-core/exec";
+import { parseAllSims } from "@delacour/warden-core/golden/golden";
+import { androidTools, parseAdbDevices } from "@delacour/warden-core/providers/android";
+import type { Platform } from "@delacour/warden-core/types";
 
 export type DeviceStateValue = "booted" | "shutdown";
 

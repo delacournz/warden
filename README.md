@@ -10,6 +10,26 @@ Machine-wide leasing of **iOS simulators, Android emulators, ports and native ap
 
 ## Install
 
+> The npm release of `@delacour/warden` is pending: the commands below are the intended install path and work once the first version is published. Until then, build from source.
+
+```bash
+npm i -g @delacour/warden && warden install    # or: bun add -g @delacour/warden && warden install
+```
+
+`warden install` wires hooks for every detected agent (Claude Code / Codex), showing a diff and asking first. Hooks call `~/.local/bin/warden`, which install links to the global package, so `npm i -g @delacour/warden@latest` upgrades both.
+
+One-shot, nothing installed globally:
+
+```bash
+npx @delacour/warden install     # or: bunx @delacour/warden install
+```
+
+This copies the binary to `~/.local/bin/warden` and wires the hooks. It only puts `warden` on your `PATH` if `~/.local/bin` is already on it (macOS doesn't add it by default). If `warden` isn't found afterwards, use the global install above. To update a one-shot install, run `warden update`, which fetches it from npm, or re-run `npx @delacour/warden@latest install`.
+
+The npm package is a small node shim plus one prebuilt binary per platform (`@delacour/warden-{darwin,linux}-{arm64,x64}`, installed as an optional dependency). Windows isn't supported. Package managers that skip optional dependencies (`--omit=optional`) leave the shim without a binary, and it says so.
+
+From source:
+
 ```bash
 bun install
 bun run --cwd apps/cli install:global   # local build of this checkout → ~/.local/bin/warden
@@ -30,7 +50,7 @@ warden skill install --project -a claude-code -y   # into the current project, o
 
 The skill's source is `skills/warden/SKILL.md`, which is embedded in the binary. `npx` is used when `bunx` isn't available; `--dry-run` prints the command.
 
-`~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`.
+For source builds and one-shot installs, `~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`.
 
 ## Update
 
@@ -40,15 +60,18 @@ The skill's source is `skills/warden/SKILL.md`, which is embedded in the binary.
 |-------|-----------------|
 | **dev**: running from source (`bun apps/cli/src/cli.ts update`) | compiles a `local` binary from this checkout → `~/.local/bin/warden` |
 | **local**: compiled from a checkout | rebuilds from the checkout it was built from, in place (`--release` switches to releases) |
-| **release**: downloaded from GitHub | `gh release view` → newer? download `warden-<os>-<arch>` → verify sha256 → self-check → swap in place |
+| **release**: downloaded from GitHub | `gh release view` → newer? download `warden-<os>-<arch>` → verify sha256 → self-check → swap in place. If GitHub releases can't be reached (no `gh`, no repo access), it falls back to npm |
+| **release**: copied by `npx`/`bunx @delacour/warden install` | npm registry: `@delacour/warden/latest` → newer? download `@delacour/warden-<os>-<arch>` → verify sha512 `dist.integrity` → self-check → swap in place |
+| **npm**: `@delacour/warden` via npm / bun / pnpm / npx / bunx | prints the package manager's upgrade command (e.g. `npm i -g @delacour/warden@latest`, `npx @delacour/warden@latest install`) and leaves `node_modules` alone; `--to <path>` still installs a standalone release binary |
 
-The binary is swapped atomically at the same path, so the next `warden` in your current shell runs the new version. No new shell or `source` is needed; if `PATH` resolves `warden` elsewhere, update warns you. Flags: `--check` (report only), `--force`, `--to <path>`, `--json`. Releases come from the private `delacournz/warden` repo through `gh` (auth required). Set `WARDEN_RELEASE_REPO` to use another repo.
+The binary is swapped atomically at the same path, so the next `warden` in your current shell runs the new version. No new shell or `source` is needed; if `PATH` resolves `warden` elsewhere, update warns you. Flags: `--check` (report only), `--force`, `--to <path>`, `--json`. Releases come from the private `delacournz/warden` repo through `gh` (auth required). Set `WARDEN_RELEASE_REPO` to use another repo, and `WARDEN_NPM_REGISTRY` to use another npm registry.
 
 ### Releasing
 
 1. Bump `version` in `apps/cli/package.json` and commit.
 2. `git tag v<version> && git push origin v<version>`.
 3. `.github/workflows/release.yml` checks that the tag matches the version, runs typecheck/check/test, builds `warden-{darwin,linux}-{arm64,x64}` plus `checksums.txt` (`bun run --cwd apps/cli build:release`) and publishes the GitHub release.
+4. The same workflow stages the npm packages (`bun run --cwd apps/cli build:npm` → `apps/cli/dist/npm/`) and publishes `@delacour/warden-<os>-<arch>` then `@delacour/warden` with public access. It needs an `NPM_TOKEN` secret that can publish to the `@delacour` scope. Versions already on npm are skipped, so a re-run finishes a partial publish. While the repo is private, the packages publish with `NPM_TOKEN`, without provenance and without repository / homepage / bugs links (`build:npm --repo-links` or `WARDEN_NPM_REPO_LINKS=1` adds them). Once the repo is public, the workflow adds the links and `--provenance` on its own, and publishing should move to npm trusted publishing (OIDC) so `NPM_TOKEN` can be retired.
 
 ## Usage
 
@@ -198,3 +221,7 @@ bun run check       # biome
 ```
 
 See [AGENTS.md](AGENTS.md) and the plan in [docs/plans/wdn-warden-cli.md](docs/plans/wdn-warden-cli.md).
+
+## License
+
+[MIT](LICENSE)

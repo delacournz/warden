@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { err, ok } from "@warden/types/result";
+import { err, ok } from "@delacour/warden-types/result";
 import { type EasStepOutcome, type ResolveSource, type ResolveSteps, resolveApp } from "./resolve";
 
 type World = {

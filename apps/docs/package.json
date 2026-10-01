@@ -1,5 +1,5 @@
 {
-	"name": "@warden/docs",
+	"name": "@delacour/warden-docs",
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",

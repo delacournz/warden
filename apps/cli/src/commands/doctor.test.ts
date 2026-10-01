@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MIGRATIONS } from "@warden/core/store";
+import { MIGRATIONS } from "@delacour/warden-core/store";
 import { Chalk } from "chalk";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
 import { mergeCodexHooks } from "../hooks/codex-hooks";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
-import { type DoctorCheck, doctorCommand } from "./doctor";
+import { type DoctorCheck, doctorCommand, installProbe } from "./doctor";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -67,6 +67,25 @@ describe("warden doctor", () => {
 		c.env = installEverything(c.cwd, c.env);
 		expect(await doctorCommand.run(c)).toBe(0);
 		expect(checks(c).filter((x) => x.status !== "ok")).toEqual([]);
+	});
+
+	test("install: always reported, ok", async () => {
+		const c = setup(["--json"]);
+		await doctorCommand.run(c);
+		expect(byName(c).install).toMatchObject({ status: "ok", level: "optional" });
+	});
+
+	test("path: ~/.local/bin off PATH but `warden` resolves elsewhere (npm global bin) → ok", async () => {
+		const c = setup(["--json"]);
+		c.env = installEverything(c.cwd, c.env);
+		const npmBin = join(c.cwd, "npm-prefix", "bin");
+		mkdirSync(npmBin, { recursive: true });
+		writeFileSync(join(npmBin, "warden"), "#!/bin/sh\n");
+		chmodSync(join(npmBin, "warden"), 0o755);
+		c.env = { ...c.env, PATH: `/usr/bin:${npmBin}` };
+		await doctorCommand.run(c);
+		expect(byName(c).path?.status).toBe("ok");
+		expect(byName(c).path?.detail).toContain(join(npmBin, "warden"));
 	});
 
 	test("codex-hook: not detected → ok; detected without hooks → warn; installed → ok", async () => {
@@ -154,5 +173,32 @@ describe("warden doctor", () => {
 		expect(await doctorCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
 		expect(c.stdout).toEqual([]);
+	});
+});
+
+describe("installProbe", () => {
+	test("npm global install → names it and the npm upgrade command", () => {
+		const probe = installProbe(
+			{ channel: "release", version: "0.3.0" },
+			"/usr/local/lib/node_modules/@delacour/warden/node_modules/@delacour/warden-linux-x64/bin/warden"
+		);
+		expect(probe.ok).toBe(true);
+		expect(probe.detail).toContain("npm global install of @delacour/warden");
+		expect(probe.detail).toContain("npm i -g @delacour/warden@latest");
+	});
+
+	test("a copy from npx / bunx → updates from npm", () => {
+		expect(installProbe({ channel: "release", version: "0.3.0" }, "/h/.local/bin/warden", "npm").detail).toBe(
+			"release binary /h/.local/bin/warden (from npm) — `warden update` upgrades it from @delacour/warden on npm"
+		);
+	});
+
+	test("standalone builds → channel + `warden update`", () => {
+		expect(installProbe({ channel: "release", version: "0.3.0" }, "/h/.local/bin/warden").detail).toBe(
+			"release binary /h/.local/bin/warden — `warden update` upgrades it"
+		);
+		expect(installProbe({ channel: "dev", version: "0.3.0", sourceDir: "/repo" }, "/bin/bun").detail).toBe(
+			"running from source /repo — `warden update` builds ~/.local/bin/warden"
+		);
 	});
 });

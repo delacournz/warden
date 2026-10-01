@@ -1,7 +1,7 @@
 import { chmodSync, copyFileSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Exec } from "@warden/core/exec";
-import { type AsyncResult, err, ok } from "@warden/types/result";
+import type { Exec } from "@delacour/warden-core/exec";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 
 /**
  * Put `source` at `target` atomically: copy next to the target, chmod 755, drop the macOS

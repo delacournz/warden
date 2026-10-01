@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fakeHost } from "@warden/core/golden/golden.testing";
+import { fakeHost } from "@delacour/warden-core/golden/golden.testing";
 import { providerFor } from "./providers";
 import { type TestContext, testContext } from "./testing";
 

@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
-import { type EnsureInput, ensureApp, type ProjectContext, projectContext } from "@warden/core/builds/ensure";
-import { computeFingerprint } from "@warden/core/builds/fingerprint";
-import type { EnsureResult } from "@warden/core/builds/resolve";
-import { processAlive } from "@warden/core/liveness";
-import type { Owner, Platform } from "@warden/core/types";
-import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
+import { type EnsureInput, ensureApp, type ProjectContext, projectContext } from "@delacour/warden-core/builds/ensure";
+import { computeFingerprint } from "@delacour/warden-core/builds/fingerprint";
+import type { EnsureResult } from "@delacour/warden-core/builds/resolve";
+import { processAlive } from "@delacour/warden-core/liveness";
+import type { Owner, Platform } from "@delacour/warden-core/types";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { parsePlatform, resolveOwner, resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";

@@ -1,5 +1,5 @@
-import { bunExec, type Exec } from "@warden/core/exec";
-import { openStore, type Store } from "@warden/core/store";
+import { bunExec, type Exec } from "@delacour/warden-core/exec";
+import { openStore, type Store } from "@delacour/warden-core/store";
 import { terminalUi, type Ui } from "./ui";
 
 /** Everything a command touches from the outside world — injectable for tests. */

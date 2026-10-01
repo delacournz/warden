@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Owner } from "@warden/core/types";
+import type { Owner } from "@delacour/warden-core/types";
 import { type TestContext, testContext } from "../testing";
 import { lsCommand } from "./ls";
 

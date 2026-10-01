@@ -1,4 +1,4 @@
-import { ok, type Result } from "@warden/types/result";
+import { ok, type Result } from "@delacour/warden-types/result";
 
 /** One leased device in a `warden batch --record` dir (see plan WBD, record-dir contract). */
 export type BatchDevice = {

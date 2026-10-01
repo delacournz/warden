@@ -6,7 +6,7 @@
  *
  * Pure half: key, names, staleness plan, parsers. Side effects live in `ios-golden.ts`.
  */
-import { err, ok, type Result } from "@warden/types/result";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 
 /** Bump when what building a golden does to the device changes, so existing goldens go stale. */
 export const GOLDEN_RECIPE = 1;

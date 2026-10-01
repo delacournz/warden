@@ -1,7 +1,7 @@
-import { DEFAULT_TTL_MS } from "@warden/core/config.defaults";
-import { isLeaseAlive, type PidAlive } from "@warden/core/liveness";
-import type { GitInfo } from "@warden/core/owner";
-import type { Store } from "@warden/core/store";
+import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
+import { isLeaseAlive, type PidAlive } from "@delacour/warden-core/liveness";
+import type { GitInfo } from "@delacour/warden-core/owner";
+import type { Store } from "@delacour/warden-core/store";
 import {
 	type AgentOwner,
 	type DeviceResource,
@@ -11,7 +11,7 @@ import {
 	ownerLocation,
 	type Platform,
 	sameOwner,
-} from "@warden/core/types";
+} from "@delacour/warden-core/types";
 import { errorMessage, isRecord, stringField } from "./json";
 
 /** Claude Code hook outcome: exit 0 = allow, 2 = block (stderr is shown to the model). */

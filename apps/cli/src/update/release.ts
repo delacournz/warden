@@ -1,6 +1,7 @@
-import type { Exec } from "@warden/core/exec";
-import { execError } from "@warden/core/exec";
-import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
+import type { Exec } from "@delacour/warden-core/exec";
+import { execError } from "@delacour/warden-core/exec";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { releaseTarget } from "../npm/platforms";
 
 export const DEFAULT_RELEASE_REPO = "delacournz/warden";
 export const CHECKSUMS_ASSET = "checksums.txt";
@@ -11,14 +12,10 @@ export function releaseRepo(env: Record<string, string | undefined>): string {
 	return env.WARDEN_RELEASE_REPO || DEFAULT_RELEASE_REPO;
 }
 
-const OS: Record<string, string> = { darwin: "darwin", linux: "linux" };
-const ARCH: Record<string, string> = { arm64: "arm64", x64: "x64" };
-
 /** Release asset for this machine: `warden-<darwin|linux>-<arm64|x64>`. */
 export function assetName(platform: string, arch: string): Result<string> {
-	const os = OS[platform];
-	const cpu = ARCH[arch];
-	return os && cpu ? ok(`warden-${os}-${cpu}`) : err(`no warden release build for ${platform}-${arch}`);
+	const target = releaseTarget(platform, arch);
+	return target.success ? ok(`warden-${target.data}`) : target;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

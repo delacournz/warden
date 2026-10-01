@@ -1,7 +1,7 @@
-import { DEFAULT_TTL_MS } from "@warden/core/config.defaults";
-import { formatDuration, parseDuration } from "@warden/core/duration";
-import { isLeaseAlive, processAlive } from "@warden/core/liveness";
-import { detectOwner, type OwnerContext, readGitInfo } from "@warden/core/owner";
+import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
+import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
+import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
+import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-core/owner";
 import {
 	claimPorts,
 	DEFAULT_PORT_SPAN,
@@ -10,11 +10,11 @@ import {
 	type PortReleaseSelector,
 	parsePortSpec,
 	releasePorts,
-} from "@warden/core/ports";
-import type { Lease, Owner } from "@warden/core/types";
-import { describeOwner, ownerLocation } from "@warden/core/types";
-import type { Result } from "@warden/types/result";
-import { err, ok } from "@warden/types/result";
+} from "@delacour/warden-core/ports";
+import type { Lease, Owner } from "@delacour/warden-core/types";
+import { describeOwner, ownerLocation } from "@delacour/warden-core/types";
+import type { Result } from "@delacour/warden-types/result";
+import { err, ok } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, formatTable } from "../output";

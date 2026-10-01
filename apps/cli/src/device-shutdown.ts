@@ -1,5 +1,5 @@
-import { shouldShutdown } from "@warden/core/shutdown-policy";
-import type { Lease, Owner } from "@warden/core/types";
+import { shouldShutdown } from "@delacour/warden-core/shutdown-policy";
+import type { Lease, Owner } from "@delacour/warden-core/types";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
 

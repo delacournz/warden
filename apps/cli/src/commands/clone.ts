@@ -1,8 +1,8 @@
-import { profileSlug, wardenDeviceName } from "@warden/core/allocate";
-import { execError } from "@warden/core/exec";
-import { type GoldenSim, isGoldenName, parseAllSims } from "@warden/core/golden/golden";
-import { shortRuntime } from "@warden/core/providers/ios";
-import { err, ok, type Result } from "@warden/types/result";
+import { profileSlug, wardenDeviceName } from "@delacour/warden-core/allocate";
+import { execError } from "@delacour/warden-core/exec";
+import { type GoldenSim, isGoldenName, parseAllSims } from "@delacour/warden-core/golden/golden";
+import { shortRuntime } from "@delacour/warden-core/providers/ios";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit } from "../output";

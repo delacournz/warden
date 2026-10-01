@@ -1,8 +1,8 @@
-import { cloneFromGolden } from "@warden/core/golden/ios-golden";
-import { createAndroidProvider } from "@warden/core/providers/android";
-import { createIosProvider, shortRuntime } from "@warden/core/providers/ios";
-import type { DeviceProvider, ProviderDeps } from "@warden/core/providers/provider.types";
-import type { Owner, Platform } from "@warden/core/types";
+import { cloneFromGolden } from "@delacour/warden-core/golden/ios-golden";
+import { createAndroidProvider } from "@delacour/warden-core/providers/android";
+import { createIosProvider, shortRuntime } from "@delacour/warden-core/providers/ios";
+import type { DeviceProvider, ProviderDeps } from "@delacour/warden-core/providers/provider.types";
+import type { Owner, Platform } from "@delacour/warden-core/types";
 import type { CommandContext } from "./context";
 import { goldenDeps, goldenEnabled, type Sleep } from "./golden-deps";
 

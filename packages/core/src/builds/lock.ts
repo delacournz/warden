@@ -1,4 +1,4 @@
-import { type AsyncResult, err } from "@warden/types/result";
+import { type AsyncResult, err } from "@delacour/warden-types/result";
 import { isLeaseAlive, type PidAlive } from "../liveness";
 import type { Store } from "../store";
 import { type BuildResource, describeOwner, type Lease, type Owner, type Platform } from "../types";

@@ -1,14 +1,14 @@
 import { availableParallelism } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
-import { defaultMax, profileSlug } from "@warden/core/allocate";
-import { type ClaimOutcome, claimDevices } from "@warden/core/claim";
-import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@warden/core/config.defaults";
-import { parseDuration } from "@warden/core/duration";
-import { processAlive } from "@warden/core/liveness";
-import { detectOwner, type OwnerContext, readGitInfo } from "@warden/core/owner";
-import { listAvds } from "@warden/core/providers/android";
-import type { DeviceRequest, Owner, Platform } from "@warden/core/types";
-import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
+import { defaultMax, profileSlug } from "@delacour/warden-core/allocate";
+import { type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
+import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
+import { parseDuration } from "@delacour/warden-core/duration";
+import { processAlive } from "@delacour/warden-core/liveness";
+import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-core/owner";
+import { listAvds } from "@delacour/warden-core/providers/android";
+import type { DeviceRequest, Owner, Platform } from "@delacour/warden-core/types";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
 

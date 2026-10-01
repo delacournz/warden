@@ -4,7 +4,7 @@
  * process never races another — a clone never sees a half-built or deleted golden.
  */
 import { join } from "node:path";
-import { type AsyncResult, err, ok } from "@warden/types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { withBuildLock } from "../builds/lock";
 import { type Exec, execError } from "../exec";
 import type { PidAlive } from "../liveness";

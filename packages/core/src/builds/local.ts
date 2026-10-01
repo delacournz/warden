@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { type AsyncResult, err, ok } from "@warden/types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import type { Platform } from "../types";
 import { LOCAL_BUILD_TIMEOUT_MS } from "./builds.defaults";

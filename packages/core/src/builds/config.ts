@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { err, ok, type Result } from "@warden/types/result";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { e2eSuiteSchema } from "../affected/affected.schema";
 import { batchPresetSchema, RESERVED_PRESET_NAMES } from "../batch/preset.schema";

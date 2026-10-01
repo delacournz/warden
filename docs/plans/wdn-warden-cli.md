@@ -1,7 +1,7 @@
 # Plan WDN — `warden`: machine-wide device + port leasing for agents/users
 
 ## Context
-Agents, Orca worktrees and other repos currently share iOS sims / Android emulators / Metro ports with no coordination. Salient's `run-ios.ts` reuses `salient-e2e-1..N` by name (`parallel-helpers.ts:48 planSims`) — two worktrees running e2e at once grab the same sims → flakes. Ports are only protected by a free-port scan (`run-ios.ts:188 pickPort`). Goal: one global CLI, `warden`, that owns a lease registry so a device/port in use by one agent/user/project is never handed to another. Built in the separate **warden** repo (Bun + Turbo scaffold, `@warden/*` scope), compiled to a standalone binary so any repo can use it.
+Agents, Orca worktrees and other repos currently share iOS sims / Android emulators / Metro ports with no coordination. Salient's `run-ios.ts` reuses `salient-e2e-1..N` by name (`parallel-helpers.ts:48 planSims`) — two worktrees running e2e at once grab the same sims → flakes. Ports are only protected by a free-port scan (`run-ios.ts:188 pickPort`). Goal: one global CLI, `warden`, that owns a lease registry so a device/port in use by one agent/user/project is never handed to another. Built in the separate **warden** repo (Bun + Turbo scaffold, `@delacour/warden*` scope), compiled to a standalone binary so any repo can use it.
 
 Second goal: warden also owns **app build reuse**. It keys native builds by Expo fingerprint in a machine-wide cache, so a fresh workspace/branch reuses an installed app, a cached `.app`/`.apk`, or an EAS dev build. It builds locally only as a last resort, and always does so when the fingerprint is new.
 
@@ -16,7 +16,7 @@ The target is the existing Orca workspace `~/orca/workspaces/warden/cowrie` (rep
 5. Report the terminal handle to the user. Monitor it with `orca terminal read`.
 
 ## Architecture (warden repo: `packages/core` + `apps/cli`)
-`packages/core` (`@warden/core`) = everything below except `cli.ts`/`commands/`/`hooks/`, which live in `apps/cli` (`@warden/cli`, bin `warden`). Follow warden `AGENTS.md`: `biome.jsonc` extends `//`, tsconfig extends `@warden/tsconfig/tsconfig.base.json`, errors as `Result`/`AsyncResult` from `@warden/types`, no barrels, file naming `{domain}.types.ts` etc.
+`packages/core` (`@delacour/warden-core`) = everything below except `cli.ts`/`commands/`/`hooks/`, which live in `apps/cli` (`@delacour/warden`, bin `warden`). Follow warden `AGENTS.md`: `biome.jsonc` extends `//`, tsconfig extends `@delacour/warden-tsconfig/tsconfig.base.json`, errors as `Result`/`AsyncResult` from `@delacour/warden-types`, no barrels, file naming `{domain}.types.ts` etc.
 ```
 src/
   cli.ts                 entry; node:util parseArgs; subcommand dispatch
@@ -69,7 +69,7 @@ CLI surface (all support `--json`):
 Wave plan for subagents (disjoint files): wave A = WDN-1; wave B = WDN-2, WDN-3, WDN-4 in parallel; wave C = WDN-5, WDN-6 in parallel; WDN-7 last.
 
 ### WDN-1 detail
-- `packages/core/package.json` `@warden/core` + `apps/cli/package.json` `@warden/cli` with `bin: { warden: ./src/cli.ts }`, scripts per warden AGENTS.md checklist (`fmt`/`lint`/`check`/`typecheck`/`test: bun test`); in apps/cli also `build: bun build --compile src/cli.ts --outfile dist/warden`, `install:global: bun run build && install -m 755 dist/warden ~/.local/bin/warden`. Each gets `AGENTS.md` + `CLAUDE.md` symlink; update root AGENTS.md layout. Ensure turbo `build` outputs include `dist/**`.
+- `packages/core/package.json` `@delacour/warden-core` + `apps/cli/package.json` `@delacour/warden` with `bin: { warden: ./src/cli.ts }`, scripts per warden AGENTS.md checklist (`fmt`/`lint`/`check`/`typecheck`/`test: bun test`); in apps/cli also `build: bun build --compile src/cli.ts --outfile dist/warden`, `install:global: bun run build && install -m 755 dist/warden ~/.local/bin/warden`. Each gets `AGENTS.md` + `CLAUDE.md` symlink; update root AGENTS.md layout. Ensure turbo `build` outputs include `dist/**`.
 - Tests first: `allocate.test.ts` (free reuse, foreign skip, stale reclaim, pool growth cap, profile/runtime match), `liveness.test.ts`, `store.test.ts` (temp db; two concurrent `claim` processes via `Bun.spawn` never receive the same resource), `owner.test.ts`.
 - `WARDEN_HOME` env overrides `~/.warden` (tests, CI).
 

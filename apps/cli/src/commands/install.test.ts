@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Chalk } from "chalk";
 import { WARDEN_RULE_LINE } from "../hooks/argent-rules";
 import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
+import { installOrigin } from "../update/install-origin";
 import { createInstallCommand, detectRuntime, type InstallDeps, type Runtime } from "./install";
 
 let ctx: TestContext | undefined;
@@ -83,6 +84,41 @@ describe("warden install", () => {
 		const shim = join(home, ".local", "bin", "warden");
 		expect(read(shim)).toBe('#!/bin/sh\nexec bun "/repo/apps/cli/src/cli.ts" "$@"\n');
 		expect(statSync(shim).mode & 0o777).toBe(0o755);
+	});
+
+	test("npm global install: links ~/.local/bin/warden to the package's binary so upgrades follow npm", async () => {
+		const execPath =
+			"/usr/local/lib/node_modules/@delacour/warden/node_modules/@delacour/warden-darwin-arm64/bin/warden";
+		const { c, home, deps } = setup(["--json"], { runtime: { kind: "compiled", execPath } });
+		expect(await runInstall(c, deps)).toBe(0);
+		const shim = join(home, ".local", "bin", "warden");
+		expect(read(shim)).toBe(`#!/bin/sh\nexec "${execPath}" "$@"\n`);
+		expect(statSync(shim).mode & 0o777).toBe(0o755);
+		const step = JSON.parse(c.stdout.join("\n")).steps[0];
+		expect(step).toMatchObject({ step: "binary", status: "written" });
+		expect(step.detail).toContain("npm global install");
+		c.stdout.length = 0;
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).steps[0]).toMatchObject({ step: "binary", status: "unchanged" });
+	});
+
+	test("npx run: copies the cached binary (the cache isn't a stable path) and says how to refresh it", async () => {
+		const { c, home, deps } = setup(["--json"]);
+		const cache = join(c.cwd, ".npm", "_npx", "ab12", "node_modules", "@delacour", "warden-darwin-arm64", "bin");
+		mkdirSync(cache, { recursive: true });
+		const execPath = join(cache, "warden");
+		writeFileSync(execPath, "NPX-BINARY");
+		deps.runtime = { kind: "compiled", execPath };
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(read(join(home, ".local", "bin", "warden"))).toBe("NPX-BINARY");
+		const step = JSON.parse(c.stdout.join("\n")).steps[0];
+		expect(step.detail).toContain("npx @delacour/warden@latest install");
+		const target = join(home, ".local", "bin", "warden");
+		expect(installOrigin(c.env, target)).toBe("npm");
+		deps.runtime = { kind: "compiled", execPath: join(c.cwd, "warden-built") };
+		c.stdout.length = 0;
+		expect(await runInstall(c, deps)).toBe(0);
+		expect(installOrigin(c.env, target)).toBeUndefined();
 	});
 
 	test("--claude writes skill, merges hooks, patches argent rules after confirming", async () => {

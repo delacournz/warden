@@ -1,5 +1,5 @@
-import type { Exec, ExecResult } from "@warden/core/exec";
-import { type FixtureSim, simctlDevicesJson } from "@warden/core/providers/ios.fixture";
+import type { Exec, ExecResult } from "@delacour/warden-core/exec";
+import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { fakeExec } from "./testing";
 
 export const OWNER_ENV = { WARDEN_SESSION_ID: "me" };

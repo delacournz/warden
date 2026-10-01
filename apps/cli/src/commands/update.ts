@@ -1,14 +1,23 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AsyncResult, err, ok } from "@warden/types/result";
+import { type AsyncResult, type ErrorResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { NPM_PACKAGE, platformPackageName, releaseTarget } from "../npm/platforms";
 import { emit } from "../output";
 import { withSpinner } from "../spinner-context";
 import { type BuildInfo, currentBuild, describeBuild } from "../update/build-info";
 import { installBinary } from "../update/install-binary";
+import { installOrigin, recordInstallOrigin } from "../update/install-origin";
+import { downloadNpmBinary, type Fetch, latestNpmVersion, npmRegistry, platformDist } from "../update/npm-registry";
+import {
+	describePackageInstall,
+	detectPackageInstall,
+	type PackageInstall,
+	upgradeCommand,
+} from "../update/package-install";
 import { assetName, downloadRelease, latestRelease, parseChecksums, pickAsset, releaseRepo } from "../update/release";
 import { buildFromSource, cliDir } from "../update/source-build";
 import { compareVersions } from "../update/version";
@@ -22,6 +31,8 @@ export type UpdateDeps = {
 	execPath: string;
 	/** what `warden` resolves to on `PATH` */
 	which: (cmd: string, path: string | undefined) => string | null;
+	/** npm registry client (`fetch`) */
+	fetch: Fetch;
 	/** version in `<sourceDir>/apps/cli/package.json` */
 	readSourceVersion?: (sourceDir: string) => string;
 };
@@ -31,7 +42,8 @@ type Flags = { check?: true; release?: true; force?: true; to?: string; json?: t
 type UpdateReport =
 	| { status: "up-to-date"; current: string; latest: string; channel: BuildInfo["channel"] }
 	| { status: "available"; current: string; latest: string; channel: BuildInfo["channel"] }
-	| { status: "updated"; current: string; latest: string; channel: BuildInfo["channel"]; path: string; build: string };
+	| { status: "updated"; current: string; latest: string; channel: BuildInfo["channel"]; path: string; build: string }
+	| { status: "managed"; current: string; channel: BuildInfo["channel"]; install: PackageInstall; command: string };
 
 function sourceVersion(sourceDir: string): string {
 	const pkg: unknown = JSON.parse(readFileSync(join(cliDir(sourceDir), "package.json"), "utf8"));
@@ -73,30 +85,121 @@ function defaultTarget(ctx: CommandContext, deps: UpdateDeps): string {
 	return deps.build.channel === "dev" ? join(ctx.env.HOME ?? "~", ".local", "bin", "warden") : deps.execPath;
 }
 
+/** `up-to-date` / `available` when there's nothing to install (or `--check`); `undefined` = go ahead. */
+function skipInstall(deps: UpdateDeps, flags: Flags, latest: string): UpdateReport | undefined {
+	const base = { current: deps.build.version, latest, channel: deps.build.channel };
+	const newer = compareVersions(latest, deps.build.version) > 0;
+	const switching = deps.build.channel !== "release";
+	if (!newer && !switching && !flags.force) return { status: "up-to-date", ...base };
+	if (flags.check) return { status: newer ? "available" : "up-to-date", ...base };
+	return undefined;
+}
+
+/**
+ * Standalone binaries: from npm when this copy came from an npx / bunx install, else the latest
+ * GitHub release, falling back to npm when GitHub releases can't be reached (no gh, no repo access).
+ */
+async function updateStandalone(
+	ctx: CommandContext,
+	deps: UpdateDeps,
+	flags: Flags,
+	target: string
+): AsyncResult<UpdateReport> {
+	if (installOrigin(ctx.env, deps.execPath) === "npm") return updateFromNpm(ctx, deps, flags, target);
+	const github = await updateFromRelease(ctx, deps, flags, target);
+	if (github.success || github.error.kind !== "unreachable") {
+		return github.success ? github : err(github.error.message);
+	}
+	ctx.err(ctx.ui.color.dim(`GitHub releases unavailable — trying npm (${NPM_PACKAGE})`));
+	const npm = await updateFromNpm(ctx, deps, flags, target);
+	return npm.success ? npm : err(`${github.error.message}\nnpm: ${npm.error}`);
+}
+
+/** Latest `@delacour/warden` on npm → platform tarball → sha512 integrity check → atomic install at `target`. */
+async function updateFromNpm(
+	ctx: CommandContext,
+	deps: UpdateDeps,
+	flags: Flags,
+	target: string
+): AsyncResult<UpdateReport> {
+	const platform = releaseTarget(deps.platform, deps.arch);
+	if (!platform.success) return platform;
+	const registry = npmRegistry(ctx.env);
+	const latest = await step(
+		ctx,
+		`checking the latest ${NPM_PACKAGE} on npm…`,
+		() => latestNpmVersion(deps.fetch, registry),
+		(version) => `latest ${NPM_PACKAGE} ${version}`
+	);
+	if (!latest.success) return latest;
+	const version = latest.data;
+	const skipped = skipInstall(deps, flags, version);
+	if (skipped) return ok(skipped);
+	const name = `${platformPackageName(platform.data)}@${version}`;
+
+	const dir = mkdtempSync(join(tmpdir(), "warden-update-"));
+	try {
+		const binary = join(dir, "warden");
+		const downloaded = await step(
+			ctx,
+			`downloading ${name}…`,
+			async (): AsyncResult<void> => {
+				const dist = await platformDist(deps.fetch, registry, platform.data, version);
+				if (!dist.success) return dist;
+				const bytes = await downloadNpmBinary(deps.fetch, dist.data);
+				if (!bytes.success) return bytes;
+				writeFileSync(binary, bytes.data);
+				return ok(undefined);
+			},
+			() => `downloaded ${name} (sha512 ok)`
+		);
+		if (!downloaded.success) return downloaded;
+		const installed = await install(ctx, binary, target, version);
+		if (!installed.success) return installed;
+		recordInstallOrigin(ctx.env, target, "npm");
+		return ok({
+			status: "updated",
+			current: deps.build.version,
+			latest: version,
+			channel: deps.build.channel,
+			path: target,
+			build: `${version} (npm ${NPM_PACKAGE}@${version})`,
+		});
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/** Why a GitHub release update failed: `unreachable` (lookup failed) falls back to npm, `failed` doesn't. */
+type ReleaseError = { kind: "unreachable" | "failed"; message: string };
+
+function releaseError(kind: ReleaseError["kind"], message: string): ErrorResult<ReleaseError> {
+	return { success: false, error: { kind, message } };
+}
+
 /** Latest GitHub release → download → sha256 check → atomic install at `target`. */
 async function updateFromRelease(
 	ctx: CommandContext,
 	deps: UpdateDeps,
 	flags: Flags,
 	target: string
-): AsyncResult<UpdateReport> {
+): Promise<Result<UpdateReport, ReleaseError>> {
+	const failed = (message: string) => releaseError("failed", message);
 	const repo = releaseRepo(ctx.env);
 	const asset = assetName(deps.platform, deps.arch);
-	if (!asset.success) return asset;
+	if (!asset.success) return failed(asset.error);
 	const latest = await step(
 		ctx,
 		`checking the latest release on ${repo}…`,
 		(sctx) => latestRelease(sctx.exec, repo),
 		(release) => `latest release ${release.tag}`
 	);
-	if (!latest.success) return latest;
+	if (!latest.success) return releaseError("unreachable", latest.error);
 	const base = { current: deps.build.version, latest: latest.data.version, channel: deps.build.channel };
-	const newer = compareVersions(latest.data.version, deps.build.version) > 0;
-	const switching = deps.build.channel !== "release";
-	if (!newer && !switching && !flags.force) return ok({ status: "up-to-date", ...base });
-	if (flags.check) return ok({ status: newer ? "available" : "up-to-date", ...base });
+	const skipped = skipInstall(deps, flags, latest.data.version);
+	if (skipped) return ok(skipped);
 	const picked = pickAsset(latest.data, asset.data);
-	if (!picked.success) return picked;
+	if (!picked.success) return failed(picked.error);
 	const name = picked.data;
 
 	const dir = mkdtempSync(join(tmpdir(), "warden-update-"));
@@ -116,9 +219,9 @@ async function updateFromRelease(
 			},
 			() => `downloaded ${name} ${latest.data.tag} (sha256 ok)`
 		);
-		if (!downloaded.success) return downloaded;
+		if (!downloaded.success) return failed(downloaded.error);
 		const installed = await install(ctx, binary, target, latest.data.version);
-		if (!installed.success) return installed;
+		if (!installed.success) return failed(installed.error);
 		return ok({
 			status: "updated",
 			...base,
@@ -161,7 +264,19 @@ async function updateFromSource(
 
 function plan(ctx: CommandContext, deps: UpdateDeps, flags: Flags, target: string): AsyncResult<UpdateReport> {
 	const build = deps.build;
-	if (flags.release || build.channel === "release") return updateFromRelease(ctx, deps, flags, target);
+	const managed = flags.to === undefined ? detectPackageInstall(deps.execPath) : undefined;
+	if (managed) {
+		return Promise.resolve(
+			ok({
+				status: "managed",
+				current: build.version,
+				channel: build.channel,
+				install: managed,
+				command: upgradeCommand(managed),
+			})
+		);
+	}
+	if (flags.release || build.channel === "release") return updateStandalone(ctx, deps, flags, target);
 	if (!build.sourceDir) {
 		return Promise.resolve(
 			err(
@@ -179,6 +294,8 @@ function reportText(ctx: CommandContext, report: UpdateReport): string {
 			return `${color.green(`warden ${report.current} is up to date`)} ${color.dim(`(latest ${report.latest})`)}`;
 		case "available":
 			return `${color.yellow(`update available: ${report.current} → ${report.latest}`)} ${color.dim("(run `warden update`)")}`;
+		case "managed":
+			return `${color.yellow(`warden ${report.current} (${describePackageInstall(report.install)}) — upgrade it with:`)}\n  ${report.command}`;
 		case "updated": {
 			const headline =
 				report.current === report.latest ? "warden rebuilt" : `warden updated ${report.current} → ${report.latest}`;
@@ -213,7 +330,9 @@ async function update(ctx: CommandContext, deps: UpdateDeps, flags: Flags): Prom
  * `warden update`:
  * - from source (dev) → compile a `local` binary from this checkout into `~/.local/bin/warden`
  * - locally built binary → rebuild from its recorded checkout, in place
- * - release binary (or `--release`) → download the latest GitHub release (sha256-verified), in place
+ * - release binary (or `--release`) → download the latest GitHub release (sha256-verified), in place;
+ *   a copy installed via npx / bunx, or no reachable GitHub releases → the latest npm package (sha512-verified)
+ * - npm package install (`node_modules/@delacour/warden-<target>/`) → print the package manager's upgrade command
  * The binary is swapped atomically at the same path, so the current shell's next `warden` runs it.
  */
 export function createUpdateCommand(deps: UpdateDeps): Command {
@@ -238,4 +357,5 @@ export const updateCommand: Command = createUpdateCommand({
 	arch: process.arch,
 	execPath: process.execPath,
 	which: (cmd, path) => Bun.which(cmd, path === undefined ? {} : { PATH: path }),
+	fetch: (url) => fetch(url),
 });

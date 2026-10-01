@@ -1,5 +1,5 @@
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
-import type { Lease } from "@warden/core/types";
+import type { Lease } from "@delacour/warden-core/types";
 import { resolveOwner, sessionOwner } from "./claim-flags";
 import type { CommandContext } from "./context";
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { makeSuiteRepo } from "@warden/core/affected/fixture.testing";
-import { bunExec } from "@warden/core/exec";
+import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
+import { bunExec } from "@delacour/warden-core/exec";
 import { type TestContext, testContext } from "../testing";
 import { affectedCommand } from "./affected";
 

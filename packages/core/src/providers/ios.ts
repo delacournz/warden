@@ -1,4 +1,4 @@
-import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { profileSlug } from "../allocate";
 import { type Exec, execError } from "../exec";
 import { isGoldenName } from "../golden/golden";

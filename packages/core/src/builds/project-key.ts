@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { type AsyncResult, ok } from "@warden/types/result";
+import { type AsyncResult, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 
 /**

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { DEFAULT_TTL_MS } from "@warden/core/config.defaults";
+import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { leasePidFor, parseClaimFlags, resolveAutoProfile, resolveOwner } from "./claim-flags";
 import { type TestContext, testContext } from "./testing";
 

@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { cp } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { type AsyncResult, err, ok } from "@warden/types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Store } from "../store";
 import { wardenHome } from "../store";
 import type { Platform } from "../types";

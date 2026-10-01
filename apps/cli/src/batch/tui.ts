@@ -1,5 +1,5 @@
-import type { BatchEvent } from "@warden/core/batch/schedule";
-import { formatDuration } from "@warden/core/duration";
+import type { BatchEvent } from "@delacour/warden-core/batch/schedule";
+import { formatDuration } from "@delacour/warden-core/duration";
 
 /** Live state of one device (= worker) in the batch grid. */
 export type DeviceView = {

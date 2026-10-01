@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { simctlDevicesJson } from "@warden/core/providers/ios.fixture";
+import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { deviceState } from "./device-state";
 import { fakeExec } from "./testing";
 

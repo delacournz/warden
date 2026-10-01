@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { goldenKey, goldenName } from "@warden/core/golden/golden";
-import { fakeHost, IPHONE_17, RUNTIME_BUILD, RUNTIME_ID } from "@warden/core/golden/golden.testing";
+import { goldenKey, goldenName } from "@delacour/warden-core/golden/golden";
+import { fakeHost, IPHONE_17, RUNTIME_BUILD, RUNTIME_ID } from "@delacour/warden-core/golden/golden.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { createGoldenCommand } from "./golden";
 

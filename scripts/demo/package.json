@@ -1,5 +1,5 @@
 {
-	"name": "@warden/demo",
+	"name": "@delacour/warden-demo",
 	"version": "0.1.0",
 	"description": "Demo video compositor: warden batch --record dir -> landing-page mp4/webm/poster",
 	"type": "module",
@@ -14,10 +14,10 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@warden/types": "workspace:*"
+		"@delacour/warden-types": "workspace:*"
 	},
 	"devDependencies": {
-		"@warden/tsconfig": "workspace:*",
+		"@delacour/warden-tsconfig": "workspace:*",
 		"typescript": "^5.9.3"
 	}
 }

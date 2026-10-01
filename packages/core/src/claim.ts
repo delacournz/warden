@@ -1,4 +1,4 @@
-import { type AsyncResult, err, ok, type Result } from "@warden/types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { allocate } from "./allocate";
 import { DEFAULT_READY_TIMEOUT_MS } from "./config.defaults";
 import { markWardenDevices } from "./inventory";

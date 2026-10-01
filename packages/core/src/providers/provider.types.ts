@@ -1,4 +1,4 @@
-import type { AsyncResult } from "@warden/types/result";
+import type { AsyncResult } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import type { Store } from "../store";
 import type { InventoryDevice, Owner, Platform } from "../types";

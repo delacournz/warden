@@ -1,5 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
-import { ok, type Result } from "@warden/types/result";
+import { ok, type Result } from "@delacour/warden-types/result";
 import { findWardenConfig } from "../builds/config";
 import type { Platform } from "../types";
 import type { BatchPresetConfig } from "./preset.schema";

@@ -1,4 +1,4 @@
-import { type AsyncResult, err, ok } from "@warden/types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import { androidTools } from "../providers/android";
 import type { Platform } from "../types";

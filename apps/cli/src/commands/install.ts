@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { err, ok, type Result } from "@warden/types/result";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { type Agent, detectAgents } from "../hooks/agents";
@@ -10,6 +10,13 @@ import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook, mergeCodexHook
 import { errorMessage } from "../hooks/json";
 import { lineDiff } from "../hooks/text-diff";
 import { SKILL_MD as skill } from "../skill";
+import { type InstallOrigin, recordInstallOrigin } from "../update/install-origin";
+import {
+	describePackageInstall,
+	detectPackageInstall,
+	isStableInstall,
+	upgradeCommand,
+} from "../update/package-install";
 
 /** Hook commands reference the installed binary via `$HOME` so they work whatever PATH the agent runs with. */
 export const HOOK_BINARY = "$HOME/.local/bin/warden";
@@ -52,7 +59,7 @@ function sameFile(a: string, b: string): boolean {
 	}
 }
 
-function installBinary(target: string, runtime: Runtime, flags: Flags): StepReport {
+function installBinary(ctx: CommandContext, target: string, runtime: Runtime, flags: Flags): StepReport {
 	if (runtime.kind === "dev" && !flags.shim) {
 		const appDir = resolve(dirname(runtime.cliPath), "..");
 		return report(
@@ -63,14 +70,49 @@ function installBinary(target: string, runtime: Runtime, flags: Flags): StepRepo
 		);
 	}
 	if (runtime.kind === "compiled" && sameFile(runtime.execPath, target)) return report("binary", "unchanged", target);
-	const content =
-		runtime.kind === "dev" ? `#!/bin/sh\nexec bun "${runtime.cliPath}" "$@"\n` : readFileSync(runtime.execPath);
+	const source = binarySource(runtime);
 	const current = existsSync(target) ? readFileSync(target) : undefined;
-	if (current && Buffer.from(content).equals(current)) return report("binary", "unchanged", target);
-	if (flags.dryRun)
-		return report("binary", "dry-run", target, `would write ${runtime.kind === "dev" ? "shim" : "binary"}`);
-	atomicWrite(target, content, 0o755);
-	return report("binary", "written", target, runtime.kind === "dev" ? `shim → ${runtime.cliPath}` : undefined);
+	if (current && Buffer.from(source.content).equals(current)) {
+		recordInstallOrigin(ctx.env, target, source.origin);
+		return report("binary", "unchanged", target);
+	}
+	if (flags.dryRun) return report("binary", "dry-run", target, `would write ${source.kind}`);
+	atomicWrite(target, source.content, 0o755);
+	recordInstallOrigin(ctx.env, target, source.origin);
+	return report("binary", "written", target, source.detail);
+}
+
+/** `origin: "npm"` = a copy from an npx / bunx run, so `warden update` fetches it from npm. */
+type BinarySource = { kind: "shim" | "binary"; content: string | Uint8Array; detail?: string; origin?: InstallOrigin };
+
+/**
+ * What `~/.local/bin/warden` should be: a shim for a source checkout or a global npm/bun/pnpm install
+ * (a stable path its package manager upgrades in place), otherwise a copy of the running binary.
+ */
+function binarySource(runtime: Runtime): BinarySource {
+	if (runtime.kind === "dev") {
+		return {
+			kind: "shim",
+			content: `#!/bin/sh\nexec bun "${runtime.cliPath}" "$@"\n`,
+			detail: `shim → ${runtime.cliPath}`,
+		};
+	}
+	const managed = detectPackageInstall(runtime.execPath);
+	if (managed && isStableInstall(managed)) {
+		return {
+			kind: "shim",
+			content: `#!/bin/sh\nexec "${runtime.execPath}" "$@"\n`,
+			detail: `shim → ${describePackageInstall(managed)}; \`${upgradeCommand(managed)}\` upgrades it`,
+		};
+	}
+	const content = readFileSync(runtime.execPath);
+	if (!managed) return { kind: "binary", content };
+	return {
+		kind: "binary",
+		content,
+		detail: `copied from ${describePackageInstall(managed)}; \`warden update\` or \`${upgradeCommand(managed)}\` refreshes it`,
+		origin: "npm",
+	};
 }
 
 function installSkill(ctx: CommandContext, path: string, flags: Flags): StepReport {
@@ -225,7 +267,7 @@ async function install(
 	agents: Agent[]
 ): Promise<StepReport[]> {
 	const binary = join(home, ".local", "bin", "warden");
-	const steps: StepReport[] = [await step("binary", binary, () => installBinary(binary, deps.runtime, flags))];
+	const steps: StepReport[] = [await step("binary", binary, () => installBinary(ctx, binary, deps.runtime, flags))];
 	if (agents.includes("claude")) {
 		const claude = join(home, ".claude");
 		const skillPath = join(claude, "skills", "warden", "SKILL.md");

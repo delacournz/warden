@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@warden/types/result";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { PidAlive } from "../liveness";
 import type { Store } from "../store";
 import { type BuildRecord, listBuilds, removeBuild } from "./cache";
