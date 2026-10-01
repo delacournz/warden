@@ -3,7 +3,6 @@
 .tanstack
 .vite
 .source
-src/routeTree.gen.ts
 
 # Finish-review captures, regenerated each round
 .impeccable/review/
