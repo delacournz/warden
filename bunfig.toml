@@ -1,0 +1,4 @@
+[install]
+# Refuse package versions published < 3 days ago. Worm releases (e.g. the
+# May 2026 @tanstack compromise) are typically pulled within hours.
+minimumReleaseAge = 259200
