@@ -16,7 +16,7 @@ function useReducedMotion(): boolean {
 }
 
 /**
- * The hero demo: a recorded `warden batch` run fanning salient's argent flows
+ * The hero demo: a recorded `warden batch` run fanning salient's end-to-end flows
  * across five leased iOS simulators, sped up to under a minute. It autoplays
  * muted and loops; with reduced motion it rests on the poster (the final
  * all-green frame) and offers controls instead.
@@ -49,8 +49,11 @@ export function DemoVideo(): ReactElement {
 					<source src={`${SRC}/demo.mp4`} type="video/mp4" />
 				</video>
 			</div>
-			<figcaption className="font-mono text-ink-2 text-sm">
-				warden batch ios --count 5 --jobs-from flows.txt -- bun e2e --attach {"{job}"} --device {"{udid}"}
+			<figcaption className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 text-ink-2 text-sm">
+				<code className="font-mono text-ink">warden batch salient-e2e</code>
+				<span className="font-mono tabular-nums">
+					37 Salient e2e flows · 5 iPhone 17 simulators · 3m25s (13m55s on one) · 37/37 passed · shown at 5× speed
+				</span>
 			</figcaption>
 		</figure>
 	);

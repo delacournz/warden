@@ -1,45 +1,283 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-30T00:00:00Z",
+  "generatedAt": "2026-10-01T00:00:00Z",
   "title": "Design System: warden",
   "extensions": {
     "colorMeta": {
-      "ground": { "role": "neutral", "displayName": "Grouped Gray", "canonical": "#f2f2f7", "dark": "#000000", "tonalRamp": ["#1c1c1e", "#3a3a3c", "#636366", "#8e8e93", "#aeaeb2", "#d1d1d6", "#e5e5ea", "#f2f2f7"] },
-      "surface": { "role": "neutral", "displayName": "Group White", "canonical": "#ffffff", "dark": "#1c1c1e", "tonalRamp": ["#1c1c1e", "#2c2c2e", "#48484a", "#8e8e93", "#c7c7cc", "#e5e5ea", "#f2f2f7", "#ffffff"] },
-      "fill": { "role": "neutral", "displayName": "System Fill", "canonical": "#e5e5ea", "dark": "#2c2c2e", "tonalRamp": ["#1c1c1e", "#2c2c2e", "#48484a", "#636366", "#aeaeb2", "#d1d1d6", "#e5e5ea", "#f2f2f7"] },
-      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#1c1c1e", "dark": "#f5f5f7", "tonalRamp": ["#0b0b0c", "#1c1c1e", "#3a3a3c", "#636366", "#8e8e93", "#c7c7cc", "#e5e5ea", "#f5f5f7"] },
-      "ink-2": { "role": "neutral", "displayName": "Secondary Ink", "canonical": "#6b6b72", "dark": "#98989f", "tonalRamp": ["#2a2a2e", "#3f3f44", "#55555b", "#6b6b72", "#85858c", "#98989f", "#b8b8be", "#dcdce1"] },
-      "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "#d8d8de", "dark": "#38383a", "tonalRamp": ["#1c1c1e", "#38383a", "#58585c", "#7c7c82", "#a0a0a6", "#c2c2c8", "#d8d8de", "#ececf0"] },
-      "lease": { "role": "primary", "displayName": "Lease Green", "canonical": "#1f7a40", "dark": "#30d158", "tonalRamp": ["#0b2e17", "#124a26", "#1a6634", "#1f7a40", "#259a4f", "#30d158", "#7ee49a", "#c9f4d4"] },
-      "lease-ink": { "role": "neutral", "displayName": "Lease Ink", "canonical": "#ffffff", "dark": "#000000", "tonalRamp": ["#000000", "#1c1c1e", "#3a3a3c", "#636366", "#8e8e93", "#c7c7cc", "#e5e5ea", "#ffffff"] },
-      "lamp": { "role": "primary", "displayName": "Lamp Green", "canonical": "#34c759", "dark": "#30d158", "tonalRamp": ["#0d3318", "#155226", "#1f7a40", "#28a74d", "#34c759", "#5fd67c", "#9ae6ac", "#d4f5dc"] },
-      "device-body": { "role": "neutral", "displayName": "Device Body", "canonical": "#1c1c1e", "dark": "#1c1c1e", "tonalRamp": ["#0b0b0c", "#1c1c1e", "#2c2c2e", "#3a3a3c", "#48484a", "#636366", "#8e8e93", "#c7c7cc"] },
-      "device-bezel": { "role": "neutral", "displayName": "Device Bezel", "canonical": "#48484a", "dark": "#48484a", "tonalRamp": ["#1c1c1e", "#2c2c2e", "#3a3a3c", "#48484a", "#636366", "#8e8e93", "#aeaeb2", "#d1d1d6"] },
-      "device-screen-off": { "role": "neutral", "displayName": "Screen Off", "canonical": "#0b0b0c", "dark": "#0b0b0c", "tonalRamp": ["#0b0b0c", "#1c1c1e", "#2c2c2e", "#3a3a3c", "#48484a", "#636366", "#8e8e93", "#c7c7cc"] }
+      "ground": {
+        "role": "neutral",
+        "displayName": "Grouped Gray",
+        "canonical": "#f2f2f7",
+        "dark": "#000000",
+        "tonalRamp": [
+          "#1c1c1e",
+          "#3a3a3c",
+          "#636366",
+          "#8e8e93",
+          "#aeaeb2",
+          "#d1d1d6",
+          "#e5e5ea",
+          "#f2f2f7"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Group White",
+        "canonical": "#ffffff",
+        "dark": "#1c1c1e",
+        "tonalRamp": [
+          "#1c1c1e",
+          "#2c2c2e",
+          "#48484a",
+          "#8e8e93",
+          "#c7c7cc",
+          "#e5e5ea",
+          "#f2f2f7",
+          "#ffffff"
+        ]
+      },
+      "fill": {
+        "role": "neutral",
+        "displayName": "System Fill",
+        "canonical": "#e5e5ea",
+        "dark": "#2c2c2e",
+        "tonalRamp": [
+          "#1c1c1e",
+          "#2c2c2e",
+          "#48484a",
+          "#636366",
+          "#aeaeb2",
+          "#d1d1d6",
+          "#e5e5ea",
+          "#f2f2f7"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#1c1c1e",
+        "dark": "#f5f5f7",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#1c1c1e",
+          "#3a3a3c",
+          "#636366",
+          "#8e8e93",
+          "#c7c7cc",
+          "#e5e5ea",
+          "#f5f5f7"
+        ]
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Secondary Ink",
+        "canonical": "#6b6b72",
+        "dark": "#98989f",
+        "tonalRamp": [
+          "#2a2a2e",
+          "#3f3f44",
+          "#55555b",
+          "#6b6b72",
+          "#85858c",
+          "#98989f",
+          "#b8b8be",
+          "#dcdce1"
+        ]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#d8d8de",
+        "dark": "#38383a",
+        "tonalRamp": [
+          "#1c1c1e",
+          "#38383a",
+          "#58585c",
+          "#7c7c82",
+          "#a0a0a6",
+          "#c2c2c8",
+          "#d8d8de",
+          "#ececf0"
+        ]
+      },
+      "lease": {
+        "role": "primary",
+        "displayName": "Lease Green",
+        "canonical": "#1f7a40",
+        "dark": "#30d158",
+        "tonalRamp": [
+          "#0b2e17",
+          "#124a26",
+          "#1a6634",
+          "#1f7a40",
+          "#259a4f",
+          "#30d158",
+          "#7ee49a",
+          "#c9f4d4"
+        ]
+      },
+      "lease-ink": {
+        "role": "neutral",
+        "displayName": "Lease Ink",
+        "canonical": "#ffffff",
+        "dark": "#000000",
+        "tonalRamp": [
+          "#000000",
+          "#1c1c1e",
+          "#3a3a3c",
+          "#636366",
+          "#8e8e93",
+          "#c7c7cc",
+          "#e5e5ea",
+          "#ffffff"
+        ]
+      },
+      "lamp": {
+        "role": "primary",
+        "displayName": "Lamp Green",
+        "canonical": "#34c759",
+        "dark": "#30d158",
+        "tonalRamp": [
+          "#0d3318",
+          "#155226",
+          "#1f7a40",
+          "#28a74d",
+          "#34c759",
+          "#5fd67c",
+          "#9ae6ac",
+          "#d4f5dc"
+        ]
+      },
+      "device-body": {
+        "role": "neutral",
+        "displayName": "Device Body (404 slot only)",
+        "canonical": "#1c1c1e",
+        "dark": "#1c1c1e",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#1c1c1e",
+          "#2c2c2e",
+          "#3a3a3c",
+          "#48484a",
+          "#636366",
+          "#8e8e93",
+          "#c7c7cc"
+        ]
+      },
+      "device-bezel": {
+        "role": "neutral",
+        "displayName": "Device Bezel",
+        "canonical": "#48484a",
+        "dark": "#48484a",
+        "tonalRamp": [
+          "#1c1c1e",
+          "#2c2c2e",
+          "#3a3a3c",
+          "#48484a",
+          "#636366",
+          "#8e8e93",
+          "#aeaeb2",
+          "#d1d1d6"
+        ]
+      },
+      "device-screen-off": {
+        "role": "neutral",
+        "displayName": "Screen Off",
+        "canonical": "#0b0b0c",
+        "dark": "#0b0b0c",
+        "tonalRamp": [
+          "#0b0b0c",
+          "#1c1c1e",
+          "#2c2c2e",
+          "#3a3a3c",
+          "#48484a",
+          "#636366",
+          "#8e8e93",
+          "#c7c7cc"
+        ]
+      }
     },
     "typographyMeta": {
-      "display": { "displayName": "Display", "purpose": "Landing headline only; two lines, first in Secondary Ink, second in Ink." },
-      "headline": { "displayName": "Headline", "purpose": "Section titles stated as claims; 1.875rem, 2.25rem from sm." },
-      "lede": { "displayName": "Lede", "purpose": "Section ledes in Secondary Ink, max-w-2xl." },
-      "title": { "displayName": "Title", "purpose": "Row titles, chart row names, install step titles, button labels." },
-      "body": { "displayName": "Body", "purpose": "Row details and captions in Secondary Ink." },
-      "numeral": { "displayName": "Numeral", "purpose": "Measured values: chart values, boot timer, 404." },
-      "command": { "displayName": "Command", "purpose": "Shell commands and shelf controls." },
-      "id": { "displayName": "Id", "purpose": "Device names, udids, owners, tags, tick labels, Markdown path." }
+      "display": {
+        "displayName": "Display",
+        "purpose": "Landing headline only; one sentence in two tones, 'Parallelise your agent workflows' in Secondary Ink, 'and e2e tests.' in Ink."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section titles stated as claims; 1.875rem, 2.25rem from sm."
+      },
+      "lede": {
+        "displayName": "Lede",
+        "purpose": "Hero lede in Ink; section ledes in Secondary Ink, max-w-2xl."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Row titles, chart row names, install step titles, button labels."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Row details and captions in Secondary Ink."
+      },
+      "numeral": {
+        "displayName": "Numeral",
+        "purpose": "Measured values: boot chart values, the 404."
+      },
+      "command": {
+        "displayName": "Command",
+        "purpose": "Shell commands, the preset code block, the video caption."
+      },
+      "id": {
+        "displayName": "Id",
+        "purpose": "Package-manager tabs, tags, tick labels, Markdown path."
+      }
     },
     "shadows": [],
     "motion": [
-      { "name": "boot-replay", "value": "requestAnimationFrame at 4x real time to 15.6 measured seconds", "purpose": "The one authored moment: a cloned device boots on the shelf with a live timer and boot bar." },
-      { "name": "screen-power", "value": "fill 700ms (Tailwind default ease)", "purpose": "A device screen fades from off to the home grid when it becomes booted or leased." },
-      { "name": "booting-spin", "value": "animate-spin (1s linear infinite)", "purpose": "Booting phase glyph." },
-      { "name": "rack-follow", "value": "scrollTo smooth, auto under reduced motion", "purpose": "Phone rack centres the booting device." },
-      { "name": "hover-state", "value": "opacity 0.85 / bg to fill / brightness 1.1, Tailwind default 150ms", "purpose": "Every other interactive state." },
-      { "name": "reduced-motion", "value": "animation and transition 0.01ms; boot completes instantly", "purpose": "prefers-reduced-motion: reduce." }
+      {
+        "name": "hero-recording",
+        "value": "<video> autoplay muted loop playsInline, preload metadata",
+        "purpose": "The one authored moment: the recorded warden batch run."
+      },
+      {
+        "name": "hero-reduced",
+        "value": "no autoplay; poster (final all-passed frame) + native controls; also the SSR default",
+        "purpose": "prefers-reduced-motion: reduce."
+      },
+      {
+        "name": "copy-confirm",
+        "value": "icon swaps to check for 1600ms",
+        "purpose": "Copy command feedback."
+      },
+      {
+        "name": "hover-state",
+        "value": "opacity 0.85 / bg to fill / color to ink, Tailwind default 150ms",
+        "purpose": "Every other interactive state."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "animation and transition 0.01ms",
+        "purpose": "Global prefers-reduced-motion collapse."
+      }
     ],
     "breakpoints": [
-      { "name": "sm", "value": "640px" },
-      { "name": "lg", "value": "1024px" }
-    ]
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      }
+    ],
+    "recordedMaterial": {
+      "source": "scripts/demo/compose.ts + scripts/demo/layout.ts palette (docs dark tokens)",
+      "ground": "#000000",
+      "panel": "#1c1c1e",
+      "pass": "#30d158",
+      "fail": "#ff453a",
+      "tuiBar": "#64d2ff (CLI ANSI cyan; recorded material, not page colour)",
+      "app": "Salient's own navy/yellow UI (recorded material)"
+    }
   },
   "components": [
     {
@@ -54,33 +292,17 @@
       "name": "Secondary Button",
       "kind": "button",
       "refersTo": "button-secondary",
-      "description": "Surface pill on the ground; hover to System Fill.",
+      "description": "Surface pill on the ground; hover to System Fill (404 pair).",
       "html": "<a class=\"ds-btn-secondary\" href=\"#\">How leases work</a>",
       "css": ".ds-btn-secondary { display: inline-block; background: var(--color-surface, #ffffff); color: var(--color-ink, #1c1c1e); font: 500 14px/20px 'Onest Variable', system-ui, sans-serif; padding: 10px 20px; border-radius: 9999px; text-decoration: none; transition: background-color 150ms; } .ds-btn-secondary:hover { background: var(--color-fill, #e5e5ea); } .ds-btn-secondary:focus-visible { outline: 2px solid var(--color-ink, #1c1c1e); outline-offset: 2px; }"
     },
     {
-      "name": "Claim Button",
-      "kind": "button",
-      "refersTo": "button-claim",
-      "description": "The only green control: runs a claim on the device shelf.",
-      "html": "<button class=\"ds-btn-claim\" type=\"button\">warden claim ios</button>",
-      "css": ".ds-btn-claim { background: var(--color-lease, #1f7a40); color: var(--color-lease-ink, #ffffff); font: 500 14px/20px 'Red Hat Mono Variable', ui-monospace, monospace; padding: 8px 16px; border: 0; border-radius: 9999px; cursor: pointer; transition: filter 150ms; } .ds-btn-claim:hover { filter: brightness(1.1); } .ds-btn-claim:active { filter: brightness(0.95); } .ds-btn-claim:focus-visible { outline: 2px solid var(--color-ink, #1c1c1e); outline-offset: 2px; }"
-    },
-    {
-      "name": "Release Button",
-      "kind": "button",
-      "refersTo": "button-release",
-      "description": "Fill pill beside Claim; releases only this page's leases.",
-      "html": "<button class=\"ds-btn-release\" type=\"button\">release --mine</button>",
-      "css": ".ds-btn-release { background: var(--color-fill, #e5e5ea); color: var(--color-ink, #1c1c1e); font: 500 14px/20px 'Red Hat Mono Variable', ui-monospace, monospace; padding: 8px 16px; border: 0; border-radius: 9999px; cursor: pointer; transition: background-color 150ms; } .ds-btn-release:hover { background: var(--color-hairline, #d8d8de); } .ds-btn-release:focus-visible { outline: 2px solid var(--color-ink, #1c1c1e); outline-offset: 2px; }"
-    },
-    {
-      "name": "Grouped List",
-      "kind": "card",
-      "refersTo": "grouped-list",
-      "description": "The hub's one container: inset group with hairline rows inset after the glyph, trailing mono tag.",
-      "html": "<ul class=\"ds-group\"><li class=\"ds-row\"><span class=\"ds-row-glyph\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2\"/></svg></span><div class=\"ds-row-body\"><div class=\"ds-row-text\"><p class=\"ds-row-title\">Claim</p><p class=\"ds-row-detail\">Reuse a free booted warden sim, else clone one, up to --max per profile.</p></div><span class=\"ds-tag\">claim</span></div></li><li class=\"ds-row\"><span class=\"ds-row-glyph\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m16 17 5-5-5-5\"/><path d=\"M21 12H9\"/><path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\"/></svg></span><div class=\"ds-row-body\"><div class=\"ds-row-text\"><p class=\"ds-row-title\">Release</p><p class=\"ds-row-detail\">Only sims warden created, or you booted, are shut down on release.</p></div><span class=\"ds-tag\">release</span></div></li></ul>",
-      "css": ".ds-group { list-style: none; margin: 0; padding: 0; background: var(--color-surface, #ffffff); border-radius: 14px; overflow: hidden; font-family: 'Onest Variable', system-ui, sans-serif; } .ds-row { display: flex; align-items: flex-start; gap: 12px; padding-inline-start: 16px; } .ds-row-glyph { margin-top: 14px; display: flex; width: 20px; height: 20px; align-items: center; justify-content: center; color: var(--color-ink, #1c1c1e); } .ds-row-body { display: flex; flex: 1; min-width: 0; align-items: flex-start; gap: 16px; padding: 12px 16px 12px 0; border-bottom: 1px solid var(--color-hairline, #d8d8de); } .ds-row:last-child .ds-row-body { border-bottom: 0; } .ds-row-text { flex: 1; min-width: 0; } .ds-row-title { margin: 0; font-weight: 500; color: var(--color-ink, #1c1c1e); } .ds-row-detail { margin: 2px 0 0; font-size: 14px; color: var(--color-ink-2, #6b6b72); } .ds-tag { flex-shrink: 0; margin-top: 2px; background: var(--color-ground, #f2f2f7); color: var(--color-ink-2, #6b6b72); font: 400 12px/16px 'Red Hat Mono Variable', ui-monospace, monospace; padding: 2px 8px; border-radius: 6px; }"
+      "name": "Install Command",
+      "kind": "custom",
+      "refersTo": "tab",
+      "description": "Package-manager pill tabs (npm default) over the copy command for the chosen manager.",
+      "html": "<div class=\"ds-install\"><div class=\"ds-tabs\" role=\"tablist\" aria-label=\"Package manager\"><button class=\"ds-tab\" role=\"tab\" aria-selected=\"true\" type=\"button\">npm</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\" type=\"button\">bun</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\" type=\"button\">pnpm</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\" type=\"button\">yarn</button></div><div class=\"ds-copy\"><code class=\"ds-copy-code\"><span class=\"ds-copy-prompt\">$ </span>npm i -g @delacour/warden</code><button class=\"ds-copy-btn\" type=\"button\" aria-label=\"Copy install command\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/></svg></button></div><p class=\"ds-note\">npm release pending. <a href=\"#\">Build from source</a> until then.</p></div>",
+      "css": ".ds-install { display: flex; flex-direction: column; gap: 8px; max-width: 416px; font-family: 'Onest Variable', system-ui, sans-serif; } .ds-tabs { display: flex; gap: 4px; } .ds-tab { border: 0; background: transparent; border-radius: 9999px; padding: 4px 12px; font: 400 12px/16px 'Red Hat Mono Variable', ui-monospace, monospace; color: var(--color-ink-2, #6b6b72); cursor: pointer; transition: color 150ms, background-color 150ms; } .ds-tab:hover { color: var(--color-ink, #1c1c1e); } .ds-tab[aria-selected=\"true\"] { background: var(--color-fill, #e5e5ea); color: var(--color-ink, #1c1c1e); } .ds-tab:focus-visible { outline: 2px solid var(--color-ink, #1c1c1e); outline-offset: 2px; } .ds-copy { display: flex; align-items: center; gap: 8px; background: var(--color-ground, #f2f2f7); border-radius: 12px; padding: 6px 6px 6px 16px; } .ds-copy-code { flex: 1; min-width: 0; font: 400 14px/20px 'Red Hat Mono Variable', ui-monospace, monospace; color: var(--color-ink, #1c1c1e); white-space: nowrap; overflow-x: auto; } .ds-copy-prompt { user-select: none; color: var(--color-ink-2, #6b6b72); } .ds-copy-btn { display: flex; width: 32px; height: 32px; align-items: center; justify-content: center; border: 0; background: transparent; border-radius: 8px; color: var(--color-ink-2, #6b6b72); cursor: pointer; transition: background-color 150ms, color 150ms; } .ds-copy-btn:hover { background: var(--color-fill, #e5e5ea); color: var(--color-ink, #1c1c1e); } .ds-note { margin: 0; font-size: 14px; color: var(--color-ink-2, #6b6b72); } .ds-note a { color: var(--color-ink, #1c1c1e); text-decoration: underline; text-decoration-color: var(--color-hairline, #d8d8de); text-underline-offset: 4px; } .ds-note a:hover { text-decoration-color: var(--color-ink, #1c1c1e); }"
     },
     {
       "name": "Copy Command",
@@ -91,58 +313,98 @@
       "css": ".ds-copy { display: flex; align-items: center; gap: 8px; background: var(--color-ground, #f2f2f7); border-radius: 12px; padding: 6px 6px 6px 16px; } .ds-copy-code { flex: 1; min-width: 0; font: 400 14px/20px 'Red Hat Mono Variable', ui-monospace, monospace; color: var(--color-ink, #1c1c1e); white-space: nowrap; overflow-x: auto; } .ds-copy-prompt { user-select: none; color: var(--color-ink-2, #6b6b72); } .ds-copy-btn { display: flex; width: 32px; height: 32px; align-items: center; justify-content: center; border: 0; background: transparent; border-radius: 8px; color: var(--color-ink-2, #6b6b72); cursor: pointer; transition: background-color 150ms, color 150ms; } .ds-copy-btn:hover { background: var(--color-fill, #e5e5ea); color: var(--color-ink, #1c1c1e); } .ds-copy-btn:focus-visible { outline: 2px solid var(--color-ink, #1c1c1e); outline-offset: 2px; }"
     },
     {
+      "name": "Grouped List",
+      "kind": "card",
+      "refersTo": "grouped-list",
+      "description": "The hub's one container: inset group with hairline rows inset after the glyph, trailing mono tag.",
+      "html": "<ul class=\"ds-group\"><li class=\"ds-row\"><span class=\"ds-row-glyph\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2\"/></svg></span><div class=\"ds-row-body\"><div class=\"ds-row-text\"><p class=\"ds-row-title\">Claim</p><p class=\"ds-row-detail\">Reuse a free booted warden sim, else clone one, up to --max per profile.</p></div><span class=\"ds-tag\">claim</span></div></li><li class=\"ds-row\"><span class=\"ds-row-glyph\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m16 17 5-5-5-5\"/><path d=\"M21 12H9\"/><path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\"/></svg></span><div class=\"ds-row-body\"><div class=\"ds-row-text\"><p class=\"ds-row-title\">Release</p><p class=\"ds-row-detail\">Only sims warden created, or you booted, are shut down on release.</p></div><span class=\"ds-tag\">release</span></div></li></ul>",
+      "css": ".ds-group { list-style: none; margin: 0; padding: 0; background: var(--color-surface, #ffffff); border-radius: 14px; overflow: hidden; font-family: 'Onest Variable', system-ui, sans-serif; } .ds-row { display: flex; align-items: flex-start; gap: 12px; padding-inline-start: 16px; } .ds-row-glyph { margin-top: 14px; display: flex; width: 20px; height: 20px; align-items: center; justify-content: center; color: var(--color-ink, #1c1c1e); } .ds-row-body { display: flex; flex: 1; min-width: 0; align-items: flex-start; gap: 16px; padding: 12px 16px 12px 0; border-bottom: 1px solid var(--color-hairline, #d8d8de); } .ds-row:last-child .ds-row-body { border-bottom: 0; } .ds-row-text { flex: 1; min-width: 0; } .ds-row-title { margin: 0; font-weight: 500; color: var(--color-ink, #1c1c1e); } .ds-row-detail { margin: 2px 0 0; font-size: 14px; color: var(--color-ink-2, #6b6b72); } .ds-tag { flex-shrink: 0; margin-top: 2px; background: var(--color-ground, #f2f2f7); color: var(--color-ink-2, #6b6b72); font: 400 12px/16px 'Red Hat Mono Variable', ui-monospace, monospace; padding: 2px 8px; border-radius: 6px; }"
+    },
+    {
+      "name": "Code Group",
+      "kind": "card",
+      "refersTo": "code-group",
+      "description": "Surface group holding real config or CLI output in mono; comments and prompt in Secondary Ink.",
+      "html": "<pre class=\"ds-code\"><span class=\"ds-code-dim\">// warden.config.json</span>\n\"batches\": {\n  \"salient-e2e\": {\n    \"platform\": \"ios\",\n    \"count\": 5,\n    \"retry\": 1\n  }\n}</pre>",
+      "css": ".ds-code { margin: 0; overflow-x: auto; background: var(--color-surface, #ffffff); border-radius: 14px; padding: 20px; font: 400 14px/1.625 'Red Hat Mono Variable', ui-monospace, monospace; color: var(--color-ink, #1c1c1e); } .ds-code-dim { color: var(--color-ink-2, #6b6b72); }"
+    },
+    {
+      "name": "Demo Video",
+      "kind": "custom",
+      "refersTo": "video-frame",
+      "description": "Signature: the recorded warden batch run edge to edge in a clipped surface group, with a mono caption of the command and the measured run.",
+      "html": "<figure class=\"ds-video\"><div class=\"ds-video-frame\"><div class=\"ds-video-poster\"><span class=\"ds-vh\">warden batch ios · 5 sims · 37 flows</span><span class=\"ds-vp\">37/37 passed</span></div></div><figcaption class=\"ds-video-cap\"><code>warden batch salient-e2e</code><span>37 Salient e2e flows · 5 iPhone 17 simulators · 3m25s · 37/37 passed · shown at 5× speed</span></figcaption></figure>",
+      "css": ".ds-video { margin: 0; display: flex; flex-direction: column; gap: 12px; } .ds-video-frame { overflow: hidden; border-radius: 14px; background: var(--color-surface, #ffffff); } .ds-video-poster { aspect-ratio: 16 / 11; background: #000000; display: flex; justify-content: space-between; align-items: flex-start; padding: 16px 20px; font: 400 13px/18px 'Red Hat Mono Variable', ui-monospace, monospace; } .ds-vh { color: #f5f5f7; } .ds-vp { color: #30d158; } .ds-video-cap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 24px; font: 400 14px/20px 'Red Hat Mono Variable', ui-monospace, monospace; font-variant-numeric: tabular-nums; color: var(--color-ink-2, #6b6b72); } .ds-video-cap code { font: inherit; color: var(--color-ink, #1c1c1e); }"
+    },
+    {
       "name": "Navigation",
       "kind": "nav",
       "refersTo": "navigation",
       "description": "Top bar: warden mark and lowercase name, then Docs and CLI links on a hairline-bottomed ground.",
       "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-brand\" href=\"#\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\"><rect x=\"3\" y=\"2\" width=\"13\" height=\"20\" rx=\"4.5\" stroke=\"currentColor\" stroke-width=\"2\"/><circle cx=\"18\" cy=\"6\" r=\"4\" fill=\"var(--color-lamp, #34c759)\"/></svg>warden</a><a class=\"ds-nav-link\" href=\"#\">Docs</a><a class=\"ds-nav-link\" href=\"#\">CLI</a></nav>",
       "css": ".ds-nav { display: flex; align-items: center; gap: 28px; padding: 14px 24px; background: var(--color-ground, #f2f2f7); border-bottom: 1px solid var(--color-hairline, #d8d8de); font-family: 'Onest Variable', system-ui, sans-serif; } .ds-nav-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 17px; color: var(--color-ink, #1c1c1e); text-decoration: none; } .ds-nav-link { font-size: 14px; color: var(--color-ink-2, #6b6b72); text-decoration: none; transition: color 150ms; } .ds-nav-link:hover { color: var(--color-ink, #1c1c1e); } .ds-nav-link:focus-visible { outline: 2px solid var(--color-ink, #1c1c1e); outline-offset: 2px; border-radius: 4px; }"
-    },
-    {
-      "name": "Device Unit",
-      "kind": "custom",
-      "refersTo": "spec-well",
-      "description": "Signature: drawn leased phone with its lamp lit over a ground spec well of name/udid, phase, owner.",
-      "html": "<div class=\"ds-unit\"><svg class=\"ds-unit-frame\" viewBox=\"0 0 120 250\"><rect x=\"1.5\" y=\"1.5\" width=\"117\" height=\"247\" rx=\"24\" fill=\"#1c1c1e\" stroke=\"#48484a\" stroke-width=\"1.5\"/><rect x=\"9\" y=\"9\" width=\"102\" height=\"232\" rx=\"17\" fill=\"#f2f2f7\"/><rect x=\"43\" y=\"16\" width=\"34\" height=\"9\" rx=\"4.5\" fill=\"#0b0b0c\"/><g fill=\"#dcdce1\"><rect x=\"21\" y=\"44\" width=\"15\" height=\"15\" rx=\"4.5\"/><rect x=\"42\" y=\"44\" width=\"15\" height=\"15\" rx=\"4.5\"/><rect x=\"63\" y=\"44\" width=\"15\" height=\"15\" rx=\"4.5\"/><rect x=\"84\" y=\"44\" width=\"15\" height=\"15\" rx=\"4.5\"/><rect x=\"21\" y=\"70\" width=\"15\" height=\"15\" rx=\"4.5\"/><rect x=\"42\" y=\"70\" width=\"15\" height=\"15\" rx=\"4.5\"/><rect x=\"63\" y=\"70\" width=\"15\" height=\"15\" rx=\"4.5\"/><rect x=\"84\" y=\"70\" width=\"15\" height=\"15\" rx=\"4.5\"/><rect x=\"18\" y=\"206\" width=\"84\" height=\"22\" rx=\"9\"/></g><circle cx=\"95\" cy=\"20.5\" r=\"4\" fill=\"#34c759\"/></svg><dl class=\"ds-unit-spec\"><div><dd class=\"ds-unit-name\">warden-iphone-17-3</dd><dd class=\"ds-unit-id\">udid C7E51F02</dd></div><div class=\"ds-unit-phase\"><svg width=\"10\" height=\"10\" viewBox=\"0 0 10 10\"><circle cx=\"5\" cy=\"5\" r=\"4.5\" fill=\"#34c759\"/></svg><dd>leased</dd></div><div><dd class=\"ds-unit-name\">claude · feature/bristleworm</dd></div></dl></div>",
-      "css": ".ds-unit { display: flex; flex-direction: column; gap: 12px; width: 220px; } .ds-unit-frame { display: block; margin: 0 auto; width: 100%; max-width: 112px; height: auto; } .ds-unit-spec { margin: 0; background: var(--color-ground, #f2f2f7); border-radius: 12px; overflow: hidden; font-size: 12px; } .ds-unit-spec > div { padding: 8px 12px; border-bottom: 1px solid var(--color-hairline, #d8d8de); } .ds-unit-spec > div:last-child { border-bottom: 0; } .ds-unit-spec dd { margin: 0; } .ds-unit-name { font: 500 12px/16px 'Red Hat Mono Variable', ui-monospace, monospace; color: var(--color-ink, #1c1c1e); } .ds-unit-id { font: 400 12px/16px 'Red Hat Mono Variable', ui-monospace, monospace; color: var(--color-ink-2, #6b6b72); } .ds-unit-phase { display: flex; align-items: center; gap: 8px; font: 500 12px/16px 'Onest Variable', system-ui, sans-serif; color: var(--color-ink, #1c1c1e); }"
     }
   ],
   "narrative": {
-    "northStar": "The Device Hub",
-    "overview": "warden's site is its own device shelf. It is drawn in the system-UI grammar its readers stare at all day in Xcode and Settings: a grouped gray ground, white (or near-black) inset groups, hairline separators that start after the leading glyph, and ids set in mono. Every simulator on the page is a unit with a name, a udid, a phase and an owner, and the page's argument is made by showing those units being claimed, booted and released, not by describing them.\n\nThe world is ink and system gray. One saturated colour exists, lease green, and it is spent only on the lease itself: the lamp on a leased device, the leased phase glyph, the `warden claim` control, and the lamp in the warden mark. Density is calm: generous section spacing (112–144px above each section), content in rounded groups, no decoration between groups. Depth is tonal, never shadowed. The docs chrome (Fumadocs) is re-pointed at the same tokens so the reference pages sit in the same world.\n\nThe build explicitly refuses the dark terminal hero over a six-card feature grid.",
+    "northStar": "The Parallel Device Hub",
+    "overview": "warden's site is drawn in the system-UI grammar its readers stare at all day in Xcode and Settings: a grouped gray ground, white (or near-black) inset groups, hairline separators that start after the leading glyph, and anything a machine prints set in mono. The hub's argument is now parallelism. The first thing on the page is not a drawing of a device but a real recording: one `warden batch` run fanning 37 Salient e2e flows across five leased iPhone 17 simulators in 3m25s, with the live grid underneath. The page shows the suite being split, then explains the mechanism in the same grouped rows and mono ids the CLI uses.\n\nThe world is ink and system gray. One saturated colour exists, green, and it means a lease or a pass. On the page chrome it is spent almost nowhere: the lamp in the warden mark, the selection tint, and the docs' mapped success state. Inside the hero recording it marks leased simulators' finished flows and the pass counter. Density is calm: generous space above every section, content in rounded groups, nothing decorative between them. Depth is tonal, never shadowed. The docs chrome (Fumadocs) is re-pointed at the same tokens, so reference pages sit in the same world.\n\nThe build refuses the dark terminal hero over a feature-card grid, and it refuses adjective copy: every claim on the page is a mechanism or a measurement.",
     "keyCharacteristics": [
       "Grouped gray ground with inset surface groups, light and dark.",
       "Hairline separators, never borders around groups.",
-      "Drawn phone outlines as the product image; no screenshots, no photography.",
-      "Onest for voice, Red Hat Mono for everything a machine prints (ids, commands, timers, owners).",
-      "One colour, lease green. Shape carries state; colour only confirms it.",
+      "A real recorded batch run is the hero image; drawn geometry covers the rest (the warden mark, the 404 slot). No stock photography, no marketing screenshots.",
+      "Onest for voice, Red Hat Mono for everything a machine prints (commands, ids, flags, durations, counts).",
+      "One colour, green, for leased or passed. Shape and text carry state; colour only confirms it.",
       "Tonal layering instead of shadows.",
-      "One authored motion moment: the shelf's claim and boot."
+      "One authored motion moment: the hero recording."
     ],
     "rules": [
-      { "name": "The One Lamp Rule", "body": "Green appears only where something is leased. Nothing decorative, no links, no headings, no charts are green. If a new element wants colour and it is not a lease, it is ink.", "section": "colors" },
-      { "name": "The Shape-First Rule", "body": "Every phase has its own glyph shape (dashed ring = not created, hollow ring = shutdown, spinning arc = booting, gray dot = booted and free, lamp = leased). Colour is added only to the leased glyph, so state survives without colour vision.", "section": "colors" },
-      { "name": "The Re-pointed Chrome Rule", "body": "Fumadocs' `--color-fd-*` tokens are mapped onto the hub palette. Docs pages never introduce their own neutrals.", "section": "colors" },
-      { "name": "The Machine Voice Rule", "body": "If the CLI would print it (a udid, an owner string, a flag, a duration), it is set in Red Hat Mono with tabular figures. Prose never goes mono for style.", "section": "typography" },
-      { "name": "The Measured Number Rule", "body": "Numbers are shown as measured (\"146–239 s\", \"15.6 s\", \"~6.5 s\"), with a thin space before the unit and no rounding up.", "section": "typography" },
-      { "name": "The Tonal Nest Rule", "body": "Groups sit on the ground; wells sit in groups and take the ground colour back. Never nest a surface in a surface, never add a shadow to lift something.", "section": "elevation" }
+      {
+        "name": "The One Lamp Rule",
+        "body": "Green appears only where something is leased or has passed. No links, headings, charts or decoration are green. If a new page element wants colour and it is not a lease or a pass, it is ink.",
+        "section": "colors"
+      },
+      {
+        "name": "The Recorded Material Exception",
+        "body": "Colour inside a recording belongs to what was recorded: the app under test and the CLI's terminal output. The video's own overlay keeps the One Lamp Rule (green only on ✓ flow labels, ✓ counts and \"37/37 passed\"; everything else ink or gray). The cyan TUI bars and the app's yellow are recorded material, not page colour, and the page never lifts them into its own chrome.",
+        "section": "colors"
+      },
+      {
+        "name": "The Re-pointed Chrome Rule",
+        "body": "Fumadocs' `--color-fd-*` tokens are mapped onto the hub palette. Docs pages never introduce their own neutrals.",
+        "section": "colors"
+      },
+      {
+        "name": "The Machine Voice Rule",
+        "body": "If the CLI would print it (a command, a flag, a udid, a duration, a pass count), it is set in Red Hat Mono with tabular figures. Prose never goes mono for style.",
+        "section": "typography"
+      },
+      {
+        "name": "The Measured Number Rule",
+        "body": "Numbers are shown as measured (\"3m25s\", \"37/37 passed\", \"146–239 s\", \"15.6 s\", \"~6.5 s\"), with their unit, their source, and any playback speed-up stated (\"shown at 5× speed\"). Nothing is rounded up and no speedup is claimed without a baseline.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tonal Nest Rule",
+        "body": "Groups sit on the ground; wells sit in groups and take the ground colour back. Never nest a surface in a surface, never add a shadow to lift something. A ground-coloured well placed directly on the ground (the hero and preset copy commands) reads as a bare command line with a copy button, which is intended.",
+        "section": "elevation"
+      }
     ],
     "dos": [
       "Do put every new block in a Surface group on the Grouped Gray ground, 14px radius, with hairline rows.",
-      "Do set ids, udids, owners, flags, commands and durations in Red Hat Mono with tabular figures.",
-      "Do give every device phase a distinct glyph shape and a text label; colour is the last signal, not the first.",
+      "Do set commands, flags, ids, counts and durations in Red Hat Mono with tabular figures.",
+      "Do prove a claim with a recording or a measurement, and caption it with the exact command and measured run, including any playback speed-up.",
       "Do state measured numbers exactly as measured, with their unit and source.",
-      "Do draw devices as geometry with `DeviceFrame`; show an uncreated slot as the dashed outline.",
-      "Do keep text buttons as pills: Ink primary, Surface secondary.",
-      "Do keep a reduced-motion path for any animated state that jumps straight to the end state."
+      "Do keep text buttons and tabs as pills: Ink primary, Surface secondary, System Fill for the selected tab.",
+      "Do give every autoplaying or animated element a reduced-motion rest state (a poster with controls, or the end state).",
+      "Do show install as a copyable command with a package-manager choice, and say plainly when a release is not yet published."
     ],
     "donts": [
-      "Don't use green for anything that is not a lease: not links, not headings, not charts, not success toasts beyond Fumadocs' mapped `success`.",
+      "Don't use green on the page for anything that is not a lease or a pass: not links, not headings, not charts, not decoration.",
+      "Don't lift colours from recorded material (the TUI's cyan, the app's own palette) into page chrome.",
       "Don't add drop shadows or borders around groups; depth is tonal and separation is a hairline.",
       "Don't introduce a second accent hue or tinted neutrals.",
-      "Don't open a page with a dark terminal hero over a grid of feature cards.",
-      "Don't use screenshots or photography of devices in place of the drawn frame.",
-      "Don't add a second authored animation competing with the shelf.",
+      "Don't open a page with a dark terminal hero over a grid of feature cards, or with adjective copy.",
+      "Don't add a second authored animation competing with the hero recording.",
       "Don't give docs chrome its own palette; map Fumadocs tokens to the hub tokens."
     ]
   }

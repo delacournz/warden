@@ -1,9 +1,24 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { HomeLayout } from "fumadocs-ui/layouts/home";
-import { Activity, Ban, Cable, HeartPulse, LogOut, Plug, Recycle, Terminal } from "lucide-react";
+import {
+	Activity,
+	Ban,
+	Cable,
+	Clapperboard,
+	HeartPulse,
+	ListOrdered,
+	LogOut,
+	Plug,
+	Recycle,
+	RotateCcw,
+	Server,
+	Smartphone,
+	Terminal,
+} from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
 import { CopyCommand } from "@/components/copy-command";
 import { GroupedList, GroupedRow } from "@/components/grouped-list";
+import { InstallCommand } from "@/components/install-command";
 import { BootChart } from "@/components/landing/boot-chart";
 import { DemoVideo } from "@/components/landing/demo-video";
 import { WardenIcon } from "@/components/warden-icon";
@@ -13,11 +28,30 @@ import { appDescription, appName, githubUrl } from "@/lib/shared";
 export const Route = createFileRoute("/")({
 	component: Home,
 	head: () => ({
-		meta: [{ title: `${appName} — one simulator per agent` }, { name: "description", content: appDescription }],
+		meta: [
+			{ title: `${appName} — parallel e2e tests and agents on one Mac` },
+			{ name: "description", content: appDescription },
+		],
 	}),
 });
 
 const PAGE = "mx-auto w-full max-w-6xl px-4 sm:px-6";
+
+const PRESET_EXAMPLE = `
+"batches": {
+  "salient-e2e": {
+    "project": "salient",
+    "platform": "ios",
+    "count": 5,
+    "profile": "iphone-17",
+    "app": true,
+    "retry": 1,
+    "serve": "bun scripts/e2e/run-ios.ts --session",
+    "serveReady": "file:e2e-artifacts/batch/session.json",
+    "jobsFrom": { "command": "bun scripts/e2e/select-flows.ts --list" },
+    "cmd": ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
+  }
+}`;
 
 function Section({ title, lede, children }: { title: string; lede: ReactNode; children: ReactNode }): ReactElement {
 	return (
@@ -32,9 +66,10 @@ function Section({ title, lede, children }: { title: string; lede: ReactNode; ch
 }
 
 /**
- * The first viewport states warden's two promises — isolation and speed — and
- * demonstrates both in a recorded five-simulator `warden batch` run; the page
- * then proves speed on a measured time axis, lays out the lease
+ * The first viewport states the job — a parallel e2e suite and parallel agents
+ * on one Mac — and proves it with a recorded five-simulator `warden batch`
+ * run. The page then shows what a batch does and how a repo declares one,
+ * proves new-device speed on a measured time axis, lays out the lease
  * rules as a grouped list, shows the agent hooks, and closes on install.
  */
 function Home(): ReactElement {
@@ -43,31 +78,28 @@ function Home(): ReactElement {
 			<main className="flex flex-1 flex-col pb-28">
 				<section className={`${PAGE} flex flex-col gap-8 pt-10 sm:pt-12`}>
 					<div className="flex flex-col gap-8">
-						<h1 className="font-semibold text-[2.6rem] text-ink-2 leading-[1.02] tracking-[-0.035em] sm:text-6xl lg:text-[4rem]">
-							One simulator per agent.
-							<br />
-							<span className="text-ink">Booted in 16 seconds.</span>
+						<h1 className="max-w-4xl text-balance font-semibold text-[2.6rem] text-ink-2 leading-[1.02] tracking-[-0.035em] sm:text-6xl lg:text-[4rem]">
+							Parallelise your agent workflows <span className="text-ink">and e2e tests.</span>
 						</h1>
-						<div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between lg:gap-12">
+						<div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between lg:gap-12">
 							<p className="max-w-2xl text-ink text-lg leading-relaxed">
-								warden leases every simulator, emulator and port on your Mac to exactly one agent, worktree or human,
-								and clones new sims from a golden image instead of cold-booting them.
+								warden leases every simulator, emulator and port on your Mac to one agent, worktree or run at a time,
+								then fans your e2e suite across as many simulators as you give it. No two runs ever drive the same
+								device.
 							</p>
-							<div className="flex shrink-0 flex-wrap gap-3">
-								<Link
-									className="rounded-full bg-ink px-5 py-2.5 font-medium text-sm text-surface transition-opacity hover:opacity-85"
-									params={{ _splat: "installation" }}
-									to="/docs/$"
-								>
-									Install warden
-								</Link>
-								<Link
-									className="rounded-full bg-surface px-5 py-2.5 font-medium text-ink text-sm transition-colors hover:bg-fill"
-									params={{ _splat: "concepts" }}
-									to="/docs/$"
-								>
-									How leases work
-								</Link>
+							<div className="flex w-full shrink-0 flex-col gap-2 lg:w-[26rem]">
+								<InstallCommand setup />
+								<p className="text-ink-2 text-sm">
+									npm release pending.{" "}
+									<Link
+										className="text-ink underline decoration-hairline underline-offset-4 hover:decoration-ink"
+										params={{ _splat: "installation" }}
+										to="/docs/$"
+									>
+										Build from source
+									</Link>{" "}
+									until then.
+								</p>
 							</div>
 						</div>
 					</div>
@@ -75,15 +107,62 @@ function Home(): ReactElement {
 				</section>
 
 				<Section
-					lede="A new simulator's first boot spends most of its time on a one-time data migration. warden does that once, keeps the result as a golden image, and clones every new pool device from it."
-					title="Sixteen seconds, not four minutes."
+					lede="Salient's 37 e2e flows take 13m55s on one simulator and 3m25s on five. A batch leases the simulators, starts your serve step once, and hands the next flow to whichever simulator frees up first. Declare it once in warden.config.json; every agent and human runs the same command."
+					title="Your whole suite, split across every simulator."
+				>
+					<div className="grid grid-cols-1 gap-6 *:min-w-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+						<GroupedList label="What a batch does">
+							<GroupedRow
+								detail="N simulators and every port the run needs, all-or-nothing, released on exit."
+								leading={<Smartphone className="size-[18px]" />}
+								title="Lease"
+								trailing={<Tag>--count</Tag>}
+							/>
+							<GroupedRow
+								detail="Metro, an API, a seeded database: started once, and jobs wait until it is ready."
+								leading={<Server className="size-[18px]" />}
+								title="Serve"
+								trailing={<Tag>--serve</Tag>}
+							/>
+							<GroupedRow
+								detail="One worker per simulator pulls the next flow, so a slow flow never holds up the rest."
+								leading={<ListOrdered className="size-[18px]" />}
+								title="Queue"
+								trailing={<Tag>{"{job}"}</Tag>}
+							/>
+							<GroupedRow
+								detail="A failed flow reruns on the same simulator, with its own log."
+								leading={<RotateCcw className="size-[18px]" />}
+								title="Retry"
+								trailing={<Tag>--retry</Tag>}
+							/>
+							<GroupedRow
+								detail="Every simulator on video, the live grid as a cast, and a timeline of every job."
+								leading={<Clapperboard className="size-[18px]" />}
+								title="Record"
+								trailing={<Tag>--record</Tag>}
+							/>
+						</GroupedList>
+						<div className="flex flex-col gap-3">
+							<pre className="overflow-x-auto rounded-[var(--radius-group)] bg-surface p-5 font-mono text-ink text-sm leading-relaxed">
+								<span className="text-ink-2">{"// warden.config.json"}</span>
+								{PRESET_EXAMPLE}
+							</pre>
+							<CopyCommand command="warden batch salient-e2e" />
+						</div>
+					</div>
+				</Section>
+
+				<Section
+					lede="Five simulators in parallel means five devices to boot. A new simulator's first boot spends most of its time on a one-time data migration; warden does that once, keeps the result as a golden image, and clones every new pool device from it."
+					title="New simulators in sixteen seconds, not four minutes."
 				>
 					<BootChart />
 				</Section>
 
 				<Section
 					lede="Every claim runs in one sqlite transaction on this machine, so two agents asking at the same instant are served in turn, never both."
-					title="One lease per device."
+					title="Parallel, never shared."
 				>
 					<div className="grid grid-cols-1 gap-6 *:min-w-0 lg:grid-cols-2">
 						<GroupedList label="Lease rules">
@@ -138,7 +217,7 @@ function Home(): ReactElement {
 				</Section>
 
 				<Section
-					lede="warden install adds two hooks to Claude Code and Codex. An agent's first argent call claims a device for its session; a call on someone else's device is blocked."
+					lede="warden install adds two hooks to Claude Code and Codex. An agent's first simulator tool call claims a device for its session; a call on someone else's device is blocked."
 					title="Your agents claim before they tap."
 				>
 					<div className="grid grid-cols-1 gap-6 *:min-w-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -177,13 +256,19 @@ function Home(): ReactElement {
 				</Section>
 
 				<Section
-					lede="Build from a checkout, wire the hooks, check the setup. Every agent-config change shows a diff and asks first."
+					lede="Install the CLI, wire the agent hooks, check the setup. Every agent-config change shows a diff and asks first. Until the npm release lands, build from a checkout."
 					title="Install"
 				>
 					<ol className="grid grid-cols-1 gap-4 *:min-w-0 lg:grid-cols-[1.5fr_1fr_1fr]">
-						<InstallStep command="bun run --cwd apps/cli install:global" n={1} title="Build the binary" />
-						<InstallStep command="warden install" n={2} title="Hook up your agents" />
-						<InstallStep command="warden doctor" n={3} title="Check it" />
+						<InstallStep n={1} title="Install warden">
+							<InstallCommand />
+						</InstallStep>
+						<InstallStep n={2} title="Hook up your agents">
+							<CopyCommand command="warden install" />
+						</InstallStep>
+						<InstallStep n={3} title="Check it">
+							<CopyCommand command="warden doctor" />
+						</InstallStep>
 					</ol>
 					<Link
 						className="self-start rounded-full bg-ink px-5 py-2.5 font-medium text-sm text-surface transition-opacity hover:opacity-85"
@@ -220,14 +305,14 @@ function Tag({ children }: { children: ReactNode }): ReactElement {
 	return <span className="rounded-md bg-ground px-2 py-0.5 font-mono text-ink-2 text-xs">{children}</span>;
 }
 
-function InstallStep({ n, title, command }: { n: number; title: string; command: string }): ReactElement {
+function InstallStep({ n, title, children }: { n: number; title: string; children: ReactNode }): ReactElement {
 	return (
 		<li className="flex flex-col gap-3 rounded-[var(--radius-group)] bg-surface p-4">
 			<p className="flex items-baseline gap-2 font-medium text-ink">
 				<span className="font-mono text-ink-2 text-sm tabular-nums">{n}</span>
 				{title}
 			</p>
-			<CopyCommand command={command} />
+			{children}
 		</li>
 	);
 }

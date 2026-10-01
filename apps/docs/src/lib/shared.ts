@@ -2,7 +2,7 @@ export const appName = "warden";
 
 /** One sentence, served as the meta description and the social card body. */
 export const appDescription =
-	"Machine-wide leasing of iOS simulators, Android emulators, ports and native app builds for agents, worktrees and humans sharing one Mac.";
+	"Parallelise your agent workflows and e2e tests on one Mac: warden leases every simulator, emulator and port to one owner at a time and fans your e2e flows across them.";
 
 export const docsRoute = "/docs";
 
