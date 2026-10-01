@@ -38,6 +38,12 @@ export type GoldenSim = {
 	isAvailable: boolean;
 	runtimeId: string;
 	deviceTypeIdentifier?: string;
+	/** `<CoreSimulator>/Devices/<udid>/data` */
+	dataPath?: string;
+	/** bytes simctl reports for `dataPath` (the bulk of a sim's footprint) */
+	dataPathSize?: number;
+	/** epoch ms of the last boot, when simctl reports it */
+	lastBootedAt?: number;
 };
 
 export type GoldenPlan = { kind: "reuse"; sim: GoldenSim; stale: GoldenSim[] } | { kind: "create"; stale: GoldenSim[] };
@@ -76,11 +82,18 @@ function toGoldenSim(entry: unknown, runtimeId: string): GoldenSim | undefined {
 		runtimeId,
 	};
 	if (typeof entry.deviceTypeIdentifier === "string") sim.deviceTypeIdentifier = entry.deviceTypeIdentifier;
+	if (typeof entry.dataPath === "string") sim.dataPath = entry.dataPath;
+	if (typeof entry.dataPathSize === "number") sim.dataPathSize = entry.dataPathSize;
+	const booted = typeof entry.lastBootedAt === "string" ? Date.parse(entry.lastBootedAt) : Number.NaN;
+	if (!Number.isNaN(booted)) sim.lastBootedAt = booted;
 	return sim;
 }
 
-/** `simctl list devices -j` (NOT `available`, so a golden whose runtime was removed is still seen and pruned). iOS only. */
-export function parseAllSims(stdout: string): Result<GoldenSim[]> {
+/**
+ * `simctl list devices -j` (NOT `available`, so a golden whose runtime was removed is still seen and pruned).
+ * iOS only unless `allPlatforms` (watchOS/tvOS/visionOS sims too, for the disk audit).
+ */
+export function parseAllSims(stdout: string, opts: { allPlatforms?: boolean } = {}): Result<GoldenSim[]> {
 	let data: unknown;
 	try {
 		data = JSON.parse(stdout);
@@ -90,7 +103,7 @@ export function parseAllSims(stdout: string): Result<GoldenSim[]> {
 	if (!isRecord(data) || !isRecord(data.devices)) return err("simctl list devices: missing `devices`");
 	const sims: GoldenSim[] = [];
 	for (const [runtimeId, list] of Object.entries(data.devices)) {
-		if (!runtimeId.includes(".iOS-") || !Array.isArray(list)) continue;
+		if ((!opts.allPlatforms && !runtimeId.includes(".iOS-")) || !Array.isArray(list)) continue;
 		for (const entry of list) {
 			const sim = toGoldenSim(entry, runtimeId);
 			if (sim) sims.push(sim);
