@@ -1,6 +1,6 @@
 name: ci
 
-# PRs from maintainers (OWNER / MEMBER / COLLABORATOR) run on every push.
+# PRs from maintainers (write/maintain/admin on the repo) run on every push.
 # Everyone else gets a failing `ci` until a maintainer approves the current
 # head commit; ci-approve.yml then re-runs this workflow. A new push needs a
 # fresh approval. Require the `ci` check on main.
@@ -28,31 +28,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          AUTHOR_ASSOC: ${{ github.event.pull_request.author_association }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          is_maintainer() { case "$1" in OWNER|MEMBER|COLLABORATOR) return 0;; *) return 1;; esac; }
+          # Payload author_association reports private org members as CONTRIBUTOR,
+          # so ask the API for the user's actual repo permission instead.
+          is_maintainer() {
+            perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$1/permission" --jq .permission 2>/dev/null || echo none)
+            case "$perm" in admin|maintain|write) return 0;; *) return 1;; esac
+          }
 
-          if [ "$EVENT" = "push" ]; then
+          if [ "$EVENT" = "push" ] || is_maintainer "$AUTHOR"; then
             echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
 
-          if is_maintainer "$AUTHOR_ASSOC"; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
+          approvers=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate \
+            --jq ".[] | select(.state == \"APPROVED\" and .commit_id == \"$HEAD_SHA\") | .user.login" | sort -u)
+          for user in $approvers; do
+            if is_maintainer "$user"; then
+              echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          done
 
-          approved=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate \
-            --jq "[.[] | select(.state == \"APPROVED\" and .commit_id == \"$HEAD_SHA\"
-                   and (.author_association | IN(\"OWNER\",\"MEMBER\",\"COLLABORATOR\")))] | length" \
-            | awk '{s+=$1} END {print s+0}')
-
-          if [ "$approved" -gt 0 ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::Awaiting maintainer approval of $HEAD_SHA before CI runs"
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "::notice::Awaiting maintainer approval of $HEAD_SHA before CI runs"
+          echo "run=false" >> "$GITHUB_OUTPUT"
 
   checks:
     needs: gate

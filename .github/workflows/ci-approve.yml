@@ -15,15 +15,23 @@ jobs:
   rerun-ci:
     if: >-
       github.event.review.state == 'approved' &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) &&
-      !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) &&
       github.event.review.commit_id == github.event.pull_request.head.sha
     runs-on: namespace-profile-linux-small
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          REVIEWER: ${{ github.event.review.user.login }}
         run: |
+          perm() { gh api "repos/$GITHUB_REPOSITORY/collaborators/$1/permission" --jq .permission 2>/dev/null || echo none; }
+          is_maintainer() { case "$(perm "$1")" in admin|maintain|write) return 0;; *) return 1;; esac; }
+
+          # Maintainer PRs already ran CI; only maintainer approvals unlock others.
+          if is_maintainer "$AUTHOR" || ! is_maintainer "$REVIEWER"; then
+            echo "nothing to re-run"; exit 0
+          fi
+
           run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=1" \
             --jq '.workflow_runs[0].id // empty')
           if [ -z "$run_id" ]; then
