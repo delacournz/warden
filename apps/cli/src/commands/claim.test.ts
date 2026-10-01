@@ -85,3 +85,14 @@ describe("warden claim", () => {
 		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
 	});
 });
+
+describe("warden claim → arrange", () => {
+	test("iOS claim tiles sim windows unless WARDEN_ARRANGE=0", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], fakeSimctl([wardenSim(1, "Booted")], calls, [["osascript", { stdout: "{}" }]]));
+		const { WARDEN_ARRANGE: _, ...env } = c.env;
+		c.env = env;
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(calls.some((cmd) => cmd[0] === "osascript")).toBe(process.platform === "darwin");
+	});
+});

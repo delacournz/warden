@@ -1,6 +1,7 @@
 import type { Command } from "../command";
 import { affectedCommand } from "./affected";
 import { appCommand } from "./app";
+import { arrangeCommand } from "./arrange";
 import { batchCommand } from "./batch";
 import { buildsCommand } from "./builds";
 import { checkCommand } from "./check";
@@ -33,6 +34,7 @@ export const COMMANDS: readonly Command[] = [
 	lsCommand,
 	devicesCommand,
 	simsCommand,
+	arrangeCommand,
 	cloneCommand,
 	goldenCommand,
 	checkCommand,
