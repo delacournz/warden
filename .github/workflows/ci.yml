@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   gate:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-linux-small
     outputs:
       run: ${{ steps.gate.outputs.run }}
     steps:
@@ -57,7 +57,7 @@ jobs:
   checks:
     needs: gate
     if: needs.gate.outputs.run == 'true'
-    runs-on: macos-latest
+    runs-on: namespace-profile-mac-small
     steps:
       - uses: actions/checkout@v5
         with:
@@ -78,7 +78,7 @@ jobs:
   ci:
     needs: [gate, checks]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-linux-small
     steps:
       - env:
           GATE: ${{ needs.gate.result }}
