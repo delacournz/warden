@@ -12,7 +12,14 @@ export type Spinner = {
 	stop: () => void;
 };
 
-export type Choice<T extends string> = { value: T; label: string; hint?: string; disabled?: boolean };
+export type Choice<T extends string> = {
+	value: T;
+	label: string;
+	hint?: string;
+	disabled?: boolean;
+	/** multiselect: starts ticked */
+	selected?: boolean;
+};
 
 /** Terminal presentation: colours, spinners, prompts — all on stderr, so stdout stays clean for `--json`. Injected so tests stay plain and scripted. */
 export type Ui = {
@@ -23,7 +30,7 @@ export type Ui = {
 	/** undefined = cancelled (Ctrl-C / Esc) */
 	confirm: (message: string, initialValue?: boolean) => Promise<boolean | undefined>;
 	select: <T extends string>(message: string, choices: Choice<T>[]) => Promise<T | undefined>;
-	/** space toggles, enter submits; disabled choices show but can't be picked. undefined = cancelled */
+	/** space toggles, enter submits; `selected` choices start ticked, disabled ones show but can't be picked. undefined = cancelled */
 	multiselect: <T extends string>(message: string, choices: Choice<T>[]) => Promise<T[] | undefined>;
 	/** clack's cancel line */
 	cancelled: (message: string) => void;
@@ -88,6 +95,7 @@ export function terminalUi(env: Record<string, string | undefined>): Ui {
 				message,
 				output: process.stderr,
 				required: false,
+				initialValues: choices.filter((c) => c.selected && !c.disabled).map((c) => c.value),
 				options: choices.map(toOption),
 			});
 			return isCancel(answer) ? undefined : answer;

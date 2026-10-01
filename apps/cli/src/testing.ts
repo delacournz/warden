@@ -50,7 +50,7 @@ export function scriptedUi(
 			return choices.find((c) => c.value === answer)?.value;
 		},
 		multiselect: async <T extends string>(message: string, choices: Choice<T>[]): Promise<T[] | undefined> => {
-			const offered = choices.map((c) => `${c.disabled ? "-" : "+"}${c.value}`).join(" ");
+			const offered = choices.map((c) => `${c.disabled ? "-" : c.selected ? "*" : "+"}${c.value}`).join(" ");
 			ui.events.push(`multiselect: ${message} [${offered}]`);
 			const answer = ui.multiselectAnswers.shift();
 			return answer?.flatMap((v) => choices.find((c) => c.value === v && !c.disabled)?.value ?? []);

@@ -9,6 +9,9 @@ export type FixtureSim = {
 	state: "Booted" | "Shutdown" | "Booting";
 	deviceTypeIdentifier?: string;
 	isAvailable?: boolean;
+	/** ISO timestamp; omitted = never booted */
+	lastBootedAt?: string;
+	dataPathSize?: number;
 };
 
 const RUNTIME_PREFIX = "com.apple.CoreSimulator.SimRuntime.";
@@ -20,7 +23,8 @@ export function simctlDevicesJson(byRuntime: Record<string, FixtureSim[]>): stri
 			`${RUNTIME_PREFIX}${runtime}`,
 			sims.map((s) => ({
 				dataPath: `/Users/me/Library/Developer/CoreSimulator/Devices/${s.udid}/data`,
-				dataPathSize: 18337792,
+				dataPathSize: s.dataPathSize ?? 18337792,
+				...(s.lastBootedAt !== undefined ? { lastBootedAt: s.lastBootedAt } : {}),
 				logPath: `/Users/me/Library/Logs/CoreSimulator/${s.udid}`,
 				udid: s.udid,
 				isAvailable: s.isAvailable ?? true,

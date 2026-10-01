@@ -23,7 +23,15 @@ function parseJson(stdout: string, what: string): Result<JsonObject> {
 	}
 }
 
-type RawSim = { udid: string; name: string; state: string; isAvailable?: boolean; deviceTypeIdentifier?: string };
+type RawSim = {
+	udid: string;
+	name: string;
+	state: string;
+	isAvailable?: boolean;
+	deviceTypeIdentifier?: string;
+	lastBootedAt?: string;
+	dataPathSize?: number;
+};
 
 function isRawSim(value: unknown): value is RawSim {
 	return (
@@ -32,7 +40,9 @@ function isRawSim(value: unknown): value is RawSim {
 		typeof value.name === "string" &&
 		typeof value.state === "string" &&
 		(value.isAvailable === undefined || typeof value.isAvailable === "boolean") &&
-		(value.deviceTypeIdentifier === undefined || typeof value.deviceTypeIdentifier === "string")
+		(value.deviceTypeIdentifier === undefined || typeof value.deviceTypeIdentifier === "string") &&
+		(value.lastBootedAt === undefined || typeof value.lastBootedAt === "string") &&
+		(value.dataPathSize === undefined || typeof value.dataPathSize === "number")
 	);
 }
 
@@ -50,17 +60,59 @@ export function shortRuntime(identifier: string): string {
  * always false here; callers mark warden's own with `markWardenDevices`.
  */
 export function parseSimctlDevices(stdout: string): Result<InventoryDevice[]> {
+	const sims = parseIosSims(stdout);
+	if (!sims.success) return sims;
+	return ok(
+		sims.data.filter(({ sim }) => sim.isAvailable !== false).map(({ sim, runtime }) => toInventoryDevice(sim, runtime))
+	);
+}
+
+/** An iOS sim with the extra `simctl list devices -j` fields cleanup decisions need. */
+export type SimDetail = InventoryDevice & {
+	/** false when its runtime is gone (`simctl delete unavailable` territory) */
+	available: boolean;
+	/** full device type identifier, e.g. `com.apple.CoreSimulator.SimDeviceType.iPhone-17` */
+	deviceType?: string;
+	/** epoch ms; undefined = never booted (or an Xcode that doesn't report it) */
+	lastBootedAt?: number;
+	/** size of the sim's data dir */
+	dataBytes?: number;
+};
+
+/** Like `parseSimctlDevices` but from `simctl list devices -j` (no `available`): keeps unavailable sims and adds detail. */
+export function parseSimctlSimDetails(stdout: string): Result<SimDetail[]> {
+	const sims = parseIosSims(stdout);
+	if (!sims.success) return sims;
+	return ok(
+		sims.data.map(({ sim, runtime }): SimDetail => {
+			const detail: SimDetail = { ...toInventoryDevice(sim, runtime), available: sim.isAvailable !== false };
+			if (sim.deviceTypeIdentifier !== undefined) detail.deviceType = sim.deviceTypeIdentifier;
+			if (sim.dataPathSize !== undefined) detail.dataBytes = sim.dataPathSize;
+			const booted = sim.lastBootedAt !== undefined ? Date.parse(sim.lastBootedAt) : Number.NaN;
+			if (!Number.isNaN(booted)) detail.lastBootedAt = booted;
+			return detail;
+		})
+	);
+}
+
+/** Every iOS sim, unavailable ones included, with cleanup detail. */
+export async function listSimDetails(exec: Exec): AsyncResult<SimDetail[]> {
+	const out = await simctl(exec, ["list", "devices", "-j"]);
+	return out.success ? parseSimctlSimDetails(out.data) : out;
+}
+
+function parseIosSims(stdout: string): Result<Array<{ sim: RawSim; runtime: string }>> {
 	const parsed = parseJson(stdout, "simctl list devices");
 	if (!parsed.success) return parsed;
 	const { devices } = parsed.data;
 	if (!isObject(devices)) return err("simctl list devices: missing `devices`");
-	const out: InventoryDevice[] = [];
+	const out: Array<{ sim: RawSim; runtime: string }> = [];
 	for (const [runtimeKey, list] of Object.entries(devices)) {
 		const runtime = shortRuntime(runtimeKey);
 		if (!runtime.startsWith("iOS-")) continue;
 		const sims = parseRuntimeSims(runtimeKey, list);
 		if (!sims.success) return sims;
-		out.push(...sims.data.filter((sim) => sim.isAvailable !== false).map((sim) => toInventoryDevice(sim, runtime)));
+		out.push(...sims.data.map((sim) => ({ sim, runtime })));
 	}
 	return ok(out);
 }
@@ -215,10 +267,15 @@ async function idempotent(exec: Exec, args: string[], alreadyState: string): Asy
 	return err(execError(cmd, result));
 }
 
-/** Shut down (if booted) and permanently `simctl delete` a sim. Callers decide whether warden may touch it. */
-export async function deleteSim(exec: Exec, udid: string): AsyncResult<void> {
-	const down = await idempotent(exec, ["shutdown", udid], "Shutdown");
-	if (!down.success) return down;
+/**
+ * Shut down (if booted) and permanently `simctl delete` a sim. Callers decide whether warden may
+ * touch it. `shutdown: false` for an unavailable sim — its runtime is gone, so it can't be running.
+ */
+export async function deleteSim(exec: Exec, udid: string, opts: { shutdown?: boolean } = {}): AsyncResult<void> {
+	if (opts.shutdown !== false) {
+		const down = await idempotent(exec, ["shutdown", udid], "Shutdown");
+		if (!down.success) return down;
+	}
 	const deleted = await simctl(exec, ["delete", udid]);
 	return deleted.success ? ok(undefined) : deleted;
 }

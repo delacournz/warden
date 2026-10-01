@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { Owner } from "@delacour/warden-core/types";
 import { fakeSimctl, OWNER_ENV } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { simsCommand } from "./sims";
+import { describeReasons, simsCommand } from "./sims";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 const other: Owner = { kind: "agent", sessionId: "s2", cwd: "/", repo: "warden", worktree: "cowrie@main" };
+
+const DAY = 86_400_000;
+const NOW = 100 * DAY;
+const daysAgo = (n: number) => new Date(NOW - n * DAY).toISOString();
 
 const SIMS = [
 	{ udid: "U1", name: "warden-iphone-17-1", state: "Booted" as const },
@@ -17,6 +22,8 @@ const SIMS = [
 ];
 
 type SetupOpts = {
+	/** runtime suffix → sims (default: SIMS on iOS-26-5) */
+	sims?: Record<string, FixtureSim[]>;
 	interactive?: boolean;
 	multiselect?: Array<string[] | undefined>;
 	confirm?: Array<boolean | undefined>;
@@ -25,7 +32,11 @@ type SetupOpts = {
 function setup(argv: string[], opts: SetupOpts = {}): { c: TestContext; calls: string[][] } {
 	const calls: string[][] = [];
 	const c = testContext(["delete", ...argv], {
-		exec: fakeSimctl(SIMS, calls, [["xcrun simctl delete", {}]]),
+		now: () => NOW,
+		exec: fakeSimctl(SIMS, calls, [
+			["xcrun simctl list devices -j", { stdout: simctlDevicesJson(opts.sims ?? { "iOS-26-5": SIMS }) }],
+			["xcrun simctl delete", {}],
+		]),
 		ui: scriptedUi({
 			interactive: opts.interactive ?? false,
 			...(opts.multiselect ? { multiselect: opts.multiselect } : {}),
@@ -33,7 +44,7 @@ function setup(argv: string[], opts: SetupOpts = {}): { c: TestContext; calls: s
 		}),
 	});
 	c.env = { ...c.env, ...OWNER_ENV };
-	c.db.recordDevice({ platform: "ios", id: "U3", name: "warden-iphone-17-3", profile: "iphone-17" }, 0);
+	c.db.recordDevice({ platform: "ios", id: "U3", name: "warden-iphone-17-3", profile: "iphone-17" }, NOW);
 	c.db.insertLease(
 		{
 			resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
@@ -143,5 +154,91 @@ describe("warden sims delete", () => {
 		expect(await simsCommand.run(c)).toBe(1);
 		expect(deletes(calls)).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("U2");
+	});
+
+	describe("suggestions", () => {
+		const SUGGEST = {
+			"iOS-17-0": [{ udid: "GONE", name: "iPhone 15", state: "Shutdown" as const, isAvailable: false }],
+			"iOS-26-5": [
+				{ udid: "FRESH", name: "iPhone 17", state: "Shutdown" as const, lastBootedAt: daysAgo(1) },
+				{ udid: "STALE", name: "iPhone Air", state: "Shutdown" as const, lastBootedAt: daysAgo(45) },
+				{ udid: "U1", name: "warden-iphone-17-1", state: "Booted" as const, lastBootedAt: daysAgo(90) },
+			],
+		};
+
+		test("suggested sims come first and start ticked; a leased one stays disabled", async () => {
+			const { c } = setup([], { sims: SUGGEST, interactive: true, multiselect: [[]] });
+			expect(await simsCommand.run(c)).toBe(0);
+			expect(events(c)[0]).toBe("multiselect: Select simulators to delete [*GONE *STALE -U1 +FRESH]");
+		});
+
+		test("an unavailable sim is deleted without a shutdown", async () => {
+			const { c, calls } = setup([], { sims: SUGGEST, interactive: true, multiselect: [["GONE"]], confirm: [true] });
+			expect(await simsCommand.run(c)).toBe(0);
+			expect(deletes(calls)).toEqual(["xcrun simctl delete GONE"]);
+		});
+
+		test("--suggested -y deletes just the (unleased) suggestions without the menu", async () => {
+			const { c, calls } = setup(["--suggested", "-y"], { sims: SUGGEST });
+			expect(await simsCommand.run(c)).toBe(0);
+			expect(deletes(calls)).toEqual([
+				"xcrun simctl delete GONE",
+				"xcrun simctl shutdown STALE",
+				"xcrun simctl delete STALE",
+			]);
+		});
+
+		test("--stale moves the threshold", async () => {
+			const { c, calls } = setup(["--suggested", "-y", "--stale", "60d"], { sims: SUGGEST });
+			expect(await simsCommand.run(c)).toBe(0);
+			expect(deletes(calls)).toEqual(["xcrun simctl delete GONE"]);
+		});
+
+		test("--suggested with nothing to suggest is a no-op", async () => {
+			const { c, calls } = setup(["--suggested", "-y"]);
+			expect(await simsCommand.run(c)).toBe(0);
+			expect(deletes(calls)).toEqual([]);
+			expect(c.stderr.join("\n")).toContain("no suggested simulators");
+		});
+
+		test("--suggested with udids, or a bad --stale, is a usage error", async () => {
+			for (const argv of [
+				["U2", "--suggested", "-y"],
+				["--suggested", "-y", "--stale", "soon"],
+			]) {
+				const { c, calls } = setup(argv);
+				expect(await simsCommand.run(c)).toBe(1);
+				expect(deletes(calls)).toEqual([]);
+				c.cleanup();
+				ctx = undefined;
+			}
+		});
+
+		test("--suggested --dry-run lists what would go (with reasons) and deletes nothing, off a terminal too", async () => {
+			const { c, calls } = setup(["--suggested", "--dry-run", "--json"], { sims: SUGGEST });
+			expect(await simsCommand.run(c)).toBe(0);
+			expect(deletes(calls)).toEqual([]);
+			expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+				dryRun: true,
+				wouldDelete: [
+					{ id: "GONE", name: "iPhone 15", reasons: [{ kind: "unavailable" }] },
+					{ id: "STALE", name: "iPhone Air", reasons: [{ kind: "stale", sinceMs: 45 * DAY }] },
+				],
+			});
+		});
+
+		test("describeReasons reads like a hint", () => {
+			expect(
+				describeReasons([
+					{ kind: "unavailable" },
+					{ kind: "stale", sinceMs: 45 * DAY },
+					{ kind: "old-runtime", newest: "iOS-26-5" },
+					{ kind: "duplicate", of: { id: "U2", name: "iPhone 17" } },
+					{ kind: "idle-pool", sinceMs: 9 * DAY },
+				])
+			).toBe(
+				"runtime removed · not booted in 45d · older runtime (iOS-26-5 installed) · duplicate of iPhone 17 · warden sim unused 9d"
+			);
+		});
 	});
 });

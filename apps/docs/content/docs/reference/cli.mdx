@@ -134,7 +134,25 @@ Every simulator / emulator, booted or not, plus Android AVDs — with warden own
 
 ### `warden sims delete [udids...]` (alias `sims rm`)
 
-Permanently delete iOS simulators. With no udids it opens a multi-select menu (space toggles, enter submits) of every sim; leased sims and goldens are shown but can't be picked (goldens go through `warden golden prune`). Lists what will go and asks before deleting unless `-y`. Off a terminal, pass udids and `-y`. Each sim is leased to the caller while it is deleted, so a racing `warden claim` can't grab it mid-delete. `--json` prints `{ deleted, failed }`; exit 1 if any sim was skipped.
+Permanently delete iOS simulators. With no udids it opens a multi-select menu (space toggles, enter submits) of every sim, including ones whose runtime has been removed. Leased sims and goldens are shown but can't be picked (goldens go through `warden golden prune`). Lists what will go and asks before deleting unless `-y`. Each sim is leased to the caller while it is deleted, so a racing `warden claim` can't grab it mid-delete.
+
+**Suggestions.** Sims that look safe to delete come first in the menu and start ticked, with the reason and data size in the hint:
+
+| Reason | When |
+|--------|------|
+| runtime removed | the sim's runtime is no longer installed (`isAvailable: false`) |
+| not booted in N | a non-warden sim last booted longer than `--stale` ago (default `30d`; never-booted sims are left alone) |
+| older runtime | an older iOS than the newest installed for the same device type |
+| duplicate | same name + runtime as a more recently booted sim |
+| warden sim unused N | a warden-created sim unused (store `lastUsedAt`) longer than `--idle` (default `7d`) |
+
+| Flag | Meaning |
+|------|---------|
+| `--suggested` | delete every suggestion instead of showing the menu |
+| `--stale <duration>` / `--idle <duration>` | suggestion thresholds |
+| `--dry-run` | only show what would be deleted, with reasons (works off a terminal) |
+| `-y, --yes` | don't ask; required off a terminal (with udids or `--suggested`) |
+| `--json` | `{ deleted, failed }`, or `{ dryRun, wouldDelete }`; exit 1 if any sim was skipped |
 
 ### `warden clone <source>`
 

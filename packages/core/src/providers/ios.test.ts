@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
-import { createIosProvider, deleteSim, parseSimctlDevices, parseSimctlDeviceTypes, parseSimctlRuntimes } from "./ios";
+import {
+	createIosProvider,
+	deleteSim,
+	parseSimctlDevices,
+	parseSimctlDeviceTypes,
+	parseSimctlRuntimes,
+	parseSimctlSimDetails,
+} from "./ios";
 import { SIMCTL_DEVICES_JSON, SIMCTL_DEVICETYPES_JSON, SIMCTL_RUNTIMES_JSON, simctlDevicesJson } from "./ios.fixture";
 import type { DeviceProvider } from "./provider.types";
 
@@ -343,6 +350,13 @@ describe("deleteSim", () => {
 		expect(calls.map((c) => c.cmd.join(" "))).toEqual(["xcrun simctl shutdown U1", "xcrun simctl delete U1"]);
 	});
 
+	test("skips the shutdown when told to (an unavailable sim can't be shut down)", async () => {
+		const calls: Call[] = [];
+		const exec = fake([["xcrun simctl delete", {}]], calls);
+		expect((await deleteSim(exec, "U1", { shutdown: false })).success).toBe(true);
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual(["xcrun simctl delete U1"]);
+	});
+
 	test("reports a failed delete", async () => {
 		const exec = fake([
 			["xcrun simctl shutdown", {}],
@@ -350,5 +364,59 @@ describe("deleteSim", () => {
 		]);
 		const result = await deleteSim(exec, "U1");
 		expect(result.success).toBe(false);
+	});
+});
+
+describe("parseSimctlSimDetails", () => {
+	test("keeps unavailable sims and reads lastBootedAt, data size and device type", () => {
+		const json = simctlDevicesJson({
+			"iOS-17-0": [
+				{
+					udid: "OLD",
+					name: "iPhone 15",
+					state: "Shutdown",
+					isAvailable: false,
+					deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-15",
+				},
+			],
+			"iOS-26-5": [
+				{ udid: "U1", name: "iPhone 17", state: "Booted", lastBootedAt: "2026-09-28T01:57:04Z", dataPathSize: 4_000 },
+			],
+		});
+		const result = parseSimctlSimDetails(json);
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		expect(result.data).toEqual([
+			{
+				platform: "ios",
+				id: "OLD",
+				name: "iPhone 15",
+				state: "shutdown",
+				wardenCreated: false,
+				runtime: "iOS-17-0",
+				profile: "iphone-15",
+				available: false,
+				deviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-15",
+				dataBytes: 18337792,
+			},
+			{
+				platform: "ios",
+				id: "U1",
+				name: "iPhone 17",
+				state: "booted",
+				wardenCreated: false,
+				runtime: "iOS-26-5",
+				profile: "iphone-17",
+				available: true,
+				deviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
+				dataBytes: 4_000,
+				lastBootedAt: Date.parse("2026-09-28T01:57:04Z"),
+			},
+		]);
+	});
+
+	test("drops non-iOS runtimes", () => {
+		const json = simctlDevicesJson({ "watchOS-26-0": [{ udid: "W", name: "Watch", state: "Shutdown" }] });
+		expect(parseSimctlSimDetails(json)).toEqual({ success: true, data: [] });
 	});
 });
