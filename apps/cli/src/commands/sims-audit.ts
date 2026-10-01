@@ -9,6 +9,12 @@ import {
 	type SimsDeps,
 	type SimsPruneResult,
 } from "@delacour/warden-core/sims/prune";
+import {
+	auditRuntimes,
+	listDiskRuntimes,
+	type RuntimeAudit,
+	type RuntimeVerdict,
+} from "@delacour/warden-core/sims/runtimes";
 import { DEFAULT_SIM_IDLE_MS } from "@delacour/warden-core/sims/sims.defaults";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
@@ -106,7 +112,68 @@ function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimAu
 	return lines.join("\n");
 }
 
-/** Read-only: every sim on the machine with size, owner, lease, last use and what may be deleted. */
+function describeRuntimeVerdict(verdict: RuntimeVerdict, color: ChalkInstance): string {
+	switch (verdict.kind) {
+		case "in-use":
+			return color.dim("in use");
+		case "unused-after-prune":
+			return color.yellow("unused after prune");
+		case "unused":
+			return color.cyan("unused");
+		case "protected":
+			return color.dim("unused (not deletable)");
+	}
+}
+
+type RuntimeSection = { kind: "ok"; audit: RuntimeAudit } | { kind: "error"; error: string };
+
+function runtimesText(ctx: CommandContext, section: RuntimeSection): string {
+	const { color } = ctx.ui;
+	if (section.kind === "error") return color.yellow(`runtimes: skipped (${section.error})`);
+	const { audit } = section;
+	if (audit.entries.length === 0) return color.dim("no downloaded runtimes");
+	const now = ctx.now();
+	const rows = audit.entries.map((r) => [
+		color.bold(r.runtime),
+		r.build,
+		color.dim(r.identifier),
+		String(r.sims),
+		r.lastUsedAt === undefined ? "never" : `${formatDuration(Math.max(0, now - r.lastUsedAt))} ago`,
+		formatSize(r.sizeBytes),
+		describeRuntimeVerdict(r.verdict, color),
+	]);
+	const lines = [
+		formatTable(["RUNTIME", "BUILD", "IDENTIFIER", "SIMS", "LAST USED", "SIZE", "VERDICT"], rows, color),
+		"",
+		`runtimes ${color.bold(formatSize(audit.totalBytes))} across ${audit.entries.length} runtime(s)`,
+	];
+	if (audit.unusedBytes > 0)
+		lines.push(
+			color.cyan(
+				`${formatSize(audit.unusedBytes)} in unused runtimes — machine-wide, warden won't touch them: \`xcrun simctl runtime delete <identifier>\``
+			)
+		);
+	if (audit.unusedAfterPruneBytes > audit.unusedBytes)
+		lines.push(
+			color.yellow(
+				`${formatSize(audit.unusedAfterPruneBytes - audit.unusedBytes)} more becomes unused after \`warden sims prune\``
+			)
+		);
+	return lines.join("\n");
+}
+
+/** Runtime half of the audit; a host without `simctl runtime` (Xcode < 15) just gets a note. */
+async function runtimeSection(ctx: CommandContext, sims: SimAudit): Promise<RuntimeSection> {
+	const runtimes = await listDiskRuntimes(ctx.exec);
+	return runtimes.success
+		? { kind: "ok", audit: auditRuntimes(runtimes.data, sims.entries) }
+		: { kind: "error", error: runtimes.error };
+}
+
+/**
+ * Read-only: every sim on the machine with size, owner, lease, last use and what may be deleted,
+ * then every downloaded runtime with its size and how many sims use it.
+ */
 async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 	const parsed = parseOpts(opts);
 	if (!parsed.success) return fail(ctx, "audit", parsed.error);
@@ -114,8 +181,15 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 	if (!owner.success) return fail(ctx, "audit", owner.error);
 	const audit = await withSpinner(ctx, "auditing simulators…", (sctx) => auditMachineSims(simsDeps(sctx), parsed.data));
 	if (!audit.success) return fail(ctx, "audit", audit.error);
+	const runtimes = await runtimeSection(ctx, audit.data);
 	const entries = audit.data.entries.filter((e) => owner.data === "all" || e.owner === owner.data);
-	emit(ctx, opts.json === true, { ...audit.data, entries }, auditText(ctx, audit.data, entries));
+	const json = {
+		...audit.data,
+		entries,
+		runtimes: runtimes.kind === "ok" ? runtimes.audit : null,
+		...(runtimes.kind === "error" ? { runtimesError: runtimes.error } : {}),
+	};
+	emit(ctx, opts.json === true, json, `${auditText(ctx, audit.data, entries)}\n\n${runtimesText(ctx, runtimes)}`);
 	return 0;
 }
 
@@ -185,7 +259,7 @@ export const registerSimsAudit: Register = (cmd, ctx, done) => {
 	const idleHelp = `warden sims unused this long are deletable (default ${formatDuration(DEFAULT_SIM_IDLE_MS)})`;
 	cmd
 		.command("audit", { isDefault: true })
-		.description("every sim on the machine: size, owner, lease, last use, verdict (the default; read-only)")
+		.description("every sim + downloaded runtime: size, owner, lease, last use, verdict (the default; read-only)")
 		.option("--idle <duration>", idleHelp)
 		.option("--max-size <size>", "disk budget for all sims, e.g. 40G — LRU warden sims over it are deletable")
 		.option("--owner <owner>", "warden | golden | foreign | all (default all)")

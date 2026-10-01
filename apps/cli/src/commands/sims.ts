@@ -266,7 +266,7 @@ async function deleteCmd(ctx: CommandContext, udids: string[], opts: DeleteOpts)
 
 export const simsCommand = defineCommand({
 	name: "sims",
-	summary: "simulator disk audit (default), prune idle warden sims, delete (multi-select)",
+	summary: "simulator + runtime disk audit (default), prune idle warden sims, delete (multi-select)",
 	register: (cmd, ctx, done) => {
 		registerSimsAudit(cmd, ctx, done);
 		cmd

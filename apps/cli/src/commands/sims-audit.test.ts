@@ -16,6 +16,28 @@ const SIMS: FixtureSim[] = [
 	{ udid: "FOR", name: "My iPhone", state: "Shutdown", dataPathSize: GB, isAvailable: false },
 ];
 
+const RT = "com.apple.CoreSimulator.SimRuntime.";
+const RUNTIMES_JSON = JSON.stringify({
+	R265: {
+		identifier: "R265",
+		runtimeIdentifier: `${RT}iOS-26-5`,
+		build: "23F77",
+		version: "26.5",
+		sizeBytes: 8 * GB,
+		deletable: true,
+		state: "Ready",
+	},
+	R261: {
+		identifier: "R261",
+		runtimeIdentifier: `${RT}iOS-26-1`,
+		build: "23B86",
+		version: "26.1",
+		sizeBytes: 7 * GB,
+		deletable: true,
+		state: "Ready",
+	},
+});
+
 function setup(argv: string[], opts: { interactive?: boolean; confirm?: boolean[] } = {}): TestContext {
 	const calls: string[][] = [];
 	ctx = testContext(argv, { now: () => NOW, ui: scriptedUi(opts) });
@@ -23,6 +45,7 @@ function setup(argv: string[], opts: { interactive?: boolean; confirm?: boolean[
 		[
 			["xcrun simctl list devices -j", { stdout: simctlDevicesJson({ "iOS-26-5": SIMS }) }],
 			["xcrun simctl delete", {}],
+			["xcrun simctl runtime list -j", { stdout: RUNTIMES_JSON }],
 		],
 		calls
 	);
@@ -49,6 +72,33 @@ describe("warden sims audit", () => {
 		expect(report.reclaimableBytes).toBe(3 * GB);
 		expect(report.foreignReclaimableBytes).toBe(GB);
 		expect(deletes(c)).toEqual([]);
+	});
+
+	test("--json includes the runtime audit", async () => {
+		const c = setup(["--json"]);
+		expect(await simsCommand.run(c)).toBe(0);
+		const { runtimes } = JSON.parse(c.stdout.join("\n"));
+		expect(
+			runtimes.entries.map((r: { runtime: string; sims: number; verdict: unknown }) => [r.runtime, r.sims, r.verdict])
+		).toEqual([
+			["iOS-26-5", 3, { kind: "in-use" }],
+			["iOS-26-1", 0, { kind: "unused" }],
+		]);
+		expect(runtimes.unusedBytes).toBe(7 * GB);
+	});
+
+	test("runtime table and delete hint; a failing runtime list is only a note", async () => {
+		const c = setup([]);
+		expect(await simsCommand.run(c)).toBe(0);
+		const out = c.stdout.join("\n");
+		expect(out).toContain("RUNTIME");
+		expect(out).toContain("xcrun simctl runtime delete <identifier>");
+		const old = setup(["--json"]);
+		old.exec = fakeExec([["xcrun simctl list devices -j", { stdout: simctlDevicesJson({ "iOS-26-5": SIMS }) }]]);
+		expect(await simsCommand.run(old)).toBe(0);
+		const report = JSON.parse(old.stdout.join("\n"));
+		expect(report.runtimes).toBeNull();
+		expect(report.runtimesError).toContain("runtime list");
 	});
 
 	test("table is the default subcommand, with a footer and a foreign hint", async () => {
