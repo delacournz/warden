@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
-import { createIosProvider, parseSimctlDevices, parseSimctlDeviceTypes, parseSimctlRuntimes } from "./ios";
+import { createIosProvider, deleteSim, parseSimctlDevices, parseSimctlDeviceTypes, parseSimctlRuntimes } from "./ios";
 import { SIMCTL_DEVICES_JSON, SIMCTL_DEVICETYPES_JSON, SIMCTL_RUNTIMES_JSON, simctlDevicesJson } from "./ios.fixture";
 import type { DeviceProvider } from "./provider.types";
 
@@ -326,5 +326,29 @@ describe("createIosProvider", () => {
 		expect((await already.shutdown("U1")).success).toBe(true);
 		const broken = provider(fake([["xcrun simctl shutdown", { exitCode: 1, stderr: "Invalid device" }]]));
 		expect((await broken.shutdown("U1")).success).toBe(false);
+	});
+});
+
+describe("deleteSim", () => {
+	test("shuts the sim down (already-shutdown is fine) then deletes it", async () => {
+		const calls: Call[] = [];
+		const exec = fake(
+			[
+				["xcrun simctl shutdown", { exitCode: 1, stderr: "Unable to shutdown device in current state: Shutdown" }],
+				["xcrun simctl delete", {}],
+			],
+			calls
+		);
+		expect(await deleteSim(exec, "U1")).toEqual({ success: true, data: undefined });
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual(["xcrun simctl shutdown U1", "xcrun simctl delete U1"]);
+	});
+
+	test("reports a failed delete", async () => {
+		const exec = fake([
+			["xcrun simctl shutdown", {}],
+			["xcrun simctl delete", { exitCode: 1, stderr: "Invalid device: U1" }],
+		]);
+		const result = await deleteSim(exec, "U1");
+		expect(result.success).toBe(false);
 	});
 });

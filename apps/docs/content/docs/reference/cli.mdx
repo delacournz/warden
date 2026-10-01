@@ -132,6 +132,10 @@ List leases: resource, state, owner, repo/worktree, age, heartbeat.
 
 Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases.
 
+### `warden sims delete [udids...]` (alias `sims rm`)
+
+Permanently delete iOS simulators. With no udids it opens a multi-select menu (space toggles, enter submits) of every sim; leased sims and goldens are shown but can't be picked (goldens go through `warden golden prune`). Lists what will go and asks before deleting unless `-y`. Off a terminal, pass udids and `-y`. Each sim is leased to the caller while it is deleted, so a racing `warden claim` can't grab it mid-delete. `--json` prints `{ deleted, failed }`; exit 1 if any sim was skipped.
+
 ### `warden clone <source>`
 
 Duplicate a shut-down iOS simulator (udid or name) into warden's pool. `--name` defaults to the next free `warden-<profile>-N`.

@@ -215,6 +215,14 @@ async function idempotent(exec: Exec, args: string[], alreadyState: string): Asy
 	return err(execError(cmd, result));
 }
 
+/** Shut down (if booted) and permanently `simctl delete` a sim. Callers decide whether warden may touch it. */
+export async function deleteSim(exec: Exec, udid: string): AsyncResult<void> {
+	const down = await idempotent(exec, ["shutdown", udid], "Shutdown");
+	if (!down.success) return down;
+	const deleted = await simctl(exec, ["delete", udid]);
+	return deleted.success ? ok(undefined) : deleted;
+}
+
 /** `simctl list devicetypes/runtimes` → the device type + runtime `simctl create` should use for this profile. */
 export async function lookupCreateTarget(
 	exec: Exec,
