@@ -1,0 +1,32 @@
+name: ci-approve
+
+# When a maintainer approves a non-maintainer PR, re-run its `ci` workflow for
+# the approved head commit. The gate in ci.yml re-checks the approval itself.
+# Job is not named `ci`, so skipped runs here never satisfy the required check.
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun-ci:
+    if: >-
+      github.event.review.state == 'approved' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) &&
+      !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) &&
+      github.event.review.commit_id == github.event.pull_request.head.sha
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=1" \
+            --jq '.workflow_runs[0].id // empty')
+          if [ -z "$run_id" ]; then
+            echo "no ci run for $HEAD_SHA" >&2; exit 1
+          fi
+          gh run rerun "$run_id" --repo "$GITHUB_REPOSITORY"
