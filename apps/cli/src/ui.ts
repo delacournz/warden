@@ -1,4 +1,4 @@
-import { cancel, confirm, isCancel, type Option, select } from "@clack/prompts";
+import { cancel, confirm, isCancel, multiselect, type Option, select } from "@clack/prompts";
 import { Chalk, type ChalkInstance } from "chalk";
 import ora from "ora";
 
@@ -12,7 +12,14 @@ export type Spinner = {
 	stop: () => void;
 };
 
-export type Choice<T extends string> = { value: T; label: string; hint?: string };
+export type Choice<T extends string> = {
+	value: T;
+	label: string;
+	hint?: string;
+	disabled?: boolean;
+	/** multiselect: starts ticked */
+	selected?: boolean;
+};
 
 /** Terminal presentation: colours, spinners, prompts — all on stderr, so stdout stays clean for `--json`. Injected so tests stay plain and scripted. */
 export type Ui = {
@@ -23,6 +30,8 @@ export type Ui = {
 	/** undefined = cancelled (Ctrl-C / Esc) */
 	confirm: (message: string, initialValue?: boolean) => Promise<boolean | undefined>;
 	select: <T extends string>(message: string, choices: Choice<T>[]) => Promise<T | undefined>;
+	/** space toggles, enter submits; `selected` choices start ticked, disabled ones show but can't be picked. undefined = cancelled */
+	multiselect: <T extends string>(message: string, choices: Choice<T>[]) => Promise<T[] | undefined>;
 	/** clack's cancel line */
 	cancelled: (message: string) => void;
 };
@@ -35,6 +44,13 @@ export function colorLevel(env: Record<string, string | undefined>, isTTY: boole
 		return forced === "0" || forced === "false" ? 0 : forced === "3" ? 3 : forced === "1" ? 1 : 2;
 	if (env.TERM === "dumb") return 0;
 	return isTTY ? 3 : 0;
+}
+
+function toOption<T extends string>(c: Choice<T>): Option<T> {
+	const option: { value: T; label: string; hint?: string; disabled?: boolean } = { value: c.value, label: c.label };
+	if (c.hint) option.hint = c.hint;
+	if (c.disabled) option.disabled = true;
+	return option as Option<T>;
 }
 
 export function terminalUi(env: Record<string, string | undefined>): Ui {
@@ -71,14 +87,16 @@ export function terminalUi(env: Record<string, string | undefined>): Ui {
 			return isCancel(answer) ? undefined : answer;
 		},
 		select: async <T extends string>(message: string, choices: Choice<T>[]): Promise<T | undefined> => {
-			const answer = await select<T>({
+			const answer = await select<T>({ message, output: process.stderr, options: choices.map(toOption) });
+			return isCancel(answer) ? undefined : answer;
+		},
+		multiselect: async <T extends string>(message: string, choices: Choice<T>[]): Promise<T[] | undefined> => {
+			const answer = await multiselect<T>({
 				message,
 				output: process.stderr,
-				options: choices.map((c): Option<T> => {
-					const option: { value: T; label: string; hint?: string } = { value: c.value, label: c.label };
-					if (c.hint) option.hint = c.hint;
-					return option as Option<T>;
-				}),
+				required: false,
+				initialValues: choices.filter((c) => c.selected && !c.disabled).map((c) => c.value),
+				options: choices.map(toOption),
 			});
 			return isCancel(answer) ? undefined : answer;
 		},

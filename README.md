@@ -84,6 +84,7 @@ warden ls                                        # leases: resource, state, owne
 warden clone <udid|name> [--name x]              # duplicate a shut-down sim into the pool (seconds, no first boot)
 warden golden ensure|ls|prune [--all]            # golden images new sims are cloned from
 warden devices [ios|android]                     # every sim/emulator (booted or not) + AVDs, warden-owned?, leased by (alias: list)
+warden sims delete [udids...|--suggested] [-y]   # multi-select → confirm → delete sims; stale/dead/duplicate ones pre-ticked (--dry-run)
 warden check --udid <udid>                       # exit 2 if another owner holds it
 warden heartbeat --mine
 warden gc [--idle 20m]                           # reclaim stale leases, shut down idle warden devices

@@ -12,10 +12,16 @@ export type ScriptedUi = Ui & {
 	events: string[];
 	confirmAnswers: Array<boolean | undefined>;
 	selectAnswers: Array<string | undefined>;
+	multiselectAnswers: Array<string[] | undefined>;
 };
 
 export function scriptedUi(
-	opts: { interactive?: boolean; confirm?: Array<boolean | undefined>; select?: Array<string | undefined> } = {}
+	opts: {
+		interactive?: boolean;
+		confirm?: Array<boolean | undefined>;
+		select?: Array<string | undefined>;
+		multiselect?: Array<string[] | undefined>;
+	} = {}
 ): ScriptedUi {
 	const ui: ScriptedUi = {
 		color: new Chalk({ level: 0 }),
@@ -23,6 +29,7 @@ export function scriptedUi(
 		events: [],
 		confirmAnswers: [...(opts.confirm ?? [])],
 		selectAnswers: [...(opts.select ?? [])],
+		multiselectAnswers: [...(opts.multiselect ?? [])],
 		spinner: (text): Spinner => {
 			ui.events.push(`spin: ${text}`);
 			return {
@@ -41,6 +48,12 @@ export function scriptedUi(
 			ui.events.push(`select: ${message}`);
 			const answer = ui.selectAnswers.shift();
 			return choices.find((c) => c.value === answer)?.value;
+		},
+		multiselect: async <T extends string>(message: string, choices: Choice<T>[]): Promise<T[] | undefined> => {
+			const offered = choices.map((c) => `${c.disabled ? "-" : c.selected ? "*" : "+"}${c.value}`).join(" ");
+			ui.events.push(`multiselect: ${message} [${offered}]`);
+			const answer = ui.multiselectAnswers.shift();
+			return answer?.flatMap((v) => choices.find((c) => c.value === v && !c.disabled)?.value ?? []);
 		},
 		cancelled: (message) => ui.events.push(`cancelled: ${message}`),
 	};
