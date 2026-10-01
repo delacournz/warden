@@ -19,6 +19,7 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 | `providers/*.ts` | `DeviceProvider` impls (`ios`, `android`) on simctl / adb / emulator; Android console ports leased 5554–5584 |
 | `builds/*.ts` | app build cache: `config` (zod `warden.config.json`), `project-key`, `fingerprint`, `cache`, `eas`, `local`, `install`, `lock` (build lease), `resolve` (5-step resolver), `prune`, `ensure` |
 | `sim-cleanup.ts` | pure `suggestSimDeletions`: unavailable / stale / older runtime / duplicate / idle warden sim reasons (`warden sims delete`) |
+| `sims/*.ts` | disk audit: `audit` (pure per-sim verdicts + `--max-size` LRU budget), `runtimes` (`simctl runtime list`, per-runtime verdicts, report-only), `prune` (list + size sims, delete warden sims under a device lease) — `warden sims audit\|prune` |
 | `golden/*.ts` | golden iOS images: `golden` (key, names, staleness plan, migration/settle parsers, pure), `ios-golden` (build under `golden:ios` lease, clone, prune) |
 | `*.race-fixture.ts` | child-process fixtures for cross-process race tests |
 

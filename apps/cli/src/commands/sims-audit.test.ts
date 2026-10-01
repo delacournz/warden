@@ -109,7 +109,7 @@ describe("warden sims audit", () => {
 		expect(out).toContain("warden-iphone-17-1");
 		expect(out).toContain("6.0G");
 		expect(out).toContain("warden sims prune");
-		expect(out).toContain("xcrun simctl delete unavailable");
+		expect(out).toContain("warden sims delete");
 	});
 
 	test("--max-size warns when over budget", async () => {

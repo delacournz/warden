@@ -3,7 +3,7 @@
  * unavailable runtimes): size, owner, lease, last use — and which ones warden may delete.
  *
  * Only warden-created sims are ever `delete`; goldens belong to `golden prune`, and foreign sims are
- * read-only (they get a `hint` the user can act on with `xcrun simctl delete`). Pure: inputs injected.
+ * read-only here (they get a `hint`; the user deletes them with `warden sims delete`). Pure: inputs injected.
  */
 import { type GoldenSim, isGoldenName } from "../golden/golden";
 import { shortRuntime } from "../providers/ios";

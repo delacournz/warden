@@ -100,7 +100,7 @@ function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimAu
 	if (audit.foreignReclaimableBytes > 0)
 		lines.push(
 			color.cyan(
-				`${formatSize(audit.foreignReclaimableBytes)} in foreign sims warden won't touch — review, then \`xcrun simctl delete unavailable\` or \`xcrun simctl delete <udid>\``
+				`${formatSize(audit.foreignReclaimableBytes)} in foreign sims prune won't touch — review, then \`warden sims delete\` (they're pre-ticked when stale)`
 			)
 		);
 	if (audit.maxBytes !== undefined)
