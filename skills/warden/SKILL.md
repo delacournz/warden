@@ -33,6 +33,7 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a long lease alive | `warden heartbeat --mine` |
 | reclaim dead leases | `warden gc` |
+| sim + runtime disk usage; delete idle/broken warden sims | `warden sims` (read-only, runtimes too) · `warden sims prune --dry-run` then `--yes` (`--max-size 40G` for a budget) |
 | setup problems | `warden doctor` |
 | `warden` not installed | `npm i -g @delacour/warden && warden install` (one-shot: `npx @delacour/warden install`) |
 | update warden | `warden update` (`--check` to only look; for npm/bun installs it prints the upgrade command) |

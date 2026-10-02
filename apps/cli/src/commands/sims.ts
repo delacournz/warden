@@ -12,6 +12,7 @@ import type { CommandContext } from "../context";
 import { emit } from "../output";
 import { withSpinner } from "../spinner-context";
 import type { Choice } from "../ui";
+import { registerSimsAudit } from "./sims-audit";
 
 /** held while a sim is deleted so a concurrent `warden claim` can't lease it mid-delete */
 const RESERVE_TTL_MS = 10 * 60_000;
@@ -265,8 +266,9 @@ async function deleteCmd(ctx: CommandContext, udids: string[], opts: DeleteOpts)
 
 export const simsCommand = defineCommand({
 	name: "sims",
-	summary: "manage iOS simulators: delete (multi-select, cleanup suggestions pre-ticked)",
+	summary: "simulator + runtime disk audit (default), prune idle warden sims, delete (multi-select)",
 	register: (cmd, ctx, done) => {
+		registerSimsAudit(cmd, ctx, done);
 		cmd
 			.command("delete")
 			.alias("rm")
