@@ -29,8 +29,6 @@ type RawSim = {
 	state: string;
 	isAvailable?: boolean;
 	deviceTypeIdentifier?: string;
-	lastBootedAt?: string;
-	dataPathSize?: number;
 };
 
 function isRawSim(value: unknown): value is RawSim {
@@ -40,9 +38,7 @@ function isRawSim(value: unknown): value is RawSim {
 		typeof value.name === "string" &&
 		typeof value.state === "string" &&
 		(value.isAvailable === undefined || typeof value.isAvailable === "boolean") &&
-		(value.deviceTypeIdentifier === undefined || typeof value.deviceTypeIdentifier === "string") &&
-		(value.lastBootedAt === undefined || typeof value.lastBootedAt === "string") &&
-		(value.dataPathSize === undefined || typeof value.dataPathSize === "number")
+		(value.deviceTypeIdentifier === undefined || typeof value.deviceTypeIdentifier === "string")
 	);
 }
 
@@ -65,40 +61,6 @@ export function parseSimctlDevices(stdout: string): Result<InventoryDevice[]> {
 	return ok(
 		sims.data.filter(({ sim }) => sim.isAvailable !== false).map(({ sim, runtime }) => toInventoryDevice(sim, runtime))
 	);
-}
-
-/** An iOS sim with the extra `simctl list devices -j` fields cleanup decisions need. */
-export type SimDetail = InventoryDevice & {
-	/** false when its runtime is gone (`simctl delete unavailable` territory) */
-	available: boolean;
-	/** full device type identifier, e.g. `com.apple.CoreSimulator.SimDeviceType.iPhone-17` */
-	deviceType?: string;
-	/** epoch ms; undefined = never booted (or an Xcode that doesn't report it) */
-	lastBootedAt?: number;
-	/** size of the sim's data dir */
-	dataBytes?: number;
-};
-
-/** Like `parseSimctlDevices` but from `simctl list devices -j` (no `available`): keeps unavailable sims and adds detail. */
-export function parseSimctlSimDetails(stdout: string): Result<SimDetail[]> {
-	const sims = parseIosSims(stdout);
-	if (!sims.success) return sims;
-	return ok(
-		sims.data.map(({ sim, runtime }): SimDetail => {
-			const detail: SimDetail = { ...toInventoryDevice(sim, runtime), available: sim.isAvailable !== false };
-			if (sim.deviceTypeIdentifier !== undefined) detail.deviceType = sim.deviceTypeIdentifier;
-			if (sim.dataPathSize !== undefined) detail.dataBytes = sim.dataPathSize;
-			const booted = sim.lastBootedAt !== undefined ? Date.parse(sim.lastBootedAt) : Number.NaN;
-			if (!Number.isNaN(booted)) detail.lastBootedAt = booted;
-			return detail;
-		})
-	);
-}
-
-/** Every iOS sim, unavailable ones included, with cleanup detail. */
-export async function listSimDetails(exec: Exec): AsyncResult<SimDetail[]> {
-	const out = await simctl(exec, ["list", "devices", "-j"]);
-	return out.success ? parseSimctlSimDetails(out.data) : out;
 }
 
 function parseIosSims(stdout: string): Result<Array<{ sim: RawSim; runtime: string }>> {

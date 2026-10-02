@@ -34,6 +34,7 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | keep a long lease alive | `warden heartbeat --mine` |
 | reclaim dead leases | `warden gc` |
 | sim + runtime disk usage; delete idle/broken warden sims | `warden sims` (read-only, runtimes too) · `warden sims prune --dry-run` then `--yes` (`--max-size 40G` for a budget) |
+| delete sims of any owner (user-picked; same rules as audit) | `warden sims delete` (menu, suggestions pre-ticked) · `--suggested --dry-run` to preview |
 | setup problems | `warden doctor` |
 | `warden` not installed | `npm i -g @delacour/warden && warden install` (one-shot: `npx @delacour/warden install`) |
 | update warden | `warden update` (`--check` to only look; for npm/bun installs it prints the upgrade command) |

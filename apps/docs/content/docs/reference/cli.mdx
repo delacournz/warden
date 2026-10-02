@@ -134,39 +134,59 @@ List leases: resource, state, owner, repo/worktree, age, heartbeat.
 
 Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases.
 
-### `warden sims audit | prune`
+### `warden sims audit | prune | delete`
 
-`warden sims` with no subcommand runs `audit`. Disk audit of every simulator on the machine (all platforms, unavailable runtimes included): size, owner (`warden` / `golden` / `foreign`), lease, last use and a verdict. `audit` is the default and read-only; `--owner warden|golden|foreign|all` filters, `--json` for scripts.
+`audit`, `prune` and `delete` share one listing (`simctl list devices -j`: every platform, unavailable runtimes included) and one set of rules, so they always agree about a sim. The only difference is which sims each one acts on.
 
-A warden sim is **deletable** when it's unleased, shut down, and either its runtime is gone (`unavailable-runtime`), the store has no record of it (`orphan`), or it hasn't been claimed or booted for `--idle` (default `7d`). With `--max-size 40G`, least-recently-used warden sims are also marked (`budget`) until all sims fit; the audit says if you're still over budget after that.
+**Owner.** `warden` (in warden's store, or named `warden-<profile>-N`), `golden` (`warden-golden-…`), or `foreign` (anything else).
 
-`prune` deletes exactly those (`--dry-run` to preview; without a terminal it needs `--yes`). Each delete holds a lease on the sim, so a concurrent `claim` never gets one mid-delete. Goldens are left to `warden golden prune`; foreign sims are never pruned — the audit flags stale ones; delete those yourself with `warden sims delete <udid>`.
+**Blockers.** A sim is `leased` (any lease, live or stale; a stale one shows `run warden gc`), `booted`, or `golden`.
+
+**Reasons** (the same text appears in the audit's VERDICT column and in the delete menu hint):
+
+| Reason | Owner | When |
+|--------|-------|------|
+| runtime removed | any | the sim's runtime is no longer installed (`isAvailable: false`) |
+| warden-named, no warden record | warden | `warden-<profile>-N` that the store has no record of (`orphan`) |
+| warden sim unused N | warden | not claimed or booted (the later of the store's `lastUsedAt` and `lastBootedAt`) for `--idle` (default `7d`) |
+| over --max-size | warden | with `--max-size 40G`, the least-recently-used unblocked warden sims until all sims fit (`budget`) |
+| not booted in N | foreign | last booted more than `--stale` ago (default `30d`). Never-booted sims are left alone. |
+| older runtime | foreign | older than the newest runtime installed for the same device type and platform |
+| duplicate | foreign | same name and runtime as a more recently booted sim |
+
+Warden sims never get `older runtime` or `duplicate`: warden manages its own pool. Goldens never get a reason; they belong to `warden golden prune`.
+
+| Subcommand | Acts on |
+|------------|---------|
+| `audit` (the default) | nothing; read-only. VERDICT is `keep (leased\|booted\|golden\|recent)`, `delete: <reasons>` (prune will delete it), or `foreign[: <reasons>]` |
+| `prune` | warden sims with a reason and no blockers |
+| `delete` | any sim you pick except leased ones and goldens. Unblocked sims with a reason start ticked. |
 
 Sizes are simctl's `dataPathSize` (the device's `data/` dir, nearly all of it), with `du` as a fallback.
 
-The audit also lists every downloaded runtime (`xcrun simctl runtime list`, Xcode 15+) with its size (7–9 GB each), last use, how many sims use it and a verdict: `in use`, `unused`, `unused after prune` (only deletable warden sims use it) or `unused (not deletable)`. Runtimes are machine-wide, so warden only reports them — free one with `xcrun simctl runtime delete <identifier>`. `--json` puts this under `runtimes` (`null` plus `runtimesError` when simctl can't list them).
+**Deleting.** `prune` and `delete` use the same delete path. Each sim is leased to the caller under the store lock, and skipped if anyone holds a lease on it, even a stale one. It is then shut down (if its runtime still exists), `simctl delete`d, forgotten from the store, and released. A racing `warden claim` either wins (the sim is skipped) or waits.
 
-### `warden sims delete [udids...]` (alias `sims rm`)
+#### `warden sims audit`
 
-Permanently delete iOS simulators. With no udids it opens a multi-select menu (space toggles, enter submits) of every sim, including ones whose runtime has been removed. Leased sims and goldens are shown but can't be picked (goldens go through `warden golden prune`). Lists what will go and asks before deleting unless `-y`. Each sim is leased to the caller while it is deleted, so a racing `warden claim` can't grab it mid-delete.
+Lists every sim with its size, owner, lease, last use and verdict, then every downloaded runtime (`xcrun simctl runtime list`, Xcode 15+). For each runtime it shows the size (7–9 GB each), last use, how many sims use it, and a verdict: `in use`, `unused`, `unused after prune` (only sims prune would delete use it) or `unused (not deletable)`. Runtimes are machine-wide, so warden only reports them; free one with `xcrun simctl runtime delete <identifier>`.
 
-**Suggestions.** Sims that look safe to delete come first in the menu and start ticked, with the reason and data size in the hint:
+Flags: `--idle`, `--stale`, `--max-size`, `--owner warden|golden|foreign|all` and `--json`. In the JSON, each entry has `blockers`, `reasons` and `verdict`, and runtimes sit under `runtimes` (`null` plus `runtimesError` when simctl can't list them). The audit also says if you'd still be over `--max-size` after pruning.
 
-| Reason | When |
-|--------|------|
-| runtime removed | the sim's runtime is no longer installed (`isAvailable: false`) |
-| not booted in N | a non-warden sim last booted longer than `--stale` ago (default `30d`; never-booted sims are left alone) |
-| older runtime | an older iOS than the newest installed for the same device type |
-| duplicate | same name + runtime as a more recently booted sim |
-| warden sim unused N | a warden-created sim unused (store `lastUsedAt`) longer than `--idle` (default `7d`) |
+#### `warden sims prune`
+
+Deletes the sims `audit` marks `delete` (`--idle`, `--max-size`). Use `--dry-run` to preview. Off a terminal it needs `--yes`. It never deletes foreign sims or goldens.
+
+#### `warden sims delete [udids...]` (alias `sims rm`)
+
+Permanently deletes simulators. With no udids it opens a multi-select menu (space toggles, enter submits) of every sim. Suggested sims come first and start ticked; the hint shows their reasons, state, runtime and size. Leased sims and goldens are shown but can't be picked. It lists what will go and asks before deleting unless you pass `-y`.
 
 | Flag | Meaning |
 |------|---------|
 | `--suggested` | delete every suggestion instead of showing the menu |
-| `--stale <duration>` / `--idle <duration>` | suggestion thresholds |
+| `--stale <duration>` / `--idle <duration>` | rule thresholds (same as `audit`) |
 | `--dry-run` | only show what would be deleted, with reasons (works off a terminal) |
 | `-y, --yes` | don't ask; required off a terminal (with udids or `--suggested`) |
-| `--json` | `{ deleted, failed }`, or `{ dryRun, wouldDelete }`; exit 1 if any sim was skipped |
+| `--json` | `{ deleted, failed }`, or `{ dryRun, wouldDelete: [{ id, name, reasons }] }`; exits 1 if any sim was skipped |
 
 ### `warden clone <source>`
 

@@ -1,13 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import type { SimctlSim } from "../sims/list";
 import {
 	GOLDEN_PREFIX,
-	type GoldenSim,
 	goldenKey,
 	goldenName,
 	isGoldenName,
 	isSettled,
 	migrationDone,
-	parseAllSims,
 	parseXcodeBuild,
 	planGolden,
 	wipName,
@@ -46,7 +45,7 @@ describe("names", () => {
 	});
 });
 
-const sim = (o: Partial<GoldenSim> & { udid: string; name: string }): GoldenSim => ({
+const sim = (o: Partial<SimctlSim> & { udid: string; name: string }): SimctlSim => ({
 	state: "Shutdown",
 	isAvailable: true,
 	runtimeId: inputs.runtimeId,
@@ -92,30 +91,6 @@ describe("parsers", () => {
 	test("parseXcodeBuild", () => {
 		expect(parseXcodeBuild("Xcode 26.6\nBuild version 17F113\n")).toEqual({ success: true, data: "17F113" });
 		expect(parseXcodeBuild("nope").success).toBe(false);
-	});
-
-	test("parseAllSims keeps unavailable sims + runtime/device type", () => {
-		const json = JSON.stringify({
-			devices: {
-				[inputs.runtimeId]: [
-					{ udid: "U1", name: "a", state: "Shutdown", isAvailable: false, deviceTypeIdentifier: inputs.deviceType },
-				],
-				"com.apple.CoreSimulator.SimRuntime.watchOS-11-0": [{ udid: "W", name: "w", state: "Shutdown" }],
-			},
-		});
-		expect(parseAllSims(json)).toEqual({
-			success: true,
-			data: [
-				{
-					udid: "U1",
-					name: "a",
-					state: "Shutdown",
-					isAvailable: false,
-					runtimeId: inputs.runtimeId,
-					deviceTypeIdentifier: inputs.deviceType,
-				},
-			],
-		});
 	});
 
 	test("migrationDone requires success for this runtime build", () => {

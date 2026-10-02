@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SimAuditEntry } from "./audit";
+import type { SimEntry } from "./rules";
 import { auditRuntimes, type DiskRuntime, parseRuntimeList } from "./runtimes";
 
 const GB = 1024 ** 3;
@@ -43,7 +43,7 @@ function runtime(short: string, extra: Partial<DiskRuntime> = {}): DiskRuntime {
 	};
 }
 
-function sim(udid: string, short: string, verdict: SimAuditEntry["verdict"]): SimAuditEntry {
+function sim(udid: string, short: string, verdict: SimEntry["verdict"]): SimEntry {
 	return {
 		udid,
 		name: udid,
@@ -54,6 +54,8 @@ function sim(udid: string, short: string, verdict: SimAuditEntry["verdict"]): Si
 		bytes: GB,
 		owner: verdict.kind === "foreign" ? "foreign" : "warden",
 		leased: false,
+		blockers: [],
+		reasons: [],
 		verdict,
 	};
 }

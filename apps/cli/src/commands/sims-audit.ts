@@ -1,21 +1,22 @@
 import { formatSize, parseSize } from "@delacour/warden-core/builds/prune";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
-import type { SimAudit, SimAuditEntry, SimOwner, SimVerdict } from "@delacour/warden-core/sims/audit";
+import type { SimAudit } from "@delacour/warden-core/sims/audit";
+import { auditMachineSims, pruneSims, type SimsDeps, type SimsPruneResult } from "@delacour/warden-core/sims/prune";
 import {
-	auditMachineSims,
-	pruneSims,
-	type SimsAuditOpts,
-	type SimsDeps,
-	type SimsPruneResult,
-} from "@delacour/warden-core/sims/prune";
+	describeReasons,
+	formatAge,
+	type SimEntry,
+	type SimOwner,
+	type SimRuleOpts,
+} from "@delacour/warden-core/sims/rules";
 import {
 	auditRuntimes,
 	listDiskRuntimes,
 	type RuntimeAudit,
 	type RuntimeVerdict,
 } from "@delacour/warden-core/sims/runtimes";
-import { DEFAULT_SIM_IDLE_MS } from "@delacour/warden-core/sims/sims.defaults";
+import { DEFAULT_SIM_IDLE_MS, DEFAULT_SIM_STALE_MS } from "@delacour/warden-core/sims/sims.defaults";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
@@ -26,7 +27,7 @@ import { withSpinner } from "../spinner-context";
 
 type OwnerFilter = SimOwner | "all";
 type CommonOpts = { idle?: string; maxSize?: string; json?: true };
-type AuditOpts = CommonOpts & { owner?: string };
+type AuditOpts = CommonOpts & { owner?: string; stale?: string };
 type PruneOpts = CommonOpts & { dryRun?: true; yes?: true };
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
@@ -34,13 +35,26 @@ function fail(ctx: CommandContext, sub: string, message: string): number {
 	return 1;
 }
 
-function parseOpts(opts: CommonOpts): Result<SimsAuditOpts> {
-	const idle = opts.idle === undefined ? ok(DEFAULT_SIM_IDLE_MS) : parseDuration(opts.idle);
-	if (!idle.success) return idle;
-	if (opts.maxSize === undefined) return ok({ idleMs: idle.data });
-	const max = parseSize(opts.maxSize);
-	return max.success ? ok({ idleMs: idle.data, maxBytes: max.data }) : max;
+function parseFlag(flag: string, raw: string | undefined, fallback: number): Result<number> {
+	if (raw === undefined) return ok(fallback);
+	const parsed = parseDuration(raw);
+	return parsed.success ? parsed : err(`${flag}: ${parsed.error}`);
 }
+
+/** `--idle` / `--stale` / `--max-size` → the rule thresholds every `warden sims` subcommand shares. */
+export function parseRuleOpts(opts: { idle?: string; stale?: string; maxSize?: string }): Result<SimRuleOpts> {
+	const idle = parseFlag("--idle", opts.idle, DEFAULT_SIM_IDLE_MS);
+	if (!idle.success) return idle;
+	const stale = parseFlag("--stale", opts.stale, DEFAULT_SIM_STALE_MS);
+	if (!stale.success) return stale;
+	const thresholds = { idleMs: idle.data, staleMs: stale.data };
+	if (opts.maxSize === undefined) return ok(thresholds);
+	const max = parseSize(opts.maxSize);
+	return max.success ? ok({ ...thresholds, maxBytes: max.data }) : err(`--max-size: ${max.error}`);
+}
+
+export const IDLE_HELP = `warden sims unused this long are deletable (default ${formatAge(DEFAULT_SIM_IDLE_MS)})`;
+export const STALE_HELP = `foreign sims not booted this long are suggested (default ${formatAge(DEFAULT_SIM_STALE_MS)})`;
 
 function parseOwner(raw: string | undefined): Result<OwnerFilter> {
 	const value = raw ?? "all";
@@ -49,7 +63,7 @@ function parseOwner(raw: string | undefined): Result<OwnerFilter> {
 		: err(`invalid --owner "${value}" (warden | golden | foreign | all)`);
 }
 
-function simsDeps(ctx: CommandContext): SimsDeps {
+export function simsDeps(ctx: CommandContext): SimsDeps {
 	return {
 		exec: ctx.exec,
 		store: ctx.store(),
@@ -60,22 +74,24 @@ function simsDeps(ctx: CommandContext): SimsDeps {
 	};
 }
 
-function describeVerdict(verdict: SimVerdict, color: ChalkInstance): string {
+/** `delete: warden sim unused 30d` — the same reason text as the `sims delete` menu. */
+function describeVerdict(entry: SimEntry, color: ChalkInstance): string {
+	const { verdict } = entry;
 	switch (verdict.kind) {
 		case "keep":
 			return color.dim(`keep (${verdict.reason})`);
 		case "delete":
-			return color.yellow(`delete (${verdict.reason})`);
+			return color.yellow(`delete: ${describeReasons(entry.reasons)}`);
 		case "foreign":
-			return verdict.hint ? color.cyan(`foreign (${verdict.hint})`) : color.dim("foreign");
+			return verdict.hint ? color.cyan(`foreign: ${describeReasons(entry.reasons)}`) : color.dim("foreign");
 	}
 }
 
-function lastUsed(entry: SimAuditEntry, now: number): string {
+function lastUsed(entry: SimEntry, now: number): string {
 	return entry.lastUsedAt === undefined ? "never" : `${formatDuration(Math.max(0, now - entry.lastUsedAt))} ago`;
 }
 
-function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimAuditEntry[]): string {
+function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimEntry[]): string {
 	const { color } = ctx.ui;
 	const now = ctx.now();
 	if (entries.length === 0) return color.dim("no simulators");
@@ -88,7 +104,7 @@ function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimAu
 		e.leased ? color.green("yes") : "",
 		lastUsed(e, now),
 		formatSize(e.bytes),
-		describeVerdict(e.verdict, color),
+		describeVerdict(e, color),
 	]);
 	const lines = [
 		formatTable(["NAME", "UDID", "RUNTIME", "STATE", "OWNER", "LEASED", "LAST USED", "SIZE", "VERDICT"], rows, color),
@@ -100,7 +116,7 @@ function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimAu
 	if (audit.foreignReclaimableBytes > 0)
 		lines.push(
 			color.cyan(
-				`${formatSize(audit.foreignReclaimableBytes)} in foreign sims prune won't touch — review, then \`warden sims delete\` (they're pre-ticked when stale)`
+				`${formatSize(audit.foreignReclaimableBytes)} in foreign sims prune won't touch — review, then \`warden sims delete\` (they're pre-ticked)`
 			)
 		);
 	if (audit.maxBytes !== undefined)
@@ -175,7 +191,7 @@ async function runtimeSection(ctx: CommandContext, sims: SimAudit): Promise<Runt
  * then every downloaded runtime with its size and how many sims use it.
  */
 async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
-	const parsed = parseOpts(opts);
+	const parsed = parseRuleOpts(opts);
 	if (!parsed.success) return fail(ctx, "audit", parsed.error);
 	const owner = parseOwner(opts.owner);
 	if (!owner.success) return fail(ctx, "audit", owner.error);
@@ -193,8 +209,7 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 	return 0;
 }
 
-const describeSim = (e: SimAuditEntry) =>
-	`${e.name} ${e.udid} (${formatSize(e.bytes)}, ${e.verdict.kind === "delete" ? e.verdict.reason : ""})`;
+const describeSim = (e: SimEntry) => `${e.name} ${e.udid} (${formatSize(e.bytes)}, ${describeReasons(e.reasons)})`;
 
 /** Terminal confirm of the preview's deletes; true = go ahead. */
 async function confirmDeletes(ctx: CommandContext, preview: SimsPruneResult): Promise<boolean> {
@@ -225,7 +240,7 @@ function pruneText(ctx: CommandContext, result: SimsPruneResult): string {
  * needs `--yes` or a terminal confirm. Foreign sims and goldens are never deleted.
  */
 async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
-	const parsed = parseOpts(opts);
+	const parsed = parseRuleOpts(opts);
 	if (!parsed.success) return fail(ctx, "prune", parsed.error);
 	const dryRun = opts.dryRun === true;
 	const ask = !dryRun && !opts.yes;
@@ -256,11 +271,11 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 
 /** `warden sims audit` (the default) and `warden sims prune`: disk usage and LRU/idle cleanup of warden sims. */
 export const registerSimsAudit: Register = (cmd, ctx, done) => {
-	const idleHelp = `warden sims unused this long are deletable (default ${formatDuration(DEFAULT_SIM_IDLE_MS)})`;
 	cmd
 		.command("audit", { isDefault: true })
 		.description("every sim + downloaded runtime: size, owner, lease, last use, verdict (the default; read-only)")
-		.option("--idle <duration>", idleHelp)
+		.option("--idle <duration>", IDLE_HELP)
+		.option("--stale <duration>", STALE_HELP)
 		.option("--max-size <size>", "disk budget for all sims, e.g. 40G — LRU warden sims over it are deletable")
 		.option("--owner <owner>", "warden | golden | foreign | all (default all)")
 		.option("--json", "machine-readable output")
@@ -268,7 +283,7 @@ export const registerSimsAudit: Register = (cmd, ctx, done) => {
 	cmd
 		.command("prune")
 		.description("delete warden sims the audit marks deletable (never foreign sims or goldens)")
-		.option("--idle <duration>", idleHelp)
+		.option("--idle <duration>", IDLE_HELP)
 		.option("--max-size <size>", "also delete least-recently-used warden sims until all sims fit, e.g. 40G")
 		.option("--dry-run", "only show what would be deleted")
 		.option("--yes", "don't ask before deleting")
