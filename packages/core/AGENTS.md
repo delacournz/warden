@@ -18,8 +18,7 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 | `duration.ts` / `config.defaults.ts` | `10m`-style durations; TTL 30m, idle 20m, heartbeat 30s, default profiles |
 | `providers/*.ts` | `DeviceProvider` impls (`ios`, `android`) on simctl / adb / emulator; Android console ports leased 5554–5584 |
 | `builds/*.ts` | app build cache: `config` (zod `warden.config.json`), `project-key`, `fingerprint`, `cache`, `eas`, `local`, `install`, `lock` (build lease), `resolve` (5-step resolver), `prune`, `ensure` |
-| `sim-cleanup.ts` | pure `suggestSimDeletions`: unavailable / stale / older runtime / duplicate / idle warden sim reasons (`warden sims delete`) |
-| `sims/*.ts` | disk audit: `audit` (pure per-sim verdicts + `--max-size` LRU budget), `runtimes` (`simctl runtime list`, per-runtime verdicts, report-only), `prune` (list + size sims, delete warden sims under a device lease) — `warden sims audit\|prune` |
+| `sims/*.ts` | `warden sims audit\|prune\|delete`, one path: `list` (the only `simctl list devices -j` parser, `SimctlSim`, du fallback), `rules` (pure `judgeSims`: owner / blockers / reasons / verdict / budget, `canPrune` · `canDelete` · `isSuggested`, `describeReasons`), `delete` (`deleteSims`: lease under txn → shutdown → delete → forget → release), `audit` (totals), `prune` (list + judge + delete), `runtimes` (report-only), `sims.defaults` (idle 7d / stale 30d) |
 | `golden/*.ts` | golden iOS images: `golden` (key, names, staleness plan, migration/settle parsers, pure), `ios-golden` (build under `golden:ios` lease, clone, prune) |
 | `*.race-fixture.ts` | child-process fixtures for cross-process race tests |
 
