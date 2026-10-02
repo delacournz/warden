@@ -1,6 +1,13 @@
 import type { DeviceRecord } from "./store";
 import type { InventoryDevice } from "./types";
 
+const WARDEN_NAME = /^warden-(.+)-\d+$/;
+
+/** `warden-<profile>-N`: a pool device warden created (goldens are `warden-golden-…`, checked first by callers). */
+export function wardenNameProfile(name: string): string | undefined {
+	return WARDEN_NAME.exec(name)?.[1];
+}
+
 /** Mark devices warden created (store record, or a `warden-` name) and attach their profile. */
 export function markWardenDevices<T extends InventoryDevice>(inventory: T[], records: DeviceRecord[]): T[] {
 	const byId = new Map(records.map((r) => [`${r.platform}:${r.id}`, r]));
@@ -12,8 +19,8 @@ export function markWardenDevices<T extends InventoryDevice>(inventory: T[], rec
 			if (record.profile !== undefined) marked.profile = record.profile;
 			return marked;
 		}
-		const match = /^warden-(.+)-\d+$/.exec(device.name);
-		if (match?.[1]) return { ...device, wardenCreated: true, profile: match[1] };
+		const profile = wardenNameProfile(device.name);
+		if (profile !== undefined) return { ...device, wardenCreated: true, profile };
 		return device;
 	});
 }

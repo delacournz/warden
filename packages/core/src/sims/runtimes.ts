@@ -6,7 +6,7 @@
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import { shortRuntime } from "../providers/ios";
-import type { SimAuditEntry } from "./audit";
+import type { SimEntry } from "./rules";
 
 export type DiskRuntime = {
 	/** disk image UUID — what `simctl runtime delete` takes */
@@ -86,13 +86,13 @@ export async function listDiskRuntimes(exec: Exec): AsyncResult<DiskRuntime[]> {
 	return result.exitCode === 0 ? parseRuntimeList(result.stdout) : err(execError(cmd, result));
 }
 
-function verdictFor(runtime: DiskRuntime, users: readonly SimAuditEntry[]): RuntimeVerdict {
+function verdictFor(runtime: DiskRuntime, users: readonly SimEntry[]): RuntimeVerdict {
 	if (users.length === 0) return runtime.deletable ? { kind: "unused" } : { kind: "protected" };
 	const allGoing = users.every((s) => s.verdict.kind === "delete");
 	return allGoing && runtime.deletable ? { kind: "unused-after-prune" } : { kind: "in-use" };
 }
 
-export function auditRuntimes(runtimes: readonly DiskRuntime[], sims: readonly SimAuditEntry[]): RuntimeAudit {
+export function auditRuntimes(runtimes: readonly DiskRuntime[], sims: readonly SimEntry[]): RuntimeAudit {
 	const entries = runtimes.map((runtime): RuntimeAuditEntry => {
 		const users = sims.filter((s) => s.runtimeId === runtime.runtimeIdentifier);
 		return {

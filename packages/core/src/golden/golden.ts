@@ -7,6 +7,7 @@
  * Pure half: key, names, staleness plan, parsers. Side effects live in `ios-golden.ts`.
  */
 import { err, ok, type Result } from "@delacour/warden-types/result";
+import type { SimctlSim } from "../sims/list";
 
 /** Bump when what building a golden does to the device changes, so existing goldens go stale. */
 export const GOLDEN_RECIPE = 1;
@@ -30,30 +31,14 @@ export function isGoldenName(name: string): boolean {
 	return name.startsWith(`${GOLDEN_PREFIX}-`);
 }
 
-/** A sim from `simctl list devices -j` (all, including unavailable), with what golden planning needs. */
-export type GoldenSim = {
-	udid: string;
-	name: string;
-	state: string;
-	isAvailable: boolean;
-	runtimeId: string;
-	deviceTypeIdentifier?: string;
-	/** `<CoreSimulator>/Devices/<udid>/data` */
-	dataPath?: string;
-	/** bytes simctl reports for `dataPath` (the bulk of a sim's footprint) */
-	dataPathSize?: number;
-	/** epoch ms of the last boot, when simctl reports it */
-	lastBootedAt?: number;
-};
-
-export type GoldenPlan = { kind: "reuse"; sim: GoldenSim; stale: GoldenSim[] } | { kind: "create"; stale: GoldenSim[] };
+export type GoldenPlan = { kind: "reuse"; sim: SimctlSim; stale: SimctlSim[] } | { kind: "create"; stale: SimctlSim[] };
 
 /**
  * Goldens of `profile` (`warden-golden-<profile>-<10 hex>[-wip]`): the first available one named for
  * `key` is reused; every other one of this profile (older key, unavailable runtime, leftover wip,
  * duplicate) is stale. Goldens of other profiles are left alone.
  */
-export function planGolden(sims: GoldenSim[], profile: string, key: string): GoldenPlan {
+export function planGolden(sims: SimctlSim[], profile: string, key: string): GoldenPlan {
 	const pattern = new RegExp(
 		`^${GOLDEN_PREFIX}-${profile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-[0-9a-f]{10}(-wip)?$`
 	);
@@ -70,46 +55,6 @@ export function parseXcodeBuild(stdout: string): Result<string> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function toGoldenSim(entry: unknown, runtimeId: string): GoldenSim | undefined {
-	if (!isRecord(entry) || typeof entry.udid !== "string" || typeof entry.name !== "string") return undefined;
-	const sim: GoldenSim = {
-		udid: entry.udid,
-		name: entry.name,
-		state: typeof entry.state === "string" ? entry.state : "Unknown",
-		isAvailable: entry.isAvailable !== false,
-		runtimeId,
-	};
-	if (typeof entry.deviceTypeIdentifier === "string") sim.deviceTypeIdentifier = entry.deviceTypeIdentifier;
-	if (typeof entry.dataPath === "string") sim.dataPath = entry.dataPath;
-	if (typeof entry.dataPathSize === "number") sim.dataPathSize = entry.dataPathSize;
-	const booted = typeof entry.lastBootedAt === "string" ? Date.parse(entry.lastBootedAt) : Number.NaN;
-	if (!Number.isNaN(booted)) sim.lastBootedAt = booted;
-	return sim;
-}
-
-/**
- * `simctl list devices -j` (NOT `available`, so a golden whose runtime was removed is still seen and pruned).
- * iOS only unless `allPlatforms` (watchOS/tvOS/visionOS sims too, for the disk audit).
- */
-export function parseAllSims(stdout: string, opts: { allPlatforms?: boolean } = {}): Result<GoldenSim[]> {
-	let data: unknown;
-	try {
-		data = JSON.parse(stdout);
-	} catch {
-		return err("simctl list devices: invalid JSON");
-	}
-	if (!isRecord(data) || !isRecord(data.devices)) return err("simctl list devices: missing `devices`");
-	const sims: GoldenSim[] = [];
-	for (const [runtimeId, list] of Object.entries(data.devices)) {
-		if ((!opts.allPlatforms && !runtimeId.includes(".iOS-")) || !Array.isArray(list)) continue;
-		for (const entry of list) {
-			const sim = toGoldenSim(entry, runtimeId);
-			if (sim) sims.push(sim);
-		}
-	}
-	return ok(sims);
 }
 
 /**

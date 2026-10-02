@@ -6,7 +6,7 @@ import type { Exec, ExecResult } from "../exec";
 import { type FixtureSim, simctlDevicesJson } from "../providers/ios.fixture";
 import { openStore, type Store } from "../store";
 import type { Owner } from "../types";
-import { auditMachineSims, listAllSims, pruneSims, type SimsDeps } from "./prune";
+import { auditMachineSims, pruneSims, type SimsDeps } from "./prune";
 
 const DAY = 86_400_000;
 const NOW = 100 * DAY;
@@ -41,6 +41,7 @@ function fakeExec(host: Host): Exec {
 			host.sims = host.sims.filter((s) => s.udid !== udid);
 			return { exitCode: 0, stdout: "", stderr: "" };
 		}
+		if (line.startsWith("xcrun simctl shutdown ")) return { exitCode: 0, stdout: "", stderr: "" };
 		if (line.startsWith("du -sk ")) return { exitCode: 0, stdout: "2048\t/x\n", stderr: "" };
 		return { exitCode: 127, stdout: "", stderr: `unexpected ${line}` };
 	};
@@ -62,33 +63,12 @@ const record = (id: string, lastUsedAt: number) => {
 	store.recordDevice({ platform: "ios", id, name: `warden-iphone-17-${id}` }, lastUsedAt);
 };
 
-describe("listAllSims", () => {
-	test("keeps sizes from simctl; falls back to du -sk for a missing dataPathSize", async () => {
-		const json = JSON.stringify({
-			devices: {
-				"com.apple.CoreSimulator.SimRuntime.watchOS-11-0": [
-					{ udid: "W", name: "watch", state: "Shutdown", isAvailable: true, dataPath: "/d/W/data" },
-				],
-			},
-		});
-		const calls: string[][] = [];
-		const exec: Exec = async (cmd) => {
-			calls.push([...cmd]);
-			if (cmd[0] === "du") return { exitCode: 0, stdout: "2048\t/d/W/data\n", stderr: "" };
-			return { exitCode: 0, stdout: json, stderr: "" };
-		};
-		const sims = await listAllSims(exec);
-		expect(sims.success && sims.data.map((s) => [s.udid, s.dataPathSize])).toEqual([["W", 2048 * 1024]]);
-		expect(calls).toContainEqual(["du", "-sk", "/d/W/data"]);
-	});
-});
-
 describe("pruneSims", () => {
 	test("dry run deletes nothing", async () => {
 		const host: Host = { sims: [sim("A", "warden-iphone-17-1")], calls: [] };
-		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, dryRun: true });
+		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: true });
 		expect(result.success && result.data.removed.map((e) => e.udid)).toEqual(["A"]);
-		expect(host.calls.some((c) => c.includes("delete"))).toBe(false);
+		expect(host.calls.some((c) => c.includes("delete") || c.includes("shutdown"))).toBe(false);
 	});
 
 	test("deletes only warden sims it may, forgets their records, frees bytes", async () => {
@@ -103,7 +83,7 @@ describe("pruneSims", () => {
 			],
 			calls: [],
 		};
-		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, dryRun: false });
+		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
 		expect(result.success && result.data.removed.map((e) => e.udid)).toEqual(["A"]);
 		expect(result.success && result.data.freedBytes).toBe(GB);
 		expect(host.sims.map((s) => s.udid)).toEqual(["R", "F", "G"]);
@@ -121,7 +101,7 @@ describe("pruneSims", () => {
 					store.findLeaseByResource({ kind: "device", platform: "ios", id: udid, name: "" }) !== undefined
 				),
 		};
-		await pruneSims(deps(host), { idleMs: 7 * DAY, dryRun: false });
+		await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
 		expect(leasedDuring).toEqual([true]);
 	});
 
@@ -134,7 +114,7 @@ describe("pruneSims", () => {
 		// the audit's lease snapshot predates the claim
 		const listLeases = store.listLeases.bind(store);
 		store.listLeases = () => [];
-		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, dryRun: false });
+		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
 		store.listLeases = listLeases;
 		expect(result.success && result.data.removed).toEqual([]);
 		expect(result.success && result.data.skipped.map((e) => e.udid)).toEqual(["A"]);
@@ -148,7 +128,7 @@ describe("pruneSims", () => {
 			calls: [],
 			failDelete: "A",
 		};
-		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, dryRun: false });
+		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
 		expect(result.success && result.data.removed.map((e) => e.udid)).toEqual(["B"]);
 		expect(result.success && result.data.failed.map((f) => f.entry.udid)).toEqual(["A"]);
 		expect(store.listLeases()).toEqual([]);
@@ -158,7 +138,7 @@ describe("pruneSims", () => {
 		record("A", NOW - 3 * DAY);
 		record("B", NOW - DAY);
 		const host: Host = { sims: [sim("A", "warden-iphone-17-1"), sim("B", "warden-iphone-17-2")], calls: [] };
-		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, dryRun: false, maxBytes: GB });
+		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false, maxBytes: GB });
 		expect(result.success && result.data.removed.map((e) => e.udid)).toEqual(["A"]);
 	});
 });
@@ -170,7 +150,7 @@ describe("auditMachineSims", () => {
 			NOW
 		);
 		const host: Host = { sims: [sim("A", "warden-iphone-17-1")], calls: [] };
-		const audit = await auditMachineSims(deps(host), { idleMs: 7 * DAY });
+		const audit = await auditMachineSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY });
 		expect(audit.success && audit.data.entries[0]?.verdict).toEqual({ kind: "keep", reason: "leased" });
 	});
 });

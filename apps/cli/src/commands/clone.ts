@@ -1,7 +1,8 @@
 import { profileSlug, wardenDeviceName } from "@delacour/warden-core/allocate";
 import { execError } from "@delacour/warden-core/exec";
-import { type GoldenSim, isGoldenName, parseAllSims } from "@delacour/warden-core/golden/golden";
+import { isGoldenName } from "@delacour/warden-core/golden/golden";
 import { shortRuntime } from "@delacour/warden-core/providers/ios";
+import { parseAllSims, type SimctlSim } from "@delacour/warden-core/sims/list";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -10,7 +11,7 @@ import { withSpinner } from "../spinner-context";
 
 const DEVICE_TYPE_PREFIX = "com.apple.CoreSimulator.SimDeviceType.";
 
-function findSource(sims: GoldenSim[], ref: string): Result<GoldenSim> {
+function findSource(sims: SimctlSim[], ref: string): Result<SimctlSim> {
 	const byUdid = sims.find((s) => s.udid === ref);
 	if (byUdid) return ok(byUdid);
 	const byName = sims.filter((s) => s.name === ref && s.isAvailable);
@@ -18,13 +19,13 @@ function findSource(sims: GoldenSim[], ref: string): Result<GoldenSim> {
 	return byName[0] ? ok(byName[0]) : err(`no simulator "${ref}" (see \`warden devices ios\`)`);
 }
 
-function profileOf(sim: GoldenSim): string | undefined {
+function profileOf(sim: SimctlSim): string | undefined {
 	const type = sim.deviceTypeIdentifier;
 	return type?.startsWith(DEVICE_TYPE_PREFIX) ? profileSlug(type.slice(DEVICE_TYPE_PREFIX.length)) : undefined;
 }
 
 /** Lowest free `warden-<profile>-N`. */
-function nextPoolName(sims: GoldenSim[], profile: string): string {
+function nextPoolName(sims: SimctlSim[], profile: string): string {
 	const taken = new Set(sims.map((s) => s.name));
 	let n = 1;
 	while (taken.has(wardenDeviceName(profile, n))) n++;

@@ -3,7 +3,7 @@ import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-core/provid
 import type { Owner } from "@delacour/warden-core/types";
 import { fakeSimctl, OWNER_ENV } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { describeReasons, simsCommand } from "./sims";
+import { simsCommand } from "./sims";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -156,6 +156,34 @@ describe("warden sims delete", () => {
 		expect(c.stderr.join("\n")).toContain("U2");
 	});
 
+	test("a stale lease still blocks the sim, with a `warden gc` hint", async () => {
+		const { c } = setup([], { interactive: true, multiselect: [[]] });
+		c.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "U2", name: "iPhone 17 Pro" }, owner: other, ttlMs: 1 },
+			0
+		);
+		expect(await simsCommand.run(c)).toBe(0);
+		expect(events(c)[0]).toBe("multiselect: Select simulators to delete [-U1 -U2 -G1 +U3]");
+		c.cleanup();
+		const refused = setup(["U2", "--yes"]).c;
+		refused.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "U2", name: "iPhone 17 Pro" }, owner: other, ttlMs: 1 },
+			0
+		);
+		expect(await simsCommand.run(refused)).toBe(1);
+		expect(refused.stderr.join("\n")).toContain("stale — run `warden gc`");
+	});
+
+	test("lists every platform's sims, not just iOS", async () => {
+		const { c } = setup([], {
+			sims: { "iOS-26-5": SIMS, "watchOS-11-0": [{ udid: "W1", name: "Apple Watch", state: "Shutdown" }] },
+			interactive: true,
+			multiselect: [[]],
+		});
+		expect(await simsCommand.run(c)).toBe(0);
+		expect(events(c)[0]).toContain("+W1");
+	});
+
 	describe("suggestions", () => {
 		const SUGGEST = {
 			"iOS-17-0": [{ udid: "GONE", name: "iPhone 15", state: "Shutdown" as const, isAvailable: false }],
@@ -214,6 +242,34 @@ describe("warden sims delete", () => {
 			}
 		});
 
+		test("an orphaned warden sim (no store record) is suggested; --idle moves the warden threshold", async () => {
+			const sims = {
+				"iOS-26-5": [
+					{ udid: "U3", name: "warden-iphone-17-3", state: "Shutdown" as const, lastBootedAt: daysAgo(3) },
+					{ udid: "ORPHAN", name: "warden-iphone-17-9", state: "Shutdown" as const },
+				],
+			};
+			const dry = setup(["--suggested", "--dry-run", "--json", "--idle", "1d"], { sims }).c;
+			expect(await simsCommand.run(dry)).toBe(0);
+			expect(JSON.parse(dry.stdout.join("\n")).wouldDelete.map((w: { id: string }) => w.id)).toEqual(["ORPHAN"]);
+		});
+
+		test("the menu hint is the shared reason text", async () => {
+			const { c } = setup([], { sims: SUGGEST, interactive: true, multiselect: [[]] });
+			const seen: string[] = [];
+			const ui = c.ui;
+			c.ui = {
+				...ui,
+				multiselect: async (message, choices) => {
+					seen.push(...choices.map((ch) => `${ch.value}: ${ch.hint ?? ""}`));
+					return ui.multiselect(message, choices);
+				},
+			};
+			expect(await simsCommand.run(c)).toBe(0);
+			expect(seen).toContain("GONE: runtime removed, iOS-17-0, 17.5M");
+			expect(seen.find((h) => h.startsWith("STALE:"))).toContain("not booted in 45d");
+		});
+
 		test("--suggested --dry-run lists what would go (with reasons) and deletes nothing, off a terminal too", async () => {
 			const { c, calls } = setup(["--suggested", "--dry-run", "--json"], { sims: SUGGEST });
 			expect(await simsCommand.run(c)).toBe(0);
@@ -221,24 +277,10 @@ describe("warden sims delete", () => {
 			expect(JSON.parse(c.stdout.join("\n"))).toEqual({
 				dryRun: true,
 				wouldDelete: [
-					{ id: "GONE", name: "iPhone 15", reasons: [{ kind: "unavailable" }] },
+					{ id: "GONE", name: "iPhone 15", reasons: [{ kind: "unavailable-runtime" }] },
 					{ id: "STALE", name: "iPhone Air", reasons: [{ kind: "stale", sinceMs: 45 * DAY }] },
 				],
 			});
-		});
-
-		test("describeReasons reads like a hint", () => {
-			expect(
-				describeReasons([
-					{ kind: "unavailable" },
-					{ kind: "stale", sinceMs: 45 * DAY },
-					{ kind: "old-runtime", newest: "iOS-26-5" },
-					{ kind: "duplicate", of: { id: "U2", name: "iPhone 17" } },
-					{ kind: "idle-pool", sinceMs: 9 * DAY },
-				])
-			).toBe(
-				"runtime removed · not booted in 45d · older runtime (iOS-26-5 installed) · duplicate of iPhone 17 · warden sim unused 9d"
-			);
 		});
 	});
 });

@@ -44,6 +44,7 @@ function setup(argv: string[], opts: { interactive?: boolean; confirm?: boolean[
 	ctx.exec = fakeExec(
 		[
 			["xcrun simctl list devices -j", { stdout: simctlDevicesJson({ "iOS-26-5": SIMS }) }],
+			["xcrun simctl shutdown", {}],
 			["xcrun simctl delete", {}],
 			["xcrun simctl runtime list -j", { stdout: RUNTIMES_JSON }],
 		],
@@ -125,9 +126,45 @@ describe("warden sims audit", () => {
 		expect(report.entries.map((e: { udid: string }) => e.udid)).toEqual(["FOR"]);
 	});
 
-	test("bad --idle fails", async () => {
+	test("bad --idle / --stale fails", async () => {
 		const c = setup(["audit", "--idle", "soon"]);
 		expect(await simsCommand.run(c)).toBe(1);
+		const s = setup(["audit", "--stale", "soon"]);
+		expect(await simsCommand.run(s)).toBe(1);
+		expect(s.stderr.join("\n")).toContain("--stale");
+	});
+
+	test("--stale moves the foreign hint threshold, like `sims delete`", async () => {
+		const foreign = (stale: string) => {
+			const c = setup(["audit", "--json", "--stale", stale]);
+			c.exec = fakeExec([
+				[
+					"xcrun simctl list devices -j",
+					{
+						stdout: simctlDevicesJson({
+							"iOS-26-5": [
+								{ udid: "F", name: "x", state: "Shutdown", lastBootedAt: new Date(NOW - 40 * DAY).toISOString() },
+							],
+						}),
+					},
+				],
+			]);
+			return c;
+		};
+		const c30 = foreign("30d");
+		expect(await simsCommand.run(c30)).toBe(0);
+		expect(JSON.parse(c30.stdout.join("\n")).entries[0].verdict).toEqual({ kind: "foreign", hint: "stale" });
+		const c60 = foreign("60d");
+		expect(await simsCommand.run(c60)).toBe(0);
+		expect(JSON.parse(c60.stdout.join("\n")).entries[0].verdict).toEqual({ kind: "foreign" });
+	});
+
+	test("VERDICT shows the shared reason text", async () => {
+		const c = setup([]);
+		expect(await simsCommand.run(c)).toBe(0);
+		const out = c.stdout.join("\n");
+		expect(out).toContain("warden sim unused 30d");
+		expect(out).toContain("runtime removed");
 	});
 });
 

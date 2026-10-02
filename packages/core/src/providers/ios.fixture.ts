@@ -231,3 +231,44 @@ export const SIMCTL_DEVICETYPES_JSON = `{
     }
   ]
 }`;
+
+const DAY_MS = 86_400_000;
+const iso = (ms: number) => new Date(ms).toISOString();
+
+/**
+ * One machine with every kind of sim `warden sims` judges, booted/used relative to `now`. Pair with
+ * `MIXED_SIMS_RECORDS` (warden's store) and a lease on `W-LEASED`.
+ */
+export function mixedSims(now: number): Record<string, FixtureSim[]> {
+	const ago = (days: number) => iso(now - days * DAY_MS);
+	return {
+		"iOS-17-0": [{ udid: "F-GONE", name: "iPhone 15", state: "Shutdown", isAvailable: false, dataPathSize: 1_000 }],
+		"iOS-18-6": [{ udid: "F-OLD", name: "iPhone 16", state: "Shutdown", lastBootedAt: ago(2), dataPathSize: 2_000 }],
+		"iOS-26-5": [
+			{ udid: "W-IDLE", name: "warden-iphone-17-1", state: "Shutdown", lastBootedAt: ago(20), dataPathSize: 3_000 },
+			{ udid: "W-RECENT", name: "warden-iphone-17-2", state: "Shutdown", lastBootedAt: ago(1), dataPathSize: 4_000 },
+			{ udid: "W-ORPHAN", name: "warden-iphone-17-3", state: "Shutdown", dataPathSize: 5_000 },
+			{ udid: "W-BOOTED", name: "warden-iphone-17-4", state: "Booted", lastBootedAt: ago(30), dataPathSize: 6_000 },
+			{ udid: "W-LEASED", name: "warden-iphone-17-5", state: "Shutdown", lastBootedAt: ago(30), dataPathSize: 7_000 },
+			{ udid: "F-STALE", name: "iPhone Air", state: "Shutdown", lastBootedAt: ago(45), dataPathSize: 8_000 },
+			{ udid: "F-FRESH", name: "iPhone 16", state: "Shutdown", lastBootedAt: ago(1), dataPathSize: 9_000 },
+			{ udid: "F-DUP-A", name: "iPhone 17", state: "Shutdown", lastBootedAt: ago(3), dataPathSize: 10_000 },
+			{ udid: "F-DUP-B", name: "iPhone 17", state: "Shutdown", lastBootedAt: ago(1), dataPathSize: 11_000 },
+			{
+				udid: "G-GOLD",
+				name: "warden-golden-iphone-17-0123456789",
+				state: "Shutdown",
+				isAvailable: false,
+				dataPathSize: 12_000,
+			},
+		],
+	};
+}
+
+/** Warden's store records for `mixedSims` (`W-ORPHAN` deliberately has none): udid → days since last use. */
+export const MIXED_SIMS_RECORDS: Record<string, number> = {
+	"W-IDLE": 20,
+	"W-RECENT": 1,
+	"W-BOOTED": 30,
+	"W-LEASED": 30,
+};

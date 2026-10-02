@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import type { GoldenSim } from "../golden/golden";
 import type { DeviceRecord } from "../store";
-import { type AuditInput, auditSims } from "./audit";
+import type { Lease } from "../types";
+import { auditSims } from "./audit";
+import type { SimctlSim } from "./list";
+import type { RulesInput } from "./rules";
 
 const DAY = 86_400_000;
 const NOW = 100 * DAY;
 const GB = 1024 ** 3;
 
-function sim(udid: string, name: string, extra: Partial<GoldenSim> = {}): GoldenSim {
+function sim(udid: string, name: string, extra: Partial<SimctlSim> = {}): SimctlSim {
 	return {
 		udid,
 		name,
@@ -23,11 +25,29 @@ function record(id: string, lastUsedAt: number): DeviceRecord {
 	return { platform: "ios", id, name: `warden-iphone-17-${id}`, createdAt: 0, lastUsedAt };
 }
 
-function input(overrides: Partial<AuditInput>): AuditInput {
-	return { sims: [], records: [], leased: new Set(), now: NOW, idleMs: 7 * DAY, ...overrides };
+const lease = (id: string): Lease => ({
+	id: `L-${id}`,
+	resource: { kind: "device", platform: "ios", id, name: id },
+	owner: { kind: "agent", sessionId: "s", cwd: "/" },
+	acquiredAt: NOW,
+	heartbeatAt: NOW,
+	ttlMs: DAY,
+});
+
+function input(overrides: Partial<RulesInput>): RulesInput {
+	return {
+		sims: [],
+		records: [],
+		leases: [],
+		now: NOW,
+		pidAlive: () => false,
+		idleMs: 7 * DAY,
+		staleMs: 30 * DAY,
+		...overrides,
+	};
 }
 
-const verdictOf = (udid: string, i: AuditInput) => auditSims(i).entries.find((e) => e.udid === udid)?.verdict;
+const verdictOf = (udid: string, i: RulesInput) => auditSims(i).entries.find((e) => e.udid === udid)?.verdict;
 
 describe("auditSims", () => {
 	test("classifies owners: store record / warden- name = warden, golden, else foreign", () => {
@@ -56,7 +76,7 @@ describe("auditSims", () => {
 			sim("A", "warden-iphone-17-1", { isAvailable: false }),
 			sim("B", "warden-iphone-17-2", { state: "Booted" }),
 		];
-		const i = input({ sims, records: [record("A", 0), record("B", 0)], leased: new Set(["A"]) });
+		const i = input({ sims, records: [record("A", 0), record("B", 0)], leases: [lease("A")] });
 		expect(verdictOf("A", i)).toEqual({ kind: "keep", reason: "leased" });
 		expect(verdictOf("B", i)).toEqual({ kind: "keep", reason: "booted" });
 	});
@@ -84,7 +104,7 @@ describe("auditSims", () => {
 		expect(auditSims(i).entries[0]?.lastUsedAt).toBe(NOW - DAY);
 	});
 
-	test("goldens are kept; foreign sims are never deletable, only hinted", () => {
+	test("goldens are kept; foreign sims are never deletable, only hinted (stale = not booted in staleMs)", () => {
 		const i = input({
 			sims: [
 				sim("G", "warden-golden-iphone-17-0123456789", { isAvailable: false }),
@@ -95,7 +115,7 @@ describe("auditSims", () => {
 		});
 		expect(verdictOf("G", i)).toEqual({ kind: "keep", reason: "golden" });
 		expect(verdictOf("F1", i)).toEqual({ kind: "foreign", hint: "unavailable-runtime" });
-		expect(verdictOf("F2", i)).toEqual({ kind: "foreign", hint: "idle" });
+		expect(verdictOf("F2", i)).toEqual({ kind: "foreign", hint: "stale" });
 		expect(verdictOf("F3", i)).toEqual({ kind: "foreign" });
 		const report = auditSims(i);
 		expect(report.reclaimableBytes).toBe(0);
@@ -128,7 +148,7 @@ describe("auditSims", () => {
 			sim("F", "foreign"),
 		];
 		const records = [record("A", NOW - 3 * DAY), record("B", NOW - 2 * DAY), record("C", NOW - DAY), record("L", 0)];
-		const report = auditSims(input({ sims, records, leased: new Set(["L"]), maxBytes: 3 * GB }));
+		const report = auditSims(input({ sims, records, leases: [lease("L")], maxBytes: 3 * GB }));
 		const verdicts = Object.fromEntries(report.entries.map((e) => [e.udid, e.verdict]));
 		expect(verdicts.A).toEqual({ kind: "delete", reason: "budget" });
 		expect(verdicts.B).toEqual({ kind: "delete", reason: "budget" });

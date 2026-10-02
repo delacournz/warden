@@ -9,17 +9,16 @@ import { withBuildLock } from "../builds/lock";
 import { type Exec, execError } from "../exec";
 import type { PidAlive } from "../liveness";
 import { lookupCreateTarget } from "../providers/ios";
+import { parseAllSims, type SimctlSim } from "../sims/list";
 import type { Store } from "../store";
 import type { Owner } from "../types";
 import {
 	GOLDEN_PREFIX,
 	type GoldenInputs,
-	type GoldenSim,
 	goldenKey,
 	goldenName,
 	isSettled,
 	migrationDone,
-	parseAllSims,
 	parseXcodeBuild,
 	planGolden,
 	wipName,
@@ -99,7 +98,7 @@ export async function readGoldenTarget(deps: GoldenDeps, profile: string, runtim
 	});
 }
 
-async function allSims(deps: GoldenDeps): AsyncResult<GoldenSim[]> {
+async function allSims(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
 	const out = await simctl(deps, ["list", "devices", "-j"]);
 	return out.success ? parseAllSims(out.data) : out;
 }
@@ -215,7 +214,7 @@ async function buildGolden(deps: GoldenDeps, target: GoldenTarget, key: string):
 	return ok({ udid, name, built: true });
 }
 
-async function deleteSims(deps: GoldenDeps, sims: GoldenSim[]): AsyncResult<GoldenSim[]> {
+async function deleteSims(deps: GoldenDeps, sims: SimctlSim[]): AsyncResult<SimctlSim[]> {
 	for (const sim of sims) {
 		log(deps, `deleting ${sim.name} (${sim.udid})`);
 		await simctl(deps, ["shutdown", sim.udid]);
@@ -280,18 +279,18 @@ function goldenProfile(name: string): string | undefined {
 }
 
 /** Every golden on the machine (all runtimes, including unavailable). */
-export async function listGoldens(deps: GoldenDeps): AsyncResult<GoldenSim[]> {
+export async function listGoldens(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
 	const sims = await allSims(deps);
 	return sims.success ? ok(sims.data.filter((s) => goldenProfile(s.name) !== undefined)) : sims;
 }
 
 /** Delete stale goldens (not current for their profile's latest runtime), or every golden with `all`. */
-export async function pruneGoldens(deps: GoldenDeps, opts: { all: boolean }): AsyncResult<GoldenSim[]> {
+export async function pruneGoldens(deps: GoldenDeps, opts: { all: boolean }): AsyncResult<SimctlSim[]> {
 	return withBuildLock(lockDeps(deps), GOLDEN_LOCK_KEY, async () => {
 		const goldens = await listGoldens(deps);
 		if (!goldens.success) return goldens;
 		if (opts.all) return deleteSims(deps, goldens.data);
-		const stale: GoldenSim[] = [];
+		const stale: SimctlSim[] = [];
 		const profiles = new Set(goldens.data.flatMap((s) => goldenProfile(s.name) ?? []));
 		for (const profile of profiles) {
 			const target = await readGoldenTarget(deps, profile);
