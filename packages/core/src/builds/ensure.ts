@@ -6,7 +6,7 @@ import type { Owner, Platform } from "../types";
 import { type BuildSource, cachedBuild, findLegacyArtifact, getInstall, recordInstall, storeArtifact } from "./cache";
 import { bundleIdFor, type EasSettings, loadProject, type Project } from "./config";
 import { type Download, resolveFromEas } from "./eas";
-import { installApp, isAppInstalled } from "./install";
+import { installApp, isAppInstalled, uninstallApp } from "./install";
 import { runLocalBuild } from "./local";
 import { buildLockKey, withBuildLock } from "./lock";
 import { readProjectKey } from "./project-key";
@@ -62,6 +62,8 @@ export type EnsureInput = ProjectContext & {
 	eas: boolean;
 	/** false = `--no-build` */
 	build: boolean;
+	/** `--clean`: uninstall before installing, even when the device already has this hash */
+	clean?: boolean;
 	download?: Download;
 	easPollMs?: number;
 	lockPollMs?: number;
@@ -130,6 +132,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 
 	const steps: ResolveSteps = {
 		hash,
+		...(input.clean ? { clean: true } : {}),
 		log: input.log,
 		cached: () => cachedBuild(store, projectKey, platform, hash, input.now())?.path,
 		legacy: async () => {
@@ -183,6 +186,10 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		steps.device = {
 			installedHash: () => getInstall(store, platform, deviceId, bundleId.data)?.hash,
 			confirm: () => isAppInstalled(deps, target, bundleId.data),
+			uninstall: () => {
+				input.log(`uninstalling ${bundleId.data} from ${deviceId} (clean install)`);
+				return uninstallApp(deps, target, bundleId.data);
+			},
 			install: async (appPath) => {
 				input.log(`installing ${appPath} on ${deviceId}`);
 				const done = await installApp(deps, target, appPath, bundleId.data);

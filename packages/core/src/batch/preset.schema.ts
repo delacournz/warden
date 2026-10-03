@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { appOptionSchema } from "../builds/app-option.schema";
 import { parseDuration } from "../duration";
 import { parsePortSpec } from "../ports";
 
@@ -29,7 +30,8 @@ export const batchPresetSchema = z
 		ttl: duration.optional(),
 		wait: duration.optional(),
 		ports: z.array(portSpec).optional(),
-		app: z.boolean().optional(),
+		/** install the project's app on every device first; `{ clean: true }` also uninstalls it first */
+		app: appOptionSchema.optional(),
 		retry: z.number().int().min(0).optional(),
 		passes: z.number().int().min(1).optional(),
 		/** added to the serve + job env */

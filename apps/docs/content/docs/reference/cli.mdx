@@ -61,6 +61,7 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--project <dir>` | `--app`: project directory (default: cwd) |
 | `--bundle-id <id>` | `--app`: override the bundle id / package |
 | `--no-eas` / `--no-build` | `--app`: skip EAS downloads / local builds |
+| `--clean` | `--app`: uninstall the app first, so every run starts from a fresh container (even when the hash already matches) |
 
 See [e2e scripts](/docs/guides/e2e).
 
@@ -231,7 +232,7 @@ Print the project's native fingerprint (both platforms by default). `--project`,
 
 ### `warden app ensure [platform]`
 
-Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--no-eas`, `--no-build`, `--project`, `--bundle-id`. See [App builds](/docs/guides/app-builds).
+Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--clean` uninstalls the app first even when the hash matches; `--no-eas`, `--no-build`, `--project`, `--bundle-id`. See [App builds](/docs/guides/app-builds).
 
 ### `warden builds ls | prune | import`
 

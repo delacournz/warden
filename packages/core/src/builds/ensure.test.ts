@@ -110,6 +110,30 @@ describe("ensureApp", () => {
 		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe("NEW");
 	});
 
+	test("clean: uninstalls then installs even though the device is already at this hash", async () => {
+		await seedCache();
+		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		const calls: string[] = [];
+		let present = true;
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined === "xcrun simctl uninstall U1 com.x.app") present = false;
+			if (joined.startsWith("xcrun simctl install U1")) present = true;
+			if (joined.startsWith("xcrun simctl get_app_container")) {
+				return present ? { exitCode: 0, stdout: "/x", stderr: "" } : { exitCode: 1, stdout: "", stderr: "" };
+			}
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const res = await ensureApp(input(exec, { clean: true }));
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.source).toBe("cache");
+		expect(res.data.installed).toBe(true);
+		const verbs = calls.filter((c) => /simctl (un)?install/.test(c)).map((c) => c.split(" ")[2]);
+		expect(verbs).toEqual(["uninstall", "install"]);
+		expect(getInstall(store, "ios", "U1", "com.x.app")?.installedAt).toBe(5_000);
+	});
+
 	test("legacy cache dir → imported (copied) into the warden cache", async () => {
 		const legacy = join(dir, "legacy");
 		fakeApp(join(legacy, "H"), "Salient.app");

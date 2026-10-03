@@ -121,6 +121,8 @@ export function childEnv(
 /** `--app` family option values shared by `run` and `batch`. */
 export type AppFlagValues = {
 	app?: true;
+	/** `--clean` */
+	clean?: true;
 	project?: string;
 	bundleId?: string;
 	/** false = `--no-eas` */
@@ -141,6 +143,7 @@ export function withLeaseOptions<Args extends unknown[], Opts extends OptionValu
 			[] as string[]
 		)
 		.option("--app", "install the project's app (fingerprint → cache → EAS → build) on each device first")
+		.option("--clean", "--app: uninstall the app first, so every run starts from a fresh container")
 		.option("--project <dir>", "--app: project directory (default: cwd)")
 		.option("--bundle-id <id>", "--app: override the bundle id / package")
 		.option("--no-eas", "--app: don't download EAS builds")
@@ -153,12 +156,13 @@ export function parseAppFlags(opts: AppFlagValues): Result<EnsureOptions | undef
 		return ok({
 			eas: opts.eas,
 			build: opts.build,
+			...(opts.clean ? { clean: true } : {}),
 			...(opts.project !== undefined ? { project: opts.project } : {}),
 			...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
 		});
 	}
-	if (opts.project !== undefined || !opts.eas || !opts.build || opts.bundleId !== undefined) {
-		return err("--project / --no-eas / --no-build / --bundle-id need --app");
+	if (opts.project !== undefined || !opts.eas || !opts.build || opts.bundleId !== undefined || opts.clean) {
+		return err("--project / --no-eas / --no-build / --bundle-id / --clean need --app");
 	}
 	return ok(undefined);
 }

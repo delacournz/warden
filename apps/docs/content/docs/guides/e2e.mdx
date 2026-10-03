@@ -31,7 +31,7 @@ With `--app`, warden first ensures the project's dev build is installed on each 
 warden run ios --count 2 --app --project apps/mobile -- bun run e2e
 ```
 
-`--no-eas` skips EAS downloads; `--no-build` refuses to build locally on a cache miss.
+`--no-eas` skips EAS downloads; `--no-build` refuses to build locally on a cache miss. `--clean` uninstalls the app first (`xcrun simctl uninstall` / `adb uninstall`), even when the device already has the right build, so each run starts with an empty app container. In a preset or suite, `"app": { "clean": true }` is the same as `--app --clean`.
 
 ## Reading the env in a script
 

@@ -86,6 +86,21 @@ describe("batches in parseWardenConfig", () => {
 });
 
 describe("findBatchPreset", () => {
+	test("app: { clean: true } resolves to app + clean", () => {
+		write(CONFIG_FILE, { batches: { a: { platform: "ios", app: { clean: true }, cmd: ["x"] } } });
+		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.preset).toMatchObject({ app: true, clean: true });
+	});
+
+	test("app: true leaves clean unset", () => {
+		write(CONFIG_FILE, { batches: { a: { platform: "ios", app: true, cmd: ["x"] } } });
+		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.preset?.app).toBe(true);
+		expect(res.data.preset?.clean).toBeUndefined();
+	});
+
 	test("no config → no preset, no names", () => {
 		expect(findBatchPreset({ start: dir, stopAt: dir, name: "e2e" })).toEqual({
 			success: true,

@@ -12,6 +12,7 @@ type World = {
 	/** cache filled by another process while we waited for the lock */
 	filledWhileLocked?: string;
 	device?: boolean;
+	clean?: boolean;
 };
 
 function steps(world: World) {
@@ -40,6 +41,7 @@ function steps(world: World) {
 			}
 		},
 		log: () => {},
+		...(world.clean ? { clean: true } : {}),
 	};
 	const eas = world.eas;
 	if (eas !== "skip") {
@@ -62,6 +64,10 @@ function steps(world: World) {
 			confirm: async () => {
 				calls.push("confirm");
 				return ok(world.onDevice ?? false);
+			},
+			uninstall: async () => {
+				calls.push("uninstall");
+				return ok(undefined);
 			},
 			install: async (path) => {
 				calls.push(`install ${path}`);
@@ -149,6 +155,24 @@ const rows: Row[] = [
 		calls: ["cached", "legacy", "lock", "cached", "eas(locked)", "build(locked)"],
 	},
 	{
+		name: "clean: installed at the same hash is not enough → uninstall, then install",
+		world: { installedHash: "H", onDevice: true, cache: "/c/A.app", clean: true },
+		source: "cache",
+		calls: ["cached", "uninstall", "install /c/A.app"],
+	},
+	{
+		name: "clean: still goes through EAS/build on a cache miss, uninstalling just before the install",
+		world: { eas: { kind: "miss", reason: "none" }, build: "/c/B.app", clean: true },
+		source: "build",
+		calls: ["cached", "legacy", "lock", "cached", "eas(locked)", "build(locked)", "uninstall", "install /c/B.app"],
+	},
+	{
+		name: "clean without a device → artifact only, nothing uninstalled",
+		world: { device: false, cache: "/c/A.app", clean: true },
+		source: "cache",
+		calls: ["cached"],
+	},
+	{
 		name: "no device → resolve the artifact only",
 		world: { device: false, cache: "/c/A.app" },
 		source: "cache",
@@ -179,6 +203,14 @@ describe("resolveApp decision table", () => {
 		if (s.device) s.device.install = async () => err("simctl install failed");
 		const res = await resolveApp(s);
 		expect(res).toEqual({ success: false, error: "simctl install failed" });
+	});
+
+	test("clean: an uninstall failure stops before the install", async () => {
+		const { s, calls } = steps({ cache: "/c/A.app", clean: true });
+		if (s.device) s.device.uninstall = async () => err("simctl uninstall failed");
+		const res = await resolveApp(s);
+		expect(res).toEqual({ success: false, error: "simctl uninstall failed" });
+		expect(calls.some((c) => c.startsWith("install"))).toBe(false);
 	});
 
 	test("error message lists what was skipped", async () => {

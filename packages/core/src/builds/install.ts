@@ -35,6 +35,29 @@ export async function isAppInstalled(
 	return ok(res.exitCode === 0 && res.stdout.includes("package:"));
 }
 
+/** `xcrun simctl uninstall <udid> <bundleId>` / `adb -s <serial> uninstall <bundleId>`. */
+export function uninstallArgv(target: InstallTarget, bundleId: string, env: InstallerDeps["env"]): string[] {
+	return target.platform === "ios"
+		? ["xcrun", "simctl", "uninstall", target.deviceId, bundleId]
+		: [androidTools(env).adb, "-s", target.deviceId, "uninstall", bundleId];
+}
+
+/**
+ * Remove `bundleId` (and with it the app container: data, keychain-less state) so the next install
+ * starts fresh. Absent already is fine; present after the uninstall is an error.
+ */
+export async function uninstallApp(deps: InstallerDeps, target: InstallTarget, bundleId: string): AsyncResult<void> {
+	const present = await isAppInstalled(deps, target, bundleId);
+	if (!present.success) return present;
+	if (!present.data) return ok(undefined);
+	const argv = uninstallArgv(target, bundleId, deps.env);
+	const res = await deps.exec(argv, { timeoutMs: INSTALL_TIMEOUT_MS });
+	if (res.exitCode !== 0 || /Failure/.test(res.stdout)) return err(`uninstall failed: ${execError(argv, res)}`);
+	const after = await isAppInstalled(deps, target, bundleId);
+	if (!after.success) return after;
+	return after.data ? err(`uninstalled ${bundleId} from ${target.deviceId} but it is still there`) : ok(undefined);
+}
+
 /** Install `appPath`, then confirm `bundleId` is present. */
 export async function installApp(
 	deps: InstallerDeps,

@@ -32,6 +32,8 @@ export type EnsureOptions = {
 	eas: boolean;
 	/** false = `--no-build` */
 	build: boolean;
+	/** `--clean`: uninstall before installing, even at the same hash */
+	clean?: boolean;
 };
 
 function log(ctx: CommandContext, line: string): void {
@@ -95,6 +97,7 @@ export async function ensureAppFor(
 		hash: hash.data.key,
 		eas: opts.eas,
 		build: opts.build,
+		...(opts.clean ? { clean: true } : {}),
 		...(deviceId !== undefined ? { deviceId } : {}),
 		...(deps.easPollMs !== undefined ? { easPollMs: deps.easPollMs } : {}),
 		...(deps.lockPollMs !== undefined ? { lockPollMs: deps.lockPollMs } : {}),
@@ -133,7 +136,14 @@ export function pickDevice(
 
 type ProjectOpts = { project?: string; bundleId?: string; json?: true };
 
-type EnsureOpts = ProjectOpts & { lease?: string; udid?: string; install: boolean; eas: boolean; build: boolean };
+type EnsureOpts = ProjectOpts & {
+	lease?: string;
+	udid?: string;
+	install: boolean;
+	eas: boolean;
+	build: boolean;
+	clean?: true;
+};
 
 function projectOptions(opts: ProjectOpts): Pick<EnsureOptions, "project" | "bundleId"> {
 	return {
@@ -164,11 +174,13 @@ async function ensureCmd(
 		noInstall: !opts.install,
 	});
 	if (!device.success) return fail(ctx, "ensure", device.error);
+	if (opts.clean && device.data === undefined) return fail(ctx, "ensure", "--clean needs a device (drop --no-install)");
 	const res = await withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {
 		const result = await ensureAppFor(sctx, deps, owner, platform.data, device.data, {
 			...projectOptions(opts),
 			eas: opts.eas,
 			build: opts.build,
+			...(opts.clean ? { clean: true } : {}),
 		});
 		if (result.success) spinner.succeed(`${platform.data} app ready (${result.data.source})`);
 		else spinner.fail(`${platform.data} app not ready`);
@@ -245,6 +257,7 @@ export function createAppCommand(deps: AppDeps): Command {
 				.option("--no-install", "only resolve the build into the cache")
 				.option("--no-eas", "don't download EAS builds")
 				.option("--no-build", "don't build locally on a cache miss")
+				.option("--clean", "uninstall the app first, so the run starts from a fresh container")
 				.option("--bundle-id <id>", "override the bundle id / package")
 				.option("--json", "machine-readable output")
 				.action(async (platform, opts) => done(await ensureCmd(ctx, deps, platform, opts)));

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "../exec";
-import { installApp, isAppInstalled } from "./install";
+import { installApp, isAppInstalled, uninstallApp } from "./install";
 
 function exec(handlers: Record<string, Partial<ExecResult>>, calls: string[] = []): Exec {
 	return async (cmd) => {
@@ -64,5 +64,56 @@ describe("installApp", () => {
 		const res = await installApp({ exec: e, env }, ios, "/c/App.app", "com.wrong");
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("com.wrong");
+	});
+});
+
+describe("uninstallApp", () => {
+	test("iOS: simctl uninstall, then confirm it is gone", async () => {
+		const calls: string[] = [];
+		let present = true;
+		const e: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined === "xcrun simctl uninstall U1 com.x") present = false;
+			if (joined.startsWith("xcrun simctl get_app_container")) {
+				return present ? { exitCode: 0, stdout: "/p", stderr: "" } : { exitCode: 1, stdout: "", stderr: "no" };
+			}
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		expect(await uninstallApp({ exec: e, env }, ios, "com.x")).toEqual({ success: true, data: undefined });
+		expect(calls).toEqual([
+			"xcrun simctl get_app_container U1 com.x",
+			"xcrun simctl uninstall U1 com.x",
+			"xcrun simctl get_app_container U1 com.x",
+		]);
+	});
+
+	test("not installed → nothing to do (no uninstall call)", async () => {
+		const calls: string[] = [];
+		expect((await uninstallApp({ exec: exec({}, calls), env }, ios, "com.x")).success).toBe(true);
+		expect(calls).toEqual(["xcrun simctl get_app_container U1 com.x"]);
+	});
+
+	test("Android: adb uninstall", async () => {
+		const calls: string[] = [];
+		let present = true;
+		const e: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined === "adb -s emulator-5554 uninstall com.x") present = false;
+			if (joined.includes("pm path")) {
+				return { exitCode: 0, stdout: present ? "package:/x" : "", stderr: "" };
+			}
+			return { exitCode: 0, stdout: "Success", stderr: "" };
+		};
+		expect((await uninstallApp({ exec: e, env }, android, "com.x")).success).toBe(true);
+		expect(calls).toContain("adb -s emulator-5554 uninstall com.x");
+	});
+
+	test("still present afterwards → error", async () => {
+		const e = exec({ "xcrun simctl get_app_container": { stdout: "/p" }, "xcrun simctl uninstall": {} });
+		const res = await uninstallApp({ exec: e, env }, ios, "com.x");
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("com.x");
 	});
 });

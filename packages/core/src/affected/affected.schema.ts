@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { appOptionSchema } from "../builds/app-option.schema";
 
 const path = z.string().min(1);
 const platform = z.enum(["ios", "android"]);
@@ -50,8 +51,8 @@ export const e2eSuiteSchema = z
 		retry: z.number().int().min(0).default(0),
 		count: z.number().int().min(1).optional(),
 		profile: z.string().min(1).optional(),
-		/** install the project's app on each device first (`warden batch --app`) */
-		app: z.boolean().optional(),
+		/** install the project's app on each device first (`warden batch --app`); `{ clean: true }` = `--clean` */
+		app: appOptionSchema.optional(),
 		/** default `required` for flows that don't set it */
 		required: z.boolean().default(true),
 		flows: z.record(z.string().min(1), e2eFlowSchema).default({}),

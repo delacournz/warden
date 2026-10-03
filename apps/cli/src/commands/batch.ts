@@ -552,6 +552,7 @@ function presetOpts(preset: BatchPreset): Partial<BatchOpts> {
 		record: preset.record,
 		logs: preset.logs,
 		...(preset.app ? { app: true, project: preset.projectRoot } : {}),
+		...(preset.app && preset.clean ? { clean: true } : {}),
 	};
 	return Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined));
 }

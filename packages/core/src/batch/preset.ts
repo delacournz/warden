@@ -1,5 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import { ok, type Result } from "@delacour/warden-types/result";
+import { appSwitches } from "../builds/app-option.schema";
 import { findWardenConfig } from "../builds/config";
 import type { Platform } from "../types";
 import type { BatchPresetConfig } from "./preset.schema";
@@ -29,6 +30,8 @@ export type BatchPreset = {
 	wait?: string;
 	ports?: string[];
 	app?: boolean;
+	/** `app: { clean: true }`: uninstall before installing */
+	clean?: boolean;
 	retry?: number;
 	passes?: number;
 	env?: Record<string, string>;
@@ -57,13 +60,26 @@ function readySpec(value: string, cwd: string): string {
 }
 
 function resolvePreset(name: string, preset: BatchPresetConfig, cwd: string, projectRoot?: string): BatchPreset {
-	const { project: _project, jobs: _jobs, jobsFrom: _jobsFrom, serveReady, record, logs, label, ...rest } = preset;
+	const {
+		project: _project,
+		jobs: _jobs,
+		jobsFrom: _jobsFrom,
+		app: appOption,
+		serveReady,
+		record,
+		logs,
+		label,
+		...rest
+	} = preset;
+	const { app, clean } = appSwitches(appOption);
 	const jobs = jobsSource(preset, cwd);
 	return {
 		...rest,
 		name,
 		cwd,
 		label: label ?? name,
+		...(appOption !== undefined ? { app } : {}),
+		...(clean ? { clean } : {}),
 		...(projectRoot !== undefined ? { projectRoot } : {}),
 		...(serveReady !== undefined ? { serveReady: readySpec(serveReady, cwd) } : {}),
 		...(record !== undefined ? { record: absolute(cwd, record) } : {}),

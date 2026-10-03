@@ -20,6 +20,8 @@ export type DeviceSteps = {
 	installedHash: () => string | undefined;
 	/** does the device really have the bundle id (simctl get_app_container / pm path)? */
 	confirm: () => AsyncResult<boolean>;
+	/** remove the app (and its data) so the install starts fresh; absent is fine */
+	uninstall: () => AsyncResult<void>;
 	/** install + record in `installs` */
 	install: (appPath: string) => AsyncResult<void>;
 };
@@ -31,6 +33,8 @@ export type DeviceSteps = {
 export type ResolveSteps = {
 	hash: string;
 	device?: DeviceSteps;
+	/** uninstall before installing, even when the device already has `hash` (a fresh app container per run) */
+	clean?: boolean;
 	/** cached artifact path for `hash` (touches lastUsedAt) */
 	cached: () => string | undefined;
 	/** import `hash` from a legacy cache dir into the cache; path when found */
@@ -88,15 +92,25 @@ async function alreadyInstalled(steps: ResolveSteps, device: DeviceSteps): Promi
 	return ok(confirmed.data);
 }
 
+/** Put `path` on the device: `clean` removes the old container first. */
+async function installOnDevice(steps: ResolveSteps, device: DeviceSteps, path: string): AsyncResult<void> {
+	if (steps.clean) {
+		const gone = await device.uninstall();
+		if (!gone.success) return gone;
+	}
+	return device.install(path);
+}
+
 /**
  * The 5-step resolver, first hit wins: (1) already installed at this hash → nothing to do;
  * (2) warden cache; (3) legacy cache import; then under the build lock (4) EAS, (5) local build.
- * Whatever was found is installed on the device (a hash mismatch reinstalls). A new fingerprint
- * misses 1–3 by construction, so it never gets a stale binary.
+ * Whatever was found is installed on the device (a hash mismatch reinstalls; `clean` uninstalls first
+ * and skips step 1, so every run starts from a fresh container). A new fingerprint misses 1–3 by
+ * construction, so it never gets a stale binary.
  */
 export async function resolveApp(steps: ResolveSteps): AsyncResult<EnsureResult> {
 	const { device, hash } = steps;
-	if (device) {
+	if (device && !steps.clean) {
 		const installed = await alreadyInstalled(steps, device);
 		if (!installed.success) return installed;
 		if (installed.data) return ok({ appPath: steps.cached() ?? "", hash, source: "installed", installed: true });
@@ -104,7 +118,7 @@ export async function resolveApp(steps: ResolveSteps): AsyncResult<EnsureResult>
 	const found = await locate(steps);
 	if (!found.success) return found;
 	if (device) {
-		const done = await device.install(found.data.path);
+		const done = await installOnDevice(steps, device, found.data.path);
 		if (!done.success) return done;
 	}
 	return ok({ appPath: found.data.path, hash, source: found.data.source, installed: device !== undefined });

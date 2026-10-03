@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
-import { getInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { getInstall, recordInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
 import type { ExecResult } from "@delacour/warden-core/exec";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
@@ -128,6 +128,33 @@ describe("warden app ensure", () => {
 		expect(await cmd.run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).source).toBe("installed");
 		expect(calls.some((cmdline) => cmdline.join(" ").startsWith("xcrun simctl install"))).toBe(false);
+	});
+
+	test("--clean: uninstalls then installs although the device is already at the hash", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--udid", "U1", "--clean", "--json"], [], calls);
+		const base = c.exec;
+		let present = true;
+		c.exec = async (cmd, opts) => {
+			const joined = cmd.join(" ");
+			if (!joined.startsWith("xcrun simctl")) return base(cmd, opts);
+			calls.push([...cmd]);
+			present = joined.startsWith("xcrun simctl install") || (present && !joined.includes("uninstall"));
+			const probe = joined.startsWith("xcrun simctl get_app_container");
+			return { exitCode: probe && !present ? 1 : 0, stdout: probe ? "/x" : "", stderr: "" };
+		};
+		await seed(c);
+		recordInstall(c.db, { platform: "ios", deviceId: "U1", bundleId: "com.demo", hash: HASH, installedAt: 1 });
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).source).toBe("cache");
+		const verbs = calls.map((x) => x.join(" ")).filter((x) => /simctl (un)?install/.test(x));
+		expect(verbs).toEqual(["xcrun simctl uninstall U1 com.demo", expect.stringContaining("xcrun simctl install U1")]);
+	});
+
+	test("--clean with --no-install is an error", async () => {
+		const c = setup(["ensure", "ios", "--no-install", "--clean"]);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--clean needs a device");
 	});
 
 	test("no --udid/--lease → the caller's single leased device", async () => {

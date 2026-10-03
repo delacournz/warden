@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { Affected } from "@delacour/warden-core/affected/affected";
 import type { E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
 import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
+import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import type { Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { type ClaimFlagValues, withClaimOptions } from "../claim-flags";
@@ -51,12 +52,14 @@ export type E2eReport = {
 
 /** The suite's run settings as option values (CLI flags passed explicitly win). */
 function suiteOpts(suite: E2eSuiteConfig, opts: E2eOpts, passed: ReadonlySet<string>): E2eOpts {
+	const app = appSwitches(suite.app);
 	const fromSuite: Partial<E2eOpts> = {
 		retry: String(suite.retry),
 		passes: String(suite.passes),
 		...(suite.count !== undefined ? { count: String(suite.count) } : {}),
 		...(suite.profile !== undefined ? { profile: suite.profile } : {}),
-		...(suite.app ? { app: true as const } : {}),
+		...(app.app ? { app: true as const } : {}),
+		...(app.clean ? { clean: true as const } : {}),
 	};
 	const cli = Object.fromEntries(Object.entries(opts).filter(([key]) => passed.has(key)));
 	return { ...opts, ...fromSuite, ...cli };

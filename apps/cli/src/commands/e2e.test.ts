@@ -101,6 +101,19 @@ describe("warden e2e", () => {
 		expect(c.stderr.join("\n")).toContain("● chats");
 	});
 
+	test("suite app: { clean: true } installs the app cleanly on every device", async () => {
+		await resuite({ app: { clean: true } });
+		const c = setup(["--files", "src/chat/lazy.tsx"]);
+		const h = harness();
+		const seen: Array<boolean | undefined> = [];
+		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+			seen.push(opts.clean);
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(seen).toEqual([true]);
+	});
+
 	test("a two-platform suite needs --platform", async () => {
 		await resuite({ platform: undefined });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);

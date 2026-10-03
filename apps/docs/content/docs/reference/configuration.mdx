@@ -75,7 +75,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
     ttl: { type: "string", description: "Lease TTL without heartbeat.", default: "30m" },
     wait: { type: "string", description: "Wait this long for free devices." },
     ports: { type: "string[]", description: "`FROM:SPAN` port specs (`WARDEN_PORT_<i>`)." },
-    app: { type: "boolean", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env)." },
+    app: { type: "boolean | { clean?: boolean }", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env). `{ clean: true }` also uninstalls it first (`--clean`)." },
     retry: { type: "number", description: "Re-run a failed job up to N times on the same device.", default: "0" },
     passes: { type: "number", description: "A job passes only after N consecutive green runs on its device.", default: "1" },
     env: { type: "Record<string, string>", description: "Added to the serve and job env." },
@@ -130,7 +130,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
     retry: { type: "number", description: "Re-run a failed flow up to N times.", default: "0" },
     count: { type: "number", description: "Devices to claim." },
     profile: { type: "string", description: "Device profile." },
-    app: { type: "boolean", description: "Ensure the app on every device first." },
+    app: { type: "boolean | { clean?: boolean }", description: "Ensure the app on every device first. `{ clean: true }` also uninstalls it first (`--clean`)." },
     flows: { type: "Record<string, Flow>", description: "Per flow id or glob; see below." },
   }}
 />

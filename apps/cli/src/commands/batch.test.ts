@@ -335,6 +335,23 @@ describe("warden batch", () => {
 		expect(h.jobs()[0]?.opts.env.WARDEN_APP_PATH).toBe("/c/A.app");
 	});
 
+	test("--clean is passed to the ensure step; it needs --app", async () => {
+		const c = setup(["ios", "--jobs", "a", "--app", "--clean", "--", "x"]);
+		const h = harness();
+		const seen: Array<boolean | undefined> = [];
+		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+			seen.push(opts.clean);
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(seen).toEqual([true]);
+		ctx?.cleanup();
+
+		const bare = setup(["ios", "--jobs", "a", "--clean", "--", "x"]);
+		expect(await createBatchCommand(harness().deps).run(bare)).toBe(1);
+		expect(bare.stderr.join("\n")).toContain("--clean need --app");
+	});
+
 	test("--app exports WARDEN_APP_PATH / WARDEN_APP_HASH to serve as well as jobs", async () => {
 		const c = setup(["ios", "--jobs", "a", "--app", "--serve", "s", "--", "x"]);
 		const h = harness();
@@ -602,6 +619,22 @@ describe("warden batch", () => {
 				expect(proc?.opts.env.WARDEN_APP_HASH).toBe("H");
 				expect(proc?.opts.env.WARDEN_APP_PATH).toBeUndefined();
 			}
+		});
+
+		test("preset app: { clean: true } installs cleanly", async () => {
+			const c = setup(["p"]);
+			writeConfig(c.cwd, {
+				projects: [{ name: "s", root: ".", bundleId: { ios: "x" } }],
+				batches: { p: { project: "s", platform: "ios", app: { clean: true }, jobs: ["a"], cmd: ["x"] } },
+			});
+			const h = harness();
+			const seen: Array<boolean | undefined> = [];
+			h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+				seen.push(opts.clean);
+				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+			};
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			expect(seen).toEqual([true]);
 		});
 
 		test("preset without jobs needs --jobs/--jobs-from; a platform operand ignores the config", async () => {
