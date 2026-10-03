@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { type EnsureInput, ensureApp, type ProjectContext, projectContext } from "@delacour/warden-core/builds/ensure";
-import { computeFingerprint } from "@delacour/warden-core/builds/fingerprint";
+import { type CacheKey, computeCacheKey } from "@delacour/warden-core/builds/fingerprint";
 import type { EnsureResult } from "@delacour/warden-core/builds/resolve";
 import { processAlive } from "@delacour/warden-core/liveness";
 import type { Owner, Platform } from "@delacour/warden-core/types";
@@ -48,14 +48,17 @@ async function loadContext(
 	return projectContext({ exec: ctx.exec, env: ctx.env, start, ...(bundleId ? { bundleId } : {}) });
 }
 
-/** Fingerprint + log it loudly (a hash that differs from EAS's never finds a build). */
-async function fingerprint(ctx: CommandContext, project: ProjectContext, platform: Platform): AsyncResult<string> {
-	const hash = await computeFingerprint(ctx.exec, project.project, platform);
+/** Cache key + log it loudly (a hash that differs from EAS's never finds a build). */
+async function fingerprint(ctx: CommandContext, project: ProjectContext, platform: Platform): AsyncResult<CacheKey> {
+	const hash = await computeCacheKey(ctx.exec, project.project, platform);
 	if (!hash.success) return hash;
 	const { color } = ctx.ui;
 	const rule = color.dim("────────────────────────────────────────────────────────");
 	log(ctx, rule);
-	log(ctx, `${platform} fingerprint: ${color.bold(hash.data)}`);
+	log(ctx, `${platform} fingerprint: ${color.bold(hash.data.key)}`);
+	if (hash.data.js !== undefined) {
+		log(ctx, color.dim(`  native ${hash.data.native} + js ${hash.data.js} (fingerprint.include native+js)`));
+	}
 	log(ctx, `project ${project.project.name} (${project.projectKey})`);
 	log(ctx, rule);
 	return hash;
@@ -89,7 +92,7 @@ export async function ensureAppFor(
 		owner,
 		pid: deps.pid,
 		platform,
-		hash: hash.data,
+		hash: hash.data.key,
 		eas: opts.eas,
 		build: opts.build,
 		...(deviceId !== undefined ? { deviceId } : {}),
@@ -198,11 +201,13 @@ async function fingerprintCmd(
 	const project = await loadContext(ctx, projectOptions(opts), platforms.length === 1 ? platforms[0] : undefined);
 	if (!project.success) return fail(ctx, "fingerprint", project.error);
 	const fingerprints: Partial<Record<Platform, string>> = {};
+	const native: Partial<Record<Platform, string>> = {};
 	const failed = await withSpinner(ctx, `fingerprinting ${platforms.join(" + ")}…`, async (sctx) => {
 		for (const platform of platforms) {
 			const hash = await fingerprint(sctx, project.data, platform);
 			if (!hash.success) return hash.error;
-			fingerprints[platform] = hash.data;
+			fingerprints[platform] = hash.data.key;
+			if (hash.data.js !== undefined) native[platform] = hash.data.native;
 		}
 		return undefined;
 	});
@@ -216,6 +221,7 @@ async function fingerprintCmd(
 			projectKey: project.data.projectKey,
 			root: project.data.project.root,
 			fingerprints,
+			...(Object.keys(native).length > 0 ? { native } : {}),
 		},
 		text
 	);

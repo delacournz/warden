@@ -22,10 +22,24 @@ export const projectConfigSchema = z
 		/** project dir relative to the config file */
 		root: z.string().min(1).default("."),
 		bundleId: perPlatform,
-		/** own fingerprint command (`{platform}` is substituted); stdout = JSON `{ hash }` or a bare hash */
 		fingerprint: z
-			.object({ command: z.string().min(1) })
+			.object({
+				/** own fingerprint command (`{platform}` is substituted); stdout = JSON `{ hash }` or a bare hash */
+				command: z.string().min(1).optional(),
+				/** native: key = the native fingerprint; native+js: key also covers the `jsInputs` file contents (Release builds embed the JS) */
+				include: z.enum(["native", "native+js"]).default("native"),
+				/** globs (relative to the project root) of the JS sources that make up the bundle; git-tracked + untracked-not-ignored files only */
+				jsInputs: z.array(z.string().min(1)).min(1).optional(),
+			})
 			.strict()
+			.superRefine((fp, issue) => {
+				if (fp.include === "native+js" && fp.jsInputs === undefined) {
+					issue.addIssue({ code: "custom", message: 'include "native+js" needs jsInputs', path: ["jsInputs"] });
+				}
+				if (fp.include === "native" && fp.jsInputs !== undefined) {
+					issue.addIssue({ code: "custom", message: 'jsInputs only apply to include "native+js"', path: ["jsInputs"] });
+				}
+			})
 			.optional(),
 		eas: z
 			.object({
@@ -89,6 +103,8 @@ export type Project = {
 	root: string;
 	bundleId: { ios?: string; android?: string };
 	fingerprintCommand?: string;
+	/** set = JS-aware key (`fingerprint.include: "native+js"`): globs of the JS sources the key covers */
+	jsInputs?: string[];
 	/** undefined = EAS not used (no `eas` config and no `eas.json`) */
 	eas?: EasSettings;
 	build: Record<Platform, string>;
@@ -140,7 +156,10 @@ function fromConfig(entry: ProjectConfig, configDir: string, env: Record<string,
 		),
 		origin: "config",
 	};
-	if (entry.fingerprint) project.fingerprintCommand = entry.fingerprint.command;
+	if (entry.fingerprint?.command !== undefined) project.fingerprintCommand = entry.fingerprint.command;
+	if (entry.fingerprint?.include === "native+js" && entry.fingerprint.jsInputs) {
+		project.jsInputs = entry.fingerprint.jsInputs;
+	}
 	const eas =
 		entry.eas ?? (existsSync(join(root, "eas.json")) ? { profile: DEFAULT_EAS_PROFILE, trigger: false } : undefined);
 	if (eas) project.eas = eas;

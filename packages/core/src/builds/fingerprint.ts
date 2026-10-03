@@ -6,6 +6,7 @@ import { type Exec, execError } from "../exec";
 import type { Platform } from "../types";
 import { FINGERPRINT_TIMEOUT_MS } from "./builds.defaults";
 import type { Project } from "./config";
+import { combineKey, jsInputsHash, type ReadFile } from "./js-inputs";
 
 const hashJson = z.object({ hash: z.string().min(1) });
 const BARE_HASH = /^[0-9a-f]{8,}$/i;
@@ -76,4 +77,31 @@ export async function computeFingerprint(exec: Exec, project: Project, platform:
 	});
 	if (res.exitCode !== 0) return err(`fingerprint failed: ${execError(argv, res)}`);
 	return parseFingerprintOutput(res.stdout);
+}
+
+/** What identifies a build: `key` is the cache / install hash, `native` the `@expo/fingerprint` hash (EAS indexes by it). */
+export type CacheKey = { key: string; native: string /** only for JS-aware projects */; js?: string };
+
+/**
+ * The cache / install key of `project`. Native projects: the native fingerprint. JS-aware projects
+ * (`fingerprint.include: "native+js"`): sha256 of the native fingerprint + a content hash of the
+ * `jsInputs` files, so a JS-only change is a new build (a Release binary embeds its bundle).
+ */
+export async function computeCacheKey(
+	exec: Exec,
+	project: Project,
+	platform: Platform,
+	readFile?: ReadFile
+): AsyncResult<CacheKey> {
+	const native = await computeFingerprint(exec, project, platform);
+	if (!native.success) return native;
+	if (project.jsInputs === undefined) return ok({ key: native.data, native: native.data });
+	const js = await jsInputsHash({
+		exec,
+		root: project.root,
+		jsInputs: project.jsInputs,
+		...(readFile ? { readFile } : {}),
+	});
+	if (!js.success) return js;
+	return ok({ key: combineKey(native.data, js.data), native: native.data, js: js.data });
 }

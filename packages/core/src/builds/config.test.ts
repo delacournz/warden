@@ -115,6 +115,33 @@ describe("loadProject", () => {
 		expect(b.data.build.ios).toBe("my build");
 	});
 
+	test("fingerprint.include native+js needs jsInputs, which carry onto the project", () => {
+		const bad = parseWardenConfig({
+			projects: [{ name: "a", bundleId: {}, fingerprint: { include: "native+js" } }],
+		});
+		expect(bad.success).toBe(false);
+		if (!bad.success) expect(bad.error).toContain("jsInputs");
+		const stray = parseWardenConfig({
+			projects: [{ name: "a", bundleId: {}, fingerprint: { jsInputs: ["src/**"] } }],
+		});
+		expect(stray.success).toBe(false);
+
+		write(CONFIG_FILE, {
+			projects: [
+				{ name: "a", bundleId: { ios: "x" }, fingerprint: { include: "native+js", jsInputs: ["src/**", "app.json"] } },
+				{ name: "b", bundleId: { ios: "x" }, fingerprint: { command: "fp" } },
+			],
+		});
+		const a = loadProject({ start: dir, env, name: "a" });
+		if (!a.success) throw new Error(a.error);
+		expect(a.data.jsInputs).toEqual(["src/**", "app.json"]);
+		expect(a.data.fingerprintCommand).toBeUndefined();
+		const b = loadProject({ start: dir, env, name: "b" });
+		if (!b.success) throw new Error(b.error);
+		expect(b.data.jsInputs).toBeUndefined();
+		expect(b.data.fingerprintCommand).toBe("fp");
+	});
+
 	test("rejects an unknown build.configuration", () => {
 		const res = parseWardenConfig({ projects: [{ name: "a", bundleId: {}, build: { configuration: "Staging" } }] });
 		expect(res.success).toBe(false);

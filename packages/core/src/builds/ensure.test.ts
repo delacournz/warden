@@ -155,6 +155,64 @@ describe("ensureApp", () => {
 		expect(calls.some((c) => c.includes("eas"))).toBe(false);
 	});
 
+	describe("JS-aware project (fingerprint.include native+js)", () => {
+		const eas = { profile: "development-simulator", trigger: true, workflow: ".eas/wf.yml" };
+		const jsProject = () => testProject({ root: join(dir, "app"), jsInputs: ["src/**"], eas });
+
+		function gitHost(status: string, calls: string[]): Exec {
+			return fake(
+				[
+					["git rev-parse HEAD", { stdout: "abc123\n" }],
+					["git status --porcelain", { stdout: status }],
+					["bunx eas-cli build:list", { stdout: "[]" }],
+				],
+				calls
+			);
+		}
+
+		test("clean tree: EAS is looked up by git commit, never by fingerprint, never triggered", async () => {
+			const calls: string[] = [];
+			const res = await ensureApp(
+				input(gitHost("", calls), { project: jsProject(), deviceId: undefined, build: false, eas: true })
+			);
+			expect(res.success).toBe(false);
+			const list = calls.find((c) => c.startsWith("bunx eas-cli build:list")) ?? "";
+			expect(list).toContain("--git-commit-hash abc123");
+			expect(list).not.toContain("--fingerprint-hash");
+			expect(calls.some((c) => c.includes("workflow:run"))).toBe(false);
+		});
+
+		test("dirty tree: EAS is skipped (its build can't match the working tree)", async () => {
+			const calls: string[] = [];
+			const logs: string[] = [];
+			const res = await ensureApp(
+				input(gitHost(" M src/a.ts\n", calls), {
+					project: jsProject(),
+					deviceId: undefined,
+					build: false,
+					eas: true,
+					log: (l) => logs.push(l),
+				})
+			);
+			expect(res.success).toBe(false);
+			expect(calls.some((c) => c.startsWith("bunx eas-cli"))).toBe(false);
+			expect(logs.join("\n")).toContain("working tree is not clean");
+		});
+
+		test("native projects keep the fingerprint lookup", async () => {
+			const calls: string[] = [];
+			await ensureApp(
+				input(gitHost("", calls), {
+					project: testProject({ root: join(dir, "app"), eas: { ...eas, trigger: false } }),
+					deviceId: undefined,
+					build: false,
+					eas: true,
+				})
+			);
+			expect(calls.find((c) => c.startsWith("bunx eas-cli build:list"))).toContain("--fingerprint-hash H");
+		});
+	});
+
 	test("missing bundle id for a device install → error", async () => {
 		await seedCache();
 		const res = await ensureApp(

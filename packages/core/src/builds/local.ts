@@ -6,7 +6,7 @@ import type { Platform } from "../types";
 import type { BuildConfiguration } from "./builds.defaults";
 import { LOCAL_BUILD_TIMEOUT_MS } from "./builds.defaults";
 import type { Project } from "./config";
-import { computeFingerprint } from "./fingerprint";
+import { computeCacheKey } from "./fingerprint";
 
 const simProducts = (configuration: BuildConfiguration) =>
 	join("Build", "Products", `${configuration}-iphonesimulator`);
@@ -100,8 +100,9 @@ export type LocalBuildDeps = {
 
 /**
  * Run `build.<platform>` in the project root, locate the produced `.app`/`.apk`, and verify the
- * project's fingerprint still equals `hash` (a build that changed native inputs — or a source tree
- * edited mid-build — must not be cached under the old hash).
+ * project's cache key (native fingerprint, plus the JS sources for a JS-aware project) still equals
+ * `hash` (a build that changed native inputs — or a source tree edited mid-build — must not be cached
+ * under the old hash).
  */
 export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<string> {
 	const { project, platform } = deps;
@@ -121,10 +122,10 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<string> {
 			`local build succeeded but no ${project.buildConfiguration} ${platform === "ios" ? ".app" : ".apk"} was found (DerivedData / android/app/build/outputs)`
 		);
 	}
-	const after = await computeFingerprint(deps.exec, project, platform);
+	const after = await computeCacheKey(deps.exec, project, platform);
 	if (!after.success) return after;
-	if (after.data !== deps.hash) {
-		return err(`fingerprint changed during the build (${deps.hash} → ${after.data}); not caching ${artifact}`);
+	if (after.data.key !== deps.hash) {
+		return err(`fingerprint changed during the build (${deps.hash} → ${after.data.key}); not caching ${artifact}`);
 	}
 	return ok(artifact);
 }

@@ -60,6 +60,32 @@ async function seed(c: TestContext): Promise<string> {
 	return res.data.path;
 }
 
+describe("warden app fingerprint (native+js)", () => {
+	test("the printed fingerprint is the JS-aware key; native is reported alongside", async () => {
+		const c = setup(["fingerprint", "ios", "--json"], [["git ls-files", { stdout: "src/a.ts" }]]);
+		mkdirSync(join(c.cwd, "app", "src"), { recursive: true });
+		writeFileSync(join(c.cwd, "app", "src", "a.ts"), "export {}");
+		writeFileSync(
+			join(c.cwd, "warden.config.json"),
+			JSON.stringify({
+				projects: [
+					{
+						name: "demo",
+						root: "app",
+						bundleId: { ios: "com.demo" },
+						fingerprint: { command: "fp {platform}", include: "native+js", jsInputs: ["src/**"] },
+					},
+				],
+			})
+		);
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.native).toEqual({ ios: HASH });
+		expect(out.fingerprints.ios).toMatch(/^[0-9a-f]{40}$/);
+		expect(out.fingerprints.ios).not.toBe(HASH);
+	});
+});
+
 describe("warden app fingerprint", () => {
 	test("both platforms by default, --json, hash logged loudly to stderr", async () => {
 		const c = setup(["fingerprint", "--json"]);
