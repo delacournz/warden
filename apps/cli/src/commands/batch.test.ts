@@ -37,6 +37,7 @@ type BatchJson = {
 		startedAt: number;
 		endedAt: number;
 		exitCode: number;
+		screenshot?: string;
 	}>;
 };
 
@@ -106,6 +107,57 @@ describe("warden batch", () => {
 		const bad = h.jobs().filter((j) => j.opts.env.WARDEN_JOB === "bad");
 		expect(bad.map((j) => j.opts.env.WARDEN_JOB_SEQ)).toEqual(["1", "2"]);
 		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("a job that exits non-zero gets a screenshot next to its log, recorded in batch.json", async () => {
+		const c = setup(["ios", "--jobs", "ok,bad", "--", "x", "{job}"]);
+		const h = harness({ exitCodes: { bad: 4 } });
+		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		const logs = join(c.env.WARDEN_HOME ?? "", "batches", "b1", "logs");
+		const bad = h.jobs().find((j) => j.opts.env.WARDEN_JOB === "bad");
+		const png = join(logs, `${bad?.opts.env.WARDEN_WORKER}-${bad?.opts.env.WARDEN_JOB_SEQ}-bad.png`);
+		expect(bad?.opts.log).toBe(png.replace(/\.png$/, ".log"));
+		expect(h.shots).toEqual([`ios ${bad?.opts.env.WARDEN_UDID} ${png}`]);
+		const summary = JSON.parse(h.files.get(join(logs, "..", "batch.json")) ?? "{}") as BatchJson;
+		expect(summary.jobs.find((j) => j.job === "bad")?.screenshot).toBe(png);
+		expect(summary.jobs.find((j) => j.job === "ok")).not.toHaveProperty("screenshot");
+	});
+
+	test("each failed retry attempt gets its own screenshot", async () => {
+		const c = setup(["ios", "--jobs", "bad", "--retry", "1", "--", "x", "{job}"]);
+		const h = harness({ exitCodes: { bad: 4 } });
+		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		expect(h.shots).toHaveLength(2);
+		expect(new Set(h.shots).size).toBe(2);
+	});
+
+	test("with --passes the screenshot is named after the failing pass's log", async () => {
+		const c = setup(["ios", "--jobs", "bad", "--passes", "2", "--", "x", "{job}"]);
+		const h = harness({ exitCodeFor: (env) => (env.WARDEN_PASS === "1" ? 3 : 0) });
+		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		expect(h.shots).toHaveLength(1);
+		expect(h.shots[0]).toMatch(/-bad\.pass1\.png$/);
+	});
+
+	test("a failing or throwing screenshot never fails the batch or lands in batch.json", async () => {
+		for (const mode of ["fail", "throw"] as const) {
+			const c = setup(["ios", "--jobs", "bad", "--", "x", "{job}"]);
+			const h = harness({ exitCodes: { bad: 4 }, screenshot: mode });
+			expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+			const doc = JSON.parse(
+				h.files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "batch.json")) ?? "{}"
+			) as BatchJson;
+			expect(doc.jobs[0]).toMatchObject({ job: "bad", exitCode: 4 });
+			expect(doc.jobs[0]).not.toHaveProperty("screenshot");
+			c.cleanup();
+		}
+	});
+
+	test("green jobs take no screenshot", async () => {
+		const c = setup(["ios", "--jobs", "a", "--", "x", "{job}"]);
+		const h = harness();
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(h.shots).toEqual([]);
 	});
 
 	test("--passes N: a job passes only after N consecutive green runs; the first red one stops it", async () => {

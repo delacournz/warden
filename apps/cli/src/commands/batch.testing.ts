@@ -14,6 +14,8 @@ export type Harness = {
 	signals: Map<string, () => void>;
 	probes: ReadySpec[];
 	terminal: string[];
+	/** every failure screenshot requested: `<platform> <udid> <path>` */
+	shots: string[];
 };
 
 /**
@@ -29,6 +31,8 @@ export function harness(
 		serveExitsOnKill?: boolean;
 		/** overrides `exitCodes`: the exit code for one job spawn, from its env */
 		exitCodeFor?: (env: Record<string, string | undefined>) => number;
+		/** the failure-screenshot capture: "fail" resolves false, "throw" rejects */
+		screenshot?: "ok" | "fail" | "throw";
 	} = {}
 ): Harness {
 	const h: Harness = {
@@ -41,6 +45,7 @@ export function harness(
 		signals: new Map(),
 		probes: [],
 		terminal: [],
+		shots: [],
 		deps: {
 			pid: 777,
 			isPortFree: async () => true,
@@ -78,6 +83,11 @@ export function harness(
 						return 0;
 					},
 				};
+			},
+			screenshot: async (platform, udid, path) => {
+				h.shots.push(`${platform} ${udid} ${path}`);
+				if (opts.screenshot === "throw") throw new Error("no device");
+				return opts.screenshot !== "fail";
 			},
 			writeFile: async (path, data) => {
 				h.files.set(path, data);

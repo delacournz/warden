@@ -100,6 +100,10 @@ With `project` set, serve, the jobs and `jobsFrom.command` run in that project's
 
 To queue only the flows a change needs, see [Affected e2e](/docs/guides/affected-e2e).
 
+### Failure screenshots
+
+When a job exits non-zero, warden screenshots its device right away (iOS `simctl io screenshot`, Android `adb exec-out screencap -p`) into the logs directory, named after the job's log (`0-2-login.log` → `0-2-login.png`; with `passes`, `….pass1.png`). Each failed retry attempt gets its own. The absolute path is the `screenshot` field on that job in `batch.json`, and on the flow in `e2e-report.json`. It is best effort with a 5 s cap: if the device can't be captured the field is simply absent and the batch carries on.
+
 ### Recording a run
 
 `--record <dir>` (iOS) records every simulator with `simctl io recordVideo` from the moment the serve is ready, mirrors the grid into an asciicast (`tui.cast`) and writes a `batch.json` timeline of every job. `scripts/demo/compose.ts` in the warden repo turns that directory into a single tiled video — it's how the landing page demo was made.

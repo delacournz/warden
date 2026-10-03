@@ -78,7 +78,7 @@ A flow's id is its path under `flowsDir` without the extension. Keys in `flows` 
 - Each flow runs as `runner` with `{flow}` (id), `{flowPath}` (absolute file), `{udid}`, `{worker}` and `{seq}` substituted, in the config file's directory.
 - `passes: 2` makes a flow pass only after two consecutive green runs on the same device (`WARDEN_PASS` = 0, 1), which catches flows that only pass from a lucky start state.
 - `required: false` flows are reported but never fail the gate. `--required-only` runs just the required ones.
-- `e2e-report.json` (in the batch dir, and at `--report <file>`) lists every flow with its reasons, attempts and verdict. `--json` prints it.
+- `e2e-report.json` (in the batch dir, and at `--report <file>`) lists every flow with its reasons, attempts and verdict, plus a `screenshot` (png of the device) for a flow whose last attempt failed. `--json` prints it.
 - Nothing affected → exit 0 without claiming a device. `--dry-run` selects and explains, then stops.
 
 ### In CI

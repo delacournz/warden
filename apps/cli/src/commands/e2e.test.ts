@@ -80,6 +80,20 @@ describe("warden e2e", () => {
 		expect(c.stderr.join("\n")).toContain("gate failed");
 	});
 
+	test("a failed flow's report entry carries its failure screenshot; passed flows carry none", async () => {
+		write("src/chat/lazy.tsx", "export const x = 2;\n");
+		write("src/settings/form.tsx", "export const y = 2;\n");
+		const c = setup(["--count", "2"]);
+		const h = harness({ exitCodes: { chats: 1 } });
+		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+		const report = reportOf(h.files, c);
+		const chats = report.flows.find((f) => f.id === "chats");
+		const chatsRun = h.jobs().find((j) => j.opts.env.WARDEN_JOB === "chats");
+		expect(chats?.screenshot).toBe(chatsRun?.opts.log.replace(/\.log$/, ".png"));
+		expect(h.shots).toHaveLength(1);
+		expect(report.flows.find((f) => f.id === "settings")).not.toHaveProperty("screenshot");
+	});
+
 	test("suite passes (2) → every flow runs twice on its device", async () => {
 		await resuite({ passes: 2 });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);

@@ -12,6 +12,7 @@ import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit } from "../output";
 import { type AffectedOpts, explain, runAffected, selectedFlows } from "./affected";
 import {
+	attemptKey,
 	type BatchDeps,
 	defaultBatchDeps,
 	parseBatchArgs,
@@ -39,7 +40,12 @@ export type E2eOpts = ClaimFlagValues &
 	};
 
 /** One flow's outcome in `e2e-report.json`. */
-export type FlowVerdict = SelectedFlow & { verdict: "passed" | "failed" | "not-run"; attempts: number };
+export type FlowVerdict = SelectedFlow & {
+	verdict: "passed" | "failed" | "not-run";
+	attempts: number;
+	/** the device as the flow's last failed attempt left it (png), when one could be captured */
+	screenshot?: string;
+};
 
 export type E2eReport = {
 	suite: string;
@@ -89,7 +95,12 @@ export function verdicts(
 	const out = flows.map((flow): FlowVerdict => {
 		const attempts = results.filter((r) => r.job === flow.id).length;
 		const verdict = attempts === 0 ? "not-run" : failed.has(flow.id) ? "failed" : "passed";
-		return { ...flow, verdict, attempts };
+		const shots = results.filter((r) => r.job === flow.id && r.exitCode !== 0);
+		const screenshot = shots
+			.map((r) => session.screenshots?.get(attemptKey(r)))
+			.reverse()
+			.find((path) => path !== undefined);
+		return { ...flow, verdict, attempts, ...(screenshot !== undefined ? { screenshot } : {}) };
 	});
 	const ok = session.summary !== undefined && out.every((f) => !f.required || f.verdict === "passed");
 	return { ok, flows: out };
