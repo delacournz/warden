@@ -20,6 +20,7 @@ icon: Terminal
 | pre-build the golden image | `warden golden ensure --profile iphone-17` |
 | who holds what | `warden ls` |
 | every sim / emulator + who leases it | `warden devices` (alias `warden list`) |
+| tidy Simulator.app windows | `warden arrange` |
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a long lease alive | `warden heartbeat --mine` |
 | reclaim dead leases | `warden gc` |
@@ -187,6 +188,10 @@ Permanently deletes simulators. With no udids it opens a multi-select menu (spac
 | `--dry-run` | only show what would be deleted, with reasons (works off a terminal) |
 | `-y, --yes` | don't ask; required off a terminal (with udids or `--suggested`) |
 | `--json` | `{ deleted, failed }`, or `{ dryRun, wouldDelete: [{ id, name, reasons }] }`; exits 1 if any sim was skipped |
+
+### `warden arrange`
+
+macOS only. Lines up the open Simulator.app windows of warden sims in name order (`warden-iphone-17-2` before `-10`), left to right from the top-left of the main screen. Simulator windows can't be resized, so a row wider than the screen overlaps evenly, with every title bar left visible; windows wrap to a second row only if the screen is tall enough. Other simulators are left where they are, and Simulator.app is never launched. Every iOS claim (`claim`, `run`, `batch`, `e2e`) runs this automatically; set `WARDEN_ARRANGE=0` to turn that off. Moving windows uses System Events, so your terminal needs Accessibility access (System Settings → Privacy & Security → Accessibility).
 
 ### `warden clone <source>`
 

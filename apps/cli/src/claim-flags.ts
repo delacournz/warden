@@ -11,6 +11,7 @@ import type { DeviceRequest, Owner, Platform } from "@delacour/warden-core/types
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
+import { autoArrangeSimWindows } from "./sim-windows";
 
 /** Claim options shared by `claim` and `run` (typed by commander's extra-typings). */
 export function withClaimOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
@@ -119,7 +120,7 @@ export function resolveAutoProfile(avds: readonly string[]): Result<string> {
 		: err("no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
 }
 
-/** Run a device claim with the context's store + provider. */
+/** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows. */
 export async function claimWithFlags(
 	ctx: CommandContext,
 	owner: Owner,
@@ -133,7 +134,7 @@ export async function claimWithFlags(
 		if (!profile.success) return profile;
 		request = { ...request, profile: profile.data };
 	}
-	return claimDevices({
+	const outcome = await claimDevices({
 		store: ctx.store(),
 		provider: providerFor(request.platform, ctx, owner),
 		owner,
@@ -145,6 +146,13 @@ export async function claimWithFlags(
 		pidAlive: processAlive,
 		waitMs: flags.waitMs,
 	});
+	if (outcome.success && request.platform === "ios") {
+		await autoArrangeSimWindows(
+			ctx,
+			outcome.data.claimed.map((c) => c.device.name)
+		);
+	}
+	return outcome;
 }
 
 /** JSON shape of claimed devices, shared by `claim` and `run`. */
