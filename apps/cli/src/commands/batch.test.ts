@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_FILE } from "@delacour/warden-core/builds/config";
-import type { ExecOptions, ExecResult } from "@delacour/warden-core/exec";
+import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-core/exec";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createBatchCommand } from "./batch";
@@ -39,6 +39,37 @@ type BatchJson = {
 		exitCode: number;
 	}>;
 };
+
+/**
+ * Fake the build + install side of `--app` on top of `base` (simctl inventory): the project's
+ * fingerprint command prints `native`, the Release build drops an .app into `Release-iphonesimulator`,
+ * and the app starts installed so a clean install has something to uninstall. `calls` logs the
+ * build and every install/uninstall.
+ */
+function releaseExec(base: Exec, root: string, native: string, calls: string[]): Exec {
+	const done = (stdout = "", exitCode = 0): ExecResult => ({ exitCode, stdout, stderr: "" });
+	let installed = true;
+	return async (cmd, opts) => {
+		const line = cmd.join(" ");
+		const canned: Record<string, string> = { "sh -c fp ios": native, "git ls-files": "src/a.ts\0" };
+		const hit = Object.keys(canned).find((prefix) => line.startsWith(prefix));
+		if (hit) return done(canned[hit]);
+		if (line === "sh -c build-release") {
+			calls.push(line);
+			const products = join(root, "ios", "build", "Build", "Products", "Release-iphonesimulator");
+			mkdirSync(join(products, "S.app"), { recursive: true });
+			return done();
+		}
+		const verb = cmd[0] === "xcrun" ? cmd[2] : undefined;
+		if (verb === "get_app_container") return installed ? done("/container") : done("", 1);
+		if (verb === "install" || verb === "uninstall") {
+			calls.push(line);
+			installed = verb === "install";
+			return done();
+		}
+		return base(cmd, opts);
+	};
+}
 
 describe("warden batch", () => {
 	test("fans jobs over the leased devices with per-job argv + env, logs, releases, exit 0", async () => {
@@ -635,6 +666,38 @@ describe("warden batch", () => {
 			};
 			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
 			expect(seen).toEqual([true]);
+		});
+
+		test("app: Release build, native+js key (custom fingerprint command) and clean install all reach the real ensure path", async () => {
+			const c = setup(["p"]);
+			const root = join(c.cwd, "app");
+			mkdirSync(join(root, "src"), { recursive: true });
+			writeFileSync(join(root, "src", "a.ts"), "export {}");
+			writeConfig(c.cwd, {
+				projects: [
+					{
+						name: "s",
+						root: "app",
+						bundleId: { ios: "nz.x" },
+						fingerprint: { command: "fp {platform}", include: "native+js", jsInputs: ["src/**"] },
+						build: { configuration: "Release", ios: "build-release" },
+					},
+				],
+				batches: { p: { project: "s", platform: "ios", app: { clean: true }, jobs: ["a"], cmd: ["x"] } },
+			});
+			const native = "abc123def456";
+			const calls: string[] = [];
+			c.exec = releaseExec(c.exec, root, native, calls);
+			const h = harness();
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			const order = calls.map((l) => l.split(" ").slice(0, 3).join(" "));
+			expect(order).toContain("sh -c build-release");
+			expect(order.indexOf("xcrun simctl uninstall")).toBeGreaterThanOrEqual(0);
+			expect(order.indexOf("xcrun simctl uninstall")).toBeLessThan(order.indexOf("xcrun simctl install"));
+			const hash = h.jobs()[0]?.opts.env.WARDEN_APP_HASH;
+			expect(hash).toMatch(/^[0-9a-f]{40}$/);
+			expect(hash).not.toBe(native);
+			expect(h.jobs()[0]?.opts.env.WARDEN_APP_PATH).toContain("S.app");
 		});
 
 		test("preset without jobs needs --jobs/--jobs-from; a platform operand ignores the config", async () => {
