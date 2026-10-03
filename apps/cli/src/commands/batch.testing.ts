@@ -7,6 +7,8 @@ export type Harness = {
 	deps: BatchDeps;
 	spawned: Spawned[];
 	jobs: () => Spawned[];
+	/** per-device `setup` spawns */
+	setups: () => Spawned[];
 	serve: () => Spawned | undefined;
 	files: Map<string, string>;
 	dirs: string[];
@@ -37,7 +39,8 @@ export function harness(
 ): Harness {
 	const h: Harness = {
 		spawned: [],
-		jobs: () => h.spawned.filter((s) => !s.opts.group),
+		jobs: () => h.spawned.filter((s) => !s.opts.group && !s.opts.setup),
+		setups: () => h.spawned.filter((s) => s.opts.setup),
 		serve: () => h.spawned.find((s) => s.opts.group),
 		files: new Map(),
 		dirs: [],
@@ -57,7 +60,9 @@ export function harness(
 				const entry: Spawned = { cmd, opts: spawnOpts, kills: [], finish: (code) => resolveExit(code) };
 				h.spawned.push(entry);
 				const job = spawnOpts.env.WARDEN_JOB;
-				h.events.push(spawnOpts.group ? "serve:start" : `job:${job}`);
+				h.events.push(
+					spawnOpts.group ? "serve:start" : spawnOpts.setup ? `setup:${spawnOpts.env.WARDEN_UDID}` : `job:${job}`
+				);
 				if (!spawnOpts.group && !opts.manual)
 					queueMicrotask(() => resolveExit(opts.exitCodeFor?.(spawnOpts.env) ?? opts.exitCodes?.[job ?? ""] ?? 0));
 				return {

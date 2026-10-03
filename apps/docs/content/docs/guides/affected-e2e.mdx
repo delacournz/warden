@@ -97,3 +97,21 @@ The same command runs locally or in a pre-push hook. Parsed imports are cached u
 ```json
 "jobsFrom": { "command": "warden affected mobile --platform ios --base origin/main" }
 ```
+
+## Per-device setup
+
+`setup` runs a shell command once on every leased device, after the app install and before that device's first flow. Typical uses: point the installed app at the suite's local API, or answer a first-launch system alert.
+
+```json title="warden.config.json"
+{
+  "e2e": {
+    "online": {
+      "ports": ["8091:5"],
+      "serve": "bun api",
+      "setup": "xcrun simctl spawn {udid} defaults write com.example.app ApiUrl http://localhost:$WARDEN_PORT_0"
+    }
+  }
+}
+```
+
+The command gets `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>` / `WARDEN_PORTS`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH` and the suite `env`, and runs in the suite's `project` root. Each device's output is `logs/setup-<worker>.log`, next to the job logs. A device whose setup exits non-zero is dropped from the pool (its flows go to the remaining devices); if none is left the run fails and names the setup logs. `e2e-report.json` records every device under `setup` (`worker`, `udid`, `ok`, `exitCode`, `log`).

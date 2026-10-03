@@ -5,6 +5,7 @@ import { readySpec } from "@delacour/warden-core/batch/preset";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import type { Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
+import type { DeviceSetup } from "../batch/setup";
 import { type ClaimFlagValues, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -54,6 +55,8 @@ export type E2eReport = {
 	ok: boolean;
 	batchDir?: string;
 	flows: FlowVerdict[];
+	/** per-device setup outcomes, when the suite has a `setup` */
+	setup?: DeviceSetup[];
 };
 
 /** The suite's run settings as option values (CLI flags passed explicitly win). */
@@ -188,6 +191,7 @@ async function e2e(
 	const { runner } = suite.config;
 	const session = await runSession(ctx, deps, args.data, [...byId.keys()], runner, {
 		name: "e2e",
+		...(suite.config.setup !== undefined ? { setup: { command: suite.config.setup } } : {}),
 		argvFor: (job) => {
 			const flow = byId.get(job);
 			return flow ? runnerArgv(runner, flow) : runner;
@@ -199,6 +203,7 @@ async function e2e(
 		ok: result.ok,
 		...(session.batchDir ? { batchDir: session.batchDir } : {}),
 		flows: result.flows,
+		...(session.setups ? { setup: session.setups } : {}),
 	};
 	await publish(ctx, deps, opts, report);
 	if (session.code === 130) return 130;

@@ -172,4 +172,89 @@ describe("warden e2e", () => {
 		await createE2eCommand(h2.deps).run(c);
 		expect(h2.serve()?.cmd).toEqual(["sh", "-c", "bun other"]);
 	});
+
+	test("suite setup runs once per device after the app install and before any flow, with the lease env", async () => {
+		await resuite({
+			setup: "defaults write {udid} Key http://localhost:$WARDEN_PORT_0",
+			ports: ["8091:5"],
+			env: { A: "1" },
+			app: true,
+		});
+		write("src/chat/lazy.tsx", "export const x = 2;\n");
+		write("src/settings/form.tsx", "export const y = 2;\n");
+		const c = setup(["--count", "2"]);
+		const h = harness();
+		h.deps.ensureApp = async () => {
+			h.events.push("app");
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const setups = h.setups();
+		expect(setups).toHaveLength(2);
+		const udids = setups.map((s) => s.opts.env.WARDEN_UDID).sort();
+		expect(new Set(udids).size).toBe(2);
+		for (const s of setups) {
+			expect(s.cmd).toEqual([
+				"sh",
+				"-c",
+				`defaults write ${s.opts.env.WARDEN_UDID} Key http://localhost:$WARDEN_PORT_0`,
+			]);
+			expect(s.opts.env).toMatchObject({
+				WARDEN_PORT_0: "8091",
+				WARDEN_APP_PATH: "/c/A.app",
+				WARDEN_APP_HASH: "H",
+				A: "1",
+			});
+			expect(s.opts.cwd).toBe(dir);
+			expect(s.opts.log).toMatch(/logs\/setup-\d\.log$/);
+		}
+		const firstJob = h.events.findIndex((e) => e.startsWith("job:"));
+		const lastSetup = h.events.map((e) => e.startsWith("setup:")).lastIndexOf(true);
+		expect(h.events.indexOf("app")).toBeLessThan(h.events.findIndex((e) => e.startsWith("setup:")));
+		expect(lastSetup).toBeLessThan(firstJob);
+		const report = reportOf(h.files, c);
+		expect(report.setup?.map((d) => [d.ok, d.exitCode])).toEqual([
+			[true, 0],
+			[true, 0],
+		]);
+		expect(report.setup?.[0]?.log).toMatch(/setup-0\.log$/);
+	});
+
+	test("a device whose setup fails is dropped; its flows run on the rest", async () => {
+		await resuite({ setup: "prep {udid}" });
+		write("src/chat/lazy.tsx", "export const x = 2;\n");
+		write("src/settings/form.tsx", "export const y = 2;\n");
+		const c = setup(["--count", "2"]);
+		let bad: string | undefined;
+		const h = harness({
+			exitCodeFor: (env) => {
+				if (env.WARDEN_JOB !== undefined) return 0;
+				bad ??= env.WARDEN_UDID;
+				return env.WARDEN_UDID === bad ? 3 : 0;
+			},
+		});
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const jobDevices = new Set(h.jobs().map((j) => j.opts.env.WARDEN_UDID));
+		expect(jobDevices.size).toBe(1);
+		expect(jobDevices.has(bad ?? "")).toBe(false);
+		expect(h.jobs()).toHaveLength(2);
+		const report = reportOf(h.files, c);
+		expect(report.setup?.filter((d) => !d.ok).map((d) => [d.udid, d.exitCode])).toEqual([[bad, 3]]);
+		expect(c.stderr.join("\n")).toContain("setup failed on");
+	});
+
+	test("setup failing on every device fails the run and names the setup log", async () => {
+		await resuite({ setup: "prep {udid}" });
+		write("src/chat/lazy.tsx", "export const x = 2;\n");
+		write("src/settings/form.tsx", "export const y = 2;\n");
+		const c = setup(["--count", "2"]);
+		const h = harness({ exitCodeFor: () => 1 });
+		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+		expect(h.jobs()).toEqual([]);
+		expect(c.stderr.join("\n")).toMatch(/setup failed on every device.*setup-\d\.log/s);
+		const report = reportOf(h.files, c);
+		expect(report.ok).toBe(false);
+		expect(report.setup?.every((d) => !d.ok)).toBe(true);
+		expect(c.db.listLeases()).toEqual([]);
+	});
 });

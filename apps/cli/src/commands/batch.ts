@@ -16,6 +16,7 @@ import { type Cast, createCast } from "../batch/cast";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
 import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
+import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
 import { applyEvent, type BatchView, initialView, type LiveScreen, liveScreen, plainLine, render } from "../batch/tui";
 import { type ClaimFlagValues, parseClaimFlags, resolveOwner, resolvePlatform, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
@@ -50,6 +51,8 @@ export type SpawnOptions = {
 	group?: boolean;
 	/** the invoking directory (`ctx.cwd`), or the preset's cwd */
 	cwd: string;
+	/** a per-device `setup` command rather than a job */
+	setup?: true;
 };
 
 /** Where the TUI goes (stderr by default). */
@@ -444,10 +447,60 @@ async function report(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, r: 
 }
 
 /** How a batch session ended: its exit code, and — once the jobs ran — the summary and where it lives. */
-export type SessionResult = { code: number; batchDir?: string; summary?: BatchSummary; screenshots?: Screenshots };
+export type SessionResult = {
+	code: number;
+	batchDir?: string;
+	summary?: BatchSummary;
+	screenshots?: Screenshots;
+	/** per-device setup outcomes, when the session ran a setup */
+	setups?: DeviceSetup[] | undefined;
+};
 
 /** Extras for callers building on batch (`warden e2e`). */
-export type SessionHooks = { argvFor?: ArgvFor; name?: string };
+export type SessionHooks = {
+	argvFor?: ArgvFor;
+	name?: string;
+	/** run once per device after the app install and before its first job; a device whose setup fails is dropped */
+	setup?: DeviceSetupSpec;
+};
+
+/** Per-device setup (`hooks.setup`): who is left to run jobs, every outcome, and why the run can't go on (no device left). */
+async function prepareDevices(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	name: string,
+	spec: DeviceSetupSpec | undefined,
+	devices: Device[],
+	env: Record<string, string | undefined>,
+	cwd: string,
+	logDir: string,
+	running: Set<ProcHandle>
+): Promise<{ live: Device[]; setups?: DeviceSetup[]; failure?: string }> {
+	if (!spec) return { live: devices };
+	const setups = await setupDevices({
+		devices,
+		spec,
+		env,
+		cwd,
+		logDir,
+		spawn: (argv, o) => deps.spawn(argv, o),
+		track: (proc) => {
+			const handle = proc as ProcHandle;
+			running.add(handle);
+			return () => running.delete(handle);
+		},
+	});
+	const failed = setups.filter((d) => !d.ok);
+	for (const d of failed) {
+		ctx.err(ctx.ui.color.red(`warden ${name}: setup failed on ${d.udid} (exit ${d.exitCode}) — log: ${d.log}`));
+	}
+	const live = devices.filter((d) => setups.find((s) => s.worker === d.worker)?.ok);
+	if (live.length > 0) return { live, setups };
+	return { live, setups, failure: `setup failed on every device (logs: ${failed.map((d) => d.log).join(", ")})` };
+}
+
+/** 130 when the run was interrupted, else 0 for a clean pass and 1 for any failure. */
+const exitFor = (interrupted: boolean, passed: boolean): number => (interrupted ? 130 : passed ? 0 : 1);
 
 /** Everything after the claim: serve → recordings → jobs → stop serve → stop recordings → batch.json → release. */
 async function supervise(
@@ -479,9 +532,9 @@ async function supervise(
 	const interrupted = () => controller.signal.aborted;
 	let serve: ProcHandle | undefined;
 	let recordings: Recording[] = [];
-	const fail = (message: string): SessionResult => {
+	const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
 		ctx.err(ctx.ui.color.red(`warden ${name}: ${message}`));
-		return { code: interrupted() ? 130 : 1 };
+		return { code: interrupted() ? 130 : 1, ...extra };
 	};
 	/** workers are done: serve first, then the recordings (the contract's stop order) */
 	const teardown = async () => {
@@ -504,10 +557,13 @@ async function supervise(
 			if (!started.success) return fail(started.error);
 			recordings = started.data;
 		}
+		const prepared = await prepareDevices(ctx, deps, name, hooks.setup, devices, env, args.cwd, logDir, running);
+		if (prepared.failure !== undefined) return fail(prepared.failure, { batchDir, setups: prepared.setups });
+		const { live, setups } = prepared;
 		const startedAt = ctx.now();
-		const screen = display(ctx, deps, args, { current: initialView(devices, jobs.length, startedAt) });
+		const screen = display(ctx, deps, args, { current: initialView(live, jobs.length, startedAt) });
 		const summary = await runBatch({
-			workers: devices,
+			workers: live,
 			jobs,
 			retry: args.retry,
 			now: ctx.now,
@@ -542,8 +598,7 @@ async function supervise(
 			screenshots,
 		};
 		await report(ctx, deps, args, screen.cast ? { ...run, cast: screen.cast } : run);
-		if (interrupted()) return { code: 130, batchDir, summary, screenshots };
-		return { code: summary.ok ? 0 : 1, batchDir, summary, screenshots };
+		return { code: exitFor(interrupted(), summary.ok), batchDir, summary, screenshots, setups };
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	} finally {
