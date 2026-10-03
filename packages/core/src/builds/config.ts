@@ -5,7 +5,12 @@ import { z } from "zod";
 import { e2eSuiteSchema } from "../affected/affected.schema";
 import { batchPresetSchema, RESERVED_PRESET_NAMES } from "../batch/preset.schema";
 import type { Platform } from "../types";
-import { DEFAULT_BUILD_COMMAND, DEFAULT_EAS_PROFILE, LEGACY_CACHE_DIRS } from "./builds.defaults";
+import {
+	type BuildConfiguration,
+	DEFAULT_EAS_PROFILE,
+	defaultBuildCommand,
+	LEGACY_CACHE_DIRS,
+} from "./builds.defaults";
 
 export const CONFIG_FILE = "warden.config.json";
 
@@ -30,7 +35,12 @@ export const projectConfigSchema = z
 			})
 			.strict()
 			.optional(),
-		build: perPlatform.optional(),
+		build: perPlatform
+			.extend({
+				/** Xcode / Gradle configuration the local build produces; picks the default build command + where the artifact is searched */
+				configuration: z.enum(["Debug", "Release"]).optional(),
+			})
+			.optional(),
 		/** extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand */
 		cacheDirs: z.array(z.string().min(1)).optional(),
 	})
@@ -82,6 +92,8 @@ export type Project = {
 	/** undefined = EAS not used (no `eas` config and no `eas.json`) */
 	eas?: EasSettings;
 	build: Record<Platform, string>;
+	/** Debug unless `build.configuration` says Release */
+	buildConfiguration: BuildConfiguration;
 	cacheDirs: string[];
 	/** where the project came from */
 	origin: "config" | "app.json" | "app.config";
@@ -113,11 +125,16 @@ function within(dir: string, target: string): boolean {
 
 function fromConfig(entry: ProjectConfig, configDir: string, env: Record<string, string | undefined>): Project {
 	const root = resolve(configDir, entry.root);
+	const configuration = entry.build?.configuration ?? "Debug";
 	const project: Project = {
 		name: entry.name,
 		root,
 		bundleId: entry.bundleId,
-		build: { ...DEFAULT_BUILD_COMMAND, ...entry.build },
+		build: {
+			ios: entry.build?.ios ?? defaultBuildCommand("ios", configuration),
+			android: entry.build?.android ?? defaultBuildCommand("android", configuration),
+		},
+		buildConfiguration: configuration,
 		cacheDirs: (entry.cacheDirs ?? LEGACY_CACHE_DIRS[entry.name] ?? []).map((d) =>
 			resolve(root, expandHome(d, env.HOME))
 		),

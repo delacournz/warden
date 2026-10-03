@@ -16,7 +16,7 @@ warden app ensure ios --udid <udid> --json
 <Step>**Installed** — the device already has this fingerprint hash.</Step>
 <Step>**Cache** — `~/.warden/builds/<projectKey>/<platform>/<hash>`, then legacy caches. All worktrees of a repo share one cache.</Step>
 <Step>**EAS** — `build:list --fingerprint-hash`, then download. Waits for builds already in flight; triggers the workflow only if `eas.trigger` is set.</Step>
-<Step>**Local build** — verified against the fingerprint.</Step>
+<Step>**Local build** — verified against the fingerprint. Debug by default; set `build.configuration: "Release"` to build and find a Release simulator build (the JS bundle is embedded, so no Metro is needed at test time).</Step>
 </Steps>
 
 A build lock stops two agents from downloading or building the same hash twice.

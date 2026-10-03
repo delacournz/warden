@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_BUILD_COMMAND } from "./builds.defaults";
+import { DEFAULT_BUILD_COMMAND, defaultBuildCommand } from "./builds.defaults";
 import { bundleIdFor, CONFIG_FILE, loadProject, parseWardenConfig } from "./config";
 
 let dir: string;
@@ -92,9 +92,32 @@ describe("loadProject", () => {
 			fingerprintCommand: "bun run --silent fingerprint:{platform}",
 			eas: { profile: "development-simulator", workflow: ".eas/workflows/dev-build.yml", trigger: false },
 			build: { ios: "bun ios", android: DEFAULT_BUILD_COMMAND.android },
+			buildConfiguration: "Debug",
 			cacheDirs: ["/home/me/.cache/salient-dev-builds"],
 			origin: "config",
 		});
+	});
+
+	test("build.configuration: Release flips the default build commands, not explicit ones", () => {
+		write(CONFIG_FILE, {
+			projects: [
+				{ name: "a", bundleId: { ios: "x" }, build: { configuration: "Release" } },
+				{ name: "b", bundleId: { ios: "x" }, build: { configuration: "Release", ios: "my build" } },
+			],
+		});
+		const a = loadProject({ start: dir, env, name: "a" });
+		if (!a.success) throw new Error(a.error);
+		expect(a.data.buildConfiguration).toBe("Release");
+		expect(a.data.build.ios).toBe("bunx expo run:ios --configuration Release --no-install --no-bundler");
+		expect(a.data.build.android).toBe(defaultBuildCommand("android", "Release"));
+		const b = loadProject({ start: dir, env, name: "b" });
+		if (!b.success) throw new Error(b.error);
+		expect(b.data.build.ios).toBe("my build");
+	});
+
+	test("rejects an unknown build.configuration", () => {
+		const res = parseWardenConfig({ projects: [{ name: "a", bundleId: {}, build: { configuration: "Staging" } }] });
+		expect(res.success).toBe(false);
 	});
 
 	test("ambiguous: several projects, none containing start → error; --name picks", () => {

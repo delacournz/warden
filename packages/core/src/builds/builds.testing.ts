@@ -10,6 +10,7 @@ export function testProject(overrides: Partial<Project> = {}): Project {
 		root: "/repo/app",
 		bundleId: { ios: "com.x.app", android: "com.x.app" },
 		build: { ...DEFAULT_BUILD_COMMAND },
+		buildConfiguration: "Debug",
 		cacheDirs: [],
 		origin: "config",
 		...overrides,

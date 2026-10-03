@@ -34,6 +34,28 @@ describe("locateArtifact", () => {
 		expect(locateArtifact(root, "ios", dd, Date.now() + 60_000)).toBeUndefined();
 	});
 
+	test("iOS: Release looks in Release-iphonesimulator only", () => {
+		const root = join(dir, "app");
+		const dd = join(dir, "DerivedData");
+		const debug = fakeApp(join(dd, "App-xyz", SIM), "Debug.app");
+		const release = fakeApp(join(dd, "App-xyz", join("Build", "Products", "Release-iphonesimulator")), "Rel.app");
+		const local = fakeApp(join(root, "ios", "build", join("Build", "Products", "Release-iphonesimulator")), "Loc.app");
+		expect(artifactCandidates(root, "ios", dd, "Release").sort()).toEqual([local, release].sort());
+		expect(artifactCandidates(root, "ios", dd).sort()).toEqual([debug]);
+	});
+
+	test("Android: Release picks only release apks", () => {
+		const apk = join(dir, "android", "app", "build", "outputs", "apk");
+		for (const variant of ["debug", "release"]) {
+			mkdirSync(join(apk, variant), { recursive: true });
+			writeFileSync(join(apk, variant, `app-${variant}.apk`), "apk");
+		}
+		expect(artifactCandidates(dir, "android", join(dir, "dd"), "Release")).toEqual([
+			join(apk, "release", "app-release.apk"),
+		]);
+		expect(artifactCandidates(dir, "android", join(dir, "dd"), "Debug")).toEqual([join(apk, "debug", "app-debug.apk")]);
+	});
+
 	test("Android: .apk under android/app/build/outputs/apk", () => {
 		const out = join(dir, "android", "app", "build", "outputs", "apk", "debug");
 		mkdirSync(out, { recursive: true });
@@ -43,6 +65,35 @@ describe("locateArtifact", () => {
 });
 
 describe("runLocalBuild", () => {
+	test("a Release build is found in Release-iphonesimulator", async () => {
+		const root = join(dir, "app");
+		const dd = join(dir, "Library", "Developer", "Xcode", "DerivedData");
+		const out = join(dd, "App-xyz", "Build", "Products", "Release-iphonesimulator");
+		const exec: Exec = async (cmd) => {
+			if (cmd[2] === "xcode-release") {
+				fakeApp(out, "App.app");
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
+		};
+		const project = testProject({
+			root,
+			fingerprintCommand: "fp",
+			buildConfiguration: "Release",
+			build: { ios: "xcode-release", android: "x" },
+		});
+		const res = await runLocalBuild({
+			exec,
+			project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			now: () => Date.now(),
+			log: () => {},
+		});
+		expect(res).toEqual({ success: true, data: join(out, "App.app") });
+	});
+
 	function setup(fingerprints: string[]) {
 		const root = join(dir, "app");
 		const out = join(root, "android", "app", "build", "outputs", "apk", "debug");

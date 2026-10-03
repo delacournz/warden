@@ -3,10 +3,22 @@ import type { Platform } from "../types";
 /** EAS build profile searched when the project config names none. */
 export const DEFAULT_EAS_PROFILE = "development-simulator";
 
-/** Local build commands (run in the project root) when `build.<platform>` is not configured. */
+/** Xcode / Gradle build configuration the local build produces (`build.configuration`). */
+export type BuildConfiguration = "Debug" | "Release";
+
+/** Local build command (run in the project root) when `build.<platform>` is not configured. */
+export function defaultBuildCommand(platform: Platform, configuration: BuildConfiguration): string {
+	const flags = "--no-install --no-bundler";
+	if (platform === "ios") {
+		return `bunx expo run:ios ${configuration === "Release" ? "--configuration Release " : ""}${flags}`;
+	}
+	return `bunx expo run:android ${configuration === "Release" ? "--variant release " : ""}${flags}`;
+}
+
+/** The Debug defaults. */
 export const DEFAULT_BUILD_COMMAND: Record<Platform, string> = {
-	ios: "bunx expo run:ios --no-install --no-bundler",
-	android: "bunx expo run:android --no-install --no-bundler",
+	ios: defaultBuildCommand("ios", "Debug"),
+	android: defaultBuildCommand("android", "Debug"),
 };
 
 /** `warden prune` default budget. */

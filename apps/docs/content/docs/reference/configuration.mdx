@@ -28,7 +28,8 @@ Optional, at the repo root. Without it, warden detects a single Expo project fro
     "eas.profile": { type: "string", description: "EAS build profile to look up builds under." },
     "eas.workflow": { type: "string", description: "EAS workflow file to trigger on a miss." },
     "eas.trigger": { type: "boolean", description: "Trigger the workflow when no EAS build matches.", default: "false" },
-    build: { type: "{ ios?: string; android?: string }", description: "Local build command per platform, used as the last resort." },
+    build: { type: "{ ios?: string; android?: string; configuration?: \"Debug\" | \"Release\" }", description: "Local build command per platform, used as the last resort." },
+    "build.configuration": { type: '"Debug" | "Release"', description: "Which build a local build produces. Sets the artifact search (`<Config>-iphonesimulator`, `apk/release`) and, unless `build.<platform>` is set, the default command (`--configuration Release` / `--variant release`).", default: '"Debug"' },
   }}
 />
 
