@@ -138,6 +138,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
     serveReady: { type: "string", description: "Wait for `http://…`, `tcp:PORT` or `file:PATH` (relative to the project root) before starting. Needs `serve`." },
     serveTimeout: { type: "string", description: "Give up waiting for `serveReady` after this long (`30s`, `10m`).", default: '"10m"' },
     setup: { type: "string", description: "`sh -c` once per leased device, after the app install and before that device's first flow (`{udid}` is substituted). Env: `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH`, plus `env`. Output goes to `logs/setup-<worker>.log`. A non-zero exit drops that device and its flows go to the others; none left fails the run." },
+    slim: { type: "boolean", description: "iOS: switch off the simulator daemons flows never need on each leased device, before `setup` (`warden sim slim`). A failure only warns." },
     flows: { type: "Record<string, Flow>", description: "Per flow id or glob; see below." },
   }}
 />

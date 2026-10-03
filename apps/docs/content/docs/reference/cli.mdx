@@ -20,6 +20,7 @@ icon: Terminal
 | pre-build the golden image | `warden golden ensure --profile iphone-17` |
 | who holds what | `warden ls` |
 | every sim / emulator + who leases it | `warden devices` (alias `warden list`) |
+| lighten a booted sim (fewer daemons) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` |
 | tidy Simulator.app windows | `warden arrange` |
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a long lease alive | `warden heartbeat --mine` |
@@ -135,6 +136,18 @@ List leases: resource, state, owner, repo/worktree, age, heartbeat.
 ### `warden devices [platform]` (alias `list`)
 
 Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases.
+
+### `warden sim slim [udid]`
+
+iOS. Switches off the launchd jobs inside a booted simulator that UI flows never need — Siri, Apple Intelligence, Health, News, Mail, Photos analysis, Game Center, Wallet and friends (a conservative denylist; SpringBoard, installd, XCTest, the accessibility tree and the keyboard are never touched). A booted simulator runs 200+ such processes; with several simulators side by side, that is the RAM and CPU a flow suite is starved of.
+
+| Flag | |
+|---|---|
+| `--booted` | every booted simulator instead of one `<udid>` |
+| `--dry-run` | list the jobs, change nothing |
+| `--restore` | re-enable them (fully effective on the next boot) |
+
+Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/guides/affected-e2e#per-device-setup).
 
 ### `warden sims audit | prune | delete`
 

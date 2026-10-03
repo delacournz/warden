@@ -257,4 +257,33 @@ describe("warden e2e", () => {
 		expect(report.setup?.every((d) => !d.ok)).toBe(true);
 		expect(c.db.listLeases()).toEqual([]);
 	});
+
+	test("suite slim: every device is slimmed before its setup; a failed slim only warns", async () => {
+		await resuite({ slim: true, setup: "prep {udid}" });
+		write("src/chat/lazy.tsx", "export const x = 2;\n");
+		write("src/settings/form.tsx", "export const y = 2;\n");
+		const c = setup(["--count", "2"]);
+		const h = harness({ slim: "fail" });
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.slimmed).toHaveLength(2);
+		for (const udid of h.slimmed) {
+			expect(h.events.indexOf(`slim:${udid}`)).toBeLessThan(h.events.indexOf(`setup:${udid}`));
+		}
+		expect(c.stderr.join("\n")).toContain("slim");
+		expect(c.stderr.join("\n")).toContain("not booted");
+		expect(reportOf(h.files, c).setup?.every((d) => d.ok && d.slim !== undefined)).toBe(true);
+	});
+
+	test("slim alone (no setup command) still slims; slim on android is refused", async () => {
+		await resuite({ slim: true });
+		const c = setup(["--files", "src/chat/lazy.tsx"]);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.slimmed).toHaveLength(1);
+		expect(h.setups()).toEqual([]);
+
+		c.argv = ["--files", "src/chat/lazy.tsx", "--platform", "android"];
+		expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("slim is iOS-only");
+	});
 });

@@ -18,6 +18,8 @@ export type Harness = {
 	terminal: string[];
 	/** every failure screenshot requested: `<platform> <udid> <path>` */
 	shots: string[];
+	/** every `slim` request: the udid */
+	slimmed: string[];
 };
 
 /**
@@ -35,6 +37,8 @@ export function harness(
 		exitCodeFor?: (env: Record<string, string | undefined>) => number;
 		/** the failure-screenshot capture: "fail" resolves false, "throw" rejects */
 		screenshot?: "ok" | "fail" | "throw";
+		/** the `slim` effect: "fail" resolves an error */
+		slim?: "ok" | "fail";
 	} = {}
 ): Harness {
 	const h: Harness = {
@@ -49,6 +53,7 @@ export function harness(
 		probes: [],
 		terminal: [],
 		shots: [],
+		slimmed: [],
 		deps: {
 			pid: 777,
 			isPortFree: async () => true,
@@ -93,6 +98,11 @@ export function harness(
 				h.shots.push(`${platform} ${udid} ${path}`);
 				if (opts.screenshot === "throw") throw new Error("no device");
 				return opts.screenshot !== "fail";
+			},
+			slim: async (udid) => {
+				h.slimmed.push(udid);
+				h.events.push(`slim:${udid}`);
+				return opts.slim === "fail" ? { success: false, error: "not booted" } : { success: true, data: ["a", "b"] };
 			},
 			writeFile: async (path, data) => {
 				h.files.set(path, data);

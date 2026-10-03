@@ -6,8 +6,9 @@ import { expandArgv, jobSlug, parseJobLines, parseJobList } from "@delacour/ward
 import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delacour/warden-core/batch/preset";
 import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "@delacour/warden-core/batch/schedule";
 import { parseDuration } from "@delacour/warden-core/duration";
-import { execError } from "@delacour/warden-core/exec";
+import { bunExec, execError } from "@delacour/warden-core/exec";
 import { isPortFree } from "@delacour/warden-core/ports";
+import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
@@ -71,6 +72,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	 * could not (and must stay within a few seconds): a failure shot never fails or stalls the batch.
 	 */
 	screenshot: (platform: Platform, udid: string, path: string) => Promise<boolean>;
+	/** `slim: true`: switch off the unneeded daemons on one iOS simulator (resolves to the jobs touched) */
+	slim: (udid: string) => AsyncResult<string[]>;
 	/** write a file, creating its parent dirs */
 	writeFile: (path: string, data: string) => Promise<void>;
 	readFile: (path: string) => Promise<string>;
@@ -461,7 +464,7 @@ export type SessionHooks = {
 	argvFor?: ArgvFor;
 	name?: string;
 	/** run once per device after the app install and before its first job; a device whose setup fails is dropped */
-	setup?: DeviceSetupSpec;
+	setup?: DeviceSetupSpec | undefined;
 };
 
 /** Per-device setup (`hooks.setup`): who is left to run jobs, every outcome, and why the run can't go on (no device left). */
@@ -484,6 +487,7 @@ async function prepareDevices(
 		cwd,
 		logDir,
 		spawn: (argv, o) => deps.spawn(argv, o),
+		slim: deps.slim,
 		track: (proc) => {
 			const handle = proc as ProcHandle;
 			running.add(handle);
@@ -491,6 +495,9 @@ async function prepareDevices(
 		},
 	});
 	const failed = setups.filter((d) => !d.ok);
+	for (const d of setups) {
+		if (d.slim && "error" in d.slim) ctx.err(ctx.ui.color.yellow(`warden ${name}: slim ${d.udid}: ${d.slim.error}`));
+	}
 	for (const d of failed) {
 		ctx.err(ctx.ui.color.red(`warden ${name}: setup failed on ${d.udid} (exit ${d.exitCode}) — log: ${d.log}`));
 	}
@@ -839,6 +846,7 @@ export const defaultBatchDeps: BatchDeps = {
 	sleep: (ms) => Bun.sleep(ms),
 	record: (udid, path) => startSimRecording(udid, path, Date.now),
 	screenshot: captureScreenshot,
+	slim: (udid) => slimSimulator(bunExec, udid),
 	writeFile: async (path, data) => {
 		await mkdir(dirname(path), { recursive: true });
 		await writeFile(path, data);

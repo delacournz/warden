@@ -1,11 +1,12 @@
 import { join } from "node:path";
 import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
+import type { E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
 import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
 import { readySpec } from "@delacour/warden-core/batch/preset";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import type { Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
-import type { DeviceSetup } from "../batch/setup";
+import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
 import { type ClaimFlagValues, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -85,6 +86,20 @@ function onePlatform(affected: Affected): Result<Selection> {
 			`suite "${affected.suite.name}" runs on ios and android — pass --platform (or set e2e.<suite>.platform)`
 		);
 	return ok(only);
+}
+
+/** Suite settings the platform can't honour (undefined = fine). */
+function platformError(suite: E2eSuiteConfig, platform: Platform): string | undefined {
+	return suite.slim && platform !== "ios" ? "slim is iOS-only" : undefined;
+}
+
+/** The per-device prep a suite asks for (`slim`, then `setup`). */
+function deviceSetup(suite: E2eSuiteConfig): DeviceSetupSpec | undefined {
+	if (suite.setup === undefined && !suite.slim) return undefined;
+	return {
+		...(suite.setup !== undefined ? { command: suite.setup } : {}),
+		...(suite.slim ? { slim: true } : {}),
+	};
 }
 
 /** `runner` argv for one flow: `{flow}` = its id, `{flowPath}` = its file; batch expands the rest. */
@@ -188,10 +203,12 @@ async function e2e(
 		...(suite.config.env ? { env: suite.config.env } : {}),
 	});
 	if (!args.success) return fail(args.error);
+	const unsupported = platformError(suite.config, selection.platform);
+	if (unsupported) return fail(unsupported);
 	const { runner } = suite.config;
 	const session = await runSession(ctx, deps, args.data, [...byId.keys()], runner, {
 		name: "e2e",
-		...(suite.config.setup !== undefined ? { setup: { command: suite.config.setup } } : {}),
+		setup: deviceSetup(suite.config),
 		argvFor: (job) => {
 			const flow = byId.get(job);
 			return flow ? runnerArgv(runner, flow) : runner;

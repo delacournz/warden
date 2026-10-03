@@ -115,3 +115,5 @@ The same command runs locally or in a pre-push hook. Parsed imports are cached u
 ```
 
 The command gets `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>` / `WARDEN_PORTS`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH` and the suite `env`, and runs in the suite's `project` root. Each device's output is `logs/setup-<worker>.log`, next to the job logs. A device whose setup exits non-zero is dropped from the pool (its flows go to the remaining devices); if none is left the run fails and names the setup logs. `e2e-report.json` records every device under `setup` (`worker`, `udid`, `ok`, `exitCode`, `log`).
+
+`slim: true` (iOS) runs [`warden sim slim`](/docs/reference/cli#warden-sim-slim-udid) on each device first, to save RAM and CPU when several simulators run together. A slim failure only warns; the device still runs flows. The result is recorded under `setup[].slim` in `e2e-report.json`.

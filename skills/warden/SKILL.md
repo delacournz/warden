@@ -24,6 +24,7 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | a batch saved in `warden.config.json` `batches` | `warden batch <preset> [flags override it] [-- <cmd> overrides its cmd]` |
 | which e2e flows a change needs (git diff → import graph) | `warden affected [suite] --base main --explain` (`--json`, `--strict`) |
 | run only those flows on leased devices; exit 1 if a required one fails | `warden e2e [suite] --base main --count N` (`--dry-run` to preview). Suite fields `project` `ports` `env` `serve` `serveReady` `serveTimeout` `app` mirror a batch preset; `setup` runs once per device before its first flow (failing device is dropped; `logs/setup-<worker>.log`) |
+| fewer background daemons on a booted sim (RAM/CPU with many sims) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` (e2e suite: `"slim": true`) |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` |
 | duplicate a shut-down sim (fast, no first boot) | `warden clone <udid\|name> [--name x]` |
