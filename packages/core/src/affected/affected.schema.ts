@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { duration, portSpec } from "../batch/preset.schema";
 import { appOptionSchema } from "../builds/app-option.schema";
 
 const path = z.string().min(1);
@@ -26,6 +27,8 @@ export const e2eFlowSchema = z
  */
 export const e2eSuiteSchema = z
 	.object({
+		/** `projects[].name`: runner / serve / setup run in its root and `app` installs it (default: the config file's dir) */
+		project: z.string().min(1).optional(),
 		flowsDir: path,
 		/** per-flow command; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted */
 		runner: z.array(z.string()).min(1),
@@ -53,11 +56,32 @@ export const e2eSuiteSchema = z
 		profile: z.string().min(1).optional(),
 		/** install the project's app on each device first (`warden batch --app`); `{ clean: true }` = `--clean` */
 		app: appOptionSchema.optional(),
+		/** ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner */
+		ports: z.array(portSpec).optional(),
+		/** added to the serve, setup and runner env */
+		env: z.record(z.string(), z.string()).optional(),
+		/** `sh -c` once per run before the flows (own process group), killed at the end; `--serve` overrides */
+		serve: z.string().min(1).optional(),
+		/** wait for `http://…`, `tcp:PORT` or `file:PATH` before starting; `--serve-ready` overrides */
+		serveReady: z.string().min(1).optional(),
+		serveTimeout: duration.optional(),
+		/** `sh -c` once per leased device, after the app install and before its first flow; `{udid}` is substituted. A non-zero exit drops that device from the run */
+		setup: z.string().min(1).optional(),
+		/** iOS: switch off the simulator daemons flows never need on each device, before `setup` */
+		slim: z.boolean().optional(),
 		/** default `required` for flows that don't set it */
 		required: z.boolean().default(true),
 		flows: z.record(z.string().min(1), e2eFlowSchema).default({}),
 	})
-	.strict();
+	.strict()
+	.superRefine((suite, issue) => {
+		if (suite.serveReady !== undefined && suite.serve === undefined)
+			issue.addIssue({ code: "custom", message: "serveReady needs serve", path: ["serveReady"] });
+		if (suite.serveTimeout !== undefined && suite.serve === undefined)
+			issue.addIssue({ code: "custom", message: "serveTimeout needs serve", path: ["serveTimeout"] });
+		if (suite.slim === true && suite.platform === "android")
+			issue.addIssue({ code: "custom", message: "slim is iOS-only", path: ["slim"] });
+	});
 
 export type E2eFlowConfig = z.infer<typeof e2eFlowSchema>;
 export type E2eSuiteConfig = z.infer<typeof e2eSuiteSchema>;

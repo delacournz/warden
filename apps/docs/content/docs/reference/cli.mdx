@@ -126,7 +126,7 @@ Select like `warden affected`, then run the flows like `warden batch` — the su
 | `--dry-run` | select and explain, run nothing |
 | `--report <file>` | also write `e2e-report.json` here |
 
-The suite's `count`, `profile`, `retry`, `passes` and `app` apply unless the flag is passed. Nothing affected → exit 0 without claiming.
+The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. Nothing affected → exit 0 without claiming.
 
 ### `warden ls`
 

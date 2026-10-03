@@ -1,4 +1,4 @@
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { CONFIG_FILE, findWardenConfig } from "../builds/config";
 import type { Exec } from "../exec";
@@ -10,7 +10,15 @@ import { type ChangedFile, changedFiles } from "./git";
 import { createImportGraph } from "./graph";
 import { type Selection, selectFlows } from "./select";
 
-export type Suite = { name: string; config: E2eSuiteConfig; configDir: string };
+export type Suite = {
+	name: string;
+	config: E2eSuiteConfig;
+	configDir: string;
+	/** where the runner / serve / setup run: the suite's `project` root, else `configDir` */
+	cwd: string;
+	/** root of `project` (what `app` installs) */
+	projectRoot?: string;
+};
 
 export type AffectedInput = {
 	exec: Exec;
@@ -53,7 +61,10 @@ export async function findSuite(exec: Exec, cwd: string, name?: string): AsyncRe
 		);
 	const config = suites[pick];
 	if (!config) return err(`no e2e suite "${pick}" in ${CONFIG_FILE} (${names.join(", ") || "none"})`);
-	return ok({ name: pick, config, configDir: found.data.dir });
+	const { dir } = found.data;
+	const project = found.data.config.projects?.find((p) => p.name === config.project);
+	const projectRoot = project ? resolve(dir, project.root) : undefined;
+	return ok({ name: pick, config, configDir: dir, cwd: projectRoot ?? dir, ...(projectRoot ? { projectRoot } : {}) });
 }
 
 /** Repo-root-relative changes → relative to the config dir; files outside it are dropped. */

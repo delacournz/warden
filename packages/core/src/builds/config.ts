@@ -90,6 +90,15 @@ export const wardenConfigSchema = z
 				});
 			}
 		}
+		for (const [name, suite] of Object.entries(config.e2e ?? {})) {
+			if (suite.project !== undefined && !names.has(suite.project)) {
+				issue.addIssue({
+					code: "custom",
+					message: `no project "${suite.project}" in projects[]`,
+					path: ["e2e", name, "project"],
+				});
+			}
+		}
 	});
 
 export type ProjectConfig = z.infer<typeof projectConfigSchema>;

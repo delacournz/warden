@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import type { Affected } from "@delacour/warden-core/affected/affected";
-import type { E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
+import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
 import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
+import { readySpec } from "@delacour/warden-core/batch/preset";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import type { Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
@@ -57,14 +57,18 @@ export type E2eReport = {
 };
 
 /** The suite's run settings as option values (CLI flags passed explicitly win). */
-function suiteOpts(suite: E2eSuiteConfig, opts: E2eOpts, passed: ReadonlySet<string>): E2eOpts {
+function suiteOpts({ config: suite, cwd, projectRoot }: Suite, opts: E2eOpts, passed: ReadonlySet<string>): E2eOpts {
 	const app = appSwitches(suite.app);
 	const fromSuite: Partial<E2eOpts> = {
 		retry: String(suite.retry),
 		passes: String(suite.passes),
 		...(suite.count !== undefined ? { count: String(suite.count) } : {}),
 		...(suite.profile !== undefined ? { profile: suite.profile } : {}),
-		...(app.app ? { app: true as const } : {}),
+		...(suite.ports ? { port: suite.ports } : {}),
+		...(suite.serve !== undefined ? { serve: suite.serve } : {}),
+		...(suite.serveReady !== undefined ? { serveReady: readySpec(suite.serveReady, cwd) } : {}),
+		...(suite.serveTimeout !== undefined ? { serveTimeout: suite.serveTimeout } : {}),
+		...(app.app ? { app: true as const, ...(projectRoot ? { project: projectRoot } : {}) } : {}),
 		...(app.clean ? { clean: true as const } : {}),
 	};
 	const cli = Object.fromEntries(Object.entries(opts).filter(([key]) => passed.has(key)));
@@ -173,11 +177,12 @@ async function e2e(
 		return 0;
 	}
 	// --json is the e2e report here, not batch.json
-	const { json: _json, ...batchOpts } = suiteOpts(suite.config, opts, passed);
+	const { json: _json, ...batchOpts } = suiteOpts(suite, opts, passed);
 	const byId = new Map(flows.map((f) => [f.id, f]));
 	const args = parseBatchArgs(selection.platform, batchOpts, ctx.cwd, {
 		jobs: { kind: "list", jobs: [...byId.keys()] },
-		cwd: suite.configDir,
+		cwd: suite.cwd,
+		...(suite.config.env ? { env: suite.config.env } : {}),
 	});
 	if (!args.success) return fail(args.error);
 	const { runner } = suite.config;

@@ -60,6 +60,27 @@ describe("parseWardenConfig", () => {
 		expect(suite?.flows.a).toEqual({ entries: ["x.tsx"], paths: [] });
 	});
 
+	test("an e2e suite's project must exist; serveReady / serveTimeout need serve; slim is iOS-only", () => {
+		const suite = { flowsDir: "flows", runner: ["run"] };
+		const bad = (extra: Record<string, unknown>, projects = true) =>
+			parseWardenConfig({
+				...(projects ? { projects: [{ name: "app", bundleId: { ios: "x" } }] } : {}),
+				e2e: { s: { ...suite, ...extra } },
+			});
+		expect(bad({ project: "app" }).success).toBe(true);
+		const missing = bad({ project: "nope" });
+		expect(missing.success).toBe(false);
+		if (!missing.success) expect(missing.error).toContain('no project "nope"');
+		expect(bad({ serveReady: "tcp:1" }).success).toBe(false);
+		expect(bad({ serveTimeout: "1m" }).success).toBe(false);
+		expect(
+			bad({ serve: "x", serveReady: "tcp:1", serveTimeout: "1m", ports: ["8091:5"], env: { A: "1" } }).success
+		).toBe(true);
+		expect(bad({ ports: ["nope"] }).success).toBe(false);
+		expect(bad({ slim: true, platform: "android" }).success).toBe(false);
+		expect(bad({ slim: true, platform: "ios", setup: "echo {udid}" }).success).toBe(true);
+	});
+
 	test("rejects a bad e2e suite", () => {
 		const res = parseWardenConfig({ e2e: { mobile: { flowsDir: "flows", runner: [] } } });
 		expect(res.success).toBe(false);

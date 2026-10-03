@@ -3,12 +3,12 @@ import { appOptionSchema } from "../builds/app-option.schema";
 import { parseDuration } from "../duration";
 import { parsePortSpec } from "../ports";
 
-const duration = z
+export const duration = z
 	.string()
 	.min(1)
 	.refine((v) => parseDuration(v).success, { message: "invalid duration (use e.g. 30s, 10m, 2h)" });
 
-const portSpec = z
+export const portSpec = z
 	.string()
 	.min(1)
 	.refine((v) => parsePortSpec(v).success, { message: "invalid port spec (use <from>[:<span>], e.g. 8091:20)" });

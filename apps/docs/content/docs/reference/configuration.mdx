@@ -114,8 +114,9 @@ The preset's cwd is its project's root, or the config file's directory when ther
 
 <TypeTable
   type={{
+    project: { type: "string", description: "`projects[].name`: the runner, `serve` and `setup` run in its root, relative `serveReady` `file:` paths resolve against it, and `app` installs that project's build. Needed when the config has several projects and warden runs from the repo root." },
     flowsDir: { type: "string", description: "Required. Directory of flow YAML files (searched recursively; dot dirs and `__baselines__` skipped)." },
-    runner: { type: "string[]", description: "Required. Per-flow argv; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted. Runs in the config file's directory." },
+    runner: { type: "string[]", description: "Required. Per-flow argv; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted. Runs in the suite's `project` root, else the config file's directory." },
     platform: { type: '"ios" | "android"', description: "Default platform. Without it `warden affected` reports both and `warden e2e` needs `--platform`." },
     base: { type: "string", description: "Ref changes are measured against (merge-base with HEAD).", default: '"main"' },
     tsconfig: { type: "string", description: "tsconfig for files with no `tsconfig.json` between them and the config file." },
@@ -131,6 +132,11 @@ The preset's cwd is its project's root, or the config file's directory when ther
     count: { type: "number", description: "Devices to claim." },
     profile: { type: "string", description: "Device profile." },
     app: { type: "boolean | { clean?: boolean }", description: "Ensure the app on every device first. `{ clean: true }` also uninstalls it first (`--clean`)." },
+    ports: { type: "string[]", description: "Ports leased for the run (`<from>[:<span>]`, like `--port`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner." },
+    env: { type: "Record<string, string>", description: "Added to the serve, setup and runner env." },
+    serve: { type: "string", description: "`sh -c` once per run before the flows, in its own process group; killed at the end. `--serve` overrides." },
+    serveReady: { type: "string", description: "Wait for `http://…`, `tcp:PORT` or `file:PATH` (relative to the project root) before starting. Needs `serve`." },
+    serveTimeout: { type: "string", description: "Give up waiting for `serveReady` after this long (`30s`, `10m`).", default: '"10m"' },
     flows: { type: "Record<string, Flow>", description: "Per flow id or glob; see below." },
   }}
 />

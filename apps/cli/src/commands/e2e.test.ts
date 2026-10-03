@@ -22,9 +22,9 @@ afterEach(() => {
 });
 
 /** Swap the fixture for one whose suite has `overrides`. */
-async function resuite(overrides: Record<string, unknown>): Promise<void> {
+async function resuite(overrides: Record<string, unknown>, config: Record<string, unknown> = {}): Promise<void> {
 	rmSync(dir, { recursive: true, force: true });
-	({ dir, write } = await makeSuiteRepo(overrides));
+	({ dir, write } = await makeSuiteRepo(overrides, config));
 }
 
 function setup(argv: string[]): TestContext {
@@ -133,5 +133,43 @@ describe("warden e2e", () => {
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
 		expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("pass --platform");
+	});
+
+	test("suite project: runner + serve run in the project root and its app is installed", async () => {
+		await resuite(
+			{ project: "app", app: true, serve: "bun api", serveReady: "file:ready.txt" },
+			{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] }
+		);
+		const c = setup(["--files", "src/chat/lazy.tsx"]);
+		const h = harness();
+		const projects: Array<string | undefined> = [];
+		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+			projects.push(opts.project);
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const root = join(dir, "packages/ui");
+		expect(projects).toEqual([root]);
+		expect(h.jobs()[0]?.opts.cwd).toBe(root);
+		expect(h.serve()?.opts.cwd).toBe(root);
+		expect(h.probes).toEqual([{ kind: "file", path: join(root, "ready.txt") }]);
+	});
+
+	test("suite serve / ports / env reach serve and every runner; a CLI flag overrides serve", async () => {
+		await resuite({ serve: "bun api", serveReady: "tcp:9000", ports: ["8091:5"], env: { API: "http://x" } });
+		const c = setup(["--files", "src/chat/lazy.tsx"]);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.serve()?.cmd).toEqual(["sh", "-c", "bun api"]);
+		expect(h.probes).toEqual([{ kind: "tcp", host: "127.0.0.1", port: 9000 }]);
+		for (const s of [h.serve(), ...h.jobs()]) {
+			expect(s?.opts.env.WARDEN_PORT_0).toBe("8091");
+			expect(s?.opts.env.WARDEN_PORTS).toBe("8091");
+			expect(s?.opts.env.API).toBe("http://x");
+		}
+		c.argv = ["--files", "src/chat/lazy.tsx", "--serve", "bun other"];
+		const h2 = harness();
+		await createE2eCommand(h2.deps).run(c);
+		expect(h2.serve()?.cmd).toEqual(["sh", "-c", "bun other"]);
 	});
 });

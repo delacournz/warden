@@ -54,7 +54,9 @@ export function makeFixtureRepo(): { dir: string; write: (path: string, text: st
 
 /** Two flows + a `mobile` suite mapping them to screens, committed on `main`, checked out on `feature`. */
 export async function makeSuiteRepo(
-	suite: Record<string, unknown> = {}
+	suite: Record<string, unknown> = {},
+	/** extra top-level `warden.config.json` keys (e.g. `projects`) */
+	config: Record<string, unknown> = {}
 ): Promise<{ dir: string; write: (path: string, text: string) => void }> {
 	const repo = makeFixtureRepo();
 	const { dir, write } = repo;
@@ -64,6 +66,7 @@ export async function makeSuiteRepo(
 	write(
 		"warden.config.json",
 		JSON.stringify({
+			...config,
 			e2e: {
 				mobile: {
 					flowsDir: "flows",

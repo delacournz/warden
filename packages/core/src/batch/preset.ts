@@ -55,7 +55,8 @@ function jobsSource(preset: BatchPresetConfig, cwd: string): BatchJobsSource | u
 	return from === "-" ? { kind: "stdin" } : { kind: "file", path: absolute(cwd, from) };
 }
 
-function readySpec(value: string, cwd: string): string {
+/** `file:` probes made absolute against `cwd`; other probes unchanged. */
+export function readySpec(value: string, cwd: string): string {
 	return value.startsWith("file:") ? `file:${absolute(cwd, value.slice("file:".length))}` : value;
 }
 
