@@ -26,7 +26,7 @@ Optional, at the repo root. Without it, warden detects a single Expo project fro
     bundleId: { type: "{ ios?: string; android?: string }", description: "Bundle id / package. Required for a dynamic app.config." },
     "fingerprint.command": { type: "string", description: "Command that prints the native fingerprint. `{platform}` is substituted. Default: `@expo/fingerprint`." },
     "fingerprint.include": { type: '"native" | "native+js"', description: "What the cache / install key covers. `native+js` adds a content hash of `jsInputs`, for Release builds that embed the JS bundle.", default: '"native"' },
-    "fingerprint.jsInputs": { type: "string[]", description: "Required with `native+js`. Globs, relative to the project root, of the JS sources. Only git-tracked and untracked-not-ignored files count." },
+    "fingerprint.jsInputs": { type: "string[]", description: "Required with `native+js`. Globs, relative to the project root, of the JS sources. A glob starting with `../` reaches outside the project (a workspace package the bundle embeds, e.g. `../../../packages/engine/src/**`). Only git-tracked and untracked-not-ignored files count." },
     "eas.profile": { type: "string", description: "EAS build profile to look up builds under." },
     "eas.workflow": { type: "string", description: "EAS workflow file to trigger on a miss." },
     "eas.trigger": { type: "boolean", description: "Trigger the workflow when no EAS build matches.", default: "false" },

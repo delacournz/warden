@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 
@@ -31,21 +31,56 @@ export type JsInputsDeps = {
 
 const sha256 = (data: Uint8Array | string) => createHash("sha256").update(data).digest("hex");
 
+const GLOB_CHARS = /[*?[{]/;
+
+/** A `../…` glob split at its first glob segment: list files under `dir`, match the rest against `pattern`. */
+function outsideGlob(root: string, glob: string): { dir: string; pattern: string } {
+	const segments = resolve(root, glob).split("/");
+	const first = segments.findIndex((segment) => GLOB_CHARS.test(segment));
+	if (first === -1) return { dir: dirname(segments.join("/")), pattern: segments.at(-1) ?? "" };
+	return { dir: segments.slice(0, first).join("/") || "/", pattern: segments.slice(first).join("/") };
+}
+
+/** Tracked + untracked-not-ignored files under `dir` (relative to it). */
+async function listFiles(exec: Exec, dir: string): AsyncResult<string[]> {
+	const argv = ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."];
+	const listed = await exec(argv, { cwd: dir });
+	if (listed.exitCode !== 0) return err(`could not list JS inputs: ${execError(argv, listed)}`);
+	return ok([...new Set(listed.stdout.split("\0").filter(Boolean))]);
+}
+
+/** Project-root-relative paths of every file `globs` match: plain globs under the root, `../` globs wherever they point. */
+async function matchedInputs(deps: JsInputsDeps): AsyncResult<string[]> {
+	const inside = deps.jsInputs.filter((g) => !g.startsWith("../"));
+	const matched = new Set<string>();
+	if (inside.length > 0) {
+		const all = await listFiles(deps.exec, deps.root);
+		if (!all.success) return all;
+		for (const path of matchJsInputs(all.data, inside)) matched.add(path);
+	}
+	for (const glob of deps.jsInputs.filter((g) => g.startsWith("../"))) {
+		const { dir, pattern } = outsideGlob(deps.root, glob);
+		const all = await listFiles(deps.exec, dir);
+		if (!all.success) return all;
+		for (const path of matchJsInputs(all.data, [pattern])) matched.add(relative(deps.root, join(dir, path)));
+	}
+	return ok([...matched].sort());
+}
+
 /**
- * Content hash of the project's JS sources: every tracked or untracked-not-ignored file under the
- * root that matches `jsInputs`, hashed as sorted `path NUL sha256(content)` lines — so renames count
- * and ignored build output never does. Errors when nothing matches (the globs are wrong; an empty hash
- * would silently never change).
+ * Content hash of the project's JS sources: every tracked or untracked-not-ignored file that
+ * matches `jsInputs`, hashed as sorted `path NUL sha256(content)` lines — so renames count and
+ * ignored build output never does. Globs are relative to the project root; a glob starting with
+ * `../` reaches outside it (a workspace package the bundle embeds) and its files are keyed by their
+ * root-relative path, so the hash is the same in every checkout. Errors when nothing matches (the
+ * globs are wrong; an empty hash would silently never change).
  */
 export async function jsInputsHash(deps: JsInputsDeps): AsyncResult<string> {
-	const argv = ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."];
-	const listed = await deps.exec(argv, { cwd: deps.root });
-	if (listed.exitCode !== 0) return err(`could not list JS inputs: ${execError(argv, listed)}`);
-	const all = [...new Set(listed.stdout.split("\0").filter(Boolean))];
-	const matched = matchJsInputs(all, deps.jsInputs).sort();
+	const matched = await matchedInputs(deps);
+	if (!matched.success) return matched;
 	const read = deps.readFile ?? readFileOrUndefined;
 	const lines: string[] = [];
-	for (const path of matched) {
+	for (const path of matched.data) {
 		const bytes = await read(join(deps.root, path));
 		if (bytes !== undefined) lines.push(`${path}\0${sha256(bytes)}`);
 	}

@@ -92,3 +92,57 @@ describe("combineKey", () => {
 		expect(k).toMatch(/^[0-9a-f]{40}$/);
 	});
 });
+
+describe("jsInputsHash with ../ globs", () => {
+	/** two git dirs: the project and a workspace package beside it; `ls-files` answers per cwd */
+	function twoDirs(engine: Record<string, string>, app: Record<string, string> = { "src/a.ts": "a" }) {
+		const calls: string[] = [];
+		const exec: Exec = async (_cmd, opts) => {
+			calls.push(opts?.cwd ?? "");
+			const files = opts?.cwd === "/repo/app" ? app : opts?.cwd === "/repo/packages/engine/src" ? engine : undefined;
+			return files
+				? { exitCode: 0, stdout: Object.keys(files).join("\0"), stderr: "" }
+				: { exitCode: 128, stdout: "", stderr: "not a git repo" };
+		};
+		const readFile = async (path: string): Promise<Uint8Array | undefined> => {
+			const body = path.startsWith("/repo/packages/engine/src/")
+				? engine[path.replace("/repo/packages/engine/src/", "")]
+				: app[path.replace("/repo/app/", "")];
+			return body === undefined ? undefined : new TextEncoder().encode(body);
+		};
+		return { exec, readFile, calls };
+	}
+	const globs = ["src/**", "../packages/engine/src/**"];
+	const run = (h: ReturnType<typeof twoDirs>) =>
+		jsInputsHash({ exec: h.exec, readFile: h.readFile, root: "/repo/app", jsInputs: globs });
+
+	test("files outside the root are listed from where they live and move the hash", async () => {
+		const a = twoDirs({ "x.ts": "1" });
+		const b = twoDirs({ "x.ts": "2" });
+		const ra = await run(a);
+		expect(ra.success).toBe(true);
+		expect(a.calls).toEqual(["/repo/app", "/repo/packages/engine/src"]);
+		expect(await run(a)).toEqual(ra);
+		expect(await run(b)).not.toEqual(ra);
+	});
+
+	test("only ../ globs: the project root isn't listed at all", async () => {
+		const h = twoDirs({ "x.ts": "1" });
+		const res = await jsInputsHash({
+			exec: h.exec,
+			readFile: h.readFile,
+			root: "/repo/app",
+			jsInputs: ["../packages/engine/src/**"],
+		});
+		expect(res.success).toBe(true);
+		expect(h.calls).toEqual(["/repo/packages/engine/src"]);
+	});
+
+	test("a ../ glob into a directory git can't list is an error", async () => {
+		const h = twoDirs({ "x.ts": "1" });
+		const res = await jsInputsHash({ exec: h.exec, root: "/repo/app", jsInputs: ["../nope/**"] });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("could not list JS inputs");
+		expect(h.calls).toEqual(["/repo/nope"]);
+	});
+});

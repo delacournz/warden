@@ -35,6 +35,7 @@ The cache and install key becomes `sha256(native fingerprint + a content hash of
 
 Trade-offs:
 
+- **Workspace packages count too.** A `../` glob (`"../../../packages/engine/src/**"`) hashes files outside the project root; they are listed with `git ls-files` from where they live and keyed by their root-relative path, so the key is identical in every checkout.
 - **Any matched edit is a rebuild.** A Release build is minutes, so keep `jsInputs` to what the bundle really reads (not tests, docs or e2e flows).
 - **EAS is looked up by commit, not fingerprint.** EAS indexes builds by the native hash, which can't see JS. With `native+js`, warden asks for a build of `HEAD` (`eas build:list --git-commit-hash`) and only on a clean working tree; otherwise EAS is skipped and the build is local. `eas.trigger` is ignored.
 - `warden app fingerprint --json` prints the key under `fingerprints`, and the native hash under `native`.
