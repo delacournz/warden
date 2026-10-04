@@ -23,12 +23,17 @@ warden app ensure ios --udid <udid> --json
 
 A Release build embeds its JS bundle, but the native fingerprint doesn't change when only JS does — so a JS edit would count as "already installed" and keep running stale code. Opt in to a JS-aware key:
 
-```json title="warden.config.json"
-{ "projects": [{
-  "name": "app", "bundleId": { "ios": "com.example.app" },
-  "build": { "configuration": "Release" },
-  "fingerprint": { "include": "native+js", "jsInputs": ["src/**", "assets/**", "app.json"] }
-}] }
+```ts title="warden.config.ts"
+import { defineConfig } from "@delacour/warden/config";
+
+export default defineConfig({
+  projects: [{
+    name: "app",
+    bundleId: { ios: "com.example.app" },
+    build: { configuration: "Release" },
+    fingerprint: { include: "native+js", jsInputs: ["src/**", "assets/**", "app.json"] }
+  }]
+});
 ```
 
 The cache and install key becomes `sha256(native fingerprint + a content hash of the matching files)`. The files are git-tracked and untracked-not-ignored ones under the project root, hashed with their paths, so a rename counts and build output never does. Globs that match nothing are an error. The post-build check uses the same key.
@@ -44,7 +49,7 @@ A build lock stops two agents from downloading or building the same hash twice.
 
 ## Project detection
 
-With no config, warden detects a single project from `app.json` / `app.config.*` (pass `--bundle-id` for a dynamic config). For monorepos or custom commands, add a [`warden.config.json`](/docs/reference/configuration).
+With no config, warden detects a single project from `app.json` / `app.config.*` (pass `--bundle-id` for a dynamic config). For monorepos or custom commands, add a [`warden.config.ts`](/docs/reference/configuration).
 
 ## Managing the cache
 

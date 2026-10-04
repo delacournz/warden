@@ -270,7 +270,7 @@ export function createE2eCommand(deps: BatchDeps): Command {
 		register: (cmd, ctx, done) => {
 			withBatchOptions(
 				withLeaseOptions(
-					withClaimOptions(cmd.argument("[suite]", "e2e.<suite> in warden.config.json (optional with one suite)"))
+					withClaimOptions(cmd.argument("[suite]", "e2e.<suite> in warden.config.ts (optional with one suite)"))
 				)
 			)
 				.option("--base <ref>", "compare against merge-base with this ref (default: the suite's base)")

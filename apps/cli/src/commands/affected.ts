@@ -155,7 +155,7 @@ export const affectedCommand = defineCommand({
 	summary: "list the e2e flows a change needs (git diff vs base → import graph → flows)",
 	register: (cmd, ctx, done) => {
 		cmd
-			.argument("[suite]", "e2e.<suite> in warden.config.json (optional with one suite)")
+			.argument("[suite]", "e2e.<suite> in warden.config.ts (optional with one suite)")
 			.option("--base <ref>", "compare against merge-base with this ref (default: the suite's base, main)")
 			.option("--platform <platform>", "ios | android (default: the suite's platform, else both)")
 			.option("--files <list>", "comma-separated changed files (relative to cwd) instead of git")

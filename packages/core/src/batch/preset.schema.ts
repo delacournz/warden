@@ -16,7 +16,7 @@ export const portSpec = z
 /** `jobsFrom`: a file (relative to the preset's cwd), `-` for stdin, or `{ command }` whose stdout lines are the jobs. */
 const jobsFromSchema = z.union([z.string().min(1), z.object({ command: z.string().min(1) }).strict()]);
 
-/** `batches.<name>` in `warden.config.json`: a saved `warden batch` invocation. */
+/** `batches.<name>` in `warden.config.ts`: a saved `warden batch` invocation. */
 export const batchPresetSchema = z
 	.object({
 		/** `projects[].name`: serve / jobs run in its root and `app` uses it */

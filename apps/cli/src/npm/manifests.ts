@@ -28,6 +28,7 @@ export type MainManifest = RepoLinks & {
 	license: string;
 	keywords: string[];
 	bin: { warden: string };
+	exports: Record<string, string | { types: string; default: string }>;
 	files: string[];
 	engines: { node: string };
 	optionalDependencies: Record<string, string>;
@@ -36,6 +37,9 @@ export type MainManifest = RepoLinks & {
 
 /** Path of the bundled shim inside the main package (also its `bin`). */
 export const SHIM_PATH = "bin/warden.mjs";
+/** `@delacour/warden/config` (`defineConfig` for `warden.config.ts`) inside the main package. */
+export const CONFIG_ENTRY_JS = "config/index.mjs";
+export const CONFIG_ENTRY_DTS = "config/index.d.ts";
 /** Path of the compiled binary inside a platform package. */
 export const BINARY_PATH = "bin/warden";
 /** Copied from the repo root into every package. */
@@ -68,8 +72,8 @@ export function platformManifest(target: ReleaseTarget, meta: PackageMeta): Plat
 }
 
 /**
- * `@delacour/warden`: a JS shim bin plus every platform package as an exact-version optional
- * dependency. The package manager installs only the one matching this machine's os/cpu.
+ * `@delacour/warden`: a JS shim bin, the `./config` entry (`defineConfig` + types) and every platform
+ * package as an exact-version optional dependency. The package manager installs only the one matching this machine's os/cpu.
  */
 export function mainManifest(meta: PackageMeta): MainManifest {
 	return {
@@ -80,7 +84,11 @@ export function mainManifest(meta: PackageMeta): MainManifest {
 		...repoLinks(meta.repository),
 		keywords: ["ios-simulator", "android-emulator", "leasing", "agents", "e2e", "cli"],
 		bin: { warden: SHIM_PATH },
-		files: [SHIM_PATH, "README.md", LICENSE_FILE],
+		exports: {
+			"./config": { types: `./${CONFIG_ENTRY_DTS}`, default: `./${CONFIG_ENTRY_JS}` },
+			"./package.json": "./package.json",
+		},
+		files: [SHIM_PATH, CONFIG_ENTRY_JS, CONFIG_ENTRY_DTS, "README.md", LICENSE_FILE],
 		engines: { node: ">=18" },
 		optionalDependencies: Object.fromEntries(
 			RELEASE_TARGETS.map((target) => [platformPackageName(target), meta.version])

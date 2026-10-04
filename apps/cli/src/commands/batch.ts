@@ -791,7 +791,7 @@ export function withBatchOptions<Args extends unknown[], Opts extends OptionValu
 
 /**
  * `warden batch [platform|preset] [claim options] (--jobs …|--jobs-from …) [--serve …] [--record dir] [-- <cmd…>]`.
- * A preset is `batches.<name>` in `warden.config.json`; flags passed alongside it override it.
+ * A preset is `batches.<name>` in `warden.config.ts`; flags passed alongside it override it.
  */
 export function createBatchCommand(deps: BatchDeps): Command {
 	return defineCommand({
@@ -804,7 +804,7 @@ export function createBatchCommand(deps: BatchDeps): Command {
 						cmd
 							.argument(
 								"[platform]",
-								"ios | android (asked for when omitted in a terminal), or a warden.config.json batches preset"
+								"ios | android (asked for when omitted in a terminal), or a warden.config.ts batches preset"
 							)
 							.argument("[cmd...]", "per-job command after --; {job} {udid} {worker} {seq} are substituted")
 					)
@@ -814,7 +814,7 @@ export function createBatchCommand(deps: BatchDeps): Command {
 				.option("--jobs-from <file>", "one job per line from a file, or - for stdin")
 				.addHelpText(
 					"after",
-					"\nExamples:\n  warden batch ios --count 3 --jobs a,b,c,d -- bun e2e --flow {job} --device {udid}\n  warden batch e2e --count 2    # batches.e2e from warden.config.json, --count overridden"
+					"\nExamples:\n  warden batch ios --count 3 --jobs a,b,c,d -- bun e2e --flow {job} --device {udid}\n  warden batch e2e --count 2    # batches.e2e from warden.config.ts, --count overridden"
 				)
 				.action(async (platform, rest, opts, command) => {
 					const passed = new Set(Object.keys(opts).filter((key) => command.getOptionValueSource(key) === "cli"));

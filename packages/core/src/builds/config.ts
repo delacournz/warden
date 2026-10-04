@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { e2eSuiteSchema } from "../affected/affected.schema";
@@ -11,8 +11,20 @@ import {
 	defaultBuildCommand,
 	LEGACY_CACHE_DIRS,
 } from "./builds.defaults";
+import type { WardenConfigContext } from "./define-config";
 
-export const CONFIG_FILE = "warden.config.json";
+/** The preferred config file, named in hints. */
+export const CONFIG_FILE = "warden.config.ts";
+/** Still read, so JSON configs keep working. */
+export const JSON_CONFIG_FILE = "warden.config.json";
+/** Every file name `findWardenConfig` looks for, in preference order; at most one may exist per dir. */
+export const CONFIG_FILES = [
+	CONFIG_FILE,
+	"warden.config.mts",
+	"warden.config.js",
+	"warden.config.mjs",
+	JSON_CONFIG_FILE,
+];
 
 const perPlatform = z.object({ ios: z.string().min(1).optional(), android: z.string().min(1).optional() }).strict();
 
@@ -101,8 +113,9 @@ export const wardenConfigSchema = z
 		}
 	});
 
-export type ProjectConfig = z.infer<typeof projectConfigSchema>;
-export type WardenConfig = z.infer<typeof wardenConfigSchema>;
+/** Parsed (defaults applied). The documented input types live in `define-config.ts`. */
+export type ParsedProjectConfig = z.infer<typeof projectConfigSchema>;
+export type ParsedWardenConfig = z.infer<typeof wardenConfigSchema>;
 
 export type EasSettings = { profile: string; workflow?: string; trigger: boolean };
 
@@ -124,11 +137,12 @@ export type Project = {
 	origin: "config" | "app.json" | "app.config";
 };
 
-export function parseWardenConfig(raw: unknown): Result<WardenConfig> {
+/** Validate a config value; `file` names it in the error. */
+export function parseWardenConfig(raw: unknown, file: string = CONFIG_FILE): Result<ParsedWardenConfig> {
 	const parsed = wardenConfigSchema.safeParse(raw);
 	if (parsed.success) return ok(parsed.data);
 	const issues = parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
-	return err(`invalid ${CONFIG_FILE}: ${issues}`);
+	return err(`invalid ${file}: ${issues}`);
 }
 
 function expandHome(path: string, home: string | undefined): string {
@@ -148,7 +162,7 @@ function within(dir: string, target: string): boolean {
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function fromConfig(entry: ProjectConfig, configDir: string, env: Record<string, string | undefined>): Project {
+function fromConfig(entry: ParsedProjectConfig, configDir: string, env: Record<string, string | undefined>): Project {
 	const root = resolve(configDir, entry.root);
 	const configuration = entry.build?.configuration ?? "Debug";
 	const project: Project = {
@@ -257,30 +271,72 @@ export type LoadProjectInput = {
 	bundleId?: Project["bundleId"];
 };
 
-/** The nearest `warden.config.json` walking up from `start` (to `stopAt`), parsed; undefined = none. */
-export function findWardenConfig(
-	start: string,
-	stopAt?: string
-): Result<{ dir: string; config: WardenConfig } | undefined> {
-	const dir = ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined).find((d) =>
-		existsSync(join(d, CONFIG_FILE))
-	);
-	if (dir === undefined) return ok(undefined);
-	const raw = readJson(join(dir, CONFIG_FILE));
-	if (!raw.success) return raw;
-	const config = parseWardenConfig(raw.data);
-	return config.success ? ok({ dir, config: config.data }) : config;
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
 }
 
 /**
- * Find the project for `start`: nearest `warden.config.json` walking up (to `stopAt`), else the
+ * Run a `warden.config.{ts,mts,js,mjs}` module (Bun transpiles it; type-only imports are erased) and
+ * return its config: the default export, called with `context` when it is a function. Sync only, so
+ * every caller stays sync.
+ */
+function readModule(path: string, context: WardenConfigContext): Result<unknown> {
+	let mod: unknown;
+	try {
+		delete require.cache[path];
+		mod = require(path);
+	} catch (error) {
+		return err(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	const esm = extname(path) !== ".js";
+	if (esm && !(isRecord(mod) && "default" in mod)) return err(`${path}: must \`export default\` a config`);
+	let value = isRecord(mod) && "default" in mod ? mod.default : mod;
+	if (typeof value === "function") {
+		try {
+			value = value(context);
+		} catch (error) {
+			return err(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+	if (value instanceof Promise) {
+		value.catch(() => undefined);
+		return err(`${path}: the config must be sync (no async function / Promise)`);
+	}
+	return ok(value);
+}
+
+/**
+ * The nearest `warden.config.{ts,mts,js,mjs,json}` walking up from `start` (to `stopAt`), parsed;
+ * undefined = none. A config function gets `{ configDir, env }`.
+ */
+export function findWardenConfig(
+	start: string,
+	stopAt?: string,
+	env: Record<string, string | undefined> = process.env
+): Result<{ dir: string; config: ParsedWardenConfig } | undefined> {
+	for (const dir of ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined)) {
+		const files = CONFIG_FILES.filter((f) => existsSync(join(dir, f)));
+		const [file, ...extra] = files;
+		if (file === undefined) continue;
+		if (extra.length > 0) return err(`several warden configs in ${dir} (${files.join(", ")}) — keep one`);
+		const path = join(dir, file);
+		const raw = file === JSON_CONFIG_FILE ? readJson(path) : readModule(path, { configDir: dir, env });
+		if (!raw.success) return raw;
+		const config = parseWardenConfig(raw.data, basename(path));
+		return config.success ? ok({ dir, config: config.data }) : config;
+	}
+	return ok(undefined);
+}
+
+/**
+ * Find the project for `start`: nearest warden config walking up (to `stopAt`), else the
  * nearest Expo app (`app.json` / `app.config.*`). `--bundle-id` overrides the configured id.
  */
 export function loadProject(input: LoadProjectInput): Result<Project> {
 	const start = resolve(input.start);
 	const override = input.bundleId ?? {};
 	const dirs = ancestors(start, input.stopAt ? resolve(input.stopAt) : undefined);
-	const found = findWardenConfig(start, input.stopAt);
+	const found = findWardenConfig(start, input.stopAt, input.env);
 	if (!found.success) return found;
 	const projects = found.data?.config.projects;
 	if (found.data && projects) {
@@ -296,7 +352,7 @@ export function loadProject(input: LoadProjectInput): Result<Project> {
 		const detected = autoDetect(dir, input.env, override);
 		if (detected) return detected;
 	}
-	return err(`no ${CONFIG_FILE}, app.json or app.config.* found from ${start}`);
+	return err(`no ${CONFIG_FILE} (or ${JSON_CONFIG_FILE}), app.json or app.config.* found from ${start}`);
 }
 
 /** `start` and its parents, up to and including `stop` (or the filesystem root). */

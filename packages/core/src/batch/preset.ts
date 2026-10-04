@@ -98,7 +98,7 @@ export type FindBatchPresetInput = {
 };
 
 /**
- * Look `name` up in the nearest `warden.config.json` (walking up from `start`). `preset` is
+ * Look `name` up in the nearest warden config (walking up from `start`). `preset` is
  * undefined when there is no config or no such preset; `names` lists the presets that exist.
  */
 export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: BatchPreset; names: string[] }> {

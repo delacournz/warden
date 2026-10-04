@@ -17,7 +17,7 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 | `ports.ts` | `parsePortSpec`, `isPortFree` (bind probe), `claimPorts` (probe outside txn, lease inside), `releasePorts` |
 | `duration.ts` / `config.defaults.ts` | `10m`-style durations; TTL 30m, idle 20m, heartbeat 30s, default profiles |
 | `providers/*.ts` | `DeviceProvider` impls (`ios`, `android`) on simctl / adb / emulator; Android console ports leased 5554–5584 |
-| `builds/*.ts` | app build cache: `config` (zod `warden.config.json`), `project-key`, `fingerprint`, `cache`, `eas`, `local`, `install`, `lock` (build lease), `resolve` (5-step resolver), `prune`, `ensure` |
+| `builds/*.ts` | app build cache: `config` (zod `warden.config.{ts,json}` loader), `define-config` (public documented types + `defineConfig`, published as `@delacour/warden/config`), `project-key`, `fingerprint`, `cache`, `eas`, `local`, `install`, `lock` (build lease), `resolve` (5-step resolver), `prune`, `ensure` |
 | `sims/*.ts` | `warden sims audit\|prune\|delete`, one path: `list` (the only `simctl list devices -j` parser, `SimctlSim`, du fallback), `rules` (pure `judgeSims`: owner / blockers / reasons / verdict / budget, `canPrune` · `canDelete` · `isSuggested`, `describeReasons`), `delete` (`deleteSims`: lease under txn → shutdown → delete → forget → release), `audit` (totals), `prune` (list + judge + delete), `runtimes` (report-only), `sims.defaults` (idle 7d / stale 30d) |
 | `golden/*.ts` | golden iOS images: `golden` (key, names, staleness plan, migration/settle parsers, pure), `ios-golden` (build under `golden:ios` lease, clone, prune) |
 | `*.race-fixture.ts` | child-process fixtures for cross-process race tests |

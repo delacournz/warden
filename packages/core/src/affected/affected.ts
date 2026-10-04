@@ -47,7 +47,7 @@ export type Affected = {
 	warnings: string[];
 };
 
-/** `e2e.<name>` from the nearest `warden.config.json` (walking up to the git root). */
+/** `e2e.<name>` from the nearest warden config (walking up to the git root). */
 export async function findSuite(exec: Exec, cwd: string, name?: string): AsyncResult<Suite> {
 	const top = await exec(["git", "rev-parse", "--show-toplevel"], { cwd });
 	const stopAt = top.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : undefined;

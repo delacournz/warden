@@ -22,7 +22,7 @@ export const e2eFlowSchema = z
 	.strict();
 
 /**
- * `e2e.<suite>` in `warden.config.json`: flows under `flowsDir`, how they map to source, how to run one.
+ * `e2e.<suite>` in `warden.config.ts`: flows under `flowsDir`, how they map to source, how to run one.
  * Paths and globs are relative to the config file's directory.
  */
 export const e2eSuiteSchema = z
