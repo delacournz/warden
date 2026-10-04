@@ -127,6 +127,23 @@ describe("claimDevices", () => {
 		expect(result.success && result.data.claimed[0]?.lease.bootedByOwner).toBe(true);
 	});
 
+	test("boots every claimed device at once, not one by one", async () => {
+		const provider = fakeProvider([sim("1"), sim("2"), sim("3")]);
+		let inFlight = 0;
+		let peak = 0;
+		const boot = provider.boot;
+		provider.boot = async (id) => {
+			inFlight++;
+			peak = Math.max(peak, inFlight);
+			await Bun.sleep(5);
+			inFlight--;
+			return boot(id);
+		};
+		const result = await claimDevices(input(provider, { request: request({ count: 3, max: 3 }) }));
+		expect(result.success).toBe(true);
+		expect(peak).toBe(3);
+	});
+
 	test("creates when pool has room; lease is on the real udid, not the placeholder", async () => {
 		const provider = fakeProvider([]);
 		const result = await claimDevices(input(provider, { request: request({ runtime: "latest" }) }));
