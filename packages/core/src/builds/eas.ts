@@ -126,15 +126,15 @@ export function easArgv(...args: string[]): string[] {
 	return ["bunx", "eas-cli", ...args, "--json", "--non-interactive"];
 }
 
-export function buildListArgv(platform: Platform, profile: string, hash: string): string[] {
+/** `eas build:list` for one fingerprint hash, or — JS-aware projects — for the builds of one git `commit`. */
+export function buildListArgv(platform: Platform, profile: string, hash: string, commit?: string): string[] {
 	return easArgv(
 		"build:list",
 		"--platform",
 		platform,
 		"--build-profile",
 		profile,
-		"--fingerprint-hash",
-		hash,
+		...(commit !== undefined ? ["--git-commit-hash", commit] : ["--fingerprint-hash", hash]),
 		...(platform === "ios" ? ["--simulator"] : []),
 		"--limit",
 		"10"
@@ -161,6 +161,8 @@ export type EasDeps = {
 	cwd: string;
 	platform: Platform;
 	hash: string;
+	/** look builds up by this git commit instead of the fingerprint (JS-aware projects); never triggers the workflow */
+	commit?: string;
 	eas: EasSettings;
 	now: () => number;
 	sleep: (ms: number) => Promise<void>;
@@ -198,7 +200,7 @@ async function downloadBuild(deps: EasDeps, build: EasBuild): AsyncResult<string
 type StepOutcome = EasOutcome | { kind: "continue"; triggered: boolean };
 
 async function listBuilds(deps: EasDeps): AsyncResult<EasBuild[]> {
-	const listed = await run(deps, buildListArgv(deps.platform, deps.eas.profile, deps.hash));
+	const listed = await run(deps, buildListArgv(deps.platform, deps.eas.profile, deps.hash, deps.commit));
 	return listed.success ? parseBuildList(listed.data) : listed;
 }
 
@@ -234,7 +236,7 @@ export async function resolveFromEas(deps: EasDeps): Promise<EasOutcome> {
 	const policy: PollPolicy = {
 		timeoutMs: deps.timeoutMs ?? EAS_TIMEOUT_MS,
 		graceMs: deps.graceMs ?? EAS_TRIGGER_GRACE_MS,
-		trigger: deps.eas.trigger && deps.eas.workflow !== undefined,
+		trigger: deps.commit === undefined && deps.eas.trigger && deps.eas.workflow !== undefined,
 	};
 	const pollMs = deps.pollMs ?? EAS_POLL_MS;
 	const started = deps.now();

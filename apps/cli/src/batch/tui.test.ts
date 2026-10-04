@@ -91,9 +91,18 @@ describe("frameBytes", () => {
 
 describe("plainLine", () => {
 	test("one log line per start / end / done; idle is quiet", () => {
-		const view = midRun();
+		const view = applyEvent(midRun(), {
+			type: "job-start",
+			at: 0,
+			job: "a",
+			worker: 1,
+			udid: "U1",
+			seq: 2,
+			attempt: 0,
+		});
+		expect(view.ordinals.a).toBe(4);
 		expect(plainLine(view, { type: "job-start", at: 0, job: "a", worker: 1, udid: "U1", seq: 2, attempt: 0 })).toBe(
-			"[1 warden-iphone-17-2] ▶ a"
+			"[4/4] warden-iphone-17-2 ▶ a"
 		);
 		expect(
 			plainLine(view, {
@@ -108,7 +117,21 @@ describe("plainLine", () => {
 				exitCode: 3,
 				willRetry: true,
 			})
-		).toBe("[0 warden-iphone-17-1] ✗ a exit 3 12s (retrying)");
+		).toBe("[4/4] warden-iphone-17-1 ✗ a exit 3 (12.0 s) retrying");
+		expect(
+			plainLine(view, {
+				type: "job-end",
+				job: "a",
+				worker: 1,
+				udid: "U1",
+				seq: 2,
+				attempt: 0,
+				startedAt: 0,
+				endedAt: 12_400,
+				exitCode: 0,
+				willRetry: false,
+			})
+		).toBe("[4/4] warden-iphone-17-2 ✓ a (12.4 s)");
 		expect(plainLine(view, { type: "worker-idle", worker: 0, udid: "U0", at: 0 })).toBeUndefined();
 		expect(plainLine(view, { type: "done", ok: true, stopped: false, at: 0 })).toBe(
 			"warden batch: 0/4 passed, 1 failed"

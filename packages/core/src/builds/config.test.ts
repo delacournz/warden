@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_BUILD_COMMAND } from "./builds.defaults";
+import { DEFAULT_BUILD_COMMAND, defaultBuildCommand } from "./builds.defaults";
 import { bundleIdFor, CONFIG_FILE, loadProject, parseWardenConfig } from "./config";
 
 let dir: string;
@@ -60,6 +60,27 @@ describe("parseWardenConfig", () => {
 		expect(suite?.flows.a).toEqual({ entries: ["x.tsx"], paths: [] });
 	});
 
+	test("an e2e suite's project must exist; serveReady / serveTimeout need serve; slim is iOS-only", () => {
+		const suite = { flowsDir: "flows", runner: ["run"] };
+		const bad = (extra: Record<string, unknown>, projects = true) =>
+			parseWardenConfig({
+				...(projects ? { projects: [{ name: "app", bundleId: { ios: "x" } }] } : {}),
+				e2e: { s: { ...suite, ...extra } },
+			});
+		expect(bad({ project: "app" }).success).toBe(true);
+		const missing = bad({ project: "nope" });
+		expect(missing.success).toBe(false);
+		if (!missing.success) expect(missing.error).toContain('no project "nope"');
+		expect(bad({ serveReady: "tcp:1" }).success).toBe(false);
+		expect(bad({ serveTimeout: "1m" }).success).toBe(false);
+		expect(
+			bad({ serve: "x", serveReady: "tcp:1", serveTimeout: "1m", ports: ["8091:5"], env: { A: "1" } }).success
+		).toBe(true);
+		expect(bad({ ports: ["nope"] }).success).toBe(false);
+		expect(bad({ slim: true, platform: "android" }).success).toBe(false);
+		expect(bad({ slim: true, platform: "ios", setup: "echo {udid}" }).success).toBe(true);
+	});
+
 	test("rejects a bad e2e suite", () => {
 		const res = parseWardenConfig({ e2e: { mobile: { flowsDir: "flows", runner: [] } } });
 		expect(res.success).toBe(false);
@@ -92,9 +113,59 @@ describe("loadProject", () => {
 			fingerprintCommand: "bun run --silent fingerprint:{platform}",
 			eas: { profile: "development-simulator", workflow: ".eas/workflows/dev-build.yml", trigger: false },
 			build: { ios: "bun ios", android: DEFAULT_BUILD_COMMAND.android },
+			buildConfiguration: "Debug",
 			cacheDirs: ["/home/me/.cache/salient-dev-builds"],
 			origin: "config",
 		});
+	});
+
+	test("build.configuration: Release flips the default build commands, not explicit ones", () => {
+		write(CONFIG_FILE, {
+			projects: [
+				{ name: "a", bundleId: { ios: "x" }, build: { configuration: "Release" } },
+				{ name: "b", bundleId: { ios: "x" }, build: { configuration: "Release", ios: "my build" } },
+			],
+		});
+		const a = loadProject({ start: dir, env, name: "a" });
+		if (!a.success) throw new Error(a.error);
+		expect(a.data.buildConfiguration).toBe("Release");
+		expect(a.data.build.ios).toBe("bunx expo run:ios --configuration Release --no-install --no-bundler");
+		expect(a.data.build.android).toBe(defaultBuildCommand("android", "Release"));
+		const b = loadProject({ start: dir, env, name: "b" });
+		if (!b.success) throw new Error(b.error);
+		expect(b.data.build.ios).toBe("my build");
+	});
+
+	test("fingerprint.include native+js needs jsInputs, which carry onto the project", () => {
+		const bad = parseWardenConfig({
+			projects: [{ name: "a", bundleId: {}, fingerprint: { include: "native+js" } }],
+		});
+		expect(bad.success).toBe(false);
+		if (!bad.success) expect(bad.error).toContain("jsInputs");
+		const stray = parseWardenConfig({
+			projects: [{ name: "a", bundleId: {}, fingerprint: { jsInputs: ["src/**"] } }],
+		});
+		expect(stray.success).toBe(false);
+
+		write(CONFIG_FILE, {
+			projects: [
+				{ name: "a", bundleId: { ios: "x" }, fingerprint: { include: "native+js", jsInputs: ["src/**", "app.json"] } },
+				{ name: "b", bundleId: { ios: "x" }, fingerprint: { command: "fp" } },
+			],
+		});
+		const a = loadProject({ start: dir, env, name: "a" });
+		if (!a.success) throw new Error(a.error);
+		expect(a.data.jsInputs).toEqual(["src/**", "app.json"]);
+		expect(a.data.fingerprintCommand).toBeUndefined();
+		const b = loadProject({ start: dir, env, name: "b" });
+		if (!b.success) throw new Error(b.error);
+		expect(b.data.jsInputs).toBeUndefined();
+		expect(b.data.fingerprintCommand).toBe("fp");
+	});
+
+	test("rejects an unknown build.configuration", () => {
+		const res = parseWardenConfig({ projects: [{ name: "a", bundleId: {}, build: { configuration: "Staging" } }] });
+		expect(res.success).toBe(false);
 	});
 
 	test("ambiguous: several projects, none containing start → error; --name picks", () => {

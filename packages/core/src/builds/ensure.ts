@@ -1,12 +1,12 @@
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import type { PidAlive } from "../liveness";
 import type { Store } from "../store";
 import type { Owner, Platform } from "../types";
 import { type BuildSource, cachedBuild, findLegacyArtifact, getInstall, recordInstall, storeArtifact } from "./cache";
-import { bundleIdFor, loadProject, type Project } from "./config";
+import { bundleIdFor, type EasSettings, loadProject, type Project } from "./config";
 import { type Download, resolveFromEas } from "./eas";
-import { installApp, isAppInstalled } from "./install";
+import { installApp, isAppInstalled, uninstallApp } from "./install";
 import { runLocalBuild } from "./local";
 import { buildLockKey, withBuildLock } from "./lock";
 import { readProjectKey } from "./project-key";
@@ -62,13 +62,55 @@ export type EnsureInput = ProjectContext & {
 	eas: boolean;
 	/** false = `--no-build` */
 	build: boolean;
+	/** `--clean`: uninstall before installing, even when the device already has this hash */
+	clean?: boolean;
 	download?: Download;
 	easPollMs?: number;
 	lockPollMs?: number;
 };
 
+/**
+ * HEAD's sha when the working tree is clean. A JS-aware key covers JS the EAS fingerprint doesn't, so
+ * EAS can only be trusted for a build of the exact commit being tested — dirty tree, no EAS.
+ */
+async function cleanHead(exec: Exec, cwd: string): AsyncResult<string> {
+	const status = await exec(["git", "status", "--porcelain"], { cwd });
+	if (status.exitCode !== 0) return err("EAS skipped: not a git checkout");
+	if (status.stdout.trim() !== "") return err("EAS skipped: working tree is not clean (JS-aware key)");
+	const head = await exec(["git", "rev-parse", "HEAD"], { cwd });
+	const sha = head.stdout.trim();
+	return head.exitCode === 0 && sha ? ok(sha) : err("EAS skipped: could not read HEAD");
+}
+
 function profileOf(project: Project): string {
 	return project.eas?.profile ?? LOCAL_PROFILE;
+}
+
+type CacheFn = (path: string, source: BuildSource, move: boolean) => ReturnType<typeof storeArtifact>;
+
+/** The EAS step: JS-aware projects look builds up by (clean) HEAD commit, the rest by fingerprint hash. */
+function easStep(input: EnsureInput, eas: EasSettings, cache: CacheFn): NonNullable<ResolveSteps["eas"]> {
+	const { project, platform, hash } = input;
+	return async () => {
+		const head = project.jsInputs === undefined ? undefined : await cleanHead(input.exec, project.root);
+		if (head && !head.success) return ok({ kind: "miss", reason: head.error });
+		const outcome = await resolveFromEas({
+			exec: input.exec,
+			cwd: project.root,
+			platform,
+			hash,
+			...(head ? { commit: head.data } : {}),
+			eas,
+			now: input.now,
+			sleep: input.sleep,
+			log: input.log,
+			...(input.download ? { download: input.download } : {}),
+			...(input.easPollMs !== undefined ? { pollMs: input.easPollMs } : {}),
+		});
+		if (outcome.kind === "miss") return ok(outcome);
+		const stored = await cache(outcome.path, "eas", true);
+		return stored.success ? ok({ kind: "hit", path: stored.data.path }) : stored;
+	};
 }
 
 /** Wire the real effects (sqlite cache, simctl/adb, eas-cli, local build) into `resolveApp`. */
@@ -90,6 +132,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 
 	const steps: ResolveSteps = {
 		hash,
+		...(input.clean ? { clean: true } : {}),
 		log: input.log,
 		cached: () => cachedBuild(store, projectKey, platform, hash, input.now())?.path,
 		legacy: async () => {
@@ -116,25 +159,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	};
 
 	const easSettings = project.eas;
-	if (input.eas && easSettings) {
-		steps.eas = async () => {
-			const outcome = await resolveFromEas({
-				exec: input.exec,
-				cwd: project.root,
-				platform,
-				hash,
-				eas: easSettings,
-				now: input.now,
-				sleep: input.sleep,
-				log: input.log,
-				...(input.download ? { download: input.download } : {}),
-				...(input.easPollMs !== undefined ? { pollMs: input.easPollMs } : {}),
-			});
-			if (outcome.kind === "miss") return ok(outcome);
-			const stored = await cache(outcome.path, "eas", true);
-			return stored.success ? ok({ kind: "hit", path: stored.data.path }) : stored;
-		};
-	}
+	if (input.eas && easSettings) steps.eas = easStep(input, easSettings, cache);
 	if (input.build) {
 		steps.build = async () => {
 			const built = await runLocalBuild({
@@ -161,6 +186,10 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		steps.device = {
 			installedHash: () => getInstall(store, platform, deviceId, bundleId.data)?.hash,
 			confirm: () => isAppInstalled(deps, target, bundleId.data),
+			uninstall: () => {
+				input.log(`uninstalling ${bundleId.data} from ${deviceId} (clean install)`);
+				return uninstallApp(deps, target, bundleId.data);
+			},
 			install: async (appPath) => {
 				input.log(`installing ${appPath} on ${deviceId}`);
 				const done = await installApp(deps, target, appPath, bundleId.data);

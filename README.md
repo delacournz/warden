@@ -95,6 +95,20 @@ warden port claim --from 8091 --span 20 --json
 warden port release --mine
 ```
 
+### Installing warden in GitHub Actions
+
+The repo is private and the npm package is not required for CI: the release workflow attaches a compiled single-file binary per platform (`warden-darwin-arm64` …, plus `checksums.txt`) to each GitHub release, and a composite action in this repo installs the right one:
+
+```yaml
+- uses: delacournz/warden/.github/actions/install-warden@main
+  with:
+    token: ${{ secrets.WARDEN_RELEASE_TOKEN }}   # optional pin: version: v0.1.0
+```
+
+`WARDEN_RELEASE_TOKEN` is a fine-grained PAT (or GitHub App token) with **Contents: read** on `delacournz/warden`; the default `GITHUB_TOKEN` of another repo cannot read it. For `uses:` itself to resolve, allow it under warden's Settings → Actions → General → Access ("accessible from repositories in the delacournz organization"). The action verifies the sha256 and puts `warden` on `PATH`. A bare script works too: `gh release download --repo delacournz/warden --pattern warden-darwin-arm64 --pattern checksums.txt`.
+
+A clean macOS runner needs no prior state: the `--profile` is created on claim (cloned from a golden image that is built on first use, about a minute or two; cache `~/Library/Developer/CoreSimulator/Devices` between runs to keep it) and falls back to `simctl create`. The runner must have the iOS runtime installed.
+
 ### Fast new simulators: golden images
 
 A brand-new simulator's first boot (Apple logo + progress bar) takes 1–10 min, and about 80% of that is the one-time data migration. The salient e2e measurements (SAL-GOLDEN):

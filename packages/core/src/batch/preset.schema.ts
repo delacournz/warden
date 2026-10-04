@@ -1,13 +1,14 @@
 import { z } from "zod";
+import { appOptionSchema } from "../builds/app-option.schema";
 import { parseDuration } from "../duration";
 import { parsePortSpec } from "../ports";
 
-const duration = z
+export const duration = z
 	.string()
 	.min(1)
 	.refine((v) => parseDuration(v).success, { message: "invalid duration (use e.g. 30s, 10m, 2h)" });
 
-const portSpec = z
+export const portSpec = z
 	.string()
 	.min(1)
 	.refine((v) => parsePortSpec(v).success, { message: "invalid port spec (use <from>[:<span>], e.g. 8091:20)" });
@@ -29,7 +30,8 @@ export const batchPresetSchema = z
 		ttl: duration.optional(),
 		wait: duration.optional(),
 		ports: z.array(portSpec).optional(),
-		app: z.boolean().optional(),
+		/** install the project's app on every device first; `{ clean: true }` also uninstalls it first */
+		app: appOptionSchema.optional(),
 		retry: z.number().int().min(0).optional(),
 		passes: z.number().int().min(1).optional(),
 		/** added to the serve + job env */

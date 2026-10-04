@@ -4,7 +4,7 @@ import type { Reason, Selection } from "@delacour/warden-core/affected/select";
 import { parseJobList } from "@delacour/warden-core/batch/expand";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Platform } from "@delacour/warden-core/types";
-import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
 import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";
@@ -18,6 +18,10 @@ export type AffectedOpts = {
 	explain?: true;
 	requiredOnly?: true;
 	strict?: true;
+	/** `warden e2e --all` */
+	all?: true;
+	/** `warden e2e --flows`: comma-separated ids / globs */
+	flows?: string;
 };
 
 /** Option values → `computeAffected` input; parsed imports are cached under `$WARDEN_HOME/affected`. */
@@ -26,6 +30,9 @@ export function affectedInput(
 	suite: string | undefined,
 	opts: AffectedOpts
 ): Result<AffectedInput> {
+	if (opts.all && opts.flows !== undefined) return err("--all and --flows are exclusive");
+	if ((opts.all || opts.flows !== undefined) && opts.files !== undefined)
+		return err("--all / --flows select without a diff — drop --files");
 	let platform: Platform | undefined;
 	if (opts.platform !== undefined) {
 		const parsed = parsePlatform(opts.platform);
@@ -40,6 +47,11 @@ export function affectedInput(
 		...(opts.base !== undefined ? { base: opts.base } : {}),
 		...(platform ? { platform } : {}),
 		...(opts.files !== undefined ? { files: parseJobList(opts.files) } : {}),
+		...(opts.flows !== undefined
+			? { only: { mode: "flows" as const, patterns: parseJobList(opts.flows) } }
+			: opts.all
+				? { only: { mode: "all" as const } }
+				: {}),
 	});
 }
 
@@ -62,6 +74,12 @@ function describeReason(reason: Reason, color: ChalkInstance): string[] {
 			return [`always   ${color.dim(reason.pattern)}`];
 		case "unmapped":
 			return [`unmapped ${color.dim("(no entries / paths — runs every time)")}`];
+		case "all":
+			return [`all      ${color.dim("(--all)")}`];
+		case "requested":
+			return [`flows    ${color.dim(`(--flows ${reason.pattern})`)}`];
+		case "unmatched":
+			return [`unmatched ${reason.file} ${color.dim("(reached no flow — unmatched: run-all)")}`];
 	}
 }
 

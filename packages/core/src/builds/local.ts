@@ -1,13 +1,15 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import type { Platform } from "../types";
+import type { BuildConfiguration } from "./builds.defaults";
 import { LOCAL_BUILD_TIMEOUT_MS } from "./builds.defaults";
 import type { Project } from "./config";
-import { computeFingerprint } from "./fingerprint";
+import { computeCacheKey } from "./fingerprint";
 
-const SIM_PRODUCTS = join("Build", "Products", "Debug-iphonesimulator");
+const simProducts = (configuration: BuildConfiguration) =>
+	join("Build", "Products", `${configuration}-iphonesimulator`);
 
 function children(dir: string): string[] {
 	try {
@@ -38,17 +40,31 @@ function findFiles(dir: string, ext: string, depth = 6): string[] {
 	});
 }
 
+/** Is `apk` a build of `configuration`? (`apk/release/…`, `apk/<flavor>/release/…`, `apk/fooRelease/…`) */
+function isApkOf(apk: string, outputs: string, configuration: BuildConfiguration): boolean {
+	const want = configuration.toLowerCase();
+	return relative(outputs, dirname(apk))
+		.split(sep)
+		.some((segment) => segment.toLowerCase().endsWith(want));
+}
+
 /**
- * Candidate build outputs: iOS `.app`s in `<root>/ios/build/…/Debug-iphonesimulator` and every
- * DerivedData project's `…/Debug-iphonesimulator`; Android `.apk`s under
- * `<root>/android/app/build/outputs/apk`.
+ * Candidate build outputs for `configuration`: iOS `.app`s in `<root>/ios/build/…/<Config>-iphonesimulator`
+ * and every DerivedData project's `…/<Config>-iphonesimulator`; Android `.apk`s under
+ * `<root>/android/app/build/outputs/apk` whose variant directory is that configuration.
  */
-export function artifactCandidates(root: string, platform: Platform, derivedData: string): string[] {
-	if (platform === "android") return findFiles(join(root, "android", "app", "build", "outputs", "apk"), ".apk");
-	const productDirs = [
-		join(root, "ios", "build", SIM_PRODUCTS),
-		...children(derivedData).map((d) => join(d, SIM_PRODUCTS)),
-	];
+export function artifactCandidates(
+	root: string,
+	platform: Platform,
+	derivedData: string,
+	configuration: BuildConfiguration = "Debug"
+): string[] {
+	if (platform === "android") {
+		const outputs = join(root, "android", "app", "build", "outputs", "apk");
+		return findFiles(outputs, ".apk").filter((apk) => isApkOf(apk, outputs, configuration));
+	}
+	const products = simProducts(configuration);
+	const productDirs = [join(root, "ios", "build", products), ...children(derivedData).map((d) => join(d, products))];
 	return productDirs.flatMap((d) => children(d).filter((p) => p.endsWith(".app")));
 }
 
@@ -57,9 +73,10 @@ export function locateArtifact(
 	root: string,
 	platform: Platform,
 	derivedData: string,
-	since: number
+	since: number,
+	configuration: BuildConfiguration = "Debug"
 ): string | undefined {
-	return artifactCandidates(root, platform, derivedData)
+	return artifactCandidates(root, platform, derivedData, configuration)
 		.map((path) => ({ path, at: mtime(path) }))
 		.filter((c) => c.at >= since)
 		.sort((a, b) => b.at - a.at)[0]?.path;
@@ -83,8 +100,9 @@ export type LocalBuildDeps = {
 
 /**
  * Run `build.<platform>` in the project root, locate the produced `.app`/`.apk`, and verify the
- * project's fingerprint still equals `hash` (a build that changed native inputs — or a source tree
- * edited mid-build — must not be cached under the old hash).
+ * project's cache key (native fingerprint, plus the JS sources for a JS-aware project) still equals
+ * `hash` (a build that changed native inputs — or a source tree edited mid-build — must not be cached
+ * under the old hash).
  */
 export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<string> {
 	const { project, platform } = deps;
@@ -98,16 +116,16 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<string> {
 		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
 	});
 	if (res.exitCode !== 0) return err(`local build failed: ${execError(argv, res)}`);
-	const artifact = locateArtifact(project.root, platform, derivedDataDir(deps.env), since);
+	const artifact = locateArtifact(project.root, platform, derivedDataDir(deps.env), since, project.buildConfiguration);
 	if (!artifact || !existsSync(artifact)) {
 		return err(
-			`local build succeeded but no ${platform === "ios" ? ".app" : ".apk"} was found (DerivedData / android/app/build/outputs)`
+			`local build succeeded but no ${project.buildConfiguration} ${platform === "ios" ? ".app" : ".apk"} was found (DerivedData / android/app/build/outputs)`
 		);
 	}
-	const after = await computeFingerprint(deps.exec, project, platform);
+	const after = await computeCacheKey(deps.exec, project, platform);
 	if (!after.success) return after;
-	if (after.data !== deps.hash) {
-		return err(`fingerprint changed during the build (${deps.hash} → ${after.data}); not caching ${artifact}`);
+	if (after.data.key !== deps.hash) {
+		return err(`fingerprint changed during the build (${deps.hash} → ${after.data.key}); not caching ${artifact}`);
 	}
 	return ok(artifact);
 }

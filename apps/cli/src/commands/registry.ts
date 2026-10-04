@@ -19,6 +19,7 @@ import { lsCommand } from "./ls";
 import { portCommand } from "./port";
 import { releaseCommand } from "./release";
 import { runCommand } from "./run";
+import { simCommand } from "./sim";
 import { simsCommand } from "./sims";
 import { skillCommand } from "./skill";
 import { updateCommand } from "./update";
@@ -33,6 +34,7 @@ export const COMMANDS: readonly Command[] = [
 	e2eCommand,
 	lsCommand,
 	devicesCommand,
+	simCommand,
 	simsCommand,
 	arrangeCommand,
 	cloneCommand,

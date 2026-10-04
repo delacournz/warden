@@ -110,6 +110,30 @@ describe("ensureApp", () => {
 		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe("NEW");
 	});
 
+	test("clean: uninstalls then installs even though the device is already at this hash", async () => {
+		await seedCache();
+		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		const calls: string[] = [];
+		let present = true;
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined === "xcrun simctl uninstall U1 com.x.app") present = false;
+			if (joined.startsWith("xcrun simctl install U1")) present = true;
+			if (joined.startsWith("xcrun simctl get_app_container")) {
+				return present ? { exitCode: 0, stdout: "/x", stderr: "" } : { exitCode: 1, stdout: "", stderr: "" };
+			}
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const res = await ensureApp(input(exec, { clean: true }));
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.source).toBe("cache");
+		expect(res.data.installed).toBe(true);
+		const verbs = calls.filter((c) => /simctl (un)?install/.test(c)).map((c) => c.split(" ")[2]);
+		expect(verbs).toEqual(["uninstall", "install"]);
+		expect(getInstall(store, "ios", "U1", "com.x.app")?.installedAt).toBe(5_000);
+	});
+
 	test("legacy cache dir → imported (copied) into the warden cache", async () => {
 		const legacy = join(dir, "legacy");
 		fakeApp(join(legacy, "H"), "Salient.app");
@@ -153,6 +177,64 @@ describe("ensureApp", () => {
 		expect(record?.profile).toBe("development-simulator");
 		expect(res.data.appPath).toBe(record?.path ?? "");
 		expect(calls.some((c) => c.includes("eas"))).toBe(false);
+	});
+
+	describe("JS-aware project (fingerprint.include native+js)", () => {
+		const eas = { profile: "development-simulator", trigger: true, workflow: ".eas/wf.yml" };
+		const jsProject = () => testProject({ root: join(dir, "app"), jsInputs: ["src/**"], eas });
+
+		function gitHost(status: string, calls: string[]): Exec {
+			return fake(
+				[
+					["git rev-parse HEAD", { stdout: "abc123\n" }],
+					["git status --porcelain", { stdout: status }],
+					["bunx eas-cli build:list", { stdout: "[]" }],
+				],
+				calls
+			);
+		}
+
+		test("clean tree: EAS is looked up by git commit, never by fingerprint, never triggered", async () => {
+			const calls: string[] = [];
+			const res = await ensureApp(
+				input(gitHost("", calls), { project: jsProject(), deviceId: undefined, build: false, eas: true })
+			);
+			expect(res.success).toBe(false);
+			const list = calls.find((c) => c.startsWith("bunx eas-cli build:list")) ?? "";
+			expect(list).toContain("--git-commit-hash abc123");
+			expect(list).not.toContain("--fingerprint-hash");
+			expect(calls.some((c) => c.includes("workflow:run"))).toBe(false);
+		});
+
+		test("dirty tree: EAS is skipped (its build can't match the working tree)", async () => {
+			const calls: string[] = [];
+			const logs: string[] = [];
+			const res = await ensureApp(
+				input(gitHost(" M src/a.ts\n", calls), {
+					project: jsProject(),
+					deviceId: undefined,
+					build: false,
+					eas: true,
+					log: (l) => logs.push(l),
+				})
+			);
+			expect(res.success).toBe(false);
+			expect(calls.some((c) => c.startsWith("bunx eas-cli"))).toBe(false);
+			expect(logs.join("\n")).toContain("working tree is not clean");
+		});
+
+		test("native projects keep the fingerprint lookup", async () => {
+			const calls: string[] = [];
+			await ensureApp(
+				input(gitHost("", calls), {
+					project: testProject({ root: join(dir, "app"), eas: { ...eas, trigger: false } }),
+					deviceId: undefined,
+					build: false,
+					eas: true,
+				})
+			);
+			expect(calls.find((c) => c.startsWith("bunx eas-cli build:list"))).toContain("--fingerprint-hash H");
+		});
 	});
 
 	test("missing bundle id for a device install → error", async () => {

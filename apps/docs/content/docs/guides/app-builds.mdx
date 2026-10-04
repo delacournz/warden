@@ -16,8 +16,29 @@ warden app ensure ios --udid <udid> --json
 <Step>**Installed** — the device already has this fingerprint hash.</Step>
 <Step>**Cache** — `~/.warden/builds/<projectKey>/<platform>/<hash>`, then legacy caches. All worktrees of a repo share one cache.</Step>
 <Step>**EAS** — `build:list --fingerprint-hash`, then download. Waits for builds already in flight; triggers the workflow only if `eas.trigger` is set.</Step>
-<Step>**Local build** — verified against the fingerprint.</Step>
+<Step>**Local build** — verified against the fingerprint. Debug by default; set `build.configuration: "Release"` to build and find a Release simulator build (the JS bundle is embedded, so no Metro is needed at test time).</Step>
 </Steps>
+
+## Release builds and JS changes
+
+A Release build embeds its JS bundle, but the native fingerprint doesn't change when only JS does — so a JS edit would count as "already installed" and keep running stale code. Opt in to a JS-aware key:
+
+```json title="warden.config.json"
+{ "projects": [{
+  "name": "app", "bundleId": { "ios": "com.example.app" },
+  "build": { "configuration": "Release" },
+  "fingerprint": { "include": "native+js", "jsInputs": ["src/**", "assets/**", "app.json"] }
+}] }
+```
+
+The cache and install key becomes `sha256(native fingerprint + a content hash of the matching files)`. The files are git-tracked and untracked-not-ignored ones under the project root, hashed with their paths, so a rename counts and build output never does. Globs that match nothing are an error. The post-build check uses the same key.
+
+Trade-offs:
+
+- **Workspace packages count too.** A `../` glob (`"../../../packages/engine/src/**"`) hashes files outside the project root; they are listed with `git ls-files` from where they live and keyed by their root-relative path, so the key is identical in every checkout.
+- **Any matched edit is a rebuild.** A Release build is minutes, so keep `jsInputs` to what the bundle really reads (not tests, docs or e2e flows).
+- **EAS is looked up by commit, not fingerprint.** EAS indexes builds by the native hash, which can't see JS. With `native+js`, warden asks for a build of `HEAD` (`eas build:list --git-commit-hash`) and only on a clean working tree; otherwise EAS is skipped and the build is local. `eas.trigger` is ignored.
+- `warden app fingerprint --json` prints the key under `fingerprints`, and the native hash under `native`.
 
 A build lock stops two agents from downloading or building the same hash twice.
 

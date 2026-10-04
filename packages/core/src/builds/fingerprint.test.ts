@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec } from "../exec";
 import { testProject } from "./builds.testing";
-import { computeFingerprint, findFingerprintBin, fingerprintArgv, parseFingerprintOutput } from "./fingerprint";
+import {
+	computeCacheKey,
+	computeFingerprint,
+	findFingerprintBin,
+	fingerprintArgv,
+	parseFingerprintOutput,
+} from "./fingerprint";
+import { combineKey } from "./js-inputs";
 
 const HASH = "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a";
 
@@ -73,5 +80,34 @@ describe("computeFingerprint", () => {
 		const res = await computeFingerprint(exec, testProject({ fingerprintCommand: "fp" }), "ios");
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("Cannot find module");
+	});
+});
+
+describe("computeCacheKey", () => {
+	function host(js: string) {
+		const exec: Exec = async (cmd) => {
+			if (cmd[0] === "git") return { exitCode: 0, stdout: "src/a.ts", stderr: "" };
+			return { exitCode: 0, stdout: `{"hash":"${HASH}"}`, stderr: "" };
+		};
+		const readFile = async () => new TextEncoder().encode(js);
+		return { exec, readFile };
+	}
+
+	test("native projects: the key is the native fingerprint", async () => {
+		const h = host("a");
+		const res = await computeCacheKey(h.exec, testProject({ fingerprintCommand: "fp" }), "ios", h.readFile);
+		expect(res).toEqual({ success: true, data: { key: HASH, native: HASH } });
+	});
+
+	test("native+js: the key covers the JS sources, the native hash stays separate", async () => {
+		const project = testProject({ fingerprintCommand: "fp", jsInputs: ["src/**"] });
+		const a = await computeCacheKey(host("a").exec, project, "ios", host("a").readFile);
+		const b = await computeCacheKey(host("b").exec, project, "ios", host("b").readFile);
+		if (!a.success || !b.success) throw new Error("expected keys");
+		expect(a.data.native).toBe(HASH);
+		expect(a.data.js).toBeDefined();
+		expect(a.data.key).toBe(combineKey(HASH, a.data.js ?? ""));
+		expect(a.data.key).not.toBe(b.data.key);
+		expect(a.data.native).toBe(b.data.native);
 	});
 });

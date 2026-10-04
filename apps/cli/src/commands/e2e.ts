@@ -1,9 +1,13 @@
 import { join } from "node:path";
-import type { Affected } from "@delacour/warden-core/affected/affected";
+import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
 import type { E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
 import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
+import { readySpec } from "@delacour/warden-core/batch/preset";
+import type { JobResult } from "@delacour/warden-core/batch/schedule";
+import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import type { Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
+import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
 import { type ClaimFlagValues, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -11,6 +15,7 @@ import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit } from "../output";
 import { type AffectedOpts, explain, runAffected, selectedFlows } from "./affected";
 import {
+	attemptKey,
 	type BatchDeps,
 	defaultBatchDeps,
 	parseBatchArgs,
@@ -38,7 +43,16 @@ export type E2eOpts = ClaimFlagValues &
 	};
 
 /** One flow's outcome in `e2e-report.json`. */
-export type FlowVerdict = SelectedFlow & { verdict: "passed" | "failed" | "not-run"; attempts: number };
+export type FlowVerdict = SelectedFlow & {
+	verdict: "passed" | "failed" | "not-run";
+	attempts: number;
+	/** the device the flow's last failed attempt ran on */
+	device?: { udid: string; name: string };
+	/** the runner output of that attempt */
+	log?: string;
+	/** the device as the flow's last failed attempt left it (png), when one could be captured */
+	screenshot?: string;
+};
 
 export type E2eReport = {
 	suite: string;
@@ -47,16 +61,24 @@ export type E2eReport = {
 	ok: boolean;
 	batchDir?: string;
 	flows: FlowVerdict[];
+	/** per-device setup outcomes, when the suite has a `setup` */
+	setup?: DeviceSetup[];
 };
 
 /** The suite's run settings as option values (CLI flags passed explicitly win). */
-function suiteOpts(suite: E2eSuiteConfig, opts: E2eOpts, passed: ReadonlySet<string>): E2eOpts {
+function suiteOpts({ config: suite, cwd, projectRoot }: Suite, opts: E2eOpts, passed: ReadonlySet<string>): E2eOpts {
+	const app = appSwitches(suite.app);
 	const fromSuite: Partial<E2eOpts> = {
 		retry: String(suite.retry),
 		passes: String(suite.passes),
 		...(suite.count !== undefined ? { count: String(suite.count) } : {}),
 		...(suite.profile !== undefined ? { profile: suite.profile } : {}),
-		...(suite.app ? { app: true as const } : {}),
+		...(suite.ports ? { port: suite.ports } : {}),
+		...(suite.serve !== undefined ? { serve: suite.serve } : {}),
+		...(suite.serveReady !== undefined ? { serveReady: readySpec(suite.serveReady, cwd) } : {}),
+		...(suite.serveTimeout !== undefined ? { serveTimeout: suite.serveTimeout } : {}),
+		...(app.app ? { app: true as const, ...(projectRoot ? { project: projectRoot } : {}) } : {}),
+		...(app.clean ? { clean: true as const } : {}),
 	};
 	const cli = Object.fromEntries(Object.entries(opts).filter(([key]) => passed.has(key)));
 	return { ...opts, ...fromSuite, ...cli };
@@ -71,9 +93,40 @@ function onePlatform(affected: Affected): Result<Selection> {
 	return ok(only);
 }
 
+/** Suite settings the platform can't honour (undefined = fine). */
+function platformError(suite: E2eSuiteConfig, platform: Platform): string | undefined {
+	return suite.slim && platform !== "ios" ? "slim is iOS-only" : undefined;
+}
+
+/** The per-device prep a suite asks for (`slim`, then `setup`). */
+function deviceSetup(suite: E2eSuiteConfig): DeviceSetupSpec | undefined {
+	if (suite.setup === undefined && !suite.slim) return undefined;
+	return {
+		...(suite.setup !== undefined ? { command: suite.setup } : {}),
+		...(suite.slim ? { slim: true } : {}),
+	};
+}
+
 /** `runner` argv for one flow: `{flow}` = its id, `{flowPath}` = its file; batch expands the rest. */
 export function runnerArgv(runner: readonly string[], flow: SelectedFlow): string[] {
 	return runner.map((arg) => arg.replaceAll("{flowPath}", flow.file).replaceAll("{flow}", flow.id));
+}
+
+/** device / log / screenshot of a flow's failed attempts (the last one's device and log; the latest screenshot there is). */
+function lastFailure(session: SessionResult, failed: readonly JobResult[]): Partial<FlowVerdict> {
+	const last = failed.at(-1);
+	if (!last) return {};
+	const screenshot = failed
+		.map((r) => session.screenshots?.get(attemptKey(r)))
+		.reverse()
+		.find((path) => path !== undefined);
+	const log = session.logs?.get(attemptKey(last));
+	const name = session.devices?.find((d) => d.worker === last.worker)?.name ?? last.udid;
+	return {
+		device: { udid: last.udid, name },
+		...(log !== undefined ? { log } : {}),
+		...(screenshot !== undefined ? { screenshot } : {}),
+	};
 }
 
 /** Batch outcome → per-flow verdicts; `ok` = every required flow passed. */
@@ -86,7 +139,11 @@ export function verdicts(
 	const out = flows.map((flow): FlowVerdict => {
 		const attempts = results.filter((r) => r.job === flow.id).length;
 		const verdict = attempts === 0 ? "not-run" : failed.has(flow.id) ? "failed" : "passed";
-		return { ...flow, verdict, attempts };
+		const failure = lastFailure(
+			session,
+			results.filter((r) => r.job === flow.id && r.exitCode !== 0)
+		);
+		return { ...flow, verdict, attempts, ...failure };
 	});
 	const ok = session.summary !== undefined && out.every((f) => !f.required || f.verdict === "passed");
 	return { ok, flows: out };
@@ -100,12 +157,22 @@ async function publish(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, repo
 	if (opts.json) emit(ctx, true, report, "");
 }
 
+/** ` on <device> — log <path> — screenshot <path>` for a flow that ran and failed (empty otherwise). */
+function failureDetail(flow: FlowVerdict): string {
+	const parts = [
+		flow.device ? `on ${flow.device.name} (${flow.device.udid})` : undefined,
+		flow.log ? `log ${flow.log}` : undefined,
+		flow.screenshot ? `screenshot ${flow.screenshot}` : undefined,
+	].filter((part) => part !== undefined);
+	return parts.length > 0 ? ` ${parts.join(" — ")}` : "";
+}
+
 /** Failed / not-run flows, then the one-line gate verdict. */
 function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	const { color } = ctx.ui;
 	for (const flow of report.flows.filter((f) => f.verdict !== "passed")) {
 		const tag = flow.required ? color.red(flow.verdict) : color.yellow(`${flow.verdict} (optional)`);
-		ctx.err(`warden e2e: ${flow.id} ${tag}`);
+		ctx.err(`warden e2e: ${flow.id} ${tag}${failureDetail(flow)}`);
 	}
 	const passed = report.flows.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.flows.length} flow(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
@@ -124,6 +191,7 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 	for (const w of [...affected.data.warnings, ...selection.data.warnings]) ctx.err(color.yellow(`warden e2e: ${w}`));
 	if (opts.explain || opts.dryRun) ctx.err(explain(affected.data, opts.requiredOnly === true, color));
 	const flows = selectedFlows(selection.data, opts.requiredOnly === true);
+	if (opts.flows !== undefined && flows.length === 0) return err("--flows matched no flow");
 	return ok({ affected: affected.data, selection: selection.data, flows });
 }
 
@@ -159,16 +227,20 @@ async function e2e(
 		return 0;
 	}
 	// --json is the e2e report here, not batch.json
-	const { json: _json, ...batchOpts } = suiteOpts(suite.config, opts, passed);
+	const { json: _json, ...batchOpts } = suiteOpts(suite, opts, passed);
 	const byId = new Map(flows.map((f) => [f.id, f]));
 	const args = parseBatchArgs(selection.platform, batchOpts, ctx.cwd, {
 		jobs: { kind: "list", jobs: [...byId.keys()] },
-		cwd: suite.configDir,
+		cwd: suite.cwd,
+		...(suite.config.env ? { env: suite.config.env } : {}),
 	});
 	if (!args.success) return fail(args.error);
+	const unsupported = platformError(suite.config, selection.platform);
+	if (unsupported) return fail(unsupported);
 	const { runner } = suite.config;
 	const session = await runSession(ctx, deps, args.data, [...byId.keys()], runner, {
 		name: "e2e",
+		setup: deviceSetup(suite.config),
 		argvFor: (job) => {
 			const flow = byId.get(job);
 			return flow ? runnerArgv(runner, flow) : runner;
@@ -180,6 +252,7 @@ async function e2e(
 		ok: result.ok,
 		...(session.batchDir ? { batchDir: session.batchDir } : {}),
 		flows: result.flows,
+		...(session.setups ? { setup: session.setups } : {}),
 	};
 	await publish(ctx, deps, opts, report);
 	if (session.code === 130) return 130;
@@ -203,6 +276,8 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--base <ref>", "compare against merge-base with this ref (default: the suite's base)")
 				.option("--platform <platform>", "ios | android (default: the suite's platform)")
 				.option("--files <list>", "comma-separated changed files (relative to cwd) instead of git")
+				.option("--all", "run every flow of the suite (after include / exclude), skipping the git diff")
+				.option("--flows <list>", "run exactly these flow ids / globs (comma-separated), skipping the git diff")
 				.option("--required-only", "only run flows with required: true")
 				.option("--explain", "print why each flow was selected before running")
 				.option("--dry-run", "select and explain, run nothing")

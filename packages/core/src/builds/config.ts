@@ -5,7 +5,12 @@ import { z } from "zod";
 import { e2eSuiteSchema } from "../affected/affected.schema";
 import { batchPresetSchema, RESERVED_PRESET_NAMES } from "../batch/preset.schema";
 import type { Platform } from "../types";
-import { DEFAULT_BUILD_COMMAND, DEFAULT_EAS_PROFILE, LEGACY_CACHE_DIRS } from "./builds.defaults";
+import {
+	type BuildConfiguration,
+	DEFAULT_EAS_PROFILE,
+	defaultBuildCommand,
+	LEGACY_CACHE_DIRS,
+} from "./builds.defaults";
 
 export const CONFIG_FILE = "warden.config.json";
 
@@ -17,10 +22,24 @@ export const projectConfigSchema = z
 		/** project dir relative to the config file */
 		root: z.string().min(1).default("."),
 		bundleId: perPlatform,
-		/** own fingerprint command (`{platform}` is substituted); stdout = JSON `{ hash }` or a bare hash */
 		fingerprint: z
-			.object({ command: z.string().min(1) })
+			.object({
+				/** own fingerprint command (`{platform}` is substituted); stdout = JSON `{ hash }` or a bare hash */
+				command: z.string().min(1).optional(),
+				/** native: key = the native fingerprint; native+js: key also covers the `jsInputs` file contents (Release builds embed the JS) */
+				include: z.enum(["native", "native+js"]).default("native"),
+				/** globs (relative to the project root) of the JS sources that make up the bundle; git-tracked + untracked-not-ignored files only */
+				jsInputs: z.array(z.string().min(1)).min(1).optional(),
+			})
 			.strict()
+			.superRefine((fp, issue) => {
+				if (fp.include === "native+js" && fp.jsInputs === undefined) {
+					issue.addIssue({ code: "custom", message: 'include "native+js" needs jsInputs', path: ["jsInputs"] });
+				}
+				if (fp.include === "native" && fp.jsInputs !== undefined) {
+					issue.addIssue({ code: "custom", message: 'jsInputs only apply to include "native+js"', path: ["jsInputs"] });
+				}
+			})
 			.optional(),
 		eas: z
 			.object({
@@ -30,7 +49,12 @@ export const projectConfigSchema = z
 			})
 			.strict()
 			.optional(),
-		build: perPlatform.optional(),
+		build: perPlatform
+			.extend({
+				/** Xcode / Gradle configuration the local build produces; picks the default build command + where the artifact is searched */
+				configuration: z.enum(["Debug", "Release"]).optional(),
+			})
+			.optional(),
 		/** extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand */
 		cacheDirs: z.array(z.string().min(1)).optional(),
 	})
@@ -66,6 +90,15 @@ export const wardenConfigSchema = z
 				});
 			}
 		}
+		for (const [name, suite] of Object.entries(config.e2e ?? {})) {
+			if (suite.project !== undefined && !names.has(suite.project)) {
+				issue.addIssue({
+					code: "custom",
+					message: `no project "${suite.project}" in projects[]`,
+					path: ["e2e", name, "project"],
+				});
+			}
+		}
 	});
 
 export type ProjectConfig = z.infer<typeof projectConfigSchema>;
@@ -79,9 +112,13 @@ export type Project = {
 	root: string;
 	bundleId: { ios?: string; android?: string };
 	fingerprintCommand?: string;
+	/** set = JS-aware key (`fingerprint.include: "native+js"`): globs of the JS sources the key covers */
+	jsInputs?: string[];
 	/** undefined = EAS not used (no `eas` config and no `eas.json`) */
 	eas?: EasSettings;
 	build: Record<Platform, string>;
+	/** Debug unless `build.configuration` says Release */
+	buildConfiguration: BuildConfiguration;
 	cacheDirs: string[];
 	/** where the project came from */
 	origin: "config" | "app.json" | "app.config";
@@ -113,17 +150,25 @@ function within(dir: string, target: string): boolean {
 
 function fromConfig(entry: ProjectConfig, configDir: string, env: Record<string, string | undefined>): Project {
 	const root = resolve(configDir, entry.root);
+	const configuration = entry.build?.configuration ?? "Debug";
 	const project: Project = {
 		name: entry.name,
 		root,
 		bundleId: entry.bundleId,
-		build: { ...DEFAULT_BUILD_COMMAND, ...entry.build },
+		build: {
+			ios: entry.build?.ios ?? defaultBuildCommand("ios", configuration),
+			android: entry.build?.android ?? defaultBuildCommand("android", configuration),
+		},
+		buildConfiguration: configuration,
 		cacheDirs: (entry.cacheDirs ?? LEGACY_CACHE_DIRS[entry.name] ?? []).map((d) =>
 			resolve(root, expandHome(d, env.HOME))
 		),
 		origin: "config",
 	};
-	if (entry.fingerprint) project.fingerprintCommand = entry.fingerprint.command;
+	if (entry.fingerprint?.command !== undefined) project.fingerprintCommand = entry.fingerprint.command;
+	if (entry.fingerprint?.include === "native+js" && entry.fingerprint.jsInputs) {
+		project.jsInputs = entry.fingerprint.jsInputs;
+	}
 	const eas =
 		entry.eas ?? (existsSync(join(root, "eas.json")) ? { profile: DEFAULT_EAS_PROFILE, trigger: false } : undefined);
 	if (eas) project.eas = eas;

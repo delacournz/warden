@@ -24,11 +24,14 @@ Optional, at the repo root. Without it, warden detects a single Expo project fro
     name: { type: "string", description: "Project name, used in the cache key." },
     root: { type: "string", description: "Project directory, relative to the repo root." },
     bundleId: { type: "{ ios?: string; android?: string }", description: "Bundle id / package. Required for a dynamic app.config." },
-    "fingerprint.command": { type: "string", description: "Command that prints the fingerprint. `{platform}` is substituted." },
+    "fingerprint.command": { type: "string", description: "Command that prints the native fingerprint. `{platform}` is substituted. Default: `@expo/fingerprint`." },
+    "fingerprint.include": { type: '"native" | "native+js"', description: "What the cache / install key covers. `native+js` adds a content hash of `jsInputs`, for Release builds that embed the JS bundle.", default: '"native"' },
+    "fingerprint.jsInputs": { type: "string[]", description: "Required with `native+js`. Globs, relative to the project root, of the JS sources. A glob starting with `../` reaches outside the project (a workspace package the bundle embeds, e.g. `../../../packages/engine/src/**`). Only git-tracked and untracked-not-ignored files count." },
     "eas.profile": { type: "string", description: "EAS build profile to look up builds under." },
     "eas.workflow": { type: "string", description: "EAS workflow file to trigger on a miss." },
     "eas.trigger": { type: "boolean", description: "Trigger the workflow when no EAS build matches.", default: "false" },
-    build: { type: "{ ios?: string; android?: string }", description: "Local build command per platform, used as the last resort." },
+    build: { type: "{ ios?: string; android?: string; configuration?: \"Debug\" | \"Release\" }", description: "Local build command per platform, used as the last resort." },
+    "build.configuration": { type: '"Debug" | "Release"', description: "Which build a local build produces. Sets the artifact search (`<Config>-iphonesimulator`, `apk/release`) and, unless `build.<platform>` is set, the default command (`--configuration Release` / `--variant release`).", default: '"Debug"' },
   }}
 />
 
@@ -72,7 +75,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
     ttl: { type: "string", description: "Lease TTL without heartbeat.", default: "30m" },
     wait: { type: "string", description: "Wait this long for free devices." },
     ports: { type: "string[]", description: "`FROM:SPAN` port specs (`WARDEN_PORT_<i>`)." },
-    app: { type: "boolean", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env)." },
+    app: { type: "boolean | { clean?: boolean }", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env). `{ clean: true }` also uninstalls it first (`--clean`)." },
     retry: { type: "number", description: "Re-run a failed job up to N times on the same device.", default: "0" },
     passes: { type: "number", description: "A job passes only after N consecutive green runs on its device.", default: "1" },
     env: { type: "Record<string, string>", description: "Added to the serve and job env." },
@@ -111,13 +114,18 @@ The preset's cwd is its project's root, or the config file's directory when ther
 
 <TypeTable
   type={{
+    project: { type: "string", description: "`projects[].name`: the runner, `serve` and `setup` run in its root, relative `serveReady` `file:` paths resolve against it, and `app` installs that project's build. Needed when the config has several projects and warden runs from the repo root." },
     flowsDir: { type: "string", description: "Required. Directory of flow YAML files (searched recursively; dot dirs and `__baselines__` skipped)." },
-    runner: { type: "string[]", description: "Required. Per-flow argv; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted. Runs in the config file's directory." },
+    runner: { type: "string[]", description: "Required. Per-flow argv; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted. Runs in the suite's `project` root, else the config file's directory." },
     platform: { type: '"ios" | "android"', description: "Default platform. Without it `warden affected` reports both and `warden e2e` needs `--platform`." },
     base: { type: "string", description: "Ref changes are measured against (merge-base with HEAD).", default: '"main"' },
     tsconfig: { type: "string", description: "tsconfig for files with no `tsconfig.json` between them and the config file." },
     routerRoot: { type: "string", description: "File-based router directory: `_layout` files above an entry count as entries." },
     maxDepth: { type: "number", description: "Import hops from an entry that still select a flow.", default: "unlimited" },
+    include: { type: "string[]", description: "Flow-id globs: only matching flows are ever selected (default: all). Lets one `flowsDir` feed several suites, e.g. `[\"online/**\"]`." },
+    exclude: { type: "string[]", description: "Flow-id globs that are never selected, e.g. `[\"online/**\"]`." },
+    scope: { type: "string[]", description: "Changed-file globs: only matching changes count at all (default: every change)." },
+    unmatched: { type: '"run-all" | "skip"', description: "A counted change that reaches no flow (no `paths` / `entries` / `runAll` match, not `ignore`d): `run-all` selects every flow — a new `src/` area never silently runs nothing — `skip` selects nothing.", default: '"skip"' },
     runAll: { type: "string[]", description: "Globs: a matching change selects every flow." },
     ignore: { type: "string[]", description: "Globs: matching changes are ignored." },
     always: { type: "string[]", description: "Flow ids / globs that always run." },
@@ -127,7 +135,14 @@ The preset's cwd is its project's root, or the config file's directory when ther
     retry: { type: "number", description: "Re-run a failed flow up to N times.", default: "0" },
     count: { type: "number", description: "Devices to claim." },
     profile: { type: "string", description: "Device profile." },
-    app: { type: "boolean", description: "Ensure the app on every device first." },
+    app: { type: "boolean | { clean?: boolean }", description: "Ensure the app on every device first. `{ clean: true }` also uninstalls it first (`--clean`)." },
+    ports: { type: "string[]", description: "Ports leased for the run (`<from>[:<span>]`, like `--port`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner." },
+    env: { type: "Record<string, string>", description: "Added to the serve, setup and runner env." },
+    serve: { type: "string", description: "`sh -c` once per run before the flows, in its own process group; killed at the end. `--serve` overrides." },
+    serveReady: { type: "string", description: "Wait for `http://…`, `tcp:PORT` or `file:PATH` (relative to the project root) before starting. Needs `serve`." },
+    serveTimeout: { type: "string", description: "Give up waiting for `serveReady` after this long (`30s`, `10m`).", default: '"10m"' },
+    setup: { type: "string", description: "`sh -c` once per leased device, after the app install and before that device's first flow (`{udid}` is substituted). Env: `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH`, plus `env`. Output goes to `logs/setup-<worker>.log`. A non-zero exit drops that device and its flows go to the others; none left fails the run." },
+    slim: { type: "boolean", description: "iOS: switch off the simulator daemons flows never need on each leased device, before `setup` (`warden sim slim`). A failure only warns." },
     flows: { type: "Record<string, Flow>", description: "Per flow id or glob; see below." },
   }}
 />

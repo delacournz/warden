@@ -6,15 +6,18 @@ import { expandArgv, jobSlug, parseJobLines, parseJobList } from "@delacour/ward
 import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delacour/warden-core/batch/preset";
 import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "@delacour/warden-core/batch/schedule";
 import { parseDuration } from "@delacour/warden-core/duration";
-import { execError } from "@delacour/warden-core/exec";
+import { bunExec, execError } from "@delacour/warden-core/exec";
 import { isPortFree } from "@delacour/warden-core/ports";
+import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
+import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
+import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
 import { applyEvent, type BatchView, initialView, type LiveScreen, liveScreen, plainLine, render } from "../batch/tui";
 import { type ClaimFlagValues, parseClaimFlags, resolveOwner, resolvePlatform, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
@@ -49,6 +52,8 @@ export type SpawnOptions = {
 	group?: boolean;
 	/** the invoking directory (`ctx.cwd`), or the preset's cwd */
 	cwd: string;
+	/** a per-device `setup` command rather than a job */
+	setup?: true;
 };
 
 /** Where the TUI goes (stderr by default). */
@@ -62,6 +67,13 @@ export type BatchDeps = LeaseSessionDeps & {
 	sleep: (ms: number) => Promise<void>;
 	/** `--record`: start recording `udid` into `path` */
 	record: (udid: string, path: string) => Promise<Recording>;
+	/**
+	 * Best-effort screenshot of a device after a job failed, into `path`. Resolves false when it
+	 * could not (and must stay within a few seconds): a failure shot never fails or stalls the batch.
+	 */
+	screenshot: (platform: Platform, udid: string, path: string) => Promise<boolean>;
+	/** `slim: true`: switch off the unneeded daemons on one iOS simulator (resolves to the jobs touched) */
+	slim: (udid: string) => AsyncResult<string[]>;
 	/** write a file, creating its parent dirs */
 	writeFile: (path: string, data: string) => Promise<void>;
 	readFile: (path: string) => Promise<string>;
@@ -234,6 +246,15 @@ async function waitReady(
 
 type Device = BatchWorker & { name: string; video?: string; videoStartedAt?: number };
 
+/** Failure screenshots by attempt: `<worker>:<seq>` → absolute png path. */
+export type Screenshots = ReadonlyMap<string, string>;
+
+/** Job logs by attempt: `<worker>:<seq>` → absolute log path. */
+export type Logs = ReadonlyMap<string, string>;
+
+/** Key of one job attempt in `Screenshots` / `Logs`. */
+export const attemptKey = (r: { worker: number; seq: number }) => `${r.worker}:${r.seq}`;
+
 /** The `batch.json` document (record-dir contract; also the `--json` output). */
 function summaryJson(
 	batchId: string,
@@ -241,7 +262,8 @@ function summaryJson(
 	startedAt: number,
 	endedAt: number,
 	devices: Device[],
-	summary: BatchSummary
+	summary: BatchSummary,
+	screenshots: Screenshots
 ) {
 	return {
 		batchId,
@@ -256,6 +278,7 @@ function summaryJson(
 			...(d.video !== undefined ? { video: d.video, videoStartedAt: d.videoStartedAt } : {}),
 		})),
 		jobs: summary.results.map((r) => ({
+			...(screenshots.has(attemptKey(r)) ? { screenshot: screenshots.get(attemptKey(r)) } : {}),
 			job: r.job,
 			worker: r.worker,
 			udid: r.udid,
@@ -336,6 +359,11 @@ type JobRunnerOptions = {
 	cwd: string;
 	logDir: string;
 	passes: number;
+	platform: Platform;
+	/** filled with a failed attempt's screenshot (`attemptKey`) */
+	screenshots: Map<string, string>;
+	/** filled with each attempt's log (`attemptKey`); a later pass overwrites, so a failed attempt keeps the failing run's */
+	logs: Map<string, string>;
 	running: Set<ProcHandle>;
 	interrupted: () => boolean;
 };
@@ -357,6 +385,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 		};
 		const suffix = o.passes > 1 ? `.pass${pass}` : "";
 		const log = join(o.logDir, `${w.worker}-${seq}-${jobSlug(job)}${suffix}.log`);
+		o.logs.set(attemptKey({ worker: w.worker, seq }), log);
 		const argv = o.hooks.argvFor ? o.hooks.argvFor(job) : o.cmd;
 		let proc: ProcHandle;
 		try {
@@ -369,10 +398,23 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			return 127;
 		}
 		o.running.add(proc);
+		let code: number;
 		try {
-			return await proc.exited;
+			code = await proc.exited;
 		} finally {
 			o.running.delete(proc);
+		}
+		if (code !== 0 && !o.interrupted()) await shoot(w, seq, log);
+		return code;
+	};
+	/** a failed attempt's device, next to its log (`….log` → `….png`); never throws */
+	const shoot = async (w: BatchWorker, seq: number, log: string): Promise<void> => {
+		const path = log.replace(/\.log$/, ".png");
+		try {
+			if (await deps.screenshot(o.platform, w.udid, path))
+				o.screenshots.set(attemptKey({ worker: w.worker, seq }), path);
+		} catch {
+			// best effort
 		}
 	};
 	return async (w: BatchWorker, job: string, seq: number): Promise<number> => {
@@ -396,12 +438,13 @@ type BatchRun = {
 	startedAt: number;
 	endedAt: number;
 	summary: BatchSummary;
+	screenshots: Screenshots;
 	cast?: Cast;
 };
 
 /** Write `batch.json` (+ `tui.cast`), print `--json` / the closing lines. */
 async function report(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, r: BatchRun): Promise<void> {
-	const doc = summaryJson(r.batchId, r.cmd, r.startedAt, r.endedAt, r.devices, r.summary);
+	const doc = summaryJson(r.batchId, r.cmd, r.startedAt, r.endedAt, r.devices, r.summary, r.screenshots);
 	await deps.writeFile(join(r.batchDir, "batch.json"), `${JSON.stringify(doc, null, 2)}\n`);
 	if (r.cast) await deps.writeFile(join(r.batchDir, "tui.cast"), r.cast.text());
 	if (args.json) emit(ctx, true, doc, "");
@@ -413,10 +456,68 @@ async function report(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, r: 
 }
 
 /** How a batch session ended: its exit code, and — once the jobs ran — the summary and where it lives. */
-export type SessionResult = { code: number; batchDir?: string; summary?: BatchSummary };
+export type SessionResult = {
+	code: number;
+	batchDir?: string;
+	summary?: BatchSummary;
+	screenshots?: Screenshots;
+	/** the log of each attempt (`attemptKey`): the failing run of that attempt when it failed */
+	logs?: Logs;
+	/** every device the run leased, `worker` indexed */
+	devices?: Array<{ worker: number; udid: string; name: string }>;
+	/** per-device setup outcomes, when the session ran a setup */
+	setups?: DeviceSetup[] | undefined;
+};
 
 /** Extras for callers building on batch (`warden e2e`). */
-export type SessionHooks = { argvFor?: ArgvFor; name?: string };
+export type SessionHooks = {
+	argvFor?: ArgvFor;
+	name?: string;
+	/** run once per device after the app install and before its first job; a device whose setup fails is dropped */
+	setup?: DeviceSetupSpec | undefined;
+};
+
+/** Per-device setup (`hooks.setup`): who is left to run jobs, every outcome, and why the run can't go on (no device left). */
+async function prepareDevices(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	name: string,
+	spec: DeviceSetupSpec | undefined,
+	devices: Device[],
+	env: Record<string, string | undefined>,
+	cwd: string,
+	logDir: string,
+	running: Set<ProcHandle>
+): Promise<{ live: Device[]; setups?: DeviceSetup[]; failure?: string }> {
+	if (!spec) return { live: devices };
+	const setups = await setupDevices({
+		devices,
+		spec,
+		env,
+		cwd,
+		logDir,
+		spawn: (argv, o) => deps.spawn(argv, o),
+		slim: deps.slim,
+		track: (proc) => {
+			const handle = proc as ProcHandle;
+			running.add(handle);
+			return () => running.delete(handle);
+		},
+	});
+	const failed = setups.filter((d) => !d.ok);
+	for (const d of setups) {
+		if (d.slim && "error" in d.slim) ctx.err(ctx.ui.color.yellow(`warden ${name}: slim ${d.udid}: ${d.slim.error}`));
+	}
+	for (const d of failed) {
+		ctx.err(ctx.ui.color.red(`warden ${name}: setup failed on ${d.udid} (exit ${d.exitCode}) — log: ${d.log}`));
+	}
+	const live = devices.filter((d) => setups.find((s) => s.worker === d.worker)?.ok);
+	if (live.length > 0) return { live, setups };
+	return { live, setups, failure: `setup failed on every device (logs: ${failed.map((d) => d.log).join(", ")})` };
+}
+
+/** 130 when the run was interrupted, else 0 for a clean pass and 1 for any failure. */
+const exitFor = (interrupted: boolean, passed: boolean): number => (interrupted ? 130 : passed ? 0 : 1);
 
 /** Everything after the claim: serve → recordings → jobs → stop serve → stop recordings → batch.json → release. */
 async function supervise(
@@ -440,6 +541,8 @@ async function supervise(
 	}));
 	const controller = new AbortController();
 	const running = new Set<ProcHandle>();
+	const screenshots = new Map<string, string>();
+	const logs = new Map<string, string>();
 	const stopHold = holdLeases(ctx, deps, session.leaseIds, (signal) => {
 		controller.abort();
 		for (const job of running) job.kill(signal);
@@ -447,9 +550,9 @@ async function supervise(
 	const interrupted = () => controller.signal.aborted;
 	let serve: ProcHandle | undefined;
 	let recordings: Recording[] = [];
-	const fail = (message: string): SessionResult => {
+	const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
 		ctx.err(ctx.ui.color.red(`warden ${name}: ${message}`));
-		return { code: interrupted() ? 130 : 1 };
+		return { code: interrupted() ? 130 : 1, ...extra };
 	};
 	/** workers are done: serve first, then the recordings (the contract's stop order) */
 	const teardown = async () => {
@@ -472,24 +575,49 @@ async function supervise(
 			if (!started.success) return fail(started.error);
 			recordings = started.data;
 		}
+		const prepared = await prepareDevices(ctx, deps, name, hooks.setup, devices, env, args.cwd, logDir, running);
+		if (prepared.failure !== undefined) return fail(prepared.failure, { batchDir, setups: prepared.setups });
+		const { live, setups } = prepared;
 		const startedAt = ctx.now();
-		const screen = display(ctx, deps, args, { current: initialView(devices, jobs.length, startedAt) });
+		const screen = display(ctx, deps, args, { current: initialView(live, jobs.length, startedAt) });
 		const summary = await runBatch({
-			workers: devices,
+			workers: live,
 			jobs,
 			retry: args.retry,
 			now: ctx.now,
 			signal: controller.signal,
 			onEvent: screen.event,
-			run: jobRunner(deps, { cmd, env, cwd: args.cwd, logDir, passes: args.passes, running, interrupted, hooks }),
+			run: jobRunner(deps, {
+				cmd,
+				env,
+				cwd: args.cwd,
+				logDir,
+				passes: args.passes,
+				platform: args.flags.request.platform,
+				screenshots,
+				logs,
+				running,
+				interrupted,
+				hooks,
+			}),
 		});
 		const endedAt = ctx.now();
 		screen.end();
 		await teardown();
-		const run: BatchRun = { batchId, batchDir, logDir, cmd, devices, total: jobs.length, startedAt, endedAt, summary };
+		const run: BatchRun = {
+			batchId,
+			batchDir,
+			logDir,
+			cmd,
+			devices,
+			total: jobs.length,
+			startedAt,
+			endedAt,
+			summary,
+			screenshots,
+		};
 		await report(ctx, deps, args, screen.cast ? { ...run, cast: screen.cast } : run);
-		if (interrupted()) return { code: 130, batchDir, summary };
-		return { code: summary.ok ? 0 : 1, batchDir, summary };
+		return { code: exitFor(interrupted(), summary.ok), batchDir, summary, screenshots, logs, devices, setups };
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	} finally {
@@ -552,6 +680,7 @@ function presetOpts(preset: BatchPreset): Partial<BatchOpts> {
 		record: preset.record,
 		logs: preset.logs,
 		...(preset.app ? { app: true, project: preset.projectRoot } : {}),
+		...(preset.app && preset.clean ? { clean: true } : {}),
 	};
 	return Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined));
 }
@@ -728,6 +857,8 @@ export const defaultBatchDeps: BatchDeps = {
 	probe: probeReady,
 	sleep: (ms) => Bun.sleep(ms),
 	record: (udid, path) => startSimRecording(udid, path, Date.now),
+	screenshot: captureScreenshot,
+	slim: (udid) => slimSimulator(bunExec, udid),
 	writeFile: async (path, data) => {
 		await mkdir(dirname(path), { recursive: true });
 		await writeFile(path, data);

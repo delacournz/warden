@@ -7,6 +7,8 @@ export type Harness = {
 	deps: BatchDeps;
 	spawned: Spawned[];
 	jobs: () => Spawned[];
+	/** per-device `setup` spawns */
+	setups: () => Spawned[];
 	serve: () => Spawned | undefined;
 	files: Map<string, string>;
 	dirs: string[];
@@ -14,6 +16,10 @@ export type Harness = {
 	signals: Map<string, () => void>;
 	probes: ReadySpec[];
 	terminal: string[];
+	/** every failure screenshot requested: `<platform> <udid> <path>` */
+	shots: string[];
+	/** every `slim` request: the udid */
+	slimmed: string[];
 };
 
 /**
@@ -29,11 +35,16 @@ export function harness(
 		serveExitsOnKill?: boolean;
 		/** overrides `exitCodes`: the exit code for one job spawn, from its env */
 		exitCodeFor?: (env: Record<string, string | undefined>) => number;
+		/** the failure-screenshot capture: "fail" resolves false, "throw" rejects */
+		screenshot?: "ok" | "fail" | "throw";
+		/** the `slim` effect: "fail" resolves an error */
+		slim?: "ok" | "fail";
 	} = {}
 ): Harness {
 	const h: Harness = {
 		spawned: [],
-		jobs: () => h.spawned.filter((s) => !s.opts.group),
+		jobs: () => h.spawned.filter((s) => !s.opts.group && !s.opts.setup),
+		setups: () => h.spawned.filter((s) => s.opts.setup),
 		serve: () => h.spawned.find((s) => s.opts.group),
 		files: new Map(),
 		dirs: [],
@@ -41,6 +52,8 @@ export function harness(
 		signals: new Map(),
 		probes: [],
 		terminal: [],
+		shots: [],
+		slimmed: [],
 		deps: {
 			pid: 777,
 			isPortFree: async () => true,
@@ -52,7 +65,9 @@ export function harness(
 				const entry: Spawned = { cmd, opts: spawnOpts, kills: [], finish: (code) => resolveExit(code) };
 				h.spawned.push(entry);
 				const job = spawnOpts.env.WARDEN_JOB;
-				h.events.push(spawnOpts.group ? "serve:start" : `job:${job}`);
+				h.events.push(
+					spawnOpts.group ? "serve:start" : spawnOpts.setup ? `setup:${spawnOpts.env.WARDEN_UDID}` : `job:${job}`
+				);
 				if (!spawnOpts.group && !opts.manual)
 					queueMicrotask(() => resolveExit(opts.exitCodeFor?.(spawnOpts.env) ?? opts.exitCodes?.[job ?? ""] ?? 0));
 				return {
@@ -78,6 +93,16 @@ export function harness(
 						return 0;
 					},
 				};
+			},
+			screenshot: async (platform, udid, path) => {
+				h.shots.push(`${platform} ${udid} ${path}`);
+				if (opts.screenshot === "throw") throw new Error("no device");
+				return opts.screenshot !== "fail";
+			},
+			slim: async (udid) => {
+				h.slimmed.push(udid);
+				h.events.push(`slim:${udid}`);
+				return opts.slim === "fail" ? { success: false, error: "not booted" } : { success: true, data: ["a", "b"] };
 			},
 			writeFile: async (path, data) => {
 				h.files.set(path, data);

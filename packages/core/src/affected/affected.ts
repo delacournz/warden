@@ -1,16 +1,24 @@
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { CONFIG_FILE, findWardenConfig } from "../builds/config";
 import type { Exec } from "../exec";
 import type { Platform } from "../types";
 import type { E2eSuiteConfig } from "./affected.schema";
-import { openImportCache } from "./cache";
+import { type ImportCache, openImportCache } from "./cache";
 import { scanFlows } from "./flows";
 import { type ChangedFile, changedFiles } from "./git";
 import { createImportGraph } from "./graph";
-import { type Selection, selectFlows } from "./select";
+import { type SelectInput, type Selection, selectFlows } from "./select";
 
-export type Suite = { name: string; config: E2eSuiteConfig; configDir: string };
+export type Suite = {
+	name: string;
+	config: E2eSuiteConfig;
+	configDir: string;
+	/** where the runner / serve / setup run: the suite's `project` root, else `configDir` */
+	cwd: string;
+	/** root of `project` (what `app` installs) */
+	projectRoot?: string;
+};
 
 export type AffectedInput = {
 	exec: Exec;
@@ -23,6 +31,8 @@ export type AffectedInput = {
 	platform?: Platform;
 	/** use these (relative to cwd) instead of `git diff` */
 	files?: readonly string[];
+	/** no diff at all: every flow, or exactly the named ones (see `SelectInput.only`) */
+	only?: SelectInput["only"];
 	/** persist parsed imports under this dir (one file per config dir), e.g. `$WARDEN_HOME/affected` */
 	cacheDir?: string;
 };
@@ -53,7 +63,10 @@ export async function findSuite(exec: Exec, cwd: string, name?: string): AsyncRe
 		);
 	const config = suites[pick];
 	if (!config) return err(`no e2e suite "${pick}" in ${CONFIG_FILE} (${names.join(", ") || "none"})`);
-	return ok({ name: pick, config, configDir: found.data.dir });
+	const { dir } = found.data;
+	const project = found.data.config.projects?.find((p) => p.name === config.project);
+	const projectRoot = project ? resolve(dir, project.root) : undefined;
+	return ok({ name: pick, config, configDir: dir, cwd: projectRoot ?? dir, ...(projectRoot ? { projectRoot } : {}) });
 }
 
 /** Repo-root-relative changes → relative to the config dir; files outside it are dropped. */
@@ -69,6 +82,7 @@ function rebase(files: readonly ChangedFile[], top: string, configDir: string): 
 }
 
 async function loadChanges(input: AffectedInput, suite: Suite, base: string): AsyncResult<ChangedFile[]> {
+	if (input.only) return ok([]);
 	if (input.files) {
 		return ok(
 			input.files.map((f) => ({ path: relative(suite.configDir, join(input.cwd, f)), status: "modified" as const }))
@@ -83,6 +97,18 @@ function platformsOf(input: AffectedInput, suite: Suite): Platform[] {
 	if (input.platform) return [input.platform];
 	return suite.config.platform ? [suite.config.platform] : ["ios", "android"];
 }
+
+function importGraphFor(config: E2eSuiteConfig, configDir: string, platform: Platform, cache: ImportCache) {
+	return createImportGraph({
+		platform,
+		repoRoot: configDir,
+		cache,
+		...(config.tsconfig ? { fallbackTsconfig: join(configDir, config.tsconfig) } : {}),
+	});
+}
+
+/** false when `files` / `only` replace the git diff (so there is no base to report). */
+const usesGit = (input: AffectedInput): boolean => !input.files && !input.only;
 
 /** Changed files → the flows each platform must run (with reasons), per `e2e.<suite>`. */
 export async function computeAffected(input: AffectedInput): AsyncResult<Affected> {
@@ -99,14 +125,7 @@ export async function computeAffected(input: AffectedInput): AsyncResult<Affecte
 	);
 	const selections: Selection[] = [];
 	for (const platform of platformsOf(input, suite.data)) {
-		const graph = needsGraph
-			? await createImportGraph({
-					platform,
-					repoRoot: configDir,
-					cache,
-					...(config.tsconfig ? { fallbackTsconfig: join(configDir, config.tsconfig) } : {}),
-				})
-			: undefined;
+		const graph = needsGraph ? await importGraphFor(config, configDir, platform, cache) : undefined;
 		selections.push(
 			selectFlows({
 				suite: config,
@@ -115,13 +134,14 @@ export async function computeAffected(input: AffectedInput): AsyncResult<Affecte
 				changes: changes.data,
 				flows: scan.flows,
 				...(graph ? { imports: graph.imports } : {}),
+				...(input.only ? { only: input.only } : {}),
 			})
 		);
 	}
 	cache.save();
 	return ok({
 		suite: suite.data,
-		...(input.files ? {} : { base }),
+		...(usesGit(input) ? { base } : {}),
 		changes: changes.data,
 		selections,
 		warnings: scan.warnings,

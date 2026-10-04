@@ -31,7 +31,7 @@ With `--app`, warden first ensures the project's dev build is installed on each 
 warden run ios --count 2 --app --project apps/mobile -- bun run e2e
 ```
 
-`--no-eas` skips EAS downloads; `--no-build` refuses to build locally on a cache miss.
+`--no-eas` skips EAS downloads; `--no-build` refuses to build locally on a cache miss. `--clean` uninstalls the app first (`xcrun simctl uninstall` / `adb uninstall`), even when the device already has the right build, so each run starts with an empty app container. In a preset or suite, `"app": { "clean": true }` is the same as `--app --clean`.
 
 ## Reading the env in a script
 
@@ -66,7 +66,7 @@ Each job gets the `warden run` variables plus:
 
 `--passes N` makes a job pass only after N consecutive green runs on its device; the first red run is that attempt's result (and `--retry` can re-run it).
 
-A live grid shows every device's current job, elapsed time and pass/fail counts; with `--no-tui` or no terminal it prints plain lines. Each job's output goes to `logs/<worker>-<seq>-<job>.log`.
+A live grid shows every device's current job, elapsed time and pass/fail counts; with `--no-tui` or no terminal it prints plain lines like `[03/30] warden-iphone-17-2 ▶ login` / `✓ login (12.4 s)` / `✗ login exit 1 (9.0 s)` (03/30 = the job's place in start order). Each job's output goes to `logs/<worker>-<seq>-<job>.log`.
 
 ### Saving a batch as a preset
 
@@ -99,6 +99,10 @@ warden batch salient-e2e --count 2 --jobs qa-login   # same setup, 2 sims, one f
 With `project` set, serve, the jobs and `jobsFrom.command` run in that project's root, relative paths (`serveReady` `file:`, `record`, `logs`, a `jobsFrom` file) resolve against it, and `app` installs that project's build. `env` is added to the serve and job env. Flags you pass override the preset, and `-- <cmd>` overrides `cmd`.
 
 To queue only the flows a change needs, see [Affected e2e](/docs/guides/affected-e2e).
+
+### Failure screenshots
+
+When a job exits non-zero, warden screenshots its device right away (iOS `simctl io screenshot`, Android `adb exec-out screencap -p`) into the logs directory, named after the job's log (`0-2-login.log` → `0-2-login.png`; with `passes`, `….pass1.png`). Each failed retry attempt gets its own. The absolute path is the `screenshot` field on that job in `batch.json`, and on the flow in `e2e-report.json`. It is best effort with a 5 s cap: if the device can't be captured the field is simply absent and the batch carries on.
 
 ### Recording a run
 

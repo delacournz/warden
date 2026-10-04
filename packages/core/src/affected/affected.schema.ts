@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { duration, portSpec } from "../batch/preset.schema";
+import { appOptionSchema } from "../builds/app-option.schema";
 
 const path = z.string().min(1);
 const platform = z.enum(["ios", "android"]);
@@ -25,6 +27,8 @@ export const e2eFlowSchema = z
  */
 export const e2eSuiteSchema = z
 	.object({
+		/** `projects[].name`: runner / serve / setup run in its root and `app` installs it (default: the config file's dir) */
+		project: z.string().min(1).optional(),
 		flowsDir: path,
 		/** per-flow command; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted */
 		runner: z.array(z.string()).min(1),
@@ -43,6 +47,14 @@ export const e2eSuiteSchema = z
 		ignore: z.array(path).default([]),
 		/** flow ids / globs that always run */
 		always: z.array(path).default([]),
+		/** flow-id globs: only flows matching one of these are ever selected (default: all) */
+		include: z.array(path).default([]),
+		/** flow-id globs that are never selected (e.g. flows another suite owns) */
+		exclude: z.array(path).default([]),
+		/** changed-file globs: only matching changes count at all (default: every change) */
+		scope: z.array(path).default([]),
+		/** a counted change that reaches no flow (no `paths` / `entries` / `runAll` match, not `ignore`d): `run-all` selects every flow, `skip` selects nothing */
+		unmatched: z.enum(["run-all", "skip"]).default("skip"),
 		/** a flow without entries/paths: run it every time, or only via runAll / always */
 		unmapped: z.enum(["run", "skip"]).default("run"),
 		/** a flow passes only after this many consecutive green runs on the same device */
@@ -50,13 +62,34 @@ export const e2eSuiteSchema = z
 		retry: z.number().int().min(0).default(0),
 		count: z.number().int().min(1).optional(),
 		profile: z.string().min(1).optional(),
-		/** install the project's app on each device first (`warden batch --app`) */
-		app: z.boolean().optional(),
+		/** install the project's app on each device first (`warden batch --app`); `{ clean: true }` = `--clean` */
+		app: appOptionSchema.optional(),
+		/** ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner */
+		ports: z.array(portSpec).optional(),
+		/** added to the serve, setup and runner env */
+		env: z.record(z.string(), z.string()).optional(),
+		/** `sh -c` once per run before the flows (own process group), killed at the end; `--serve` overrides */
+		serve: z.string().min(1).optional(),
+		/** wait for `http://…`, `tcp:PORT` or `file:PATH` before starting; `--serve-ready` overrides */
+		serveReady: z.string().min(1).optional(),
+		serveTimeout: duration.optional(),
+		/** `sh -c` once per leased device, after the app install and before its first flow; `{udid}` is substituted. A non-zero exit drops that device from the run */
+		setup: z.string().min(1).optional(),
+		/** iOS: switch off the simulator daemons flows never need on each device, before `setup` */
+		slim: z.boolean().optional(),
 		/** default `required` for flows that don't set it */
 		required: z.boolean().default(true),
 		flows: z.record(z.string().min(1), e2eFlowSchema).default({}),
 	})
-	.strict();
+	.strict()
+	.superRefine((suite, issue) => {
+		if (suite.serveReady !== undefined && suite.serve === undefined)
+			issue.addIssue({ code: "custom", message: "serveReady needs serve", path: ["serveReady"] });
+		if (suite.serveTimeout !== undefined && suite.serve === undefined)
+			issue.addIssue({ code: "custom", message: "serveTimeout needs serve", path: ["serveTimeout"] });
+		if (suite.slim === true && suite.platform === "android")
+			issue.addIssue({ code: "custom", message: "slim is iOS-only", path: ["slim"] });
+	});
 
 export type E2eFlowConfig = z.infer<typeof e2eFlowSchema>;
 export type E2eSuiteConfig = z.infer<typeof e2eSuiteSchema>;

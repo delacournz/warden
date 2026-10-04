@@ -41,6 +41,15 @@ describe("parsing", () => {
 		expect(parseBuildList(JSON.stringify([{ id: "x", status: "WAT", createdAt: "" }])).success).toBe(false);
 	});
 
+	test("buildListArgv: a commit lookup replaces the fingerprint hash", () => {
+		const argv = buildListArgv("ios", "dev-sim", "h", "abc123");
+		expect(argv).not.toContain("--fingerprint-hash");
+		expect(argv.slice(argv.indexOf("--git-commit-hash"), argv.indexOf("--git-commit-hash") + 2)).toEqual([
+			"--git-commit-hash",
+			"abc123",
+		]);
+	});
+
 	test("parseDownloadPath", () => {
 		expect(parseDownloadPath('{"path":"/tmp/eas/App.app"}')).toEqual({ success: true, data: "/tmp/eas/App.app" });
 		expect(parseDownloadPath("{}").success).toBe(false);
@@ -49,6 +58,7 @@ describe("parsing", () => {
 	test("buildListArgv: --simulator only for iOS", () => {
 		expect(buildListArgv("ios", "dev-sim", "h")).toContain("--simulator");
 		expect(buildListArgv("android", "dev-sim", "h")).not.toContain("--simulator");
+		expect(buildListArgv("ios", "dev-sim", "h")).toContain("--fingerprint-hash");
 		expect(buildListArgv("ios", "dev-sim", "h").slice(0, 3)).toEqual(["bunx", "eas-cli", "build:list"]);
 	});
 });
@@ -202,6 +212,20 @@ describe("resolveFromEas", () => {
 		);
 		expect(res).toEqual({ kind: "downloaded", path: "/eas/New.app", buildId: "n" });
 		expect(calls.filter((c) => c.includes("workflow:run"))).toHaveLength(1);
+	});
+
+	test("commit lookup: lists by commit and never triggers the workflow", async () => {
+		const calls: string[] = [];
+		const res = await resolveFromEas(
+			deps(easExec([list()], {}, calls), {
+				commit: "abc123",
+				eas: { profile: "p", workflow: ".eas/workflows/dev-build.yml", trigger: true },
+				graceMs: 0,
+			}).deps
+		);
+		expect(res.kind).toBe("miss");
+		expect(calls.some((c) => c.includes("workflow:run"))).toBe(false);
+		expect(calls.some((c) => c.includes("--git-commit-hash abc123"))).toBe(true);
 	});
 
 	test("eas-cli failure → miss (local build can still run)", async () => {

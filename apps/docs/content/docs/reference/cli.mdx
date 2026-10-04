@@ -20,6 +20,7 @@ icon: Terminal
 | pre-build the golden image | `warden golden ensure --profile iphone-17` |
 | who holds what | `warden ls` |
 | every sim / emulator + who leases it | `warden devices` (alias `warden list`) |
+| lighten a booted sim (fewer daemons) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` |
 | tidy Simulator.app windows | `warden arrange` |
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a long lease alive | `warden heartbeat --mine` |
@@ -61,6 +62,7 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--project <dir>` | `--app`: project directory (default: cwd) |
 | `--bundle-id <id>` | `--app`: override the bundle id / package |
 | `--no-eas` / `--no-build` | `--app`: skip EAS downloads / local builds |
+| `--clean` | `--app`: uninstall the app first, so every run starts from a fresh container (even when the hash already matches) |
 
 See [e2e scripts](/docs/guides/e2e).
 
@@ -123,9 +125,11 @@ Select like `warden affected`, then run the flows like `warden batch` — the su
 | Flag | |
 |---|---|
 | `--dry-run` | select and explain, run nothing |
+| `--all` | run every flow of the suite (after `include` / `exclude`), no git diff |
+| `--flows <list>` | run exactly these flow ids / globs (comma-separated), no git diff; a list matching nothing fails |
 | `--report <file>` | also write `e2e-report.json` here |
 
-The suite's `count`, `profile`, `retry`, `passes` and `app` apply unless the flag is passed. Nothing affected → exit 0 without claiming.
+The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. Flows run in id order (sorted file path), so `count: 1` is a stable serial run. Nothing affected → exit 0 without claiming. Every failed flow is named at the end with its device, runner log and failure screenshot (also `device`, `log`, `screenshot` on the flow in `e2e-report.json`).
 
 ### `warden ls`
 
@@ -134,6 +138,18 @@ List leases: resource, state, owner, repo/worktree, age, heartbeat.
 ### `warden devices [platform]` (alias `list`)
 
 Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases.
+
+### `warden sim slim [udid]`
+
+iOS. Switches off the launchd jobs inside a booted simulator that UI flows never need — Siri, Apple Intelligence, Health, News, Mail, Photos analysis, Game Center, Wallet and friends (a conservative denylist; SpringBoard, installd, XCTest, the accessibility tree and the keyboard are never touched). A booted simulator runs 200+ such processes; with several simulators side by side, that is the RAM and CPU a flow suite is starved of.
+
+| Flag | |
+|---|---|
+| `--booted` | every booted simulator instead of one `<udid>` |
+| `--dry-run` | list the jobs, change nothing |
+| `--restore` | re-enable them (fully effective on the next boot) |
+
+Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/guides/affected-e2e#per-device-setup).
 
 ### `warden sims audit | prune | delete`
 
@@ -231,7 +247,7 @@ Print the project's native fingerprint (both platforms by default). `--project`,
 
 ### `warden app ensure [platform]`
 
-Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--no-eas`, `--no-build`, `--project`, `--bundle-id`. See [App builds](/docs/guides/app-builds).
+Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--clean` uninstalls the app first even when the hash matches; `--no-eas`, `--no-build`, `--project`, `--bundle-id`. See [App builds](/docs/guides/app-builds).
 
 ### `warden builds ls | prune | import`
 

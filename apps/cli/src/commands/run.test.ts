@@ -198,6 +198,41 @@ describe("warden run", () => {
 		expect(await running).toBe(0);
 	});
 
+	test("--app installs on every claimed device at once, not one by one", async () => {
+		const c = setup(["ios", "--count", "2", "--app", "--", "true"]);
+		const h = harness();
+		let inFlight = 0;
+		let peak = 0;
+		h.deps.ensureApp = async () => {
+			inFlight++;
+			peak = Math.max(peak, inFlight);
+			await new Promise((r) => setTimeout(r, 10));
+			inFlight--;
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		const running = createRunCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0);
+		expect(peak).toBe(2);
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	test("--app failure on one device waits for the others, then releases every lease", async () => {
+		const c = setup(["ios", "--count", "2", "--app", "--", "true"]);
+		const h = harness();
+		let settled = 0;
+		h.deps.ensureApp = async (_ctx, _owner, _platform, deviceId) => {
+			if (deviceId === "U1") return { success: false, error: "install failed" };
+			await new Promise((r) => setTimeout(r, 10));
+			settled++;
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(settled).toBe(1);
+		expect(c.db.listLeases()).toEqual([]);
+		expect(c.stderr.join("\n")).toContain("app on U1: install failed");
+	});
+
 	test("--app failure → leases released, exit 1, child never spawned", async () => {
 		const c = setup(["ios", "--app", "--port", "8091:20", "--", "true"]);
 		const h = harness();

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_FILE } from "@delacour/warden-core/builds/config";
-import type { ExecOptions, ExecResult } from "@delacour/warden-core/exec";
+import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-core/exec";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createBatchCommand } from "./batch";
@@ -37,8 +37,40 @@ type BatchJson = {
 		startedAt: number;
 		endedAt: number;
 		exitCode: number;
+		screenshot?: string;
 	}>;
 };
+
+/**
+ * Fake the build + install side of `--app` on top of `base` (simctl inventory): the project's
+ * fingerprint command prints `native`, the Release build drops an .app into `Release-iphonesimulator`,
+ * and the app starts installed so a clean install has something to uninstall. `calls` logs the
+ * build and every install/uninstall.
+ */
+function releaseExec(base: Exec, root: string, native: string, calls: string[]): Exec {
+	const done = (stdout = "", exitCode = 0): ExecResult => ({ exitCode, stdout, stderr: "" });
+	let installed = true;
+	return async (cmd, opts) => {
+		const line = cmd.join(" ");
+		const canned: Record<string, string> = { "sh -c fp ios": native, "git ls-files": "src/a.ts\0" };
+		const hit = Object.keys(canned).find((prefix) => line.startsWith(prefix));
+		if (hit) return done(canned[hit]);
+		if (line === "sh -c build-release") {
+			calls.push(line);
+			const products = join(root, "ios", "build", "Build", "Products", "Release-iphonesimulator");
+			mkdirSync(join(products, "S.app"), { recursive: true });
+			return done();
+		}
+		const verb = cmd[0] === "xcrun" ? cmd[2] : undefined;
+		if (verb === "get_app_container") return installed ? done("/container") : done("", 1);
+		if (verb === "install" || verb === "uninstall") {
+			calls.push(line);
+			installed = verb === "install";
+			return done();
+		}
+		return base(cmd, opts);
+	};
+}
 
 describe("warden batch", () => {
 	test("fans jobs over the leased devices with per-job argv + env, logs, releases, exit 0", async () => {
@@ -75,6 +107,57 @@ describe("warden batch", () => {
 		const bad = h.jobs().filter((j) => j.opts.env.WARDEN_JOB === "bad");
 		expect(bad.map((j) => j.opts.env.WARDEN_JOB_SEQ)).toEqual(["1", "2"]);
 		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("a job that exits non-zero gets a screenshot next to its log, recorded in batch.json", async () => {
+		const c = setup(["ios", "--jobs", "ok,bad", "--", "x", "{job}"]);
+		const h = harness({ exitCodes: { bad: 4 } });
+		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		const logs = join(c.env.WARDEN_HOME ?? "", "batches", "b1", "logs");
+		const bad = h.jobs().find((j) => j.opts.env.WARDEN_JOB === "bad");
+		const png = join(logs, `${bad?.opts.env.WARDEN_WORKER}-${bad?.opts.env.WARDEN_JOB_SEQ}-bad.png`);
+		expect(bad?.opts.log).toBe(png.replace(/\.png$/, ".log"));
+		expect(h.shots).toEqual([`ios ${bad?.opts.env.WARDEN_UDID} ${png}`]);
+		const summary = JSON.parse(h.files.get(join(logs, "..", "batch.json")) ?? "{}") as BatchJson;
+		expect(summary.jobs.find((j) => j.job === "bad")?.screenshot).toBe(png);
+		expect(summary.jobs.find((j) => j.job === "ok")).not.toHaveProperty("screenshot");
+	});
+
+	test("each failed retry attempt gets its own screenshot", async () => {
+		const c = setup(["ios", "--jobs", "bad", "--retry", "1", "--", "x", "{job}"]);
+		const h = harness({ exitCodes: { bad: 4 } });
+		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		expect(h.shots).toHaveLength(2);
+		expect(new Set(h.shots).size).toBe(2);
+	});
+
+	test("with --passes the screenshot is named after the failing pass's log", async () => {
+		const c = setup(["ios", "--jobs", "bad", "--passes", "2", "--", "x", "{job}"]);
+		const h = harness({ exitCodeFor: (env) => (env.WARDEN_PASS === "1" ? 3 : 0) });
+		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		expect(h.shots).toHaveLength(1);
+		expect(h.shots[0]).toMatch(/-bad\.pass1\.png$/);
+	});
+
+	test("a failing or throwing screenshot never fails the batch or lands in batch.json", async () => {
+		for (const mode of ["fail", "throw"] as const) {
+			const c = setup(["ios", "--jobs", "bad", "--", "x", "{job}"]);
+			const h = harness({ exitCodes: { bad: 4 }, screenshot: mode });
+			expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+			const doc = JSON.parse(
+				h.files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "batch.json")) ?? "{}"
+			) as BatchJson;
+			expect(doc.jobs[0]).toMatchObject({ job: "bad", exitCode: 4 });
+			expect(doc.jobs[0]).not.toHaveProperty("screenshot");
+			c.cleanup();
+		}
+	});
+
+	test("green jobs take no screenshot", async () => {
+		const c = setup(["ios", "--jobs", "a", "--", "x", "{job}"]);
+		const h = harness();
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(h.shots).toEqual([]);
 	});
 
 	test("--passes N: a job passes only after N consecutive green runs; the first red one stops it", async () => {
@@ -333,6 +416,23 @@ describe("warden batch", () => {
 		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
 		expect(seen.sort()).toEqual(["U1", "U2"]);
 		expect(h.jobs()[0]?.opts.env.WARDEN_APP_PATH).toBe("/c/A.app");
+	});
+
+	test("--clean is passed to the ensure step; it needs --app", async () => {
+		const c = setup(["ios", "--jobs", "a", "--app", "--clean", "--", "x"]);
+		const h = harness();
+		const seen: Array<boolean | undefined> = [];
+		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+			seen.push(opts.clean);
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(seen).toEqual([true]);
+		ctx?.cleanup();
+
+		const bare = setup(["ios", "--jobs", "a", "--clean", "--", "x"]);
+		expect(await createBatchCommand(harness().deps).run(bare)).toBe(1);
+		expect(bare.stderr.join("\n")).toContain("--clean need --app");
 	});
 
 	test("--app exports WARDEN_APP_PATH / WARDEN_APP_HASH to serve as well as jobs", async () => {
@@ -602,6 +702,54 @@ describe("warden batch", () => {
 				expect(proc?.opts.env.WARDEN_APP_HASH).toBe("H");
 				expect(proc?.opts.env.WARDEN_APP_PATH).toBeUndefined();
 			}
+		});
+
+		test("preset app: { clean: true } installs cleanly", async () => {
+			const c = setup(["p"]);
+			writeConfig(c.cwd, {
+				projects: [{ name: "s", root: ".", bundleId: { ios: "x" } }],
+				batches: { p: { project: "s", platform: "ios", app: { clean: true }, jobs: ["a"], cmd: ["x"] } },
+			});
+			const h = harness();
+			const seen: Array<boolean | undefined> = [];
+			h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+				seen.push(opts.clean);
+				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+			};
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			expect(seen).toEqual([true]);
+		});
+
+		test("app: Release build, native+js key (custom fingerprint command) and clean install all reach the real ensure path", async () => {
+			const c = setup(["p"]);
+			const root = join(c.cwd, "app");
+			mkdirSync(join(root, "src"), { recursive: true });
+			writeFileSync(join(root, "src", "a.ts"), "export {}");
+			writeConfig(c.cwd, {
+				projects: [
+					{
+						name: "s",
+						root: "app",
+						bundleId: { ios: "nz.x" },
+						fingerprint: { command: "fp {platform}", include: "native+js", jsInputs: ["src/**"] },
+						build: { configuration: "Release", ios: "build-release" },
+					},
+				],
+				batches: { p: { project: "s", platform: "ios", app: { clean: true }, jobs: ["a"], cmd: ["x"] } },
+			});
+			const native = "abc123def456";
+			const calls: string[] = [];
+			c.exec = releaseExec(c.exec, root, native, calls);
+			const h = harness();
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			const order = calls.map((l) => l.split(" ").slice(0, 3).join(" "));
+			expect(order).toContain("sh -c build-release");
+			expect(order.indexOf("xcrun simctl uninstall")).toBeGreaterThanOrEqual(0);
+			expect(order.indexOf("xcrun simctl uninstall")).toBeLessThan(order.indexOf("xcrun simctl install"));
+			const hash = h.jobs()[0]?.opts.env.WARDEN_APP_HASH;
+			expect(hash).toMatch(/^[0-9a-f]{40}$/);
+			expect(hash).not.toBe(native);
+			expect(h.jobs()[0]?.opts.env.WARDEN_APP_PATH).toContain("S.app");
 		});
 
 		test("preset without jobs needs --jobs/--jobs-from; a platform operand ignores the config", async () => {
