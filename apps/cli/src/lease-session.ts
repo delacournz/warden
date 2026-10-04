@@ -170,7 +170,7 @@ export function parseAppFlags(opts: AppFlagValues): Result<EnsureOptions | undef
 /** What to lease: devices (claim flags), `--port` specs and optionally the app on each device. */
 export type LeaseArgs = { flags: ClaimFlags; ports: string[]; app?: EnsureOptions };
 
-/** `--app`: ensure the app on every claimed device; exports `WARDEN_APP_PATH` / `WARDEN_APP_HASH` into `env`. */
+/** `--app`: ensure the app on every claimed device in parallel (waits for all, then reports the first failure); exports `WARDEN_APP_PATH` / `WARDEN_APP_HASH` into `env`. */
 async function ensureSessionApp(
 	ctx: CommandContext,
 	ensure: RunEnsureApp,
@@ -180,8 +180,12 @@ async function ensureSessionApp(
 	env: Record<string, string | undefined>,
 	name: string
 ): AsyncResult<void> {
-	for (const c of outcome.claimed) {
-		const res = await ensure(ctx, owner, c.device.platform, c.device.id, opts);
+	const results = await Promise.all(
+		outcome.claimed.map((c) => ensure(ctx, owner, c.device.platform, c.device.id, opts))
+	);
+	for (const [i, c] of outcome.claimed.entries()) {
+		const res = results[i];
+		if (!res) continue;
 		if (!res.success) return err(`app on ${c.device.id}: ${res.error}`);
 		ctx.err(`warden ${name}: app ${res.data.source} on ${c.device.id} [${res.data.hash}]`);
 		if (res.data.appPath) env.WARDEN_APP_PATH = res.data.appPath;
