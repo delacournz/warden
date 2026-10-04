@@ -80,3 +80,17 @@ warden skill install --project -a claude-code -y   # into the current project, o
 ```
 
 The skill's source is `skills/warden/SKILL.md`, embedded in the binary. `npx` is used when `bunx` isn't available; `--dry-run` prints the command.
+
+## In GitHub Actions
+
+The repo is private, so CI installs the release binary with a token instead of npm:
+
+```yaml
+- uses: delacournz/warden/.github/actions/install-warden@main
+  with:
+    token: ${{ secrets.WARDEN_RELEASE_TOKEN }}
+```
+
+`WARDEN_RELEASE_TOKEN` needs **Contents: read** on `delacournz/warden` (fine-grained PAT or GitHub App token). Allow the action's repo under Settings → Actions → General → Access. The action downloads `warden-<os>-<arch>` from the latest (or `version:`) release, checks `checksums.txt` and adds `warden` to `PATH`.
+
+A clean macOS runner needs no setup beyond an installed iOS runtime: the profile's simulators are created on claim, cloned from a golden image built on first use (cache `~/Library/Developer/CoreSimulator/Devices` to skip that next time).

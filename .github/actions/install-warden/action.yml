@@ -1,0 +1,41 @@
+name: Install warden
+description: Download the warden release binary for this runner from the private delacournz/warden repo, verify its checksum and put it on PATH.
+
+inputs:
+  token:
+    description: Token that can read releases of the warden repo (fine-grained PAT with "Contents: read" on delacournz/warden, or a GitHub App token).
+    required: true
+  version:
+    description: Release tag to install (e.g. v0.1.0); "latest" for the newest.
+    default: latest
+  repo:
+    description: Repo that publishes the releases.
+    default: delacournz/warden
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        WARDEN_VERSION: ${{ inputs.version }}
+        WARDEN_REPO: ${{ inputs.repo }}
+      run: |
+        set -euo pipefail
+        case "$(uname -s)-$(uname -m)" in
+          Darwin-arm64) target=darwin-arm64 ;;
+          Darwin-x86_64) target=darwin-x64 ;;
+          Linux-aarch64) target=linux-arm64 ;;
+          Linux-x86_64) target=linux-x64 ;;
+          *) echo "no warden build for $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/warden-dl"
+        mkdir -p "$dir" "$HOME/.local/bin"
+        tag_args=()
+        if [ "$WARDEN_VERSION" != "latest" ]; then tag_args=("$WARDEN_VERSION"); fi
+        gh release download "${tag_args[@]}" --repo "$WARDEN_REPO" --dir "$dir" \
+          --pattern "warden-$target" --pattern checksums.txt --clobber
+        (cd "$dir" && grep " warden-$target\$" checksums.txt | shasum -a 256 -c -)
+        install -m 0755 "$dir/warden-$target" "$HOME/.local/bin/warden"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        "$HOME/.local/bin/warden" --version
