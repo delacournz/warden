@@ -11,7 +11,7 @@ icon: Terminal
 | one sim / emulator | `warden claim ios --json` · `warden claim android --json` |
 | N devices + ports for a script | `warden run ios --count N --port 8091:20 -- <cmd>` |
 | One job per device, queued | `warden batch ios --count N --jobs-from jobs.txt -- <cmd {job} {udid}>` |
-| a saved batch from `warden.config.json` | `warden batch <preset> [flags] [-- <cmd>]` |
+| a saved batch from `warden.config.ts` | `warden batch <preset> [flags] [-- <cmd>]` |
 | which e2e flows a change needs | `warden affected [suite] --base main --explain` |
 | run them and gate on the required ones | `warden e2e [suite] --base main --count N` |
 | a free port | `warden port claim --json` |
@@ -84,7 +84,7 @@ Claim devices and fan a job queue out over them, one worker per device; the comm
 
 `--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed.
 
-If the first operand is the name of a preset in [`warden.config.json`](/docs/reference/configuration#batches) `batches` (found by walking up from the cwd to the git root), that preset supplies the platform and defaults:
+If the first operand is the name of a preset in [`warden.config.ts`](/docs/reference/configuration#batches) `batches` (found by walking up from the cwd to the git root), that preset supplies the platform and defaults:
 
 - Flags you actually pass override the preset; commander defaults (`--count 1`, `--retry 0`, `--serve-timeout 10m`…) do not.
 - `--jobs` / `--jobs-from` replace the preset's `jobs` / `jobsFrom`.

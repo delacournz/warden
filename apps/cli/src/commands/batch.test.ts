@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG_FILE } from "@delacour/warden-core/builds/config";
+import { JSON_CONFIG_FILE } from "@delacour/warden-core/builds/config";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-core/exec";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
@@ -474,7 +474,7 @@ describe("warden batch", () => {
 		};
 
 		function writeConfig(dir: string, config: unknown): void {
-			writeFileSync(join(dir, CONFIG_FILE), JSON.stringify(config));
+			writeFileSync(join(dir, JSON_CONFIG_FILE), JSON.stringify(config));
 		}
 
 		type ShCall = { cmd: string[]; opts?: ExecOptions };
@@ -663,7 +663,7 @@ describe("warden batch", () => {
 			const broken = setup(["p", "--", "x"]);
 			writeConfig(broken.cwd, { batches: { p: { platform: "ios" } } });
 			expect(await createBatchCommand(harness().deps).run(broken)).toBe(1);
-			expect(broken.stderr.join("\n")).toContain(`invalid ${CONFIG_FILE}: batches.p.cmd`);
+			expect(broken.stderr.join("\n")).toContain(`invalid ${JSON_CONFIG_FILE}: batches.p.cmd`);
 		});
 
 		test("fewer jobs than count → the claim is clamped to the job count", async () => {

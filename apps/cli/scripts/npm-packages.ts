@@ -3,6 +3,7 @@
  * Stage the npm packages from `build:release` output (run that first):
  *   dist/npm/warden-<target>/  → @delacour/warden-<target>: package.json + bin/warden (the compiled binary)
  *   dist/npm/warden/           → @delacour/warden: package.json + bin/warden.mjs (node shim) + README.md
+ *                                + config/index.{mjs,d.ts} (`@delacour/warden/config`: defineConfig + types)
  * Every package also gets the repo-root LICENSE. Repository / homepage / bugs links are added only with
  * `--repo-links` or `WARDEN_NPM_REPO_LINKS=1` (the release workflow sets it once the repo is public).
  * Publishing is the release workflow's job: platform packages first, then @delacour/warden.
@@ -11,6 +12,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync }
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import cliPackage from "../package.json" with { type: "json" };
+import { buildConfigEntry } from "../src/npm/config-entry";
 import {
 	BINARY_PATH,
 	LICENSE_FILE,
@@ -71,6 +73,8 @@ const shimPath = join(main, SHIM_PATH);
 mkdirSync(dirname(shimPath), { recursive: true });
 writeFileSync(shimPath, code.startsWith("#!") ? code : `#!/usr/bin/env node\n${code}`);
 chmodSync(shimPath, 0o755);
+const configEntry = await buildConfigEntry(main);
+if (!configEntry.success) throw new Error(configEntry.error);
 copyFileSync(join(repoRoot, "README.md"), join(main, "README.md"));
 copyFileSync(join(repoRoot, LICENSE_FILE), join(main, LICENSE_FILE));
 console.log("staged dist/npm/warden");

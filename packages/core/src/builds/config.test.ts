@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_BUILD_COMMAND, defaultBuildCommand } from "./builds.defaults";
-import { bundleIdFor, CONFIG_FILE, loadProject, parseWardenConfig } from "./config";
+import { bundleIdFor, CONFIG_FILE, findWardenConfig, JSON_CONFIG_FILE, loadProject, parseWardenConfig } from "./config";
 
 let dir: string;
 const env = { HOME: "/home/me" };
@@ -90,7 +90,7 @@ describe("parseWardenConfig", () => {
 
 describe("loadProject", () => {
 	test("config at repo root, project picked by containing dir", () => {
-		write(CONFIG_FILE, {
+		write(JSON_CONFIG_FILE, {
 			projects: [
 				{ name: "web", root: "apps/web", bundleId: {} },
 				{
@@ -120,7 +120,7 @@ describe("loadProject", () => {
 	});
 
 	test("build.configuration: Release flips the default build commands, not explicit ones", () => {
-		write(CONFIG_FILE, {
+		write(JSON_CONFIG_FILE, {
 			projects: [
 				{ name: "a", bundleId: { ios: "x" }, build: { configuration: "Release" } },
 				{ name: "b", bundleId: { ios: "x" }, build: { configuration: "Release", ios: "my build" } },
@@ -147,7 +147,7 @@ describe("loadProject", () => {
 		});
 		expect(stray.success).toBe(false);
 
-		write(CONFIG_FILE, {
+		write(JSON_CONFIG_FILE, {
 			projects: [
 				{ name: "a", bundleId: { ios: "x" }, fingerprint: { include: "native+js", jsInputs: ["src/**", "app.json"] } },
 				{ name: "b", bundleId: { ios: "x" }, fingerprint: { command: "fp" } },
@@ -169,7 +169,7 @@ describe("loadProject", () => {
 	});
 
 	test("ambiguous: several projects, none containing start → error; --name picks", () => {
-		write(CONFIG_FILE, {
+		write(JSON_CONFIG_FILE, {
 			projects: [
 				{ name: "a", root: "a", bundleId: {} },
 				{ name: "b", root: "b", bundleId: {} },
@@ -181,7 +181,7 @@ describe("loadProject", () => {
 	});
 
 	test("single project is used from anywhere under the config", () => {
-		write(CONFIG_FILE, { projects: [{ name: "a", root: "app", bundleId: { ios: "x" } }] });
+		write(JSON_CONFIG_FILE, { projects: [{ name: "a", root: "app", bundleId: { ios: "x" } }] });
 		const res = loadProject({ start: dir, env });
 		expect(res.success && res.data.name).toBe("a");
 	});
@@ -217,10 +217,103 @@ describe("loadProject", () => {
 	});
 
 	test("bundleIdFor", () => {
-		write(CONFIG_FILE, { projects: [{ name: "a", bundleId: { ios: "x" } }] });
+		write(JSON_CONFIG_FILE, { projects: [{ name: "a", bundleId: { ios: "x" } }] });
 		const res = loadProject({ start: dir, env });
 		if (!res.success) throw new Error(res.error);
 		expect(bundleIdFor(res.data, "ios")).toEqual({ success: true, data: "x" });
 		expect(bundleIdFor(res.data, "android").success).toBe(false);
+	});
+});
+
+describe("findWardenConfig: warden.config.ts", () => {
+	const defineConfigPath = join(import.meta.dir, "define-config.ts");
+
+	test("object default export via defineConfig, with defaults applied", () => {
+		write(
+			CONFIG_FILE,
+			`import { defineConfig } from ${JSON.stringify(defineConfigPath)};
+const ios: string = "com.x.app";
+export default defineConfig({ projects: [{ name: "app", bundleId: { ios } }] });`
+		);
+		const res = findWardenConfig(dir, dir);
+		if (!res.success) throw new Error(res.error);
+		expect(res.data?.dir).toBe(dir);
+		expect(res.data?.config.projects?.[0]).toEqual({ name: "app", root: ".", bundleId: { ios: "com.x.app" } });
+	});
+
+	test("type-only imports are erased, so the package needn't be installed", () => {
+		write(
+			CONFIG_FILE,
+			`import type { WardenConfig } from "@delacour/warden/not-installed";
+export default { batches: { smoke: { platform: "ios", cmd: ["true"] } } } satisfies WardenConfig;`
+		);
+		const res = findWardenConfig(dir, dir);
+		if (!res.success) throw new Error(res.error);
+		expect(Object.keys(res.data?.config.batches ?? {})).toEqual(["smoke"]);
+	});
+
+	test("function export gets configDir + env", () => {
+		write(
+			CONFIG_FILE,
+			"export default ({ configDir, env }) => ({ projects: [{ name: env.APP_NAME, root: configDir, bundleId: {} }] });"
+		);
+		const res = findWardenConfig(dir, dir, { APP_NAME: "from-env" });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data?.config.projects?.[0]).toMatchObject({ name: "from-env", root: dir });
+	});
+
+	test("loadProject passes its env to a config function", () => {
+		write(CONFIG_FILE, "export default ({ env }) => ({ projects: [{ name: 'a', bundleId: { ios: env.HOME } }] });");
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.bundleId).toEqual({ ios: "/home/me" });
+	});
+
+	test("picked up while walking up from a subdir; .mjs works too", () => {
+		write("warden.config.mjs", "export default { batches: { a: { platform: 'android', cmd: ['x'] } } };");
+		mkdirSync(join(dir, "deep/er"), { recursive: true });
+		const res = findWardenConfig(join(dir, "deep/er"), dir);
+		if (!res.success) throw new Error(res.error);
+		expect(res.data?.dir).toBe(dir);
+	});
+
+	test("re-reads an edited file", () => {
+		write(CONFIG_FILE, "export default { batches: { a: { platform: 'ios', cmd: ['x'] } } };");
+		expect(findWardenConfig(dir, dir).success).toBe(true);
+		write(CONFIG_FILE, "export default { batches: { b: { platform: 'ios', cmd: ['x'] } } };");
+		const res = findWardenConfig(dir, dir);
+		if (!res.success) throw new Error(res.error);
+		expect(Object.keys(res.data?.config.batches ?? {})).toEqual(["b"]);
+	});
+
+	test("several config files in one dir → error naming them", () => {
+		write(CONFIG_FILE, "export default { batches: { a: { platform: 'ios', cmd: ['x'] } } };");
+		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", cmd: ["x"] } } });
+		const res = findWardenConfig(dir, dir);
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain(`${CONFIG_FILE}, ${JSON_CONFIG_FILE}`);
+	});
+
+	test("invalid shape → error names the .ts file and the path", () => {
+		write(CONFIG_FILE, "export default { batches: { a: { platform: 'ios' } } };");
+		const res = findWardenConfig(dir, dir);
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain(`invalid ${CONFIG_FILE}: batches.a.cmd`);
+	});
+
+	test("bad modules → clear errors", () => {
+		const cases: [string, string][] = [
+			["export const projects = [];", "export default"],
+			["export default async () => ({ e2e: {} });", "sync"],
+			["export default Promise.resolve({});", "sync"],
+			["throw new Error('boom');", "boom"],
+			["export default {", join(dir, CONFIG_FILE)],
+		];
+		for (const [source, message] of cases) {
+			write(CONFIG_FILE, source);
+			const res = findWardenConfig(dir, dir);
+			expect(res.success).toBe(false);
+			if (!res.success) expect(res.error).toContain(message);
+		}
 	});
 });

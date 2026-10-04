@@ -1,22 +1,56 @@
 ---
-title: warden.config.json
+title: warden.config.ts
 description: Optional per-repo config for app builds, saved batches and affected e2e suites.
 icon: Settings
 ---
 
 Optional, at the repo root. Without it, warden detects a single Expo project from `app.json` / `app.config.*`.
 
-```json title="warden.config.json"
-{
-  "projects": [{
-    "name": "salient",
-    "root": "apps/salient/app",
-    "bundleId": { "ios": "com.example.salient", "android": "com.example.salient" },
-    "fingerprint": { "command": "bun run --silent fingerprint:{platform}" },
-    "eas": { "profile": "development-simulator", "workflow": ".eas/workflows/dev-build.yml", "trigger": false },
-    "build": { "ios": "bunx expo run:ios --no-install --no-bundler" }
+## Setup
+
+Add `@delacour/warden` as a dev dependency, then wrap the config in `defineConfig`. Your editor gets autocompletion, the defaults and docs on hover, and type errors for typos:
+
+```bash
+bun add -d @delacour/warden
+```
+
+warden runs the file itself (Bun transpiles it), so it needs no build step. It looks for `warden.config.ts`, `.mts`, `.js`, `.mjs` and then `warden.config.json`, walking up from the cwd. Keep only one of them per directory. JSON configs still work but have no autocompletion.
+
+Instead of an object, the default export can be a **sync** function. It receives `{ configDir, env }`:
+
+```ts title="warden.config.ts"
+import { defineConfig } from "@delacour/warden/config";
+
+export default defineConfig(({ env }) => ({
+  projects: [{ name: "app", bundleId: { ios: env.IOS_BUNDLE_ID ?? "com.example.app" } }],
+}));
+```
+
+If you'd rather not install the package, use a type-only import. It is erased before the file runs:
+
+```ts title="warden.config.ts"
+import type { WardenConfig } from "@delacour/warden/config";
+
+export default { batches: { smoke: { platform: "ios", cmd: ["true"] } } } satisfies WardenConfig;
+```
+
+The section types are exported too: `WardenProject`, `WardenBatchPreset`, `WardenE2eSuite`, `WardenE2eFlow`.
+
+## Projects
+
+```ts title="warden.config.ts"
+import { defineConfig } from "@delacour/warden/config";
+
+export default defineConfig({
+  projects: [{
+    name: "salient",
+    root: "apps/salient/app",
+    bundleId: { ios: "com.example.salient", android: "com.example.salient" },
+    fingerprint: { command: "bun run --silent fingerprint:{platform}" },
+    eas: { profile: "development-simulator", workflow: ".eas/workflows/dev-build.yml", trigger: false },
+    build: { ios: "bunx expo run:ios --no-install --no-bundler" }
   }]
-}
+});
 ```
 
 <TypeTable
@@ -41,23 +75,25 @@ The file needs at least one of `projects`, `batches` and `e2e`. With only `batch
 
 `batches` maps a name to a saved [`warden batch`](/docs/reference/cli#warden-batch-platformpreset----cmd) invocation, run with `warden batch <name>`. Each field mirrors the flag of the same name. Flags you pass on the command line override the preset, and `-- <cmd>` overrides `cmd`. `ios` and `android` can't be used as names.
 
-```json title="warden.config.json"
-{
-  "projects": [{ "name": "salient", "root": "apps/salient/app", "bundleId": { "ios": "com.example.salient" } }],
-  "batches": {
+```ts title="warden.config.ts"
+import { defineConfig } from "@delacour/warden/config";
+
+export default defineConfig({
+  projects: [{ name: "salient", root: "apps/salient/app", bundleId: { ios: "com.example.salient" } }],
+  batches: {
     "salient-e2e": {
-      "project": "salient",
-      "platform": "ios", "count": 5, "max": 5, "profile": "iphone-17",
-      "ports": ["8091:20"], "app": true, "retry": 1,
-      "env": { "E2E_SESSION_FILE": "e2e-artifacts/batch/session.json" },
-      "serve": "bun scripts/e2e/run-ios.ts --session",
-      "serveReady": "file:e2e-artifacts/batch/session.json",
-      "serveTimeout": "20m",
-      "jobsFrom": { "command": "bun scripts/e2e/select-flows.ts --list --offline" },
-      "cmd": ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
+      project: "salient",
+      platform: "ios", count: 5, max: 5, profile: "iphone-17",
+      ports: ["8091:20"], app: true, retry: 1,
+      env: { E2E_SESSION_FILE: "e2e-artifacts/batch/session.json" },
+      serve: "bun scripts/e2e/run-ios.ts --session",
+      serveReady: "file:e2e-artifacts/batch/session.json",
+      serveTimeout: "20m",
+      jobsFrom: { command: "bun scripts/e2e/select-flows.ts --list --offline" },
+      cmd: ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
     }
   }
-}
+});
 ```
 
 The preset's cwd is its project's root, or the config file's directory when there is no `project`. Serve, the jobs and `jobsFrom.command` run there, and relative paths in the preset resolve against it.
@@ -93,23 +129,25 @@ The preset's cwd is its project's root, or the config file's directory when ther
 
 `e2e` maps a suite name to the flows [`warden affected`](/docs/reference/cli#warden-affected-suite) selects and [`warden e2e`](/docs/reference/cli#warden-e2e-suite) runs. See [Affected e2e](/docs/guides/affected-e2e) for how selection works. Every path and glob is relative to the config file.
 
-```json title="warden.config.json"
-{
-  "e2e": {
-    "mobile": {
-      "flowsDir": "flows",
-      "runner": ["<flow-runner>", "run", "{flowPath}", "--device", "{udid}"],
-      "platform": "ios",
-      "routerRoot": "apps/mobile/src/app",
-      "maxDepth": 3,
-      "runAll": ["bun.lock", "apps/mobile/ios/**"],
-      "flows": {
-        "qa-login": { "entries": ["apps/mobile/src/app/(auth)/login.tsx"] },
-        "store-*": { "required": false }
+```ts title="warden.config.ts"
+import { defineConfig } from "@delacour/warden/config";
+
+export default defineConfig({
+  e2e: {
+    mobile: {
+      flowsDir: "flows",
+      runner: ["<flow-runner>", "run", "{flowPath}", "--device", "{udid}"],
+      platform: "ios",
+      routerRoot: "apps/mobile/src/app",
+      maxDepth: 3,
+      runAll: ["bun.lock", "apps/mobile/ios/**"],
+      flows: {
+        "qa-login": { entries: ["apps/mobile/src/app/(auth)/login.tsx"] },
+        "store-*": { required: false }
       }
     }
   }
-}
+});
 ```
 
 <TypeTable

@@ -142,21 +142,21 @@ ls flows | warden batch ios --count 5 --max 5 --port 8091:20 --serve "bun run me
 
 `warden batch` claims N devices and runs a job queue across them, one worker per device: `{job}`, `{udid}`, `{worker}` and `{seq}` are substituted into the command, which also gets `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_JOB` and `WARDEN_JOB_SEQ`. `--serve` starts a long-lived process (Metro) first and waits for `--serve-ready`. A live grid tracks every device, and `--record <dir>` (iOS) captures each simulator, the grid and a `batch.json` timeline (`scripts/demo/compose.ts` tiles them into one video). It exits 0 only when every job passed.
 
-Save a batch in `warden.config.json` and run it by name:
+Save a batch in `warden.config.ts` and run it by name:
 
-```json
-{
-  "batches": {
+```ts
+export default defineConfig({
+  batches: {
     "salient-e2e": {
-      "project": "salient", "platform": "ios", "count": 5, "max": 5, "profile": "iphone-17",
-      "ports": ["8091:20"], "app": true, "retry": 1,
-      "env": { "E2E_SESSION_FILE": "e2e-artifacts/batch/session.json" },
-      "serve": "bun scripts/e2e/run-ios.ts --session", "serveReady": "file:e2e-artifacts/batch/session.json", "serveTimeout": "20m",
-      "jobsFrom": { "command": "bun scripts/e2e/select-flows.ts --list --offline" },
-      "cmd": ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
+      project: "salient", platform: "ios", count: 5, max: 5, profile: "iphone-17",
+      ports: ["8091:20"], app: true, retry: 1,
+      env: { E2E_SESSION_FILE: "e2e-artifacts/batch/session.json" },
+      serve: "bun scripts/e2e/run-ios.ts --session", serveReady: "file:e2e-artifacts/batch/session.json", serveTimeout: "20m",
+      jobsFrom: { command: "bun scripts/e2e/select-flows.ts --list --offline" },
+      cmd: ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
     }
   }
-}
+});
 ```
 
 ```bash
@@ -173,7 +173,7 @@ warden affected mobile --base origin/main --explain   # which flows this branch 
 warden e2e mobile --base origin/main --count 2        # run them on leased devices; exit 1 if a required one fails
 ```
 
-An `e2e.<suite>` in `warden.config.json` maps flow files to the screens they drive (`entries`) and globs (`paths`). Warden takes the git diff against the merge-base, walks each flow's import graph with the TypeScript resolver (tsconfig `paths`, workspace packages, per-platform `.ios` / `.android` files, type-only imports dropped), and runs only the flows a changed file reaches, with `runAll` globs (lockfile, native dirs) selecting everything. `warden e2e` runs them like `warden batch`, each `passes` times, and writes `e2e-report.json`. See the [Affected e2e guide](apps/docs/content/docs/guides/affected-e2e.mdx).
+An `e2e.<suite>` in `warden.config.ts` maps flow files to the screens they drive (`entries`) and globs (`paths`). Warden takes the git diff against the merge-base, walks each flow's import graph with the TypeScript resolver (tsconfig `paths`, workspace packages, per-platform `.ios` / `.android` files, type-only imports dropped), and runs only the flows a changed file reaches, with `runAll` globs (lockfile, native dirs) selecting everything. `warden e2e` runs them like `warden batch`, each `passes` times, and writes `e2e-report.json`. See the [Affected e2e guide](apps/docs/content/docs/guides/affected-e2e.mdx).
 
 ### App builds
 
@@ -183,19 +183,21 @@ warden app ensure ios --udid <udid> --json   # { appPath, hash, source: installe
 warden builds ls | prune --max-size 20G | import <App.app> --hash <h>
 ```
 
-Optional `warden.config.json` at the repo root:
+Optional `warden.config.ts` at the repo root (`bun add -d @delacour/warden` for autocompletion; `warden.config.json` still works):
 
-```json
-{
-  "projects": [{
-    "name": "salient",
-    "root": "apps/salient/app",
-    "bundleId": { "ios": "com.example.salient", "android": "com.example.salient" },
-    "fingerprint": { "command": "bun run --silent fingerprint:{platform}" },
-    "eas": { "profile": "development-simulator", "workflow": ".eas/workflows/dev-build.yml", "trigger": false },
-    "build": { "ios": "bunx expo run:ios --no-install --no-bundler" }
+```ts
+import { defineConfig } from "@delacour/warden/config";
+
+export default defineConfig({
+  projects: [{
+    name: "salient",
+    root: "apps/salient/app",
+    bundleId: { ios: "com.example.salient", android: "com.example.salient" },
+    fingerprint: { command: "bun run --silent fingerprint:{platform}" },
+    eas: { profile: "development-simulator", workflow: ".eas/workflows/dev-build.yml", trigger: false },
+    build: { ios: "bunx expo run:ios --no-install --no-bundler" }
   }]
-}
+});
 ```
 
 With no config, warden detects a single project from `app.json` / `app.config.*` (pass `--bundle-id` for a dynamic config). It resolves builds in this order: already installed at this hash → `~/.warden/builds/<projectKey>/<platform>/<hash>` → legacy caches → EAS (`build:list --fingerprint-hash`, then download; waits for builds in flight; triggers the workflow only if `trigger` is set) → local build, which is verified against the fingerprint. A build lock stops two agents from downloading or building the same hash twice.

@@ -6,7 +6,7 @@ import type { Exec, ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
 import { fakeApp, testProject } from "./builds.testing";
 import { getBuild, getInstall, recordInstall, storeArtifact } from "./cache";
-import { CONFIG_FILE } from "./config";
+import { JSON_CONFIG_FILE } from "./config";
 import { type EnsureInput, ensureApp, projectContext } from "./ensure";
 
 let dir: string;
@@ -251,7 +251,7 @@ describe("projectContext", () => {
 		const repo = join(dir, "repo");
 		mkdirSync(join(repo, "apps", "a"), { recursive: true });
 		writeFileSync(
-			join(repo, CONFIG_FILE),
+			join(repo, JSON_CONFIG_FILE),
 			JSON.stringify({ projects: [{ name: "a", root: "apps/a", bundleId: { ios: "com.a" } }] })
 		);
 		const exec: Exec = async (cmd) => {

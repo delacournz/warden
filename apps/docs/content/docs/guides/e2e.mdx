@@ -70,25 +70,27 @@ A live grid shows every device's current job, elapsed time and pass/fail counts;
 
 ### Saving a batch as a preset
 
-A batch you run often can live in [`warden.config.json`](/docs/reference/configuration#batches) under `batches`, so the whole invocation becomes `warden batch <name>`:
+A batch you run often can live in [`warden.config.ts`](/docs/reference/configuration#batches) under `batches`, so the whole invocation becomes `warden batch <name>`:
 
-```json title="warden.config.json"
-{
-  "projects": [{ "name": "salient", "root": "apps/salient/app", "bundleId": { "ios": "com.example.salient" } }],
-  "batches": {
+```ts title="warden.config.ts"
+import { defineConfig } from "@delacour/warden/config";
+
+export default defineConfig({
+  projects: [{ name: "salient", root: "apps/salient/app", bundleId: { ios: "com.example.salient" } }],
+  batches: {
     "salient-e2e": {
-      "project": "salient",
-      "platform": "ios", "count": 5, "max": 5, "profile": "iphone-17",
-      "ports": ["8091:20"], "app": true, "retry": 1,
-      "env": { "E2E_SESSION_FILE": "e2e-artifacts/batch/session.json" },
-      "serve": "bun scripts/e2e/run-ios.ts --session",
-      "serveReady": "file:e2e-artifacts/batch/session.json",
-      "serveTimeout": "20m",
-      "jobsFrom": { "command": "bun scripts/e2e/select-flows.ts --list --offline" },
-      "cmd": ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
+      project: "salient",
+      platform: "ios", count: 5, max: 5, profile: "iphone-17",
+      ports: ["8091:20"], app: true, retry: 1,
+      env: { E2E_SESSION_FILE: "e2e-artifacts/batch/session.json" },
+      serve: "bun scripts/e2e/run-ios.ts --session",
+      serveReady: "file:e2e-artifacts/batch/session.json",
+      serveTimeout: "20m",
+      jobsFrom: { command: "bun scripts/e2e/select-flows.ts --list --offline" },
+      cmd: ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
     }
   }
-}
+});
 ```
 
 ```bash
