@@ -117,3 +117,64 @@ describe("selectFlows", () => {
 		expect(sel.warnings).toEqual(["chats: entry src/app/nope.tsx does not exist"]);
 	});
 });
+
+describe("include / exclude / only / scope / unmatched", () => {
+	test("exclude drops flows by id glob; include keeps only matching ones", async () => {
+		write("flows/online/lb.yaml", "steps:\n  - launch: com.x\n");
+		const all = await select(["bun.lock"]);
+		expect(ids(all)).toContain("online/lb");
+		const excl = await select(["bun.lock"], "ios", suite({ exclude: ["online/**"] }));
+		expect(ids(excl)).not.toContain("online/lb");
+		expect(excl.skipped).not.toContain("online/lb");
+		const incl = await select(["bun.lock"], "ios", suite({ include: ["online/**"] }));
+		expect(ids(incl)).toEqual(["online/lb"]);
+	});
+
+	test("only: all selects every candidate without a diff; flows selects ids / globs, in scan order", async () => {
+		const sel = (only: Parameters<typeof selectFlows>[0]["only"], s = suite()) =>
+			selectFlows({
+				suite: s,
+				configDir: dir,
+				platform: "ios",
+				changes: [],
+				flows: scanFlows(join(dir, "flows")).flows,
+				only,
+			});
+		const all = sel({ mode: "all" });
+		expect(all.selected.map((f) => f.id)).toEqual(["chats", "settings", "smoke", "store-ios-01"]);
+		expect(kinds(all.selected[0]?.reasons ?? [])).toEqual(["all"]);
+		const some = sel({ mode: "flows", patterns: ["smoke", "chat*"] });
+		expect(some.selected.map((f) => f.id)).toEqual(["chats", "smoke"]);
+		expect(kinds(some.selected[0]?.reasons ?? [])).toEqual(["requested"]);
+		expect(sel({ mode: "flows", patterns: ["nope"] }).warnings.join()).toContain('"nope" matches no flow');
+		expect(sel({ mode: "all" }, suite({ exclude: ["smoke"] })).selected.map((f) => f.id)).toEqual([
+			"chats",
+			"settings",
+			"store-ios-01",
+		]);
+	});
+
+	test("unmatched run-all: a counted change that reaches no flow selects every flow; skip (default) doesn't", async () => {
+		expect(ids(await select(["src/brand-new/area.ts"]))).toEqual([]);
+		const sel = await select(["src/brand-new/area.ts"], "ios", suite({ unmatched: "run-all" }));
+		expect(ids(sel)).toEqual(["chats", "settings", "smoke", "store-ios-01"]);
+		expect(sel.selected[0]?.reasons).toEqual([{ kind: "unmatched", file: "src/brand-new/area.ts" }]);
+		// ignored files never count
+		expect(ids(await select(["README.md"], "ios", suite({ unmatched: "run-all" })))).toEqual([]);
+		// a change that reached a flow is not unmatched
+		expect(ids(await select(["src/settings/form.tsx"], "ios", suite({ unmatched: "run-all" })))).toEqual(["settings"]);
+	});
+
+	test("scope limits which changed files count at all", async () => {
+		const s = suite({ unmatched: "run-all", scope: ["src/**"] });
+		expect(ids(await select(["docs/x.ts"], "ios", s))).toEqual([]);
+		expect(ids(await select(["src/brand-new/area.ts"], "ios", s))).toEqual([
+			"chats",
+			"settings",
+			"smoke",
+			"store-ios-01",
+		]);
+		// runAll globs outside scope don't fire either
+		expect(ids(await select(["bun.lock"], "ios", s))).toEqual([]);
+	});
+});

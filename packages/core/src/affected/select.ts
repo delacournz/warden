@@ -15,7 +15,13 @@ export type Reason =
 	/** the flow file itself, or a fragment it `run:`s, changed */
 	| { kind: "flow-file"; file: string }
 	| { kind: "always"; pattern: string }
-	| { kind: "unmapped" };
+	| { kind: "unmapped" }
+	/** `--all` */
+	| { kind: "all" }
+	/** `--flows`: named explicitly */
+	| { kind: "requested"; pattern: string }
+	/** `unmatched: "run-all"`: this counted change reached no flow */
+	| { kind: "unmatched"; file: string };
 
 export type SelectedFlow = { id: string; file: string; required: boolean; reasons: Reason[] };
 
@@ -39,6 +45,8 @@ export type SelectInput = {
 	flows: readonly Flow[];
 	/** resolved imports of a file (absolute paths); needed when some flow has entries */
 	imports?: (file: string) => string[];
+	/** skip the diff: every flow, or exactly the flows these ids / globs name (`include` / `exclude` still apply) */
+	only?: { mode: "all" } | { mode: "flows"; patterns: readonly string[] };
 };
 
 const globMatch = (patterns: readonly string[], path: string) => patterns.find((p) => new Bun.Glob(p).match(path));
@@ -67,12 +75,14 @@ type Scope = {
 	warnings: string[];
 };
 
-/** Changed paths (both sides of a rename) that aren't `ignore`d. */
-function changedPaths(changes: readonly ChangedFile[], ignore: readonly string[]): Set<string> {
+/** Changed paths (both sides of a rename) that are in `scope` (when set) and aren't `ignore`d. */
+function changedPaths(changes: readonly ChangedFile[], suite: E2eSuiteConfig): Set<string> {
 	const paths = new Set<string>();
 	for (const change of changes) {
 		for (const path of [change.path, change.from]) {
-			if (path !== undefined && globMatch(ignore, path) === undefined) paths.add(path);
+			if (path === undefined || globMatch(suite.ignore, path) !== undefined) continue;
+			if (suite.scope.length > 0 && globMatch(suite.scope, path) === undefined) continue;
+			paths.add(path);
 		}
 	}
 	return paths;
@@ -118,6 +128,63 @@ function standingReasons(suite: E2eSuiteConfig, { flow, settings }: Candidate): 
 	return reasons;
 }
 
+function pick(suite: E2eSuiteConfig, { flow, settings }: Candidate, reasons: Reason[]): SelectedFlow {
+	return { id: flow.id, file: flow.file, required: settings.required ?? suite.required, reasons };
+}
+
+/** `unmatched: "run-all"`: every candidate not already selected joins, citing the unmatched files. */
+function selectUnmatched(
+	suite: E2eSuiteConfig,
+	candidates: readonly Candidate[],
+	selected: readonly SelectedFlow[],
+	unreached: readonly string[]
+): SelectedFlow[] {
+	const reasons = unreached.map((file): Reason => ({ kind: "unmatched", file }));
+	const have = new Set(selected.map((f) => f.id));
+	const added = candidates.filter(({ flow }) => !have.has(flow.id)).map((c) => pick(suite, c, reasons));
+	return [...selected, ...added].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** `--all` / `--flows`: no diff, candidates in scan order. A pattern that names nothing is a warning. */
+function selectOnly(input: SelectInput, warnings: string[], candidates: readonly Candidate[]): Selection {
+	const { only, suite, platform } = input;
+	const selected: SelectedFlow[] = [];
+	const skipped: string[] = [];
+	const patterns = only?.mode === "flows" ? only.patterns : [];
+	for (const candidate of candidates) {
+		const pattern = patterns.find((p) => p === candidate.flow.id || new Bun.Glob(p).match(candidate.flow.id));
+		if (only?.mode === "all") selected.push(pick(suite, candidate, [{ kind: "all" }]));
+		else if (pattern !== undefined) selected.push(pick(suite, candidate, [{ kind: "requested", pattern }]));
+		else skipped.push(candidate.flow.id);
+	}
+	for (const p of patterns) {
+		if (!candidates.some(({ flow }) => p === flow.id || new Bun.Glob(p).match(flow.id)))
+			warnings.push(`--flows "${p}" matches no flow`);
+	}
+	return { platform, selected, skipped, unreached: [], warnings: [...new Set(warnings)] };
+}
+
+/** Every reason `candidate` is selected, in priority order (`runAll` hits suppress the import walk). */
+function reasonsFor(scope: Scope, candidate: Candidate, runAll: readonly Reason[]): Reason[] {
+	return [
+		...runAll,
+		...pathReasons(scope, candidate),
+		...(runAll.length === 0 ? importReasons(scope, candidate) : []),
+		...flowFileReasons(scope, candidate),
+		...standingReasons(scope.input.suite, candidate),
+	];
+}
+
+/** Runnable e2e flows for the platform that `include` / `exclude` allow, with their settings. */
+function candidatesFor({ suite, platform, flows }: SelectInput): Candidate[] {
+	return flows
+		.filter((f) => f.kind === "e2e")
+		.map((flow) => ({ flow, settings: flowSettings(flow.id, suite.flows) }))
+		.filter(({ flow, settings }) => flowPlatforms(flow, settings).includes(platform))
+		.filter(({ flow }) => suite.include.length === 0 || globMatch(suite.include, flow.id) !== undefined)
+		.filter(({ flow }) => globMatch(suite.exclude, flow.id) === undefined);
+}
+
 /**
  * Which e2e flows `changes` require on `platform`, each with its reasons. Priority: `runAll` globs
  * (select everything), a flow's `paths` globs, its import graph from `entries` (+ router layouts),
@@ -127,16 +194,14 @@ export function selectFlows(input: SelectInput): Selection {
 	const { suite, configDir, platform } = input;
 	const scope: Scope = {
 		input,
-		paths: changedPaths(input.changes, suite.ignore),
+		paths: changedPaths(input.changes, suite),
 		abs: (path) => join(configDir, path),
 		rel: (path) => relative(configDir, path),
 		byFile: new Map(input.flows.map((f) => [f.file, f])),
 		warnings: [],
 	};
-	const candidates: Candidate[] = input.flows
-		.filter((f) => f.kind === "e2e")
-		.map((flow) => ({ flow, settings: flowSettings(flow.id, suite.flows) }))
-		.filter(({ flow, settings }) => flowPlatforms(flow, settings).includes(platform));
+	const candidates = candidatesFor(input);
+	if (input.only) return selectOnly(input, scope.warnings, candidates);
 	const runAll = [...scope.paths].flatMap((file): Reason[] => {
 		const pattern = globMatch(suite.runAll, file);
 		return pattern === undefined ? [] : [{ kind: "run-all", file, pattern }];
@@ -146,19 +211,17 @@ export function selectFlows(input: SelectInput): Selection {
 	const skipped: string[] = [];
 	const reached = new Set<string>();
 	for (const candidate of candidates) {
-		const reasons = [
-			...runAll,
-			...pathReasons(scope, candidate),
-			...(runAll.length === 0 ? importReasons(scope, candidate) : []),
-			...flowFileReasons(scope, candidate),
-			...standingReasons(suite, candidate),
-		];
+		const reasons = reasonsFor(scope, candidate, runAll);
 		for (const reason of reasons) if ("file" in reason) reached.add(reason.file);
-		const { flow, settings } = candidate;
+		const { flow } = candidate;
 		if (reasons.length === 0) skipped.push(flow.id);
-		else selected.push({ id: flow.id, file: flow.file, required: settings.required ?? suite.required, reasons });
+		else selected.push(pick(suite, candidate, reasons));
 	}
 	for (const reason of runAll) if ("file" in reason) reached.add(reason.file);
 	const unreached = [...scope.paths].filter((p) => !reached.has(p)).sort();
+	if (suite.unmatched === "run-all" && unreached.length > 0) {
+		const all = selectUnmatched(suite, candidates, selected, unreached);
+		return { platform, selected: all, skipped: [], unreached, warnings: [...new Set(scope.warnings)] };
+	}
 	return { platform, selected, skipped, unreached, warnings: [...new Set(scope.warnings)] };
 }

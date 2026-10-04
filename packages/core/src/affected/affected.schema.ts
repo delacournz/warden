@@ -47,6 +47,14 @@ export const e2eSuiteSchema = z
 		ignore: z.array(path).default([]),
 		/** flow ids / globs that always run */
 		always: z.array(path).default([]),
+		/** flow-id globs: only flows matching one of these are ever selected (default: all) */
+		include: z.array(path).default([]),
+		/** flow-id globs that are never selected (e.g. flows another suite owns) */
+		exclude: z.array(path).default([]),
+		/** changed-file globs: only matching changes count at all (default: every change) */
+		scope: z.array(path).default([]),
+		/** a counted change that reaches no flow (no `paths` / `entries` / `runAll` match, not `ignore`d): `run-all` selects every flow, `skip` selects nothing */
+		unmatched: z.enum(["run-all", "skip"]).default("skip"),
 		/** a flow without entries/paths: run it every time, or only via runAll / always */
 		unmapped: z.enum(["run", "skip"]).default("run"),
 		/** a flow passes only after this many consecutive green runs on the same device */
