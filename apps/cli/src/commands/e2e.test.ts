@@ -315,4 +315,38 @@ describe("warden e2e", () => {
 		expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("slim is iOS-only");
 	});
+
+	test("--all runs every flow with no diff; include / exclude narrow it", async () => {
+		const c = setup(["--all"]);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(
+			h
+				.jobs()
+				.map((j) => j.opts.env.WARDEN_JOB)
+				.sort()
+		).toEqual(["chats", "settings"]);
+		expect(c.stderr.join("\n")).toContain("2/2 flow(s) passed");
+
+		await resuite({ exclude: ["settings"] });
+		const c2 = setup(["--all"]);
+		const h2 = harness();
+		expect(await createE2eCommand(h2.deps).run(c2)).toBe(0);
+		expect(h2.jobs().map((j) => j.opts.env.WARDEN_JOB)).toEqual(["chats"]);
+	});
+
+	test("--flows runs exactly the named flows; an unknown one fails", async () => {
+		const c = setup(["--flows", "settings"]);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.jobs().map((j) => j.opts.env.WARDEN_JOB)).toEqual(["settings"]);
+
+		const bad = setup(["--flows", "nope"]);
+		expect(await createE2eCommand(harness().deps).run(bad)).toBe(1);
+		expect(bad.stderr.join("\n")).toContain('"nope" matches no flow');
+
+		const both = setup(["--all", "--flows", "chats"]);
+		expect(await createE2eCommand(harness().deps).run(both)).toBe(1);
+		expect(both.stderr.join("\n")).toContain("exclusive");
+	});
 });

@@ -3,6 +3,7 @@ import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
 import type { E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
 import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
 import { readySpec } from "@delacour/warden-core/batch/preset";
+import type { JobResult } from "@delacour/warden-core/batch/schedule";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import type { Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
@@ -111,6 +112,23 @@ export function runnerArgv(runner: readonly string[], flow: SelectedFlow): strin
 	return runner.map((arg) => arg.replaceAll("{flowPath}", flow.file).replaceAll("{flow}", flow.id));
 }
 
+/** device / log / screenshot of a flow's failed attempts (the last one's device and log; the latest screenshot there is). */
+function lastFailure(session: SessionResult, failed: readonly JobResult[]): Partial<FlowVerdict> {
+	const last = failed.at(-1);
+	if (!last) return {};
+	const screenshot = failed
+		.map((r) => session.screenshots?.get(attemptKey(r)))
+		.reverse()
+		.find((path) => path !== undefined);
+	const log = session.logs?.get(attemptKey(last));
+	const name = session.devices?.find((d) => d.worker === last.worker)?.name ?? last.udid;
+	return {
+		device: { udid: last.udid, name },
+		...(log !== undefined ? { log } : {}),
+		...(screenshot !== undefined ? { screenshot } : {}),
+	};
+}
+
 /** Batch outcome → per-flow verdicts; `ok` = every required flow passed. */
 export function verdicts(
 	flows: readonly SelectedFlow[],
@@ -121,22 +139,11 @@ export function verdicts(
 	const out = flows.map((flow): FlowVerdict => {
 		const attempts = results.filter((r) => r.job === flow.id).length;
 		const verdict = attempts === 0 ? "not-run" : failed.has(flow.id) ? "failed" : "passed";
-		const shots = results.filter((r) => r.job === flow.id && r.exitCode !== 0);
-		const last = shots.at(-1);
-		const screenshot = shots
-			.map((r) => session.screenshots?.get(attemptKey(r)))
-			.reverse()
-			.find((path) => path !== undefined);
-		const log = last ? session.logs?.get(attemptKey(last)) : undefined;
-		const name = last ? session.devices?.find((d) => d.worker === last.worker)?.name : undefined;
-		return {
-			...flow,
-			verdict,
-			attempts,
-			...(last ? { device: { udid: last.udid, name: name ?? last.udid } } : {}),
-			...(log !== undefined ? { log } : {}),
-			...(screenshot !== undefined ? { screenshot } : {}),
-		};
+		const failure = lastFailure(
+			session,
+			results.filter((r) => r.job === flow.id && r.exitCode !== 0)
+		);
+		return { ...flow, verdict, attempts, ...failure };
 	});
 	const ok = session.summary !== undefined && out.every((f) => !f.required || f.verdict === "passed");
 	return { ok, flows: out };
@@ -184,6 +191,7 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 	for (const w of [...affected.data.warnings, ...selection.data.warnings]) ctx.err(color.yellow(`warden e2e: ${w}`));
 	if (opts.explain || opts.dryRun) ctx.err(explain(affected.data, opts.requiredOnly === true, color));
 	const flows = selectedFlows(selection.data, opts.requiredOnly === true);
+	if (opts.flows !== undefined && flows.length === 0) return err("--flows matched no flow");
 	return ok({ affected: affected.data, selection: selection.data, flows });
 }
 
@@ -268,6 +276,8 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--base <ref>", "compare against merge-base with this ref (default: the suite's base)")
 				.option("--platform <platform>", "ios | android (default: the suite's platform)")
 				.option("--files <list>", "comma-separated changed files (relative to cwd) instead of git")
+				.option("--all", "run every flow of the suite (after include / exclude), skipping the git diff")
+				.option("--flows <list>", "run exactly these flow ids / globs (comma-separated), skipping the git diff")
 				.option("--required-only", "only run flows with required: true")
 				.option("--explain", "print why each flow was selected before running")
 				.option("--dry-run", "select and explain, run nothing")
