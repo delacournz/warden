@@ -94,6 +94,35 @@ describe("warden e2e", () => {
 		expect(report.flows.find((f) => f.id === "settings")).not.toHaveProperty("screenshot");
 	});
 
+	test("a failed flow is summarised with its device, log and screenshot", async () => {
+		write("src/chat/lazy.tsx", "export const x = 2;\n");
+		write("src/settings/form.tsx", "export const y = 2;\n");
+		const c = setup(["--count", "2"]);
+		const h = harness({ exitCodes: { chats: 1 } });
+		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+		const run = h.jobs().find((j) => j.opts.env.WARDEN_JOB === "chats");
+		const chats = reportOf(h.files, c).flows.find((f) => f.id === "chats");
+		expect(chats?.device?.udid).toBe(run?.opts.env.WARDEN_UDID);
+		expect(chats?.device?.name).toMatch(/^warden-iphone-17-/);
+		expect(chats?.log).toBe(run?.opts.log);
+		expect(reportOf(h.files, c).flows.find((f) => f.id === "settings")).not.toHaveProperty("log");
+		const summary = c.stderr.find((l) => l.includes("chats failed")) ?? "";
+		expect(summary).toContain(`${chats?.device?.name}`);
+		expect(summary).toContain(`log ${run?.opts.log}`);
+		expect(summary).toContain(`screenshot ${chats?.screenshot}`);
+	});
+
+	test("count 1 runs the flows serially on a single device", async () => {
+		await resuite({ count: 1 });
+		write("src/chat/lazy.tsx", "export const x = 2;\n");
+		write("src/settings/form.tsx", "export const y = 2;\n");
+		const c = setup([]);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(new Set(h.jobs().map((j) => j.opts.env.WARDEN_UDID)).size).toBe(1);
+		expect(h.jobs()).toHaveLength(2);
+	});
+
 	test("suite passes (2) → every flow runs twice on its device", async () => {
 		await resuite({ passes: 2 });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);

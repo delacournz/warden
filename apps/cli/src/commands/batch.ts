@@ -249,7 +249,10 @@ type Device = BatchWorker & { name: string; video?: string; videoStartedAt?: num
 /** Failure screenshots by attempt: `<worker>:<seq>` → absolute png path. */
 export type Screenshots = ReadonlyMap<string, string>;
 
-/** Key of one job attempt in `Screenshots`. */
+/** Job logs by attempt: `<worker>:<seq>` → absolute log path. */
+export type Logs = ReadonlyMap<string, string>;
+
+/** Key of one job attempt in `Screenshots` / `Logs`. */
 export const attemptKey = (r: { worker: number; seq: number }) => `${r.worker}:${r.seq}`;
 
 /** The `batch.json` document (record-dir contract; also the `--json` output). */
@@ -359,6 +362,8 @@ type JobRunnerOptions = {
 	platform: Platform;
 	/** filled with a failed attempt's screenshot (`attemptKey`) */
 	screenshots: Map<string, string>;
+	/** filled with each attempt's log (`attemptKey`); a later pass overwrites, so a failed attempt keeps the failing run's */
+	logs: Map<string, string>;
 	running: Set<ProcHandle>;
 	interrupted: () => boolean;
 };
@@ -380,6 +385,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 		};
 		const suffix = o.passes > 1 ? `.pass${pass}` : "";
 		const log = join(o.logDir, `${w.worker}-${seq}-${jobSlug(job)}${suffix}.log`);
+		o.logs.set(attemptKey({ worker: w.worker, seq }), log);
 		const argv = o.hooks.argvFor ? o.hooks.argvFor(job) : o.cmd;
 		let proc: ProcHandle;
 		try {
@@ -455,6 +461,10 @@ export type SessionResult = {
 	batchDir?: string;
 	summary?: BatchSummary;
 	screenshots?: Screenshots;
+	/** the log of each attempt (`attemptKey`): the failing run of that attempt when it failed */
+	logs?: Logs;
+	/** every device the run leased, `worker` indexed */
+	devices?: Array<{ worker: number; udid: string; name: string }>;
 	/** per-device setup outcomes, when the session ran a setup */
 	setups?: DeviceSetup[] | undefined;
 };
@@ -532,6 +542,7 @@ async function supervise(
 	const controller = new AbortController();
 	const running = new Set<ProcHandle>();
 	const screenshots = new Map<string, string>();
+	const logs = new Map<string, string>();
 	const stopHold = holdLeases(ctx, deps, session.leaseIds, (signal) => {
 		controller.abort();
 		for (const job of running) job.kill(signal);
@@ -584,6 +595,7 @@ async function supervise(
 				passes: args.passes,
 				platform: args.flags.request.platform,
 				screenshots,
+				logs,
 				running,
 				interrupted,
 				hooks,
@@ -605,7 +617,7 @@ async function supervise(
 			screenshots,
 		};
 		await report(ctx, deps, args, screen.cast ? { ...run, cast: screen.cast } : run);
-		return { code: exitFor(interrupted(), summary.ok), batchDir, summary, screenshots, setups };
+		return { code: exitFor(interrupted(), summary.ok), batchDir, summary, screenshots, logs, devices, setups };
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	} finally {

@@ -17,6 +17,8 @@ export type BatchView = {
 	now: number;
 	total: number;
 	devices: DeviceView[];
+	/** job → its 1-based place in the order jobs started (retries keep their job's place) */
+	ordinals: Record<string, number>;
 	/** set by the `done` event */
 	result?: { ok: boolean; stopped: boolean };
 };
@@ -32,6 +34,7 @@ export function initialView(
 		startedAt,
 		now: startedAt,
 		total,
+		ordinals: {},
 		devices: devices.map((d) => ({ ...d, passed: 0, failed: 0, idle: false })),
 	};
 }
@@ -45,12 +48,15 @@ export function applyEvent(view: BatchView, event: BatchEvent): BatchView {
 		devices: view.devices.map((d) => (d.worker === worker ? fn(d) : d)),
 	});
 	switch (event.type) {
-		case "job-start":
-			return update(event.worker, (d) => ({
+		case "job-start": {
+			const next = update(event.worker, (d) => ({
 				...d,
 				idle: false,
 				current: { job: event.job, startedAt: event.at, attempt: event.attempt },
 			}));
+			if (event.job in view.ordinals) return next;
+			return { ...next, ordinals: { ...view.ordinals, [event.job]: Object.keys(view.ordinals).length + 1 } };
+		}
 		case "job-end":
 			return update(event.worker, ({ current: _, ...d }) => ({
 				...d,
@@ -200,16 +206,29 @@ export function liveScreen(write: (data: string) => void): LiveScreen {
 	};
 }
 
-/** `--no-tui` / not a TTY: one log line per job start / end and the final tally (idle is quiet). */
+/** `12.4 s` under a minute, `1m5s` above: what a log line says a job took. */
+function took(ms: number): string {
+	return ms < 60_000 ? `${(Math.max(0, ms) / 1_000).toFixed(1)} s` : formatDuration(ms);
+}
+
+/**
+ * `--no-tui` / not a TTY: one log line per job start / end and the final tally (idle is quiet).
+ * Each line is `[03/30] <device> ▶ <job>` / `✓ <job> (12.4 s)` / `✗ <job> exit N (12.4 s)`, where 03/30 is
+ * the job's place in start order out of all jobs.
+ */
 export function plainLine(view: BatchView, event: BatchEvent): string | undefined {
-	const tag = (worker: number) => `[${worker} ${view.devices.find((d) => d.worker === worker)?.name ?? "?"}]`;
+	const width = String(view.total).length;
+	const tag = (worker: number, job: string) => {
+		const n = String(view.ordinals[job] ?? 0).padStart(width, "0");
+		return `[${n}/${view.total}] ${view.devices.find((d) => d.worker === worker)?.name ?? "?"}`;
+	};
 	switch (event.type) {
 		case "job-start":
-			return `${tag(event.worker)} ▶ ${event.job}${event.attempt > 0 ? ` (retry ${event.attempt})` : ""}`;
+			return `${tag(event.worker, event.job)} ▶ ${event.job}${event.attempt > 0 ? ` (retry ${event.attempt})` : ""}`;
 		case "job-end": {
-			const took = formatDuration(event.endedAt - event.startedAt);
-			if (event.exitCode === 0) return `${tag(event.worker)} ✓ ${event.job} ${took}`;
-			return `${tag(event.worker)} ✗ ${event.job} exit ${event.exitCode} ${took}${event.willRetry ? " (retrying)" : ""}`;
+			const duration = took(event.endedAt - event.startedAt);
+			if (event.exitCode === 0) return `${tag(event.worker, event.job)} ✓ ${event.job} (${duration})`;
+			return `${tag(event.worker, event.job)} ✗ ${event.job} exit ${event.exitCode} (${duration})${event.willRetry ? " retrying" : ""}`;
 		}
 		case "worker-idle":
 			return undefined;

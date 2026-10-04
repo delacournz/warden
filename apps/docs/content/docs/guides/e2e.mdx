@@ -66,7 +66,7 @@ Each job gets the `warden run` variables plus:
 
 `--passes N` makes a job pass only after N consecutive green runs on its device; the first red run is that attempt's result (and `--retry` can re-run it).
 
-A live grid shows every device's current job, elapsed time and pass/fail counts; with `--no-tui` or no terminal it prints plain lines. Each job's output goes to `logs/<worker>-<seq>-<job>.log`.
+A live grid shows every device's current job, elapsed time and pass/fail counts; with `--no-tui` or no terminal it prints plain lines like `[03/30] warden-iphone-17-2 ▶ login` / `✓ login (12.4 s)` / `✗ login exit 1 (9.0 s)` (03/30 = the job's place in start order). Each job's output goes to `logs/<worker>-<seq>-<job>.log`.
 
 ### Saving a batch as a preset
 

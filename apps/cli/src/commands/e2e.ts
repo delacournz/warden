@@ -45,6 +45,10 @@ export type E2eOpts = ClaimFlagValues &
 export type FlowVerdict = SelectedFlow & {
 	verdict: "passed" | "failed" | "not-run";
 	attempts: number;
+	/** the device the flow's last failed attempt ran on */
+	device?: { udid: string; name: string };
+	/** the runner output of that attempt */
+	log?: string;
 	/** the device as the flow's last failed attempt left it (png), when one could be captured */
 	screenshot?: string;
 };
@@ -118,11 +122,21 @@ export function verdicts(
 		const attempts = results.filter((r) => r.job === flow.id).length;
 		const verdict = attempts === 0 ? "not-run" : failed.has(flow.id) ? "failed" : "passed";
 		const shots = results.filter((r) => r.job === flow.id && r.exitCode !== 0);
+		const last = shots.at(-1);
 		const screenshot = shots
 			.map((r) => session.screenshots?.get(attemptKey(r)))
 			.reverse()
 			.find((path) => path !== undefined);
-		return { ...flow, verdict, attempts, ...(screenshot !== undefined ? { screenshot } : {}) };
+		const log = last ? session.logs?.get(attemptKey(last)) : undefined;
+		const name = last ? session.devices?.find((d) => d.worker === last.worker)?.name : undefined;
+		return {
+			...flow,
+			verdict,
+			attempts,
+			...(last ? { device: { udid: last.udid, name: name ?? last.udid } } : {}),
+			...(log !== undefined ? { log } : {}),
+			...(screenshot !== undefined ? { screenshot } : {}),
+		};
 	});
 	const ok = session.summary !== undefined && out.every((f) => !f.required || f.verdict === "passed");
 	return { ok, flows: out };
@@ -136,12 +150,22 @@ async function publish(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, repo
 	if (opts.json) emit(ctx, true, report, "");
 }
 
+/** ` on <device> — log <path> — screenshot <path>` for a flow that ran and failed (empty otherwise). */
+function failureDetail(flow: FlowVerdict): string {
+	const parts = [
+		flow.device ? `on ${flow.device.name} (${flow.device.udid})` : undefined,
+		flow.log ? `log ${flow.log}` : undefined,
+		flow.screenshot ? `screenshot ${flow.screenshot}` : undefined,
+	].filter((part) => part !== undefined);
+	return parts.length > 0 ? ` ${parts.join(" — ")}` : "";
+}
+
 /** Failed / not-run flows, then the one-line gate verdict. */
 function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	const { color } = ctx.ui;
 	for (const flow of report.flows.filter((f) => f.verdict !== "passed")) {
 		const tag = flow.required ? color.red(flow.verdict) : color.yellow(`${flow.verdict} (optional)`);
-		ctx.err(`warden e2e: ${flow.id} ${tag}`);
+		ctx.err(`warden e2e: ${flow.id} ${tag}${failureDetail(flow)}`);
 	}
 	const passed = report.flows.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.flows.length} flow(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;

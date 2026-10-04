@@ -127,7 +127,7 @@ Select like `warden affected`, then run the flows like `warden batch` — the su
 | `--dry-run` | select and explain, run nothing |
 | `--report <file>` | also write `e2e-report.json` here |
 
-The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. Nothing affected → exit 0 without claiming.
+The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. Nothing affected → exit 0 without claiming. Every failed flow is named at the end with its device, runner log and failure screenshot (also `device`, `log`, `screenshot` on the flow in `e2e-report.json`).
 
 ### `warden ls`
 
