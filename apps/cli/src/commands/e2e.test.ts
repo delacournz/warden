@@ -27,8 +27,8 @@ async function resuite(overrides: Record<string, unknown>, config: Record<string
 	({ dir, write } = await makeSuiteRepo(overrides, config));
 }
 
-function setup(argv: string[]): TestContext {
-	const sim = fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")]);
+function setup(argv: string[], calls: string[][] = []): TestContext {
+	const sim = fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")], calls);
 	const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
 	ctx = testContext(argv, { exec });
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -348,5 +348,47 @@ describe("warden e2e", () => {
 		const both = setup(["--all", "--flows", "chats"]);
 		expect(await createE2eCommand(harness().deps).run(both)).toBe(1);
 		expect(both.stderr.join("\n")).toContain("exclusive");
+	});
+
+	describe("device shutdown", () => {
+		/** setup() whose two sims warden created, so they're its to shut down */
+		function wardenSetup(argv: string[], calls: string[][]): TestContext {
+			const c = setup(argv, calls);
+			for (const n of [1, 2])
+				c.db.recordDevice({ platform: "ios", id: `U${n}`, name: `warden-iphone-17-${n}`, profile: "iphone-17" }, 0);
+			return c;
+		}
+		const shutdowns = (calls: string[][]) => calls.filter((x) => x[2] === "shutdown").map((x) => x[3]);
+
+		test("gate passed → the leased devices warden created are shut down, then released", async () => {
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--count", "2"], calls);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("gate failed → devices left running for inspection; leases still released", async () => {
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--count", "2"], calls);
+			expect(await createE2eCommand(harness({ exitCodes: { chats: 1 } }).deps).run(c)).toBe(1);
+			expect(shutdowns(calls)).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("--no-shutdown keeps devices running after a pass", async () => {
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--no-shutdown"], calls);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls)).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("a device that was already running and not warden's stays up", async () => {
+			const calls: string[][] = [];
+			const c = setup(["--all"], calls);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls)).toEqual([]);
+		});
 	});
 });

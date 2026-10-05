@@ -22,6 +22,7 @@ import { applyEvent, type BatchView, initialView, type LiveScreen, liveScreen, p
 import { type ClaimFlagValues, parseClaimFlags, resolveOwner, resolvePlatform, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { shutdownReleasedDevices } from "../device-shutdown";
 import {
 	type AppFlagValues,
 	claimAll,
@@ -475,7 +476,28 @@ export type SessionHooks = {
 	name?: string;
 	/** run once per device after the app install and before its first job; a device whose setup fails is dropped */
 	setup?: DeviceSetupSpec | undefined;
+	/** shut down the leased devices warden may shut down (see `shutdownReleasedDevices`) before releasing, when this says so of a finished, uninterrupted run */
+	shutdownIf?: (summary: BatchSummary) => boolean;
 };
+
+/** `hooks.shutdownIf`: stop the session's devices while their leases are still held; failures only warn. */
+async function shutdownDevices(
+	ctx: CommandContext,
+	hooks: SessionHooks & { name: string },
+	session: LeaseSession,
+	summary: BatchSummary
+): Promise<void> {
+	if (!hooks.shutdownIf?.(summary)) return;
+	const store = ctx.store();
+	const leases = session.leaseIds.flatMap((id) => store.getLease(id) ?? []);
+	const owner = resolveOwner(ctx);
+	const { notes } = await withSpinner(ctx, "shutting down devices…", async (sctx, spinner) => {
+		const outcome = await shutdownReleasedDevices(sctx, leases, owner);
+		spinner.succeed(outcome.shutdown.length > 0 ? `shut down ${outcome.shutdown.join(" ")}` : "nothing to shut down");
+		return outcome;
+	});
+	for (const note of notes) ctx.err(ctx.ui.color.dim(`warden ${hooks.name}: ${note}`));
+}
 
 /** Per-device setup (`hooks.setup`): who is left to run jobs, every outcome, and why the run can't go on (no device left). */
 async function prepareDevices(
@@ -617,6 +639,7 @@ async function supervise(
 			screenshots,
 		};
 		await report(ctx, deps, args, screen.cast ? { ...run, cast: screen.cast } : run);
+		if (!interrupted()) await shutdownDevices(ctx, hooks, session, summary);
 		return { code: exitFor(interrupted(), summary.ok), batchDir, summary, screenshots, logs, devices, setups };
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));

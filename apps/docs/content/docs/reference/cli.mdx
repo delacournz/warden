@@ -128,8 +128,9 @@ Select like `warden affected`, then run the flows like `warden batch` — the su
 | `--all` | run every flow of the suite (after `include` / `exclude`), no git diff |
 | `--flows <list>` | run exactly these flow ids / globs (comma-separated), no git diff; a list matching nothing fails |
 | `--report <file>` | also write `e2e-report.json` here |
+| `--no-shutdown` | keep the devices running after the gate passes |
 
-The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. Flows run in id order (sorted file path), so `count: 1` is a stable serial run. Nothing affected → exit 0 without claiming. Every failed flow is named at the end with its device, runner log and failure screenshot (also `device`, `log`, `screenshot` on the flow in `e2e-report.json`).
+The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. Flows run in id order (sorted file path), so `count: 1` is a stable serial run. Nothing affected → exit 0 without claiming. Every failed flow is named at the end with its device, runner log and failure screenshot (also `device`, `log`, `screenshot` on the flow in `e2e-report.json`). Leases are always released at the end; when the gate passes, the devices warden created (or booted for the run) are shut down first — a failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
 
 ### `warden ls`
 
