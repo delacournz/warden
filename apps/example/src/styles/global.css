@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@import "uniwind";
+
+@source "../**/*.{ts,tsx}";
+
+/* delacour:start — managed by `delacour init`, edit outside this block */
+@import "./index.css";
+
+@source "../components/ui";
+@source "../hooks";
+@source "../lib";
+/* delacour:end */

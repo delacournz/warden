@@ -1,0 +1,25 @@
+export { Text, type TextPresetProps, type TextProps } from "./text";
+export { TextClassProvider, useTextClass } from "./text.context";
+export {
+	canNestText,
+	isInlineTextVariant,
+	resolveTextClass,
+	TEXT_ALIGNS,
+	TEXT_BASE_CLASS,
+	TEXT_COLORS,
+	TEXT_INLINE_VARIANTS,
+	TEXT_MAX_FONT_SIZE_MULTIPLIER,
+	TEXT_SIZES,
+	TEXT_TRANSFORMS,
+	TEXT_VARIANTS,
+	TEXT_WEIGHTS,
+	type TextAlign,
+	type TextColor,
+	type TextInlineVariant,
+	type TextSize,
+	type TextTransform,
+	type TextVariant,
+	type TextVariantProps,
+	type TextWeight,
+	textVariants,
+} from "./text.variants";
