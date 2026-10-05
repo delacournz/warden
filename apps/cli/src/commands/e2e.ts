@@ -40,6 +40,8 @@ export type E2eOpts = ClaimFlagValues &
 		tui: boolean;
 		report?: string;
 		dryRun?: true;
+		/** false = `--no-shutdown` */
+		shutdown: boolean;
 	};
 
 /** One flow's outcome in `e2e-report.json`. */
@@ -197,7 +199,8 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 
 /**
  * `warden e2e [suite]`: the flows the change needs (see `warden affected`), run on leased devices
- * like `warden batch`, each `passes` times. Exit 0 when every required flow passed (optional
+ * like `warden batch`, each `passes` times. Once the gate passes, the devices warden created (or
+ * booted) are shut down before their leases are released; a failed run leaves them up. Exit 0 when every required flow passed (optional
  * failures are reported, not fatal), 1 otherwise, 130 when interrupted.
  */
 async function e2e(
@@ -241,6 +244,8 @@ async function e2e(
 	const session = await runSession(ctx, deps, args.data, [...byId.keys()], runner, {
 		name: "e2e",
 		setup: deviceSetup(suite.config),
+		// a passed gate frees the sims; a failed one leaves them up to inspect
+		...(opts.shutdown ? { shutdownIf: (summary) => verdicts(flows, { code: 0, summary }).ok } : {}),
 		argvFor: (job) => {
 			const flow = byId.get(job);
 			return flow ? runnerArgv(runner, flow) : runner;
@@ -282,6 +287,10 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--explain", "print why each flow was selected before running")
 				.option("--dry-run", "select and explain, run nothing")
 				.option("--report <file>", "also write e2e-report.json here")
+				.option(
+					"--no-shutdown",
+					"keep the devices running after the gate passes (default: shut down the ones warden created)"
+				)
 				.addHelpText(
 					"after",
 					"\nExamples:\n  warden e2e mobile --base origin/main --count 2\n  warden e2e --dry-run --files src/modules/chat/api.ts"
