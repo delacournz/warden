@@ -75,6 +75,44 @@ describe("scanFlows", () => {
 	});
 });
 
+describe("TypeScript flows (*.e2e.ts)", () => {
+	test("*.e2e.ts is an e2e flow; id drops `.e2e.ts`; relative imports resolve (extension / index) as runs", () => {
+		write("helpers/app.ts", "export const x = 1;\n");
+		write("helpers/index.ts", "export * from './app';\n");
+		const file = join(dir, "auth/sign-in.e2e.ts");
+		const text = [
+			'import { test } from "@e2e-dev/mobile";',
+			'import { expect } from "e2e";',
+			'import type { Todo } from "../helpers/types";',
+			'import { openApp } from "../helpers/app";',
+			'import "../helpers";',
+		].join("\n");
+		expect(parseFlow(file, dir, text)).toEqual({
+			id: "auth/sign-in",
+			file,
+			kind: "e2e",
+			runs: [join(dir, "helpers/app.ts"), join(dir, "helpers/index.ts")],
+		});
+	});
+
+	test("scanFlows: *.e2e.ts / .tsx are flows, other .ts files are fragments, YAML still works", () => {
+		write("sign-in.e2e.ts", 'import { open } from "./helpers/app";\n');
+		write("todos.e2e.tsx", "export {};\n");
+		write("helpers/app.ts", 'import { ids } from "./ids";\n');
+		write("helpers/ids.ts", "export const ids = {};\n");
+		write("legacy.yaml", "steps:\n  - launch: x\n");
+		const scan = scanFlows(dir);
+		expect(scan.flows.map((f) => [f.id, f.kind])).toEqual([
+			["helpers/app", "fragment"],
+			["helpers/ids", "fragment"],
+			["legacy", "e2e"],
+			["sign-in", "e2e"],
+			["todos", "e2e"],
+		]);
+		expect(scan.flows.find((f) => f.id === "helpers/app")?.runs).toEqual([join(dir, "helpers/ids.ts")]);
+	});
+});
+
 describe("flowSettings / flowPlatforms", () => {
 	const flows = {
 		"store-*": { entries: ["src/app/_layout.tsx"], paths: [], required: false },
