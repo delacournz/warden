@@ -16,6 +16,7 @@
 apps/
   cli/                # @delacour/warden — the `warden` binary (commands, Claude hook)
   docs/               # @delacour/warden-docs — Fumadocs + TanStack Start docs site (content/docs/*.mdx), :3210
+  example/            # @delacour/warden-example — Expo + Delacour UI demo app; tester.army e2e flows run via `warden e2e example`
 packages/
   core/               # @delacour/warden-core — lease store, allocation, device providers, build cache
   biome-config/       # shared Biome config (root.jsonc, react.jsonc)

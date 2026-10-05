@@ -267,7 +267,7 @@ export interface WardenE2eSuite {
 	 * Needed when the config has several projects and warden runs from the repo root.
 	 */
 	project?: string | undefined;
-	/** Directory of flow YAML files (searched recursively; dot dirs and `__baselines__` skipped). */
+	/** Directory of flows: YAML files, or `*.e2e.ts(x)` tests whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	flowsDir: string;
 	/**
 	 * Per-flow argv; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted.

@@ -2,3 +2,7 @@
 # Refuse package versions published < 3 days ago. Worm releases (e.g. the
 # May 2026 @tanstack compromise) are typically pulled within hours.
 minimumReleaseAge = 259200
+# Metro (apps/example) resolves by walking node_modules and can't see through
+# Bun's isolated layout (node_modules/.bun); React Native tooling expects a
+# flat, hoisted tree.
+linker = "hoisted"

@@ -1,0 +1,27 @@
+{
+	"$schema": "https://raw.githubusercontent.com/delacournz/delacour-ui/main/registry/config.schema.json",
+	"framework": "expo",
+	"typescript": true,
+	"registry": {},
+	"registries": {},
+	"paths": {
+		"ui": "src/components/ui",
+		"lib": "src/lib",
+		"hooks": "src/hooks",
+		"styles": "src/styles",
+		"icons": "src/lib/icons"
+	},
+	"aliases": {
+		"ui": "@/components/ui",
+		"lib": "@/lib",
+		"hooks": "@/hooks",
+		"styles": "@/styles",
+		"icons": "@/lib/icons"
+	},
+	"app": {
+		"root": ".",
+		"css": "src/styles/global.css",
+		"metroConfig": "metro.config.js",
+		"uniwindTypes": "src/uniwind-types.d.ts"
+	}
+}

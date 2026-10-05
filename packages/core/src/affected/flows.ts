@@ -1,11 +1,13 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import type { Platform } from "../types";
 import type { E2eFlowConfig } from "./affected.schema";
 
 /**
  * A flow file under `flowsDir`. `id` = its path below `flowsDir` without the extension (`qa/login`).
- * `e2e` flows start with a `launch` step and are runnable on their own; `fragment`s are pulled in by `run:`.
+ * YAML: `e2e` flows start with a `launch` step and are runnable on their own; `fragment`s are pulled in by `run:`.
+ * TypeScript: `*.e2e.ts(x)` files are `e2e` flows, any other `.ts(x)` is a `fragment` (a helper); `runs` are the
+ * relative imports, so a helper change selects every flow that imports it.
  */
 export type Flow = {
 	id: string;
@@ -19,7 +21,11 @@ export type Flow = {
 
 export type FlowScan = { flows: Flow[]; warnings: string[] };
 
-const FLOW_FILE = /\.ya?ml$/;
+const YAML_FILE = /\.ya?ml$/;
+const TS_FLOW = /\.e2e\.tsx?$/;
+const TS_FILE = /(?<!\.d)\.tsx?$/;
+const FLOW_FILE = new RegExp(`${YAML_FILE.source}|${TS_FILE.source}`);
+const TS_EXTENSIONS = [".ts", ".tsx"];
 const SKIP_DIR = /^(\.|__baselines__$|node_modules$)/;
 const PASSIVE_STEPS = new Set(["echo", "script"]);
 
@@ -90,9 +96,40 @@ function parseSteps(text: string): unknown[] {
 	}
 }
 
-/** One flow file → its kind, `run:` refs and launch platforms. */
+const isFile = (path: string): boolean => existsSync(path) && statSync(path).isFile();
+
+/** `./x` → the first existing `./x`, `./x.ts(x)`, `./x/index.ts(x)`; undefined when none does. */
+function resolveRelative(from: string, specifier: string): string | undefined {
+	const base = resolve(dirname(from), specifier);
+	const candidates = [
+		base,
+		...TS_EXTENSIONS.map((ext) => base + ext),
+		...TS_EXTENSIONS.map((ext) => join(base, `index${ext}`)),
+	];
+	return candidates.find(isFile);
+}
+
+const tsTranspiler = new Bun.Transpiler({ loader: "tsx" });
+
+/** A TypeScript flow or helper: its relative, value-level imports that exist on disk. */
+function parseTsFlow(file: string, flowsDir: string, text: string): Flow {
+	const runs = tsTranspiler
+		.scanImports(text)
+		.map((i) => i.path)
+		.filter((spec) => spec.startsWith("."))
+		.flatMap((spec) => resolveRelative(file, spec) ?? []);
+	return {
+		id: relative(flowsDir, file).replace(TS_FLOW, "").replace(TS_FILE, ""),
+		file,
+		kind: TS_FLOW.test(file) ? "e2e" : "fragment",
+		runs: [...new Set(runs)],
+	};
+}
+
+/** One flow file → its kind, `run:` refs (YAML) or relative imports (TypeScript) and launch platforms. */
 export function parseFlow(file: string, flowsDir: string, text: string): Flow {
-	const id = relative(flowsDir, file).replace(FLOW_FILE, "");
+	if (TS_FILE.test(file)) return parseTsFlow(file, flowsDir, text);
+	const id = relative(flowsDir, file).replace(YAML_FILE, "");
 	const steps = parseSteps(text);
 	const first = steps.find((s) => !(isRecord(s) && Object.keys(s).some((k) => PASSIVE_STEPS.has(k))));
 	const launch = isRecord(first) ? first.launch : undefined;

@@ -1,0 +1,28 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+	"extends": "//",
+	"root": false,
+	"files": {
+		"includes": ["src/**/*", "scripts/**/*", "e2e/**/*", "*.ts", "!src/uniwind-types.d.ts",
+			// Copied in by `delacour add` and diffed against upstream with `delacour diff`; keep them byte-identical.
+			"!src/components/ui",
+			"!src/lib",
+			"!src/hooks",
+			"!src/styles"
+		]
+	},
+	"css": {
+		"parser": { "tailwindDirectives": true }
+	},
+	"overrides": [
+		{
+			// Expo Router derives routes from filenames; `_layout`, `(group)` and `[param]` are its conventions.
+			"includes": ["src/app/**/*"],
+			"linter": {
+				"rules": {
+					"style": { "useFilenamingConvention": "off" }
+				}
+			}
+		}
+	]
+}

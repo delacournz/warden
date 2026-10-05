@@ -1,0 +1,447 @@
+/*
+ * THE ONE FILE THAT IS YOURS.
+ *
+ * Everything else in this folder is plumbing: `base.css` pulls in the engines,
+ * `tokens.css` names the sizes the utilities are minted from, `index.css`
+ * stitches them together. This file is the theme, and it is meant to be
+ * replaced whole:
+ *
+ *   - Build one at https://ui.delacour.co.nz/theme and paste the `theme.css`
+ *     tab over this file. Nothing else to run.
+ *   - Have a shadcn or tweakcn `globals.css`? Paste it over this file and run
+ *     `delacour theme`. It rewrites the file in place — see below for why a
+ *     paste alone is not enough.
+ *
+ * The palette is shadcn's, in shadcn's two-layer shape. Layer one is a raw
+ * semantic name — `--primary`, `--destructive` — declared once per theme.
+ * Layer two is the `@theme inline` block at the bottom, which maps each raw
+ * name onto the `--color-*` Tailwind reads to mint `bg-primary`,
+ * `text-primary`, `border-primary`.
+ *
+ * Two layers rather than one so a web app's theme can be moved here almost
+ * unchanged: shadcn, tweakcn and every theme generator built on them emit
+ * exactly these raw names. The one thing that cannot survive a copy/paste is
+ * the wrapper: Uniwind reads a theme only from `@variant light` /
+ * `@variant dark`, and treats a literal `.dark { … }` as a utility class
+ * named `dark` that silently does nothing. `delacour theme` rewrites the
+ * wrapper and fills in the tokens shadcn has no name for.
+ *
+ * `@theme inline` emits NO `--color-*` variable of its own; it substitutes the
+ * raw `var(--primary)` into each utility. That is why `useThemeColor` looks up
+ * the raw name — see `hooks/use-theme-color.ts`.
+ */
+@layer theme {
+	:root {
+		@variant light {
+			/*
+			 * The page sits BELOW the card, in both themes.
+			 *
+			 * shadcn ships `background` and `card` as the same white, because on
+			 * the web a card is separated by a shadow. Nothing here casts one, so
+			 * a `ListGroup` on a page was white on white and read as a hairline
+			 * border around nothing — while the same component in dark, where the
+			 * ramp does step, read as a raised surface. One component, two
+			 * different ideas of what a card is.
+			 *
+			 * This is the near-white step the ramp already carries for `sidebar`,
+			 * so it invents no colour and collides with nothing: `secondary` and
+			 * `muted` sit lower at 0.97, and `card` keeps the white above it.
+			 * Light elevation is deliberately a fraction of dark's — on a light
+			 * ground a surface lifts by a percent or two, where in dark it lifts
+			 * by seven.
+			 */
+			--background: oklch(0.985 0 0);
+			--foreground: oklch(0.145 0 0);
+			--card: oklch(1 0 0);
+			--card-foreground: oklch(0.145 0 0);
+			--popover: oklch(1 0 0);
+			--popover-foreground: oklch(0.145 0 0);
+
+			--primary: oklch(0.205 0 0);
+			--primary-foreground: oklch(0.985 0 0);
+			--secondary: oklch(0.97 0 0);
+			--secondary-foreground: oklch(0.205 0 0);
+			--muted: oklch(0.97 0 0);
+			--muted-foreground: oklch(0.556 0 0);
+			--accent: oklch(0.97 0 0);
+			--accent-foreground: oklch(0.205 0 0);
+
+			--destructive: oklch(0.577 0.245 27.325);
+			--destructive-foreground: oklch(0.985 0 0);
+
+			--border: oklch(0.922 0 0);
+			--input: oklch(0.922 0 0);
+			--ring: oklch(0.708 0 0);
+
+			/*
+			 * The neutral ramp shadcn ships today, in both themes: five greys, not
+			 * five hues. It is what a fresh `shadcn init` writes and what the
+			 * default preset on /theme resolves to — `emit.test.ts` holds the
+			 * two equal. An accent recolours all five.
+			 */
+			--chart-1: oklch(0.87 0 0);
+			--chart-2: oklch(0.556 0 0);
+			--chart-3: oklch(0.439 0 0);
+			--chart-4: oklch(0.371 0 0);
+			--chart-5: oklch(0.269 0 0);
+
+			--sidebar: oklch(0.985 0 0);
+			--sidebar-foreground: oklch(0.145 0 0);
+			--sidebar-primary: oklch(0.205 0 0);
+			--sidebar-primary-foreground: oklch(0.985 0 0);
+			--sidebar-accent: oklch(0.97 0 0);
+			--sidebar-accent-foreground: oklch(0.205 0 0);
+			--sidebar-border: oklch(0.922 0 0);
+			--sidebar-ring: oklch(0.708 0 0);
+
+			/*
+			 * A surface that sits ABOVE `muted`, in both themes.
+			 *
+			 * In light that is now exactly what `card` is, so this follows it —
+			 * it used to follow `background`, which was the same white, and would
+			 * now sink below the card and land a hair above `muted`. `Tabs`'
+			 * selected capsule is what this exists for, and it has to read as
+			 * raised out of a muted track.
+			 *
+			 * `card` still cannot do the job in dark, where it is *darker* than
+			 * `muted` and nothing else in the ramp is lighter — hence the mix
+			 * there. Derived rather than literal in both, so a pasted palette
+			 * drags it along.
+			 */
+			--elevated: var(--card);
+			--elevated-foreground: var(--foreground);
+
+			/*
+			 * A fill quieter than `secondary`. shadcn has no counterpart —
+			 * its `secondary`, `muted` and `accent` are one colour — so this is
+			 * derived as half a step further from the page than `secondary`,
+			 * which quiets it in light and in dark alike.
+			 */
+			--tertiary: color-mix(in oklch, var(--secondary) 50%, var(--background));
+			--tertiary-foreground: color-mix(in oklch, var(--foreground) 50%, var(--muted-foreground));
+
+			/*
+			 * The three state colours shadcn does not define, and the tinted
+			 * `-soft` pair every state colour carries.
+			 *
+			 * A `-soft` surface is the state colour laid over the page, and its
+			 * foreground is that colour darkened toward the text — so all eight
+			 * follow a pasted `--background` and `--foreground` without being
+			 * restated. The dark variant inverts the second rule: over a dark
+			 * tint the state colour already reads, and mixing it toward a
+			 * near-white foreground would only wash it out.
+			 */
+			--success: oklch(0.696 0.17 162.48);
+			--success-foreground: oklch(0.985 0 0);
+			--warning: oklch(0.769 0.188 70.08);
+			--warning-foreground: oklch(0.216 0.006 56.043);
+			--info: oklch(0.623 0.188 259.81);
+			--info-foreground: oklch(0.985 0 0);
+
+			--destructive-soft: color-mix(in oklch, var(--destructive) 8%, var(--background));
+			--destructive-soft-foreground: color-mix(in oklch, var(--destructive) 70%, var(--foreground));
+			--success-soft: color-mix(in oklch, var(--success) 8%, var(--background));
+			--success-soft-foreground: color-mix(in oklch, var(--success) 70%, var(--foreground));
+			--warning-soft: color-mix(in oklch, var(--warning) 8%, var(--background));
+			--warning-soft-foreground: color-mix(in oklch, var(--warning) 70%, var(--foreground));
+			--info-soft: color-mix(in oklch, var(--info) 8%, var(--background));
+			--info-soft-foreground: color-mix(in oklch, var(--info) 70%, var(--foreground));
+
+			/*
+			 * The scrim a BottomSheet draws over the app it covers.
+			 *
+			 * A surface token with no `-foreground`: nothing is ever drawn on it,
+			 * and the sheet in front carries its own. It is not `bg-black/50` at a
+			 * call site because a pure-black scrim over a near-black dark theme is
+			 * nearly invisible — the two variants below differ on purpose, and the
+			 * alpha lives with the colour so a caller never has to restate it.
+			 *
+			 * Literal black rather than derived: a scrim is black in both themes,
+			 * and deriving it from `--foreground` would paint a white one in dark.
+			 */
+			--overlay: oklch(0 0 0 / 45%);
+
+			/*
+			 * Carried so a pasted theme survives intact. No component in this
+			 * package draws a shadow — three tests assert it — so nothing reads
+			 * these today; a consumer's own `shadow-md` will.
+			 */
+			--shadow: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+			--shadow-2xs: 0 1px 3px 0 hsl(0 0% 0% / 0.05);
+			--shadow-xs: 0 1px 3px 0 hsl(0 0% 0% / 0.05);
+			--shadow-sm: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+			--shadow-md: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
+			--shadow-lg: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
+			--shadow-xl: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
+			--shadow-2xl: 0 1px 3px 0 hsl(0 0% 0% / 0.25);
+		}
+
+		@variant dark {
+			--background: oklch(0.145 0 0);
+			--foreground: oklch(0.985 0 0);
+			--card: oklch(0.205 0 0);
+			--card-foreground: oklch(0.985 0 0);
+			--popover: oklch(0.205 0 0);
+			--popover-foreground: oklch(0.985 0 0);
+
+			--primary: oklch(0.922 0 0);
+			--primary-foreground: oklch(0.205 0 0);
+			--secondary: oklch(0.269 0 0);
+			--secondary-foreground: oklch(0.985 0 0);
+			--muted: oklch(0.269 0 0);
+			--muted-foreground: oklch(0.708 0 0);
+			--accent: oklch(0.269 0 0);
+			--accent-foreground: oklch(0.985 0 0);
+
+			--destructive: oklch(0.704 0.191 22.216);
+			--destructive-foreground: oklch(0.985 0 0);
+
+			--border: oklch(1 0 0 / 10%);
+			--input: oklch(1 0 0 / 15%);
+			--ring: oklch(0.556 0 0);
+
+			--chart-1: oklch(0.87 0 0);
+			--chart-2: oklch(0.556 0 0);
+			--chart-3: oklch(0.439 0 0);
+			--chart-4: oklch(0.371 0 0);
+			--chart-5: oklch(0.269 0 0);
+
+			--sidebar: oklch(0.205 0 0);
+			--sidebar-foreground: oklch(0.985 0 0);
+			--sidebar-primary: oklch(0.488 0.243 264.376);
+			--sidebar-primary-foreground: oklch(0.985 0 0);
+			--sidebar-accent: oklch(0.269 0 0);
+			--sidebar-accent-foreground: oklch(0.985 0 0);
+			--sidebar-border: oklch(1 0 0 / 10%);
+			--sidebar-ring: oklch(0.556 0 0);
+
+			--elevated: color-mix(in oklch, var(--muted) 88%, var(--foreground));
+			--elevated-foreground: var(--foreground);
+
+			--tertiary: color-mix(in oklch, var(--secondary) 50%, var(--background));
+			--tertiary-foreground: color-mix(in oklch, var(--foreground) 50%, var(--muted-foreground));
+
+			--success: oklch(0.696 0.17 162.48);
+			--success-foreground: oklch(0.205 0 0);
+			--warning: oklch(0.769 0.188 70.08);
+			--warning-foreground: oklch(0.216 0.006 56.043);
+			--info: oklch(0.623 0.188 259.81);
+			--info-foreground: oklch(0.985 0 0);
+
+			--destructive-soft: color-mix(in oklch, var(--destructive) 14%, var(--background));
+			--destructive-soft-foreground: var(--destructive);
+			--success-soft: color-mix(in oklch, var(--success) 14%, var(--background));
+			--success-soft-foreground: var(--success);
+			--warning-soft: color-mix(in oklch, var(--warning) 14%, var(--background));
+			--warning-soft-foreground: var(--warning);
+			--info-soft: color-mix(in oklch, var(--info) 14%, var(--background));
+			--info-soft-foreground: var(--info);
+
+			--overlay: oklch(0 0 0 / 65%);
+
+			--shadow: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+			--shadow-2xs: 0 1px 3px 0 hsl(0 0% 0% / 0.05);
+			--shadow-xs: 0 1px 3px 0 hsl(0 0% 0% / 0.05);
+			--shadow-sm: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+			--shadow-md: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
+			--shadow-lg: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
+			--shadow-xl: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
+			--shadow-2xl: 0 1px 3px 0 hsl(0 0% 0% / 0.25);
+		}
+	}
+}
+
+@layer theme {
+	:root {
+		/*
+		 * The three font families, split by platform rather than by theme.
+		 *
+		 * Tailwind's defaults are comma-separated web stacks, and React Native's
+		 * `fontFamily` takes a single family name with no fallback list — the
+		 * whole string would resolve to nothing and quietly fall back to the
+		 * system sans, which is the opposite of what `Text.Code` is for. This is
+		 * also why `delacour theme` takes only the FIRST family out of a pasted
+		 * stack rather than carrying it whole.
+		 *
+		 * No single name works on both platforms: iOS has Menlo and Georgia and
+		 * not `monospace`, Android the reverse. Every name here ships with the
+		 * OS, so nothing has to be loaded through `expo-font` and a consuming app
+		 * needs no plugin.
+		 *
+		 * This cannot live in `tokens.css`: platform selection needs `@variant`,
+		 * and `@theme {}` accepts custom properties only. It also needs the
+		 * `noDuplicateCustomProperties` exemption `biome.jsonc` scopes to this
+		 * file — the same one `light` and `dark` already rely on.
+		 */
+		@variant ios {
+			--font-sans: "System";
+			--font-serif: "Georgia";
+			--font-mono: "Menlo";
+			--font-heading: "System";
+		}
+
+		@variant android {
+			--font-sans: "sans-serif";
+			--font-serif: "serif";
+			--font-mono: "monospace";
+			--font-heading: "sans-serif";
+		}
+	}
+}
+
+@layer theme {
+	:root {
+		/*
+		 * The geometry, restated so it can be retuned at runtime.
+		 *
+		 * Every number here is already declared in `tokens.css`, and that copy
+		 * is the one `apps/web` reads — the docs site imports only that file.
+		 * This one exists because of how Uniwind compiles a variable: one
+		 * declared in a plain `@theme` block is resolved and INLINED at build
+		 * time, so `h-button-md` would carry a literal 44 and no runtime
+		 * override could ever reach it. A variable declared inside a `@variant`
+		 * compiles to a getter against the live store instead. That is the
+		 * whole difference between a kit whose density can be changed by an app
+		 * and one whose density is a build artefact.
+		 *
+		 * `native` rather than `light`/`dark` on purpose: it is one of Uniwind's
+		 * registered platform variants, and the store merges it into the base
+		 * variables every theme inherits — so one block covers both themes,
+		 * where a theme variant would have to be written out twice and kept in
+		 * step. None of these are light/dark dependent; a corner does not change
+		 * shape at dusk.
+		 *
+		 * `styles/geometry.test.ts` asserts this block and `tokens.css` agree,
+		 * because two hand-maintained copies of one number always drift.
+		 */
+		@variant native {
+			--radius: 0.625rem;
+
+			--spacing-button-sm: 36px;
+			--spacing-button-md: 44px;
+			--spacing-button-lg: 52px;
+
+			--text-button-sm: 14px;
+			--text-button-md: 16px;
+			--text-button-lg: 18px;
+
+			--radius-button-sm: 18px;
+			--radius-button-md: 22px;
+			--radius-button-lg: 26px;
+
+			--spacing-input-sm: 36px;
+			--spacing-input-md: 44px;
+			--spacing-input-lg: 52px;
+
+			--text-input-sm: 14px;
+			--text-input-md: 16px;
+			--text-input-lg: 18px;
+
+			--spacing-icon-xs: 14px;
+			--spacing-icon-sm: 16px;
+			--spacing-icon-md: 18px;
+			--spacing-icon-lg: 20px;
+			--spacing-icon-xl: 24px;
+			--spacing-icon-2xl: 32px;
+
+			--spacing-navbar-row: 56px;
+			--spacing-screen-gutter: 20px;
+
+			--spacing-chart-sm: 160px;
+			--spacing-chart-md: 220px;
+			--spacing-chart-lg: 280px;
+		}
+	}
+}
+
+/*
+ * Every raw name above, mapped onto the namespace Tailwind mints utilities
+ * from. `inline` is what makes a utility read `var(--primary)` directly rather
+ * than a copy taken at `:root`, which is what lets the `@variant` swap above
+ * reach it.
+ *
+ * A name added to a `@variant` block and forgotten here is declared but
+ * unreachable — no `bg-*` will exist for it. `styles/theme-tokens.test.ts`
+ * fails on the gap.
+ */
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+
+	--color-destructive: var(--destructive);
+	--color-destructive-foreground: var(--destructive-foreground);
+
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+
+	--color-chart-1: var(--chart-1);
+	--color-chart-2: var(--chart-2);
+	--color-chart-3: var(--chart-3);
+	--color-chart-4: var(--chart-4);
+	--color-chart-5: var(--chart-5);
+
+	--color-sidebar: var(--sidebar);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
+
+	--color-elevated: var(--elevated);
+	--color-elevated-foreground: var(--elevated-foreground);
+	--color-tertiary: var(--tertiary);
+	--color-tertiary-foreground: var(--tertiary-foreground);
+
+	--color-destructive-soft: var(--destructive-soft);
+	--color-destructive-soft-foreground: var(--destructive-soft-foreground);
+	--color-success: var(--success);
+	--color-success-foreground: var(--success-foreground);
+	--color-success-soft: var(--success-soft);
+	--color-success-soft-foreground: var(--success-soft-foreground);
+	--color-warning: var(--warning);
+	--color-warning-foreground: var(--warning-foreground);
+	--color-warning-soft: var(--warning-soft);
+	--color-warning-soft-foreground: var(--warning-soft-foreground);
+	--color-info: var(--info);
+	--color-info-foreground: var(--info-foreground);
+	--color-info-soft: var(--info-soft);
+	--color-info-soft-foreground: var(--info-soft-foreground);
+
+	--color-overlay: var(--overlay);
+
+	/*
+	 * The fonts are deliberately absent.
+	 *
+	 * Tailwind already declares `--font-sans`, `--font-serif` and `--font-mono`
+	 * in its own theme, so `font-mono` already reads `var(--font-mono)` and the
+	 * platform block above already overrides it. Aliasing them here the way
+	 * shadcn does would redefine each one AS ITSELF — Uniwind compiles that to
+	 * `vars["--font-mono"] => vars["--font-mono"]`, a variable that recurses
+	 * instead of resolving, and every `font-*` utility silently draws nothing.
+	 * shadcn needs the alias only because its fonts live outside `@theme`.
+	 */
+
+	--shadow-2xs: var(--shadow-2xs);
+	--shadow-xs: var(--shadow-xs);
+	--shadow-sm: var(--shadow-sm);
+	--shadow-md: var(--shadow-md);
+	--shadow-lg: var(--shadow-lg);
+	--shadow-xl: var(--shadow-xl);
+	--shadow-2xl: var(--shadow-2xl);
+}

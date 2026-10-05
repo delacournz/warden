@@ -11,7 +11,7 @@ warden affected mobile --base origin/main --explain   # what would run, and why
 warden e2e mobile --base origin/main --count 2        # run it: exit 0 = every required flow passed
 ```
 
-Flows stay in your flow runner's own YAML files; warden only picks them, leases devices, runs your `runner` command once per flow, and reports.
+Flows stay in your flow runner's own files — YAML flows, or `*.e2e.ts` tests (e.g. [tester.army e2e](https://e2e.tester.army/docs/mobile)) whose relative imports count as fragments; warden only picks them, leases devices, runs your `runner` command once per flow, and reports.
 
 ## How flows are picked
 

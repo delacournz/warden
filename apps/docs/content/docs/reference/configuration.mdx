@@ -153,7 +153,7 @@ export default defineConfig({
 <TypeTable
   type={{
     project: { type: "string", description: "`projects[].name`: the runner, `serve` and `setup` run in its root, relative `serveReady` `file:` paths resolve against it, and `app` installs that project's build. Needed when the config has several projects and warden runs from the repo root." },
-    flowsDir: { type: "string", description: "Required. Directory of flow YAML files (searched recursively; dot dirs and `__baselines__` skipped)." },
+    flowsDir: { type: "string", description: "Required. Directory of flows: YAML files, or `*.e2e.ts(x)` tests (other `.ts` files there are helpers; a helper change selects every flow importing it). Searched recursively; dot dirs, `node_modules` and `__baselines__` skipped." },
     runner: { type: "string[]", description: "Required. Per-flow argv; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted. Runs in the suite's `project` root, else the config file's directory." },
     platform: { type: '"ios" | "android"', description: "Default platform. Without it `warden affected` reports both and `warden e2e` needs `--platform`." },
     base: { type: "string", description: "Ref changes are measured against (merge-base with HEAD).", default: '"main"' },

@@ -1,0 +1,132 @@
+@theme {
+	/*
+	 * The one number every generic corner is derived from, in the `@theme
+	 * inline` block at the bottom of this file. shadcn's own scale, so a
+	 * `--radius` copied out of a web app retunes every rounded edge here at
+	 * once — and unlike the older `calc(var(--radius) - 4px)` form some theme
+	 * generators still emit, a multiplier scales rather than shifts, so a
+	 * square-cornered theme stays square at every step.
+	 *
+	 * It lives in `tokens.css` rather than beside the palette because
+	 * `apps/web` imports only this file; a `--radius` in `theme.css` would
+	 * leave every derived radius undefined on the docs site.
+	 */
+	--radius: 0.625rem;
+
+	--text-xs: 12px;
+	--text-sm: 14px;
+	--text-base: 16px;
+	--text-lg: 18px;
+	--text-xl: 20px;
+	--text-2xl: 24px;
+	--text-3xl: 30px;
+
+	/*
+	 * The button's three scales, stepped together: the height — which is also
+	 * the square footprint at an `icon-*` size — the label's type, and the
+	 * corner.
+	 *
+	 * The corner is half the height at every step, so a button is a capsule and
+	 * a square one a circle. A token rather than `rounded-full` because the
+	 * shape is a default, not a law: a kit that wants squarer buttons changes
+	 * three numbers here and touches no component. `tokens.test.ts` keeps each
+	 * under half its height — past that the renderer clamps and the number
+	 * stops meaning what it says.
+	 */
+	--spacing-button-sm: 36px;
+	--spacing-button-md: 44px;
+	--spacing-button-lg: 52px;
+
+	--text-button-sm: 14px;
+	--text-button-md: 16px;
+	--text-button-lg: 18px;
+
+	--radius-button-sm: 18px;
+	--radius-button-md: 22px;
+	--radius-button-lg: 26px;
+
+	/*
+	 * Field heights, and the type scale paired step-for-step with them.
+	 *
+	 * A scale of its own rather than `--spacing-button-*`, even though the
+	 * numbers agree today: a control that borrowed the button's would retune
+	 * silently whenever the button's did.
+	 */
+	--spacing-input-sm: 36px;
+	--spacing-input-md: 44px;
+	--spacing-input-lg: 52px;
+
+	--text-input-sm: 14px;
+	--text-input-md: 16px;
+	--text-input-lg: 18px;
+
+	/*
+	 * The icon scale, shared by `Icon` and `Spinner` so a named size means the
+	 * same edge length in both and one can replace the other without the
+	 * layout moving. `size-icon-md`.
+	 *
+	 * A component's own size axis indexes into this scale rather than restating
+	 * a number: a button's sm/md/lg icon is icon-sm/md/lg.
+	 *
+	 * It sizes more than glyphs. A `Checkbox`'s square reads it too, two steps
+	 * above the tick it holds, rather than minting a scale that would have to be
+	 * retuned in step with this one forever.
+	 */
+	--spacing-icon-xs: 14px;
+	--spacing-icon-sm: 16px;
+	--spacing-icon-md: 18px;
+	--spacing-icon-lg: 20px;
+	--spacing-icon-xl: 24px;
+	--spacing-icon-2xl: 32px;
+
+	/*
+	 * Screen chrome. `h-navbar-row` is the navbar's control row on its own —
+	 * the safe-area band above it is padding, not part of this number, so one
+	 * value holds across every device.
+	 *
+	 * `px-screen-gutter` is the horizontal gutter `Screen.Header`,
+	 * `Screen.Navbar` and a screen's own content all line up against. It is one
+	 * token rather than three `px-5`s so a change moves every edge together.
+	 *
+	 * The footer's padding is deliberately NOT here — see `screen.variants.ts`.
+	 */
+	--spacing-navbar-row: 56px;
+	--spacing-screen-gutter: 20px;
+
+	/*
+	 * A chart's height. It has no intrinsic one — a canvas fills whatever box
+	 * it is given — so without a token every chart on a dashboard would be a
+	 * different height and the rows would not line up.
+	 *
+	 * A height rather than an aspect ratio on purpose: two charts side by side
+	 * at different widths must still agree, and `aspect-video` would give them
+	 * different heights. Registering the names with tailwind-merge is what lets
+	 * a caller's `aspect-video h-auto` cleanly win when they want that instead.
+	 */
+	--spacing-chart-sm: 160px;
+	--spacing-chart-md: 220px;
+	--spacing-chart-lg: 280px;
+}
+
+/*
+ * The generic corner scale, derived from `--radius`.
+ *
+ * `inline` for the same reason the palette uses it: a utility has to read
+ * `var(--radius)` itself, so a theme that redeclares `--radius` reaches
+ * `rounded-lg` rather than a copy taken when the scale was compiled.
+ *
+ * `--radius-button-*` above is deliberately NOT part of this. A button's corner
+ * is half its own height — a shape, not a step on a scale — and it must not
+ * move when a consumer retunes `--radius`.
+ */
+@theme inline {
+	--radius-xs: calc(var(--radius) * 0.4);
+	--radius-sm: calc(var(--radius) * 0.6);
+	--radius-md: calc(var(--radius) * 0.8);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) * 1.4);
+	--radius-2xl: calc(var(--radius) * 1.8);
+	--radius-3xl: calc(var(--radius) * 2.2);
+	--radius-4xl: calc(var(--radius) * 2.6);
+	--radius-full: 9999px;
+}
