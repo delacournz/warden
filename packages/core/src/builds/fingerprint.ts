@@ -83,7 +83,15 @@ export async function computeFingerprint(exec: Exec, project: Project, platform:
 export type CacheKey = { key: string; native: string /** only for JS-aware projects */; js?: string };
 
 /**
- * The cache / install key of `project`. Native projects: the native fingerprint. JS-aware projects
+ * Key of a native-only Release build: the native fingerprint can't tell Debug from Release, but the
+ * binaries differ (embedded bundle, no dev client), so they must not share a cache / install key.
+ */
+export function releaseKey(native: string): string {
+	return combineKey(native, "configuration:Release");
+}
+
+/**
+ * The cache / install key of `project`. Native projects: the native fingerprint (salted for Release). JS-aware projects
  * (`fingerprint.include: "native+js"`): sha256 of the native fingerprint + a content hash of the
  * `jsInputs` files, so a JS-only change is a new build (a Release binary embeds its bundle).
  */
@@ -95,7 +103,10 @@ export async function computeCacheKey(
 ): AsyncResult<CacheKey> {
 	const native = await computeFingerprint(exec, project, platform);
 	if (!native.success) return native;
-	if (project.jsInputs === undefined) return ok({ key: native.data, native: native.data });
+	if (project.jsInputs === undefined) {
+		const key = project.buildConfiguration === "Release" ? releaseKey(native.data) : native.data;
+		return ok({ key, native: native.data });
+	}
 	const js = await jsInputsHash({
 		exec,
 		root: project.root,

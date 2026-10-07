@@ -81,6 +81,7 @@ function suiteOpts({ config: suite, cwd, projectRoot }: Suite, opts: E2eOpts, pa
 		...(suite.serveTimeout !== undefined ? { serveTimeout: suite.serveTimeout } : {}),
 		...(app.app ? { app: true as const, ...(projectRoot ? { project: projectRoot } : {}) } : {}),
 		...(app.clean ? { clean: true as const } : {}),
+		...(app.variant !== undefined ? { variant: app.variant } : {}),
 	};
 	const cli = Object.fromEntries(Object.entries(opts).filter(([key]) => passed.has(key)));
 	return { ...opts, ...fromSuite, ...cli };

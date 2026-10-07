@@ -154,13 +154,40 @@ function staleLeases(ctx: CommandContext): Probe {
 	});
 }
 
+/**
+ * Expo iOS project in the cwd: native builds are only worth caching with ccache enabled in the Podfile
+ * properties, and React Native built from source defeats it. Not an Expo iOS project → ok.
+ */
+export function ccacheProject(cwd: string): Probe {
+	const path = join(cwd, "ios", "Podfile.properties.json");
+	if (!existsSync(path)) return { ok: true, detail: "no ios/Podfile.properties.json here" };
+	return attempt(() => {
+		const props: unknown = JSON.parse(readFileSync(path, "utf8"));
+		const get = (key: string): unknown =>
+			typeof props === "object" && props !== null ? Reflect.get(props, key) : undefined;
+		const problems: string[] = [];
+		if (get("apple.ccacheEnabled") !== "true") {
+			problems.push('"apple.ccacheEnabled" is not "true" — set expo-build-properties `ios.ccacheEnabled: true`');
+		}
+		if (get("ios.buildReactNativeFromSource") === "true") {
+			problems.push('"ios.buildReactNativeFromSource" is "true" — rebuilds React Native every cache miss');
+		}
+		return problems.length === 0 ? { ok: true, detail: path } : { ok: false, detail: problems.join("; ") };
+	});
+}
+
 export async function runChecks(ctx: CommandContext): Promise<DoctorCheck[]> {
 	const home = ctx.env.HOME ?? "";
 	const { adb, emulator } = androidTools(ctx.env);
-	const [simctl, adbProbe, emulatorProbe] = await Promise.all([
+	const [simctl, adbProbe, emulatorProbe, ccache] = await Promise.all([
 		tool(ctx, ["xcrun", "simctl", "help"], "xcrun simctl not available (install Xcode) — iOS disabled"),
 		tool(ctx, [adb, "version"], `${adb} not found (set ANDROID_HOME) — Android disabled`),
 		tool(ctx, [emulator, "-version"], `${emulator} not found (set ANDROID_HOME) — Android disabled`),
+		tool(
+			ctx,
+			["ccache", "--version"],
+			"ccache not on PATH — `brew install ccache` to speed up native iOS cache-miss builds"
+		),
 	]);
 	return [
 		check("home", "core", homeWritable(wardenHome(ctx.env))),
@@ -173,6 +200,8 @@ export async function runChecks(ctx: CommandContext): Promise<DoctorCheck[]> {
 			"optional",
 			installProbe(currentBuild(), process.execPath, installOrigin(ctx.env, process.execPath))
 		),
+		check("ccache", "optional", ccache),
+		check("ccache-project", "optional", ccacheProject(ctx.cwd)),
 		check("path", "optional", onPath(ctx, home)),
 		check("claude-hook", "optional", claudeHook(home)),
 		check("codex-hook", "optional", codexHook(ctx)),

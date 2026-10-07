@@ -7,6 +7,7 @@ import { buildsCommand } from "./builds";
 import { checkCommand } from "./check";
 import { claimCommand } from "./claim";
 import { cloneCommand } from "./clone";
+import { devCommand } from "./dev";
 import { devicesCommand } from "./devices";
 import { doctorCommand } from "./doctor";
 import { e2eCommand } from "./e2e";
@@ -29,6 +30,7 @@ export const COMMANDS: readonly Command[] = [
 	claimCommand,
 	releaseCommand,
 	runCommand,
+	devCommand,
 	batchCommand,
 	affectedCommand,
 	e2eCommand,

@@ -93,6 +93,13 @@ describe("findBatchPreset", () => {
 		expect(res.data.preset).toMatchObject({ app: true, clean: true });
 	});
 
+	test("app: { variant } resolves to app + variant", () => {
+		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", app: { variant: "e2e" }, cmd: ["x"] } } });
+		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.preset).toMatchObject({ app: true, variant: "e2e" });
+	});
+
 	test("app: true leaves clean unset", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", app: true, cmd: ["x"] } } });
 		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });

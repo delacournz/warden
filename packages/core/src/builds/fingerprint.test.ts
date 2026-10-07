@@ -7,6 +7,7 @@ import {
 	findFingerprintBin,
 	fingerprintArgv,
 	parseFingerprintOutput,
+	releaseKey,
 } from "./fingerprint";
 import { combineKey } from "./js-inputs";
 
@@ -109,5 +110,19 @@ describe("computeCacheKey", () => {
 		expect(a.data.key).toBe(combineKey(HASH, a.data.js ?? ""));
 		expect(a.data.key).not.toBe(b.data.key);
 		expect(a.data.native).toBe(b.data.native);
+	});
+
+	test("a native-only Release key differs from the Debug one (same native hash, different binary)", async () => {
+		const h = host("a");
+		const res = await computeCacheKey(
+			h.exec,
+			testProject({ fingerprintCommand: "fp", buildConfiguration: "Release" }),
+			"ios",
+			h.readFile
+		);
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.native).toBe(HASH);
+		expect(res.data.key).not.toBe(HASH);
+		expect(res.data.key).toBe(releaseKey(HASH));
 	});
 });

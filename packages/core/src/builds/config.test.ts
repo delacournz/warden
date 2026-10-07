@@ -163,6 +163,55 @@ describe("loadProject", () => {
 		expect(b.data.fingerprintCommand).toBe("fp");
 	});
 
+	test("variants replace build / fingerprint / eas wholesale; unknown variant errors unless optional", () => {
+		write(JSON_CONFIG_FILE, {
+			projects: [
+				{
+					name: "a",
+					bundleId: { ios: "x" },
+					build: { configuration: "Release", ios: "E2E=1 release build" },
+					fingerprint: { include: "native+js", jsInputs: ["src/**"] },
+					variants: { dev: { build: { configuration: "Debug" }, fingerprint: { include: "native" } } },
+				},
+			],
+		});
+		const base = loadProject({ start: dir, env });
+		if (!base.success) throw new Error(base.error);
+		expect(base.data.variant).toBeUndefined();
+		expect(base.data.buildConfiguration).toBe("Release");
+		expect(base.data.jsInputs).toEqual(["src/**"]);
+
+		const dev = loadProject({ start: dir, env, variant: "dev" });
+		if (!dev.success) throw new Error(dev.error);
+		expect(dev.data.variant).toBe("dev");
+		expect(dev.data.buildConfiguration).toBe("Debug");
+		expect(dev.data.build.ios).toBe(defaultBuildCommand("ios", "Debug"));
+		expect(dev.data.jsInputs).toBeUndefined();
+
+		const missing = loadProject({ start: dir, env, variant: "qa" });
+		expect(missing.success).toBe(false);
+		if (!missing.success) expect(missing.error).toContain('no variant "qa"');
+		const optional = loadProject({ start: dir, env, variant: "qa", variantOptional: true });
+		if (!optional.success) throw new Error(optional.error);
+		expect(optional.data.variant).toBeUndefined();
+	});
+
+	test("variant names are validated; an e2e suite's app.variant must exist on its project", () => {
+		const bad = parseWardenConfig({ projects: [{ name: "a", bundleId: {}, variants: { dev: { nope: 1 } } }] });
+		expect(bad.success).toBe(false);
+		const missing = parseWardenConfig({
+			projects: [{ name: "a", bundleId: {} }],
+			e2e: { s: { project: "a", flowsDir: "f", runner: ["r"], app: { variant: "e2e" } } },
+		});
+		expect(missing.success).toBe(false);
+		if (!missing.success) expect(missing.error).toContain('no variant "e2e"');
+		const fine = parseWardenConfig({
+			projects: [{ name: "a", bundleId: {}, variants: { e2e: { build: { configuration: "Release" } } } }],
+			e2e: { s: { project: "a", flowsDir: "f", runner: ["r"], app: { variant: "e2e" } } },
+		});
+		expect(fine.success).toBe(true);
+	});
+
 	test("rejects an unknown build.configuration", () => {
 		const res = parseWardenConfig({ projects: [{ name: "a", bundleId: {}, build: { configuration: "Staging" } }] });
 		expect(res.success).toBe(false);

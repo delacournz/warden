@@ -24,6 +24,10 @@ export type ProjectContextInput = {
 	start: string;
 	name?: string;
 	bundleId?: Project["bundleId"];
+	/** `projects[].variants.<name>` */
+	variant?: string;
+	/** a missing variant falls back to the project's own settings */
+	variantOptional?: boolean;
 };
 
 /** Load the project for `start` (bounded by its git toplevel) and compute its project key. */
@@ -36,6 +40,8 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 		...(stopAt ? { stopAt } : {}),
 		...(input.name !== undefined ? { name: input.name } : {}),
 		...(input.bundleId ? { bundleId: input.bundleId } : {}),
+		...(input.variant !== undefined ? { variant: input.variant } : {}),
+		...(input.variantOptional ? { variantOptional: true } : {}),
 	});
 	if (!project.success) return project;
 	const key = await readProjectKey(input.exec, project.data.root);
@@ -55,7 +61,10 @@ export type EnsureInput = ProjectContext & {
 	owner: Owner;
 	pid: number;
 	platform: Platform;
+	/** cache / install key */
 	hash: string;
+	/** the `@expo/fingerprint` hash EAS indexes by, when it differs from `hash` (default `hash`) */
+	native?: string;
 	/** udid / serial to install onto; absent = resolve the artifact only */
 	deviceId?: string;
 	/** false = `--no-eas` */
@@ -82,15 +91,18 @@ async function cleanHead(exec: Exec, cwd: string): AsyncResult<string> {
 	return head.exitCode === 0 && sha ? ok(sha) : err("EAS skipped: could not read HEAD");
 }
 
+/** Cache `profile`: the EAS profile (or `local`), `:<variant>` when the project was resolved with one. */
 function profileOf(project: Project): string {
-	return project.eas?.profile ?? LOCAL_PROFILE;
+	const profile = project.eas?.profile ?? LOCAL_PROFILE;
+	return project.variant === undefined ? profile : `${profile}:${project.variant}`;
 }
 
 type CacheFn = (path: string, source: BuildSource, move: boolean) => ReturnType<typeof storeArtifact>;
 
 /** The EAS step: JS-aware projects look builds up by (clean) HEAD commit, the rest by fingerprint hash. */
 function easStep(input: EnsureInput, eas: EasSettings, cache: CacheFn): NonNullable<ResolveSteps["eas"]> {
-	const { project, platform, hash } = input;
+	const { project, platform } = input;
+	const hash = input.native ?? input.hash;
 	return async () => {
 		const head = project.jsInputs === undefined ? undefined : await cleanHead(input.exec, project.root);
 		if (head && !head.success) return ok({ kind: "miss", reason: head.error });
@@ -170,6 +182,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 				env,
 				now: input.now,
 				log: input.log,
+				...(project.compilerCache === false ? { compilerCache: false } : {}),
 			});
 			if (!built.success) return built;
 			const stored = await cache(built.data, "build", false);

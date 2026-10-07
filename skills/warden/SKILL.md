@@ -26,7 +26,8 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | run only those flows on leased devices; exit 1 if a required one fails | `warden e2e [suite] --base main --count N` (`--dry-run` to preview; `--all` every flow; `--flows a,b` exactly those, no diff; suite `include`/`exclude` flow-id globs, `scope` + `unmatched: "run-all"` fail-safe). Suite fields `project` `ports` `env` `serve` `serveReady` `serveTimeout` `app` mirror a batch preset; `setup` runs once per device before its first flow (failing device is dropped; `logs/setup-<worker>.log`) |
 | fewer background daemons on a booted sim (RAM/CPU with many sims) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` (e2e suite: `"slim": true`) |
 | a free port | `warden port claim --json` |
-| dev build installed on the device | `warden app ensure ios --udid <udid> --json` |
+| dev build installed on the device | `warden app ensure ios --udid <udid> --json` (`--variant dev\|e2e`) |
+| run the app in a worktree (instead of `expo run:ios`) | `warden dev ios [--udid <udid>] [-- <expo start args>]` — reuses the cached build for the native fingerprint, starts Metro on a leased port, opens the dev client |
 | duplicate a shut-down sim (fast, no first boot) | `warden clone <udid\|name> [--name x]` |
 | pre-build the golden image new sims clone from | `warden golden ensure --profile iphone-17` |
 | who holds what | `warden ls` |

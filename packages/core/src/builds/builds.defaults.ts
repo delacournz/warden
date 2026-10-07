@@ -49,3 +49,13 @@ export const BUILD_LOCK_POLL_MS = 2_000;
 export const LEGACY_CACHE_DIRS: Readonly<Record<string, readonly string[]>> = {
 	salient: ["~/.cache/salient-dev-builds"],
 };
+
+/** ccache sloppiness for Xcode/clang builds: lets worktrees with different mtimes/PCH state still hit. */
+export const CCACHE_SLOPPINESS =
+	"clang_index_store,file_stat_matches,include_file_ctime,include_file_mtime,ivfsoverlay,pch_defines,modules,system_headers,time_macros";
+/** Subdirectory of WARDEN_HOME holding the shared ccache. */
+export const CCACHE_DIR_NAME = "ccache";
+/** First Xcode major with compilation caching (`COMPILATION_CACHE_ENABLE_CACHING`). */
+export const XCODE_COMPILATION_CACHE_MIN_MAJOR = 26;
+/** Timeout for the quick `git` / `xcodebuild -version` probes before a build. */
+export const PROBE_TIMEOUT_MS = 10_000;

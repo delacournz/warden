@@ -32,6 +32,8 @@ export type BatchPreset = {
 	app?: boolean;
 	/** `app: { clean: true }`: uninstall before installing */
 	clean?: boolean;
+	/** `app: { variant }`: install that project variant's build */
+	variant?: string;
 	retry?: number;
 	passes?: number;
 	env?: Record<string, string>;
@@ -72,7 +74,7 @@ function resolvePreset(name: string, preset: BatchPresetConfig, cwd: string, pro
 		label,
 		...rest
 	} = preset;
-	const { app, clean } = appSwitches(appOption);
+	const { app, clean, variant } = appSwitches(appOption);
 	const jobs = jobsSource(preset, cwd);
 	return {
 		...rest,
@@ -81,6 +83,7 @@ function resolvePreset(name: string, preset: BatchPresetConfig, cwd: string, pro
 		label: label ?? name,
 		...(appOption !== undefined ? { app } : {}),
 		...(clean ? { clean } : {}),
+		...(variant !== undefined ? { variant } : {}),
 		...(projectRoot !== undefined ? { projectRoot } : {}),
 		...(serveReady !== undefined ? { serveReady: readySpec(serveReady, cwd) } : {}),
 		...(record !== undefined ? { record: absolute(cwd, record) } : {}),

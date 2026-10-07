@@ -1,10 +1,12 @@
 import { resolve } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
 import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { ccacheCleanup } from "@delacour/warden-core/builds/compiler-cache";
 import { LOCAL_PROFILE, projectContext } from "@delacour/warden-core/builds/ensure";
 import { formatSize, parseSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { formatDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
+import { wardenHome } from "@delacour/warden-core/store";
 import type { Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { parsePlatform } from "../claim-flags";
@@ -80,6 +82,7 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 	const plan = dryRun
 		? preview
 		: await withSpinner(ctx, `pruning ${preview.remove.length} build(s)…`, async () => prune(false));
+	if (!dryRun) await ccacheCleanup(ctx.exec, wardenHome(ctx.env));
 	const verb = dryRun ? "would remove" : "removed";
 	const text = [
 		...plan.remove.map((b) => (dryRun ? color.yellow : color.green)(`${verb} ${describeBuild(b)}`)),

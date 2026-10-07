@@ -34,6 +34,10 @@ export type EnsureOptions = {
 	build: boolean;
 	/** `--clean`: uninstall before installing, even at the same hash */
 	clean?: boolean;
+	/** `--variant`: a `projects[].variants.<name>` build */
+	variant?: string;
+	/** a missing variant falls back to the project's own build (`warden dev`) */
+	variantOptional?: boolean;
 };
 
 function log(ctx: CommandContext, line: string): void {
@@ -42,12 +46,19 @@ function log(ctx: CommandContext, line: string): void {
 
 async function loadContext(
 	ctx: CommandContext,
-	opts: Pick<EnsureOptions, "project" | "bundleId">,
+	opts: Pick<EnsureOptions, "project" | "bundleId" | "variant" | "variantOptional">,
 	platform?: Platform
 ): AsyncResult<ProjectContext> {
 	const start = opts.project ? resolve(ctx.cwd, opts.project) : ctx.cwd;
 	const bundleId = opts.bundleId !== undefined && platform !== undefined ? { [platform]: opts.bundleId } : undefined;
-	return projectContext({ exec: ctx.exec, env: ctx.env, start, ...(bundleId ? { bundleId } : {}) });
+	return projectContext({
+		exec: ctx.exec,
+		env: ctx.env,
+		start,
+		...(bundleId ? { bundleId } : {}),
+		...(opts.variant !== undefined ? { variant: opts.variant } : {}),
+		...(opts.variantOptional ? { variantOptional: true } : {}),
+	});
 }
 
 /** Cache key + log it loudly (a hash that differs from EAS's never finds a build). */
@@ -61,7 +72,8 @@ async function fingerprint(ctx: CommandContext, project: ProjectContext, platfor
 	if (hash.data.js !== undefined) {
 		log(ctx, color.dim(`  native ${hash.data.native} + js ${hash.data.js} (fingerprint.include native+js)`));
 	}
-	log(ctx, `project ${project.project.name} (${project.projectKey})`);
+	const variant = project.project.variant === undefined ? "" : ` variant ${project.project.variant}`;
+	log(ctx, `project ${project.project.name}${variant} (${project.projectKey})`);
 	log(ctx, rule);
 	return hash;
 }
@@ -95,6 +107,7 @@ export async function ensureAppFor(
 		pid: deps.pid,
 		platform,
 		hash: hash.data.key,
+		...(hash.data.native !== hash.data.key ? { native: hash.data.native } : {}),
 		eas: opts.eas,
 		build: opts.build,
 		...(opts.clean ? { clean: true } : {}),
@@ -134,7 +147,7 @@ export function pickDevice(
 	);
 }
 
-type ProjectOpts = { project?: string; bundleId?: string; json?: true };
+type ProjectOpts = { project?: string; bundleId?: string; variant?: string; json?: true };
 
 type EnsureOpts = ProjectOpts & {
 	lease?: string;
@@ -145,10 +158,11 @@ type EnsureOpts = ProjectOpts & {
 	clean?: true;
 };
 
-function projectOptions(opts: ProjectOpts): Pick<EnsureOptions, "project" | "bundleId"> {
+function projectOptions(opts: ProjectOpts): Pick<EnsureOptions, "project" | "bundleId" | "variant"> {
 	return {
 		...(opts.project !== undefined ? { project: opts.project } : {}),
 		...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
+		...(opts.variant !== undefined ? { variant: opts.variant } : {}),
 	};
 }
 
@@ -232,6 +246,7 @@ async function fingerprintCmd(
 			project: project.data.project.name,
 			projectKey: project.data.projectKey,
 			root: project.data.project.root,
+			...(project.data.project.variant !== undefined ? { variant: project.data.project.variant } : {}),
 			fingerprints,
 			...(Object.keys(native).length > 0 ? { native } : {}),
 		},
@@ -259,6 +274,7 @@ export function createAppCommand(deps: AppDeps): Command {
 				.option("--no-build", "don't build locally on a cache miss")
 				.option("--clean", "uninstall the app first, so the run starts from a fresh container")
 				.option("--bundle-id <id>", "override the bundle id / package")
+				.option("--variant <name>", "use this projects[].variants build (dev, e2e…)")
 				.option("--json", "machine-readable output")
 				.action(async (platform, opts) => done(await ensureCmd(ctx, deps, platform, opts)));
 			cmd
@@ -267,6 +283,7 @@ export function createAppCommand(deps: AppDeps): Command {
 				.argument("[platform]", "ios | android")
 				.option("--project <dir>", "project directory (default: cwd)")
 				.option("--bundle-id <id>", "override the bundle id / package")
+				.option("--variant <name>", "fingerprint this projects[].variants build")
 				.option("--json", "machine-readable output")
 				.action(async (platform, opts) => done(await fingerprintCmd(ctx, platform, opts)));
 		},

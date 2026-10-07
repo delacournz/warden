@@ -244,11 +244,15 @@ By port, `--lease <id...>` or `--mine`. `--force` releases leases held by someon
 
 ### `warden app fingerprint [platform]`
 
-Print the project's native fingerprint (both platforms by default). `--project`, `--bundle-id`.
+Print the project's native fingerprint (both platforms by default). `--project`, `--bundle-id`, `--variant`.
 
 ### `warden app ensure [platform]`
 
-Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--clean` uninstalls the app first even when the hash matches; `--no-eas`, `--no-build`, `--project`, `--bundle-id`. See [App builds](/docs/guides/app-builds).
+Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--clean` uninstalls the app first even when the hash matches; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`. See [App builds](/docs/guides/app-builds).
+
+### `warden dev [platform] [-- <expo start args>]`
+
+The worktree-friendly `expo run:*`. Uses the device of `--udid` / `--lease` / your single lease, else claims one (claim options apply). Ensures the `dev` variant's build (or the project's own when it has no `dev`; `--variant` to pick, which must exist), leases a Metro port (`--port`, default `8081:100`), runs `bunx expo start --dev-client --port <p>` in the project root, waits for `/status` (`--ready-timeout`, default `2m`), then opens `exp+<slug>://expo-development-client/?url=…` on the device (`--scheme` to override; Android runs `adb reverse` first). Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--clean`, `--project`, `--bundle-id`.
 
 ### `warden builds ls | prune | import`
 

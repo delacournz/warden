@@ -15,6 +15,7 @@ const ALL_TOOLS = fakeExec([
 	["xcrun simctl help", {}],
 	["adb version", { stdout: "Android Debug Bridge version 1.0.41" }],
 	["emulator -version", { stdout: "Android emulator version 35.1" }],
+	["ccache --version", { stdout: "ccache version 4.10" }],
 ]);
 
 function setup(argv: string[], exec = ALL_TOOLS): TestContext {
@@ -104,6 +105,30 @@ describe("warden doctor", () => {
 		c.stdout.length = 0;
 		await doctorCommand.run(c);
 		expect(byName(c)["codex-hook"]).toMatchObject({ status: "ok", detail: join(codexDir, "hooks.json") });
+	});
+
+	test("ccache: missing → warn; Podfile.properties checks", async () => {
+		const c = setup(["--json"], fakeExec([]));
+		await doctorCommand.run(c);
+		expect(byName(c).ccache?.status).toBe("warn");
+		expect(byName(c).ccache?.detail).toContain("brew install ccache");
+		expect(byName(c)["ccache-project"]?.status).toBe("ok");
+
+		const iosDir = join(c.cwd, "ios");
+		mkdirSync(iosDir, { recursive: true });
+		const props = join(iosDir, "Podfile.properties.json");
+		writeFileSync(props, JSON.stringify({ "ios.buildReactNativeFromSource": "true" }));
+		c.stdout.length = 0;
+		await doctorCommand.run(c);
+		const warn = byName(c)["ccache-project"];
+		expect(warn?.status).toBe("warn");
+		expect(warn?.detail).toContain("ios.ccacheEnabled: true");
+		expect(warn?.detail).toContain("buildReactNativeFromSource");
+
+		writeFileSync(props, JSON.stringify({ "apple.ccacheEnabled": "true" }));
+		c.stdout.length = 0;
+		await doctorCommand.run(c);
+		expect(byName(c)["ccache-project"]?.status).toBe("ok");
 	});
 
 	test("missing device tools only warn", async () => {

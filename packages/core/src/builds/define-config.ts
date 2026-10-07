@@ -26,9 +26,10 @@ export type WardenPlatform = "ios" | "android";
  *
  * - `true` installs the cached / built app (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` are exported).
  * - `{ clean: true }` also uninstalls it first, so each run starts from a fresh container (`--clean`).
+ * - `{ variant: "e2e" }` installs that {@link WardenProject.variants} build instead of the project's own.
  * - `{}` is the same as `true`.
  */
-export type WardenAppOption = boolean | { clean?: boolean | undefined };
+export type WardenAppOption = boolean | { clean?: boolean | undefined; variant?: string | undefined };
 
 /** A value per platform, e.g. a bundle id or a build command. */
 export interface WardenPerPlatform {
@@ -98,6 +99,29 @@ export interface WardenBuild extends WardenPerPlatform {
 	 * @default "Debug"
 	 */
 	configuration?: "Debug" | "Release" | undefined;
+	/**
+	 * Inject shared compiler caches into local builds so a native rebuild in one worktree reuses another's
+	 * compiled objects: ccache (`$WARDEN_HOME/ccache`, `CCACHE_BASEDIR` = git toplevel), Xcode 26
+	 * compilation caching, and the Gradle build cache. `false` turns them off.
+	 *
+	 * @default true
+	 */
+	cache?: boolean | undefined;
+}
+
+/**
+ * A named build of a project (`dev`, `e2e`…), picked with `--variant`, `app: { variant }` or `warden dev`
+ * (which uses `dev` when it exists). Each key set here **replaces** the project's own, wholesale.
+ *
+ * @example { dev: { build: { configuration: "Debug" }, fingerprint: { include: "native" } } }
+ */
+export interface WardenVariant {
+	/** Replaces {@link WardenProject.fingerprint}. */
+	fingerprint?: WardenFingerprint | undefined;
+	/** Replaces {@link WardenProject.eas}. */
+	eas?: WardenEas | undefined;
+	/** Replaces {@link WardenProject.build}. */
+	build?: WardenBuild | undefined;
 }
 
 /** An app warden builds, caches and installs. */
@@ -122,6 +146,11 @@ export interface WardenProject {
 	 * @example { ios: "bunx expo run:ios --no-install --no-bundler" }
 	 */
 	build?: WardenBuild | undefined;
+	/**
+	 * Named builds, e.g. a Debug dev client next to a Release e2e build. Each has its own cache key, so
+	 * every worktree with the same fingerprint reuses one build per variant.
+	 */
+	variants?: Record<string, WardenVariant> | undefined;
 	/** Extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand. `~` expands to `$HOME`. */
 	cacheDirs?: string[] | undefined;
 }
