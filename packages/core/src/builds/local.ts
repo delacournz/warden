@@ -2,9 +2,11 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
+import { wardenHome as resolveWardenHome } from "../store";
 import type { Platform } from "../types";
 import type { BuildConfiguration } from "./builds.defaults";
-import { LOCAL_BUILD_TIMEOUT_MS } from "./builds.defaults";
+import { LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
+import { compilerCacheEnv, parseXcodeMajor } from "./compiler-cache";
 import type { Project } from "./config";
 import { computeCacheKey } from "./fingerprint";
 
@@ -96,7 +98,36 @@ export type LocalBuildDeps = {
 	now: () => number;
 	log: (line: string) => void;
 	timeoutMs?: number;
+	/** inject ccache / Xcode / Gradle caching env (default true); integrator: pass `project.build.cache !== false` */
+	compilerCache?: boolean;
+	/** warden home for the shared ccache (default: resolved from `env`) */
+	wardenHome?: string;
 };
+
+async function probe(deps: LocalBuildDeps, argv: string[], cwd?: string): Promise<string | undefined> {
+	try {
+		const res = await deps.exec(argv, { cwd, timeoutMs: PROBE_TIMEOUT_MS });
+		return res.exitCode === 0 ? res.stdout.trim() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
+	if (deps.compilerCache === false) return {};
+	const { platform, project } = deps;
+	const gitTop =
+		platform === "ios" ? await probe(deps, ["git", "rev-parse", "--show-toplevel"], project.root) : undefined;
+	const xcode = platform === "ios" ? await probe(deps, ["xcodebuild", "-version"]) : undefined;
+	return compilerCacheEnv({
+		platform,
+		wardenHome: deps.wardenHome ?? resolveWardenHome(deps.env),
+		gitTop: gitTop || undefined,
+		xcodeMajor: xcode ? parseXcodeMajor(xcode) : undefined,
+		enabled: true,
+		baseEnv: deps.env,
+	});
+}
 
 /**
  * Run `build.<platform>` in the project root, locate the produced `.app`/`.apk`, and verify the
@@ -110,9 +141,10 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<string> {
 	const since = deps.now() - 1_000;
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
 	const argv = ["sh", "-c", command];
+	const caching = await cacheEnv(deps);
 	const res = await deps.exec(argv, {
 		cwd: project.root,
-		env: { EXPO_NO_TELEMETRY: "1" },
+		env: { ...caching, EXPO_NO_TELEMETRY: "1" },
 		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
 	});
 	if (res.exitCode !== 0) return err(`local build failed: ${execError(argv, res)}`);

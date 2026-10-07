@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec } from "../exec";
 import { fakeApp, testProject } from "./builds.testing";
+import { releaseKey } from "./fingerprint";
 import { artifactCandidates, locateArtifact, runLocalBuild } from "./local";
 
 let dir: string;
@@ -86,7 +87,7 @@ describe("runLocalBuild", () => {
 			exec,
 			project,
 			platform: "ios",
-			hash: "h1",
+			hash: releaseKey("h1"),
 			env: { HOME: dir },
 			now: () => Date.now(),
 			log: () => {},
@@ -136,5 +137,61 @@ describe("runLocalBuild", () => {
 		const res = await runLocalBuild({ ...base, exec: s.exec, project: s.project, platform: "ios", hash: "h1" });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("BUILD FAILED");
+	});
+});
+
+describe("runLocalBuild compiler cache env", () => {
+	function iosSetup() {
+		const root = join(dir, "app");
+		const out = join(root, "ios", "build", SIM);
+		const envs: Array<Record<string, string | undefined> | undefined> = [];
+		const exec: Exec = async (cmd, opts) => {
+			const joined = cmd.join(" ");
+			if (joined === "git rev-parse --show-toplevel") return { exitCode: 0, stdout: `${root}\n`, stderr: "" };
+			if (joined === "xcodebuild -version") return { exitCode: 0, stdout: "Xcode 26.0\n", stderr: "" };
+			if (cmd[2] === "xb") {
+				envs.push(opts?.env);
+				fakeApp(out, "A.app");
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "xb", android: "x" } });
+		return { root, envs, exec, project };
+	}
+	const common = { now: () => Date.now(), log: () => {} };
+
+	test("iOS build gets ccache env", async () => {
+		const s = iosSetup();
+		await runLocalBuild({
+			...common,
+			exec: s.exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: "/w",
+		});
+		expect(s.envs[0]).toMatchObject({
+			USE_CCACHE: "1",
+			CCACHE_DIR: "/w/ccache",
+			CCACHE_BASEDIR: s.root,
+			COMPILATION_CACHE_ENABLE_CACHING: "YES",
+			EXPO_NO_TELEMETRY: "1",
+		});
+	});
+
+	test("compilerCache:false → no cache env", async () => {
+		const s = iosSetup();
+		await runLocalBuild({
+			...common,
+			exec: s.exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			compilerCache: false,
+		});
+		expect(s.envs[0]).toEqual({ EXPO_NO_TELEMETRY: "1" });
 	});
 });

@@ -235,6 +235,57 @@ describe("ensureApp", () => {
 			);
 			expect(calls.find((c) => c.startsWith("bunx eas-cli build:list"))).toContain("--fingerprint-hash H");
 		});
+
+		test("a native-only Release key still looks EAS up by the native fingerprint", async () => {
+			const calls: string[] = [];
+			await ensureApp(
+				input(gitHost("", calls), {
+					project: testProject({
+						root: join(dir, "app"),
+						buildConfiguration: "Release",
+						eas: { ...eas, trigger: false },
+					}),
+					hash: "SALTED",
+					native: "N1",
+					deviceId: undefined,
+					build: false,
+					eas: true,
+				})
+			);
+			expect(calls.find((c) => c.startsWith("bunx eas-cli build:list"))).toContain("--fingerprint-hash N1");
+		});
+	});
+
+	test("a variant build is cached under <profile>:<variant>; build.cache false reaches the local build", async () => {
+		const root = join(dir, "app");
+		const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+		const calls: string[] = [];
+		const envs: Array<Record<string, string | undefined> | undefined> = [];
+		const exec: Exec = async (cmd, opts) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined === "sh -c make-ios") {
+				envs.push(opts?.env);
+				fakeApp(products, "Built.app");
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+			return { exitCode: 127, stdout: "", stderr: joined };
+		};
+		const project = testProject({
+			root,
+			fingerprintCommand: "fp",
+			build: { ios: "make-ios", android: "x" },
+			variant: "dev",
+			compilerCache: false,
+		});
+		const res = await ensureApp(
+			input(exec, { project, deviceId: undefined, build: true, eas: false, now: () => Date.now() })
+		);
+		if (!res.success) throw new Error(res.error);
+		expect(getBuild(store, KEY, "ios", "H")?.profile).toBe("local:dev");
+		expect(envs[0]?.USE_CCACHE).toBeUndefined();
+		expect(calls.some((c) => c.startsWith("xcodebuild"))).toBe(false);
 	});
 
 	test("missing bundle id for a device install → error", async () => {
@@ -265,5 +316,15 @@ describe("projectContext", () => {
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.projectKey).toBe("github.com/o/r:apps/a");
 		expect(res.data.project.name).toBe("a");
+		const dev = await projectContext({ exec, env, start: join(repo, "apps", "a"), variant: "dev" });
+		expect(dev.success).toBe(false);
+		const optional = await projectContext({
+			exec,
+			env,
+			start: join(repo, "apps", "a"),
+			variant: "dev",
+			variantOptional: true,
+		});
+		expect(optional.success).toBe(true);
 	});
 });

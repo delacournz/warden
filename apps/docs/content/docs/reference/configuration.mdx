@@ -64,8 +64,10 @@ export default defineConfig({
     "eas.profile": { type: "string", description: "EAS build profile to look up builds under." },
     "eas.workflow": { type: "string", description: "EAS workflow file to trigger on a miss." },
     "eas.trigger": { type: "boolean", description: "Trigger the workflow when no EAS build matches.", default: "false" },
-    build: { type: "{ ios?: string; android?: string; configuration?: \"Debug\" | \"Release\" }", description: "Local build command per platform, used as the last resort." },
+    build: { type: "{ ios?: string; android?: string; configuration?: \"Debug\" | \"Release\"; cache?: boolean }", description: "Local build command per platform, used as the last resort." },
     "build.configuration": { type: '"Debug" | "Release"', description: "Which build a local build produces. Sets the artifact search (`<Config>-iphonesimulator`, `apk/release`) and, unless `build.<platform>` is set, the default command (`--configuration Release` / `--variant release`).", default: '"Debug"' },
+    "build.cache": { type: "boolean", description: "Shared compiler caches for local builds: ccache (`$WARDEN_HOME/ccache`, `CCACHE_BASEDIR` = git toplevel, so worktrees hit each other's objects), Xcode 26 compilation caching, Gradle build cache. `false` turns them off.", default: "true" },
+    variants: { type: "Record<string, { fingerprint?; eas?; build? }>", description: "Named builds (`dev`, `e2e`…) picked with `--variant`, `app: { variant }`, or `warden dev` (uses `dev` when present). Each key a variant sets replaces the project's own wholesale. Every variant has its own cache key." },
   }}
 />
 
@@ -111,7 +113,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
     ttl: { type: "string", description: "Lease TTL without heartbeat.", default: "30m" },
     wait: { type: "string", description: "Wait this long for free devices." },
     ports: { type: "string[]", description: "`FROM:SPAN` port specs (`WARDEN_PORT_<i>`)." },
-    app: { type: "boolean | { clean?: boolean }", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env). `{ clean: true }` also uninstalls it first (`--clean`)." },
+    app: { type: "boolean | { clean?: boolean; variant?: string }", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env). `{ clean: true }` also uninstalls it first (`--clean`); `{ variant }` installs that `projects[].variants` build." },
     retry: { type: "number", description: "Re-run a failed job up to N times on the same device.", default: "0" },
     passes: { type: "number", description: "A job passes only after N consecutive green runs on its device.", default: "1" },
     env: { type: "Record<string, string>", description: "Added to the serve and job env." },
@@ -173,7 +175,7 @@ export default defineConfig({
     retry: { type: "number", description: "Re-run a failed flow up to N times.", default: "0" },
     count: { type: "number", description: "Devices to claim." },
     profile: { type: "string", description: "Device profile." },
-    app: { type: "boolean | { clean?: boolean }", description: "Ensure the app on every device first. `{ clean: true }` also uninstalls it first (`--clean`)." },
+    app: { type: "boolean | { clean?: boolean; variant?: string }", description: "Ensure the app on every device first. `{ clean: true }` also uninstalls it first (`--clean`); `{ variant }` installs that `projects[].variants` build (must exist on the suite's project)." },
     ports: { type: "string[]", description: "Ports leased for the run (`<from>[:<span>]`, like `--port`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner." },
     env: { type: "Record<string, string>", description: "Added to the serve, setup and runner env." },
     serve: { type: "string", description: "`sh -c` once per run before the flows, in its own process group; killed at the end. `--serve` overrides." },

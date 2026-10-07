@@ -704,6 +704,7 @@ function presetOpts(preset: BatchPreset): Partial<BatchOpts> {
 		logs: preset.logs,
 		...(preset.app ? { app: true, project: preset.projectRoot } : {}),
 		...(preset.app && preset.clean ? { clean: true } : {}),
+		...(preset.app && preset.variant !== undefined ? { variant: preset.variant } : {}),
 	};
 	return Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined));
 }

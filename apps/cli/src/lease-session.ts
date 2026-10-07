@@ -125,6 +125,8 @@ export type AppFlagValues = {
 	clean?: true;
 	project?: string;
 	bundleId?: string;
+	/** `--variant <name>`: a `projects[].variants` build */
+	variant?: string;
 	/** false = `--no-eas` */
 	eas: boolean;
 	/** false = `--no-build` */
@@ -146,6 +148,7 @@ export function withLeaseOptions<Args extends unknown[], Opts extends OptionValu
 		.option("--clean", "--app: uninstall the app first, so every run starts from a fresh container")
 		.option("--project <dir>", "--app: project directory (default: cwd)")
 		.option("--bundle-id <id>", "--app: override the bundle id / package")
+		.option("--variant <name>", "--app: install this projects[].variants build (dev, e2e…)")
 		.option("--no-eas", "--app: don't download EAS builds")
 		.option("--no-build", "--app: don't build locally on a cache miss");
 }
@@ -159,10 +162,12 @@ export function parseAppFlags(opts: AppFlagValues): Result<EnsureOptions | undef
 			...(opts.clean ? { clean: true } : {}),
 			...(opts.project !== undefined ? { project: opts.project } : {}),
 			...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
+			...(opts.variant !== undefined ? { variant: opts.variant } : {}),
 		});
 	}
-	if (opts.project !== undefined || !opts.eas || !opts.build || opts.bundleId !== undefined || opts.clean) {
-		return err("--project / --no-eas / --no-build / --bundle-id / --clean need --app");
+	const sub = opts.project ?? opts.bundleId ?? opts.variant;
+	if (sub !== undefined || !opts.eas || !opts.build || opts.clean) {
+		return err("--project / --no-eas / --no-build / --bundle-id / --variant / --clean need --app");
 	}
 	return ok(undefined);
 }

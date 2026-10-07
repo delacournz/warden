@@ -11,6 +11,7 @@ const SIGNED_IN = ["src/app/welcome.tsx", "src/app/sign-in.tsx"];
  * warden e2e example                 # every flow, 2 sims
  * warden affected example            # which flows this branch needs
  * warden e2e example --affected      # just those
+ * warden dev ios                     # dev variant: cached Debug dev client + Metro
  * ```
  */
 export default {
@@ -26,6 +27,9 @@ export default {
 			fingerprint: {
 				include: "native+js",
 				jsInputs: ["src/**", "assets/**", "app.config.ts", "index.ts", "metro.config.js", "package.json"],
+			},
+			variants: {
+				dev: { build: { configuration: "Debug" }, fingerprint: { include: "native" } },
 			},
 		},
 	],

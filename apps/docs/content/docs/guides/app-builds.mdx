@@ -10,6 +10,47 @@ warden app ensure ios --udid <udid> --json
 # { "appPath": "…", "hash": "…", "source": "installed" | "cache" | "eas" | "build", "installed": true }
 ```
 
+## Worktrees: `warden dev` instead of `expo run:*`
+
+`expo run:ios` rebuilds natively in every worktree: Xcode's DerivedData is keyed by the checkout's path, so a fresh worktree compiles every pod again even when the native code is identical. warden caches the **built app** by native fingerprint instead, shared by every worktree of the repo:
+
+```bash
+warden dev ios              # claim a sim, install the cached dev build, start Metro, open the dev client
+warden dev ios -- --clear   # extra args go to `expo start`
+```
+
+Same fingerprint as any earlier build (any worktree, EAS or local) → no prebuild, no Xcode, seconds to a running app. A native change → one local build, cached for every other worktree. Two worktrees missing the same hash at once share one build (build lock).
+
+### Variants: a dev client next to an e2e build
+
+```ts title="warden.config.ts"
+projects: [{
+  name: "app",
+  bundleId: { ios: "com.example.app" },
+  build: { configuration: "Release" },                                  // e2e: JS embedded
+  fingerprint: { include: "native+js", jsInputs: ["src/**"] },
+  variants: {
+    dev: { build: { configuration: "Debug" }, fingerprint: { include: "native" } }, // dev client: JS from Metro
+  },
+}]
+```
+
+`warden dev` picks `dev` when it exists; `warden app ensure --variant <name>`, `run|batch --app --variant <name>` and `e2e.<suite>.app: { variant }` pick one explicitly. A variant's keys replace the project's own wholesale. A native-only Release key is salted, so Debug and Release builds of one fingerprint never share a cache entry or an install record (EAS is still looked up by the plain native hash).
+
+### Faster misses: shared compiler caches
+
+When a native build can't be avoided, warden local builds get compiler caches that, unlike DerivedData, hit across worktrees (opt out with `build.cache: false`):
+
+| Platform | Cache | How it crosses worktrees |
+|---|---|---|
+| iOS | ccache in `$WARDEN_HOME/ccache` | `CCACHE_BASEDIR` = git toplevel rewrites absolute paths to relative ones |
+| iOS (Xcode 26+) | compilation caching (`COMPILATION_CACHE_ENABLE_CACHING=YES`) | content-addressed |
+| Android | Gradle build cache (`-Dorg.gradle.caching=true`) | relocatable task outputs in `~/.gradle` |
+
+ccache only runs when the Podfile enables it: set `ios.ccacheEnabled: true` with `expo-build-properties` (written to `ios/Podfile.properties.json` as `apple.ccacheEnabled`) and `brew install ccache`. `warden doctor` checks both, and warns when React Native is built from source (`ios.buildReactNativeFromSource`) instead of using the prebuilt core. `warden builds prune` also runs `ccache --cleanup`.
+
+Why not share DerivedData? Its build database and dependency files hold absolute paths, so another checkout looks entirely changed and rebuilds anyway, and two concurrent builds in one DerivedData corrupt or block each other.
+
 ## Resolution order
 
 <Steps>

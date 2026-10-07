@@ -5,6 +5,7 @@ import { z } from "zod";
 import { e2eSuiteSchema } from "../affected/affected.schema";
 import { batchPresetSchema, RESERVED_PRESET_NAMES } from "../batch/preset.schema";
 import type { Platform } from "../types";
+import type { AppOption } from "./app-option.schema";
 import {
 	type BuildConfiguration,
 	DEFAULT_EAS_PROFILE,
@@ -28,49 +29,98 @@ export const CONFIG_FILES = [
 
 const perPlatform = z.object({ ios: z.string().min(1).optional(), android: z.string().min(1).optional() }).strict();
 
+const fingerprintSchema = z
+	.object({
+		/** own fingerprint command (`{platform}` is substituted); stdout = JSON `{ hash }` or a bare hash */
+		command: z.string().min(1).optional(),
+		/** native: key = the native fingerprint; native+js: key also covers the `jsInputs` file contents (Release builds embed the JS) */
+		include: z.enum(["native", "native+js"]).default("native"),
+		/** globs (relative to the project root) of the JS sources that make up the bundle; git-tracked + untracked-not-ignored files only */
+		jsInputs: z.array(z.string().min(1)).min(1).optional(),
+	})
+	.strict()
+	.superRefine((fp, issue) => {
+		if (fp.include === "native+js" && fp.jsInputs === undefined) {
+			issue.addIssue({ code: "custom", message: 'include "native+js" needs jsInputs', path: ["jsInputs"] });
+		}
+		if (fp.include === "native" && fp.jsInputs !== undefined) {
+			issue.addIssue({ code: "custom", message: 'jsInputs only apply to include "native+js"', path: ["jsInputs"] });
+		}
+	});
+
+const easSchema = z
+	.object({
+		profile: z.string().min(1).default(DEFAULT_EAS_PROFILE),
+		workflow: z.string().min(1).optional(),
+		trigger: z.boolean().default(false),
+	})
+	.strict();
+
+const buildSchema = perPlatform.extend({
+	/** Xcode / Gradle configuration the local build produces; picks the default build command + where the artifact is searched */
+	configuration: z.enum(["Debug", "Release"]).optional(),
+	/** false = don't inject the shared compiler caches (ccache, Xcode compilation caching, Gradle build cache) into local builds */
+	cache: z.boolean().optional(),
+});
+
+/** A named build of the project (`variants.<name>`): each key set here replaces the project's own. */
+export const variantSchema = z
+	.object({ fingerprint: fingerprintSchema.optional(), eas: easSchema.optional(), build: buildSchema.optional() })
+	.strict();
+
 export const projectConfigSchema = z
 	.object({
 		name: z.string().min(1),
 		/** project dir relative to the config file */
 		root: z.string().min(1).default("."),
 		bundleId: perPlatform,
-		fingerprint: z
-			.object({
-				/** own fingerprint command (`{platform}` is substituted); stdout = JSON `{ hash }` or a bare hash */
-				command: z.string().min(1).optional(),
-				/** native: key = the native fingerprint; native+js: key also covers the `jsInputs` file contents (Release builds embed the JS) */
-				include: z.enum(["native", "native+js"]).default("native"),
-				/** globs (relative to the project root) of the JS sources that make up the bundle; git-tracked + untracked-not-ignored files only */
-				jsInputs: z.array(z.string().min(1)).min(1).optional(),
-			})
-			.strict()
-			.superRefine((fp, issue) => {
-				if (fp.include === "native+js" && fp.jsInputs === undefined) {
-					issue.addIssue({ code: "custom", message: 'include "native+js" needs jsInputs', path: ["jsInputs"] });
-				}
-				if (fp.include === "native" && fp.jsInputs !== undefined) {
-					issue.addIssue({ code: "custom", message: 'jsInputs only apply to include "native+js"', path: ["jsInputs"] });
-				}
-			})
-			.optional(),
-		eas: z
-			.object({
-				profile: z.string().min(1).default(DEFAULT_EAS_PROFILE),
-				workflow: z.string().min(1).optional(),
-				trigger: z.boolean().default(false),
-			})
-			.strict()
-			.optional(),
-		build: perPlatform
-			.extend({
-				/** Xcode / Gradle configuration the local build produces; picks the default build command + where the artifact is searched */
-				configuration: z.enum(["Debug", "Release"]).optional(),
-			})
-			.optional(),
+		fingerprint: fingerprintSchema.optional(),
+		eas: easSchema.optional(),
+		build: buildSchema.optional(),
+		/** named builds (`dev`, `e2e`…) picked with `--variant` / `app.variant`; each replaces fingerprint / eas / build wholesale */
+		variants: z.record(z.string().min(1), variantSchema).optional(),
 		/** extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand */
 		cacheDirs: z.array(z.string().min(1)).optional(),
 	})
 	.strict();
+
+/** Why an e2e suite's `app.variant` is unknown on its project (the only one when it names none), if it is. */
+function unknownSuiteVariant(
+	projects: readonly z.infer<typeof projectConfigSchema>[],
+	suite: { project?: string | undefined; app?: AppOption | undefined }
+): string | undefined {
+	const variant = typeof suite.app === "object" ? suite.app.variant : undefined;
+	if (variant === undefined) return undefined;
+	const name = suite.project;
+	const project = name === undefined && projects.length === 1 ? projects[0] : projects.find((p) => p.name === name);
+	if (!project || project.variants?.[variant] !== undefined) return undefined;
+	return `no variant "${variant}" on project ${project.name}`;
+}
+
+type ConfigIssues = { addIssue: (issue: { code: "custom"; message: string; path: Array<string | number> }) => void };
+
+/** e2e suites: `project` must exist, and so must `app.variant` on it. */
+function refineSuites(
+	config: {
+		projects?: z.infer<typeof projectConfigSchema>[] | undefined;
+		e2e?: Record<string, { project?: string | undefined; app?: AppOption | undefined }> | undefined;
+	},
+	issue: ConfigIssues
+): void {
+	const names = new Set((config.projects ?? []).map((p) => p.name));
+	for (const [name, suite] of Object.entries(config.e2e ?? {})) {
+		if (suite.project !== undefined && !names.has(suite.project)) {
+			issue.addIssue({
+				code: "custom",
+				message: `no project "${suite.project}" in projects[]`,
+				path: ["e2e", name, "project"],
+			});
+		}
+		const variant = unknownSuiteVariant(config.projects ?? [], suite);
+		if (variant !== undefined)
+			issue.addIssue({ code: "custom", message: variant, path: ["e2e", name, "app", "variant"] });
+	}
+}
 
 export const wardenConfigSchema = z
 	.object({
@@ -102,15 +152,7 @@ export const wardenConfigSchema = z
 				});
 			}
 		}
-		for (const [name, suite] of Object.entries(config.e2e ?? {})) {
-			if (suite.project !== undefined && !names.has(suite.project)) {
-				issue.addIssue({
-					code: "custom",
-					message: `no project "${suite.project}" in projects[]`,
-					path: ["e2e", name, "project"],
-				});
-			}
-		}
+		refineSuites(config, issue);
 	});
 
 /** Parsed (defaults applied). The documented input types live in `define-config.ts`. */
@@ -132,6 +174,10 @@ export type Project = {
 	build: Record<Platform, string>;
 	/** Debug unless `build.configuration` says Release */
 	buildConfiguration: BuildConfiguration;
+	/** false = `build.cache: false`: no shared compiler caches in local builds */
+	compilerCache?: false;
+	/** the `variants.<name>` this project was resolved with; undefined = the project's own settings */
+	variant?: string;
 	cacheDirs: string[];
 	/** where the project came from */
 	origin: "config" | "app.json" | "app.config";
@@ -179,6 +225,7 @@ function fromConfig(entry: ParsedProjectConfig, configDir: string, env: Record<s
 		),
 		origin: "config",
 	};
+	if (entry.build?.cache === false) project.compilerCache = false;
 	if (entry.fingerprint?.command !== undefined) project.fingerprintCommand = entry.fingerprint.command;
 	if (entry.fingerprint?.include === "native+js" && entry.fingerprint.jsInputs) {
 		project.jsInputs = entry.fingerprint.jsInputs;
@@ -269,7 +316,29 @@ export type LoadProjectInput = {
 	name?: string;
 	/** `--bundle-id` for the requested platform */
 	bundleId?: Project["bundleId"];
+	/** `projects[].variants.<name>` to resolve the project with */
+	variant?: string;
+	/** a missing `variant` falls back to the project's own settings instead of erroring (`warden dev`) */
+	variantOptional?: boolean;
 };
+
+/** `entry` with `variants.<name>` applied: each key the variant sets replaces the project's own. */
+function applyVariant(
+	entry: ParsedProjectConfig,
+	name: string | undefined,
+	optional: boolean
+): Result<{ entry: ParsedProjectConfig; variant?: string }> {
+	if (name === undefined) return ok({ entry });
+	const variant = entry.variants?.[name];
+	if (variant === undefined) {
+		if (optional) return ok({ entry });
+		const known = Object.keys(entry.variants ?? {});
+		return err(
+			`project "${entry.name}" has no variant "${name}"${known.length > 0 ? ` (${known.join(", ")})` : ""} — add projects[].variants.${name} to ${CONFIG_FILE}`
+		);
+	}
+	return ok({ entry: { ...entry, ...variant }, variant: name });
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -328,6 +397,28 @@ export function findWardenConfig(
 	return ok(undefined);
 }
 
+/** The configured project containing `start` (or `input.name`), resolved with `input.variant`. */
+function configuredProject(
+	projects: readonly ParsedProjectConfig[],
+	configDir: string,
+	start: string,
+	input: LoadProjectInput
+): Result<Project> {
+	const selected = selectProject(
+		projects.map((p) => fromConfig(p, configDir, input.env)),
+		start,
+		input.name
+	);
+	if (!selected.success) return selected;
+	const entry = projects.find((p) => p.name === selected.data.name);
+	if (!entry) return err(`no project "${selected.data.name}" in ${CONFIG_FILE}`);
+	const resolved = applyVariant(entry, input.variant, input.variantOptional === true);
+	if (!resolved.success) return resolved;
+	const project = fromConfig(resolved.data.entry, configDir, input.env);
+	if (resolved.data.variant !== undefined) project.variant = resolved.data.variant;
+	return ok(project);
+}
+
 /**
  * Find the project for `start`: nearest warden config walking up (to `stopAt`), else the
  * nearest Expo app (`app.json` / `app.config.*`). `--bundle-id` overrides the configured id.
@@ -340,17 +431,16 @@ export function loadProject(input: LoadProjectInput): Result<Project> {
 	if (!found.success) return found;
 	const projects = found.data?.config.projects;
 	if (found.data && projects) {
-		const configDir = found.data.dir;
-		const project = selectProject(
-			projects.map((p) => fromConfig(p, configDir, input.env)),
-			start,
-			input.name
-		);
+		const project = configuredProject(projects, found.data.dir, start, input);
 		return project.success ? ok({ ...project.data, bundleId: { ...project.data.bundleId, ...override } }) : project;
 	}
 	for (const dir of dirs) {
 		const detected = autoDetect(dir, input.env, override);
-		if (detected) return detected;
+		if (!detected) continue;
+		if (input.variant !== undefined && input.variantOptional !== true && detected.success) {
+			return err(`variant "${input.variant}" needs projects[].variants in a ${CONFIG_FILE}`);
+		}
+		return detected;
 	}
 	return err(`no ${CONFIG_FILE} (or ${JSON_CONFIG_FILE}), app.json or app.config.* found from ${start}`);
 }
