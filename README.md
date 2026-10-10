@@ -39,6 +39,8 @@ warden install --codex                   # force Codex only: hooks in $CODEX_HOM
 warden doctor
 ```
 
+Working on warden itself: `bun run cli:link` points `~/.local/bin/warden` at this checkout's source (no rebuilds), and `bun run cli:unlink` puts back whatever was there before.
+
 Agent skill only, for Claude Code, Codex, Cursor and others via the [`skills`](https://github.com/vercel-labs/skills) CLI:
 
 ```bash
