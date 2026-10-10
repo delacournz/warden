@@ -1,14 +1,17 @@
 import { join } from "node:path";
 import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
-import type { E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
+import type { E2eDeviceLeg, E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
 import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
 import { readySpec } from "@delacour/warden-core/batch/preset";
 import type { JobResult } from "@delacour/warden-core/batch/schedule";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
+import { bundleIdFor } from "@delacour/warden-core/builds/config";
+import { projectContext } from "@delacour/warden-core/builds/ensure";
+import { parseDuration } from "@delacour/warden-core/duration";
 import type { Platform } from "@delacour/warden-core/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
-import { type ClaimFlagValues, withClaimOptions } from "../claim-flags";
+import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
@@ -16,8 +19,12 @@ import { emit } from "../output";
 import { type AffectedOpts, explain, runAffected, selectedFlows } from "./affected";
 import {
 	attemptKey,
+	type BatchArgs,
 	type BatchDeps,
+	type BatchLeg,
 	defaultBatchDeps,
+	legJob,
+	type MetroPlan,
 	parseBatchArgs,
 	runSession,
 	type SessionResult,
@@ -35,6 +42,9 @@ export type E2eOpts = ClaimFlagValues &
 		serve?: string;
 		serveReady?: string;
 		serveTimeout: string;
+		jobTimeout?: string;
+		/** `--devices`: which `e2e.<suite>.devices` legs run */
+		devices?: string;
 		record?: string;
 		logs?: string;
 		tui: boolean;
@@ -46,6 +56,8 @@ export type E2eOpts = ClaimFlagValues &
 
 /** One flow's outcome in `e2e-report.json`. */
 export type FlowVerdict = SelectedFlow & {
+	/** the device leg this verdict is for (suites with `devices`) */
+	leg?: string;
 	verdict: "passed" | "failed" | "not-run";
 	attempts: number;
 	/** the device the flow's last failed attempt ran on */
@@ -60,6 +72,8 @@ export type E2eReport = {
 	suite: string;
 	platform: Platform;
 	base?: string;
+	/** `single`: one runner process per leg ran every flow, so its flows share that process's verdict */
+	mode?: "single";
 	ok: boolean;
 	batchDir?: string;
 	flows: FlowVerdict[];
@@ -115,6 +129,67 @@ export function runnerArgv(runner: readonly string[], flow: SelectedFlow): strin
 	return runner.map((arg) => arg.replaceAll("{flowPath}", flow.file).replaceAll("{flow}", flow.id));
 }
 
+/** `mode: "single"`: an argument that is exactly `{flows}` / `{flowPaths}` becomes one argument per flow. */
+export function singleRunnerArgv(runner: readonly string[], flows: readonly SelectedFlow[]): string[] {
+	return runner.flatMap((arg) => {
+		if (arg === "{flows}") return flows.map((f) => f.id);
+		if (arg === "{flowPaths}") return flows.map((f) => f.file);
+		return [arg];
+	});
+}
+
+/** How the batch jobs map back to flows: the legs that ran, and the one job of a `single` run. */
+export type RunShape = { legs: ReadonlyArray<string | undefined>; singleJob?: string };
+
+const ONE_LEG: RunShape = { legs: [undefined] };
+
+/** `--devices all | default | <profile,…>` → the suite's legs to run (undefined: the suite has none, or `--profile` / `--count` replace them). */
+function selectLegs(
+	suite: E2eSuiteConfig,
+	opts: E2eOpts,
+	passed: ReadonlySet<string>
+): Result<E2eDeviceLeg[] | undefined> {
+	const all = suite.devices;
+	if (!all) return opts.devices === undefined ? ok(undefined) : err("--devices needs e2e.<suite>.devices");
+	if (passed.has("profile") || passed.has("count")) return ok(undefined);
+	const pick = opts.devices ?? "default";
+	if (pick === "all") return ok(all);
+	if (pick === "default") return ok(all.filter((leg) => leg.default));
+	const names = pick
+		.split(",")
+		.map((name) => name.trim())
+		.filter((name) => name.length > 0);
+	const unknown = names.find((name) => !all.some((leg) => leg.profile === name));
+	if (unknown !== undefined || names.length === 0)
+		return err(`--devices: no leg "${unknown ?? pick}" (${all.map((leg) => leg.profile).join(", ")})`);
+	return ok(all.filter((leg) => names.includes(leg.profile)));
+}
+
+/** The suite's Metro as a run plan: project root, timeouts, and the app to open on each device (when its bundle id is known). */
+async function metroPlan(ctx: CommandContext, suite: Suite, platform: Platform): AsyncResult<MetroPlan | undefined> {
+	const metro = suite.config.metro;
+	if (!metro?.enabled) return ok(undefined);
+	const readyTimeoutMs = parseDuration(metro.readyTimeout);
+	if (!readyTimeoutMs.success) return err(`metro.readyTimeout: ${readyTimeoutMs.error}`);
+	const projectRoot = suite.projectRoot ?? suite.cwd;
+	const { variant } = appSwitches(suite.config.app);
+	const project = await projectContext({
+		exec: ctx.exec,
+		env: ctx.env,
+		start: projectRoot,
+		...(variant !== undefined ? { variant, variantOptional: true } : {}),
+	});
+	const bundleId = project.success ? bundleIdFor(project.data.project, platform) : project;
+	return ok({
+		projectRoot,
+		env: metro.env ?? {},
+		prewarm: metro.prewarm,
+		readyTimeoutMs: readyTimeoutMs.data,
+		launchArgs: metro.launchArgs,
+		...(bundleId.success ? { bundleId: bundleId.data } : {}),
+	});
+}
+
 /** device / log / screenshot of a flow's failed attempts (the last one's device and log; the latest screenshot there is). */
 function lastFailure(session: SessionResult, failed: readonly JobResult[]): Partial<FlowVerdict> {
 	const last = failed.at(-1);
@@ -132,22 +207,30 @@ function lastFailure(session: SessionResult, failed: readonly JobResult[]): Part
 	};
 }
 
-/** Batch outcome → per-flow verdicts; `ok` = every required flow passed. */
+/**
+ * Batch outcome → per-flow verdicts (one per leg that ran); `ok` = every required flow passed on
+ * every leg. In a `single` run every flow of a leg shares that leg's one job.
+ */
 export function verdicts(
 	flows: readonly SelectedFlow[],
-	session: SessionResult
+	session: SessionResult,
+	shape: RunShape = ONE_LEG
 ): { ok: boolean; flows: FlowVerdict[] } {
 	const results = session.summary?.results ?? [];
 	const failed = new Set(session.summary?.failed ?? []);
-	const out = flows.map((flow): FlowVerdict => {
-		const attempts = results.filter((r) => r.job === flow.id).length;
-		const verdict = attempts === 0 ? "not-run" : failed.has(flow.id) ? "failed" : "passed";
-		const failure = lastFailure(
-			session,
-			results.filter((r) => r.job === flow.id && r.exitCode !== 0)
-		);
-		return { ...flow, verdict, attempts, ...failure };
-	});
+	const qualified = shape.legs.length > 1;
+	const out = shape.legs.flatMap((leg) =>
+		flows.map((flow): FlowVerdict => {
+			const job = legJob(shape.singleJob ?? flow.id, qualified ? leg : undefined);
+			const ran = results.filter((r) => r.job === job);
+			const verdict = ran.length === 0 ? "not-run" : failed.has(job) ? "failed" : "passed";
+			const failure = lastFailure(
+				session,
+				ran.filter((r) => r.exitCode !== 0)
+			);
+			return { ...flow, ...(leg !== undefined ? { leg } : {}), verdict, attempts: ran.length, ...failure };
+		})
+	);
 	const ok = session.summary !== undefined && out.every((f) => !f.required || f.verdict === "passed");
 	return { ok, flows: out };
 }
@@ -175,7 +258,8 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	const { color } = ctx.ui;
 	for (const flow of report.flows.filter((f) => f.verdict !== "passed")) {
 		const tag = flow.required ? color.red(flow.verdict) : color.yellow(`${flow.verdict} (optional)`);
-		ctx.err(`warden e2e: ${flow.id} ${tag}${failureDetail(flow)}`);
+		const leg = flow.leg !== undefined ? ` [${flow.leg}]` : "";
+		ctx.err(`warden e2e: ${flow.id}${leg} ${tag}${failureDetail(flow)}`);
 	}
 	const passed = report.flows.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.flows.length} flow(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
@@ -230,31 +314,29 @@ async function e2e(
 		await publish(ctx, deps, opts, { ...base, ok: true, flows: notRun });
 		return 0;
 	}
-	// --json is the e2e report here, not batch.json
-	const { json: _json, ...batchOpts } = suiteOpts(suite, opts, passed);
-	const byId = new Map(flows.map((f) => [f.id, f]));
-	const args = parseBatchArgs(selection.platform, batchOpts, ctx.cwd, {
-		jobs: { kind: "list", jobs: [...byId.keys()] },
-		cwd: suite.cwd,
-		...(suite.config.env ? { env: suite.config.env } : {}),
-	});
-	if (!args.success) return fail(args.error);
 	const unsupported = platformError(suite.config, selection.platform);
 	if (unsupported) return fail(unsupported);
+	const run = await runPlan(ctx, suite, selection.platform, flows, opts, passed);
+	if (!run.success) return fail(run.error);
+	const { args, shape } = run.data;
+	const byId = new Map(flows.map((f) => [f.id, f]));
 	const { runner } = suite.config;
-	const session = await runSession(ctx, deps, args.data, [...byId.keys()], runner, {
+	const single = shape.singleJob !== undefined;
+	const session = await runSession(ctx, deps, args, single ? [suite.name] : [...byId.keys()], runner, {
 		name: "e2e",
 		setup: deviceSetup(suite.config),
 		// a passed gate frees the sims; a failed one leaves them up to inspect
-		...(opts.shutdown ? { shutdownIf: (summary) => verdicts(flows, { code: 0, summary }).ok } : {}),
+		...(opts.shutdown ? { shutdownIf: (summary) => verdicts(flows, { code: 0, summary }, shape).ok } : {}),
 		argvFor: (job) => {
+			if (single) return singleRunnerArgv(runner, flows);
 			const flow = byId.get(job);
 			return flow ? runnerArgv(runner, flow) : runner;
 		},
 	});
-	const result = verdicts(flows, session);
+	const result = verdicts(flows, session, shape);
 	const report: E2eReport = {
 		...base,
+		...(single ? { mode: "single" as const } : {}),
 		ok: result.ok,
 		...(session.batchDir ? { batchDir: session.batchDir } : {}),
 		flows: result.flows,
@@ -264,6 +346,83 @@ async function e2e(
 	if (session.code === 130) return 130;
 	printVerdict(ctx, report);
 	return result.ok ? 0 : 1;
+}
+
+/** `mode: "single"`: the flows reach the one runner process through its env too. */
+function singleEnv(flows: readonly SelectedFlow[]): Record<string, string> {
+	return { WARDEN_FLOWS: flows.map((f) => f.id).join(","), WARDEN_FLOW_PATHS: flows.map((f) => f.file).join(",") };
+}
+
+/**
+ * The suite + CLI flags as a batch run: claim flags (one per device leg), Metro, the job timeout, and
+ * how its jobs map back to flows. With Metro its port is leased first, so it is `{port}` / `WARDEN_PORT`.
+ */
+async function runPlan(
+	ctx: CommandContext,
+	suite: Suite,
+	platform: Platform,
+	flows: readonly SelectedFlow[],
+	opts: E2eOpts,
+	passed: ReadonlySet<string>
+): AsyncResult<{ args: BatchArgs; shape: RunShape }> {
+	const { config } = suite;
+	const picked = selectLegs(config, opts, passed);
+	if (!picked.success) return picked;
+	const metro = await metroPlan(ctx, suite, platform);
+	if (!metro.success) return metro;
+	// --json is the e2e report here, not batch.json
+	const { json: _json, ...merged } = suiteOpts(suite, opts, passed);
+	const batchOpts = { ...merged, ...(config.metro?.enabled ? { port: [config.metro.port, ...merged.port] } : {}) };
+	const legOpts = (leg: E2eDeviceLeg) => ({ ...batchOpts, profile: leg.profile, count: String(leg.count) });
+	const single = config.mode === "single";
+	const [first] = picked.data ?? [];
+	const args = parseBatchArgs(platform, first ? legOpts(first) : batchOpts, ctx.cwd, {
+		jobs: { kind: "list", jobs: single ? [suite.name] : flows.map((f) => f.id) },
+		cwd: suite.cwd,
+		env: { ...config.env, ...(single ? singleEnv(flows) : {}) },
+	});
+	if (!args.success) return args;
+	const legs = batchLegs(platform, picked.data ?? [], legOpts);
+	if (!legs.success) return legs;
+	return ok(planOf(args.data, legs.data, config, suite.name, metro.data));
+}
+
+/** One claim per picked device leg. */
+function batchLegs(
+	platform: Platform,
+	picked: readonly E2eDeviceLeg[],
+	legOpts: (leg: E2eDeviceLeg) => ClaimFlagValues
+): Result<BatchLeg[]> {
+	const legs: BatchLeg[] = [];
+	for (const leg of picked) {
+		const flags = parseClaimFlags(platform, legOpts(leg));
+		if (!flags.success) return flags;
+		legs.push({ name: leg.profile, flags: flags.data, env: leg.env ?? {} });
+	}
+	return ok(legs);
+}
+
+function planOf(
+	args: BatchArgs,
+	legs: BatchLeg[],
+	config: E2eSuiteConfig,
+	suiteName: string,
+	metro: MetroPlan | undefined
+): { args: BatchArgs; shape: RunShape } {
+	const single = config.mode === "single";
+	return {
+		args: {
+			...args,
+			jobTimeoutMs: args.jobTimeoutMs ?? config.jobTimeoutMs,
+			...(legs.length > 0 ? { legs } : {}),
+			...(single ? { single: true } : {}),
+			...(metro ? { metro } : {}),
+		},
+		shape: {
+			legs: legs.length > 0 ? legs.map((leg) => leg.name) : [undefined],
+			...(single ? { singleJob: suiteName } : {}),
+		},
+	};
 }
 
 /**
@@ -288,6 +447,7 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--explain", "print why each flow was selected before running")
 				.option("--dry-run", "select and explain, run nothing")
 				.option("--report <file>", "also write e2e-report.json here")
+				.option("--devices <legs>", "which e2e.<suite>.devices legs run: default | all | <profile,…>")
 				.option(
 					"--no-shutdown",
 					"keep the devices running after the gate passes (default: shut down the ones warden created)"

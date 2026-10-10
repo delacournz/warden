@@ -448,6 +448,53 @@ describe("warden batch", () => {
 		}
 	});
 
+	test("{port} is the first leased port in the job argv, --serve and --serve-ready; --job-timeout is validated", async () => {
+		const c = setup([
+			"ios",
+			"--jobs",
+			"a",
+			"--port",
+			"3000:10",
+			"--serve",
+			"api --port {port}",
+			"--serve-ready",
+			"http://127.0.0.1:{port}/health",
+			"--job-timeout",
+			"90s",
+			"--",
+			"run",
+			"{job}",
+			"--api",
+			"http://127.0.0.1:{port}",
+			"{stateDir}",
+		]);
+		const h = harness();
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(h.serve()?.cmd).toEqual(["sh", "-c", "api --port 3000"]);
+		expect(h.probes).toEqual([{ kind: "http", url: "http://127.0.0.1:3000/health" }]);
+		const job = h.jobs()[0];
+		expect(job?.cmd).toEqual([
+			"run",
+			"a",
+			"--api",
+			"http://127.0.0.1:3000",
+			join(c.env.WARDEN_HOME ?? "", "batches", "b1", "agent-device", "0"),
+		]);
+		expect(job?.opts.group).toBe(true);
+		expect(h.timers.map((t) => [t.ms, t.cancelled])).toEqual([[90_000, true]]);
+		c.argv = ["ios", "--jobs", "a", "--job-timeout", "soon", "--", "run"];
+		expect(await createBatchCommand(harness().deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--job-timeout");
+	});
+
+	test("without --job-timeout a job is not its own process group and no timer is armed", async () => {
+		const c = setup(["ios", "--jobs", "a", "--", "run", "{job}"]);
+		const h = harness();
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(h.jobs()[0]?.opts.group).toBeUndefined();
+		expect(h.timers).toEqual([]);
+	});
+
 	test("--logs overrides the log dir", async () => {
 		const c = setup(["ios", "--jobs", "Some Job", "--logs", "L", "--", "x"]);
 		const h = harness();
@@ -750,6 +797,42 @@ describe("warden batch", () => {
 			expect(hash).toMatch(/^[0-9a-f]{40}$/);
 			expect(hash).not.toBe(native);
 			expect(h.jobs()[0]?.opts.env.WARDEN_APP_PATH).toContain("S.app");
+		});
+
+		test("app on several devices: the project is fingerprinted once, then installed on each", async () => {
+			const c = setup(["p"]);
+			const root = join(c.cwd, "app");
+			mkdirSync(join(root, "src"), { recursive: true });
+			writeFileSync(join(root, "src", "a.ts"), "export {}");
+			writeConfig(c.cwd, {
+				projects: [
+					{
+						name: "s",
+						root: "app",
+						bundleId: { ios: "nz.x" },
+						fingerprint: { command: "fp {platform}" },
+						build: { ios: "build-release", configuration: "Release" },
+					},
+				],
+				batches: { p: { project: "s", platform: "ios", count: 2, app: { clean: true }, jobs: ["a", "b"], cmd: ["x"] } },
+			});
+			const fingerprints: string[] = [];
+			const installs: string[] = [];
+			const release = releaseExec(c.exec, root, "abc123def456", installs);
+			c.exec = async (cmd, opts) => {
+				if (cmd.join(" ") === "sh -c fp ios") fingerprints.push(cmd.join(" "));
+				return release(cmd, opts);
+			};
+			const h = harness();
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			// once for the run (not once per device), plus the one local build's own post-build check
+			expect(fingerprints).toHaveLength(2);
+			expect(
+				installs
+					.filter((line) => line.startsWith("xcrun simctl install"))
+					.map((line) => line.split(" ")[3])
+					.sort()
+			).toEqual(["U1", "U2"]);
 		});
 
 		test("preset without jobs needs --jobs/--jobs-from; a platform operand ignores the config", async () => {

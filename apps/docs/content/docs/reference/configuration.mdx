@@ -156,7 +156,11 @@ export default defineConfig({
   type={{
     project: { type: "string", description: "`projects[].name`: the runner, `serve` and `setup` run in its root, relative `serveReady` `file:` paths resolve against it, and `app` installs that project's build. Needed when the config has several projects and warden runs from the repo root." },
     flowsDir: { type: "string", description: "Required. Directory of flows: YAML files, or `*.e2e.ts(x)` tests (other `.ts` files there are helpers; a helper change selects every flow importing it). Searched recursively; dot dirs, `node_modules` and `__baselines__` skipped." },
-    runner: { type: "string[]", description: "Required. Per-flow argv; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted. Runs in the suite's `project` root, else the config file's directory." },
+    runner: { type: "string[]", description: "Required. Runner argv; `{udid}` `{worker}` `{seq}` `{leg}` `{port}` `{metroUrl}` `{stateDir}` are substituted, per flow also `{flow}` `{flowPath}`. In `mode: \"single\"` an argument that is exactly `{flows}` / `{flowPaths}` becomes one argument per selected flow. Runs in the suite's `project` root, else the config file's directory." },
+    mode: { type: '"per-flow" | "single"', description: "`per-flow`: one runner process per flow, one worker per device. `single`: one runner process per device leg for every selected flow; it gets the whole pool in `WARDEN_UDIDS` (and the flows in `WARDEN_FLOWS` / `WARDEN_FLOW_PATHS`), shards over it itself, and its exit code is the verdict of all of them. Not with `passes` > 1.", default: '"per-flow"' },
+    jobTimeoutMs: { type: "number", description: "A runner process still going after this many milliseconds is screenshotted, killed (SIGTERM, SIGKILL 5 s later, whole process group) and counted as failed (exit 124). `--job-timeout` overrides.", default: "600000" },
+    devices: { type: "{ profile; count?; env?; default? }[]", description: "Device legs, replacing `profile` / `count`: each claims its own pool (`count`, default 1) and runs the selected flows concurrently with the others, with its `env` added and only its own devices in `WARDEN_UDIDS`. `default: false` legs run only with `--devices all` or `--devices <profile>`." },
+    metro: { type: "{ enabled?; port?; launchArgs?; env?; prewarm?; readyTimeout? }", description: "Dev-client suites: warden starts one Metro for the run; see below." },
     platform: { type: '"ios" | "android"', description: "Default platform. Without it `warden affected` reports both and `warden e2e` needs `--platform`." },
     base: { type: "string", description: "Ref changes are measured against (merge-base with HEAD).", default: '"main"' },
     tsconfig: { type: "string", description: "tsconfig for files with no `tsconfig.json` between them and the config file." },
@@ -173,19 +177,34 @@ export default defineConfig({
     required: { type: "boolean", description: "Default `required` for flows.", default: "true" },
     passes: { type: "number", description: "Consecutive green runs a flow needs.", default: "1" },
     retry: { type: "number", description: "Re-run a failed flow up to N times.", default: "0" },
-    count: { type: "number", description: "Devices to claim." },
-    profile: { type: "string", description: "Device profile." },
+    count: { type: "number", description: "Devices to claim (not with `devices`)." },
+    profile: { type: "string", description: "Device profile (not with `devices`)." },
     app: { type: "boolean | { clean?: boolean; variant?: string }", description: "Ensure the app on every device first. `{ clean: true }` also uninstalls it first (`--clean`); `{ variant }` installs that `projects[].variants` build (must exist on the suite's project)." },
     ports: { type: "string[]", description: "Ports leased for the run (`<from>[:<span>]`, like `--port`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner." },
     env: { type: "Record<string, string>", description: "Added to the serve, setup and runner env." },
-    serve: { type: "string", description: "`sh -c` once per run before the flows, in its own process group; killed at the end. `--serve` overrides." },
-    serveReady: { type: "string", description: "Wait for `http://…`, `tcp:PORT` or `file:PATH` (relative to the project root) before starting. Needs `serve`." },
+    serve: { type: "string", description: "`sh -c` once per run before the flows, in its own process group; killed at the end. `{port}` / `{metroUrl}` are substituted. `--serve` overrides." },
+    serveReady: { type: "string", description: "Wait for `http://…`, `tcp:PORT` or `file:PATH` (relative to the project root) before starting; `{port}` is the first leased port (`tcp:{port}`). Needs `serve`." },
     serveTimeout: { type: "string", description: "Give up waiting for `serveReady` after this long (`30s`, `10m`).", default: '"10m"' },
     setup: { type: "string", description: "`sh -c` once per leased device, after the app install and before that device's first flow (`{udid}` is substituted). Env: `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH`, plus `env`. Output goes to `logs/setup-<worker>.log`. A non-zero exit drops that device and its flows go to the others; none left fails the run." },
     slim: { type: "boolean", description: "iOS: switch off the simulator daemons flows never need on each leased device, before `setup` (`warden sim slim`). A failure only warns." },
     flows: { type: "Record<string, Flow>", description: "Per flow id or glob; see below." },
   }}
 />
+
+`metro` (a dev-client build needs a bundler; warden owns it for the run):
+
+<TypeTable
+  type={{
+    enabled: { type: "boolean", description: "Start Metro for the run.", default: "true" },
+    port: { type: "string", description: "Where the Metro port is leased from (`<from>[:<span>]`). It is leased before the suite's `ports`, so it is `WARDEN_PORT`, `WARDEN_PORT_0` and `{port}`.", default: '"8081:100"' },
+    launchArgs: { type: "string[]", description: "Extra launch arguments when warden opens the app on each device before its first flow (iOS: after `--initialUrl <metroUrl>`).", default: "[]" },
+    env: { type: "Record<string, string>", description: "Added to Metro's env only." },
+    prewarm: { type: "boolean", description: "Build the bundle once before the first flow; a bundle that does not build fails the run right there.", default: "true" },
+    readyTimeout: { type: "string", description: "Give up waiting for Metro after this long.", default: '"2m"' },
+  }}
+/>
+
+Metro runs `bunx expo start --dev-client --port <p>` in the project root with `CI=1`, logging to `<batch dir>/metro.log`. It counts as ready only once `/status` on that port is proven to serve this checkout (the `X-React-Native-Project-Root` header, else the listening process's cwd); another worktree's Metro on the port fails the run with `port <p> is served by <dir>, not this worktree`. Runners get `WARDEN_METRO_URL` and `{metroUrl}`.
 
 `flows.<id|glob>`:
 

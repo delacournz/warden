@@ -2,10 +2,10 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
-import { expandArgv, jobSlug, parseJobLines, parseJobList } from "@delacour/warden-core/batch/expand";
+import { expandArgv, expandText, jobSlug, parseJobLines, parseJobList } from "@delacour/warden-core/batch/expand";
 import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delacour/warden-core/batch/preset";
 import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "@delacour/warden-core/batch/schedule";
-import { parseDuration } from "@delacour/warden-core/duration";
+import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
 import { isPortFree } from "@delacour/warden-core/ports";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
@@ -19,7 +19,14 @@ import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
 import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
 import { applyEvent, type BatchView, initialView, type LiveScreen, liveScreen, plainLine, render } from "../batch/tui";
-import { type ClaimFlagValues, parseClaimFlags, resolveOwner, resolvePlatform, withClaimOptions } from "../claim-flags";
+import {
+	type ClaimFlags,
+	type ClaimFlagValues,
+	parseClaimFlags,
+	resolveOwner,
+	resolvePlatform,
+	withClaimOptions,
+} from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { shutdownReleasedDevices } from "../device-shutdown";
@@ -38,6 +45,15 @@ import {
 	splitCommand,
 	withLeaseOptions,
 } from "../lease-session";
+import {
+	adbReverseArgv,
+	devClientLaunchArgv,
+	type Metro,
+	type MetroOwner,
+	metroOwner,
+	prewarmMetro,
+	startMetro,
+} from "../metro";
 import { emit } from "../output";
 import { withSpinner } from "../spinner-context";
 
@@ -55,6 +71,10 @@ export type SpawnOptions = {
 	cwd: string;
 	/** a per-device `setup` command rather than a job */
 	setup?: true;
+	/** the run's own Metro (a `group` spawn, like serve) */
+	metro?: true;
+	/** a job (jobs with a timeout are `group` spawns too, so the whole tree can be killed) */
+	job?: true;
 };
 
 /** Where the TUI goes (stderr by default). */
@@ -81,6 +101,12 @@ export type BatchDeps = LeaseSessionDeps & {
 	mkdir: (dir: string) => Promise<void>;
 	newId: () => string;
 	terminal: Terminal;
+	/** run `fn` once after `ms` (job timeouts); returns cancel */
+	after: (ms: number, fn: () => void) => () => void;
+	/** who serves the run's Metro port, relative to the project root */
+	metroProbe: (port: number, projectRoot: string) => Promise<MetroOwner>;
+	/** build the bundle once before the first job */
+	prewarm: (url: string, platform: Platform) => AsyncResult<{ bundled: boolean }>;
 };
 
 /** Commander option values of `warden batch`. */
@@ -95,15 +121,32 @@ export type BatchOpts = ClaimFlagValues &
 		serve?: string;
 		serveReady?: string;
 		serveTimeout: string;
+		jobTimeout?: string;
 		record?: string;
 		logs?: string;
 		/** false = `--no-tui` */
 		tui: boolean;
 	};
 
-type Serve = { cmd: string; ready?: ReadySpec; timeoutMs: number };
+/** `cmd` and `ready` may hold `{port}` / `{metroUrl}`, known only once the run has its leases. */
+type Serve = { cmd: string; ready?: { spec: string; cwd: string }; timeoutMs: number };
 
-type BatchArgs = LeaseArgs & {
+/** A device leg of the run: its own claim, env and job queue (`e2e.<suite>.devices[]`). */
+export type BatchLeg = { name: string; flags: ClaimFlags; env: Record<string, string> };
+
+/** The run's own Metro (`e2e.<suite>.metro`); it listens on the first leased port. */
+export type MetroPlan = {
+	projectRoot: string;
+	env: Record<string, string>;
+	prewarm: boolean;
+	readyTimeoutMs: number;
+	launchArgs: string[];
+	/** the app warden opens on each device, pointed at Metro (undefined: the runner opens it itself) */
+	bundleId?: string;
+};
+
+/** A validated `warden batch` run (what `runSession` takes); `warden e2e` adds legs, `single` and `metro`. */
+export type BatchArgs = LeaseArgs & {
 	json: boolean;
 	jobs: BatchJobsSource;
 	retry: number;
@@ -117,9 +160,24 @@ type BatchArgs = LeaseArgs & {
 	record?: string;
 	logs?: string;
 	tui: boolean;
+	/** a job process still going after this is killed and counts as failed (exit 124) */
+	jobTimeoutMs?: number;
+	/** device legs, claimed instead of `flags`; each runs every job on its own devices */
+	legs?: BatchLeg[];
+	/** one job process per leg, handed the whole pool (`WARDEN_UDIDS`), instead of one worker per device */
+	single?: boolean;
+	metro?: MetroPlan;
 };
 
+/** The id a job runs under in the scheduler: qualified with its leg when the run has several. */
+export const legJob = (job: string, leg: string | undefined): string => (leg === undefined ? job : `${job}@${leg}`);
+
+/** Exit code of a job killed for running past `jobTimeoutMs` (as `timeout(1)`). */
+export const TIMEOUT_EXIT = 124;
+
 const SERVE_KILL_GRACE_MS = 15_000;
+/** SIGTERM → SIGKILL for a timed-out job. */
+const JOB_KILL_GRACE_MS = 5_000;
 const READY_POLL_MS = 500;
 const FRAME_MS = 100;
 
@@ -143,8 +201,24 @@ function parseServe(opts: BatchOpts, cwd: string): Result<Serve | undefined> {
 	const timeoutMs = parseDuration(opts.serveTimeout);
 	if (!timeoutMs.success) return err(`--serve-timeout: ${timeoutMs.error}`);
 	if (opts.serveReady === undefined) return ok({ cmd: opts.serve, timeoutMs: timeoutMs.data });
-	const ready = parseReadySpec(opts.serveReady, cwd);
-	return ready.success ? ok({ cmd: opts.serve, timeoutMs: timeoutMs.data, ready: ready.data }) : ready;
+	// validated now with stand-in values; parsed for real once the port is leased
+	const ready = parseReadySpec(expandText(opts.serveReady, { port: 1, metroUrl: "http://127.0.0.1:1" }), cwd);
+	if (!ready.success) return ready;
+	return ok({ cmd: opts.serve, timeoutMs: timeoutMs.data, ready: { spec: opts.serveReady, cwd } });
+}
+
+/** `--retry` / `--passes` / `--job-timeout` → validated numbers. */
+function parseLimits(opts: BatchOpts): Result<Pick<BatchArgs, "retry" | "passes" | "jobTimeoutMs">> {
+	if (!/^\d+$/.test(opts.retry)) return err(`--retry must be an integer >= 0, got "${opts.retry}"`);
+	if (!/^\d+$/.test(opts.passes) || Number(opts.passes) < 1)
+		return err(`--passes must be an integer >= 1, got "${opts.passes}"`);
+	const jobTimeout = opts.jobTimeout === undefined ? ok(undefined) : parseDuration(opts.jobTimeout);
+	if (!jobTimeout.success) return err(`--job-timeout: ${jobTimeout.error}`);
+	return ok({
+		retry: Number(opts.retry),
+		passes: Number(opts.passes),
+		...(jobTimeout.data !== undefined ? { jobTimeoutMs: jobTimeout.data } : {}),
+	});
 }
 
 /** What a preset adds beyond option values: its jobs source, env and cwd. */
@@ -166,9 +240,8 @@ export function parseBatchArgs(
 	if (!app.success) return app;
 	const jobs = parseJobsSource(opts, cwd, base.jobs);
 	if (!jobs.success) return jobs;
-	if (!/^\d+$/.test(opts.retry)) return err(`--retry must be an integer >= 0, got "${opts.retry}"`);
-	if (!/^\d+$/.test(opts.passes) || Number(opts.passes) < 1)
-		return err(`--passes must be an integer >= 1, got "${opts.passes}"`);
+	const limits = parseLimits(opts);
+	if (!limits.success) return limits;
 	const serve = parseServe(opts, cwd);
 	if (!serve.success) return serve;
 	if (opts.record !== undefined && platform !== "ios") return err("--record is iOS-only");
@@ -177,8 +250,7 @@ export function parseBatchArgs(
 		ports: opts.port,
 		json: opts.json === true,
 		jobs: jobs.data,
-		retry: Number(opts.retry),
-		passes: Number(opts.passes),
+		...limits.data,
 		tui: opts.tui,
 		cwd: base.cwd ?? cwd,
 		env: base.env ?? {},
@@ -225,6 +297,7 @@ async function waitReady(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	serve: Serve,
+	ready: ReadySpec | undefined,
 	proc: ProcHandle,
 	aborted: () => boolean
 ): AsyncResult<void> {
@@ -232,7 +305,6 @@ async function waitReady(
 	void proc.exited.then((code) => {
 		exitCode = code;
 	});
-	const ready = serve.ready;
 	if (!ready) return ok(undefined);
 	const deadline = ctx.now() + serve.timeoutMs;
 	for (;;) {
@@ -245,7 +317,13 @@ async function waitReady(
 	}
 }
 
-type Device = BatchWorker & { name: string; video?: string; videoStartedAt?: number };
+type Device = BatchWorker & { name: string; video?: string; videoStartedAt?: number; leg?: string };
+
+/** The devices of one leg (a plain batch has one unnamed pool). */
+type Pool = { leg?: string; env: Record<string, string>; devices: Device[] };
+
+/** Values known once the run has its leases, substituted into serve and every job argv. */
+type RunVars = { port?: number; metroUrl?: string };
 
 /** Failure screenshots by attempt: `<worker>:<seq>` → absolute png path. */
 export type Screenshots = ReadonlyMap<string, string>;
@@ -276,6 +354,7 @@ function summaryJson(
 			worker: d.worker,
 			udid: d.udid,
 			name: d.name,
+			...(d.leg !== undefined ? { leg: d.leg } : {}),
 			...(d.video !== undefined ? { video: d.video, videoStartedAt: d.videoStartedAt } : {}),
 		})),
 		jobs: summary.results.map((r) => ({
@@ -356,11 +435,23 @@ export type ArgvFor = (job: string) => string[];
 type JobRunnerOptions = {
 	cmd: string[];
 	hooks: SessionHooks;
+	/** the pool's env (lease + preset / suite + leg) */
 	env: Record<string, string | undefined>;
+	pool: Pool;
+	/** the pool's devices that survived setup */
+	live: readonly Device[];
+	/** job ids carry `@<leg>` (several legs) */
+	qualified: boolean;
+	single: boolean;
+	vars: RunVars;
 	cwd: string;
+	batchDir: string;
 	logDir: string;
 	passes: number;
 	platform: Platform;
+	jobTimeoutMs?: number | undefined;
+	/** a job ran past `jobTimeoutMs` and is being killed */
+	onTimeout: (job: string, w: BatchWorker) => void;
 	/** filled with a failed attempt's screenshot (`attemptKey`) */
 	screenshots: Map<string, string>;
 	/** filled with each attempt's log (`attemptKey`); a later pass overwrites, so a failed attempt keeps the failing run's */
@@ -369,15 +460,61 @@ type JobRunnerOptions = {
 	interrupted: () => boolean;
 };
 
+/** Arm the job timeout: `onExpire` (the screenshot) runs first, then SIGTERM, then SIGKILL after the grace period. */
+function watchdog(deps: BatchDeps, timeoutMs: number | undefined, proc: ProcHandle, onExpire: () => Promise<void>) {
+	let fired = false;
+	let cancelKill = () => {};
+	const cancel =
+		timeoutMs === undefined
+			? () => {}
+			: deps.after(timeoutMs, () => {
+					fired = true;
+					void onExpire().finally(() => {
+						proc.kill("SIGTERM");
+						cancelKill = deps.after(JOB_KILL_GRACE_MS, () => proc.kill("SIGKILL"));
+					});
+				});
+	return {
+		expired: () => fired,
+		cancel: () => {
+			cancel();
+			cancelKill();
+		},
+	};
+}
+
 /**
  * The per-job `run` for `runBatch`: expand the argv, spawn with the job env + log, track it for
  * SIGINT. With `passes` > 1 the job is spawned again after each green run (`WARDEN_PASS`, one log
- * per pass); the first red run is the attempt's exit code.
+ * per pass); the first red run is the attempt's exit code. A job past `jobTimeoutMs` is shot,
+ * then killed, and its attempt exits `TIMEOUT_EXIT`.
  */
 function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
-	const spawnOnce = async (w: BatchWorker, job: string, seq: number, pass: number): Promise<number> => {
-		const jobEnv = {
+	const { leg } = o.pool;
+	const baseJob = (id: string) => (o.qualified && leg !== undefined ? id.slice(0, -(leg.length + 1)) : id);
+	/** the device(s) of a failed attempt, next to its log (`….log` → `….png`, further pool devices `….<i>.png`); never throws */
+	const shoot = async (w: BatchWorker, seq: number, log: string): Promise<void> => {
+		const key = attemptKey({ worker: w.worker, seq });
+		const targets = o.single ? o.live : [w];
+		await Promise.all(
+			targets.map(async (device, i) => {
+				const path = log.replace(/\.log$/, i === 0 ? ".png" : `.${i}.png`);
+				try {
+					if ((await deps.screenshot(o.platform, device.udid, path)) && !o.screenshots.has(key))
+						o.screenshots.set(key, path);
+				} catch {
+					// best effort
+				}
+			})
+		);
+	};
+	/** env, argv and log of one spawn: the pool env + this worker's own agent-device state dir */
+	const plan = (w: BatchWorker, id: string, seq: number, pass: number) => {
+		const job = baseJob(id);
+		const stateDir = o.env.AGENT_DEVICE_STATE_DIR ?? join(o.batchDir, "agent-device", String(w.worker));
+		const env = {
 			...o.env,
+			AGENT_DEVICE_STATE_DIR: stateDir,
 			WARDEN_UDID: w.udid,
 			WARDEN_WORKER: String(w.worker),
 			WARDEN_JOB: job,
@@ -385,38 +522,44 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			WARDEN_PASS: String(pass),
 		};
 		const suffix = o.passes > 1 ? `.pass${pass}` : "";
-		const log = join(o.logDir, `${w.worker}-${seq}-${jobSlug(job)}${suffix}.log`);
+		const log = join(o.logDir, `${w.worker}-${seq}-${jobSlug(id)}${suffix}.log`);
+		const vars = {
+			job,
+			udid: w.udid,
+			worker: w.worker,
+			seq,
+			stateDir,
+			...o.vars,
+			...(leg !== undefined ? { leg } : {}),
+		};
+		const argv = expandArgv(o.hooks.argvFor ? o.hooks.argvFor(job) : o.cmd, vars);
+		return { job, env, log, argv };
+	};
+	const spawnOnce = async (w: BatchWorker, id: string, seq: number, pass: number): Promise<number> => {
+		const { job, env, log, argv } = plan(w, id, seq, pass);
 		o.logs.set(attemptKey({ worker: w.worker, seq }), log);
-		const argv = o.hooks.argvFor ? o.hooks.argvFor(job) : o.cmd;
 		let proc: ProcHandle;
 		try {
-			proc = deps.spawn(expandArgv(argv, { job, udid: w.udid, worker: w.worker, seq }), {
-				env: jobEnv,
-				log,
-				cwd: o.cwd,
-			});
+			const group = o.jobTimeoutMs !== undefined ? { group: true } : {};
+			proc = deps.spawn(argv, { env, log, cwd: o.cwd, job: true, ...group });
 		} catch {
 			return 127;
 		}
 		o.running.add(proc);
+		const timer = watchdog(deps, o.jobTimeoutMs, proc, async () => {
+			o.onTimeout(job, w);
+			await shoot(w, seq, log);
+		});
 		let code: number;
 		try {
 			code = await proc.exited;
 		} finally {
+			timer.cancel();
 			o.running.delete(proc);
 		}
+		if (timer.expired()) return TIMEOUT_EXIT;
 		if (code !== 0 && !o.interrupted()) await shoot(w, seq, log);
 		return code;
-	};
-	/** a failed attempt's device, next to its log (`….log` → `….png`); never throws */
-	const shoot = async (w: BatchWorker, seq: number, log: string): Promise<void> => {
-		const path = log.replace(/\.log$/, ".png");
-		try {
-			if (await deps.screenshot(o.platform, w.udid, path))
-				o.screenshots.set(attemptKey({ worker: w.worker, seq }), path);
-		} catch {
-			// best effort
-		}
 	};
 	return async (w: BatchWorker, job: string, seq: number): Promise<number> => {
 		for (let pass = 0; pass < o.passes; pass++) {
@@ -465,7 +608,7 @@ export type SessionResult = {
 	/** the log of each attempt (`attemptKey`): the failing run of that attempt when it failed */
 	logs?: Logs;
 	/** every device the run leased, `worker` indexed */
-	devices?: Array<{ worker: number; udid: string; name: string }>;
+	devices?: Array<{ worker: number; udid: string; name: string; leg?: string }>;
 	/** per-device setup outcomes, when the session ran a setup */
 	setups?: DeviceSetup[] | undefined;
 };
@@ -499,7 +642,7 @@ async function shutdownDevices(
 	for (const note of notes) ctx.err(ctx.ui.color.dim(`warden ${hooks.name}: ${note}`));
 }
 
-/** Per-device setup (`hooks.setup`): who is left to run jobs, every outcome, and why the run can't go on (no device left). */
+/** Per-device setup (`hooks.setup`) of one pool: who is left to run jobs and every outcome. */
 async function prepareDevices(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -510,7 +653,7 @@ async function prepareDevices(
 	cwd: string,
 	logDir: string,
 	running: Set<ProcHandle>
-): Promise<{ live: Device[]; setups?: DeviceSetup[]; failure?: string }> {
+): Promise<{ live: Device[]; setups?: DeviceSetup[] }> {
 	if (!spec) return { live: devices };
 	const setups = await setupDevices({
 		devices,
@@ -519,29 +662,350 @@ async function prepareDevices(
 		cwd,
 		logDir,
 		spawn: (argv, o) => deps.spawn(argv, o),
-		slim: deps.slim,
+		// recorded, so a later plain `warden claim` knows to restore the device
+		slim: async (udid) => {
+			const res = await deps.slim(udid);
+			if (res.success) ctx.store().setSlimmed("ios", udid, ctx.now());
+			return res;
+		},
 		track: (proc) => {
 			const handle = proc as ProcHandle;
 			running.add(handle);
 			return () => running.delete(handle);
 		},
 	});
-	const failed = setups.filter((d) => !d.ok);
 	for (const d of setups) {
 		if (d.slim && "error" in d.slim) ctx.err(ctx.ui.color.yellow(`warden ${name}: slim ${d.udid}: ${d.slim.error}`));
+		if (!d.ok)
+			ctx.err(ctx.ui.color.red(`warden ${name}: setup failed on ${d.udid} (exit ${d.exitCode}) — log: ${d.log}`));
 	}
-	for (const d of failed) {
-		ctx.err(ctx.ui.color.red(`warden ${name}: setup failed on ${d.udid} (exit ${d.exitCode}) — log: ${d.log}`));
-	}
-	const live = devices.filter((d) => setups.find((s) => s.worker === d.worker)?.ok);
-	if (live.length > 0) return { live, setups };
-	return { live, setups, failure: `setup failed on every device (logs: ${failed.map((d) => d.log).join(", ")})` };
+	return { live: devices.filter((d) => setups.find((s) => s.worker === d.worker)?.ok), setups };
 }
 
 /** 130 when the run was interrupted, else 0 for a clean pass and 1 for any failure. */
 const exitFor = (interrupted: boolean, passed: boolean): number => (interrupted ? 130 : passed ? 0 : 1);
 
-/** Everything after the claim: serve → recordings → jobs → stop serve → stop recordings → batch.json → release. */
+/** One pool per claim: the legs' devices in claim order, `worker` counted across all of them. */
+function buildPools(session: LeaseSession, args: BatchArgs): Pool[] {
+	let worker = 0;
+	return session.claims.map((claim, i): Pool => {
+		const leg = args.legs?.[i];
+		return {
+			...(leg ? { leg: leg.name } : {}),
+			env: leg?.env ?? {},
+			devices: claim.claimed.map((c) => ({
+				worker: worker++,
+				udid: c.device.id,
+				name: c.device.name,
+				...(leg ? { leg: leg.name } : {}),
+			})),
+		};
+	});
+}
+
+/**
+ * A pool's env: the run env with `WARDEN_UDIDS` / `WARDEN_UDID_<i>` narrowed to the pool's own
+ * devices (a leg's runner must not see another leg's), then the leg's env and `WARDEN_LEG`.
+ */
+function poolEnv(
+	base: Record<string, string | undefined>,
+	pool: Pool,
+	devices: readonly Device[]
+): Record<string, string | undefined> {
+	const env = Object.fromEntries(Object.entries(base).filter(([key]) => !/^WARDEN_UDID_\d+$/.test(key)));
+	env.WARDEN_UDIDS = devices.map((d) => d.udid).join(",");
+	devices.forEach((d, i) => {
+		env[`WARDEN_UDID_${i}`] = d.udid;
+	});
+	return { ...env, ...pool.env, ...(pool.leg !== undefined ? { WARDEN_LEG: pool.leg } : {}) };
+}
+
+/** Start the run's Metro on its leased port (verified to serve this project) and prewarm the bundle. */
+async function startRunMetro(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	plan: MetroPlan,
+	o: {
+		port: number | undefined;
+		env: Record<string, string | undefined>;
+		log: string;
+		platform: Platform;
+		interrupted: () => boolean;
+		started: (metro: Metro) => void;
+	}
+): AsyncResult<Metro> {
+	if (o.port === undefined) return err("metro: no port leased for it");
+	const metro = await withSpinner(ctx, `starting Metro on :${o.port}…`, async (_sctx, spinner) => {
+		const started = await startMetro(
+			{
+				probe: deps.metroProbe,
+				now: ctx.now,
+				sleep: deps.sleep,
+				spawn: (cmd, env, cwd) => deps.spawn(cmd, { env, log: o.log, cwd, group: true, metro: true }),
+			},
+			{
+				projectRoot: plan.projectRoot,
+				port: o.port ?? 0,
+				// CI: no interactive prompts (a busy port fails instead of asking) and no file watching
+				env: { ...o.env, ...plan.env, CI: "1" },
+				readyTimeoutMs: plan.readyTimeoutMs,
+				aborted: o.interrupted,
+			}
+		);
+		if (!started.success) {
+			spinner.fail("Metro not ready");
+			return started;
+		}
+		o.started(started.data);
+		if (plan.prewarm) {
+			spinner.update(`Metro on :${o.port}: building the ${o.platform} bundle…`);
+			const warmed = await deps.prewarm(started.data.url, o.platform);
+			if (!warmed.success) {
+				spinner.fail("Metro could not build the bundle");
+				return warmed;
+			}
+		}
+		spinner.succeed(`Metro on :${o.port} serves ${plan.projectRoot}`);
+		return started;
+	});
+	return metro.success ? metro : err(`${metro.error} (log: ${o.log})`);
+}
+
+/**
+ * Point every device at the run's Metro before its first job: Android gets the port reversed; iOS
+ * relaunches the app with `--initialUrl` when its bundle id is known. Failures only warn — the
+ * runner opens the app itself.
+ */
+async function openOnDevices(
+	ctx: CommandContext,
+	name: string,
+	platform: Platform,
+	plan: MetroPlan,
+	metro: Metro,
+	devices: readonly Device[]
+): Promise<void> {
+	const argvFor = (udid: string): string[] | undefined => {
+		if (platform === "android") return adbReverseArgv(udid, metro.port);
+		return plan.bundleId === undefined
+			? undefined
+			: devClientLaunchArgv(udid, plan.bundleId, metro.url, plan.launchArgs);
+	};
+	await Promise.all(
+		devices.map(async (d) => {
+			const argv = argvFor(d.udid);
+			if (!argv) return;
+			const res = await ctx.exec(argv);
+			if (res.exitCode !== 0) ctx.err(ctx.ui.color.yellow(`warden ${name}: ${execError(argv, res)}`));
+		})
+	);
+}
+
+/** The grid row of a pool's worker: in `single` mode one row stands for the whole pool. */
+function workerRows(live: readonly Device[], single: boolean): Device[] {
+	const [first, ...rest] = live;
+	if (!single || !first) return [...live];
+	return [{ ...first, name: rest.length > 0 ? `${first.name} +${rest.length}` : first.name }];
+}
+
+/** One scheduler per pool, run concurrently; their events feed one grid and their summaries merge. */
+async function runPools(
+	pools: readonly Queue[],
+	o: { retry: number; now: () => number; signal: AbortSignal; onEvent: (e: BatchEvent) => void }
+): Promise<BatchSummary> {
+	const summaries = await Promise.all(
+		pools.map((pool) =>
+			runBatch({
+				workers: pool.workers,
+				jobs: pool.jobs,
+				retry: o.retry,
+				now: o.now,
+				signal: o.signal,
+				// each pool reports its own `done`; the run has one
+				onEvent: (e) => {
+					if (e.type !== "done") o.onEvent(e);
+				},
+				run: pool.run,
+			})
+		)
+	);
+	const stopped = summaries.some((s) => s.stopped);
+	// a pool with no device left ran nothing: that is not a pass
+	const ok = summaries.every((s) => s.ok) && pools.every((p) => p.workers.length > 0 || p.jobs.length === 0);
+	o.onEvent({ type: "done", ok, stopped, at: o.now() });
+	return { ok, stopped, results: summaries.flatMap((s) => s.results), failed: summaries.flatMap((s) => s.failed) };
+}
+
+/** What the phases of one supervised run share. */
+type RunContext = {
+	name: string;
+	batchDir: string;
+	logDir: string;
+	platform: Platform;
+	/** the first leased port (Metro's, when the run owns one) */
+	port: number | undefined;
+	pools: Pool[];
+	devices: Device[];
+	hooks: SessionHooks & { name: string };
+	running: Set<ProcHandle>;
+	interrupted: () => boolean;
+	signal: AbortSignal;
+};
+
+/** The long-lived children of a run, stopped by `teardown`. */
+type Services = { serve?: ProcHandle | undefined; metro?: Metro | undefined; recordings: Recording[] };
+
+/** Metro → serve → recordings; resolves the job env + placeholder values once they are up. */
+async function startServices(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	baseEnv: Record<string, string | undefined>,
+	services: Services
+): AsyncResult<{ env: Record<string, string | undefined>; vars: RunVars }> {
+	if (args.metro) {
+		const started = await startRunMetro(ctx, deps, args.metro, {
+			port: r.port,
+			env: baseEnv,
+			log: join(r.batchDir, "metro.log"),
+			platform: r.platform,
+			interrupted: r.interrupted,
+			started: (metro) => {
+				services.metro = metro;
+			},
+		});
+		if (!started.success) return started;
+	}
+	const metroUrl = services.metro?.url;
+	const vars: RunVars = {
+		...(r.port !== undefined ? { port: r.port } : {}),
+		...(metroUrl !== undefined ? { metroUrl } : {}),
+	};
+	const env = { ...baseEnv, ...(metroUrl !== undefined ? { WARDEN_METRO_URL: metroUrl } : {}) };
+	if (args.serve) {
+		const up = await startServe(ctx, deps, args.serve, { r, env, vars, cwd: args.cwd, services });
+		if (!up.success) return up;
+	}
+	if (args.record) {
+		const started = await startRecordings(deps, args.record, r.devices);
+		if (!started.success) return started;
+		services.recordings = started.data;
+	}
+	return ok({ env, vars });
+}
+
+/** Start serve (`{port}` / `{metroUrl}` substituted) and wait until it is ready. */
+async function startServe(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	serve: Serve,
+	o: { r: RunContext; env: Record<string, string | undefined>; vars: RunVars; cwd: string; services: Services }
+): AsyncResult<void> {
+	const log = join(o.r.logDir, "serve.log");
+	const ready = serve.ready ? parseReadySpec(expandText(serve.ready.spec, o.vars), serve.ready.cwd) : ok(undefined);
+	if (!ready.success) return ready;
+	const proc = deps.spawn(["sh", "-c", expandText(serve.cmd, o.vars)], { env: o.env, log, group: true, cwd: o.cwd });
+	o.services.serve = proc;
+	const up = await waitReady(ctx, deps, serve, ready.data, proc, o.r.interrupted);
+	return up.success ? up : err(`${up.error} (log: ${log})`);
+}
+
+type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
+
+/** Per-device setup of every pool, concurrently; `setups` is undefined when the run has no setup. */
+async function preparePools(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	env: Record<string, string | undefined>
+): Promise<{ prepared: PreparedPool[]; setups: DeviceSetup[] | undefined }> {
+	const prepared = await Promise.all(
+		r.pools.map(async (pool): Promise<PreparedPool> => {
+			const setupEnv = poolEnv(env, pool, pool.devices);
+			const { setup } = r.hooks;
+			const done = await prepareDevices(
+				ctx,
+				deps,
+				r.name,
+				setup,
+				pool.devices,
+				setupEnv,
+				args.cwd,
+				r.logDir,
+				r.running
+			);
+			return { pool, ...done };
+		})
+	);
+	return { prepared, setups: r.hooks.setup ? prepared.flatMap((p) => p.setups ?? []) : undefined };
+}
+
+type Queue = { workers: Device[]; jobs: string[]; run: ReturnType<typeof jobRunner> };
+
+/** One job queue per pool: its workers (one per device, or one for the pool in `single` mode) and its job runner. */
+function poolQueues(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	prepared: readonly PreparedPool[],
+	o: {
+		jobs: string[];
+		cmd: string[];
+		env: Record<string, string | undefined>;
+		vars: RunVars;
+		screenshots: Map<string, string>;
+		logs: Map<string, string>;
+	}
+): Queue[] {
+	const qualified = r.pools.length > 1;
+	const single = args.single === true;
+	const onTimeout = (job: string, w: BatchWorker) => {
+		const after = formatDuration(args.jobTimeoutMs ?? 0);
+		ctx.err(ctx.ui.color.red(`warden ${r.name}: ${job} still running on ${w.udid} after ${after} — killing it`));
+	};
+	return prepared.map((p) => ({
+		workers: workerRows(p.live, single),
+		jobs: o.jobs.map((job) => legJob(job, qualified ? p.pool.leg : undefined)),
+		run: jobRunner(deps, {
+			cmd: o.cmd,
+			env: poolEnv(o.env, p.pool, p.live),
+			pool: p.pool,
+			live: p.live,
+			qualified,
+			single,
+			vars: o.vars,
+			cwd: args.cwd,
+			batchDir: r.batchDir,
+			logDir: r.logDir,
+			passes: args.passes,
+			platform: r.platform,
+			jobTimeoutMs: args.jobTimeoutMs,
+			onTimeout,
+			screenshots: o.screenshots,
+			logs: o.logs,
+			running: r.running,
+			interrupted: r.interrupted,
+			hooks: r.hooks,
+		}),
+	}));
+}
+
+/** The run env before Metro is up: lease env + preset / suite env + `WARDEN_BATCH_DIR` / `WARDEN_PORT`. */
+function runEnv(session: LeaseSession, args: BatchArgs, batchDir: string): Record<string, string | undefined> {
+	// the invoking shell's agent-device state dir must not leak into the jobs: each worker gets its own
+	const { AGENT_DEVICE_STATE_DIR: _shared, ...sessionEnv } = session.env;
+	const port = session.ports[0]?.port;
+	return {
+		...sessionEnv,
+		...args.env,
+		WARDEN_BATCH_DIR: batchDir,
+		...(port !== undefined ? { WARDEN_PORT: String(port) } : {}),
+	};
+}
+
+/** Everything after the claim: Metro → serve → recordings → setup → jobs → stop serve / recordings / Metro → batch.json → release. */
 async function supervise(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -551,96 +1015,76 @@ async function supervise(
 	session: LeaseSession,
 	hooks: SessionHooks & { name: string }
 ): Promise<SessionResult> {
-	const { name } = hooks;
 	const batchId = deps.newId();
 	const batchDir = args.record ?? join(wardenHome(ctx.env), "batches", batchId);
 	const logDir = args.logs ?? join(batchDir, "logs");
-	const env = { ...session.env, ...args.env, WARDEN_BATCH_DIR: batchDir };
-	const devices: Device[] = session.outcome.claimed.map((c, worker) => ({
-		worker,
-		udid: c.device.id,
-		name: c.device.name,
-	}));
 	const controller = new AbortController();
-	const running = new Set<ProcHandle>();
+	const pools = buildPools(session, args);
+	const r: RunContext = {
+		name: hooks.name,
+		batchDir,
+		logDir,
+		platform: args.flags.request.platform,
+		port: session.ports[0]?.port,
+		pools,
+		devices: pools.flatMap((p) => p.devices),
+		hooks,
+		running: new Set<ProcHandle>(),
+		interrupted: () => controller.signal.aborted,
+		signal: controller.signal,
+	};
 	const screenshots = new Map<string, string>();
 	const logs = new Map<string, string>();
 	const stopHold = holdLeases(ctx, deps, session.leaseIds, (signal) => {
 		controller.abort();
-		for (const job of running) job.kill(signal);
+		for (const job of r.running) job.kill(signal);
 	});
-	const interrupted = () => controller.signal.aborted;
-	let serve: ProcHandle | undefined;
-	let recordings: Recording[] = [];
+	const services: Services = { recordings: [] };
 	const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
-		ctx.err(ctx.ui.color.red(`warden ${name}: ${message}`));
-		return { code: interrupted() ? 130 : 1, ...extra };
+		ctx.err(ctx.ui.color.red(`warden ${r.name}: ${message}`));
+		return { code: r.interrupted() ? 130 : 1, ...extra };
 	};
-	/** workers are done: serve first, then the recordings (the contract's stop order) */
+	/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
 	const teardown = async () => {
-		const [proc, recs] = [serve, recordings];
-		serve = undefined;
-		recordings = [];
-		if (proc) await stopServe(deps, proc);
-		await Promise.all(recs.map((r) => r.stop()));
+		const { serve, metro, recordings } = services;
+		services.serve = undefined;
+		services.metro = undefined;
+		services.recordings = [];
+		if (serve) await stopServe(deps, serve);
+		await Promise.all(recordings.map((rec) => rec.stop()));
+		await metro?.stop();
 	};
 	try {
 		await deps.mkdir(logDir);
-		if (args.serve) {
-			const log = join(logDir, "serve.log");
-			serve = deps.spawn(["sh", "-c", args.serve.cmd], { env, log, group: true, cwd: args.cwd });
-			const ready = await waitReady(ctx, deps, args.serve, serve, interrupted);
-			if (!ready.success) return fail(`${ready.error} (log: ${log})`);
+		const up = await startServices(ctx, deps, args, r, runEnv(session, args, batchDir), services);
+		if (!up.success) return fail(up.error, { batchDir });
+		const { env, vars } = up.data;
+		const { prepared, setups } = await preparePools(ctx, deps, args, r, env);
+		const live = prepared.flatMap((p) => p.live);
+		if (live.length === 0) {
+			const failedLogs = (setups ?? []).filter((d) => !d.ok).map((d) => d.log);
+			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
 		}
-		if (args.record) {
-			const started = await startRecordings(deps, args.record, devices);
-			if (!started.success) return fail(started.error);
-			recordings = started.data;
-		}
-		const prepared = await prepareDevices(ctx, deps, name, hooks.setup, devices, env, args.cwd, logDir, running);
-		if (prepared.failure !== undefined) return fail(prepared.failure, { batchDir, setups: prepared.setups });
-		const { live, setups } = prepared;
+		if (args.metro && services.metro) await openOnDevices(ctx, r.name, r.platform, args.metro, services.metro, live);
+		const queues = poolQueues(ctx, deps, args, r, prepared, { jobs, cmd, env, vars, screenshots, logs });
+		const total = queues.reduce((n, q) => n + q.jobs.length, 0);
 		const startedAt = ctx.now();
-		const screen = display(ctx, deps, args, { current: initialView(live, jobs.length, startedAt) });
-		const summary = await runBatch({
-			workers: live,
-			jobs,
+		const rows = queues.flatMap((q) => q.workers);
+		const screen = display(ctx, deps, args, { current: initialView(rows, total, startedAt) });
+		const summary = await runPools(queues, {
 			retry: args.retry,
 			now: ctx.now,
-			signal: controller.signal,
+			signal: r.signal,
 			onEvent: screen.event,
-			run: jobRunner(deps, {
-				cmd,
-				env,
-				cwd: args.cwd,
-				logDir,
-				passes: args.passes,
-				platform: args.flags.request.platform,
-				screenshots,
-				logs,
-				running,
-				interrupted,
-				hooks,
-			}),
 		});
 		const endedAt = ctx.now();
 		screen.end();
 		await teardown();
-		const run: BatchRun = {
-			batchId,
-			batchDir,
-			logDir,
-			cmd,
-			devices,
-			total: jobs.length,
-			startedAt,
-			endedAt,
-			summary,
-			screenshots,
-		};
+		const { devices } = r;
+		const run: BatchRun = { batchId, batchDir, logDir, cmd, devices, total, startedAt, endedAt, summary, screenshots };
 		await report(ctx, deps, args, screen.cast ? { ...run, cast: screen.cast } : run);
-		if (!interrupted()) await shutdownDevices(ctx, hooks, session, summary);
-		return { code: exitFor(interrupted(), summary.ok), batchDir, summary, screenshots, logs, devices, setups };
+		if (!r.interrupted()) await shutdownDevices(ctx, hooks, session, summary);
+		return { code: exitFor(r.interrupted(), summary.ok), batchDir, summary, screenshots, logs, devices, setups };
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	} finally {
@@ -730,11 +1174,19 @@ export function mergePreset(
 	};
 }
 
-/** More devices than jobs would idle: claim at most one device per job (same `args` when no change). */
+const clampFlags = (flags: ClaimFlags, jobCount: number): ClaimFlags =>
+	jobCount >= flags.request.count ? flags : { ...flags, request: { ...flags.request, count: Math.max(1, jobCount) } };
+
+/**
+ * More devices than jobs would idle: claim at most one device per job, per leg (same `args` when no
+ * change). A `single` run hands its one job the whole pool, so nothing is clamped.
+ */
 export function clampToJobs(args: BatchArgs, jobCount: number): BatchArgs {
-	const { request } = args.flags;
-	if (jobCount >= request.count) return args;
-	return { ...args, flags: { ...args.flags, request: { ...request, count: Math.max(1, jobCount) } } };
+	if (args.single) return args;
+	const flags = clampFlags(args.flags, jobCount);
+	const legs = args.legs?.map((leg) => ({ ...leg, flags: clampFlags(leg.flags, jobCount) }));
+	const unchanged = flags === args.flags && (legs ?? []).every((leg, i) => leg.flags === args.legs?.[i]?.flags);
+	return unchanged ? args : { ...args, flags, ...(legs ? { legs } : {}) };
 }
 
 /** Parse → load jobs → claim (under a spinner) → supervise; exit 0 only when every job passed. */
@@ -780,17 +1232,17 @@ export async function runSession(
 	if (lease !== args) ctx.err(color.dim(`warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`));
 	const owner = resolveOwner(ctx);
 	maybeAutoGc(ctx);
-	const { count, profile, platform } = lease.flags.request;
-	const claimed = await withSpinner(
-		ctx,
-		`claiming ${count} ${profile} ${platform} device(s)…`,
-		async (sctx, spinner) => {
-			const result = await claimAll(sctx, deps, owner, lease, name);
-			if (result.success) spinner.succeed(`leased ${result.data.outcome.claimed.map((c) => c.device.name).join(", ")}`);
-			else spinner.fail("claim failed");
-			return result;
-		}
-	);
+	const { platform } = lease.flags.request;
+	const wanted = (lease.legs?.map((leg) => leg.flags) ?? [lease.flags])
+		.map((flags) => `${flags.request.count} ${flags.request.profile}`)
+		.join(" + ");
+	const claimed = await withSpinner(ctx, `claiming ${wanted} ${platform} device(s)…`, async (sctx, spinner) => {
+		const legFlags = lease.legs?.map((leg) => leg.flags);
+		const result = await claimAll(sctx, deps, owner, legFlags ? { ...lease, legFlags } : lease, name);
+		if (result.success) spinner.succeed(`leased ${result.data.outcome.claimed.map((c) => c.device.name).join(", ")}`);
+		else spinner.fail("claim failed");
+		return result;
+	});
 	if (!claimed.success) {
 		ctx.err(color.red(`warden ${name}: ${claimed.error}`));
 		return { code: 1 };
@@ -805,9 +1257,13 @@ export function withBatchOptions<Args extends unknown[], Opts extends OptionValu
 	return cmd
 		.option("--retry <n>", "re-run a failed job up to N times on the same device", "0")
 		.option("--passes <n>", "a job passes after N consecutive green runs on its device", "1")
-		.option("--serve <sh-cmd>", "start this (sh -c, own process group) before the jobs; killed at the end")
-		.option("--serve-ready <probe>", "wait for http://…, tcp:PORT or file:PATH before starting jobs")
+		.option(
+			"--serve <sh-cmd>",
+			"start this (sh -c, own process group) before the jobs; killed at the end; {port} = the first leased port"
+		)
+		.option("--serve-ready <probe>", "wait for http://…, tcp:PORT or file:PATH before starting jobs (tcp:{port} works)")
 		.option("--serve-timeout <duration>", "--serve-ready: give up after this long", "10m")
+		.option("--job-timeout <duration>", "kill a job still running after this long (it counts as failed)")
 		.option("--record <dir>", "iOS: record every simulator + the TUI into DIR (batch.json, tui.cast, dev-<i>.mp4)")
 		.option("--logs <dir>", "per-job logs (default: <record dir>/logs or $WARDEN_HOME/batches/<id>/logs)")
 		.option("--no-tui", "plain log lines instead of the live grid");
@@ -903,6 +1359,12 @@ export const defaultBatchDeps: BatchDeps = {
 	},
 	onSignal: processOnSignal,
 	every: intervalEvery,
+	after: (ms, fn) => {
+		const timer = setTimeout(fn, ms);
+		return () => clearTimeout(timer);
+	},
+	metroProbe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
+	prewarm: prewarmMetro,
 };
 
 export const batchCommand: Command = createBatchCommand(defaultBatchDeps);

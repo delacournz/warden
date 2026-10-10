@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
 import { projectContext } from "@delacour/warden-core/builds/ensure";
+import { DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { bunExec } from "@delacour/warden-core/exec";
 import { isPortFree } from "@delacour/warden-core/ports";
@@ -38,9 +39,9 @@ import { withSpinner } from "../spinner-context";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 
 /** Metro port range `warden dev` leases from. */
-export const DEV_PORT_SPEC = "8081:100";
+export const DEV_PORT_SPEC = DEFAULT_METRO_PORT_SPEC;
 /** How long to wait for Metro's `/status` before giving up. */
-export const DEV_READY_TIMEOUT = "2m";
+export const DEV_READY_TIMEOUT = DEFAULT_METRO_READY_TIMEOUT;
 
 /** Side effects of `warden dev`, injectable for tests. */
 export type DevDeps = Omit<LeaseSessionDeps, "ensureApp"> & {

@@ -186,6 +186,8 @@ warden e2e mobile --base origin/main --count 2        # run them on leased devic
 
 An `e2e.<suite>` in `warden.config.ts` maps flow files to the screens they drive (`entries`) and globs (`paths`). Warden takes the git diff against the merge-base, walks each flow's import graph with the TypeScript resolver (tsconfig `paths`, workspace packages, per-platform `.ios` / `.android` files, type-only imports dropped), and runs only the flows a changed file reaches, with `runAll` globs (lockfile, native dirs) selecting everything. `warden e2e` runs them like `warden batch`, each `passes` times, and writes `e2e-report.json`. See the [Affected e2e guide](apps/docs/content/docs/guides/affected-e2e.mdx).
 
+Dev-client suites add `metro: {}`: `warden e2e <suite>` then leases a port, starts its own Metro in the project root, waits until that port is proven to serve this checkout (another worktree's Metro on it fails the run instead of being attached to), prewarms the bundle and exports `WARDEN_METRO_URL` / `WARDEN_PORT` to the runner. `devices: [{ profile, count, env, default }]` runs several device legs concurrently (`--devices all`), `mode: "single"` hands one runner process the whole pool, and `jobTimeoutMs` (default 10 min) kills a hung runner. Every runner gets its own `AGENT_DEVICE_STATE_DIR`.
+
 ### App builds
 
 ```bash

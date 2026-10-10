@@ -1,4 +1,5 @@
 import type { ReadySpec } from "../batch/serve";
+import type { MetroOwner } from "../metro";
 import type { BatchDeps, KillSignal, ProcHandle, SpawnOptions } from "./batch";
 
 export type Spawned = { cmd: string[]; opts: SpawnOptions; kills: KillSignal[]; finish: (code: number) => void };
@@ -10,6 +11,13 @@ export type Harness = {
 	/** per-device `setup` spawns */
 	setups: () => Spawned[];
 	serve: () => Spawned | undefined;
+	/** the run's own Metro */
+	metro: () => Spawned | undefined;
+	/** armed `after` timers (job timeouts): call `fire` to expire one */
+	timers: Array<{ ms: number; fire: () => void; cancelled: boolean }>;
+	/** every Metro probe: `<port> <projectRoot>` */
+	metroProbes: string[];
+	prewarmed: string[];
 	files: Map<string, string>;
 	dirs: string[];
 	events: string[];
@@ -39,13 +47,18 @@ export function harness(
 		screenshot?: "ok" | "fail" | "throw";
 		/** the `slim` effect: "fail" resolves an error */
 		slim?: "ok" | "fail";
+		/** who the Metro probe finds on the leased port (default: this project's Metro) */
+		metroOwner?: MetroOwner;
+		/** the prewarm outcome: "fail" = the bundle does not build */
+		prewarm?: "ok" | "fail";
 	} = {}
 ): Harness {
 	const h: Harness = {
 		spawned: [],
-		jobs: () => h.spawned.filter((s) => !s.opts.group && !s.opts.setup),
+		jobs: () => h.spawned.filter((s) => s.opts.job),
 		setups: () => h.spawned.filter((s) => s.opts.setup),
-		serve: () => h.spawned.find((s) => s.opts.group),
+		serve: () => h.spawned.find((s) => s.opts.group && !s.opts.job && !s.opts.metro),
+		metro: () => h.spawned.find((s) => s.opts.metro),
 		files: new Map(),
 		dirs: [],
 		events: [],
@@ -54,6 +67,9 @@ export function harness(
 		terminal: [],
 		shots: [],
 		slimmed: [],
+		timers: [],
+		metroProbes: [],
+		prewarmed: [],
 		deps: {
 			pid: 777,
 			isPortFree: async () => true,
@@ -65,17 +81,18 @@ export function harness(
 				const entry: Spawned = { cmd, opts: spawnOpts, kills: [], finish: (code) => resolveExit(code) };
 				h.spawned.push(entry);
 				const job = spawnOpts.env.WARDEN_JOB;
+				const daemon = spawnOpts.metro ? "metro" : spawnOpts.group && !spawnOpts.job ? "serve" : undefined;
 				h.events.push(
-					spawnOpts.group ? "serve:start" : spawnOpts.setup ? `setup:${spawnOpts.env.WARDEN_UDID}` : `job:${job}`
+					daemon ? `${daemon}:start` : spawnOpts.setup ? `setup:${spawnOpts.env.WARDEN_UDID}` : `job:${job}`
 				);
-				if (!spawnOpts.group && !opts.manual)
+				if (!daemon && !opts.manual)
 					queueMicrotask(() => resolveExit(opts.exitCodeFor?.(spawnOpts.env) ?? opts.exitCodes?.[job ?? ""] ?? 0));
 				return {
 					exited,
 					kill: (signal) => {
 						entry.kills.push(signal);
-						h.events.push(`${spawnOpts.group ? "serve" : `job:${job}`}:${signal}`);
-						if (spawnOpts.group && opts.serveExitsOnKill !== false) resolveExit(143);
+						h.events.push(`${daemon ?? `job:${job}`}:${signal}`);
+						if (daemon && opts.serveExitsOnKill !== false) resolveExit(143);
 					},
 				};
 			},
@@ -122,6 +139,23 @@ export function harness(
 				return () => h.signals.delete(signal);
 			},
 			every: (_ms, _fn) => () => {},
+			after: (ms, fn) => {
+				const timer = { ms, fire: fn, cancelled: false };
+				h.timers.push(timer);
+				return () => {
+					timer.cancelled = true;
+				};
+			},
+			metroProbe: async (port, projectRoot) => {
+				h.metroProbes.push(`${port} ${projectRoot}`);
+				return opts.metroOwner ?? { kind: "ours" };
+			},
+			prewarm: async (url, platform) => {
+				h.prewarmed.push(`${platform} ${url}`);
+				return opts.prewarm === "fail"
+					? { success: false, error: "Metro could not build the ios bundle (HTTP 500): SyntaxError" }
+					: { success: true, data: { bundled: true } };
+			},
 		},
 	};
 	return h;

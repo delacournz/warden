@@ -68,7 +68,7 @@ See [e2e scripts](/docs/guides/e2e).
 
 ### `warden batch [platform|preset] [-- <cmd...>]`
 
-Claim devices and fan a job queue out over them, one worker per device; the command runs once per job with `{job}`, `{udid}`, `{worker}` and `{seq}` substituted. Takes every `run` flag, plus:
+Claim devices and fan a job queue out over them, one worker per device; the command runs once per job with `{job}`, `{udid}`, `{worker}`, `{seq}`, `{port}` (the first leased port) and `{stateDir}` substituted. Takes every `run` flag, plus:
 
 | Flag | |
 |---|---|
@@ -76,13 +76,14 @@ Claim devices and fan a job queue out over them, one worker per device; the comm
 | `--retry <n>` | re-run a failed job up to N times on the same device |
 | `--passes <n>` | a job passes only after N consecutive green runs on its device (`WARDEN_PASS`) |
 | `--serve <sh-cmd>` | a long-lived process (e.g. Metro) started before the jobs, killed at the end |
-| `--serve-ready <probe>` | wait for `http://…`, `tcp:PORT` or `file:PATH` first |
+| `--serve-ready <probe>` | wait for `http://…`, `tcp:PORT` or `file:PATH` first; `{port}` works here and in `--serve` (`tcp:{port}`) |
 | `--serve-timeout <duration>` | give up waiting for `--serve-ready` (default `10m`) |
+| `--job-timeout <duration>` | a job still running after this is screenshotted, killed and failed (exit 124); off by default |
 | `--record <dir>` | iOS: record every simulator and the TUI (`batch.json`, `tui.cast`, `dev-<i>.mp4`) |
 | `--logs <dir>` | per-job logs |
 | `--no-tui` | plain log lines instead of the live grid |
 
-`--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed.
+`--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed. Every job gets its own `AGENT_DEVICE_STATE_DIR` (`<batch dir>/agent-device/<worker>`, also `{stateDir}`), so parallel runners never share an agent-device daemon; a value in the preset / suite `env` wins.
 
 If the first operand is the name of a preset in [`warden.config.ts`](/docs/reference/configuration#batches) `batches` (found by walking up from the cwd to the git root), that preset supplies the platform and defaults:
 
@@ -128,9 +129,11 @@ Select like `warden affected`, then run the flows like `warden batch` — the su
 | `--all` | run every flow of the suite (after `include` / `exclude`), no git diff |
 | `--flows <list>` | run exactly these flow ids / globs (comma-separated), no git diff; a list matching nothing fails |
 | `--report <file>` | also write `e2e-report.json` here |
+| `--devices <legs>` | which `devices` legs run: `default` (the default), `all`, or profile names (comma-separated) |
+| `--job-timeout <duration>` | overrides the suite's `jobTimeoutMs` (default 10 min) |
 | `--no-shutdown` | keep the devices running after the gate passes |
 
-The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. Flows run in id order (sorted file path), so `count: 1` is a stable serial run. Nothing affected → exit 0 without claiming. Every failed flow is named at the end with its device, runner log and failure screenshot (also `device`, `log`, `screenshot` on the flow in `e2e-report.json`). Leases are always released at the end; when the gate passes, the devices warden created (or booted for the run) are shut down first — a failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
+The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. With [`metro`](/docs/reference/configuration#e2e) warden starts and verifies its own Metro before any flow and stops it last. With `devices`, every picked leg claims its own pool and runs the flows concurrently (`--profile` / `--count` replace the legs with one claim); the report then has one verdict per flow and leg. With `mode: "single"` one runner process per leg runs every selected flow and its exit code is their shared verdict. Flows run in id order (sorted file path), so `count: 1` is a stable serial run. Nothing affected → exit 0 without claiming. Every failed flow is named at the end with its device, runner log and failure screenshot (also `device`, `log`, `screenshot` on the flow in `e2e-report.json`). Leases are always released at the end; when the gate passes, the devices warden created (or booted for the run) are shut down first — a failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
 
 ### `warden ls`
 
