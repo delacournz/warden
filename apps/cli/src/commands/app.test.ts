@@ -249,4 +249,17 @@ describe("warden app ensure", () => {
 		expect(await createAppCommand(deps).run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("missing platform");
 	});
+
+	test("--project that is not a directory → one clear error, nothing spawned", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--no-install", "--project", "apps/nope"], [], calls);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain(
+			`--project apps/nope: no such directory ${join(c.cwd, "apps/nope")} (cwd ${c.cwd})`
+		);
+		expect(calls).toEqual([]);
+		c.argv = ["fingerprint", "ios", "--project", "apps/nope"];
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(calls).toEqual([]);
+	});
 });

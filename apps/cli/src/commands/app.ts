@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { type EnsureInput, ensureApp, type ProjectContext, projectContext } from "@delacour/warden-core/builds/ensure";
 import { type CacheKey, computeCacheKey } from "@delacour/warden-core/builds/fingerprint";
@@ -44,17 +45,27 @@ function log(ctx: CommandContext, line: string): void {
 	ctx.err(`[warden] ${line}`);
 }
 
+/** Where project discovery starts: `--project` (relative to cwd, must be a directory) or cwd. */
+export function projectStart(ctx: CommandContext, project: string | undefined): Result<string> {
+	if (!project) return ok(ctx.cwd);
+	const start = resolve(ctx.cwd, project);
+	return statSync(start, { throwIfNoEntry: false })?.isDirectory()
+		? ok(start)
+		: err(`--project ${project}: no such directory ${start} (cwd ${ctx.cwd})`);
+}
+
 async function loadContext(
 	ctx: CommandContext,
 	opts: Pick<EnsureOptions, "project" | "bundleId" | "variant" | "variantOptional">,
 	platform?: Platform
 ): AsyncResult<ProjectContext> {
-	const start = opts.project ? resolve(ctx.cwd, opts.project) : ctx.cwd;
+	const start = projectStart(ctx, opts.project);
+	if (!start.success) return start;
 	const bundleId = opts.bundleId !== undefined && platform !== undefined ? { [platform]: opts.bundleId } : undefined;
 	return projectContext({
 		exec: ctx.exec,
 		env: ctx.env,
-		start,
+		start: start.data,
 		...(bundleId ? { bundleId } : {}),
 		...(opts.variant !== undefined ? { variant: opts.variant } : {}),
 		...(opts.variantOptional ? { variantOptional: true } : {}),

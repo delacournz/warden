@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
 import { projectContext } from "@delacour/warden-core/builds/ensure";
 import { parseDuration } from "@delacour/warden-core/duration";
@@ -26,7 +26,7 @@ import {
 	splitCommand,
 } from "../lease-session";
 import { withSpinner } from "../spinner-context";
-import { defaultAppDeps, type EnsureOptions, ensureAppFor } from "./app";
+import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 
 /** Metro port range `warden dev` leases from. */
 export const DEV_PORT_SPEC = "8081:100";
@@ -231,12 +231,13 @@ async function dev(
 	if (!timeout.success) return fail(`--ready-timeout: ${timeout.error}`);
 	const owner = resolveOwner(ctx);
 	maybeAutoGc(ctx);
-	const start = opts.project ? resolve(ctx.cwd, opts.project) : ctx.cwd;
+	const start = projectStart(ctx, opts.project);
+	if (!start.success) return fail(start.error);
 	const variant = opts.variant ?? "dev";
 	const project = await projectContext({
 		exec: ctx.exec,
 		env: ctx.env,
-		start,
+		start: start.data,
 		...(opts.bundleId !== undefined ? { bundleId: { [platform.data]: opts.bundleId } } : {}),
 		variant,
 		...(opts.variant === undefined ? { variantOptional: true } : {}),
@@ -244,7 +245,7 @@ async function dev(
 	if (!project.success) return fail(project.error);
 	const scheme = await devScheme(ctx, project.data.project, opts.scheme);
 	if (!scheme.success) return fail(scheme.error);
-	const app = ensureOptions(start, variant, opts);
+	const app = ensureOptions(start.data, variant, opts);
 
 	const session = await withSpinner(ctx, `preparing the ${platform.data} dev build…`, async (sctx, spinner) => {
 		const result = await openSession(sctx, deps, owner, platform.data, opts, app);

@@ -185,4 +185,14 @@ describe("warden dev", () => {
 		expect(kills).toEqual(["SIGTERM"]);
 		expect(c.db.listLeases()).toEqual([]);
 	});
+
+	test("--project that is not a directory → clear error before anything is claimed", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios", "--project", "nope"], calls);
+		const h = harness();
+		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain(`--project nope: no such directory ${join(c.cwd, "nope")} (cwd ${c.cwd})`);
+		expect(calls).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
 });
