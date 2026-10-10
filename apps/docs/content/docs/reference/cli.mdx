@@ -140,6 +140,15 @@ List leases: resource, state, owner, repo/worktree, age, heartbeat.
 
 Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases.
 
+### Device health: `release --bad`, `sim unquarantine`
+
+After booting or reusing an iOS sim, `warden claim` checks that `simctl spawn <udid> launchctl print system` answers within 5 s and that SpringBoard is running. A device that fails is quarantined (recorded in the store with a reason, shut down if warden created it) and the claim picks another one; after 2 retries it fails with a clear error. A foreign device that fails is skipped, never touched. Android has no probe yet.
+
+- `warden release <leaseId…> --bad [reason]` releases and quarantines the devices by hand (warden devices only). Quarantined devices are never allocated and free their pool slot.
+- `warden sim unquarantine <udid|serial>` clears it. `warden devices` shows `quarantined` and `slim` next to the warden column.
+- A claim that has to build the golden image prints `warden ... prewarm with: warden golden ensure --profile <profile>` first.
+- `warden app ensure` no longer trusts its install record alone: on iOS it also compares the installed app's `CFBundleVersion`, executable size and `main.jsbundle` size with the cached build, and reinstalls on a difference.
+
 ### `warden sim slim [udid]`
 
 iOS. Switches off the launchd jobs inside a booted simulator that UI flows never need — Siri, Apple Intelligence, Health, News, Mail, Photos analysis, Game Center, Wallet and friends (a conservative denylist; SpringBoard, installd, XCTest, the accessibility tree and the keyboard are never touched). A booted simulator runs 200+ such processes; with several simulators side by side, that is the RAM and CPU a flow suite is starved of.
@@ -150,7 +159,7 @@ iOS. Switches off the launchd jobs inside a booted simulator that UI flows never
 | `--dry-run` | list the jobs, change nothing |
 | `--restore` | re-enable them (fully effective on the next boot) |
 
-Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/guides/affected-e2e#per-device-setup).
+Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. `slim` and `--restore` record the state per device; a plain `warden claim` re-enables a device left slimmed (jobs already booted out stay down until its next reboot). In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/guides/affected-e2e#per-device-setup).
 
 ### `warden sims audit | prune | delete`
 

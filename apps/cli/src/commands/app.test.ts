@@ -114,6 +114,8 @@ describe("warden app ensure", () => {
 			[
 				["xcrun simctl install U1", {}],
 				["xcrun simctl get_app_container U1 com.demo", { stdout: "/x" }],
+				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
+				["stat -f %z", { stdout: "7\n" }],
 			],
 			calls
 		);

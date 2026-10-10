@@ -82,6 +82,8 @@ warden claim ios --json                          # lease 1 sim (reuse → boot �
 warden claim android --profile pixel-10 --count 2
 warden claim ios --count 2 --wait 10m --ttl 1h --label e2e
 warden release --mine [--label x] [--shutdown]   # or <leaseId…> | --udid X | --session S; --label = only --mine leases with that label; --shutdown = warden-created or self-booted sims
+warden release <leaseId> --bad [reason]          # release + quarantine the device (claims skip it); clear: warden sim unquarantine <udid>
+warden sim slim <udid> [--restore]               # slim state is recorded; a plain `warden claim` re-enables what a run left slimmed
 warden ls                                        # leases: resource, state, owner, repo/worktree, age, heartbeat
 warden clone <udid|name> [--name x]              # duplicate a shut-down sim into the pool (seconds, no first boot)
 warden golden ensure|ls|prune [--all]            # golden images new sims are cloned from
@@ -124,9 +126,16 @@ A brand-new simulator's first boot (Apple logo + progress bar) takes 1–10 min,
 So when `warden claim ios` needs a **new** pool device, it `simctl clone`s it from a **golden image**. That is a sim warden booted once, waited on until its data migration had finished (`DMLastMigrationResults`, since `bootstatus -b` can return early) and its CPU had settled, then shut down. The golden is built on first use and keyed by Xcode build + runtime + runtime build + device type + recipe, so an Xcode or runtime upgrade simply builds a new one (`warden golden prune` removes old ones). Clones are APFS copy-on-write (~30 MB each). If cloning fails, warden falls back to `simctl create`. Set `WARDEN_GOLDEN=0` to turn cloning off.
 
 - `warden golden ensure [--profile iphone-17]`: build ahead of time, so the first claim doesn't pay for it.
+- A claim that has to build the golden prints `building golden for <profile> … prewarm with: warden golden ensure --profile <profile>` on stderr first.
 - `warden clone <udid|name> [--name x]`: duplicate any **shut-down** sim, e.g. one you've set up by hand, into warden's pool. warden refuses a booted source rather than shutting it down.
 - Goldens are never allocated, adopted, booted by `gc` or counted in the pool, and `warden devices` labels them `golden`.
 - A pool device that already exists is always reused first; a second boot takes ~6.5 s.
+
+### Device health
+
+- After booting (or reusing) an iOS sim, `warden claim` probes it: `simctl spawn <udid> launchctl print system` must answer within 5 s and SpringBoard must be running. A sim that fails is quarantined (and shut down) and another one is claimed, up to 2 retries, then a clear error. Foreign devices that fail are only skipped. Android has no probe yet.
+- `warden release <id> --bad [reason]` quarantines the released warden device by hand. `warden devices` shows `quarantined` / `slim`. `warden sim unquarantine <udid|serial>` clears it.
+- `warden app ensure` re-installs when the app on the device no longer matches the cached build (iOS: `CFBundleVersion`, executable size and `main.jsbundle` size).
 
 ### e2e scripts: `warden run`
 

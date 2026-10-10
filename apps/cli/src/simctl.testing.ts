@@ -17,6 +17,7 @@ export function fakeSimctl(
 			["xcrun simctl boot", {}],
 			["xcrun simctl bootstatus", {}],
 			["xcrun simctl shutdown", {}],
+			["xcrun simctl spawn", { stdout: "PID\tStatus\tLabel\n412\t0\tUIKitApplication:com.apple.springboard[x]\n" }],
 		],
 		calls
 	);

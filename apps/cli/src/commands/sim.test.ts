@@ -74,4 +74,28 @@ describe("warden sim slim", () => {
 		expect(c.stderr.join("\n")).toContain("leased by");
 		expect(calls.some((x) => x.includes("disable"))).toBe(false);
 	});
+
+	test("records the slimmed state per device; --restore clears it; --dry-run leaves it", async () => {
+		const c = setup(["slim", "U1", "--dry-run"]);
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
+		await createSimCommand().run(c);
+		expect(c.db.listDevices()[0]?.slimmedAt).toBeUndefined();
+		c.argv = ["slim", "U1"];
+		expect(await createSimCommand().run(c)).toBe(0);
+		expect(c.db.listDevices()[0]?.slimmedAt).toBe(c.now());
+		c.argv = ["slim", "U1", "--restore"];
+		expect(await createSimCommand().run(c)).toBe(0);
+		expect(c.db.listDevices()[0]?.slimmedAt).toBeUndefined();
+	});
+});
+
+describe("warden sim unquarantine", () => {
+	test("clears quarantine; unknown id is an error", async () => {
+		const c = setup(["unquarantine", "U1"]);
+		c.db.quarantineDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, "hung", 1);
+		expect(await createSimCommand().run(c)).toBe(0);
+		expect(c.db.listDevices()[0]?.quarantinedAt).toBeUndefined();
+		expect(await createSimCommand().run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("not quarantined");
+	});
 });

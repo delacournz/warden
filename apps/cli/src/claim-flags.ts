@@ -150,6 +150,7 @@ export async function claimWithFlags(
 		now: ctx.now,
 		pidAlive: processAlive,
 		waitMs: flags.waitMs,
+		log: (line) => ctx.err(`warden: ${line}`),
 	});
 	if (outcome.success && request.platform === "ios") {
 		await autoArrangeSimWindows(

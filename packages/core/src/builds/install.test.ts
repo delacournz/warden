@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "../exec";
-import { installApp, isAppInstalled, uninstallApp } from "./install";
+import { appMatchesArtifact, installApp, isAppInstalled, uninstallApp } from "./install";
 
 function exec(handlers: Record<string, Partial<ExecResult>>, calls: string[] = []): Exec {
 	return async (cmd) => {
@@ -115,5 +115,53 @@ describe("uninstallApp", () => {
 		const res = await uninstallApp({ exec: e, env }, ios, "com.x");
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("com.x");
+	});
+});
+
+describe("appMatchesArtifact", () => {
+	const plist = (version: string) => JSON.stringify({ CFBundleVersion: version, CFBundleExecutable: "App" });
+	const world = (
+		installed: { version: string; exe: string; js?: string },
+		cached = { version: "7", exe: "100", js: "9" }
+	) =>
+		exec({
+			"xcrun simctl get_app_container U1 com.x": { stdout: "/dev/App.app\n" },
+			"plutil -convert json -o - /dev/App.app/Info.plist": { stdout: plist(installed.version) },
+			"plutil -convert json -o - /cache/App.app/Info.plist": { stdout: plist(cached.version) },
+			"stat -f %z /dev/App.app/App": { stdout: `${installed.exe}\n` },
+			"stat -f %z /cache/App.app/App": { stdout: `${cached.exe}\n` },
+			...(installed.js ? { "stat -f %z /dev/App.app/main.jsbundle": { stdout: `${installed.js}\n` } } : {}),
+			"stat -f %z /cache/App.app/main.jsbundle": { stdout: `${cached.js}\n` },
+		});
+
+	test("same version, binary and JS bundle → match", async () => {
+		const e = world({ version: "7", exe: "100", js: "9" });
+		expect(await appMatchesArtifact({ exec: e, env }, ios, "com.x", "/cache/App.app")).toEqual({
+			success: true,
+			data: true,
+		});
+	});
+
+	test("different CFBundleVersion, binary size or JS bundle → no match", async () => {
+		for (const installed of [
+			{ version: "8", exe: "100", js: "9" },
+			{ version: "7", exe: "101", js: "9" },
+			{ version: "7", exe: "100", js: "10" },
+			{ version: "7", exe: "100" },
+		]) {
+			const res = await appMatchesArtifact({ exec: world(installed), env }, ios, "com.x", "/cache/App.app");
+			expect(res).toEqual({ success: true, data: false });
+		}
+	});
+
+	test("app missing or unreadable → no match; Android is not checked", async () => {
+		expect(await appMatchesArtifact({ exec: exec({}), env }, ios, "com.x", "/cache/App.app")).toEqual({
+			success: true,
+			data: false,
+		});
+		expect(await appMatchesArtifact({ exec: exec({}), env }, android, "com.x", "/cache/a.apk")).toEqual({
+			success: true,
+			data: true,
+		});
 	});
 });

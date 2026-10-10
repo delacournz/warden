@@ -26,6 +26,7 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | which e2e flows a change needs (git diff → import graph) | `warden affected [suite] --base main --explain` (`--json`, `--strict`) |
 | run only those flows on leased devices; exit 1 if a required one fails | `warden e2e [suite] --base main --count N` (`--dry-run` to preview; `--all` every flow; `--flows a,b` exactly those, no diff; suite `include`/`exclude` flow-id globs, `scope` + `unmatched: "run-all"` fail-safe). Suite fields `project` `ports` `env` `serve` `serveReady` `serveTimeout` `app` mirror a batch preset; `setup` runs once per device before its first flow (failing device is dropped; `logs/setup-<worker>.log`) |
 | fewer background daemons on a booted sim (RAM/CPU with many sims) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` (e2e suite: `"slim": true`) |
+| a device is misbehaving: release and keep it out of the pool | `warden release <leaseId> --bad [reason]` (clear: `warden sim unquarantine <udid>`); claims also probe iOS sims and quarantine hung ones |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` (`--variant dev\|e2e`) |
 | run the app in a worktree (instead of `expo run:ios`) | `warden dev ios [--udid <udid>] [-- <expo start args>]` — reuses the cached build for the native fingerprint, starts its own Metro on a leased port (refuses another checkout's Metro on it), opens the dev client; `--json` prints `{ udid, port, metroUrl, leaseIds }` |

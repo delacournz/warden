@@ -117,4 +117,26 @@ describe("warden claim → arrange", () => {
 		expect(await claimCommand.run(c)).toBe(0);
 		expect(calls.some((cmd) => cmd[0] === "osascript")).toBe(process.platform === "darwin");
 	});
+
+	test("a device left slimmed is restored on a plain claim, and the record cleared", async () => {
+		const calls: string[][] = [];
+		const exec = fakeSimctl([wardenSim(2, "Booted")], calls, [
+			["xcrun simctl spawn U2 launchctl print-disabled", { stdout: '\t"com.apple.healthd" => disabled\n' }],
+		]);
+		const c = setup(["ios"], exec);
+		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);
+		c.db.setSlimmed("ios", "U2", 5);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(calls.map((x) => x.join(" "))).toContain("xcrun simctl spawn U2 launchctl enable system/com.apple.healthd");
+		expect(c.db.listDevices()[0]?.slimmedAt).toBeUndefined();
+		expect(c.stderr.join("\n")).toContain("re-enabled 1 slimmed job(s)");
+	});
+
+	test("a clean device is only checked, never touched", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], fakeSimctl([wardenSim(2, "Booted")], calls));
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(calls.some((x) => x.includes("enable"))).toBe(false);
+		expect(c.stderr.join("\n")).not.toContain("slimmed");
+	});
 });

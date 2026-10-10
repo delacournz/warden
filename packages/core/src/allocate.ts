@@ -8,6 +8,8 @@ export type AllocateInput = {
 	request: DeviceRequest;
 	now: number;
 	pidAlive: PidAlive;
+	/** device ids to leave out this round (failed their health probe in this claim) */
+	skip?: ReadonlySet<string>;
 };
 
 /** `iPhone 17 Pro` → `iphone-17-pro`. */
@@ -60,7 +62,7 @@ const STATE_RANK: Record<InventoryDevice["state"], number> = { booted: 0, bootin
  * (booted before shutdown, newest runtime first), then pool growth up to `max`. Foreign devices are
  * only considered with `adopt`. Stale leases are ignored and returned for reclaim.
  */
-export function allocate({ inventory, leases, request, now, pidAlive }: AllocateInput): AllocationPlan {
+export function allocate({ inventory, leases, request, now, pidAlive, skip }: AllocateInput): AllocationPlan {
 	const stale = leases.filter((l) => !isLeaseAlive(l, now, pidAlive)).map((l) => l.id);
 	const staleSet = new Set(stale);
 	const held = new Set(leases.filter((l) => !staleSet.has(l.id)).map((l) => resourceKey(l.resource)));
@@ -69,6 +71,8 @@ export function allocate({ inventory, leases, request, now, pidAlive }: Allocate
 		(d) =>
 			d.platform === request.platform &&
 			d.golden !== true &&
+			d.quarantined !== true &&
+			skip?.has(d.id) !== true &&
 			(d.wardenCreated || request.adopt === true) &&
 			profileMatches(d, request.profile) &&
 			runtimeMatches(d, request.runtime)
@@ -85,7 +89,8 @@ export function allocate({ inventory, leases, request, now, pidAlive }: Allocate
 		(d) => d.platform === request.platform && d.golden !== true && d.wardenCreated && profileMatches(d, request.profile)
 	);
 	const usedNames = new Set(pool.map((d) => d.name));
-	let room = request.max - pool.length;
+	// quarantined devices keep their names but free their pool slot so a replacement can be created
+	let room = request.max - pool.filter((d) => d.quarantined !== true).length;
 	let index = 1;
 	while (steps.length < request.count && room > 0) {
 		while (usedNames.has(wardenDeviceName(request.profile, index))) index++;

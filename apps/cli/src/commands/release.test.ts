@@ -115,4 +115,31 @@ describe("warden release", () => {
 		expect(await releaseCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("l_nope");
 	});
+
+	test("--bad releases and quarantines a warden device, with the reason", async () => {
+		const c = setup([]);
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
+		lease(c, "U1");
+		c.argv = ["--mine", "--bad", "dictation loop", "--json"];
+		expect(await releaseCommand.run(c)).toBe(0);
+		expect(c.db.listLeases()).toEqual([]);
+		expect(c.db.listDevices()[0]).toMatchObject({ id: "U1", quarantineReason: "dictation loop" });
+		expect(JSON.parse(c.stdout.join("\n")).quarantined).toEqual(["U1"]);
+	});
+
+	test("--bad without a reason still quarantines; foreign devices are only released", async () => {
+		const c = setup([]);
+		const foreign = c.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "FOREIGN", name: "My iPhone" }, owner: me, ttlMs: 60_000 },
+			c.now()
+		);
+		lease(c, "2");
+		c.argv = ["--mine", "--bad", "--json"];
+		expect(await releaseCommand.run(c)).toBe(0);
+		expect(c.db.getLease(foreign.id)).toBeUndefined();
+		expect(c.db.listDevices().map((d) => d.id)).toEqual(["2"]);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.quarantined).toEqual(["2"]);
+		expect(out.notes.join(" ")).toContain("FOREIGN");
+	});
 });
