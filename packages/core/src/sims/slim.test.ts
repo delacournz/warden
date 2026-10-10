@@ -4,9 +4,11 @@ import {
 	NEVER_DISABLE,
 	parseLaunchctlList,
 	parsePrintDisabled,
+	planHeal,
 	planRestore,
 	planSlim,
 	SLIM_DENYLIST,
+	SLIM_RETIRED,
 	slimSimulator,
 } from "./slim";
 
@@ -39,6 +41,23 @@ describe("SLIM_DENYLIST", () => {
 		for (const label of SLIM_DENYLIST) {
 			for (const pattern of NEVER_DISABLE) expect(pattern.test(label)).toBe(false);
 		}
+	});
+});
+
+describe("dictation daemons (the keyboard hangs the app without them)", () => {
+	test("are never disabled, and a sim an older denylist slimmed gets them back", () => {
+		for (const label of ["com.apple.assistantd", "com.apple.corespeechd"]) {
+			expect(SLIM_DENYLIST).not.toContain(label);
+			expect(SLIM_RETIRED).toContain(label);
+			expect(NEVER_DISABLE.some((pattern) => pattern.test(label))).toBe(true);
+		}
+		const disabled = new Map([
+			["com.apple.assistantd", true],
+			["com.apple.corespeechd", false],
+			["com.apple.newsd", true],
+		]);
+		expect(planHeal(disabled)).toEqual(["com.apple.assistantd"]);
+		expect(planRestore(disabled)).toEqual(["com.apple.newsd", "com.apple.assistantd"]);
 	});
 });
 

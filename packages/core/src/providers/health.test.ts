@@ -37,7 +37,21 @@ describe("probeIosHealth", () => {
 
 	test("hung launchctl times out without real waiting", async () => {
 		const res = await probeIosHealth({ exec: exec({ "print system": never }), timer: instant }, "U1");
-		expect(res).toEqual({ success: false, error: "U1: launchctl print system did not answer within 5s" });
+		expect(res).toEqual({ success: false, error: "U1: launchctl print system did not answer within 15s" });
+	});
+
+	test("one timeout is retried with a longer budget: a slow answer on a busy host is healthy", async () => {
+		const timeouts: number[] = [];
+		let calls = 0;
+		const slowOnce: Exec = (cmd, options) => {
+			if (!cmd.join(" ").includes("print system")) return done(LIST)();
+			timeouts.push(options?.timeoutMs ?? 0);
+			calls += 1;
+			return calls === 1 ? Promise.resolve({ exitCode: 124, stdout: "", stderr: "" }) : done()();
+		};
+		const res = await probeIosHealth({ exec: slowOnce, timer: forever }, "U1");
+		expect(res.success).toBe(true);
+		expect(timeouts).toEqual([5_000, 15_000]);
 	});
 
 	test("non-zero launchctl fails", async () => {

@@ -162,7 +162,7 @@ iOS. Switches off the launchd jobs inside a booted simulator that UI flows never
 | `--dry-run` | list the jobs, change nothing |
 | `--restore` | re-enable them (fully effective on the next boot) |
 
-Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. `slim` and `--restore` record the state per device; a plain `warden claim` re-enables a device left slimmed (jobs already booted out stay down until its next reboot). In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/guides/affected-e2e#per-device-setup).
+Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. Siri's `assistantd` and `corespeechd` are deliberately left running: the software keyboard asks them about dictation, and with them down an app that shows the keyboard spins its main thread until XCTest can no longer read it. A simulator slimmed by an older warden gets them re-enabled on the next `slim` or `--restore` (effective after its next boot). The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. `slim` and `--restore` record the state per device; a plain `warden claim` re-enables a device left slimmed (jobs already booted out stay down until its next reboot). In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/guides/affected-e2e#per-device-setup).
 
 ### `warden sims audit | prune | delete`
 
