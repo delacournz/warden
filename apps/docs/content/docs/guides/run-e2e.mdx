@@ -1,0 +1,88 @@
+---
+title: Run e2e (quickstart)
+description: One command from a cold shell runs a suite on leased simulators, with warden owning the devices, the build and Metro.
+icon: Rocket
+---
+
+```bash
+warden e2e <suite>
+```
+
+That is the whole run. No device to pick, no port to export, no bundler to start first. warden claims the simulators, installs the cached build, starts and verifies its own Metro when the suite has one, runs the flows, and releases everything on exit (Ctrl-C included).
+
+## Try it on the example app
+
+`apps/example` in the warden repo carries two suites over the same five flows:
+
+| Suite | Build | Metro | Runner |
+|---|---|---|---|
+| `example` | Release, JS embedded | none | one `e2e run <flow>` per flow |
+| `example-dev` | Debug dev client | warden's, on a leased port | one `e2e run <flows…>` for the pool |
+
+```bash
+cd apps/example
+warden e2e example --all        # Release build, 2 sims
+warden e2e example-dev --all    # dev client + warden's Metro, 2 sims
+warden e2e example-dev          # only the flows this branch touches
+warden e2e example-dev --flows todos,settings
+```
+
+The first run of a native fingerprint builds the app (minutes); later runs reuse the cache.
+
+The flows run on [tester.army e2e](https://e2e.tester.army/docs/mobile), whose CLI needs Node `^22.22.3 || >=24.8.0` on `PATH`. With an older node every flow fails at once with exit 2 and the reason is the first line of the job log.
+
+## What a dev-client suite needs
+
+```ts title="warden.config.ts"
+"example-dev": {
+  project: "example",
+  flowsDir: "e2e",
+  platform: "ios",
+  app: { variant: "dev", clean: true },
+  metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
+  mode: "single",
+  count: 2,
+  runner: ["bunx", "e2e", "run", "{flowPaths}", "--retries", "0", "--output", ".e2e/dev"],
+  jobTimeoutMs: 15 * 60_000,
+},
+```
+
+- `metro: {}` makes warden lease a port, start `expo start --dev-client` there in the project root, and call it ready only once that port is proven to serve **this** checkout. Another worktree's Metro on the port stops the run with `port <p> is served by <dir>, not this worktree`.
+- `mode: "single"` hands the whole pool to one runner. Use it when the runner shards over devices itself.
+- `jobTimeoutMs` kills a runner that hangs (exit 124) so the run always ends.
+
+The runner's config reads what warden exports and nothing else:
+
+```ts title="e2e.config.ts"
+const devices = (process.env.WARDEN_UDIDS ?? "").split(",").filter(Boolean);
+const metroUrl = process.env.WARDEN_METRO_URL;
+
+export default {
+  tests: ["e2e/**/*.e2e.ts"],
+  targets: [{
+    name: "ios",
+    engine: mobile({ platform: "ios", device: devices }),
+    app: { bundleId: "com.example.app", launchArguments: metroUrl ? ["--initialUrl", metroUrl] : [] },
+  }],
+  workers: Math.max(1, devices.length),
+};
+```
+
+`--initialUrl` is what the Expo dev client reads at launch to load from that Metro, so every `app.open()` in a flow lands on warden's bundler.
+
+## Where to look when it fails
+
+| What | Where |
+|---|---|
+| verdict per flow | stdout, and `e2e-report.json` in the batch dir (`--json` prints it) |
+| a job's output | `<batchDir>/logs/<worker>-<seq>-<job>.log`, screenshot next to it |
+| Metro's output | `<batchDir>/metro.log` |
+| a device that keeps failing | `warden release <leaseId> --bad "<why>"` keeps it out of the pool |
+
+## Don't
+
+- Start Metro yourself, or point a suite at a fixed port.
+- Export `WARDEN_UDID*` / port env vars by hand. They exist only inside a run.
+- Hold devices with a bare `warden claim` for a test run. It lasts about 5 minutes; `warden e2e` holds its leases for as long as it runs.
+
+More: [e2e scripts](/docs/guides/e2e), [Affected e2e](/docs/guides/affected-e2e), [configuration](/docs/reference/configuration).
