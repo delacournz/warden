@@ -12,7 +12,8 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 - **Claim before use.** `warden claim ios --json` (or `android`) → use the returned `udid` / `serial` for every argent / simctl / adb call. Never pick a device from `list-devices` or `simctl list` on your own.
 - **Never touch a booted device you did not claim** — it belongs to another session. Do not shut it down, erase it, or install on it.
 - A Claude hook blocks argent calls on devices leased by other sessions; if blocked, run `warden claim` and switch to the returned device.
-- **Release when done:** `warden release --mine` (add `--shutdown` to stop sims warden created).
+- **A bare `warden claim` lasts ~5 min** (agents; `--ttl` overrides) and nothing refreshes it by itself. Only a wrapper (`warden dev` / `run` / `batch` / `e2e`, which hold by pid + 30 s heartbeat) or an explicit `warden heartbeat` keeps a device longer. Stale devices are reclaimed (gc shuts a sim down no sooner than 10 min after its lease went stale, and never while an app is running on it).
+- **Release when done:** `warden release <leaseId…>` (add `--shutdown` to stop sims warden created). Subagents never call `release --mine` (it frees the parent's leases too): release by id, or claim with `--label <x>` and `release --mine --label <x>`.
 
 ## Commands
 
@@ -33,7 +34,7 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | who holds what | `warden ls` |
 | all sims / emulators (booted or not) + who leases them | `warden devices` (alias `warden list`) |
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
-| keep a long lease alive | `warden heartbeat --mine` |
+| keep a bare-claim lease alive | `warden heartbeat <leaseId…>` (or `--mine`); better, use a wrapper |
 | reclaim dead leases | `warden gc` |
 | sim + runtime disk usage; delete idle/broken warden sims | `warden sims` (read-only, runtimes too) · `warden sims prune --dry-run` then `--yes` (`--max-size 40G` for a budget) |
 | delete sims of any owner (user-picked; same rules as audit) | `warden sims delete` (menu, suggestions pre-ticked) · `--suggested --dry-run` to preview |
@@ -41,4 +42,11 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | `warden` not installed | `npm i -g @delacour/warden && warden install` (one-shot: `npx @delacour/warden install`) |
 | update warden | `warden update` (`--check` to only look; for npm/bun installs it prints the upgrade command) |
 
-Leases expire after 30 min without a heartbeat (each argent call through the hook refreshes it).
+Leases expire without a heartbeat: ~5 min for a bare agent `warden claim`, 30 min otherwise. Wrappers heartbeat for you.
+
+## agent-device
+
+1. `warden claim ios --json` (or `android`) → pass the returned device explicitly on every call: `--platform ios --udid <udid>` (Android: `--serial <serial>`). Never let agent-device pick; with several booted devices it refuses to guess.
+2. Short check: do it within the ~5 min of the bare claim, or `warden heartbeat <leaseId>` while you work.
+3. Longer exploration: claim, then run `warden dev ios --udid <udid>` (add `--profile X` to let it claim instead) in the background. It holds the device and a Metro port and opens the dev client; keep targeting the udid, and stop it (Ctrl-C) to release what it leased.
+4. Subagents: release with `warden release <leaseId>` or `--mine --label <x>`, never bare `--mine`.

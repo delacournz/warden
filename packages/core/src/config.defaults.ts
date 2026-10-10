@@ -1,5 +1,7 @@
 /** Default lease TTL for agents/users: 30 min (plan default 2a). */
 export const DEFAULT_TTL_MS = 30 * 60_000;
+/** Bare `warden claim` by an agent: 5 min. Only wrappers (`dev`/`run`/`batch`/`e2e`) or `heartbeat` hold longer. */
+export const BARE_CLAIM_AGENT_TTL_MS = 5 * 60_000;
 /** `warden gc` shuts down idle warden devices after 20 min. */
 export const DEFAULT_IDLE_MS = 20 * 60_000;
 /** `warden run` heartbeat interval. */

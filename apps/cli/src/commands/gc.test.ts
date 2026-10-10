@@ -119,6 +119,46 @@ describe("warden gc", () => {
 		expect(calls.filter((x) => x[2] === "shutdown").map((x) => x[3])).toContain("F");
 	});
 
+	function staleF(c: TestContext, heartbeatAt: number): void {
+		c.db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "F", name: "iPhone 17" },
+				owner: agent,
+				ttlMs: 60_000,
+				bootedByOwner: true,
+			},
+			heartbeatAt
+		);
+	}
+
+	test("lease stale < 10 min → lease reclaimed but device kept running", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json", "--idle", "0s"], calls);
+		staleF(c, NOW - 5 * 60_000 - 60_000);
+		expect(await gcCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.reclaimed.length).toBe(2);
+		expect(c.db.listLeases().map((l) => l.resource)).not.toContainEqual(expect.objectContaining({ id: "F" }));
+		expect(calls.filter((x) => x[2] === "shutdown").map((x) => x[3])).not.toContain("F");
+		expect(out.notes.join("\n")).toContain("grace");
+	});
+
+	test("lease stale > 10 min but non-Apple app running → device kept", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		staleF(c, NOW - 30 * 60_000);
+		c.exec = fakeExec(
+			[
+				["xcrun simctl spawn F launchctl list", { stdout: "9\t0\tUIKitApplication:com.acme.app[0x1]" }],
+				["xcrun simctl", {}],
+			],
+			calls
+		);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(calls.filter((x) => x[2] === "shutdown").map((x) => x[3])).not.toContain("F");
+		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).toContain("app is running");
+	});
+
 	test("--quiet prints nothing; last run recorded", async () => {
 		const c = setup(["--quiet"], []);
 		const ui = scriptedUi();

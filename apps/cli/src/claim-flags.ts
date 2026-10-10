@@ -23,7 +23,7 @@ export function withClaimOptions<Args extends unknown[], Opts extends OptionValu
 		.option("--count <n>", "how many devices", "1")
 		.option("--max <n>", "max warden devices of this profile (default: cores/4, cap 4)")
 		.option("--wait <duration>", "wait this long for a free device, e.g. 10m")
-		.option("--ttl <duration>", "lease TTL without heartbeat", "30m")
+		.option("--ttl <duration>", "lease TTL without heartbeat (default 30m; bare `claim` by an agent: 5m)")
 		.option("--label <label>", "label shown in `warden ls`")
 		.option("--adopt", "allow allocating foreign (non-warden) devices")
 		.option("--json", "machine-readable output");
@@ -63,11 +63,16 @@ function positiveInt(name: string, raw: string | undefined, fallback: number, mi
 	return ok(Number(raw));
 }
 
-/** Validate claim flags; defaults from `config.defaults` and `defaultMax(cores)`. */
+/**
+ * Validate claim flags; defaults from `config.defaults` and `defaultMax(cores)`. `defaultTtlMs` is
+ * what `--ttl` falls back to: wrappers keep the 30 min default (they heartbeat); only bare `claim`
+ * by an agent passes the short one.
+ */
 export function parseClaimFlags(
 	platformArg: string | undefined,
 	values: ClaimFlagValues,
-	cores: number = availableParallelism()
+	cores: number = availableParallelism(),
+	defaultTtlMs: number = DEFAULT_TTL_MS
 ): Result<ClaimFlags> {
 	const platform = parsePlatform(platformArg);
 	if (!platform.success) return platform;
@@ -77,7 +82,7 @@ export function parseClaimFlags(
 	if (!max.success) return max;
 	const waitMs = values.wait === undefined ? ok(0) : parseDuration(values.wait);
 	if (!waitMs.success) return waitMs;
-	const ttlMs = values.ttl === undefined ? ok(DEFAULT_TTL_MS) : parseDuration(values.ttl);
+	const ttlMs = values.ttl === undefined ? ok(defaultTtlMs) : parseDuration(values.ttl);
 	if (!ttlMs.success) return ttlMs;
 
 	const request: DeviceRequest = {

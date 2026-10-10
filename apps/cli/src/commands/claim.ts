@@ -1,3 +1,5 @@
+import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
+import { formatDuration } from "@delacour/warden-core/duration";
 import { maybeAutoGc } from "../autogc";
 import {
 	type ClaimFlagValues,
@@ -24,12 +26,13 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		ctx.err(color.red(`warden claim: ${platform.error}`));
 		return 1;
 	}
-	const flags = parseClaimFlags(platform.data, opts);
+	const owner = resolveOwner(ctx);
+	const shortLived = owner.kind === "agent" && opts.ttl === undefined;
+	const flags = parseClaimFlags(platform.data, opts, undefined, shortLived ? BARE_CLAIM_AGENT_TTL_MS : DEFAULT_TTL_MS);
 	if (!flags.success) {
 		ctx.err(color.red(`warden claim: ${flags.error}`));
 		return 1;
 	}
-	const owner = resolveOwner(ctx);
 	maybeAutoGc(ctx);
 	const { count, profile } = flags.data.request;
 	const outcome = await withSpinner(
@@ -45,6 +48,13 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	if (!outcome.success) {
 		ctx.err(color.red(`warden claim: ${outcome.error}`));
 		return 1;
+	}
+	if (shortLived) {
+		ctx.err(
+			color.yellow(
+				`lease expires in ${formatDuration(flags.data.ttlMs)}; hold it with: warden dev … / warden run … / warden heartbeat`
+			)
+		);
 	}
 	const leases = claimedJson(outcome.data);
 	emit(

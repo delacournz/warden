@@ -34,6 +34,28 @@ describe("warden claim", () => {
 		expect(text).toContain("U2");
 	});
 
+	test("agent bare claim → 5m ttl + stderr hint; stdout stays pure JSON", async () => {
+		const c = setup(["ios", "--json"]);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(c.db.listLeases()[0]?.ttlMs).toBe(5 * 60_000);
+		expect(c.stderr.join("\n")).toContain("lease expires in 5m; hold it with: warden dev");
+		expect(() => JSON.parse(c.stdout.join("\n"))).not.toThrow();
+	});
+
+	test("agent --ttl overrides the default, no hint", async () => {
+		const c = setup(["ios", "--ttl", "20m"]);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(c.db.listLeases()[0]?.ttlMs).toBe(20 * 60_000);
+		expect(c.stderr.join("\n")).not.toContain("lease expires");
+	});
+
+	test("user owner → 30m ttl, no hint", async () => {
+		ctx = testContext(["ios"], { exec: fakeSimctl([wardenSim(1, "Booted")]) });
+		expect(await claimCommand.run(ctx)).toBe(0);
+		expect(ctx.db.listLeases()[0]?.ttlMs).toBe(30 * 60_000);
+		expect(ctx.stderr.join("\n")).not.toContain("lease expires");
+	});
+
 	test("user owner → lease pid = parent shell", async () => {
 		ctx = testContext(["ios"], { exec: fakeSimctl([wardenSim(1, "Booted")]) });
 		expect(await claimCommand.run(ctx)).toBe(0);

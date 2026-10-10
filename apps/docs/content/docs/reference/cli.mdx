@@ -43,13 +43,13 @@ Lease iOS sims / Android emulators — reuse, boot or create — booted and read
 | `--count <n>` | `1` | how many devices |
 | `--max <n>` | cores/4, cap 4 | max warden devices of this profile |
 | `--wait <duration>` | | wait this long for a free device, e.g. `10m` |
-| `--ttl <duration>` | `30m` | lease TTL without heartbeat |
+| `--ttl <duration>` | `30m` (bare `claim` by an agent: `5m`) | lease TTL without heartbeat |
 | `--label <label>` | | shown in `warden ls` |
 | `--adopt` | | allow allocating foreign (non-warden) devices |
 
 ### `warden release [leaseIds...]`
 
-Release leases, selected by id, `--udid <udid...>`, `--mine` or `--session <id>`. `--shutdown` also shuts down devices warden created (or the lease owner booted).
+Release leases, selected by id, `--udid <udid...>`, `--mine` or `--session <id>`. `--label <label>` narrows `--mine` to leases with that label (what subagents should use). `--shutdown` also shuts down devices warden created (or the lease owner booted).
 
 ### `warden run [platform] -- <cmd...>`
 

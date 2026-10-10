@@ -34,7 +34,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 					);
 					return outcome;
 				})
-			: { shutdown: [], notes: [] };
+			: { shutdown: [], notes: [], kept: [] };
 	const store = ctx.store();
 	store.deleteLeases(leases.map((l) => l.id));
 	const now = ctx.now();

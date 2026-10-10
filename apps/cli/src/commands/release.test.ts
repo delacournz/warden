@@ -50,6 +50,28 @@ describe("warden release", () => {
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
+	test("--mine --label releases only this owner's leases with that label", async () => {
+		const c = setup([]);
+		const labelled = (id: string, label: string, owner: Owner = me) =>
+			c.db.insertLease(
+				{
+					resource: { kind: "device", platform: "ios", id, name: id },
+					owner,
+					ttlMs: 60_000,
+					label,
+				},
+				c.now()
+			);
+		const a = labelled("U1", "sub-a");
+		labelled("U2", "sub-b");
+		labelled("U3", "sub-a", other);
+		lease(c, "U4");
+		c.argv = ["--mine", "--label", "sub-a", "--json"];
+		expect(await releaseCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).released).toEqual([a.id]);
+		expect(c.db.listLeases()).toHaveLength(3);
+	});
+
 	test("--shutdown only shuts down warden-created devices", async () => {
 		const calls: string[][] = [];
 		const c = setup([], calls);
