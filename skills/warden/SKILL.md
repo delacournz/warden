@@ -28,7 +28,7 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | fewer background daemons on a booted sim (RAM/CPU with many sims) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` (e2e suite: `"slim": true`) |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` (`--variant dev\|e2e`) |
-| run the app in a worktree (instead of `expo run:ios`) | `warden dev ios [--udid <udid>] [-- <expo start args>]` — reuses the cached build for the native fingerprint, starts Metro on a leased port, opens the dev client |
+| run the app in a worktree (instead of `expo run:ios`) | `warden dev ios [--udid <udid>] [-- <expo start args>]` — reuses the cached build for the native fingerprint, starts its own Metro on a leased port (refuses another checkout's Metro on it), opens the dev client; `--json` prints `{ udid, port, metroUrl, leaseIds }` |
 | duplicate a shut-down sim (fast, no first boot) | `warden clone <udid\|name> [--name x]` |
 | pre-build the golden image new sims clone from | `warden golden ensure --profile iphone-17` |
 | who holds what | `warden ls` |
@@ -48,5 +48,5 @@ Leases expire without a heartbeat: ~5 min for a bare agent `warden claim`, 30 mi
 
 1. `warden claim ios --json` (or `android`) → pass the returned device explicitly on every call: `--platform ios --udid <udid>` (Android: `--serial <serial>`). Never let agent-device pick; with several booted devices it refuses to guess.
 2. Short check: do it within the ~5 min of the bare claim, or `warden heartbeat <leaseId>` while you work.
-3. Longer exploration: claim, then run `warden dev ios --udid <udid>` (add `--profile X` to let it claim instead) in the background. It holds the device and a Metro port and opens the dev client; keep targeting the udid, and stop it (Ctrl-C) to release what it leased.
+3. Longer exploration: run `warden dev ios --json [--profile X]` in the background (or `--udid <udid>` for a device you already claimed). It claims the device, holds it and a Metro port, starts a Metro verified to serve this checkout and opens the dev client; its first stdout line is `{ udid, port, metroUrl, leaseIds }`. Target that udid, and stop it (Ctrl-C / SIGTERM) to release what it leased.
 4. Subagents: release with `warden release <leaseId>` or `--mine --label <x>`, never bare `--mine`.

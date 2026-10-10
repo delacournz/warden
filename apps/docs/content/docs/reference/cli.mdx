@@ -252,7 +252,11 @@ Install the build matching the fingerprint on a device (`--lease <id>` or `--udi
 
 ### `warden dev [platform] [-- <expo start args>]`
 
-The worktree-friendly `expo run:*`. Uses the device of `--udid` / `--lease` / your single lease, else claims one (claim options apply). Ensures the `dev` variant's build (or the project's own when it has no `dev`; `--variant` to pick, which must exist), leases a Metro port (`--port`, default `8081:100`), runs `bunx expo start --dev-client --port <p>` in the project root, waits for `/status` (`--ready-timeout`, default `2m`), then opens `exp+<slug>://expo-development-client/?url=…` on the device (`--scheme` to override; Android runs `adb reverse` first). Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--clean`, `--project`, `--bundle-id`.
+The worktree-friendly `expo run:*`. Uses the device of `--udid` / `--lease` / your single lease, else claims one (claim options apply). Ensures the `dev` variant's build (or the project's own when it has no `dev`; `--variant` to pick, which must exist), leases a Metro port (`--port`, default `8081:100`) and runs `bunx expo start --dev-client --port <p>` in the project root.
+
+Metro counts as ready (`--ready-timeout`, default `2m`) only once `/status` on that port is proven to serve **this** project root (the `X-React-Native-Project-Root` header, else the listening process's cwd). Another checkout's Metro on the port fails the command with `port <p> is served by <dir>, not this worktree` instead of being attached to.
+
+Then the dev client is opened on the device: iOS relaunches the app with `--initialUrl <metroUrl>` (no "Open in …?" alert); Android runs `adb reverse` and opens `exp+<slug>://expo-development-client/?url=…` (`--scheme` to override). `--no-open` skips this. `--json` prints one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready (Metro's own output goes to stderr). The device and port stay leased (heartbeat every 30 s) until Metro exits; Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--clean`, `--project`, `--bundle-id`.
 
 ### `warden builds ls | prune | import`
 

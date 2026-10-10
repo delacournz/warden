@@ -3,17 +3,16 @@ import { join } from "node:path";
 import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
 import { projectContext } from "@delacour/warden-core/builds/ensure";
 import { parseDuration } from "@delacour/warden-core/duration";
+import { bunExec } from "@delacour/warden-core/exec";
 import { isPortFree } from "@delacour/warden-core/ports";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { maybeAutoGc } from "../autogc";
-import { probeReady } from "../batch/serve";
 import { type ClaimFlagValues, parseClaimFlags, resolveOwner, resolvePlatform, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import {
-	type ChildHandle,
 	childEnv,
 	claimAll,
 	claimRunPorts,
@@ -25,6 +24,16 @@ import {
 	type RunEnsureApp,
 	splitCommand,
 } from "../lease-session";
+import {
+	adbReverseArgv,
+	devClientLaunchArgv,
+	type MetroOwner,
+	type MetroProc,
+	metroOwner,
+	metroUrl,
+	startMetro,
+} from "../metro";
+import { emit } from "../output";
 import { withSpinner } from "../spinner-context";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 
@@ -32,13 +41,18 @@ import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "
 export const DEV_PORT_SPEC = "8081:100";
 /** How long to wait for Metro's `/status` before giving up. */
 export const DEV_READY_TIMEOUT = "2m";
-const READY_POLL_MS = 500;
 
 /** Side effects of `warden dev`, injectable for tests. */
 export type DevDeps = Omit<LeaseSessionDeps, "ensureApp"> & {
-	spawn: (cmd: string[], env: Record<string, string | undefined>, cwd: string) => ChildHandle;
-	/** one readiness probe of Metro's status URL */
-	ready: (url: string) => Promise<boolean>;
+	/** Metro on the user's terminal; `stdout: "stderr"` keeps stdout clean for `--json` */
+	spawn: (
+		cmd: string[],
+		env: Record<string, string | undefined>,
+		cwd: string,
+		stdout: "inherit" | "stderr"
+	) => MetroProc;
+	/** who serves the Metro port (must be this project root before the dev client is opened) */
+	probe: (port: number, projectRoot: string) => Promise<MetroOwner>;
 	sleep: (ms: number) => Promise<void>;
 	ensureApp: RunEnsureApp;
 };
@@ -55,6 +69,10 @@ type DevOpts = ClaimFlagValues & {
 	eas: boolean;
 	build: boolean;
 	clean?: true;
+	/** `--json`: one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready */
+	json?: true;
+	/** false = `--no-open` */
+	open: boolean;
 };
 
 /** The dev-client deep link that points `scheme`'s app at the Metro on `port`. */
@@ -161,24 +179,17 @@ async function openSession(
 	return ok({ deviceId, port, env, leaseIds, release });
 }
 
-/** Poll Metro's `/status` until it answers or `timeoutMs` passes. */
-async function waitForMetro(ctx: CommandContext, deps: DevDeps, port: number, timeoutMs: number): Promise<boolean> {
-	const url = `http://127.0.0.1:${port}/status`;
-	const deadline = ctx.now() + timeoutMs;
-	while (ctx.now() <= deadline) {
-		if (await deps.ready(url)) return true;
-		await deps.sleep(READY_POLL_MS);
-	}
-	return false;
-}
-
-/** Point the dev client on `deviceId` at Metro (Android: `adb reverse` first, so 127.0.0.1 reaches the host). */
+/**
+ * Point the dev client on `deviceId` at Metro. iOS: relaunch it with `--initialUrl` (`simctl openurl`
+ * raises an "Open in …?" alert); Android: `adb reverse` first, so 127.0.0.1 reaches the host, then the
+ * dev-client deep link.
+ */
 async function openDevClient(
 	ctx: CommandContext,
 	platform: Platform,
 	deviceId: string,
 	project: Project,
-	url: string,
+	scheme: string,
 	port: number
 ): AsyncResult<void> {
 	const run = async (argv: string[]): AsyncResult<void> => {
@@ -187,12 +198,25 @@ async function openDevClient(
 			? ok(undefined)
 			: err(`${argv.join(" ")}: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
 	};
-	if (platform === "ios") return run(["xcrun", "simctl", "openurl", deviceId, url]);
-	const pkg = bundleIdFor(project, "android");
-	if (!pkg.success) return pkg;
-	const reverse = await run(["adb", "-s", deviceId, "reverse", `tcp:${port}`, `tcp:${port}`]);
+	const bundle = bundleIdFor(project, platform);
+	if (!bundle.success) return bundle;
+	if (platform === "ios") return run(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port)));
+	const reverse = await run(adbReverseArgv(deviceId, port));
 	if (!reverse.success) return reverse;
-	return run(["adb", "-s", deviceId, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url, pkg.data]);
+	const url = devClientUrl(scheme, port);
+	return run([
+		"adb",
+		"-s",
+		deviceId,
+		"shell",
+		"am",
+		"start",
+		"-a",
+		"android.intent.action.VIEW",
+		"-d",
+		url,
+		bundle.data,
+	]);
 }
 
 /** What `warden dev` asks `ensureApp` for: a missing `dev` variant falls back, an explicit `--variant` must exist. */
@@ -206,6 +230,62 @@ function ensureOptions(start: string, variant: string, opts: DevOpts): EnsureOpt
 		...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
 		...(opts.clean ? { clean: true } : {}),
 	};
+}
+
+type Running = { session: Session; platform: Platform; project: Project; scheme: string; timeoutMs: number };
+
+/** Metro on the leased port (verified to serve this project), the dev client opened on it; resolves with Metro's exit code. */
+async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Running): Promise<number> {
+	const { color } = ctx.ui;
+	const { deviceId, port, env, leaseIds, release } = r.session;
+	const json = opts.json === true;
+	const aborted = { now: false };
+	let metroProc: MetroProc | undefined;
+	const stop = holdLeases(ctx, deps, leaseIds, (signal) => {
+		aborted.now = true;
+		metroProc?.kill(signal);
+	});
+	try {
+		const metro = await startMetro(
+			{
+				probe: deps.probe,
+				now: ctx.now,
+				sleep: deps.sleep,
+				spawn: (cmd, metroEnv, cwd) => {
+					metroProc = deps.spawn(cmd, metroEnv, cwd, json ? "stderr" : "inherit");
+					return metroProc;
+				},
+			},
+			{
+				projectRoot: r.project.root,
+				port,
+				env,
+				args: splitCommand(ctx.argv).cmd,
+				readyTimeoutMs: r.timeoutMs,
+				aborted: () => aborted.now,
+			}
+		);
+		if (!metro.success) {
+			ctx.err(color.red(`warden dev: ${metro.error}`));
+			return 1;
+		}
+		if (opts.open) {
+			const opened = await openDevClient(ctx, r.platform, deviceId, r.project, r.scheme, port);
+			ctx.err(
+				opened.success
+					? color.dim(`warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`)
+					: color.yellow(
+							`warden dev: couldn't open the dev client (${opened.error}) — open ${devClientUrl(r.scheme, port)} yourself`
+						)
+			);
+		}
+		if (json) emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds }, "");
+		else ctx.err(color.dim(`warden dev: holding ${deviceId} + :${port} until Metro exits (WARDEN_UDID=${deviceId})`));
+		return await metro.data.proc.exited;
+	} finally {
+		stop();
+		release();
+	}
 }
 
 /**
@@ -254,35 +334,13 @@ async function dev(
 		return result;
 	});
 	if (!session.success) return fail(session.error);
-	const { deviceId, port, env, leaseIds, release } = session.data;
-
-	const metroArgs = ["bunx", "expo", "start", "--dev-client", "--port", String(port), ...splitCommand(ctx.argv).cmd];
-	let metro: ChildHandle;
-	try {
-		metro = deps.spawn(metroArgs, { ...env, EXPO_NO_TELEMETRY: "1" }, project.data.project.root);
-	} catch (error) {
-		release();
-		return fail(error instanceof Error ? error.message : String(error));
-	}
-	const stop = holdLeases(ctx, deps, leaseIds, (signal) => metro.kill(signal));
-	try {
-		if (!(await waitForMetro(ctx, deps, port, timeout.data))) {
-			metro.kill("SIGTERM");
-			await metro.exited;
-			return fail(`Metro did not answer on :${port} within ${opts.readyTimeout}`);
-		}
-		const url = devClientUrl(scheme.data, port);
-		const opened = await openDevClient(ctx, platform.data, deviceId, project.data.project, url, port);
-		ctx.err(
-			opened.success
-				? color.dim(`warden dev: opened ${url} on ${deviceId}`)
-				: color.yellow(`warden dev: couldn't open the dev client (${opened.error}) — open ${url} yourself`)
-		);
-		return await metro.exited;
-	} finally {
-		stop();
-		release();
-	}
+	return runMetro(ctx, deps, opts, {
+		session: session.data,
+		platform: platform.data,
+		project: project.data.project,
+		scheme: scheme.data,
+		timeoutMs: timeout.data,
+	});
 }
 
 /** `warden dev` with injectable effects. */
@@ -308,6 +366,7 @@ export function createDevCommand(deps: DevDeps): Command {
 				.option("--no-eas", "don't download EAS builds")
 				.option("--no-build", "don't build locally on a cache miss")
 				.option("--clean", "uninstall the app first")
+				.option("--no-open", "don't open the dev client (Metro + the leases only)")
 				.addHelpText("after", "\nExample:\n  warden dev ios -- --clear")
 				.action(async (platform, _expoArgs, opts) => done(await dev(ctx, deps, platform, opts)));
 		},
@@ -317,13 +376,19 @@ export function createDevCommand(deps: DevDeps): Command {
 export const defaultDevDeps: DevDeps = {
 	pid: process.pid,
 	isPortFree: (port) => isPortFree(port),
-	spawn(cmd, env, cwd) {
-		const proc = Bun.spawn(cmd, { cwd, env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+	spawn(cmd, env, cwd, stdout) {
+		const proc = Bun.spawn(cmd, {
+			cwd,
+			env,
+			stdin: "inherit",
+			stdout: stdout === "stderr" ? 2 : "inherit",
+			stderr: "inherit",
+		});
 		return { exited: proc.exited.then((code) => exitCodeOf(proc, code)), kill: (signal) => proc.kill(signal) };
 	},
 	onSignal: processOnSignal,
 	every: intervalEvery,
-	ready: (url) => probeReady({ kind: "http", url }),
+	probe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	sleep: (ms) => Bun.sleep(ms),
 	ensureApp: (ctx, owner, platform, deviceId, opts) =>
 		ensureAppFor(ctx, defaultAppDeps, owner, platform, deviceId, opts),
