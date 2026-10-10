@@ -179,14 +179,14 @@ async function metroPlan(ctx: CommandContext, suite: Suite, platform: Platform):
 		start: projectRoot,
 		...(variant !== undefined ? { variant, variantOptional: true } : {}),
 	});
-	const bundleId = project.success ? bundleIdFor(project.data.project, platform) : project;
+	const bundleId = metro.open && project.success ? bundleIdFor(project.data.project, platform) : undefined;
 	return ok({
 		projectRoot,
 		env: metro.env ?? {},
 		prewarm: metro.prewarm,
 		readyTimeoutMs: readyTimeoutMs.data,
 		launchArgs: metro.launchArgs,
-		...(bundleId.success ? { bundleId: bundleId.data } : {}),
+		...(bundleId?.success ? { bundleId: bundleId.data } : {}),
 	});
 }
 

@@ -269,6 +269,16 @@ describe("warden e2e", () => {
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
+		test("open: false leaves launching the app to the runner", async () => {
+			await resuite({ ...suite, metro: { ...suite.metro, open: false } }, projects);
+			const calls: string[][] = [];
+			const c = setup(["--files", "src/chat/lazy.tsx"], calls);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.jobs()[0]?.opts.env.WARDEN_METRO_URL).toBe("http://127.0.0.1:8081");
+			expect(calls.filter((cmd) => cmd.includes("launch"))).toEqual([]);
+		});
+
 		test("a foreign Metro on the leased port: the run never starts a flow and names the other checkout", async () => {
 			await resuite(suite, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);

@@ -104,6 +104,7 @@ describe("parseWardenConfig", () => {
 			enabled: true,
 			port: "8081:100",
 			launchArgs: ["-Flag", "YES"],
+			open: true,
 			env: { E2E: "1" },
 			prewarm: true,
 			readyTimeout: "2m",

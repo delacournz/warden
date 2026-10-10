@@ -306,6 +306,13 @@ export interface WardenE2eMetro {
 	 * @default []
 	 */
 	launchArgs?: string[] | undefined;
+	/**
+	 * Open the app on each device once Metro is ready. `false` for a runner that installs the app
+	 * itself and so has to launch it too (`WARDEN_METRO_URL` is what it points the dev client at).
+	 *
+	 * @default true
+	 */
+	open?: boolean | undefined;
 	/** Added to Metro's env only. */
 	env?: Record<string, string> | undefined;
 	/**

@@ -69,6 +69,8 @@ export const e2eMetroSchema = z
 		port: portSpec.default(DEFAULT_METRO_PORT_SPEC),
 		/** extra launch arguments for the app when warden opens it on each device */
 		launchArgs: z.array(z.string()).default([]),
+		/** false: warden starts Metro but leaves launching the app to the runner (it installs the app itself) */
+		open: z.boolean().default(true),
 		/** added to Metro's env only */
 		env: z.record(z.string(), z.string()).optional(),
 		/** build the bundle once before the first flow */
