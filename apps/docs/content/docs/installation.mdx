@@ -68,6 +68,8 @@ warden install
 
 `~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`. `warden update` rebuilds from the checkout.
 
+While working on warden itself, `bun run cli:link` points `~/.local/bin/warden` at the checkout's source, so every `warden` call (and every agent hook) runs your working tree with no rebuild. `bun run cli:unlink` puts back whatever was there before: the binary it moved aside, another checkout's link, or nothing.
+
 ## Agent skill only
 
 For Claude Code, Codex, Cursor and others via the [`skills`](https://github.com/vercel-labs/skills) CLI:

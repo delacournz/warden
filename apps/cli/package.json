@@ -11,6 +11,8 @@
 	"scripts": {
 		"build": "bun scripts/build.ts",
 		"install:global": "bun src/cli.ts update",
+		"link": "bun scripts/link.ts link",
+		"unlink": "bun scripts/link.ts unlink",
 		"fmt": "biome format --write ./src ./scripts",
 		"lint": "biome lint --write ./src ./scripts",
 		"check": "biome check ./src ./scripts",

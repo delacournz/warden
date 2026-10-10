@@ -82,6 +82,11 @@ function installBinary(ctx: CommandContext, target: string, runtime: Runtime, fl
 	return report("binary", "written", target, source.detail);
 }
 
+/** `~/.local/bin/warden` for a source checkout: runs its `cli.ts` with bun. */
+export function devShim(cliPath: string): string {
+	return `#!/bin/sh\nexec bun "${cliPath}" "$@"\n`;
+}
+
 /** `origin: "npm"` = a copy from an npx / bunx run, so `warden update` fetches it from npm. */
 type BinarySource = { kind: "shim" | "binary"; content: string | Uint8Array; detail?: string; origin?: InstallOrigin };
 
@@ -93,7 +98,7 @@ function binarySource(runtime: Runtime): BinarySource {
 	if (runtime.kind === "dev") {
 		return {
 			kind: "shim",
-			content: `#!/bin/sh\nexec bun "${runtime.cliPath}" "$@"\n`,
+			content: devShim(runtime.cliPath),
 			detail: `shim → ${runtime.cliPath}`,
 		};
 	}

@@ -16,4 +16,6 @@ bun run typecheck # Type check
 bun run build     # Production build
 bun run check     # Biome lint + format
 bun run test      # Tests
+bun run cli:link   # ~/.local/bin/warden → this checkout's source (shim)
+bun run cli:unlink # put back whatever warden was before cli:link
 ```
