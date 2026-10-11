@@ -14,6 +14,7 @@ import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, formatTable } from "../output";
 import { withSpinner } from "../spinner-context";
+import { projectStart } from "./app";
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
 	ctx.err(ctx.ui.color.red(`warden builds ${sub}: ${message}`));
@@ -119,12 +120,13 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 	const artifact = resolve(ctx.cwd, raw).replace(/\/+$/, "");
 	const platform = inferPlatform(artifact, opts.platform);
 	if (!platform.success) return fail(ctx, "import", platform.error);
-	const start = opts.project ? resolve(ctx.cwd, opts.project) : ctx.cwd;
+	const start = projectStart(ctx, opts.project);
+	if (!start.success) return fail(ctx, "import", start.error);
 	const bundle = opts.bundleId;
 	const project = await projectContext({
 		exec: ctx.exec,
 		env: ctx.env,
-		start,
+		start: start.data,
 		...(bundle !== undefined ? { bundleId: { [platform.data]: bundle } } : {}),
 	});
 	if (!project.success) return fail(ctx, "import", project.error);

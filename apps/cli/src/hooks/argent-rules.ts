@@ -1,5 +1,5 @@
 export const WARDEN_RULE_LINE =
-	"0. **Claim via warden first** - run `warden claim ios|android --json` and use the returned udid/serial before booting or choosing a device; never use a device leased by another session (`warden ls`, `warden check --udid X`).";
+	"0. **Claim via warden first** - run `warden claim ios|android --json` and use the returned udid/serial before booting or choosing a device; never use a device leased by another session (`warden ls`, `warden check --udid X`). A bare claim lasts ~5 min; only `warden dev|run|batch|e2e` or `warden heartbeat` hold a device longer.";
 
 export type RulesPatch =
 	| { kind: "patched"; text: string }

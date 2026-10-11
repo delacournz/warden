@@ -196,3 +196,28 @@ describe("helpers", () => {
 		expect(defaultMax(64)).toBe(4);
 	});
 });
+
+describe("allocate quarantine + skip", () => {
+	test("never picks a quarantined device and frees its pool slot for a replacement", () => {
+		const plan = allocate({
+			inventory: [sim({ id: "1", quarantined: true })],
+			leases: [],
+			request: { ...req, max: 1 },
+			now: NOW,
+			pidAlive: noPid,
+		});
+		expect(plan).toEqual({ kind: "assign", steps: [{ action: "create", name: "warden-iphone-17-2" }], stale: [] });
+	});
+
+	test("skip ids are left out", () => {
+		const plan = allocate({
+			inventory: [sim({ id: "1", state: "booted" }), sim({ id: "2" })],
+			leases: [],
+			request: req,
+			now: NOW,
+			pidAlive: noPid,
+			skip: new Set(["1"]),
+		});
+		expect(plan.kind === "assign" && plan.steps).toEqual([{ action: "boot", device: sim({ id: "2" }) }]);
+	});
+});

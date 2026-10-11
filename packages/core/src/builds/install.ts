@@ -35,6 +35,53 @@ export async function isAppInstalled(
 	return ok(res.exitCode === 0 && res.stdout.includes("package:"));
 }
 
+/** Run `cmd`, stdout trimmed; undefined when it fails. */
+async function out(deps: InstallerDeps, cmd: string[]): Promise<string | undefined> {
+	const res = await deps.exec(cmd);
+	return res.exitCode === 0 ? res.stdout.trim() : undefined;
+}
+
+/**
+ * What distinguishes one build of an `.app` from another, cheaply: `CFBundleVersion` plus the byte
+ * size of the main executable and of the embedded `main.jsbundle` (Release). Size is used instead
+ * of mtime because `simctl install` re-copies the bundle, so the installed mtime need not match the
+ * cached one. undefined when the bundle can't be read.
+ */
+export async function appIdentity(deps: InstallerDeps, appDir: string): Promise<string | undefined> {
+	const plist = await out(deps, ["plutil", "-convert", "json", "-o", "-", `${appDir}/Info.plist`]);
+	if (plist === undefined) return undefined;
+	let info: { CFBundleVersion?: unknown; CFBundleExecutable?: unknown };
+	try {
+		info = JSON.parse(plist) as typeof info;
+	} catch {
+		return undefined;
+	}
+	if (typeof info.CFBundleExecutable !== "string") return undefined;
+	const exe = await out(deps, ["stat", "-f", "%z", `${appDir}/${info.CFBundleExecutable}`]);
+	if (exe === undefined) return undefined;
+	const js = await out(deps, ["stat", "-f", "%z", `${appDir}/main.jsbundle`]);
+	return [String(info.CFBundleVersion ?? ""), exe, js ?? "-"].join("|");
+}
+
+/**
+ * Is the app on the device the cached `artifactPath` build? iOS: compare `appIdentity` of the
+ * installed container (`simctl get_app_container`) with the cached `.app`. Anything unreadable
+ * counts as a mismatch (reinstall is the safe side). Android: not checked (always true) — warden's
+ * install record is trusted there.
+ */
+export async function appMatchesArtifact(
+	deps: InstallerDeps,
+	target: InstallTarget,
+	bundleId: string,
+	artifactPath: string
+): AsyncResult<boolean> {
+	if (target.platform !== "ios") return ok(true);
+	const installedDir = await out(deps, probeArgv(target, bundleId, deps.env));
+	if (!installedDir) return ok(false);
+	const [installed, cached] = await Promise.all([appIdentity(deps, installedDir), appIdentity(deps, artifactPath)]);
+	return ok(installed !== undefined && installed === cached);
+}
+
 /** `xcrun simctl uninstall <udid> <bundleId>` / `adb -s <serial> uninstall <bundleId>`. */
 export function uninstallArgv(target: InstallTarget, bundleId: string, env: InstallerDeps["env"]): string[] {
 	return target.platform === "ios"

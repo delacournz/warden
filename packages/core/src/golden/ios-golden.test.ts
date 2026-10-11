@@ -104,6 +104,17 @@ describe("ensureGolden", () => {
 		expect(logs.join("\n")).toContain("not settled");
 	});
 
+	test("claim path (prewarmHint) says how to prewarm before the multi-minute build; ensure itself stays quiet", async () => {
+		const logs: string[] = [];
+		await ensureGolden({ ...deps(fakeHost({ migrationPolls: 0 }), logs), prewarmHint: true }, "iphone-17");
+		expect(logs[0]).toBe(
+			"golden: building golden for iphone-17 (first claim of this profile, ~5 min); prewarm with: warden golden ensure --profile iphone-17"
+		);
+		const quiet: string[] = [];
+		await ensureGolden(deps(fakeHost({ migrationPolls: 0 }), quiet), "iphone-17");
+		expect(quiet.some((l) => l.includes("prewarm"))).toBe(false);
+	});
+
 	test("unknown profile → error", async () => {
 		const result = await ensureGolden(deps(fakeHost()), "nokia-3310");
 		expect(result.success).toBe(false);

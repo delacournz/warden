@@ -26,7 +26,7 @@ export function providerFor(
 	};
 	if (platform === "android") return createAndroidProvider(deps);
 	if (!goldenEnabled(ctx.env)) return createIosProvider(deps);
-	const golden = goldenDeps(ctx, owner, opts.sleep);
+	const golden = { ...goldenDeps(ctx, owner, opts.sleep), prewarmHint: true };
 	return createIosProvider(deps, {
 		clone: async (name, profile, runtime) => {
 			const cloned = await cloneFromGolden(golden, profile, runtime, name);

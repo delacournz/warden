@@ -43,13 +43,13 @@ Lease iOS sims / Android emulators — reuse, boot or create — booted and read
 | `--count <n>` | `1` | how many devices |
 | `--max <n>` | cores/4, cap 4 | max warden devices of this profile |
 | `--wait <duration>` | | wait this long for a free device, e.g. `10m` |
-| `--ttl <duration>` | `30m` | lease TTL without heartbeat |
+| `--ttl <duration>` | `30m` (bare `claim` by an agent: `5m`) | lease TTL without heartbeat |
 | `--label <label>` | | shown in `warden ls` |
 | `--adopt` | | allow allocating foreign (non-warden) devices |
 
 ### `warden release [leaseIds...]`
 
-Release leases, selected by id, `--udid <udid...>`, `--mine` or `--session <id>`. `--shutdown` also shuts down devices warden created (or the lease owner booted).
+Release leases, selected by id, `--udid <udid...>`, `--mine` or `--session <id>`. `--label <label>` narrows `--mine` to leases with that label (what subagents should use). `--shutdown` also shuts down devices warden created (or the lease owner booted).
 
 ### `warden run [platform] -- <cmd...>`
 
@@ -68,7 +68,7 @@ See [e2e scripts](/docs/guides/e2e).
 
 ### `warden batch [platform|preset] [-- <cmd...>]`
 
-Claim devices and fan a job queue out over them, one worker per device; the command runs once per job with `{job}`, `{udid}`, `{worker}` and `{seq}` substituted. Takes every `run` flag, plus:
+Claim devices and fan a job queue out over them, one worker per device; the command runs once per job with `{job}`, `{udid}`, `{worker}`, `{seq}`, `{port}` (the first leased port) and `{stateDir}` substituted. Takes every `run` flag, plus:
 
 | Flag | |
 |---|---|
@@ -76,13 +76,14 @@ Claim devices and fan a job queue out over them, one worker per device; the comm
 | `--retry <n>` | re-run a failed job up to N times on the same device |
 | `--passes <n>` | a job passes only after N consecutive green runs on its device (`WARDEN_PASS`) |
 | `--serve <sh-cmd>` | a long-lived process (e.g. Metro) started before the jobs, killed at the end |
-| `--serve-ready <probe>` | wait for `http://…`, `tcp:PORT` or `file:PATH` first |
+| `--serve-ready <probe>` | wait for `http://…`, `tcp:PORT` or `file:PATH` first; `{port}` works here and in `--serve` (`tcp:{port}`) |
 | `--serve-timeout <duration>` | give up waiting for `--serve-ready` (default `10m`) |
+| `--job-timeout <duration>` | a job still running after this is screenshotted, killed and failed (exit 124); off by default |
 | `--record <dir>` | iOS: record every simulator and the TUI (`batch.json`, `tui.cast`, `dev-<i>.mp4`) |
 | `--logs <dir>` | per-job logs |
 | `--no-tui` | plain log lines instead of the live grid |
 
-`--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed.
+`--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed. Every job gets its own `AGENT_DEVICE_STATE_DIR` (`<batch dir>/agent-device/<worker>`, also `{stateDir}`), so parallel runners never share an agent-device daemon; a value in the preset / suite `env` wins.
 
 If the first operand is the name of a preset in [`warden.config.ts`](/docs/reference/configuration#batches) `batches` (found by walking up from the cwd to the git root), that preset supplies the platform and defaults:
 
@@ -128,9 +129,11 @@ Select like `warden affected`, then run the flows like `warden batch` — the su
 | `--all` | run every flow of the suite (after `include` / `exclude`), no git diff |
 | `--flows <list>` | run exactly these flow ids / globs (comma-separated), no git diff; a list matching nothing fails |
 | `--report <file>` | also write `e2e-report.json` here |
+| `--devices <legs>` | which `devices` legs run: `default` (the default), `all`, or profile names (comma-separated) |
+| `--job-timeout <duration>` | overrides the suite's `jobTimeoutMs` (default 10 min) |
 | `--no-shutdown` | keep the devices running after the gate passes |
 
-The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. Flows run in id order (sorted file path), so `count: 1` is a stable serial run. Nothing affected → exit 0 without claiming. Every failed flow is named at the end with its device, runner log and failure screenshot (also `device`, `log`, `screenshot` on the flow in `e2e-report.json`). Leases are always released at the end; when the gate passes, the devices warden created (or booted for the run) are shut down first — a failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
+The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. With [`metro`](/docs/reference/configuration#e2e) warden starts and verifies its own Metro before any flow and stops it last. With `devices`, every picked leg claims its own pool and runs the flows concurrently (`--profile` / `--count` replace the legs with one claim); the report then has one verdict per flow and leg. With `mode: "single"` one runner process per leg runs every selected flow and its exit code is their shared verdict. Flows run in id order (sorted file path), so `count: 1` is a stable serial run. Nothing affected → exit 0 without claiming. Every failed flow is named at the end with its device, runner log and failure screenshot (also `device`, `log`, `screenshot` on the flow in `e2e-report.json`). Leases are always released at the end; when the gate passes, the devices warden created (or booted for the run) are shut down first — a failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
 
 ### `warden ls`
 
@@ -139,6 +142,15 @@ List leases: resource, state, owner, repo/worktree, age, heartbeat.
 ### `warden devices [platform]` (alias `list`)
 
 Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases.
+
+### Device health: `release --bad`, `sim unquarantine`
+
+After booting or reusing an iOS sim, `warden claim` checks that `simctl spawn <udid> launchctl print system` answers within 5 s and that SpringBoard is running. A device that fails is quarantined (recorded in the store with a reason, shut down if warden created it) and the claim picks another one; after 2 retries it fails with a clear error. A foreign device that fails is skipped, never touched. Android has no probe yet.
+
+- `warden release <leaseId…> --bad [reason]` releases and quarantines the devices by hand (warden devices only). Quarantined devices are never allocated and free their pool slot.
+- `warden sim unquarantine <udid|serial>` clears it. `warden devices` shows `quarantined` and `slim` next to the warden column.
+- A claim that has to build the golden image prints `warden ... prewarm with: warden golden ensure --profile <profile>` first.
+- `warden app ensure` no longer trusts its install record alone: on iOS it also compares the installed app's `CFBundleVersion`, executable size and `main.jsbundle` size with the cached build, and reinstalls on a difference.
 
 ### `warden sim slim [udid]`
 
@@ -150,7 +162,7 @@ iOS. Switches off the launchd jobs inside a booted simulator that UI flows never
 | `--dry-run` | list the jobs, change nothing |
 | `--restore` | re-enable them (fully effective on the next boot) |
 
-Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/guides/affected-e2e#per-device-setup).
+Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. Siri's `assistantd` and `corespeechd` are deliberately left running: the software keyboard asks them about dictation, and with them down an app that shows the keyboard spins its main thread until XCTest can no longer read it. A simulator slimmed by an older warden gets them re-enabled on the next `slim` or `--restore` (effective after its next boot). The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. `slim` and `--restore` record the state per device; a plain `warden claim` re-enables a device left slimmed (jobs already booted out stay down until its next reboot). In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/guides/affected-e2e#per-device-setup).
 
 ### `warden sims audit | prune | delete`
 
@@ -252,7 +264,11 @@ Install the build matching the fingerprint on a device (`--lease <id>` or `--udi
 
 ### `warden dev [platform] [-- <expo start args>]`
 
-The worktree-friendly `expo run:*`. Uses the device of `--udid` / `--lease` / your single lease, else claims one (claim options apply). Ensures the `dev` variant's build (or the project's own when it has no `dev`; `--variant` to pick, which must exist), leases a Metro port (`--port`, default `8081:100`), runs `bunx expo start --dev-client --port <p>` in the project root, waits for `/status` (`--ready-timeout`, default `2m`), then opens `exp+<slug>://expo-development-client/?url=…` on the device (`--scheme` to override; Android runs `adb reverse` first). Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--clean`, `--project`, `--bundle-id`.
+The worktree-friendly `expo run:*`. Uses the device of `--udid` / `--lease` / your single lease, else claims one (claim options apply). Ensures the `dev` variant's build (or the project's own when it has no `dev`; `--variant` to pick, which must exist), leases a Metro port (`--port`, default `8081:100`) and runs `bunx expo start --dev-client --port <p>` in the project root.
+
+Metro counts as ready (`--ready-timeout`, default `2m`) only once `/status` on that port is proven to serve **this** project root (the `X-React-Native-Project-Root` header, else the listening process's cwd). Another checkout's Metro on the port fails the command with `port <p> is served by <dir>, not this worktree` instead of being attached to.
+
+Then the dev client is opened on the device: iOS relaunches the app with `--initialUrl <metroUrl>` (no "Open in …?" alert); Android runs `adb reverse` and opens `exp+<slug>://expo-development-client/?url=…` (`--scheme` to override). `--no-open` skips this. `--json` prints one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready (Metro's own output goes to stderr). The device and port stay leased (heartbeat every 30 s) until Metro exits; Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--clean`, `--project`, `--bundle-id`.
 
 ### `warden builds ls | prune | import`
 

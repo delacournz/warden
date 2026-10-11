@@ -1,5 +1,5 @@
 import type { Device } from "@e2e-dev/mobile";
-import { type App, expect, type Screen } from "e2e";
+import { type App, expect, type Locator, type Screen } from "e2e";
 import { ids } from "./ids";
 
 /** How long to wait for the todos screen after submitting sign-in, while clearing the Keychain sheet. */
@@ -34,10 +34,32 @@ export async function openSignIn(app: App, device: Device, screen: Screen): Prom
 	await expect(screen.getByTestId(ids.signIn.screen)).toBeVisible();
 }
 
+/**
+ * `fill`, tolerant of the engine failing to confirm text it did type (seen on a loaded machine):
+ * the field is then checked itself. A secure field hides its value, so it is filled again instead
+ * (`fill` replaces, never appends).
+ */
+export async function fillField(field: Locator, text: string, secure = false): Promise<void> {
+	try {
+		await field.fill(text);
+	} catch {
+		if (secure) await field.fill(text);
+		else await expect(field).toHaveValue(text);
+	}
+}
+
+/**
+ * Answers iOS's "Open in “warden-example”?" prompt for a link opened from outside the app, when it
+ * shows: left unanswered it outlives the app. Not every build / engine version raises it.
+ */
+export async function acceptOpenIn(device: Device): Promise<void> {
+	await device.alert("accept").catch(() => undefined);
+}
+
 /** Fill and submit the sign-in form. */
 export async function submitSignIn(screen: Screen, email: string, password: string): Promise<void> {
-	await screen.getByTestId(ids.signIn.email).fill(email);
-	await screen.getByTestId(ids.signIn.password).fill(password);
+	await fillField(screen.getByTestId(ids.signIn.email), email);
+	await fillField(screen.getByTestId(ids.signIn.password), password, true);
 	await screen.getByTestId(ids.signIn.submit).tap();
 }
 
@@ -51,6 +73,20 @@ export async function expectTodosAfterSignIn(device: Device, screen: Screen): Pr
 		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
 	}
 	await expect(todos).toBeVisible({ timeout: 1 });
+}
+
+/**
+ * A `Badge` / `Chip` showing `text`. The text node inside is matched, not the container: iOS only
+ * sometimes copies the text up to the container as its label, so the container's own text can read
+ * empty.
+ */
+export async function expectLabel(container: Locator, text: string): Promise<void> {
+	await expect(container.getByText(text).first()).toBeVisible();
+}
+
+/** The navbar badge reads `<count> left`. */
+export async function expectRemaining(screen: Screen, count: number): Promise<void> {
+	await expectLabel(screen.getByTestId(ids.todos.remaining), `${count} left`);
 }
 
 /** Fresh launch, signed in as `email`, on the todos tab. */

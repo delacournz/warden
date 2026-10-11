@@ -1,8 +1,9 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore, type Store, wardenHome } from "./store";
+import { MIGRATIONS, openStore, type Store, wardenHome } from "./store";
 import type { Owner } from "./types";
 
 let dir: string;
@@ -134,5 +135,48 @@ describe("concurrency", () => {
 		const ports = await Promise.all(procs.map(async (p) => Number((await new Response(p.stdout).text()).trim())));
 		expect(await Promise.all(procs.map((p) => p.exited))).toEqual([0, 0, 0, 0, 0, 0]);
 		expect(new Set(ports).size).toBe(6);
+	});
+});
+
+describe("device quarantine + slim state", () => {
+	const dev = { platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" } as const;
+
+	test("quarantine records reason + time, survives recordDevice, unquarantine clears", () => {
+		store.recordDevice(dev, 1);
+		store.quarantineDevice(dev, "dictation loop", 5);
+		expect(store.listDevices()[0]).toMatchObject({ id: "U1", quarantinedAt: 5, quarantineReason: "dictation loop" });
+		store.recordDevice(dev, 9);
+		expect(store.listDevices()[0]?.quarantinedAt).toBe(5);
+		expect(store.unquarantineDevice("U1")).toBe(1);
+		expect(store.listDevices()[0]?.quarantinedAt).toBeUndefined();
+		expect(store.unquarantineDevice("U1")).toBe(0);
+	});
+
+	test("quarantine inserts a device only known by name", () => {
+		store.quarantineDevice(dev, undefined, 5);
+		expect(store.listDevices()).toHaveLength(1);
+		expect(store.listDevices()[0]?.quarantineReason).toBeUndefined();
+	});
+
+	test("setSlimmed sets and clears", () => {
+		store.recordDevice(dev, 1);
+		store.setSlimmed("ios", "U1", 7);
+		expect(store.listDevices()[0]?.slimmedAt).toBe(7);
+		store.setSlimmed("ios", "U1", undefined);
+		expect(store.listDevices()[0]?.slimmedAt).toBeUndefined();
+	});
+
+	test("migrates a database created before the columns existed", () => {
+		const old = join(dir, "old.db");
+		const db = new Database(old, { create: true });
+		for (const sql of MIGRATIONS.slice(0, 3)) db.exec(sql);
+		db.exec("PRAGMA user_version = 3");
+		db.exec("INSERT INTO devices VALUES ('ios', 'U9', 'warden-iphone-17-9', 'iphone-17', NULL, 1, 1)");
+		db.close();
+		const migrated = openStore(old);
+		expect(migrated.listDevices()[0]).toMatchObject({ id: "U9" });
+		migrated.quarantineDevice(dev, "x", 2);
+		expect(migrated.listDevices().find((d) => d.id === "U1")?.quarantinedAt).toBe(2);
+		migrated.close();
 	});
 });

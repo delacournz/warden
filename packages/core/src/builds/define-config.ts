@@ -287,6 +287,69 @@ export interface WardenE2eFlow {
 }
 
 /**
+ * `e2e.<suite>.metro`: one warden-owned Metro per run. It is started in the project root on a leased
+ * port, counts as ready only once that port is verified to serve this checkout (never another
+ * worktree's Metro), and is stopped at the end. Runners get `WARDEN_METRO_URL` / `WARDEN_PORT`.
+ */
+export interface WardenE2eMetro {
+	/** @default true */
+	enabled?: boolean | undefined;
+	/**
+	 * Where the Metro port is leased from (`<from>[:<span>]`).
+	 *
+	 * @default "8081:100"
+	 */
+	port?: string | undefined;
+	/**
+	 * Extra launch arguments when warden opens the app on each device (iOS: after `--initialUrl <metroUrl>`).
+	 *
+	 * @default []
+	 */
+	launchArgs?: string[] | undefined;
+	/**
+	 * Open the app on each device once Metro is ready. `false` for a runner that installs the app
+	 * itself and so has to launch it too (`WARDEN_METRO_URL` is what it points the dev client at).
+	 *
+	 * @default true
+	 */
+	open?: boolean | undefined;
+	/** Added to Metro's env only. */
+	env?: Record<string, string> | undefined;
+	/**
+	 * Build the bundle once before the first flow, so no flow pays for (or times out on) the cold build.
+	 *
+	 * @default true
+	 */
+	prewarm?: boolean | undefined;
+	/**
+	 * Give up waiting for Metro after this long.
+	 *
+	 * @default "2m"
+	 */
+	readyTimeout?: string | undefined;
+}
+
+/** `e2e.<suite>.devices[]`: one leg of the run with its own device pool. */
+export interface WardenE2eDeviceLeg {
+	/** Device profile; also the leg's name (`{leg}`, `WARDEN_LEG`, `--devices <profile>`). */
+	profile: string;
+	/**
+	 * Devices to claim for this leg.
+	 *
+	 * @default 1
+	 */
+	count?: number | undefined;
+	/** Added to this leg's setup and runner env. */
+	env?: Record<string, string> | undefined;
+	/**
+	 * `false`: the leg only runs with `--devices all` or `--devices <profile>`.
+	 *
+	 * @default true
+	 */
+	default?: boolean | undefined;
+}
+
+/**
  * `e2e.<suite>`: the flows `warden affected` selects and `warden e2e` runs. Every path and glob is
  * relative to the config file.
  */
@@ -299,11 +362,38 @@ export interface WardenE2eSuite {
 	/** Directory of flows: YAML files, or `*.e2e.ts(x)` tests whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	flowsDir: string;
 	/**
-	 * Per-flow argv; `{flow}` `{flowPath}` `{udid}` `{worker}` `{seq}` are substituted.
+	 * Runner argv. `{udid}` `{worker}` `{seq}` `{leg}` `{port}` `{metroUrl}` `{stateDir}` are substituted;
+	 * per flow also `{flow}` `{flowPath}`. In `mode: "single"` an argument that is exactly `{flows}` /
+	 * `{flowPaths}` becomes one argument per selected flow (they are also in `WARDEN_FLOWS` /
+	 * `WARDEN_FLOW_PATHS`, comma-separated).
 	 *
 	 * @example ["<flow-runner>", "run", "{flowPath}", "--device", "{udid}"]
 	 */
 	runner: string[];
+	/**
+	 * `"per-flow"`: one runner process per flow, one worker per device. `"single"`: one runner process
+	 * per device leg for every selected flow; the runner shards over `WARDEN_UDIDS` itself and its exit
+	 * code is the verdict of all of them.
+	 *
+	 * @default "per-flow"
+	 */
+	mode?: "per-flow" | "single" | undefined;
+	/**
+	 * A runner process still going after this many milliseconds is killed (screenshot first) and counts
+	 * as failed.
+	 *
+	 * @default 600000 (10 min)
+	 */
+	jobTimeoutMs?: number | undefined;
+	/**
+	 * Device legs: each claims its own pool and runs the selected flows, concurrently with the others.
+	 * Replaces `profile` / `count`.
+	 *
+	 * @example [{ profile: "iphone-17", count: 2 }, { profile: "ipad-pro-11-inch-m5", default: false, env: { E2E_LAYOUT: "regular" } }]
+	 */
+	devices?: WardenE2eDeviceLeg[] | undefined;
+	/** Dev-client suites: warden starts one Metro for the run on a leased port and points the app at it. */
+	metro?: WardenE2eMetro | undefined;
 	/** tsconfig for files with no `tsconfig.json` between them and the config file. */
 	tsconfig?: string | undefined;
 	/**
@@ -388,9 +478,9 @@ export interface WardenE2eSuite {
 	 * @default 0
 	 */
 	retry?: number | undefined;
-	/** Devices to claim. */
+	/** Devices to claim (not with `devices`). */
 	count?: number | undefined;
-	/** Device profile. */
+	/** Device profile (not with `devices`). */
 	profile?: string | undefined;
 	/** Ensure the app on every device first. */
 	app?: WardenAppOption | undefined;
@@ -398,9 +488,9 @@ export interface WardenE2eSuite {
 	ports?: string[] | undefined;
 	/** Added to the serve, setup and runner env. */
 	env?: Record<string, string> | undefined;
-	/** `sh -c` once per run before the flows, in its own process group; killed at the end. `--serve` overrides. */
+	/** `sh -c` once per run before the flows, in its own process group; killed at the end. `{port}` / `{metroUrl}` are substituted. `--serve` overrides. */
 	serve?: string | undefined;
-	/** Wait for `http://…`, `tcp:PORT` or `file:PATH` (relative to the project root) before starting. Needs `serve`. */
+	/** Wait for `http://…`, `tcp:PORT` or `file:PATH` (relative to the project root) before starting; `{port}` is the first leased port (`"tcp:{port}"`). Needs `serve`. */
 	serveReady?: string | undefined;
 	/**
 	 * Give up waiting for `serveReady` after this long (`30s`, `10m`). Needs `serve`.

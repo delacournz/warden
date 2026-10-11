@@ -2,6 +2,7 @@ import type { AsyncResult } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import type { Store } from "../store";
 import type { InventoryDevice, Owner, Platform } from "../types";
+import type { Timer } from "./health";
 
 /**
  * A device backend (iOS simulators, Android emulators). Providers report raw devices with
@@ -16,6 +17,8 @@ export interface DeviceProvider {
 	boot(id: string): AsyncResult<void>;
 	waitReady(id: string, timeoutMs: number): AsyncResult<void>;
 	shutdown(id: string): AsyncResult<void>;
+	/** Is a booted device responsive? Absent = no probe (Android), treated as healthy. */
+	probe?(id: string): AsyncResult<void>;
 }
 
 export type ProviderDeps = {
@@ -25,6 +28,8 @@ export type ProviderDeps = {
 	now: () => number;
 	/** the claimer — owner for any side leases a provider takes (e.g. Android console ports) */
 	owner: Owner;
+	/** timer for probe timeouts (default: real timers) */
+	timer?: (ms: number) => Timer;
 	/** progress notes (e.g. "cloning from golden…") — stderr in the CLI */
 	log?: (line: string) => void;
 };

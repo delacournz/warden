@@ -4,7 +4,7 @@ Machine-wide leasing of **iOS simulators, Android emulators, ports and native ap
 
 - **Leases** live in one sqlite db (`~/.warden/warden.db`, WAL). Claims run under `BEGIN IMMEDIATE`, which serialises them across processes.
 - **Owners**: a Claude session (hook stdin, `CLAUDE_CODE_SESSION_ID`, `WARDEN_SESSION_ID`), CI (`CI`, `GITHUB_RUN_ID`), or a user shell (parent pid). The repo and worktree are recorded for messages.
-- **Liveness**: a lease stays alive while its pid is alive or its heartbeat is within the TTL (default 30 min). Stale leases are reclaimed on every claim and by `warden gc`.
+- **Liveness**: a lease stays alive while its pid is alive or its heartbeat is within the TTL (default 30 min; a bare `warden claim` by an agent gets 5 min and prints a hint, so only wrappers or `warden heartbeat` hold a device longer). Stale leases are reclaimed on every claim and by `warden gc`.
 - **Devices**: warden creates and reuses its own `warden-<profile>-N` simulators and launches `-read-only` emulators. It never allocates, shuts down or erases a device it didn't create, unless you pass `--adopt`.
 - **Builds**: Expo fingerprint → installed → local cache → EAS → local build. All worktrees of a repo share one cache.
 
@@ -81,7 +81,9 @@ The binary is swapped atomically at the same path, so the next `warden` in your 
 warden claim ios --json                          # lease 1 sim (reuse → boot → create), booted + ready
 warden claim android --profile pixel-10 --count 2
 warden claim ios --count 2 --wait 10m --ttl 1h --label e2e
-warden release --mine [--shutdown]               # or <leaseId…> | --udid X | --session S; --shutdown = warden-created or self-booted sims
+warden release --mine [--label x] [--shutdown]   # or <leaseId…> | --udid X | --session S; --label = only --mine leases with that label; --shutdown = warden-created or self-booted sims
+warden release <leaseId> --bad [reason]          # release + quarantine the device (claims skip it); clear: warden sim unquarantine <udid>
+warden sim slim <udid> [--restore]               # slim state is recorded; a plain `warden claim` re-enables what a run left slimmed
 warden ls                                        # leases: resource, state, owner, repo/worktree, age, heartbeat
 warden clone <udid|name> [--name x]              # duplicate a shut-down sim into the pool (seconds, no first boot)
 warden golden ensure|ls|prune [--all]            # golden images new sims are cloned from
@@ -124,9 +126,16 @@ A brand-new simulator's first boot (Apple logo + progress bar) takes 1–10 min,
 So when `warden claim ios` needs a **new** pool device, it `simctl clone`s it from a **golden image**. That is a sim warden booted once, waited on until its data migration had finished (`DMLastMigrationResults`, since `bootstatus -b` can return early) and its CPU had settled, then shut down. The golden is built on first use and keyed by Xcode build + runtime + runtime build + device type + recipe, so an Xcode or runtime upgrade simply builds a new one (`warden golden prune` removes old ones). Clones are APFS copy-on-write (~30 MB each). If cloning fails, warden falls back to `simctl create`. Set `WARDEN_GOLDEN=0` to turn cloning off.
 
 - `warden golden ensure [--profile iphone-17]`: build ahead of time, so the first claim doesn't pay for it.
+- A claim that has to build the golden prints `building golden for <profile> … prewarm with: warden golden ensure --profile <profile>` on stderr first.
 - `warden clone <udid|name> [--name x]`: duplicate any **shut-down** sim, e.g. one you've set up by hand, into warden's pool. warden refuses a booted source rather than shutting it down.
 - Goldens are never allocated, adopted, booted by `gc` or counted in the pool, and `warden devices` labels them `golden`.
 - A pool device that already exists is always reused first; a second boot takes ~6.5 s.
+
+### Device health
+
+- After booting (or reusing) an iOS sim, `warden claim` probes it: `simctl spawn <udid> launchctl print system` must answer within 5 s and SpringBoard must be running. A sim that fails is quarantined (and shut down) and another one is claimed, up to 2 retries, then a clear error. Foreign devices that fail are only skipped. Android has no probe yet.
+- `warden release <id> --bad [reason]` quarantines the released warden device by hand. `warden devices` shows `quarantined` / `slim`. `warden sim unquarantine <udid|serial>` clears it.
+- `warden app ensure` re-installs when the app on the device no longer matches the cached build (iOS: `CFBundleVersion`, executable size and `main.jsbundle` size).
 
 ### e2e scripts: `warden run`
 
@@ -177,6 +186,8 @@ warden e2e mobile --base origin/main --count 2        # run them on leased devic
 
 An `e2e.<suite>` in `warden.config.ts` maps flow files to the screens they drive (`entries`) and globs (`paths`). Warden takes the git diff against the merge-base, walks each flow's import graph with the TypeScript resolver (tsconfig `paths`, workspace packages, per-platform `.ios` / `.android` files, type-only imports dropped), and runs only the flows a changed file reaches, with `runAll` globs (lockfile, native dirs) selecting everything. `warden e2e` runs them like `warden batch`, each `passes` times, and writes `e2e-report.json`. See the [Affected e2e guide](apps/docs/content/docs/guides/affected-e2e.mdx).
 
+Dev-client suites add `metro: {}`: `warden e2e <suite>` then leases a port, starts its own Metro in the project root, waits until that port is proven to serve this checkout (another worktree's Metro on it fails the run instead of being attached to), prewarms the bundle and exports `WARDEN_METRO_URL` / `WARDEN_PORT` to the runner. `devices: [{ profile, count, env, default }]` runs several device legs concurrently (`--devices all`), `mode: "single"` hands one runner process the whole pool, and `jobTimeoutMs` (default 10 min) kills a hung runner. Every runner gets its own `AGENT_DEVICE_STATE_DIR`.
+
 ### App builds
 
 ```bash
@@ -206,13 +217,17 @@ With no config, warden detects a single project from `app.json` / `app.config.*`
 
 `warden install` wires hooks into every agent it detects: Claude Code (`~/.claude` or `claude` on PATH) and Codex (`$CODEX_HOME` / `~/.codex` or `codex` on PATH). `--claude` / `--codex` force one (or both) regardless of detection. Every agent config change shows a diff and asks first (`--yes` skips, `--dry-run` only prints, a non-TTY without `--yes` skips). Merges are idempotent and keep all other config.
 
+### agent-device
+
+Claim, then pass the device explicitly: `warden claim ios --json` → `agent-device … --platform ios --udid <udid>` (Android: `--serial`). A bare agent claim lasts about 5 min and nothing refreshes it; only `warden dev` / `run` / `batch` / `e2e` or an explicit `warden heartbeat <leaseId>` hold a device longer. For exploration, run `warden dev ios --json` in the background (claims and holds a device + a Metro port, starts a Metro verified to serve this checkout, opens the dev client) and target the `udid` from its first stdout line. Subagents never call `release --mine`: use `release <leaseId>`, or claim with `--label x` and `release --mine --label x`.
+
 ### Claude Code
 
 `warden install --claude` adds:
 
-- a **PreToolUse** hook on `mcp__argent__.*|mcp__plugin_goldie_argent__.*`. An unleased device is auto-claimed for the session, the session's own device gets a heartbeat, and a device leased by another owner is blocked (exit 2) with the owner and repo/worktree.
+- a **PreToolUse** hook on `mcp__argent__.*|mcp__plugin_goldie_argent__.*`. An unleased device is auto-claimed for the session (argent is retired: do not rely on this to hold a lease), and a device leased by another owner is blocked (exit 2) with the owner and repo/worktree.
 - a **SessionEnd** hook, which **shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself (they were off when it first touched them), are shut down. A sim that was already running when the agent picked it up, such as your own Simulator.app one, is released but left on. On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim on its next argent call.
-- **Sessions that die without SessionEnd** (killed or terminal closed): their leases go stale after 30 min without a heartbeat. `warden gc` then shuts those sims down under the same rule. gc runs automatically in the background at most every 10 min, triggered by hook activity and by `claim`/`run` (`WARDEN_AUTO_GC=0` turns this off), as well as on demand.
+- **Sessions that die without SessionEnd** (killed or terminal closed): their leases go stale after their TTL (30 min; 5 min for a bare agent claim). `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by hook activity and by `claim`/`run` (`WARDEN_AUTO_GC=0` turns this off), as well as on demand.
 - the `~/.claude/skills/warden/SKILL.md` skill, plus a "claim via warden first" line in the argent `device_selection_rule`.
 
 ### Codex

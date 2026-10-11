@@ -39,6 +39,8 @@ export type InventoryDevice = {
 	runtime?: string;
 	/** a golden image (`warden-golden-*`): clone source only — never allocated, adopted, booted by gc or counted in a pool */
 	golden?: boolean;
+	/** reported bad: never allocated until `warden sim unquarantine` */
+	quarantined?: boolean;
 };
 
 export type DeviceRequest = {

@@ -1,6 +1,6 @@
 import { test } from "@e2e-dev/mobile";
 import { expect } from "e2e";
-import { expectTodosAfterSignIn, openSignIn, submitSignIn } from "./helpers/flows";
+import { expectRemaining, expectTodosAfterSignIn, openSignIn, submitSignIn } from "./helpers/flows";
 import { ids } from "./helpers/ids";
 
 test("invalid email and short password show field errors", async ({ app, device, screen }) => {
@@ -22,5 +22,5 @@ test("valid credentials land on todos", async ({ app, device, screen }) => {
 	await openSignIn(app, device, screen);
 	await submitSignIn(screen, "Ada@Example.com", "password1");
 	await expectTodosAfterSignIn(device, screen);
-	await expect(screen.getByTestId(ids.todos.remaining)).toContainText("1 left");
+	await expectRemaining(screen, 1);
 });

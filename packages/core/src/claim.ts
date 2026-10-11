@@ -32,6 +32,8 @@ export type ClaimInput = {
 	readyTimeoutMs?: number;
 	/** pid of this claiming process — keeps create placeholders alive while it runs (default `process.pid`) */
 	selfPid?: number;
+	/** progress notes (health-probe quarantines) — stderr in the CLI */
+	log?: (line: string) => void;
 };
 
 export type ClaimedDevice = { lease: Lease; device: InventoryDevice; action: AllocationStep["action"] };
@@ -46,6 +48,8 @@ type Reservation = { kind: "assign"; items: Reserved[] } | { kind: "wait"; poolS
 
 const DEFAULT_POLL_MS = 2_000;
 const MAX_CONFLICT_RETRIES = 5;
+/** Re-claims after a device fails its health probe (so up to 3 attempts in all). */
+const MAX_HEALTH_RETRIES = 2;
 
 function deviceResource(device: { platform: Platform; id: string; name: string }): DeviceResource {
 	return { kind: "device", platform: device.platform, id: device.id, name: device.name };
@@ -83,7 +87,12 @@ function isUniqueConflict(error: unknown): boolean {
 	return error instanceof Error && error.message.includes("UNIQUE constraint failed");
 }
 
-function reserve(input: ClaimInput, rawInventory: InventoryDevice[], reclaimed: string[]): Reservation {
+function reserve(
+	input: ClaimInput,
+	rawInventory: InventoryDevice[],
+	reclaimed: string[],
+	skip: ReadonlySet<string>
+): Reservation {
 	const { store, request, owner } = input;
 	const now = input.now();
 	reclaimed.push(...store.reclaimStale(now, input.pidAlive));
@@ -92,7 +101,7 @@ function reserve(input: ClaimInput, rawInventory: InventoryDevice[], reclaimed: 
 		withPendingDevices(rawInventory, leases, request.platform),
 		store.listDevices(request.platform)
 	);
-	const plan = allocate({ inventory, leases, request, now, pidAlive: input.pidAlive });
+	const plan = allocate({ inventory, leases, request, now, pidAlive: input.pidAlive, skip });
 	if (plan.kind === "wait") {
 		const poolSize = inventory.filter(
 			(d) => d.platform === request.platform && d.wardenCreated && d.profile === request.profile
@@ -128,7 +137,12 @@ function reserve(input: ClaimInput, rawInventory: InventoryDevice[], reclaimed: 
 	return { kind: "assign", items };
 }
 
-type Realised = { ok: Result<ClaimedDevice>; leaseId: string };
+type Realised = {
+	ok: Result<ClaimedDevice>;
+	leaseId: string;
+	/** the device booted but failed its health probe */
+	unhealthy?: { device: InventoryDevice; reason: string };
+};
 
 async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 	const { provider, store, request } = input;
@@ -167,11 +181,44 @@ async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 	}
 	const ready = await provider.waitReady(device.id, readyMs);
 	if (!ready.success) return { ok: ready, leaseId: lease.id };
+	const healthy = provider.probe ? await provider.probe(device.id) : ok(undefined);
+	if (!healthy.success) {
+		return { ok: healthy, leaseId: lease.id, unhealthy: { device, reason: healthy.error } };
+	}
 	return { ok: ok({ lease, device: { ...device, state: "booted" }, action: item.action }), leaseId: lease.id };
 }
 
 function waitMessage(request: DeviceRequest, poolSize: number): string {
 	return `all ${poolSize} warden-${request.profile} devices leased; max ${request.max} — use --wait or --max`;
+}
+
+type HealthLog = { skip: Set<string>; reasons: string[] };
+
+/** Remember devices that failed their probe; the error to give up with once retries are spent. */
+function noteUnhealthy(log: HealthLog, bad: { device: InventoryDevice; reason: string }[]): string | undefined {
+	for (const b of bad) {
+		log.skip.add(b.device.id);
+		log.reasons.push(b.reason);
+	}
+	if (log.reasons.length <= MAX_HEALTH_RETRIES) return undefined;
+	return `${log.reasons.length} device(s) failed the health probe, giving up: ${log.reasons.join("; ")}`;
+}
+
+async function pause(input: ClaimInput, remainingMs: number): Promise<void> {
+	await (input.sleep ?? Bun.sleep)(Math.min(input.pollMs ?? DEFAULT_POLL_MS, remainingMs));
+}
+
+/** One `complete` round: the final result, or undefined to claim again without the unhealthy devices. */
+async function completeRound(
+	input: ClaimInput,
+	items: Reserved[],
+	reclaimed: string[],
+	health: HealthLog
+): Promise<Result<ClaimOutcome> | undefined> {
+	const done = await complete(input, items, reclaimed);
+	if (!("retry" in done)) return done;
+	const giveUp = noteUnhealthy(health, done.retry);
+	return giveUp ? err(giveUp) : undefined;
 }
 
 /**
@@ -182,46 +229,101 @@ function waitMessage(request: DeviceRequest, poolSize: number): string {
  * All-or-nothing: if any device fails, every lease taken by this call is released.
  */
 export async function claimDevices(input: ClaimInput): AsyncResult<ClaimOutcome> {
-	const sleep = input.sleep ?? Bun.sleep;
-	const pollMs = input.pollMs ?? DEFAULT_POLL_MS;
 	const deadline = input.now() + input.waitMs;
 	const reclaimed: string[] = [];
+	const health: HealthLog = { skip: new Set(), reasons: [] };
 	let conflicts = 0;
 
 	for (;;) {
 		const inventory = await input.provider.inventory();
 		if (!inventory.success) return inventory;
 
-		const reservation = tryReserve(input, inventory.data, reclaimed);
-		const retry = reservation.kind === "conflict" && conflicts++ < MAX_CONFLICT_RETRIES;
-		if (retry) continue;
+		const reservation = tryReserve(input, inventory.data, reclaimed, health.skip);
+		if (reservation.kind === "conflict" && conflicts++ < MAX_CONFLICT_RETRIES) continue;
 		if (reservation.kind === "conflict" || reservation.kind === "error") return err(reservation.error);
-		if (reservation.kind === "assign") return complete(input, reservation.items, reclaimed);
-
-		const remaining = deadline - input.now();
-		if (remaining <= 0) return err(waitMessage(input.request, reservation.poolSize));
-		await sleep(Math.min(pollMs, remaining));
+		const done = await settle(input, reservation, { deadline, reclaimed, health });
+		if (done) return done;
 	}
+}
+
+type Round = { deadline: number; reclaimed: string[]; health: HealthLog };
+
+/** After a reservation: the final result, or undefined to go round again (after waiting, or without unhealthy devices). */
+async function settle(
+	input: ClaimInput,
+	reservation: Extract<Attempt, { kind: "assign" | "wait" }>,
+	round: Round
+): Promise<Result<ClaimOutcome> | undefined> {
+	if (reservation.kind === "assign") return completeRound(input, reservation.items, round.reclaimed, round.health);
+	const remaining = round.deadline - input.now();
+	if (remaining <= 0) return err(waitMessage(input.request, reservation.poolSize));
+	await pause(input, remaining);
+	return undefined;
 }
 
 type Attempt = Reservation | { kind: "conflict"; error: string } | { kind: "error"; error: string };
 
-function tryReserve(input: ClaimInput, inventory: InventoryDevice[], reclaimed: string[]): Attempt {
+function tryReserve(
+	input: ClaimInput,
+	inventory: InventoryDevice[],
+	reclaimed: string[],
+	skip: ReadonlySet<string>
+): Attempt {
 	try {
-		return input.store.transaction(() => reserve(input, inventory, reclaimed));
+		return input.store.transaction(() => reserve(input, inventory, reclaimed, skip));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { kind: isUniqueConflict(error) ? "conflict" : "error", error: message };
 	}
 }
 
-/** Boot / create / wait-ready every reserved device; all-or-nothing. */
-async function complete(input: ClaimInput, items: Reserved[], reclaimed: string[]): AsyncResult<ClaimOutcome> {
+type UnhealthyDevice = NonNullable<Realised["unhealthy"]>;
+
+/**
+ * Warden-created devices that failed the probe are quarantined and shut down; foreign ones are only
+ * skipped (read-only: never recorded, never shut down).
+ */
+async function quarantineUnhealthy(input: ClaimInput, bad: UnhealthyDevice[]): Promise<void> {
+	for (const { device, reason } of bad) {
+		if (!device.wardenCreated) {
+			input.log?.(`${device.name} (${device.id}) failed its health probe (${reason}) — skipping (not a warden device)`);
+			continue;
+		}
+		input.store.quarantineDevice(
+			{
+				platform: device.platform,
+				id: device.id,
+				name: device.name,
+				...(device.profile !== undefined ? { profile: device.profile } : {}),
+				...(device.runtime !== undefined ? { runtime: device.runtime } : {}),
+			},
+			reason,
+			input.now()
+		);
+		input.log?.(
+			`${device.name} (${device.id}) failed its health probe (${reason}) — quarantined; clear with: warden sim unquarantine ${device.id}`
+		);
+		await input.provider.shutdown(device.id);
+	}
+}
+
+/**
+ * Boot / create / wait-ready / probe every reserved device; all-or-nothing. A failed probe
+ * quarantines that device and asks the caller to claim again without it (`retry`).
+ */
+async function complete(
+	input: ClaimInput,
+	items: Reserved[],
+	reclaimed: string[]
+): Promise<Result<ClaimOutcome> | { retry: UnhealthyDevice[] }> {
 	const results = await Promise.all(items.map((item) => realise(input, item)));
-	const failures = results.flatMap((r) => (r.ok.success ? [] : [r.ok.error]));
-	if (failures.length > 0) {
+	const bad = results.flatMap((r) => (r.unhealthy ? [r.unhealthy] : []));
+	const failures = results.flatMap((r) => (r.ok.success || r.unhealthy ? [] : [r.ok.error]));
+	if (failures.length > 0 || bad.length > 0) {
 		input.store.deleteLeases(results.map((r) => r.leaseId));
-		return err(failures.join("; "));
+		await quarantineUnhealthy(input, bad);
+		if (failures.length > 0) return err(failures.join("; "));
+		return { retry: bad };
 	}
 	const claimed = results.flatMap((r) => (r.ok.success ? [r.ok.data] : []));
 	const now = input.now();

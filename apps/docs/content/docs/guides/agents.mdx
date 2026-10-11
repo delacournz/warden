@@ -20,7 +20,7 @@ icon: Bot
 <Accordions>
 <Accordion title="PreToolUse hook">
 
-Matches `mcp__argent__.*|mcp__plugin_goldie_argent__.*`. An unleased device is auto-claimed for the session, the session's own device gets a heartbeat, and a device leased by another owner is **blocked** (exit 2) with the owner and repo/worktree.
+Matches `mcp__argent__.*|mcp__plugin_goldie_argent__.*`. An unleased device is auto-claimed for the session (argent is retired: do not rely on this to hold a lease), and a device leased by another owner is **blocked** (exit 2) with the owner and repo/worktree.
 
 </Accordion>
 <Accordion title="SessionEnd hook">
@@ -32,7 +32,7 @@ On `/clear` (reason `clear`) sims keep running: the conversation restarts, the w
 </Accordion>
 <Accordion title="Sessions that die without SessionEnd">
 
-Killed or terminal closed: their leases go stale after 30 min without a heartbeat, and `warden gc` then shuts those sims down under the same rule. gc runs automatically in the background at most every 10 min, triggered by hook activity and by `claim` / `run` (`WARDEN_AUTO_GC=0` turns this off).
+Killed or terminal closed: their leases go stale after their TTL (30 min; 5 min for a bare agent claim), and `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by hook activity and by `claim` / `run` (`WARDEN_AUTO_GC=0` turns this off).
 
 </Accordion>
 <Accordion title="Skill + argent rule">

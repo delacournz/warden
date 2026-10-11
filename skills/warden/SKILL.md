@@ -12,7 +12,8 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 - **Claim before use.** `warden claim ios --json` (or `android`) → use the returned `udid` / `serial` for every argent / simctl / adb call. Never pick a device from `list-devices` or `simctl list` on your own.
 - **Never touch a booted device you did not claim** — it belongs to another session. Do not shut it down, erase it, or install on it.
 - A Claude hook blocks argent calls on devices leased by other sessions; if blocked, run `warden claim` and switch to the returned device.
-- **Release when done:** `warden release --mine` (add `--shutdown` to stop sims warden created).
+- **A bare `warden claim` lasts ~5 min** (agents; `--ttl` overrides) and nothing refreshes it by itself. Only a wrapper (`warden dev` / `run` / `batch` / `e2e`, which hold by pid + 30 s heartbeat) or an explicit `warden heartbeat` keeps a device longer. Stale devices are reclaimed (gc shuts a sim down no sooner than 10 min after its lease went stale, and never while an app is running on it).
+- **Release when done:** `warden release <leaseId…>` (add `--shutdown` to stop sims warden created). Subagents never call `release --mine` (it frees the parent's leases too): release by id, or claim with `--label <x>` and `release --mine --label <x>`.
 
 ## Commands
 
@@ -23,17 +24,18 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | A list of independent jobs (flows, scenes) across N devices | `warden batch ios --count N --jobs-from <file\|-> [--serve <cmd> --serve-ready tcp:PORT] -- <cmd {job} {udid}>` (per job: `WARDEN_UDID`, `WARDEN_JOB`, `WARDEN_JOB_SEQ`; a failed job leaves `<log>.png` next to its log, path in `batch.json`) |
 | a batch saved in `warden.config.ts` `batches` | `warden batch <preset> [flags override it] [-- <cmd> overrides its cmd]` |
 | which e2e flows a change needs (git diff → import graph) | `warden affected [suite] --base main --explain` (`--json`, `--strict`) |
-| run only those flows on leased devices; exit 1 if a required one fails | `warden e2e [suite] --base main --count N` (`--dry-run` to preview; `--all` every flow; `--flows a,b` exactly those, no diff; suite `include`/`exclude` flow-id globs, `scope` + `unmatched: "run-all"` fail-safe). Suite fields `project` `ports` `env` `serve` `serveReady` `serveTimeout` `app` mirror a batch preset; `setup` runs once per device before its first flow (failing device is dropped; `logs/setup-<worker>.log`) |
+| run only those flows on leased devices; exit 1 if a required one fails | `warden e2e [suite] --base main --count N` (`--dry-run` to preview; `--all` every flow; `--flows a,b` exactly those, no diff; suite `include`/`exclude` flow-id globs, `scope` + `unmatched: "run-all"` fail-safe). Suite fields `project` `ports` `env` `serve` `serveReady` `serveTimeout` `app` mirror a batch preset; `setup` runs once per device before its first flow (failing device is dropped; `logs/setup-<worker>.log`). `metro: {}` = warden starts + verifies its own Metro (`WARDEN_METRO_URL`, `WARDEN_PORT`; never another worktree's); `devices: [...]` legs (`--devices all`); `mode: "single"` = one runner for the whole pool; `jobTimeoutMs` kills a hung runner. Never start Metro or export device / port env vars by hand for a suite: run `warden e2e <suite>` |
 | fewer background daemons on a booted sim (RAM/CPU with many sims) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` (e2e suite: `"slim": true`) |
+| a device is misbehaving: release and keep it out of the pool | `warden release <leaseId> --bad [reason]` (clear: `warden sim unquarantine <udid>`); claims also probe iOS sims and quarantine hung ones |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` (`--variant dev\|e2e`) |
-| run the app in a worktree (instead of `expo run:ios`) | `warden dev ios [--udid <udid>] [-- <expo start args>]` — reuses the cached build for the native fingerprint, starts Metro on a leased port, opens the dev client |
+| run the app in a worktree (instead of `expo run:ios`) | `warden dev ios [--udid <udid>] [-- <expo start args>]` — reuses the cached build for the native fingerprint, starts its own Metro on a leased port (refuses another checkout's Metro on it), opens the dev client; `--json` prints `{ udid, port, metroUrl, leaseIds }` |
 | duplicate a shut-down sim (fast, no first boot) | `warden clone <udid\|name> [--name x]` |
 | pre-build the golden image new sims clone from | `warden golden ensure --profile iphone-17` |
 | who holds what | `warden ls` |
 | all sims / emulators (booted or not) + who leases them | `warden devices` (alias `warden list`) |
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
-| keep a long lease alive | `warden heartbeat --mine` |
+| keep a bare-claim lease alive | `warden heartbeat <leaseId…>` (or `--mine`); better, use a wrapper |
 | reclaim dead leases | `warden gc` |
 | sim + runtime disk usage; delete idle/broken warden sims | `warden sims` (read-only, runtimes too) · `warden sims prune --dry-run` then `--yes` (`--max-size 40G` for a budget) |
 | delete sims of any owner (user-picked; same rules as audit) | `warden sims delete` (menu, suggestions pre-ticked) · `--suggested --dry-run` to preview |
@@ -41,4 +43,11 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | `warden` not installed | `npm i -g @delacour/warden && warden install` (one-shot: `npx @delacour/warden install`) |
 | update warden | `warden update` (`--check` to only look; for npm/bun installs it prints the upgrade command) |
 
-Leases expire after 30 min without a heartbeat (each argent call through the hook refreshes it).
+Leases expire without a heartbeat: ~5 min for a bare agent `warden claim`, 30 min otherwise. Wrappers heartbeat for you.
+
+## agent-device
+
+1. `warden claim ios --json` (or `android`) → pass the returned device explicitly on every call: `--platform ios --udid <udid>` (Android: `--serial <serial>`). Never let agent-device pick; with several booted devices it refuses to guess.
+2. Short check: do it within the ~5 min of the bare claim, or `warden heartbeat <leaseId>` while you work.
+3. Longer exploration: run `warden dev ios --json [--profile X]` in the background (or `--udid <udid>` for a device you already claimed). It claims the device, holds it and a Metro port, starts a Metro verified to serve this checkout and opens the dev client; its first stdout line is `{ udid, port, metroUrl, leaseIds }`. Target that udid, and stop it (Ctrl-C / SIGTERM) to release what it leased.
+4. Subagents: release with `warden release <leaseId>` or `--mine --label <x>`, never bare `--mine`.

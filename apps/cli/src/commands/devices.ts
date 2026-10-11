@@ -21,6 +21,10 @@ export type DeviceRow = {
 	warden: boolean;
 	/** a golden image new sims are cloned from */
 	golden?: true;
+	/** reported bad — claims skip it until `warden sim unquarantine` */
+	quarantined?: { reason?: string };
+	/** simulator daemons switched off by `sim slim` */
+	slimmed?: true;
 	lease?: { id: string; owner: string; where?: string };
 };
 
@@ -37,8 +41,10 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 		ctx.err(ctx.ui.color.yellow(`${platform}: skipped (${inventory.error})`));
 		return [];
 	}
-	const rows: DeviceRow[] = markWardenDevices(inventory.data, store.listDevices(platform)).map((d) => {
+	const records = new Map(store.listDevices(platform).map((r) => [r.id, r]));
+	const rows: DeviceRow[] = markWardenDevices(inventory.data, [...records.values()]).map((d) => {
 		const lease = leases.get(`${platform}:${d.id}`);
+		const record = records.get(d.id);
 		return {
 			platform,
 			name: d.name,
@@ -47,6 +53,10 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 			...(d.runtime !== undefined ? { runtime: d.runtime } : {}),
 			warden: d.wardenCreated,
 			...(d.golden ? { golden: true as const } : {}),
+			...(record?.quarantinedAt !== undefined
+				? { quarantined: record.quarantineReason !== undefined ? { reason: record.quarantineReason } : {} }
+				: {}),
+			...(record?.slimmedAt !== undefined ? { slimmed: true as const } : {}),
 			...(lease ? { lease: leaseInfo(lease) } : {}),
 		};
 	});
@@ -71,6 +81,13 @@ function stateCell(color: ChalkInstance, state: DeviceRow["state"]): string {
 	if (state === "booted") return color.green(state);
 	if (state === "booting") return color.yellow(state);
 	return color.dim(state);
+}
+
+function wardenCell(color: ChalkInstance, r: DeviceRow, none: string): string {
+	if (r.golden) return color.yellow("golden");
+	if (!r.warden) return none;
+	const flags = [r.quarantined ? color.red("quarantined") : "", r.slimmed ? color.dim("slim") : ""].filter(Boolean);
+	return [color.green("yes"), ...flags].join(" ");
 }
 
 /** List every simulator / emulator on the machine, running or not, with warden ownership and leases. */
@@ -101,7 +118,7 @@ async function devices(ctx: CommandContext, filter: string | undefined, json: bo
 			r.id ?? none,
 			stateCell(color, r.state),
 			r.runtime ?? none,
-			r.golden ? color.yellow("golden") : r.warden ? color.green("yes") : none,
+			wardenCell(color, r, none),
 			r.lease ? `${r.lease.owner}${r.lease.where ? color.dim(` (${r.lease.where})`) : ""}` : none,
 		]),
 		color

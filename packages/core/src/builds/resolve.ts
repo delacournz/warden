@@ -20,6 +20,8 @@ export type DeviceSteps = {
 	installedHash: () => string | undefined;
 	/** does the device really have the bundle id (simctl get_app_container / pm path)? */
 	confirm: () => AsyncResult<boolean>;
+	/** does the installed app match the cached build at `cachedPath` (CFBundleVersion + binary)? Absent = trust the record. */
+	matches?: (cachedPath: string) => AsyncResult<boolean>;
 	/** remove the app (and its data) so the install starts fresh; absent is fine */
 	uninstall: () => AsyncResult<void>;
 	/** install + record in `installs` */
@@ -88,8 +90,18 @@ async function alreadyInstalled(steps: ResolveSteps, device: DeviceSteps): Promi
 	if (device.installedHash() !== steps.hash) return ok(false);
 	const confirmed = await device.confirm();
 	if (!confirmed.success) return confirmed;
-	if (!confirmed.data) steps.log("install record is stale (app missing on device) — reinstalling");
-	return ok(confirmed.data);
+	if (!confirmed.data) {
+		steps.log("install record is stale (app missing on device) — reinstalling");
+		return ok(false);
+	}
+	const cached = device.matches ? steps.cached() : undefined;
+	if (device.matches && cached) {
+		const same = await device.matches(cached);
+		if (!same.success) return same;
+		if (!same.data) steps.log("app on device differs from the cached build — reinstalling");
+		return ok(same.data);
+	}
+	return ok(true);
 }
 
 /** Put `path` on the device: `clean` removes the old container first. */

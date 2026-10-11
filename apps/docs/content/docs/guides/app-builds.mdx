@@ -17,7 +17,10 @@ warden app ensure ios --udid <udid> --json
 ```bash
 warden dev ios              # claim a sim, install the cached dev build, start Metro, open the dev client
 warden dev ios -- --clear   # extra args go to `expo start`
+warden dev ios --json       # one line { udid, port, metroUrl, leaseIds } once Metro is ready
 ```
+
+`warden dev` owns its Metro: it only opens the dev client once the leased port is verified to serve this checkout, so a Metro left running by another worktree is refused, never attached to. It holds the device and the port until Metro exits.
 
 Same fingerprint as any earlier build (any worktree, EAS or local) → no prebuild, no Xcode, seconds to a running app. A native change → one local build, cached for every other worktree. Two worktrees missing the same hash at once share one build (build lock).
 

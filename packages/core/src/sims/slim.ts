@@ -12,15 +12,13 @@ import { type Exec, execError } from "../exec";
 
 /** Jobs the slimmer switches off. Deliberately conservative: nothing an app under test, argent or the keyboard uses. */
 export const SLIM_DENYLIST: readonly string[] = [
-	// Siri + speech
-	"com.apple.assistantd",
+	// Siri + speech (not `assistantd` / `corespeechd`: the keyboard asks them about dictation, see NEVER_DISABLE)
 	"com.apple.assistant_cdmd",
 	"com.apple.siriinferenced",
 	"com.apple.siriactionsd",
 	"com.apple.siriknowledged",
 	"com.apple.sirittsd",
 	"com.apple.siri.context.service",
-	"com.apple.corespeechd",
 	// Apple Intelligence
 	"com.apple.intelligenceplatformd",
 	"com.apple.intelligencetasksd",
@@ -70,6 +68,10 @@ export const NEVER_DISABLE: readonly RegExp[] = [
 	/testmanagerd/i,
 	/accessibility|\.AX|axd/i,
 	/kbd|InputUI|keyboard/i,
+	// Dictation availability. With these down the software keyboard re-queries it in a loop on the
+	// app's main thread (`AFDictationConnection … AvailabilityChanged`): the app pins a core and
+	// XCTest can no longer read its tree, so any flow that types hangs.
+	/\.assistantd$|corespeechd/i,
 	/mobileassetd/i,
 	/searchd/i,
 	/networkd|mDNSResponder|nsurlsession/i,
@@ -107,9 +109,20 @@ export function planSlim(jobs: LaunchJob[], disabled: Map<string, boolean>): str
 	return SLIM_DENYLIST.filter((label) => disabled.get(label) !== true || running.has(label));
 }
 
-/** Denylisted labels currently disabled — what `--restore` re-enables. */
+/**
+ * Labels an earlier denylist disabled and this one must not: a sim slimmed back then still has
+ * them off, so slimming re-enables them and `--restore` counts them too.
+ */
+export const SLIM_RETIRED: readonly string[] = ["com.apple.assistantd", "com.apple.corespeechd"];
+
+/** Retired labels still disabled on this sim — what a slim re-enables before it disables anything. */
+export function planHeal(disabled: Map<string, boolean>): string[] {
+	return SLIM_RETIRED.filter((label) => disabled.get(label) === true);
+}
+
+/** Denylisted (and retired) labels currently disabled — what `--restore` re-enables. */
 export function planRestore(disabled: Map<string, boolean>): string[] {
-	return SLIM_DENYLIST.filter((label) => disabled.get(label) === true);
+	return [...SLIM_DENYLIST, ...SLIM_RETIRED].filter((label) => disabled.get(label) === true);
 }
 
 const launchctl = (udid: string, ...args: string[]) => ["xcrun", "simctl", "spawn", udid, "launchctl", ...args];
@@ -121,7 +134,7 @@ export type SlimOptions = { dryRun?: boolean; restore?: boolean };
  * the labels touched. Each job is `launchctl disable`d inside the simulator, which that device
  * remembers across its own reboots, then `bootout`ed so it stops now. The disabled state is kept
  * outside the device's `data/`, so a `simctl clone` of a slimmed image boots with nothing disabled.
- * Idempotent: a slimmed sim is a no-op. Widget and poster extensions are spawned by SpringBoard,
+ * Idempotent: a slimmed sim is a no-op (bar re-enabling labels a past denylist wrongly disabled). Widget and poster extensions are spawned by SpringBoard,
  * not launchd, so a few survive; starving their daemons still stops most of them.
  */
 export async function slimSimulator(exec: Exec, udid: string, options: SlimOptions = {}): AsyncResult<string[]> {
@@ -144,6 +157,8 @@ export async function slimSimulator(exec: Exec, udid: string, options: SlimOptio
 	if (listed.exitCode !== 0) return err(execError(listCmd, listed));
 	const labels = planSlim(parseLaunchctlList(listed.stdout), disabled);
 	if (options.dryRun) return ok(labels);
+	// best effort, and only effective on the device's next boot
+	for (const label of planHeal(disabled)) await exec(launchctl(udid, "enable", `system/${label}`));
 	for (const label of labels) {
 		const cmd = launchctl(udid, "disable", `system/${label}`);
 		const res = await exec(cmd);

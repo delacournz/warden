@@ -1,11 +1,31 @@
-/** Per-job placeholder values for `warden batch -- <cmd…>`. */
-export type JobVars = { job: string; udid: string; worker: number; seq: number };
+/** Per-job placeholder values for `warden batch -- <cmd…>`; the optional ones exist once the run has them. */
+export type JobVars = {
+	job: string;
+	udid: string;
+	worker: number;
+	seq: number;
+	/** the device leg (`e2e.<suite>.devices[].profile`) */
+	leg?: string;
+	/** the first port leased for the run (Metro's, when warden owns Metro) */
+	port?: number;
+	metroUrl?: string;
+	/** this worker's private `AGENT_DEVICE_STATE_DIR` */
+	stateDir?: string;
+};
 
-const PLACEHOLDER = /\{(job|udid|worker|seq)\}/g;
+const PLACEHOLDER = /\{(job|udid|worker|seq|leg|port|metroUrl|stateDir)\}/g;
 
-/** Substitute `{job}` `{udid}` `{worker}` `{seq}` in each argv element (single pass; unknown `{…}` kept). */
+/** Substitute the placeholders `vars` has a value for (single pass; unknown or valueless `{…}` kept). */
+export function expandText(text: string, vars: Partial<JobVars>): string {
+	return text.replace(PLACEHOLDER, (match, key: keyof JobVars) => {
+		const value = vars[key];
+		return value === undefined ? match : String(value);
+	});
+}
+
+/** `expandText` over each argv element. */
 export function expandArgv(argv: readonly string[], vars: JobVars): string[] {
-	return argv.map((arg) => arg.replace(PLACEHOLDER, (_, key: keyof JobVars) => String(vars[key])));
+	return argv.map((arg) => expandText(arg, vars));
 }
 
 /** `--jobs a,b,c` → `["a","b","c"]` (trimmed, empties dropped). */

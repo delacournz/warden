@@ -106,6 +106,23 @@ describe("warden devices", () => {
 		expect(ctx.stdout.join("\n")).toMatch(/warden-golden-iphone-17-abc123def0 .* golden/);
 	});
 
+	test("quarantine + slim state show on warden devices", async () => {
+		const c = setup(["ios", "--json"], { adb: false });
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
+		c.db.quarantineDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, "hung", 3);
+		c.db.setSlimmed("ios", "U1", 4);
+		expect(await devicesCommand.run(c)).toBe(0);
+		const rows: Array<{ id: string; quarantined?: { reason?: string }; slimmed?: true }> = JSON.parse(
+			c.stdout.join("\n")
+		);
+		expect(rows.find((r) => r.id === "U1")).toMatchObject({ quarantined: { reason: "hung" }, slimmed: true });
+		expect(rows.find((r) => r.id === "U2")?.quarantined).toBeUndefined();
+		c.stdout.length = 0;
+		c.argv = ["ios"];
+		await devicesCommand.run(c);
+		expect(c.stdout.join("\n")).toMatch(/warden-iphone-17-1 .* yes quarantined slim/);
+	});
+
 	test("platform filter", async () => {
 		const c = setup(["ios", "--json"]);
 		expect(await devicesCommand.run(c)).toBe(0);

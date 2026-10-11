@@ -12,7 +12,7 @@ Several agents, Orca worktrees, repos and humans share one Mac's simulators, emu
 
 - **Leases** live in one sqlite db (`~/.warden/warden.db`, WAL). Claims run under `BEGIN IMMEDIATE`, which serialises them across processes — no lockfiles.
 - **Owners** are a Claude/Codex session, CI, or a user shell. The repo and worktree are recorded for messages.
-- **Liveness**: a lease stays alive while its pid is alive or its heartbeat is within the TTL (default 30 min). Stale leases are reclaimed on every claim and by `warden gc`.
+- **Liveness**: a lease stays alive while its pid is alive or its heartbeat is within the TTL (default 30 min; a bare `warden claim` by an agent gets 5 min, so only wrappers or `warden heartbeat` hold a device longer). Stale leases are reclaimed on every claim and by `warden gc`.
 - **Devices**: warden creates and reuses its own `warden-<profile>-N` simulators and launches `-read-only` emulators. It never allocates, shuts down or erases a device it didn't create, unless you pass `--adopt`.
 - **Builds**: Expo fingerprint → installed → local cache → EAS → local build. All worktrees of a repo share one cache.
 

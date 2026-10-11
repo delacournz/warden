@@ -1,6 +1,7 @@
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
+import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { resolveOwner } from "../claim-flags";
@@ -9,6 +10,7 @@ import type { CommandContext } from "../context";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { emit } from "../output";
 import { providerFor } from "../providers";
+import { hasForegroundApp } from "../running-apps";
 import { withSpinner } from "../spinner-context";
 
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
@@ -62,7 +64,8 @@ type GcOpts = { idle?: string; quiet?: true; json?: true };
 /**
  * Stale leases (owner died without releasing, e.g. a Claude session killed before SessionEnd) are
  * reclaimed, and their devices shut down when the shutdown policy allows (warden-created, or booted
- * by that owner). Then shut down warden-created devices (store `devices` table) that are
+ * by that owner) — unless the lease went stale under 10 min ago or an app is running on the device,
+ * which then stays up with its idle clock restarted. Then shut down warden-created devices (store `devices` table) that are
  * booted, unleased and idle longer than `--idle`. Foreign devices are never touched; nothing is
  * ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
  * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note.
@@ -79,13 +82,27 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const owner = resolveOwner(ctx);
 	const stale = store.listLeases().filter((l) => l.resource.kind === "device" && !isLeaseAlive(l, now, processAlive));
 	const shutDownIdle = async (sctx: CommandContext): Promise<GcPlan & { reclaimed: string[] }> => {
-		const orphaned = await shutdownReleasedDevices(sctx, stale, owner);
+		// A lease that only just went stale (agent between tool calls) or has an app running keeps its device.
+		const orphaned = await shutdownReleasedDevices(sctx, stale, owner, async (lease) => {
+			const r = lease.resource;
+			if (r.kind !== "device") return undefined;
+			return (
+				staleShutdownBlock(lease, now, false) ??
+				staleShutdownBlock(lease, now, await hasForegroundApp(sctx.exec, r.platform, r.id))
+			);
+		});
 		const reclaimed = store.reclaimStale(now, processAlive);
 		const leased = new Set(
 			store
 				.listLeases()
 				.flatMap((l) => (l.resource.kind === "device" ? [`${l.resource.platform}:${l.resource.id}`] : []))
 		);
+		for (const l of stale) {
+			if (l.resource.kind !== "device" || !orphaned.kept.includes(l.resource.id)) continue;
+			// Spared on purpose: restart its idle clock and keep the idle pass off it this run.
+			store.touchDevice(l.resource.platform, l.resource.id, now);
+			leased.add(`${l.resource.platform}:${l.resource.id}`);
+		}
 		const plan: GcPlan = {
 			now,
 			idleMs: idle.data,

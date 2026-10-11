@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
+import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { leasePidFor, parseClaimFlags, resolveAutoProfile, resolveOwner } from "./claim-flags";
 import { type TestContext, testContext } from "./testing";
 
@@ -17,6 +17,13 @@ describe("parseClaimFlags", () => {
 				ttlMs: DEFAULT_TTL_MS,
 			},
 		});
+	});
+
+	test("default ttl is overridable by the caller; --ttl still wins", () => {
+		const short = parseClaimFlags("ios", {}, 16, BARE_CLAIM_AGENT_TTL_MS);
+		expect(short.success && short.data.ttlMs).toBe(5 * 60_000);
+		const explicit = parseClaimFlags("ios", { ttl: "1h" }, 16, BARE_CLAIM_AGENT_TTL_MS);
+		expect(explicit.success && explicit.data.ttlMs).toBe(60 * 60_000);
 	});
 
 	test("all flags", () => {

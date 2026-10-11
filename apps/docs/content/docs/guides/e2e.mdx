@@ -61,6 +61,10 @@ Each job gets the `warden run` variables plus:
 | `WARDEN_JOB_SEQ` | the run count on this worker, 0-based, retries included |
 | `WARDEN_PASS` | with `--passes N`: which consecutive run of the job this is, 0-based |
 | `WARDEN_BATCH_DIR` | where `batch.json` and the logs go |
+| `WARDEN_PORT` | the first leased port (also `{port}` in the command, `--serve` and `--serve-ready`) |
+| `AGENT_DEVICE_STATE_DIR` | a state dir private to this worker (`{stateDir}`), so parallel runners never share an agent-device daemon |
+
+`--job-timeout 10m` kills a job that is still running after that long (its device is screenshotted first) and counts it as failed with exit 124, so one hung runner cannot stall the queue.
 
 `--serve` runs in its own process group with the full lease in its env; it is SIGTERMed (then SIGKILLed after 15 s) once the jobs are done. If it exits before `--serve-ready` passes, the batch fails without waiting out the timeout.
 
@@ -101,6 +105,40 @@ warden batch salient-e2e --count 2 --jobs qa-login   # same setup, 2 sims, one f
 With `project` set, serve, the jobs and `jobsFrom.command` run in that project's root, relative paths (`serveReady` `file:`, `record`, `logs`, a `jobsFrom` file) resolve against it, and `app` installs that project's build. `env` is added to the serve and job env. Flags you pass override the preset, and `-- <cmd>` overrides `cmd`.
 
 To queue only the flows a change needs, see [Affected e2e](/docs/guides/affected-e2e).
+
+### Dev-client suites: `warden e2e` owns Metro
+
+A Release build embeds its JS and needs no bundler. A dev-client build does, and "whatever answers on the port" is not good enough: with several worktrees, that can be another checkout's Metro, and the flows then test the wrong code. Give the suite a `metro` block and warden runs the bundler itself:
+
+```ts title="warden.config.ts"
+export default defineConfig({
+  projects: [{ name: "app", root: "apps/mobile", bundleId: { ios: "com.example.app" }, variants: { dev: { build: { configuration: "Debug" } } } }],
+  e2e: {
+    mobile: {
+      project: "app",
+      flowsDir: "e2e",
+      platform: "ios",
+      app: { variant: "dev" },
+      metro: { launchArgs: ["-E2E", "YES"] },
+      mode: "single",
+      devices: [
+        { profile: "iphone-17", count: 2 },
+        { profile: "ipad-pro-11-inch-m5", default: false, env: { E2E_LAYOUT: "regular" } },
+      ],
+      runner: ["bunx", "e2e", "run", "--output", "e2e-artifacts/{leg}"],
+    },
+  },
+});
+```
+
+```bash
+warden e2e mobile                 # from a cold shell, no env: 2 iPhones
+warden e2e mobile --devices all   # the iPad leg too, concurrently
+```
+
+One command does the whole run: claim the devices of every leg, install the build, lease a port and start Metro on it in the project root, wait until that port is verified to serve **this** checkout, build the bundle once, open the app on each device with `--initialUrl`, run the runner, stop Metro, release. The runner reads `WARDEN_METRO_URL` and `WARDEN_UDIDS` (its own leg's devices) and never has to guess a port or start a bundler. If the leased port is answered by another worktree's Metro, the run stops with `port <p> is served by <dir>, not this worktree` before any flow.
+
+`mode: "single"` suits runners that shard over several devices themselves: one process per leg gets the whole pool and every selected flow (`WARDEN_FLOWS`, or `{flows}` / `{flowPaths}` in the argv), and its exit code is the verdict of all of them.
 
 ### Failure screenshots
 

@@ -24,9 +24,9 @@ The repo and worktree are recorded with the lease, so `warden ls` and a blocked 
 
 ## Liveness
 
-A lease is alive while **its pid is alive or its heartbeat is within the TTL** (default 30 min). Stale leases — pid dead *and* heartbeat expired — are reclaimed on every claim and by `warden gc`.
+A lease is alive while **its pid is alive or its heartbeat is within the TTL** (default 30 min; 5 min for a bare `warden claim` by an agent). Stale leases — pid dead *and* heartbeat expired — are reclaimed on every claim and by `warden gc`.
 
-Keep long work alive with `warden heartbeat --mine`. Each argent call through the agent hook refreshes the heartbeat automatically, and `warden run` heartbeats every 30 s.
+A bare agent `warden claim` prints a hint and expires in 5 min; nothing refreshes it automatically. `warden dev`, `run`, `batch` and `e2e` heartbeat every 30 s and hold their devices; otherwise keep a lease alive with `warden heartbeat <leaseId>` (or `--mine`). `warden gc` shuts a stale lease's sim down only 10+ min after the lease went stale, and never while a non-Apple app is running on it.
 
 ## Which devices warden touches
 

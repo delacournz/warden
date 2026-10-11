@@ -34,6 +34,28 @@ describe("warden claim", () => {
 		expect(text).toContain("U2");
 	});
 
+	test("agent bare claim → 5m ttl + stderr hint; stdout stays pure JSON", async () => {
+		const c = setup(["ios", "--json"]);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(c.db.listLeases()[0]?.ttlMs).toBe(5 * 60_000);
+		expect(c.stderr.join("\n")).toContain("lease expires in 5m; hold it with: warden dev");
+		expect(() => JSON.parse(c.stdout.join("\n"))).not.toThrow();
+	});
+
+	test("agent --ttl overrides the default, no hint", async () => {
+		const c = setup(["ios", "--ttl", "20m"]);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(c.db.listLeases()[0]?.ttlMs).toBe(20 * 60_000);
+		expect(c.stderr.join("\n")).not.toContain("lease expires");
+	});
+
+	test("user owner → 30m ttl, no hint", async () => {
+		ctx = testContext(["ios"], { exec: fakeSimctl([wardenSim(1, "Booted")]) });
+		expect(await claimCommand.run(ctx)).toBe(0);
+		expect(ctx.db.listLeases()[0]?.ttlMs).toBe(30 * 60_000);
+		expect(ctx.stderr.join("\n")).not.toContain("lease expires");
+	});
+
 	test("user owner → lease pid = parent shell", async () => {
 		ctx = testContext(["ios"], { exec: fakeSimctl([wardenSim(1, "Booted")]) });
 		expect(await claimCommand.run(ctx)).toBe(0);
@@ -94,5 +116,27 @@ describe("warden claim → arrange", () => {
 		c.env = env;
 		expect(await claimCommand.run(c)).toBe(0);
 		expect(calls.some((cmd) => cmd[0] === "osascript")).toBe(process.platform === "darwin");
+	});
+
+	test("a device left slimmed is restored on a plain claim, and the record cleared", async () => {
+		const calls: string[][] = [];
+		const exec = fakeSimctl([wardenSim(2, "Booted")], calls, [
+			["xcrun simctl spawn U2 launchctl print-disabled", { stdout: '\t"com.apple.healthd" => disabled\n' }],
+		]);
+		const c = setup(["ios"], exec);
+		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);
+		c.db.setSlimmed("ios", "U2", 5);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(calls.map((x) => x.join(" "))).toContain("xcrun simctl spawn U2 launchctl enable system/com.apple.healthd");
+		expect(c.db.listDevices()[0]?.slimmedAt).toBeUndefined();
+		expect(c.stderr.join("\n")).toContain("re-enabled 1 slimmed job(s)");
+	});
+
+	test("a clean device is only checked, never touched", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], fakeSimctl([wardenSim(2, "Booted")], calls));
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(calls.some((x) => x.includes("enable"))).toBe(false);
+		expect(c.stderr.join("\n")).not.toContain("slimmed");
 	});
 });

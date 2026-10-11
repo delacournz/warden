@@ -17,6 +17,7 @@ export function markWardenDevices<T extends InventoryDevice>(inventory: T[], rec
 		if (record) {
 			const marked: T = { ...device, wardenCreated: true };
 			if (record.profile !== undefined) marked.profile = record.profile;
+			if (record.quarantinedAt !== undefined) marked.quarantined = true;
 			return marked;
 		}
 		const profile = wardenNameProfile(device.name);
