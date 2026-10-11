@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { type EnsureInput, ensureApp, type ProjectContext, projectContext } from "@delacour/warden-core/builds/ensure";
 import { type CacheKey, computeCacheKey } from "@delacour/warden-core/builds/fingerprint";
@@ -44,17 +45,27 @@ function log(ctx: CommandContext, line: string): void {
 	ctx.err(`[warden] ${line}`);
 }
 
+/** Where project discovery starts: `--project` (relative to cwd, must be a directory) or cwd. */
+export function projectStart(ctx: CommandContext, project: string | undefined): Result<string> {
+	if (!project) return ok(ctx.cwd);
+	const start = resolve(ctx.cwd, project);
+	return statSync(start, { throwIfNoEntry: false })?.isDirectory()
+		? ok(start)
+		: err(`--project ${project}: no such directory ${start} (cwd ${ctx.cwd})`);
+}
+
 async function loadContext(
 	ctx: CommandContext,
 	opts: Pick<EnsureOptions, "project" | "bundleId" | "variant" | "variantOptional">,
 	platform?: Platform
 ): AsyncResult<ProjectContext> {
-	const start = opts.project ? resolve(ctx.cwd, opts.project) : ctx.cwd;
+	const start = projectStart(ctx, opts.project);
+	if (!start.success) return start;
 	const bundleId = opts.bundleId !== undefined && platform !== undefined ? { [platform]: opts.bundleId } : undefined;
 	return projectContext({
 		exec: ctx.exec,
 		env: ctx.env,
-		start,
+		start: start.data,
 		...(bundleId ? { bundleId } : {}),
 		...(opts.variant !== undefined ? { variant: opts.variant } : {}),
 		...(opts.variantOptional ? { variantOptional: true } : {}),
@@ -78,6 +89,56 @@ async function fingerprint(ctx: CommandContext, project: ProjectContext, platfor
 	return hash;
 }
 
+/** A project with its cache key for one platform: what every device of a run installs. */
+export type PreparedApp = { project: ProjectContext; hash: CacheKey };
+
+/** Load the project and fingerprint it for `platform` (the slow, device-independent half of an ensure). */
+export async function prepareApp(
+	ctx: CommandContext,
+	opts: EnsureOptions,
+	platform: Platform
+): AsyncResult<PreparedApp> {
+	const project = await loadContext(ctx, opts, platform);
+	if (!project.success) return project;
+	const hash = await fingerprint(ctx, project.data, platform);
+	return hash.success ? ok({ project: project.data, hash: hash.data }) : hash;
+}
+
+/** Make sure the prepared app is installed on `deviceId` (or just resolved into the cache when it is undefined). */
+export async function ensurePreparedApp(
+	ctx: CommandContext,
+	deps: AppDeps,
+	owner: Owner,
+	platform: Platform,
+	deviceId: string | undefined,
+	opts: EnsureOptions,
+	prepared: PreparedApp
+): AsyncResult<EnsureResult> {
+	const { project, hash } = prepared;
+	const input: EnsureInput = {
+		...project,
+		store: ctx.store(),
+		exec: ctx.exec,
+		env: ctx.env,
+		now: ctx.now,
+		sleep: deps.sleep,
+		log: (line) => log(ctx, line),
+		pidAlive: deps.pidAlive,
+		owner,
+		pid: deps.pid,
+		platform,
+		hash: hash.key,
+		...(hash.native !== hash.key ? { native: hash.native } : {}),
+		eas: opts.eas,
+		build: opts.build,
+		...(opts.clean ? { clean: true } : {}),
+		...(deviceId !== undefined ? { deviceId } : {}),
+		...(deps.easPollMs !== undefined ? { easPollMs: deps.easPollMs } : {}),
+		...(deps.lockPollMs !== undefined ? { lockPollMs: deps.lockPollMs } : {}),
+	};
+	return ensureApp(input);
+}
+
 /**
  * Fingerprint the project and make sure the matching app is installed on `deviceId` (or just
  * resolved into the cache when `deviceId` is undefined). Shared by `app ensure` and `run --app`.
@@ -90,32 +151,9 @@ export async function ensureAppFor(
 	deviceId: string | undefined,
 	opts: EnsureOptions
 ): AsyncResult<EnsureResult> {
-	const project = await loadContext(ctx, opts, platform);
-	if (!project.success) return project;
-	const hash = await fingerprint(ctx, project.data, platform);
-	if (!hash.success) return hash;
-	const input: EnsureInput = {
-		...project.data,
-		store: ctx.store(),
-		exec: ctx.exec,
-		env: ctx.env,
-		now: ctx.now,
-		sleep: deps.sleep,
-		log: (line) => log(ctx, line),
-		pidAlive: deps.pidAlive,
-		owner,
-		pid: deps.pid,
-		platform,
-		hash: hash.data.key,
-		...(hash.data.native !== hash.data.key ? { native: hash.data.native } : {}),
-		eas: opts.eas,
-		build: opts.build,
-		...(opts.clean ? { clean: true } : {}),
-		...(deviceId !== undefined ? { deviceId } : {}),
-		...(deps.easPollMs !== undefined ? { easPollMs: deps.easPollMs } : {}),
-		...(deps.lockPollMs !== undefined ? { lockPollMs: deps.lockPollMs } : {}),
-	};
-	return ensureApp(input);
+	const prepared = await prepareApp(ctx, opts, platform);
+	if (!prepared.success) return prepared;
+	return ensurePreparedApp(ctx, deps, owner, platform, deviceId, opts, prepared.data);
 }
 
 type DeviceFlags = { udid?: string; lease?: string; noInstall: boolean };

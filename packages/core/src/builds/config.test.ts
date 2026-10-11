@@ -81,6 +81,53 @@ describe("parseWardenConfig", () => {
 		expect(bad({ slim: true, platform: "ios", setup: "echo {udid}" }).success).toBe(true);
 	});
 
+	test("e2e suite run settings: metro, mode, jobTimeoutMs and device legs, with defaults", () => {
+		const suite = { flowsDir: "flows", runner: ["run"] };
+		const parse = (extra: Record<string, unknown>) => parseWardenConfig({ e2e: { s: { ...suite, ...extra } } });
+		const plain = parse({});
+		if (!plain.success) throw new Error(plain.error);
+		expect(plain.data.e2e?.s?.mode).toBe("per-flow");
+		expect(plain.data.e2e?.s?.jobTimeoutMs).toBe(600_000);
+		expect(plain.data.e2e?.s?.metro).toBeUndefined();
+
+		const full = parse({
+			mode: "single",
+			jobTimeoutMs: 120_000,
+			metro: { launchArgs: ["-Flag", "YES"], env: { E2E: "1" } },
+			devices: [
+				{ profile: "iphone-17", count: 2 },
+				{ profile: "ipad", env: { LAYOUT: "regular" }, default: false },
+			],
+		});
+		if (!full.success) throw new Error(full.error);
+		expect(full.data.e2e?.s?.metro).toEqual({
+			enabled: true,
+			port: "8081:100",
+			launchArgs: ["-Flag", "YES"],
+			open: true,
+			env: { E2E: "1" },
+			prewarm: true,
+			readyTimeout: "2m",
+		});
+		expect(full.data.e2e?.s?.devices).toEqual([
+			{ profile: "iphone-17", count: 2, default: true },
+			{ profile: "ipad", count: 1, env: { LAYOUT: "regular" }, default: false },
+		]);
+
+		const errorOf = (extra: Record<string, unknown>) => {
+			const res = parse(extra);
+			return res.success ? "" : res.error;
+		};
+		expect(errorOf({ devices: [{ profile: "a" }], count: 2 })).toContain("devices replaces profile / count");
+		expect(errorOf({ devices: [{ profile: "a" }, { profile: "a" }] })).toContain('duplicate profile "a"');
+		expect(errorOf({ devices: [{ profile: "a", default: false }] })).toContain("at least one device leg");
+		expect(errorOf({ mode: "single", runner: ["run", "{flowPath}"] })).toContain("{flows} / {flowPaths}");
+		expect(errorOf({ mode: "single", passes: 2 })).toContain("passes");
+		expect(errorOf({ runner: ["run", "{flows}"] })).toContain('mode "single"');
+		expect(errorOf({ metro: { port: "nope" } })).toContain("port");
+		expect(errorOf({ jobTimeoutMs: 10 })).not.toBe("");
+	});
+
 	test("rejects a bad e2e suite", () => {
 		const res = parseWardenConfig({ e2e: { mobile: { flowsDir: "flows", runner: [] } } });
 		expect(res.success).toBe(false);

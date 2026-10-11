@@ -25,6 +25,7 @@ describe("patchArgentRules", () => {
 		expect(result.text).toContain(`Decision order:\n\n${WARDEN_RULE_LINE}\n1. **Explicit user intent**`);
 		expect(result.text.replace(`${WARDEN_RULE_LINE}\n`, "")).toBe(RULE);
 		expect(WARDEN_RULE_LINE).toStartWith("0. **Claim via warden first**");
+		expect(WARDEN_RULE_LINE).toContain("~5 min");
 	});
 
 	test("idempotent: already mentions warden → unchanged", () => {

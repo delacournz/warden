@@ -35,7 +35,9 @@ async function slimOne(ctx: CommandContext, udid: string, opts: SlimOpts): Promi
 		...(opts.dryRun ? { dryRun: true } : {}),
 		...(opts.restore ? { restore: true } : {}),
 	});
-	return res.success ? { udid, labels: res.data } : { udid, error: res.error };
+	if (!res.success) return { udid, error: res.error };
+	if (!opts.dryRun) ctx.store().setSlimmed("ios", udid, opts.restore ? undefined : ctx.now());
+	return { udid, labels: res.data };
 }
 
 function describeReport(report: SlimReport, opts: SlimOpts): string {
@@ -69,10 +71,21 @@ async function slim(ctx: CommandContext, udid: string | undefined, opts: SlimOpt
 	return reports.every((r) => r.error === undefined) ? 0 : 1;
 }
 
+/** `warden sim unquarantine <id>`: let claims hand the device out again. */
+function unquarantine(ctx: CommandContext, id: string): number {
+	const { color } = ctx.ui;
+	if (ctx.store().unquarantineDevice(id) === 0) {
+		ctx.err(color.red(`warden sim unquarantine: ${id} is not quarantined`));
+		return 1;
+	}
+	ctx.err(color.green(`${id}: quarantine cleared`));
+	return 0;
+}
+
 export function createSimCommand(): Command {
 	return defineCommand({
 		name: "sim",
-		summary: "per-simulator tweaks: slim",
+		summary: "per-simulator tweaks: slim | unquarantine",
 		register: (cmd, ctx, done) => {
 			cmd
 				.command("slim")
@@ -85,6 +98,11 @@ export function createSimCommand(): Command {
 				.option("--restore", "re-enable them (fully effective on the next boot)")
 				.option("--json", "machine-readable output")
 				.action(async (udid, o) => done(await slim(ctx, udid, o)));
+			cmd
+				.command("unquarantine")
+				.description("clear the quarantine on a device (set by `release --bad` or a failed claim health probe)")
+				.argument("<id>", "simulator udid / emulator serial")
+				.action((id) => done(unquarantine(ctx, id)));
 		},
 	});
 }

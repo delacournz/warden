@@ -13,6 +13,8 @@ type World = {
 	filledWhileLocked?: string;
 	device?: boolean;
 	clean?: boolean;
+	/** the installed app matches the cached build; undefined = the device has no `matches` step */
+	matches?: boolean;
 };
 
 function steps(world: World) {
@@ -65,6 +67,14 @@ function steps(world: World) {
 				calls.push("confirm");
 				return ok(world.onDevice ?? false);
 			},
+			...(world.matches === undefined
+				? {}
+				: {
+						matches: async (path: string) => {
+							calls.push(`matches ${path}`);
+							return ok(world.matches === true);
+						},
+					}),
 			uninstall: async () => {
 				calls.push("uninstall");
 				return ok(undefined);
@@ -93,6 +103,26 @@ const rows: Row[] = [
 		world: { installedHash: "H", onDevice: false, cache: "/c/A.app" },
 		source: "cache",
 		calls: ["confirm", "cached", "install /c/A.app"],
+	},
+	{
+		name: "1 installed + confirmed + matches the cached build → skip install",
+		world: { installedHash: "H", onDevice: true, cache: "/c/A.app", matches: true },
+		source: "installed",
+		appPath: "/c/A.app",
+		calls: ["confirm", "cached", "matches /c/A.app", "cached"],
+	},
+	{
+		name: "1 installed but differs from the cached build → reinstall",
+		world: { installedHash: "H", onDevice: true, cache: "/c/A.app", matches: false },
+		source: "cache",
+		calls: ["confirm", "cached", "matches /c/A.app", "cached", "install /c/A.app"],
+	},
+	{
+		name: "1 installed, cache pruned → nothing to compare, trust the record",
+		world: { installedHash: "H", onDevice: true, matches: false },
+		source: "installed",
+		appPath: "",
+		calls: ["confirm", "cached", "cached"],
 	},
 	{
 		name: "1 installed at another hash → reinstall (no confirm needed)",

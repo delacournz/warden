@@ -3,8 +3,8 @@ import type { Lease } from "@delacour/warden-core/types";
 import { resolveOwner, sessionOwner } from "./claim-flags";
 import type { CommandContext } from "./context";
 
-/** `<leaseId…> | --udid X | --mine | --session S` — shared by release + heartbeat. */
-export type LeaseSelector = { ids: string[]; udids: string[]; mine: boolean; session?: string };
+/** `<leaseId…> | --udid X | --mine [--label L] | --session S` — shared by release + heartbeat. */
+export type LeaseSelector = { ids: string[]; udids: string[]; mine: boolean; session?: string; label?: string };
 
 /** Selector options shared by `release` + `heartbeat`; the `[leaseIds...]` argument is the caller's. */
 export function withSelectOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
@@ -13,11 +13,12 @@ export function withSelectOptions<Args extends unknown[], Opts extends OptionVal
 	return cmd
 		.option("--udid <udid...>", "select leases of these device udids / serials (repeatable)")
 		.option("--mine", "select every lease held by this owner")
+		.option("--label <label>", "with --mine: only leases whose label equals this")
 		.option("--session <id>", "select every lease held by this agent session");
 }
 
 /** Values `withSelectOptions` parses to. */
-export type SelectOptionValues = { udid?: string[]; mine?: boolean; session?: string };
+export type SelectOptionValues = { udid?: string[]; mine?: boolean; session?: string; label?: string };
 
 export const NOTHING_SELECTED = "nothing selected — pass <leaseId…>, --udid, --mine or --session";
 
@@ -53,7 +54,11 @@ export function selectLeases(ctx: CommandContext, selector: LeaseSelector): Sele
 	const leases = [
 		...byIds(ctx, selector.ids, unknown),
 		...byUdids(ctx, selector.udids, unknown),
-		...(selector.mine ? store.listLeasesByOwner(resolveOwner(ctx)) : []),
+		...(selector.mine
+			? store
+					.listLeasesByOwner(resolveOwner(ctx))
+					.filter((l) => selector.label === undefined || l.label === selector.label)
+			: []),
 		...(selector.session !== undefined ? store.listLeasesByOwner(sessionOwner(selector.session)) : []),
 	];
 	return { leases: [...new Map(leases.map((l) => [l.id, l])).values()], unknown };
@@ -66,5 +71,6 @@ export function selectorFrom(ids: readonly string[], values: SelectOptionValues)
 		udids: values.udid ?? [],
 		mine: values.mine === true,
 		...(values.session !== undefined ? { session: values.session } : {}),
+		...(values.label !== undefined ? { label: values.label } : {}),
 	};
 }

@@ -79,6 +79,8 @@ describe("ensureApp", () => {
 			[
 				["xcrun simctl install U1", {}],
 				["xcrun simctl get_app_container U1 com.x.app", { stdout: "/data/App.app" }],
+				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
+				["stat -f %z", { stdout: "7\n" }],
 			],
 			calls
 		);
@@ -90,7 +92,28 @@ describe("ensureApp", () => {
 		calls.length = 0;
 		const second = await ensureApp(input(exec));
 		expect(second).toEqual({ success: true, data: { appPath: path, hash: "H", source: "installed", installed: true } });
-		expect(calls).toEqual(["xcrun simctl get_app_container U1 com.x.app"]);
+		expect(calls[0]).toBe("xcrun simctl get_app_container U1 com.x.app");
+		expect(calls.some((c) => c.startsWith("xcrun simctl install"))).toBe(false);
+	});
+
+	test("app on the device differs from the cached build → reinstall", async () => {
+		const path = await seedCache();
+		const exec = fake(
+			[
+				["xcrun simctl install U1", {}],
+				["xcrun simctl get_app_container U1 com.x.app", { stdout: "/data/App.app" }],
+				[
+					"plutil -convert json -o - /data/App.app",
+					{ stdout: JSON.stringify({ CFBundleVersion: "OLD", CFBundleExecutable: "App" }) },
+				],
+				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
+				["stat -f %z", { stdout: "7\n" }],
+			],
+			[]
+		);
+		await ensureApp(input(exec));
+		const again = await ensureApp(input(exec));
+		expect(again).toEqual({ success: true, data: { appPath: path, hash: "H", source: "cache", installed: true } });
 	});
 
 	test("installed at an old hash → reinstall", async () => {

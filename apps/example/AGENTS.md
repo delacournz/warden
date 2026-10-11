@@ -64,16 +64,25 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 - Flows are `e2e/*.e2e.ts`; helpers are in `e2e/helpers` (`ids.ts` mirrors the testIDs).
 - Use `test` from `@e2e-dev/mobile` and `expect` from `e2e`. Flows must be deterministic, so never use `agent.*`.
 - Start a flow with `launch` / `openSignIn` / `signedIn` from `e2e/helpers/flows.ts`, not a bare `app.open()`. They clear iOS prompts that cover the app: the "Open in warden-example?" prompt left by a deep link (it outlives a reinstall), and Keychain's "Save Password?" sheet after sign-in.
-- `e2e.config.ts` pins the device from `WARDEN_UDID` (or `E2E_UDID`), with one agent-device session per device.
+- `e2e.config.ts` reads the devices and Metro warden exports (`e2e/helpers/launch.ts`): `WARDEN_UDID` for a per-flow job, the `WARDEN_UDIDS` pool for a `single` run, `WARDEN_METRO_URL` → `--initialUrl` for the dev client (`E2E_UDID` by hand).
 - `warden.config.ts` defines:
   - project `example`: a Release build keyed on native + JS;
-  - suite `example`: 2 sims, clean install, slim, and the flow → screen `entries` that `warden affected` uses.
+  - variant `dev`: the Debug dev client, keyed on native only;
+  - suite `example`: 2 sims, clean install, slim, and the flow → screen `entries` that `warden affected` uses;
+  - suite `example-dev`: the same flows on the dev client. warden starts and verifies its own Metro (`metro`), and one runner drives the whole pool (`mode: "single"`).
 
 ```bash
 bun run e2e                          # warden e2e example (this checkout's warden)
+bun run e2e:dev -- --all             # warden e2e example-dev: dev client + warden's Metro
 bun run e2e:affected -- --explain    # which flows this branch needs
 bun run e2e:flow todos               # one flow
 E2E_UDID=<udid> bunx e2e run e2e/todos.e2e.ts   # by hand, on an installed build
 ```
 
-Failure output is in `.e2e/<worker>-<seq>/` (`report.json`, `artifacts/`) and in warden's batch logs and screenshots.
+Never start Metro or export device env vars for a suite: `warden e2e <suite>` does both.
+
+`e2e` 0.19 needs Node `^22.22.3 || >=24.8.0` on `PATH` (the runner is `bunx e2e`, a node bin); an older node fails every flow at once with exit 2.
+
+Assert a `Badge` / `Chip` with `expectLabel` / `expectRemaining` and type with `fillField` (`e2e/helpers/flows.ts`): the container's own text can read empty on iOS, and the engine sometimes cannot confirm text it did type.
+
+Failure output is in `.e2e/<worker>-<seq>/` (`.e2e/dev/` for `example-dev`) (`report.json`, `artifacts/`) and in warden's batch logs and screenshots.

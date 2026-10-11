@@ -304,3 +304,63 @@ describe("claimDevices", () => {
 		expect(result).toEqual({ success: false, error: "simctl missing" });
 	});
 });
+
+describe("claim health probe", () => {
+	function withProbe(provider: FakeProvider, bad: Set<string>): FakeProvider {
+		provider.probe = async (id) => {
+			provider.calls.push(`probe ${id}`);
+			return bad.has(id) ? err(`${id}: hung`) : ok(undefined);
+		};
+		return provider;
+	}
+
+	test("quarantines an unhealthy warden device, releases its lease and claims another", async () => {
+		const provider = withProbe(fakeProvider([sim("1", { state: "booted" }), sim("2")]), new Set(["1"]));
+		const logs: string[] = [];
+		const result = await claimDevices(input(provider, { log: (l) => logs.push(l) }));
+		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
+		expect(store.listDevices().find((d) => d.id === "1")).toMatchObject({ quarantineReason: "1: hung" });
+		expect(store.listLeases().map((l) => l.resource.kind === "device" && l.resource.id)).toEqual(["2"]);
+		expect(logs.join("\n")).toContain("quarantined");
+	});
+
+	test("a quarantined device is not offered to the next claim", async () => {
+		const provider = withProbe(fakeProvider([sim("1", { state: "booted" })]), new Set(["1"]));
+		const result = await claimDevices(input(provider, { request: request({ max: 1 }) }));
+		expect(result.success && result.data.claimed[0]?.action).toBe("create");
+		expect(result.success && result.data.claimed[0]?.device.id).toBe("NEW1");
+	});
+
+	test("foreign unhealthy device is skipped, never quarantined or shut down", async () => {
+		const provider = withProbe(
+			fakeProvider([
+				sim("F", { name: "Chris iPhone", wardenCreated: false, profile: "iphone-17", state: "booted" }),
+				sim("2", { state: "booted" }),
+			]),
+			new Set(["F"])
+		);
+		const result = await claimDevices(input(provider, { request: request({ adopt: true }) }));
+		expect(result.success && result.data.claimed[0]?.device.id).toBe("2");
+		expect(store.listDevices().find((d) => d.id === "F")).toBeUndefined();
+		expect(provider.calls).not.toContain("shutdown F");
+	});
+
+	test("gives up with a clear error after bounded retries and leaves no leases", async () => {
+		const provider = withProbe(
+			fakeProvider([sim("1", { state: "booted" })]),
+			new Set(["1", "NEW1", "NEW2", "NEW3", "NEW4"])
+		);
+		const result = await claimDevices(input(provider, { request: request({ max: 9 }) }));
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toContain("failed the health probe");
+		expect(store.listLeases()).toEqual([]);
+		expect(provider.calls.filter((c) => c.startsWith("probe")).length).toBe(3);
+	});
+
+	test("healthy devices are unaffected", async () => {
+		const provider = withProbe(fakeProvider([sim("1", { state: "booted" })]), new Set());
+		const result = await claimDevices(input(provider));
+		expect(result.success && result.data.claimed[0]?.device.id).toBe("1");
+		expect(store.listDevices()).toEqual([]);
+	});
+});

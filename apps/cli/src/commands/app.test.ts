@@ -114,6 +114,8 @@ describe("warden app ensure", () => {
 			[
 				["xcrun simctl install U1", {}],
 				["xcrun simctl get_app_container U1 com.demo", { stdout: "/x" }],
+				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
+				["stat -f %z", { stdout: "7\n" }],
 			],
 			calls
 		);
@@ -248,5 +250,18 @@ describe("warden app ensure", () => {
 		const c = setup(["ensure", "--no-install"]);
 		expect(await createAppCommand(deps).run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("missing platform");
+	});
+
+	test("--project that is not a directory → one clear error, nothing spawned", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--no-install", "--project", "apps/nope"], [], calls);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain(
+			`--project apps/nope: no such directory ${join(c.cwd, "apps/nope")} (cwd ${c.cwd})`
+		);
+		expect(calls).toEqual([]);
+		c.argv = ["fingerprint", "ios", "--project", "apps/nope"];
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(calls).toEqual([]);
 	});
 });

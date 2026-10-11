@@ -66,6 +66,9 @@ export const MIGRATIONS: readonly string[] = [
 	);`,
 	`ALTER TABLE leases ADD COLUMN booted_by_owner INTEGER;
 	CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`,
+	`ALTER TABLE devices ADD COLUMN quarantined_at INTEGER;
+	ALTER TABLE devices ADD COLUMN quarantine_reason TEXT;
+	ALTER TABLE devices ADD COLUMN slimmed_at INTEGER;`,
 ];
 
 export function ownerKey(owner: Owner): string {
@@ -97,6 +100,11 @@ export type DeviceRecord = {
 	runtime?: string;
 	createdAt: number;
 	lastUsedAt: number;
+	/** set when the device was reported bad (`release --bad`, failed health probe): never allocated until cleared */
+	quarantinedAt?: number;
+	quarantineReason?: string;
+	/** set while the simulator's daemons are switched off (`sim slim`); cleared by `--restore` */
+	slimmedAt?: number;
 };
 
 type LeaseRow = {
@@ -119,6 +127,9 @@ type DeviceRow = {
 	runtime: string | null;
 	created_at: number;
 	last_used_at: number;
+	quarantined_at: number | null;
+	quarantine_reason: string | null;
+	slimmed_at: number | null;
 };
 
 function toLease(row: LeaseRow): Lease {
@@ -146,6 +157,9 @@ function toDevice(row: DeviceRow): DeviceRecord {
 	};
 	if (row.profile !== null) device.profile = row.profile;
 	if (row.runtime !== null) device.runtime = row.runtime;
+	if (row.quarantined_at !== null) device.quarantinedAt = row.quarantined_at;
+	if (row.quarantine_reason !== null) device.quarantineReason = row.quarantine_reason;
+	if (row.slimmed_at !== null) device.slimmedAt = row.slimmed_at;
 	return device;
 }
 
@@ -287,6 +301,47 @@ export class Store {
 
 	touchDevice(platform: Platform, id: string, now: number): void {
 		this.db.query("UPDATE devices SET last_used_at = ? WHERE platform = ? AND id = ?").run(now, platform, id);
+	}
+
+	/** Quarantine a warden device (recording it first when only its name marked it ours). */
+	quarantineDevice(
+		device: Omit<DeviceRecord, "createdAt" | "lastUsedAt" | "quarantinedAt" | "quarantineReason" | "slimmedAt">,
+		reason: string | undefined,
+		now: number
+	): void {
+		this.transaction(() => {
+			this.db
+				.query(
+					`INSERT INTO devices (platform, id, name, profile, runtime, created_at, last_used_at, quarantined_at, quarantine_reason)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+					 ON CONFLICT (platform, id) DO UPDATE SET quarantined_at = excluded.quarantined_at, quarantine_reason = excluded.quarantine_reason`
+				)
+				.run(
+					device.platform,
+					device.id,
+					device.name,
+					device.profile ?? null,
+					device.runtime ?? null,
+					now,
+					now,
+					now,
+					reason ?? null
+				);
+		});
+	}
+
+	/** Clear quarantine on every recorded device with this id (any platform); returns how many were cleared. */
+	unquarantineDevice(id: string): number {
+		return this.db
+			.query(
+				"UPDATE devices SET quarantined_at = NULL, quarantine_reason = NULL WHERE id = ? AND quarantined_at IS NOT NULL"
+			)
+			.run(id).changes;
+	}
+
+	/** Record (`at` set) or clear (`at` undefined) that a recorded device's daemons are slimmed. */
+	setSlimmed(platform: Platform, id: string, at: number | undefined): void {
+		this.db.query("UPDATE devices SET slimmed_at = ? WHERE platform = ? AND id = ?").run(at ?? null, platform, id);
 	}
 
 	forgetDevice(platform: Platform, id: string): void {

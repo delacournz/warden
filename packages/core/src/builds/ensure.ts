@@ -6,7 +6,7 @@ import type { Owner, Platform } from "../types";
 import { type BuildSource, cachedBuild, findLegacyArtifact, getInstall, recordInstall, storeArtifact } from "./cache";
 import { bundleIdFor, type EasSettings, loadProject, type Project } from "./config";
 import { type Download, resolveFromEas } from "./eas";
-import { installApp, isAppInstalled, uninstallApp } from "./install";
+import { appMatchesArtifact, installApp, isAppInstalled, uninstallApp } from "./install";
 import { runLocalBuild } from "./local";
 import { buildLockKey, withBuildLock } from "./lock";
 import { readProjectKey } from "./project-key";
@@ -199,6 +199,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		steps.device = {
 			installedHash: () => getInstall(store, platform, deviceId, bundleId.data)?.hash,
 			confirm: () => isAppInstalled(deps, target, bundleId.data),
+			matches: (cachedPath) => appMatchesArtifact(deps, target, bundleId.data, cachedPath),
 			uninstall: () => {
 				input.log(`uninstalling ${bundleId.data} from ${deviceId} (clean install)`);
 				return uninstallApp(deps, target, bundleId.data);

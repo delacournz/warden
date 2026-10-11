@@ -60,6 +60,8 @@ export type GoldenDeps = {
 	pidAlive: PidAlive;
 	sleep: (ms: number) => Promise<void>;
 	log?: (line: string) => void;
+	/** a claim is waiting on this build: say how to prewarm it (off for `warden golden ensure`, which is the prewarm) */
+	prewarmHint?: boolean;
 	timing?: Partial<GoldenTiming>;
 };
 
@@ -193,6 +195,12 @@ async function buildSteps(deps: GoldenDeps, target: GoldenTarget, udid: string):
 async function buildGolden(deps: GoldenDeps, target: GoldenTarget, key: string): AsyncResult<EnsuredGolden> {
 	const started = deps.now();
 	const name = goldenName(target.profile, key);
+	if (deps.prewarmHint) {
+		log(
+			deps,
+			`building golden for ${target.profile} (first claim of this profile, ~5 min); prewarm with: warden golden ensure --profile ${target.profile}`
+		);
+	}
 	log(
 		deps,
 		`building ${name} (${target.deviceType.split(".").pop()}, ${target.runtimeId.split(".").pop()}) — one-time first boot, a few minutes`
