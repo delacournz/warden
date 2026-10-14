@@ -22,7 +22,8 @@ A headless run shows no simulator window, even with Simulator.app open, and neve
 
 - After the claim, warden closes the Simulator.app windows of the devices **this run leased**, instead of tiling them. A window is matched by its device name (the title before ` – iOS …`). Windows of other devices are never touched, and a reused sim that was open before has its window closed too.
 - `warden e2e` / `warden batch` close them again just before the first job, after Metro, `serve` and `setup` are up, because a window can attach late (a slow boot, or Simulator.app opened in the meantime).
-- If Simulator.app is set to shut a device down when its window closes, warden boots that device again without a window (`simctl boot` + `bootstatus -b`) and prints a warning.
+- By default Simulator.app shuts a device down when you close its window. For the close only, warden switches on Simulator's "keep running" setting (`defaults write com.apple.iphonesimulator DetachOnWindowClose -bool true`). The window detaches and the device stays booted. Afterwards warden puts the setting back exactly as it was: unset, `false` or `true`.
+- If a device still shuts down, warden waits for it to finish shutting down, boots it again without a window (`simctl boot` + `bootstatus -b`), closes any window Simulator.app reattached, and prints a warning.
 - Simulator.app is never launched. When it isn't running, there is nothing to do.
 - Headless never fails a run. A missing Accessibility permission or an osascript error is a yellow warning.
 - Serve, setup and runners get `WARDEN_HEADLESS=1`, so your own tools can honour it. On a run that isn't headless, `WARDEN_HEADLESS` is removed from their env.

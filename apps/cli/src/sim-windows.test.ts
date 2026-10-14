@@ -156,35 +156,56 @@ describe("autoArrangeSimWindows", () => {
 	});
 });
 
+type State = "Booted" | "Shutdown" | "Shutting Down";
+
+const done = (stdout = "", exitCode = 0, stderr = "") => ({ exitCode, stdout, stderr });
+
+/** `afterClose[udid]` on the `n`-th `simctl list` call (1-based; the last state repeats). */
+function stateAt(afterClose: Record<string, State | State[]>, udid: string, n: number): State {
+	const states = afterClose[udid] ?? "Booted";
+	return typeof states === "string" ? states : (states[Math.min(n - 1, states.length - 1)] ?? "Booted");
+}
+
+/**
+ * Simulator.app showing `titles` (undefined = not running). `afterClose`: each device's state per
+ * `simctl list` call once windows close (the last one repeats). `detach`: the user's
+ * `DetachOnWindowClose` (`defaults read` output; undefined = unset).
+ */
+function fakeSimulator(
+	leased: ReadonlyArray<{ udid: string; name: string }>,
+	titles: string[] | undefined,
+	afterClose: Record<string, State | State[]>,
+	detach: "0" | "1" | undefined
+) {
+	const calls: string[][] = [];
+	const warnings: string[] = [];
+	let lists = 0;
+	const windows = () => JSON.stringify({ screen, windows: (titles ?? []).map((t) => sim(t)) });
+	const list = () => {
+		lists++;
+		const sims = leased.map((d) => ({ udid: d.udid, name: d.name, state: stateAt(afterClose, d.udid, lists) }));
+		return done(simctlDevicesJson({ "iOS-26-5": sims }));
+	};
+	const readPref = () => (detach === undefined ? done("", 1, "does not exist") : done(`${detach}\n`));
+	const exec: Exec = async (cmd) => {
+		calls.push([...cmd]);
+		if (cmd[0] === "osascript") return done((cmd[4] ?? "").includes("NSScreen") ? windows() : "");
+		if (cmd[0] === "defaults" && cmd[1] === "read") return readPref();
+		return cmd.join(" ") === "xcrun simctl list devices -j" ? list() : done();
+	};
+	const deps = { exec, os: "darwin" as const, sleep: async () => {}, warn: (line: string) => warnings.push(line) };
+	return { deps, calls, warnings };
+}
+
 describe("hideSimWindows", () => {
 	const leased = [
 		{ udid: "U1", name: "warden-iphone-17-1" },
 		{ udid: "U2", name: "warden-iphone-17-2" },
 	];
-	/** Simulator.app showing `titles` (undefined = not running); `afterClose` = sim states once windows close. */
-	const fake = (titles: string[] | undefined, afterClose: Record<string, "Booted" | "Shutdown"> = {}) => {
-		const calls: string[][] = [];
-		const warnings: string[] = [];
-		const exec: Exec = async (cmd) => {
-			calls.push([...cmd]);
-			const script = cmd[4] ?? "";
-			if (cmd[0] === "osascript" && script.includes("NSScreen")) {
-				return {
-					exitCode: 0,
-					stdout: JSON.stringify({ screen, windows: (titles ?? []).map((t) => sim(t)) }),
-					stderr: "",
-				};
-			}
-			if (cmd[0] === "osascript") return { exitCode: 0, stdout: "", stderr: "" };
-			if (cmd.join(" ") === "xcrun simctl list devices -j") {
-				const sims = leased.map((d) => ({ udid: d.udid, name: d.name, state: afterClose[d.udid] ?? "Booted" }));
-				return { exitCode: 0, stdout: simctlDevicesJson({ "iOS-26-5": sims }), stderr: "" };
-			}
-			return { exitCode: 0, stdout: "", stderr: "" };
-		};
-		const deps = { exec, os: "darwin" as const, sleep: async () => {}, warn: (line: string) => warnings.push(line) };
-		return { deps, calls, warnings };
-	};
+	const fake = (titles: string[] | undefined, afterClose: Record<string, State | State[]> = {}, detach?: "0" | "1") =>
+		fakeSimulator(leased, titles, afterClose, detach);
+	const defaultsCalls = (calls: string[][]) => calls.filter((c) => c[0] === "defaults").map((c) => c.join(" "));
+	const PREF = "com.apple.iphonesimulator DetachOnWindowClose";
 	const closeCalls = (calls: string[][]) =>
 		calls.filter((c) => c[0] === "osascript" && (c[4] ?? "").includes("AXCloseButton"));
 
@@ -215,6 +236,47 @@ describe("hideSimWindows", () => {
 		expect(simctl).toContain("xcrun simctl bootstatus U2 -b");
 		expect(simctl.some((c) => c.includes("U1") && c.includes("boot"))).toBe(false);
 		expect(f.warnings.join("\n")).toContain("warden-iphone-17-2");
+	});
+
+	test("closes with DetachOnWindowClose on (device keeps running), then deletes the unset preference again", async () => {
+		const f = fake(["warden-iphone-17-1 – iOS 26.5"]);
+		await hideSimWindows(f.deps, leased);
+		expect(defaultsCalls(f.calls)).toEqual([
+			`defaults read ${PREF}`,
+			`defaults write ${PREF} -bool true`,
+			`defaults delete ${PREF}`,
+		]);
+		const close = f.calls.findIndex((c) => (c[4] ?? "").includes("AXCloseButton"));
+		const write = f.calls.findIndex((c) => c.join(" ").includes("-bool true"));
+		const restore = f.calls.findIndex((c) => c[1] === "delete");
+		expect(write).toBeLessThan(close);
+		expect(restore).toBeGreaterThan(close);
+	});
+
+	test("a user's DetachOnWindowClose = false is put back; true is left alone", async () => {
+		const off = fake(["warden-iphone-17-1 – iOS 26.5"], {}, "0");
+		await hideSimWindows(off.deps, leased);
+		expect(defaultsCalls(off.calls).at(-1)).toBe(`defaults write ${PREF} -bool false`);
+		const on = fake(["warden-iphone-17-1 – iOS 26.5"], {}, "1");
+		await hideSimWindows(on.deps, leased);
+		expect(defaultsCalls(on.calls)).toEqual([`defaults read ${PREF}`]);
+	});
+
+	test("nothing to close → the preference is never touched", async () => {
+		const f = fake(["iPhone 17 Pro – iOS 26.5"]);
+		await hideSimWindows(f.deps, leased);
+		expect(defaultsCalls(f.calls)).toEqual([]);
+	});
+
+	test("a device still Shutting Down is waited for before it is booted again; its reattached window is closed again", async () => {
+		const f = fake(["warden-iphone-17-2 – iOS 26.5"], { U2: ["Shutting Down", "Shutting Down", "Shutdown"] });
+		const out = await hideSimWindows(f.deps, leased);
+		expect(out.rebooted).toEqual(["warden-iphone-17-2"]);
+		const lines = f.calls.map((c) => c.join(" "));
+		const lastList = lines.lastIndexOf("xcrun simctl list devices -j");
+		expect(lines.indexOf("xcrun simctl boot U2")).toBeGreaterThan(lastList);
+		expect(closeCalls(f.calls)).toHaveLength(2);
+		expect(defaultsCalls(f.calls).at(-1)).toBe(`defaults delete ${PREF}`);
 	});
 
 	test("osascript failure only warns", async () => {

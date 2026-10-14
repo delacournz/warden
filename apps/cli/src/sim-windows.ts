@@ -184,61 +184,120 @@ export type HideDeps = {
 
 export type HideOutcome = { closed: string[]; rebooted: string[] };
 
-/** a closed window can take a moment to shut its device down (Simulator's "close = shut down" setting) */
+/** a closed window can take a moment to shut its device down */
 const CLOSE_SETTLE_MS = 500;
+/** how long to wait for a device that is still `Shutting Down` before booting it again */
+const SHUTDOWN_POLLS = 40;
+const SHUTDOWN_POLL_MS = 500;
 const BOOT_TIMEOUT_MS = 180_000;
+
+/**
+ * Simulator.app's "when closing a window" setting: unset / false = shut the device down, true =
+ * detach and keep it running. Headless needs the latter, so it is switched on for the close and
+ * then put back exactly as it was.
+ */
+const DETACH_PREF = ["com.apple.iphonesimulator", "DetachOnWindowClose"] as const;
+
+type DetachPref = "unset" | "on" | "off";
+
+async function readDetachPref(exec: Exec): Promise<DetachPref> {
+	const out = await exec(["defaults", "read", ...DETACH_PREF]);
+	if (out.exitCode !== 0) return "unset";
+	const value = out.stdout.trim();
+	if (value === "1") return "on";
+	return value === "0" ? "off" : "unset";
+}
+
+async function restoreDetachPref(deps: HideDeps, before: DetachPref): Promise<void> {
+	if (before === "on") return;
+	const argv =
+		before === "off" ? ["defaults", "write", ...DETACH_PREF, "-bool", "false"] : ["defaults", "delete", ...DETACH_PREF];
+	const out = await deps.exec(argv);
+	if (out.exitCode !== 0) deps.warn(`headless: couldn't restore Simulator's close setting: ${execError(argv, out)}`);
+}
+
+/** Titles of the open Simulator.app windows that belong to `sims`; undefined after a warned error. */
+async function leasedTitles(deps: HideDeps, sims: readonly LeasedSim[]): Promise<string[] | undefined> {
+	const read = await osascript(deps.exec, READ_SCRIPT);
+	if (read.exitCode !== 0) {
+		deps.warn(`headless: ${scriptError("(read windows)", read)}`);
+		return undefined;
+	}
+	const parsed = parseRead(read.stdout);
+	if (!parsed.success) {
+		deps.warn(`headless: ${parsed.error}`);
+		return undefined;
+	}
+	const names = new Set(sims.map((s) => s.name));
+	return parsed.data.windows.map((w) => w.title).filter((title) => names.has(deviceName(title)));
+}
+
+async function closeTitles(deps: HideDeps, titles: readonly string[]): Promise<boolean> {
+	const closed = await osascript(deps.exec, CLOSE_SCRIPT, JSON.stringify(titles));
+	if (closed.exitCode === 0) return true;
+	deps.warn(`headless: ${scriptError("(close windows)", closed)}`);
+	return false;
+}
 
 /**
  * Headless: close the Simulator.app windows of the leased devices (matched by `deviceName(title)`,
  * never another device's), macOS only. Never launches Simulator.app — not running → nothing to do.
- * A device the close shut down is booted again without a window (`simctl boot` + `bootstatus -b`).
+ * The close detaches (Simulator's `DetachOnWindowClose`, restored afterwards), so the device keeps
+ * running; one that shut down anyway is booted again without a window (`simctl boot` +
+ * `bootstatus -b`) and a window Simulator.app reattached to it is closed once more.
  * Never fails: errors go to `warn`.
  */
 export async function hideSimWindows(deps: HideDeps, sims: readonly LeasedSim[]): Promise<HideOutcome> {
 	const none: HideOutcome = { closed: [], rebooted: [] };
 	if ((deps.os ?? process.platform) !== "darwin" || sims.length === 0) return none;
-	const read = await osascript(deps.exec, READ_SCRIPT);
-	if (read.exitCode !== 0) {
-		deps.warn(`headless: ${scriptError("(read windows)", read)}`);
-		return none;
+	const titles = await leasedTitles(deps, sims);
+	if (!titles || titles.length === 0) return none;
+	const before = await readDetachPref(deps.exec);
+	if (before !== "on") await deps.exec(["defaults", "write", ...DETACH_PREF, "-bool", "true"]);
+	try {
+		if (!(await closeTitles(deps, titles))) return none;
+		const closed = titles.map(deviceName);
+		const rebooted = await rebootShutDown(
+			deps,
+			sims.filter((s) => closed.includes(s.name))
+		);
+		if (rebooted.length > 0) {
+			const again = await leasedTitles(
+				deps,
+				sims.filter((s) => rebooted.includes(s.name))
+			);
+			if (again && again.length > 0) await closeTitles(deps, again);
+		}
+		return { closed, rebooted };
+	} finally {
+		await restoreDetachPref(deps, before);
 	}
-	const parsed = parseRead(read.stdout);
-	if (!parsed.success) {
-		deps.warn(`headless: ${parsed.error}`);
-		return none;
-	}
-	const names = new Set(sims.map((s) => s.name));
-	const titles = parsed.data.windows.map((w) => w.title).filter((title) => names.has(deviceName(title)));
-	if (titles.length === 0) return none;
-	const closed = await osascript(deps.exec, CLOSE_SCRIPT, JSON.stringify(titles));
-	if (closed.exitCode !== 0) {
-		deps.warn(`headless: ${scriptError("(close windows)", closed)}`);
-		return none;
-	}
-	const closedNames = titles.map(deviceName);
-	const rebooted = await rebootShutDown(
-		deps,
-		sims.filter((s) => closedNames.includes(s.name))
-	);
-	return { closed: closedNames, rebooted };
 }
 
-/** Boot again (headless) any of `sims` that is no longer `Booted` after its window closed. */
-async function rebootShutDown(deps: HideDeps, sims: readonly LeasedSim[]): Promise<string[]> {
-	await (deps.sleep ?? ((ms: number) => Bun.sleep(ms)))(CLOSE_SETTLE_MS);
+/** `simctl list` states by udid; undefined after a warned error. */
+async function simStates(deps: HideDeps): Promise<Map<string, string> | undefined> {
 	const list = await deps.exec(["xcrun", "simctl", "list", "devices", "-j"]);
 	const all = list.exitCode === 0 ? parseAllSims(list.stdout) : undefined;
-	if (!all?.success) {
-		deps.warn(`headless: couldn't check device states after closing windows: ${all ? all.error : list.stderr.trim()}`);
-		return [];
+	if (all?.success) return new Map(all.data.map((d) => [d.udid, d.state]));
+	deps.warn(`headless: couldn't check device states after closing windows: ${all ? all.error : list.stderr.trim()}`);
+	return undefined;
+}
+
+/** Boot again (headless) any of `sims` that is no longer `Booted` after its window closed, once it finished shutting down. */
+async function rebootShutDown(deps: HideDeps, sims: readonly LeasedSim[]): Promise<string[]> {
+	const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
+	await sleep(CLOSE_SETTLE_MS);
+	let states = await simStates(deps);
+	// `simctl boot` refuses a device that is still shutting down
+	for (let i = 0; states && i < SHUTDOWN_POLLS && sims.some((s) => states?.get(s.udid) === "Shutting Down"); i++) {
+		await sleep(SHUTDOWN_POLL_MS);
+		states = await simStates(deps);
 	}
-	const down = sims.filter((s) => all.data.find((d) => d.udid === s.udid)?.state !== "Booted");
+	if (!states) return [];
+	const down = sims.filter((s) => states?.get(s.udid) !== "Booted");
 	const rebooted: string[] = [];
 	for (const sim of down) {
-		deps.warn(
-			`headless: closing ${sim.name}'s window shut it down — booting it again without a window (Simulator.app is set to shut devices down when their window closes)`
-		);
-		// "already booted" / "shutting down" are fine here: bootstatus -b boots it and waits either way
+		deps.warn(`headless: closing ${sim.name}'s window shut it down — booting it again without a window`);
 		await deps.exec(["xcrun", "simctl", "boot", sim.udid]);
 		const ready = await deps.exec(["xcrun", "simctl", "bootstatus", sim.udid, "-b"], { timeoutMs: BOOT_TIMEOUT_MS });
 		if (ready.exitCode === 0) rebooted.push(sim.name);
