@@ -17,20 +17,21 @@ import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
 import { type FlowMark, flowMarks, type TrackedFlow } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
+import { type RunnerReport, reportOutputDir, runnerReport } from "../batch/runner-report";
 import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
 import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
 import {
 	applyEvent,
 	applyFlowMarks,
+	applyRunnerReport,
 	type BatchView,
-	type DeviceView,
 	initialView,
 	type LiveScreen,
 	liveScreen,
 	plainLine,
 	render,
-	withFlows,
+	withRunners,
 } from "../batch/tui";
 import {
 	type ClaimFlags,
@@ -396,6 +397,8 @@ type Display = {
 	event: (e: BatchEvent) => void;
 	/** flow results read off `worker`'s runner output */
 	flows: (worker: number, marks: Readonly<Record<string, FlowMark>>) => void;
+	/** the `single` runner's report: the flows each device ran */
+	report: (report: RunnerReport) => void;
 	end: () => void;
 	cast?: Cast;
 };
@@ -432,13 +435,13 @@ function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { 
 			frame(false);
 		},
 		flows: (worker, marks) => {
-			if (!live)
-				announceFlows(
-					ctx,
-					view.current.devices.find((d) => d.worker === worker),
-					marks
-				);
+			if (!live) announceFlows(ctx, view.current, worker, marks);
 			view.current = applyFlowMarks(view.current, worker, marks);
+			frame(false);
+		},
+		report: (report) => {
+			view.current = applyRunnerReport(view.current, report);
+			if (!live) announceDevices(ctx, view.current);
 			frame(false);
 		},
 		end: () => {
@@ -455,9 +458,15 @@ async function runGrid(
 	args: BatchArgs,
 	r: RunContext,
 	queues: readonly Queue[],
-	o: { total: number; startedAt: number; logs: ReadonlyMap<string, string>; flows: readonly TrackedFlow[] | undefined }
+	o: {
+		total: number;
+		startedAt: number;
+		cmd: readonly string[];
+		logs: ReadonlyMap<string, string>;
+		flows: readonly TrackedFlow[] | undefined;
+	}
 ): Promise<{ summary: BatchSummary; screen: Display }> {
-	const rows = queues.flatMap((q) => q.workers);
+	const rows = queues.flatMap((q) => q.rows);
 	// only a `single` runner runs several flows in one job
 	const flows = args.single ? o.flows : undefined;
 	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, flows) });
@@ -471,13 +480,30 @@ async function runGrid(
 		});
 		poller?.stop();
 		await poller?.poll();
+		if (flows) await readRunnerReport(deps, args.cwd, o.cmd, flows, o.startedAt, screen);
 		return { summary, screen };
 	} finally {
 		poller?.stop();
 	}
 }
 
-/** The grid's first frame: every row tracks `flows` when a `single` run has them. */
+/** `single`: hand the runner's `report.json` (in its `--output` dir) to the display; a missing / stale one is skipped. */
+async function readRunnerReport(
+	deps: BatchDeps,
+	cwd: string,
+	cmd: readonly string[],
+	flows: readonly TrackedFlow[],
+	since: number,
+	screen: Display
+): Promise<void> {
+	const dir = reportOutputDir(cmd);
+	if (dir === undefined) return;
+	const text = await deps.readFile(join(absolute(cwd, dir), "report.json")).catch(() => "");
+	const report = runnerReport(text, flows, since);
+	if (report) screen.report(report);
+}
+
+/** The grid's first frame: one runner per worker tracks `flows` when a `single` run has them. */
 function startView(
 	rows: ReadonlyArray<{ worker: number; udid: string; name: string }>,
 	total: number,
@@ -486,23 +512,34 @@ function startView(
 ): BatchView {
 	const view = initialView(rows, total, startedAt);
 	return flows
-		? withFlows(
+		? withRunners(
 				view,
 				flows.map((f) => f.id)
 			)
 		: view;
 }
 
-/** `--no-tui`: one line per flow the first time it is marked (or its mark changes). */
+const tick = (mark: FlowMark) => (mark === "passed" ? "✓" : "✗");
+
+/** `--no-tui`: one line per flow the first time it is marked (or its mark changes), named by the worker's pool. */
 function announceFlows(
 	ctx: CommandContext,
-	device: DeviceView | undefined,
+	view: BatchView,
+	worker: number,
 	marks: Readonly<Record<string, FlowMark>>
 ): void {
-	for (const f of device?.flows ?? []) {
+	const [first, ...rest] = view.devices.filter((d) => d.worker === worker);
+	const name = `${first?.name ?? "?"}${rest.length > 0 ? ` +${rest.length}` : ""}`;
+	for (const f of view.runners?.find((r) => r.worker === worker)?.flows ?? []) {
 		const mark = marks[f.id];
-		if (mark && mark !== f.mark) ctx.err(`${device?.name} ${mark === "passed" ? "✓" : "✗"} ${f.id}`);
+		if (mark && mark !== f.mark) ctx.err(`${name} ${tick(mark)} ${f.id}`);
 	}
+}
+
+/** `--no-tui`: after the runner's report, one line per device with the flows it ran. */
+function announceDevices(ctx: CommandContext, view: BatchView): void {
+	for (const d of view.devices)
+		if (d.ran && d.ran.length > 0) ctx.err(`${d.name}: ${d.ran.map((f) => `${tick(f.mark)} ${f.id}`).join("  ")}`);
 }
 
 /**
@@ -927,7 +964,7 @@ async function openOnDevices(
 	);
 }
 
-/** The grid row of a pool's worker: in `single` mode one row stands for the whole pool. */
+/** A pool's scheduler workers: in `single` mode one worker (one runner) stands for the whole pool. */
 function workerRows(live: readonly Device[], single: boolean): Device[] {
 	const [first, ...rest] = live;
 	if (!single || !first) return [...live];
@@ -1068,7 +1105,8 @@ async function preparePools(
 	return { prepared, setups: r.hooks.setup ? prepared.flatMap((p) => p.setups ?? []) : undefined };
 }
 
-type Queue = { workers: Device[]; jobs: string[]; run: ReturnType<typeof jobRunner> };
+/** `rows`: the grid's rows (every live device; a `single` pool's share its one worker). */
+type Queue = { workers: Device[]; rows: Device[]; jobs: string[]; run: ReturnType<typeof jobRunner> };
 
 /** One job queue per pool: its workers (one per device, or one for the pool in `single` mode) and its job runner. */
 function poolQueues(
@@ -1094,6 +1132,7 @@ function poolQueues(
 	};
 	return prepared.map((p) => ({
 		workers: workerRows(p.live, single),
+		rows: single ? p.live.map((d) => ({ ...d, worker: p.live[0]?.worker ?? d.worker })) : p.live,
 		jobs: o.jobs.map((job) => legJob(job, qualified ? p.pool.leg : undefined)),
 		run: jobRunner(deps, {
 			cmd: o.cmd,
@@ -1204,6 +1243,7 @@ async function supervise(
 		const { summary, screen } = await runGrid(ctx, deps, args, r, queues, {
 			total,
 			startedAt,
+			cmd,
 			logs,
 			flows: hooks.flows,
 		});

@@ -1,8 +1,12 @@
 import type { BatchEvent } from "@delacour/warden-core/batch/schedule";
 import { formatDuration } from "@delacour/warden-core/duration";
 import type { FlowMark } from "./flow-progress";
+import type { RunnerReport } from "./runner-report";
 
-/** Live state of one device (= worker) in the batch grid. */
+/** One cell of a segmented bar. */
+export type Cell = FlowMark | "running" | "pending";
+
+/** Live state of one device in the batch grid (a `single` pool's devices share their worker). */
 export type DeviceView = {
 	worker: number;
 	udid: string;
@@ -11,9 +15,14 @@ export type DeviceView = {
 	passed: number;
 	failed: number;
 	idle: boolean;
-	/** `mode: "single"`: the flows this worker's one runner runs, marked as its output reports them */
-	flows?: Array<{ id: string; mark?: FlowMark }>;
+	/** finished jobs, in order (a retried attempt only counts once it is final) */
+	results: FlowMark[];
+	/** `mode: "single"`: the flows this device ran, from the runner's report */
+	ran?: Array<{ id: string; mark: FlowMark }>;
 };
+
+/** `mode: "single"`: the one runner of `worker`, running every flow, marked as its output reports them. */
+export type RunnerView = { worker: number; flows: Array<{ id: string; mark?: FlowMark }> };
 
 export type BatchView = {
 	startedAt: number;
@@ -22,6 +31,9 @@ export type BatchView = {
 	devices: DeviceView[];
 	/** job → its 1-based place in the order jobs started (retries keep their job's place) */
 	ordinals: Record<string, number>;
+	/** job → where it stands (a job awaiting its retry stays running) */
+	jobs: Record<string, FlowMark | "running">;
+	runners?: RunnerView[];
 	/** set by the `done` event */
 	result?: { ok: boolean; stopped: boolean };
 };
@@ -38,30 +50,39 @@ export function initialView(
 		now: startedAt,
 		total,
 		ordinals: {},
-		devices: devices.map((d) => ({ ...d, passed: 0, failed: 0, idle: false })),
+		jobs: {},
+		devices: devices.map((d) => ({ ...d, passed: 0, failed: 0, idle: false, results: [] })),
 	};
 }
 
-/** Track `flowIds` on every row (a `single` run: one runner per row runs them all). */
-export function withFlows(view: BatchView, flowIds: readonly string[]): BatchView {
-	return { ...view, devices: view.devices.map((d) => ({ ...d, flows: flowIds.map((id) => ({ id })) })) };
+/** One runner per worker tracking `flowIds` (a `single` run: each worker's runner runs them all). */
+export function withRunners(view: BatchView, flowIds: readonly string[]): BatchView {
+	const workers = [...new Set(view.devices.map((d) => d.worker))];
+	return { ...view, runners: workers.map((worker) => ({ worker, flows: flowIds.map((id) => ({ id })) })) };
 }
+
+const marked = (flows: RunnerView["flows"], marks: Readonly<Record<string, FlowMark>>): RunnerView["flows"] =>
+	flows.map((f) => {
+		const mark = marks[f.id] ?? f.mark;
+		return mark ? { id: f.id, mark } : { id: f.id };
+	});
 
 /** Marks read off `worker`'s runner output (a new view; flows it doesn't track are ignored). */
 export function applyFlowMarks(view: BatchView, worker: number, marks: Readonly<Record<string, FlowMark>>): BatchView {
+	if (!view.runners) return view;
 	return {
 		...view,
-		devices: view.devices.map((d) =>
-			d.worker === worker && d.flows
-				? {
-						...d,
-						flows: d.flows.map((f) => ({
-							id: f.id,
-							...((marks[f.id] ?? f.mark) ? { mark: marks[f.id] ?? f.mark } : {}),
-						})),
-					}
-				: d
-		),
+		runners: view.runners.map((r) => (r.worker === worker ? { ...r, flows: marked(r.flows, marks) } : r)),
+	};
+}
+
+/** The runner's report: each device gets the flows it ran, and its verdicts settle every runner's flows. */
+export function applyRunnerReport(view: BatchView, report: RunnerReport): BatchView {
+	if (!view.runners) return view;
+	return {
+		...view,
+		runners: view.runners.map((r) => ({ ...r, flows: marked(r.flows, report.flows) })),
+		devices: view.devices.map((d) => ({ ...d, ran: report.devices[d.udid] ?? [] })),
 	};
 }
 
@@ -75,20 +96,25 @@ export function applyEvent(view: BatchView, event: BatchEvent): BatchView {
 	});
 	switch (event.type) {
 		case "job-start": {
-			const next = update(event.worker, (d) => ({
+			const started = update(event.worker, (d) => ({
 				...d,
 				idle: false,
 				current: { job: event.job, startedAt: event.at, attempt: event.attempt },
 			}));
+			const next = { ...started, jobs: { ...view.jobs, [event.job]: "running" as const } };
 			if (event.job in view.ordinals) return next;
 			return { ...next, ordinals: { ...view.ordinals, [event.job]: Object.keys(view.ordinals).length + 1 } };
 		}
-		case "job-end":
-			return update(event.worker, ({ current: _, ...d }) => ({
+		case "job-end": {
+			const mark: FlowMark | undefined = event.exitCode === 0 ? "passed" : event.willRetry ? undefined : "failed";
+			const next = update(event.worker, ({ current: _, ...d }) => ({
 				...d,
-				passed: d.passed + (event.exitCode === 0 ? 1 : 0),
-				failed: d.failed + (event.exitCode !== 0 && !event.willRetry ? 1 : 0),
+				passed: d.passed + (mark === "passed" ? 1 : 0),
+				failed: d.failed + (mark === "failed" ? 1 : 0),
+				results: mark ? [...d.results, mark] : d.results,
 			}));
+			return mark ? { ...next, jobs: { ...view.jobs, [event.job]: mark } } : next;
+		}
 		case "worker-idle":
 			return update(event.worker, ({ current: _, ...d }) => ({ ...d, idle: true }));
 		case "done":
@@ -96,8 +122,13 @@ export function applyEvent(view: BatchView, event: BatchEvent): BatchView {
 	}
 }
 
+/** The first row of each worker (a `single` pool's rows share one worker and its job counts). */
+function workerHeads(view: BatchView): DeviceView[] {
+	return view.devices.filter((d, i) => view.devices.findIndex((o) => o.worker === d.worker) === i);
+}
+
 function totals(view: BatchView): { passed: number; failed: number } {
-	return view.devices.reduce((t, d) => ({ passed: t.passed + d.passed, failed: t.failed + d.failed }), {
+	return workerHeads(view).reduce((t, d) => ({ passed: t.passed + d.passed, failed: t.failed + d.failed }), {
 		passed: 0,
 		failed: 0,
 	});
@@ -135,21 +166,61 @@ function pad(text: string, width: number): string {
 	return text + " ".repeat(width - chars.length);
 }
 
-function bar(fraction: number, width: number): string {
-	const full = Math.round(Math.min(1, Math.max(0, fraction)) * width);
-	return "█".repeat(full) + "░".repeat(width - full);
+const CELL: Record<Cell, Segment> = {
+	passed: { text: "█", style: "green" },
+	failed: { text: "×", style: "red" },
+	running: { text: "▸", style: "cyan" },
+	pending: { text: "░", style: "dim" },
+};
+
+/** What a bucket of cells shows: a failure first, then work still running, still pending, else passed. */
+const RANK: Cell[] = ["failed", "running", "pending", "passed"];
+
+/** A segmented bar: one column per cell, or at most `width` columns each standing for a bucket of cells. */
+function segmentBar(cells: readonly Cell[], width: number): Segment[] {
+	const columns =
+		cells.length <= width
+			? cells
+			: Array.from({ length: width }, (_, i) => {
+					const bucket = cells.slice(
+						Math.floor((i * cells.length) / width),
+						Math.floor(((i + 1) * cells.length) / width)
+					);
+					return RANK.find((c) => bucket.includes(c)) ?? "pending";
+				});
+	const out: Segment[] = [];
+	for (const cell of columns) {
+		const last = out.at(-1);
+		const { text, style } = CELL[cell];
+		if (last && last.style === style) last.text += text;
+		else out.push({ text, style });
+	}
+	return out;
 }
 
-const BAR_WIDTH = 20;
-const DEVICE_BAR_WIDTH = 8;
+const BAR_WIDTH = 30;
+const DEVICE_BAR_WIDTH = 12;
 const NAME_WIDTH = 20;
 
-/** Flow counts across the rows that track flows; undefined when none does (count jobs instead). */
+/** Flow counts across the runners; undefined when there are none (count jobs instead). */
 function flowTotals(view: BatchView): { passed: number; failed: number; total: number } | undefined {
-	const flows = view.devices.flatMap((d) => d.flows ?? []);
-	if (!view.devices.some((d) => d.flows)) return undefined;
+	if (!view.runners) return undefined;
+	const flows = view.runners.flatMap((r) => r.flows);
 	const count = (mark: FlowMark) => flows.filter((f) => f.mark === mark).length;
 	return { passed: count("passed"), failed: count("failed"), total: flows.length };
+}
+
+/** The header's cells: every runner's flows (as many running as the runner has busy devices), else every job in start order. */
+function overallCells(view: BatchView): Cell[] {
+	if (view.runners)
+		return view.runners.flatMap((r) => {
+			let busy = view.devices.filter((d) => d.worker === r.worker && d.current).length;
+			return r.flows.map((f): Cell => f.mark ?? (busy-- > 0 ? "running" : "pending"));
+		});
+	const started = Object.entries(view.ordinals)
+		.sort(([, a], [, b]) => a - b)
+		.map(([job]): Cell => view.jobs[job] ?? "pending");
+	return [...started, ...Array.from({ length: Math.max(0, view.total - started.length) }, (): Cell => "pending")];
 }
 
 function header(view: BatchView, max: number, color: boolean): string {
@@ -164,7 +235,7 @@ function header(view: BatchView, max: number, color: boolean): string {
 	return line(
 		[
 			{ text: "warden batch  ", style: "bold" },
-			{ text: bar(total === 0 ? 1 : done / total, BAR_WIDTH), style: "cyan" },
+			...segmentBar(overallCells(view), BAR_WIDTH),
 			{ text: `  ${done}/${total}  ` },
 			{ text: `✓${passed}`, style: "green" },
 			{ text: " " },
@@ -185,8 +256,18 @@ function deviceStatus(d: DeviceView, width: number): Segment {
 	return { text: pad(`▶ ${d.current.job}${retry}`, width), style: retry ? "yellow" : "cyan" };
 }
 
+/** A row's cells: the flows the report says it ran; a runner's device until then, one running cell while busy; else its jobs + the current one. */
+function deviceCells(view: BatchView, d: DeviceView): Cell[] {
+	if (d.ran) return d.ran.map((f) => f.mark);
+	const current: Cell[] = d.current ? ["running"] : [];
+	if (view.runners?.some((r) => r.worker === d.worker)) return current;
+	return [...d.results, ...current];
+}
+
 function deviceRow(view: BatchView, d: DeviceView, cols: Columns, max: number, color: boolean): string {
 	const elapsed = d.current ? formatDuration(view.now - d.current.startedAt) : "";
+	const passed = d.ran ? d.ran.filter((f) => f.mark === "passed").length : d.passed;
+	const failed = d.ran ? d.ran.filter((f) => f.mark === "failed").length : d.failed;
 	return line(
 		[
 			{ text: `${String(d.worker).padStart(cols.id)} `, style: "dim" },
@@ -194,11 +275,11 @@ function deviceRow(view: BatchView, d: DeviceView, cols: Columns, max: number, c
 			{ text: "  " },
 			deviceStatus(d, cols.job),
 			{ text: `  ${elapsed.padStart(6)}  `, style: "dim" },
-			{ text: `✓${String(d.passed).padEnd(3)}`, style: "green" },
+			{ text: `✓${String(passed).padEnd(3)}`, style: "green" },
 			{ text: " " },
-			{ text: `✗${String(d.failed).padEnd(3)}`, style: d.failed > 0 ? "red" : "dim" },
+			{ text: `✗${String(failed).padEnd(3)}`, style: failed > 0 ? "red" : "dim" },
 			{ text: " " },
-			{ text: bar(view.total === 0 ? 0 : (d.passed + d.failed) / view.total, DEVICE_BAR_WIDTH), style: "cyan" },
+			...segmentBar(deviceCells(view, d), DEVICE_BAR_WIDTH),
 		],
 		max,
 		color
@@ -233,15 +314,18 @@ function flowLines(flows: ReadonlyArray<{ id: string; mark?: FlowMark }>, max: n
 	return lines.map((segments) => line(segments, max, color));
 }
 
-/** The grid: a header (overall progress, ✓/✗, elapsed) + one row per device (+ its flows). Pure — no ANSI cursor moves. */
+/** The grid: a header (overall segmented bar, ✓/✗, elapsed) + one row per device (+ its runner's flows, under the runner's last row). Pure — no ANSI cursor moves. */
 export function render(view: BatchView, opts: RenderOptions): string {
 	const max = Math.max(10, opts.width - 1);
 	const id = String(Math.max(0, ...view.devices.map((d) => d.worker))).length;
 	const name = Math.min(NAME_WIDTH, Math.max(4, ...view.devices.map((d) => [...d.name].length)));
 	const job = Math.max(8, max - (id + 1 + name + 2 + 2 + 7 + 2 + 9 + DEVICE_BAR_WIDTH));
-	const rows = view.devices.flatMap((d) => [
+	const last = (i: number, worker: number) => !view.devices.slice(i + 1).some((o) => o.worker === worker);
+	const rows = view.devices.flatMap((d, i) => [
 		deviceRow(view, d, { id, name, job }, max, opts.color),
-		...flowLines(d.flows ?? [], max, opts.color),
+		...(last(i, d.worker)
+			? flowLines(view.runners?.find((r) => r.worker === d.worker)?.flows ?? [], max, opts.color)
+			: []),
 	]);
 	return [header(view, max, opts.color), ...rows].join("\n");
 }
@@ -286,7 +370,8 @@ export function plainLine(view: BatchView, event: BatchEvent): string | undefine
 	const width = String(view.total).length;
 	const tag = (worker: number, job: string) => {
 		const n = String(view.ordinals[job] ?? 0).padStart(width, "0");
-		return `[${n}/${view.total}] ${view.devices.find((d) => d.worker === worker)?.name ?? "?"}`;
+		const [first, ...rest] = view.devices.filter((d) => d.worker === worker);
+		return `[${n}/${view.total}] ${first?.name ?? "?"}${rest.length > 0 ? ` +${rest.length}` : ""}`;
 	};
 	switch (event.type) {
 		case "job-start":
