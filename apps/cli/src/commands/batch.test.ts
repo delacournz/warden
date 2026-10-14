@@ -508,21 +508,38 @@ describe("warden batch", () => {
 		expect(ui.events).toContain("spin: installing the app on 2 device(s)…");
 	});
 
-	test("--clean is passed to the ensure step; it needs --app", async () => {
-		const c = setup(["ios", "--jobs", "a", "--app", "--clean", "--", "x"]);
+	test("--install-mode / --reset-keychain are passed to the ensure step; they need --app", async () => {
+		const c = setup(["ios", "--jobs", "a", "--app", "--install-mode", "clean", "--reset-keychain", "--", "x"]);
 		const h = harness();
-		const seen: Array<boolean | undefined> = [];
+		const seen: Array<string | undefined> = [];
 		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
-			seen.push(opts.clean);
+			seen.push(`${opts.installMode}/${opts.resetKeychain}`);
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
 		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
-		expect(seen).toEqual([true]);
+		expect(seen).toEqual(["clean/true"]);
 		ctx?.cleanup();
 
-		const bare = setup(["ios", "--jobs", "a", "--clean", "--", "x"]);
+		const bare = setup(["ios", "--jobs", "a", "--install-mode", "clean", "--", "x"]);
 		expect(await createBatchCommand(harness().deps).run(bare)).toBe(1);
 		expect(bare.stderr.join("\n")).toContain("--clean need --app");
+	});
+
+	test("deprecated --clean maps to installMode reinstall; --reset-keychain needs a mode", async () => {
+		const c = setup(["ios", "--jobs", "a", "--app", "--clean", "--", "x"]);
+		const h = harness();
+		const seen: Array<string | undefined> = [];
+		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+			seen.push(opts.installMode);
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(seen).toEqual(["reinstall"]);
+		ctx?.cleanup();
+
+		const bad = setup(["ios", "--jobs", "a", "--app", "--reset-keychain", "--", "x"]);
+		expect(await createBatchCommand(harness().deps).run(bad)).toBe(1);
+		expect(bad.stderr.join("\n")).toContain("--reset-keychain needs --install-mode");
 	});
 
 	test("--app exports WARDEN_APP_PATH / WARDEN_APP_HASH to serve as well as jobs", async () => {
@@ -841,20 +858,20 @@ describe("warden batch", () => {
 			}
 		});
 
-		test("preset app: { clean: true } installs cleanly", async () => {
+		test('preset app: { installMode: "reinstall" } reaches the ensure step', async () => {
 			const c = setup(["p"]);
 			writeConfig(c.cwd, {
 				projects: [{ name: "s", root: ".", bundleId: { ios: "x" } }],
-				batches: { p: { project: "s", platform: "ios", app: { clean: true }, jobs: ["a"], cmd: ["x"] } },
+				batches: { p: { project: "s", platform: "ios", app: { installMode: "reinstall" }, jobs: ["a"], cmd: ["x"] } },
 			});
 			const h = harness();
-			const seen: Array<boolean | undefined> = [];
+			const seen: Array<string | undefined> = [];
 			h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
-				seen.push(opts.clean);
+				seen.push(opts.installMode);
 				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 			};
 			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
-			expect(seen).toEqual([true]);
+			expect(seen).toEqual(["reinstall"]);
 		});
 
 		test("app: Release build, native+js key (custom fingerprint command) and clean install all reach the real ensure path", async () => {
@@ -872,7 +889,7 @@ describe("warden batch", () => {
 						build: { configuration: "Release", ios: "build-release" },
 					},
 				],
-				batches: { p: { project: "s", platform: "ios", app: { clean: true }, jobs: ["a"], cmd: ["x"] } },
+				batches: { p: { project: "s", platform: "ios", app: { installMode: "reinstall" }, jobs: ["a"], cmd: ["x"] } },
 			});
 			const native = "abc123def456";
 			const calls: string[] = [];
@@ -904,7 +921,16 @@ describe("warden batch", () => {
 						build: { ios: "build-release", configuration: "Release" },
 					},
 				],
-				batches: { p: { project: "s", platform: "ios", count: 2, app: { clean: true }, jobs: ["a", "b"], cmd: ["x"] } },
+				batches: {
+					p: {
+						project: "s",
+						platform: "ios",
+						count: 2,
+						app: { installMode: "reinstall" },
+						jobs: ["a", "b"],
+						cmd: ["x"],
+					},
+				},
 			});
 			const fingerprints: string[] = [];
 			const installs: string[] = [];

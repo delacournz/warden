@@ -146,7 +146,7 @@ export const e2eSuiteSchema = z
 		retry: z.number().int().min(0).default(0),
 		count: z.number().int().min(1).optional(),
 		profile: z.string().min(1).optional(),
-		/** install the project's app on each device first (`warden batch --app`); `{ clean: true }` = `--clean` */
+		/** install the project's app on each device first (`warden batch --app`); `{ installMode }` = `--install-mode` */
 		app: appOptionSchema.optional(),
 		/** ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner */
 		ports: z.array(portSpec).optional(),

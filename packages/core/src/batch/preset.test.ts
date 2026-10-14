@@ -86,11 +86,20 @@ describe("batches in parseWardenConfig", () => {
 });
 
 describe("findBatchPreset", () => {
-	test("app: { clean: true } resolves to app + clean", () => {
+	test("app: { installMode, resetKeychain } resolves to app + installMode + resetKeychain", () => {
+		write(JSON_CONFIG_FILE, {
+			batches: { a: { platform: "ios", app: { installMode: "clean", resetKeychain: true }, cmd: ["x"] } },
+		});
+		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.preset).toMatchObject({ app: true, installMode: "clean", resetKeychain: true });
+	});
+
+	test("legacy app: { clean: true } resolves to installMode reinstall", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", app: { clean: true }, cmd: ["x"] } } });
 		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
 		if (!res.success) throw new Error(res.error);
-		expect(res.data.preset).toMatchObject({ app: true, clean: true });
+		expect(res.data.preset).toMatchObject({ app: true, installMode: "reinstall" });
 	});
 
 	test("app: { variant } resolves to app + variant", () => {
@@ -100,12 +109,12 @@ describe("findBatchPreset", () => {
 		expect(res.data.preset).toMatchObject({ app: true, variant: "e2e" });
 	});
 
-	test("app: true leaves clean unset", () => {
+	test("app: true leaves installMode unset", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", app: true, cmd: ["x"] } } });
 		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.preset?.app).toBe(true);
-		expect(res.data.preset?.clean).toBeUndefined();
+		expect(res.data.preset?.installMode).toBeUndefined();
 	});
 
 	test("headless: the preset's own wins over the top-level default", () => {

@@ -30,7 +30,7 @@ export const batchPresetSchema = z
 		ttl: duration.optional(),
 		wait: duration.optional(),
 		ports: z.array(portSpec).optional(),
-		/** install the project's app on every device first; `{ clean: true }` also uninstalls it first */
+		/** install the project's app on every device first; `{ installMode }` also resets it first */
 		app: appOptionSchema.optional(),
 		/** keep Simulator.app windows closed for this run; `--headless` / `--no-headless` win */
 		headless: z.boolean().optional(),

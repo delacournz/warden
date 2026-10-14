@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import { ok, type Result } from "@delacour/warden-types/result";
-import { appSwitches } from "../builds/app-option.schema";
+import { appSwitches, type InstallMode } from "../builds/app-option.schema";
 import { findWardenConfig } from "../builds/config";
 import type { Platform } from "../types";
 import type { BatchPresetConfig } from "./preset.schema";
@@ -30,8 +30,10 @@ export type BatchPreset = {
 	wait?: string;
 	ports?: string[];
 	app?: boolean;
-	/** `app: { clean: true }`: uninstall before installing */
-	clean?: boolean;
+	/** `app: { installMode }`: reset the installed app (`clean`: fresh data, `reinstall`: uninstall + install) */
+	installMode?: InstallMode;
+	/** `app: { installMode, resetKeychain: true }`: also reset the iOS sim keychain */
+	resetKeychain?: true;
 	/** `app: { variant }`: install that project variant's build */
 	variant?: string;
 	retry?: number;
@@ -83,7 +85,7 @@ function resolvePreset(
 		label,
 		...rest
 	} = preset;
-	const { app, clean, variant } = appSwitches(appOption);
+	const { app, installMode, resetKeychain, variant } = appSwitches(appOption);
 	const jobs = jobsSource(preset, cwd);
 	const headless = ownHeadless ?? defaultHeadless;
 	return {
@@ -92,7 +94,8 @@ function resolvePreset(
 		cwd,
 		label: label ?? name,
 		...(appOption !== undefined ? { app } : {}),
-		...(clean ? { clean } : {}),
+		...(installMode !== undefined ? { installMode } : {}),
+		...(resetKeychain ? { resetKeychain } : {}),
 		...(variant !== undefined ? { variant } : {}),
 		...(projectRoot !== undefined ? { projectRoot } : {}),
 		...(serveReady !== undefined ? { serveReady: readySpec(serveReady, cwd) } : {}),

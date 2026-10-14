@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { err, ok } from "@delacour/warden-types/result";
+import type { InstallMode } from "./app-option.schema";
 import { type EasStepOutcome, type ResolveSource, type ResolveSteps, resolveApp } from "./resolve";
 
 type World = {
@@ -12,9 +13,11 @@ type World = {
 	/** cache filled by another process while we waited for the lock */
 	filledWhileLocked?: string;
 	device?: boolean;
-	clean?: boolean;
+	installMode?: InstallMode;
 	/** the installed app matches the cached build; undefined = the device has no `matches` step */
 	matches?: boolean;
+	/** `reset` fails */
+	resetFails?: boolean;
 };
 
 function steps(world: World) {
@@ -43,7 +46,7 @@ function steps(world: World) {
 			}
 		},
 		log: () => {},
-		...(world.clean ? { clean: true } : {}),
+		...(world.installMode !== undefined ? { installMode: world.installMode } : {}),
 	};
 	const eas = world.eas;
 	if (eas !== "skip") {
@@ -78,6 +81,10 @@ function steps(world: World) {
 			uninstall: async () => {
 				calls.push("uninstall");
 				return ok(undefined);
+			},
+			reset: async () => {
+				calls.push("reset");
+				return world.resetFails ? err("pm clear failed") : ok(undefined);
 			},
 			install: async (path) => {
 				calls.push(`install ${path}`);
@@ -185,20 +192,51 @@ const rows: Row[] = [
 		calls: ["cached", "legacy", "lock", "cached", "eas(locked)", "build(locked)"],
 	},
 	{
-		name: "clean: installed at the same hash is not enough → uninstall, then install",
-		world: { installedHash: "H", onDevice: true, cache: "/c/A.app", clean: true },
+		name: "installMode reinstall: installed at the same hash is not enough → uninstall, then install",
+		world: { installedHash: "H", onDevice: true, cache: "/c/A.app", installMode: "reinstall" },
 		source: "cache",
 		calls: ["cached", "uninstall", "install /c/A.app"],
 	},
 	{
-		name: "clean: still goes through EAS/build on a cache miss, uninstalling just before the install",
-		world: { eas: { kind: "miss", reason: "none" }, build: "/c/B.app", clean: true },
+		name: "installMode reinstall: still goes through EAS/build on a cache miss, uninstalling just before the install",
+		world: { eas: { kind: "miss", reason: "none" }, build: "/c/B.app", installMode: "reinstall" },
 		source: "build",
 		calls: ["cached", "legacy", "lock", "cached", "eas(locked)", "build(locked)", "uninstall", "install /c/B.app"],
 	},
 	{
-		name: "clean without a device → artifact only, nothing uninstalled",
-		world: { device: false, cache: "/c/A.app", clean: true },
+		name: "installMode reinstall without a device → artifact only, nothing uninstalled",
+		world: { device: false, cache: "/c/A.app", installMode: "reinstall" },
+		source: "cache",
+		calls: ["cached"],
+	},
+	{
+		name: "installMode clean: installed at the same hash → reset its data, no install",
+		world: { installedHash: "H", onDevice: true, cache: "/c/A.app", installMode: "clean" },
+		source: "installed",
+		appPath: "/c/A.app",
+		calls: ["confirm", "cached", "reset"],
+	},
+	{
+		name: "installMode clean: another hash → install over it, then reset (no uninstall)",
+		world: { installedHash: "OLD", onDevice: true, cache: "/c/A.app", installMode: "clean" },
+		source: "cache",
+		calls: ["cached", "install /c/A.app", "reset"],
+	},
+	{
+		name: "installMode clean: the reset fails → fall back to uninstall + install",
+		world: { installedHash: "H", onDevice: true, cache: "/c/A.app", installMode: "clean", resetFails: true },
+		source: "cache",
+		calls: ["confirm", "cached", "reset", "cached", "uninstall", "install /c/A.app"],
+	},
+	{
+		name: "installMode clean: the reset after a fresh install fails → uninstall + install again",
+		world: { cache: "/c/A.app", installMode: "clean", resetFails: true },
+		source: "cache",
+		calls: ["cached", "install /c/A.app", "reset", "uninstall", "install /c/A.app"],
+	},
+	{
+		name: "installMode clean without a device → artifact only",
+		world: { device: false, cache: "/c/A.app", installMode: "clean" },
 		source: "cache",
 		calls: ["cached"],
 	},
@@ -235,8 +273,8 @@ describe("resolveApp decision table", () => {
 		expect(res).toEqual({ success: false, error: "simctl install failed" });
 	});
 
-	test("clean: an uninstall failure stops before the install", async () => {
-		const { s, calls } = steps({ cache: "/c/A.app", clean: true });
+	test("installMode reinstall: an uninstall failure stops before the install", async () => {
+		const { s, calls } = steps({ cache: "/c/A.app", installMode: "reinstall" });
 		if (s.device) s.device.uninstall = async () => err("simctl uninstall failed");
 		const res = await resolveApp(s);
 		expect(res).toEqual({ success: false, error: "simctl uninstall failed" });

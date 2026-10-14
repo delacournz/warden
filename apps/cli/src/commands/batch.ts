@@ -1317,7 +1317,8 @@ function presetOpts(preset: BatchPreset): Partial<BatchOpts> {
 		record: preset.record,
 		logs: preset.logs,
 		...(preset.app ? { app: true, project: preset.projectRoot } : {}),
-		...(preset.app && preset.clean ? { clean: true } : {}),
+		...(preset.app && preset.installMode !== undefined ? { installMode: preset.installMode } : {}),
+		...(preset.app && preset.resetKeychain ? { resetKeychain: true } : {}),
 		...(preset.app && preset.variant !== undefined ? { variant: preset.variant } : {}),
 	};
 	return Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined));

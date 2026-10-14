@@ -63,7 +63,9 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--project <dir>` | `--app`: project directory (default: cwd) |
 | `--bundle-id <id>` | `--app`: override the bundle id / package |
 | `--no-eas` / `--no-build` | `--app`: skip EAS downloads / local builds |
-| `--clean` | `--app`: uninstall the app first, so every run starts from a fresh container (even when the hash already matches) |
+| `--install-mode <clean\|reinstall>` | `--app`: `clean` = fresh app data each run without reinstalling an unchanged build (falls back to reinstall if the reset fails); `reinstall` = uninstall + install each run. Default: install only when the build differs |
+| `--reset-keychain` | `--install-mode`: also reset the iOS simulator's keychain (not cleared by uninstall either) |
+| `--clean` | deprecated alias of `--install-mode reinstall` |
 
 See [e2e scripts](/docs/guides/e2e).
 
@@ -261,7 +263,7 @@ Print the project's native fingerprint (both platforms by default). `--project`,
 
 ### `warden app ensure [platform]`
 
-Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--clean` uninstalls the app first even when the hash matches; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`. See [App builds](/docs/guides/app-builds).
+Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--install-mode clean|reinstall` resets the installed app first (`clean`: fresh data, no reinstall of an unchanged build; `reinstall`: uninstall + install), `--reset-keychain` also resets the iOS sim keychain, `--clean` is a deprecated alias of `--install-mode reinstall`; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`. See [App builds](/docs/guides/app-builds).
 
 ### `warden dev [platform] [-- <expo start args>]`
 
@@ -269,7 +271,7 @@ The worktree-friendly `expo run:*`. Uses the device of `--udid` / `--lease` / yo
 
 Metro counts as ready (`--ready-timeout`, default `2m`) only once `/status` on that port is proven to serve **this** project root (the `X-React-Native-Project-Root` header, else the listening process's cwd). Another checkout's Metro on the port fails the command with `port <p> is served by <dir>, not this worktree` instead of being attached to.
 
-Then the dev client is opened on the device: iOS relaunches the app with `--initialUrl <metroUrl>` (no "Open in …?" alert); Android runs `adb reverse` and opens `exp+<slug>://expo-development-client/?url=…` (`--scheme` to override). `--no-open` skips this. `--json` prints one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready (Metro's own output goes to stderr). The device and port stay leased (heartbeat every 30 s) until Metro exits; Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--clean`, `--project`, `--bundle-id`. `--headless` closes the claimed sim's window and gives Metro `WARDEN_HEADLESS=1`; dev is headless only with the flag (config `headless` and `WARDEN_HEADLESS` don't apply).
+Then the dev client is opened on the device: iOS relaunches the app with `--initialUrl <metroUrl>` (no "Open in …?" alert); Android runs `adb reverse` and opens `exp+<slug>://expo-development-client/?url=…` (`--scheme` to override). `--no-open` skips this. `--json` prints one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready (Metro's own output goes to stderr). The device and port stay leased (heartbeat every 30 s) until Metro exits; Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--install-mode`, `--reset-keychain`, `--project`, `--bundle-id`. `--headless` closes the claimed sim's window and gives Metro `WARDEN_HEADLESS=1`; dev is headless only with the flag (config `headless` and `WARDEN_HEADLESS` don't apply).
 
 ### `warden builds ls | prune | import`
 

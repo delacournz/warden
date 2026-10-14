@@ -1,5 +1,6 @@
 import { constants } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
+import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import type { EnsureResult } from "@delacour/warden-core/builds/resolve";
 import type { ClaimOutcome } from "@delacour/warden-core/claim";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
@@ -10,6 +11,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
 import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
 import type { CommandContext } from "./context";
+import { installModeOption, legacyCleanOption, parseInstallFlags, RESET_KEYCHAIN_HELP } from "./install-flags";
 import type { Spinner } from "./ui";
 
 /** Shared by `warden run` and `warden batch`: claim devices + ports, child env, heartbeat, release. */
@@ -128,7 +130,11 @@ export function setHeadlessEnv(env: Record<string, string | undefined>, headless
 /** `--app` family option values shared by `run` and `batch`. */
 export type AppFlagValues = {
 	app?: true;
-	/** `--clean` */
+	/** `--install-mode` */
+	installMode?: InstallMode;
+	/** `--reset-keychain` */
+	resetKeychain?: true;
+	/** `--clean`: deprecated alias of `--install-mode reinstall` */
 	clean?: true;
 	project?: string;
 	bundleId?: string;
@@ -152,7 +158,9 @@ export function withLeaseOptions<Args extends unknown[], Opts extends OptionValu
 			[] as string[]
 		)
 		.option("--app", "install the project's app (fingerprint → cache → EAS → build) on each device first")
-		.option("--clean", "--app: uninstall the app first, so every run starts from a fresh container")
+		.addOption(installModeOption("--app: "))
+		.option("--reset-keychain", RESET_KEYCHAIN_HELP)
+		.addOption(legacyCleanOption())
 		.option("--project <dir>", "--app: project directory (default: cwd)")
 		.option("--bundle-id <id>", "--app: override the bundle id / package")
 		.option("--variant <name>", "--app: install this projects[].variants build (dev, e2e…)")
@@ -162,19 +170,23 @@ export function withLeaseOptions<Args extends unknown[], Opts extends OptionValu
 
 /** `--app …` → ensure options (undefined without `--app`); the sub-flags need `--app`. */
 export function parseAppFlags(opts: AppFlagValues): Result<EnsureOptions | undefined> {
+	const install = parseInstallFlags(opts);
+	if (!install.success) return install;
 	if (opts.app) {
 		return ok({
 			eas: opts.eas,
 			build: opts.build,
-			...(opts.clean ? { clean: true } : {}),
+			...install.data,
 			...(opts.project !== undefined ? { project: opts.project } : {}),
 			...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
 			...(opts.variant !== undefined ? { variant: opts.variant } : {}),
 		});
 	}
 	const sub = opts.project ?? opts.bundleId ?? opts.variant;
-	if (sub !== undefined || !opts.eas || !opts.build || opts.clean) {
-		return err("--project / --no-eas / --no-build / --bundle-id / --variant / --clean need --app");
+	if (sub !== undefined || !opts.eas || !opts.build || install.data.installMode !== undefined) {
+		return err(
+			"--project / --no-eas / --no-build / --bundle-id / --variant / --install-mode / --reset-keychain / --clean need --app"
+		);
 	}
 	return ok(undefined);
 }

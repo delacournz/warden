@@ -25,11 +25,22 @@ export type WardenPlatform = "ios" | "android";
  * Install the project's app on every leased device before the first job.
  *
  * - `true` installs the cached / built app (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` are exported).
- * - `{ clean: true }` also uninstalls it first, so each run starts from a fresh container (`--clean`).
+ * - `{ installMode: "clean" }` gives each run fresh app data without reinstalling an unchanged build (`--install-mode clean`).
+ * - `{ installMode: "reinstall" }` uninstalls the app first, then installs it, every run (`--install-mode reinstall`).
+ * - `{ installMode, resetKeychain: true }` also resets the iOS simulator's keychain (`--reset-keychain`); needs `installMode`.
+ * - `{ clean: true }` is the deprecated spelling of `{ installMode: "reinstall" }`.
  * - `{ variant: "e2e" }` installs that {@link WardenProject.variants} build instead of the project's own.
  * - `{}` is the same as `true`.
  */
-export type WardenAppOption = boolean | { clean?: boolean | undefined; variant?: string | undefined };
+export type WardenAppOption =
+	| boolean
+	| {
+			installMode?: "clean" | "reinstall" | undefined;
+			resetKeychain?: boolean | undefined;
+			/** @deprecated use `installMode: "reinstall"` */
+			clean?: boolean | undefined;
+			variant?: string | undefined;
+	  };
 
 /** A value per platform, e.g. a bundle id or a build command. */
 export interface WardenPerPlatform {

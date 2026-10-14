@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
 import { projectContext } from "@delacour/warden-core/builds/ensure";
 import { DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "@delacour/warden-core/config.defaults";
@@ -13,6 +14,7 @@ import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, resolveOwner, resolvePlatform, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import {
 	childEnv,
 	claimAll,
@@ -70,6 +72,8 @@ type DevOpts = ClaimFlagValues & {
 	readyTimeout: string;
 	eas: boolean;
 	build: boolean;
+	installMode?: InstallMode;
+	resetKeychain?: true;
 	clean?: true;
 	/** `--json`: one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready */
 	json?: true;
@@ -224,16 +228,18 @@ async function openDevClient(
 }
 
 /** What `warden dev` asks `ensureApp` for: a missing `dev` variant falls back, an explicit `--variant` must exist. */
-function ensureOptions(start: string, variant: string, opts: DevOpts): EnsureOptions {
-	return {
+function ensureOptions(start: string, variant: string, opts: DevOpts): Result<EnsureOptions> {
+	const install = parseInstallFlags(opts);
+	if (!install.success) return install;
+	return ok({
 		project: start,
 		eas: opts.eas,
 		build: opts.build,
 		variant,
 		...(opts.variant === undefined ? { variantOptional: true } : {}),
 		...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
-		...(opts.clean ? { clean: true } : {}),
-	};
+		...install.data,
+	});
 }
 
 type Running = { session: Session; platform: Platform; project: Project; scheme: string; timeoutMs: number };
@@ -330,9 +336,10 @@ async function dev(
 	const scheme = await devScheme(ctx, project.data.project, opts.scheme);
 	if (!scheme.success) return fail(scheme.error);
 	const app = ensureOptions(start.data, variant, opts);
+	if (!app.success) return fail(app.error);
 
 	const session = await withSpinner(ctx, `preparing the ${platform.data} dev build…`, async (sctx, spinner) => {
-		const result = await openSession(sctx, deps, owner, platform.data, opts, app);
+		const result = await openSession(sctx, deps, owner, platform.data, opts, app.data);
 		if (result.success) spinner.succeed(`${platform.data} dev build on ${result.data.deviceId}`);
 		else spinner.fail(`${platform.data} dev build not ready`);
 		return result;
@@ -369,7 +376,9 @@ export function createDevCommand(deps: DevDeps): Command {
 				.option("--ready-timeout <duration>", "wait this long for Metro", DEV_READY_TIMEOUT)
 				.option("--no-eas", "don't download EAS builds")
 				.option("--no-build", "don't build locally on a cache miss")
-				.option("--clean", "uninstall the app first")
+				.addOption(installModeOption())
+				.option("--reset-keychain", "--install-mode: also reset the iOS simulator's keychain")
+				.addOption(legacyCleanOption())
 				.option("--no-open", "don't open the dev client (Metro + the leases only)")
 				.addHelpText("after", "\nExample:\n  warden dev ios -- --clear")
 				.action(async (platform, _expoArgs, opts) => done(await dev(ctx, deps, platform, opts)));

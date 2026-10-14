@@ -133,7 +133,7 @@ describe("ensureApp", () => {
 		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe("NEW");
 	});
 
-	test("clean: uninstalls then installs even though the device is already at this hash", async () => {
+	test("installMode reinstall: uninstalls then installs even though the device is already at this hash", async () => {
 		await seedCache();
 		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "H", installedAt: 1 });
 		const calls: string[] = [];
@@ -148,13 +148,68 @@ describe("ensureApp", () => {
 			}
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		const res = await ensureApp(input(exec, { clean: true }));
+		const res = await ensureApp(input(exec, { installMode: "reinstall" }));
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.source).toBe("cache");
 		expect(res.data.installed).toBe(true);
 		const verbs = calls.filter((c) => /simctl (un)?install/.test(c)).map((c) => c.split(" ")[2]);
 		expect(verbs).toEqual(["uninstall", "install"]);
 		expect(getInstall(store, "ios", "U1", "com.x.app")?.installedAt).toBe(5_000);
+	});
+
+	test("installMode clean: already at this hash → no install, the app's data is reset (keychain when asked)", async () => {
+		await seedCache();
+		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		const calls: string[] = [];
+		const exec = fake(
+			[
+				["xcrun simctl get_app_container U1 com.x.app data", { stdout: "/data/C" }],
+				["xcrun simctl get_app_container U1 com.x.app groups", { exitCode: 1 }],
+				["xcrun simctl get_app_container U1 com.x.app", { stdout: "/data/App.app" }],
+				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
+				["stat -f %z", { stdout: "7\n" }],
+				["xcrun simctl terminate", {}],
+				["xcrun simctl spawn", {}],
+				["xcrun simctl privacy U1 reset all com.x.app", {}],
+				["xcrun simctl keychain U1 reset", {}],
+			],
+			calls
+		);
+		const removed: string[] = [];
+		const resetFs = {
+			readdir: async () => ["Documents", ".com.apple.mobile_container_manager.metadata.plist"],
+			rm: async (path: string) => {
+				removed.push(path);
+			},
+			mkdir: async () => {},
+		};
+		const res = await ensureApp(input(exec, { installMode: "clean", resetKeychain: true, resetFs }));
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.source).toBe("installed");
+		expect(calls.some((c) => /simctl (un)?install/.test(c))).toBe(false);
+		expect(removed).toEqual(["/data/C/Documents"]);
+		expect(calls).toContain("xcrun simctl privacy U1 reset all com.x.app");
+		expect(calls).toContain("xcrun simctl keychain U1 reset");
+	});
+
+	test("installMode reinstall + resetKeychain: the sim keychain is reset after the uninstall", async () => {
+		await seedCache();
+		const calls: string[] = [];
+		let present = true;
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined === "xcrun simctl uninstall U1 com.x.app") present = false;
+			if (joined.startsWith("xcrun simctl install U1")) present = true;
+			if (joined.startsWith("xcrun simctl get_app_container")) {
+				return present ? { exitCode: 0, stdout: "/x", stderr: "" } : { exitCode: 1, stdout: "", stderr: "" };
+			}
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const res = await ensureApp(input(exec, { installMode: "reinstall", resetKeychain: true }));
+		if (!res.success) throw new Error(res.error);
+		const steps = calls.filter((c) => /simctl (uninstall|install|keychain)/.test(c)).map((c) => c.split(" ")[2]);
+		expect(steps).toEqual(["uninstall", "keychain", "install"]);
 	});
 
 	test("legacy cache dir → imported (copied) into the warden cache", async () => {
