@@ -1,5 +1,6 @@
 import type { BatchEvent } from "@delacour/warden-core/batch/schedule";
 import { formatDuration } from "@delacour/warden-core/duration";
+import type { FlowMark } from "./flow-progress";
 
 /** Live state of one device (= worker) in the batch grid. */
 export type DeviceView = {
@@ -10,6 +11,8 @@ export type DeviceView = {
 	passed: number;
 	failed: number;
 	idle: boolean;
+	/** `mode: "single"`: the flows this worker's one runner runs, marked as its output reports them */
+	flows?: Array<{ id: string; mark?: FlowMark }>;
 };
 
 export type BatchView = {
@@ -36,6 +39,29 @@ export function initialView(
 		total,
 		ordinals: {},
 		devices: devices.map((d) => ({ ...d, passed: 0, failed: 0, idle: false })),
+	};
+}
+
+/** Track `flowIds` on every row (a `single` run: one runner per row runs them all). */
+export function withFlows(view: BatchView, flowIds: readonly string[]): BatchView {
+	return { ...view, devices: view.devices.map((d) => ({ ...d, flows: flowIds.map((id) => ({ id })) })) };
+}
+
+/** Marks read off `worker`'s runner output (a new view; flows it doesn't track are ignored). */
+export function applyFlowMarks(view: BatchView, worker: number, marks: Readonly<Record<string, FlowMark>>): BatchView {
+	return {
+		...view,
+		devices: view.devices.map((d) =>
+			d.worker === worker && d.flows
+				? {
+						...d,
+						flows: d.flows.map((f) => ({
+							id: f.id,
+							...((marks[f.id] ?? f.mark) ? { mark: marks[f.id] ?? f.mark } : {}),
+						})),
+					}
+				: d
+		),
 	};
 }
 
@@ -118,8 +144,17 @@ const BAR_WIDTH = 20;
 const DEVICE_BAR_WIDTH = 8;
 const NAME_WIDTH = 20;
 
+/** Flow counts across the rows that track flows; undefined when none does (count jobs instead). */
+function flowTotals(view: BatchView): { passed: number; failed: number; total: number } | undefined {
+	const flows = view.devices.flatMap((d) => d.flows ?? []);
+	if (!view.devices.some((d) => d.flows)) return undefined;
+	const count = (mark: FlowMark) => flows.filter((f) => f.mark === mark).length;
+	return { passed: count("passed"), failed: count("failed"), total: flows.length };
+}
+
 function header(view: BatchView, max: number, color: boolean): string {
-	const { passed, failed } = totals(view);
+	const tally = flowTotals(view) ?? { ...totals(view), total: view.total };
+	const { passed, failed, total } = tally;
 	const done = passed + failed;
 	const state: Segment = view.result
 		? view.result.ok
@@ -129,8 +164,8 @@ function header(view: BatchView, max: number, color: boolean): string {
 	return line(
 		[
 			{ text: "warden batch  ", style: "bold" },
-			{ text: bar(view.total === 0 ? 1 : done / view.total, BAR_WIDTH), style: "cyan" },
-			{ text: `  ${done}/${view.total}  ` },
+			{ text: bar(total === 0 ? 1 : done / total, BAR_WIDTH), style: "cyan" },
+			{ text: `  ${done}/${total}  ` },
 			{ text: `✓${passed}`, style: "green" },
 			{ text: " " },
 			{ text: `✗${failed}`, style: failed > 0 ? "red" : "dim" },
@@ -170,13 +205,44 @@ function deviceRow(view: BatchView, d: DeviceView, cols: Columns, max: number, c
 	);
 }
 
-/** The grid: a header (overall progress, ✓/✗, elapsed) + one row per device. Pure — no ANSI cursor moves. */
+const FLOW_INDENT = "    ";
+
+function flowSegment(flow: { id: string; mark?: FlowMark }): Segment {
+	if (flow.mark === "passed") return { text: `✓ ${flow.id}`, style: "green" };
+	if (flow.mark === "failed") return { text: `✗ ${flow.id}`, style: "red" };
+	return { text: `· ${flow.id}`, style: "dim" };
+}
+
+/** A row's flows, two spaces apart, wrapped to `max` columns under the row. */
+function flowLines(flows: ReadonlyArray<{ id: string; mark?: FlowMark }>, max: number, color: boolean): string[] {
+	const lines: Segment[][] = [];
+	let current: Segment[] = [];
+	let width = FLOW_INDENT.length;
+	for (const flow of flows) {
+		const segment = flowSegment(flow);
+		const size = [...segment.text].length + 2;
+		if (current.length > 0 && width + size > max) {
+			lines.push(current);
+			current = [];
+			width = FLOW_INDENT.length;
+		}
+		current.push({ text: current.length > 0 ? "  " : FLOW_INDENT }, segment);
+		width += size;
+	}
+	if (current.length > 0) lines.push(current);
+	return lines.map((segments) => line(segments, max, color));
+}
+
+/** The grid: a header (overall progress, ✓/✗, elapsed) + one row per device (+ its flows). Pure — no ANSI cursor moves. */
 export function render(view: BatchView, opts: RenderOptions): string {
 	const max = Math.max(10, opts.width - 1);
 	const id = String(Math.max(0, ...view.devices.map((d) => d.worker))).length;
 	const name = Math.min(NAME_WIDTH, Math.max(4, ...view.devices.map((d) => [...d.name].length)));
 	const job = Math.max(8, max - (id + 1 + name + 2 + 2 + 7 + 2 + 9 + DEVICE_BAR_WIDTH));
-	const rows = view.devices.map((d) => deviceRow(view, d, { id, name, job }, max, opts.color));
+	const rows = view.devices.flatMap((d) => [
+		deviceRow(view, d, { id, name, job }, max, opts.color),
+		...flowLines(d.flows ?? [], max, opts.color),
+	]);
 	return [header(view, max, opts.color), ...rows].join("\n");
 }
 

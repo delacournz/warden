@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { applyEvent, type BatchView, frameBytes, initialView, plainLine, render } from "./tui";
+import {
+	applyEvent,
+	applyFlowMarks,
+	type BatchView,
+	frameBytes,
+	initialView,
+	plainLine,
+	render,
+	withFlows,
+} from "./tui";
 
 const DEVICES = [
 	{ worker: 0, udid: "U0", name: "warden-iphone-17-1" },
@@ -79,6 +88,47 @@ describe("render", () => {
 		expect(colored).not.toBe(plain);
 		// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI
 		expect(colored.replace(/\u001b\[[0-9;]*m/g, "")).toBe(plain);
+	});
+});
+
+describe("flow progress (one runner for many flows)", () => {
+	const flows = ["onboarding", "settings", "sign-in", "todos"];
+	const single = () => {
+		let view = withFlows(initialView([DEVICES[0] ?? { worker: 0, udid: "U0", name: "d" }], 1, 0), flows);
+		view = applyEvent(view, {
+			type: "job-start",
+			at: 0,
+			job: "example-dev",
+			worker: 0,
+			udid: "U0",
+			seq: 0,
+			attempt: 0,
+		});
+		return applyFlowMarks(view, 0, { onboarding: "passed", "sign-in": "failed" });
+	};
+
+	test("the header counts flows, not the one job; a flow line sits under its device row", () => {
+		const text = render({ ...single(), now: 70_000 }, { width: 100, color: false });
+		const [head, row, flowLine] = text.split("\n");
+		expect(head).toContain("2/4");
+		expect(head).toContain("✓1 ✗1");
+		expect(row).toContain("▶ example-dev");
+		expect(flowLine).toBe("    ✓ onboarding  · settings  ✗ sign-in  · todos");
+	});
+
+	test("marks replace earlier ones; unknown flow ids are ignored", () => {
+		const view = applyFlowMarks(single(), 0, { "sign-in": "passed", ghost: "failed" });
+		expect(render(view, { width: 100, color: false })).toContain("✓ onboarding  · settings  ✓ sign-in  · todos");
+	});
+
+	test("the flow line wraps to the width", () => {
+		const lines = render(single(), { width: 30, color: false }).split("\n");
+		for (const line of lines) expect(line.length).toBeLessThan(30);
+		expect(lines.slice(2).join(" ")).toContain("✗ sign-in");
+	});
+
+	test("without flows the grid is unchanged", () => {
+		expect(render(midRun(), { width: 80, color: false }).split("\n")).toHaveLength(3);
 	});
 });
 

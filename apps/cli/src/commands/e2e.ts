@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
 import type { E2eDeviceLeg, E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
 import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
@@ -11,6 +11,7 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { resolveHeadless } from "@delacour/warden-core/headless";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import type { TrackedFlow } from "../batch/flow-progress";
 import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
 import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
@@ -28,6 +29,7 @@ import {
 	type MetroPlan,
 	parseBatchArgs,
 	runSession,
+	type SessionHooks,
 	type SessionResult,
 	withBatchOptions,
 } from "./batch";
@@ -335,17 +337,14 @@ async function e2e(
 	const byId = new Map(flows.map((f) => [f.id, f]));
 	const { runner } = suite.config;
 	const single = shape.singleJob !== undefined;
-	const session = await runSession(ctx, deps, args, single ? [suite.name] : [...byId.keys()], runner, {
-		name: "e2e",
-		setup: deviceSetup(suite.config),
-		// a passed gate frees the sims; a failed one leaves them up to inspect
-		...(opts.shutdown ? { shutdownIf: (summary) => verdicts(flows, { code: 0, summary }, shape).ok } : {}),
-		argvFor: (job) => {
-			if (single) return singleRunnerArgv(runner, flows);
-			const flow = byId.get(job);
-			return flow ? runnerArgv(runner, flow) : runner;
-		},
-	});
+	const session = await runSession(
+		ctx,
+		deps,
+		args,
+		single ? [suite.name] : [...byId.keys()],
+		runner,
+		sessionHooks(suite, flows, shape, opts.shutdown)
+	);
 	const result = verdicts(flows, session, shape);
 	const report: E2eReport = {
 		...base,
@@ -360,6 +359,30 @@ async function e2e(
 	if (session.code === 130) return 130;
 	printVerdict(ctx, report);
 	return result.ok ? 0 : 1;
+}
+
+/** How the batch session runs the suite: per-device setup, runner argv per job, live flows (`single`) and the shutdown rule. */
+function sessionHooks(suite: Suite, flows: readonly SelectedFlow[], shape: RunShape, shutdown: boolean): SessionHooks {
+	const { runner } = suite.config;
+	const single = shape.singleJob !== undefined;
+	const byId = new Map(flows.map((f) => [f.id, f]));
+	return {
+		name: "e2e",
+		setup: deviceSetup(suite.config),
+		...(single ? { flows: trackedFlows(suite, flows) } : {}),
+		// a passed gate frees the sims; a failed one leaves them up to inspect
+		...(shutdown ? { shutdownIf: (summary) => verdicts(flows, { code: 0, summary }, shape).ok } : {}),
+		argvFor: (job) => {
+			if (single) return singleRunnerArgv(runner, flows);
+			const flow = byId.get(job);
+			return flow ? runnerArgv(runner, flow) : runner;
+		},
+	};
+}
+
+/** `mode: "single"`: the flows as the runner prints them (relative to the suite cwd), for live progress. */
+function trackedFlows(suite: Suite, flows: readonly SelectedFlow[]): TrackedFlow[] {
+	return flows.map((f) => ({ id: f.id, path: relative(suite.cwd, f.file) }));
 }
 
 /** `mode: "single"`: the flows reach the one runner process through its env too. */

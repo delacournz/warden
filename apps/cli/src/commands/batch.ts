@@ -15,11 +15,23 @@ import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
+import { type FlowMark, flowMarks, type TrackedFlow } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
 import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
 import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
-import { applyEvent, type BatchView, initialView, type LiveScreen, liveScreen, plainLine, render } from "../batch/tui";
+import {
+	applyEvent,
+	applyFlowMarks,
+	type BatchView,
+	type DeviceView,
+	initialView,
+	type LiveScreen,
+	liveScreen,
+	plainLine,
+	render,
+	withFlows,
+} from "../batch/tui";
 import {
 	type ClaimFlags,
 	type ClaimFlagValues,
@@ -184,6 +196,8 @@ const SERVE_KILL_GRACE_MS = 15_000;
 const JOB_KILL_GRACE_MS = 5_000;
 const READY_POLL_MS = 500;
 const FRAME_MS = 100;
+/** how often a `single` run's runner log is read for finished flows */
+const FLOW_POLL_MS = 1_000;
 
 const absolute = (cwd: string, path: string) => (isAbsolute(path) ? path : resolve(cwd, path));
 
@@ -378,16 +392,21 @@ function summaryJson(
 }
 
 /** TUI sinks: the terminal (live grid or plain lines) and the `tui.cast` mirror. */
-type Display = { event: (e: BatchEvent) => void; end: () => void; cast?: Cast };
+type Display = {
+	event: (e: BatchEvent) => void;
+	/** flow results read off `worker`'s runner output */
+	flows: (worker: number, marks: Readonly<Record<string, FlowMark>>) => void;
+	end: () => void;
+	cast?: Cast;
+};
 
 function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { current: BatchView }): Display {
 	const { terminal } = deps;
 	const live = args.tui && terminal.isTTY;
 	const width = live ? terminal.columns : 100;
-	// header + one row per device + the cursor row the grid's trailing newline leaves
-	const cast = args.record
-		? createCast({ width, height: view.current.devices.length + 2, startedAt: ctx.now() })
-		: undefined;
+	// the grid (header, device rows, flow lines) + the cursor row its trailing newline leaves
+	const height = render(view.current, { width, color: false }).split("\n").length + 1;
+	const cast = args.record ? createCast({ width, height, startedAt: ctx.now() }) : undefined;
 	const sinks: Array<{ screen: LiveScreen; color: boolean; last?: string }> = [];
 	if (live) sinks.push({ screen: liveScreen(terminal.write), color: ctx.ui.color.level > 0 });
 	if (cast) sinks.push({ screen: liveScreen((data) => cast.write(ctx.now(), data)), color: true });
@@ -412,11 +431,110 @@ function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { 
 			}
 			frame(false);
 		},
+		flows: (worker, marks) => {
+			if (!live)
+				announceFlows(
+					ctx,
+					view.current.devices.find((d) => d.worker === worker),
+					marks
+				);
+			view.current = applyFlowMarks(view.current, worker, marks);
+			frame(false);
+		},
 		end: () => {
 			stopFrames();
 			frame(true);
 		},
 	};
+}
+
+/** Run every pool's queue behind the grid; a `single` run with `flows` also ticks them off live from the runner logs. */
+async function runGrid(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	queues: readonly Queue[],
+	o: { total: number; startedAt: number; logs: ReadonlyMap<string, string>; flows: readonly TrackedFlow[] | undefined }
+): Promise<{ summary: BatchSummary; screen: Display }> {
+	const rows = queues.flatMap((q) => q.workers);
+	// only a `single` runner runs several flows in one job
+	const flows = args.single ? o.flows : undefined;
+	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, flows) });
+	const poller = flows ? flowPoller(deps, flows, o.logs, screen) : undefined;
+	try {
+		const summary = await runPools(queues, {
+			retry: args.retry,
+			now: ctx.now,
+			signal: r.signal,
+			onEvent: screen.event,
+		});
+		poller?.stop();
+		await poller?.poll();
+		return { summary, screen };
+	} finally {
+		poller?.stop();
+	}
+}
+
+/** The grid's first frame: every row tracks `flows` when a `single` run has them. */
+function startView(
+	rows: ReadonlyArray<{ worker: number; udid: string; name: string }>,
+	total: number,
+	startedAt: number,
+	flows: readonly TrackedFlow[] | undefined
+): BatchView {
+	const view = initialView(rows, total, startedAt);
+	return flows
+		? withFlows(
+				view,
+				flows.map((f) => f.id)
+			)
+		: view;
+}
+
+/** `--no-tui`: one line per flow the first time it is marked (or its mark changes). */
+function announceFlows(
+	ctx: CommandContext,
+	device: DeviceView | undefined,
+	marks: Readonly<Record<string, FlowMark>>
+): void {
+	for (const f of device?.flows ?? []) {
+		const mark = marks[f.id];
+		if (mark && mark !== f.mark) ctx.err(`${device?.name} ${mark === "passed" ? "✓" : "✗"} ${f.id}`);
+	}
+}
+
+/**
+ * `mode: "single"`: read each worker's latest runner log and hand the flows it reports finished to
+ * the display. `poll` reads once (also called after the run, so the last flows land); `stop` ends the timer.
+ */
+function flowPoller(
+	deps: BatchDeps,
+	flows: readonly TrackedFlow[],
+	logs: ReadonlyMap<string, string>,
+	screen: Display
+): { poll: () => Promise<void>; stop: () => void } {
+	let busy = false;
+	const poll = async () => {
+		if (busy) return;
+		busy = true;
+		try {
+			// attempt keys are `<worker>:<seq>` in spawn order: the last one per worker is its current log
+			const latest = new Map<number, string>();
+			for (const [key, log] of logs) latest.set(Number(key.split(":")[0]), log);
+			for (const [worker, log] of latest) {
+				const text = await deps.readFile(log).catch(() => "");
+				screen.flows(worker, flowMarks(text, flows));
+			}
+		} finally {
+			busy = false;
+		}
+	};
+	const stop = deps.every(FLOW_POLL_MS, () => {
+		void poll();
+	});
+	return { poll, stop };
 }
 
 /** Start one recording per device (in parallel); failures stop the ones that started. */
@@ -628,6 +746,8 @@ export type SessionHooks = {
 	setup?: DeviceSetupSpec | undefined;
 	/** shut down the leased devices warden may shut down (see `shutdownReleasedDevices`) before releasing, when this says so of a finished, uninterrupted run */
 	shutdownIf?: (summary: BatchSummary) => boolean;
+	/** `single` runs: the flows its runner runs, tracked live from the runner's output */
+	flows?: readonly TrackedFlow[];
 };
 
 /** `hooks.shutdownIf`: stop the session's devices while their leases are still held; failures only warn. */
@@ -1081,13 +1201,11 @@ async function supervise(
 		const queues = poolQueues(ctx, deps, args, r, prepared, { jobs, cmd, env, vars, screenshots, logs });
 		const total = queues.reduce((n, q) => n + q.jobs.length, 0);
 		const startedAt = ctx.now();
-		const rows = queues.flatMap((q) => q.workers);
-		const screen = display(ctx, deps, args, { current: initialView(rows, total, startedAt) });
-		const summary = await runPools(queues, {
-			retry: args.retry,
-			now: ctx.now,
-			signal: r.signal,
-			onEvent: screen.event,
+		const { summary, screen } = await runGrid(ctx, deps, args, r, queues, {
+			total,
+			startedAt,
+			logs,
+			flows: hooks.flows,
 		});
 		const endedAt = ctx.now();
 		screen.end();

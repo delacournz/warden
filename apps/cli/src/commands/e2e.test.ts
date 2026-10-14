@@ -360,6 +360,37 @@ describe("warden e2e", () => {
 			]);
 		});
 
+		test("live flow progress: the grid marks each flow as the runner's output reports it", async () => {
+			await resuite({ mode: "single", runner: ["run-all"] });
+			const c = setup(["--all"]);
+			const h = harness({ manual: true, isTTY: true });
+			const running = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.jobs().length > 0);
+			const job = h.jobs()[0];
+			h.files.set(
+				job?.opts.log ?? "",
+				" ✓ |ios| flows/chats.yaml (1 test) 2s\n ❯ |ios| flows/settings.yaml (1 test | 1 failed)\n"
+			);
+			job?.finish(1);
+			expect(await running).toBe(1);
+			const screen = h.terminal.join("");
+			expect(screen).toContain("✓ chats  ✗ settings");
+			expect(screen).toContain("2/2");
+		});
+
+		test("--no-tui: one line per flow as it finishes", async () => {
+			await resuite({ mode: "single", runner: ["run-all"] });
+			const c = setup(["--all", "--no-tui"]);
+			const h = harness({ manual: true });
+			const running = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.jobs().length > 0);
+			const job = h.jobs()[0];
+			h.files.set(job?.opts.log ?? "", " ✓ |ios| flows/chats.yaml (1 test) 2s\n");
+			job?.finish(0);
+			expect(await running).toBe(0);
+			expect(c.stderr.join("\n")).toContain("warden-iphone-17-1 ✓ chats");
+		});
+
 		test("the runner's exit code is the verdict of every flow", async () => {
 			await resuite({ mode: "single", runner: ["run-all"] });
 			const c = setup(["--all"]);
