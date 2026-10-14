@@ -1,3 +1,5 @@
+import { unstamp } from "./stamp-lines";
+
 /** A flow finished inside a `mode: "single"` runner, read off the runner's output. */
 export type FlowMark = "passed" | "failed";
 
@@ -33,12 +35,12 @@ function markOf(line: string): FlowMark | undefined {
  * Per-flow results so far, from the output of one runner that runs every flow (tester.army
  * `e2e run`'s list reporter: ` ✓ |ios| e2e/a.e2e.ts (1 test) 6.8s`, ` ❯ |ios| e2e/b.e2e.ts (3 tests | 1 failed)`).
  * Only lines that name a flow's file count, so per-test lines under a file never do. The last line
- * for a flow wins (retries). Flows not finished yet are absent.
+ * for a flow wins (retries). Flows not finished yet are absent. warden's line stamps are ignored.
  */
 export function flowMarks(output: string, flows: readonly TrackedFlow[]): Record<string, FlowMark> {
 	const marks: Record<string, FlowMark> = {};
 	for (const raw of output.split("\n")) {
-		const line = raw.replace(ANSI, "");
+		const line = unstamp(raw.replace(ANSI, ""));
 		const mark = markOf(line);
 		if (!mark) continue;
 		const flow = flows.find((f) => names(line, f.path));

@@ -85,4 +85,6 @@ Never start Metro or export device env vars for a suite: `warden e2e <suite>` do
 
 Assert a `Badge` / `Chip` with `expectLabel` / `expectRemaining` and type with `fillField` (`e2e/helpers/flows.ts`): the container's own text can read empty on iOS, and the engine sometimes cannot confirm text it did type.
 
+`e2e.config.ts` always adds `timestampsReporter` (`e2e/helpers/timestamps.ts`) beside `list`: one `▶`/`■` line per test start/end (with duration and device) and `▸`/`▪` per step. Under warden the log lines are already stamped, so it prints no clock of its own.
+
 Failure output is in `.e2e/<worker>-<seq>/` (`.e2e/dev/` for `example-dev`) (`report.json`, `artifacts/`) and in warden's batch logs and screenshots.

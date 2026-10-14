@@ -34,6 +34,14 @@ describe("flowMarks", () => {
 		});
 	});
 
+	test("warden's line stamps are ignored", () => {
+		const stamped = RUN.split("\n")
+			.map((line) => `[23:51:23.412] ${line}`)
+			.join("\n");
+		expect(flowMarks(stamped, flows)).toEqual(flowMarks(RUN, flows));
+		expect(flowMarks(stamped, flows)).toHaveProperty("onboarding", "passed");
+	});
+
 	test("nothing finished yet → no marks", () => {
 		expect(flowMarks(" RUN  e2e v0.19.0\nℹ booting X (1 of 2)\n", flows)).toEqual({});
 	});

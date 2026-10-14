@@ -79,6 +79,15 @@ export default {
 | Metro's output | `<batchDir>/metro.log` |
 | a device that keeps failing | `warden release <leaseId> --bad "<why>"` keeps it out of the pool |
 
+Every line warden writes to these logs (jobs, `setup-<worker>.log`, `metro.log`, `serve.log`) starts with the local time it arrived, `[HH:MM:SS.mmm] `. Jobs get `WARDEN_LOG_TIMESTAMPS=1`, so a runner that prints its own times can leave them out. The example app's `timestampsReporter` (`apps/example/e2e/helpers/timestamps.ts`, beside the `list` reporter) adds a line for every test and step start and end:
+
+```text
+[00:54:25.766] ▶ test |ios| e2e/onboarding.e2e.ts › onboarding steps through to sign-in
+[00:54:25.942]   ▸ onboarding › app app.open
+[00:54:27.193]   ▪ onboarding › app app.open passed 1251ms
+[00:54:32.647] ■ test |ios| e2e/onboarding.e2e.ts › onboarding steps through to sign-in passed 6.88s on 4115EA7D-…
+```
+
 ## Don't
 
 - Start Metro yourself, or point a suite at a fixed port.

@@ -1,4 +1,3 @@
-import { closeSync, mkdirSync, openSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
@@ -21,6 +20,7 @@ import { type RunnerReport, reportOutputDir, runnerReport } from "../batch/runne
 import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
 import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
+import { openStampedLog } from "../batch/stamped-log";
 import {
 	applyEvent,
 	applyFlowMarks,
@@ -80,7 +80,7 @@ export type ProcHandle = { exited: Promise<number>; kill: (signal: KillSignal) =
 
 export type SpawnOptions = {
 	env: Record<string, string | undefined>;
-	/** stdout + stderr are appended to this file */
+	/** stdout + stderr are appended to this file, each line stamped `[HH:MM:SS.mmm] ` (and the child gets `WARDEN_LOG_TIMESTAMPS=1`) */
 	log: string;
 	/** own process group (detached); `kill` signals the whole group */
 	group?: boolean;
@@ -1483,23 +1483,31 @@ export function createBatchCommand(deps: BatchDeps): Command {
 	});
 }
 
+/** how long an exited job's output may still be draining into its log */
+const LOG_DRAIN_MS = 2000;
+
 export const defaultBatchDeps: BatchDeps = {
 	pid: process.pid,
 	isPortFree: (port) => isPortFree(port),
 	spawn(cmd, opts) {
-		mkdirSync(dirname(opts.log), { recursive: true });
-		const fd = openSync(opts.log, "a");
+		const log = openStampedLog(opts.log);
 		try {
 			const proc = Bun.spawn(cmd, {
-				env: opts.env,
+				env: { ...opts.env, WARDEN_LOG_TIMESTAMPS: "1" },
 				cwd: opts.cwd,
 				stdin: "ignore",
-				stdout: fd,
-				stderr: fd,
+				stdout: "pipe",
+				stderr: "pipe",
 				detached: opts.group === true,
 			});
+			const drained = Promise.all([log.pump(proc.stdout), log.pump(proc.stderr)]);
 			return {
-				exited: proc.exited.then((code) => exitCodeOf(proc, code)),
+				// a grandchild still holding the pipes can't hold up the exit past LOG_DRAIN_MS
+				exited: proc.exited.then(async (code) => {
+					await Promise.race([drained, Bun.sleep(LOG_DRAIN_MS)]);
+					log.close();
+					return exitCodeOf(proc, code);
+				}),
 				kill: (signal) => {
 					try {
 						if (opts.group) process.kill(-proc.pid, signal);
@@ -1509,8 +1517,9 @@ export const defaultBatchDeps: BatchDeps = {
 					}
 				},
 			};
-		} finally {
-			closeSync(fd);
+		} catch (e) {
+			log.close();
+			throw e;
 		}
 	},
 	probe: probeReady,
