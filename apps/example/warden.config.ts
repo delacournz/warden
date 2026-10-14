@@ -78,7 +78,7 @@ export default {
 		example: {
 			runner: ["bunx", "e2e", "run", "{flowPath}", "--retries", "0", "--output", ".e2e/{worker}-{seq}"],
 			count: 2,
-			app: { clean: true },
+			app: true,
 			slim: true,
 			...AFFECTED,
 		},
@@ -86,7 +86,7 @@ export default {
 			runner: ["bunx", "e2e", "run", "{flowPaths}", "--retries", "0", "--output", ".e2e/dev"],
 			mode: "single",
 			count: 2,
-			app: { variant: "dev", clean: true },
+			app: { variant: "dev" },
 			metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
 			jobTimeoutMs: 15 * 60_000,
 			slim: true,

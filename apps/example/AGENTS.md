@@ -68,7 +68,7 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 - `warden.config.ts` defines:
   - project `example`: a Release build keyed on native + JS;
   - variant `dev`: the Debug dev client, keyed on native only;
-  - suite `example`: 2 sims, clean install, slim, and the flow → screen `entries` that `warden affected` uses;
+  - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the flow → screen `entries` that `warden affected` uses;
   - suite `example-dev`: the same flows on the dev client. warden starts and verifies its own Metro (`metro`), and one runner drives the whole pool (`mode: "single"`).
 
 ```bash
