@@ -15,7 +15,7 @@ warden app ensure ios --udid <udid> --json
 `expo run:ios` rebuilds natively in every worktree: Xcode's DerivedData is keyed by the checkout's path, so a fresh worktree compiles every pod again even when the native code is identical. warden caches the **built app** by native fingerprint instead, shared by every worktree of the repo:
 
 ```bash
-warden dev ios              # claim a sim, install the cached dev build, start Metro, open the dev client
+warden dev                  # ios by default: claim a sim, install the cached dev build, start Metro, open the dev client
 warden dev ios -- --clear   # extra args go to `expo start`
 warden dev ios --json       # one line { udid, port, metroUrl, leaseIds } once Metro is ready
 ```

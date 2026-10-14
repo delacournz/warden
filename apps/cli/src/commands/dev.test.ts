@@ -113,6 +113,38 @@ describe("warden dev", () => {
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
+	test("no platform → ios, without asking", async () => {
+		const calls: string[][] = [];
+		const c = setup([], calls);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		expect(h.ensured[0]?.deviceId).toBe("U1");
+		expect(calls).toContainEqual(devClientLaunchArgv("U1", "com.demo", "http://127.0.0.1:8081"));
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	test("expo-dev-client not installed → exit 1 with the install command, nothing leased", async () => {
+		const c = setup(["ios"], []);
+		writeFileSync(join(c.cwd, "package.json"), JSON.stringify({ dependencies: { expo: "~57.0.0" } }));
+		const h = harness();
+		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("bunx expo install expo-dev-client");
+		expect(h.ensured).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("no bundle id in app.json → exit 1 naming the app.json key, nothing leased", async () => {
+		const c = setup(["ios"], []);
+		writeFileSync(join(c.cwd, "app.json"), JSON.stringify({ expo: { slug: "demo" } }));
+		const h = harness();
+		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("expo.ios.bundleIdentifier");
+		expect(h.ensured).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
 	test("an explicit --variant must exist", async () => {
 		const c = setup(["ios", "--variant", "qa"], []);
 		const h = harness();

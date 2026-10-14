@@ -454,11 +454,18 @@ function ancestors(start: string, stop: string | undefined): string[] {
 	}
 }
 
+/** Where an Expo app config keeps each platform's id. */
+const APP_CONFIG_BUNDLE_KEY: Record<Platform, string> = {
+	ios: "expo.ios.bundleIdentifier",
+	android: "expo.android.package",
+};
+
 export function bundleIdFor(project: Project, platform: Platform): Result<string> {
 	const id = project.bundleId[platform];
-	return id
-		? ok(id)
-		: err(
-				`project "${project.name}" has no ${platform} bundle id — set bundleId.${platform} in ${CONFIG_FILE} or pass --bundle-id`
-			);
+	if (id) return ok(id);
+	const fix =
+		project.origin === "config"
+			? `set bundleId.${platform} in ${CONFIG_FILE}`
+			: `set ${APP_CONFIG_BUNDLE_KEY[platform]} in the app config (\`warden init --bundle-id <id>\` writes it)`;
+	return err(`project "${project.name}" has no ${platform} bundle id — ${fix} or pass --bundle-id`);
 }

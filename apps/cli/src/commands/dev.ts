@@ -10,9 +10,10 @@ import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { maybeAutoGc } from "../autogc";
-import { type ClaimFlagValues, parseClaimFlags, resolveOwner, resolvePlatform, withClaimOptions } from "../claim-flags";
+import { type ClaimFlagValues, parseClaimFlags, parsePlatform, resolveOwner, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { missingPackages } from "../expo-app";
 import {
 	childEnv,
 	claimAll,
@@ -220,6 +221,18 @@ async function openDevClient(
 	]);
 }
 
+/**
+ * What a fresh Expo app is missing for a dev-client run, with the fix, before anything is leased or
+ * built: the platform's bundle id, and `expo-dev-client` (Metro is started with `--dev-client`).
+ */
+function preflight(project: Project, platform: Platform): Result<void> {
+	const bundle = bundleIdFor(project, platform);
+	if (!bundle.success) return bundle;
+	if (missingPackages(project.root, ["expo-dev-client"]).length > 0)
+		return err(`expo-dev-client isn't installed in ${project.root} — run: bunx expo install expo-dev-client`);
+	return ok(undefined);
+}
+
 /** What `warden dev` asks `ensureApp` for: a missing `dev` variant falls back, an explicit `--variant` must exist. */
 function ensureOptions(start: string, variant: string, opts: DevOpts): EnsureOptions {
 	return {
@@ -290,7 +303,7 @@ async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Ru
 }
 
 /**
- * `warden dev <platform> [-- <expo start args>]`: the worktree-friendly `expo run:*`. Installs the dev
+ * `warden dev [platform] [-- <expo start args>]` (platform defaults to ios): the worktree-friendly `expo run:*`. Installs the dev
  * build matching the native fingerprint (installed → shared cache → EAS → local build, `dev` variant
  * when the project has one), so a worktree whose native code matches any earlier build skips Xcode /
  * Gradle entirely; then starts Metro on a leased port and opens the dev client on the device.
@@ -306,7 +319,7 @@ async function dev(
 		ctx.err(color.red(`warden dev: ${message}`));
 		return 1;
 	};
-	const platform = await resolvePlatform(ctx, platformArg);
+	const platform = parsePlatform(platformArg ?? "ios");
 	if (!platform.success) return fail(platform.error);
 	const timeout = parseDuration(opts.readyTimeout);
 	if (!timeout.success) return fail(`--ready-timeout: ${timeout.error}`);
@@ -324,6 +337,8 @@ async function dev(
 		...(opts.variant === undefined ? { variantOptional: true } : {}),
 	});
 	if (!project.success) return fail(project.error);
+	const ready = preflight(project.data.project, platform.data);
+	if (!ready.success) return fail(ready.error);
 	const scheme = await devScheme(ctx, project.data.project, opts.scheme);
 	if (!scheme.success) return fail(scheme.error);
 	const app = ensureOptions(start.data, variant, opts);
@@ -353,7 +368,7 @@ export function createDevCommand(deps: DevDeps): Command {
 		register: (cmd, ctx, done) => {
 			withClaimOptions(
 				cmd
-					.argument("[platform]", "ios | android (asked for when omitted in a terminal)")
+					.argument("[platform]", "ios | android (default: ios)")
 					.argument("[expoArgs...]", "extra `expo start` args, after --")
 			)
 				.option("--udid <udid>", "use this device instead of claiming one")
@@ -368,7 +383,7 @@ export function createDevCommand(deps: DevDeps): Command {
 				.option("--no-build", "don't build locally on a cache miss")
 				.option("--clean", "uninstall the app first")
 				.option("--no-open", "don't open the dev client (Metro + the leases only)")
-				.addHelpText("after", "\nExample:\n  warden dev ios -- --clear")
+				.addHelpText("after", "\nExamples:\n  warden dev\n  warden dev android -- --clear")
 				.action(async (platform, _expoArgs, opts) => done(await dev(ctx, deps, platform, opts)));
 		},
 	});

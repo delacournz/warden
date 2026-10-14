@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
@@ -146,6 +146,20 @@ describe("warden e2e", () => {
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		expect(h.jobs()).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("● chats");
+	});
+
+	test("no suite configured: an Expo app's e2e/ flows are the default suite", async () => {
+		const c = setup(["--dry-run", "--json"]);
+		const app = join(c.env.WARDEN_HOME ?? "", "fresh");
+		mkdirSync(join(app, "e2e"), { recursive: true });
+		writeFileSync(join(app, "app.json"), JSON.stringify({ expo: { slug: "fresh", ios: { bundleIdentifier: "x.y" } } }));
+		writeFileSync(join(app, "e2e/smoke.e2e.ts"), "export {};\n");
+		c.cwd = app;
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const report: E2eReport = JSON.parse(c.stdout.join("\n"));
+		expect(report).toMatchObject({ suite: "fresh", platform: "ios", ok: true });
+		expect(report.flows.map((f) => f.id)).toEqual(["smoke"]);
 	});
 
 	test("suite app: { clean: true } installs the app cleanly on every device", async () => {

@@ -6,11 +6,20 @@ export const DEFAULT_EAS_PROFILE = "development-simulator";
 /** Xcode / Gradle build configuration the local build produces (`build.configuration`). */
 export type BuildConfiguration = "Debug" | "Release";
 
+/**
+ * Makes a fresh (CNG) checkout buildable: `expo run:ios --no-install` skips CocoaPods, so generate
+ * `ios/` when it has no Podfile and run `pod install` when the Pods sandbox is missing or out of sync
+ * with `Podfile.lock` (the check Xcode's own build phase makes). A no-op on a prepared project.
+ */
+export const IOS_NATIVE_PREPARE =
+	"{ [ -f ios/Podfile ] || bunx expo prebuild --platform ios --no-install; } && " +
+	"{ diff -q ios/Podfile.lock ios/Pods/Manifest.lock >/dev/null 2>&1 || pod install --project-directory=ios; }";
+
 /** Local build command (run in the project root) when `build.<platform>` is not configured. */
 export function defaultBuildCommand(platform: Platform, configuration: BuildConfiguration): string {
 	const flags = "--no-install --no-bundler";
 	if (platform === "ios") {
-		return `bunx expo run:ios ${configuration === "Release" ? "--configuration Release " : ""}${flags}`;
+		return `${IOS_NATIVE_PREPARE} && bunx expo run:ios ${configuration === "Release" ? "--configuration Release " : ""}${flags}`;
 	}
 	return `bunx expo run:android ${configuration === "Release" ? "--variant release " : ""}${flags}`;
 }

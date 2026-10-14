@@ -15,6 +15,7 @@ import { gcCommand } from "./gc";
 import { goldenCommand } from "./golden";
 import { heartbeatCommand } from "./heartbeat";
 import { hookCommand } from "./hook";
+import { initCommand } from "./init";
 import { installCommand } from "./install";
 import { lsCommand } from "./ls";
 import { portCommand } from "./port";
@@ -30,6 +31,7 @@ export const COMMANDS: readonly Command[] = [
 	claimCommand,
 	releaseCommand,
 	runCommand,
+	initCommand,
 	devCommand,
 	batchCommand,
 	affectedCommand,

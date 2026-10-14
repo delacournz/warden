@@ -29,7 +29,8 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | a device is misbehaving: release and keep it out of the pool | `warden release <leaseId> --bad [reason]` (clear: `warden sim unquarantine <udid>`); claims also probe iOS sims and quarantine hung ones |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` (`--variant dev\|e2e`) |
-| run the app in a worktree (instead of `expo run:ios`) | `warden dev ios [--udid <udid>] [-- <expo start args>]` — reuses the cached build for the native fingerprint, starts its own Metro on a leased port (refuses another checkout's Metro on it), opens the dev client; `--json` prints `{ udid, port, metroUrl, leaseIds }` |
+| set a new Expo app up for warden | `warden init --bundle-id <id>` — writes `warden.config.ts`, `e2e.config.ts`, a first flow; names packages to install |
+| run the app in a worktree (instead of `expo run:ios`) | `warden dev [ios\|android] [--udid <udid>] [-- <expo start args>]` (default ios) — reuses the cached build for the native fingerprint, starts its own Metro on a leased port (refuses another checkout's Metro on it), opens the dev client; `--json` prints `{ udid, port, metroUrl, leaseIds }` |
 | duplicate a shut-down sim (fast, no first boot) | `warden clone <udid\|name> [--name x]` |
 | pre-build the golden image new sims clone from | `warden golden ensure --profile iphone-17` |
 | who holds what | `warden ls` |

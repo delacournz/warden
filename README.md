@@ -137,6 +137,18 @@ So when `warden claim ios` needs a **new** pool device, it `simctl clone`s it fr
 - `warden release <id> --bad [reason]` quarantines the released warden device by hand. `warden devices` shows `quarantined` / `slim`. `warden sim unquarantine <udid|serial>` clears it.
 - `warden app ensure` re-installs when the app on the device no longer matches the cached build (iOS: `CFBundleVersion`, executable size and `main.jsbundle` size).
 
+### A new Expo app: `warden init`, `warden dev`, `warden e2e`
+
+```bash
+warden init --bundle-id com.example.app   # bundle id → app.json, warden.config.ts, e2e.config.ts, e2e/smoke.e2e.ts
+warden dev                                # lease a sim, build / reuse the dev client, own Metro port, open the app
+warden e2e --count 3                      # the e2e/ flows on the dev client, spread over 3 leased sims
+```
+
+- `warden dev [platform]` defaults to iOS. Every run leases its own Metro port (`8081:100`), so agents in different worktrees iterate side by side. Before leasing anything it checks for the bundle id and `expo-dev-client` and prints the fix.
+- The default local iOS build prepares a fresh checkout itself: `expo prebuild` when `ios/Podfile` is missing, `pod install` when the Pods are missing or out of sync, then `expo run:ios`. A configured `build.ios` is run as written.
+- With no `e2e` suite in the config, `warden e2e` runs every flow under `e2e/` with one tester.army runner (`bunx e2e run`) over 2 simulators, on the dev client and a Metro warden starts. `warden init` writes that suite out so you can edit it. It names the packages to install (`expo-dev-client`, `e2e`, `@e2e-dev/mobile`) and installs nothing.
+
 ### e2e scripts: `warden run`
 
 ```bash
@@ -219,7 +231,7 @@ With no config, warden detects a single project from `app.json` / `app.config.*`
 
 ### agent-device
 
-Claim, then pass the device explicitly: `warden claim ios --json` → `agent-device … --platform ios --udid <udid>` (Android: `--serial`). A bare agent claim lasts about 5 min and nothing refreshes it; only `warden dev` / `run` / `batch` / `e2e` or an explicit `warden heartbeat <leaseId>` hold a device longer. For exploration, run `warden dev ios --json` in the background (claims and holds a device + a Metro port, starts a Metro verified to serve this checkout, opens the dev client) and target the `udid` from its first stdout line. Subagents never call `release --mine`: use `release <leaseId>`, or claim with `--label x` and `release --mine --label x`.
+Claim, then pass the device explicitly: `warden claim ios --json` → `agent-device … --platform ios --udid <udid>` (Android: `--serial`). A bare agent claim lasts about 5 min and nothing refreshes it; only `warden dev` / `run` / `batch` / `e2e` or an explicit `warden heartbeat <leaseId>` hold a device longer. For exploration, run `warden dev --json` in the background (claims and holds a device + a Metro port, starts a Metro verified to serve this checkout, opens the dev client) and target the `udid` from its first stdout line. Subagents never call `release --mine`: use `release <leaseId>`, or claim with `--label x` and `release --mine --label x`.
 
 ### Claude Code
 

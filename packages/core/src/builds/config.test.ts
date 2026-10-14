@@ -176,7 +176,7 @@ describe("loadProject", () => {
 		const a = loadProject({ start: dir, env, name: "a" });
 		if (!a.success) throw new Error(a.error);
 		expect(a.data.buildConfiguration).toBe("Release");
-		expect(a.data.build.ios).toBe("bunx expo run:ios --configuration Release --no-install --no-bundler");
+		expect(a.data.build.ios).toBe(defaultBuildCommand("ios", "Release"));
 		expect(a.data.build.android).toBe(defaultBuildCommand("android", "Release"));
 		const b = loadProject({ start: dir, env, name: "b" });
 		if (!b.success) throw new Error(b.error);
