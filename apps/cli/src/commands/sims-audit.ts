@@ -22,7 +22,7 @@ import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable, heading, plural, reportError, warn } from "../output";
+import { emit, heading, reportError, table, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type OwnerFilter = SimOwner | "all";
@@ -99,15 +99,17 @@ function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimEn
 		color.bold(e.name),
 		color.dim(e.udid),
 		e.isAvailable ? e.runtime : color.red(`${e.runtime} (unavailable)`),
-		e.state,
+		e.leased ? color.cyan("leased") : e.state === "Booted" ? color.green(e.state) : color.dim(e.state),
 		e.owner,
-		e.leased ? color.green("yes") : "",
 		lastUsed(e, now),
 		formatSize(e.bytes),
 		describeVerdict(e, color),
 	]);
 	const lines = [
-		formatTable(["NAME", "UDID", "RUNTIME", "STATE", "OWNER", "LEASED", "LAST USED", "SIZE", "VERDICT"], rows, color),
+		table(ctx, ["NAME", "UDID", "RUNTIME", "STATE", "OWNER", "LAST USED", "SIZE", "VERDICT"], rows, [
+			{ column: 0, min: 18 },
+			{ column: 1, min: 9 },
+		]),
 		"",
 		`total ${color.bold(formatSize(audit.totalBytes))} across ${audit.entries.length} sim(s)`,
 	];
@@ -159,7 +161,11 @@ function runtimesText(ctx: CommandContext, section: RuntimeSection): string {
 		describeRuntimeVerdict(r.verdict, color),
 	]);
 	const lines = [
-		formatTable(["RUNTIME", "BUILD", "IDENTIFIER", "SIMS", "LAST USED", "SIZE", "VERDICT"], rows, color),
+		table(ctx, ["RUNTIME", "BUILD", "IDENTIFIER", "SIMS", "LAST USED", "SIZE", "VERDICT"], rows, {
+			column: 2,
+			keep: "end",
+			min: 16,
+		}),
 		"",
 		`runtimes ${color.bold(formatSize(audit.totalBytes))} across ${audit.entries.length} runtime(s)`,
 	];
@@ -195,6 +201,7 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 	if (!parsed.success) return fail(ctx, "audit", parsed.error);
 	const owner = parseOwner(opts.owner);
 	if (!owner.success) return fail(ctx, "audit", owner.error);
+	if (!opts.json) heading(ctx, "sims audit", opts.owner && opts.owner !== "all" ? `owner ${opts.owner}` : undefined);
 	const audit = await withSpinner(ctx, "auditing simulators…", (sctx) => auditMachineSims(simsDeps(sctx), parsed.data));
 	if (!audit.success) return fail(ctx, "audit", audit.error);
 	const runtimes = await runtimeSection(ctx, audit.data);
@@ -205,10 +212,7 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 		runtimes: runtimes.kind === "ok" ? runtimes.audit : null,
 		...(runtimes.kind === "error" ? { runtimesError: runtimes.error } : {}),
 	};
-	emit(ctx, opts.json === true, json, `${auditText(ctx, audit.data, entries)}\n\n${runtimesText(ctx, runtimes)}`, {
-		scope: "sims audit",
-		detail: plural(entries.length, "simulator"),
-	});
+	emit(ctx, opts.json === true, json, `${auditText(ctx, audit.data, entries)}\n\n${runtimesText(ctx, runtimes)}`);
 	return 0;
 }
 

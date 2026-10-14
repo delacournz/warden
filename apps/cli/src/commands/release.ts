@@ -48,7 +48,7 @@ type Picked = { kind: "ids"; ids: string[] } | { kind: "exit"; code: number };
 
 /**
  * `warden release` with no selector: in a terminal, offer every lease in a menu (the caller's own start
- * ticked); otherwise — or for `--json`, or with nothing leased — it stays the usage error.
+ * listed first and ticked); otherwise — or for `--json`, or with nothing leased — it stays the usage error.
  */
 async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picked> {
 	const { ui } = ctx;
@@ -58,9 +58,10 @@ async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picke
 		return { kind: "exit", code: 1 };
 	}
 	const me = resolveOwner(ctx);
+	const mineFirst = [...all].sort((a, b) => Number(sameOwner(b.owner, me)) - Number(sameOwner(a.owner, me)));
 	const answer = await ui.multiselect(
 		"Release which leases?",
-		all.map((l) => ({
+		mineFirst.map((l) => ({
 			value: l.id,
 			label: `${describeResource(l.resource)}${l.label ? ` [${l.label}]` : ""}`,
 			hint: `${describeOwner(l.owner)} · ${l.id}`,
@@ -81,13 +82,10 @@ async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picke
 /** Release the selected leases; with `--shutdown`, first shut down the devices warden may shut down. */
 async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): Promise<number> {
 	const { color } = ctx.ui;
-	let selector = selectorFrom(ids, opts);
-	if (isEmptySelector(selector)) {
-		const picked = await pickLeases(ctx, opts);
-		if (picked.kind === "exit") return picked.code;
-		selector = { ...selector, ids: picked.ids };
-	}
-	const { leases, unknown } = selectLeases(ctx, selector);
+	const selector = selectorFrom(ids, opts);
+	const picked = isEmptySelector(selector) ? await pickLeases(ctx, opts) : { kind: "ids" as const, ids };
+	if (picked.kind === "exit") return picked.code;
+	const { leases, unknown } = selectLeases(ctx, { ...selector, ids: picked.ids });
 	const devices = leases.filter((l) => l.resource.kind === "device");
 	const { shutdown, notes }: ShutdownOutcome =
 		opts.shutdown && devices.length > 0

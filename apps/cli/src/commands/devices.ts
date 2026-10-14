@@ -6,7 +6,7 @@ import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable, plural, reportError, warn } from "../output";
+import { emit, plural, reportError, table, warn } from "../output";
 import { providerFor } from "../providers";
 
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
@@ -77,7 +77,10 @@ function compareRows(a: DeviceRow, b: DeviceRow): number {
 	);
 }
 
-function stateCell(color: ChalkInstance, state: DeviceRow["state"]): string {
+/** `booted` / `shutdown` …, or `leased · <owner>` (cyan, like a running job in the batch grid) when someone holds it. */
+function stateCell(color: ChalkInstance, r: DeviceRow): string {
+	if (r.lease) return `${color.cyan("leased")} ${color.dim(`· ${r.lease.owner}`)}`;
+	const { state } = r;
 	if (state === "booted") return color.green(state);
 	if (state === "booting") return color.yellow(state);
 	return color.dim(state);
@@ -110,22 +113,25 @@ async function devices(ctx: CommandContext, filter: string | undefined, json: bo
 	rows.sort(compareRows);
 
 	const none = color.dim("-");
-	const table = formatTable(
-		["PLATFORM", "NAME", "ID", "STATE", "RUNTIME", "WARDEN", "LEASED BY"],
+	const text = table(
+		ctx,
+		["PLATFORM", "NAME", "ID", "STATE", "RUNTIME", "WARDEN"],
 		rows.map((r) => [
-			r.platform,
+			color.dim(r.platform),
 			r.warden || r.golden ? color.bold(r.name) : r.name,
 			r.id ?? none,
-			stateCell(color, r.state),
+			stateCell(color, r),
 			r.runtime ?? none,
 			wardenCell(color, r, none),
-			r.lease ? `${r.lease.owner}${r.lease.where ? color.dim(` (${r.lease.where})`) : ""}` : none,
 		]),
-		color
+		[
+			{ column: 1, min: 18 },
+			{ column: 2, min: 9 },
+		]
 	);
 	const booted = rows.filter((r) => r.state === "booted").length;
 	const leased = rows.filter((r) => r.lease).length;
-	emit(ctx, json, rows, rows.length > 0 ? table : color.dim("no devices"), {
+	emit(ctx, json, rows, rows.length > 0 ? text : color.dim("no devices"), {
 		scope: "devices",
 		detail: `${plural(rows.length, "device")} · ${booted} booted · ${leased} leased`,
 	});

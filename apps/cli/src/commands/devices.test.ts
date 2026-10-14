@@ -158,4 +158,21 @@ describe("warden devices", () => {
 	test("is also reachable as `warden list`", () => {
 		expect(devicesCommand.aliases).toEqual(["list"]);
 	});
+
+	test("table: no LEASED BY column — a leased device says so in STATE with its owner", async () => {
+		const c = setup([]);
+		c.db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
+				owner: other,
+				ttlMs: 60_000,
+			},
+			c.now()
+		);
+		expect(await devicesCommand.run(c)).toBe(0);
+		const text = c.stdout.join("\n");
+		expect(text).not.toContain("LEASED BY");
+		expect(text.split("\n")[0]).toMatch(/^PLATFORM\s+NAME\s+ID\s+STATE\s+RUNTIME\s+WARDEN$/);
+		expect(text).toMatch(/warden-iphone-17-1\s+U1\s+leased · agent s2/);
+	});
 });

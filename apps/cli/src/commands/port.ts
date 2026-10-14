@@ -17,7 +17,7 @@ import type { Result } from "@delacour/warden-types/result";
 import { err, ok } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable, plural, reportError, warn } from "../output";
+import { emit, plural, reportError, table, warn } from "../output";
 
 const DEFAULT_FROM = 8091;
 
@@ -141,10 +141,11 @@ function ls(ctx: CommandContext, json: boolean): number {
 	const text =
 		leases.length === 0
 			? color.dim("no port leases")
-			: formatTable(
+			: table(
+					ctx,
 					["PORT", "STATE", "OWNER", "WHERE", "LABEL", "AGE", "HEARTBEAT", "LEASE"],
 					leases.map((l) => lsRow(ctx, l, now)),
-					color
+					{ column: 3, keep: "end", min: 16 }
 				);
 	emit(ctx, json, leases, text, { scope: "port ls", detail: plural(leases.length, "port lease") });
 	return 0;

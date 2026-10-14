@@ -4,7 +4,7 @@ import { resolveOwner } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { goldenDeps, type Sleep } from "../golden-deps";
-import { emit, formatTable, heading, plural, reportError } from "../output";
+import { emit, heading, plural, reportError, table } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type EnsureOpts = { profile?: string; runtime?: string; json?: true };
@@ -35,7 +35,8 @@ async function ls(ctx: CommandContext, sleep: Sleep | undefined, json: boolean):
 	const { color } = ctx.ui;
 	const goldens = await listGoldens(goldenDeps(ctx, resolveOwner(ctx), sleep));
 	if (!goldens.success) return fail(ctx, goldens.error);
-	const table = formatTable(
+	const text = table(
+		ctx,
 		["NAME", "UDID", "STATE", "RUNTIME", "AVAILABLE"],
 		goldens.data.map((g) => [
 			g.name,
@@ -44,9 +45,12 @@ async function ls(ctx: CommandContext, sleep: Sleep | undefined, json: boolean):
 			g.runtimeId.split(".").pop() ?? "",
 			g.isAvailable ? color.green("yes") : color.red("no"),
 		]),
-		color
+		[
+			{ column: 0, min: 18 },
+			{ column: 1, min: 9 },
+		]
 	);
-	emit(ctx, json, goldens.data, goldens.data.length > 0 ? table : color.dim("no golden images"), {
+	emit(ctx, json, goldens.data, goldens.data.length > 0 ? text : color.dim("no golden images"), {
 		scope: "golden ls",
 		detail: plural(goldens.data.length, "golden image"),
 	});

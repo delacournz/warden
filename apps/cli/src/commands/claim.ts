@@ -15,7 +15,7 @@ import {
 } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable, heading, reportError, warn } from "../output";
+import { emit, heading, reportError, table, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type ClaimOpts = ClaimFlagValues & { json?: true };
@@ -85,10 +85,10 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		ctx,
 		opts.json === true,
 		{ leases, udids: leases.map((l) => l.udid), reclaimed: outcome.data.reclaimed },
-		formatTable(
+		table(
+			ctx,
 			["LEASE", "UDID", "NAME", "ACTION"],
-			leases.map((l) => [l.leaseId, color.bold(l.udid), l.name, color.dim(l.action)]),
-			color
+			leases.map((l) => [l.leaseId, color.bold(l.udid), l.name, color.dim(l.action)])
 		)
 	);
 	return 0;
