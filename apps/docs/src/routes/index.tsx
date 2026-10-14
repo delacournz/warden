@@ -294,7 +294,9 @@ function Home(): ReactElement {
 					<a className="hover:text-ink" href={githubUrl} rel="noreferrer noopener" target="_blank">
 						GitHub
 					</a>
-					<span className="sm:ms-auto">Built by Delacour</span>
+					<a className="hover:text-ink sm:ms-auto" href="https://delacour.co.nz" rel="noopener" target="_blank">
+						Built by Delacour
+					</a>
 				</div>
 			</footer>
 		</HomeLayout>
