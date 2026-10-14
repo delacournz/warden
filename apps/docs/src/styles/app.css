@@ -74,6 +74,14 @@
 }
 
 @layer base {
+	/* Native chrome (canvas, scrollbars, form controls) follows the toggle too. */
+	html {
+		color-scheme: light;
+	}
+	html.dark {
+		color-scheme: dark;
+	}
+
 	html {
 		font-feature-settings: "ss01", "cv11";
 		-webkit-font-smoothing: antialiased;

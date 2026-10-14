@@ -2,6 +2,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-r
 import { RootProvider } from "fumadocs-ui/provider/tanstack";
 import { socialImageMeta } from "@/lib/seo";
 import { appDescription, appName, defaultOgImage } from "@/lib/shared";
+import { themeScript } from "@/lib/theme";
 import appCss from "@/styles/app.css?url";
 
 export const Route = createRootRoute({
@@ -21,6 +22,7 @@ export const Route = createRootRoute({
 			{ rel: "stylesheet", href: appCss },
 			{ rel: "icon", href: "/favicon.svg", type: "image/svg+xml", sizes: "any" },
 		],
+		scripts: [{ children: themeScript }],
 	}),
 	component: RootComponent,
 });
@@ -45,6 +47,11 @@ function DirectionContract() {
 	return <template dangerouslySetInnerHTML={{ __html: DIRECTION_CONTRACT }} id="direction-contract" />;
 }
 
+/**
+ * Theming is `@/lib/theme`: an inline head script sets `.dark` before first
+ * paint. Fumadocs' own provider (next-themes) is switched off; its script
+ * lands in `<body>`, late enough to flash the light ground.
+ */
 function RootComponent() {
 	return (
 		<html lang="en" suppressHydrationWarning>
@@ -53,7 +60,7 @@ function RootComponent() {
 			</head>
 			<body className="flex min-h-screen flex-col bg-ground">
 				<DirectionContract />
-				<RootProvider>
+				<RootProvider theme={{ enabled: false }}>
 					<Outlet />
 				</RootProvider>
 				<Scripts />
