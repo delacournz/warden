@@ -6,6 +6,17 @@ export const appDescription =
 
 export const docsRoute = "/docs";
 
+/** The production origin. Social cards need absolute URLs; previews share production's artwork. */
+export const siteUrl = "https://warden.delacour.co.nz";
+
+/** The landing page's card, and the fallback for any route without its own. */
+export const defaultOgImage = "/og/default.png";
+
+/** Where `scripts/generate-og.ts` writes a docs page's card; the docs root is `index`. */
+export function ogImagePath(slugs: readonly string[]) {
+	return `/og${docsRoute}/${slugs.length === 0 ? "index" : slugs.join("/")}.png`;
+}
+
 export const gitConfig = {
 	user: "delacournz",
 	repo: "warden",
