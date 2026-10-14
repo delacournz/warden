@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { JSON_CONFIG_FILE } from "@delacour/warden-core/builds/config";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-core/exec";
+import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createBatchCommand } from "./batch";
@@ -403,6 +404,78 @@ describe("warden batch", () => {
 		const out = JSON.parse(c.stdout.join("\n")) as BatchJson;
 		expect(out).toMatchObject({ batchId: "b1", ok: true });
 		expect(out.jobs).toHaveLength(1);
+	});
+
+	describe("headless", () => {
+		/** Simulator.app shows both leased sims' windows; every close is logged into `events`. */
+		function windowsExec(c: TestContext, events: string[]): void {
+			const base = c.exec;
+			const sims = [wardenSim(1, "Booted"), wardenSim(2, "Booted")];
+			c.exec = async (cmd, opts) => {
+				if (cmd[0] === "osascript") {
+					const script = cmd[4] ?? "";
+					if (script.includes("AXCloseButton")) events.push("close");
+					const windows = sims.map((s) => ({ title: `${s.name} – iOS 26.5`, width: 400, height: 800 }));
+					return {
+						exitCode: 0,
+						stdout: JSON.stringify({ screen: { x: 0, y: 0, width: 900, height: 900 }, windows }),
+						stderr: "",
+					};
+				}
+				if (cmd.join(" ") === "xcrun simctl list devices -j") {
+					return { exitCode: 0, stdout: simctlDevicesJson({ "iOS-26-5": sims }), stderr: "" };
+				}
+				return base(cmd, opts);
+			};
+		}
+		const darwin = process.platform === "darwin";
+
+		test("--headless: windows closed at claim and again before the first job; WARDEN_HEADLESS=1; batch.json headless", async () => {
+			const c = setup(["ios", "--count", "2", "--headless", "--jobs", "a", "--serve", "srv", "--", "x"]);
+			const h = harness();
+			windowsExec(c, h.events);
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			expect(h.serve()?.opts.env.WARDEN_HEADLESS).toBe("1");
+			expect(h.jobs()[0]?.opts.env.WARDEN_HEADLESS).toBe("1");
+			const closes = h.events.filter((e) => e === "close").length;
+			expect(closes).toBe(darwin ? 2 : 0);
+			if (darwin) expect(h.events.lastIndexOf("close")).toBeLessThan(h.events.indexOf("job:a"));
+			const batchDir = join(c.env.WARDEN_HOME ?? "", "batches", "b1");
+			expect(JSON.parse(h.files.get(join(batchDir, "batch.json")) ?? "{}").headless).toBe(true);
+		});
+
+		test("not headless: no window closed, batch.json headless false, WARDEN_HEADLESS unset", async () => {
+			const c = setup(["ios", "--jobs", "a", "--", "x"]);
+			const h = harness();
+			windowsExec(c, h.events);
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			expect(h.events).not.toContain("close");
+			expect("WARDEN_HEADLESS" in (h.jobs()[0]?.opts.env ?? {})).toBe(false);
+			const batchDir = join(c.env.WARDEN_HOME ?? "", "batches", "b1");
+			expect(JSON.parse(h.files.get(join(batchDir, "batch.json")) ?? "{}").headless).toBe(false);
+		});
+
+		test("preset headless (top-level default) applies; --no-headless beats it", async () => {
+			const on = setup(["smoke", "--jobs", "a"]);
+			writeFileSync(
+				join(on.cwd, JSON_CONFIG_FILE),
+				JSON.stringify({ headless: true, batches: { smoke: { platform: "ios", cmd: ["x"] } } })
+			);
+			const h1 = harness();
+			expect(await createBatchCommand(h1.deps).run(on)).toBe(0);
+			expect(h1.jobs()[0]?.opts.env.WARDEN_HEADLESS).toBe("1");
+			on.cleanup();
+
+			const off = setup(["smoke", "--jobs", "a", "--no-headless"]);
+			off.env = { ...off.env, WARDEN_HEADLESS: "1" };
+			writeFileSync(
+				join(off.cwd, JSON_CONFIG_FILE),
+				JSON.stringify({ batches: { smoke: { platform: "ios", headless: true, cmd: ["x"] } } })
+			);
+			const h2 = harness();
+			expect(await createBatchCommand(h2.deps).run(off)).toBe(0);
+			expect("WARDEN_HEADLESS" in (h2.jobs()[0]?.opts.env ?? {})).toBe(false);
+		});
 	});
 
 	test("--app ensures the app on every device before serve and jobs", async () => {

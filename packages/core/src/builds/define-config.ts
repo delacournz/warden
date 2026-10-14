@@ -250,6 +250,11 @@ export interface WardenBatchPreset {
 	jobsFrom?: WardenJobsFrom | undefined;
 	/** iOS: record every simulator and the TUI into this dir. */
 	record?: string | undefined;
+	/**
+	 * iOS: close the Simulator.app windows of this run's devices. Overrides the top-level `headless`;
+	 * `--headless` / `--no-headless` override both.
+	 */
+	headless?: boolean | undefined;
 	/** Per-job log dir. */
 	logs?: string | undefined;
 	/**
@@ -506,6 +511,11 @@ export interface WardenE2eSuite {
 	/** iOS only: switch off the simulator daemons flows never need on each leased device, before `setup`. */
 	slim?: boolean | undefined;
 	/**
+	 * iOS: close the Simulator.app windows of this run's devices, so it shows nothing even with Simulator.app
+	 * open. Overrides the top-level `headless`; `--headless` / `--no-headless` override both. Android is always headless.
+	 */
+	headless?: boolean | undefined;
+	/**
 	 * Default `required` for flows that don't set it.
 	 *
 	 * @default true
@@ -531,6 +541,11 @@ export interface WardenConfig {
 	batches?: Record<string, WardenBatchPreset> | undefined;
 	/** Named `warden affected` / `warden e2e` suites. */
 	e2e?: Record<string, WardenE2eSuite> | undefined;
+	/**
+	 * iOS: close the Simulator.app windows of every device an `e2e` suite or `batches` preset leases (default for
+	 * those that don't set `headless`). `warden dev` ignores it. `WARDEN_HEADLESS=1` is the fallback below it.
+	 */
+	headless?: boolean | undefined;
 }
 
 /** What a config function receives. */

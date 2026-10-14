@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { bunExec } from "../exec";
-import { computeAffected } from "./affected";
+import { computeAffected, findSuite } from "./affected";
 import { makeSuiteRepo } from "./fixture.testing";
 
 let dir: string;
@@ -38,5 +38,19 @@ describe("computeAffected", () => {
 		const res = await computeAffected({ exec: bunExec, cwd: dir, suite: "web" });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain('no e2e suite "web"');
+	});
+
+	test("suite.headless: the suite's own, else the top-level default", async () => {
+		const top = await makeSuiteRepo({}, { headless: true });
+		const own = await makeSuiteRepo({ headless: false }, { headless: true });
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b, c] = await Promise.all([top, own, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.headless).toBe(true);
+			expect(b?.success && b.data.headless).toBe(false);
+			expect(c?.success && c.data.headless).toBeUndefined();
+		} finally {
+			for (const r of [top, own, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
 	});
 });

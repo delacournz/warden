@@ -436,6 +436,58 @@ describe("warden e2e", () => {
 		});
 	});
 
+	describe("headless", () => {
+		test("suite headless: runners get WARDEN_HEADLESS=1, every leg claims headless, the report says so", async () => {
+			await resuite({
+				headless: true,
+				devices: [
+					{ profile: "iphone-17", count: 1 },
+					{ profile: "ipad", count: 1, default: false },
+				],
+			});
+			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
+			const sim = fakeSimctl(sims);
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			ctx.cwd = dir;
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+			expect(h.jobs().map((j) => j.opts.env.WARDEN_HEADLESS)).toEqual(["1", "1"]);
+			expect(reportOf(h.files, ctx).headless).toBe(true);
+		});
+
+		test("top-level headless is the default; --no-headless beats it and clears WARDEN_HEADLESS", async () => {
+			await resuite({}, { headless: true });
+			const on = setup(["--files", "src/chat/lazy.tsx"]);
+			const h1 = harness();
+			expect(await createE2eCommand(h1.deps).run(on)).toBe(0);
+			expect(h1.jobs()[0]?.opts.env.WARDEN_HEADLESS).toBe("1");
+			expect(reportOf(h1.files, on).headless).toBe(true);
+			on.cleanup();
+
+			const off = setup(["--files", "src/chat/lazy.tsx", "--no-headless"]);
+			off.env = { ...off.env, WARDEN_HEADLESS: "1" };
+			const h2 = harness();
+			expect(await createE2eCommand(h2.deps).run(off)).toBe(0);
+			expect("WARDEN_HEADLESS" in (h2.jobs()[0]?.opts.env ?? {})).toBe(false);
+			expect(reportOf(h2.files, off).headless).toBe(false);
+		});
+
+		test("default: not headless; WARDEN_HEADLESS=1 turns it on; --dry-run reports it too", async () => {
+			const plain = setup(["--files", "src/chat/lazy.tsx"]);
+			const h1 = harness();
+			expect(await createE2eCommand(h1.deps).run(plain)).toBe(0);
+			expect(reportOf(h1.files, plain).headless).toBe(false);
+			plain.cleanup();
+
+			const env = setup(["--files", "src/chat/lazy.tsx", "--dry-run", "--json"]);
+			env.env = { ...env.env, WARDEN_HEADLESS: "1" };
+			expect(await createE2eCommand(harness().deps).run(env)).toBe(0);
+			expect(JSON.parse(env.stdout.join("\n")).headless).toBe(true);
+		});
+	});
+
 	test("suite setup runs once per device after the app install and before any flow, with the lease env", async () => {
 		await resuite({
 			setup: "defaults write {udid} Key http://localhost:$WARDEN_PORT_0",

@@ -44,6 +44,8 @@ export type BatchPreset = {
 	jobs?: BatchJobsSource;
 	record?: string;
 	logs?: string;
+	/** the preset's `headless`, else the top-level one (undefined: neither sets it) */
+	headless?: boolean;
 	cmd: string[];
 };
 
@@ -62,8 +64,15 @@ export function readySpec(value: string, cwd: string): string {
 	return value.startsWith("file:") ? `file:${absolute(cwd, value.slice("file:".length))}` : value;
 }
 
-function resolvePreset(name: string, preset: BatchPresetConfig, cwd: string, projectRoot?: string): BatchPreset {
+function resolvePreset(
+	name: string,
+	preset: BatchPresetConfig,
+	cwd: string,
+	projectRoot?: string,
+	defaultHeadless?: boolean
+): BatchPreset {
 	const {
+		headless: ownHeadless,
 		project: _project,
 		jobs: _jobs,
 		jobsFrom: _jobsFrom,
@@ -76,6 +85,7 @@ function resolvePreset(name: string, preset: BatchPresetConfig, cwd: string, pro
 	} = preset;
 	const { app, clean, variant } = appSwitches(appOption);
 	const jobs = jobsSource(preset, cwd);
+	const headless = ownHeadless ?? defaultHeadless;
 	return {
 		...rest,
 		name,
@@ -89,6 +99,7 @@ function resolvePreset(name: string, preset: BatchPresetConfig, cwd: string, pro
 		...(record !== undefined ? { record: absolute(cwd, record) } : {}),
 		...(logs !== undefined ? { logs: absolute(cwd, logs) } : {}),
 		...(jobs ? { jobs } : {}),
+		...(headless !== undefined ? { headless } : {}),
 	};
 }
 
@@ -115,5 +126,8 @@ export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: 
 	if (!preset) return ok({ names });
 	const project = config.projects?.find((p) => p.name === preset.project);
 	const projectRoot = project ? resolve(dir, project.root) : undefined;
-	return ok({ names, preset: resolvePreset(input.name, preset, projectRoot ?? dir, projectRoot) });
+	return ok({
+		names,
+		preset: resolvePreset(input.name, preset, projectRoot ?? dir, projectRoot, config.headless),
+	});
 }

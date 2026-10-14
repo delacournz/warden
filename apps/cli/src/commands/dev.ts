@@ -23,6 +23,7 @@ import {
 	type LeaseSessionDeps,
 	processOnSignal,
 	type RunEnsureApp,
+	setHeadlessEnv,
 	splitCommand,
 } from "../lease-session";
 import {
@@ -144,7 +145,8 @@ async function openSession(
 	const held = heldDevice(ctx, owner, platform, opts);
 	if (!held.success) return held;
 	if (held.data === undefined) {
-		const flags = parseClaimFlags(platform, opts);
+		// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
+		const flags = parseClaimFlags(platform, { ...opts, headless: opts.headless === true });
 		if (!flags.success) return flags;
 		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
 		const session = await claimAll(ctx, deps, owner, { flags: flags.data, ports: [opts.port], app }, "dev");
@@ -177,6 +179,7 @@ async function openSession(
 	const env = childEnv(ctx.env, { claimed: [], reclaimed: [] }, ports.data);
 	env.WARDEN_UDIDS = deviceId;
 	env.WARDEN_UDID_0 = deviceId;
+	setHeadlessEnv(env, opts.headless === true);
 	return ok({ deviceId, port, env, leaseIds, release });
 }
 

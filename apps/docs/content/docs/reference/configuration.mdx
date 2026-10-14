@@ -36,6 +36,16 @@ export default { batches: { smoke: { platform: "ios", cmd: ["true"] } } } satisf
 
 The section types are exported too: `WardenProject`, `WardenBatchPreset`, `WardenE2eSuite`, `WardenE2eFlow`.
 
+## Top level
+
+Besides `projects`, `batches` and `e2e`:
+
+<TypeTable
+  type={{
+    headless: { type: "boolean", description: "iOS: close the Simulator.app windows of every device an `e2e` suite or `batches` preset leases. The default for those that don't set their own `headless`. `--headless` / `--no-headless` override it; `WARDEN_HEADLESS=1` applies only when it's unset. `warden dev` ignores it. See [Headless e2e](/docs/guides/headless).", default: "false" },
+  }}
+/>
+
 ## Projects
 
 ```ts title="warden.config.ts"
@@ -124,6 +134,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
     jobsFrom: { type: 'string | "-" | { command: string }', description: "A file of jobs (one per line), `-` for stdin, or a `sh -c` command whose stdout lines are the jobs (nonzero exit fails the batch)." },
     record: { type: "string", description: "iOS: record every simulator and the TUI into this dir." },
     logs: { type: "string", description: "Per-job log dir." },
+    headless: { type: "boolean", description: "iOS: close this run's Simulator.app windows (see [Headless e2e](/docs/guides/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both.", default: "top-level `headless`" },
   }}
 />
 
@@ -187,6 +198,7 @@ export default defineConfig({
     serveTimeout: { type: "string", description: "Give up waiting for `serveReady` after this long (`30s`, `10m`).", default: '"10m"' },
     setup: { type: "string", description: "`sh -c` once per leased device, after the app install and before that device's first flow (`{udid}` is substituted). Env: `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH`, plus `env`. Output goes to `logs/setup-<worker>.log`. A non-zero exit drops that device and its flows go to the others; none left fails the run." },
     slim: { type: "boolean", description: "iOS: switch off the simulator daemons flows never need on each leased device, before `setup` (`warden sim slim`). A failure only warns." },
+    headless: { type: "boolean", description: "iOS: close the Simulator.app windows of this suite's devices, at claim and again before the first flow, so the run shows nothing even with Simulator.app open (see [Headless e2e](/docs/guides/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both. Android is always headless.", default: "top-level `headless`" },
     flows: { type: "Record<string, Flow>", description: "Per flow id or glob; see below." },
   }}
 />

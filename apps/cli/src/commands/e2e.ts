@@ -8,6 +8,7 @@ import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import { bundleIdFor } from "@delacour/warden-core/builds/config";
 import { projectContext } from "@delacour/warden-core/builds/ensure";
 import { parseDuration } from "@delacour/warden-core/duration";
+import { resolveHeadless } from "@delacour/warden-core/headless";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
@@ -75,6 +76,8 @@ export type E2eReport = {
 	/** `single`: one runner process per leg ran every flow, so its flows share that process's verdict */
 	mode?: "single";
 	ok: boolean;
+	/** iOS: the run kept its devices' Simulator.app windows closed */
+	headless: boolean;
 	batchDir?: string;
 	flows: FlowVerdict[];
 	/** per-device setup outcomes, when the suite has a `setup` */
@@ -266,6 +269,15 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	ctx.err((report.ok ? color.green : color.red)(line));
 }
 
+/** `--headless` / `--no-headless` > the suite's (else top-level) `headless` > `WARDEN_HEADLESS`. */
+function suiteHeadless(ctx: CommandContext, suite: Suite, opts: E2eOpts, passed: ReadonlySet<string>): boolean {
+	return resolveHeadless({
+		flag: passed.has("headless") ? opts.headless : undefined,
+		config: suite.headless,
+		env: ctx.env,
+	});
+}
+
 type Plan = { affected: Affected; selection: Selection; flows: SelectedFlow[] };
 
 /** Affected flows for the one platform this run is for (warnings printed, `--explain` shown). */
@@ -303,6 +315,7 @@ async function e2e(
 	if (!planned.success) return fail(planned.error);
 	const { affected, selection, flows } = planned.data;
 	const { suite } = affected;
+	const headless = suiteHeadless(ctx, suite, opts, passed);
 	const base = {
 		suite: suite.name,
 		platform: selection.platform,
@@ -311,12 +324,12 @@ async function e2e(
 	if (flows.length === 0 || opts.dryRun) {
 		if (flows.length === 0) ctx.err(ctx.ui.color.green("warden e2e: no affected flows — nothing to run"));
 		const notRun = flows.map((f): FlowVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
-		await publish(ctx, deps, opts, { ...base, ok: true, flows: notRun });
+		await publish(ctx, deps, opts, { ...base, ok: true, headless, flows: notRun });
 		return 0;
 	}
 	const unsupported = platformError(suite.config, selection.platform);
 	if (unsupported) return fail(unsupported);
-	const run = await runPlan(ctx, suite, selection.platform, flows, opts, passed);
+	const run = await runPlan(ctx, suite, selection.platform, flows, { ...opts, headless }, passed);
 	if (!run.success) return fail(run.error);
 	const { args, shape } = run.data;
 	const byId = new Map(flows.map((f) => [f.id, f]));
@@ -338,6 +351,7 @@ async function e2e(
 		...base,
 		...(single ? { mode: "single" as const } : {}),
 		ok: result.ok,
+		headless,
 		...(session.batchDir ? { batchDir: session.batchDir } : {}),
 		flows: result.flows,
 		...(session.setups ? { setup: session.setups } : {}),

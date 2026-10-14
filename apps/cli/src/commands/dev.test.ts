@@ -113,6 +113,23 @@ describe("warden dev", () => {
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
+	test("headless only with an explicit --headless: config / WARDEN_HEADLESS are ignored", async () => {
+		const metroEnv = async (argv: string[], env: Record<string, string> = {}) => {
+			const calls: string[][] = [];
+			const c = setup(argv, calls);
+			c.env = { ...c.env, ...env };
+			const h = harness();
+			const running = createDevCommand(h.deps).run(c);
+			await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+			h.finish(0);
+			await running;
+			c.cleanup();
+			return h.spawned[0]?.env ?? {};
+		};
+		expect((await metroEnv(["ios", "--headless"])).WARDEN_HEADLESS).toBe("1");
+		expect("WARDEN_HEADLESS" in (await metroEnv(["ios"], { WARDEN_HEADLESS: "1" }))).toBe(false);
+	});
+
 	test("an explicit --variant must exist", async () => {
 		const c = setup(["ios", "--variant", "qa"], []);
 		const h = harness();

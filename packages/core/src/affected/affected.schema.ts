@@ -161,6 +161,8 @@ export const e2eSuiteSchema = z
 		setup: z.string().min(1).optional(),
 		/** iOS: switch off the simulator daemons flows never need on each device, before `setup` */
 		slim: z.boolean().optional(),
+		/** keep Simulator.app windows closed for this suite's run; `--headless` / `--no-headless` win */
+		headless: z.boolean().optional(),
 		/** default `required` for flows that don't set it */
 		required: z.boolean().default(true),
 		flows: z.record(z.string().min(1), e2eFlowSchema).default({}),

@@ -7,6 +7,7 @@ import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delaco
 import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "@delacour/warden-core/batch/schedule";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
+import { resolveHeadless } from "@delacour/warden-core/headless";
 import { isPortFree } from "@delacour/warden-core/ports";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { wardenHome } from "@delacour/warden-core/store";
@@ -55,6 +56,7 @@ import {
 	startMetro,
 } from "../metro";
 import { emit } from "../output";
+import { hideSimWindows } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 
 export type KillSignal = ForwardedSignal | "SIGKILL";
@@ -342,7 +344,8 @@ function summaryJson(
 	endedAt: number,
 	devices: Device[],
 	summary: BatchSummary,
-	screenshots: Screenshots
+	screenshots: Screenshots,
+	headless: boolean
 ) {
 	return {
 		batchId,
@@ -350,6 +353,7 @@ function summaryJson(
 		startedAt,
 		endedAt,
 		ok: summary.ok,
+		headless,
 		devices: devices.map((d) => ({
 			worker: d.worker,
 			udid: d.udid,
@@ -588,7 +592,8 @@ type BatchRun = {
 
 /** Write `batch.json` (+ `tui.cast`), print `--json` / the closing lines. */
 async function report(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, r: BatchRun): Promise<void> {
-	const doc = summaryJson(r.batchId, r.cmd, r.startedAt, r.endedAt, r.devices, r.summary, r.screenshots);
+	const headless = args.flags.headless === true;
+	const doc = summaryJson(r.batchId, r.cmd, r.startedAt, r.endedAt, r.devices, r.summary, r.screenshots, headless);
 	await deps.writeFile(join(r.batchDir, "batch.json"), `${JSON.stringify(doc, null, 2)}\n`);
 	if (r.cast) await deps.writeFile(join(r.batchDir, "tui.cast"), r.cast.text());
 	if (args.json) emit(ctx, true, doc, "");
@@ -1066,6 +1071,11 @@ async function supervise(
 			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
 		}
 		if (args.metro && services.metro) await openOnDevices(ctx, r.name, r.platform, args.metro, services.metro, live);
+		// a window can attach after the claim (boot lag, Simulator.app opened since): close it before the first job
+		if (r.platform === "ios" && args.flags.headless) {
+			const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
+			await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
+		}
 		const queues = poolQueues(ctx, deps, args, r, prepared, { jobs, cmd, env, vars, screenshots, logs });
 		const total = queues.reduce((n, q) => n + q.jobs.length, 0);
 		const startedAt = ctx.now();
@@ -1210,7 +1220,12 @@ async function batch(
 	const cmd = split.data.cmd.length > 0 ? split.data.cmd : (preset?.cmd ?? []);
 	if (cmd.length === 0) return fail("missing command after -- (warden batch ios -- <cmd…>)");
 	const merged = preset ? mergePreset(preset, opts, passed) : { opts, base: {} };
-	const args = parseBatchArgs(platform, merged.opts, ctx.cwd, merged.base);
+	const headless = resolveHeadless({
+		flag: passed.has("headless") ? opts.headless : undefined,
+		config: preset?.headless,
+		env: ctx.env,
+	});
+	const args = parseBatchArgs(platform, { ...merged.opts, headless }, ctx.cwd, merged.base);
 	if (!args.success) return fail(args.error);
 	const jobs = await loadJobs(ctx, deps, args.data);
 	if (!jobs.success) return fail(jobs.error);

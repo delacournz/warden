@@ -43,6 +43,13 @@ describe("parseClaimFlags", () => {
 		});
 	});
 
+	test("headless: set only when true", () => {
+		const on = parseClaimFlags("ios", { headless: true }, 16);
+		expect(on.success && on.data.headless).toBe(true);
+		const off = parseClaimFlags("ios", { headless: false }, 16);
+		expect(off.success && "headless" in off.data).toBe(false);
+	});
+
 	test("max defaults to at least count", () => {
 		const result = parseClaimFlags("ios", { count: "3" }, 4);
 		expect(result.success && result.data.request.max).toBe(3);

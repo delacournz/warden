@@ -118,6 +118,12 @@ export function childEnv(
 	return env;
 }
 
+/** `WARDEN_HEADLESS=1` in a child env when the run is headless; removed otherwise, so children see the run's own value. */
+export function setHeadlessEnv(env: Record<string, string | undefined>, headless: boolean): void {
+	if (headless) env.WARDEN_HEADLESS = "1";
+	else delete env.WARDEN_HEADLESS;
+}
+
 /** `--app` family option values shared by `run` and `batch`. */
 export type AppFlagValues = {
 	app?: true;
@@ -280,6 +286,10 @@ export async function claimAll(
 		for (const c of outcome.claimed) store.touchDevice(c.device.platform, c.device.id, now);
 	};
 	const env = childEnv(ctx.env, outcome, ports.data);
+	setHeadlessEnv(
+		env,
+		(args.legFlags ?? [args.flags]).some((f) => f.headless === true)
+	);
 	if (args.app) {
 		const ensure = deps.ensureApp ?? sessionEnsureApp();
 		const app = await ensureSessionApp(ctx, ensure, owner, outcome, args.app, env, name);

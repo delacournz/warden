@@ -1,3 +1,4 @@
+import { resolveHeadless } from "@delacour/warden-core/headless";
 import { isPortFree } from "@delacour/warden-core/ports";
 import type { Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -91,7 +92,10 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	if (!target.success) return fail(target.error);
 	const platform = await resolvePlatform(ctx, target.data.platformArg);
 	if (!platform.success) return fail(platform.error);
-	const args = parseRunArgs(platform.data, opts);
+	const args = parseRunArgs(platform.data, {
+		...opts,
+		headless: resolveHeadless({ flag: opts.headless, env: ctx.env }),
+	});
 	if (!args.success) return fail(args.error);
 	const { cmd } = target.data;
 	const owner = resolveOwner(ctx);
