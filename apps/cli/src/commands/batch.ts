@@ -41,6 +41,8 @@ import {
 	type LeaseArgs,
 	type LeaseSession,
 	type LeaseSessionDeps,
+	leasedProgress,
+	leasedText,
 	parseAppFlags,
 	processOnSignal,
 	splitCommand,
@@ -1253,9 +1255,12 @@ export async function runSession(
 		.join(" + ");
 	const claimed = await withSpinner(ctx, `claiming ${wanted} ${platform} device(s)…`, async (sctx, spinner) => {
 		const legFlags = lease.legs?.map((leg) => leg.flags);
-		const result = await claimAll(sctx, deps, owner, legFlags ? { ...lease, legFlags } : lease, name);
-		if (result.success) spinner.succeed(`leased ${result.data.outcome.claimed.map((c) => c.device.name).join(", ")}`);
-		else spinner.fail("claim failed");
+		const onLeased = leasedProgress(spinner, color, lease.app !== undefined);
+		const args = { ...lease, ...(legFlags ? { legFlags } : {}), ...(onLeased ? { onLeased } : {}) };
+		const result = await claimAll(sctx, deps, owner, args, name);
+		if (!result.success) spinner.fail(lease.app ? "claim / app install failed" : "claim failed");
+		else if (lease.app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
+		else spinner.succeed(leasedText(result.data.outcome));
 		return result;
 	});
 	if (!claimed.success) {

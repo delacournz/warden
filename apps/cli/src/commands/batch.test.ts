@@ -5,7 +5,7 @@ import { JSON_CONFIG_FILE } from "@delacour/warden-core/builds/config";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-core/exec";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { scriptedUi, type TestContext, testContext } from "../testing";
 import { createBatchCommand } from "./batch";
 import { harness } from "./batch.testing";
 
@@ -489,6 +489,23 @@ describe("warden batch", () => {
 		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
 		expect(seen.sort()).toEqual(["U1", "U2"]);
 		expect(h.jobs()[0]?.opts.env.WARDEN_APP_PATH).toBe("/c/A.app");
+	});
+
+	test("--app: the lease is reported as soon as it is held, before any install", async () => {
+		const c = setup(["ios", "--count", "2", "--jobs", "a,b", "--app", "--", "x"]);
+		const ui = scriptedUi();
+		c.ui = ui;
+		const h = harness();
+		h.deps.ensureApp = async (ctx, _owner, _platform, deviceId) => {
+			ctx.err(`installing on ${deviceId}`);
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		const leased = ui.events.findIndex((e) => /leased warden-iphone-17-\d, warden-iphone-17-\d/.test(e));
+		const install = ui.events.findIndex((e) => e.includes("installing on"));
+		expect(leased).toBeGreaterThan(-1);
+		expect(leased).toBeLessThan(install);
+		expect(ui.events).toContain("spin: installing the app on 2 device(s)…");
 	});
 
 	test("--clean is passed to the ensure step; it needs --app", async () => {

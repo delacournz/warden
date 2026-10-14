@@ -10,6 +10,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
 import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
 import type { CommandContext } from "./context";
+import type { Spinner } from "./ui";
 
 /** Shared by `warden run` and `warden batch`: claim devices + ports, child env, heartbeat, release. */
 
@@ -187,6 +188,8 @@ export type LeaseArgs = {
 	legFlags?: readonly ClaimFlags[];
 	ports: string[];
 	app?: EnsureOptions;
+	/** the devices + ports are held (before `--app` installs, which can take minutes) */
+	onLeased?: (outcome: ClaimOutcome) => void;
 };
 
 /** `--app`: ensure the app on every claimed device in parallel (waits for all, then reports the first failure); exports `WARDEN_APP_PATH` / `WARDEN_APP_HASH` into `env`. */
@@ -285,6 +288,7 @@ export async function claimAll(
 		const now = ctx.now();
 		for (const c of outcome.claimed) store.touchDevice(c.device.platform, c.device.id, now);
 	};
+	args.onLeased?.(outcome);
 	const env = childEnv(ctx.env, outcome, ports.data);
 	setHeadlessEnv(
 		env,
@@ -299,6 +303,25 @@ export async function claimAll(
 		}
 	}
 	return ok({ outcome, claims: claims.data, ports: ports.data, env, release, leaseIds });
+}
+
+/** `leased <name>, …` — the claim spinner's line. */
+export const leasedText = (outcome: ClaimOutcome) => `leased ${outcome.claimed.map((c) => c.device.name).join(", ")}`;
+
+/**
+ * With `--app` the installs run under the claim spinner: report the lease the moment it is held,
+ * so the install lines that follow read as happening on leased devices.
+ */
+export function leasedProgress(
+	spinner: Spinner,
+	color: CommandContext["ui"]["color"],
+	app: boolean
+): ((outcome: ClaimOutcome) => void) | undefined {
+	if (!app) return undefined;
+	return (outcome) => {
+		spinner.log(`${color.green("✔")} ${leasedText(outcome)}`);
+		spinner.update(`installing the app on ${outcome.claimed.length} device(s)…`);
+	};
 }
 
 /**
