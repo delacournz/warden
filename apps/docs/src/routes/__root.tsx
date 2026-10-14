@@ -1,6 +1,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { RootProvider } from "fumadocs-ui/provider/tanstack";
-import { appDescription, appName } from "@/lib/shared";
+import { socialImageMeta } from "@/lib/seo";
+import { appDescription, appName, defaultOgImage } from "@/lib/shared";
 import appCss from "@/styles/app.css?url";
 
 export const Route = createRootRoute({
@@ -14,6 +15,7 @@ export const Route = createRootRoute({
 			{ property: "og:site_name", content: appName },
 			{ property: "og:title", content: `${appName} — one simulator per agent` },
 			{ property: "og:description", content: appDescription },
+			...socialImageMeta(defaultOgImage, `${appName} — one simulator per agent`),
 		],
 		links: [
 			{ rel: "stylesheet", href: appCss },

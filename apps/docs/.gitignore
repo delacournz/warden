@@ -4,6 +4,9 @@
 .vite
 .source
 
+# OpenGraph cards, produced by `bun run seo:assets` during build (see package.json)
+/public/og/
+
 # Finish-review captures, regenerated each round
 .impeccable/review/
 .impeccable/questions/
