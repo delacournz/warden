@@ -6,7 +6,7 @@ import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable } from "../output";
+import { emit, formatTable, plural, reportError, warn } from "../output";
 import { providerFor } from "../providers";
 
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
@@ -38,7 +38,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 	const store = ctx.store();
 	const inventory = await providerFor(platform, ctx, resolveOwner(ctx)).inventory();
 	if (!inventory.success) {
-		ctx.err(ctx.ui.color.yellow(`${platform}: skipped (${inventory.error})`));
+		warn(ctx, `${platform}: skipped (${inventory.error})`);
 		return [];
 	}
 	const records = new Map(store.listDevices(platform).map((r) => [r.id, r]));
@@ -64,7 +64,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 		const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
 		if (avds.success)
 			rows.push(...avds.data.map((name): DeviceRow => ({ platform, name, state: "avd", warden: false })));
-		else ctx.err(ctx.ui.color.yellow(`android avds: skipped (${avds.error})`));
+		else warn(ctx, `android avds: skipped (${avds.error})`);
 	}
 	return rows;
 }
@@ -94,7 +94,7 @@ function wardenCell(color: ChalkInstance, r: DeviceRow, none: string): string {
 async function devices(ctx: CommandContext, filter: string | undefined, json: boolean): Promise<number> {
 	const { color } = ctx.ui;
 	if (filter !== undefined && filter !== "ios" && filter !== "android") {
-		ctx.err(color.red(`warden devices: unknown platform "${filter}" (ios|android)`));
+		reportError(ctx, "devices", `unknown platform "${filter}" (ios|android)`);
 		return 1;
 	}
 	const now = ctx.now();
@@ -123,12 +123,18 @@ async function devices(ctx: CommandContext, filter: string | undefined, json: bo
 		]),
 		color
 	);
-	emit(ctx, json, rows, rows.length > 0 ? table : color.dim("no devices"));
+	const booted = rows.filter((r) => r.state === "booted").length;
+	const leased = rows.filter((r) => r.lease).length;
+	emit(ctx, json, rows, rows.length > 0 ? table : color.dim("no devices"), {
+		scope: "devices",
+		detail: `${plural(rows.length, "device")} · ${booted} booted · ${leased} leased`,
+	});
 	return 0;
 }
 
 export const devicesCommand = defineCommand({
 	name: "devices",
+	group: "Devices",
 	aliases: ["list"],
 	summary: "list every simulator / emulator (booted or not, plus Android AVDs) with warden ownership + leases",
 	register: (cmd, ctx, done) => {

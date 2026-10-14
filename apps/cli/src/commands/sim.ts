@@ -5,7 +5,7 @@ import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { resolveOwner } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit } from "../output";
+import { emit, reportError, success } from "../output";
 
 type SlimOpts = { booted?: true; dryRun?: true; restore?: true; json?: true };
 
@@ -53,7 +53,7 @@ function describeReport(report: SlimReport, opts: SlimOpts): string {
 async function slim(ctx: CommandContext, udid: string | undefined, opts: SlimOpts): Promise<number> {
 	const { color } = ctx.ui;
 	const fail = (message: string) => {
-		ctx.err(color.red(`warden sim slim: ${message}`));
+		reportError(ctx, "sim slim", message);
 		return 1;
 	};
 	if ((udid === undefined) === (opts.booted !== true)) return fail("pass <udid> or --booted");
@@ -73,18 +73,18 @@ async function slim(ctx: CommandContext, udid: string | undefined, opts: SlimOpt
 
 /** `warden sim unquarantine <id>`: let claims hand the device out again. */
 function unquarantine(ctx: CommandContext, id: string): number {
-	const { color } = ctx.ui;
 	if (ctx.store().unquarantineDevice(id) === 0) {
-		ctx.err(color.red(`warden sim unquarantine: ${id} is not quarantined`));
+		reportError(ctx, "sim unquarantine", `${id} is not quarantined`);
 		return 1;
 	}
-	ctx.err(color.green(`${id}: quarantine cleared`));
+	success(ctx, `${id}: quarantine cleared`);
 	return 0;
 }
 
 export function createSimCommand(): Command {
 	return defineCommand({
 		name: "sim",
+		group: "Devices",
 		summary: "per-simulator tweaks: slim | unquarantine",
 		register: (cmd, ctx, done) => {
 			cmd

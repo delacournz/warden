@@ -26,7 +26,7 @@ import {
 	splitOperands,
 	withLeaseOptions,
 } from "../lease-session";
-import { emit } from "../output";
+import { emit, heading, note, reportError } from "../output";
 import { withSpinner } from "../spinner-context";
 
 /** Side effects of `warden run`, injectable for tests. */
@@ -68,7 +68,7 @@ async function supervise(
 		child = deps.spawn(cmd, env);
 	} catch (error) {
 		release();
-		ctx.err(ctx.ui.color.red(`warden run: ${error instanceof Error ? error.message : String(error)}`));
+		reportError(ctx, "run", error instanceof Error ? error.message : String(error));
 		return 127;
 	}
 	const stop = holdLeases(ctx, deps, leaseIds, (signal) => child.kill(signal));
@@ -82,9 +82,8 @@ async function supervise(
 
 /** Claim (under a spinner) → spawn child with leases in env → heartbeat → release on exit; exit code passthrough. */
 async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string[], opts: RunOpts): Promise<number> {
-	const { color } = ctx.ui;
 	const fail = (message: string) => {
-		ctx.err(color.red(`warden run: ${message}`));
+		reportError(ctx, "run", message);
 		return 1;
 	};
 	const target = splitOperands(ctx.argv, operands);
@@ -97,6 +96,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	const owner = resolveOwner(ctx);
 	maybeAutoGc(ctx);
 	const { count, profile } = args.data.flags.request;
+	if (!args.data.json) heading(ctx, "run", `${platform.data} · ${profile} ×${count} · ${cmd.join(" ")}`);
 	const claimed = await withSpinner(
 		ctx,
 		`claiming ${count} ${profile} ${platform.data} device(s)…`,
@@ -111,7 +111,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	const { outcome, ports, env, release, leaseIds } = claimed.data;
 	const summary = { leases: claimedJson(outcome), ports, cmd };
 	if (args.data.json) emit(ctx, true, summary, "");
-	else ctx.err(color.dim(`warden run: leased ${summary.leases.map((l) => `${l.udid} (${l.leaseId})`).join(", ")}`));
+	else note(ctx, `warden run: leased ${summary.leases.map((l) => `${l.udid} (${l.leaseId})`).join(", ")}`);
 	return supervise(ctx, deps, cmd, env, leaseIds, release);
 }
 
@@ -119,6 +119,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 export function createRunCommand(deps: RunDeps): Command {
 	return defineCommand({
 		name: "run",
+		group: "Run",
 		summary: "claim devices, run a command with WARDEN_UDIDS set, release on exit",
 		register: (cmd, ctx, done) => {
 			withLeaseOptions(

@@ -12,12 +12,12 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable } from "../output";
+import { emit, heading, plural, reportError, table, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 import { projectStart } from "./app";
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
-	ctx.err(ctx.ui.color.red(`warden builds ${sub}: ${message}`));
+	reportError(ctx, `builds ${sub}`, message);
 	return 1;
 }
 
@@ -39,8 +39,11 @@ function lsCmd(ctx: CommandContext, json: boolean): number {
 	const text =
 		builds.length === 0
 			? color.dim("no cached builds")
-			: `${formatTable(["PROJECT", "PLATFORM", "HASH", "SOURCE", "PROFILE", "SIZE", "LAST USED", "PATH"], rows, color)}\n\ntotal ${color.bold(formatSize(total))}`;
-	emit(ctx, json, { builds, totalBytes: total }, text);
+			: `${table(ctx, ["PROJECT", "PLATFORM", "HASH", "SOURCE", "PROFILE", "SIZE", "LAST USED", "PATH"], rows, { column: 7, keep: "end", min: 24 })}\n\ntotal ${color.bold(formatSize(total))}`;
+	emit(ctx, json, { builds, totalBytes: total }, text, {
+		scope: "builds",
+		detail: `${plural(builds.length, "build")} · ${formatSize(total)}`,
+	});
 	return 0;
 }
 
@@ -69,9 +72,16 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 			dryRun: dry,
 		});
 	const preview = prune(true);
+	if (!opts.json) {
+		heading(
+			ctx,
+			"builds prune",
+			`${plural(preview.remove.length, "build")} over ${formatSize(max.data)}${dryRun ? " · dry run" : ""}`
+		);
+	}
 	if (!dryRun && ui.interactive && !opts.yes) {
 		if (preview.remove.length > 0) {
-			for (const b of preview.remove) ctx.err(color.yellow(`will remove ${describeBuild(b)}`));
+			for (const b of preview.remove) warn(ctx, `will remove ${describeBuild(b)}`);
 			const freed = preview.remove.reduce((sum, b) => sum + b.size, 0);
 			const answer = await ui.confirm(`Remove ${preview.remove.length} cached build(s) (${formatSize(freed)})?`);
 			if (answer !== true) {
@@ -156,6 +166,7 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 
 export const buildsCommand = defineCommand({
 	name: "builds",
+	group: "Builds",
 	summary: "list, prune (LRU) and import cached native app builds",
 	register: (cmd, ctx, done) => {
 		cmd

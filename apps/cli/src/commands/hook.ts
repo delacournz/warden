@@ -59,6 +59,7 @@ async function hook(ctx: CommandContext, kind: HookKind): Promise<number> {
 
 export const hookCommand = defineCommand({
 	name: "hook",
+	group: "Setup",
 	summary: "Claude Code hooks: lease argent devices per session; on session end shut down what it booted + release",
 	register: (cmd, ctx, done) => {
 		cmd

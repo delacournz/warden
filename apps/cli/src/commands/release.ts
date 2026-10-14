@@ -1,6 +1,6 @@
 import { PENDING_PREFIX } from "@delacour/warden-core/claim";
 import { wardenNameProfile } from "@delacour/warden-core/inventory";
-import type { Lease } from "@delacour/warden-core/types";
+import { describeOwner, type Lease, sameOwner } from "@delacour/warden-core/types";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -13,8 +13,9 @@ import {
 	selectorFrom,
 	withSelectOptions,
 } from "../lease-select";
-import { emit } from "../output";
+import { emit, note, plural, reportError } from "../output";
 import { withSpinner } from "../spinner-context";
+import { describeResource } from "./ls";
 
 type ReleaseOpts = SelectOptionValues & { shutdown?: true; bad?: true | string; json?: true };
 
@@ -43,13 +44,48 @@ function quarantineReleased(ctx: CommandContext, leases: Lease[], reason: string
 	return { quarantined, notes };
 }
 
+type Picked = { kind: "ids"; ids: string[] } | { kind: "exit"; code: number };
+
+/**
+ * `warden release` with no selector: in a terminal, offer every lease in a menu (the caller's own start
+ * ticked); otherwise — or for `--json`, or with nothing leased — it stays the usage error.
+ */
+async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picked> {
+	const { ui } = ctx;
+	const all = ctx.store().listLeases();
+	if (!ui.interactive || opts.json || all.length === 0) {
+		reportError(ctx, "release", NOTHING_SELECTED);
+		return { kind: "exit", code: 1 };
+	}
+	const me = resolveOwner(ctx);
+	const answer = await ui.multiselect(
+		"Release which leases?",
+		all.map((l) => ({
+			value: l.id,
+			label: `${describeResource(l.resource)}${l.label ? ` [${l.label}]` : ""}`,
+			hint: `${describeOwner(l.owner)} · ${l.id}`,
+			selected: sameOwner(l.owner, me),
+		}))
+	);
+	if (answer === undefined) {
+		ui.cancelled("Aborted.");
+		return { kind: "exit", code: 1 };
+	}
+	if (answer.length === 0) {
+		note(ctx, "nothing selected");
+		return { kind: "exit", code: 0 };
+	}
+	return { kind: "ids", ids: answer };
+}
+
 /** Release the selected leases; with `--shutdown`, first shut down the devices warden may shut down. */
 async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): Promise<number> {
 	const { color } = ctx.ui;
-	const selector = selectorFrom(ids, opts);
+	let selector = selectorFrom(ids, opts);
 	if (isEmptySelector(selector)) {
-		ctx.err(color.red(`warden release: ${NOTHING_SELECTED}`));
-		return 1;
+		const picked = await pickLeases(ctx, opts);
+		if (picked.kind === "exit") return picked.code;
+		selector = { ...selector, ids: picked.ids };
 	}
 	const { leases, unknown } = selectLeases(ctx, selector);
 	const devices = leases.filter((l) => l.resource.kind === "device");
@@ -72,7 +108,8 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 	const now = ctx.now();
 	for (const l of leases) if (l.resource.kind === "device") store.touchDevice(l.resource.platform, l.resource.id, now);
 
-	for (const u of unknown) ctx.err(color.red(`warden release: no lease for ${u}`));
+	for (const u of unknown) reportError(ctx, "release", `no lease for ${u}`);
+	const title = { scope: "release", detail: plural(leases.length, "lease") };
 	const text = [
 		leases.length === 0
 			? color.yellow("nothing released")
@@ -93,13 +130,15 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 			unknown,
 			notes: [...notes, ...bad.notes],
 		},
-		text
+		text,
+		title
 	);
 	return unknown.length > 0 ? 1 : 0;
 }
 
 export const releaseCommand = defineCommand({
 	name: "release",
+	group: "Lease",
 	summary: "release leases (optionally shut down devices warden created)",
 	register: (cmd, ctx, done) => {
 		withSelectOptions(cmd.argument("[leaseIds...]", "lease ids to release"))

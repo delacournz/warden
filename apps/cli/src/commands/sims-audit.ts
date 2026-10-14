@@ -22,7 +22,7 @@ import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable } from "../output";
+import { emit, formatTable, heading, plural, reportError, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type OwnerFilter = SimOwner | "all";
@@ -31,7 +31,7 @@ type AuditOpts = CommonOpts & { owner?: string; stale?: string };
 type PruneOpts = CommonOpts & { dryRun?: true; yes?: true };
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
-	ctx.err(ctx.ui.color.red(`warden sims ${sub}: ${message}`));
+	reportError(ctx, `sims ${sub}`, message);
 	return 1;
 }
 
@@ -205,7 +205,10 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 		runtimes: runtimes.kind === "ok" ? runtimes.audit : null,
 		...(runtimes.kind === "error" ? { runtimesError: runtimes.error } : {}),
 	};
-	emit(ctx, opts.json === true, json, `${auditText(ctx, audit.data, entries)}\n\n${runtimesText(ctx, runtimes)}`);
+	emit(ctx, opts.json === true, json, `${auditText(ctx, audit.data, entries)}\n\n${runtimesText(ctx, runtimes)}`, {
+		scope: "sims audit",
+		detail: plural(entries.length, "simulator"),
+	});
 	return 0;
 }
 
@@ -214,7 +217,7 @@ const describeSim = (e: SimEntry) => `${e.name} ${e.udid} (${formatSize(e.bytes)
 /** Terminal confirm of the preview's deletes; true = go ahead. */
 async function confirmDeletes(ctx: CommandContext, preview: SimsPruneResult): Promise<boolean> {
 	const { ui } = ctx;
-	for (const e of preview.removed) ctx.err(ui.color.yellow(`will delete ${describeSim(e)}`));
+	for (const e of preview.removed) warn(ctx, `will delete ${describeSim(e)}`);
 	const answer = await ui.confirm(`Delete ${preview.removed.length} simulator(s) (${formatSize(preview.freedBytes)})?`);
 	if (answer === true) return true;
 	ui.cancelled("Aborted.");
@@ -245,6 +248,7 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 	const dryRun = opts.dryRun === true;
 	const ask = !dryRun && !opts.yes;
 	if (ask && !ctx.ui.interactive) return fail(ctx, "prune", "refusing to delete without --yes (or --dry-run)");
+	if (!opts.json) heading(ctx, "sims prune", dryRun ? "dry run" : undefined);
 	const deps = simsDeps(ctx);
 	const preview = await withSpinner(ctx, "auditing simulators…", () =>
 		pruneSims(deps, { ...parsed.data, dryRun: true })

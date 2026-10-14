@@ -3,7 +3,7 @@ import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { describeOwner, ownerLocation, type Resource } from "@delacour/warden-core/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable } from "../output";
+import { emit, plural, table } from "../output";
 
 export function describeResource(resource: Resource): string {
 	switch (resource.kind) {
@@ -36,13 +36,19 @@ function list(ctx: CommandContext, json: boolean): number {
 	const text =
 		leases.length === 0
 			? color.dim("no leases")
-			: formatTable(["LEASE", "RESOURCE", "STATE", "OWNER", "REPO/WORKTREE", "LABEL", "AGE", "HEARTBEAT"], rows, color);
-	emit(ctx, json, { leases }, text);
+			: table(ctx, ["LEASE", "RESOURCE", "STATE", "OWNER", "REPO/WORKTREE", "LABEL", "AGE", "HEARTBEAT"], rows, {
+					column: 4,
+					keep: "end",
+				});
+	const stale = leases.filter((l) => l.state === "stale").length;
+	const detail = `${plural(leases.length, "lease")}${stale > 0 ? ` · ${stale} stale` : ""}`;
+	emit(ctx, json, { leases }, text, { scope: "ls", detail });
 	return 0;
 }
 
 export const lsCommand = defineCommand({
 	name: "ls",
+	group: "Lease",
 	summary: "list leases (resource, state, owner, repo/worktree, age, heartbeat)",
 	register: (cmd, ctx, done) => {
 		cmd.option("--json", "machine-readable output").action((opts) => done(list(ctx, opts.json === true)));

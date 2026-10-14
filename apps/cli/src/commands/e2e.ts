@@ -15,7 +15,7 @@ import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../clai
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
-import { emit } from "../output";
+import { emit, reportError, success, warn } from "../output";
 import { type AffectedOpts, explain, runAffected, selectedFlows } from "./affected";
 import {
 	attemptKey,
@@ -263,7 +263,8 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	}
 	const passed = report.flows.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.flows.length} flow(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
-	ctx.err((report.ok ? color.green : color.red)(line));
+	if (report.ok) success(ctx, line);
+	else reportError(ctx, "e2e", line.replace(/^warden e2e: /, ""));
 }
 
 type Plan = { affected: Affected; selection: Selection; flows: SelectedFlow[] };
@@ -275,7 +276,7 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 	if (!affected.success) return affected;
 	const selection = onePlatform(affected.data);
 	if (!selection.success) return selection;
-	for (const w of [...affected.data.warnings, ...selection.data.warnings]) ctx.err(color.yellow(`warden e2e: ${w}`));
+	for (const w of [...affected.data.warnings, ...selection.data.warnings]) warn(ctx, `warden e2e: ${w}`);
 	if (opts.explain || opts.dryRun) ctx.err(explain(affected.data, opts.requiredOnly === true, color));
 	const flows = selectedFlows(selection.data, opts.requiredOnly === true);
 	if (opts.flows !== undefined && flows.length === 0) return err("--flows matched no flow");
@@ -296,7 +297,7 @@ async function e2e(
 	passed: ReadonlySet<string>
 ): Promise<number> {
 	const fail = (message: string) => {
-		ctx.err(ctx.ui.color.red(`warden e2e: ${message}`));
+		reportError(ctx, "e2e", message);
 		return 1;
 	};
 	const planned = await plan(ctx, suiteName, opts);
@@ -309,7 +310,7 @@ async function e2e(
 		...(affected.base !== undefined ? { base: affected.base } : {}),
 	};
 	if (flows.length === 0 || opts.dryRun) {
-		if (flows.length === 0) ctx.err(ctx.ui.color.green("warden e2e: no affected flows — nothing to run"));
+		if (flows.length === 0) success(ctx, "warden e2e: no affected flows — nothing to run");
 		const notRun = flows.map((f): FlowVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
 		await publish(ctx, deps, opts, { ...base, ok: true, flows: notRun });
 		return 0;
@@ -431,6 +432,7 @@ function planOf(
 export function createE2eCommand(deps: BatchDeps): Command {
 	return defineCommand({
 		name: "e2e",
+		group: "Run",
 		summary: "run the e2e flows a change needs on leased devices; exit 1 if a required flow fails",
 		register: (cmd, ctx, done) => {
 			withBatchOptions(

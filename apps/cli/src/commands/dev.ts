@@ -34,7 +34,7 @@ import {
 	metroUrl,
 	startMetro,
 } from "../metro";
-import { emit } from "../output";
+import { emit, heading, note, reportError, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 
@@ -237,7 +237,6 @@ type Running = { session: Session; platform: Platform; project: Project; scheme:
 
 /** Metro on the leased port (verified to serve this project), the dev client opened on it; resolves with Metro's exit code. */
 async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Running): Promise<number> {
-	const { color } = ctx.ui;
 	const { deviceId, port, env, leaseIds, release } = r.session;
 	const json = opts.json === true;
 	const aborted = { now: false };
@@ -267,21 +266,20 @@ async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Ru
 			}
 		);
 		if (!metro.success) {
-			ctx.err(color.red(`warden dev: ${metro.error}`));
+			reportError(ctx, "dev", metro.error);
 			return 1;
 		}
 		if (opts.open) {
 			const opened = await openDevClient(ctx, r.platform, deviceId, r.project, r.scheme, port);
-			ctx.err(
-				opened.success
-					? color.dim(`warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`)
-					: color.yellow(
-							`warden dev: couldn't open the dev client (${opened.error}) — open ${devClientUrl(r.scheme, port)} yourself`
-						)
-			);
+			if (opened.success) note(ctx, `warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`);
+			else
+				warn(
+					ctx,
+					`warden dev: couldn't open the dev client (${opened.error}) — open ${devClientUrl(r.scheme, port)} yourself`
+				);
 		}
 		if (json) emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds }, "");
-		else ctx.err(color.dim(`warden dev: holding ${deviceId} + :${port} until Metro exits (WARDEN_UDID=${deviceId})`));
+		else note(ctx, `warden dev: holding ${deviceId} + :${port} until Metro exits (WARDEN_UDID=${deviceId})`);
 		return await metro.data.proc.exited;
 	} finally {
 		stop();
@@ -301,9 +299,8 @@ async function dev(
 	platformArg: string | undefined,
 	opts: DevOpts
 ): Promise<number> {
-	const { color } = ctx.ui;
 	const fail = (message: string) => {
-		ctx.err(color.red(`warden dev: ${message}`));
+		reportError(ctx, "dev", message);
 		return 1;
 	};
 	const platform = await resolvePlatform(ctx, platformArg);
@@ -328,6 +325,7 @@ async function dev(
 	if (!scheme.success) return fail(scheme.error);
 	const app = ensureOptions(start.data, variant, opts);
 
+	if (!opts.json) heading(ctx, "dev", `${platform.data} · ${project.data.project.name}`);
 	const session = await withSpinner(ctx, `preparing the ${platform.data} dev build…`, async (sctx, spinner) => {
 		const result = await openSession(sctx, deps, owner, platform.data, opts, app);
 		if (result.success) spinner.succeed(`${platform.data} dev build on ${result.data.deviceId}`);
@@ -348,6 +346,7 @@ async function dev(
 export function createDevCommand(deps: DevDeps): Command {
 	return defineCommand({
 		name: "dev",
+		group: "Run",
 		summary:
 			"install the cached dev build for this fingerprint, start Metro, open the dev client (replaces expo run:*)",
 		register: (cmd, ctx, done) => {

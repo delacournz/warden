@@ -54,7 +54,7 @@ import {
 	prewarmMetro,
 	startMetro,
 } from "../metro";
-import { emit } from "../output";
+import { emit, note, reportError, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 
 export type KillSignal = ForwardedSignal | "SIGKILL";
@@ -592,7 +592,7 @@ async function report(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, r: 
 	await deps.writeFile(join(r.batchDir, "batch.json"), `${JSON.stringify(doc, null, 2)}\n`);
 	if (r.cast) await deps.writeFile(join(r.batchDir, "tui.cast"), r.cast.text());
 	if (args.json) emit(ctx, true, doc, "");
-	ctx.err(ctx.ui.color.dim(`warden batch: logs in ${r.logDir}${args.record ? `, recording in ${args.record}` : ""}`));
+	note(ctx, `warden batch: logs in ${r.logDir}${args.record ? `, recording in ${args.record}` : ""}`);
 	if (args.tui && deps.terminal.isTTY) {
 		const passed = r.summary.results.filter((j) => j.exitCode === 0).length;
 		ctx.err(`warden batch: ${passed}/${r.total} passed, ${r.summary.failed.length} failed`);
@@ -639,7 +639,7 @@ async function shutdownDevices(
 		spinner.succeed(outcome.shutdown.length > 0 ? `shut down ${outcome.shutdown.join(" ")}` : "nothing to shut down");
 		return outcome;
 	});
-	for (const note of notes) ctx.err(ctx.ui.color.dim(`warden ${hooks.name}: ${note}`));
+	for (const line of notes) note(ctx, `warden ${hooks.name}: ${line}`);
 }
 
 /** Per-device setup (`hooks.setup`) of one pool: who is left to run jobs and every outcome. */
@@ -675,9 +675,8 @@ async function prepareDevices(
 		},
 	});
 	for (const d of setups) {
-		if (d.slim && "error" in d.slim) ctx.err(ctx.ui.color.yellow(`warden ${name}: slim ${d.udid}: ${d.slim.error}`));
-		if (!d.ok)
-			ctx.err(ctx.ui.color.red(`warden ${name}: setup failed on ${d.udid} (exit ${d.exitCode}) — log: ${d.log}`));
+		if (d.slim && "error" in d.slim) warn(ctx, `warden ${name}: slim ${d.udid}: ${d.slim.error}`);
+		if (!d.ok) reportError(ctx, name, `setup failed on ${d.udid} (exit ${d.exitCode}) — log: ${d.log}`);
 	}
 	return { live: devices.filter((d) => setups.find((s) => s.worker === d.worker)?.ok), setups };
 }
@@ -795,7 +794,7 @@ async function openOnDevices(
 			const argv = argvFor(d.udid);
 			if (!argv) return;
 			const res = await ctx.exec(argv);
-			if (res.exitCode !== 0) ctx.err(ctx.ui.color.yellow(`warden ${name}: ${execError(argv, res)}`));
+			if (res.exitCode !== 0) warn(ctx, `warden ${name}: ${execError(argv, res)}`);
 		})
 	);
 }
@@ -963,7 +962,7 @@ function poolQueues(
 	const single = args.single === true;
 	const onTimeout = (job: string, w: BatchWorker) => {
 		const after = formatDuration(args.jobTimeoutMs ?? 0);
-		ctx.err(ctx.ui.color.red(`warden ${r.name}: ${job} still running on ${w.udid} after ${after} — killing it`));
+		reportError(ctx, r.name, `${job} still running on ${w.udid} after ${after} — killing it`);
 	};
 	return prepared.map((p) => ({
 		workers: workerRows(p.live, single),
@@ -1041,7 +1040,7 @@ async function supervise(
 	});
 	const services: Services = { recordings: [] };
 	const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
-		ctx.err(ctx.ui.color.red(`warden ${r.name}: ${message}`));
+		reportError(ctx, r.name, message);
 		return { code: r.interrupted() ? 130 : 1, ...extra };
 	};
 	/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
@@ -1197,9 +1196,8 @@ async function batch(
 	opts: BatchOpts,
 	passed: ReadonlySet<string>
 ): Promise<number> {
-	const { color } = ctx.ui;
 	const fail = (message: string) => {
-		ctx.err(color.red(`warden batch: ${message}`));
+		reportError(ctx, "batch", message);
 		return 1;
 	};
 	const split = batchOperands(ctx.argv, operands);
@@ -1226,10 +1224,9 @@ export async function runSession(
 	cmd: string[],
 	hooks: SessionHooks = {}
 ): Promise<SessionResult> {
-	const { color } = ctx.ui;
 	const name = hooks.name ?? "batch";
 	const lease = clampToJobs(args, jobs.length);
-	if (lease !== args) ctx.err(color.dim(`warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`));
+	if (lease !== args) note(ctx, `warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`);
 	const owner = resolveOwner(ctx);
 	maybeAutoGc(ctx);
 	const { platform } = lease.flags.request;
@@ -1244,7 +1241,7 @@ export async function runSession(
 		return result;
 	});
 	if (!claimed.success) {
-		ctx.err(color.red(`warden ${name}: ${claimed.error}`));
+		reportError(ctx, name, claimed.error);
 		return { code: 1 };
 	}
 	return supervise(ctx, deps, lease, jobs, cmd, claimed.data, { ...hooks, name });
@@ -1276,6 +1273,7 @@ export function withBatchOptions<Args extends unknown[], Opts extends OptionValu
 export function createBatchCommand(deps: BatchDeps): Command {
 	return defineCommand({
 		name: "batch",
+		group: "Run",
 		summary: "claim N devices, fan a job queue out over them (one worker per device), release at the end",
 		register: (cmd, ctx, done) => {
 			withBatchOptions(
