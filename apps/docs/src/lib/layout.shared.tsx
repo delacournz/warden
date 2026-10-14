@@ -1,4 +1,5 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
+import { ThemeSwitch } from "@/components/theme-switch";
 import { WardenIcon } from "@/components/warden-icon";
 import { appName, githubUrl } from "./shared";
 
@@ -17,5 +18,6 @@ export function baseOptions(): BaseLayoutProps {
 			{ type: "main", text: "CLI", url: "/docs/reference/cli", active: "nested-url" },
 		],
 		githubUrl,
+		slots: { themeSwitch: ThemeSwitch },
 	};
 }
