@@ -128,7 +128,12 @@ export function uiLongpress(
 
 type FillRun = { ok: true } | { ok: false; held: string };
 
-async function focusClearType(driver: Driver, resolved: ResolvedTarget, entry: NodeEntry | undefined, text: string) {
+export async function focusClearType(
+	driver: Driver,
+	resolved: ResolvedTarget,
+	entry: NodeEntry | undefined,
+	text: string
+) {
 	const point = resolved.element ? focusPoint(resolved.element.frame) : resolved.point;
 	const focused = fromDriver(await driver.tap(point));
 	if (!focused.success) return focused;
@@ -249,6 +254,7 @@ export function uiFill(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 			target: where,
 			...(verified !== undefined ? { verified } : {}),
 			args: secure ? { secure: true } : { text },
+			...(secure ? { secret: text } : {}),
 			extra: { characters: [...text].length, ...(secure ? { secure: true } : {}) },
 		});
 	});

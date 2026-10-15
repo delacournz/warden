@@ -1,4 +1,4 @@
-import type { Driver, Element, Point } from "@delacour/warden-e2e/driver/driver.types";
+import type { Driver, Element, Point, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import { assignRefs, isRef } from "@delacour/warden-e2e/driver/refs";
 import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-e2e/screen/nodes";
 import { describeEntry } from "@delacour/warden-e2e/screen/render";
@@ -30,6 +30,8 @@ export type ResolvedTarget = {
 	ref?: string;
 	/** the ref was checked against a fresh snapshot */
 	verified?: boolean;
+	/** the snapshot `element` belongs to (the stored one for a plain `@eN`, else the fresh one) */
+	snapshot?: Snapshot;
 };
 
 const POINT = /^(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)$/;
@@ -102,7 +104,9 @@ async function resolveRef(ref: string, rc: ResolveContext): Promise<Result<Resol
 	if (!element)
 		return { success: false, error: staleRef(ref, `is not in snapshot generation ${lastSnapshot.generation}`) };
 	const old = rc.now - lastSnapshot.takenAt > REF_MAX_AGE_MS;
-	if (!old && !rc.verify) return ok({ kind: "ref", ref, element, point: centre(element) });
+	if (!old && !rc.verify) {
+		return ok({ kind: "ref", ref, element, point: centre(element), snapshot: lastSnapshot.snapshot });
+	}
 
 	const fresh = await rc.driver.snapshot();
 	if (!fresh.success) return { success: false, error: driverUiError(fresh.error) };
@@ -112,7 +116,14 @@ async function resolveRef(ref: string, rc: ResolveContext): Promise<Result<Resol
 		const seen = wanted ? describeEntry(wanted) : element.id;
 		return { success: false, error: staleRef(ref, `(${seen}) is no longer on screen`) };
 	}
-	return ok({ kind: "ref", ref, element: now.element, point: centre(now.element), verified: true });
+	return ok({
+		kind: "ref",
+		ref,
+		element: now.element,
+		point: centre(now.element),
+		verified: true,
+		snapshot: fresh.data,
+	});
 }
 
 /** Matches of a selector in a snapshot index: `nth=` picks one, else the most specific visible one wins. */
@@ -139,7 +150,12 @@ async function resolveSelector(selector: ParsedSelector, rc: ResolveContext): Pr
 	if (!fresh.success) return { success: false, error: driverUiError(fresh.error) };
 	const picked = pickBySelector(indexSnapshot(fresh.data), selector);
 	if (!picked.success) return picked;
-	return ok({ kind: "selector", element: picked.data.element, point: centre(picked.data.element) });
+	return ok({
+		kind: "selector",
+		element: picked.data.element,
+		point: centre(picked.data.element),
+		snapshot: fresh.data,
+	});
 }
 
 /** The element + tap point a target stands for. Refs come from the stored snapshot; selectors always from a fresh one. */

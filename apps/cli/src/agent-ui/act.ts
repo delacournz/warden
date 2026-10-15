@@ -6,8 +6,9 @@ import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
 import type { UiDeps } from "./driver";
+import { flowRecordSink } from "./flow-sink";
 import { type UiError, type UiSuccess, uiError } from "./output";
-import { noRecordSink, type RecordStep, type RecordTarget } from "./record";
+import { attachEvidence, evidenceOf, type RecordStep, type RecordTarget } from "./record";
 import type { UiOptionValues, UiRunEnv } from "./run";
 import { DEFAULT_SETTLE_BUDGET_MS, settleLines, type TakenSnapshot, takeSnapshot } from "./snapshot";
 import { positiveInt } from "./snapshot-command";
@@ -36,6 +37,8 @@ export type ActionDone = {
 	verified?: boolean | "unconfirmed";
 	/** the action's own arguments: appended to the recording (never put a secret here) */
 	args?: RecordStep["args"];
+	/** text typed into a secure field: the recording only names it (`WARDEN_UI_SECRET_*`), never stores it */
+	secret?: string;
 	/** more `--json` fields (`direction`, `swipes`, `path`, …) */
 	extra?: Record<string, unknown>;
 };
@@ -73,10 +76,14 @@ export async function finishAction(
 		taken = snap.data;
 	}
 	if (env.record) {
-		await (deps.record ?? noRecordSink).append(device.udid, {
+		const evidence = done.target ? evidenceOf(done.target) : undefined;
+		await (deps.record ?? flowRecordSink(ctx)).append(device.udid, {
 			action: done.action,
 			...(done.target ? { target: done.target } : {}),
 			...(done.args ? { args: done.args } : {}),
+			...(evidence ? { evidence } : {}),
+			...(settleBudget !== undefined ? { settle: { timeoutMs: settleBudget } } : {}),
+			...(done.secret !== undefined ? { secret: done.secret } : {}),
 		});
 	}
 	const result: Record<string, unknown> = {
@@ -117,11 +124,14 @@ export async function pointAt(
 
 /** How a resolved target is reported: `ref`, the selector text, the screen point. */
 export function recordTarget(target: Target, resolved: ResolvedTarget): RecordTarget {
-	return {
+	const where: RecordTarget = {
 		...(resolved.ref !== undefined ? { ref: resolved.ref } : {}),
 		...(target.kind === "selector" ? { selector: formatSelector(target.selector) } : {}),
 		point: resolved.point,
 	};
+	return resolved.element && resolved.snapshot
+		? attachEvidence(where, { element: resolved.element, snapshot: resolved.snapshot })
+		: where;
 }
 
 /** `@e3`, `id=email` or `(120,340)`: a target in one line of text. */

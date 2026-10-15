@@ -204,7 +204,8 @@ describe("press / tap", () => {
 	test("every action is appended to the recording; --no-record skips it", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		await h.run("press", "id=sign-in-submit");
-		expect(h.steps).toEqual([{ action: "press", target: { selector: "id=sign-in-submit", point: SIGN_IN } }]);
+		expect(h.steps).toMatchObject([{ action: "press", target: { selector: "id=sign-in-submit", point: SIGN_IN } }]);
+		expect(h.steps[0]?.evidence?.element.identifier).toBe("sign-in-submit");
 		await h.run("press", "10", "20", "--no-record");
 		expect(h.steps).toHaveLength(1);
 	});

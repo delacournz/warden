@@ -2,6 +2,7 @@ import { uiFill, uiKey, uiLongpress, uiPress, uiSwipe, uiType } from "../agent-u
 import { type CloseOptionValues, uiClose } from "../agent-ui/close";
 import { uiAlert, uiAppearance, uiHardware, uiRotate, uiScreenshot } from "../agent-ui/controls";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
+import { registerFlowCommands } from "../agent-ui/flows-command";
 import { uiOpen } from "../agent-ui/open";
 import { withUiOptions } from "../agent-ui/run";
 import { uiScroll } from "../agent-ui/scroll";
@@ -164,6 +165,7 @@ export function createUiCommand(deps: UiDeps): Command {
 					.argument("<action>", "start | stop")
 					.argument("[path]", "output file for start")
 			).action(async (action, path, opts) => done(await uiVideo(ctx, deps, action, path, opts)));
+			registerFlowCommands(cmd, ctx, done, deps);
 		},
 	});
 }

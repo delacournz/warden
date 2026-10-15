@@ -279,6 +279,67 @@ describe("replayFlow", () => {
 		expect(logs.some((line) => line.includes("by coordinates"))).toBe(true);
 	});
 
+	test("wait/is/get/scroll-until targets are not pre-resolved: the executor looks them up with find", async () => {
+		const base = screen();
+		const flow = flowOf([
+			{ kind: "wait", at: 1, target: targetFromElement(elementNamed(base, "title"), base) },
+			{ kind: "scroll", at: 2, direction: "down", until: targetFromElement(elementNamed(base, "email"), base) },
+		]);
+		const without = snapshotOf([el("button", { id: "other" })]);
+		const { deps, driver } = harness(without);
+		const seen: string[] = [];
+		deps.act = {
+			...recordingActors(driver, []),
+			wait: async (step, ctx) => {
+				seen.push(`pre-resolved=${ctx.targets.target !== undefined}`);
+				const before = await ctx.find(step.target);
+				seen.push(before.success && "missing" in before.data ? "missing" : "found");
+				driver.set(base);
+				const after = await ctx.find(step.target);
+				seen.push(after.success && "resolved" in after.data ? `found via ${after.data.resolved.via}` : "missing");
+				return ok(undefined);
+			},
+			scroll: async (_step, ctx) => {
+				seen.push(`until pre-resolved=${ctx.targets.until !== undefined}`);
+				return ok(undefined);
+			},
+		};
+		const outcome = await replayFlow(flow, deps);
+		expect(outcome.status).toBe("passed");
+		expect(seen).toEqual(["pre-resolved=false", "missing", "found via id", "until pre-resolved=false"]);
+	});
+
+	test("an executor that reports replay_divergence ends the replay as diverged", async () => {
+		const base = screen();
+		const flow = flowOf([{ kind: "wait", at: 1, target: targetFromElement(elementNamed(base, "title"), base) }]);
+		const { deps, driver } = harness(base);
+		deps.act = {
+			...recordingActors(driver, []),
+			wait: async () => ({ success: false, error: { code: "replay_divergence", message: "id=title never appeared" } }),
+		};
+		const outcome = await replayFlow(flow, deps);
+		expect(outcome).toMatchObject({ status: "diverged", step: 0, kind: "wait", reason: "id=title never appeared" });
+		if (outcome.status === "diverged") expect(outcome.snapshot).toContain("id=email");
+	});
+
+	test("onStep reports each step with a label, its duration and any drift", async () => {
+		const flow = recorded();
+		const changed = snapshotOf([
+			...screen().elements.map(toSpec),
+			el("text", { label: "Banner", frame: { x: 0, y: 0, width: 390, height: 20 } }),
+		]);
+		const events: { step: number; label: string; drift: boolean }[] = [];
+		const { deps } = harness(changed, {
+			onStep: (e) => void events.push({ step: e.step, label: e.label, drift: e.drift !== undefined }),
+		});
+		await replayFlow(flow, deps);
+		expect(events).toEqual([
+			{ step: 0, label: "id=sign-in", drift: true },
+			{ step: 1, label: "id=email", drift: true },
+			{ step: 2, label: "id=title", drift: false },
+		]);
+	});
+
 	test("a snapshot failure on a step with a target is a failed step", async () => {
 		const { deps } = harness(screen(), {
 			snapshot: async () => ({ success: false, error: { code: "E_AX_UNAVAILABLE", message: "no ax" } }),

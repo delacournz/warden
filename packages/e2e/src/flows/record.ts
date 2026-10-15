@@ -148,7 +148,7 @@ export function writeFileAtomic(path: string, content: string): void {
 	renameSync(temp, path);
 }
 
-function serialize(flow: Flow): string {
+export function serializeFlow(flow: Flow): string {
 	return `${JSON.stringify(flow, null, 2)}\n`;
 }
 
@@ -190,7 +190,7 @@ export function createFlowFile(
 	const flow: Flow = { v: FLOW_VERSION, ...header, steps: [] };
 	try {
 		mkdirSync(dirname(file), { recursive: true });
-		(options.write ?? writeFileAtomic)(file, serialize(flow));
+		(options.write ?? writeFileAtomic)(file, serializeFlow(flow));
 	} catch (error) {
 		return fileError("io", error instanceof Error ? error.message : String(error));
 	}
@@ -289,7 +289,7 @@ export async function appendStep(
 		const next: Flow = { ...current.data, steps: [...current.data.steps, numbered] };
 		const check = flowSchema.safeParse(next);
 		if (!check.success) return fileError("flow_invalid", check.error.issues[0]?.message ?? "invalid step");
-		(options.write ?? writeFileAtomic)(file, serialize(next));
+		(options.write ?? writeFileAtomic)(file, serializeFlow(next));
 		return ok(numbered);
 	} catch (error) {
 		return fileError("io", error instanceof Error ? error.message : String(error));

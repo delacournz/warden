@@ -15,7 +15,8 @@ export type UiState = {
 	metroUrl?: string;
 	/** bundle id of the app `warden ui open` last launched (`close --app` terminates it) */
 	app?: string;
-	recording?: string;
+	/** the flow being recorded (`warden ui record start`) */
+	recording?: { file: string; name: string; startedAt: number };
 	helper?: { pid: number; socket: string };
 	/** the running `video start` recorder: host pid, output file, and (Android) the file on the device */
 	video?: { pid: number; path: string; remote?: string; startedAt: number };

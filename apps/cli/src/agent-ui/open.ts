@@ -34,12 +34,12 @@ async function reverseMetro(ctx: CommandContext, device: UiDevice, metroUrl: str
 	await ctx.exec([androidTools(ctx.env).adb, ...rest]);
 }
 
-async function launchBundle(
+export async function launchBundle(
 	ctx: CommandContext,
 	driver: Driver,
 	device: UiDevice,
 	bundleId: string,
-	opts: OpenOptionValues
+	opts: Pick<OpenOptionValues, "relaunch" | "metro" | "args">
 ) {
 	const extra = opts.args ?? [];
 	if (opts.metro !== undefined) await reverseMetro(ctx, device, opts.metro);
