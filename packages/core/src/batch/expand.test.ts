@@ -13,23 +13,17 @@ describe("expandArgv", () => {
 		).toEqual(["run", "--flow=qa-login", "U1", "w2-s0", "qa-login/qa-login"]);
 	});
 
-	test("run placeholders ({port} {metroUrl} {stateDir} {leg}) are substituted once known, kept until then", () => {
+	test("run placeholders ({port} {metroUrl} {leg}) are substituted once known, kept until then", () => {
 		const vars = { job: "j", udid: "u", worker: 0, seq: 0 };
-		expect(expandArgv(["{port}", "{metroUrl}", "{stateDir}", "{leg}"], vars)).toEqual([
-			"{port}",
-			"{metroUrl}",
-			"{stateDir}",
-			"{leg}",
-		]);
+		expect(expandArgv(["{port}", "{metroUrl}", "{leg}"], vars)).toEqual(["{port}", "{metroUrl}", "{leg}"]);
 		expect(
-			expandArgv(["--port={port}", "{metroUrl}/status", "{stateDir}", "{leg}"], {
+			expandArgv(["--port={port}", "{metroUrl}/status", "{leg}"], {
 				...vars,
 				port: 8090,
 				metroUrl: "http://127.0.0.1:8090",
-				stateDir: "/b/agent-device/0",
 				leg: "ipad",
 			})
-		).toEqual(["--port=8090", "http://127.0.0.1:8090/status", "/b/agent-device/0", "ipad"]);
+		).toEqual(["--port=8090", "http://127.0.0.1:8090/status", "ipad"]);
 		expect(expandText("tcp:{port}", { port: 3000 })).toBe("tcp:3000");
 	});
 

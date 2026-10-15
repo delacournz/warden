@@ -23,7 +23,6 @@ export const e2eFlowSchema = z
 	.strict();
 
 type RunSettings = {
-	runner: string[];
 	mode: "per-flow" | "single";
 	passes: number;
 	count?: number | undefined;
@@ -34,15 +33,7 @@ type RunSettings = {
 /** What `mode` and `devices` rule out. */
 function runIssues(suite: RunSettings): Array<{ message: string; path: string[] }> {
 	const issues: Array<{ message: string; path: string[] }> = [];
-	const single = suite.mode === "single";
-	if (single && suite.runner.some((arg) => PER_FLOW_PLACEHOLDER.test(arg)))
-		issues.push({
-			message: 'mode "single" runs every flow in one process: use {flows} / {flowPaths}',
-			path: ["runner"],
-		});
-	if (!single && suite.runner.some((arg) => SINGLE_PLACEHOLDER.test(arg)))
-		issues.push({ message: '{flows} / {flowPaths} need mode "single"', path: ["runner"] });
-	if (single && suite.passes > 1)
+	if (suite.mode === "single" && suite.passes > 1)
 		issues.push({
 			message: 'passes > 1 needs mode "per-flow" (one process cannot be re-run per flow)',
 			path: ["passes"],
@@ -69,7 +60,7 @@ export const e2eMetroSchema = z
 		port: portSpec.default(DEFAULT_METRO_PORT_SPEC),
 		/** extra launch arguments for the app when warden opens it on each device */
 		launchArgs: z.array(z.string()).default([]),
-		/** false: warden starts Metro but leaves launching the app to the runner (it installs the app itself) */
+		/** false: warden starts Metro but leaves launching the app to the specs (`app.open()`) */
 		open: z.boolean().default(true),
 		/** added to Metro's env only */
 		env: z.record(z.string(), z.string()).optional(),
@@ -84,15 +75,32 @@ export const e2eDeviceLegSchema = z
 	.object({
 		profile: z.string().min(1),
 		count: z.number().int().min(1).default(1),
-		/** added to this leg's setup and runner env */
+		/** added to this leg's setup and spec env */
 		env: z.record(z.string(), z.string()).optional(),
 		/** false = only with `--devices all` (or naming the profile) */
 		default: z.boolean().default(true),
 	})
 	.strict();
 
-const PER_FLOW_PLACEHOLDER = /\{(flow|flowPath)\}/;
-const SINGLE_PLACEHOLDER = /\{(flows|flowPaths)\}/;
+/** `e2e.<suite>.spec`: how warden runs the `*.e2e.ts` specs (`bun test` + `@delacour/warden-e2e`). */
+export const e2eSpecSchema = z
+	.object({
+		/** the app under test (default: the suite project's `bundleId` for the platform) */
+		bundleId: z.string().min(1).optional(),
+		/** launch arguments `app.open()` passes (after `--initialUrl` and `metro.launchArgs`) */
+		launchArgs: z.array(z.string()).optional(),
+		/** per-test timeout (default `2m`) */
+		timeout: duration.optional(),
+		/** per-action (tap / fill / waits for an element) timeout (default `30s`) */
+		actionTimeout: duration.optional(),
+		/** per-`expect` polling timeout (default `5s`) */
+		assertionTimeout: duration.optional(),
+	})
+	.strict();
+
+/** A key the suite no longer takes: any value fails with a message naming the key's path and its replacement. */
+const removedKey = (key: string, hint: string) =>
+	z.undefined({ error: (iss) => `e2e.${String(iss.path?.[1])}.${key} was removed: ${hint}` }).optional();
 
 /**
  * `e2e.<suite>` in `warden.config.ts`: flows under `flowsDir`, how they map to source, how to run one.
@@ -100,17 +108,16 @@ const SINGLE_PLACEHOLDER = /\{(flows|flowPaths)\}/;
  */
 export const e2eSuiteSchema = z
 	.object({
-		/** `projects[].name`: runner / serve / setup run in its root and `app` installs it (default: the config file's dir) */
+		/** `projects[].name`: specs / serve / setup run in its root and `app` installs it (default: the config file's dir) */
 		project: z.string().min(1).optional(),
 		flowsDir: path,
-		/**
-		 * runner argv. `{udid}` `{worker}` `{seq}` `{port}` `{metroUrl}` `{stateDir}` `{leg}` are substituted; per flow also
-		 * `{flow}` `{flowPath}`, in `mode: "single"` an argument that is exactly `{flows}` / `{flowPaths}` becomes one argument per flow
-		 */
-		runner: z.array(z.string()).min(1),
-		/** per-flow: one runner process per flow, one worker per device. single: one runner process per leg for every selected flow; it shards over `WARDEN_UDIDS` itself */
+		/** removed: flows run with `@delacour/warden-e2e` (`bun test`), tuned by `spec` */
+		runner: removedKey("runner", "flows run with @delacour/warden-e2e, see spec"),
+		/** the spec runner's settings: app under test, launch args, timeouts */
+		spec: e2eSpecSchema.optional(),
+		/** per-flow: one `bun test` process per flow, one worker per device. single: one process per device runs its shard of the flows (round-robin by flow id) */
 		mode: z.enum(["per-flow", "single"]).default("per-flow"),
-		/** a runner process still going after this long is killed and counts as failed */
+		/** a spec process still going after this long is killed and counts as failed */
 		jobTimeoutMs: z.number().int().min(1_000).default(DEFAULT_JOB_TIMEOUT_MS),
 		/** device legs, each with its own pool, run concurrently (replaces `profile` / `count`) */
 		devices: z.array(e2eDeviceLegSchema).min(1).optional(),
@@ -148,9 +155,9 @@ export const e2eSuiteSchema = z
 		profile: z.string().min(1).optional(),
 		/** install the project's app on each device first (`warden batch --app`); `{ installMode }` = `--install-mode` */
 		app: appOptionSchema.optional(),
-		/** ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner */
+		/** ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every spec process */
 		ports: z.array(portSpec).optional(),
-		/** added to the serve, setup and runner env */
+		/** added to the serve, setup and spec env */
 		env: z.record(z.string(), z.string()).optional(),
 		/** `sh -c` once per run before the flows (own process group), killed at the end; `--serve` overrides */
 		serve: z.string().min(1).optional(),
@@ -161,8 +168,10 @@ export const e2eSuiteSchema = z
 		setup: z.string().min(1).optional(),
 		/** iOS: switch off the simulator daemons flows never need on each device, before `setup` */
 		slim: z.boolean().optional(),
-		/** iOS: start every device's agent-device runner in parallel before the flows (default on; `false` = off) */
-		warmRunners: z.boolean().optional(),
+		/** removed: renamed `warmDrivers` */
+		warmRunners: removedKey("warmRunners", "renamed to warmDrivers"),
+		/** iOS: start every device's automation helper in parallel before the flows (default on; `false` = off) */
+		warmDrivers: z.boolean().optional(),
 		/** keep Simulator.app windows closed for this suite's run; `--headless` / `--no-headless` win */
 		headless: z.boolean().optional(),
 		/** default `required` for flows that don't set it */
@@ -180,6 +189,7 @@ export const e2eSuiteSchema = z
 		for (const message of runIssues(suite)) issue.addIssue({ code: "custom", ...message });
 	});
 
+export type E2eSpecConfig = z.infer<typeof e2eSpecSchema>;
 export type E2eMetroConfig = z.infer<typeof e2eMetroSchema>;
 export type E2eDeviceLeg = z.infer<typeof e2eDeviceLegSchema>;
 export type E2eFlowConfig = z.infer<typeof e2eFlowSchema>;
