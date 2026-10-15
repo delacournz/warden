@@ -343,7 +343,8 @@ describe("warden e2e", () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
-			expect(h.timers.map((t) => [t.ms, t.cancelled])).toEqual([[600_000, true]]);
+			// the 120 s timer is the warm-up's
+			expect(h.timers.filter((t) => t.ms !== 120_000).map((t) => [t.ms, t.cancelled])).toEqual([[600_000, true]]);
 		});
 	});
 
@@ -771,6 +772,95 @@ describe("warden e2e", () => {
 			c.argv = ["--files", "src/chat/lazy.tsx", "--devices", "watch"];
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain('--devices: no leg "watch" (iphone-17, ipad)');
+		});
+	});
+
+	describe("warmDrivers", () => {
+		const jobEnv = (h: Harness) => h.jobs().map((j) => j.opts.env.WARDEN_SIMD_SOCKET);
+
+		test("every leased iOS device is warmed before the first job; its jobs get WARDEN_SIMD_SOCKET", async () => {
+			write("src/chat/lazy.tsx", "export const x = 2;\n");
+			write("src/settings/form.tsx", "export const y = 2;\n");
+			const c = setup(["--count", "2"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warmed.sort()).toEqual(["U1", "U2"]);
+			const firstJob = h.events.findIndex((e) => e.startsWith("job:"));
+			expect(h.events.lastIndexOf("warm:U1")).toBeLessThan(firstJob);
+			expect(h.events.lastIndexOf("warm:U2")).toBeLessThan(firstJob);
+			for (const job of h.jobs()) {
+				expect(job.opts.env.WARDEN_SIMD_SOCKET).toBe(`/tmp/warden-simd-${job.opts.env.WARDEN_UDID}.sock`);
+			}
+			expect(h.files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "logs", "warm-0.log"))).toContain(
+				"snapshot ok"
+			);
+			expect(h.warmClosed.sort()).toEqual(["U1", "U2"]);
+		});
+
+		test("a headless run hides the simulator windows first", async () => {
+			if (process.platform !== "darwin") return;
+			await resuite({ headless: true });
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			const base = c.exec;
+			c.exec = async (cmd, opts) => {
+				if (cmd[0] !== "osascript") return base(cmd, opts);
+				if ((cmd[4] ?? "").includes("AXCloseButton")) h.events.push("close");
+				const windows = [{ title: "warden-iphone-17-1 – iOS 26.5", width: 400, height: 800 }];
+				return {
+					exitCode: 0,
+					stdout: JSON.stringify({ screen: { x: 0, y: 0, width: 900, height: 900 }, windows }),
+					stderr: "",
+				};
+			};
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const close = h.events.lastIndexOf("close");
+			expect(close).toBeGreaterThanOrEqual(0);
+			expect(close).toBeLessThan(h.events.indexOf("warm:U1"));
+			expect(h.events.indexOf("warm:U1")).toBeLessThan(h.events.findIndex((e) => e.startsWith("job:")));
+		});
+
+		test("a failed warm-up only warns: jobs still run, with no socket", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ warm: "fail" });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(c.stderr.join("\n")).toContain("warm U1: helper did not start");
+			expect(jobEnv(h)).toEqual([undefined]);
+			expect(h.jobs()).toHaveLength(1);
+		});
+
+		test("a helper that cannot snapshot warns, is stopped, and its jobs get no socket", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ warm: "snapshot-fail" });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(c.stderr.join("\n")).toContain("snapshot failed: AX denied");
+			expect(jobEnv(h)).toEqual([undefined]);
+			expect(h.warmClosed).toEqual(["U1"]);
+		});
+
+		test("suite warmDrivers: false skips it", async () => {
+			await resuite({ warmDrivers: false });
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warmed).toEqual([]);
+			expect(jobEnv(h)).toEqual([undefined]);
+		});
+
+		test("--no-warm skips it", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx", "--no-warm"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warmed).toEqual([]);
+		});
+
+		test("single mode warms once per device, before its shard starts", async () => {
+			await resuite({ mode: "single" });
+			const c = setup(["--all"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warmed).toEqual(["U1"]);
+			expect(jobEnv(h)).toEqual(["/tmp/warden-simd-U1.sock"]);
 		});
 	});
 

@@ -15,6 +15,7 @@ import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { realPath, type TrackedFlow } from "../batch/flow-progress";
 import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
+import type { WarmConnect } from "../batch/warm-drivers";
 import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -58,6 +59,8 @@ export type E2eOpts = ClaimFlagValues &
 		dryRun?: true;
 		/** false = `--no-shutdown` */
 		shutdown: boolean;
+		/** false = `--no-warm` (default true) */
+		warm?: boolean;
 	};
 
 export type E2eReport = {
@@ -276,7 +279,7 @@ async function e2e(
 		args,
 		jobs,
 		argvs.get(jobs[0] ?? "") ?? [],
-		sessionHooks(suite, flows, shape, spec, argvs, opts.shutdown)
+		sessionHooks(suite, flows, shape, spec, argvs, { shutdown: opts.shutdown, warm: warmHook(ctx, deps, suite, opts) })
 	);
 	const result = await verdicts(flows, session, shape, { readFile: deps.readFile, ci: inCi(ctx.env) });
 	for (const warning of result.warnings) ctx.err(ctx.ui.color.yellow(`warden e2e: ${warning}`));
@@ -325,6 +328,11 @@ async function preparedRun(
 	return run.success ? ok({ ...run.data, spec: spec.data }) : run;
 }
 
+/** The socket-helper warm-up: on unless the suite sets `warmDrivers: false` or `--no-warm` is passed. */
+function warmHook(ctx: CommandContext, deps: BatchDeps, suite: Suite, opts: E2eOpts): WarmConnect | undefined {
+	return suite.config.warmDrivers === false || opts.warm === false ? undefined : deps.warmConnect(ctx);
+}
+
 /** How the batch session runs the suite: per-device setup, spec argv + env per job, live flows (`single`) and the shutdown rule. */
 function sessionHooks(
 	suite: Suite,
@@ -332,16 +340,16 @@ function sessionHooks(
 	shape: RunShape,
 	spec: SpecPlan,
 	argvs: ReadonlyMap<string, string[]>,
-	shutdown: boolean
+	o: { shutdown: boolean; warm: WarmConnect | undefined }
 ): SessionHooks {
 	return {
 		name: "e2e",
 		setup: deviceSetup(suite.config),
-		// on unless the suite opts out; batch skips it off iOS
-		warmDrivers: suite.config.warmDrivers !== false,
+		// batch skips it off iOS
+		warmDrivers: o.warm,
 		flows: trackedFlows(flows, shape),
 		// a passed gate frees the sims; a failed one leaves them up to inspect
-		...(shutdown ? { shutdownIf: (summary) => exitGate(flows, summary, shape) } : {}),
+		...(o.shutdown ? { shutdownIf: (summary) => exitGate(flows, summary, shape) } : {}),
 		argvFor: (job) => argvs.get(job) ?? [],
 		jobEnv: (job) =>
 			specEnv({
@@ -547,6 +555,7 @@ export function createE2eCommand(deps: BatchDeps): Command {
 					"--no-shutdown",
 					"keep the devices running after the gate passes (default: shut down the ones warden created)"
 				)
+				.option("--no-warm", "skip pre-warming the iOS socket helper per device (default: on; suite warmDrivers)")
 				.addHelpText(
 					"after",
 					"\nExamples:\n  warden e2e mobile --base origin/main --count 2\n  warden e2e --dry-run --files src/modules/chat/api.ts"

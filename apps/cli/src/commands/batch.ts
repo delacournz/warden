@@ -36,6 +36,7 @@ import {
 	render,
 	withRunners,
 } from "../batch/tui";
+import { type WarmConnect, type WarmHelper, warmDrivers } from "../batch/warm-drivers";
 import {
 	type ClaimFlags,
 	type ClaimFlagValues,
@@ -48,6 +49,7 @@ import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { helperDir } from "../e2e/bun-runner";
+import { warmConnect } from "../e2e/warm-connect";
 import {
 	type AppFlagValues,
 	claimAll,
@@ -130,6 +132,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	metroProbe: (port: number, projectRoot: string) => Promise<MetroOwner>;
 	/** build the bundle once before the first job */
 	prewarm: (url: string, platform: Platform) => AsyncResult<{ bundled: boolean }>;
+	/** how `hooks.warmDrivers` reaches one device's socket helper (default: `e2e/warm-connect`) */
+	warmConnect: (ctx: CommandContext) => WarmConnect;
 	/** `Bun.which`: where a command is on PATH */
 	which: (cmd: string) => string | null | undefined;
 	/** `Bun.resolveSync`: the file a package specifier resolves to from `from` (throws when it does not) */
@@ -659,6 +663,8 @@ type JobRunnerOptions = {
 	logs: Map<string, string>;
 	/** filled with each attempt's `results.jsonl` (`attemptKey`), for jobs whose env sets `WARDEN_E2E_OUT` */
 	resultFiles: Map<string, string>;
+	/** each warm device's helper socket (udid → path), filled by the warm step before the first job */
+	sockets: ReadonlyMap<string, string>;
 	running: Set<ProcHandle>;
 	interrupted: () => boolean;
 };
@@ -685,6 +691,10 @@ function watchdog(deps: BatchDeps, timeoutMs: number | undefined, proc: ProcHand
 		},
 	};
 }
+
+/** `WARDEN_SIMD_SOCKET` for a job on a device whose helper is warm. */
+const socketEnv = (socketPath: string | undefined): Record<string, string> =>
+	socketPath === undefined ? {} : { [ENV_NAMES.simdSocket]: socketPath };
 
 /**
  * The per-job `run` for `runBatch`: expand the argv, spawn with the job env + log, track it for
@@ -718,6 +728,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 				batchDir: o.batchDir,
 				metroUrl: o.vars.metroUrl,
 			}),
+			...socketEnv(o.sockets.get(w.udid)),
 			WARDEN_UDID: w.udid,
 			WARDEN_WORKER: String(w.worker),
 			WARDEN_JOB: job,
@@ -832,8 +843,12 @@ export type SessionHooks = {
 	flows?: readonly TrackedFlow[];
 	/** env added to one job's spawn (over the pool env, under the worker's own `WARDEN_UDID` / `WARDEN_WORKER` / `WARDEN_JOB…`) */
 	jobEnv?: (job: JobEnvInput) => Record<string, string>;
-	/** iOS: start each device's automation helper in parallel after setup, before the first job (the step itself lands with `warm-drivers`) */
-	warmDrivers?: boolean | undefined;
+	/**
+	 * iOS: connect each device's socket helper and take one snapshot, in parallel after setup and
+	 * the window hide, before the first job; that device's jobs get `WARDEN_SIMD_SOCKET`. Undefined =
+	 * no warm-up. A failed warm-up only warns.
+	 */
+	warmDrivers?: WarmConnect | undefined;
 };
 
 /** What `hooks.jobEnv` knows about the spawn it is building. */
@@ -1069,7 +1084,42 @@ type RunContext = {
 };
 
 /** The long-lived children of a run, stopped by `teardown`. */
-type Services = { serve?: ProcHandle | undefined; metro?: Metro | undefined; recordings: Recording[] };
+type Services = {
+	serve?: ProcHandle | undefined;
+	metro?: Metro | undefined;
+	recordings: Recording[];
+	/** the warm socket helpers (`hooks.warmDrivers`) */
+	helpers?: WarmHelper[];
+};
+
+/**
+ * `hooks.warmDrivers` on iOS: warm every live device's helper (failures warn); returns the
+ * sockets by udid and keeps the helpers in `services` so `teardown` stops them.
+ */
+async function warmStep(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	r: RunContext,
+	live: readonly Device[],
+	services: Services,
+	sockets: Map<string, string>
+): Promise<void> {
+	const connect = r.hooks.warmDrivers;
+	if (!connect || r.platform !== "ios" || live.length === 0) return;
+	const { devices, helpers } = await warmDrivers(
+		{
+			devices: live,
+			logDir: r.logDir,
+			now: ctx.now,
+			after: deps.after,
+			writeFile: deps.writeFile,
+			signal: r.signal,
+		},
+		{ connect, warn: (line) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`)) }
+	);
+	services.helpers = helpers;
+	for (const d of devices) if (d.socketPath !== undefined) sockets.set(d.udid, d.socketPath);
+}
 
 /** Metro → serve → recordings; resolves the job env + placeholder values once they are up. */
 async function startServices(
@@ -1176,6 +1226,7 @@ function poolQueues(
 		screenshots: Map<string, string>;
 		logs: Map<string, string>;
 		resultFiles: Map<string, string>;
+		sockets: ReadonlyMap<string, string>;
 	}
 ): Queue[] {
 	const qualified = r.pools.length > 1;
@@ -1204,6 +1255,7 @@ function poolQueues(
 			screenshots: o.screenshots,
 			logs: o.logs,
 			resultFiles: o.resultFiles,
+			sockets: o.sockets,
 			running: r.running,
 			interrupted: r.interrupted,
 			hooks: r.hooks,
@@ -1253,6 +1305,7 @@ async function supervise(
 	const screenshots = new Map<string, string>();
 	const logs = new Map<string, string>();
 	const resultFiles = new Map<string, string>();
+	const sockets = new Map<string, string>();
 	const stopHold = holdLeases(ctx, deps, session.leaseIds, (signal) => {
 		controller.abort();
 		for (const job of r.running) job.kill(signal);
@@ -1264,12 +1317,14 @@ async function supervise(
 	};
 	/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
 	const teardown = async () => {
-		const { serve, metro, recordings } = services;
+		const { serve, metro, recordings, helpers = [] } = services;
 		services.serve = undefined;
 		services.metro = undefined;
 		services.recordings = [];
+		services.helpers = [];
 		if (serve) await stopServe(deps, serve);
 		await Promise.all(recordings.map((rec) => rec.stop()));
+		await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
 		await metro?.stop();
 	};
 	try {
@@ -1289,6 +1344,7 @@ async function supervise(
 			const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
 			await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
 		}
+		await warmStep(ctx, deps, r, live, services, sockets);
 		const queues = poolQueues(ctx, deps, args, r, prepared, {
 			jobs,
 			cmd,
@@ -1297,6 +1353,7 @@ async function supervise(
 			screenshots,
 			logs,
 			resultFiles,
+			sockets,
 		});
 		const total = queues.reduce((n, q) => n + q.jobs.length, 0);
 		const startedAt = ctx.now();
@@ -1620,6 +1677,7 @@ export const defaultBatchDeps: BatchDeps = {
 	},
 	metroProbe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	prewarm: prewarmMetro,
+	warmConnect,
 	which: (cmd) => Bun.which(cmd),
 	resolveModule: (specifier, from) => Bun.resolveSync(specifier, from),
 	helperDir: () => helperDir(Bun.main, process.execPath),
