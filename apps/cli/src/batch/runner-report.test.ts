@@ -1,67 +1,50 @@
 import { describe, expect, test } from "bun:test";
-import { reportOutputDir, runnerReport } from "./runner-report";
+import { jsonl, result } from "./results.testing";
+import { resultsReport } from "./runner-report";
 
-const flows = [
-	{ id: "onboarding", path: "e2e/onboarding.e2e.ts" },
-	{ id: "sign-in", path: "e2e/sign-in.e2e.ts" },
-	{ id: "todos", path: "e2e/todos.e2e.ts" },
-];
+const flows = ["onboarding", "sign-in", "todos"].map((id) => ({ id, path: `/app/e2e/${id}.e2e.ts` }));
+const file = (id: string) => `/app/e2e/${id}.e2e.ts`;
+const identity = (path: string) => path;
+const on = (udid: string) => ({ device: { udid, platform: "ios" as const } });
 
-const attempt = (status: string, device: string) => ({ status, environment: { platform: "ios", device } });
+const RUN = jsonl(
+	result(file("onboarding"), "welcome", "passed", on("A")),
+	result(file("sign-in"), "valid", "passed", on("B")),
+	result(file("sign-in"), "invalid", "failed", on("B")),
+	result(file("sign-in"), "valid", "passed", on("A")),
+	result(file("todos"), "later", "skipped", on("A")),
+	result("/app/e2e/other.e2e.ts", "x", "passed", on("A"))
+);
 
-/** The shape of tester.army `e2e run`'s `<output>/report.json` (fields warden reads). */
-function report(startedAt: string, results: unknown[]): string {
-	return JSON.stringify({ schemaVersion: "report-1", run: { startedAt, results } });
-}
-
-const RUN = report("2026-10-14T10:10:11.780Z", [
-	{ file: "e2e/onboarding.e2e.ts", status: "passed", attempts: [attempt("passed", "A")] },
-	{ file: "e2e/sign-in.e2e.ts", status: "passed", attempts: [attempt("passed", "B")] },
-	{ file: "e2e/sign-in.e2e.ts", status: "failed", attempts: [attempt("failed", "B"), attempt("passed", "A")] },
-	{ file: "e2e/todos.e2e.ts", status: "skipped", attempts: [] },
-	{ file: "e2e/other.e2e.ts", status: "passed", attempts: [attempt("passed", "A")] },
-]);
-const SINCE = Date.parse("2026-10-14T10:10:00.000Z");
-
-describe("runnerReport", () => {
+describe("resultsReport", () => {
 	test("per flow: failed if any of its tests failed; per device: each flow it ran, failed if a test of it failed there", () => {
-		expect(runnerReport(RUN, flows, SINCE)).toEqual({
-			flows: { onboarding: "passed", "sign-in": "failed" },
+		expect(resultsReport(RUN, flows, 0, identity)).toEqual({
+			flows: { onboarding: "passed", "sign-in": "failed", todos: "passed" },
 			devices: {
 				A: [
 					{ id: "onboarding", mark: "passed" },
 					{ id: "sign-in", mark: "passed" },
+					{ id: "todos", mark: "passed" },
 				],
 				B: [{ id: "sign-in", mark: "failed" }],
 			},
 		});
 	});
 
-	test("an interrupted test is a failure", () => {
-		const run = report("2026-10-14T10:10:11.780Z", [
-			{ file: "e2e/todos.e2e.ts", status: "interrupted", attempts: [attempt("interrupted", "A")] },
-		]);
-		expect(runnerReport(run, flows, 0)).toEqual({
-			flows: { todos: "failed" },
-			devices: { A: [{ id: "todos", mark: "failed" }] },
-		});
+	test("a timed-out test fails its flow", () => {
+		const text = jsonl(result(file("todos"), "slow", "timed-out"));
+		expect(resultsReport(text, flows, 0, identity)?.flows).toEqual({ todos: "failed" });
 	});
 
-	test("a report from an earlier run is ignored", () => {
-		expect(runnerReport(RUN, flows, Date.parse("2026-10-14T11:00:00.000Z"))).toBeUndefined();
+	test("results from before the run started are ignored", () => {
+		expect(resultsReport(RUN, flows, 5_000, identity)).toBeUndefined();
 	});
 
-	test("not JSON, or not that shape → undefined", () => {
-		expect(runnerReport("nope", flows, 0)).toBeUndefined();
-		expect(runnerReport(JSON.stringify({ run: {} }), flows, 0)).toBeUndefined();
-	});
-});
-
-describe("reportOutputDir", () => {
-	test("--output <dir> / --output=<dir>, else e2e's default .e2e; a placeholder means unknown", () => {
-		expect(reportOutputDir(["bunx", "e2e", "run", "flows/a.yaml", "--output", ".e2e/dev"])).toBe(".e2e/dev");
-		expect(reportOutputDir(["e2e", "run", "--output=out"])).toBe("out");
-		expect(reportOutputDir(["bunx", "e2e", "run"])).toBe(".e2e");
-		expect(reportOutputDir(["e2e", "run", "--output", "out/{worker}"])).toBeUndefined();
+	test("empty, unparseable or all-untracked results → undefined; a truncated last line is skipped", () => {
+		expect(resultsReport("", flows, 0, identity)).toBeUndefined();
+		expect(resultsReport("nope\n", flows, 0, identity)).toBeUndefined();
+		expect(resultsReport(jsonl(result("/app/e2e/other.e2e.ts", "x")), flows, 0, identity)).toBeUndefined();
+		const truncated = `${jsonl(result(file("todos"), "t"))}{"file":"`;
+		expect(resultsReport(truncated, flows, 0, identity)?.flows).toEqual({ todos: "passed" });
 	});
 });
