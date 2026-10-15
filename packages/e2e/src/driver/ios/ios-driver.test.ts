@@ -219,6 +219,23 @@ describe("Driver methods over the helper", () => {
 		expect(snap.elements[0]?.children[0]?.identifier).toBe("go");
 	});
 
+	test("snapshot tolerates D4's extra fields and logs a backend fallback", async () => {
+		const { driver, logs } = await open(() => ({
+			data: {
+				...snapshotData,
+				backend: "ax",
+				modal: null,
+				readMs: 12.5,
+				nodes: 3,
+				fallback: { from: "axbridge", to: "ax", reason: "applicationUnavailable" },
+			},
+		}));
+		const snap = await unwrapped(driver.snapshot());
+		expect(snap.backend).toBe("ax");
+		expect("modal" in snap).toBe(false);
+		expect(logs.some((line) => line.includes("axbridge -> ax: applicationUnavailable"))).toBe(true);
+	});
+
 	test("snapshot without options sends no null params", async () => {
 		const { driver, helper } = await open(() => ({ data: snapshotData }));
 		await unwrapped(driver.snapshot());
@@ -307,6 +324,60 @@ describe("Driver methods over the helper", () => {
 		expect(helper.of("orientation").map((request) => request.set)).toEqual([undefined, "landscapeLeft"]);
 	});
 
+	test("orientation: sources are logged, flat readings are exposed as portrait", async () => {
+		const reads = [
+			{ orientation: "landscapeLeft", source: "device" },
+			{ orientation: "landscapeRight", source: "written" },
+			{ orientation: "portrait", source: "assumed" },
+			{ orientation: "faceUp", source: "device" },
+			{ orientation: "unknown" },
+		];
+		const { driver, logs } = await open((request) =>
+			request.op === "orientation" ? { data: reads.shift() } : undefined
+		);
+		expect(await unwrapped(driver.orientation())).toBe("landscapeLeft");
+		expect(logs.filter((line) => line.includes("orientation"))).toEqual([]);
+		expect(await unwrapped(driver.orientation())).toBe("landscapeRight");
+		expect(logs.some((line) => line.includes("landscapeRight is written"))).toBe(true);
+		expect(await unwrapped(driver.orientation())).toBe("portrait");
+		expect(logs.some((line) => line.includes("portrait is assumed"))).toBe(true);
+		expect(await unwrapped(driver.orientation())).toBe("portrait");
+		expect(await unwrapped(driver.orientation())).toBe("portrait");
+		expect(logs.filter((line) => line.includes("exposing it as portrait"))).toHaveLength(2);
+	});
+
+	test("health accepts the helper's socket, probe error and build fields", async () => {
+		const { driver } = await open((request) =>
+			request.op === "health"
+				? {
+						data: {
+							protocol: 1,
+							version: "0.1.0",
+							udid: UDID,
+							hid: { transport: "indigo" },
+							ax: { default: "ax", bridge: "failed", error: "guest did not answer" },
+							screen: SCREEN,
+							idb: "v1.7.2",
+							xcode: "26.6",
+							state: "Booted",
+							uptimeMs: 1234,
+							coreSimulatorVersion: null,
+							socket: { path: "/h/simd/U.sock", clients: 2 },
+						},
+					}
+				: undefined
+		);
+		const health = await unwrapped(driver.health());
+		expect(health.bridge).toBe("failed");
+		expect(health.detail).toMatchObject({
+			axDefault: "ax",
+			axError: "guest did not answer",
+			socket: { path: "/h/simd/U.sock", clients: 2 },
+			xcode: "26.6",
+			state: "Booted",
+		});
+	});
+
 	test("alert: null, or title/message/buttons with filled ids", async () => {
 		let up = false;
 		const { driver } = await open((request) =>
@@ -391,7 +462,8 @@ describe("settle", () => {
 			request.op === "settle" ? { data: { quiet: true, waitedMs: 120 } } : undefined
 		);
 		expect(await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 1000 }))).toEqual({ quiet: true, waitedMs: 120 });
-		expect(helper.of("settle")[0]).toMatchObject({ quietMs: 100, timeoutMs: 1000 });
+		// the helper reads settleTimeoutMs; the envelope timeoutMs is the padded client timer
+		expect(helper.of("settle")[0]).toMatchObject({ quietMs: 100, settleTimeoutMs: 1000, timeoutMs: 3000 });
 	});
 
 	test("E_UNSUPPORTED falls back to snapshot-hash polling, and is remembered", async () => {
