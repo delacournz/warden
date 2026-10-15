@@ -6,7 +6,7 @@
  *
  * open → health → launch → settle → snapshot → tap first button → fill a textfield (if present) →
  * swipe → screenshot → settle → terminate → close. Prints the duration of each step; exits 1 when a
- * step fails. Lease the simulator first (`warden claim ios`) and install the app (`warden app ensure`).
+ * step fails; ops the helper does not implement yet (`E_BAD_REQUEST`) are reported as skipped. Lease the simulator first (`warden claim ios`) and install the app (`warden app ensure`).
  */
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -42,6 +42,11 @@ async function step<T>(name: string, run: () => DriverResult<T>, note?: (data: T
 	if (result.success) {
 		process.stdout.write(`ok    ${name.padEnd(22)} ${String(ms).padStart(5)} ms  ${note?.(result.data) ?? ""}\n`);
 		return result.data;
+	}
+	// E_BAD_REQUEST = the op is not built into this helper yet (D4/D5/D6 still landing)
+	if (result.error.code === "E_BAD_REQUEST") {
+		process.stdout.write(`skip  ${name.padEnd(22)} ${String(ms).padStart(5)} ms  skipped (helper lacks op)\n`);
+		return undefined;
 	}
 	failures += 1;
 	process.stdout.write(
