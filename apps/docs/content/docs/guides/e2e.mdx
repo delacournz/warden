@@ -1,10 +1,10 @@
 ---
 title: e2e scripts
-description: Claim devices and ports for a script with warden run, released on exit.
+description: Claim devices and ports for your own script with warden run or warden batch, released on exit.
 icon: Play
 ---
 
-`warden run` is the primary integration for any repo's e2e script:
+`warden run` is the primary integration for any repo's e2e script. To run specs written with `@delacour/warden-e2e` use [`warden e2e`](/docs/guides/run-e2e) instead, which does all of this for you; this page covers custom scripts and batches.
 
 ```bash
 warden run ios --count 2 --port 8091:20 --port 3208:20 [--app] -- bun run e2e
@@ -62,7 +62,6 @@ Each job gets the `warden run` variables plus:
 | `WARDEN_PASS` | with `--passes N`: which consecutive run of the job this is, 0-based |
 | `WARDEN_BATCH_DIR` | where `batch.json` and the logs go |
 | `WARDEN_PORT` | the first leased port (also `{port}` in the command, `--serve` and `--serve-ready`) |
-| `AGENT_DEVICE_STATE_DIR` | a state dir private to this worker (`{stateDir}`), so parallel runners never share an agent-device daemon |
 
 `--job-timeout 10m` kills a job that is still running after that long (its device is screenshotted first) and counts it as failed with exit 124, so one hung runner cannot stall the queue.
 
@@ -125,7 +124,7 @@ export default defineConfig({
         { profile: "iphone-17", count: 2 },
         { profile: "ipad-pro-11-inch-m5", default: false, env: { E2E_LAYOUT: "regular" } },
       ],
-      runner: ["bunx", "e2e", "run", "--output", "e2e-artifacts/{leg}"],
+      spec: { bundleId: "com.example.app" },
     },
   },
 });
@@ -136,9 +135,9 @@ warden e2e mobile                 # from a cold shell, no env: 2 iPhones
 warden e2e mobile --devices all   # the iPad leg too, concurrently
 ```
 
-One command does the whole run: claim the devices of every leg, install the build, lease a port and start Metro on it in the project root, wait until that port is verified to serve **this** checkout, build the bundle once, open the app on each device with `--initialUrl`, run the runner, stop Metro, release. The runner reads `WARDEN_METRO_URL` and `WARDEN_UDIDS` (its own leg's devices) and never has to guess a port or start a bundler. If the leased port is answered by another worktree's Metro, the run stops with `port <p> is served by <dir>, not this worktree` before any flow.
+One command does the whole run: claim the devices of every leg, install the build, lease a port and start Metro on it in the project root, wait until that port is verified to serve **this** checkout, build the bundle once, open the app on each device with `--initialUrl`, run the specs ([`@delacour/warden-e2e`](/docs/guides/specs) under `bun test`), stop Metro, release. A spec reads `WARDEN_METRO_URL` and `WARDEN_UDID` (its own device) and never has to guess a port or start a bundler. If the leased port is answered by another worktree's Metro, the run stops with `port <p> is served by <dir>, not this worktree` before any flow.
 
-`mode: "single"` suits runners that shard over several devices themselves: one process per leg gets the whole pool and every selected flow (`WARDEN_FLOWS`, or `{flows}` / `{flowPaths}` in the argv), and its exit code is the verdict of all of them.
+`mode: "single"` runs one `bun test` process per device instead of one per flow: the selected flows are sharded over the leg's devices round-robin by flow id, so the same flows always land together and a device's specs run serially in one process. Every flow still gets its own verdict, read from that process's `results.jsonl`.
 
 ### Failure screenshots
 

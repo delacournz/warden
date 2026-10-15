@@ -27,7 +27,8 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 | run only those flows on leased devices; exit 1 if a required one fails | `warden e2e [suite] --base main --count N` (`--dry-run` to preview; `--all` every flow; `--flows a,b` exactly those, no diff; suite `include`/`exclude` flow-id globs, `scope` + `unmatched: "run-all"` fail-safe). Suite fields `project` `ports` `env` `serve` `serveReady` `serveTimeout` `app` mirror a batch preset; `setup` runs once per device before its first flow (failing device is dropped; `logs/setup-<worker>.log`). `metro: {}` = warden starts + verifies its own Metro (`WARDEN_METRO_URL`, `WARDEN_PORT`; never another worktree's); `devices: [...]` legs (`--devices all`); `mode: "single"` = one runner for the whole pool; `jobTimeoutMs` kills a hung runner. Never start Metro or export device / port env vars by hand for a suite: run `warden e2e <suite>` |
 | no simulator windows during a run (even with Simulator.app open) | `--headless` on `claim` / `run` / `batch` / `e2e` / `dev`, or `headless: true` on the suite / preset / config top level, or `WARDEN_HEADLESS=1` (not `dev`). Closes only this run's sims' windows (never launches Simulator.app); `--no-headless` overrides. Android is always headless |
 | fewer background daemons on a booted sim (RAM/CPU with many sims) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` (e2e suite: `"slim": true`) |
-| agent-device runners up before the first flow (iOS) | e2e suite `warmRunners` (default on): all devices' runners start in parallel after setup; the runner must name its agent-device session `$WARDEN_AGENT_SESSION` (engine appends `-<slot>`); log `logs/warm-<worker>.log`; `warmRunners: false` = off |
+| iOS driver helpers up before the first flow | e2e suite `warmDrivers` (default on; `--no-warm` skips): every leased device's `warden-simd` helper starts in parallel after setup and takes one snapshot; jobs get `WARDEN_SIMD_SOCKET`; log `logs/warm-<worker>.log` |
+| the spec runner: how flows run | `*.e2e.ts` specs from `@delacour/warden-e2e` (`bun add -d @delacour/warden-e2e`, same version as warden) run by `bun test`; suite `spec: { bundleId, launchArgs, timeout, actionTimeout, assertionTimeout }` (the removed `runner` key fails validation). By hand: `WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=<id> bun test e2e/x.e2e.ts`. Evidence per failed test: `<batchDir>/e2e/<worker>-<seq>/<flow>/<test>/{failure.png,screen-at-failure.txt,trace.jsonl}`; verdicts in `e2e-report.json` `tests[]` |
 | a device is misbehaving: release and keep it out of the pool | `warden release <leaseId> --bad [reason]` (clear: `warden sim unquarantine <udid>`); claims also probe iOS sims and quarantine hung ones |
 | a free port | `warden port claim --json` |
 | dev build installed on the device | `warden app ensure ios --udid <udid> --json` (`--variant dev\|e2e`) |
@@ -47,9 +48,10 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 
 Leases expire without a heartbeat: ~5 min for a bare agent `warden claim`, 30 min otherwise. Wrappers heartbeat for you.
 
-## agent-device
+## Driving a device
 
-1. `warden claim ios --json` (or `android`) → pass the returned device explicitly on every call: `--platform ios --udid <udid>` (Android: `--serial <serial>`). Never let agent-device pick; with several booted devices it refuses to guess.
+1. `warden claim ios --json` (or `android`) → use the returned device explicitly on every call (udid for iOS, serial for Android). Never let a tool pick one; with several booted devices it can touch someone else's.
 2. Short check: do it within the ~5 min of the bare claim, or `warden heartbeat <leaseId>` while you work.
 3. Longer exploration: run `warden dev ios --json [--profile X]` in the background (or `--udid <udid>` for a device you already claimed). It claims the device, holds it and a Metro port, starts a Metro verified to serve this checkout and opens the dev client; its first stdout line is `{ udid, port, metroUrl, leaseIds }`. Target that udid, and stop it (Ctrl-C / SIGTERM) to release what it leased.
-4. Subagents: release with `warden release <leaseId>` or `--mine --label <x>`, never bare `--mine`.
+4. Poking at the screen yourself (snapshot, tap, type) is `warden ui`; its docs are guides/agent-ui (coming). For repeatable checks write a spec instead (row above).
+5. Subagents: release with `warden release <leaseId>` or `--mine --label <x>`, never bare `--mine`.

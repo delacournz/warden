@@ -4,6 +4,7 @@
 		"agents",
 		"run-e2e",
 		"headless",
+		"specs",
 		"e2e",
 		"affected-e2e",
 		"ports",

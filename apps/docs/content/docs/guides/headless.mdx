@@ -13,8 +13,8 @@ A headless run shows no simulator window, even with Simulator.app open, and neve
 ## How headless e2e works
 
 1. **Boot.** warden boots iOS simulators with `xcrun simctl boot <udid>` + `bootstatus -b`. Simulator.app is only a *viewer*: the simulated iOS (launchd_sim, SpringBoard, your app) runs inside CoreSimulator whether or not a window exists. warden never launches Simulator.app. Android emulators start with `emulator -no-window -read-only`, so they are always headless.
-2. **Render.** The app draws into the device's own framebuffer. `simctl io screenshot` and agent-device snapshots read that, so screenshots and failure evidence need no window.
-3. **Drive.** `warden e2e` starts the runner (`bunx e2e run …`, tester.army), which uses agent-device. agent-device installs an XCTest runner on the sim and injects touches through XCTest, reading the accessibility tree. Links and installs go through `simctl`. Nothing touches a window.
+2. **Render.** The app draws into the device's own framebuffer. `simctl io screenshot` and the driver's accessibility snapshots read that, so screenshots and failure evidence need no window.
+3. **Drive.** `warden e2e` runs the specs with `bun test` and `@delacour/warden-e2e`, whose iOS driver talks to `warden-simd` ([iOS driver helper](/docs/reference/e2e-driver)). The helper sends touches and keys to the simulator through CoreSimulator and reads the accessibility tree through a guest that runs inside it, so no Simulator.app window is needed and there is no runner app to install on the sim. Links and installs go through `simctl`. Nothing touches a window.
 4. **Where windows come from.** If Simulator.app is already open, it attaches a window to every booted device, warden's included. Without `--headless`, every iOS claim then tiles those windows (`warden arrange`, off with `WARDEN_ARRANGE=0`). A reused sim that you already had open keeps its window.
 5. **Watching a run.** `open -a Simulator` attaches windows to the booted sims without touching leases. ⌘W closes a window. Quitting Simulator.app does not always keep the devices booted.
 
@@ -26,7 +26,7 @@ A headless run shows no simulator window, even with Simulator.app open, and neve
 - If a device still shuts down, warden waits for it to finish shutting down, boots it again without a window (`simctl boot` + `bootstatus -b`), closes any window Simulator.app reattached, and prints a warning.
 - Simulator.app is never launched. When it isn't running, there is nothing to do.
 - Headless never fails a run. A missing Accessibility permission or an osascript error is a yellow warning.
-- Serve, setup and runners get `WARDEN_HEADLESS=1`, so your own tools can honour it. On a run that isn't headless, `WARDEN_HEADLESS` is removed from their env.
+- Serve, setup and spec processes get `WARDEN_HEADLESS=1`, so your own tools can honour it. On a run that isn't headless, `WARDEN_HEADLESS` is removed from their env.
 - `e2e-report.json` and `batch.json` record `"headless": true | false`.
 - Android: no change, because emulators already run with `-no-window`.
 

@@ -34,3 +34,34 @@ icon: Variable
 | `WARDEN_PORT_<i>` | the i-th `--port` lease |
 | `WARDEN_APP_PATH`, `WARDEN_APP_HASH` | with `--app`: installed build + fingerprint |
 | `WARDEN_HEADLESS` | `1` when the run is headless (also for `batch` / `e2e` serve, setup and jobs, and `dev`'s Metro); removed otherwise |
+
+## Set for batch jobs
+
+`warden batch` and `warden e2e` add these to every job, on top of the `warden run` variables above (details in [e2e scripts](/docs/guides/e2e)):
+
+| Variable | Value |
+|---|---|
+| `WARDEN_UDID` | this job's device |
+| `WARDEN_WORKER`, `WARDEN_JOB`, `WARDEN_JOB_SEQ`, `WARDEN_PASS`, `WARDEN_BATCH_DIR`, `WARDEN_PORT` | worker index, job, run count on the worker, consecutive-pass index, batch directory, first leased port |
+| `WARDEN_LOG_TIMESTAMPS` | `1`: warden stamps every log line with its arrival time, so the job prints no clock of its own |
+
+## Set for spec processes
+
+`warden e2e` starts each run of `*.e2e.ts` specs as `bun test` with these set. Setting `WARDEN_UDID` yourself runs a spec by hand ([Write e2e specs](/docs/guides/specs#run-a-spec-by-hand)); without it the `@delacour/warden-e2e` preload does nothing.
+
+| Variable | Value |
+|---|---|
+| `WARDEN_UDID` | the device (iOS udid or Android serial). Required for a by-hand run |
+| `WARDEN_PLATFORM` | `ios` (default) or `android` |
+| `WARDEN_BUNDLE_ID` | the app under test: `spec.bundleId`, else the project's. Required for a by-hand run |
+| `WARDEN_APP_PATH` | the installed build, for `app.reinstall()` |
+| `WARDEN_METRO_URL` | warden's Metro, for a dev client |
+| `WARDEN_LAUNCH_ARGS` | JSON array of the launch arguments `app.open()` passes: `--initialUrl <metro url>`, `metro.launchArgs`, `spec.launchArgs` |
+| `WARDEN_E2E_OUT` | where `results.jsonl` and the per-test artifacts go: `<batchDir>/e2e/<worker>-<seq>` |
+| `WARDEN_E2E_TIMEOUT`, `WARDEN_E2E_ACTION_TIMEOUT`, `WARDEN_E2E_ASSERTION_TIMEOUT` | the `spec` timeouts in milliseconds (defaults 120000, 30000, 5000) |
+| `WARDEN_E2E_FLOWS_DIR` | the suite's `flowsDir`, used to name each spec's flow id |
+| `WARDEN_SIMD_SOCKET` | the pre-warmed iOS helper's socket (`warmDrivers`); unset, the driver starts a helper itself |
+| `WARDEN_SIMD`, `WARDEN_HELPER_DIR` | where the `warden-simd` binary is ([iOS driver helper](/docs/reference/e2e-driver)); `warden e2e` sets `WARDEN_HELPER_DIR` |
+| `WARDEN_HEADLESS` | `1` on a headless run |
+| `WARDEN_E2E_DEBUG` | `1`: log every helper operation and `simctl` call with its duration to stderr. Set it yourself |
+| `WARDEN_BUN` | read by `warden e2e`: the `bun` to run specs with (default: `bun` on `PATH`) |

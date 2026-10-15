@@ -11,7 +11,7 @@ warden affected mobile --base origin/main --explain   # what would run, and why
 warden e2e mobile --base origin/main --count 2        # run it: exit 0 = every required flow passed
 ```
 
-Flows stay in your flow runner's own files — YAML flows, or `*.e2e.ts` tests (e.g. [tester.army e2e](https://e2e.tester.army/docs/mobile)) whose relative imports count as fragments; warden only picks them, leases devices, runs your `runner` command once per flow, and reports.
+Flows stay in your repo's own `*.e2e.ts` files, written with [`@delacour/warden-e2e`](/docs/guides/specs), and the relative imports of a flow count as fragments; warden picks them, leases devices, runs them with `bun test` and reports.
 
 ## How flows are picked
 
@@ -52,7 +52,7 @@ export default defineConfig({
   e2e: {
     mobile: {
       flowsDir: "flows",
-      runner: ["<flow-runner>", "run", "{flowPath}", "--device", "{udid}"],
+      spec: { bundleId: "com.example.mobile" },
       platform: "ios",
       tsconfig: "apps/mobile/tsconfig.json",
       routerRoot: "apps/mobile/src/app",
@@ -75,12 +75,12 @@ A flow's id is its path under `flowsDir` without the extension. Keys in `flows` 
 
 ## Running and gating
 
-`warden e2e` is [`warden batch`](/docs/guides/e2e#batches-one-job-per-device) with the job list coming from the selection. Every batch and claim flag works (`--count`, `--serve`, `--serve-ready`, `--app`, `--record` …); the suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` fill in anything you don't pass, and `project` (a `projects[].name`) sets where the runner and serve run and which app is installed — the same semantics as a [batch preset](/docs/guides/e2e#saving-a-batch-as-a-preset).
+`warden e2e` is [`warden batch`](/docs/guides/e2e#batches-one-job-per-device) with the job list coming from the selection. Every batch and claim flag works (`--count`, `--serve`, `--serve-ready`, `--app`, `--record` …); the suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` fill in anything you don't pass, and `project` (a `projects[].name`) sets where the specs and serve run and which app is installed — the same semantics as a [batch preset](/docs/guides/e2e#saving-a-batch-as-a-preset).
 
-- Each flow runs as `runner` with `{flow}` (id), `{flowPath}` (absolute file), `{udid}`, `{worker}` and `{seq}` substituted, in the config file's directory.
+- Each flow runs as one `bun test` process (`mode: "per-flow"`, the default) on its device, in the suite's `project` root, with `WARDEN_UDID`, `WARDEN_BUNDLE_ID` and the rest of the [spec environment](/docs/reference/environment#set-for-spec-processes). `mode: "single"` runs one process per device over its share of the flows.
 - `passes: 2` makes a flow pass only after two consecutive green runs on the same device (`WARDEN_PASS` = 0, 1), which catches flows that only pass from a lucky start state.
 - `required: false` flows are reported but never fail the gate. `--required-only` runs just the required ones.
-- `e2e-report.json` (in the batch dir, and at `--report <file>`) lists every flow with its reasons, attempts and verdict, plus a `screenshot` (png of the device) for a flow whose last attempt failed. `--json` prints it.
+- `e2e-report.json` (in the batch dir, and at `--report <file>`) lists every flow with its reasons, attempts and verdict, a `tests[]` entry per test (status, duration, error, artifact directory, from the spec's `results.jsonl`), plus a `screenshot` (png of the device) for a flow whose last attempt failed. `--json` prints it.
 - Leases are released when the run ends. Once the gate passes, the sims / emulators warden created (or booted for the run) are shut down too; a failed run leaves them booted so you can inspect them (`warden release --mine --shutdown` when done). `--no-shutdown` keeps them up after a pass.
 - Nothing affected → exit 0 without claiming a device. `--dry-run` selects and explains, then stops.
 

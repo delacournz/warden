@@ -1,0 +1,183 @@
+---
+title: Write e2e specs
+description: The @delacour/warden-e2e spec API - test, describe and hooks, screen queries, locator actions and reads, the nine matchers, app and device, failure artifacts and running a spec by hand.
+icon: FlaskConical
+---
+
+`@delacour/warden-e2e` is warden's own mobile test runner. A flow is a `*.e2e.ts` file run by `bun test`; [`warden e2e`](/docs/guides/run-e2e) leases the simulators, installs the build, starts Metro and runs the specs against them. The package drives iOS simulators and Android emulators directly (see [iOS driver helper](/docs/reference/e2e-driver)), so there is no daemon and no other test runner to install.
+
+```bash
+bun add -d @delacour/warden-e2e
+```
+
+<Callout type="warn">
+`@delacour/warden-e2e` is versioned in lock-step with `@delacour/warden`: install the same version of both, and update them together (`warden update`, then bump the dev dependency).
+</Callout>
+
+## A spec
+
+```ts title="e2e/todos.e2e.ts"
+import { expect, test } from "@delacour/warden-e2e";
+
+test("add a todo", async ({ device, screen }) => {
+  await screen.getByTestId("todo-input").fill("Write e2e flows");
+  await screen.getByTestId("todo-add").tap();
+  await expect(screen.getByTestId("todos-remaining")).toHaveText("2 left");
+});
+```
+
+`test(title, options?, body)` receives four fixtures: `app`, `device`, `screen` and `platform` (`"ios" | "android"`). Before every test the runner opens the app fresh (`app.open()`), so a test starts on the app's first screen. Everything a fixture does honours the test's deadline: when it passes, the running driver call is aborted and the test fails with a timeout.
+
+| Option | Effect |
+|---|---|
+| `timeout` | ms for the whole test, hooks included (default 2 min, `spec.timeout`) |
+| `skip`, `only` | skip the test, or run only this one. A leftover `only` fails the run under `CI` |
+| `platforms` | run only on these platforms, e.g. `["ios"]` |
+| `retry` | extra attempts after a failure; only the last attempt is reported |
+
+`test.skip`, `test.only`, `test.skipIf(condition)` and `test.todo(title)` work as in `bun:test`.
+
+### describe, hooks and settings
+
+```ts title="e2e/settings.e2e.ts"
+import { beforeEach, describe, expect, test } from "@delacour/warden-e2e";
+
+describe("settings", () => {
+  test.use({ assertionTimeout: 10_000 });
+
+  beforeEach(async ({ screen }) => {
+    await screen.getByTestId("tab-settings").tap();
+  });
+
+  test("shows the account", async ({ screen }) => {
+    await expect(screen.getByTestId("settings-email")).toHaveText("ada@example.com");
+  });
+});
+```
+
+- `describe(title, body)` groups tests; the group title is part of every test title.
+- `beforeEach` / `afterEach` hooks receive the same fixtures as a test. `beforeAll` / `afterAll` run once per file or `describe` and receive the base fixtures (`app`, `device`, `screen`, `platform`) but not the ones added by `test.extend`.
+- `test.use({ timeout, actionTimeout, assertionTimeout, launch })` applies to every test in the current file or `describe`. `launch: "none"` skips the fresh `app.open()` before each test.
+- `actionTimeout` (default 30 s) bounds each tap, fill and wait for an element; `assertionTimeout` (default 5 s) bounds each `expect(locator)`.
+
+### Your own fixtures
+
+`test.extend` adds fixtures. A fixture sets up, calls `use(value)` and cleans up afterwards, even when the test failed:
+
+```ts title="e2e/helpers/test.ts"
+import { test as base } from "@delacour/warden-e2e";
+
+export const test = base.extend<{ email: string }>({
+  email: async (_fixtures, use) => {
+    await use(`user-${Date.now()}@example.com`);
+  },
+});
+```
+
+## screen: queries
+
+`screen.getBy…` returns a lazy `Locator`. Nothing is read until you act on it or assert on it, so a locator can be created before the element exists.
+
+| Query | Matches |
+|---|---|
+| `getByTestId(id)` | the `testID` of the view |
+| `getByText(text, { exact?, visible? })` | the visible text (innermost match) |
+| `getByLabel(text)` / `getByPlaceholder(text)` / `getByValue(text)` | accessibility label, field placeholder, field value |
+| `getByRole(role, name?, { checked?, disabled?, selected? })` | a role such as `button`, `textbox`, `switch`, with an optional name |
+| `locator("id=sign-in-submit role=button")` | the selector grammar of `warden ui` (guides/agent-ui, coming) |
+
+A string matches the whole text after whitespace is collapsed; `{ exact: false }` makes it a case-insensitive substring; a `RegExp` is tested as written. Refine a locator with `.filter({ hasText, has })`, `.first()`, `.last()` and `.nth(i)`.
+
+Role queries and `visible: true` drop hidden elements. Actions and reads need exactly one match: none gives `LOCATOR_NOT_FOUND`, several give `LOCATOR_AMBIGUOUS` (narrow the query, or use `.first()`).
+
+Whole-screen gestures live on `screen`: `tapAt({ x, y })`, `swipe({ direction })` or `swipe({ from, to })`, and `scrollUntilVisible(locator, { direction?, maxSwipes? })`.
+
+<Callout>
+Specs read the accessibility tree, not the React tree. A `testID` is only exposed when the native view is `accessible`, so mark every view a flow taps or asserts as accessible.
+</Callout>
+
+## locator: actions and reads
+
+Actions wait for the element (up to `actionTimeout`) and then act:
+
+| Action | |
+|---|---|
+| `tap({ position? })`, `longPress({ durationMs? })` | touch the element's centre, or a point inside it |
+| `fill(text)` | replace the field's text, then check the field shows it; retries once. Secure fields skip the check |
+| `type(text)`, `clear()`, `press("Enter")` | keyboard input on the focused field |
+| `swipe({ direction })`, `scrollTo()` | scroll the element, or scroll until it is visible |
+
+Reads never wait; they answer from the screen as it is now:
+
+`text()` · `value()` · `count()` · `all()` · `allTexts()` · `isVisible()` · `isHidden()` · `isEnabled()` · `isChecked()` · `boundingBox()` · `waitFor({ state: "visible" | "hidden" | "attached" | "detached", timeout })`
+
+`text()` falls back to the text of the descendants when iOS leaves a container's own label empty (a `Badge`, a `Chip`), so asserting on the container works.
+
+## expect: the nine matchers
+
+`expect(locator)` polls every 100 ms until the check holds or `assertionTimeout` (default 5 s) runs out. Pass `{ timeout }` to override one check.
+
+| Matcher | Holds when |
+|---|---|
+| `toBeVisible()` / `toBeHidden()` | the element is on screen / absent or off screen |
+| `toHaveText(text, { exact? })` | the text equals `text` (a `RegExp` is tested as written) |
+| `toContainText(text)` | the text contains `text` |
+| `toHaveValue(text)` | the field's value equals `text` |
+| `toBeChecked({ checked? })` | a switch or checkbox is on (`{ checked: false }`: off) |
+| `toHaveCount(n)` | exactly `n` elements match |
+| `toBeEnabled()` / `toBeDisabled()` | the element accepts / refuses input |
+
+`.not` inverts any matcher: `await expect(row).not.toBeVisible()`. `expect.soft(locator)` records a failure and carries on; the test fails at the end if any soft check failed. For anything that is not a locator, `expect` is bun's own `expect`.
+
+## app and device
+
+`app` is the app under test (`spec.bundleId`):
+
+`open({ url?, args?, env? })` · `close()` · `restart()` · `reinstall()` · `clearData()` · `isRunning()`
+
+`open` terminates a running instance and launches the app with the suite's launch arguments (`--initialUrl <metro url>` for a dev client) plus `args`. `clearData` wipes the app's data and the keychain; `reinstall` installs the build again from `WARDEN_APP_PATH`.
+
+`device` is the simulator or emulator:
+
+| Call | |
+|---|---|
+| `alert("accept" \| "dismiss" \| { button })` | answers the system alert on top; resolves `false` when there is none |
+| `openLink(url, { accept? })` | opens a URL from outside the app; on iOS answers the "Open in …?" sheet |
+| `home()`, `back()` | home button; Android back key |
+| `orientation(set?)`, `appearance(set?)` | read or set the orientation and the light/dark appearance |
+| `clipboard()`, `setClipboard(text)` | the device pasteboard |
+| `hideKeyboard()` | dismiss the soft keyboard when it shows |
+| `screenshot(name)` | saves `screenshots/NNN-name.png` in the test's artifact directory |
+| `snapshot({ interactiveOnly? })` | the accessibility tree as text, the text format `warden ui snapshot` prints |
+| `settle({ quietMs?, timeout? })` | waits for a quiet UI |
+| `devtools` | dev client only: `evaluate(expr)`, `reloadJs()` |
+
+## Failure artifacts
+
+When a test fails, the runner writes its evidence next to the results:
+
+```text
+<out>/<flow>/<test-title>-<hash>/
+  failure.png            the device at the moment of failure
+  screen-at-failure.txt  the full accessibility tree, with testIDs, labels and values
+  trace.jsonl            every step, with timings
+  console.jsonl          dev client: JS console
+  network.jsonl          dev client: network requests
+  screenshots/           device.screenshot() images
+```
+
+Read `screen-at-failure.txt` first: a query that found nothing is almost always an element that is missing or not `accessible` there. Under `warden e2e`, `<out>` is `<batchDir>/e2e/<worker>-<seq>/` and every test also appends one line to `results.jsonl` there; see [Run e2e](/docs/guides/run-e2e#where-to-look-when-it-fails).
+
+## Run a spec by hand
+
+Under `warden e2e` the environment is set for you. By hand, install the build on a simulator you have claimed, then point the spec at it:
+
+```bash
+warden claim ios --json                                     # -> udid
+WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=com.example.app \
+  bun test e2e/todos.e2e.ts
+```
+
+`WARDEN_UDID` switches the runner on: without it the preload does nothing. Add `WARDEN_PLATFORM=android` for an emulator, `WARDEN_METRO_URL` or `WARDEN_LAUNCH_ARGS` (a JSON array) for a dev client, and `WARDEN_E2E_DEBUG=1` to log every helper call with its duration. The full list is in [environment variables](/docs/reference/environment#set-for-spec-processes). Release the device with `warden release <leaseId>` when you are done.
+
+Add `preload = ["@delacour/warden-e2e/preload"]` under `[test]` in `bunfig.toml` to run specs with a plain `bun test` in the project; `warden e2e` passes the preload itself.
