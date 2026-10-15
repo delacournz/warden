@@ -11,6 +11,7 @@ import {
 	setDefaultDriverFactory,
 	setDefaultFixtureFactory,
 } from "./session";
+import { WARDEN_E2E_VERSION, WORKSPACE_VERSION } from "./version";
 
 export { BUN_TIMEOUT_MARGIN_MS };
 
@@ -19,11 +20,23 @@ export type PreloadDeps = {
 	setDefaultTimeout: (ms: number) => void;
 	afterAll: (fn: () => Promise<void>) => void;
 	createSession: typeof getSession;
+	/** this package's version (`WARDEN_E2E_VERSION`) */
+	version: string;
 	/** whether a `test.only` was collected */
 	onlySeen: () => boolean;
 	stderr: (text: string) => void;
 	exit: (code: number) => void;
 };
+
+/**
+ * The protocol handshake: `warden e2e` and this package version in lock-step. A mismatch is a warning, not an
+ * error (most pairs still work), but the install fix is spelled out. Nothing to compare without `WARDEN_VERSION`
+ * (a by-hand run) or from the workspace sources (not a published build).
+ */
+export function versionMismatch(wardenVersion: string | undefined, e2eVersion: string): string | undefined {
+	if (wardenVersion === undefined || wardenVersion === e2eVersion || e2eVersion === WORKSPACE_VERSION) return undefined;
+	return `warden e2e: @delacour/warden-e2e ${e2eVersion} does not match warden ${wardenVersion}; install the matching version: bun add -d @delacour/warden-e2e@${wardenVersion}`;
+}
 
 /** `CI=1`, `CI=true`, … — anything but empty, `0` and `false`. */
 export function isCi(env: Readonly<Record<string, string | undefined>>): boolean {
@@ -44,6 +57,8 @@ export function installPreload(deps: PreloadDeps): void {
 		return;
 	}
 	if (read.data === undefined) return;
+	const warning = versionMismatch(read.data.wardenVersion, deps.version);
+	if (warning !== undefined) deps.stderr(`${warning}\n`);
 	deps.setDefaultTimeout(read.data.timeoutMs + BUN_TIMEOUT_MARGIN_MS);
 	const session = deps.createSession({ env: read.data });
 	deps.afterAll(async () => {
@@ -61,6 +76,7 @@ installPreload({
 	setDefaultTimeout,
 	afterAll,
 	createSession: getSession,
+	version: WARDEN_E2E_VERSION,
 	onlySeen: onlyWasSeen,
 	stderr: (text) => {
 		process.stderr.write(text);

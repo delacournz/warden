@@ -100,6 +100,7 @@ describe("specEnv", () => {
 				timeouts: { timeoutMs: 120_000, actionTimeoutMs: 30_000, assertionTimeoutMs: 5_000 },
 				flowsDir: "/repo/flows",
 				helperDir: "/bin",
+				version: "0.3.0",
 			})
 		).toEqual({
 			WARDEN_PLATFORM: "ios",
@@ -111,6 +112,7 @@ describe("specEnv", () => {
 			WARDEN_E2E_ASSERTION_TIMEOUT: "5000",
 			WARDEN_E2E_FLOWS_DIR: "/repo/flows",
 			WARDEN_HELPER_DIR: "/bin",
+			WARDEN_VERSION: "0.3.0",
 		});
 	});
 });
