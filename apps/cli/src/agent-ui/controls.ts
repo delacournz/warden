@@ -92,7 +92,7 @@ export function uiAlert(ctx: CommandContext, deps: UiDeps, what: string, opts: A
 			const alert = info.data ? { title: info.data.title ?? null, message: info.data.message ?? null, buttons } : null;
 			return ok({
 				device: { udid: device.udid, platform: device.platform, name: device.name },
-				result: { action: "alert", alert },
+				result: { action: "alert", present: alert !== null, alert, buttons },
 				text:
 					alert === null
 						? "no alert showing"
@@ -108,7 +108,9 @@ export function uiAlert(ctx: CommandContext, deps: UiDeps, what: string, opts: A
 		if (!handled.data) {
 			return {
 				success: false,
-				error: uiError("target_not_found", "no alert is showing", { hint: "`warden ui alert get` reads it" }),
+				error: uiError("no_alert", `no alert is showing to ${what}`, {
+					hint: "`warden ui alert get` reads it (an empty buttons list means none)",
+				}),
 			};
 		}
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {

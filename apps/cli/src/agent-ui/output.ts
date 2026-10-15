@@ -18,6 +18,7 @@ export const UI_ERROR_EXIT = {
 	wait_text_absent: UI_EXIT.failed,
 	wait_not_stable: UI_EXIT.failed,
 	target_not_found: UI_EXIT.failed,
+	no_alert: UI_EXIT.failed,
 	device_foreign: UI_EXIT.lease,
 	device_not_leased: UI_EXIT.lease,
 	no_device_leased: UI_EXIT.lease,

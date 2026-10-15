@@ -10,7 +10,7 @@ import type { CommandContext } from "../context";
 import { diffSnapshots, renderDiff, type SnapshotDiff } from "./diff";
 import { driverUiError, type UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
-import { bumpGeneration, preorder, readLastSnapshot, writeLastSnapshot } from "./state";
+import { commitGeneration, preorder, readLastSnapshot, writeLastSnapshot } from "./state";
 
 /** Lines printed by a plain `snapshot` before `… N more (use --all)`. */
 export const DEFAULT_MAX_LINES = 200;
@@ -141,10 +141,8 @@ export async function takeSnapshot(
 	const fetched = await fetchSnapshot(ctx, deps, driver, request.settle);
 	if (!fetched.success) return fetched;
 	const { snapshot } = fetched.data;
-	const generation = bumpGeneration(ctx, udid);
-	const refs = assignRefs(snapshot, generation);
+	const { generation, refs } = storeSnapshot(ctx, udid, snapshot);
 	const hash = snapshotHash(snapshot);
-	writeLastSnapshot(ctx, udid, { generation, takenAt: ctx.now(), hash, snapshot });
 
 	const view = request.depth === undefined ? snapshot : pruneDepth(snapshot, request.depth);
 	const rendered = renderSnapshot(view, {
@@ -217,9 +215,7 @@ export async function findElements(
 	const taken = await driver.snapshot();
 	if (!taken.success) return { success: false, error: driverUiError(taken.error) };
 	const snapshot = taken.data;
-	const generation = bumpGeneration(ctx, udid);
-	const refs = assignRefs(snapshot, generation);
-	writeLastSnapshot(ctx, udid, { generation, takenAt: ctx.now(), hash: snapshotHash(snapshot), snapshot });
+	const { generation, refs } = storeSnapshot(ctx, udid, snapshot);
 	const matches = resolve(selectorToQuery(selector), indexSnapshot(snapshot));
 	return ok({
 		generation,
@@ -233,14 +229,19 @@ export async function findElements(
 	});
 }
 
-/** Store a snapshot as the device's next generation (what `wait` and `scroll --until` do for the screen they matched). */
+/**
+ * Store a snapshot as the device's next generation (every snapshot, `find`, and the screen `wait` and `scroll --until`
+ * matched). The generation is taken and the file written in one store transaction, so concurrent processes cannot
+ * leave an older generation in `last-snapshot.json`.
+ */
 export function storeSnapshot(
-	ctx: Pick<CommandContext, "env" | "now">,
+	ctx: Pick<CommandContext, "env" | "now" | "store">,
 	udid: string,
 	snapshot: Snapshot
 ): { generation: number; refs: RefTable } {
-	const generation = bumpGeneration(ctx, udid);
-	const refs = assignRefs(snapshot, generation);
-	writeLastSnapshot(ctx, udid, { generation, takenAt: ctx.now(), hash: snapshotHash(snapshot), snapshot });
-	return { generation, refs };
+	return commitGeneration(ctx, udid, (generation) => {
+		const refs = assignRefs(snapshot, generation);
+		writeLastSnapshot(ctx, udid, { generation, takenAt: ctx.now(), hash: snapshotHash(snapshot), snapshot });
+		return { generation, refs };
+	});
 }

@@ -2,9 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openStore, type Store } from "@delacour/warden-core/store";
 import { el, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import {
-	bumpGeneration,
+	commitGeneration,
 	readDumpRoute,
 	readLastSnapshot,
 	readState,
@@ -15,14 +16,23 @@ import {
 } from "./state";
 
 let home: string | undefined;
+const stores: Store[] = [];
 afterEach(() => {
+	for (const store of stores.splice(0)) store.close();
 	if (home) rmSync(home, { recursive: true, force: true });
 	home = undefined;
 });
 
+/** Another process's view of the same `WARDEN_HOME`: its own store connection. */
+function connect(dir: string) {
+	const store = openStore(join(dir, "warden.db"));
+	stores.push(store);
+	return { env: { WARDEN_HOME: dir }, now: () => 42, store: () => store };
+}
+
 function setup() {
 	home = mkdtempSync(join(tmpdir(), "warden-ui-state-"));
-	return { env: { WARDEN_HOME: home }, now: () => 42 };
+	return connect(home);
 }
 
 describe("ui state", () => {
@@ -33,11 +43,48 @@ describe("ui state", () => {
 		expect(readLastSnapshot(ctx, "U1")).toBeUndefined();
 	});
 
-	test("bumpGeneration persists and keeps the other fields", () => {
+	test("commitGeneration counts per device in the store, seeded by an older state.json", () => {
 		const ctx = setup();
 		writeState(ctx, "U1", { generation: 3, metroUrl: "http://localhost:8081", updatedAt: 0 });
-		expect(bumpGeneration(ctx, "U1")).toBe(4);
-		expect(readState(ctx, "U1")).toEqual({ generation: 4, metroUrl: "http://localhost:8081", updatedAt: 42 });
+		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(4);
+		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(5);
+		expect(commitGeneration(ctx, "U2", (generation) => generation)).toBe(1);
+		expect(readState(ctx, "U1")).toEqual({ generation: 5, metroUrl: "http://localhost:8081", updatedAt: 42 });
+	});
+
+	test("a failing write does not spend the generation", () => {
+		const ctx = setup();
+		expect(() =>
+			commitGeneration(ctx, "U1", () => {
+				throw new Error("disk full");
+			})
+		).toThrow("disk full");
+		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(1);
+	});
+
+	test("two processes taking generations on one WARDEN_HOME never share one, and the stored snapshot is the newest", async () => {
+		const ctx = setup();
+		const worker = join(import.meta.dir, "state.worker.testing.ts");
+		const workers = Array.from({ length: 4 }, () =>
+			Bun.spawn([process.execPath, worker, home ?? "", "U1", "25"], { stdout: "pipe", stderr: "inherit" })
+		);
+		const taken: number[] = [];
+		for (const child of workers) {
+			expect(await child.exited).toBe(0);
+			taken.push(...(JSON.parse(await new Response(child.stdout).text()) as number[]));
+		}
+		expect([...taken].sort((a, b) => a - b)).toEqual(Array.from({ length: 100 }, (_, n) => n + 1));
+		expect(readLastSnapshot(ctx, "U1")?.generation).toBe(100);
+		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(101);
+	});
+
+	test("concurrent connections in one process also stay in step", () => {
+		const first = setup();
+		const second = connect(home ?? "");
+		const seen = [1, 2, 3, 4].map((n) =>
+			commitGeneration(n % 2 === 0 ? first : second, "U1", (generation) => generation)
+		);
+		expect(seen).toEqual([1, 2, 3, 4]);
 	});
 
 	test("last-snapshot round-trips with `flat` rebuilt from the tree; writes leave no temp files", () => {
