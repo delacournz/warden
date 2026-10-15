@@ -2,11 +2,12 @@ import { describeOwner } from "@delacour/warden-core/types";
 import { ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
+import type { UiDeps } from "./driver";
 import { runUi, type UiOptionValues } from "./run";
 
 /** `warden ui status`: the device, the caller's lease on it, and (placeholders until later issues) helper + recording. */
-export function uiStatus(ctx: CommandContext, opts: UiOptionValues): Promise<number> {
-	return runUi(ctx, "status", opts, async (device: UiDevice) => {
+export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues): Promise<number> {
+	return runUi(ctx, deps, "status", opts, async (device: UiDevice) => {
 		const { lease } = device;
 		const result = {
 			lease: {
