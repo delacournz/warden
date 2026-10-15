@@ -75,6 +75,20 @@ describe("openIosDriver", () => {
 		expect(driver.capabilities).toMatchObject({ nativeSettle: true, unicodeText: true, alerts: true });
 	});
 
+	test("opening costs no xcrun call once the sim's plist has AutomationEnabled", async () => {
+		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" }, [
+			["plutil -extract AutomationEnabled", { stdout: "true\n" }],
+		]);
+		expect(joined(calls).filter((line) => line.startsWith("xcrun"))).toEqual([]);
+	});
+
+	test("opening writes AutomationEnabled once when the plist lacks it", async () => {
+		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" }, [
+			["plutil -extract AutomationEnabled", { exitCode: 1, stderr: "no such key" }],
+		]);
+		expect(joined(calls).filter((line) => line.includes("defaults write"))).toHaveLength(1);
+	});
+
 	test("an AutomationEnabled failure is logged, not fatal", async () => {
 		const calls: ExecCall[] = [];
 		const helper = fakeSimd(() => ({ data: null }));

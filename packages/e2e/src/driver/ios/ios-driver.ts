@@ -59,6 +59,8 @@ export type OpenIosDriverOptions = {
 	defaultTimeoutMs?: number;
 	/** log each helper op and simctl call with its duration (`WARDEN_E2E_DEBUG=1`) */
 	debug?: boolean;
+	/** CoreSimulator devices directory for the host-side `AutomationEnabled` check (default `~/Library/Developer/CoreSimulator/Devices`) */
+	devicesRoot?: string;
 };
 
 const DEFAULT_QUIET_MS = 250;
@@ -447,7 +449,7 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 	const log: Logger = o.log ?? (() => undefined);
 	const now = o.now ?? Date.now;
 	const exec = o.debug ? timedExec(o.exec, log, now) : o.exec;
-	const simctl = createSimctl({ udid: o.udid, exec });
+	const simctl = createSimctl({ udid: o.udid, exec, ...(o.devicesRoot ? { devicesRoot: o.devicesRoot } : {}) });
 	const [client, automation] = await Promise.all([connect(o, log), simctl.enableAutomation()]);
 	if (!automation.success) log(`[ios] could not enable AX automation: ${automation.error.message}`);
 	if (!client.success) return client;
