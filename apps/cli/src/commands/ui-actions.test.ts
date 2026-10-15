@@ -1,104 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
-import {
-	type DriverCall,
-	type ElementSpec,
-	el,
-	type FakeDriver,
-	type FakeOverride,
-	failWith,
-	fakeDriver,
-	snapshotOf,
-} from "@delacour/warden-e2e/driver/driver.testing";
+import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
-import { ok } from "@delacour/warden-types/result";
+import { KEY_PACE_MS } from "../agent-ui/actions";
 import type { UiDeps } from "../agent-ui/driver";
-import type { RecordStep } from "../agent-ui/record";
 import { readState } from "../agent-ui/state";
 import type { VideoSpec } from "../agent-ui/video";
-import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
-import { createUiCommand } from "./ui";
+import { cleanupHarnesses, doc, harness, LOGIN, UDID } from "./ui.testing";
 
-let ctx: TestContext | undefined;
-afterEach(() => ctx?.cleanup());
-
-const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
-
-const LOGIN: ElementSpec[] = [
-	el("window", {
-		children: [
-			el("text", { label: "Welcome" }),
-			el("textfield", { label: "Email", id: "email", value: "a@b.co" }),
-			el("button", { label: "Sign in", id: "sign-in-submit", hittable: true }),
-			el("image", { label: "logo" }),
-		],
-	}),
-];
-
-type Harness = {
-	c: TestContext;
-	clock: { t: number };
-	driver: FakeDriver;
-	steps: RecordStep[];
-	run: (...argv: string[]) => Promise<number>;
-};
-
-type HarnessOptions = {
-	onCall?: (call: DriverCall, driver: FakeDriver) => FakeOverride | undefined;
-	video?: UiDeps["video"];
-};
-
-/** A leased device, a fake clock that `sleep` advances, a fake driver over `screens`, and a recording sink. */
-function harness(screens: Snapshot[] | (() => Snapshot), options: HarnessOptions = {}): Harness {
-	const clock = { t: 1_000_000 };
-	const steps: RecordStep[] = [];
-	const driver: FakeDriver = fakeDriver({
-		screens,
-		onCall: (call) => options.onCall?.(call, driver),
-	});
-	const deps: UiDeps = {
-		driver: async () => ok(driver),
-		sleep: async (ms) => {
-			clock.t += ms;
-		},
-		record: {
-			append: async (_udid, step) => {
-				steps.push(step);
-			},
-		},
-		...(options.video ? { video: options.video } : {}),
-	};
-	const c = testContext([], { now: () => clock.t });
-	ctx = c;
-	c.env = { ...c.env, ...OWNER_ENV };
-	c.db.insertLease(
-		{
-			resource: { kind: "device", platform: "ios", id: UDID, name: "sim" },
-			owner: { kind: "agent", sessionId: "me", cwd: "/w" },
-			ttlMs: 10 * 60 * 60_000,
-		},
-		clock.t
-	);
-	const command = createUiCommand(deps);
-	return {
-		c,
-		clock,
-		driver,
-		steps,
-		run: (...argv) => {
-			c.argv = [...argv, "--udid", UDID];
-			c.stdout.length = 0;
-			c.stderr.length = 0;
-			return command.run(c);
-		},
-	};
-}
-
-const doc = (c: TestContext) => {
-	expect(c.stdout).toHaveLength(1);
-	return JSON.parse(c.stdout[0] ?? "");
-};
+afterEach(cleanupHarnesses);
 
 /** SIGN-IN is the third row of LOGIN: frame (0,150 390×44), centre (195,172). */
 const SIGN_IN = { x: 195, y: 172 };
@@ -243,19 +153,27 @@ function typingScreen(value: string): Snapshot {
 
 describe("fill", () => {
 	test("focuses at the caret, backspaces the old text, types, and confirms by reading back", async () => {
+		let typed = "";
 		const h = harness([typingScreen("a@b.co")], {
 			onCall: (call, driver) => {
-				if (call.method === "typeText") driver.set(typingScreen(call.text));
+				if (call.method === "typeText") {
+					typed += call.text;
+					driver.set(typingScreen(typed));
+				}
 				return undefined;
 			},
 		});
 		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
-		const methods: string[] = h.driver.calls.map((call) => call.method).filter((m) => m !== "snapshot");
+		const methods: string[] = h.driver.calls
+			.map((call) => call.method)
+			.filter((m) => m !== "snapshot" && m !== "elementAtPoint");
 		const backspaces: string[] = Array.from({ length: 7 }, () => "key");
-		expect(methods).toEqual(["tap", ...backspaces, "typeText", "close"]);
+		const characters: string[] = Array.from({ length: 8 }, () => "typeText");
+		expect(methods).toEqual(["tap", ...backspaces, ...characters, "close"]);
 		expect(h.driver.callsOf("tap")[0]?.point).toEqual({ x: 351, y: 122 });
 		expect(h.driver.callsOf("key").every((call) => call.key === "Backspace")).toBe(true);
-		expect(h.driver.callsOf("typeText")).toEqual([{ method: "typeText", text: "new@x.co" }]);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual([..."new@x.co"]);
+		expect(h.clock.t - 1_000_000).toBeGreaterThanOrEqual(15 * KEY_PACE_MS);
 		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
@@ -266,7 +184,7 @@ describe("fill", () => {
 		const out = doc(h.c);
 		expect(out.error.code).toBe("failed");
 		expect(out.error.message).toBe('fill did not take: expected "new" but the field holds "old"');
-		expect(h.driver.callsOf("typeText")).toHaveLength(2);
+		expect(h.driver.callsOf("typeText")).toHaveLength(6);
 	});
 
 	test("--secure: no read-back, reported as unconfirmed, the text is neither echoed nor recorded", async () => {
@@ -274,7 +192,12 @@ describe("fill", () => {
 		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure")).toBe(0);
 		expect(h.c.stdout.join("\n")).toContain("(unconfirmed)");
 		expect(h.c.stdout.join("\n")).not.toContain("hunter2");
-		expect(h.driver.callsOf("typeText")).toEqual([{ method: "typeText", text: "hunter2hunter2" }]);
+		expect(
+			h.driver
+				.callsOf("typeText")
+				.map((call) => call.text)
+				.join("")
+		).toBe("hunter2hunter2");
 		expect(h.steps[0]?.args).toEqual({ secure: true });
 		await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--json");
 		expect(doc(h.c).result).toMatchObject({ verified: "unconfirmed", secure: true, characters: 14 });
@@ -307,7 +230,7 @@ describe("type / key", () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(await h.run("type", "hello", "--submit", "--json")).toBe(0);
 		expect(h.driver.calls.filter((call) => call.method === "typeText" || call.method === "key")).toEqual([
-			{ method: "typeText", text: "hello" },
+			...[..."hello"].map((text) => ({ method: "typeText" as const, text })),
 			{ method: "key", key: "Enter" },
 		]);
 		expect(doc(h.c).result).toMatchObject({ action: "type", submitted: true });

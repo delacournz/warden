@@ -5,6 +5,7 @@ import { registerDevtoolsCommands } from "../agent-ui/devtools-cli";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { registerFlowCommands } from "../agent-ui/flows-command";
 import { uiOpen } from "../agent-ui/open";
+import { uiGet, uiIs, uiWait } from "../agent-ui/query";
 import { withUiOptions } from "../agent-ui/run";
 import { uiScroll } from "../agent-ui/scroll";
 import { uiFind, uiSnapshot } from "../agent-ui/snapshot-command";
@@ -166,6 +167,26 @@ export function createUiCommand(deps: UiDeps): Command {
 					.argument("<action>", "start | stop")
 					.argument("[path]", "output file for start")
 			).action(async (action, path, opts) => done(await uiVideo(ctx, deps, action, path, opts)));
+			withUiOptions(
+				cmd
+					.command("wait")
+					.description(
+						"poll (100 ms, --timeout) until an element is visible; also: absent <sel> | text <…> | stable [ms]"
+					)
+					.argument("<args...>", "<selector> | absent <selector> | text <text> | stable [ms]")
+			).action(async (words, opts) => done(await uiWait(ctx, deps, words, opts)));
+			withUiOptions(
+				cmd
+					.command("is")
+					.description("exit 0 when the element is in that state, 1 when not")
+					.argument("<args...>", "<selector> visible|hittable|enabled|checked|selected|focused")
+			).action(async (words, opts) => done(await uiIs(ctx, deps, words, opts)));
+			withUiOptions(
+				cmd
+					.command("get")
+					.description("print one property of an element (count = how many match)")
+					.argument("<args...>", "<selector> text|value|label|id|role|frame|count")
+			).action(async (words, opts) => done(await uiGet(ctx, deps, words, opts)));
 			registerFlowCommands(cmd, ctx, done, deps);
 			registerDevtoolsCommands(cmd, ctx, done, deps);
 		},

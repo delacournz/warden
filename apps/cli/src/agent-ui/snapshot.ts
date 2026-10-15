@@ -247,3 +247,15 @@ export async function findElements(
 		count: matches.length,
 	});
 }
+
+/** Store a snapshot as the device's next generation (what `wait` and `scroll --until` do for the screen they matched). */
+export function storeSnapshot(
+	ctx: Pick<CommandContext, "env" | "now">,
+	udid: string,
+	snapshot: Snapshot
+): { generation: number; refs: RefTable } {
+	const generation = bumpGeneration(ctx, udid);
+	const refs = assignRefs(snapshot, generation);
+	writeLastSnapshot(ctx, udid, { generation, takenAt: ctx.now(), hash: snapshotHash(snapshot), snapshot });
+	return { generation, refs };
+}

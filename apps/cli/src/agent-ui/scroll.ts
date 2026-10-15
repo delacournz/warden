@@ -1,6 +1,4 @@
 import type { Driver, Rect, ScreenInfo } from "@delacour/warden-e2e/driver/driver.types";
-import { assignRefs } from "@delacour/warden-e2e/driver/refs";
-import { snapshotHash } from "@delacour/warden-e2e/driver/settle";
 import { visibleRect } from "@delacour/warden-e2e/screen/actions";
 import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-e2e/screen/nodes";
 import { renderEntryLine } from "@delacour/warden-e2e/screen/render";
@@ -29,8 +27,8 @@ import {
 import { driverUiError, fromDriver, type UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
 import { runUi } from "./run";
+import { storeSnapshot } from "./snapshot";
 import { positiveInt } from "./snapshot-command";
-import { bumpGeneration, writeLastSnapshot } from "./state";
 
 /** The match of `selector` that is on the screen: `nth=` picks among the visible ones, else the most specific wins. */
 export function visibleMatch(index: NodeIndex, selector: ParsedSelector, screen: ScreenInfo): NodeEntry | undefined {
@@ -70,25 +68,6 @@ function parseRequest(
 
 type Found = { ref: string | undefined; entry: NodeEntry };
 
-/** Store the snapshot that showed the match as a new generation, so its `@eN` can be used next. */
-function storeFound(
-	ctx: CommandContext,
-	udid: string,
-	looked: Awaited<ReturnType<Driver["snapshot"]>>,
-	entry: NodeEntry
-) {
-	if (!looked.success) return undefined;
-	const generation = bumpGeneration(ctx, udid);
-	const refs = assignRefs(looked.data, generation);
-	writeLastSnapshot(ctx, udid, {
-		generation,
-		takenAt: ctx.now(),
-		hash: snapshotHash(looked.data),
-		snapshot: looked.data,
-	});
-	return refs.byId.get(entry.element.id);
-}
-
 type ScrollRun = { swipes: number; found?: Found };
 
 /** One swipe, or (`until`) swipes until the selector is on screen, looking before each one, at most `max`. */
@@ -111,7 +90,10 @@ async function scrollLoop(
 		const looked = await driver.snapshot();
 		if (!looked.success) return { success: false, error: driverUiError(looked.error) };
 		const entry = visibleMatch(indexSnapshot(looked.data), plan.until, area.screen);
-		if (entry) return ok({ swipes, found: { ref: storeFound(ctx, udid, looked, entry), entry } });
+		if (entry) {
+			const stored = storeSnapshot(ctx, udid, looked.data);
+			return ok({ swipes, found: { ref: stored.refs.byId.get(entry.element.id), entry } });
+		}
 		if (swipes >= plan.max) return ok({ swipes });
 		const swiped = await swipe();
 		if (!swiped.success) return swiped;

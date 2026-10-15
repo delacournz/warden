@@ -126,6 +126,7 @@ export function flowActors(
 			if (isDone(at)) return at;
 			const typed = await focusClearType(
 				driver,
+				deps.sleep,
 				{ kind: "selector", point: at.point, ...(at.element ? { element: at.element } : {}) },
 				at.entry,
 				c.text(step.text)

@@ -196,7 +196,12 @@ describe("replay", () => {
 		expect(lines[0]).toMatch(/^✓ 0 press id=sign-in-submit \(\d+ ms\)$/);
 		expect(h.c.stdout.at(-1)).toContain("replayed 8 steps");
 		expect(h.driver.callsOf("tap").length).toBeGreaterThanOrEqual(3);
-		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["me@example.com", "hunter22", "hello"]);
+		expect(
+			h.driver
+				.callsOf("typeText")
+				.map((call) => call.text)
+				.join("")
+		).toBe("me@example.comhunter22hello");
 		expect(h.driver.callsOf("app.launch")[0]?.bundleId).toBe("com.example.app");
 	});
 
@@ -216,7 +221,12 @@ describe("replay", () => {
 		h.driver.calls.length = 0;
 		expect(await h.run("replay", h.flowPath, "--json")).toBe(1);
 		expect(h.doc().error.message).toContain("missing_secret");
-		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["me@example.com"]);
+		expect(
+			h.driver
+				.callsOf("typeText")
+				.map((call) => call.text)
+				.join("")
+		).toBe("me@example.com");
 	});
 
 	test("a vanished element is a replay_divergence naming the step, exit 1, with a screen excerpt", async () => {

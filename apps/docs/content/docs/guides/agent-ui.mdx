@@ -70,7 +70,7 @@ Actions take a **target**: an `@eN` ref, a selector, or screen coordinates `x y`
 
 A value is bare (`id=sign-in`), quoted when it has spaces (`label="Sign in"`), or a regex (`text=/^\d+ left$/i`). Keys combine with AND: `role=button label=add`.
 
-When a selector matches several elements, an action picks the most specific visible one: visible first, then the most exact text terms, then the smallest frame, then reading order. Pin a different one with `nth=`. `wait`, `is`, `get` and `find` do not guess: they report every match.
+When a selector matches several elements, an action picks the most specific visible one: visible first, then the most exact text terms, then the smallest frame, then reading order. Pin a different one with `nth=`. `find` lists every match, and `get <selector> count` counts them; `wait`, `is` and `get` use the same most-specific pick as an action.
 
 ## Acting
 
@@ -96,14 +96,14 @@ These poll the live screen every 100 ms for up to `--timeout` (default 5000 ms) 
 
 | Command | Result |
 |---|---|
-| `wait <selector>` | until a match is on screen |
-| `wait absent <selector>` | until no match is |
+| `wait <selector>` | until a match is on screen; prints it with a fresh `@eN` (the snapshot it matched in becomes the new generation) |
+| `wait absent <selector>` | until no match is visible |
 | `wait text "…"` | until that text is visible |
-| `wait stable [ms]` | until the screen has stopped changing |
-| `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` | exit 0 when true, 1 when false: usable in a shell `if` |
-| `get <selector> text\|value\|label\|id\|role\|frame\|count` | print one property of the match (`count`: how many match) |
+| `wait stable [ms]` | until the screen has stopped changing for that long (default 250 ms) |
+| `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` | prints `true` / `false`; exit 0 when true, 1 when false or nothing matches: usable in a shell `if` (`--json`: `{ matched, state, reason? }`) |
+| `get <selector> text\|value\|label\|id\|role\|frame\|count` | print one bare value (`frame` as `x y w h`; `count`: how many match, `0` is a success); no match is `target_not_found` |
 
-A `wait` that runs out fails with `wait_target_absent` (exit 1).
+A `wait` that runs out fails (exit 1) with `wait_target_absent` (never in the tree), `wait_target_hidden` (in the tree, not visible), `wait_target_present` (`absent`: still visible), `wait_text_absent` or `wait_not_stable`. `--json` failures carry `details: { matched: false, waitedMs, reason }`. `wait` and `is` on a selector are recorded into an active flow (`wait` as a visible check); `wait absent|text|stable` are not.
 
 ## The app's console, network and React tree
 
@@ -146,7 +146,7 @@ warden ui export .warden-ui/add-todo.flow.json --to e2e/add-todo.e2e.ts --ids e2
 | Exit | Meaning | Error codes |
 |---|---|---|
 | 0 | ok | |
-| 1 | failed or bad usage | `failed`, `usage`, `target_not_found`, `wait_target_absent`, `replay_divergence` |
+| 1 | failed or bad usage | `failed`, `usage`, `target_not_found`, `wait_target_absent`, `wait_target_hidden`, `wait_target_present`, `wait_text_absent`, `wait_not_stable`, `replay_divergence` |
 | 2 | lease problem | `device_foreign`, `device_not_leased`, `no_device_leased`, `ambiguous_device`, `lease_not_found` |
 | 3 | engine unavailable | `engine_unavailable` (the iOS helper or `adb` cannot be reached), `devtools_unavailable` (no dev client or Metro) |
 | 4 | stale ref | `stale_ref`: take a new snapshot |

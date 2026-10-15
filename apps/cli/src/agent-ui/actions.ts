@@ -20,7 +20,13 @@ import { findInFresh, parseTarget, type ResolvedTarget } from "./target";
 
 /** `fill` re-reads the field for up to this long before it counts as not taken (capped by `--timeout`). */
 export const FILL_VERIFY_MS = 1000;
+/** How often the read-back looks at the field. */
 const FILL_POLL_MS = 100;
+/** Gap after each key on iOS: 25 ms measured reliable, 10 ms loses or garbles keys. */
+export const KEY_PACE_MS = 25;
+type Sleep = (ms: number) => Promise<void>;
+/** While the field is still changing, the read-back waits at least this long for the next change. */
+const FILL_PROGRESS_MS = 1000;
 /** Pause between a scroll swipe and the next look at the screen. */
 export const SCROLL_PAUSE_MS = 150;
 /** `scroll --until` gives up after this many swipes unless `--max` says otherwise. */
@@ -130,6 +136,7 @@ type FillRun = { ok: true } | { ok: false; held: string };
 
 export async function focusClearType(
 	driver: Driver,
+	sleep: Sleep,
 	resolved: ResolvedTarget,
 	entry: NodeEntry | undefined,
 	text: string
@@ -141,8 +148,25 @@ export async function focusClearType(
 	for (let press = 0; press < presses; press += 1) {
 		const cleared = fromDriver(await driver.key("Backspace"));
 		if (!cleared.success) return cleared;
+		if (driver.platform === "ios") await sleep(KEY_PACE_MS);
 	}
-	return text === "" ? ok(undefined) : fromDriver(await driver.typeText(text));
+	return text === "" ? ok(undefined) : typeText(driver, sleep, text);
+}
+
+/**
+ * Type `text`. On iOS a multi-character `typeText` is one composite HID event and the tail of it is dropped
+ * (measured on the example app: `ada@example.com` arrived as `ada@example` or `ada@example.co`), so each character
+ * is its own request, `KEY_PACE_MS` apart (the app digests ~50 ms a character; keys flooded much faster than
+ * that arrive truncated or garbled). Android types the whole string.
+ */
+export async function typeText(driver: Driver, sleep: Sleep, text: string): Promise<Result<void, UiError>> {
+	if (driver.platform !== "ios") return fromDriver(await driver.typeText(text));
+	for (const character of text) {
+		const typed = fromDriver(await driver.typeText(character));
+		if (!typed.success) return typed;
+		await sleep(KEY_PACE_MS);
+	}
+	return ok(undefined);
 }
 
 /** Polls the field until it holds `text` (or `budgetMs` passes); a field that cannot be found again reads as `(gone)`. */
@@ -154,19 +178,37 @@ async function readBack(
 	text: string,
 	budgetMs: number
 ): Promise<Result<FillRun, UiError>> {
-	const deadline = ctx.now() + budgetMs;
+	let deadline = ctx.now() + budgetMs;
 	let held = "(gone)";
 	for (;;) {
-		const fresh = await driver.snapshot();
-		if (!fresh.success) return { success: false, error: driverUiError(fresh.error) };
-		const found = findInFresh(wanted, indexSnapshot(fresh.data));
-		if (found) {
-			held = fieldValue(found);
-			if (held === text) return ok({ ok: true });
+		const read = await readField(driver, wanted);
+		if (!read.success) return read;
+		if (read.data !== undefined) {
+			if (read.data === text) return ok({ ok: true });
+			// the keys are still landing (the app digests ~50 ms a character): keep waiting while the field keeps changing
+			if (read.data !== held) deadline = Math.max(deadline, ctx.now() + FILL_PROGRESS_MS);
+			held = read.data;
 		}
 		if (ctx.now() >= deadline) return ok({ ok: false, held });
 		await deps.sleep(FILL_POLL_MS);
 	}
+}
+
+/**
+ * What the field shows now, or undefined when it cannot be found. First a hit-test at the field (≈10 ms; a full
+ * snapshot takes 300-1000 ms and starves the app of the very key events being read back), then a snapshot.
+ */
+async function readField(driver: Driver, wanted: NodeEntry): Promise<Result<string | undefined, UiError>> {
+	const { x, y, width, height } = wanted.element.frame;
+	const hit = await driver.elementAtPoint({ x: x + width / 2, y: y + height / 2 });
+	if (hit.success && hit.data) {
+		const entry = entryOfElement(hit.data, { platform: driver.platform });
+		if (entry?.role === wanted.role) return ok(fieldValue(entry));
+	}
+	const fresh = await driver.snapshot();
+	if (!fresh.success) return { success: false, error: driverUiError(fresh.error) };
+	const found = findInFresh(wanted, indexSnapshot(fresh.data));
+	return ok(found ? fieldValue(found) : undefined);
 }
 
 type FillPlan = {
@@ -190,7 +232,7 @@ async function typeAndConfirm(
 	const { entry, text } = plan;
 	const readable = plan.verify && !plan.secure && entry !== undefined;
 	for (let attempt = 1; attempt <= (readable ? 2 : 1); attempt += 1) {
-		const typed = await focusClearType(driver, resolved, entry, text);
+		const typed = await focusClearType(driver, deps.sleep, resolved, entry, text);
 		if (!typed.success) return typed;
 		if (!readable) break;
 		const back = await readBack(ctx, deps, driver, entry, text, plan.budgetMs);
@@ -267,7 +309,7 @@ export function uiType(ctx: CommandContext, deps: UiDeps, text: string, opts: Ty
 		if (!settle.success) return settle;
 		const driver = await env.driver();
 		if (!driver.success) return driver;
-		const typed = fromDriver(await driver.data.typeText(text));
+		const typed = await typeText(driver.data, deps.sleep, text);
 		if (!typed.success) return typed;
 		if (opts.submit === true) {
 			const submitted = fromDriver(await driver.data.key("Enter"));

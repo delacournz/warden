@@ -13,6 +13,10 @@ export const UI_ERROR_EXIT = {
 	usage: UI_EXIT.failed,
 	failed: UI_EXIT.failed,
 	wait_target_absent: UI_EXIT.failed,
+	wait_target_hidden: UI_EXIT.failed,
+	wait_target_present: UI_EXIT.failed,
+	wait_text_absent: UI_EXIT.failed,
+	wait_not_stable: UI_EXIT.failed,
 	target_not_found: UI_EXIT.failed,
 	device_foreign: UI_EXIT.lease,
 	device_not_leased: UI_EXIT.lease,
@@ -86,9 +90,11 @@ export type UiSuccess = {
 	text: string;
 	generation?: number;
 	warnings?: string[];
+	/** exit code when not 0: `is` answers false with 1 and still prints its result */
+	exit?: UiExitCode;
 };
 
-/** Print a success (JSON envelope, or `text` on stdout; warnings on stderr in text mode) and return exit 0. */
+/** Print a success (JSON envelope, or `text` on stdout; warnings on stderr in text mode) and return exit 0 (or `success.exit`). */
 export function reportOk(ctx: CommandContext, report: UiReport, success: UiSuccess): UiExitCode {
 	if (report.json) {
 		const doc: UiJson = {
@@ -101,11 +107,11 @@ export function reportOk(ctx: CommandContext, report: UiReport, success: UiSucce
 			...(success.warnings && success.warnings.length > 0 ? { warnings: success.warnings } : {}),
 		};
 		ctx.out(JSON.stringify(doc));
-		return UI_EXIT.ok;
+		return success.exit ?? UI_EXIT.ok;
 	}
 	if (success.text.length > 0) ctx.out(success.text);
 	for (const w of success.warnings ?? []) ctx.err(ctx.ui.color.yellow(`warden ui: ${w}`));
-	return UI_EXIT.ok;
+	return success.exit ?? UI_EXIT.ok;
 }
 
 /** Print a failure (JSON envelope on stdout, or a red line on stderr) and return its exit code. */
