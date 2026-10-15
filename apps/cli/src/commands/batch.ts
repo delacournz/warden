@@ -692,6 +692,10 @@ function watchdog(deps: BatchDeps, timeoutMs: number | undefined, proc: ProcHand
 	};
 }
 
+/** `WARDEN_DEVICE_NAME`: lets a spec tell its own device from the others on a shared Metro. */
+const deviceNameEnv = (name: string | undefined): Record<string, string> =>
+	name === undefined ? {} : { [ENV_NAMES.deviceName]: name };
+
 /** `WARDEN_SIMD_SOCKET` for a job on a device whose helper is warm. */
 const socketEnv = (socketPath: string | undefined): Record<string, string> =>
 	socketPath === undefined ? {} : { [ENV_NAMES.simdSocket]: socketPath };
@@ -730,6 +734,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			}),
 			...socketEnv(o.sockets.get(w.udid)),
 			WARDEN_UDID: w.udid,
+			...deviceNameEnv(o.live.find((d) => d.udid === w.udid)?.name),
 			WARDEN_WORKER: String(w.worker),
 			WARDEN_JOB: job,
 			WARDEN_JOB_SEQ: String(seq),

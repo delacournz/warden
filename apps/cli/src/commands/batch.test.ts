@@ -83,6 +83,7 @@ describe("warden batch", () => {
 		const a = jobs[0];
 		const udid = a?.opts.env.WARDEN_UDID;
 		expect(a?.cmd).toEqual(["run", "a", `--on=${udid}`, `w${a?.opts.env.WARDEN_WORKER}s0`]);
+		expect(a?.opts.env.WARDEN_DEVICE_NAME).toBeString();
 		expect(a?.opts.env.WARDEN_JOB_SEQ).toBe("0");
 		expect(a?.opts.env.WARDEN_UDIDS?.split(",").sort()).toEqual(["U1", "U2"]);
 		expect(a?.opts.env.WARDEN_SESSION_ID).toBe("me");

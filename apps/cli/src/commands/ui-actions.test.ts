@@ -450,6 +450,7 @@ describe("open", () => {
 		const h = harness([snapshotOf(LOGIN)], {
 			onCall: (call, driver) => {
 				if (call.method === "app.openUrl") driver.set(OPEN_SHEET);
+				if (call.method === "tap") driver.set(snapshotOf(LOGIN));
 				return undefined;
 			},
 		});
