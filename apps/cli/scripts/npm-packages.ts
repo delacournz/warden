@@ -7,15 +7,18 @@
  * darwin-arm64 also gets the simulator helper (`bin/{warden-simd, Resources/, *.framework, manifest.json}`) copied from
  * `packages/e2e/native/dist` (override: `WARDEN_E2E_NATIVE_DIST`) when it is built; `--require-helper` (release) makes
  * a missing helper an error.
+ *   dist/npm/warden-e2e/       → @delacour/warden-e2e: package.json + index.mjs/preload.mjs (+ chunk) + index.d.ts/preload.d.ts
+ *                                + types/ (the spec API for `warden e2e`, bundled from packages/e2e; lock-step with warden)
  * Every package also gets the repo-root LICENSE. Repository / homepage / bugs links are added only with
  * `--repo-links` or `WARDEN_NPM_REPO_LINKS=1` (the release workflow sets it once the repo is public).
- * Publishing is the release workflow's job: platform packages first, then @delacour/warden.
+ * Publishing is the release workflow's job: platform packages first, then @delacour/warden, then @delacour/warden-e2e.
  */
 import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import cliPackage from "../package.json" with { type: "json" };
 import { buildConfigEntry } from "../src/npm/config-entry";
+import { stageE2e } from "../src/npm/e2e-stage";
 import { HELPER_TARGET, type StagedHelper } from "../src/npm/helper";
 import { stageHelper } from "../src/npm/helper-stage";
 import {
@@ -94,6 +97,11 @@ if (!configEntry.success) throw new Error(configEntry.error);
 copyFileSync(join(repoRoot, "README.md"), join(main, "README.md"));
 copyFileSync(join(repoRoot, LICENSE_FILE), join(main, LICENSE_FILE));
 console.log("staged dist/npm/warden");
+
+const e2e = await stageE2e({ repoRoot, outDir: join(out, "warden-e2e"), meta });
+if (!e2e.success) throw new Error(e2e.error);
+console.log("staged dist/npm/warden-e2e");
+
 console.log(
-	`npm ${meta.version}: ${RELEASE_TARGETS.length} platform packages + @delacour/warden${repoLinks ? "" : " (no repo links)"}`
+	`npm ${meta.version}: ${RELEASE_TARGETS.length} platform packages + @delacour/warden + @delacour/warden-e2e${repoLinks ? "" : " (no repo links)"}`
 );
