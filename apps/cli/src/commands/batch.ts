@@ -1322,7 +1322,7 @@ async function supervise(
 	} finally {
 		await teardown();
 		stopHold();
-		session.release();
+		await session.release();
 	}
 }
 

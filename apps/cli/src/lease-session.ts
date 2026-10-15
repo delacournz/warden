@@ -11,6 +11,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
 import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
 import type { CommandContext } from "./context";
+import { releaseDevices } from "./device-lease";
 import { installModeOption, legacyCleanOption, parseInstallFlags, RESET_KEYCHAIN_HELP } from "./install-flags";
 import type { Spinner } from "./ui";
 
@@ -66,7 +67,11 @@ export async function claimRunPorts(
 				)
 			: range;
 		if (!claimed.success) {
-			store.deleteLeases(ports.map((p) => p.leaseId));
+			await releaseDevices(
+				ctx,
+				ports.map((p) => p.leaseId),
+				{ touch: false }
+			);
 			return err(claimed.error);
 		}
 		for (const lease of claimed.data) {
@@ -237,7 +242,7 @@ export type LeaseSession = {
 	env: Record<string, string | undefined>;
 	leaseIds: string[];
 	/** delete every lease and mark the devices used now */
-	release: () => void;
+	release: () => Promise<void>;
 };
 
 /**
@@ -261,7 +266,11 @@ async function claimLegs(ctx: CommandContext, owner: Owner, args: LeaseArgs, pid
 	for (const flags of args.legFlags ?? [args.flags]) {
 		const outcome = await claimWithFlags(ctx, owner, flags, pid);
 		if (!outcome.success) {
-			ctx.store().deleteLeases(claims.flatMap((c) => c.claimed.map((d) => d.lease.id)));
+			await releaseDevices(
+				ctx,
+				claims.flatMap((c) => c.claimed.map((d) => d.lease.id)),
+				{ touch: false }
+			);
 			return outcome;
 		}
 		claims.push(outcome.data);
@@ -280,7 +289,6 @@ export async function claimAll(
 	args: LeaseArgs,
 	name = "run"
 ): AsyncResult<LeaseSession> {
-	const store = ctx.store();
 	const claims = await claimLegs(ctx, owner, args, deps.pid);
 	if (!claims.success) return claims;
 	const outcome: ClaimOutcome = {
@@ -291,14 +299,12 @@ export async function claimAll(
 	const label = args.flags.label ?? `warden ${name}`;
 	const ports = await claimRunPorts(ctx, owner, args.ports, deps.pid, deps.isPortFree, label);
 	if (!ports.success) {
-		store.deleteLeases(deviceLeaseIds);
+		await releaseDevices(ctx, deviceLeaseIds, { touch: false });
 		return ports;
 	}
 	const leaseIds = [...deviceLeaseIds, ...ports.data.map((p) => p.leaseId)];
-	const release = () => {
-		store.deleteLeases(leaseIds);
-		const now = ctx.now();
-		for (const c of outcome.claimed) store.touchDevice(c.device.platform, c.device.id, now);
+	const release = async () => {
+		await releaseDevices(ctx, leaseIds);
 	};
 	args.onLeased?.(outcome);
 	const env = childEnv(ctx.env, outcome, ports.data);
@@ -310,7 +316,7 @@ export async function claimAll(
 		const ensure = deps.ensureApp ?? sessionEnsureApp();
 		const app = await ensureSessionApp(ctx, ensure, owner, outcome, args.app, env, name);
 		if (!app.success) {
-			release();
+			await release();
 			return app;
 		}
 	}

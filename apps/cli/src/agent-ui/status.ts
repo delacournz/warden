@@ -1,0 +1,33 @@
+import { describeOwner } from "@delacour/warden-core/types";
+import { ok } from "@delacour/warden-types/result";
+import type { CommandContext } from "../context";
+import type { UiDevice } from "./device";
+import { runUi, type UiOptionValues } from "./run";
+
+/** `warden ui status`: the device, the caller's lease on it, and (placeholders until later issues) helper + recording. */
+export function uiStatus(ctx: CommandContext, opts: UiOptionValues): Promise<number> {
+	return runUi(ctx, "status", opts, async (device: UiDevice) => {
+		const { lease } = device;
+		const result = {
+			lease: {
+				id: lease.id,
+				action: device.action,
+				source: device.source,
+				owner: describeOwner(lease.owner),
+				label: lease.label ?? null,
+				ttlMs: lease.ttlMs,
+				heartbeatAt: lease.heartbeatAt,
+			},
+			helper: "not started",
+			recording: "none",
+		};
+		const { color } = ctx.ui;
+		const text = [
+			`${color.bold(device.udid)} ${device.name ?? ""} ${color.dim(`(${device.platform})`)}`.trimEnd(),
+			`lease     ${lease.id} ${color.dim(`${device.action}, ${describeOwner(lease.owner)}`)}`,
+			`helper    ${result.helper}`,
+			`recording ${result.recording}`,
+		].join("\n");
+		return ok({ device: { udid: device.udid, platform: device.platform, name: device.name }, result, text });
+	});
+}
