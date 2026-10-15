@@ -14,10 +14,11 @@ function run(argv: string[]): Promise<number> {
 }
 
 describe("cli", () => {
-	test("--help lists every command", async () => {
+	test("--help lists every command except the hidden workers", async () => {
 		expect(await run(["--help"])).toBe(0);
 		const text = ctx?.stdout.join("\n") ?? "";
-		for (const c of COMMANDS) expect(text).toContain(c.name);
+		for (const c of COMMANDS.filter((command) => !command.hidden)) expect(text).toContain(c.name);
+		for (const c of COMMANDS.filter((command) => command.hidden)) expect(text).not.toContain(c.name);
 	});
 
 	test("unknown command exits 1", async () => {

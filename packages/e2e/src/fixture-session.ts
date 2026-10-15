@@ -1,3 +1,4 @@
+import type { DevtoolsFacet, DevtoolsResult } from "./devtools/devtools.types";
 import type { TraceEvent } from "./runner/trace";
 
 /**
@@ -14,6 +15,10 @@ export type FixtureSession = {
 	readonly attemptDir?: string;
 	/** the running attempt's `trace.jsonl` */
 	readonly trace?: { write(event: TraceEvent): void };
+	/** attaches the app's devtools on first call (the session shares one connection); absent = no devtools */
+	devtools?(): Promise<DevtoolsResult<DevtoolsFacet>>;
+	/** the facet if already attached; never attaches */
+	peekDevtools?(): DevtoolsFacet | undefined;
 };
 
 /** Injected time: tests drive a fake clock. */

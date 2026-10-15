@@ -328,7 +328,7 @@ describe("device.screenshot", () => {
 });
 
 describe("device misc", () => {
-	test("devtools is undefined until A7 attaches it", () => {
+	test("devtools is undefined without a Metro URL", () => {
 		expect(setup().device.devtools).toBeUndefined();
 	});
 

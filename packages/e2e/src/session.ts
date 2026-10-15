@@ -1,5 +1,7 @@
 import { mkdirSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
+import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools/devtools.types";
+import { openDevtoolsFacet } from "./devtools/facet";
 import type { Driver, DriverResult } from "./driver/driver.types";
 import { type E2eEnv, readEnv } from "./env";
 import { E2eError } from "./errors";
@@ -9,6 +11,19 @@ import { runStep } from "./runner/step";
 import type { TraceWriter } from "./runner/trace";
 
 export type DriverFactory = (env: E2eEnv) => DriverResult<Driver>;
+
+/** How to attach to the app's dev client; default {@link openDevtools}. Tests inject a stub. */
+export type DevtoolsOpener = (env: E2eEnv) => Promise<DevtoolsResult<DevtoolsFacet>>;
+
+/** Metro's inspector for this env's app: `WARDEN_METRO_URL`, the bundle id picks the page. */
+export const openDevtools: DevtoolsOpener = (env) =>
+	openDevtoolsFacet({
+		env: { metroUrl: env.metroUrl },
+		device: { appId: env.bundleId },
+		fetch,
+		WebSocket,
+		timeoutMs: 5_000,
+	});
 
 export type Session = {
 	readonly env: E2eEnv;
@@ -30,6 +45,13 @@ export type Session = {
 	driver(): Promise<Driver>;
 	/** the driver if it is already open; never opens one (failure capture must not start a device) */
 	peekDriver(): Driver | undefined;
+	/**
+	 * The app's devtools (console, network, React tree, evaluate), attached on the first call and shared after;
+	 * `devtools_unavailable` without `WARDEN_METRO_URL` (a release build). A failed attach is retried on the next call.
+	 */
+	devtools(): Promise<DevtoolsResult<DevtoolsFacet>>;
+	/** the facet if it is already attached; never attaches one (failure capture must not connect to anything) */
+	peekDevtools(): DevtoolsFacet | undefined;
 	/** one reported step (`▸`/`▪` lines, `trace.jsonl`) that gives up when the attempt deadline aborts */
 	step<T>(kind: string, label: string, fn: () => Promise<T>): Promise<T>;
 	enterAttempt(attempt: AttemptContext): void;
@@ -43,6 +65,8 @@ export type SessionOptions = {
 	env?: E2eEnv;
 	/** how to open the device; default {@link setDefaultDriverFactory}'s */
 	driverFactory?: DriverFactory;
+	/** how to attach devtools; default {@link openDevtools} */
+	devtools?: DevtoolsOpener;
 	/** fixture factory; default {@link setDefaultFixtureFactory}'s */
 	fixtures?: FixtureFactory;
 	/** console line sink; default writes to fd 1 (bun test captures `process.stdout`, fd 1 is not captured) */
@@ -114,6 +138,9 @@ export function createSession(opts: SessionOptions = {}): Session {
 	let opened: Promise<Driver> | undefined;
 	let current: Driver | undefined;
 	let closing: Promise<void> | undefined;
+	let devtoolsOpening: Promise<DevtoolsResult<DevtoolsFacet>> | undefined;
+	let facet: DevtoolsFacet | undefined;
+	const openFacet = opts.devtools ?? openDevtools;
 	let attempt: AttemptContext | undefined;
 
 	const session: Session = {
@@ -158,6 +185,29 @@ export function createSession(opts: SessionOptions = {}): Session {
 		peekDriver() {
 			return current;
 		},
+		devtools() {
+			if (closing !== undefined) return Promise.resolve(devtoolsErr("devtools_unavailable", "session is closed"));
+			if (resolved.metroUrl === undefined) {
+				return Promise.resolve(
+					devtoolsErr("devtools_unavailable", "no Metro URL (WARDEN_METRO_URL): release builds have no devtools")
+				);
+			}
+			devtoolsOpening ??= openFacet(resolved).then(
+				(result) => {
+					if (result.success) facet = result.data;
+					else devtoolsOpening = undefined;
+					return result;
+				},
+				(cause: unknown) => {
+					devtoolsOpening = undefined;
+					return devtoolsErr("devtools_unavailable", cause instanceof Error ? cause.message : String(cause));
+				}
+			);
+			return devtoolsOpening;
+		},
+		peekDevtools() {
+			return facet;
+		},
 		step(kind, label, fn) {
 			return runStep(attempt, kind, label, fn);
 		},
@@ -176,6 +226,13 @@ export function createSession(opts: SessionOptions = {}): Session {
 					);
 				}
 				current = undefined;
+				if (devtoolsOpening !== undefined) {
+					await devtoolsOpening.then(
+						(result) => (result.success ? result.data.close() : undefined),
+						() => undefined
+					);
+				}
+				facet = undefined;
 				if (slot()[SESSION_KEY] === session) delete slot()[SESSION_KEY];
 				if (exitListener !== undefined) process.off("exit", exitListener);
 			})();

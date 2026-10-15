@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { E2eError } from "../errors";
 import type { Session } from "../session";
 import { attemptDir, flowIdOf, hash6 } from "./artifacts";
-import { captureFailure } from "./failure";
+import { captureDevtoolsArtifacts, captureFailure } from "./failure";
 import type { AttemptContext, BaseFixtures } from "./fixtures.types";
 import type { TestResult } from "./results";
 import { hooksFor, type ResolvedUse, resolveUse, type Scope } from "./scope";
@@ -290,14 +290,22 @@ async function setUpAndRun<F extends object>(
 	await spec.body(built as unknown as F);
 }
 
-/** `failure.png` + `screen-at-failure.txt` from the already-open driver (never opens one); problems go to the trace. */
+/**
+ * `failure.png` + `screen-at-failure.txt` from the already-open driver and `console.jsonl` + `network.jsonl` from the
+ * already-attached devtools (never opens either); problems go to the trace.
+ */
 async function captureFailureArtifacts(session: Session, ctx: AttemptContext): Promise<void> {
 	const driver = session.peekDriver();
-	if (driver === undefined) return;
-	const capture = await captureFailure(driver, ctx.dir);
-	for (const file of capture.files) ctx.files.add(file);
-	for (const problem of capture.problems) {
-		ctx.trace.write({ type: "note", ts: Date.now(), kind: "note", label: `failure capture: ${problem}` });
+	const facet = session.peekDevtools();
+	const captures = [
+		...(driver === undefined ? [] : [await captureFailure(driver, ctx.dir)]),
+		...(facet === undefined ? [] : [await captureDevtoolsArtifacts(facet, ctx.dir)]),
+	];
+	for (const capture of captures) {
+		for (const file of capture.files) ctx.files.add(file);
+		for (const problem of capture.problems) {
+			ctx.trace.write({ type: "note", ts: Date.now(), kind: "note", label: `failure capture: ${problem}` });
+		}
 	}
 }
 

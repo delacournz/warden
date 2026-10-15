@@ -18,6 +18,8 @@ export type UiState = {
 	/** the flow being recorded (`warden ui record start`) */
 	recording?: { file: string; name: string; startedAt: number };
 	helper?: { pid: number; socket: string };
+	/** the running `logs start` collector (`warden ui-collect`): host pid and start time */
+	collector?: { pid: number; startedAt: number };
 	/** the running `video start` recorder: host pid, output file, and (Android) the file on the device */
 	video?: { pid: number; path: string; remote?: string; startedAt: number };
 	updatedAt: number;

@@ -1,10 +1,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { DevtoolsFacet } from "../devtools/devtools.types";
 import type { Driver } from "../driver/driver.types";
 import { renderHeader, renderSnapshot } from "../screen/render";
 
 export const FAILURE_PNG = "failure.png";
 export const SCREEN_AT_FAILURE = "screen-at-failure.txt";
+export const CONSOLE_JSONL = "console.jsonl";
+export const NETWORK_JSONL = "network.jsonl";
 
 /** Longest a single capture call may take: a wedged device must not hold the test run. */
 export const CAPTURE_TIMEOUT_MS = 10_000;
@@ -68,6 +71,26 @@ export async function captureFailure(
 		}
 	} catch (cause) {
 		capture.problems.push(`snapshot: ${cause instanceof Error ? cause.message : String(cause)}`);
+	}
+	return capture;
+}
+
+/**
+ * `console.jsonl` and `network.jsonl` of the app's attached devtools into `dir`. Best effort like
+ * {@link captureFailure}: never throws, gives up after `timeoutMs` (the network drain talks to the page).
+ */
+export async function captureDevtoolsArtifacts(
+	facet: DevtoolsFacet,
+	dir: string,
+	timeoutMs = CAPTURE_TIMEOUT_MS
+): Promise<FailureCapture> {
+	const capture: FailureCapture = { files: [], problems: [] };
+	try {
+		const written = await limited(facet.attachArtifacts(dir), timeoutMs);
+		if (written.success) capture.files.push(CONSOLE_JSONL, NETWORK_JSONL);
+		else capture.problems.push(`devtools artifacts: ${written.error.code}: ${written.error.message}`);
+	} catch (cause) {
+		capture.problems.push(`devtools artifacts: ${cause instanceof Error ? cause.message : String(cause)}`);
 	}
 	return capture;
 }

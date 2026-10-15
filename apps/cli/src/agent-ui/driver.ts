@@ -4,6 +4,7 @@ import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.typ
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
+import type { DevtoolsDeps } from "./devtools-cli";
 import { connectHelper } from "./helper";
 import { type UiError, uiError } from "./output";
 import type { RecordSink } from "./record";
@@ -18,6 +19,8 @@ export type UiDeps = {
 	record?: RecordSink;
 	/** how `video start|stop` runs the recorder process (default: real processes) */
 	video?: VideoDeps;
+	/** how the devtools subcommands (eval, tree, logs, network, reload) reach Metro and spawn the collector */
+	devtools?: DevtoolsDeps;
 };
 
 const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code"]>([
