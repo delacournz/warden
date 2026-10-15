@@ -11,6 +11,10 @@ struct Dispatcher<Context: Sendable>: Sendable {
   /// The op that ends the session; the server stops reading after answering it.
   static var shutdownOp: String { "shutdown" }
 
+  /// Ops that spend their own wait budget (`settle` answers `quiet:false` at its deadline), so the envelope
+  /// `timeoutMs` must not turn that into `E_TIMEOUT`. The client's own timer still bounds them.
+  static var selfTimedOps: Set<String> { ["settle"] }
+
   var handlers: [String: OpHandler]
 
   init(handlers: [String: OpHandler]) {
@@ -27,7 +31,7 @@ struct Dispatcher<Context: Sendable>: Sendable {
     do {
       let params = request.params
       let data: JSON
-      if let timeoutMs = request.timeoutMs {
+      if let timeoutMs = request.timeoutMs, !Self.selfTimedOps.contains(request.op) {
         let op = request.op
         data = try await withTimeout(milliseconds: timeoutMs, error: {
           WireError(.timeout, "op \"\(op)\" timed out after \(timeoutMs) ms")
@@ -95,7 +99,13 @@ extension Dispatcher where Context == Session {
   /// Every op the helper serves. Later phases append their `Ops/*.swift` tables here.
   static func standard() -> Dispatcher<Session> {
     var handlers: [String: OpHandler] = [:]
-    for table in [HealthOps.ops, InputOps.ops] {
+    for table in [
+      HealthOps.ops,
+      InputOps.ops,
+      ScreenshotOps.ops,
+      OrientationOps.ops,
+      SettleOps.ops,
+    ] {
       handlers.merge(table) { _, new in new }
     }
     return Dispatcher(handlers: handlers)

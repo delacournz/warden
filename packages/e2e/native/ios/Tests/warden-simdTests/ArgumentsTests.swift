@@ -30,8 +30,26 @@ final class ArgumentsTests: XCTestCase {
     XCTAssertNotNil(failure(["--udid", "U", "--ax", "magic"]))
   }
 
-  func testSocketModeIsNotYetSupported() {
-    XCTAssertTrue(failure(["--udid", "U", "--socket", "/s"])?.contains("D6") ?? false)
+  func testSocketModeWithIdleTimeout() throws {
+    let args = try Arguments.parse(["--udid", "U", "--socket", "/tmp/s.sock", "--idle-timeout", "2"]).get()
+    XCTAssertEqual(args.socket, "/tmp/s.sock")
+    XCTAssertEqual(args.idleTimeout, 2)
+    XCTAssertEqual(try Arguments.parse(["--udid", "U", "--socket=/s"]).get().idleTimeout, Arguments.defaultIdleTimeout)
+    XCTAssertEqual(try Arguments.parse(["--udid", "U", "--socket", "/s", "--idle-timeout", "0"]).get().idleTimeout, 0)
+  }
+
+  func testIdleTimeoutNeedsASocketAndANumber() {
+    XCTAssertNotNil(failure(["--udid", "U", "--idle-timeout", "5"]))
+    XCTAssertNotNil(failure(["--udid", "U", "--socket", "/s", "--idle-timeout", "soon"]))
+    XCTAssertNotNil(failure(["--udid", "U", "--socket", "/s", "--idle-timeout", "-1"]))
+  }
+
+  func testHealthOneShotAndSocketAreExclusive() {
+    XCTAssertNotNil(failure(["--health", "--udid", "U", "--socket", "/s"]))
+  }
+
+  func testOverlongSocketPathIsRejected() {
+    XCTAssertNotNil(failure(["--udid", "U", "--socket", "/" + String(repeating: "a", count: 120)]))
   }
 
   private func failure(_ argv: [String]) -> String? {

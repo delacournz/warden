@@ -45,6 +45,11 @@ final class Session: @unchecked Sendable {
   let coreSimulatorVersion: String?
   let resourcesDirectory: String
   let startedAt: ContinuousClock.Instant
+  /// Set by socket mode so `health` can report the listener and its clients.
+  let socket = SocketStatus()
+  /// Long-lived quiescence stream backing `settle`; created on first use.
+  let quiescence = QuiescenceHolder()
+  let orientationMemory = OrientationMemory()
 
   init(
     udid: String, simulator: Simulator, hid: SimulatorHIDSession, hidTransport: String, axDefault: String,
@@ -124,6 +129,7 @@ final class Session: @unchecked Sendable {
   }
 
   func close() async {
+    await quiescence.stop()
     await hid.close()
   }
 
@@ -172,6 +178,7 @@ extension WireError {
   static func from(_ error: any Error) -> WireError {
     if let wire = error as? WireError { return wire }
     if error is CancellationError { return WireError(.internal, "operation cancelled") }
+    if let error = error as? QuiescenceError { return from(quiescence: error) }
     if let error = error as? UIAutomationError { return from(automation: error) }
     if let error = error as? AXBridgeError { return from(bridge: error) }
     if error is SimulatorHIDError {
@@ -206,6 +213,16 @@ extension WireError {
       return WireError(.internal, message)
     @unknown default:
       return WireError(.internal, message)
+    }
+  }
+
+  private static func from(quiescence error: QuiescenceError) -> WireError {
+    let message = error.localizedDescription
+    switch error {
+    case .timedOut: return WireError(.timeout, message)
+    case let .targetExited(pid): return WireError(.appUnavailable, message, detail: appDetail(pid: pid, bundleID: nil))
+    case .streamEnded: return WireError(.axUnavailable, message)
+    @unknown default: return WireError(.axUnavailable, message)
     }
   }
 

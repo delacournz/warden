@@ -32,9 +32,16 @@ struct Arguments: Equatable {
   var verbose = false
   var hid: HIDChoice?
   var ax: AXChoice?
+  /// Socket mode: serve many clients on this unix socket instead of stdio.
+  var socket: String?
+  /// Seconds with no client and no op in flight before a socket-mode process exits (0 = never).
+  var idleTimeout = Arguments.defaultIdleTimeout
+
+  static let defaultIdleTimeout = 600
 
   static let usage = """
-    usage: warden-simd --udid <UDID> [--resources <dir>] [--log <file>] [--verbose] [--hid indigo|dtuhid] [--ax axbridge|ax]
+    usage: warden-simd --udid <UDID> [--socket <path> [--idle-timeout <s>]] [--resources <dir>] [--log <file>] [--verbose]
+                       [--hid indigo|dtuhid] [--ax axbridge|ax]
            warden-simd --health --udid <UDID>
            warden-simd --version
     """
@@ -46,6 +53,7 @@ struct Arguments: Equatable {
   static func parse(_ argv: [String]) -> Result<Arguments, Failure> {
     var result = Arguments()
     var index = 0
+    var idleTimeoutGiven = false
 
     func value(for flag: String, inline: String?) -> Result<String, Failure> {
       if let inline { return .success(inline) }
@@ -71,7 +79,7 @@ struct Arguments: Equatable {
         result.mode = .health
       case "--verbose":
         result.verbose = true
-      case "--udid", "--resources", "--log", "--hid", "--ax":
+      case "--udid", "--resources", "--log", "--hid", "--ax", "--socket", "--idle-timeout":
         switch value(for: flag, inline: inline) {
         case let .failure(failure): return .failure(failure)
         case let .success(text):
@@ -79,6 +87,13 @@ struct Arguments: Equatable {
           case "--udid": result.udid = text
           case "--resources": result.resources = text
           case "--log": result.log = text
+          case "--socket": result.socket = text
+          case "--idle-timeout":
+            guard let seconds = Int(text), seconds >= 0 else {
+              return .failure(Failure(message: "--idle-timeout must be a non-negative number of seconds"))
+            }
+            result.idleTimeout = seconds
+            idleTimeoutGiven = true
           case "--hid":
             guard let choice = HIDChoice(rawValue: text) else {
               return .failure(Failure(message: "--hid must be indigo or dtuhid"))
@@ -91,8 +106,6 @@ struct Arguments: Equatable {
             result.ax = choice
           }
         }
-      case "--socket", "--idle-timeout":
-        return .failure(Failure(message: "\(flag) is not supported yet (socket mode lands with WDN-E2E-D6)"))
       default:
         return .failure(Failure(message: "unknown argument \(raw)"))
       }
@@ -101,6 +114,15 @@ struct Arguments: Equatable {
 
     if result.mode != .version, result.udid == nil || result.udid?.isEmpty == true {
       return .failure(Failure(message: "--udid is required"))
+    }
+    if idleTimeoutGiven, result.socket == nil {
+      return .failure(Failure(message: "--idle-timeout only applies with --socket"))
+    }
+    if result.socket != nil, result.mode == .health {
+      return .failure(Failure(message: "--health is a one-shot and cannot be combined with --socket"))
+    }
+    if let socket = result.socket, socket.utf8.count > UnixSocket.maxPathBytes {
+      return .failure(Failure(message: "--socket path is over the \(UnixSocket.maxPathBytes)-byte unix socket limit"))
     }
     return .success(result)
   }
