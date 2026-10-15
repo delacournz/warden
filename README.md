@@ -34,7 +34,7 @@ From source:
 bun install
 bun run --cwd apps/cli install:global   # local build of this checkout → ~/.local/bin/warden
 warden install                           # binary + hooks for every detected agent (Claude Code / Codex); shows diff, asks first
-warden install --claude                  # force Claude Code only: skill + hooks + argent rule
+warden install --claude                  # force Claude Code only: skill + SessionEnd hook
 warden install --codex                   # force Codex only: hooks in $CODEX_HOME/hooks.json
 warden doctor
 ```
@@ -227,20 +227,19 @@ Claim, then pass the device explicitly: `warden claim ios --json` → use the re
 
 `warden install --claude` adds:
 
-- a **PreToolUse** hook on `mcp__argent__.*|mcp__plugin_goldie_argent__.*`. An unleased device is auto-claimed for the session (argent is retired: do not rely on this to hold a lease), and a device leased by another owner is blocked (exit 2) with the owner and repo/worktree.
-- a **SessionEnd** hook, which **shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself (they were off when it first touched them), are shut down. A sim that was already running when the agent picked it up, such as your own Simulator.app one, is released but left on. On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim on its next argent call.
-- **Sessions that die without SessionEnd** (killed or terminal closed): their leases go stale after their TTL (30 min; 5 min for a bare agent claim). `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by hook activity and by `claim`/`run` (`WARDEN_AUTO_GC=0` turns this off), as well as on demand.
-- the `~/.claude/skills/warden/SKILL.md` skill, plus a "claim via warden first" line in the argent `device_selection_rule`.
+- a **SessionEnd** hook, which **shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself (they were off when it first touched them), are shut down. A sim that was already running when the agent picked it up, such as your own Simulator.app one, is released but left on. On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim with its next `warden claim`.
+- **Sessions that die without SessionEnd** (killed or terminal closed): their leases go stale after their TTL (30 min; 5 min for a bare agent claim). `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by `claim`/`run` (`WARDEN_AUTO_GC=0` turns this off), as well as on demand.
+- the `~/.claude/skills/warden/SKILL.md` skill.
+
+It also removes the `PreToolUse` device-lease hook older versions installed (`warden hook pretool` stays a no-op, so an old config keeps working).
 
 ### Codex
 
-`warden install --codex` merges the same two hooks into `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`; hooks already declared in `config.toml` `[[hooks.*]]` tables count as installed). Codex hooks use Claude's format and stdin JSON, and a PreToolUse exit 2 + stderr blocks the call, so `warden hook pretool|session-end` serves both agents unchanged:
+`warden install --codex` merges the SessionEnd hook into `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`; hooks already declared in `config.toml` `[[hooks.*]]` tables count as installed). Codex hooks use Claude's format and stdin JSON, so `warden hook session-end` serves both agents unchanged:
 
 ```json
 {
   "hooks": {
-    "PreToolUse": [{ "matcher": "mcp__argent__.*|mcp__plugin_goldie_argent__.*",
-                     "hooks": [{ "type": "command", "command": "$HOME/.local/bin/warden hook pretool", "timeout": 30 }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "command": "$HOME/.local/bin/warden hook session-end", "timeout": 3 }] }]
   }
 }

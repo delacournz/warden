@@ -37,7 +37,7 @@ describe("SLIM_DENYLIST", () => {
 		expect(new Set(SLIM_DENYLIST).size).toBe(SLIM_DENYLIST.length);
 	});
 
-	test("never touches what SpringBoard, installs, argent's AX tree or typing need", () => {
+	test("never touches what SpringBoard, installs, the e2e driver's AX tree or typing need", () => {
 		for (const label of SLIM_DENYLIST) {
 			for (const pattern of NEVER_DISABLE) expect(pattern.test(label)).toBe(false);
 		}

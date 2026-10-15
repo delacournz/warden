@@ -1,6 +1,6 @@
 ---
 name: warden
-description: Machine-wide leasing of iOS simulators, Android emulators and ports across agents, worktrees and users. Use before booting, choosing or interacting with any simulator/emulator (argent, simctl, adb, e2e scripts), when picking a dev-server port, or when installing a dev build on a device.
+description: Machine-wide leasing of iOS simulators, Android emulators and ports across agents, worktrees and users. Use before booting, choosing or interacting with any simulator/emulator (simctl, adb, warden ui, e2e scripts), when picking a dev-server port, or when installing a dev build on a device.
 ---
 
 # warden
@@ -9,9 +9,9 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 
 ## Rules
 
-- **Claim before use.** `warden claim ios --json` (or `android`) → use the returned `udid` / `serial` for every argent / simctl / adb call. Never pick a device from `list-devices` or `simctl list` on your own.
+- **Claim before use.** `warden claim ios --json` (or `android`) → use the returned `udid` / `serial` for every simctl / adb / `warden ui` call. Never pick a device from `list-devices` or `simctl list` on your own.
 - **Never touch a booted device you did not claim** — it belongs to another session. Do not shut it down, erase it, or install on it.
-- A Claude hook blocks argent calls on devices leased by other sessions; if blocked, run `warden claim` and switch to the returned device.
+- `warden ui` refuses a device another session leased; if refused, run `warden claim` and switch to the returned device.
 - **A bare `warden claim` lasts ~5 min** (agents; `--ttl` overrides) and nothing refreshes it by itself. Only a wrapper (`warden dev` / `run` / `batch` / `e2e`, which hold by pid + 30 s heartbeat) or an explicit `warden heartbeat` keeps a device longer. Stale devices are reclaimed (gc shuts a sim down no sooner than 10 min after its lease went stale, and never while an app is running on it).
 - **Release when done:** `warden release <leaseId…>` (add `--shutdown` to stop sims warden created). Subagents never call `release --mine` (it frees the parent's leases too): release by id, or claim with `--label <x>` and `release --mine --label <x>`.
 

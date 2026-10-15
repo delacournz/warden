@@ -14,11 +14,11 @@ let write: (path: string, text: string) => void;
 
 beforeEach(() => {
 	({ dir, write } = makeFixtureRepo());
-	write("flows/chats.yaml", "steps:\n  - launch: com.x\n");
-	write("flows/settings.yaml", "steps:\n  - launch: com.x\n  - run: ./shared/sign-in.yaml\n");
-	write("flows/shared/sign-in.yaml", "steps:\n  - tap: { id: go }\n");
-	write("flows/store-ios-01.yaml", "steps:\n  - launch: com.x\n");
-	write("flows/smoke.yaml", "steps:\n  - launch: com.x\n");
+	write("flows/chats.e2e.ts", "export {};\n");
+	write("flows/settings.e2e.ts", 'import "./shared/sign-in";\n');
+	write("flows/shared/sign-in.ts", "export {};\n");
+	write("flows/store-ios-01.e2e.ts", "export {};\n");
+	write("flows/smoke.e2e.ts", "export {};\n");
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -92,7 +92,7 @@ describe("selectFlows", () => {
 	});
 
 	test("paths globs, flow + fragment files", async () => {
-		const sel = await select(["src/assets/logo.png", "flows/shared/sign-in.yaml"]);
+		const sel = await select(["src/assets/logo.png", "flows/shared/sign-in.ts"]);
 		expect(ids(sel)).toEqual(["chats", "settings", "store-ios-01"]);
 		const settings = sel.selected.find((f) => f.id === "settings");
 		expect(settings?.required).toBe(false);
@@ -119,7 +119,7 @@ describe("selectFlows", () => {
 
 describe("include / exclude / only / scope / unmatched", () => {
 	test("exclude drops flows by id glob; include keeps only matching ones", async () => {
-		write("flows/online/lb.yaml", "steps:\n  - launch: com.x\n");
+		write("flows/online/lb.e2e.ts", "export {};\n");
 		const all = await select(["bun.lock"]);
 		expect(ids(all)).toContain("online/lb");
 		const excl = await select(["bun.lock"], "ios", suite({ exclude: ["online/**"] }));

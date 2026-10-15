@@ -23,17 +23,11 @@ describe("codexHome / codexHooksPath", () => {
 });
 
 describe("mergeCodexHooks", () => {
-	test("empty → hooks.json with argent PreToolUse + SessionEnd (3 s cap)", () => {
+	test("empty → hooks.json with SessionEnd (3 s cap)", () => {
 		const { settings, changed } = merged(undefined);
 		expect(changed).toBe(true);
 		expect(settings).toEqual({
 			hooks: {
-				PreToolUse: [
-					{
-						matcher: "mcp__argent__.*|mcp__plugin_goldie_argent__.*",
-						hooks: [{ type: "command", command: `${BIN} hook pretool`, timeout: 30 }],
-					},
-				],
 				SessionEnd: [{ hooks: [{ type: "command", command: `${BIN} hook session-end`, timeout: 3 }] }],
 			},
 		});
@@ -52,8 +46,8 @@ describe("mergeCodexHooks", () => {
 		expect(existing).toEqual(before);
 		const hooks = first.settings.hooks as Record<string, unknown[]>;
 		expect(hooks.Stop).toEqual(before.hooks.Stop);
-		expect(hooks.PreToolUse).toHaveLength(2);
-		expect(hooks.PreToolUse?.[0]).toEqual(before.hooks.PreToolUse[0]);
+		expect(hooks.PreToolUse).toEqual(before.hooks.PreToolUse);
+		expect(hooks.SessionEnd).toHaveLength(1);
 		const second = merged(first.settings);
 		expect(second.changed).toBe(false);
 		expect(second.settings).toEqual(first.settings);
@@ -69,21 +63,20 @@ describe("mergeCodexHooks", () => {
 describe("codexTomlHasWardenHook", () => {
 	const toml = `model = "gpt-5"
 
-[[hooks.PreToolUse]]
-matcher = "mcp__argent__.*"
+[[hooks.SessionEnd]]
 
-[[hooks.PreToolUse.hooks]]
+[[hooks.SessionEnd.hooks]]
 type = "command"
-command = "$HOME/.local/bin/warden hook pretool"
+command = "$HOME/.local/bin/warden hook session-end"
 `;
 	test("finds warden hooks declared in config.toml", () => {
-		expect(codexTomlHasWardenHook(toml, "pretool")).toBe(true);
-		expect(codexTomlHasWardenHook(toml, "session-end")).toBe(false);
+		expect(codexTomlHasWardenHook(toml, "session-end")).toBe(true);
+		expect(codexTomlHasWardenHook(toml, "pretool")).toBe(false);
 	});
 
 	test("missing / invalid TOML → false", () => {
-		expect(codexTomlHasWardenHook(undefined, "pretool")).toBe(false);
-		expect(codexTomlHasWardenHook("[[[ nope", "pretool")).toBe(false);
+		expect(codexTomlHasWardenHook(undefined, "session-end")).toBe(false);
+		expect(codexTomlHasWardenHook("[[[ nope", "session-end")).toBe(false);
 	});
 
 	test("hooks.json shape is understood by hasWardenHook", () => {
@@ -102,37 +95,16 @@ describe("warden hook with Codex payloads", () => {
 		return ctx;
 	}
 
-	const codexPreTool = (sessionId: string) => ({
-		session_id: sessionId,
-		turn_id: "turn-1",
-		transcript_path: null,
-		cwd: "/nonexistent",
-		hook_event_name: "PreToolUse",
-		model: "gpt-5-codex",
-		permission_mode: "default",
-		tool_name: "mcp__argent__describe",
-		tool_use_id: "call_1",
-		tool_input: { udid: UDID },
-	});
-
-	test("pretool leases the device for the Codex session", async () => {
-		const c = run(["pretool"], codexPreTool("019a-thread"));
-		expect(await hookCommand.run(c)).toBe(0);
-		expect(c.db.listLeases()[0]?.owner).toMatchObject({ kind: "agent", sessionId: "019a-thread" });
-	});
-
-	test("a second Codex session is blocked with exit 2 + stderr reason (Codex's blocking contract)", async () => {
-		const c = run(["pretool"], codexPreTool("thread-a"));
-		await hookCommand.run(c);
-		c.readStdin = async () => JSON.stringify(codexPreTool("thread-b"));
-		expect(await hookCommand.run(c)).toBe(2);
-		expect(c.stderr.join("\n")).toContain(`device ${UDID} leased by agent thread-a`);
-	});
-
 	test("session-end (reason always `other` in Codex) releases the session's leases", async () => {
-		const c = run(["pretool"], codexPreTool("thread-a"));
-		await hookCommand.run(c);
-		c.argv = ["session-end"];
+		const c = run(["session-end"], {});
+		c.db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: UDID, name: "sim" },
+				owner: { kind: "agent", sessionId: "thread-a", cwd: "/nonexistent" },
+				ttlMs: 60_000,
+			},
+			c.now()
+		);
 		c.readStdin = async () =>
 			JSON.stringify({
 				session_id: "thread-a",

@@ -36,7 +36,7 @@ The package is a small node shim plus one prebuilt binary per platform (`@delaco
 
 ```bash
 warden install            # binary + hooks for every detected agent; shows a diff, asks first
-warden install --claude   # force Claude Code only: skill + hooks + argent rule
+warden install --claude   # force Claude Code only: skill + SessionEnd hook
 warden install --codex    # force Codex only: hooks in $CODEX_HOME/hooks.json
 ```
 

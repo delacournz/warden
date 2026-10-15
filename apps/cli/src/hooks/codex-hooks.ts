@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import type { Result } from "@delacour/warden-types/result";
-import { ARGENT_MATCHER } from "./claude-pretool";
 import {
 	type HookName,
 	hasWardenHook,
@@ -16,10 +15,7 @@ type Env = Record<string, string | undefined>;
  * hooks (same stdin JSON, exit 2 + stderr blocks a PreToolUse), but caps SessionEnd at 3 s
  * (codex-rs/hooks/src/events/session_end.rs: default 1 s, max 3 s).
  */
-export const CODEX_HOOKS: readonly WardenHookSpec[] = [
-	{ event: "PreToolUse", name: "pretool", matcher: ARGENT_MATCHER, timeout: 30 },
-	{ event: "SessionEnd", name: "session-end", timeout: 3 },
-];
+export const CODEX_HOOKS: readonly WardenHookSpec[] = [{ event: "SessionEnd", name: "session-end", timeout: 3 }];
 
 /** Codex's config dir: `$CODEX_HOME`, else `~/.codex`. */
 export function codexHome(env: Env): string | undefined {
