@@ -4,6 +4,9 @@
  *   dist/npm/warden-<target>/  → @delacour/warden-<target>: package.json + bin/warden (the compiled binary)
  *   dist/npm/warden/           → @delacour/warden: package.json + bin/warden.mjs (node shim) + README.md
  *                                + config/index.{mjs,d.ts} (`@delacour/warden/config`: defineConfig + types)
+ * darwin-arm64 also gets the simulator helper (`bin/{warden-simd, Resources/, *.framework, manifest.json}`) copied from
+ * `packages/e2e/native/dist` (override: `WARDEN_E2E_NATIVE_DIST`) when it is built; `--require-helper` (release) makes
+ * a missing helper an error.
  * Every package also gets the repo-root LICENSE. Repository / homepage / bugs links are added only with
  * `--repo-links` or `WARDEN_NPM_REPO_LINKS=1` (the release workflow sets it once the repo is public).
  * Publishing is the release workflow's job: platform packages first, then @delacour/warden.
@@ -13,7 +16,10 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import cliPackage from "../package.json" with { type: "json" };
 import { buildConfigEntry } from "../src/npm/config-entry";
+import { HELPER_TARGET, type StagedHelper } from "../src/npm/helper";
+import { stageHelper } from "../src/npm/helper-stage";
 import {
+	BIN_DIR,
 	BINARY_PATH,
 	LICENSE_FILE,
 	mainManifest,
@@ -28,7 +34,11 @@ const cliRoot = resolve(import.meta.dir, "..");
 const dist = join(cliRoot, "dist");
 const out = join(dist, "npm");
 const repoRoot = resolve(cliRoot, "..", "..");
-const { values } = parseArgs({ options: { "repo-links": { type: "boolean", default: false } }, strict: true });
+const { values } = parseArgs({
+	options: { "repo-links": { type: "boolean", default: false }, "require-helper": { type: "boolean", default: false } },
+	strict: true,
+});
+const helperDist = process.env.WARDEN_E2E_NATIVE_DIST || join(repoRoot, "packages", "e2e", "native", "dist");
 const repoLinks = values["repo-links"] || process.env.WARDEN_NPM_REPO_LINKS === "1";
 const meta: PackageMeta = {
 	version: cliPackage.version,
@@ -50,13 +60,19 @@ rmSync(out, { recursive: true, force: true });
 
 for (const target of RELEASE_TARGETS) {
 	const dir = join(out, `warden-${target}`);
-	writeJson(join(dir, "package.json"), platformManifest(target, meta));
+	let helper: StagedHelper | undefined;
+	if (target === HELPER_TARGET) {
+		const staged = stageHelper({ distDir: helperDist, binDir: join(dir, BIN_DIR), required: values["require-helper"] });
+		if (!staged.success) throw new Error(staged.error);
+		helper = staged.data;
+	}
+	writeJson(join(dir, "package.json"), platformManifest(target, meta, helper));
 	const binary = join(dir, BINARY_PATH);
 	mkdirSync(dirname(binary), { recursive: true });
 	copyFileSync(join(dist, `warden-${target}`), binary);
 	chmodSync(binary, 0o755);
 	copyFileSync(join(repoRoot, LICENSE_FILE), join(dir, LICENSE_FILE));
-	console.log(`staged dist/npm/warden-${target}`);
+	console.log(`staged dist/npm/warden-${target}${helper ? ` (+ warden-simd ${helper.version})` : ""}`);
 }
 
 const main = join(out, "warden");

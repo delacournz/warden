@@ -1,3 +1,4 @@
+import { HELPER_BINARY, HELPER_TARGET, type HelperInfo, helperFiles, type StagedHelper } from "./helper";
 import { NPM_PACKAGE, platformPackageName, RELEASE_TARGETS, type ReleaseTarget } from "./platforms";
 
 /**
@@ -17,6 +18,10 @@ export type PlatformManifest = RepoLinks & {
 	os: string[];
 	cpu: string[];
 	files: string[];
+	/** darwin-arm64 with the simulator helper: npm chmods bin targets on install, so `warden-simd` stays executable */
+	bin?: Record<string, string>;
+	/** read by `warden doctor` */
+	warden?: { helper: HelperInfo };
 	preferUnplugged: true;
 	publishConfig: PublishConfig;
 };
@@ -41,7 +46,8 @@ export const SHIM_PATH = "bin/warden.mjs";
 export const CONFIG_ENTRY_JS = "config/index.mjs";
 export const CONFIG_ENTRY_DTS = "config/index.d.ts";
 /** Path of the compiled binary inside a platform package. */
-export const BINARY_PATH = "bin/warden";
+export const BIN_DIR = "bin";
+export const BINARY_PATH = `${BIN_DIR}/warden`;
 /** Copied from the repo root into every package. */
 export const LICENSE_FILE = "LICENSE";
 
@@ -54,9 +60,13 @@ function repoLinks(repo: string | undefined): RepoLinks {
 	};
 }
 
-/** `@delacour/warden-<os>-<cpu>`: just the binary, installable only on its os/cpu. */
-export function platformManifest(target: ReleaseTarget, meta: PackageMeta): PlatformManifest {
+/**
+ * `@delacour/warden-<os>-<cpu>`: the binary, installable only on its os/cpu. darwin-arm64 with a staged
+ * `helper` also ships `warden-simd` + its resources next to the binary (other targets ignore `helper`).
+ */
+export function platformManifest(target: ReleaseTarget, meta: PackageMeta, helper?: StagedHelper): PlatformManifest {
 	const [os = "", cpu = ""] = target.split("-");
+	const shipped = target === HELPER_TARGET ? helper : undefined;
 	return {
 		name: platformPackageName(target),
 		version: meta.version,
@@ -65,7 +75,13 @@ export function platformManifest(target: ReleaseTarget, meta: PackageMeta): Plat
 		...repoLinks(meta.repository),
 		os: [os],
 		cpu: [cpu],
-		files: [BINARY_PATH, LICENSE_FILE],
+		files: [BINARY_PATH, ...(shipped ? helperFiles(BIN_DIR, shipped.frameworks) : []), LICENSE_FILE],
+		...(shipped
+			? {
+					bin: { [HELPER_BINARY]: `${BIN_DIR}/${HELPER_BINARY}` },
+					warden: { helper: { version: shipped.version, idb: shipped.idb, xcode: shipped.xcode } },
+				}
+			: {}),
 		preferUnplugged: true,
 		publishConfig: { access: "public" },
 	};

@@ -29,6 +29,38 @@ describe("platformManifest", () => {
 	});
 });
 
+describe("platformManifest with the simulator helper", () => {
+	const helper = { version: "0.1.0", idb: "1.1.8", xcode: "26.6 (17F113)", frameworks: ["A.framework", "B.framework"] };
+
+	test("darwin-arm64 ships warden-simd, resources, frameworks and records the build for doctor", () => {
+		const manifest = platformManifest("darwin-arm64", meta, helper);
+		expect(manifest.files).toEqual([
+			"bin/warden",
+			"bin/warden-simd",
+			"bin/Resources",
+			"bin/manifest.json",
+			"bin/A.framework",
+			"bin/B.framework",
+			"LICENSE",
+		]);
+		expect(manifest.bin).toEqual({ "warden-simd": "bin/warden-simd" });
+		expect(manifest.warden).toEqual({ helper: { version: "0.1.0", idb: "1.1.8", xcode: "26.6 (17F113)" } });
+	});
+
+	test("without a staged helper, darwin-arm64 is the plain binary package", () => {
+		const manifest = platformManifest("darwin-arm64", meta);
+		expect(manifest.files).toEqual(["bin/warden", "LICENSE"]);
+		expect("bin" in manifest).toBe(false);
+		expect("warden" in manifest).toBe(false);
+	});
+
+	test("other targets are unchanged even when a helper is passed", () => {
+		for (const target of ["darwin-x64", "linux-arm64", "linux-x64"] as const) {
+			expect(platformManifest(target, meta, helper)).toEqual(platformManifest(target, meta));
+		}
+	});
+});
+
 describe("mainManifest", () => {
 	test("warden bin → JS shim, every platform an exact-version optionalDependency", () => {
 		const manifest = mainManifest(meta);

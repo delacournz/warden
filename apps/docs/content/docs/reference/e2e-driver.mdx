@@ -1,0 +1,88 @@
+---
+title: iOS driver helper
+description: warden-simd, the helper that taps and reads the accessibility tree of iOS simulators - where warden looks for it, the variables that steer it, and what warden doctor reports.
+icon: Cpu
+---
+
+## What it is
+
+`warden-simd` is a small macOS binary the iOS e2e driver and `warden ui` talk to. It does the three things `xcrun simctl` cannot:
+
+- host-side touch and keyboard input (HID)
+- the accessibility tree of the frontmost app, in one round trip, through a prebuilt guest that runs inside the simulator
+- fast screenshots, orientation, and waiting for the UI to settle
+
+Everything else (install, launch, open URL, permissions, pasteboard, appearance, status bar, video) stays on `xcrun simctl`. There is no runner app to build or install on the simulator and no long-lived daemon: a helper starts on demand for a device and exits after ten idle minutes.
+
+It links the MIT-licensed `FBControlCore`, `FBSimulatorControl` and `FBSimulatorAX` libraries from [idb](https://github.com/facebook/idb), pinned to one release.
+
+<Callout type="warn">
+The helper uses private CoreSimulator and Accessibility APIs, the same ones idb and Xcode use. They can change in any Xcode release. `warden doctor` shows the idb and Xcode versions the helper was built with, and the probe below tells you when a new Xcode has broken it.
+</Callout>
+
+## Platforms
+
+| Machine | Helper |
+|---|---|
+| macOS arm64 | shipped |
+| macOS x64 | not in this version (idb's libraries are arm64-only); `warden doctor` says so. Android e2e is unaffected. |
+| Linux | n/a, there is no iOS |
+
+## Where warden looks
+
+The first match wins. An override that points at nothing is an error, never a fall-through, so a stale setting cannot quietly pick another binary.
+
+1. `WARDEN_SIMD`: the path of the `warden-simd` file
+2. `WARDEN_HELPER_DIR`: a directory containing `warden-simd`
+3. next to the running `warden` binary (this is where the npm `@delacour/warden-darwin-arm64` package puts it)
+4. `packages/e2e/native/dist/` in a warden source checkout (`bun run --cwd packages/e2e native:deps && native:build`)
+5. `$WARDEN_HOME/simd/<warden version>/`, filled by `warden doctor --fetch-helper`
+
+The helper needs its neighbours: `Resources/SimulatorFrameworkBridge-iOS` (the in-simulator guest) and two stub `*.framework` directories. They live in the same directory as the binary, and `manifest.json` next to them records the helper, idb and Xcode versions. Keep the directory together if you copy it.
+
+A standalone `warden` binary (from GitHub releases, or replaced by `warden update`) has no helper beside it. Run `warden doctor --fetch-helper` once per version to put one in `$WARDEN_HOME/simd/<version>/`.
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `WARDEN_SIMD` | use this `warden-simd` binary |
+| `WARDEN_HELPER_DIR` | look for `warden-simd` in this directory |
+| `WARDEN_SIMD_SOCKET` | path of a running helper's socket. `warden e2e` and `warden batch` start one helper per leased device before the flows and set this for each job, so spec workers connect in milliseconds. Unset (a by-hand `bun test` run), the driver starts a helper on stdio itself. |
+| `WARDEN_HELPER_URL` | `--fetch-helper` only: directory URL holding `warden-simd-darwin-arm64.tgz` and `SHA256SUMS`, instead of the GitHub release for this version |
+| `WARDEN_RELEASE_REPO` | GitHub repo `--fetch-helper` downloads from (default `delacournz/warden`) |
+
+## `warden doctor`
+
+```bash
+warden doctor
+```
+
+```text
+✓ sim-helper         /Users/me/.warden/simd/0.3.0/warden-simd (warden-home) — warden-simd 0.1.0, idb 1.1.8, xcode 26.6 (17F113)
+✓ sim-helper-health  4A1B…: hid.transport=indigo ax.bridge=available
+```
+
+`sim-helper` is the path the lookup found, which step found it, and the build info from `manifest.json`. When nothing is found it warns, lists every path it tried, and names the fix. These rows only ever warn; `doctor` still exits 0.
+
+`sim-helper-health` runs `warden-simd --health --udid <udid>` against the first booted iOS simulator, with a 5 second limit, and prints what it negotiated:
+
+- `hid.transport` is how input reaches the simulator: `indigo` (Xcode 26) or `dtuhid` (Xcode 27).
+- `ax.bridge` is the fast accessibility path. `available` means the in-simulator guest answered. `missing` or `failed` means snapshots fall back to the slower host-side accessibility API, with the reason printed.
+
+With no booted simulator there is nothing to probe and the row says so. `doctor` does not boot one.
+
+### `--fetch-helper`
+
+```bash
+warden doctor --fetch-helper
+```
+
+Downloads `warden-simd-darwin-arm64.tgz` and `SHA256SUMS` from the GitHub release `v<version>` (or `WARDEN_HELPER_URL`), checks the tarball against the sum, and unpacks it into `$WARDEN_HOME/simd/<version>/`. Nothing is unpacked when the checksum does not match. Then it runs the usual checks, so the `sim-helper` rows show the result. It exits 1 if the download fails or the machine is not macOS arm64.
+
+## How it is shipped
+
+- npm: `@delacour/warden-darwin-arm64` carries `bin/warden-simd` and its resources next to `bin/warden`. The package.json records the helper build under `warden.helper`.
+- GitHub releases: `warden-simd-darwin-arm64.tgz` (the helper directory) and `SHA256SUMS`.
+
+The helper is ad-hoc signed without the hardened runtime, like Homebrew's `idb_companion`.

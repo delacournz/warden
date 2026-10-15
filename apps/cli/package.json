@@ -19,7 +19,8 @@
 		"typecheck": "tsc --noEmit",
 		"test": "bun test",
 		"build:release": "bun scripts/build.ts --channel release",
-		"build:npm": "bun scripts/npm-packages.ts"
+		"build:npm": "bun scripts/npm-packages.ts",
+		"build:helper-asset": "bun scripts/helper-asset.ts"
 	},
 	"dependencies": {
 		"@clack/prompts": "^1.8.1",
