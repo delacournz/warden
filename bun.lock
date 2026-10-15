@@ -160,6 +160,14 @@
         "typescript": "^5.9.3",
       },
     },
+    "scripts/smoke": {
+      "name": "@delacour/warden-smoke",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@delacour/warden-tsconfig": "workspace:*",
+        "typescript": "^5.9.3",
+      },
+    },
   },
   "overrides": {
     "mdast-util-to-markdown": "2.1.2",
@@ -352,6 +360,8 @@
     "@delacour/warden-e2e": ["@delacour/warden-e2e@workspace:packages/e2e"],
 
     "@delacour/warden-example": ["@delacour/warden-example@workspace:apps/example"],
+
+    "@delacour/warden-smoke": ["@delacour/warden-smoke@workspace:scripts/smoke"],
 
     "@delacour/warden-tsconfig": ["@delacour/warden-tsconfig@workspace:packages/tsconfig"],
 

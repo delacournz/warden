@@ -23,7 +23,8 @@
 	"workspaces": [
 		"apps/*",
 		"packages/*",
-		"scripts/demo"
+		"scripts/demo",
+		"scripts/smoke"
 	],
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.14",

@@ -61,4 +61,5 @@ Leases expire without a heartbeat: ~5 min for a bare agent `warden claim`, 30 mi
 4. `--json` on any call gives one `{ok, command, device, generation?, durationMs, result}` or `{ok:false, error:{code, message, hint?}}` document. Exit codes: 0 ok · 1 failed/usage · 2 lease (foreign device: `warden claim` another; none: add `--claim`) · 3 engine/devtools unavailable · 4 stale ref · 130 interrupted. Read the hint before retrying.
 5. A view missing from `snapshot`: the app must mark it `accessible` and give it a `testID`; `tree` shows it from the React side. Full reference: docs guide `guides/agent-ui`.
 6. For repeatable checks write a spec (row above) instead of replaying by hand.
-7. Done: `warden ui close --release` (or `warden release <leaseId>`). Subagents release by lease id or `--mine --label <x>`, never bare `--mine`.
+7. Loop feels slow? `warden ui bench [--runs n] [--json]` times snapshot, press, settle, tree and driver open against the speed targets (it stops the device's helper first: use a device nobody else is using).
+8. Done: `warden ui close --release` (or `warden release <leaseId>`). Subagents release by lease id or `--mine --label <x>`, never bare `--mine`.

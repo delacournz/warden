@@ -1,0 +1,19 @@
+{
+	"name": "@delacour/warden-smoke",
+	"version": "0.1.0",
+	"description": "Manual / nightly smoke scripts that need a real simulator or emulator (ui-bench)",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"ui-bench": "bun ui-bench.ts",
+		"fmt": "biome format --write .",
+		"lint": "biome lint --write .",
+		"check": "biome check .",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*",
+		"typescript": "^5.9.3"
+	}
+}

@@ -189,3 +189,7 @@ Release only what you leased: `warden ui close --release`, or `warden release <l
 - A command that fails prints a hint. Read it before retrying; `stale_ref` means snapshot again, `target_not_found` means the selector matched nothing (run `find`, or `snapshot --all`).
 - If a view is missing from the snapshot, mark it `accessible` and give it a `testID` in the app (the accessibility tree only exposes accessible views; see [Write e2e specs](/docs/guides/specs)), or use `tree` to find the React component.
 - The first call on a device starts its helper; later calls reuse it until it has been idle for 10 minutes. `warden e2e` and `warden batch` pre-warm it for their devices.
+
+### Speed targets
+
+`warden ui bench` times the loop's primitives on a leased device (warm snapshot, HID press, press with `--settle`, `tree`, cold helper start, opening a second driver) and checks them against fixed targets, for example a warm `snapshot -i` under 60 ms at p50 and a HID `press x y` under 30 ms on iOS. A metric passes up to its target times 1.5. The full table, the JSON shape and the `bun run smoke:ui-bench` gate are in the [CLI reference](/docs/reference/cli#warden-ui-bench).
