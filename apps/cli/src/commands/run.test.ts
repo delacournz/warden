@@ -122,6 +122,26 @@ describe("warden run", () => {
 		expect(h.signals.size).toBe(0);
 	});
 
+	test("--headless → WARDEN_HEADLESS=1 for the child; WARDEN_HEADLESS is the fallback; --no-headless clears it", async () => {
+		const childEnv = async (argv: string[], env: Record<string, string> = {}) => {
+			const c = setup(argv);
+			c.env = { ...c.env, ...env };
+			const h = harness();
+			const running = createRunCommand(h.deps).run(c);
+			await waitFor(() => h.spawned.length > 0);
+			h.finish(0);
+			await running;
+			c.cleanup();
+			return h.spawned[0]?.env ?? {};
+		};
+		expect((await childEnv(["ios", "--headless", "--", "x"])).WARDEN_HEADLESS).toBe("1");
+		expect((await childEnv(["ios", "--", "x"], { WARDEN_HEADLESS: "1" })).WARDEN_HEADLESS).toBe("1");
+		expect("WARDEN_HEADLESS" in (await childEnv(["ios", "--no-headless", "--", "x"], { WARDEN_HEADLESS: "1" }))).toBe(
+			false
+		);
+		expect("WARDEN_HEADLESS" in (await childEnv(["ios", "--", "x"]))).toBe(false);
+	});
+
 	test("forwards SIGINT/SIGTERM to the child", async () => {
 		const c = setup(["ios", "--", "sleep", "60"]);
 		const h = harness();

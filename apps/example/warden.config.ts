@@ -44,6 +44,8 @@ const AFFECTED = {
  * only, and two e2e suites over the same tester.army flows:
  * - `example`: the Release build, one runner per flow;
  * - `example-dev`: the dev client against a Metro warden starts for the run, one runner for the pool.
+ * Both start every sim's agent-device runner in parallel before the flows (`warmRunners`, default on;
+ * `warmRunners: false` to opt out).
  *
  * ```bash
  * warden e2e example                 # flows this branch needs, 2 sims (--all: every flow)
@@ -78,7 +80,7 @@ export default {
 		example: {
 			runner: ["bunx", "e2e", "run", "{flowPath}", "--retries", "0", "--output", ".e2e/{worker}-{seq}"],
 			count: 2,
-			app: { clean: true },
+			app: true,
 			slim: true,
 			...AFFECTED,
 		},
@@ -86,7 +88,7 @@ export default {
 			runner: ["bunx", "e2e", "run", "{flowPaths}", "--retries", "0", "--output", ".e2e/dev"],
 			mode: "single",
 			count: 2,
-			app: { variant: "dev", clean: true },
+			app: { variant: "dev" },
 			metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
 			jobTimeoutMs: 15 * 60_000,
 			slim: true,

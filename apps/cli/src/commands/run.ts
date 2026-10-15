@@ -1,3 +1,4 @@
+import { resolveHeadless } from "@delacour/warden-core/headless";
 import { isPortFree } from "@delacour/warden-core/ports";
 import type { Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -21,6 +22,8 @@ import {
 	intervalEvery,
 	type LeaseArgs,
 	type LeaseSessionDeps,
+	leasedProgress,
+	leasedText,
 	parseAppFlags,
 	processOnSignal,
 	splitOperands,
@@ -91,7 +94,10 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	if (!target.success) return fail(target.error);
 	const platform = await resolvePlatform(ctx, target.data.platformArg);
 	if (!platform.success) return fail(platform.error);
-	const args = parseRunArgs(platform.data, opts);
+	const args = parseRunArgs(platform.data, {
+		...opts,
+		headless: resolveHeadless({ flag: opts.headless, env: ctx.env }),
+	});
 	if (!args.success) return fail(args.error);
 	const { cmd } = target.data;
 	const owner = resolveOwner(ctx);
@@ -101,9 +107,12 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 		ctx,
 		`claiming ${count} ${profile} ${platform.data} device(s)…`,
 		async (sctx, spinner) => {
-			const result = await claimAll(sctx, deps, owner, args.data);
-			if (result.success) spinner.succeed(`leased ${result.data.outcome.claimed.map((c) => c.device.name).join(", ")}`);
-			else spinner.fail("claim failed");
+			const app = args.data.app !== undefined;
+			const onLeased = leasedProgress(spinner, ctx.ui.color, app);
+			const result = await claimAll(sctx, deps, owner, { ...args.data, ...(onLeased ? { onLeased } : {}) });
+			if (!result.success) spinner.fail(app ? "claim / app install failed" : "claim failed");
+			else if (app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
+			else spinner.succeed(leasedText(result.data.outcome));
 			return result;
 		}
 	);

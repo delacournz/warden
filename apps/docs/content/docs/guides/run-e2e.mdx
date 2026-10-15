@@ -38,7 +38,7 @@ The flows run on [tester.army e2e](https://e2e.tester.army/docs/mobile), whose C
   project: "example",
   flowsDir: "e2e",
   platform: "ios",
-  app: { variant: "dev", clean: true },
+  app: { variant: "dev" },
   metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
   mode: "single",
   count: 2,
@@ -77,7 +77,19 @@ export default {
 | verdict per flow | stdout, and `e2e-report.json` in the batch dir (`--json` prints it) |
 | a job's output | `<batchDir>/logs/<worker>-<seq>-<job>.log`, screenshot next to it |
 | Metro's output | `<batchDir>/metro.log` |
+| a device's runner warm-up | `<batchDir>/logs/warm-<worker>.log` |
 | a device that keeps failing | `warden release <leaseId> --bad "<why>"` keeps it out of the pool |
+
+Before the first flow, warden starts every iOS device's agent-device automation runner at once (`warmRunners`, on by default), in the daemon and session the runner will resume: the runner reads its session prefix from `WARDEN_AGENT_SESSION`. The e2e engine warms its devices one at a time (about 20 s each), so with the runners already up its `setup prepare ios` takes a few seconds instead of 20 s per device. Set `warmRunners: false` on the suite to turn it off.
+
+Every line warden writes to these logs (jobs, `setup-<worker>.log`, `metro.log`, `serve.log`) starts with the local time it arrived, `[HH:MM:SS.mmm] `. Jobs get `WARDEN_LOG_TIMESTAMPS=1`, so a runner that prints its own times can leave them out. The example app's `timestampsReporter` (`apps/example/e2e/helpers/timestamps.ts`, beside the `list` reporter) adds a line for every test and step start and end:
+
+```text
+[00:54:25.766] ▶ test |ios| e2e/onboarding.e2e.ts › onboarding steps through to sign-in
+[00:54:25.942]   ▸ onboarding › app app.open
+[00:54:27.193]   ▪ onboarding › app app.open passed 1251ms
+[00:54:32.647] ■ test |ios| e2e/onboarding.e2e.ts › onboarding steps through to sign-in passed 6.88s on 4115EA7D-…
+```
 
 ## Don't
 

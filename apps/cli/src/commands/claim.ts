@@ -1,6 +1,7 @@
 import type { ClaimedDevice } from "@delacour/warden-core/claim";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration } from "@delacour/warden-core/duration";
+import { resolveHeadless } from "@delacour/warden-core/headless";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { maybeAutoGc } from "../autogc";
 import {
@@ -52,7 +53,13 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	}
 	const owner = resolveOwner(ctx);
 	const shortLived = owner.kind === "agent" && opts.ttl === undefined;
-	const flags = parseClaimFlags(platform.data, opts, undefined, shortLived ? BARE_CLAIM_AGENT_TTL_MS : DEFAULT_TTL_MS);
+	const headless = resolveHeadless({ flag: opts.headless, env: ctx.env });
+	const flags = parseClaimFlags(
+		platform.data,
+		{ ...opts, headless },
+		undefined,
+		shortLived ? BARE_CLAIM_AGENT_TTL_MS : DEFAULT_TTL_MS
+	);
 	if (!flags.success) {
 		ctx.err(color.red(`warden claim: ${flags.error}`));
 		return 1;

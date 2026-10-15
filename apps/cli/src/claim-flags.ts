@@ -11,7 +11,7 @@ import type { DeviceRequest, Owner, Platform } from "@delacour/warden-core/types
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
-import { autoArrangeSimWindows } from "./sim-windows";
+import { autoArrangeSimWindows, type HideDeps, hideSimWindows } from "./sim-windows";
 
 /** Claim options shared by `claim` and `run` (typed by commander's extra-typings). */
 export function withClaimOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
@@ -26,6 +26,8 @@ export function withClaimOptions<Args extends unknown[], Opts extends OptionValu
 		.option("--ttl <duration>", "lease TTL without heartbeat (default 30m; bare `claim` by an agent: 5m)")
 		.option("--label <label>", "label shown in `warden ls`")
 		.option("--adopt", "allow allocating foreign (non-warden) devices")
+		.option("--headless", "iOS: close the claimed sims' Simulator.app windows (no window, even with Simulator open)")
+		.option("--no-headless", "show the windows even when config / WARDEN_HEADLESS say headless")
 		.option("--json", "machine-readable output");
 }
 
@@ -48,9 +50,18 @@ export type ClaimFlagValues = {
 	ttl?: string;
 	label?: string;
 	adopt?: boolean;
+	/** the run's resolved headless (callers apply `resolveHeadless` first) */
+	headless?: boolean;
 };
 
-export type ClaimFlags = { request: DeviceRequest; waitMs: number; ttlMs: number; label?: string };
+export type ClaimFlags = {
+	request: DeviceRequest;
+	waitMs: number;
+	ttlMs: number;
+	label?: string;
+	/** iOS: close the claimed sims' Simulator.app windows instead of tiling them */
+	headless?: true;
+};
 
 export function parsePlatform(value: string | undefined): Result<Platform> {
 	if (value === "ios" || value === "android") return ok(value);
@@ -95,6 +106,7 @@ export function parseClaimFlags(
 	if (values.adopt) request.adopt = true;
 	const flags: ClaimFlags = { request, waitMs: waitMs.data, ttlMs: ttlMs.data };
 	if (values.label !== undefined) flags.label = values.label;
+	if (values.headless) flags.headless = true;
 	return ok(flags);
 }
 
@@ -125,7 +137,12 @@ export function resolveAutoProfile(avds: readonly string[]): Result<string> {
 		: err("no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
 }
 
-/** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows. */
+/** `hideSimWindows` deps from a command context: problems are yellow `warden: …` lines. */
+export function headlessDeps(ctx: CommandContext): HideDeps {
+	return { exec: ctx.exec, warn: (line) => ctx.err(ctx.ui.color.yellow(`warden: ${line}`)) };
+}
+
+/** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them). */
 export async function claimWithFlags(
 	ctx: CommandContext,
 	owner: Owner,
@@ -153,10 +170,13 @@ export async function claimWithFlags(
 		log: (line) => ctx.err(`warden: ${line}`),
 	});
 	if (outcome.success && request.platform === "ios") {
-		await autoArrangeSimWindows(
-			ctx,
-			outcome.data.claimed.map((c) => c.device.name)
-		);
+		const sims = outcome.data.claimed.map((c) => ({ udid: c.device.id, name: c.device.name }));
+		if (flags.headless) await hideSimWindows(headlessDeps(ctx), sims);
+		else
+			await autoArrangeSimWindows(
+				ctx,
+				sims.map((s) => s.name)
+			);
 	}
 	return outcome;
 }

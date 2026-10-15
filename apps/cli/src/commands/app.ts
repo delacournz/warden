@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
+import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import { type EnsureInput, ensureApp, type ProjectContext, projectContext } from "@delacour/warden-core/builds/ensure";
 import { type CacheKey, computeCacheKey } from "@delacour/warden-core/builds/fingerprint";
 import type { EnsureResult } from "@delacour/warden-core/builds/resolve";
@@ -9,6 +10,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { parsePlatform, resolveOwner, resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import { emit } from "../output";
 import { withSpinner } from "../spinner-context";
 
@@ -33,8 +35,10 @@ export type EnsureOptions = {
 	eas: boolean;
 	/** false = `--no-build` */
 	build: boolean;
-	/** `--clean`: uninstall before installing, even at the same hash */
-	clean?: boolean;
+	/** `--install-mode`: reset the installed app first (`clean`: fresh data, `reinstall`: uninstall + install) */
+	installMode?: InstallMode;
+	/** `--reset-keychain`: also reset the iOS sim keychain (needs `installMode`) */
+	resetKeychain?: boolean;
 	/** `--variant`: a `projects[].variants.<name>` build */
 	variant?: string;
 	/** a missing variant falls back to the project's own build (`warden dev`) */
@@ -131,7 +135,8 @@ export async function ensurePreparedApp(
 		...(hash.native !== hash.key ? { native: hash.native } : {}),
 		eas: opts.eas,
 		build: opts.build,
-		...(opts.clean ? { clean: true } : {}),
+		...(opts.installMode !== undefined ? { installMode: opts.installMode } : {}),
+		...(opts.resetKeychain ? { resetKeychain: true } : {}),
 		...(deviceId !== undefined ? { deviceId } : {}),
 		...(deps.easPollMs !== undefined ? { easPollMs: deps.easPollMs } : {}),
 		...(deps.lockPollMs !== undefined ? { lockPollMs: deps.lockPollMs } : {}),
@@ -193,6 +198,8 @@ type EnsureOpts = ProjectOpts & {
 	install: boolean;
 	eas: boolean;
 	build: boolean;
+	installMode?: InstallMode;
+	resetKeychain?: true;
 	clean?: true;
 };
 
@@ -226,13 +233,17 @@ async function ensureCmd(
 		noInstall: !opts.install,
 	});
 	if (!device.success) return fail(ctx, "ensure", device.error);
-	if (opts.clean && device.data === undefined) return fail(ctx, "ensure", "--clean needs a device (drop --no-install)");
+	const install = parseInstallFlags(opts);
+	if (!install.success) return fail(ctx, "ensure", install.error);
+	if (install.data.installMode !== undefined && device.data === undefined) {
+		return fail(ctx, "ensure", "--install-mode needs a device (drop --no-install)");
+	}
 	const res = await withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {
 		const result = await ensureAppFor(sctx, deps, owner, platform.data, device.data, {
 			...projectOptions(opts),
 			eas: opts.eas,
 			build: opts.build,
-			...(opts.clean ? { clean: true } : {}),
+			...install.data,
 		});
 		if (result.success) spinner.succeed(`${platform.data} app ready (${result.data.source})`);
 		else spinner.fail(`${platform.data} app not ready`);
@@ -310,7 +321,9 @@ export function createAppCommand(deps: AppDeps): Command {
 				.option("--no-install", "only resolve the build into the cache")
 				.option("--no-eas", "don't download EAS builds")
 				.option("--no-build", "don't build locally on a cache miss")
-				.option("--clean", "uninstall the app first, so the run starts from a fresh container")
+				.addOption(installModeOption())
+				.option("--reset-keychain", "--install-mode: also reset the iOS simulator's keychain")
+				.addOption(legacyCleanOption())
 				.option("--bundle-id <id>", "override the bundle id / package")
 				.option("--variant <name>", "use this projects[].variants build (dev, e2e…)")
 				.option("--json", "machine-readable output")

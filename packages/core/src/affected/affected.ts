@@ -1,6 +1,6 @@
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
-import { CONFIG_FILE, findWardenConfig } from "../builds/config";
+import { CONFIG_FILE, findWardenConfig, type ParsedWardenConfig } from "../builds/config";
 import type { Exec } from "../exec";
 import type { Platform } from "../types";
 import type { E2eSuiteConfig } from "./affected.schema";
@@ -18,6 +18,8 @@ export type Suite = {
 	cwd: string;
 	/** root of `project` (what `app` installs) */
 	projectRoot?: string;
+	/** the suite's `headless`, else the top-level one (undefined: neither sets it) */
+	headless?: boolean;
 };
 
 export type AffectedInput = {
@@ -63,10 +65,22 @@ export async function findSuite(exec: Exec, cwd: string, name?: string): AsyncRe
 		);
 	const config = suites[pick];
 	if (!config) return err(`no e2e suite "${pick}" in ${CONFIG_FILE} (${names.join(", ") || "none"})`);
-	const { dir } = found.data;
-	const project = found.data.config.projects?.find((p) => p.name === config.project);
+	return ok(toSuite(pick, config, found.data.dir, found.data.config));
+}
+
+/** The suite with its project root resolved and the top-level `headless` as its default. */
+function toSuite(name: string, config: E2eSuiteConfig, dir: string, top: ParsedWardenConfig): Suite {
+	const project = top.projects?.find((p) => p.name === config.project);
 	const projectRoot = project ? resolve(dir, project.root) : undefined;
-	return ok({ name: pick, config, configDir: dir, cwd: projectRoot ?? dir, ...(projectRoot ? { projectRoot } : {}) });
+	const headless = config.headless ?? top.headless;
+	return {
+		name,
+		config,
+		configDir: dir,
+		cwd: projectRoot ?? dir,
+		...(projectRoot ? { projectRoot } : {}),
+		...(headless !== undefined ? { headless } : {}),
+	};
 }
 
 /** Repo-root-relative changes → relative to the config dir; files outside it are dropped. */

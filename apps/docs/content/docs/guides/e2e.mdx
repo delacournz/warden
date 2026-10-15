@@ -31,7 +31,7 @@ With `--app`, warden first ensures the project's dev build is installed on each 
 warden run ios --count 2 --app --project apps/mobile -- bun run e2e
 ```
 
-`--no-eas` skips EAS downloads; `--no-build` refuses to build locally on a cache miss. `--clean` uninstalls the app first (`xcrun simctl uninstall` / `adb uninstall`), even when the device already has the right build, so each run starts with an empty app container. In a preset or suite, `"app": { "clean": true }` is the same as `--app --clean`.
+`--no-eas` skips EAS downloads; `--no-build` refuses to build locally on a cache miss. By default the app is installed only when the device lacks this fingerprint's build (a different build is installed over the old one, keeping its data). `--install-mode clean` gives each run fresh app data without reinstalling an unchanged build (iOS: terminate, `defaults delete`, wipe the data and app-group containers, privacy reset; Android: `pm clear`); if the reset fails it falls back to a reinstall. `--install-mode reinstall` uninstalls the app (`xcrun simctl uninstall` / `adb uninstall`) and installs it every run. `--reset-keychain` (needs `--install-mode`) also resets the iOS simulator's whole keychain, which an uninstall does not clear either. In a preset or suite, `"app": { "installMode": "clean", "resetKeychain": true }` is the same as `--app --install-mode clean --reset-keychain`. `--clean` and `"app": { "clean": true }` are deprecated aliases of `reinstall`.
 
 ## Reading the env in a script
 

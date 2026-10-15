@@ -1,19 +1,23 @@
 import { mobile } from "@e2e-dev/mobile";
 import type { E2EConfig } from "e2e";
 import { BUNDLE_ID, devClientLaunchArguments, leasedDevices } from "./e2e/helpers/launch";
+import { timestampsReporter } from "./e2e/helpers/timestamps";
 
 /**
  * tester.army e2e config. warden leases the devices, installs the build and runs the runner:
  * - `warden e2e example`: one `e2e run <flow>` per flow with `WARDEN_UDID` set (Release build, no Metro);
  * - `warden e2e example-dev`: one `e2e run <flows…>` for the whole pool (`WARDEN_UDIDS`, one worker per
  *   device) against the dev client, loaded from warden's Metro (`WARDEN_METRO_URL`).
- * The session is named after the first device, so parallel runners on one machine never share an
- * agent-device session.
+ * The session is warden's `WARDEN_AGENT_SESSION` (named after the first device, so parallel runners never
+ * share one): warden already started each device's automation runner under it (`warmRunners`), so the
+ * engine's one-by-one warm-up finds them up.
+ * Every test and step logs its start + end (`timestampsReporter`, beside the `list` reporter).
  * Run by hand: `E2E_UDID=<udid> bunx e2e run e2e/sign-in.e2e.ts` (the app must already be installed).
  */
 const devices = leasedDevices(process.env);
 const [first] = devices;
 const metroUrl = process.env.WARDEN_METRO_URL;
+const agentSession = (udid: string): string => process.env.WARDEN_AGENT_SESSION ?? `warden-${udid}`;
 
 export default {
 	tests: ["e2e/**/*.e2e.ts"],
@@ -22,7 +26,7 @@ export default {
 			name: "ios",
 			engine: mobile({
 				platform: "ios",
-				...(first ? { device: devices.length > 1 ? devices : first, session: `warden-${first}` } : {}),
+				...(first ? { device: devices.length > 1 ? devices : first, session: agentSession(first) } : {}),
 			}),
 			app: {
 				bundleId: BUNDLE_ID,
@@ -31,4 +35,5 @@ export default {
 		},
 	],
 	workers: Math.max(1, devices.length),
+	reporters: ["list", timestampsReporter()],
 } satisfies E2EConfig;

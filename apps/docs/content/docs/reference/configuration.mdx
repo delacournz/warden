@@ -36,6 +36,16 @@ export default { batches: { smoke: { platform: "ios", cmd: ["true"] } } } satisf
 
 The section types are exported too: `WardenProject`, `WardenBatchPreset`, `WardenE2eSuite`, `WardenE2eFlow`.
 
+## Top level
+
+Besides `projects`, `batches` and `e2e`:
+
+<TypeTable
+  type={{
+    headless: { type: "boolean", description: "iOS: close the Simulator.app windows of every device an `e2e` suite or `batches` preset leases. The default for those that don't set their own `headless`. `--headless` / `--no-headless` override it; `WARDEN_HEADLESS=1` applies only when it's unset. `warden dev` ignores it. See [Headless e2e](/docs/guides/headless).", default: "false" },
+  }}
+/>
+
 ## Projects
 
 ```ts title="warden.config.ts"
@@ -113,7 +123,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
     ttl: { type: "string", description: "Lease TTL without heartbeat.", default: "30m" },
     wait: { type: "string", description: "Wait this long for free devices." },
     ports: { type: "string[]", description: "`FROM:SPAN` port specs (`WARDEN_PORT_<i>`)." },
-    app: { type: "boolean | { clean?: boolean; variant?: string }", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env). `{ clean: true }` also uninstalls it first (`--clean`); `{ variant }` installs that `projects[].variants` build." },
+    app: { type: "boolean | { installMode?: 'clean' | 'reinstall'; resetKeychain?: boolean; variant?: string }", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env). Default: install only when the build differs (kept data). `{ installMode: \"clean\" }` = fresh app data each run without reinstalling an unchanged build (iOS: terminate, defaults delete, wipe data + app-group containers, privacy reset; Android: `pm clear`; falls back to reinstall if the reset fails); `{ installMode: \"reinstall\" }` = uninstall + install each run; `resetKeychain: true` (needs `installMode`) also resets the iOS sim keychain. `{ clean: true }` is a deprecated alias of reinstall. `{ variant }` installs that `projects[].variants` build." },
     retry: { type: "number", description: "Re-run a failed job up to N times on the same device.", default: "0" },
     passes: { type: "number", description: "A job passes only after N consecutive green runs on its device.", default: "1" },
     env: { type: "Record<string, string>", description: "Added to the serve and job env." },
@@ -124,6 +134,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
     jobsFrom: { type: 'string | "-" | { command: string }', description: "A file of jobs (one per line), `-` for stdin, or a `sh -c` command whose stdout lines are the jobs (nonzero exit fails the batch)." },
     record: { type: "string", description: "iOS: record every simulator and the TUI into this dir." },
     logs: { type: "string", description: "Per-job log dir." },
+    headless: { type: "boolean", description: "iOS: close this run's Simulator.app windows (see [Headless e2e](/docs/guides/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both.", default: "top-level `headless`" },
   }}
 />
 
@@ -179,7 +190,7 @@ export default defineConfig({
     retry: { type: "number", description: "Re-run a failed flow up to N times.", default: "0" },
     count: { type: "number", description: "Devices to claim (not with `devices`)." },
     profile: { type: "string", description: "Device profile (not with `devices`)." },
-    app: { type: "boolean | { clean?: boolean; variant?: string }", description: "Ensure the app on every device first. `{ clean: true }` also uninstalls it first (`--clean`); `{ variant }` installs that `projects[].variants` build (must exist on the suite's project)." },
+    app: { type: "boolean | { installMode?: 'clean' | 'reinstall'; resetKeychain?: boolean; variant?: string }", description: "Ensure the app on every device first. `{ installMode: \"clean\" | \"reinstall\" }` resets the installed app first (`--install-mode`), `resetKeychain: true` also resets the iOS sim keychain (`--reset-keychain`); `{ clean: true }` is a deprecated alias of reinstall. `{ variant }` installs that `projects[].variants` build (must exist on the suite's project)." },
     ports: { type: "string[]", description: "Ports leased for the run (`<from>[:<span>]`, like `--port`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner." },
     env: { type: "Record<string, string>", description: "Added to the serve, setup and runner env." },
     serve: { type: "string", description: "`sh -c` once per run before the flows, in its own process group; killed at the end. `{port}` / `{metroUrl}` are substituted. `--serve` overrides." },
@@ -187,6 +198,8 @@ export default defineConfig({
     serveTimeout: { type: "string", description: "Give up waiting for `serveReady` after this long (`30s`, `10m`).", default: '"10m"' },
     setup: { type: "string", description: "`sh -c` once per leased device, after the app install and before that device's first flow (`{udid}` is substituted). Env: `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH`, plus `env`. Output goes to `logs/setup-<worker>.log`. A non-zero exit drops that device and its flows go to the others; none left fails the run." },
     slim: { type: "boolean", description: "iOS: switch off the simulator daemons flows never need on each leased device, before `setup` (`warden sim slim`). A failure only warns." },
+    warmRunners: { type: "boolean", default: "true", description: "iOS: after `setup`, start every device's agent-device automation runner at once (`agent-device prepare ios-runner`), in the daemon (`AGENT_DEVICE_STATE_DIR`) and session (`WARDEN_AGENT_SESSION-<slot>`) the runner resumes, so an engine that warms devices one by one finds them up. Skipped when the project has no `agent-device` bin; a failed or timed-out (2 min) warm-up only warns. `false` turns it off." },
+    headless: { type: "boolean", description: "iOS: close the Simulator.app windows of this suite's devices, at claim and again before the first flow, so the run shows nothing even with Simulator.app open (see [Headless e2e](/docs/guides/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both. Android is always headless.", default: "top-level `headless`" },
     flows: { type: "Record<string, Flow>", description: "Per flow id or glob; see below." },
   }}
 />

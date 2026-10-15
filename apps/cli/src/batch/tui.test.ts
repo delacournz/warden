@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { applyEvent, type BatchView, frameBytes, initialView, plainLine, render } from "./tui";
+import {
+	applyEvent,
+	applyFlowMarks,
+	applyRunnerReport,
+	type BatchView,
+	frameBytes,
+	initialView,
+	plainLine,
+	render,
+	withRunners,
+} from "./tui";
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI
+const strip = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, "");
 
 const DEVICES = [
 	{ worker: 0, udid: "U0", name: "warden-iphone-17-1" },
@@ -77,8 +90,144 @@ describe("render", () => {
 		const plain = render(midRun(), { width: 80, color: false });
 		const colored = render(midRun(), { width: 80, color: true });
 		expect(colored).not.toBe(plain);
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI
-		expect(colored.replace(/\u001b\[[0-9;]*m/g, "")).toBe(plain);
+		expect(strip(colored)).toBe(plain);
+	});
+});
+
+describe("segmented bars", () => {
+	test("header: one cell per job, in start order — █ passed, × failed, ▸ running, ░ pending", () => {
+		const [head] = render(midRun(), { width: 80, color: false }).split("\n");
+		expect(head).toContain("▸×▸░");
+	});
+
+	test("device bar: the jobs it ran, then its current one", () => {
+		const [, row0, row1] = render(midRun(), { width: 80, color: false }).split("\n");
+		expect(row0?.endsWith("▸")).toBe(true);
+		expect(row1?.endsWith("×▸")).toBe(true);
+	});
+
+	test("colours: green passed, red failed, cyan running, dim pending", () => {
+		const head = render(midRun(), { width: 80, color: true }).split("\n")[0] ?? "";
+		expect(head).toContain("\u001b[31m×\u001b[39m");
+		expect(head).toContain("\u001b[36m▸\u001b[39m");
+		expect(head).toContain("\u001b[2m░\u001b[22m");
+	});
+
+	test("more cells than columns: buckets, a failure wins its bucket", () => {
+		let view = initialView(DEVICES, 100, 0);
+		for (let i = 0; i < 100; i++) {
+			const job = `j${i}`;
+			view = applyEvent(view, { type: "job-start", at: 0, job, worker: 0, udid: "U0", seq: i, attempt: 0 });
+			view = applyEvent(view, {
+				type: "job-end",
+				job,
+				worker: 0,
+				udid: "U0",
+				seq: i,
+				attempt: 0,
+				startedAt: 0,
+				endedAt: 1,
+				exitCode: i === 50 ? 1 : 0,
+				willRetry: false,
+			});
+		}
+		const text = render(view, { width: 100, color: false });
+		for (const line of text.split("\n")) expect(line.length).toBeLessThan(100);
+		expect(text.split("\n")[0]).toMatch(/█+×█+/);
+	});
+});
+
+describe("single runner (one job runs every flow on a pool of devices)", () => {
+	const flows = ["onboarding", "settings", "sign-in", "todos"];
+	const single = () => {
+		const rows = DEVICES.map((d) => ({ ...d, worker: 0 }));
+		let view = withRunners(initialView(rows, 1, 0), flows);
+		view = applyEvent(view, {
+			type: "job-start",
+			at: 0,
+			job: "example-dev",
+			worker: 0,
+			udid: "U0",
+			seq: 0,
+			attempt: 0,
+		});
+		return applyFlowMarks(view, 0, { onboarding: "passed", "sign-in": "failed" });
+	};
+
+	test("one row per device; the header counts and segments flows (a running cell per busy device); flow line once, under the pool's last row", () => {
+		const lines = render({ ...single(), now: 70_000 }, { width: 100, color: false }).split("\n");
+		const [head, row0, row1, flowLine] = lines;
+		expect(head).toContain("█▸×▸");
+		expect(head).toContain("2/4");
+		expect(head).toContain("✓1 ✗1");
+		expect(row0).toContain("warden-iphone-17-1");
+		expect(row0).toContain("▶ example-dev");
+		expect(flowLine).toBe("    ✓ onboarding  · settings  ✗ sign-in  · todos");
+		expect(row1).toContain("warden-iphone-17-2");
+		expect(row1).toContain("▶ example-dev");
+		expect(lines).toHaveLength(4);
+	});
+
+	test("until the report, a busy device's bar is one running cell", () => {
+		const [, row0] = render(single(), { width: 100, color: false }).split("\n");
+		expect(row0?.endsWith("▸")).toBe(true);
+	});
+
+	test("the report fills each device's bar and counts with the flows it ran, and settles the flows", () => {
+		let view = applyEvent(single(), {
+			type: "job-end",
+			job: "example-dev",
+			worker: 0,
+			udid: "U0",
+			seq: 0,
+			attempt: 0,
+			startedAt: 0,
+			endedAt: 9,
+			exitCode: 1,
+			willRetry: false,
+		});
+		view = applyRunnerReport(view, {
+			flows: { onboarding: "passed", settings: "passed", "sign-in": "failed", todos: "passed" },
+			devices: {
+				U0: [
+					{ id: "onboarding", mark: "passed" },
+					{ id: "sign-in", mark: "failed" },
+				],
+				U1: [
+					{ id: "settings", mark: "passed" },
+					{ id: "todos", mark: "passed" },
+				],
+			},
+		});
+		const [head, row0, row1] = render(view, { width: 100, color: false }).split("\n");
+		expect(head).toContain("██×█");
+		expect(head).toContain("✓3 ✗1");
+		expect(row0).toContain("✓1   ✗1");
+		expect(row0?.endsWith("█×")).toBe(true);
+		expect(row1).toContain("✓2   ✗0");
+		expect(row1?.endsWith("██")).toBe(true);
+	});
+
+	test("marks replace earlier ones; unknown flow ids are ignored", () => {
+		const view = applyFlowMarks(single(), 0, { "sign-in": "passed", ghost: "failed" });
+		expect(render(view, { width: 100, color: false })).toContain("✓ onboarding  · settings  ✓ sign-in  · todos");
+	});
+
+	test("the flow line wraps to the width", () => {
+		const lines = render(single(), { width: 30, color: false }).split("\n");
+		for (const line of lines) expect(line.length).toBeLessThan(30);
+		expect(lines.join(" ")).toContain("✗ sign-in");
+	});
+
+	test("plain log lines name the whole pool; done counts the job once", () => {
+		const view = single();
+		expect(
+			plainLine(view, { type: "job-start", at: 0, job: "example-dev", worker: 0, udid: "U0", seq: 0, attempt: 0 })
+		).toBe("[1/1] warden-iphone-17-1 +1 ▶ example-dev");
+	});
+
+	test("without runners the grid has no flow lines", () => {
+		expect(render(midRun(), { width: 80, color: false }).split("\n")).toHaveLength(3);
 	});
 });
 

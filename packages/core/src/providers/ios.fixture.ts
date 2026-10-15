@@ -6,7 +6,7 @@
 export type FixtureSim = {
 	udid: string;
 	name: string;
-	state: "Booted" | "Shutdown" | "Booting";
+	state: "Booted" | "Shutdown" | "Booting" | "Shutting Down";
 	deviceTypeIdentifier?: string;
 	isAvailable?: boolean;
 	/** ISO timestamp; omitted = never booted */
