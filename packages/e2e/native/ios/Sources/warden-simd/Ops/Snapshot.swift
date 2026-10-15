@@ -215,8 +215,11 @@ extension Session {
     var options = AccessibilityRequestOptions(format: .complete, keys: request.keys)
     options.filter = .all
     let readOptions = options
-    let outcome = try await withAX(backend: request.backend, op: "snapshot") { reader in
+    var outcome = try await withAX(backend: request.backend, op: "snapshot") { reader in
       try await reader.describe(.frontmost, options: readOptions).document
+    }
+    if request.backend == nil, outcome.backend == .axbridge, Session.isEmptyRoot(outcome.value) {
+      outcome = try await recoverEmptyRoot(first: outcome, options: readOptions)
     }
     let document = outcome.value
     let readMs = Session.milliseconds(since: started)
@@ -235,6 +238,60 @@ extension Session {
     data["readMs"] = .double(readMs)
     data["nodes"] = .int(document.elements.nodeCount)
     return .object(data)
+  }
+
+  /// A tree that is one childless node with no area: what the bridge reports when it is bound to an application
+  /// that is gone (a relaunched app's old pid), rather than anything an app can draw.
+  static func isEmptyRoot(_ document: AccessibilityDocument) -> Bool {
+    guard document.elements.count == 1, let root = document.elements.first, (root.children ?? []).isEmpty else {
+      return false
+    }
+    guard let frame = root.frame, let rect = frame else { return true }
+    return (rect.width ?? 0) <= 0 || (rect.height ?? 0) <= 0
+  }
+
+  /// Reads again on the bridge once after `retryDelay`, then on the host `ax` reader, when the bridge answered with
+  /// an empty root. Pure over its closures so a scripted sequence can test it.
+  static func recoverFromEmptyRoot(
+    first: AXOutcome<AccessibilityDocument>,
+    retryDelay: Duration,
+    bridgeRead: @Sendable () async throws -> AccessibilityDocument,
+    hostRead: (@Sendable () async throws -> AccessibilityDocument)?,
+    sleep: @Sendable (Duration) async throws -> Void,
+    log: @Sendable (String) -> Void
+  ) async throws -> AXOutcome<AccessibilityDocument> {
+    log("axbridge returned an empty tree; reading again")
+    try await sleep(retryDelay)
+    if let again = try? await bridgeRead(), !isEmptyRoot(again) {
+      return AXOutcome(value: again, backend: .axbridge, fallback: nil)
+    }
+    guard let hostRead else { return first }
+    let reason = "axbridge returned an empty tree"
+    log("axbridge -> ax fallback: \(reason)")
+    let document = try await hostRead()
+    return AXOutcome(value: document, backend: .ax, fallback: Fallback(reason: reason))
+  }
+
+  private func recoverEmptyRoot(
+    first: AXOutcome<AccessibilityDocument>, options: AccessibilityRequestOptions
+  ) async throws -> AXOutcome<AccessibilityDocument> {
+    guard let bridge = axBridgeReader else { return first }
+    var hostRead: (@Sendable () async throws -> AccessibilityDocument)?
+    if let host = axHostReader {
+      hostRead = { @Sendable in try await host.describe(.frontmost, options: options).document }
+    }
+    let bridgeRead: @Sendable () async throws -> AccessibilityDocument = { @Sendable in
+      try await bridge.describe(.frontmost, options: options).document
+    }
+    let sleep: @Sendable (Duration) async throws -> Void = { @Sendable duration in
+      try await Task.sleep(for: duration)
+    }
+    let log: @Sendable (String) -> Void = { @Sendable message in
+      OpLog.shared.log(.warn, message, op: "snapshot")
+    }
+    return try await Session.recoverFromEmptyRoot(
+      first: first, retryDelay: .milliseconds(150), bridgeRead: bridgeRead, hostRead: hostRead, sleep: sleep,
+      log: log)
   }
 
   /// The `snapshot` payload minus timing and diagnostics: pure, so fixtures can drive it without a simulator.

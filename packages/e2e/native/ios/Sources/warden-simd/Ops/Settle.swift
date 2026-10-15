@@ -418,15 +418,14 @@ extension Session {
   }
 
   func quiescenceMonitor() throws -> QuiescenceMonitor {
-    guard axBridgeReader != nil else {
+    guard let reader = axBridgeReader else {
       throw WireError(.unsupported, "settle needs the axbridge backend (bridge: \(bridge.name))")
     }
-    // The helper owns the simulator for its lifetime, so the long-lived stream gets a guest of its own: on the
-    // shared guest it was left stuck (every signal unanswered) after another process held a stream there.
-    return try quiescence.get {
-      try simulator.uiAutomation(
-        backend: .axBridge(persistence: .exclusive, frontmostMethod: .windowServer, automationMode: true))
-    }
+    // The stream rides the same guest as `snapshot` and the other reads: that guest is already exclusive to this
+    // helper (see `Session.open`), so no other process can leave it stuck. A second guest of our own was tried
+    // and broke accessibility for any app relaunched while the stream was alive (the relaunched app answered
+    // every request with a timeout or an empty tree), so there is exactly one guest per helper.
+    return quiescence.get { reader }
   }
 
   /// Waits until the frontmost app has been quiet (`run_loop_idle` + `animations_inactive` answered) for `quietMs`.
