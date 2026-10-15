@@ -1,5 +1,6 @@
 import { dirname, join, resolve } from "node:path";
 import type { Result } from "@delacour/warden-types/result";
+import { ENV_NAMES } from "../../env";
 import type { DriverError } from "../driver.types";
 import { driverError } from "../errors";
 
@@ -50,7 +51,7 @@ export function locateHelper(input: LocateHelperInput): Result<HelperLocation, D
 		error: driverError("E_HELPER_MISSING", `${message}; ${DOCTOR_HINT}`, { detail: { tried } }),
 	});
 
-	const explicitFile = input.env.WARDEN_SIMD;
+	const explicitFile = input.env[ENV_NAMES.simd];
 	if (explicitFile) {
 		tried.push(explicitFile);
 		return input.exists(explicitFile)
@@ -58,7 +59,7 @@ export function locateHelper(input: LocateHelperInput): Result<HelperLocation, D
 			: missing(`WARDEN_SIMD=${explicitFile} does not exist`);
 	}
 
-	const helperDir = input.env.WARDEN_HELPER_DIR;
+	const helperDir = input.env[ENV_NAMES.helperDir];
 	if (helperDir) {
 		const candidate = join(helperDir, HELPER_NAME);
 		tried.push(candidate);

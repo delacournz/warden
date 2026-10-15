@@ -353,14 +353,19 @@ export async function createSimdClient(
 			if (!ready) throw new Error("warden-simd client has no handshake");
 			return ready;
 		},
-		request: (<Op extends string>(op: Op, params: Record<string, unknown> = {}, opts: RequestOptions = {}) =>
-			request(op, params, opts) as DriverResult<OpData<Op>>) as SimdClient["request"],
+		// `request` is the untyped engine: `validate` parses each op's data against `opSchemas` at run time, so
+		// narrowing the result to `OpData<Op>` here is the one place the static op map is trusted.
+		request: ((op: string, params: Record<string, unknown> = {}, opts: RequestOptions = {}) =>
+			request(op, params, opts)) as SimdClient["request"],
 		on(event, handler) {
+			// `listeners` stores every handler as the payload union; `emit` only ever passes `event`'s own payload, so
+			// widening the per-event handler on the way in is safe.
+			const stored = handler as Listener;
 			const set = listeners.get(event) ?? new Set<Listener>();
-			set.add(handler as Listener);
+			set.add(stored);
 			listeners.set(event, set);
 			return () => {
-				set.delete(handler as Listener);
+				set.delete(stored);
 			};
 		},
 		async close() {

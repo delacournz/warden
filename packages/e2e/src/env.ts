@@ -84,9 +84,11 @@ export type E2eEnv = {
 	helperDir?: string;
 	simd?: string;
 	simdSocket?: string;
+	/** nothing in this package reads it: kept for specs and helpers that honour a headless run (`guides/headless`) */
 	headless: boolean;
 	/** warden already stamps the log lines: the spec reporter prints no clock of its own */
 	logTimestamps: boolean;
+	/** nothing in this package reads it: the 0-based worker index, for specs that shard or name per-worker data (`guides/e2e`) */
 	worker?: string;
 };
 

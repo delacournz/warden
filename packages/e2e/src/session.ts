@@ -1,3 +1,10 @@
+/**
+ * Process-wide session. The one session lives on `globalThis` under a `Symbol.for` key, not in a module-level `let`:
+ * `preload.ts` (loaded by `bun test --preload`) and the spec files (which import `@delacour/warden-e2e`) can each load
+ * their own copy of this module, and a module-level variable would give each copy its own session. The default
+ * driver and fixture factories below are plain module state: they are wired by the package entry in the same copy
+ * that reads them.
+ */
 import { mkdirSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools/devtools.types";

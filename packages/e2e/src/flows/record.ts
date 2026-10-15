@@ -285,6 +285,8 @@ export async function appendStep(
 	try {
 		const current = readFlowFile(file);
 		if (!current.success) return current;
+		// spreading a `NewStep` union widens it past `Step`; the `flowSchema.safeParse` below re-checks the whole file
+		// before anything is written, so the assertion cannot let a malformed step through
 		const numbered = { ...step, i: current.data.steps.length } as Step;
 		const next: Flow = { ...current.data, steps: [...current.data.steps, numbered] };
 		const check = flowSchema.safeParse(next);

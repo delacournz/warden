@@ -6,9 +6,10 @@ warden's own mobile e2e stack (plan: `docs/plans/wdn-e2e.md`). No lease / build 
 
 | Dir | Purpose |
 |---|---|
-| `driver/` | `Driver` contract (`driver.types.ts`, **frozen interface** shared by every layer), errors, refs, hash settle, `open.ts`; `ios/` (`warden-simd` NDJSON client + `xcrun simctl` ops), `android/` (persistent `adb shell` + uiautomator), `driver.testing.ts` (FakeDriver) |
+| top level | `index.ts` (the published entry), `env.ts` (`WARDEN_*` names + `readEnv`), `errors.ts`, `session.ts` (process-wide session, `globalThis`), `preload.ts`, `app.ts` / `device.ts` / `device-devtools.ts` / `fixtures.ts` / `fixture-session.ts` (the `app`, `device`, `screen` fixtures) |
+| `driver/` | `Driver` contract (`driver.types.ts`, **frozen interface** shared by every layer), errors, refs, hash settle, `typing.ts` (the one text/key pacing path, shared with `warden ui`), `open.ts`; `ios/` (`warden-simd` NDJSON client + `xcrun simctl` ops), `android/` (persistent `adb shell` + uiautomator), `driver.testing.ts` (FakeDriver) |
 | `runner/` | `test`/`describe`/hooks over `bun:test`, attempts, `results.jsonl`, artifacts |
-| `screen/` | locator query model, roles, text matching, actions, polling, text render + selector parser (shared with `warden ui`) |
+| `screen/` | locator query model, roles, text matching, actions, polling, text render + selector parser (shared with `warden ui`), `field.ts` (fill/clear/confirm a text field) |
 | `expect/` | `expect` wrapper + locator matchers |
 | `devtools/` | Metro inspector discovery, Hermes CDP, console/network/React tree |
 | `flows/` | `.flow.json` schema, record, replay, export |

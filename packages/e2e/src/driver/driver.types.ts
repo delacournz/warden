@@ -16,6 +16,7 @@ export type DriverErrorCode =
 	| "E_HELPER_CRASHED"
 	| "E_TIMEOUT"
 	| "E_NOT_BOOTED"
+	// the helper's wire code is `E_UNKNOWN_UDID`; `mapWireError` (driver/ios/simd-protocol.ts) maps it to this
 	| "E_UNKNOWN_DEVICE"
 	| "E_AX_UNAVAILABLE"
 	| "E_APP_UNAVAILABLE"

@@ -1,3 +1,9 @@
+/**
+ * Collection-time scopes (file roots, `describe` blocks, `test.use`). `roots` and `stack` are module state, filled and
+ * read while one spec file is collected. The `.only` flag below is the exception: it lives on `globalThis` under a
+ * `Symbol.for` key because `preload.ts` checks it after collection, and the preload and the spec files can load
+ * separate copies of this module (a module-level flag would always read false in the preload).
+ */
 import { DEFAULT_ACTION_TIMEOUT_MS, DEFAULT_ASSERTION_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, readEnv } from "../env";
 import { callerFile } from "./callsite";
 import type { BaseFixtures, LaunchMode } from "./fixtures.types";

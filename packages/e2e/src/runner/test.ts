@@ -105,6 +105,21 @@ function registerTest<F extends object>(
 	else bunTest(title, run, bunOptions);
 }
 
+/**
+ * A typed `test.extend` fixture as the untyped {@link FixtureSetup} the attempt runner stores. The runner builds the
+ * bag from the earlier fixtures in definition order, so `base` has the shape the caller's `setup` declared; `use`
+ * widens for free (it only ever receives that fixture's own value).
+ */
+function eraseSetup<Base extends object, Value>(
+	setup: (base: Base, use: (value: Value) => Promise<void>) => Promise<void>
+): FixtureSetup {
+	return (base, use) => setup(base as Base, use);
+}
+
+function isKeyOf<T extends object>(object: T, key: PropertyKey): key is keyof T {
+	return key in object;
+}
+
 function makeCallable<F extends object>(fixtures: readonly FixtureEntry[], mode: Mode): TestCallable<F> {
 	return (title: string, second: TestOptions | TestBody<F>, third?: TestBody<F>): void =>
 		registerTest<F>(fixtures, mode, title, second, third);
@@ -128,11 +143,10 @@ function makeTest<F extends object>(fixtures: readonly FixtureEntry[]): TestApi<
 			scope.use = { ...scope.use, ...options };
 		},
 		extend<Extra extends object>(defs: FixtureDefs<F, Extra>): TestApi<F & Extra> {
-			const added: FixtureEntry[] = Object.entries(defs).map(([name, setup]) => ({
-				name,
-				// the typed `(base: F, use: (value: Extra[K]) => …)` is what callers write; at run time the bag is untyped
-				setup: setup as unknown as FixtureSetup,
-			}));
+			const added: FixtureEntry[] = [];
+			for (const name of Object.keys(defs)) {
+				if (isKeyOf(defs, name)) added.push({ name, setup: eraseSetup<F & Extra, Extra[keyof Extra]>(defs[name]) });
+			}
 			return makeTest<F & Extra>([...fixtures, ...added]);
 		},
 	});
