@@ -20,3 +20,4 @@ warden's own mobile e2e stack (plan: `docs/plans/wdn-e2e.md`). No lease / build 
 - Import files directly (`@delacour/warden-e2e/driver/open`), no barrels except the published `src/index.ts`.
 - Do not change `driver/driver.types.ts` or the `WARDEN_*` names in `env.ts` without updating `docs/plans/wdn-e2e.md` — other agents build on them.
 - Tests colocated (`*.test.ts`), TDD, no `any`.
+- Flow export goldens live in `src/flows/export.golden/*.e2e.ts` (biome-ignored, typechecked by `tsc`); regenerate with `UPDATE_GOLDEN=1 bun test src/flows/export.test.ts` and review the diff.
