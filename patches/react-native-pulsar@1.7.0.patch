@@ -1,0 +1,18 @@
+diff --git a/ios/Haptics.mm b/ios/Haptics.mm
+index f0b5be2a000c812dbd3023b0bbe7eaf43f29cbdd..5a96b40517cf671cd9f686b130a2038fd7eb3831 100644
+--- a/ios/Haptics.mm
++++ b/ios/Haptics.mm
+@@ -56,8 +56,13 @@ RCT_EXPORT_MODULE()
+ {
+   self = [super init];
+   if (self) {
++#if !TARGET_OS_SIMULATOR
++    // Not on a simulator: `[Pulsar init]` starts an AVAudioEngine whose AURemoteIO RPC times out at random there
++    // and aborts the app (SIGABRT on `com.pulsar.audio`). A simulator has no haptic hardware, and messaging the
++    // nil `pulsar_` / `realtimeComposer_` below is a no-op, so every call simply does nothing.
+     pulsar_ = [[Pulsar alloc] init];
+     realtimeComposer_ = [pulsar_ getRealtimeComposer];
++#endif
+     nextId = 1;
+     patternComposersRegistry_ = [NSMutableDictionary new];
+   }

@@ -51,6 +51,15 @@ describe("app.open", () => {
 	});
 });
 
+describe("app.open on a running app", () => {
+	test.each(["ios", "android"] as const)("%s: asks the driver to terminate the running instance", async (platform) => {
+		const { driver, app } = setup({ platform, launchArgs: [] });
+		await app.open();
+		await app.open();
+		expect(driver.callsOf("app.launch").map((call) => call.opts?.relaunch)).toEqual([true, true]);
+	});
+});
+
 describe("app lifecycle", () => {
 	test("close terminates", async () => {
 		const { driver, app } = setup();
@@ -58,11 +67,14 @@ describe("app lifecycle", () => {
 		expect(driver.callsOf("app.terminate")).toEqual([{ method: "app.terminate", bundleId: "com.example.app" }]);
 	});
 
-	test("restart terminates then launches with the env launch args", async () => {
+	test("restart is one relaunch (the launch terminates), not a terminate plus another", async () => {
 		const { driver, app } = setup();
 		await app.restart();
-		expect(driver.calls.map((c) => c.method)).toEqual(["app.terminate", "app.launch"]);
-		expect(driver.callsOf("app.launch")[0]?.opts?.args).toEqual(["--initialUrl", "http://localhost:8081"]);
+		expect(driver.calls.map((c) => c.method)).toEqual(["app.launch"]);
+		expect(driver.callsOf("app.launch")[0]?.opts).toEqual({
+			args: ["--initialUrl", "http://localhost:8081"],
+			relaunch: true,
+		});
 	});
 
 	test("isRunning reflects the driver", async () => {

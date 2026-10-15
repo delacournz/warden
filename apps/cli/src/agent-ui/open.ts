@@ -44,13 +44,25 @@ export async function launchBundle(
 	const extra = opts.args ?? [];
 	if (opts.metro !== undefined) await reverseMetro(ctx, device, opts.metro);
 	const args = opts.metro === undefined ? extra : devClientLaunchArgs(opts.metro, extra);
-	return fromDriver(
+	const wasRunning = opts.relaunch === true ? false : await isRunning(driver, bundleId);
+	const launched = fromDriver(
 		await driver.app.launch(bundleId, {
 			...(args.length > 0 ? { args } : {}),
 			relaunch: opts.relaunch === true,
 		})
 	);
+	if (!launched.success) return launched;
+	return { success: true as const, data: { attached: wasRunning } };
 }
+
+/** A failed or unsupported probe counts as "not running": the note is a courtesy, never a reason to fail. */
+async function isRunning(driver: Driver, bundleId: string): Promise<boolean> {
+	const running = await driver.app.isRunning(bundleId);
+	return running.success && running.data;
+}
+
+const launchVerb = (relaunch: boolean, attached: boolean): string =>
+	relaunch ? "relaunched" : attached ? "attached to" : "launched";
 
 /**
  * `warden ui open <bundleId|url> [--relaunch] [--metro <url>] [--args …]`. A bundle id launches the app
@@ -88,6 +100,7 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 
 		const launched = await launchBundle(ctx, driver.data, device, what, opts);
 		if (!launched.success) return launched;
+		const attached = launched.data.attached;
 		const state = readState(ctx, device.udid);
 		writeState(ctx, device.udid, {
 			...state,
@@ -96,7 +109,7 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 		});
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "open",
-			text: `${opts.relaunch === true ? "relaunched" : "launched"} ${what}${opts.metro ? ` (metro ${opts.metro})` : ""}`,
+			text: `${launchVerb(opts.relaunch === true, attached)} ${what}${opts.metro ? ` (metro ${opts.metro})` : ""}${attached ? " (already running: attached, state kept; --relaunch starts it fresh)" : ""}`,
 			args: {
 				bundleId: what,
 				relaunch: opts.relaunch === true,
@@ -105,6 +118,7 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 			extra: {
 				bundleId: what,
 				relaunch: opts.relaunch === true,
+				attached,
 				...(opts.metro !== undefined ? { metroUrl: opts.metro } : {}),
 			},
 		});

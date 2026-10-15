@@ -149,8 +149,32 @@ struct FrontmostGate: Equatable {
 
   /// `pid` is nil while the application is not running (a launch still in flight).
   mutating func resolved(pid: pid_t?, now: Double) {
+    if pid != targetPid { pidSince = pid == nil ? nil : now }
     targetPid = pid
     lastResolveAt = now
+  }
+
+  /// The stream is latched on a stale process when the bundle has a pid and the stream still reports another one.
+  /// It is restarted only then, never while the bundle has no pid yet (a stream opened mid-launch binds to the
+  /// previous frontmost app, which is exactly the latch being repaired): `firstRestartGraceMs` after the new pid
+  /// appeared (a healthy stream follows within that), then every `repeatRestartMs` while it is still latched
+  /// (a fresh stream takes ~0.6 s to bind).
+  static let firstRestartGraceMs = 500
+  static let repeatRestartMs = 1500
+
+  private var pidSince: Double?
+  private var lastRestartAt: Double?
+
+  func shouldRestart(frontmostPid: pid_t?, now: Double) -> Bool {
+    guard targetPid != nil, let pidSince, !matches(frontmostPid: frontmostPid) else { return false }
+    guard let lastRestartAt, lastRestartAt >= pidSince else {
+      return (now - pidSince) * 1000 >= Double(Self.firstRestartGraceMs)
+    }
+    return (now - lastRestartAt) * 1000 >= Double(Self.repeatRestartMs)
+  }
+
+  mutating func restarted(now: Double) {
+    lastRestartAt = now
   }
 }
 
@@ -170,9 +194,20 @@ actor QuiescenceMonitor {
   private var lastError: (any Error)?
   private var lastUsed: Double = 0
   private var idleWatch: Task<Void, Never>?
+  /// Close the stream after this long without a `settle`; nil keeps it open for the helper's lifetime.
+  private let idleCloseSeconds: Double?
 
-  init(reader: any UIAutomation) {
+  init(reader: any UIAutomation, idleCloseSeconds: Double? = QuiescenceMonitor.configuredIdleCloseSeconds()) {
     self.reader = reader
+    self.idleCloseSeconds = idleCloseSeconds
+  }
+
+  /// `WARDEN_SIMD_STREAM_IDLE_S=<seconds>` closes an idle stream after that long; unset or `0` keeps it open.
+  static func configuredIdleCloseSeconds(
+    _ environment: [String: String] = ProcessInfo.processInfo.environment
+  ) -> Double? {
+    guard let raw = environment["WARDEN_SIMD_STREAM_IDLE_S"], let seconds = Double(raw), seconds > 0 else { return nil }
+    return seconds
   }
 
   private static func clock() -> Double { ProcessInfo.processInfo.systemUptime }
@@ -193,10 +228,12 @@ actor QuiescenceMonitor {
       while !Task.isCancelled {
         do {
           Self.trace("stream opening")
+          await self?.markOpening()
           let events = try await self?.reader.quiescence(
             .frontmost, parameters: QuiescenceParameters(quietWindow: 0.05))
           guard let events else { return }
           Self.trace("stream open")
+          if !Task.isCancelled { await self?.markOpen() }
           for try await event in events {
             await self?.apply(event)
           }
@@ -220,27 +257,29 @@ actor QuiescenceMonitor {
     idleWatch = nil
     state = nil
     frontmostPid = nil
+    streamOpen = false
+    openingSince = nil
   }
 
-  /// A stream left open between calls competes with any other quiescence stream on the same simulator (a second
-  /// helper, another agent's run): two concurrent streams leave each other stuck at `busy(runLoopIdle,
-  /// animationsInactive)`. So the stream is closed once nothing has settled for `idleCloseSeconds`; the next
-  /// `settle` reopens it.
-  static let idleCloseSeconds = 10.0
-
+  /// By default the stream stays open for the helper's lifetime: the guest binds it to whatever is frontmost
+  /// (reporting `targetChanged`), and an app relaunched while no stream is open is unreadable by `axbridge` until
+  /// one binds to it (see `recover`). The cost is that a stream competes with any other quiescence stream on the
+  /// same simulator (a second helper, another agent's run: two concurrent streams leave each other stuck at
+  /// `busy(runLoopIdle, animationsInactive)`); leases keep that to one helper per simulator, and
+  /// `WARDEN_SIMD_STREAM_IDLE_S` closes an idle stream after that long (the next `settle` reopens it).
   private func startIdleWatch() {
-    guard idleWatch == nil else { return }
+    guard idleCloseSeconds != nil, idleWatch == nil else { return }
     idleWatch = Task { [weak self] in
       while !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(1))
+        try? await Task.sleep(for: .milliseconds(250))
         await self?.closeIfIdle()
       }
     }
   }
 
   private func closeIfIdle() {
-    guard task != nil, Self.clock() - lastUsed >= Self.idleCloseSeconds else { return }
-    Self.trace("stream idle for \(Int(Self.idleCloseSeconds)) s, closing")
+    guard let idleCloseSeconds, task != nil, Self.clock() - lastUsed >= idleCloseSeconds else { return }
+    Self.trace("stream idle for \(idleCloseSeconds) s, closing")
     stop()
   }
 
@@ -269,6 +308,30 @@ actor QuiescenceMonitor {
   private func reset() {
     state = nil
     frontmostPid = nil
+    streamOpen = false
+    openingSince = nil
+  }
+
+  /// When the current stream began opening, nil once it is open (or closed). Opening costs 0.5 s on a quiet machine
+  /// and seconds on a loaded one; a stream still opening has not latched on anything yet.
+  private var openingSince: Double?
+  private var streamOpen = false
+  static let openingPatienceSeconds = 4.0
+
+  private func markOpening() {
+    openingSince = Self.clock()
+    streamOpen = false
+  }
+
+  private func markOpen() {
+    openingSince = nil
+    streamOpen = true
+  }
+
+  /// Restarting a stream that is still opening (for up to `openingPatienceSeconds`) only throws that work away.
+  private func isStillOpening(now: Double) -> Bool {
+    guard !streamOpen, let openingSince else { return false }
+    return now - openingSince < Self.openingPatienceSeconds
   }
 
   private func snapshot() -> (state: QuiescenceState?, since: Double, error: (any Error)?, pid: pid_t?) {
@@ -282,6 +345,7 @@ actor QuiescenceMonitor {
     task = nil
     state = nil
     frontmostPid = nil
+    markOpening()
     start()
   }
 
@@ -342,8 +406,6 @@ actor QuiescenceMonitor {
     var stability = FrameStability()
     var lastRead = 0.0
     var gate = bundleId.map { FrontmostGate(bundleId: $0) }
-    var mismatchSince: Double?
-    var mismatchRestarted = false
     while true {
       let (state, since, _, pid) = snapshot()
       let now = Self.clock()
@@ -355,22 +417,20 @@ actor QuiescenceMonitor {
           Self.trace("settle resolved \(current.bundleId) -> \(String(describing: current.targetPid)) frontmost=\(String(describing: pid))")
         }
         if !current.matches(frontmostPid: pid) {
-          let startedAt = mismatchSince ?? now
-          mismatchSince = startedAt
           if now >= deadline {
             Self.trace("settle deadline frontmost mismatch pid=\(String(describing: pid))")
             if state == nil, let error = lastError { throw error }
             return Outcome(quiet: false, via: "stream", reason: "frontmost_mismatch", frontmostPid: pid)
           }
-          if !mismatchRestarted, (now - startedAt) * 1000 >= Double(judge.restartAfterMs) {
-            Self.trace("settle frontmost still \(String(describing: pid)), restarting the stream")
-            mismatchRestarted = true
+          if !isStillOpening(now: now), current.shouldRestart(frontmostPid: pid, now: now) {
+            Self.trace("settle frontmost \(String(describing: pid)) is stale (target \(String(describing: current.targetPid))), restarting the stream")
+            current.restarted(now: now)
+            gate = current
             restart()
           }
           try await Task.sleep(for: .milliseconds(15))
           continue
         }
-        mismatchSince = nil
       }
       let isQuiet = QuietClock.isSettled(state: state, since: max(since, begun), now: now, quietMs: quietMs)
       let stuckFor = stuck.observe(state, now: now)
@@ -381,6 +441,10 @@ actor QuiescenceMonitor {
       case .restartStream:
         Self.trace("settle stream stuck for \(stuckFor ?? 0) ms, restarting it")
         restarted = true
+        if var current = gate {
+          current.restarted(now: now)
+          gate = current
+        }
         restart()
       case .fallback:
         if now - lastRead >= 0.1, let frame = try? await readFrame() {

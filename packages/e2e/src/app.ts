@@ -20,7 +20,7 @@ export type App = {
 	 */
 	open(options?: OpenOptions): Promise<void>;
 	close(): Promise<void>;
-	/** terminate, then launch again with `WARDEN_LAUNCH_ARGS` */
+	/** terminate, then launch again with `WARDEN_LAUNCH_ARGS` (the launch itself terminates a running instance, so there is one stop, not two) */
 	restart(): Promise<void>;
 	/** uninstall (when installed) and install again from `WARDEN_APP_PATH` */
 	reinstall(): Promise<void>;
@@ -60,7 +60,6 @@ export function createApp({ session, driver, env }: AppDeps): App {
 		open: launch,
 		close: terminate,
 		async restart() {
-			await terminate();
 			await launch();
 		},
 		async reinstall() {

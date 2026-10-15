@@ -109,6 +109,61 @@ final class SnapshotFixtureTests: XCTestCase {
     XCTAssertNotNil(modal["pid"]?.intValue)
   }
 
+  /// The iOS Keychain "Save Password?" sheet over the example app (Release build, iOS 26): app-process UI, so it is
+  /// in the app's own tree as `_UIAlertControllerPhoneTVMacView`, and only axbridge sees it (host `ax` reads the app
+  /// as one empty root).
+  func testKeychainSheetButtonsAreListedFromTheBridgeTree() throws {
+    let document = try DocumentFixture.document("keychain-sheet.document.json")
+    let alert = try XCTUnwrap(Session.renderAlert(document: document, backend: .axbridge, screen: screen))
+    XCTAssertEqual(alert["title"], .string("Save Password?"))
+    XCTAssertEqual(
+      alert["message"], .string("Securely store your password so it’s filled automatically the next time you need it."))
+    let buttons = try XCTUnwrap(alert["buttons"]?.arrayValue)
+    XCTAssertEqual(buttons.compactMap { $0["label"]?.stringValue }, ["Not Now", "Save"])
+    for button in buttons {
+      XCTAssertEqual(button["role"], .string("button"))
+      XCTAssertNotNil(button["tapPoint"]?["x"]?.doubleValue)
+      XCTAssertNotNil(button["tapPoint"]?["y"]?.doubleValue)
+    }
+  }
+
+  func testKeychainSheetSetsTheModalOnASnapshot() throws {
+    let data = try snapshot("keychain-sheet.document.json", backend: .axbridge, interactiveOnly: false)
+    let modal = try XCTUnwrap(data["modal"])
+    XCTAssertEqual(modal["description"], .string("Save Password?"))
+    XCTAssertNotNil(modal["pid"]?.intValue)
+  }
+
+  /// Safari's "Open this page in ..." prompt is an in-page `SFDialogView` (no UIKit alert controller) while a
+  /// "View Bookmarks ..." tip popover is drawn over it. The dialog's Cancel / Open win; the popover's Close does not.
+  func testDialogBeatsATipPopoverDrawnOverIt() throws {
+    let document = try DocumentFixture.document("safari-open-in.document.json")
+    let alert = try XCTUnwrap(Session.renderAlert(document: document, backend: .axbridge, screen: screen))
+    XCTAssertEqual(alert["title"], .string("Open this page in “warden-example”?"))
+    XCTAssertEqual(alert["buttons"]?.arrayValue?.compactMap { $0["label"]?.stringValue }, ["Cancel", "Open"])
+  }
+
+  func testDialogSetsTheModalOverAPopover() throws {
+    let data = try snapshot("safari-open-in.document.json", backend: .axbridge, interactiveOnly: false)
+    let modal = try XCTUnwrap(data["modal"])
+    XCTAssertEqual(modal["description"], .string("Open this page in “warden-example”?"))
+  }
+
+  func testAPopoverAloneIsStillReported() throws {
+    let stripped = AccessibilityDocument(
+      elements: try DocumentFixture.document("safari-open-in.document.json").elements.map(Self.withoutDialogs),
+      modal: nil, truncated: false, screen: nil)
+    let alert = try XCTUnwrap(Session.renderAlert(document: stripped, backend: .axbridge, screen: screen))
+    XCTAssertEqual(alert["buttons"]?.arrayValue?.compactMap { $0["label"]?.stringValue }, ["Close"])
+  }
+
+  /// Drops every `SFDialogView` subtree so only the popover is left.
+  private static func withoutDialogs(_ node: AccessibilityDocumentElement) -> AccessibilityDocumentElement {
+    var copy = node
+    copy.children = (node.children ?? []).filter { $0.type != "SFDialogView" }.map(withoutDialogs)
+    return copy
+  }
+
   func testPlainScreenHasNoAlertAndNoModal() throws {
     let document = try DocumentFixture.document("sign-in.document.json")
     XCTAssertNil(Session.renderAlert(document: document, backend: .axbridge, screen: screen))

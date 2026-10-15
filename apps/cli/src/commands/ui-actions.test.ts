@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
-import { KEY_PACE_MS } from "@delacour/warden-e2e/driver/typing";
 import type { UiDeps } from "../agent-ui/driver";
 import { readState } from "../agent-ui/state";
 import type { VideoSpec } from "../agent-ui/video";
@@ -168,12 +167,10 @@ describe("fill", () => {
 			.map((call) => call.method)
 			.filter((m) => m !== "snapshot" && m !== "elementAtPoint");
 		const backspaces: string[] = Array.from({ length: 7 }, () => "key");
-		const characters: string[] = Array.from({ length: 8 }, () => "typeText");
-		expect(methods).toEqual(["tap", ...backspaces, ...characters, "close"]);
+		expect(methods).toEqual(["tap", ...backspaces, "typeText", "close"]);
 		expect(h.driver.callsOf("tap")[0]?.point).toEqual({ x: 351, y: 122 });
 		expect(h.driver.callsOf("key").every((call) => call.key === "Backspace")).toBe(true);
-		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual([..."new@x.co"]);
-		expect(h.clock.t - 1_000_000).toBeGreaterThanOrEqual(15 * KEY_PACE_MS);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
 		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
@@ -184,7 +181,7 @@ describe("fill", () => {
 		const out = doc(h.c);
 		expect(out.error.code).toBe("failed");
 		expect(out.error.message).toBe('fill did not take: expected "new" but the field holds "old"');
-		expect(h.driver.callsOf("typeText")).toHaveLength(6);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new", "new"]);
 	});
 
 	test("--secure: no read-back, reported as unconfirmed, the text is neither echoed nor recorded", async () => {
@@ -230,7 +227,7 @@ describe("type / key", () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(await h.run("type", "hello", "--submit", "--json")).toBe(0);
 		expect(h.driver.calls.filter((call) => call.method === "typeText" || call.method === "key")).toEqual([
-			...[..."hello"].map((text) => ({ method: "typeText" as const, text })),
+			{ method: "typeText", text: "hello" },
 			{ method: "key", key: "Enter" },
 		]);
 		expect(doc(h.c).result).toMatchObject({ action: "type", submitted: true });
@@ -444,6 +441,33 @@ describe("open", () => {
 			},
 		]);
 		expect(readState(h.c, UDID)).toMatchObject({ app: "com.example.app", metroUrl: "http://localhost:8081" });
+	});
+
+	test("without --relaunch an already running app is attached to, and the output says so", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		await h.driver.app.launch("com.example.app");
+		expect(await h.run("open", "com.example.app", "--json")).toBe(0);
+		expect(doc(h.c).result).toMatchObject({
+			action: "open",
+			bundleId: "com.example.app",
+			relaunch: false,
+			attached: true,
+		});
+		expect(h.driver.callsOf("app.launch")[1]?.opts).toEqual({ relaunch: false });
+		const text = harness([snapshotOf(LOGIN)]);
+		await text.driver.app.launch("com.example.app");
+		expect(await text.run("open", "com.example.app")).toBe(0);
+		expect(text.c.stdout.join("\n")).toContain("attached to com.example.app");
+	});
+
+	test("--relaunch never reports attached, and a first launch is not attached", async () => {
+		const first = harness([snapshotOf(LOGIN)]);
+		await first.run("open", "com.example.app", "--json");
+		expect(doc(first.c).result.attached).toBe(false);
+		const again = harness([snapshotOf(LOGIN)]);
+		await again.driver.app.launch("com.example.app");
+		await again.run("open", "com.example.app", "--relaunch", "--json");
+		expect(doc(again.c).result).toMatchObject({ relaunch: true, attached: false });
 	});
 
 	test("a url is opened and the iOS `Open in …?` sheet is accepted", async () => {

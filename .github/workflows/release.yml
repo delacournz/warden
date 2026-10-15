@@ -109,7 +109,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/warden-* dist/checksums.txt dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
 
-      # Platform packages first so @delacour/warden's optionalDependencies resolve the moment it lands.
+      # Platform packages first so @delacour/warden's optionalDependencies resolve the moment it lands;
+      # @delacour/warden-e2e last (exact peer dependency on @delacour/warden, same version).
       # Already-published versions are skipped, so a re-run finishes a partial publish.
       # Auth is OIDC trusted publishing (npm >= 11.5.1); NPM_TOKEN is only a fallback until
       # the trusted publisher is configured on npmjs.com, then delete the secret.
@@ -121,7 +122,7 @@ jobs:
         run: |
           provenance=""
           if [ "$REPO_PRIVATE" = "false" ]; then provenance="--provenance"; fi
-          for dir in dist/npm/warden-*/ dist/npm/warden/; do
+          for dir in dist/npm/warden-darwin-*/ dist/npm/warden-linux-*/ dist/npm/warden/ dist/npm/warden-e2e/; do
             name=$(node -p "require('./$dir/package.json').name")
             version=$(node -p "require('./$dir/package.json').version")
             if npm view "$name@$version" version > /dev/null 2>&1; then

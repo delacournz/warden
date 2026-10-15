@@ -1,19 +1,13 @@
 import { expect } from "@delacour/warden-e2e";
 import type { Device } from "@delacour/warden-e2e/device";
-import type { Locator } from "@delacour/warden-e2e/screen/locator";
 import type { Screen } from "@delacour/warden-e2e/screen/screen";
 import { ids } from "./ids";
 
 /** How long to wait for the todos screen after submitting sign-in, while clearing the Keychain sheet. */
 const SIGN_IN_TIMEOUT_MS = 15_000;
 const POLL_MS = 250;
-/** How long a tap gets to show its result before it is sent again, and how often. */
-const TAP_RESULT_MS = 4_000;
-const TAP_RETRIES = 2;
-/** iOS can show "Save Password?" this long after the todos screen is already up. */
-const SAVE_PASSWORD_GRACE_MS = 2_500;
-/** No sheet for this long: the last one has finished animating away. */
-const SHEET_QUIET_MS = 1_000;
+/** How long after the todos screen shows to wait for the "Save Password?" sheet (seen 1.3 s later). */
+const SAVE_PASSWORD_WAIT_MS = 5_000;
 
 /**
  * The runner opens the app fresh before every test (`launch: "fresh"`), so a flow starts on the
@@ -26,84 +20,76 @@ export async function launch(device: Device, screen: Screen): Promise<void> {
 }
 
 /**
- * Fresh launch → welcome → the three onboarding steps → sign-in screen. Each step animates in; a tap sent while
- * the previous step is still moving is lost, so the UI settles between taps.
+ * Fresh launch → welcome → the three onboarding steps → sign-in screen. Each step's title is awaited before the
+ * next tap: a second tap that lands while the step is still transitioning is dropped.
  */
 export async function openSignIn(device: Device, screen: Screen): Promise<void> {
 	await launch(device, screen);
 	await screen.getByTestId(ids.welcome.next).tap();
-	await device.settle();
+	await expect(screen.getByTestId(ids.welcome.title)).toHaveText("Plan");
 	await screen.getByTestId(ids.welcome.next).tap();
-	await device.settle();
+	await expect(screen.getByTestId(ids.welcome.title)).toHaveText("Test");
 	await screen.getByTestId(ids.welcome.getStarted).tap();
 	await expect(screen.getByTestId(ids.signIn.screen)).toBeVisible();
 }
 
-/**
- * Fill and submit the sign-in form. Submits with Return on the password field by default: tapping the submit button
- * while the keyboard is up loses the next tap on the todos screen, so flows that go on past sign-in use Return.
- * Pass `via: "tap"` to press the button (flows that stay on the form and only read its errors).
- */
-export async function submitSignIn(
-	screen: Screen,
-	email: string,
-	password: string,
-	via: "enter" | "tap" = "enter"
-): Promise<void> {
+/** Fill and submit the sign-in form. */
+export async function submitSignIn(screen: Screen, email: string, password: string): Promise<void> {
 	await screen.getByTestId(ids.signIn.email).fill(email);
 	await screen.getByTestId(ids.signIn.password).fill(password);
-	if (via === "tap") await screen.getByTestId(ids.signIn.submit).tap();
-	else await screen.getByTestId(ids.signIn.password).press("Enter");
+	await screen.getByTestId(ids.signIn.submit).tap();
 }
 
 /**
- * Waits for the todos screen after a successful sign-in and clears the "Save Password?" sheet. The sheet is a system
- * overlay: the app's accessibility tree cannot see it, it can appear after the todos screen is up, and a tap that
- * lands while it is up or still animating away is lost. So once the screen shows, keep answering the sheet until none
- * has appeared for `SHEET_QUIET_MS`, then let the UI settle.
+ * Answers the iOS "Save Password?" sheet that follows a sign-in. It is a system sheet owned by SpringBoard, it
+ * covers the app (testIDs behind it are filtered out of the snapshot while it shows) and it appears about 1.5 s
+ * AFTER the todos screen is already visible, so a single check right after sign-in misses it. Polls for
+ * `SAVE_PASSWORD_WAIT_MS` and returns once the sheet has been dismissed ("Not Now"), or when it never shows.
  */
+export async function dismissSavePassword(device: Device): Promise<boolean> {
+	const deadline = Date.now() + SAVE_PASSWORD_WAIT_MS;
+	while (Date.now() < deadline) {
+		if (await device.alert("dismiss")) {
+			await device.settle({ quietMs: 600, timeout: 4000 });
+			return true;
+		}
+		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+	}
+	return false;
+}
+
+/** Waits for the todos screen after a successful sign-in, then clears the "Save Password?" sheet iOS shows over it. */
 export async function expectTodosAfterSignIn(device: Device, screen: Screen): Promise<void> {
 	const todos = screen.getByTestId(ids.todos.screen);
 	const deadline = Date.now() + SIGN_IN_TIMEOUT_MS;
-	let lastSheetAt = Date.now();
-	let shownAt: number | undefined;
-	while (Date.now() < deadline) {
-		if (await device.alert("dismiss")) lastSheetAt = Date.now();
-		if (await todos.isVisible()) {
-			shownAt ??= Date.now();
-			if (Date.now() - lastSheetAt >= SHEET_QUIET_MS && Date.now() - shownAt >= SAVE_PASSWORD_GRACE_MS) {
-				await device.settle();
-				return;
-			}
-		}
-		await sleep(POLL_MS);
+	let visible = false;
+	while (!visible && Date.now() < deadline) {
+		await device.alert("dismiss");
+		visible = await todos.isVisible();
+		if (!visible) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
 	}
-	await expect(todos).toBeVisible({ timeout: 1 });
+	if (!visible) await expect(todos).toBeVisible({ timeout: 1 });
+	await dismissSavePassword(device);
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const DEEP_LINK_ATTEMPTS = 3;
+const DEEP_LINK_WAIT_MS = 6_000;
 
 /**
- * Taps `target` and waits for `arrived`. The first touch after sign-in is sometimes lost while the screen is still
- * finishing its transition (seen on a heavily loaded host), so a tap that brought nothing up is sent once more.
+ * Opens `url` and waits for the screen it targets, opening it again when that screen has not shown. A link
+ * opened while the app is still settling after sign-in is occasionally dropped, with nothing on screen to
+ * tell it from a slow one, so a single `openLink` followed by an assertion is a coin flip under load.
  */
-export async function tapUntilVisible(target: Locator, arrived: Locator): Promise<void> {
-	await target.tap();
-	for (let attempt = 0; attempt < TAP_RETRIES; attempt += 1) {
-		if (await waitVisible(arrived, TAP_RESULT_MS)) return;
-		await target.tap();
+export async function openDeepLink(device: Device, screen: Screen, url: string, readyTestId: string): Promise<void> {
+	const ready = screen.getByTestId(readyTestId);
+	for (let attempt = 1; attempt <= DEEP_LINK_ATTEMPTS; attempt++) {
+		await device.openLink(url);
+		const deadline = Date.now() + DEEP_LINK_WAIT_MS;
+		while (Date.now() < deadline) {
+			if (await ready.isVisible()) return;
+			await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+		}
 	}
-}
-
-async function waitVisible(target: Locator, ms: number): Promise<boolean> {
-	const deadline = Date.now() + ms;
-	while (Date.now() < deadline) {
-		if (await target.isVisible()) return true;
-		await sleep(POLL_MS);
-	}
-	return target.isVisible();
 }
 
 /** Fresh launch, signed in as `email`, on the todos tab. */

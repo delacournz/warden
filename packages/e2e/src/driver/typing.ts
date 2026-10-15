@@ -5,17 +5,15 @@ import type { Driver, DriverResult, KeyName } from "./driver.types";
  * The one place that decides how text and keys are sent to a device (specs' `fill`/`type`/`clear` and `warden ui
  * fill`/`type` all go through it).
  *
- * iOS: a multi-character `typeText` is one composite HID event and the app drops the tail of it, and keys sent
- * closer together than the app digests them (about 45-50 ms a character) arrive truncated or garbled. Measured on
- * the example app: 25 ms between keys is reliable (10 ms and 5 ms are not). So on iOS each grapheme is its own
- * request, `KEY_PACE_MS` apart, and so is each Backspace. When the helper paces keys itself (simd-core), set
- * `KEY_PACE_MS` to 0 and `SPLIT_TEXT` to false here and nothing else changes.
+ * iOS: `warden-simd` holds, paces and spaces repeated keys itself (`WARDEN_SIMD_PACE_MS`, `WARDEN_SIMD_HOLD_MS`,
+ * `WARDEN_SIMD_REPEAT_GAP_MS`), so the whole string goes in one request and the client adds no gap. Before that
+ * the client sent one grapheme per request, 25 ms apart (set `KEY_PACE_MS` 25 and `SPLIT_TEXT` true to go back).
  */
 
 /** Gap after each key on iOS. */
-export const KEY_PACE_MS = 25;
+export const KEY_PACE_MS = 0;
 /** iOS types one grapheme per request. */
-export const SPLIT_TEXT = true;
+export const SPLIT_TEXT = false;
 
 export type Sleep = (ms: number) => Promise<void>;
 
