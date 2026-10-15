@@ -1,17 +1,15 @@
-import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { isLeaseAlive, type PidAlive } from "@delacour/warden-core/liveness";
 import type { GitInfo } from "@delacour/warden-core/owner";
 import type { Store } from "@delacour/warden-core/store";
 import {
 	type AgentOwner,
 	type DeviceResource,
-	describeOwner,
 	type Lease,
 	type Owner,
-	ownerLocation,
 	type Platform,
 	sameOwner,
 } from "@delacour/warden-core/types";
+import { ensureCallerLease, releaseDevices } from "../device-lease";
 import { errorMessage, isRecord, stringField } from "./json";
 
 /** Claude Code hook outcome: exit 0 = allow, 2 = block (stderr is shown to the model). */
@@ -66,12 +64,6 @@ function parsePreTool(raw: unknown): PreToolInput | undefined {
 	const parsed: PreToolInput = { sessionId, cwd: stringField(raw, "cwd") ?? "", toolName };
 	if (deviceId !== undefined) parsed.deviceId = deviceId;
 	return parsed;
-}
-
-function blockMessage(id: string, platform: Platform, owner: Owner): string {
-	const where = ownerLocation(owner);
-	const noun = platform === "ios" ? "udid" : "serial";
-	return `device ${id} leased by ${describeOwner(owner)}${where ? ` (${where})` : ""} — run \`warden claim ${platform}\` and use the returned ${noun}`;
 }
 
 /** git lookup must never cost the lease (e.g. cwd deleted under the session). */
@@ -130,30 +122,14 @@ export async function handlePreToolUse(raw: unknown, deps: HookDeps): Promise<Ho
 		const current = store.findLeaseByResource(probe);
 		const claiming = !current || (!sameOwner(current.owner, me) && !isLeaseAlive(current, deps.now(), deps.pidAlive));
 		const bootedByOwner = claiming ? await sessionWillBoot(deps, target.platform, target.id) : false;
-		const now = deps.now();
-		return store.transaction((): HookResult => {
-			const existing = store.findLeaseByResource(probe);
-			if (existing && sameOwner(existing.owner, me)) {
-				store.heartbeat([existing.id], now);
-				return { exitCode: 0 };
-			}
-			if (existing && isLeaseAlive(existing, now, deps.pidAlive)) {
-				return { exitCode: 2, stderr: blockMessage(target.id, target.platform, existing.owner) };
-			}
-			if (existing) store.deleteLeases([existing.id]);
-			const known = store.listDevices(target.platform).find((d) => d.id === target.id);
-			store.insertLease(
-				{
-					resource: { ...probe, name: known?.name ?? target.id },
-					owner: agentOwner(input, deps),
-					ttlMs: DEFAULT_TTL_MS,
-					label: HOOK_LABEL,
-					...(bootedByOwner ? { bootedByOwner: true } : {}),
-				},
-				now
-			);
-			return { exitCode: 0 };
+		const leased = ensureCallerLease(store, claiming ? agentOwner(input, deps) : me, target.platform, target.id, {
+			now: deps.now(),
+			pidAlive: deps.pidAlive,
+			claim: true,
+			label: HOOK_LABEL,
+			bootedByOwner,
 		});
+		return leased.success ? { exitCode: 0 } : { exitCode: 2, stderr: leased.error.message };
 	} catch (error) {
 		return { exitCode: 0, stderr: `warden hook pretool: ${errorMessage(error)} (allowing)` };
 	}
@@ -201,13 +177,10 @@ export async function handleSessionEnd(raw: unknown, deps: HookDeps): Promise<Ho
 				lines.push(`warden: shutdown failed (${errorMessage(error)}) — releasing anyway`);
 			}
 		}
-		const now = deps.now();
-		store.transaction(() => {
-			store.deleteLeases(leases.map((l) => l.id));
-			for (const l of leases) {
-				if (l.resource.kind === "device") store.touchDevice(l.resource.platform, l.resource.id, now);
-			}
-		});
+		await releaseDevices(
+			deps,
+			leases.map((l) => l.id)
+		);
 		if (leases.length > 0) lines.unshift(`warden: released ${leases.map((l) => l.id).join(" ")}`);
 		return lines.length > 0 ? { exitCode: 0, stdout: lines.join("\n") } : { exitCode: 0 };
 	} catch (error) {

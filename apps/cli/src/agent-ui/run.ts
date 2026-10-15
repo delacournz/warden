@@ -1,0 +1,66 @@
+import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
+import type { Result } from "@delacour/warden-types/result";
+import type { CommandContext } from "../context";
+import { errorMessage } from "../hooks/json";
+import { resolveUiDevice, type UiDevice, type UiDeviceFlags } from "./device";
+import { reportError, reportOk, type UiError, type UiExitCode, type UiSuccess, uiError } from "./output";
+
+/** Default per-command deadline when `--timeout` is not given. */
+export const DEFAULT_UI_TIMEOUT_MS = 5000;
+
+/** Options every `warden ui` subcommand takes (the plan's "global" flags; commander needs them per subcommand). */
+export function withUiOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
+	cmd: Commander<Args, Opts, Globals>
+) {
+	return cmd
+		.option("--udid <udid>", "device udid (iOS) / serial (Android)")
+		.option("--serial <serial>", "Android serial")
+		.option("--lease <id>", "use the device behind this lease id")
+		.option("--claim", "take over a stale/missing lease, or claim a device when none is held")
+		.option("--platform <platform>", "platform for --claim with no device named: ios (default) | android")
+		.option("--profile <slug>", "device profile for --claim with no device named")
+		.option("--runtime <runtime>", "runtime for --claim with no device named")
+		.option("--timeout <ms>", `deadline in milliseconds (default ${DEFAULT_UI_TIMEOUT_MS})`)
+		.option("--no-record", "don't append this step to a running flow recording")
+		.option("--json", "machine-readable output: one JSON document on stdout");
+}
+
+/** Values `withUiOptions` parses to. */
+export type UiOptionValues = UiDeviceFlags & { timeout?: string; record: boolean; json?: true };
+
+/** What a subcommand's work function gets besides the device. */
+export type UiRunEnv = { timeoutMs: number; record: boolean };
+
+function parseTimeout(raw: string | undefined): Result<number, UiError> {
+	if (raw === undefined) return { success: true, data: DEFAULT_UI_TIMEOUT_MS };
+	if (!/^\d+$/.test(raw) || Number(raw) < 1) {
+		return { success: false, error: uiError("usage", `--timeout must be a positive integer (ms), got "${raw}"`) };
+	}
+	return { success: true, data: Number(raw) };
+}
+
+/**
+ * The shared frame of a `warden ui` subcommand: validate globals, resolve + lease-check the device, run
+ * `work`, print the result as text or the `--json` envelope, return the exit code. Any throw becomes a
+ * `failed` error (exit 1) so `--json` always gets one document.
+ */
+export async function runUi(
+	ctx: CommandContext,
+	command: string,
+	opts: UiOptionValues,
+	work: (device: UiDevice, env: UiRunEnv) => Promise<Result<UiSuccess, UiError>>
+): Promise<UiExitCode> {
+	const report = { command, json: opts.json === true, startedAt: ctx.now() };
+	try {
+		const timeout = parseTimeout(opts.timeout);
+		if (!timeout.success) return reportError(ctx, report, timeout.error);
+		const device = await resolveUiDevice(ctx, opts);
+		if (!device.success) return reportError(ctx, report, device.error);
+		const info = { udid: device.data.udid, platform: device.data.platform, name: device.data.name };
+		const done = await work(device.data, { timeoutMs: timeout.data, record: opts.record });
+		if (!done.success) return reportError(ctx, report, done.error, info);
+		return reportOk(ctx, report, done.data);
+	} catch (error) {
+		return reportError(ctx, report, uiError("failed", errorMessage(error)));
+	}
+}

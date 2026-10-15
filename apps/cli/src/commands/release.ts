@@ -4,6 +4,7 @@ import type { Lease } from "@delacour/warden-core/types";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { releaseDevices } from "../device-lease";
 import { type ShutdownOutcome, shutdownReleasedDevices } from "../device-shutdown";
 import {
 	isEmptySelector,
@@ -63,14 +64,14 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 					return outcome;
 				})
 			: { shutdown: [], notes: [], kept: [] };
-	const store = ctx.store();
 	const bad =
 		opts.bad !== undefined
 			? quarantineReleased(ctx, leases, typeof opts.bad === "string" ? opts.bad : undefined)
 			: { quarantined: [], notes: [] };
-	store.deleteLeases(leases.map((l) => l.id));
-	const now = ctx.now();
-	for (const l of leases) if (l.resource.kind === "device") store.touchDevice(l.resource.platform, l.resource.id, now);
+	await releaseDevices(
+		ctx,
+		leases.map((l) => l.id)
+	);
 
 	for (const u of unknown) ctx.err(color.red(`warden release: no lease for ${u}`));
 	const text = [

@@ -7,6 +7,7 @@ import { ok, type Result } from "@delacour/warden-types/result";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { emit } from "../output";
 import { providerFor } from "../providers";
@@ -91,7 +92,13 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 				staleShutdownBlock(lease, now, await hasForegroundApp(sctx.exec, r.platform, r.id))
 			);
 		});
-		const reclaimed = store.reclaimStale(now, processAlive);
+		const staleIds = store
+			.listLeases()
+			.filter((l) => !isLeaseAlive(l, now, processAlive))
+			.map((l) => l.id);
+		const reclaimed = (
+			await releaseDevices(sctx, staleIds, { touch: false, only: (l) => !isLeaseAlive(l, now, processAlive) })
+		).map((l) => l.id);
 		const leased = new Set(
 			store
 				.listLeases()

@@ -14,6 +14,7 @@ import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, resolveOwner, resolvePlatform, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { releaseDevices } from "../device-lease";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import {
 	childEnv,
@@ -134,7 +135,7 @@ type Session = {
 	port: number;
 	env: Record<string, string | undefined>;
 	leaseIds: string[];
-	release: () => void;
+	release: () => Promise<void>;
 };
 
 /** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
@@ -159,7 +160,7 @@ async function openSession(
 		const deviceId = outcome.claimed[0]?.device.id;
 		const port = ports[0]?.port;
 		if (deviceId === undefined || port === undefined) {
-			release();
+			await release();
 			return err("claim returned no device / port");
 		}
 		return ok({ deviceId, port, env, leaseIds, release });
@@ -168,15 +169,15 @@ async function openSession(
 	const ports = await claimRunPorts(ctx, owner, [opts.port], deps.pid, deps.isPortFree, "warden dev");
 	if (!ports.success) return ports;
 	const leaseIds = ports.data.map((p) => p.leaseId);
-	const release = () => ctx.store().deleteLeases(leaseIds);
+	const release = () => releaseDevices(ctx, leaseIds, { touch: false }).then(() => undefined);
 	const port = ports.data[0]?.port;
 	if (port === undefined) {
-		release();
+		await release();
 		return err("no Metro port leased");
 	}
 	const ensured = await deps.ensureApp(ctx, owner, platform, deviceId, app);
 	if (!ensured.success) {
-		release();
+		await release();
 		return err(`app on ${deviceId}: ${ensured.error}`);
 	}
 	ctx.err(`warden dev: app ${ensured.data.source} on ${deviceId} [${ensured.data.hash}]`);
@@ -294,7 +295,7 @@ async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Ru
 		return await metro.data.proc.exited;
 	} finally {
 		stop();
-		release();
+		await release();
 	}
 }
 
