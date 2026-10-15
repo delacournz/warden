@@ -8,9 +8,9 @@
 		"./*": "./src/*.ts"
 	},
 	"scripts": {
-		"fmt": "biome format --write ./src",
-		"lint": "biome lint --write ./src",
-		"check": "biome check ./src",
+		"fmt": "biome format --write ./src ./native/scripts",
+		"lint": "biome lint --write ./src ./native/scripts",
+		"check": "biome check ./src ./native/scripts",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test",
 		"native:deps": "bun native/scripts/deps.ts",
