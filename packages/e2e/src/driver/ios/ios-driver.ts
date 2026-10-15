@@ -222,9 +222,10 @@ export function createIosDriver(
 		const quietMs = o.quietMs ?? DEFAULT_QUIET_MS;
 		const timeoutMs = o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS;
 		if (!settleUnsupported) {
+			// the helper's budget is `settleTimeoutMs`; the envelope `timeoutMs` is only our padded transport timer
 			const native = await client.request(
 				"settle",
-				{ quietMs, timeoutMs },
+				{ quietMs, settleTimeoutMs: timeoutMs },
 				{ timeoutMs: timeoutMs + SETTLE_MARGIN_MS }
 			);
 			if (native.success) return { success: true, data: { quiet: native.data.quiet, waitedMs: native.data.waitedMs } };
@@ -273,14 +274,29 @@ export function createIosDriver(
 				transport: d.hid.transport,
 				bridge: d.ax.bridge,
 				screen: d.screen,
-				detail: { axDefault: d.ax.default },
+				detail: {
+					axDefault: d.ax.default,
+					...(d.ax.error !== undefined ? { axError: d.ax.error } : {}),
+					...(d.socket ? { socket: d.socket } : {}),
+					...(d.xcode ? { xcode: d.xcode } : {}),
+					...(d.state ? { state: d.state } : {}),
+				},
 			},
 		};
 	}
 
 	async function orientation(set?: Orientation): DriverResult<Orientation> {
 		const result = await client.request("orientation", params({ set }));
-		return result.success ? { success: true, data: result.data.orientation } : result;
+		if (!result.success) return result;
+		const { orientation: read, source } = result.data;
+		if (source !== undefined && source !== "device")
+			opts.log?.(`[ios] orientation ${read} is ${source}, not read from the device`);
+		if (read === "faceUp" || read === "faceDown" || read === "unknown") {
+			// Orientation is frozen at the four interface orientations; a flat device has no better answer than upright.
+			opts.log?.(`[ios] device reports ${read}; exposing it as portrait`);
+			return { success: true, data: "portrait" };
+		}
+		return { success: true, data: read };
 	}
 
 	async function pressButton(button: HardwareButton): DriverResult<void> {

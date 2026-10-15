@@ -165,8 +165,18 @@ export const healthDataSchema = z.looseObject({
 	version: z.string(),
 	udid: z.string(),
 	hid: z.object({ transport: z.string() }),
-	ax: z.object({ default: z.string(), bridge: z.enum(["available", "missing", "failed"]) }),
+	ax: z.object({
+		default: z.string(),
+		bridge: z.enum(["available", "missing", "failed"]),
+		error: z.string().optional(),
+	}),
 	screen: screenInfoSchema,
+	/** present when the helper serves a socket */
+	socket: z.object({ path: z.string(), clients: z.number() }).optional(),
+	idb: z.string().optional(),
+	xcode: z.string().optional(),
+	state: z.string().optional(),
+	uptimeMs: z.number().optional(),
 });
 export type HealthData = z.infer<typeof healthDataSchema>;
 
@@ -204,8 +214,21 @@ export const alertButtonsDataSchema = z
 	.nullable();
 export type AlertButtonsData = z.infer<typeof alertButtonsDataSchema>;
 
+/**
+ * `orientation`: a real read may also say `faceUp` / `faceDown` / `unknown` (flat device); `source` tells
+ * whether the value was read from the device, is the last one this helper wrote, or is an assumed portrait.
+ */
 export const orientationDataSchema = z.object({
-	orientation: z.enum(["portrait", "portraitUpsideDown", "landscapeLeft", "landscapeRight"]),
+	orientation: z.enum([
+		"portrait",
+		"portraitUpsideDown",
+		"landscapeLeft",
+		"landscapeRight",
+		"faceUp",
+		"faceDown",
+		"unknown",
+	]),
+	source: z.enum(["device", "written", "assumed"]).optional(),
 });
 export type OrientationData = z.infer<typeof orientationDataSchema>;
 

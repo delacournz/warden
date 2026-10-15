@@ -2,7 +2,7 @@
 /**
  * Hand-run smoke test of the iOS driver against a real, booted simulator (never part of `bun test`):
  *
- *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--out <dir>]
+ *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--out <dir>] [--kill-helper]
  *
  * open → health → launch → settle → snapshot → tap first button → fill a textfield (if present) →
  * swipe → screenshot → settle → terminate → close. Prints the duration of each step; exits 1 when a
@@ -92,6 +92,41 @@ async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 	);
 }
 
+/** Without a snapshot (helper lacks the AX ops) there are no elements to aim at, so exercise raw HID at the screen centre. */
+async function blind(driver: Driver, screen: { width: number; height: number }): Promise<void> {
+	const middle = { x: screen.width / 2, y: screen.height / 2 };
+	await step("tap (centre)", () => driver.tap(middle));
+	await step("longPress (centre)", () => driver.longPress(middle, { durationMs: 600 }));
+	await step("typeText", () => driver.typeText(TYPED));
+	await step("typeText (unicode)", () => driver.typeText("caf\u00e9"));
+	await step("key Enter", () => driver.key("Enter"));
+	await step("swipe up", () =>
+		driver.swipe({ x: middle.x, y: screen.height * 0.7 }, { x: middle.x, y: screen.height * 0.3 }, { durationMs: 300 })
+	);
+	await step("drag", () =>
+		driver.drag({ x: middle.x, y: screen.height * 0.6 }, { x: middle.x, y: screen.height * 0.4 }, { durationMs: 300 })
+	);
+	await step("pinch", () => driver.pinch(middle, 1.5, { durationMs: 400 }));
+}
+
+/** `--kill-helper`: SIGKILL warden-simd while a long press is in flight, expect one E_HELPER_CRASHED, then success. */
+async function killHelperCheck(driver: Driver, screen: { width: number; height: number }): Promise<void> {
+	const middle = { x: screen.width / 2, y: screen.height / 2 };
+	const inflight = driver.longPress(middle, { durationMs: 3000 });
+	await Bun.sleep(600);
+	const killed = Bun.spawnSync(["pkill", "-9", "-f", `warden-simd.*--udid ${udid}`]);
+	const crashed = await inflight;
+	const surfaced = !crashed.success && crashed.error.code === "E_HELPER_CRASHED";
+	const started = performance.now();
+	const next = await driver.tap(middle);
+	const ms = Math.round(performance.now() - started);
+	const recovered = next.success;
+	if (!(surfaced && recovered)) failures += 1;
+	process.stdout.write(
+		`${surfaced && recovered ? "ok   " : "FAIL "} kill helper mid-call   pkill=${killed.exitCode} inflight=${crashed.success ? "ok" : crashed.error.code} next=${next.success ? `ok (${ms} ms incl. respawn)` : next.error.code}\n`
+	);
+}
+
 const opened = await openIosDriver({
 	udid,
 	exec: bunExec,
@@ -109,7 +144,7 @@ if (!opened.success) {
 const driver = opened.data;
 process.stdout.write(`device ${udid}  app ${bundle}  out ${out}\n`);
 
-await step(
+const health = await step(
 	"health",
 	() => driver.health(),
 	(h) => `${h.version} hid=${h.transport} ax=${h.bridge ?? "?"} ${h.screen.width}x${h.screen.height}@${h.screen.scale}`
@@ -125,7 +160,25 @@ const snapshot = await step(
 	() => driver.snapshot(),
 	(s) => `${s.flat.length} nodes backend=${s.backend}${s.truncated ? " truncated" : ""}`
 );
+const screen = snapshot?.screen ?? health?.screen ?? { width: 390, height: 844 };
 if (snapshot) await interact(driver, snapshot);
+else await blind(driver, screen);
+await step(
+	"orientation",
+	() => driver.orientation(),
+	(o) => o
+);
+await step(
+	"rotate landscapeLeft",
+	() => driver.orientation("landscapeLeft"),
+	(o) => o
+);
+await step(
+	"rotate portrait",
+	() => driver.orientation("portrait"),
+	(o) => o
+);
+if (process.argv.includes("--kill-helper")) await killHelperCheck(driver, screen);
 await step(
 	"screenshot",
 	() => driver.screenshot({ path: join(out, "smoke.png") }),
