@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { E2eEnv } from "../env";
 import { setDefaultDriverFactory } from "../session";
+import { fakeAndroidHost } from "./android/android-host.testing";
 import { fakeExec } from "./ios/exec.testing";
 import { fakeSimd } from "./ios/simd.testing";
 import { defaultDriverFactory, openDriver } from "./open";
@@ -58,12 +59,23 @@ describe("openDriver", () => {
 		}
 	});
 
-	test("android is a stub until D9", async () => {
-		const result = await openDriver(env("android"));
-		expect(!result.success && result.error).toMatchObject({
-			code: "E_UNSUPPORTED",
-			message: "Android driver lands in D9",
+	test("android opens the adb driver with the env serial and the injected host seams", async () => {
+		const host = fakeAndroidHost({
+			shell: [
+				{ match: "getprop sys.boot_completed", reply: "1\n" },
+				{ match: "wm size", reply: "Physical size: 1080x2400\n" },
+				{ match: "wm density", reply: "Physical density: 420\n" },
+			],
 		});
+		const result = await openDriver(env("android"), {
+			exec: host.exec,
+			android: { adb: "/sdk/platform-tools/adb", spawn: host.spawn, execBinary: host.execBinary },
+		});
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		expect(result.data.platform).toBe("android");
+		expect(host.spawns()).toBe(1);
+		await result.data.close();
 	});
 
 	test("a missing helper is E_HELPER_MISSING", async () => {
@@ -80,7 +92,7 @@ describe("openDriver", () => {
 
 test("defaultDriverFactory has the session's DriverFactory shape", async () => {
 	setDefaultDriverFactory(defaultDriverFactory);
-	const result = await defaultDriverFactory(env("android"));
-	expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+	const result = await defaultDriverFactory({ ...env("ios"), simd: "/nowhere/warden-simd" });
+	expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
 	setDefaultDriverFactory(undefined);
 });

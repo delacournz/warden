@@ -1,12 +1,19 @@
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
+import { androidTools } from "@delacour/warden-core/providers/android";
 import type { E2eEnv } from "../env";
 import type { DriverFactory } from "../session";
+import { type AndroidDriverOptions, openAndroidDriver } from "./android/android-driver";
 import type { Driver, DriverResult } from "./driver.types";
-import { driverErr } from "./errors";
 import { type OpenIosDriverOptions, openIosDriver } from "./ios/ios-driver";
 
-/** Test seams for {@link openDriver}: everything {@link openIosDriver} injects except what the env supplies. */
-export type OpenDriverDeps = Omit<OpenIosDriverOptions, "udid" | "env" | "exec"> & { exec?: Exec };
+/**
+ * Test seams for {@link openDriver}: everything the platform openers inject except what the env supplies.
+ * `android` carries the Android-only seams (`adb` path, resident-shell spawn, binary runner, clock).
+ */
+export type OpenDriverDeps = Omit<OpenIosDriverOptions, "udid" | "env" | "exec"> & {
+	exec?: Exec;
+	android?: Omit<AndroidDriverOptions, "serial" | "exec" | "log"> & { adb?: string };
+};
 
 /** `WARDEN_E2E_DEBUG=1` logs every helper op and simctl call with its duration to stderr. */
 export const DEBUG_ENV = "WARDEN_E2E_DEBUG";
@@ -28,8 +35,17 @@ export async function openDriver(env: E2eEnv, deps: OpenDriverDeps = {}): Driver
 				debug,
 				...(deps.log ? {} : debug ? { log: stderrLog } : {}),
 			});
-		case "android":
-			return driverErr("E_UNSUPPORTED", "Android driver lands in D9");
+		case "android": {
+			const android = deps.android ?? {};
+			const log = deps.log ?? (debug ? stderrLog : undefined);
+			return openAndroidDriver({
+				...android,
+				serial: env.udid,
+				adb: android.adb ?? androidTools(process.env).adb,
+				exec: deps.exec ?? bunExec,
+				...(log ? { log } : {}),
+			});
+		}
 	}
 }
 
