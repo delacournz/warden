@@ -1,6 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { installPreload, isCi, type PreloadDeps, versionMismatch } from "./preload";
-import type { Session } from "./session";
+import { type Session, setDefaultDriverFactory, setDefaultFixtureFactory } from "./session";
+
+// importing ./preload installs the real driver + fixture factories process-wide; later test files start clean
+afterAll(() => {
+	setDefaultDriverFactory(undefined);
+	setDefaultFixtureFactory(undefined);
+});
 
 function harness(env: Record<string, string | undefined>, onlySeen = false) {
 	const log = {

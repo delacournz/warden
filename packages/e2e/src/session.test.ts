@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Driver, DriverResult } from "./driver/driver.types";
 import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
-import { createSession, devtoolsTarget, getSession, resetSession } from "./session";
+import { createSession, devtoolsTarget, getSession, resetSession, setDefaultDriverFactory } from "./session";
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -150,6 +150,8 @@ describe("Session", () => {
 	});
 
 	test("without a driver factory the open fails as DRIVER", async () => {
+		// another test file in this process may have imported the preload, which installs the real factory
+		setDefaultDriverFactory(undefined);
 		const session = createSession({ env: envIn(tmp()), exitHook: false });
 		await expect(session.driver()).rejects.toMatchObject({ code: "DRIVER" });
 	});
