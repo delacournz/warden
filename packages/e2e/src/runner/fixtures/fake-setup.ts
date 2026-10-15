@@ -1,8 +1,7 @@
 import { appendFileSync, writeFileSync } from "node:fs";
-import { createApp } from "../../app";
-import { createDevice } from "../../device";
 import { el, type FakeDriver, fakeDriver, snapshotOf } from "../../driver/driver.testing";
 import { setDefaultDriverFactory, setDefaultFixtureFactory } from "../../session";
+import { defaultFixtureFactory } from "../fixtures";
 
 /** Appends one line to `$FIXTURE_LOG` (the runner test reads it back to assert ordering). */
 export function fixtureLog(line: string): void {
@@ -26,16 +25,10 @@ setDefaultDriverFactory(async (env) => {
 	return { success: true, data: fake.driver };
 });
 
+// the real app / device / screen over the fake driver; only the optional context log is added
 setDefaultFixtureFactory(async (ctx) => {
-	const { session } = ctx;
-	const driver = await session.driver();
 	if (process.env.FIXTURE_LOG_CTX === "1") {
 		fixtureLog(`ctx ${ctx.launch} action=${ctx.actionTimeoutMs} assertion=${ctx.assertionTimeoutMs}`);
 	}
-	return {
-		app: createApp({ session, driver, env: session.env }),
-		device: createDevice({ session, driver, env: session.env }),
-		screen: {},
-		platform: session.env.platform,
-	};
+	return defaultFixtureFactory(ctx);
 });

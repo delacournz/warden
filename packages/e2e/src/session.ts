@@ -21,6 +21,11 @@ export type Session = {
 	readonly log: (line: string) => void;
 	/** the running attempt, if any */
 	readonly attempt: AttemptContext | undefined;
+	/**
+	 * Failures `expect.soft` recorded without throwing. The runner empties it when an attempt starts and
+	 * fails the attempt after the body if it is not empty.
+	 */
+	readonly softFailures: Error[];
 	/** aborts at the running attempt's deadline; never aborts outside an attempt. Pass it to every driver call and poll. */
 	readonly signal: AbortSignal;
 	/** the running attempt's artifacts dir and `trace.jsonl` (read at call time by the `app`/`device` fixtures) */
@@ -73,6 +78,11 @@ export function setDefaultFixtureFactory(factory: FixtureFactory | undefined): v
 	defaultFixtures = factory;
 }
 
+/** Whether a default fixture factory is wired (so the preload leaves a test-installed one alone). */
+export function hasDefaultFixtureFactory(): boolean {
+	return defaultFixtures !== undefined;
+}
+
 const missingFactory: DriverFactory = async () => ({
 	success: false,
 	error: {
@@ -120,6 +130,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 		get attempt() {
 			return attempt;
 		},
+		softFailures: [],
 		get signal() {
 			return attempt?.signal ?? idle;
 		},
