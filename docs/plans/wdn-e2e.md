@@ -340,3 +340,21 @@ Still open: a real permission-dialog `alert` run; example-app Android build (`wa
 | openDriver | <500 | 8.8 | 9.8 | 5 | 8.4 | 10.4 | 5 | ok (was 570-730 on the loaded machine; 418 measured warm before the fix, now ~7) |
 
 Targets were not tuned. `snapshotWarm` still misses its plain p50 target on this machine (64.6 to 106.3 ms vs 60) and `helperColdToSnapshot` missed in one of two runs; both should be re-run on a quiet machine before calling them real. `openDriver` meets its target by a wide margin (the in-sim `AutomationEnabled` write that cost 380-480 ms per open is now skipped when the sim plist already has it).
+
+**Relaunch bug bisect (2026-10-16, WDN-E2E devtools/T10 follow-up): after an app relaunch the helper's `axbridge` read fails and `snapshot` falls back to `ax`, which sees a single empty 0x0 root.**
+Repro with `warden ui` only, on a leased iPhone 17 sim (`1A0EC51B`, cetus `warden-simd` built 03:13 = after 681d09a): `ui open <bundle> --metro <url>` -> `snapshot -i` ok (`axbridge`, 34 of 127 elements) -> `ui open --relaunch` (or plain `simctl launch --terminate-running-process`) -> `snapshot -i` = `ax`, `0 of 1 elements`. The helper log has one `axbridge -> ax fallback: The application with pid <NEW pid> did not respond to an accessibility request before it timed out` (warn, op snapshot) per read. The screenshot shows the app rendered normally (no sheet), the app's main thread is idle (`sample`).
+
+| # | Experiment (state: broken, unless noted) | Result |
+|---|---|---|
+| 1 | Release build instead of the dev client (`cc063702`, no Metro), 3 relaunches | same failure every time, including the first read after install: not dev-client specific |
+| 2 | `snapshot{backend:"axbridge"}` | `E_APP_NOT_RESPONDING` (retryable: true, `detail.pid` = the new pid). `snapshot{backend:"ax"}` = 0 elements, 1 node (the empty root) |
+| 3 | `settle{bundleId}` or `settle{}`, then `snapshot` | RECOVERS: `axbridge`, full tree (35-46 nodes) on every try, dev and Release. `settle` took 1.0-1.7 s `via:"stream"` on the dev client, 2.3 s / 8 s `via:"snapshot"` (stuck stream -> fallback) elsewhere. Without a settle first, the same sequence stays broken |
+| 3b | `warden ui open --relaunch --settle`, then `snapshot` | NOT fixed (the CLI's settle does not repair it) |
+| 4 | restart the helper (`ui close`, then `snapshot`) | fixed: fresh helper + fresh guest read the already-relaunched app fine (`axbridge`, 39 elements). SIGKILL of only the AX bridge guest (helper left running) also fixes it: the next read falls back once, then `axbridge` is back |
+| 5 | wait: 25 s idle with no AX calls, 20-30 s of polling (`ui wait`), 6 snapshots over 24 s | never recovers by waiting: not timing |
+| 6 | `health` (no probe) | still says `ax.bridge: "available"` while every read fails: misleading. `health{probe:true}` reports `bridge: "failed"` with the same `did not respond ... pid <new pid>` text |
+| 7 | pid | the pid in every error is the CURRENT app's new pid (differs from the pre-relaunch one), so not a stale-pid lookup. `screenshot` before the snapshot does not help |
+| 8 | the launched app is in the foreground | yes; `simctl launch` ok, Metro lists the new inspector target, the app renders |
+
+Reading: the long-lived AX guest (`automationMode: true`, `.exclusive`) loses its ability to read a NEW process of the same bundle id. `settle` (its stream restart "re-enables automation mode") or recycling the guest restores it; nothing else tried does. So the app is up and idle; the guest's per-application automation state is what goes stale across a relaunch (inside `axBridgeReader`, not in the TS client). Suggested helper fixes: on `E_APP_NOT_RESPONDING` from the `axbridge` reader recycle the guest (or restart the quiescence stream) and retry once before falling back to `ax`; recycle/re-arm on the `launch`/`terminate` the helper sees; make `health` reflect the last read failure. TS-side stop-gap (not done): after `app.launch`, run `settle({bundleId})` before returning (costs 1-8 s per launch).
+Impact: any `warden e2e` spec process that relaunches the app (`launch: "fresh"` before every test) fails every test after the first on a warm helper, e.g. several `example-dev` flows in one process; I did not test why single-launch flows pass. A `warden ui open --relaunch` followed by `snapshot` is affected the same way.
