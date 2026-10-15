@@ -196,6 +196,24 @@ struct InputParams {
     return number
   }
 
+  /// A whole-millisecond pacing param within 0...1000, `fallback` when absent.
+  private func wholeMs(_ key: String, fallback: Int) throws -> Int {
+    let ms = try optional(key) ?? Double(fallback)
+    guard ms.rounded() == ms, (0...1000).contains(ms) else {
+      throw WireError(.badRequest, "\"\(key)\" must be a whole number within 0...1000, got \(ms)")
+    }
+    return Int(ms)
+  }
+
+  /// `paceMs` for `key` / `typeText`: quiet after each key press, default `KeyboardMap.defaultPaceMs`.
+  func paceMs() throws -> Int { try wholeMs("paceMs", fallback: KeyboardMap.defaultPaceMs) }
+
+  /// `holdMs`: pause between a key's down and up, default `KeyboardMap.defaultHoldMs`.
+  func holdMs() throws -> Int { try wholeMs("holdMs", fallback: KeyboardMap.defaultHoldMs) }
+
+  /// `repeatGapMs`: extra pause before a key identical to the previous one, default `KeyboardMap.defaultRepeatGapMs`.
+  func repeatGapMs() throws -> Int { try wholeMs("repeatGapMs", fallback: KeyboardMap.defaultRepeatGapMs) }
+
   /// Milliseconds -> seconds, within 0...60 s.
   func seconds(_ key: String, default fallback: Double) throws -> Double {
     let ms = try optional(key) ?? fallback
@@ -284,9 +302,11 @@ struct InputEngine: Sendable {
     case "pressButton":
       return try await pressButton(try params.string("button"))
     case "key":
-      return try await send(try Self.keyEvent(params))
+      return try await send(try Self.keyEvent(params, paceMs: try params.paceMs(), holdMs: try params.holdMs()))
     case "typeText":
-      return try await typeText(try params.string("text"))
+      return try await typeText(
+        try params.string("text"), paceMs: try params.paceMs(), holdMs: try params.holdMs(),
+        repeatGapMs: try params.repeatGapMs())
     case "paste":
       return try await send(KeyboardMap.paste)
     default:
@@ -330,7 +350,7 @@ struct InputEngine: Sendable {
   }
 
   /// `usage` (numeric) or `name` (a `KeyName`), plus `modifiers` (`shift|cmd|alt|ctrl`).
-  static func keyEvent(_ params: InputParams) throws -> SimulatorHIDEvent {
+  static func keyEvent(_ params: InputParams, paceMs: Int = 0, holdMs: Int = 0) throws -> SimulatorHIDEvent {
     let usage: UInt32
     if let raw = try params.optional("usage") {
       guard raw.rounded() == raw, raw >= 0, raw <= 255, KeyboardMap.usageRange.contains(UInt32(raw)) else {
@@ -350,11 +370,11 @@ struct InputEngine: Sendable {
       }
       if !modifiers.contains(modifier) { modifiers.append(modifier) }
     }
-    return KeyboardMap.chord(usage: usage, modifiers: modifiers)
+    return KeyboardMap.chord(usage: usage, modifiers: modifiers, paceMs: paceMs, holdMs: holdMs)
   }
 
-  private func typeText(_ text: String) async throws -> JSON {
-    let plan = KeyboardMap.plan(typing: text)
+  private func typeText(_ text: String, paceMs: Int, holdMs: Int, repeatGapMs: Int) async throws -> JSON {
+    let plan = KeyboardMap.plan(typing: text, paceMs: paceMs, holdMs: holdMs, repeatGapMs: repeatGapMs)
     if let event = plan.event { _ = try await send(event) }
     if let rest = plan.rest {
       let first = rest.unicodeScalars.first.map { String($0) } ?? ""
@@ -389,7 +409,9 @@ enum InputOps {
     let hid = session.hid.hid
     let simulator = session.simulator
     return InputEnvironment(
-      send: { event in try await hid.send(event: event, logger: logger, drain: .perEvent) },
+      send: { event in
+        try await hid.send(event: event, logger: logger, drain: .perEvent)
+      },
       screen: { (session.screen.width, session.screen.height) },
       isLandscape: {
         switch try? await simulator.orientation.current() {

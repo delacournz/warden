@@ -67,6 +67,7 @@ const NAVIGATE = /get-started|next|skip/i;
 
 /** Dismiss a system alert if one is up, else hop forward through onboarding until a text field shows. */
 async function reachTextfield(driver: Driver): Promise<Element | undefined> {
+	let empty = 0;
 	for (let hop = 0; hop < 6; hop++) {
 		const snap = await driver.snapshot();
 		if (!snap.success) return undefined;
@@ -78,7 +79,14 @@ async function reachTextfield(driver: Driver): Promise<Element | undefined> {
 			await step(`tap alert "${button.label ?? button.id}"`, () => driver.tap(centre(button)));
 		} else {
 			const next = snap.data.flat.find((e) => e.identifier && NAVIGATE.test(e.identifier) && usable(e));
-			if (!next) return undefined;
+			if (!next) {
+				// `settle` right after `launch` can still describe the previous frontmost app (the splash / SpringBoard
+				// is quiet), so a screen with nothing to tap yet is polled for a few seconds before giving up
+				if (empty++ >= 10) return undefined;
+				hop -= 1;
+				await Bun.sleep(500);
+				continue;
+			}
 			await step(`tap ${next.identifier}`, () => driver.tap(centre(next)));
 		}
 		await step(
@@ -176,13 +184,19 @@ async function killHelperCheck(driver: Driver, screen: { width: number; height: 
 
 /** `--kill-bridge`: SIGKILL the AX bridge guest (a host process, not visible to `simctl spawn killall`), then snapshot until it answers; passes when one retry is enough. */
 async function killBridgeCheck(driver: Driver): Promise<void> {
-	// the guest is spawned with SimDevice.spawn, so it is a host process serving idb-sfb-v2/<udid>.sock
-	const killed = Bun.spawnSync([
+	// The helper's guests are `.exclusive`: host processes serving idb-sfb-v2/<random uuid>.sock with
+	// `--exit-on-disconnect 1`, so the socket name no longer carries the udid. They are scoped to this checkout's
+	// binary instead; the old `<udid>.sock` pattern still catches a shared guest left by an older helper.
+	const guestBinary = join(import.meta.dir, "..", "dist", "Resources", "SimulatorFrameworkBridge-iOS");
+	const exclusive = Bun.spawnSync(["pkill", "-9", "-f", `${guestBinary} serve .*--exit-on-disconnect`]);
+	const shared = Bun.spawnSync([
 		"pkill",
 		"-9",
 		"-f",
 		`SimulatorFrameworkBridge-iOS serve .*${(udid as string).replaceAll("-", "")}`,
 	]);
+	// pkill exits 0 when it signalled something: a run that killed nothing proves nothing about recovery
+	const killed = { exitCode: exclusive.exitCode === 0 || shared.exitCode === 0 ? 0 : 1 };
 	const attempts: string[] = [];
 	let recovered = false;
 	for (let attempt = 1; attempt <= 3 && !recovered; attempt++) {
@@ -192,7 +206,7 @@ async function killBridgeCheck(driver: Driver): Promise<void> {
 		recovered = snap.success;
 		attempts.push(snap.success ? `ok (${ms} ms, ${snap.data.flat.length} nodes)` : `${snap.error.code} (${ms} ms)`);
 	}
-	const withinOneRetry = recovered && attempts.length <= 2;
+	const withinOneRetry = killed.exitCode === 0 && recovered && attempts.length <= 2;
 	if (!withinOneRetry) failures += 1;
 	process.stdout.write(
 		`${withinOneRetry ? "ok   " : "FAIL "} kill AX bridge guest   killall=${killed.exitCode} attempts: ${attempts.join(" -> ")}\n`

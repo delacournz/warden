@@ -76,9 +76,32 @@ enum KeyboardMap {
     let rest: String?
   }
 
-  static func plan(typing text: String) -> TypingPlan {
+  /// Reads a millisecond override (0...1000) from the environment, else `fallback`.
+  private static func envMs(_ name: String, fallback: Int) -> Int {
+    guard let raw = ProcessInfo.processInfo.environment[name], let ms = Int(raw), (0...1000).contains(ms) else {
+      return fallback
+    }
+    return ms
+  }
+
+  /// Quiet after each key press (`WARDEN_SIMD_PACE_MS`). A React Native text field digests about 45-50 ms per
+  /// character: unpaced strings arrived as "ada@example".
+  static let defaultPaceMs = envMs("WARDEN_SIMD_PACE_MS", fallback: 30)
+
+  /// Pause between a key's down and its up (`WARDEN_SIMD_HOLD_MS`). Back-to-back down/up drops keys: with 0 ms
+  /// about 1 in 4 strings lost a character, 30 ms cut that to about 1 in 16.
+  static let defaultHoldMs = envMs("WARDEN_SIMD_HOLD_MS", fallback: 40)
+
+  /// Extra pause before a key identical to the one just typed (`WARDEN_SIMD_REPEAT_GAP_MS`). The second "l" of
+  /// "Hello" was the remaining loss: hold 30 + gap 150 lost it 1 in 20 strings, hold 40 + gap 300 0 in 25.
+  static let defaultRepeatGapMs = envMs("WARDEN_SIMD_REPEAT_GAP_MS", fallback: 300)
+
+  /// `paceMs` is the pause after every key press, `holdMs` the pause between a key's down and up, `repeatGapMs` an
+  /// extra pause before a key identical to the previous one (all 0 = back to back).
+  static func plan(typing text: String, paceMs: Int = 0, holdMs: Int = 0, repeatGapMs: Int = 0) -> TypingPlan {
     var events: [SimulatorHIDEvent] = []
     var shiftDown = false
+    var previous: Stroke?
     var typed = 0
     var rest: String?
     let scalars = Array(text.unicodeScalars)
@@ -93,20 +116,27 @@ enum KeyboardMap {
         events.append(.keyboard(direction: stroke.shift ? .down : .up, keyCode: leftShift))
         shiftDown = stroke.shift
       }
+      if let previous, previous == stroke, repeatGapMs > 0 { events.append(.delay(Double(repeatGapMs) / 1000)) }
+      previous = stroke
       events.append(.keyboard(direction: .down, keyCode: stroke.usage))
+      if holdMs > 0 { events.append(.delay(Double(holdMs) / 1000)) }
       events.append(.keyboard(direction: .up, keyCode: stroke.usage))
+      if paceMs > 0 { events.append(.delay(Double(paceMs) / 1000)) }
       typed += 1
     }
     if shiftDown { events.append(.keyboard(direction: .up, keyCode: leftShift)) }
     return TypingPlan(event: events.isEmpty ? nil : .composite(events), typedScalars: typed, rest: rest)
   }
 
-  /// `modifiers` down in order, the key down and up, then `modifiers` up in reverse.
-  static func chord(usage: UInt32, modifiers: [UInt32]) -> SimulatorHIDEvent {
+  /// `modifiers` down in order, the key down, `holdMs`, up, then `modifiers` up in reverse, then `paceMs` of quiet so
+  /// the next request cannot land on a text field still digesting this key.
+  static func chord(usage: UInt32, modifiers: [UInt32], paceMs: Int = 0, holdMs: Int = 0) -> SimulatorHIDEvent {
     var events: [SimulatorHIDEvent] = modifiers.map { .keyboard(direction: .down, keyCode: $0) }
     events.append(.keyboard(direction: .down, keyCode: usage))
+    if holdMs > 0 { events.append(.delay(Double(holdMs) / 1000)) }
     events.append(.keyboard(direction: .up, keyCode: usage))
     events.append(contentsOf: modifiers.reversed().map { .keyboard(direction: .up, keyCode: $0) })
+    if paceMs > 0 { events.append(.delay(Double(paceMs) / 1000)) }
     return .composite(events)
   }
 
