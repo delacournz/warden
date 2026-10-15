@@ -1,0 +1,45 @@
+import type { App } from "../app";
+import type { Device } from "../device";
+import type { Platform } from "../driver/driver.types";
+import type { Session } from "../session";
+import type { TraceWriter } from "./trace";
+
+/** The `screen` fixture. TODO(T4): replace with the real `Screen` once it lands. */
+export type Screen = object;
+
+export type { App, Device };
+
+/** What every test receives; `test.extend` adds to it. */
+export type BaseFixtures = { app: App; device: Device; screen: Screen; platform: Platform };
+
+export type LaunchMode = "fresh" | "none";
+
+/** What a fixture factory gets for one attempt (or, for `beforeAll`/`afterAll`, the idle session). */
+export type FixtureContext = {
+	session: Session;
+	/** aborts at the attempt deadline; every driver call and poll must honour it */
+	signal: AbortSignal;
+	launch: LaunchMode;
+	actionTimeoutMs: number;
+	assertionTimeoutMs: number;
+};
+
+/**
+ * Builds `app`/`device`/`screen`. Registered on `session.fixtures` or via `setDefaultFixtureFactory`.
+ * The runner itself calls `app.open()` before the body when `launch` is `"fresh"`.
+ */
+export type FixtureFactory = (ctx: FixtureContext) => BaseFixtures | Promise<BaseFixtures>;
+
+/** The running attempt: where steps, screenshots and failure files go. Read it through the session. */
+export type AttemptContext = {
+	readonly signal: AbortSignal;
+	/** `<out>/<flowId>/<title-slug>-<hash6>/` */
+	readonly dir: string;
+	/** spec name tagging step lines */
+	readonly short: string;
+	readonly trace: TraceWriter;
+	/** nesting depth of the step in progress (indents console lines) */
+	depth: number;
+	/** files written into `dir`, relative to it (reported in `TestResult.artifacts`) */
+	readonly files: Set<string>;
+};
