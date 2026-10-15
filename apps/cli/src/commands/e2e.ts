@@ -23,6 +23,7 @@ import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
 import { exitGate, type FlowVerdict, type RunShape, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit } from "../output";
+import { currentBuild } from "../update/build-info";
 import { type AffectedOpts, explain, runAffected, selectedFlows } from "./affected";
 import {
 	type BatchArgs,
@@ -484,6 +485,7 @@ async function specPlan(ctx: CommandContext, deps: BatchDeps, suite: Suite, plat
 			},
 			flowsDir: resolve(suite.configDir, suite.config.flowsDir),
 			helperDir: ctx.env.WARDEN_HELPER_DIR ?? deps.helperDir(),
+			version: currentBuild().version,
 		},
 	});
 }

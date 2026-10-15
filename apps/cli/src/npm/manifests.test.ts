@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mainManifest, type PackageMeta, platformManifest } from "./manifests";
+import { e2eManifest, mainManifest, type PackageMeta, platformManifest } from "./manifests";
 import { RELEASE_TARGETS } from "./platforms";
 
 const meta: PackageMeta = { version: "0.3.0", description: "warden CLI", license: "MIT" };
@@ -87,5 +87,36 @@ describe("mainManifest", () => {
 			homepage: "https://github.com/delacournz/warden#readme",
 			bugs: { url: "https://github.com/delacournz/warden/issues" },
 		});
+	});
+});
+
+describe("e2eManifest", () => {
+	test("public lock-step package: exact-version peer on warden, only `.` and `./preload` exported", () => {
+		expect(e2eManifest(meta, { zod: "^4.4.3" })).toEqual({
+			name: "@delacour/warden-e2e",
+			version: "0.3.0",
+			description: "TypeScript spec API for `warden e2e`: test, expect, screen, device, app",
+			license: "MIT",
+			type: "module",
+			keywords: ["e2e", "ios-simulator", "android-emulator", "bun", "testing"],
+			exports: {
+				".": { types: "./index.d.ts", default: "./index.mjs" },
+				"./preload": { types: "./preload.d.ts", default: "./preload.mjs" },
+				"./package.json": "./package.json",
+			},
+			files: ["*.mjs", "*.d.ts", "types", "LICENSE"],
+			peerDependencies: { "@delacour/warden": "0.3.0" },
+			dependencies: { zod: "^4.4.3" },
+			engines: { bun: ">=1.3" },
+			publishConfig: { access: "public" },
+		});
+	});
+
+	test("no workspace-private dependency leaks into the published manifest; repo links only with a repository", () => {
+		const manifest = e2eManifest(withRepo, { zod: "^4.4.3" });
+		expect(JSON.stringify(manifest)).not.toContain("workspace:");
+		expect(Object.keys(manifest.dependencies)).toEqual(["zod"]);
+		expect(manifest.repository).toEqual({ type: "git", url: "git+https://github.com/delacournz/warden.git" });
+		expect("repository" in e2eManifest(meta, {})).toBe(false);
 	});
 });
