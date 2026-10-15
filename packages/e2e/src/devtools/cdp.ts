@@ -22,6 +22,8 @@ export type CdpClient = {
 	on: (event: string, handler: (params: unknown) => void) => () => void;
 	/** Called when the socket closes on its own (not after `close()`). */
 	onClose: (handler: () => void) => () => void;
+	/** Every event of every method, in arrival order (a wildcard `on`). */
+	onAny: (handler: (method: string, params: unknown) => void) => () => void;
 	/**
 	 * `Runtime.addBinding`, then probe `typeof <name>`: legacy Hermes (RN <= 0.72) acknowledges the call but never
 	 * installs the function, so `available` is false and `evaluateWithBinding` is refused.
@@ -141,6 +143,7 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 	const bindings = new Map<string, PendingBinding>();
 	const listeners = new Map<string, Set<(params: unknown) => void>>();
 	const closeHandlers = new Set<() => void>();
+	const anyHandlers = new Set<(method: string, params: unknown) => void>();
 
 	const send: CdpClient["send"] = (method, params = {}, opts = {}) => {
 		if (closed || ws.readyState !== ws.OPEN)
@@ -171,6 +174,7 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 				if (tagged.success) bindings.get(tagged.data.requestId)?.settle(ok(payload));
 			}
 		}
+		for (const handler of [...anyHandlers]) handler(method, params);
 		for (const handler of [...(listeners.get(method) ?? [])]) handler(params);
 	};
 
@@ -227,6 +231,7 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 			return subscribe(set, handler);
 		},
 		onClose: (handler) => subscribe(closeHandlers, handler),
+		onAny: (handler) => subscribe(anyHandlers, handler),
 		async addBinding(name) {
 			const added = await send("Runtime.addBinding", { name });
 			if (!added.success) return added;
