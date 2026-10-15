@@ -138,8 +138,11 @@ describe("requests", () => {
 		expect(!hung.success && hung.error).toMatchObject({ code: "E_TIMEOUT", retryable: true });
 		const late = await client.request("late", {}, { timeoutMs: 40 });
 		expect(!late.success && late.error.code).toBe("E_TIMEOUT");
-		await Bun.sleep(200);
 		expect(await client.request("ok")).toEqual({ success: true, data: "ok" });
+		// The late answer lands whenever the fake helper's event loop gets scheduled; under load that can be well past
+		// its 150 ms delay, so poll for the log line instead of sleeping a fixed time.
+		const deadline = Date.now() + 5000;
+		while (!lines.some((line) => line.includes("unknown id")) && Date.now() < deadline) await Bun.sleep(25);
 		expect(lines.some((line) => line.includes("unknown id"))).toBe(true);
 	});
 
