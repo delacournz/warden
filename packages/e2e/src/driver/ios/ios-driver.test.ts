@@ -466,6 +466,58 @@ describe("settle", () => {
 		expect(helper.of("settle")[0]).toMatchObject({ quietMs: 100, settleTimeoutMs: 1000, timeoutMs: 3000 });
 	});
 
+	test("the first settle after app.launch names the launched bundle, later ones do not", async () => {
+		const { driver, helper } = await open(
+			(request) => (request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null }),
+			{},
+			[["xcrun simctl launch", {}]]
+		);
+		await unwrapped(driver.settle());
+		await unwrapped(driver.app.launch(BUNDLE));
+		await unwrapped(driver.settle());
+		await unwrapped(driver.settle());
+		const settles = helper.of("settle");
+		expect(settles[0]).not.toHaveProperty("bundleId");
+		expect(settles[1]).toMatchObject({ bundleId: BUNDLE });
+		expect(settles[2]).not.toHaveProperty("bundleId");
+	});
+
+	test("a frontmost_mismatch settle keeps asking for the launched bundle", async () => {
+		let answers = 0;
+		const { driver, helper } = await open(
+			(request) => {
+				if (request.op !== "settle") return { data: null };
+				answers += 1;
+				return {
+					data: { quiet: answers > 1, waitedMs: 5, ...(answers === 1 ? { reason: "frontmost_mismatch" } : {}) },
+				};
+			},
+			{},
+			[["xcrun simctl launch", {}]]
+		);
+		await unwrapped(driver.app.launch(BUNDLE));
+		expect((await unwrapped(driver.settle())).quiet).toBe(false);
+		expect((await unwrapped(driver.settle())).quiet).toBe(true);
+		const settles = helper.of("settle");
+		expect(settles[0]).toMatchObject({ bundleId: BUNDLE });
+		expect(settles[1]).toMatchObject({ bundleId: BUNDLE });
+	});
+
+	test("terminating the launched bundle stops naming it", async () => {
+		const { driver, helper } = await open(
+			(request) => (request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null }),
+			{},
+			[
+				["xcrun simctl launch", {}],
+				["xcrun simctl terminate", {}],
+			]
+		);
+		await unwrapped(driver.app.launch(BUNDLE));
+		await unwrapped(driver.app.terminate(BUNDLE));
+		await unwrapped(driver.settle());
+		expect(helper.of("settle")[0]).not.toHaveProperty("bundleId");
+	});
+
 	test("E_UNSUPPORTED falls back to snapshot-hash polling, and is remembered", async () => {
 		let t = 0;
 		const { driver, helper } = await open(

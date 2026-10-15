@@ -221,7 +221,13 @@ export const screenshotDataSchema = z.looseObject({
 });
 export type ScreenshotData = z.infer<typeof screenshotDataSchema>;
 
-export const settleDataSchema = z.looseObject({ quiet: z.boolean(), waitedMs: z.number() });
+/** `reason: "frontmost_mismatch"`: `bundleId` was asked for and never became the frontmost app before the deadline. */
+export const settleDataSchema = z.looseObject({
+	quiet: z.boolean(),
+	waitedMs: z.number(),
+	reason: z.string().optional(),
+	frontmostPid: z.number().optional(),
+});
 export type SettleData = z.infer<typeof settleDataSchema>;
 
 /** `alertButtons`: the system alert / sheet on top, `null` when there is none. */
