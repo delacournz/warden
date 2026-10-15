@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { installPreload, type PreloadDeps } from "./preload";
+import { installPreload, isCi, type PreloadDeps } from "./preload";
 import type { Session } from "./session";
 
-function harness(env: Record<string, string | undefined>) {
+function harness(env: Record<string, string | undefined>, onlySeen = false) {
 	const log = {
 		timeouts: [] as number[],
 		hooks: [] as Array<() => Promise<void>>,
@@ -24,6 +24,7 @@ function harness(env: Record<string, string | undefined>) {
 			log.sessions.push(opts);
 			return session;
 		},
+		onlySeen: () => onlySeen,
 		stderr: (text) => log.stderr.push(text),
 		exit: (code) => log.exits.push(code),
 	};
@@ -61,5 +62,33 @@ describe("installPreload", () => {
 		expect(log.closed).toBe(0);
 		await log.hooks[0]?.();
 		expect(log.closed).toBe(1);
+	});
+
+	test("a collected .only fails the run under CI, after the session is closed", async () => {
+		const env = { WARDEN_UDID: "U", WARDEN_BUNDLE_ID: "b", CI: "1" };
+		const { deps, log } = harness(env, true);
+		installPreload(deps);
+		await expect(log.hooks[0]?.()).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+		expect(log.closed).toBe(1);
+	});
+
+	test(".only is fine outside CI, and CI without .only is fine", async () => {
+		const local = harness({ WARDEN_UDID: "U", WARDEN_BUNDLE_ID: "b" }, true);
+		installPreload(local.deps);
+		await local.log.hooks[0]?.();
+		const ci = harness({ WARDEN_UDID: "U", WARDEN_BUNDLE_ID: "b", CI: "true" }, false);
+		installPreload(ci.deps);
+		await ci.log.hooks[0]?.();
+	});
+});
+
+describe("isCi", () => {
+	test("anything but unset, empty, 0 and false", () => {
+		expect(isCi({})).toBe(false);
+		expect(isCi({ CI: "" })).toBe(false);
+		expect(isCi({ CI: "0" })).toBe(false);
+		expect(isCi({ CI: "false" })).toBe(false);
+		expect(isCi({ CI: "1" })).toBe(true);
+		expect(isCi({ CI: "true" })).toBe(true);
 	});
 });
