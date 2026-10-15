@@ -11,6 +11,8 @@ export type Command = {
 	name: string;
 	aliases?: readonly string[];
 	summary: string;
+	/** left out of `--help` (internal workers) */
+	hidden?: true;
 	register: Register;
 	/** parse `ctx.argv` as this command's arguments and run it (what tests call) */
 	run: (ctx: CommandContext) => Promise<number>;
@@ -44,7 +46,9 @@ export async function runProgram(commands: readonly Command[], argv: string[], c
 		.showHelpAfterError(ctx.ui.color.dim("(add --help for usage)"));
 	let code = 0;
 	for (const command of commands) {
-		const sub = program.command(command.name).description(command.summary);
+		const sub = program
+			.command(command.name, command.hidden ? { hidden: true } : undefined)
+			.description(command.summary);
 		for (const alias of command.aliases ?? []) sub.alias(alias);
 		command.register(sub, ctx, (n) => {
 			code = n;

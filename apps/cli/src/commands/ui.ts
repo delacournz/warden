@@ -1,6 +1,7 @@
 import { uiFill, uiKey, uiLongpress, uiPress, uiSwipe, uiType } from "../agent-ui/actions";
 import { type CloseOptionValues, uiClose } from "../agent-ui/close";
 import { uiAlert, uiAppearance, uiHardware, uiRotate, uiScreenshot } from "../agent-ui/controls";
+import { registerDevtoolsCommands } from "../agent-ui/devtools-cli";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { uiOpen } from "../agent-ui/open";
 import { withUiOptions } from "../agent-ui/run";
@@ -164,6 +165,7 @@ export function createUiCommand(deps: UiDeps): Command {
 					.argument("<action>", "start | stop")
 					.argument("[path]", "output file for start")
 			).action(async (action, path, opts) => done(await uiVideo(ctx, deps, action, path, opts)));
+			registerDevtoolsCommands(cmd, ctx, done, deps);
 		},
 	});
 }

@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
 import type { Driver, Element, Orientation, Point, Snapshot } from "./driver/driver.types";
 import { type SettleOutcome, settleByHash, snapshotHash } from "./driver/settle";
 import { settled, toE2eError, unwrap } from "./driver/unwrap";
@@ -8,15 +9,6 @@ import { E2eError } from "./errors";
 import { type Clock, type FixtureSession, systemClock } from "./fixture-session";
 import { screenshotPath } from "./runner/artifacts";
 import { renderHeader, renderSnapshot } from "./screen/render";
-
-/**
- * TODO(A7): replaced by the real facet from `devtools/` (evaluate, reloadJs, console, network, tree).
- * Until then `device.devtools` is always `undefined`.
- */
-export type DevtoolsFacet = {
-	evaluate(expression: string): Promise<unknown>;
-	reloadJs(): Promise<void>;
-};
 
 export type AlertAction = "accept" | "dismiss" | { button: string };
 
@@ -62,7 +54,11 @@ export type Device = {
 	snapshot(options?: SnapshotTextOptions): Promise<string>;
 	/** Waits for a quiet UI: the driver's own settle, else snapshot-hash polling. */
 	settle(options?: SettleOptions): Promise<SettleOutcome>;
-	devtools: DevtoolsFacet | undefined;
+	/**
+	 * The app's JS runtime over Metro (evaluate, React tree, console, network, reload); `undefined` without
+	 * `WARDEN_METRO_URL` (a release build). The first access starts attaching, so console capture begins there.
+	 */
+	readonly devtools: DeviceDevtools | undefined;
 };
 
 export type DeviceDeps = {
@@ -122,7 +118,7 @@ function nextShotNumber(dir: string, issued: ReadonlyMap<string, number>): numbe
 	return highest + 1;
 }
 
-export function createDevice({ session, driver, clock = systemClock }: DeviceDeps): Device {
+export function createDevice({ session, driver, env, clock = systemClock }: DeviceDeps): Device {
 	const issued = new Map<string, number>();
 	// the signal is read per call: the runner swaps it for every attempt
 	const signal = (): AbortSignal | undefined => session.signal;
@@ -134,8 +130,24 @@ export function createDevice({ session, driver, clock = systemClock }: DeviceDep
 	const readSnapshot = (opts?: { interactiveOnly?: boolean }): Promise<Snapshot> =>
 		unwrap(() => driver.snapshot(opts), "snapshot", signal());
 
+	const { devtools: attach, peekDevtools } = session;
+	let devtools: DeviceDevtools | undefined;
+	const lazyDevtools = (): DeviceDevtools | undefined => {
+		if (env.metroUrl === undefined || attach === undefined || peekDevtools === undefined) return undefined;
+		if (devtools === undefined) {
+			devtools = createDeviceDevtools({
+				devtools: () => attach.call(session),
+				peekDevtools: () => peekDevtools.call(session),
+			});
+			void attach.call(session);
+		}
+		return devtools;
+	};
+
 	const device: Device = {
-		devtools: undefined,
+		get devtools() {
+			return lazyDevtools();
+		},
 
 		async alert(action) {
 			const info = await unwrap(() => driver.alert(), "read alert", signal());

@@ -143,5 +143,3 @@ for await (const chunk of Bun.stdin.stream()) {
 	}
 }
 await chain;
-
-export {};
