@@ -57,6 +57,7 @@ Each job gets the `warden run` variables plus:
 |---|---|
 | `WARDEN_UDID` | this job's device |
 | `WARDEN_WORKER` | the worker index (0-based) |
+| `WARDEN_DEVICE_NAME` | the leased device's name; `device.devtools` uses it to pick this device's inspector page when several devices share one Metro |
 | `WARDEN_JOB` | the job string |
 | `WARDEN_JOB_SEQ` | the run count on this worker, 0-based, retries included |
 | `WARDEN_PASS` | with `--passes N`: which consecutive run of the job this is, 0-based |

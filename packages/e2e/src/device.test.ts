@@ -102,12 +102,23 @@ describe("device.alert", () => {
 		expect(driver.callsOf("tap")).toHaveLength(0);
 	});
 
+	test("a transient AX failure is retried, not thrown", async () => {
+		let failures = 2;
+		const driver = fakeDriver({
+			screens: [withAlert("Cancel", "OK")],
+			onCall: (c) => (c.method === "alert" && failures-- > 0 ? failWith("E_AX_UNAVAILABLE") : undefined),
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock: fakeClock() });
+		expect(await device.alert("accept")).toBe(true);
+		expect(driver.callsOf("alert")).toHaveLength(3);
+	});
+
 	test("driver failures become E2eError", async () => {
 		const driver = fakeDriver({
 			screens: [snapshotOf([])],
 			onCall: (c) => (c.method === "alert" ? failWith("E_HELPER_CRASHED") : undefined),
 		});
-		const device = createDevice({ session: { out: "/tmp/out" }, driver, env });
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock: fakeClock() });
 		const error = await device.alert("accept").catch((e: unknown) => e);
 		expect((error as E2eError).code).toBe("DRIVER");
 	});
@@ -129,6 +140,24 @@ describe("device.openLink", () => {
 		await device.openLink("myapp://x");
 		expect(driver.callsOf("app.openUrl")[0]?.url).toBe("myapp://x");
 		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
+	test("presses Open again when the first press was lost", async () => {
+		const clock = fakeClock();
+		const driver: ReturnType<typeof fakeDriver> = fakeDriver({
+			screens: () => (driver.callsOf("tap").length >= 2 ? snapshotOf([]) : withAlert("Cancel", "Open")),
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
+		await device.openLink("myapp://x");
+		expect(driver.callsOf("tap")).toHaveLength(2);
+	});
+
+	test("stops pressing after 3 attempts", async () => {
+		const clock = fakeClock();
+		const driver = fakeDriver({ screens: [withAlert("Cancel", "Open")] });
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
+		await device.openLink("myapp://x");
+		expect(driver.callsOf("tap")).toHaveLength(3);
 	});
 
 	test("gives up after 8 s without a sheet", async () => {

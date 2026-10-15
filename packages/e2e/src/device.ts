@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
-import type { Driver, Element, Orientation, Point, Snapshot } from "./driver/driver.types";
+import type { AlertInfo, Driver, Element, Orientation, Point, Snapshot } from "./driver/driver.types";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
@@ -40,7 +40,7 @@ export type Device = {
 	 * with that name (`ACTION_FAILED` when absent). Resolves false when no alert is showing.
 	 */
 	alert(action: AlertAction): Promise<boolean>;
-	/** Opens a URL from outside the app; on iOS accepts the "Open in …?" sheet when it shows within 8 s. */
+	/** Opens a URL from outside the app; on iOS accepts the "Open in …?" sheet when it shows within 8 s, pressing again if the sheet stays up. */
 	openLink(url: string, options?: OpenLinkOptions): Promise<void>;
 	home(): Promise<void>;
 	/** Android back key; `INVALID_ARGUMENT` on iOS (there is none). */
@@ -80,6 +80,9 @@ const DISMISS_BUTTONS = ["Cancel", "Don't Allow", "Not Now", "Dismiss", "No", "C
 /** A loaded machine can show the sheet several seconds after `openUrl` returns. */
 const OPEN_LINK_WAIT_MS = 8000;
 const OPEN_LINK_POLL_MS = 100;
+const ALERT_READ_ATTEMPTS = 5;
+const ALERT_READ_RETRY_MS = 300;
+const OPEN_LINK_MAX_PRESSES = 3;
 
 function normalise(text: string): string {
 	return text.replace(/[‘’]/g, "'").trim().toLowerCase();
@@ -132,6 +135,19 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 		await unwrap(() => driver.tap(centre(button)), action, signal());
 	};
 
+	/**
+	 * `driver.alert()`, retrying a transient failure (the AX bridge briefly names no frontmost application right
+	 * after a launch or sheet change) before giving up.
+	 */
+	const readAlert = async (): Promise<AlertInfo | null> => {
+		for (let attempt = 1; ; attempt += 1) {
+			const result = await settled(() => driver.alert(), "read alert", signal());
+			if (result.success) return result.data;
+			if (!result.error.retryable || attempt >= ALERT_READ_ATTEMPTS) throw toE2eError(result.error, "read alert");
+			await clock.sleep(ALERT_READ_RETRY_MS);
+		}
+	};
+
 	const readSnapshot = (opts?: { interactiveOnly?: boolean }): Promise<Snapshot> =>
 		unwrap(() => driver.snapshot(opts), "snapshot", signal());
 
@@ -155,7 +171,7 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 		},
 
 		async alert(action) {
-			const info = await unwrap(() => driver.alert(), "read alert", signal());
+			const info = await readAlert();
 			if (info === null || info.buttons.length === 0) return false;
 			const { buttons } = info;
 			let target: Element | undefined;
@@ -177,14 +193,20 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 			await unwrap(() => driver.app.openUrl(url), `open ${url}`, signal());
 			if (options.accept === false || driver.platform !== "ios" || !driver.capabilities.alerts) return;
 			const deadline = clock.now() + OPEN_LINK_WAIT_MS;
+			let presses = 0;
 			for (;;) {
-				const info = await unwrap(() => driver.alert(), "read alert", signal());
+				const info = await readAlert();
 				const open = info === null ? undefined : findButton(info.buttons, "Open");
-				if (open !== undefined) {
+				if (open === undefined) {
+					// answered (or never shown): nothing left to press once the sheet is gone
+					if (presses > 0 || clock.now() >= deadline) return;
+				} else if (presses < OPEN_LINK_MAX_PRESSES) {
+					// a press that lands while the sheet is still animating in is lost, so look again after each one
 					await pressAlertButton(open, "accept open-in sheet");
+					presses += 1;
+				} else {
 					return;
 				}
-				if (clock.now() >= deadline) return;
 				await clock.sleep(OPEN_LINK_POLL_MS);
 			}
 		},

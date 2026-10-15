@@ -49,6 +49,7 @@ describe("readEnv", () => {
 			WARDEN_HEADLESS: "1",
 			WARDEN_LOG_TIMESTAMPS: "true",
 			WARDEN_WORKER: "w1",
+			WARDEN_DEVICE_NAME: "warden-iphone-17-5",
 		});
 		expect(env).toEqual({
 			udid: "UDID-1",
@@ -68,6 +69,7 @@ describe("readEnv", () => {
 			headless: true,
 			logTimestamps: true,
 			worker: "w1",
+			deviceName: "warden-iphone-17-5",
 		});
 	});
 

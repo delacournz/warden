@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Driver, DriverResult } from "./driver/driver.types";
 import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
-import { createSession, getSession, resetSession } from "./session";
+import { createSession, devtoolsTarget, getSession, resetSession } from "./session";
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -179,5 +179,18 @@ describe("getSession", () => {
 		} finally {
 			if (saved !== undefined) process.env.WARDEN_UDID = saved;
 		}
+	});
+});
+
+describe("devtoolsTarget", () => {
+	test("pins the inspector page to the leased device when it has a name", () => {
+		expect(devtoolsTarget({ ...envIn("/o"), deviceName: "warden-iphone-17-5" })).toEqual({
+			appId: "com.acme.app",
+			deviceName: "warden-iphone-17-5",
+		});
+	});
+
+	test("without a device name only the app id picks the page", () => {
+		expect(devtoolsTarget(envIn("/o"))).toEqual({ appId: "com.acme.app" });
 	});
 });

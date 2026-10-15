@@ -22,11 +22,19 @@ export type DriverFactory = (env: E2eEnv) => DriverResult<Driver>;
 /** How to attach to the app's dev client; default {@link openDevtools}. Tests inject a stub. */
 export type DevtoolsOpener = (env: E2eEnv) => Promise<DevtoolsResult<DevtoolsFacet>>;
 
-/** Metro's inspector for this env's app: `WARDEN_METRO_URL`, the bundle id picks the page. */
+/**
+ * Which inspector page is this env's: the bundle id and the device name. Several devices can share one Metro;
+ * without the name the newest page of any device would win and a reload or evaluate would hit another device's app.
+ */
+export function devtoolsTarget(env: E2eEnv): { appId: string; deviceName?: string } {
+	return { appId: env.bundleId, ...(env.deviceName === undefined ? {} : { deviceName: env.deviceName }) };
+}
+
+/** Metro's inspector for this env's app (`WARDEN_METRO_URL`), pinned by {@link devtoolsTarget}. */
 export const openDevtools: DevtoolsOpener = (env) =>
 	openDevtoolsFacet({
 		env: { metroUrl: env.metroUrl },
-		device: { appId: env.bundleId },
+		device: devtoolsTarget(env),
 		fetch,
 		WebSocket,
 		timeoutMs: 5_000,

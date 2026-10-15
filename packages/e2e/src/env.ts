@@ -4,6 +4,7 @@ import { z } from "zod";
 /** The env names `warden e2e` writes and the spec process reads (`apps/cli` imports these). */
 export const ENV_NAMES = {
 	udid: "WARDEN_UDID",
+	deviceName: "WARDEN_DEVICE_NAME",
 	platform: "WARDEN_PLATFORM",
 	bundleId: "WARDEN_BUNDLE_ID",
 	appPath: "WARDEN_APP_PATH",
@@ -50,6 +51,7 @@ const REQUIRED = "required when WARDEN_UDID is set";
 
 const schema = z.object({
 	udid: z.string().min(1),
+	deviceName: z.string().optional(),
 	platform: z.enum(["ios", "android"]).default("ios"),
 	bundleId: z.string({ error: REQUIRED }).min(1, REQUIRED),
 	appPath: z.string().optional(),
@@ -70,6 +72,8 @@ const schema = z.object({
 
 export type E2eEnv = {
 	udid: string;
+	/** the leased device's name: pins devtools to its own Metro inspector page when several devices share one Metro */
+	deviceName?: string;
 	platform: "ios" | "android";
 	bundleId: string;
 	appPath?: string;
@@ -112,6 +116,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 		headless: v.headless,
 		logTimestamps: v.logTimestamps,
 		...defined({
+			deviceName: v.deviceName,
 			appPath: v.appPath,
 			metroUrl: v.metroUrl,
 			flowsDir: v.flowsDir,
