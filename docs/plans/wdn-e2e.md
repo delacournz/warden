@@ -286,3 +286,18 @@ Planned; nothing implemented. Replanned after rebasing onto PR #22 (`b43e121`): 
 
 
 **Implemented (2026-10-16)**, merged on `feature/faster-local-e2e-runner`: D1-D11 (D11 real-device checks still to do), T1-T8, T10, T11, T13, A1-A4, A6, A7, and A12 part 1 (argent compat and YAML flow discovery removed). `warden e2e` runs `*.e2e.ts` specs with `bun test` and `@delacour/warden-e2e`; verdicts and live progress come from `results.jsonl`; the example app is migrated; the docs describe the spec API, config and environment. **Open:** A5, A8, A9, A10, A11, A12 part 2 (the `warden ui` guide and SKILL section), T9 (npm publish of `@delacour/warden-e2e`) and T12 (smoke gate + bench numbers).
+
+**WDN-E2E-A11 (2026-10-16): `warden ui bench` + `scripts/smoke/ui-bench.ts`.** `warden ui bench [--runs n] [--metro url] [--json]` (`apps/cli/src/agent-ui/bench.ts`, targets in the exported `BENCH_TARGETS`, tolerance `BENCH_TOLERANCE` = 1.5); run the smoke with `bun run smoke:ui-bench -- [--udid <id>] [--platform ios|android] [--bundle <id>] [--runs <n>]` (claims a device unless `--udid`, opens `nz.co.delacour.warden.example`, exits 1 over target x1.5, releases only the lease id it claimed). The example app must be installed first (`cd apps/example && warden app ensure ios --udid <udid>`).
+
+First numbers, iPhone 17 sim on a very loaded machine (load average 160-650, another agent building with xcodebuild; helper = the `dist/warden-simd` of another worktree via `WARDEN_SIMD`), release build so no dev client (`tree` skipped). ms:
+
+| metric | run 1 p50 / p95 | run 2 p50 / p95 | target | n |
+|---|---|---|---|---|
+| helperColdToSnapshot | 1153.5 / 3312.3 | 752.0 / 766.9 | < 1500 | 3 |
+| snapshotWarm | 70.3 / 131.0 | 47.1 / 53.5 | p50 < 60, p95 < 120 | 20 |
+| pressHid | 2.6 / 8.3 | 1.2 / 1.9 | < 30 | 20 |
+| pressSettle | 443.9 / 458.2 | 413.8 / 439.4 | < 600 | 5 |
+| tree | skipped (devtools_unavailable) | skipped | < 250 | 0 |
+| openDriver | 571.7 / 732.8 | 728.0 / 752.9 | < 500 | 5 |
+
+Both runs passed the x1.5 gate (exit 0). `openDriver` is over its plain target but inside the tolerance in both runs and is the one to look at when the machine is quiet (it includes the driver's own setup besides the socket connect). `tree` and Android numbers are still to be recorded (needs a dev-client run and an emulator).
