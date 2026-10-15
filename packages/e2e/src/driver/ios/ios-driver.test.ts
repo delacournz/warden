@@ -219,6 +219,23 @@ describe("Driver methods over the helper", () => {
 		expect(snap.elements[0]?.children[0]?.identifier).toBe("go");
 	});
 
+	test("snapshot tolerates D4's extra fields and logs a backend fallback", async () => {
+		const { driver, logs } = await open(() => ({
+			data: {
+				...snapshotData,
+				backend: "ax",
+				modal: null,
+				readMs: 12.5,
+				nodes: 3,
+				fallback: { from: "axbridge", to: "ax", reason: "applicationUnavailable" },
+			},
+		}));
+		const snap = await unwrapped(driver.snapshot());
+		expect(snap.backend).toBe("ax");
+		expect("modal" in snap).toBe(false);
+		expect(logs.some((line) => line.includes("axbridge -> ax: applicationUnavailable"))).toBe(true);
+	});
+
 	test("snapshot without options sends no null params", async () => {
 		const { driver, helper } = await open(() => ({ data: snapshotData }));
 		await unwrapped(driver.snapshot());

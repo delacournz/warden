@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { DriverError, DriverErrorCode, Element, Rect, Role, ScreenInfo } from "../driver.types";
+import type { DriverError, DriverErrorCode, Rect, Role, ScreenInfo } from "../driver.types";
 import { driverError } from "../errors";
 
 /**
@@ -54,40 +54,56 @@ const pointSchema = z.object({ x: z.number(), y: z.number() });
 
 /**
  * One AX node as the helper sends it. `id`, `normFrame`, `depth`, `traits`, `enabled` and `children`
- * may be omitted (the TS driver fills them in `normalize.ts`), everything else is the `Element` shape.
+ * may be omitted (the TS driver fills them in `normalize.ts`) and any optional field may arrive as
+ * `null` (unknown); everything else is the `Element` shape.
  */
-export type WireElement = Omit<Element, "id" | "normFrame" | "depth" | "children" | "traits" | "enabled"> & {
-	id?: string;
-	normFrame?: Rect;
-	depth?: number;
-	traits?: string[];
-	enabled?: boolean;
-	children?: WireElement[];
+export type WireElement = {
+	id?: string | null;
+	role: Role;
+	rawType: string;
+	label?: string | null;
+	identifier?: string | null;
+	value?: string | null;
+	text?: string | null;
+	placeholder?: string | null;
+	frame: Rect;
+	normFrame?: Rect | null;
+	traits?: string[] | null;
+	enabled?: boolean | null;
+	focused?: boolean | null;
+	hidden?: boolean | null;
+	selected?: boolean | null;
+	checked?: boolean | null;
+	hittable?: boolean | null;
+	tapPoint?: { x: number; y: number } | null;
+	pid?: number | null;
+	depth?: number | null;
+	children?: WireElement[] | null;
 };
 
 export const wireElementSchema: z.ZodType<WireElement> = z.lazy(() =>
 	z.object({
-		id: z.string().optional(),
+		id: z.string().nullish(),
 		role: z.enum(ROLES),
 		rawType: z.string(),
-		label: z.string().optional(),
-		identifier: z.string().optional(),
-		value: z.string().optional(),
-		text: z.string().optional(),
-		placeholder: z.string().optional(),
+		label: z.string().nullish(),
+		identifier: z.string().nullish(),
+		value: z.string().nullish(),
+		text: z.string().nullish(),
+		placeholder: z.string().nullish(),
 		frame: rectSchema,
-		normFrame: rectSchema.optional(),
-		traits: z.array(z.string()).optional(),
-		enabled: z.boolean().optional(),
-		focused: z.boolean().optional(),
-		hidden: z.boolean().optional(),
-		selected: z.boolean().optional(),
-		checked: z.boolean().optional(),
-		hittable: z.boolean().optional(),
-		tapPoint: pointSchema.optional(),
-		pid: z.number().optional(),
-		depth: z.number().optional(),
-		children: z.array(wireElementSchema).optional(),
+		normFrame: rectSchema.nullish(),
+		traits: z.array(z.string()).nullish(),
+		enabled: z.boolean().nullish(),
+		focused: z.boolean().nullish(),
+		hidden: z.boolean().nullish(),
+		selected: z.boolean().nullish(),
+		checked: z.boolean().nullish(),
+		hittable: z.boolean().nullish(),
+		tapPoint: pointSchema.nullish(),
+		pid: z.number().nullish(),
+		depth: z.number().nullish(),
+		children: z.array(wireElementSchema).nullish(),
 	})
 );
 
@@ -183,10 +199,14 @@ export type HealthData = z.infer<typeof healthDataSchema>;
 export const snapshotDataSchema = z.looseObject({
 	backend: z.enum(["axbridge", "ax", "uiautomator"]),
 	screen: screenInfoSchema,
-	modal: z.object({ pid: z.number().optional(), description: z.string().optional() }).optional(),
+	modal: z.object({ pid: z.number().optional(), description: z.string().optional() }).nullish(),
 	truncated: z.boolean(),
 	elements: z.array(wireElementSchema),
 	ms: z.number(),
+	/** set when the helper answered from another backend than asked for (axbridge → ax) */
+	fallback: z.object({ from: z.string(), to: z.string(), reason: z.string() }).optional(),
+	readMs: z.number().optional(),
+	nodes: z.number().optional(),
 });
 export type SnapshotData = z.infer<typeof snapshotDataSchema>;
 

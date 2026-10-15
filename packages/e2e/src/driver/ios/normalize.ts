@@ -1,7 +1,7 @@
 import type { Element, Rect, ScreenInfo, Snapshot } from "../driver.types";
 import type { SnapshotData, WireElement } from "./simd-protocol";
 
-/** Wire → `Element`: fills what the helper may omit (`id` as the preorder path, `depth`, `normFrame`, `traits`, `enabled`, `children`). */
+/** Wire → `Element`: strips `null`s, fills what the helper may omit (`id` as the preorder path, `depth`, `normFrame`, `traits`, `enabled`, `children`). */
 export type Normalized = { elements: Element[]; flat: Element[] };
 
 function normFrameOf(frame: Rect, screen: ScreenInfo): Rect {
@@ -14,6 +14,25 @@ function normFrameOf(frame: Rect, screen: ScreenInfo): Rect {
 	};
 }
 
+const STRING_FIELDS = ["label", "identifier", "value", "text", "placeholder"] as const;
+const FLAG_FIELDS = ["focused", "hidden", "selected", "checked", "hittable"] as const;
+
+/** The optional `Element` fields the helper actually set (non-null). */
+function optionalFields(node: WireElement): Partial<Element> {
+	const fields: Partial<Element> = {};
+	for (const key of STRING_FIELDS) {
+		const value = node[key];
+		if (typeof value === "string") fields[key] = value;
+	}
+	for (const key of FLAG_FIELDS) {
+		const value = node[key];
+		if (typeof value === "boolean") fields[key] = value;
+	}
+	if (node.tapPoint) fields.tapPoint = node.tapPoint;
+	if (typeof node.pid === "number") fields.pid = node.pid;
+	return fields;
+}
+
 export function normalizeElements(
 	wire: readonly WireElement[],
 	screen: ScreenInfo,
@@ -23,18 +42,20 @@ export function normalizeElements(
 	const flat: Element[] = [];
 	const elements = wire.map((node, index) => {
 		const path = prefix === "" ? String(index) : `${prefix}.${index}`;
-		const { children: wireChildren, ...rest } = node;
 		const element: Element = {
-			...rest,
+			...optionalFields(node),
 			id: node.id ?? path,
+			role: node.role,
+			rawType: node.rawType,
+			frame: node.frame,
 			depth: node.depth ?? depth,
 			normFrame: node.normFrame ?? normFrameOf(node.frame, screen),
 			traits: node.traits ?? [],
-			enabled: node.enabled ?? true,
+			enabled: node.enabled ?? !(node.traits ?? []).includes("not-enabled"),
 			children: [],
 		};
 		flat.push(element);
-		const inner = normalizeElements(wireChildren ?? [], screen, path, depth + 1);
+		const inner = normalizeElements(node.children ?? [], screen, path, depth + 1);
 		element.children = inner.elements;
 		flat.push(...inner.flat);
 		return element;

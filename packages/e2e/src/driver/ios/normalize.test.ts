@@ -64,6 +64,42 @@ describe("normalizeElements", () => {
 	});
 });
 
+describe("nulls from the helper", () => {
+	test("null optional fields are dropped, enabled follows the not-enabled trait", () => {
+		const { flat } = normalizeElements(
+			[
+				{
+					role: "textfield",
+					rawType: "TextField",
+					frame: frame(0, 0, 100, 40),
+					label: "Email",
+					placeholder: null,
+					value: "Email",
+					identifier: null,
+					enabled: null,
+					traits: ["not-enabled"],
+					focused: null,
+					tapPoint: null,
+					pid: null,
+					children: null,
+				},
+				{ role: "button", rawType: "Button", frame: frame(0, 40, 100, 40), enabled: null, traits: null },
+			],
+			screen
+		);
+		expect(flat[0]).toMatchObject({ label: "Email", value: "Email", enabled: false, children: [] });
+		expect(flat[0] && "placeholder" in flat[0]).toBe(false);
+		expect(flat[0] && "identifier" in flat[0]).toBe(false);
+		expect(flat[0] && "focused" in flat[0]).toBe(false);
+		expect(flat[1]).toMatchObject({ enabled: true, traits: [] });
+	});
+
+	test("a null modal is no modal", () => {
+		const snapshot = toSnapshot({ backend: "ax", screen, truncated: false, elements: [], ms: 1, modal: null }, 1);
+		expect("modal" in snapshot).toBe(false);
+	});
+});
+
 test("normalizeElement", () => {
 	const element = normalizeElement({ role: "button", rawType: "Button", frame: frame(0, 0, 40, 80) }, screen);
 	expect(element).toMatchObject({ id: "0", depth: 0, children: [] });

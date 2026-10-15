@@ -158,7 +158,10 @@ export function createIosDriver(
 			"snapshot",
 			params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend })
 		);
-		return result.success ? ({ success: true, data: toSnapshot(result.data, now()) } as const) : result;
+		if (!result.success) return result;
+		const { fallback } = result.data;
+		if (fallback) opts.log?.(`[ios] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}`);
+		return { success: true, data: toSnapshot(result.data, now()) } as const;
 	};
 
 	/**
