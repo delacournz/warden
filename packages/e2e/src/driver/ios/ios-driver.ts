@@ -245,6 +245,10 @@ export function createIosDriver(
 				if (expected !== undefined && native.data.reason !== "frontmost_mismatch") launchedBundle = undefined;
 				return { success: true, data: { quiet: native.data.quiet, waitedMs: native.data.waitedMs } };
 			}
+			// settle is best effort: a loaded machine answering after the padded timer means "not quiet", not a failure
+			if (native.error.code === "E_TIMEOUT") {
+				return { success: true, data: { quiet: false, waitedMs: timeoutMs + SETTLE_MARGIN_MS } };
+			}
 			if (native.error.code !== "E_UNSUPPORTED") return native;
 			settleUnsupported = true;
 			opts.log?.("[ios] native settle unsupported, polling snapshot hashes");

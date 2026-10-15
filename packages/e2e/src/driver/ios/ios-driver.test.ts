@@ -507,6 +507,13 @@ describe("settle", () => {
 		expect(helper.of("settle")[0]).toMatchObject({ quietMs: 100, settleTimeoutMs: 1000, timeoutMs: 3000 });
 	});
 
+	test("a helper that answers too late is a not-quiet outcome, not an error", async () => {
+		const { driver } = await open((request) =>
+			request.op === "settle" ? { error: { code: "E_TIMEOUT", message: "slow" } } : undefined
+		);
+		expect(await unwrapped(driver.settle({ timeoutMs: 1000 }))).toEqual({ quiet: false, waitedMs: 3000 });
+	});
+
 	test("the first settle after app.launch names the launched bundle, later ones do not", async () => {
 		const { driver, helper } = await open(
 			(request) => (request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null }),

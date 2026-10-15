@@ -124,19 +124,19 @@ describe("device.openLink", () => {
 		return { driver, device, clock };
 	}
 
-	test("opens the url, then accepts Open when the sheet shows within 3 s", async () => {
-		const { driver, device } = delayedSheet(1200);
+	test("opens the url, then accepts Open when the sheet shows late (5 s)", async () => {
+		const { driver, device } = delayedSheet(5000);
 		await device.openLink("myapp://x");
 		expect(driver.callsOf("app.openUrl")[0]?.url).toBe("myapp://x");
 		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
 	});
 
-	test("gives up after 3 s without a sheet", async () => {
-		const { driver, device, clock } = delayedSheet(10_000);
+	test("gives up after 8 s without a sheet", async () => {
+		const { driver, device, clock } = delayedSheet(20_000);
 		await device.openLink("myapp://x");
 		expect(driver.callsOf("tap")).toHaveLength(0);
-		expect(clock.time()).toBeGreaterThanOrEqual(3000);
-		expect(clock.time()).toBeLessThan(3500);
+		expect(clock.time()).toBeGreaterThanOrEqual(8000);
+		expect(clock.time()).toBeLessThan(8500);
 	});
 
 	test("accept:false skips polling", async () => {

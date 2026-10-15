@@ -40,7 +40,7 @@ export type Device = {
 	 * with that name (`ACTION_FAILED` when absent). Resolves false when no alert is showing.
 	 */
 	alert(action: AlertAction): Promise<boolean>;
-	/** Opens a URL from outside the app; on iOS accepts the "Open in …?" sheet when it shows within 3 s. */
+	/** Opens a URL from outside the app; on iOS accepts the "Open in …?" sheet when it shows within 8 s. */
 	openLink(url: string, options?: OpenLinkOptions): Promise<void>;
 	home(): Promise<void>;
 	/** Android back key; `INVALID_ARGUMENT` on iOS (there is none). */
@@ -77,7 +77,8 @@ export type DeviceDeps = {
 const ACCEPT_BUTTONS = ["OK", "Allow", "Open", "Continue", "Yes", "Done", "Allow While Using App", "Allow Once"];
 const DISMISS_BUTTONS = ["Cancel", "Don't Allow", "Not Now", "Dismiss", "No", "Close"];
 
-const OPEN_LINK_WAIT_MS = 3000;
+/** A loaded machine can show the sheet several seconds after `openUrl` returns. */
+const OPEN_LINK_WAIT_MS = 8000;
 const OPEN_LINK_POLL_MS = 100;
 
 function normalise(text: string): string {
