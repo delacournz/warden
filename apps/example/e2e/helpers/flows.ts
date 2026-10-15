@@ -6,6 +6,10 @@ import { ids } from "./ids";
 /** How long to wait for the todos screen after submitting sign-in, while clearing the Keychain sheet. */
 const SIGN_IN_TIMEOUT_MS = 15_000;
 const POLL_MS = 250;
+/** iOS shows "Save Password?" up to this long after the todos screen is already up. */
+const SAVE_PASSWORD_GRACE_MS = 3_000;
+/** Touches that land while the dismissed sheet is still animating away are lost. */
+const SHEET_DISMISS_MS = 1_000;
 
 /**
  * The runner opens the app fresh before every test (`launch: "fresh"`), so a flow starts on the
@@ -33,16 +37,35 @@ export async function submitSignIn(screen: Screen, email: string, password: stri
 	await screen.getByTestId(ids.signIn.submit).tap();
 }
 
-/** Waits for the todos screen after a successful sign-in, dismissing the "Save Password?" sheet if iOS shows it. */
+/**
+ * Waits for the todos screen after a successful sign-in and clears the "Save Password?" sheet. The sheet is a system
+ * overlay the app's accessibility tree cannot see, it can appear after the todos screen, and while it is up the first
+ * tap only dismisses it: so after the screen shows, keep answering it for a grace period.
+ */
 export async function expectTodosAfterSignIn(device: Device, screen: Screen): Promise<void> {
 	const todos = screen.getByTestId(ids.todos.screen);
 	const deadline = Date.now() + SIGN_IN_TIMEOUT_MS;
 	while (Date.now() < deadline) {
 		await device.alert("dismiss");
-		if (await todos.isVisible()) return;
+		if (await todos.isVisible()) {
+			await dismissSavePassword(device);
+			return;
+		}
 		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
 	}
 	await expect(todos).toBeVisible({ timeout: 1 });
+}
+
+/** Presses "Not Now" when iOS offers to save the password, waiting up to the grace period for it to show. */
+async function dismissSavePassword(device: Device): Promise<void> {
+	const deadline = Date.now() + SAVE_PASSWORD_GRACE_MS;
+	while (Date.now() < deadline) {
+		if (await device.alert("dismiss")) {
+			await new Promise((resolve) => setTimeout(resolve, SHEET_DISMISS_MS));
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+	}
 }
 
 /** Fresh launch, signed in as `email`, on the todos tab. */
