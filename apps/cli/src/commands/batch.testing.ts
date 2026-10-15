@@ -28,6 +28,10 @@ export type Harness = {
 	shots: string[];
 	/** every `slim` request: the udid */
 	slimmed: string[];
+	/** every warm-up `connect`: the udid */
+	warmed: string[];
+	/** every warm helper stopped: the udid */
+	warmClosed: string[];
 };
 
 /**
@@ -51,6 +55,8 @@ export function harness(
 		metroOwner?: MetroOwner;
 		/** the prewarm outcome: "fail" = the bundle does not build */
 		prewarm?: "ok" | "fail";
+		/** the warm-up helper: "fail" = cannot connect, "snapshot-fail" = connects but cannot snapshot (default "ok") */
+		warm?: "ok" | "fail" | "snapshot-fail";
 		/** `bun` on PATH (default `/usr/bin/bun`; null = not installed) */
 		bun?: string | null;
 		/** where `@delacour/warden-e2e/preload` resolves (default under `/proj/node_modules`; null = not installed) */
@@ -71,6 +77,8 @@ export function harness(
 		terminal: [],
 		shots: [],
 		slimmed: [],
+		warmed: [],
+		warmClosed: [],
 		timers: [],
 		metroProbes: [],
 		prewarmed: [],
@@ -160,6 +168,22 @@ export function harness(
 				return opts.preload ?? "/proj/node_modules/@delacour/warden-e2e/src/preload.ts";
 			},
 			helperDir: () => "/opt/warden",
+			warmConnect: () => async (udid) => {
+				h.warmed.push(udid);
+				h.events.push(`warm:${udid}`);
+				if (opts.warm === "fail") return { success: false, error: "helper did not start" };
+				return {
+					success: true,
+					data: {
+						socketPath: `/tmp/warden-simd-${udid}.sock`,
+						snapshot: async () =>
+							opts.warm === "snapshot-fail" ? { success: false, error: "AX denied" } : { success: true, data: null },
+						close: async () => {
+							h.warmClosed.push(udid);
+						},
+					},
+				};
+			},
 			prewarm: async (url, platform) => {
 				h.prewarmed.push(`${platform} ${url}`);
 				return opts.prewarm === "fail"
