@@ -120,6 +120,11 @@ For a dev client launched with `open --metro <url>`. A release build, or a dev c
 
 `logs` and `network` read what `logs start` collected; run it before the action you want to observe.
 
+Two things to know:
+
+- Without a running collector, `logs` and `network` read the files of the previous run, not the live app. Run `logs start` first, then interact.
+- A collector started before the app was restarted (`open --relaunch`, a crash, a rebuild) gives up after ten reconnect attempts and ends as `lost`. Run `logs start` again after the restart.
+
 ## Flows
 
 A **flow** is a recorded sequence of `warden ui` actions saved as `.warden-ui/<name>.flow.json`. It stores resolved selectors, never `@eN` refs, so it replays on a later run.
