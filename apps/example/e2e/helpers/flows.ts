@@ -6,6 +6,8 @@ import { ids } from "./ids";
 /** How long to wait for the todos screen after submitting sign-in, while clearing the Keychain sheet. */
 const SIGN_IN_TIMEOUT_MS = 15_000;
 const POLL_MS = 250;
+/** How long after the todos screen shows to wait for the "Save Password?" sheet (seen 1.3 s later). */
+const SAVE_PASSWORD_WAIT_MS = 5_000;
 
 /**
  * The runner opens the app fresh before every test (`launch: "fresh"`), so a flow starts on the
@@ -38,16 +40,33 @@ export async function submitSignIn(screen: Screen, email: string, password: stri
 	await screen.getByTestId(ids.signIn.submit).tap();
 }
 
-/** Waits for the todos screen after a successful sign-in, dismissing the "Save Password?" sheet if iOS shows it. */
+/**
+ * Answers the iOS "Save Password?" sheet that follows a sign-in. It is a system sheet owned by SpringBoard, it
+ * covers the app (testIDs behind it are filtered out of the snapshot while it shows) and it appears about 1.5 s
+ * AFTER the todos screen is already visible, so a single check right after sign-in misses it. Polls for
+ * `SAVE_PASSWORD_WAIT_MS` and returns once the sheet has been dismissed ("Not Now"), or when it never shows.
+ */
+export async function dismissSavePassword(device: Device): Promise<boolean> {
+	const deadline = Date.now() + SAVE_PASSWORD_WAIT_MS;
+	while (Date.now() < deadline) {
+		if (await device.alert("dismiss")) return true;
+		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+	}
+	return false;
+}
+
+/** Waits for the todos screen after a successful sign-in, then clears the "Save Password?" sheet iOS shows over it. */
 export async function expectTodosAfterSignIn(device: Device, screen: Screen): Promise<void> {
 	const todos = screen.getByTestId(ids.todos.screen);
 	const deadline = Date.now() + SIGN_IN_TIMEOUT_MS;
-	while (Date.now() < deadline) {
+	let visible = false;
+	while (!visible && Date.now() < deadline) {
 		await device.alert("dismiss");
-		if (await todos.isVisible()) return;
-		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+		visible = await todos.isVisible();
+		if (!visible) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
 	}
-	await expect(todos).toBeVisible({ timeout: 1 });
+	if (!visible) await expect(todos).toBeVisible({ timeout: 1 });
+	await dismissSavePassword(device);
 }
 
 /** Fresh launch, signed in as `email`, on the todos tab. */
