@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type CdpClient, openCdp } from "./cdp";
+import { type CdpClient, inspectorOrigin, openCdp } from "./cdp";
 import { type FakeMetro, startFakeMetro } from "./devtools.testing";
 
 const cleanup: (() => Promise<void> | void)[] = [];
@@ -20,6 +20,14 @@ async function connect(fake: FakeMetro, timeoutMs = 2_000): Promise<CdpClient> {
 	return opened.data;
 }
 
+describe("inspectorOrigin", () => {
+	test("is the 127.0.0.1 origin of the socket's port, whatever host it dials", () => {
+		expect(inspectorOrigin("ws://localhost:8081/inspector/debug?device=a&page=1")).toBe("http://127.0.0.1:8081");
+		expect(inspectorOrigin("ws://192.168.1.5:19000/inspector/debug")).toBe("http://127.0.0.1:19000");
+		expect(inspectorOrigin("not a url")).toBeUndefined();
+	});
+});
+
 describe("openCdp", () => {
 	test("connects and sends JSON-RPC with increasing ids", async () => {
 		const fake = metro({ respond: (r) => (r.method === "Echo.ping" ? { result: { pong: r.params.n } } : undefined) });
@@ -29,6 +37,12 @@ describe("openCdp", () => {
 		expect(first).toEqual({ success: true, data: { pong: 1 } });
 		expect(second).toEqual({ success: true, data: { pong: 2 } });
 		expect(fake.requests.map((r) => r.id)).toEqual([1, 2]);
+	});
+
+	test("sends an Origin for the Metro host, which Metro's inspector proxy requires", async () => {
+		const fake = metro();
+		await connect(fake);
+		expect(fake.upgradeOrigins).toEqual([`http://127.0.0.1:${fake.port}`]);
 	});
 
 	test("a refused connection is devtools_unavailable", async () => {

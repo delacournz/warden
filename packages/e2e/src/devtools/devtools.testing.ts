@@ -37,6 +37,8 @@ export type FakeMetro = {
 	connections: FakeConnection[];
 	/** path + query of every inspector socket upgrade, in order */
 	upgrades: string[];
+	/** `Origin` header of every inspector socket upgrade (`null` when absent), in order */
+	upgradeOrigins: (string | null)[];
 	reloadPosts: number;
 	setTargets: (targets: InspectorTarget[]) => void;
 	/** broadcast a CDP event to every open connection */
@@ -60,6 +62,13 @@ export function fakeTarget(port: number, page: number, overrides: Partial<Inspec
 	};
 }
 
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function isLocalOrigin(origin: string | null): boolean {
+	if (!origin || !URL.canParse(origin)) return false;
+	return LOCAL_HOSTNAMES.has(new URL(origin).hostname);
+}
+
 function defaultReply(request: FakeCdpRequest): FakeReply {
 	if (request.method === "Runtime.evaluate" && request.params.expression === "typeof __warden_cb") {
 		return { result: { result: { type: "string", value: "function" } } };
@@ -71,6 +80,7 @@ export function startFakeMetro(options: FakeMetroOptions = {}): FakeMetro {
 	const requests: FakeCdpRequest[] = [];
 	const connections: FakeConnection[] = [];
 	const upgrades: string[] = [];
+	const upgradeOrigins: (string | null)[] = [];
 	const sockets = new Map<number, { send: (data: string) => void; close: () => void }>();
 	let nextConnection = 1;
 	let targets = options.targets;
@@ -87,6 +97,10 @@ export function startFakeMetro(options: FakeMetroOptions = {}): FakeMetro {
 			const url = new URL(req.url);
 			if (url.pathname === "/inspector/debug") {
 				upgrades.push(`${url.pathname}${url.search}`);
+				const origin = req.headers.get("origin");
+				upgradeOrigins.push(origin);
+				// Like Metro's inspector proxy (`verifyClient`): a missing or non-local Origin is a 401 at the upgrade.
+				if (!isLocalOrigin(origin)) return new Response("Unauthorized", { status: 401 });
 				return srv.upgrade(req, { data: { connection: undefined } })
 					? undefined
 					: new Response("upgrade failed", { status: 400 });
@@ -144,6 +158,7 @@ export function startFakeMetro(options: FakeMetroOptions = {}): FakeMetro {
 		requests,
 		connections,
 		upgrades,
+		upgradeOrigins,
 		get reloadPosts() {
 			return reloadPosts;
 		},
