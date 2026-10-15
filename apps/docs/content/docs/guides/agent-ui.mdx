@@ -163,6 +163,19 @@ A `scroll` or direction `swipe` step in a flow names the **content's** direction
 
 `generation` appears when the call took a snapshot; `warnings` only when there are any (a screen that did not settle in its budget, replay drift). Without `--json`, results go to stdout and errors and warnings to stderr.
 
+## Android
+
+Same commands, same refs and selectors; name the emulator with `--serial <serial>` (or `--udid`, `--lease`, `WARDEN_UDID`), and `--claim --platform android` takes one. There is no helper process: each call opens an `adb` driver for the serial (`status` shows `helper not started`, that is normal) and closes it when the command ends.
+
+What differs from iOS:
+
+- **Snapshots are `uiautomator dump`.** Roles come from the view class (`Button`, `EditText`, `TextView`, clickable `ViewGroup` becomes `button`), `id=` is the `resource-id` (or React Native `testID`) without its package prefix. `hittable` is derived (clickable, enabled, on screen). Where a dump may be written differs between images, so the first snapshot probes three routes (`/dev/stdout`, `exec-out … /dev/tty`, a file on `/sdcard`) and remembers the one that worked in `$WARDEN_HOME/ui/<serial>/android-dump-route`; later calls start there. A dump that comes back empty (`null root node`, common while a window opens) is retried 3 times, 400 ms apart, before `E_AX_UNAVAILABLE` (exit 3).
+- **Speed.** `warden ui bench` targets p50 800 ms for a warm snapshot and 120 ms for a press (iOS: 60 ms and 30 ms). A dump is a process start inside the emulator, so there is no fast path. On a heavily loaded machine (load average 50-170, other agents building) the same emulator gave snapshot p50 2.4 s and press p50 94 ms; the first call on a device is slower still while the dump routes are probed. Check `bench` on a quiet machine before trusting a number.
+- **`fill`** taps the field, clears it with one batched `input keyevent 67 …` call, types with `input text` (spaces, quotes and `%s` are escaped, a `%` before a space or `s` is split into a second call) and reads the value back with the same polling as iOS; each read is a fresh dump because input drops the cached snapshot. Secure fields type but are not read back.
+- **`drag`** is hold-then-move (`input motionevent` DOWN, 8 MOVEs, UP) on Android 8 (sdk 26) and later; older images get a long `swipe` with no hold. `longpress` and `swipe` are single `input swipe` calls. `back`, `home`, `rotate` and `appearance` (`cmd uimode`) work; `alert` reads `AlertDialog` and runtime-permission buttons.
+- **`video`** uses `screenrecord`, which stops itself after 3 minutes.
+- **Not supported:** `pinch` and the clipboard (`E_UNSUPPORTED`, exit 1), text that is not printable ASCII (`E_UNSUPPORTED_TEXT`), key modifiers before Android 13, `open` launch arguments or environment (use `open <url>` for a dev-client Metro link), and `snapshot` backends other than uiautomator.
+
 ## Options on every subcommand
 
 | Flag | Effect |
