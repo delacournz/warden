@@ -31,6 +31,8 @@ export type HookDeps = {
 	 * SessionEnd hooks are time-capped (Codex: ~3 s) and a sim shutdown can take longer.
 	 */
 	endInBackground: (sessionId: string) => boolean;
+	/** stop a released device's `warden ui` helper (best effort; absent = nothing to stop) */
+	stopHelper?: (udid: string) => Promise<void>;
 };
 
 /** PreToolUse matcher for argent's device tools (plain + plugin-namespaced MCP servers). */
@@ -179,7 +181,8 @@ export async function handleSessionEnd(raw: unknown, deps: HookDeps): Promise<Ho
 		}
 		await releaseDevices(
 			deps,
-			leases.map((l) => l.id)
+			leases.map((l) => l.id),
+			{ after: deps.stopHelper }
 		);
 		if (leases.length > 0) lines.unshift(`warden: released ${leases.map((l) => l.id).join(" ")}`);
 		return lines.length > 0 ? { exitCode: 0, stdout: lines.join("\n") } : { exitCode: 0 };

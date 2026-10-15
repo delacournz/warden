@@ -13,6 +13,8 @@ export function uiDir(ctx: Pick<CommandContext, "env">, udid: string): string {
 export type UiState = {
 	generation: number;
 	metroUrl?: string;
+	/** bundle id of the app `warden ui open` last launched (`close --app` terminates it) */
+	app?: string;
 	recording?: string;
 	helper?: { pid: number; socket: string };
 	updatedAt: number;

@@ -2,6 +2,7 @@ import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.typ
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
+import { connectHelper } from "./helper";
 import { type UiError, uiError } from "./output";
 
 /** Everything `warden ui` subcommands reach the outside world through; tests inject a `fakeDriver` and a fake clock. */
@@ -30,15 +31,17 @@ export function driverUiError(error: DriverError): UiError {
 }
 
 /**
- * The real driver for a device. The iOS driver (`driver/ios/ios-driver.ts`, WDN-E2E-D7) and the Android
- * one are not on this branch yet, so for now every device reports `engine_unavailable` (exit 3); swap the
- * body for `openIosDriver` / `openAndroidDriver` when they land. Tests inject their own `UiDeps`.
+ * The real driver for a device. iOS: the device's `warden-simd` daemon (`connectHelper` spawns it on first
+ * use, closing the driver only disconnects). Android: `engine_unavailable` until the Android driver
+ * (`driver/android/android-driver.ts`, WDN-E2E-D9) is on this branch.
  */
-export async function uiDriver(_ctx: CommandContext, device: UiDevice): Promise<Result<Driver, UiError>> {
+export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<Result<Driver, UiError>> {
+	if (device.platform === "ios") return connectHelper(ctx, device.udid);
+	// TODO(D9): return openAndroidDriver({ serial: device.udid, ... }) from driver/android/android-driver
 	return {
 		success: false,
-		error: uiError("engine_unavailable", `no ${device.platform} driver is available in this build`, {
-			hint: "the device driver lands with WDN-E2E-D7 (iOS) / D9 (Android)",
+		error: uiError("engine_unavailable", "no android driver is available in this build", {
+			hint: "the Android driver lands with WDN-E2E-D9",
 		}),
 	};
 }

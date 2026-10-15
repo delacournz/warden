@@ -4,6 +4,8 @@ import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
+import { stopHelperAfter } from "../agent-ui/close";
+import { sweepDeadHelpers } from "../agent-ui/helper";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -97,8 +99,13 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			.filter((l) => !isLeaseAlive(l, now, processAlive))
 			.map((l) => l.id);
 		const reclaimed = (
-			await releaseDevices(sctx, staleIds, { touch: false, only: (l) => !isLeaseAlive(l, now, processAlive) })
+			await releaseDevices(sctx, staleIds, {
+				touch: false,
+				only: (l) => !isLeaseAlive(l, now, processAlive),
+				after: stopHelperAfter(sctx),
+			})
 		).map((l) => l.id);
+		sweepDeadHelpers(sctx);
 		const leased = new Set(
 			store
 				.listLeases()

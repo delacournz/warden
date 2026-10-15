@@ -8,6 +8,7 @@ import { processAlive } from "@delacour/warden-core/liveness";
 import { claimPorts, parsePortSpec } from "@delacour/warden-core/ports";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { stopHelperAfter } from "./agent-ui/close";
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
 import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
 import type { CommandContext } from "./context";
@@ -304,7 +305,7 @@ export async function claimAll(
 	}
 	const leaseIds = [...deviceLeaseIds, ...ports.data.map((p) => p.leaseId)];
 	const release = async () => {
-		await releaseDevices(ctx, leaseIds);
+		await releaseDevices(ctx, leaseIds, { after: stopHelperAfter(ctx) });
 	};
 	args.onLeased?.(outcome);
 	const env = childEnv(ctx.env, outcome, ports.data);

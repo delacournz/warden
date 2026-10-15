@@ -370,7 +370,8 @@ async function trySocket(o: OpenIosDriverOptions, log: Logger): Promise<SimdClie
 	return undefined;
 }
 
-function resolveHelper(o: OpenIosDriverOptions): Result<string, DriverError> {
+/** The helper binary: the explicit `helperPath`, else `locateHelper` over the env / install locations. */
+export function resolveHelper(o: OpenIosDriverOptions): Result<string, DriverError> {
 	if (o.helperPath !== undefined) return { success: true, data: o.helperPath };
 	const located = locateHelper({
 		env: { [ENV_NAMES.simd]: o.env?.simd, [ENV_NAMES.helperDir]: o.env?.helperDir },

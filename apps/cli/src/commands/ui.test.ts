@@ -176,7 +176,7 @@ describe("warden ui status", () => {
 		expect(await uiCommand.run(c)).toBe(0);
 		const doc = json(c);
 		expect(doc).toMatchObject({ ok: true, command: "status", durationMs: 0 });
-		expect(doc.result).toMatchObject({ helper: "not started", recording: "none" });
+		expect(doc.result).toMatchObject({ helper: { running: false, pid: null, socket: null }, recording: "none" });
 
 		const t = setup(["status", "--udid", UDID]);
 		lease(t, UDID, mine);
