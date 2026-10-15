@@ -1,5 +1,6 @@
 import { expect } from "@delacour/warden-e2e";
 import type { Device } from "@delacour/warden-e2e/device";
+import type { Locator } from "@delacour/warden-e2e/screen/locator";
 import type { Screen } from "@delacour/warden-e2e/screen/screen";
 import { ids } from "./ids";
 
@@ -70,6 +71,27 @@ export async function expectTodosAfterSignIn(device: Device, screen: Screen): Pr
 	}
 	if (!visible) await expect(todos).toBeVisible({ timeout: 1 });
 	await dismissSavePassword(device);
+}
+
+/** How long a tap gets to show its result before it is sent again, and how many times. */
+const TAP_RESULT_MS = 4_000;
+const TAP_RETRIES = 2;
+
+/**
+ * Taps `target` and waits for `arrived`, tapping again when nothing came up. The first press on the tab bar or a
+ * list row after the sign-in navigation is dropped (reproduced with a bare tap 1-30 s later, with no sheet on
+ * screen, on a quiet machine; a second tap always lands), so a flow's first press after `signedIn` goes through here.
+ */
+export async function tapUntilVisible(target: Locator, arrived: Locator): Promise<void> {
+	await target.tap();
+	for (let attempt = 0; attempt < TAP_RETRIES; attempt += 1) {
+		const deadline = Date.now() + TAP_RESULT_MS;
+		while (Date.now() < deadline) {
+			if (await arrived.isVisible()) return;
+			await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+		}
+		await target.tap();
+	}
 }
 
 const DEEP_LINK_ATTEMPTS = 3;

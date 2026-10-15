@@ -1,11 +1,11 @@
 import { expect, test } from "@delacour/warden-e2e";
-import { openDeepLink, signedIn } from "./helpers/flows";
+import { openDeepLink, signedIn, tapUntilVisible } from "./helpers/flows";
 import { ids } from "./helpers/ids";
 
 test("open a todo, mark it done, then delete it", async ({ device, screen }) => {
 	await signedIn(device, screen);
 
-	await screen.getByTestId(ids.todos.title("welcome")).tap();
+	await tapUntilVisible(screen.getByTestId(ids.todos.title("welcome")), screen.getByTestId(ids.detail.title));
 	await expect(screen.getByTestId(ids.detail.title)).toHaveText("Explore the example app");
 	await expect(screen.getByTestId(ids.detail.status)).toHaveText("Active");
 
