@@ -161,6 +161,8 @@ export const e2eSuiteSchema = z
 		setup: z.string().min(1).optional(),
 		/** iOS: switch off the simulator daemons flows never need on each device, before `setup` */
 		slim: z.boolean().optional(),
+		/** iOS: start every device's agent-device runner in parallel before the flows (default on; `false` = off) */
+		warmRunners: z.boolean().optional(),
 		/** keep Simulator.app windows closed for this suite's run; `--headless` / `--no-headless` win */
 		headless: z.boolean().optional(),
 		/** default `required` for flows that don't set it */

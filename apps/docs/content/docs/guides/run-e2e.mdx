@@ -77,7 +77,10 @@ export default {
 | verdict per flow | stdout, and `e2e-report.json` in the batch dir (`--json` prints it) |
 | a job's output | `<batchDir>/logs/<worker>-<seq>-<job>.log`, screenshot next to it |
 | Metro's output | `<batchDir>/metro.log` |
+| a device's runner warm-up | `<batchDir>/logs/warm-<worker>.log` |
 | a device that keeps failing | `warden release <leaseId> --bad "<why>"` keeps it out of the pool |
+
+Before the first flow, warden starts every iOS device's agent-device automation runner at once (`warmRunners`, on by default), in the daemon and session the runner will resume: the runner reads its session prefix from `WARDEN_AGENT_SESSION`. The e2e engine warms its devices one at a time (about 20 s each), so with the runners already up its `setup prepare ios` takes a few seconds instead of 20 s per device. Set `warmRunners: false` on the suite to turn it off.
 
 Every line warden writes to these logs (jobs, `setup-<worker>.log`, `metro.log`, `serve.log`) starts with the local time it arrived, `[HH:MM:SS.mmm] `. Jobs get `WARDEN_LOG_TIMESTAMPS=1`, so a runner that prints its own times can leave them out. The example app's `timestampsReporter` (`apps/example/e2e/helpers/timestamps.ts`, beside the `list` reporter) adds a line for every test and step start and end:
 

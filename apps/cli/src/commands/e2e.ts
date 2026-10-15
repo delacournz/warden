@@ -370,6 +370,8 @@ function sessionHooks(suite: Suite, flows: readonly SelectedFlow[], shape: RunSh
 	return {
 		name: "e2e",
 		setup: deviceSetup(suite.config),
+		// on unless the suite opts out; batch skips it off iOS or without an agent-device bin
+		warmRunners: suite.config.warmRunners !== false,
 		...(single ? { flows: trackedFlows(suite, flows) } : {}),
 		// a passed gate frees the sims; a failed one leaves them up to inspect
 		...(shutdown ? { shutdownIf: (summary) => verdicts(flows, { code: 0, summary }, shape).ok } : {}),

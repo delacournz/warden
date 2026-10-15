@@ -44,6 +44,8 @@ const AFFECTED = {
  * only, and two e2e suites over the same tester.army flows:
  * - `example`: the Release build, one runner per flow;
  * - `example-dev`: the dev client against a Metro warden starts for the run, one runner for the pool.
+ * Both start every sim's agent-device runner in parallel before the flows (`warmRunners`, default on;
+ * `warmRunners: false` to opt out).
  *
  * ```bash
  * warden e2e example                 # flows this branch needs, 2 sims (--all: every flow)

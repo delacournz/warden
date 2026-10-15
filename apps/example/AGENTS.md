@@ -64,6 +64,7 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 - Flows are `e2e/*.e2e.ts`; helpers are in `e2e/helpers` (`ids.ts` mirrors the testIDs).
 - Use `test` from `@e2e-dev/mobile` and `expect` from `e2e`. Flows must be deterministic, so never use `agent.*`.
 - Start a flow with `launch` / `openSignIn` / `signedIn` from `e2e/helpers/flows.ts`, not a bare `app.open()`. They clear iOS prompts that cover the app: the "Open in warden-example?" prompt left by a deep link (it outlives a reinstall), and Keychain's "Save Password?" sheet after sign-in.
+- `e2e.config.ts` names its agent-device sessions after `WARDEN_AGENT_SESSION`: warden starts every sim's automation runner in parallel under that name before the run (`warmRunners`, default on), so the engine's one-by-one warm-up finds them up.
 - `e2e.config.ts` reads the devices and Metro warden exports (`e2e/helpers/launch.ts`): `WARDEN_UDID` for a per-flow job, the `WARDEN_UDIDS` pool for a `single` run, `WARDEN_METRO_URL` → `--initialUrl` for the dev client (`E2E_UDID` by hand).
 - `warden.config.ts` defines:
   - project `example`: a Release build keyed on native + JS;

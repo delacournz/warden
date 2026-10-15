@@ -334,6 +334,79 @@ describe("warden e2e", () => {
 		});
 	});
 
+	describe("warmRunners", () => {
+		const BIN = "/proj/node_modules/.bin/agent-device";
+
+		test("single: every device's runner starts at once, after setup and before the job, in the job's daemon + sessions", async () => {
+			await resuite({ mode: "single", count: 2, runner: ["run-all"], setup: "prep {udid}" });
+			const c = setup(["--all"]);
+			const h = harness({ agentDeviceBin: BIN });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const [job] = h.jobs();
+			const udids = job?.opts.env.WARDEN_UDIDS?.split(",") ?? [];
+			const first = udids[0] ?? "";
+			expect(job?.opts.env.WARDEN_AGENT_SESSION).toBe(`warden-${first}`);
+			expect(h.warms().map((w) => w.cmd)).toEqual(
+				udids.map((udid, slot) => [
+					BIN,
+					"prepare",
+					"ios-runner",
+					"--platform",
+					"ios",
+					"--udid",
+					udid,
+					"--session",
+					`warden-${first}-${slot}`,
+				])
+			);
+			expect(h.warms().map((w) => w.opts.env.AGENT_DEVICE_STATE_DIR)).toEqual(
+				udids.map(() => job?.opts.env.AGENT_DEVICE_STATE_DIR)
+			);
+			const lastSetup = Math.max(...udids.map((u) => h.events.indexOf(`setup:${u}`)));
+			const warms = udids.map((u) => h.events.indexOf(`warm:${u}`));
+			expect(Math.min(...warms)).toBeGreaterThan(lastSetup);
+			expect(Math.max(...warms)).toBeLessThan(h.events.findIndex((e) => e.startsWith("job:")));
+		});
+
+		test("per-flow: each device warms in its own worker's daemon, as slot 0", async () => {
+			write("src/chat/lazy.tsx", "export const x = 2;\n");
+			write("src/settings/form.tsx", "export const y = 2;\n");
+			const c = setup(["--count", "2"]);
+			const h = harness({ agentDeviceBin: BIN });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warms()).toHaveLength(2);
+			for (const w of h.warms()) {
+				const udid = w.opts.env.WARDEN_UDID ?? "";
+				expect(w.cmd.slice(-2)).toEqual(["--session", `warden-${udid}-0`]);
+				const job = h.jobs().find((j) => j.opts.env.WARDEN_UDID === udid);
+				if (job) {
+					expect(job.opts.env.AGENT_DEVICE_STATE_DIR).toBe(w.opts.env.AGENT_DEVICE_STATE_DIR);
+					expect(job.opts.env.WARDEN_AGENT_SESSION).toBe(`warden-${udid}`);
+				}
+			}
+		});
+
+		test("a failed warm-up only warns; the flows still run", async () => {
+			await resuite({ mode: "single", count: 2, runner: ["run-all"] });
+			const c = setup(["--all"]);
+			const h = harness({ agentDeviceBin: BIN, warmExit: 1 });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.jobs()).toHaveLength(1);
+			expect(c.stderr.join("\n")).toMatch(/runner warm-up on \S+ exit 1 .*warm-\d\.log/);
+		});
+
+		test("off with warmRunners: false, and when the project has no agent-device", async () => {
+			await resuite({ mode: "single", runner: ["run-all"], warmRunners: false });
+			const off = harness({ agentDeviceBin: BIN });
+			expect(await createE2eCommand(off.deps).run(setup(["--all"]))).toBe(0);
+			expect(off.warms()).toEqual([]);
+			await resuite({ mode: "single", runner: ["run-all"] });
+			const none = harness();
+			expect(await createE2eCommand(none.deps).run(setup(["--all"]))).toBe(0);
+			expect(none.warms()).toEqual([]);
+		});
+	});
+
 	describe("mode: single", () => {
 		test("one runner process for every selected flow, handed the whole device pool", async () => {
 			await resuite({ mode: "single", count: 2, runner: ["run-all", "{flowPaths}", "--out", "out/{worker}"] });

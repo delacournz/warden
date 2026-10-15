@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
@@ -33,6 +34,7 @@ import {
 	render,
 	withRunners,
 } from "../batch/tui";
+import { agentDeviceStateDir, agentSession, findAgentDeviceBin, warmRunners, warmTargets } from "../batch/warm-runners";
 import {
 	type ClaimFlags,
 	type ClaimFlagValues,
@@ -92,6 +94,8 @@ export type SpawnOptions = {
 	metro?: true;
 	/** a job (jobs with a timeout are `group` spawns too, so the whole tree can be killed) */
 	job?: true;
+	/** an agent-device runner warm-up (`hooks.warmRunners`) */
+	warm?: true;
 };
 
 /** Where the TUI goes (stderr by default). */
@@ -124,6 +128,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	metroProbe: (port: number, projectRoot: string) => Promise<MetroOwner>;
 	/** build the bundle once before the first job */
 	prewarm: (url: string, platform: Platform) => AsyncResult<{ bundled: boolean }>;
+	/** the project's `agent-device` bin (`hooks.warmRunners`); `undefined` = none, nothing to warm */
+	agentDeviceBin: (cwd: string) => string | undefined;
 };
 
 /** Commander option values of `warden batch`. */
@@ -672,10 +678,13 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 	/** env, argv and log of one spawn: the pool env + this worker's own agent-device state dir */
 	const plan = (w: BatchWorker, id: string, seq: number, pass: number) => {
 		const job = baseJob(id);
-		const stateDir = o.env.AGENT_DEVICE_STATE_DIR ?? join(o.batchDir, "agent-device", String(w.worker));
+		const stateDir = agentDeviceStateDir(o.env, o.batchDir, w.worker);
+		const first = o.single ? (o.live[0] ?? w) : w;
 		const env = {
 			...o.env,
 			AGENT_DEVICE_STATE_DIR: stateDir,
+			// the session the runner names its agent-device sessions after (`-<slot>`): what `warmRunners` started
+			WARDEN_AGENT_SESSION: agentSession(first.udid),
 			WARDEN_UDID: w.udid,
 			WARDEN_WORKER: String(w.worker),
 			WARDEN_JOB: job,
@@ -785,6 +794,8 @@ export type SessionHooks = {
 	shutdownIf?: (summary: BatchSummary) => boolean;
 	/** `single` runs: the flows its runner runs, tracked live from the runner's output */
 	flows?: readonly TrackedFlow[];
+	/** iOS: start each device's agent-device runner in parallel after setup, before the first job */
+	warmRunners?: boolean;
 };
 
 /** `hooks.shutdownIf`: stop the session's devices while their leases are still held; failures only warn. */
@@ -1077,6 +1088,56 @@ async function startServe(
 type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
 
 /** Per-device setup of every pool, concurrently; `setups` is undefined when the run has no setup. */
+/** how long one device's runner warm-up may take (a cold simulator's runner start is ~20 s) */
+const WARM_TIMEOUT_MS = 120_000;
+
+/**
+ * `hooks.warmRunners`: start every live device's agent-device runner at once, in the daemon + session
+ * its job will resume, so the runner's engine (which warms devices one by one) finds them up. Skipped
+ * when the project has no `agent-device`; a failed warm-up only warns (the engine starts that runner).
+ */
+async function warmPools(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	prepared: readonly PreparedPool[],
+	env: Record<string, string | undefined>
+): Promise<void> {
+	const bin = deps.agentDeviceBin(args.cwd);
+	const count = prepared.reduce((n, p) => n + p.live.length, 0);
+	if (bin === undefined || count === 0) return;
+	const outcomes = await withSpinner(ctx, `warming ${count} automation runner(s)…`, () =>
+		Promise.all(
+			prepared.map((p) => {
+				const poolVars = poolEnv(env, p.pool, p.live);
+				return warmRunners({
+					targets: warmTargets(p.live, { single: args.single === true, env: poolVars, batchDir: r.batchDir }),
+					bin,
+					env: poolVars,
+					cwd: args.cwd,
+					logDir: r.logDir,
+					timeoutMs: WARM_TIMEOUT_MS,
+					spawn: (argv, o) => deps.spawn(argv, o),
+					after: deps.after,
+					track: (proc) => {
+						const handle = proc as ProcHandle;
+						r.running.add(handle);
+						return () => r.running.delete(handle);
+					},
+				});
+			})
+		)
+	);
+	for (const o of outcomes.flat()) {
+		if (o.ok) continue;
+		const why = o.timedOut ? `timed out after ${formatDuration(WARM_TIMEOUT_MS)}` : `exit ${o.exitCode}`;
+		ctx.err(
+			ctx.ui.color.yellow(`warden ${r.name}: runner warm-up on ${o.udid} ${why} — the runner starts it (log: ${o.log})`)
+		);
+	}
+}
+
 async function preparePools(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -1237,6 +1298,7 @@ async function supervise(
 			const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
 			await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
 		}
+		if (r.hooks.warmRunners && r.platform === "ios") await warmPools(ctx, deps, args, r, prepared, env);
 		const queues = poolQueues(ctx, deps, args, r, prepared, { jobs, cmd, env, vars, screenshots, logs });
 		const total = queues.reduce((n, q) => n + q.jobs.length, 0);
 		const startedAt = ctx.now();
@@ -1553,6 +1615,7 @@ export const defaultBatchDeps: BatchDeps = {
 	},
 	metroProbe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	prewarm: prewarmMetro,
+	agentDeviceBin: (cwd) => findAgentDeviceBin(cwd, existsSync),
 };
 
 export const batchCommand: Command = createBatchCommand(defaultBatchDeps);

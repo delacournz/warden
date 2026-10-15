@@ -522,6 +522,15 @@ export interface WardenE2eSuite {
 	/** iOS only: switch off the simulator daemons flows never need on each leased device, before `setup`. */
 	slim?: boolean | undefined;
 	/**
+	 * iOS: before the flows, start every leased device's agent-device automation runner at once, in the
+	 * daemon + session the runner resumes (`WARDEN_AGENT_SESSION`), so the e2e engine (which warms
+	 * devices one by one, ~20 s each) finds them up. A failed warm-up only warns. Skipped when the
+	 * project has no `agent-device` bin.
+	 *
+	 * @default true
+	 */
+	warmRunners?: boolean | undefined;
+	/**
 	 * iOS: close the Simulator.app windows of this run's devices, so it shows nothing even with Simulator.app
 	 * open. Overrides the top-level `headless`; `--headless` / `--no-headless` override both. Android is always headless.
 	 */
