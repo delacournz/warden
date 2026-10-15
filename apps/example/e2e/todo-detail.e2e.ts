@@ -1,5 +1,5 @@
 import { expect, test } from "@delacour/warden-e2e";
-import { signedIn } from "./helpers/flows";
+import { openDeepLink, signedIn } from "./helpers/flows";
 import { ids } from "./helpers/ids";
 
 test("open a todo, mark it done, then delete it", async ({ device, screen }) => {
@@ -19,7 +19,7 @@ test("open a todo, mark it done, then delete it", async ({ device, screen }) => 
 
 test("deep link opens a todo by id", async ({ device, screen }) => {
 	await signedIn(device, screen);
-	await device.openLink("warden-example://todo/warden");
+	await openDeepLink(device, screen, "warden-example://todo/warden", ids.detail.title);
 	await expect(screen.getByTestId(ids.detail.title)).toHaveText("Run the e2e suite with warden");
 	await expect(screen.getByTestId(ids.detail.status)).toHaveText("Done");
 });

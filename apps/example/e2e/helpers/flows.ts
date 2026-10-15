@@ -49,7 +49,10 @@ export async function submitSignIn(screen: Screen, email: string, password: stri
 export async function dismissSavePassword(device: Device): Promise<boolean> {
 	const deadline = Date.now() + SAVE_PASSWORD_WAIT_MS;
 	while (Date.now() < deadline) {
-		if (await device.alert("dismiss")) return true;
+		if (await device.alert("dismiss")) {
+			await device.settle({ quietMs: 600, timeout: 4000 });
+			return true;
+		}
 		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
 	}
 	return false;
@@ -67,6 +70,26 @@ export async function expectTodosAfterSignIn(device: Device, screen: Screen): Pr
 	}
 	if (!visible) await expect(todos).toBeVisible({ timeout: 1 });
 	await dismissSavePassword(device);
+}
+
+const DEEP_LINK_ATTEMPTS = 3;
+const DEEP_LINK_WAIT_MS = 6_000;
+
+/**
+ * Opens `url` and waits for the screen it targets, opening it again when that screen has not shown. A link
+ * opened while the app is still settling after sign-in is occasionally dropped, with nothing on screen to
+ * tell it from a slow one, so a single `openLink` followed by an assertion is a coin flip under load.
+ */
+export async function openDeepLink(device: Device, screen: Screen, url: string, readyTestId: string): Promise<void> {
+	const ready = screen.getByTestId(readyTestId);
+	for (let attempt = 1; attempt <= DEEP_LINK_ATTEMPTS; attempt++) {
+		await device.openLink(url);
+		const deadline = Date.now() + DEEP_LINK_WAIT_MS;
+		while (Date.now() < deadline) {
+			if (await ready.isVisible()) return;
+			await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+		}
+	}
 }
 
 /** Fresh launch, signed in as `email`, on the todos tab. */
