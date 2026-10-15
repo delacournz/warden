@@ -387,15 +387,24 @@ describe("alert", () => {
 			message: "Alerts may include sounds",
 			buttons: ["Don't Allow", "Allow"],
 		});
+		expect(doc(h.c).result).toMatchObject({ present: true, buttons: ["Don't Allow", "Allow"] });
 		expect(h.driver.callsOf("tap")).toHaveLength(0);
 	});
 
-	test("no alert showing: get says so, accept is target_not_found", async () => {
+	test("no alert showing: get is ok with no buttons, accept and dismiss are no_alert", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(await h.run("alert", "get", "--json")).toBe(0);
-		expect(doc(h.c).result.alert).toBeNull();
-		expect(await h.run("alert", "accept", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("target_not_found");
+		expect(doc(h.c).result).toMatchObject({ action: "alert", present: false, alert: null, buttons: [] });
+		expect(await h.run("alert", "get")).toBe(0);
+		expect(h.c.stdout.join("\n")).toBe("no alert showing");
+		for (const choice of ["accept", "dismiss"]) {
+			expect(await h.run("alert", choice, "--json")).toBe(1);
+			const out = doc(h.c);
+			expect(out.ok).toBe(false);
+			expect(out.error.code).toBe("no_alert");
+			expect(out.error.message).toBe(`no alert is showing to ${choice}`);
+		}
+		expect(h.driver.callsOf("tap")).toHaveLength(0);
 		expect(await h.run("alert", "maybe", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
 	});

@@ -85,7 +85,7 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 | `key <name>` | `Enter` `Backspace` `Tab` `Space` `Escape` `Delete` `Up` `Down` `Left` `Right` |
 | `scroll <up\|down\|left\|right> [amount]` | scroll the content that way (`down` reveals what is below). `amount` is the share of the region one swipe travels (0-1, default 0.5). `--in <target>` scrolls inside an element; `--until <selector>` swipes until the selector is on screen (at most `--max` swipes, default 10) and prints its fresh ref |
 | `swipe <up\|down\|left\|right \| x1 y1 x2 y2> [--from <target>]` | a raw finger swipe: `swipe up` moves the finger up, which reveals what is below. `--from` swipes inside an element |
-| `alert accept\|dismiss\|get` | answer the system alert or sheet on top, or read its title, message and buttons |
+| `alert accept\|dismiss\|get` | answer the system alert or sheet on top, or read its title, message and buttons. With no alert showing, `get` succeeds with an empty `buttons` list (`--json`: `present: false`) and `accept` / `dismiss` fail with `no_alert` |
 | `home` · `back` | the home button; back is Android only |
 | `rotate [orientation]` | `portrait`, `portrait-upside-down`, `landscape-left`, `landscape-right`; without an argument it reads the current one |
 | `appearance [light\|dark]` | set or read light / dark mode |
@@ -148,7 +148,7 @@ A `scroll` or direction `swipe` step in a flow names the **content's** direction
 | Exit | Meaning | Error codes |
 |---|---|---|
 | 0 | ok | |
-| 1 | failed or bad usage | `failed`, `usage`, `target_not_found`, `wait_target_absent`, `wait_target_hidden`, `wait_target_present`, `wait_text_absent`, `wait_not_stable`, `replay_divergence` |
+| 1 | failed or bad usage | `failed`, `usage`, `target_not_found`, `no_alert`, `wait_target_absent`, `wait_target_hidden`, `wait_target_present`, `wait_text_absent`, `wait_not_stable`, `replay_divergence` |
 | 2 | lease problem | `device_foreign`, `device_not_leased`, `no_device_leased`, `ambiguous_device`, `lease_not_found` |
 | 3 | engine unavailable | `engine_unavailable` (the iOS helper or `adb` cannot be reached), `devtools_unavailable` (no dev client or Metro) |
 | 4 | stale ref | `stale_ref`: take a new snapshot |

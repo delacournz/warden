@@ -121,10 +121,17 @@ export function preorder(elements: readonly Element[]): Element[] {
 	return elements.flatMap((element) => [element, ...preorder(element.children)]);
 }
 
-export function readState(ctx: Pick<CommandContext, "env">, udid: string): UiState {
+const generationKey = (udid: string): string => `ui_generation:${udid}`;
+
+/** `state.json`; with a store in `ctx`, `generation` is the store's counter (the source of truth, see `commitGeneration`). */
+export function readState(
+	ctx: Pick<CommandContext, "env"> & Partial<Pick<CommandContext, "store">>,
+	udid: string
+): UiState {
 	const parsed = stateSchema.safeParse(readJson(join(uiDir(ctx, udid), "state.json")));
-	if (!parsed.success) return { ...EMPTY_STATE };
-	return { ...EMPTY_STATE, ...parsed.data };
+	const state = parsed.success ? { ...EMPTY_STATE, ...parsed.data } : { ...EMPTY_STATE };
+	const stored = Number(ctx.store?.().getMeta(generationKey(udid)));
+	return Number.isFinite(stored) && stored > state.generation ? { ...state, generation: stored } : state;
 }
 
 export function writeState(ctx: Pick<CommandContext, "env" | "now">, udid: string, state: UiState): void {
@@ -133,12 +140,23 @@ export function writeState(ctx: Pick<CommandContext, "env" | "now">, udid: strin
 	writeFileAtomic(join(dir, "state.json"), `${JSON.stringify({ ...state, updatedAt: ctx.now() }, null, 2)}\n`);
 }
 
-/** Next generation number, persisted. Called once per `snapshot` / `snapshot --settle` / `find`. */
-export function bumpGeneration(ctx: Pick<CommandContext, "env" | "now">, udid: string): number {
-	const state = readState(ctx, udid);
-	const generation = state.generation + 1;
-	writeState(ctx, udid, { ...state, generation });
-	return generation;
+/**
+ * Takes the device's next generation number and runs `write` with it, all under the store's `BEGIN IMMEDIATE`
+ * transaction (the cross-process mutex), so two `warden ui` processes never share a generation and the stored
+ * snapshot always carries the highest one. The counter lives in a store meta row (`ui_generation:<udid>`); a
+ * `state.json` from before it existed seeds it. Called once per `snapshot` / `snapshot --settle` / `find` / `wait`.
+ */
+export function commitGeneration<T>(
+	ctx: Pick<CommandContext, "env" | "store">,
+	udid: string,
+	write: (generation: number) => T
+): T {
+	const store = ctx.store();
+	return store.transaction(() => {
+		const generation = readState(ctx, udid).generation + 1;
+		store.setMeta(generationKey(udid), String(generation));
+		return write(generation);
+	});
 }
 
 export function readLastSnapshot(ctx: Pick<CommandContext, "env">, udid: string): StoredSnapshot | undefined {
