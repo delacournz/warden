@@ -30,6 +30,7 @@ func runMain(_ arguments: Arguments) async -> Int32 {
   guard let udid = arguments.udid else { return ExitCode.usage }
 
   let output = OutputChannel.fileDescriptor(1)
+  OpLog.shared.attach(output)
   let executable = Bundle.main.executableURL?.resolvingSymlinksInPath()
   let resources = arguments.resources ?? executable?.deletingLastPathComponent().appendingPathComponent("Resources").path
     ?? "Resources"

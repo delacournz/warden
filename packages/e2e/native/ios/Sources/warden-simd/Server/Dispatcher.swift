@@ -101,6 +101,7 @@ extension Dispatcher where Context == Session {
     var handlers: [String: OpHandler] = [:]
     for table in [
       HealthOps.ops,
+      SnapshotOps.ops,
       InputOps.ops,
       ScreenshotOps.ops,
       OrientationOps.ops,
