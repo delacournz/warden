@@ -119,6 +119,39 @@ final class RelaunchRecoveryTests: XCTestCase {
     await monitor.stop()
   }
 
+  // MARK: stream lifetime
+
+  func testTheStreamStaysOpenForTheHelpersLifetimeByDefault() async throws {
+    let reader = FakeReader()
+    let monitor = QuiescenceMonitor(reader: reader, idleCloseSeconds: nil)
+    await monitor.start()
+    await reader.waitOpened(1)
+    try await Task.sleep(for: .milliseconds(800))
+    await monitor.start()
+    try await Task.sleep(for: .milliseconds(100))
+    let opened = reader.opened
+    XCTAssertEqual(opened, 1, "an unused stream was closed and reopened")
+    await monitor.stop()
+  }
+
+  func testAnIdleLimitClosesTheStreamAndTheNextStartReopensIt() async throws {
+    let reader = FakeReader()
+    let monitor = QuiescenceMonitor(reader: reader, idleCloseSeconds: 0.3)
+    await monitor.start()
+    await reader.waitOpened(1)
+    try await Task.sleep(for: .milliseconds(900))
+    await monitor.start()
+    await reader.waitOpened(2)
+    await monitor.stop()
+  }
+
+  func testIdleCloseIsConfiguredFromTheEnvironmentAndOffByDefault() {
+    XCTAssertNil(QuiescenceMonitor.configuredIdleCloseSeconds([:]))
+    XCTAssertNil(QuiescenceMonitor.configuredIdleCloseSeconds(["WARDEN_SIMD_STREAM_IDLE_S": "0"]))
+    XCTAssertNil(QuiescenceMonitor.configuredIdleCloseSeconds(["WARDEN_SIMD_STREAM_IDLE_S": "soon"]))
+    XCTAssertEqual(QuiescenceMonitor.configuredIdleCloseSeconds(["WARDEN_SIMD_STREAM_IDLE_S": "10"]), 10)
+  }
+
   // MARK: health
 
   func testHealthIsAvailableUntilAReadFails() {

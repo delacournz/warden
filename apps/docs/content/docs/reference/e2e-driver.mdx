@@ -49,6 +49,7 @@ A standalone `warden` binary (from GitHub releases, or replaced by `warden updat
 | `WARDEN_SIMD` | use this `warden-simd` binary |
 | `WARDEN_HELPER_DIR` | look for `warden-simd` in this directory |
 | `WARDEN_SIMD_SOCKET` | path of a running helper's socket. `warden e2e` and `warden batch` start one helper per leased device before the flows and set this for each job, so spec workers connect in milliseconds. Unset (a by-hand `bun test` run), the driver starts a helper on stdio itself. |
+| `WARDEN_SIMD_STREAM_IDLE_S` | seconds of no `settle` after which the helper closes its quiescence stream. Unset or `0` (the default) keeps it open for the helper's life. See "After an app relaunch" below. |
 | `WARDEN_HELPER_URL` | `--fetch-helper` only: directory URL holding `warden-simd-darwin-arm64.tgz` and `SHA256SUMS`, instead of the GitHub release for this version |
 | `WARDEN_RELEASE_REPO` | GitHub repo `--fetch-helper` downloads from (default `delacournz/warden`) |
 
@@ -69,8 +70,15 @@ warden doctor
 
 - `hid.transport` is how input reaches the simulator: `indigo` (Xcode 26) or `dtuhid` (Xcode 27).
 - `ax.bridge` is the fast accessibility path. `available` means the in-simulator guest answered. `missing` or `failed` means snapshots fall back to the slower host-side accessibility API, with the reason printed.
+- `degraded` means the guest is there but the last read through it failed, so reads may be falling back to the slower path. The row warns with `ax.lastError` (the failure and how long ago it happened), for example `ax.bridge=degraded (last read failed, 4s ago: The application with pid 7 did not respond ...)`. A fresh `--health` process has no read history, so `doctor` also asks a helper that is already serving that simulator (over `~/.warden/simd/<udid>.sock`); only that one can report `degraded`. The next successful read clears it.
 
 With no booted simulator there is nothing to probe and the row says so. `doctor` does not boot one.
+
+### After an app relaunch
+
+The guest only reads a freshly launched app once a quiescence stream (the one `settle` uses) is bound to its process. The helper keeps one stream open for its whole life, so an app you terminate and launch again is readable straight away (about 100 ms for the first read in our measurements). If the stream is not open (it was closed, or the helper was started with `WARDEN_SIMD_STREAM_IDLE_S`), the first read after a relaunch fails with `E_APP_NOT_RESPONDING`; the helper then opens a stream, waits for its first state and reads again, which costs about 2 seconds once. The retry is logged as a `warn` event, and a read that still fails falls back to host-side accessibility and marks the bridge `degraded`.
+
+`WARDEN_SIMD_STREAM_IDLE_S=<seconds>` closes an idle stream after that long (unset or `0` keeps it open). Use it only if another quiescence consumer shares the simulator: two concurrent streams leave each other stuck.
 
 ### `--fetch-helper`
 

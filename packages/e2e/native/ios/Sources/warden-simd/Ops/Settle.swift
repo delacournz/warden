@@ -170,9 +170,20 @@ actor QuiescenceMonitor {
   private var lastError: (any Error)?
   private var lastUsed: Double = 0
   private var idleWatch: Task<Void, Never>?
+  /// Close the stream after this long without a `settle`; nil keeps it open for the helper's lifetime.
+  private let idleCloseSeconds: Double?
 
-  init(reader: any UIAutomation) {
+  init(reader: any UIAutomation, idleCloseSeconds: Double? = QuiescenceMonitor.configuredIdleCloseSeconds()) {
     self.reader = reader
+    self.idleCloseSeconds = idleCloseSeconds
+  }
+
+  /// `WARDEN_SIMD_STREAM_IDLE_S=<seconds>` closes an idle stream after that long; unset or `0` keeps it open.
+  static func configuredIdleCloseSeconds(
+    _ environment: [String: String] = ProcessInfo.processInfo.environment
+  ) -> Double? {
+    guard let raw = environment["WARDEN_SIMD_STREAM_IDLE_S"], let seconds = Double(raw), seconds > 0 else { return nil }
+    return seconds
   }
 
   private static func clock() -> Double { ProcessInfo.processInfo.systemUptime }
@@ -222,25 +233,25 @@ actor QuiescenceMonitor {
     frontmostPid = nil
   }
 
-  /// A stream left open between calls competes with any other quiescence stream on the same simulator (a second
-  /// helper, another agent's run): two concurrent streams leave each other stuck at `busy(runLoopIdle,
-  /// animationsInactive)`. So the stream is closed once nothing has settled for `idleCloseSeconds`; the next
-  /// `settle` reopens it.
-  static let idleCloseSeconds = 10.0
-
+  /// By default the stream stays open for the helper's lifetime: the guest binds it to whatever is frontmost
+  /// (reporting `targetChanged`), and an app relaunched while no stream is open is unreadable by `axbridge` until
+  /// one binds to it (see `recover`). The cost is that a stream competes with any other quiescence stream on the
+  /// same simulator (a second helper, another agent's run: two concurrent streams leave each other stuck at
+  /// `busy(runLoopIdle, animationsInactive)`); leases keep that to one helper per simulator, and
+  /// `WARDEN_SIMD_STREAM_IDLE_S` closes an idle stream after that long (the next `settle` reopens it).
   private func startIdleWatch() {
-    guard idleWatch == nil else { return }
+    guard idleCloseSeconds != nil, idleWatch == nil else { return }
     idleWatch = Task { [weak self] in
       while !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(1))
+        try? await Task.sleep(for: .milliseconds(250))
         await self?.closeIfIdle()
       }
     }
   }
 
   private func closeIfIdle() {
-    guard task != nil, Self.clock() - lastUsed >= Self.idleCloseSeconds else { return }
-    Self.trace("stream idle for \(Int(Self.idleCloseSeconds)) s, closing")
+    guard let idleCloseSeconds, task != nil, Self.clock() - lastUsed >= idleCloseSeconds else { return }
+    Self.trace("stream idle for \(idleCloseSeconds) s, closing")
     stop()
   }
 

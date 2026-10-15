@@ -87,6 +87,87 @@ describe("helperChecks", () => {
 		});
 	});
 
+	describe("a helper already running on the simulator", () => {
+		const standalone = JSON.stringify({
+			ok: true,
+			data: { hid: { transport: "indigo" }, ax: { default: "axbridge", bridge: "available" } },
+		});
+		const bootedExec = () =>
+			fakeExec([
+				["xcrun simctl list", { stdout: simctlList({ udid: UDID, state: "Booted" }) }],
+				[HELPER, { stdout: standalone }],
+			]);
+		const withSocket = (runningHealth: HelperDeps["runningHealth"]) =>
+			deps(
+				{ [HELPER]: "" },
+				{ exists: (path) => path === HELPER || path.endsWith(`simd/${UDID}.sock`), runningHealth }
+			);
+
+		test("degraded bridge → warn with the last read failure", async () => {
+			const paths: string[] = [];
+			const c = setup(bootedExec());
+			const rows = await helperChecks(
+				c,
+				withSocket(async (path) => {
+					paths.push(path);
+					return {
+						ok: true,
+						data: {
+							ax: {
+								default: "axbridge",
+								bridge: "degraded",
+								lastError: { message: "pid 7 did not respond", agoMs: 4200 },
+							},
+						},
+					};
+				})
+			);
+			expect(paths).toHaveLength(1);
+			expect(paths[0]?.endsWith(`simd/${UDID}.sock`)).toBe(true);
+			const row = rows.at(-1);
+			expect(row?.status).toBe("warn");
+			expect(row?.detail).toContain("ax.bridge=degraded");
+			expect(row?.detail).toContain("pid 7 did not respond");
+			expect(row?.detail).toContain("4s ago");
+		});
+
+		test("healthy running helper keeps the ok row", async () => {
+			const c = setup(bootedExec());
+			const rows = await helperChecks(
+				c,
+				withSocket(async () => ({ data: { ax: { default: "axbridge", bridge: "available" } } }))
+			);
+			expect(rows.at(-1)?.status).toBe("ok");
+		});
+
+		test("no answer from the running helper → the standalone row stands", async () => {
+			const c = setup(bootedExec());
+			const rows = await helperChecks(
+				c,
+				withSocket(async () => undefined)
+			);
+			expect(rows.at(-1)?.status).toBe("ok");
+		});
+
+		test("no socket → the running helper is not asked", async () => {
+			let asked = false;
+			const c = setup(bootedExec());
+			await helperChecks(
+				c,
+				deps(
+					{ [HELPER]: "" },
+					{
+						runningHealth: async () => {
+							asked = true;
+							return undefined;
+						},
+					}
+				)
+			);
+			expect(asked).toBe(false);
+		});
+	});
+
 	test("bridge not available → warn naming the reason", async () => {
 		const health = JSON.stringify({
 			ok: true,
