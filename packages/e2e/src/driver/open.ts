@@ -8,11 +8,26 @@ import { type OpenIosDriverOptions, openIosDriver } from "./ios/ios-driver";
 /** Test seams for {@link openDriver}: everything {@link openIosDriver} injects except what the env supplies. */
 export type OpenDriverDeps = Omit<OpenIosDriverOptions, "udid" | "env" | "exec"> & { exec?: Exec };
 
+/** `WARDEN_E2E_DEBUG=1` logs every helper op and simctl call with its duration to stderr. */
+export const DEBUG_ENV = "WARDEN_E2E_DEBUG";
+
+const stderrLog = (line: string): void => {
+	process.stderr.write(`${line}\n`);
+};
+
 /** Open the `Driver` for the device in `env`, by platform. */
 export async function openDriver(env: E2eEnv, deps: OpenDriverDeps = {}): DriverResult<Driver> {
+	const debug = deps.debug ?? process.env[DEBUG_ENV] === "1";
 	switch (env.platform) {
 		case "ios":
-			return openIosDriver({ ...deps, udid: env.udid, env, exec: deps.exec ?? bunExec });
+			return openIosDriver({
+				...deps,
+				udid: env.udid,
+				env,
+				exec: deps.exec ?? bunExec,
+				debug,
+				...(deps.log ? {} : debug ? { log: stderrLog } : {}),
+			});
 		case "android":
 			return driverErr("E_UNSUPPORTED", "Android driver lands in D9");
 	}
