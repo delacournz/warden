@@ -86,13 +86,15 @@ describe("installPreload", () => {
 describe("version handshake", () => {
 	const under = { WARDEN_UDID: "U", WARDEN_BUNDLE_ID: "b" };
 
-	test("a different warden version warns on stderr, still installs", () => {
+	test("a different warden version is refused: message on stderr, exit 2, nothing installed", () => {
 		const { deps, log } = harness({ ...under, WARDEN_VERSION: "0.4.0" });
 		installPreload(deps);
 		expect(log.stderr.join("")).toContain("@delacour/warden-e2e 0.3.0 does not match warden 0.4.0");
 		expect(log.stderr.join("")).toContain("bun add -d @delacour/warden-e2e@0.4.0");
-		expect(log.exits).toEqual([]);
-		expect(log.sessions).toHaveLength(1);
+		expect(log.exits).toEqual([2]);
+		expect(log.sessions).toHaveLength(0);
+		expect(log.timeouts).toHaveLength(0);
+		expect(log.hooks).toHaveLength(0);
 	});
 
 	test("same version, or no WARDEN_VERSION (by-hand run), or not under warden: silent", () => {

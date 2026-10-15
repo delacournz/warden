@@ -55,6 +55,7 @@ icon: Variable
 | `WARDEN_PLATFORM` | `ios` (default) or `android` |
 | `WARDEN_BUNDLE_ID` | the app under test: `spec.bundleId`, else the project's. Required for a by-hand run |
 | `WARDEN_APP_PATH` | the installed build, for `app.reinstall()` |
+| `WARDEN_VERSION` | the `warden` version that started the run. The `@delacour/warden-e2e` preload exits 2 with the `bun add -d @delacour/warden-e2e@<version>` fix when its own (published) version differs; unset in a by-hand run, nothing is compared |
 | `WARDEN_METRO_URL` | warden's Metro, for a dev client |
 | `WARDEN_LAUNCH_ARGS` | JSON array of the launch arguments `app.open()` passes: `--initialUrl <metro url>`, `metro.launchArgs`, `spec.launchArgs` |
 | `WARDEN_E2E_OUT` | where `results.jsonl` and the per-test artifacts go: `<batchDir>/e2e/<worker>-<seq>` |

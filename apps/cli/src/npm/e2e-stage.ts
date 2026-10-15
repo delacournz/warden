@@ -17,7 +17,8 @@ export function e2eDependencies(packageJson: string): Result<Record<string, stri
 	for (const name of E2E_EXTERNALS) {
 		if (name.startsWith("bun:")) continue;
 		const range = declared[name];
-		if (typeof range !== "string") return err(`packages/e2e/package.json has no dependency ${name} (the bundle imports it)`);
+		if (typeof range !== "string")
+			return err(`packages/e2e/package.json has no dependency ${name} (the bundle imports it)`);
 		dependencies[name] = range;
 	}
 	return ok(dependencies);

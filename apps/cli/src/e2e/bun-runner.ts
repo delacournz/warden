@@ -81,7 +81,7 @@ export type SpecEnvOptions = {
 	flowsDir: string;
 	/** where `warden-simd` lives (the spec's helper lookup) */
 	helperDir: string;
-	/** warden's own version: the spec preload warns when `@delacour/warden-e2e` is not the same */
+	/** warden's own version: the spec preload refuses to run when `@delacour/warden-e2e` is not the same */
 	version: string;
 };
 

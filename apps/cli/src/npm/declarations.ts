@@ -35,6 +35,17 @@ export function entryDeclaration(typesDirName: string, sourceRelative: string): 
 	return `export * from "./${typesDirName}/${sourceRelative.replace(/\.ts$/, "")}";\n`;
 }
 
+/**
+ * `@delacour/warden-<x>/*` → `packages/<x>/src/*`. Without it the compiler finds these packages through
+ * `node_modules` (workspace symlinks), counts them as external libraries and emits nothing for them, so the
+ * published declarations would import files that are not there.
+ */
+function workspacePaths(packagesDir: string): Record<string, string[]> {
+	return Object.fromEntries(
+		Object.entries(WORKSPACE_PACKAGES).map(([name, dir]) => [`${name}/*`, [join(packagesDir, dir, "src", "*")]])
+	);
+}
+
 export type EmitDeclarationsInput = {
 	/** `packages/e2e/tsconfig.json`: the compiler options (module resolution, `bun` types) to emit with */
 	tsconfigPath: string;
@@ -65,6 +76,7 @@ export function emitDeclarations(input: EmitDeclarationsInput): Result<string[]>
 		skipLibCheck: true,
 		outDir: input.outDir,
 		rootDir: input.packagesDir,
+		paths: workspacePaths(input.packagesDir),
 	};
 	const program = ts.createProgram([...input.entries], options);
 	const written: string[] = [];
@@ -76,7 +88,13 @@ export function emitDeclarations(input: EmitDeclarationsInput): Result<string[]>
 	});
 	const errors = result.diagnostics.filter((d) => d.category === ts.DiagnosticCategory.Error);
 	if (errors.length > 0) {
-		return err(ts.formatDiagnostics(errors, { getCanonicalFileName: (f) => f, getCurrentDirectory: () => process.cwd(), getNewLine: () => "\n" }));
+		return err(
+			ts.formatDiagnostics(errors, {
+				getCanonicalFileName: (f) => f,
+				getCurrentDirectory: () => process.cwd(),
+				getNewLine: () => "\n",
+			})
+		);
 	}
 	return ok(written);
 }

@@ -20,7 +20,7 @@ export const ENV_NAMES = {
 	headless: "WARDEN_HEADLESS",
 	logTimestamps: "WARDEN_LOG_TIMESTAMPS",
 	worker: "WARDEN_WORKER",
-	/** the `warden` that started this process: the preload warns when it is not this package's version */
+	/** the `warden` that started this process: the preload refuses to run when it is not this package's version */
 	version: "WARDEN_VERSION",
 } as const;
 

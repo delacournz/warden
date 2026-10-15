@@ -156,7 +156,10 @@ export function e2eManifest(meta: PackageMeta, dependencies: Record<string, stri
 		keywords: ["e2e", "ios-simulator", "android-emulator", "bun", "testing"],
 		exports: {
 			...Object.fromEntries(
-				Object.entries(E2E_ENTRIES).map(([key, entry]) => [key, { types: `./${entry.types}`, default: `./${entry.js}` }])
+				Object.entries(E2E_ENTRIES).map(([key, entry]) => [
+					key,
+					{ types: `./${entry.types}`, default: `./${entry.js}` },
+				])
 			),
 			"./package.json": "./package.json",
 		},

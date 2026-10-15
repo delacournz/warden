@@ -35,7 +35,7 @@ export type PreloadDeps = {
  */
 export function versionMismatch(wardenVersion: string | undefined, e2eVersion: string): string | undefined {
 	if (wardenVersion === undefined || wardenVersion === e2eVersion || e2eVersion === WORKSPACE_VERSION) return undefined;
-	return `warden e2e: @delacour/warden-e2e ${e2eVersion} does not match warden ${wardenVersion}; install the matching version: bun add -d @delacour/warden-e2e@${wardenVersion}`;
+	return `warden e2e: @delacour/warden-e2e ${e2eVersion} does not match warden ${wardenVersion}, refusing to run; install the matching version: bun add -d @delacour/warden-e2e@${wardenVersion}`;
 }
 
 /** `CI=1`, `CI=true`, … — anything but empty, `0` and `false`. */
@@ -58,7 +58,11 @@ export function installPreload(deps: PreloadDeps): void {
 	}
 	if (read.data === undefined) return;
 	const warning = versionMismatch(read.data.wardenVersion, deps.version);
-	if (warning !== undefined) deps.stderr(`${warning}\n`);
+	if (warning !== undefined) {
+		deps.stderr(`${warning}\n`);
+		deps.exit(2);
+		return;
+	}
 	deps.setDefaultTimeout(read.data.timeoutMs + BUN_TIMEOUT_MARGIN_MS);
 	const session = deps.createSession({ env: read.data });
 	deps.afterAll(async () => {

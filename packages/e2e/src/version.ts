@@ -6,7 +6,7 @@ export const WORKSPACE_VERSION = "0.0.0-workspace";
 
 /**
  * The version of this `@delacour/warden-e2e`. Published builds carry warden's own version (lock-step);
- * `warden e2e` hands its version to the spec process (`WARDEN_VERSION`) and the preload warns when they differ.
+ * `warden e2e` hands its version to the spec process (`WARDEN_VERSION`) and the preload refuses to run when they differ.
  */
 export const WARDEN_E2E_VERSION: string =
 	typeof __WARDEN_E2E_VERSION__ === "string" ? __WARDEN_E2E_VERSION__ : WORKSPACE_VERSION;

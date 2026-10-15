@@ -118,7 +118,10 @@ describe("ENV_NAMES", () => {
 
 describe("WARDEN_VERSION", () => {
 	test("is read as wardenVersion, absent otherwise", () => {
-		expect(readEnv({ ...base, WARDEN_VERSION: "0.3.0" })).toMatchObject({ success: true, data: { wardenVersion: "0.3.0" } });
+		expect(readEnv({ ...base, WARDEN_VERSION: "0.3.0" })).toMatchObject({
+			success: true,
+			data: { wardenVersion: "0.3.0" },
+		});
 		const plain = readEnv(base);
 		expect(plain.success && plain.data && "wardenVersion" in plain.data).toBe(false);
 	});
