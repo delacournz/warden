@@ -40,6 +40,17 @@ function locate(env: Record<string, string>, l = layout()) {
 }
 
 describe("locateHelper order", () => {
+	test("every rung beats the ones after it: execPath > source build > $WARDEN_HOME", () => {
+		const l = layout();
+		const staged = touch(join(l.home, "simd", "1.2.3", "warden-simd"));
+		expect(locate({}, l)).toMatchObject({ success: true, data: { path: staged, source: "warden-home" } });
+		const source = touch(join(l.importDir, "../../../native/dist/warden-simd"));
+		expect(locate({}, l)).toMatchObject({ success: true, data: { source: "source-build" } });
+		touch(join(l.binDir, "warden-simd"));
+		expect(locate({}, l)).toMatchObject({ success: true, data: { source: "execPath" } });
+		expect(source).toBeTruthy();
+	});
+
 	test("WARDEN_SIMD wins over everything", () => {
 		const l = layout();
 		touch(l.explicit);

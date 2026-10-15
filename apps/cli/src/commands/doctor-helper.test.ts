@@ -213,6 +213,8 @@ describe("helperChecks", () => {
 		expect(rows[0]).toMatchObject({ name: "sim-helper", status: "warn" });
 		expect(rows[0]?.detail).toContain("warden-simd not found");
 		expect(rows[0]?.detail).toContain("warden doctor --fetch-helper");
+		expect(rows[0]?.detail).toContain("WARDEN_SIMD=/path/to/warden-simd");
+		expect(rows[0]?.detail).not.toContain("run `warden doctor` to check");
 		expect(calls).toEqual([]);
 	});
 

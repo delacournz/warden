@@ -401,3 +401,24 @@ Live, iPhone 17 sim (own lease), Release example, load average 415-800 throughou
 - Options tried: (1) app-level gate. `EXPO_PUBLIC_E2E=1` is already baked into both builds (`IS_E2E`), but gating the JS `import` (conditional `require`, or a Metro alias to a stub) does not help: the native module is created at launch regardless (the stub crashed on every launch). (2) Taken: `bun patch` on `react-native-pulsar@1.7.0` (`patches/react-native-pulsar@1.7.0.patch`, root `patchedDependencies`): under `TARGET_OS_SIMULATOR` skip `[[Pulsar alloc] init]`, so every haptic call messages nil and does nothing. Trade-off: simulators lose haptics (there is nothing to feel anyway); real devices are unchanged; the patch changes the native fingerprint so one rebuild; it needs dropping when upstream stops starting the engine on a simulator. Dropping the dependency was the alternative, but `Pressable` / `Tabs` / `Checkbox` / `Slider` call `playHaptic`, so the patch is the smaller change. (3) Upstream: software-mansion/pulsar should not start the engine on a simulator (or should tolerate the RPC timeout); not filed from here.
 - Also fixed in the flows: `dismissSavePassword` settles after `Not Now` (a tab tap right after the sheet closes was dropped), and `openDeepLink` re-opens a link whose screen did not show (a link opened while the app settles after sign-in is occasionally dropped).
 - Verification, `warden e2e example-dev --flows todos,settings,todo-detail` on the patched build: 3/3 flows on the runs after the last fix (x3, one earlier run lost only the dropped deep link), and no new `wardenexample-*.ips` on this worktree's devices.
+
+**D10 end to end with a compiled CLI (2026-10-16, simd-core).** `bun run --cwd apps/cli build` -> `apps/cli/dist/warden` (local channel, `0.1.0`, knows this checkout), `WARDEN_HOME` a temp dir, helper built from `88c8019`. Every row is `warden doctor`'s `sim-helper` line; the helper binary is the same `warden-simd` copied or pointed at each time.
+
+| rung / case | setup | `sim-helper` row | verdict |
+|---|---|---|---|
+| 1 `WARDEN_SIMD` | env = file | `<file> (WARDEN_SIMD) — warden-simd 0.1.0, idb v1.7.2, xcode 26.6` | pass |
+| 1 stale override | env = nonexistent file | warn `WARDEN_SIMD=<path> does not exist`, no fall-through to the other rungs although they would have matched | pass |
+| 2 `WARDEN_HELPER_DIR` | env = dir with `warden-simd` | `(WARDEN_HELPER_DIR)` | pass |
+| 2 stale dir | env = empty dir | warn `WARDEN_HELPER_DIR=<dir> has no warden-simd` | pass |
+| 1 beats 2 | both set, dir empty | `(WARDEN_SIMD)` | pass |
+| 3 binary dir | `native/dist/*` copied next to `dist/warden` | `apps/cli/dist/warden-simd (execPath)` | pass |
+| 4 source `native/dist` | no env, nothing next to the binary | `packages/e2e/native/dist/warden-simd (source-build)` (a local-channel build only; a release build has no checkout) | pass |
+| 5 `$WARDEN_HOME/simd/<version>/` | `native/dist` moved away, helper staged under `simd/0.1.0/` | `(warden-home)` | pass |
+| 6 missing | nothing anywhere | warn `warden-simd not found (tried <3 paths>); set WARDEN_SIMD=/path/to/warden-simd — or fetch it: warden doctor --fetch-helper` | pass (wording fixed, see below) |
+| order of 3 > 4 > 5 | unit test (`locate-helper.test.ts`, new) | execPath beats source build beats `$WARDEN_HOME` | pass |
+| `ui open / snapshot -i / press --settle / close --release` | own lease on `warden-iphone-17-7` through the compiled binary, helper only via rung 3 | `pgrep` showed the running helper as `apps/cli/dist/warden-simd`; snapshot returned the welcome screen (35 elements, `axbridge`), `press id=welcome-next --settle` advanced it, `close --release` stopped the helper and freed only my lease | pass |
+| `doctor --fetch-helper` | `build:helper-asset` -> `dist/warden-simd-darwin-arm64.tgz` + `SHA256SUMS`, `WARDEN_HELPER_URL=file://<dist>` (bun `fetch` serves `file:` URLs) | `fetched warden-simd -> $WARDEN_HOME/simd/0.1.0`, executable, `warden-simd --version` runs; with nothing else present doctor reports it as `(warden-home)` | pass |
+| fetch, wrong checksum | `SHA256SUMS` with zeros | refused: `checksum mismatch for <url>: expected 000..`, nothing extracted (`$WARDEN_HOME/simd` not created) | pass |
+| fetch, no assets | URL = empty dir | `GET <url>/SHA256SUMS failed: ENOENT ...`, exit non-zero | pass (message is a raw ENOENT for `file:`; a 404 says "does the release include ..." for http) |
+
+One wording bug found and fixed: the missing-helper row said "run `warden doctor` to check the iOS driver helper" while `warden doctor` was the thing running. `doctor-helper.ts` now replaces the driver's hint with just `set WARDEN_SIMD=/path/to/warden-simd` before adding the `--fetch-helper` hint (tests: `doctor-helper.test.ts`, `locate-helper.test.ts`). `apps/cli/dist` was deleted afterwards (gitignored, created by this run).
