@@ -300,7 +300,7 @@ Exit codes: 0 ok · 1 failed or usage · 2 lease · 3 engine unavailable (`engin
 | Subcommand | Notes |
 |---|---|
 | `status` | device, your lease, the helper and the recording |
-| `open <bundleId\|url>` | `--relaunch`, `--metro <url>`, `--args <args...>`, `--settle [ms]` |
+| `open <bundleId\|url>` | `--relaunch`, `--metro <url>`, `--args <args...>`, `--settle [ms]`. Without `--relaunch` an app that is already running is attached to, not restarted: the output says `attached to <id>` and `--json` has `attached: true` |
 | `close` | stops this device's helper; `--app [bundleId]` quits the app, `--release` frees the lease |
 | `snapshot` | `-i` interactive only, `--all` no line cap, `--depth <n>`, `--settle [ms]` quiet-screen diff |
 | `find <selector...>` | elements matching `id=… label=… text=… role=… value=… editable=… nth=…`, with refs |

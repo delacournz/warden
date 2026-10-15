@@ -443,6 +443,33 @@ describe("open", () => {
 		expect(readState(h.c, UDID)).toMatchObject({ app: "com.example.app", metroUrl: "http://localhost:8081" });
 	});
 
+	test("without --relaunch an already running app is attached to, and the output says so", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		await h.driver.app.launch("com.example.app");
+		expect(await h.run("open", "com.example.app", "--json")).toBe(0);
+		expect(doc(h.c).result).toMatchObject({
+			action: "open",
+			bundleId: "com.example.app",
+			relaunch: false,
+			attached: true,
+		});
+		expect(h.driver.callsOf("app.launch")[1]?.opts).toEqual({ relaunch: false });
+		const text = harness([snapshotOf(LOGIN)]);
+		await text.driver.app.launch("com.example.app");
+		expect(await text.run("open", "com.example.app")).toBe(0);
+		expect(text.c.stdout.join("\n")).toContain("attached to com.example.app");
+	});
+
+	test("--relaunch never reports attached, and a first launch is not attached", async () => {
+		const first = harness([snapshotOf(LOGIN)]);
+		await first.run("open", "com.example.app", "--json");
+		expect(doc(first.c).result.attached).toBe(false);
+		const again = harness([snapshotOf(LOGIN)]);
+		await again.driver.app.launch("com.example.app");
+		await again.run("open", "com.example.app", "--relaunch", "--json");
+		expect(doc(again.c).result).toMatchObject({ relaunch: true, attached: false });
+	});
+
 	test("a url is opened and the iOS `Open in …?` sheet is accepted", async () => {
 		const h = harness([snapshotOf(LOGIN)], {
 			onCall: (call, driver) => {

@@ -135,7 +135,7 @@ Reads never wait; they answer from the screen as it is now:
 
 `open({ url?, args?, env? })` · `close()` · `restart()` · `reinstall()` · `clearData()` · `isRunning()`
 
-`open` terminates a running instance and launches the app with the suite's launch arguments (`--initialUrl <metro url>` for a dev client) plus `args`. `clearData` wipes the app's data and the keychain; `reinstall` installs the build again from `WARDEN_APP_PATH`.
+`open` always starts the app fresh: it terminates a running instance first (iOS: `simctl launch --terminate-running-process`; Android: `am force-stop`, then launch), so a device an aborted run left mid-flow does not leak into the next test. It launches with the suite's launch arguments (`--initialUrl <metro url>` for a dev client) plus `args`. `restart()` is the same relaunch (one stop, not two); `close()` only stops. `launch: "none"` skips the runner's own `open()` and leaves the app as it is. `clearData` wipes the app's data and the keychain; `reinstall` installs the build again from `WARDEN_APP_PATH`.
 
 `device` is the simulator or emulator:
 
