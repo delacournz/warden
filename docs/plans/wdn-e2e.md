@@ -395,3 +395,24 @@ Live, iPhone 17 sim (own lease), Release example, load average 415-800 throughou
 - Cycles 1-5 or 6 of every run settle on the stream in 1.6-3.4 s, while the app is still on its launch screen (5 nodes).
 - From cycle 6-7 of each run the booting app answers no quiescence signal for seconds, the stream is judged stuck (restart at 1 s, fallback at 2 s) and the settle ends `via:"snapshot"` at 4.6-6.6 s. Final build, cycles 7-10: 4.8 6.3 6.6 5.4 s; previous build, cycles 6-10: 5.9 4.9 4.6 6.5 5.0 s.
 - App boot time measured the same way (launch to a snapshot with a real tree, 20 launches, same sim): 4.5-6.4 s, median 5.5 s. So the slow settles are the app's own boot; 2 of the last 10 (6.6, 6.5 s) are over boot median + 300 ms but inside the boot range (max 6.4 s measured, 8.8-10.5 s on the first launches). This is ambiguous rather than a pass or fail of "settle <= boot + 300 ms": under this load the boot time itself varies by 1.9 s. No tuning was done.
+
+**D10 end to end with a compiled CLI (2026-10-16, simd-core).** `bun run --cwd apps/cli build` -> `apps/cli/dist/warden` (local channel, `0.1.0`, knows this checkout), `WARDEN_HOME` a temp dir, helper built from `88c8019`. Every row is `warden doctor`'s `sim-helper` line; the helper binary is the same `warden-simd` copied or pointed at each time.
+
+| rung / case | setup | `sim-helper` row | verdict |
+|---|---|---|---|
+| 1 `WARDEN_SIMD` | env = file | `<file> (WARDEN_SIMD) — warden-simd 0.1.0, idb v1.7.2, xcode 26.6` | pass |
+| 1 stale override | env = nonexistent file | warn `WARDEN_SIMD=<path> does not exist`, no fall-through to the other rungs although they would have matched | pass |
+| 2 `WARDEN_HELPER_DIR` | env = dir with `warden-simd` | `(WARDEN_HELPER_DIR)` | pass |
+| 2 stale dir | env = empty dir | warn `WARDEN_HELPER_DIR=<dir> has no warden-simd` | pass |
+| 1 beats 2 | both set, dir empty | `(WARDEN_SIMD)` | pass |
+| 3 binary dir | `native/dist/*` copied next to `dist/warden` | `apps/cli/dist/warden-simd (execPath)` | pass |
+| 4 source `native/dist` | no env, nothing next to the binary | `packages/e2e/native/dist/warden-simd (source-build)` (a local-channel build only; a release build has no checkout) | pass |
+| 5 `$WARDEN_HOME/simd/<version>/` | `native/dist` moved away, helper staged under `simd/0.1.0/` | `(warden-home)` | pass |
+| 6 missing | nothing anywhere | warn `warden-simd not found (tried <3 paths>); set WARDEN_SIMD=/path/to/warden-simd — or fetch it: warden doctor --fetch-helper` | pass (wording fixed, see below) |
+| order of 3 > 4 > 5 | unit test (`locate-helper.test.ts`, new) | execPath beats source build beats `$WARDEN_HOME` | pass |
+| `ui open / snapshot -i / press --settle / close --release` | own lease on `warden-iphone-17-7` through the compiled binary, helper only via rung 3 | `pgrep` showed the running helper as `apps/cli/dist/warden-simd`; snapshot returned the welcome screen (35 elements, `axbridge`), `press id=welcome-next --settle` advanced it, `close --release` stopped the helper and freed only my lease | pass |
+| `doctor --fetch-helper` | `build:helper-asset` -> `dist/warden-simd-darwin-arm64.tgz` + `SHA256SUMS`, `WARDEN_HELPER_URL=file://<dist>` (bun `fetch` serves `file:` URLs) | `fetched warden-simd -> $WARDEN_HOME/simd/0.1.0`, executable, `warden-simd --version` runs; with nothing else present doctor reports it as `(warden-home)` | pass |
+| fetch, wrong checksum | `SHA256SUMS` with zeros | refused: `checksum mismatch for <url>: expected 000..`, nothing extracted (`$WARDEN_HOME/simd` not created) | pass |
+| fetch, no assets | URL = empty dir | `GET <url>/SHA256SUMS failed: ENOENT ...`, exit non-zero | pass (message is a raw ENOENT for `file:`; a 404 says "does the release include ..." for http) |
+
+One wording bug found and fixed: the missing-helper row said "run `warden doctor` to check the iOS driver helper" while `warden doctor` was the thing running. `doctor-helper.ts` now replaces the driver's hint with just `set WARDEN_SIMD=/path/to/warden-simd` before adding the `--fetch-helper` hint (tests: `doctor-helper.test.ts`, `locate-helper.test.ts`). `apps/cli/dist` was deleted afterwards (gitignored, created by this run).

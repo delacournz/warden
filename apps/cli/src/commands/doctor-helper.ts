@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseSimctlDevices } from "@delacour/warden-core/providers/ios";
 import { wardenHome } from "@delacour/warden-core/store";
-import { locateHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
+import { DOCTOR_HINT, locateHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
 import type { CommandContext } from "../context";
 import { HELPER_MANIFEST, HELPER_TARGET, type HelperInfo, parseHelperManifest } from "../npm/helper";
 import { type BuildInfo, currentBuild } from "../update/build-info";
@@ -230,7 +230,9 @@ export async function helperChecks(ctx: CommandContext, deps: HelperDeps): Promi
 		realpath: deps.realpath,
 	});
 	if (!located.success) {
-		return [row("sim-helper", "warn", `${located.error.message} — or fetch it: \`warden doctor --fetch-helper\``)];
+		// the driver's own hint says "run `warden doctor`", which is what is running: keep only the WARDEN_SIMD half
+		const message = located.error.message.replace(DOCTOR_HINT, "set WARDEN_SIMD=/path/to/warden-simd");
+		return [row("sim-helper", "warn", `${message} — or fetch it: \`warden doctor --fetch-helper\``)];
 	}
 	const { path, source } = located.data;
 	const info = helperInfo(deps, path);

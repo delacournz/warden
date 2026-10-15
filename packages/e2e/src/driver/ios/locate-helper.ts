@@ -28,7 +28,8 @@ export type HelperLocation = {
 	source: "WARDEN_SIMD" | "WARDEN_HELPER_DIR" | "execPath" | "source-build" | "warden-home";
 };
 
-const DOCTOR_HINT = "run `warden doctor` to check the iOS driver helper, or set WARDEN_SIMD=/path/to/warden-simd";
+export const DOCTOR_HINT =
+	"run `warden doctor` to check the iOS driver helper, or set WARDEN_SIMD=/path/to/warden-simd";
 
 /**
  * Find the `warden-simd` binary. Order: `WARDEN_SIMD` (file) → `WARDEN_HELPER_DIR/warden-simd` →
