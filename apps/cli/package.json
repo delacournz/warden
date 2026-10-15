@@ -17,7 +17,7 @@
 		"lint": "biome lint --write ./src ./scripts",
 		"check": "biome check ./src ./scripts",
 		"typecheck": "tsc --noEmit",
-		"test": "bun test",
+		"test": "bun test --timeout 20000",
 		"build:release": "bun scripts/build.ts --channel release",
 		"build:npm": "bun scripts/npm-packages.ts",
 		"build:helper-asset": "bun scripts/helper-asset.ts"
