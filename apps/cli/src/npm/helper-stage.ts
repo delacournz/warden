@@ -22,7 +22,9 @@ function frameworkNames(dir: string): string[] {
  * Copy the built helper (`packages/e2e/native/dist`: `warden-simd`, `Resources/`, `*.framework`, `manifest.json`)
  * into a platform package's `bin/`. No `warden-simd` in `distDir` → `undefined`, or an error with `required`
  * (the release build). A dist that has a binary but is incomplete is always an error: never ship half a helper.
- * Symlinks inside the frameworks are copied as symlinks (`verbatimSymlinks`).
+ * Symlinks inside the frameworks are copied as symlinks (`verbatimSymlinks`). `npm pack` drops them, which is fine:
+ * `warden-simd` links `@rpath/<Name>.framework/Versions/A/<Name>`, a real file, and the helper runs from an
+ * extracted tarball (checked on the 0.1.0 release build, `doctor` sim-helper-health ok).
  */
 export function stageHelper(input: {
 	distDir: string;
