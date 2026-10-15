@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { ok } from "@delacour/warden-types/result";
 import { failWith, fakeDriver, snapshotOf } from "./driver.testing";
-import { KEY_PACE_MS, pressKeys, typeText } from "./typing";
+import { KEY_PACE_MS, pressKeys, type RepeatingKeys, typeText } from "./typing";
 
 function recorder() {
 	const sleeps: number[] = [];
@@ -50,5 +51,25 @@ describe("pressKeys", () => {
 		const { sleep } = recorder();
 		expect((await pressKeys(driver, sleep, "Backspace", 0)).success).toBe(true);
 		expect(driver.calls).toEqual([]);
+	});
+});
+
+describe("pressKeys with a repeating driver", () => {
+	test("uses the one-round-trip path for more than one press", async () => {
+		const base = fakeDriver({ screens: [snapshotOf([])], platform: "android" });
+		const calls: Array<[string, number]> = [];
+		const driver = Object.assign(base, {
+			pressKeyRepeat: async (key: string, times: number) => {
+				calls.push([key, times]);
+				return ok(undefined);
+			},
+		} satisfies Record<keyof RepeatingKeys, unknown>);
+		const { sleeps, sleep } = recorder();
+		await pressKeys(driver, sleep, "Backspace", 5);
+		expect(calls).toEqual([["Backspace", 5]]);
+		expect(base.callsOf("key")).toHaveLength(0);
+		expect(sleeps).toEqual([]);
+		await pressKeys(driver, sleep, "Backspace", 1);
+		expect(base.callsOf("key")).toHaveLength(1);
 	});
 });

@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Driver, DriverResult } from "../driver.types";
+import { canRepeatKeys } from "../typing";
 import { elementAt, openAndroidDriver } from "./android-driver";
 import { fakeAndroidHost, type HostRule, PNG_BYTES, type ShellRule } from "./android-host.testing";
 import { parseUiautomatorXml } from "./uiautomator";
@@ -24,9 +25,7 @@ function fakeClock() {
 }
 
 const BASE_RULES: ShellRule[] = [
-	{ match: "getprop sys.boot_completed", reply: "1\n" },
-	{ match: "wm size", reply: "Physical size: 1080x2400\n" },
-	{ match: "wm density", reply: "Physical density: 420\n" },
+	{ match: "getprop sys.boot_completed", reply: "1\nPhysical size: 1080x2400\nPhysical density: 420\n" },
 	{ match: "uiautomator dump /dev/stdout", reply: `${SYNTHETIC_FORM_DUMP}` },
 ];
 
@@ -65,21 +64,60 @@ async function value<T>(p: DriverResult<T>): Promise<T> {
 }
 
 describe("open", () => {
-	test("waits for boot, reads the screen, turns animations off", async () => {
+	test("one probe round trip for boot + screen, one command to turn animations off", async () => {
 		const { driver, host } = await setup();
 		expect(driver.platform).toBe("android");
 		expect(driver.id).toBe("emulator-5554");
-		expect(host.shell.slice(0, 3)).toEqual(["getprop sys.boot_completed", "wm size", "wm density"]);
-		expect(host.shell.slice(3)).toEqual([
-			"settings put global window_animation_scale 0",
-			"settings put global transition_animation_scale 0",
-			"settings put global animator_duration_scale 0",
+		expect(host.shell).toEqual([
+			"getprop sys.boot_completed; wm size; wm density",
+			"settings put global window_animation_scale 0; settings put global transition_animation_scale 0; settings put global animator_duration_scale 0",
 		]);
 	});
 
-	test("a supplied screen skips wm", async () => {
-		const { host } = await setup({ screen: true });
-		expect(host.shell.some((c) => c.startsWith("wm"))).toBe(false);
+	test("an unparseable wm answer falls back to separate wm reads", async () => {
+		const { host } = await setup({
+			shell: [
+				{ match: "getprop sys.boot_completed", reply: "1\n" },
+				{ match: "wm size", reply: "Physical size: 1080x2400\n" },
+			],
+		});
+		expect(host.shell.slice(0, 3)).toEqual([
+			"getprop sys.boot_completed; wm size; wm density",
+			"wm size",
+			"wm density",
+		]);
+	});
+
+	test("a remembered dump route is tried first and a new one is reported", async () => {
+		const routes: string[] = [];
+		const host = fakeAndroidHost({
+			shell: [
+				...BASE_RULES,
+				{ match: "uiautomator dump /dev/stdout", reply: "UI hierchary dumped to: /dev/stdout\n" },
+				{ match: /^rm -f \/sdcard\/warden-ui\.xml/, reply: SYNTHETIC_FORM_DUMP },
+			],
+			host: [{ match: "adb", reply: "ERROR: null root node\n" }],
+		});
+		const opened = await openAndroidDriver({
+			serial: "s",
+			adb: "adb",
+			exec: host.exec,
+			spawn: host.spawn,
+			clock: fakeClock(),
+			dumpRoute: "file",
+			onDumpRoute: (r) => routes.push(r),
+		});
+		if (!opened.success) throw new Error("open");
+		open.push(opened.data);
+		await value(opened.data.snapshot());
+		expect(host.shell.some((c) => c.includes("/dev/stdout"))).toBe(false);
+		expect(host.host).toEqual([]);
+		expect(routes).toEqual([]);
+	});
+
+	test("a supplied screen skips the wm fallback", async () => {
+		const { host } = await setup({ screen: true, shell: [{ match: "getprop sys.boot_completed", reply: "1\n" }] });
+		expect(host.shell.some((c) => c === "wm size")).toBe(false);
 	});
 
 	test("E_NOT_BOOTED when sys.boot_completed never reaches 1", async () => {
@@ -154,6 +192,18 @@ describe("snapshot", () => {
 		expect(health.detail?.dumpRoute).toBe("tty");
 	});
 
+	test("a transient 'null root node' is retried and then succeeds", async () => {
+		let calls = 0;
+		const bad = "ERROR: null root node returned by UiTestAutomationBridge.\n";
+		const { driver, lines } = await setup({
+			shell: [{ match: "uiautomator dump /dev/stdout", reply: () => (++calls < 3 ? bad : SYNTHETIC_FORM_DUMP) }],
+			host: [{ match: "adb", reply: bad }],
+		});
+		const snap = await value(driver.snapshot());
+		expect(snap.flat.length).toBeGreaterThan(10);
+		expect(lines.some((l) => l.includes("retrying (1/2)"))).toBe(true);
+	});
+
 	test("an unusable dump is E_AX_UNAVAILABLE (retryable)", async () => {
 		const bad = "ERROR: null root node returned by UiTestAutomationBridge.\n";
 		const { driver } = await setup({
@@ -178,6 +228,18 @@ describe("elementAtPoint", () => {
 		expect((await value(driver.elementAtPoint({ x: 100, y: 140 })))?.text).toBe("Sign in");
 		const off = await value(driver.elementAtPoint({ x: 5000, y: 5000 }));
 		expect(off).toBeNull();
+	});
+
+	test("input and app commands drop the cached snapshot so a hit-test after typing sees the new value", async () => {
+		const { driver, host } = await setup();
+		await value(driver.snapshot());
+		await value(driver.typeText("x"));
+		await value(driver.elementAtPoint({ x: 1, y: 1 }));
+		await value(driver.tap({ x: 1, y: 1 }));
+		await value(driver.elementAtPoint({ x: 1, y: 1 }));
+		await value(driver.app.launch("com.x"));
+		await value(driver.elementAtPoint({ x: 1, y: 1 }));
+		expect(host.shell.filter((c) => c.includes("uiautomator dump")).length).toBe(4);
 	});
 
 	test("reuses a fresh snapshot instead of dumping again", async () => {
@@ -238,6 +300,14 @@ describe("input", () => {
 		expect(host.shell.filter((c) => c.startsWith("input text")).length).toBe(1);
 	});
 
+	test("typeText splits around a literal %s and chains the pieces with &&", async () => {
+		const { driver, host } = await setup();
+		await value(driver.typeText("100% safe 50% off"));
+		expect(host.shell.filter((c) => c.startsWith("input text"))).toEqual([
+			"input text 100% && input text %ssafe%s50% && input text %soff",
+		]);
+	});
+
 	test("key and modifiers", async () => {
 		const { driver, host } = await setup();
 		await value(driver.key("Enter"));
@@ -247,6 +317,17 @@ describe("input", () => {
 			"input keyevent 66",
 			"input keyevent 67",
 			"input keycombination 59 61",
+		]);
+	});
+
+	test("pressKeyRepeat batches presses into one command (the typing layer finds it)", async () => {
+		const { driver, host } = await setup();
+		expect(canRepeatKeys(driver)).toBe(true);
+		if (!canRepeatKeys(driver)) return;
+		await value(driver.pressKeyRepeat("Backspace", 13));
+		await value(driver.pressKeyRepeat("Backspace", 0));
+		expect(host.shell.filter((c) => c.startsWith("input"))).toEqual([
+			`input keyevent ${Array(13).fill("67").join(" ")}`,
 		]);
 	});
 

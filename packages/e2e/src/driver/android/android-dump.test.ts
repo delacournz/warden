@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { openAdbSession } from "./adb-session";
-import { createDumper } from "./android-dump";
+import { createDumper, type DumpRoute } from "./android-dump";
 import { fakeAndroidHost } from "./android-host.testing";
 
 const XML = '<?xml version="1.0"?><hierarchy rotation="0"><node class="x" bounds="[0,0][1,1]" /></hierarchy>';
@@ -48,7 +48,7 @@ describe("dump routes", () => {
 		const { host, session, dumper } = setup({
 			shell: [
 				{ match: "uiautomator dump /dev/stdout", reply: TRAILER },
-				{ match: "uiautomator dump /sdcard/warden-ui.xml", reply: XML },
+				{ match: /^rm -f \/sdcard\/warden-ui\.xml/, reply: XML },
 			],
 			host: [{ match: TTY, reply: "ERROR: null root node returned by UiTestAutomationBridge.\n" }],
 		});
@@ -74,13 +74,40 @@ describe("dump routes", () => {
 	test("no route works: E_AX_UNAVAILABLE carrying the tool's message", async () => {
 		const err = "ERROR: null root node returned by UiTestAutomationBridge.\n";
 		const { session, dumper } = setup({
-			shell: [{ match: "uiautomator", reply: err }],
+			shell: [{ match: /uiautomator/, reply: err }],
 			host: [{ match: TTY, reply: err }],
 		});
 		const res = await dumper.dump();
 		expect(!res.success && res.error.code).toBe("E_AX_UNAVAILABLE");
 		expect(!res.success && res.error.message).toContain("null root node");
 		expect(!res.success && res.error.retryable).toBe(true);
+		await session.close();
+	});
+
+	test("an initial route is tried first; a discovery is reported once", async () => {
+		const routes: DumpRoute[] = [];
+		const host = fakeAndroidHost({
+			shell: [{ match: "uiautomator dump /dev/stdout", reply: TRAILER }],
+			host: [{ match: TTY, reply: XML }],
+		});
+		const session = openAdbSession({ adb: "adb", serial: "s1", spawn: host.spawn });
+		const dumper = createDumper({
+			session,
+			exec: host.exec,
+			adb: "adb",
+			serial: "s1",
+			initialRoute: "tty",
+			onRoute: (r) => routes.push(r),
+		});
+		const res = await dumper.dump();
+		expect(res.success && res.data.route).toBe("tty");
+		expect(host.shell).toEqual([]);
+		expect(routes).toEqual([]);
+
+		const fresh = createDumper({ session, exec: host.exec, adb: "adb", serial: "s1", onRoute: (r) => routes.push(r) });
+		await fresh.dump();
+		await fresh.dump();
+		expect(routes).toEqual(["tty"]);
 		await session.close();
 	});
 });

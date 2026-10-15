@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
 import type {
 	AlertInfo,
+	AppCommands,
 	Driver,
 	DriverCapabilities,
 	DriverError,
@@ -20,6 +21,7 @@ import type {
 } from "../driver.types";
 import { driverErr } from "../errors";
 import { settleByHash, snapshotHash } from "../settle";
+import type { RepeatingKeys } from "../typing";
 import { type AdbSession, openAdbSession, type SpawnAdb } from "./adb-session";
 import { detectAlert } from "./android-alert";
 import { createAppCommands } from "./android-app";
@@ -30,6 +32,7 @@ import {
 	keycombinationArgv,
 	keyeventArgv,
 	keyNameKeycode,
+	keyRepeatArgvs,
 	longPressArgv,
 	modifierKeycode,
 	rotationArgvs,
@@ -37,7 +40,7 @@ import {
 	shellCommand,
 	swipeArgv,
 	tapArgv,
-	textArgv,
+	textArgvs,
 	uimodeGetArgv,
 	uimodeSetArgv,
 	userRotationArgv,
@@ -53,7 +56,7 @@ import {
 	runChecked,
 	waitForBoot,
 } from "./android-device";
-import { createDumper } from "./android-dump";
+import { createDumper, type DumpRoute } from "./android-dump";
 import { interactiveFilter, parseUiautomatorXml, UiautomatorParseError } from "./uiautomator";
 
 /** Binary-safe host process runner (screenshots); `Exec` is text-only. */
@@ -88,6 +91,10 @@ export type AndroidDriverOptions = {
 	execBinary?: ExecBinary;
 	/** injectable clock for boot polling and settle (default real time) */
 	clock?: Clock;
+	/** the dump route that worked last time (a `warden ui` call is a fresh process; skips probing the others) */
+	dumpRoute?: DumpRoute;
+	/** told when a dump route is first found to work or changes, to persist it */
+	onDumpRoute?: (route: DumpRoute) => void;
 	/** how long to wait for `sys.boot_completed`, default 30 s */
 	bootTimeoutMs?: number;
 };
@@ -101,6 +108,11 @@ const CAPABILITIES: DriverCapabilities = {
 };
 
 const SNAPSHOT_CACHE_MS = 1_000;
+/** uiautomator fails transiently (`null root node`) while a window is opening; a few quick retries ride it out. */
+const SNAPSHOT_ATTEMPTS = 3;
+const INPUT_TEXT_BASE_MS = 10_000;
+const INPUT_TEXT_PIECE_MS = 8_000;
+const SNAPSHOT_RETRY_MS = 400;
 const DEFAULT_SETTLE_QUIET_MS = 250;
 const DEFAULT_SETTLE_TIMEOUT_MS = 3_000;
 const SCREENSHOT_TIMEOUT_MS = 10_000;
@@ -122,6 +134,28 @@ export function elementAt(flat: readonly Element[], point: Point): Element | nul
 	const deepest = (list: readonly Element[]): Element | undefined =>
 		list.reduce<Element | undefined>((best, e) => (best === undefined || e.depth >= best.depth ? e : best), undefined);
 	return deepest(inside.filter((e) => e.hittable)) ?? deepest(inside) ?? null;
+}
+
+/** Wrap every `AppCommands` method so the cached snapshot is dropped when the app changes what is on screen. */
+function invalidating(app: AppCommands, drop: () => void): AppCommands {
+	const wrap =
+		<A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+		async (...args: A): Promise<R> => {
+			drop();
+			const result = await fn(...args);
+			drop();
+			return result;
+		};
+	return {
+		launch: wrap(app.launch),
+		terminate: wrap(app.terminate),
+		openUrl: wrap(app.openUrl),
+		install: app.install,
+		uninstall: app.uninstall,
+		isInstalled: app.isInstalled,
+		isRunning: app.isRunning,
+		clearData: wrap(app.clearData),
+	};
 }
 
 /**
@@ -150,12 +184,15 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 		...(log ? { log } : {}),
 	});
 	if (!booted.success) return failed(booted.error);
-	const screen = options.screen ? { success: true as const, data: options.screen } : await readScreen(session, serial);
+	const probed = options.screen ?? booted.data;
+	const screen = probed ? { success: true as const, data: probed } : await readScreen(session, serial);
 	if (!screen.success) return failed(screen.error);
-	for (const argv of animationScaleArgvs()) {
-		const res = await session.run(shellCommand(argv));
-		if (!res.success || res.data.exitCode !== 0) log?.(`could not disable animations: ${argv.join(" ")}`);
-	}
+	const animations = await session.run(
+		animationScaleArgvs()
+			.map((argv) => shellCommand(argv))
+			.join("; ")
+	);
+	if (!animations.success || animations.data.exitCode !== 0) log?.("could not disable animations");
 	return { success: true, data: buildDriver(options, session, screen.data, clock, execBinary) };
 }
 
@@ -165,13 +202,35 @@ function buildDriver(
 	baseScreen: ScreenInfo,
 	clock: Clock,
 	execBinary: ExecBinary
-): Driver {
+): Driver & RepeatingKeys {
 	const { serial, adb, exec, log } = options;
-	const dumper = createDumper({ session, exec, adb, serial, ...(log ? { log } : {}) });
+	const dumper = createDumper({
+		session,
+		exec,
+		adb,
+		serial,
+		...(log ? { log } : {}),
+		...(options.dumpRoute ? { initialRoute: options.dumpRoute } : {}),
+		...(options.onDumpRoute ? { onRoute: options.onDumpRoute } : {}),
+	});
 	let last: Snapshot | undefined;
 
+	async function dumpWithRetry(): ReturnType<typeof dumper.dump> {
+		let dumped = await dumper.dump();
+		for (
+			let attempt = 1;
+			attempt < SNAPSHOT_ATTEMPTS && !dumped.success && dumped.error.code === "E_AX_UNAVAILABLE";
+			attempt++
+		) {
+			log?.(`uiautomator unavailable, retrying (${attempt}/${SNAPSHOT_ATTEMPTS - 1})`);
+			await clock.sleep(SNAPSHOT_RETRY_MS);
+			dumped = await dumper.dump();
+		}
+		return dumped;
+	}
+
 	async function takeSnapshot(): DriverResult<Snapshot> {
-		const dumped = await dumper.dump();
+		const dumped = await dumpWithRetry();
 		if (!dumped.success) return dumped;
 		let parsed: ReturnType<typeof parseUiautomatorXml>;
 		const rotation = hierarchyRotation(dumped.data.xml);
@@ -186,8 +245,10 @@ function buildDriver(
 		return { success: true, data: last };
 	}
 
-	const input = async (cmd: string): DriverResult<void> => {
-		const res = await runChecked(session, cmd, "E_HID");
+	const input = async (cmd: string, timeoutMs?: number): DriverResult<void> => {
+		last = undefined;
+		const res = await runChecked(session, cmd, "E_HID", timeoutMs);
+		last = undefined;
 		return res.success ? unit : res;
 	};
 
@@ -216,9 +277,14 @@ function buildDriver(
 	};
 
 	const typeText: Driver["typeText"] = async (text) => {
-		const argv = textArgv(text);
-		if (!argv.success) return argv;
-		return argv.data.length === 0 ? unit : input(shellCommand(argv.data));
+		const argvs = textArgvs(text);
+		if (!argvs.success) return argvs;
+		if (argvs.data.length === 0) return unit;
+		// every `input text` is its own JVM start (hundreds of ms, seconds under load): budget per piece
+		return input(
+			argvs.data.map((argv) => shellCommand(argv)).join(" && "),
+			INPUT_TEXT_BASE_MS + INPUT_TEXT_PIECE_MS * argvs.data.length
+		);
 	};
 
 	const key: Driver["key"] = async (name: KeyName, modifiers: readonly Modifier[] = []) => {
@@ -229,6 +295,16 @@ function buildDriver(
 		return res.data.exitCode === 0
 			? unit
 			: driverErr("E_UNSUPPORTED", "key modifiers need Android 13+ (`input keycombination`)");
+	};
+
+	/** See `RepeatingKeys`: N presses in one round trip (`input keyevent 67 67 67 …`). */
+	const pressKeyRepeat: RepeatingKeys["pressKeyRepeat"] = async (name, times) => {
+		const argvs = keyRepeatArgvs(keyNameKeycode(name), times);
+		if (argvs.length === 0) return unit;
+		return input(
+			argvs.map((argv) => shellCommand(argv)).join(" && "),
+			INPUT_TEXT_BASE_MS + INPUT_TEXT_PIECE_MS * argvs.length
+		);
 	};
 
 	const pressButton: Driver["pressButton"] = async (button: HardwareButton) => {
@@ -344,6 +420,7 @@ function buildDriver(
 		pinch: unsupported("pinch"),
 		typeText,
 		key,
+		pressKeyRepeat,
 		pressButton,
 		screenshot,
 		orientation,
@@ -351,7 +428,9 @@ function buildDriver(
 		alert,
 		appearance,
 		clipboard,
-		app: createAppCommands({ session, exec, adb, serial, ...(log ? { log } : {}) }),
+		app: invalidating(createAppCommands({ session, exec, adb, serial, ...(log ? { log } : {}) }), () => {
+			last = undefined;
+		}),
 		close: () => session.close(),
 	};
 }

@@ -8,6 +8,7 @@ import {
 	readScreen,
 	rotatedScreen,
 	rotationToOrientation,
+	screenFromProbe,
 	waitForBoot,
 } from "./android-device";
 import { fakeAndroidHost } from "./android-host.testing";
@@ -52,6 +53,19 @@ describe("rotation helpers", () => {
 
 	test("orientation round trip", () => {
 		for (const r of [0, 1, 2, 3] as const) expect(orientationToRotation(rotationToOrientation(r))).toBe(r);
+	});
+});
+
+describe("screenFromProbe", () => {
+	test("reads size and density from the combined output", () => {
+		expect(screenFromProbe("1\nPhysical size: 1080x2424\nPhysical density: 420\n")).toEqual({
+			width: 1080,
+			height: 2424,
+			scale: 2.625,
+			rotation: 0,
+		});
+		expect(screenFromProbe("1\n")).toBeUndefined();
+		expect(screenFromProbe("1\nPhysical size: 100x200\n")?.scale).toBe(1);
 	});
 });
 

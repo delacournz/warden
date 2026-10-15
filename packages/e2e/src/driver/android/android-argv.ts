@@ -44,6 +44,18 @@ export function keyeventArgv(keycode: number): string[] {
 	return ["input", "keyevent", String(keycode)];
 }
 
+/** Keycodes per `input keyevent` call; more are chunked into further calls. */
+export const KEYEVENT_CHUNK = 32;
+
+/** `times` presses of one keycode as `input keyevent` argvs (one process start per chunk instead of per key). */
+export function keyRepeatArgvs(keycode: number, times: number): string[][] {
+	const argvs: string[][] = [];
+	for (let left = Math.max(0, Math.floor(times)); left > 0; left -= KEYEVENT_CHUNK) {
+		argvs.push(["input", "keyevent", ...Array<string>(Math.min(left, KEYEVENT_CHUNK)).fill(String(keycode))]);
+	}
+	return argvs;
+}
+
 /** `HardwareButton` to Android keycode; `shake` has no keycode. */
 export function buttonKeycode(button: HardwareButton): number | undefined {
 	switch (button) {
@@ -88,12 +100,34 @@ export function keyNameKeycode(key: KeyName): number {
 }
 
 /**
- * `input text`: printable ASCII only. Spaces become `%s` (the one escape `input` understands); a literal
- * `%s` cannot be expressed so it is rejected rather than silently turned into a space. Anything else
- * is `E_UNSUPPORTED_TEXT` (the caller may fall back to the clipboard). Empty text yields an empty argv.
+ * Split `text` into the pieces that are each safe for ONE `input text` call. `input text` turns `%s` into a
+ * space and treats `%` as an escape start (the next character is consumed by the escape check, so `%%s` and
+ * `50% off` come out wrong). A `%` followed by a space or an `s` is therefore the last character of its piece:
+ * the next call starts clean, and the pieces are typed back to back.
  */
-export function textArgv(text: string): Result<string[], DriverError> {
-	if (text === "") return { success: true, data: [] };
+function splitForInputText(text: string): string[] {
+	const pieces: string[] = [];
+	let current = "";
+	for (let i = 0; i < text.length; i++) {
+		const ch = text.charAt(i);
+		current += ch;
+		const next = text.charAt(i + 1);
+		if (ch === "%" && (next === " " || next === "s")) {
+			pieces.push(current);
+			current = "";
+		}
+	}
+	if (current !== "") pieces.push(current);
+	return pieces;
+}
+
+/**
+ * `input text` argvs for `text`: printable ASCII only, anything else is `E_UNSUPPORTED_TEXT` (no unicode path
+ * without an IME or app helper). Spaces become `%s` (the one escape `input` understands) and a literal `%`
+ * before a space or `s` is typed by splitting into separate calls (see {@link splitForInputText}); quoting
+ * for the shell is {@link shellCommand}'s job. Empty text yields no argv.
+ */
+export function textArgvs(text: string): Result<string[][], DriverError> {
 	for (const ch of text) {
 		const code = ch.codePointAt(0) ?? 0;
 		if (code < 0x20 || code > 0x7e) {
@@ -103,10 +137,7 @@ export function textArgv(text: string): Result<string[], DriverError> {
 			);
 		}
 	}
-	if (text.includes("%s")) {
-		return driverErr("E_UNSUPPORTED_TEXT", "Android `input text` cannot type a literal `%s` (it means a space)");
-	}
-	return { success: true, data: ["input", "text", text.replace(/ /g, "%s")] };
+	return { success: true, data: splitForInputText(text).map((piece) => ["input", "text", piece.replace(/ /g, "%s")]) };
 }
 
 export function startUrlArgv(url: string): string[] {
@@ -162,9 +193,14 @@ export function dumpTtyHostArgv(adb: string, serial: string): string[] {
 	return [adb, "-s", serial, "exec-out", "uiautomator", "dump", "/dev/tty"];
 }
 
-/** Route 3: dump to a file on the device then `cat` it (works on every image). */
+/**
+ * Route 3: dump to a file on the device then `cat` it (works on every image). The file is removed first so a
+ * failed dump can never hand back the previous screen; uiautomator's own message (`ERROR: null root node…`)
+ * is echoed when no file appears.
+ */
 export function dumpFileCommand(path: string = DUMP_FILE_PATH): string {
-	return `${shellCommand(["uiautomator", "dump", path])} >/dev/null 2>&1; ${shellCommand(["cat", path])}`;
+	const file = shellQuote(path);
+	return `rm -f ${file}; OUT=$(uiautomator dump ${file} 2>&1); cat ${file} 2>/dev/null || echo "$OUT"`;
 }
 
 /** Host argv: `adb -s <serial> install -r <apk>`. */

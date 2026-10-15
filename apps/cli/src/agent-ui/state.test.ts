@@ -3,7 +3,16 @@ import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { el, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
-import { bumpGeneration, readLastSnapshot, readState, uiDir, writeLastSnapshot, writeState } from "./state";
+import {
+	bumpGeneration,
+	readDumpRoute,
+	readLastSnapshot,
+	readState,
+	uiDir,
+	writeDumpRoute,
+	writeLastSnapshot,
+	writeState,
+} from "./state";
 
 let home: string | undefined;
 afterEach(() => {
@@ -49,5 +58,17 @@ describe("ui state", () => {
 		writeFileSync(join(uiDir(ctx, "U1"), "last-snapshot.json"), '{"generation":1}');
 		expect(readState(ctx, "U1").generation).toBe(0);
 		expect(readLastSnapshot(ctx, "U1")).toBeUndefined();
+	});
+});
+
+describe("android dump route memory", () => {
+	test("round-trips per device and ignores garbage", () => {
+		const ctx = setup();
+		expect(readDumpRoute(ctx, "emulator-5554")).toBeUndefined();
+		writeDumpRoute(ctx, "emulator-5554", "file");
+		expect(readDumpRoute(ctx, "emulator-5554")).toBe("file");
+		expect(readDumpRoute(ctx, "emulator-5556")).toBeUndefined();
+		writeFileSync(join(uiDir(ctx, "emulator-5554"), "android-dump-route"), "bogus\n");
+		expect(readDumpRoute(ctx, "emulator-5554")).toBeUndefined();
 	});
 });
