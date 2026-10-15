@@ -3,7 +3,7 @@ import { delimiter, join } from "node:path";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import { MIGRATIONS, wardenHome } from "@delacour/warden-core/store";
-import { defineCommand } from "../command";
+import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { codexDetected } from "../hooks/agents";
 import { hasWardenHook } from "../hooks/claude-settings";
@@ -12,8 +12,11 @@ import { errorMessage } from "../hooks/json";
 import { NPM_PACKAGE } from "../npm/platforms";
 import { emit } from "../output";
 import { type BuildInfo, currentBuild } from "../update/build-info";
+import { fetchHelper, tarExtractHelper } from "../update/fetch-helper";
 import { type InstallOrigin, installOrigin } from "../update/install-origin";
+import type { Fetch } from "../update/npm-registry";
 import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
+import { type HelperDeps, helperChecks, realHelperDeps } from "./doctor-helper";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 /** core failures make doctor exit 1; optional ones only warn */
@@ -176,10 +179,10 @@ export function ccacheProject(cwd: string): Probe {
 	});
 }
 
-export async function runChecks(ctx: CommandContext): Promise<DoctorCheck[]> {
+export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHelperDeps()): Promise<DoctorCheck[]> {
 	const home = ctx.env.HOME ?? "";
 	const { adb, emulator } = androidTools(ctx.env);
-	const [simctl, adbProbe, emulatorProbe, ccache] = await Promise.all([
+	const [simctl, adbProbe, emulatorProbe, ccache, simHelper] = await Promise.all([
 		tool(ctx, ["xcrun", "simctl", "help"], "xcrun simctl not available (install Xcode) — iOS disabled"),
 		tool(ctx, [adb, "version"], `${adb} not found (set ANDROID_HOME) — Android disabled`),
 		tool(ctx, [emulator, "-version"], `${emulator} not found (set ANDROID_HOME) — Android disabled`),
@@ -188,6 +191,7 @@ export async function runChecks(ctx: CommandContext): Promise<DoctorCheck[]> {
 			["ccache", "--version"],
 			"ccache not on PATH — `brew install ccache` to speed up native iOS cache-miss builds"
 		),
+		helperChecks(ctx, helper),
 	]);
 	return [
 		check("home", "core", homeWritable(wardenHome(ctx.env))),
@@ -202,6 +206,7 @@ export async function runChecks(ctx: CommandContext): Promise<DoctorCheck[]> {
 		),
 		check("ccache", "optional", ccache),
 		check("ccache-project", "optional", ccacheProject(ctx.cwd)),
+		...simHelper,
 		check("path", "optional", onPath(ctx, home)),
 		check("claude-hook", "optional", claudeHook(home)),
 		check("codex-hook", "optional", codexHook(ctx)),
@@ -224,9 +229,40 @@ function mark(ctx: CommandContext, status: CheckStatus): string {
 	}
 }
 
-async function doctor(ctx: CommandContext, json: boolean): Promise<number> {
+/** Outside world for `warden doctor`, injectable for tests. */
+export type DoctorDeps = {
+	helper: HelperDeps;
+	/** `--fetch-helper` downloads from GitHub releases (or `WARDEN_HELPER_URL`) */
+	fetch: Fetch;
+};
+
+type FetchedHelperReport = { dir: string; url: string; sha256: string };
+
+async function doctor(
+	ctx: CommandContext,
+	deps: DoctorDeps,
+	opts: { json: boolean; fetchHelper: boolean }
+): Promise<number> {
 	const { color } = ctx.ui;
-	const checks = await runChecks(ctx);
+	let fetched: FetchedHelperReport | undefined;
+	if (opts.fetchHelper) {
+		const result = await fetchHelper({
+			fetch: deps.fetch,
+			extract: tarExtractHelper(ctx.exec),
+			env: ctx.env,
+			platform: deps.helper.platform,
+			arch: deps.helper.arch,
+			version: deps.helper.version,
+			wardenHome: wardenHome(ctx.env),
+		});
+		if (!result.success) {
+			ctx.err(color.red(`warden doctor: --fetch-helper: ${result.error}`));
+			return 1;
+		}
+		fetched = result.data;
+		if (!opts.json) ctx.out(`fetched warden-simd → ${fetched.dir} (${fetched.url})`);
+	}
+	const checks = await runChecks(ctx, deps.helper);
 	const ok = checks.every((c) => c.status !== "fail");
 	const width = Math.max(...checks.map((c) => c.name.length));
 	const text = checks
@@ -235,15 +271,24 @@ async function doctor(ctx: CommandContext, json: boolean): Promise<number> {
 			return `${mark(ctx, c.status)} ${c.name.padEnd(width)}  ${detail}`;
 		})
 		.join("\n");
-	emit(ctx, json, { ok, checks }, text);
+	emit(ctx, opts.json, { ok, checks, ...(fetched ? { helperFetch: fetched } : {}) }, text);
 	return ok ? 0 : 1;
 }
 
-export const doctorCommand = defineCommand({
-	name: "doctor",
-	summary:
-		"check warden's setup: home, db, device tools, install method, PATH, Claude/Codex hooks + skill, stale leases",
-	register: (cmd, ctx, done) => {
-		cmd.option("--json", "machine-readable output").action(async (opts) => done(await doctor(ctx, opts.json === true)));
-	},
-});
+export function createDoctorCommand(deps: DoctorDeps): Command {
+	return defineCommand({
+		name: "doctor",
+		summary:
+			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases",
+		register: (cmd, ctx, done) => {
+			cmd
+				.option("--fetch-helper", "download warden-simd for this version into $WARDEN_HOME/simd/<version>/ first")
+				.option("--json", "machine-readable output")
+				.action(async (opts) =>
+					done(await doctor(ctx, deps, { json: opts.json === true, fetchHelper: opts.fetchHelper === true }))
+				);
+		},
+	});
+}
+
+export const doctorCommand: Command = createDoctorCommand({ helper: realHelperDeps(), fetch: (url) => fetch(url) });

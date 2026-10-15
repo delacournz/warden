@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { bunExec } from "@delacour/warden-core/exec";
 import { MIGRATIONS } from "@delacour/warden-core/store";
 import { Chalk } from "chalk";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
 import { mergeCodexHooks } from "../hooks/codex-hooks";
+import { fakeHelperDist } from "../npm/helper.testing";
+import { packHelper } from "../npm/helper-asset";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
-import { type DoctorCheck, doctorCommand, installProbe } from "./doctor";
+import { createDoctorCommand, type DoctorCheck, doctorCommand, installProbe } from "./doctor";
+import type { HelperDeps } from "./doctor-helper";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -66,8 +72,12 @@ describe("warden doctor", () => {
 	test("everything installed → all ok", async () => {
 		const c = setup(["--json"]);
 		c.env = installEverything(c.cwd, c.env);
+		const helper = join(c.cwd, "warden-simd");
+		writeFileSync(helper, "#!/bin/sh\n");
+		c.env = { ...c.env, WARDEN_SIMD: helper };
 		expect(await doctorCommand.run(c)).toBe(0);
 		expect(checks(c).filter((x) => x.status !== "ok")).toEqual([]);
+		expect(byName(c)["sim-helper"]?.detail).toContain(helper);
 	});
 
 	test("install: always reported, ok", async () => {
@@ -225,5 +235,93 @@ describe("installProbe", () => {
 		expect(installProbe({ channel: "dev", version: "0.3.0", sourceDir: "/repo" }, "/bin/bun").detail).toBe(
 			"running from source /repo — `warden update` builds ~/.local/bin/warden"
 		);
+	});
+});
+
+describe("warden doctor --fetch-helper", () => {
+	const TGZ = new TextEncoder().encode("tarball");
+	const sha = createHash("sha256").update(TGZ).digest("hex");
+	const BASE = "https://example.test/h";
+	const helperDeps = (overrides: Partial<HelperDeps> = {}): HelperDeps => ({
+		platform: "darwin",
+		arch: "arm64",
+		execPath: "/nowhere/warden",
+		importDir: "/",
+		version: "0.3.0",
+		exists: () => false,
+		realpath: (path) => path,
+		readFile: () => undefined,
+		...overrides,
+	});
+
+	test("downloads into $WARDEN_HOME/simd/<version>, then runs the checks", async () => {
+		const asked: string[] = [];
+		const extracted: string[] = [];
+		const c = setup(["--fetch-helper", "--json"], async (cmd) => {
+			if (cmd[0] === "tar") {
+				extracted.push(cmd.join(" "));
+				return { exitCode: 1, stdout: "", stderr: "tar: stubbed" };
+			}
+			return { exitCode: 127, stdout: "", stderr: "" };
+		});
+		c.env = { ...c.env, WARDEN_HELPER_URL: BASE };
+		const command = createDoctorCommand({
+			helper: helperDeps(),
+			fetch: async (url) => {
+				asked.push(url);
+				return url.endsWith("SHA256SUMS") ? new Response(`${sha}  warden-simd-darwin-arm64.tgz\n`) : new Response(TGZ);
+			},
+		});
+		expect(await command.run(c)).toBe(1);
+		expect(asked).toEqual([`${BASE}/SHA256SUMS`, `${BASE}/warden-simd-darwin-arm64.tgz`]);
+		expect(extracted).toHaveLength(1);
+		expect(c.stderr.join("\n")).toContain("--fetch-helper: ");
+		expect(c.stderr.join("\n")).toContain("tar: stubbed");
+	});
+
+	test("darwin-x64: refuses without fetching", async () => {
+		const c = setup(["--fetch-helper", "--json"]);
+		const command = createDoctorCommand({
+			helper: helperDeps({ arch: "x64" }),
+			fetch: async () => {
+				throw new Error("should not fetch");
+			},
+		});
+		expect(await command.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("no helper for darwin-x64 in this version");
+	});
+
+	test("success: extracts for real, then the sim-helper row finds it under $WARDEN_HOME/simd/<version>", async () => {
+		const dist = join(tmpdir(), `warden-doctor-dist-${process.pid}`);
+		const out = join(tmpdir(), `warden-doctor-out-${process.pid}`);
+		try {
+			fakeHelperDist(dist);
+			const packed = await packHelper({ distDir: dist, outDir: out, exec: bunExec });
+			if (!packed.success) throw new Error(packed.error);
+			const bytes = readFileSync(packed.data.tgz);
+			const sums = `${packed.data.sha256}  warden-simd-darwin-arm64.tgz\n`;
+
+			const c = setup(["--fetch-helper", "--json"], async (cmd, opts) =>
+				cmd[0] === "tar" ? bunExec(cmd, opts) : { exitCode: 127, stdout: "", stderr: "" }
+			);
+			c.env = { ...c.env, WARDEN_HELPER_URL: BASE };
+			const command = createDoctorCommand({
+				helper: helperDeps({
+					exists: existsSync,
+					readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
+				}),
+				fetch: async (url) => new Response(url.endsWith("SHA256SUMS") ? sums : bytes),
+			});
+			expect(await command.run(c)).toBe(0);
+			const report = JSON.parse(c.stdout.join("\n"));
+			const dir = join(c.env.WARDEN_HOME ?? "", "simd", "0.3.0");
+			expect(report.helperFetch).toMatchObject({ dir, url: `${BASE}/warden-simd-darwin-arm64.tgz` });
+			expect(byName(c)["sim-helper"]).toMatchObject({ status: "ok" });
+			expect(byName(c)["sim-helper"]?.detail).toContain(join(dir, "warden-simd"));
+			expect(byName(c)["sim-helper"]?.detail).toContain("warden-simd 0.1.0, idb 1.1.8");
+		} finally {
+			rmSync(dist, { recursive: true, force: true });
+			rmSync(out, { recursive: true, force: true });
+		}
 	});
 });

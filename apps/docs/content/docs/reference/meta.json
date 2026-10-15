@@ -1,4 +1,4 @@
 {
 	"title": "Reference",
-	"pages": ["cli", "configuration", "environment"]
+	"pages": ["cli", "configuration", "environment", "e2e-driver"]
 }

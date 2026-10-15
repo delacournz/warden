@@ -294,7 +294,7 @@ The agent hook entrypoints. Called by Claude Code / Codex, not by hand.
 
 ### `warden doctor`
 
-Check home, db, device tools, install method (and its upgrade command), `PATH`, Claude/Codex hooks + skill, and stale leases.
+Check home, db, device tools, the iOS simulator helper, install method (and its upgrade command), `PATH`, Claude/Codex hooks + skill, and stale leases. `--fetch-helper` first downloads `warden-simd` for this version into `$WARDEN_HOME/simd/<version>/`. See [iOS driver helper](/docs/reference/e2e-driver).
 
 ### `warden update`
 
