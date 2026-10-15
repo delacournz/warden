@@ -12,7 +12,7 @@ import { type OpenIosDriverOptions, openIosDriver } from "./ios/ios-driver";
  */
 export type OpenDriverDeps = Omit<OpenIosDriverOptions, "udid" | "env" | "exec"> & {
 	exec?: Exec;
-	android?: Omit<AndroidDriverOptions, "serial" | "exec" | "log"> & { adb?: string };
+	android?: Omit<AndroidDriverOptions, "serial" | "exec" | "log" | "adb"> & { adb?: string };
 };
 
 /** `WARDEN_E2E_DEBUG=1` logs every helper op and simctl call with its duration to stderr. */
@@ -36,7 +36,7 @@ export async function openDriver(env: E2eEnv, deps: OpenDriverDeps = {}): Driver
 				...(deps.log ? {} : debug ? { log: stderrLog } : {}),
 			});
 		case "android": {
-			const android = deps.android ?? {};
+			const android: NonNullable<OpenDriverDeps["android"]> = deps.android ?? {};
 			const log = deps.log ?? (debug ? stderrLog : undefined);
 			return openAndroidDriver({
 				...android,
