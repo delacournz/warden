@@ -119,10 +119,11 @@ describe("openIosDriver", () => {
 		expect(helper.spawns[0]?.[0]).toBe("/custom/warden-simd");
 	});
 
-	test("no helper anywhere → E_HELPER_MISSING with the doctor hint", async () => {
+	test("no helper anywhere → E_HELPER_MISSING with the doctor hint, before any simctl call", async () => {
+		const calls: ExecCall[] = [];
 		const result = await openIosDriver({
 			udid: UDID,
-			exec: fakeExec([["xcrun", {}]]),
+			exec: fakeExec([["xcrun", {}]], calls),
 			exists: () => false,
 			realpath: (path) => path,
 			execPath: "/usr/local/bin/warden",
@@ -131,6 +132,9 @@ describe("openIosDriver", () => {
 		});
 		expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
 		expect(!result.success && result.error.message).toContain("warden doctor");
+		// the AutomationEnabled write (xcrun simctl spawn … defaults write) must not run for a driver that cannot open:
+		// on a cold CI mac that call takes seconds and the package's open test timed out on it
+		expect(calls).toEqual([]);
 	});
 
 	test("a live socket is preferred over spawning", async () => {

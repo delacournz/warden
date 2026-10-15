@@ -457,6 +457,12 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 	const now = o.now ?? Date.now;
 	const exec = o.debug ? timedExec(o.exec, log, now) : o.exec;
 	const simctl = createSimctl({ udid: o.udid, exec, ...(o.devicesRoot ? { devicesRoot: o.devicesRoot } : {}) });
+	// a driver that cannot start (no socket, no helper binary) fails before any simctl call: the AutomationEnabled
+	// write takes seconds on a cold machine and would only delay the E_HELPER_MISSING answer
+	if (!(o.socketPath ?? o.env?.simdSocket)) {
+		const helper = resolveHelper(o);
+		if (!helper.success) return helper;
+	}
 	const [client, automation] = await Promise.all([connect(o, log), simctl.enableAutomation()]);
 	if (!automation.success) log(`[ios] could not enable AX automation: ${automation.error.message}`);
 	if (!client.success) return client;

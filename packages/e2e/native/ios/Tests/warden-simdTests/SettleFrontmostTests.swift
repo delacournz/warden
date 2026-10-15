@@ -14,12 +14,26 @@ final class FakeReader: UIAutomation, @unchecked Sendable {
   private(set) var requests = 0
   /// How long opening a stream takes (a loaded machine: seconds).
   var openDelay: Duration = .zero
+  /// While true, every open blocks until `releaseOpens()` (a deterministic "still opening" window).
+  var holdOpens = false
+  private var heldOpens: [CheckedContinuation<Void, Never>] = []
 
   func quiescence(
     _ query: AccessibilityElementQuery, parameters: QuiescenceParameters
   ) async throws -> AsyncThrowingStream<QuiescenceEvent, Error> {
     lock.withLock { requests += 1 }
     if openDelay > .zero { try await Task.sleep(for: openDelay) }
+    if lock.withLock({ holdOpens }) {
+      await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+        let held = lock.withLock { () -> Bool in
+          guard holdOpens else { return false }
+          heldOpens.append(c)
+          return true
+        }
+        if !held { c.resume() }
+      }
+      try Task.checkCancellation()
+    }
     let (stream, continuation) = AsyncThrowingStream<QuiescenceEvent, Error>.makeStream()
     lock.withLock {
       self.continuation?.finish()
@@ -27,6 +41,16 @@ final class FakeReader: UIAutomation, @unchecked Sendable {
       opened += 1
     }
     return stream
+  }
+
+  /// Lets every held open complete; later opens complete at once.
+  func releaseOpens() {
+    let held = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+      holdOpens = false
+      defer { heldOpens.removeAll() }
+      return heldOpens
+    }
+    for c in held { c.resume() }
   }
 
   func emit(_ event: QuiescenceEvent) {
@@ -225,7 +249,9 @@ final class SettleFrontmostTests: XCTestCase {
   /// away (observed live: a reopen cancelled 2.2 s into its opening).
   func testNoRestartWhileTheStreamIsStillOpening() async throws {
     let reader = FakeReader()
-    reader.openDelay = .milliseconds(1800)
+    // held, not delayed: a sleep racing a delay flaked on a loaded CI runner (the open completed first, the
+    // unbound stream was restarted every 1.5 s and the test's quiet event went to a cancelled stream)
+    reader.holdOpens = true
     let monitor = QuiescenceMonitor(reader: reader)
     let script = PidScript([app])
     let wait = Task {
@@ -233,6 +259,7 @@ final class SettleFrontmostTests: XCTestCase {
     }
     try await Task.sleep(for: .milliseconds(1500))
     XCTAssertEqual(reader.requests, 1, "the first open is still in flight and must not be restarted")
+    reader.releaseOpens()
     await reader.waitOpened()
     reader.emit(.state(.quiet, pid: app))
     let outcome = try await wait.value
