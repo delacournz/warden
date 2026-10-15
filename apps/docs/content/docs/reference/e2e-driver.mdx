@@ -48,6 +48,7 @@ A standalone `warden` binary (from GitHub releases, or replaced by `warden updat
 |---|---|
 | `WARDEN_SIMD` | use this `warden-simd` binary |
 | `WARDEN_HELPER_DIR` | look for `warden-simd` in this directory |
+| `WARDEN_SIMD_PACE_MS`, `WARDEN_SIMD_HOLD_MS`, `WARDEN_SIMD_REPEAT_GAP_MS` | key timing for `typeText`: gap after each key (30 ms), hold per key (40 ms), extra wait before a repeated key (300 ms). The client sends the whole string; the helper paces it. |
 | `WARDEN_SIMD_SOCKET` | path of a running helper's socket. `warden e2e` and `warden batch` start one helper per leased device before the flows and set this for each job, so spec workers connect in milliseconds. Unset (a by-hand `bun test` run), the driver starts a helper on stdio itself. |
 | `WARDEN_HELPER_URL` | `--fetch-helper` only: directory URL holding `warden-simd-darwin-arm64.tgz` and `SHA256SUMS`, instead of the GitHub release for this version |
 | `WARDEN_RELEASE_REPO` | GitHub repo `--fetch-helper` downloads from (default `delacournz/warden`) |

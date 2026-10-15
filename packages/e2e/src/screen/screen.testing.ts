@@ -36,7 +36,7 @@ export const FIELD_FRAME = { x: 24, y: 200, width: 300, height: 44 };
 /**
  * A single text field that behaves like one: `typeText` appends, Backspace deletes the last character. `dropTypes`
  * makes the first N `typeText` calls silently do nothing (a flaky keyboard); `dropKeys` ignores the first N Backspaces; `dropCall` drops only the Nth (1-based)
- * once, e.g. the last character of a word. `lagReads` makes the accessibility value trail the keys: after every key
+ * once, e.g. the last character of a word. `dropTail` makes the first `dropTailCalls` (default 1) `typeText` calls lose their last N characters (a keyboard that drops the tail of a whole string). `lagReads` makes the accessibility value trail the keys: after every key
  * the next N reads (snapshot or hit-test) still show the value from before it.
  */
 export function fieldFixture(
@@ -45,6 +45,8 @@ export function fieldFixture(
 		secure?: boolean;
 		dropTypes?: number;
 		dropCall?: number;
+		dropTail?: number;
+		dropTailCalls?: number;
 		dropKeys?: number;
 		lagReads?: number;
 		focused?: boolean;
@@ -54,6 +56,7 @@ export function fieldFixture(
 		value: options.value ?? "",
 		drops: options.dropTypes ?? 0,
 		keyDrops: options.dropKeys ?? 0,
+		tailDrops: options.dropTail === undefined ? 0 : (options.dropTailCalls ?? 1),
 		typeCalls: 0,
 		shown: options.value ?? "",
 		lag: 0,
@@ -79,7 +82,10 @@ export function fieldFixture(
 			if (call.method === "typeText") {
 				state.typeCalls += 1;
 				if (state.drops > 0) state.drops -= 1;
-				else if (state.typeCalls !== options.dropCall) state.value += call.text;
+				else if (state.tailDrops > 0) {
+					state.tailDrops -= 1;
+					state.value += call.text.slice(0, Math.max(0, call.text.length - (options.dropTail ?? 0)));
+				} else if (state.typeCalls !== options.dropCall) state.value += call.text;
 				state.lag = lagReads;
 			} else if (call.method === "key" && call.key === "Backspace") {
 				if (state.keyDrops > 0) state.keyDrops -= 1;

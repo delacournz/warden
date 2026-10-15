@@ -26,6 +26,7 @@ import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
 import { connectSimd, type SimdClient, spawnSimd } from "./simd-client";
 import type { SimdSpawn } from "./simd-transport";
+import { typeTextBudgetMs } from "./type-budget";
 
 /**
  * The iOS `Driver`: input and AX through `warden-simd` (socket when `WARDEN_SIMD_SOCKET` is set, else a
@@ -189,7 +190,7 @@ export function createIosDriver(
 	}
 
 	async function typeText(text: string): DriverResult<void> {
-		const typed = await sendVoid("typeText", { text });
+		const typed = await sendVoid("typeText", { text }, typeTextBudgetMs(text));
 		if (typed.success || typed.error.code !== "E_UNSUPPORTED_TEXT") return typed;
 		const rest = restOf(typed.error, text);
 		if (rest === undefined) return typed;

@@ -103,7 +103,7 @@ describe("focusClearType", () => {
 		const clock = fakeClock();
 		const result = await focusClearType(driver, clock.sleep, { x: 5, y: 6 }, entryOf(driver), "xy");
 		expect(result.success).toBe(true);
-		expect(driver.calls.map((call) => call.method)).toEqual(["tap", "key", "key", "key", "typeText", "typeText"]);
+		expect(driver.calls.map((call) => call.method)).toEqual(["tap", "key", "key", "key", "typeText"]);
 		expect(driver.callsOf("tap")[0]?.point).toEqual({ x: 5, y: 6 });
 	});
 

@@ -62,6 +62,9 @@ icon: Variable
 | `WARDEN_E2E_FLOWS_DIR` | the suite's `flowsDir`, used to name each spec's flow id |
 | `WARDEN_SIMD_SOCKET` | the pre-warmed iOS helper's socket (`warmDrivers`); unset, the driver starts a helper itself |
 | `WARDEN_SIMD`, `WARDEN_HELPER_DIR` | where the `warden-simd` binary is ([iOS driver helper](/docs/reference/e2e-driver)); `warden e2e` sets `WARDEN_HELPER_DIR` |
+| `WARDEN_SIMD_PACE_MS` | iOS helper: gap after each typed key (default 30 ms) |
+| `WARDEN_SIMD_HOLD_MS` | iOS helper: how long each key is held down (default 40 ms) |
+| `WARDEN_SIMD_REPEAT_GAP_MS` | iOS helper: extra wait before a key equal to the previous one (default 300 ms). Raise the three if a slow app drops typed characters |
 | `WARDEN_HEADLESS` | `1` on a headless run |
 | `WARDEN_E2E_DEBUG` | `1`: log every helper operation and `simctl` call with its duration to stderr. Set it yourself |
 | `WARDEN_BUN` | read by `warden e2e`: the `bun` to run specs with (default: `bun` on `PATH`) |

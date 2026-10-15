@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
-import { KEY_PACE_MS } from "@delacour/warden-e2e/driver/typing";
 import type { UiDeps } from "../agent-ui/driver";
 import { readState } from "../agent-ui/state";
 import type { VideoSpec } from "../agent-ui/video";
@@ -168,12 +167,10 @@ describe("fill", () => {
 			.map((call) => call.method)
 			.filter((m) => m !== "snapshot" && m !== "elementAtPoint");
 		const backspaces: string[] = Array.from({ length: 7 }, () => "key");
-		const characters: string[] = Array.from({ length: 8 }, () => "typeText");
-		expect(methods).toEqual(["tap", ...backspaces, ...characters, "close"]);
+		expect(methods).toEqual(["tap", ...backspaces, "typeText", "close"]);
 		expect(h.driver.callsOf("tap")[0]?.point).toEqual({ x: 351, y: 122 });
 		expect(h.driver.callsOf("key").every((call) => call.key === "Backspace")).toBe(true);
-		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual([..."new@x.co"]);
-		expect(h.clock.t - 1_000_000).toBeGreaterThanOrEqual(15 * KEY_PACE_MS);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
 		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
@@ -184,7 +181,7 @@ describe("fill", () => {
 		const out = doc(h.c);
 		expect(out.error.code).toBe("failed");
 		expect(out.error.message).toBe('fill did not take: expected "new" but the field holds "old"');
-		expect(h.driver.callsOf("typeText")).toHaveLength(6);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new", "new"]);
 	});
 
 	test("--secure: no read-back, reported as unconfirmed, the text is neither echoed nor recorded", async () => {
@@ -230,7 +227,7 @@ describe("type / key", () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(await h.run("type", "hello", "--submit", "--json")).toBe(0);
 		expect(h.driver.calls.filter((call) => call.method === "typeText" || call.method === "key")).toEqual([
-			...[..."hello"].map((text) => ({ method: "typeText" as const, text })),
+			{ method: "typeText", text: "hello" },
 			{ method: "key", key: "Enter" },
 		]);
 		expect(doc(h.c).result).toMatchObject({ action: "type", submitted: true });

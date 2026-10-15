@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ok } from "@delacour/warden-types/result";
 import { failWith, fakeDriver, snapshotOf } from "./driver.testing";
-import { KEY_PACE_MS, pressKeys, type RepeatingKeys, typeText } from "./typing";
+import { pressKeys, type RepeatingKeys, typeText } from "./typing";
 
 function recorder() {
 	const sleeps: number[] = [];
@@ -9,12 +9,12 @@ function recorder() {
 }
 
 describe("typeText", () => {
-	test("iOS: one request per grapheme, paced", async () => {
+	test("iOS: the whole string in one request, no client pacing (the helper paces)", async () => {
 		const driver = fakeDriver({ screens: [snapshotOf([])], platform: "ios" });
 		const { sleeps, sleep } = recorder();
 		expect((await typeText(driver, sleep, "a@é👍🏽")).success).toBe(true);
-		expect(driver.callsOf("typeText").map((call) => call.text)).toEqual(["a", "@", "é", "👍🏽"]);
-		expect(sleeps).toEqual([KEY_PACE_MS, KEY_PACE_MS, KEY_PACE_MS, KEY_PACE_MS]);
+		expect(driver.callsOf("typeText").map((call) => call.text)).toEqual(["a@é👍🏽"]);
+		expect(sleeps).toEqual([]);
 	});
 
 	test("Android: the whole string in one request", async () => {
@@ -28,22 +28,22 @@ describe("typeText", () => {
 	test("stops at the first failure and returns it", async () => {
 		const driver = fakeDriver({
 			screens: [snapshotOf([])],
-			onCall: (call) => (call.method === "typeText" && call.text === "b" ? failWith("E_TIMEOUT") : undefined),
+			onCall: (call) => (call.method === "typeText" ? failWith("E_TIMEOUT") : undefined),
 		});
 		const { sleep } = recorder();
 		const result = await typeText(driver, sleep, "abc");
 		expect(result.success).toBe(false);
-		expect(driver.callsOf("typeText")).toHaveLength(2);
+		expect(driver.callsOf("typeText")).toHaveLength(1);
 	});
 });
 
 describe("pressKeys", () => {
-	test("presses the key that many times, paced on iOS", async () => {
+	test("presses the key that many times, not paced by the client", async () => {
 		const driver = fakeDriver({ screens: [snapshotOf([])], platform: "ios" });
 		const { sleeps, sleep } = recorder();
 		await pressKeys(driver, sleep, "Backspace", 3);
 		expect(driver.callsOf("key")).toHaveLength(3);
-		expect(sleeps).toEqual([KEY_PACE_MS, KEY_PACE_MS, KEY_PACE_MS]);
+		expect(sleeps).toEqual([]);
 	});
 
 	test("zero presses do nothing", async () => {

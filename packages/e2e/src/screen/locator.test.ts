@@ -253,7 +253,7 @@ describe("fill", () => {
 	});
 
 	test("a dropped last character is retried once with a clear and a retype", async () => {
-		const { driver, state } = fieldFixture({ dropCall: 5 });
+		const { driver, state } = fieldFixture({ dropTail: 1 });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("hello");
 		expect(state.value).toBe("hello");
@@ -263,18 +263,18 @@ describe("fill", () => {
 	});
 
 	test("both attempts failing is ACTION_FAILED naming the expected text and what each attempt held", async () => {
-		const { driver } = fieldFixture({ dropTypes: 7 });
+		const { driver } = fieldFixture({ dropTail: 2, dropTailCalls: 2 });
 		const { screen } = setup(driver);
 		const error = await failure(screen.getByTestId("field").fill("hello"));
 		expect(error.code).toBe("ACTION_FAILED");
 		expect(error.message).toBe(
-			'getByTestId("field"): fill did not take: expected "hello" but the field holds "llo" (first attempt held "")'
+			'getByTestId("field"): fill did not take: expected "hello" but the field holds "hel" (first attempt held "hel")'
 		);
 		expect(error.screen).toBeUndefined();
 	});
 
 	test("a stale read of the old value is not trusted when it equals the wanted text", async () => {
-		const { driver, state } = fieldFixture({ value: "hello", lagReads: 2, dropCall: 5 });
+		const { driver, state } = fieldFixture({ value: "hello", lagReads: 2, dropTail: 1 });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("hello");
 		expect(state.value).toBe("hello");
@@ -311,12 +311,12 @@ describe("fill", () => {
 		expect(driver.callsOf("elementAtPoint")[0]?.point).toEqual({ x: 174, y: 222 });
 	});
 
-	test("iOS types one character per request, a key pace apart", async () => {
+	test("iOS types the whole string in one request, with no client pacing", async () => {
 		const { driver } = fieldFixture();
 		const { host, screen } = setup(driver);
 		await screen.getByTestId("field").fill("abc");
-		expect(driver.callsOf("typeText").map((call) => call.text)).toEqual(["a", "b", "c"]);
-		expect(host.clock.sleeps.filter((ms) => ms === KEY_PACE_MS)).toHaveLength(3);
+		expect(driver.callsOf("typeText").map((call) => call.text)).toEqual(["abc"]);
+		expect(host.clock.sleeps.filter((ms) => ms === KEY_PACE_MS)).toHaveLength(0);
 	});
 
 	test("secure fields are not verified", async () => {
@@ -399,12 +399,12 @@ describe("type, clear and press", () => {
 		expect(error.message).toContain('clear did not empty the field: it holds "ab"');
 	});
 
-	test("type is paced like fill and does not verify", async () => {
+	test("type sends the whole string unpaced and does not verify", async () => {
 		const { driver, state } = fieldFixture({ focused: true });
 		const { host, screen } = setup(driver);
 		await screen.getByTestId("field").type("xy");
 		expect(state.value).toBe("xy");
-		expect(host.clock.sleeps).toEqual([KEY_PACE_MS, KEY_PACE_MS]);
+		expect(host.clock.sleeps).toEqual([]);
 		expect(driver.callsOf("elementAtPoint")).toEqual([]);
 	});
 
