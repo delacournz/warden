@@ -1,4 +1,5 @@
 import type { Server } from "bun";
+import type { NetworkEntry } from "./devtools.types";
 import type { InspectorTarget } from "./inspector";
 
 type SocketData = { connection: FakeConnection | undefined };
@@ -77,6 +78,11 @@ export function startFakeMetro(options: FakeMetroOptions = {}): FakeMetro {
 
 	const server: Server<SocketData> = Bun.serve<SocketData>({
 		port: 0,
+		// Loopback only: a wildcard bind can coexist with another process's 127.0.0.1 bind on the same port,
+		// and connections to 127.0.0.1 then go to that other process.
+		hostname: "127.0.0.1",
+		// Never share the port: with SO_REUSEPORT a parallel test run could steal this suite's connections.
+		reusePort: false,
 		fetch(req, srv) {
 			const url = new URL(req.url);
 			if (url.pathname === "/inspector/debug") {
@@ -155,4 +161,40 @@ export function startFakeMetro(options: FakeMetroOptions = {}): FakeMetro {
 			void server.stop(true);
 		},
 	};
+}
+
+export type PageEntry = Omit<NetworkEntry, "id">;
+
+export const page = (url: string, extra: Partial<PageEntry> = {}): PageEntry => ({
+	ts: 1,
+	method: "GET",
+	url,
+	status: 200,
+	durationMs: 5,
+	requestHeaders: {},
+	responseHeaders: {},
+	...extra,
+});
+
+/** A page whose ring the test fills; `installed` mimics the wrapper surviving (false after a JS reload). */
+export function fakePage() {
+	const state = { queue: [] as PageEntry[], installed: false, installs: [] as string[], drains: 0 };
+	const respond: NonNullable<Parameters<typeof startFakeMetro>[0]>["respond"] = (request) => {
+		if (request.method !== "Runtime.evaluate") return undefined;
+		const expression = String(request.params.expression);
+		if (expression.includes("__warden_net_patched")) {
+			state.installs.push(expression);
+			state.installed = true;
+			return { result: { result: { type: "string", value: "patched" } } };
+		}
+		if (expression.includes("__warden_net_drain()")) {
+			state.drains++;
+			if (!state.installed) return { result: { result: { type: "object", subtype: "null", value: null } } };
+			const out = JSON.stringify(state.queue);
+			state.queue = [];
+			return { result: { result: { type: "string", value: out } } };
+		}
+		return undefined;
+	};
+	return { state, respond };
 }

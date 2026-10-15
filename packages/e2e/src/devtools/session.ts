@@ -1,6 +1,7 @@
 import { ok, type Result } from "@delacour/warden-types/result";
 import { type CdpClient, describeException, openCdp, readEvaluateReply } from "./cdp";
 import {
+	type CdpTap,
 	type DevtoolsError,
 	type DevtoolsResult,
 	devtoolsErr,
@@ -41,6 +42,8 @@ export type ConnectDevtoolsOptions = {
 	reconnectBackoffMs?: number;
 	/** reconnect attempts before giving up (default 10) */
 	maxReconnectAttempts?: number;
+	/** Called for every CDP event from the moment each socket opens, handshake included (so replays are seen). */
+	taps?: readonly CdpTap[];
 	/** how long `reloadJs` waits for the app to start tearing its JS context down (default 3 s) */
 	reloadWaitMs?: number;
 };
@@ -65,6 +68,8 @@ export type DevtoolsSession = {
 	) => Promise<DevtoolsResult<unknown>>;
 	/** CDP event subscription that survives reconnects */
 	onCdp: (method: string, handler: (params: unknown) => void) => () => void;
+	/** Tap on every CDP event, handshake events flagged `replay`; survives reconnects. */
+	onEvent: (tap: CdpTap) => () => void;
 	evaluateWithBinding: (script: string, requestId: string, timeoutMs?: number) => Promise<DevtoolsResult<unknown>>;
 	/** `reconnected` (new target attached) and `lost` (gave up reconnecting) */
 	on: <E extends keyof SessionEvents>(event: E, handler: (arg: SessionEvents[E]) => void) => () => void;
@@ -110,6 +115,8 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 		lost: new Set(),
 	};
 	let unsubscribeCdp: (() => void)[] = [];
+	let connection = 0;
+	const taps = new Set<CdpTap>(o.taps ?? []);
 
 	async function handshake(cdp: CdpClient, target: SelectedTarget): Promise<DevtoolsResult<Attached>> {
 		const optional = { timeoutMs: HANDSHAKE_OPTIONAL_TIMEOUT_MS };
@@ -135,7 +142,13 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 		if (!selected.success) return selected;
 		const opened = await openCdp(selected.data.wsUrl, { WebSocket: o.WebSocket, timeoutMs: o.timeoutMs });
 		if (!opened.success) return opened;
+		const connectionNumber = ++connection;
+		let replay = true;
+		opened.data.onAny((method, params) => {
+			for (const tap of [...taps]) tap({ method, params, connection: connectionNumber, replay });
+		});
 		const attached = await handshake(opened.data, selected.data);
+		replay = false;
 		if (!attached.success) opened.data.close();
 		return attached;
 	}
@@ -277,6 +290,12 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 			const live = await current();
 			if (!live.success) return live;
 			return live.data.cdp.send(method, params, options);
+		},
+		onEvent(tap) {
+			taps.add(tap);
+			return () => {
+				taps.delete(tap);
+			};
 		},
 		onCdp(method, handler) {
 			let set = cdpHandlers.get(method);
