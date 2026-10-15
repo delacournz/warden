@@ -1,8 +1,13 @@
+import { uiFill, uiKey, uiLongpress, uiPress, uiSwipe, uiType } from "../agent-ui/actions";
 import { type CloseOptionValues, uiClose } from "../agent-ui/close";
+import { uiAlert, uiAppearance, uiHardware, uiRotate, uiScreenshot } from "../agent-ui/controls";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
+import { uiOpen } from "../agent-ui/open";
 import { withUiOptions } from "../agent-ui/run";
+import { uiScroll } from "../agent-ui/scroll";
 import { uiFind, uiSnapshot } from "../agent-ui/snapshot-command";
 import { uiStatus } from "../agent-ui/status";
+import { uiVideo } from "../agent-ui/video";
 import { type Command, defineCommand } from "../command";
 
 /**
@@ -14,7 +19,7 @@ import { type Command, defineCommand } from "../command";
 export function createUiCommand(deps: UiDeps): Command {
 	return defineCommand({
 		name: "ui",
-		summary: "drive a leased simulator / emulator (agents): status, snapshot, find, …",
+		summary: "drive a leased simulator / emulator (agents): status, snapshot, find, open, press, fill, scroll, …",
 		register: (cmd, ctx, done) => {
 			withUiOptions(cmd.command("status").description("device, lease, helper and recording state")).action(
 				async (opts) => done(await uiStatus(ctx, deps, opts))
@@ -43,6 +48,122 @@ export function createUiCommand(deps: UiDeps): Command {
 					.description("elements matching a selector, with @eN refs (bumps the generation)")
 					.argument("<selector...>", "id=… label=… text=… role=… value=… editable=… nth=…")
 			).action(async (selector, opts) => done(await uiFind(ctx, deps, selector, opts)));
+			const SETTLE = "wait for a quiet screen afterwards (default budget 3000 ms) and print what changed";
+			withUiOptions(
+				cmd
+					.command("open")
+					.description("launch an app (bundle id) or open a URL; --metro starts the dev client on that Metro")
+					.argument("<target>", "bundle id or URL")
+					.option("--relaunch", "terminate a running app first")
+					.option("--metro <url>", "Metro URL: launch with --initialUrl and remember it")
+					.option("--args <args...>", "extra launch arguments")
+					.option("--settle [ms]", SETTLE)
+			).action(async (target, opts) => done(await uiOpen(ctx, deps, target, opts)));
+			for (const name of ["press", "tap"] as const) {
+				withUiOptions(
+					cmd
+						.command(name)
+						.description("tap an element or point; an @eN older than 30 s is re-verified first")
+						.argument("<target...>", "@eN | selector | x y")
+						.option("--verify", "re-check an @eN against a fresh snapshot before tapping")
+						.option("--settle [ms]", SETTLE)
+				).action(async (words, opts) => done(await uiPress(ctx, deps, words, opts, name)));
+			}
+			withUiOptions(
+				cmd
+					.command("longpress")
+					.description("press and hold an element or point (default 800 ms)")
+					.argument("<target...>", "@eN | selector | x y, then optionally the duration in ms")
+					.option("--verify", "re-check an @eN against a fresh snapshot first")
+					.option("--settle [ms]", SETTLE)
+			).action(async (words, opts) => done(await uiLongpress(ctx, deps, words, opts)));
+			withUiOptions(
+				cmd
+					.command("fill")
+					.description("replace a text field's content, then read it back (use -- before text starting with -)")
+					.argument("<args...>", "<target> <text>: the last word is the text")
+					.option("--secure", "password field: skip the read-back, never echo or record the text")
+					.option("--no-verify", "skip the read-back")
+					.option("--settle [ms]", SETTLE)
+			).action(async (words, opts) => done(await uiFill(ctx, deps, words, opts)));
+			withUiOptions(
+				cmd
+					.command("type")
+					.description("type into whatever has focus")
+					.argument("<text>", "text to type")
+					.option("--submit", "then press Enter")
+					.option("--settle [ms]", SETTLE)
+			).action(async (text, opts) => done(await uiType(ctx, deps, text, opts)));
+			withUiOptions(
+				cmd
+					.command("key")
+					.description("press a key: Enter Backspace Tab Space Escape Delete Up Down Left Right")
+					.argument("<name>", "key name")
+					.option("--settle [ms]", SETTLE)
+			).action(async (name, opts) => done(await uiKey(ctx, deps, name, opts)));
+			withUiOptions(
+				cmd
+					.command("swipe")
+					.description("raw swipe: the way the finger moves (swipe up reveals what is below), or x1 y1 x2 y2")
+					.argument("<args...>", "up | down | left | right | x1 y1 x2 y2")
+					.option("--from <target>", "swipe inside this element instead of the whole screen")
+					.option("--settle [ms]", SETTLE)
+			).action(async (words, opts) => done(await uiSwipe(ctx, deps, words, opts)));
+			withUiOptions(
+				cmd
+					.command("scroll")
+					.description(
+						"scroll content: scroll down reveals what is below; --until swipes until a selector is on screen"
+					)
+					.argument("<direction>", "up | down | left | right")
+					.argument("[amount]", "share of the region one swipe travels, 0-1 (default 0.5)")
+					.option("--until <selector>", "keep scrolling until this selector is on screen")
+					.option("--in <target>", "scroll inside this element (@eN or selector)")
+					.option("--max <n>", "give up after n swipes with --until (default 10)")
+					.option("--settle [ms]", SETTLE)
+			).action(async (direction, amount, opts) => done(await uiScroll(ctx, deps, direction, amount, opts)));
+			withUiOptions(
+				cmd
+					.command("alert")
+					.description("answer the system alert / sheet on top, or read it")
+					.argument("<action>", "accept | dismiss | get")
+					.option("--settle [ms]", SETTLE)
+			).action(async (action, opts) => done(await uiAlert(ctx, deps, action, opts)));
+			for (const button of ["home", "back"] as const) {
+				withUiOptions(
+					cmd
+						.command(button)
+						.description(button === "home" ? "press the home button" : "press back (Android only)")
+						.option("--settle [ms]", SETTLE)
+				).action(async (opts) => done(await uiHardware(ctx, deps, button, opts)));
+			}
+			withUiOptions(
+				cmd
+					.command("rotate")
+					.description("set the orientation (none = read it)")
+					.argument("[orientation]", "portrait | portrait-upside-down | landscape-left | landscape-right")
+					.option("--settle [ms]", SETTLE)
+			).action(async (orientation, opts) => done(await uiRotate(ctx, deps, orientation, opts)));
+			withUiOptions(
+				cmd
+					.command("appearance")
+					.description("set light or dark mode (none = read it)")
+					.argument("[mode]", "light | dark")
+					.option("--settle [ms]", SETTLE)
+			).action(async (mode, opts) => done(await uiAppearance(ctx, deps, mode, opts)));
+			withUiOptions(
+				cmd
+					.command("screenshot")
+					.description("save a PNG of the screen (default: $WARDEN_HOME/ui/<udid>/shots/NNN.png)")
+					.argument("[path]", "output file")
+			).action(async (path, opts) => done(await uiScreenshot(ctx, deps, path, opts)));
+			withUiOptions(
+				cmd
+					.command("video")
+					.description("record the screen: video start [path] | video stop")
+					.argument("<action>", "start | stop")
+					.argument("[path]", "output file for start")
+			).action(async (action, path, opts) => done(await uiVideo(ctx, deps, action, path, opts)));
 		},
 	});
 }
