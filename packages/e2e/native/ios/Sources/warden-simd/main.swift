@@ -99,6 +99,7 @@ case let .failure(failure):
   FileHandle.standardError.write(Data("warden-simd: \(failure.message)\n\(Arguments.usage)\n".utf8))
   exit(ExitCode.usage)
 case let .success(arguments):
+  if arguments.trace { setenv("WARDEN_SIMD_TRACE", "1", 1) }
   if arguments.verbose {
     setenv("FBCONTROLCORE_LOGGING", "1", 1)
     setenv("FBCONTROLCORE_DEBUG_LOGGING", "1", 1)
