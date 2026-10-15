@@ -30,18 +30,33 @@ export function parseWmDensity(text: string): number | undefined {
 /** Errors that retrying cannot fix (no adb binary, closed session). */
 const isFatal = (error: { code: string }): boolean => error.code === "E_HELPER_MISSING" || error.code === "E_INTERNAL";
 
-/** Poll `getprop sys.boot_completed` until `1`; `E_NOT_BOOTED` after `timeoutMs`. */
+/** Boot flag + `wm size` + `wm density` in ONE round trip (a `warden ui` call opens a fresh driver every time). */
+const BOOT_PROBE = `${shellCommand(getpropArgv("sys.boot_completed"))}; ${shellCommand(WM_SIZE_ARGV)}; ${shellCommand(WM_DENSITY_ARGV)}`;
+
+/** The screen out of a boot probe's output, if `wm` answered. */
+export function screenFromProbe(stdout: string): ScreenInfo | undefined {
+	const size = parseWmSize(stdout);
+	if (!size) return undefined;
+	return { ...size, scale: parseWmDensity(stdout) ?? 1, rotation: 0 };
+}
+
+/**
+ * Poll the boot probe until `sys.boot_completed` is `1`; `E_NOT_BOOTED` after `timeoutMs`. Returns the screen
+ * from the same round trip (undefined when `wm` printed nothing parseable; use {@link readScreen}).
+ */
 export async function waitForBoot(
 	session: AdbSession,
 	serial: string,
 	clock: Clock,
 	opts: { timeoutMs?: number; log?: Logger } = {}
-): DriverResult<void> {
+): DriverResult<ScreenInfo | undefined> {
 	const timeoutMs = opts.timeoutMs ?? BOOT_TIMEOUT_MS;
 	const deadline = clock.now() + timeoutMs;
 	for (;;) {
-		const res = await session.run(shellCommand(getpropArgv("sys.boot_completed")), { timeoutMs: 5_000 });
-		if (res.success && res.data.stdout.trim() === "1") return { success: true, data: undefined };
+		const res = await session.run(BOOT_PROBE, { timeoutMs: 5_000 });
+		if (res.success && res.data.stdout.trimStart().startsWith("1")) {
+			return { success: true, data: screenFromProbe(res.data.stdout) };
+		}
 		if (!res.success && isFatal(res.error)) return res;
 		if (clock.now() >= deadline) {
 			return driverErr("E_NOT_BOOTED", `${serial} did not report sys.boot_completed=1 within ${timeoutMs}ms`, {
@@ -116,9 +131,10 @@ export function orientationToRotation(orientation: Orientation): RotationValue {
 export async function runChecked(
 	session: AdbSession,
 	cmd: string,
-	failure: "E_HID" | "E_IO" | "E_APP_UNAVAILABLE" | "E_UNSUPPORTED" | "E_BAD_REQUEST" = "E_HID"
+	failure: "E_HID" | "E_IO" | "E_APP_UNAVAILABLE" | "E_UNSUPPORTED" | "E_BAD_REQUEST" = "E_HID",
+	timeoutMs?: number
 ): DriverResult<string> {
-	const res = await session.run(cmd);
+	const res = await session.run(cmd, timeoutMs === undefined ? undefined : { timeoutMs });
 	if (!res.success) return res;
 	if (res.data.exitCode !== 0) {
 		return driverErr(failure, `\`${cmd}\` exited ${res.data.exitCode}: ${res.data.stdout.trim().slice(0, 200)}`);

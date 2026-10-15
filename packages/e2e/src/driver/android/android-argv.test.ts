@@ -11,6 +11,7 @@ import {
 	keycombinationArgv,
 	keyeventArgv,
 	keyNameKeycode,
+	keyRepeatArgvs,
 	longPressArgv,
 	modifierKeycode,
 	monkeyLaunchArgv,
@@ -24,7 +25,7 @@ import {
 	startUrlArgv,
 	swipeArgv,
 	tapArgv,
-	textArgv,
+	textArgvs,
 	uimodeGetArgv,
 	uimodeSetArgv,
 	uninstallArgv,
@@ -66,6 +67,13 @@ describe("input argv", () => {
 		expect(keyeventArgv(66)).toEqual(["input", "keyevent", "66"]);
 	});
 
+	test("key repeats are batched into one call per 32 presses", () => {
+		expect(keyRepeatArgvs(67, 3)).toEqual([["input", "keyevent", "67", "67", "67"]]);
+		expect(keyRepeatArgvs(67, 0)).toEqual([]);
+		const chunks = keyRepeatArgvs(67, 70);
+		expect(chunks.map((c) => c.length - 2)).toEqual([32, 32, 6]);
+	});
+
 	test("hardware button and key name keycodes", () => {
 		expect(buttonKeycode("home")).toBe(3);
 		expect(buttonKeycode("back")).toBe(4);
@@ -86,23 +94,25 @@ describe("input argv", () => {
 	});
 });
 
-describe("textArgv", () => {
+describe("textArgvs", () => {
+	const argvs = (text: string): string[][] => {
+		const result = textArgvs(text);
+		if (!result.success) throw new Error(result.error.message);
+		return result.data;
+	};
+
 	test("spaces become %s", () => {
-		const result = textArgv("hello big world");
-		expect(result).toEqual({ success: true, data: ["input", "text", "hello%sbig%sworld"] });
+		expect(argvs("hello big world")).toEqual([["input", "text", "hello%sbig%sworld"]]);
 	});
 
 	test("shell metacharacters survive quoting", () => {
-		const result = textArgv('it\'s $HOME & `x` "y"');
-		expect(result.success).toBe(true);
-		if (!result.success) return;
-		expect(result.data.slice(0, 2)).toEqual(["input", "text"]);
-		expect(shellCommand(result.data)).toBe("input text 'it'\\''s%s$HOME%s&%s`x`%s\"y\"'");
+		const [first] = argvs('it\'s $HOME & `x` "y"');
+		expect(first && shellCommand(first)).toBe("input text 'it'\\''s%s$HOME%s&%s`x`%s\"y\"'");
 	});
 
 	test("non-ASCII is E_UNSUPPORTED_TEXT", () => {
 		for (const text of ["café", "日本", "😀", "tab\there", "new\nline"]) {
-			const result = textArgv(text);
+			const result = textArgvs(text);
 			expect(result.success).toBe(false);
 			if (!result.success) {
 				expect(result.error.code).toBe("E_UNSUPPORTED_TEXT");
@@ -111,15 +121,35 @@ describe("textArgv", () => {
 		}
 	});
 
-	test("literal %s cannot be typed and is rejected rather than mangled", () => {
-		const result = textArgv("100%safe");
-		expect(result.success).toBe(false);
-		if (!result.success) expect(result.error.code).toBe("E_UNSUPPORTED_TEXT");
+	test("a literal %s is typed by splitting between the % and the s", () => {
+		expect(argvs("100%safe")).toEqual([
+			["input", "text", "100%"],
+			["input", "text", "safe"],
+		]);
+		expect(argvs("%s")).toEqual([
+			["input", "text", "%"],
+			["input", "text", "s"],
+		]);
 	});
 
-	test("lone % is allowed; empty text is a no-op argv", () => {
-		expect(textArgv("50%")).toEqual({ success: true, data: ["input", "text", "50%"] });
-		expect(textArgv("")).toEqual({ success: true, data: [] });
+	test("a % before a space splits so the space escape starts a fresh call", () => {
+		expect(argvs("50% off")).toEqual([
+			["input", "text", "50%"],
+			["input", "text", "%soff"],
+		]);
+	});
+
+	test("%% and a trailing %", () => {
+		expect(argvs("a%%b")).toEqual([["input", "text", "a%%b"]]);
+		expect(argvs("%%s")).toEqual([
+			["input", "text", "%%"],
+			["input", "text", "s"],
+		]);
+		expect(argvs("50%")).toEqual([["input", "text", "50%"]]);
+	});
+
+	test("empty text has no argv", () => {
+		expect(argvs("")).toEqual([]);
 	});
 });
 
@@ -167,7 +197,9 @@ describe("device/app query argv", () => {
 	test("dump routes", () => {
 		expect(dumpStdoutArgv()).toEqual(["uiautomator", "dump", "/dev/stdout"]);
 		expect(dumpTtyHostArgv("adb", "s1")).toEqual(["adb", "-s", "s1", "exec-out", "uiautomator", "dump", "/dev/tty"]);
-		expect(dumpFileCommand()).toBe("uiautomator dump /sdcard/warden-ui.xml >/dev/null 2>&1; cat /sdcard/warden-ui.xml");
+		expect(dumpFileCommand()).toBe(
+			'rm -f /sdcard/warden-ui.xml; OUT=$(uiautomator dump /sdcard/warden-ui.xml 2>&1); cat /sdcard/warden-ui.xml 2>/dev/null || echo "$OUT"'
+		);
 	});
 
 	test("install/uninstall are host argv", () => {

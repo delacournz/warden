@@ -19,6 +19,17 @@ export const SPLIT_TEXT = true;
 
 export type Sleep = (ms: number) => Promise<void>;
 
+/**
+ * Optional fast path a driver can offer next to the frozen `Driver` interface: `times` presses of `key` in one
+ * device round trip. Android needs it because every `input keyevent` is a process start (clearing a 20 character
+ * field one key at a time takes seconds); iOS paces keys itself.
+ */
+export type RepeatingKeys = { pressKeyRepeat(key: KeyName, times: number): DriverResult<void> };
+
+export function canRepeatKeys(driver: Driver): driver is Driver & RepeatingKeys {
+	return typeof (driver as Partial<RepeatingKeys>).pressKeyRepeat === "function";
+}
+
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function graphemesOf(text: string): string[] {
@@ -46,6 +57,7 @@ export async function typeText(driver: Driver, sleep: Sleep, text: string): Driv
 
 /** Presses `key` `times` times, paced like typed characters. */
 export async function pressKeys(driver: Driver, sleep: Sleep, key: KeyName, times: number): DriverResult<void> {
+	if (times > 1 && canRepeatKeys(driver)) return driver.pressKeyRepeat(key, times);
 	for (let press = 0; press < times; press += 1) {
 		const pressed = await driver.key(key);
 		if (!pressed.success) return pressed;

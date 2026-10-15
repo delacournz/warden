@@ -16,7 +16,17 @@ export const DUMP_ROUTES: readonly DumpRoute[] = ["stdout", "tty", "file"];
 
 export const DUMP_TIMEOUT_MS = 20_000;
 
-export type DumpDeps = { session: AdbSession; exec: Exec; adb: string; serial: string; log?: Logger };
+export type DumpDeps = {
+	session: AdbSession;
+	exec: Exec;
+	adb: string;
+	serial: string;
+	log?: Logger;
+	/** route to try first (remembered from an earlier process) */
+	initialRoute?: DumpRoute;
+	/** called whenever the working route changes (including the first discovery) */
+	onRoute?: (route: DumpRoute) => void;
+};
 
 export type Dumper = {
 	/** raw XML plus the route that produced it; `E_AX_UNAVAILABLE` when no route yields a hierarchy */
@@ -26,7 +36,7 @@ export type Dumper = {
 };
 
 export function createDumper(deps: DumpDeps): Dumper {
-	let known: DumpRoute | undefined;
+	let known: DumpRoute | undefined = deps.initialRoute;
 
 	async function fetchRoute(route: DumpRoute): Promise<{ text: string } | { error: DriverError }> {
 		if (route === "tty") {
@@ -67,6 +77,7 @@ export function createDumper(deps: DumpDeps): Dumper {
 			const found = await tryRoutes(order);
 			if ("xml" in found) {
 				if (known !== found.route) deps.log?.(`uiautomator dump route: ${found.route}`);
+				if (known !== found.route) deps.onRoute?.(found.route);
 				known = found.route;
 				return { success: true, data: found };
 			}

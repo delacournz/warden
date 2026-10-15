@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { wardenHome } from "@delacour/warden-core/store";
+import type { DumpRoute } from "@delacour/warden-e2e/driver/android/android-dump";
 import type { Element, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import type { CommandContext } from "../context";
 
@@ -98,4 +99,25 @@ export function writeLastSnapshot(ctx: Pick<CommandContext, "env">, udid: string
 	const { flat: _flat, ...snapshot } = stored.snapshot;
 	const file: StoredSnapshotFile = { ...stored, snapshot };
 	writeFileAtomic(join(dir, "last-snapshot.json"), JSON.stringify(file));
+}
+
+/** The Android uiautomator dump route that last worked on this device (`android-dump-route`), if remembered. */
+export function readDumpRoute(ctx: Pick<CommandContext, "env">, udid: string): DumpRoute | undefined {
+	try {
+		const text = readFileSync(join(uiDir(ctx, udid), "android-dump-route"), "utf8").trim();
+		return text === "stdout" || text === "tty" || text === "file" ? text : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Remember the working dump route; best effort (a read-only home just means re-probing next call). */
+export function writeDumpRoute(ctx: Pick<CommandContext, "env">, udid: string, route: DumpRoute): void {
+	try {
+		const dir = uiDir(ctx, udid);
+		mkdirSync(dir, { recursive: true });
+		writeFileAtomic(join(dir, "android-dump-route"), `${route}\n`);
+	} catch {
+		// best effort
+	}
 }
