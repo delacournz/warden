@@ -89,6 +89,45 @@ export type NetworkEntry = {
 
 export type NetworkQuery = { last?: number; id?: number };
 
+export type TreeOptions = {
+	/** components returned, at most 5000 (default 5000) */
+	max?: number;
+	/** only this screen's subtree (a react-navigation / expo-router route name), whether or not it is the focused one */
+	screen?: string;
+	/** keep inactive screens and hidden subtrees, flagged `inactive` */
+	all?: boolean;
+	/** multiply measured rects by this: Android reports dp, the driver speaks px (iOS points are dp already) */
+	pixelRatio?: number;
+	/** give up after this long (default 5 s) */
+	timeoutMs?: number;
+};
+
+/** One React component of the app that carries a testID, a label, text or a screen. */
+export type TreeComponent = {
+	/** index in `components` (preorder) */
+	id: number;
+	name: string;
+	testID?: string;
+	/** accessibilityLabel / aria-label */
+	label?: string;
+	/** the strings rendered inside it, concatenated */
+	text?: string;
+	/** `id` of the enclosing component, null for a top-level one */
+	parent: number | null;
+	/** window coordinates; absent when the view could not be measured */
+	rect?: { x: number; y: number; width: number; height: number };
+	/** inside an inactive screen or hidden subtree (only with `all`) */
+	inactive?: true;
+};
+
+export type ReactTree = {
+	/** route name of the focused screen, when the app uses react-navigation or expo-router */
+	screen?: string;
+	components: TreeComponent[];
+	/** more components existed than `max` */
+	truncated: boolean;
+};
+
 /** Everything `device.devtools` (T6) and the failure capture (T3) use. */
 export type DevtoolsFacet = {
 	evaluate: (
@@ -107,6 +146,8 @@ export type DevtoolsFacet = {
 		/** also discards what the page still holds, so it is a clean cut */
 		clear: () => Promise<void>;
 	};
+	/** The app's React components with rects (see `tree.script.ts`); `devtools_unavailable` when the app has no DevTools hook. */
+	tree: (options?: TreeOptions) => Promise<DevtoolsResult<ReactTree>>;
 	/** the page currently attached (changes after a reconnect) */
 	readonly target: SelectedTarget;
 	/** `reconnected` (new target attached) and `lost` (gave up reconnecting) */
