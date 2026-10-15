@@ -1,0 +1,150 @@
+import { describe, expect, test } from "bun:test";
+import {
+	animationScaleArgvs,
+	buttonKeycode,
+	forceStopArgv,
+	keyeventArgv,
+	keyNameKeycode,
+	longPressArgv,
+	monkeyLaunchArgv,
+	pmClearArgv,
+	screencapArgv,
+	shellCommand,
+	shellQuote,
+	startUrlArgv,
+	swipeArgv,
+	tapArgv,
+	textArgv,
+} from "./android-argv";
+
+describe("shellQuote / shellCommand", () => {
+	test("leaves safe words bare and single-quotes the rest", () => {
+		expect(shellQuote("input")).toBe("input");
+		expect(shellQuote("a/b.c-d_e:1=2,3@4%5+6")).toBe("a/b.c-d_e:1=2,3@4%5+6");
+		expect(shellQuote("hello world")).toBe("'hello world'");
+		expect(shellQuote("")).toBe("''");
+		expect(shellQuote("it's")).toBe("'it'\\''s'");
+		expect(shellQuote('a;b&c|d$e`f"g\\h')).toBe("'a;b&c|d$e`f\"g\\h'");
+	});
+
+	test("joins quoted args", () => {
+		expect(shellCommand(["am", "start", "-d", "https://x.y/?a=1&b=2"])).toBe("am start -d 'https://x.y/?a=1&b=2'");
+	});
+});
+
+describe("input argv", () => {
+	test("tap rounds to integer pixels", () => {
+		expect(tapArgv({ x: 100.4, y: 200.6 })).toEqual(["input", "tap", "100", "201"]);
+	});
+
+	test("swipe carries a duration, floored at 1 ms", () => {
+		expect(swipeArgv({ x: 1, y: 2 }, { x: 3, y: 4 }, 250)).toEqual(["input", "swipe", "1", "2", "3", "4", "250"]);
+		expect(swipeArgv({ x: 1, y: 2 }, { x: 3, y: 4 }, 0)).toEqual(["input", "swipe", "1", "2", "3", "4", "1"]);
+		expect(swipeArgv({ x: 1, y: 2 }, { x: 3, y: 4 })).toEqual(["input", "swipe", "1", "2", "3", "4", "300"]);
+	});
+
+	test("long press is a swipe in place", () => {
+		expect(longPressArgv({ x: 10, y: 20 }, 800)).toEqual(["input", "swipe", "10", "20", "10", "20", "800"]);
+		expect(longPressArgv({ x: 10, y: 20 })).toEqual(["input", "swipe", "10", "20", "10", "20", "600"]);
+	});
+
+	test("keyevent", () => {
+		expect(keyeventArgv(66)).toEqual(["input", "keyevent", "66"]);
+	});
+
+	test("hardware button and key name keycodes", () => {
+		expect(buttonKeycode("home")).toBe(3);
+		expect(buttonKeycode("back")).toBe(4);
+		expect(buttonKeycode("volumeUp")).toBe(24);
+		expect(buttonKeycode("volumeDown")).toBe(25);
+		expect(buttonKeycode("lock")).toBe(26);
+		expect(buttonKeycode("shake")).toBeUndefined();
+		expect(keyNameKeycode("Enter")).toBe(66);
+		expect(keyNameKeycode("Backspace")).toBe(67);
+		expect(keyNameKeycode("Tab")).toBe(61);
+		expect(keyNameKeycode("Space")).toBe(62);
+		expect(keyNameKeycode("Escape")).toBe(111);
+		expect(keyNameKeycode("Delete")).toBe(112);
+		expect(keyNameKeycode("Up")).toBe(19);
+		expect(keyNameKeycode("Down")).toBe(20);
+		expect(keyNameKeycode("Left")).toBe(21);
+		expect(keyNameKeycode("Right")).toBe(22);
+	});
+});
+
+describe("textArgv", () => {
+	test("spaces become %s", () => {
+		const result = textArgv("hello big world");
+		expect(result).toEqual({ success: true, data: ["input", "text", "hello%sbig%sworld"] });
+	});
+
+	test("shell metacharacters survive quoting", () => {
+		const result = textArgv('it\'s $HOME & `x` "y"');
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		expect(result.data.slice(0, 2)).toEqual(["input", "text"]);
+		expect(shellCommand(result.data)).toBe("input text 'it'\\''s%s$HOME%s&%s`x`%s\"y\"'");
+	});
+
+	test("non-ASCII is E_UNSUPPORTED_TEXT", () => {
+		for (const text of ["café", "日本", "😀", "tab\there", "new\nline"]) {
+			const result = textArgv(text);
+			expect(result.success).toBe(false);
+			if (!result.success) {
+				expect(result.error.code).toBe("E_UNSUPPORTED_TEXT");
+				expect(result.error.retryable).toBe(false);
+			}
+		}
+	});
+
+	test("literal %s cannot be typed and is rejected rather than mangled", () => {
+		const result = textArgv("100%safe");
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error.code).toBe("E_UNSUPPORTED_TEXT");
+	});
+
+	test("lone % is allowed; empty text is a no-op argv", () => {
+		expect(textArgv("50%")).toEqual({ success: true, data: ["input", "text", "50%"] });
+		expect(textArgv("")).toEqual({ success: true, data: [] });
+	});
+});
+
+describe("app argv", () => {
+	test("open url", () => {
+		expect(startUrlArgv("myapp://home?x=1&y=2")).toEqual([
+			"am",
+			"start",
+			"-a",
+			"android.intent.action.VIEW",
+			"-d",
+			"myapp://home?x=1&y=2",
+		]);
+	});
+
+	test("launch, force-stop, clear", () => {
+		expect(monkeyLaunchArgv("com.x")).toEqual(["monkey", "-p", "com.x", "-c", "android.intent.category.LAUNCHER", "1"]);
+		expect(forceStopArgv("com.x")).toEqual(["am", "force-stop", "com.x"]);
+		expect(pmClearArgv("com.x")).toEqual(["pm", "clear", "com.x"]);
+	});
+
+	test("animations off covers all three scales", () => {
+		expect(animationScaleArgvs()).toEqual([
+			["settings", "put", "global", "window_animation_scale", "0"],
+			["settings", "put", "global", "transition_animation_scale", "0"],
+			["settings", "put", "global", "animator_duration_scale", "0"],
+		]);
+	});
+});
+
+describe("host argv", () => {
+	test("screencap goes through exec-out, never the shell session", () => {
+		expect(screencapArgv("/sdk/adb", "emulator-5554")).toEqual([
+			"/sdk/adb",
+			"-s",
+			"emulator-5554",
+			"exec-out",
+			"screencap",
+			"-p",
+		]);
+	});
+});
