@@ -2,7 +2,7 @@ import { afterAll, setDefaultTimeout } from "bun:test";
 import { defaultDriverFactory } from "./driver/open";
 import { readEnv } from "./env";
 import { E2eError } from "./errors";
-import { defaultFixtureFactory } from "./runner/fixtures";
+import { defaultFixtureFactory } from "./fixtures";
 import { BUN_TIMEOUT_MARGIN_MS, onlyWasSeen } from "./runner/scope";
 import {
 	getSession,

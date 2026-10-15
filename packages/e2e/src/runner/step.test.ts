@@ -12,6 +12,7 @@ function attempt(controller = new AbortController()) {
 		trace: { path: "/d/trace.jsonl", write: (e) => events.push(e) },
 		depth: 0,
 		files: new Set(),
+		softFailures: [],
 	};
 	return { ctx, events, controller };
 }

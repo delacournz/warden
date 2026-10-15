@@ -1,7 +1,7 @@
 import { appendFileSync, writeFileSync } from "node:fs";
 import { el, type FakeDriver, fakeDriver, snapshotOf } from "../../driver/driver.testing";
+import { defaultFixtureFactory } from "../../fixtures";
 import { setDefaultDriverFactory, setDefaultFixtureFactory } from "../../session";
-import { defaultFixtureFactory } from "../fixtures";
 
 /** Appends one line to `$FIXTURE_LOG` (the runner test reads it back to assert ordering). */
 export function fixtureLog(line: string): void {

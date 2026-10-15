@@ -1,4 +1,5 @@
 import type { Driver, DriverError, DriverResult, Snapshot } from "../driver/driver.types";
+import { DEFAULT_ASSERTION_TIMEOUT_MS } from "../env";
 import { E2eError } from "../errors";
 import { indexSnapshot, type NodeIndex } from "./nodes";
 import { type Clock, type PollResult, type PollStep, poll, systemClock } from "./poll";
@@ -10,9 +11,11 @@ import { renderHeader, renderSnapshot } from "./render";
  */
 export type ScreenHost = {
 	driver(): Promise<Driver>;
-	env: { actionTimeoutMs: number };
+	env: { actionTimeoutMs: number; assertionTimeoutMs?: number };
 	/** live override of the action timeout (`test.use({ actionTimeout })`) */
 	actionTimeout?: () => number;
+	/** live override of the assertion timeout (`test.use({ assertionTimeout })`) */
+	assertionTimeout?: () => number;
 	/** the running attempt's deadline: every poll stops when it aborts */
 	signal?: AbortSignal;
 	/** records one reported step around an action */
@@ -37,6 +40,10 @@ export class Runtime {
 
 	actionTimeout(): number {
 		return this.host.actionTimeout?.() ?? this.host.env.actionTimeoutMs;
+	}
+
+	assertionTimeout(): number {
+		return this.host.assertionTimeout?.() ?? this.host.env.assertionTimeoutMs ?? DEFAULT_ASSERTION_TIMEOUT_MS;
 	}
 
 	/** A deadline `timeoutMs` (default: the action timeout) from now; `remaining()` is what is left of it. */
