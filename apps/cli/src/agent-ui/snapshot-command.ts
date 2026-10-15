@@ -14,7 +14,7 @@ export type SnapshotOptionValues = UiOptionValues & {
 	depth?: string;
 };
 
-function positiveInt(name: string, raw: string): Result<number, UiError> {
+export function positiveInt(name: string, raw: string): Result<number, UiError> {
 	if (!/^\d+$/.test(raw) || Number(raw) < 1) {
 		return { success: false, error: uiError("usage", `${name} must be a positive integer, got "${raw}"`) };
 	}

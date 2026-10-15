@@ -194,9 +194,9 @@ export async function takeSnapshot(
 	return ok(taken);
 }
 
-/** The text of `warden ui snapshot`: header, element lines, then (settle) the verdict and the diff. */
-export function snapshotText(taken: TakenSnapshot): string {
-	const out = [taken.header, ...taken.lines];
+/** The `# settled…` verdict and the `+`/`-` diff lines that follow a settled snapshot. */
+export function settleLines(taken: Pick<TakenSnapshot, "settle" | "diff">): string[] {
+	const out: string[] = [];
 	if (taken.settle) {
 		out.push(
 			taken.settle.quiet
@@ -206,7 +206,12 @@ export function snapshotText(taken: TakenSnapshot): string {
 	}
 	if (taken.diff) out.push(`# diff vs generation ${taken.diff.against}`, ...renderDiff(taken.diff));
 	else if (taken.settle) out.push("# no previous snapshot to diff against");
-	return out.join("\n");
+	return out;
+}
+
+/** The text of `warden ui snapshot`: header, element lines, then (settle) the verdict and the diff. */
+export function snapshotText(taken: TakenSnapshot): string {
+	return [taken.header, ...taken.lines, ...settleLines(taken)].join("\n");
 }
 
 export type FoundElements = {
