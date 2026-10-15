@@ -96,6 +96,9 @@ describe("bootedByOwner + meta", () => {
 		store.setMeta("last_gc_at", "5");
 		store.setMeta("last_gc_at", "6");
 		expect(store.getMeta("last_gc_at")).toBe("6");
+		store.deleteMeta("last_gc_at");
+		store.deleteMeta("never_set");
+		expect(store.getMeta("last_gc_at")).toBeUndefined();
 	});
 });
 

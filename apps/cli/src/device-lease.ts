@@ -98,7 +98,7 @@ export type ReleaseHost = { store: () => Store; now: () => number };
 
 export type ReleaseOptions = {
 	/** runs per released device lease after it is deleted (teardown hook; failures are swallowed) */
-	after?: (udid: string) => Promise<void>;
+	after?: ((udid: string) => Promise<void>) | undefined;
 	/** mark the devices used now (default true; gc/cleanup paths pass false) */
 	touch?: boolean;
 	/** re-checked inside the transaction: leases it rejects are left alone (gc: still stale?) */

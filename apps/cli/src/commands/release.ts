@@ -1,6 +1,7 @@
 import { PENDING_PREFIX } from "@delacour/warden-core/claim";
 import { wardenNameProfile } from "@delacour/warden-core/inventory";
 import type { Lease } from "@delacour/warden-core/types";
+import { stopHelperAfter } from "../agent-ui/close";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -70,7 +71,8 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 			: { quarantined: [], notes: [] };
 	await releaseDevices(
 		ctx,
-		leases.map((l) => l.id)
+		leases.map((l) => l.id),
+		{ after: stopHelperAfter(ctx) }
 	);
 
 	for (const u of unknown) ctx.err(color.red(`warden release: no lease for ${u}`));

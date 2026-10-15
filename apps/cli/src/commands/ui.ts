@@ -1,3 +1,4 @@
+import { type CloseOptionValues, uiClose } from "../agent-ui/close";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { withUiOptions } from "../agent-ui/run";
 import { uiFind, uiSnapshot } from "../agent-ui/snapshot-command";
@@ -18,6 +19,15 @@ export function createUiCommand(deps: UiDeps): Command {
 			withUiOptions(cmd.command("status").description("device, lease, helper and recording state")).action(
 				async (opts) => done(await uiStatus(ctx, deps, opts))
 			);
+			withUiOptions(
+				cmd
+					.command("close")
+					.description(
+						"stop this device's helper (the lease stays); --app also quits the app, --release frees the lease"
+					)
+					.option("--app [bundleId]", "terminate the app first (default: the one `open` launched)")
+					.option("--release", "release the lease too (stops the helper)")
+			).action(async (opts: CloseOptionValues) => done(await uiClose(ctx, deps, opts)));
 			withUiOptions(
 				cmd
 					.command("snapshot")

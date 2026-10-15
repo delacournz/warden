@@ -236,6 +236,10 @@ export class Store {
 			.run(key, value);
 	}
 
+	deleteMeta(key: string): void {
+		this.db.query("DELETE FROM meta WHERE key = ?").run(key);
+	}
+
 	getLease(id: string): Lease | undefined {
 		const row = this.db.query<LeaseRow, [string]>("SELECT * FROM leases WHERE id = ?").get(id);
 		return row ? toLease(row) : undefined;

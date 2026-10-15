@@ -2,7 +2,12 @@
 /**
  * Fake `warden-simd` for tests: speaks the NDJSON protocol (v1) on stdin/stdout from a JSON script.
  *
- *   bun fake-simd.ts --script <script.json> [--udid <UDID>] [...ignored helper flags]
+ *   bun fake-simd.ts --script <script.json> [--udid <UDID>] [--socket <path>] [...ignored helper flags]
+ *
+ * With `--socket <path>` it listens on that unix socket instead of using stdio (like the real helper's
+ * daemon mode): every connection gets its own `ready` (plus `startup` lines) and answers requests from the
+ * same script; `shutdown` closes every connection, removes the socket file and exits 0; the socket file is
+ * also removed on SIGTERM / normal exit. A stale file at the path is replaced. `--idle-timeout` is ignored.
  *
  * Script shape (all keys optional):
  *   stderr:   lines written to stderr at startup
@@ -18,7 +23,7 @@
  *
  * Requests are handled concurrently, so a slow op answers after a fast one (out-of-order responses).
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 type WireError = { code: string; message: string; retryable?: boolean; detail?: unknown };
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -53,11 +58,19 @@ const udid = arg("udid") ?? "FAKE-UDID";
 const script: Script = scriptPath ? (JSON.parse(readFileSync(scriptPath, "utf8")) as Script) : {};
 const diedMarker = scriptPath ? `${scriptPath}.died` : undefined;
 
-function write(value: unknown): void {
-	process.stdout.write(`${typeof value === "string" ? value : JSON.stringify(value)}\n`);
-}
+type Request = { id: string; op: string; [key: string]: unknown };
+type Write = (value: unknown) => void;
+
+const socketPath = arg("socket");
 
 function exit(code: number): never {
+	if (socketPath) {
+		try {
+			unlinkSync(socketPath);
+		} catch {
+			// already gone
+		}
+	}
 	process.exit(code);
 }
 
@@ -71,19 +84,6 @@ const defaultReady = {
 	screen: { width: 390, height: 844, scale: 3 },
 };
 
-for (const line of script.stderr ?? []) process.stderr.write(`${line}\n`);
-if (script.exitBeforeReady !== undefined) exit(script.exitBeforeReady);
-if (script.fatal?.beforeReady) {
-	write({ event: "fatal", error: script.fatal.error });
-	exit(3);
-}
-if (script.ready !== false) write({ ...defaultReady, ...script.ready });
-for (const line of script.startup ?? []) write(line);
-if (script.fatal) {
-	write({ event: "fatal", error: script.fatal.error });
-	exit(3);
-}
-
 let received = 0;
 
 function shouldDie(): boolean {
@@ -96,9 +96,24 @@ function shouldDie(): boolean {
 	return true;
 }
 
-type Request = { id: string; op: string; [key: string]: unknown };
+/** Banner for one client (stdio: the process; socket: each connection). False = it must not serve requests. */
+function greet(write: Write): boolean {
+	for (const line of script.stderr ?? []) process.stderr.write(`${line}\n`);
+	if (script.exitBeforeReady !== undefined) exit(script.exitBeforeReady);
+	if (script.fatal?.beforeReady) {
+		write({ event: "fatal", error: script.fatal.error });
+		exit(3);
+	}
+	if (script.ready !== false) write({ ...defaultReady, ...script.ready });
+	for (const line of script.startup ?? []) write(line);
+	if (script.fatal) {
+		write({ event: "fatal", error: script.fatal.error });
+		exit(3);
+	}
+	return true;
+}
 
-async function handle(request: Request): Promise<void> {
+async function handle(request: Request, write: Write): Promise<void> {
 	const op = script.ops?.[request.op];
 	if (op?.delayMs) await Bun.sleep(op.delayMs);
 	if (op?.emitLog) write({ event: "log", ...op.emitLog, op: request.op, id: request.id });
@@ -123,7 +138,7 @@ async function handle(request: Request): Promise<void> {
 	});
 }
 
-function onLine(line: string): void {
+function onLine(line: string, write: Write): void {
 	if (!line.trim()) return;
 	let request: Request;
 	try {
@@ -134,15 +149,66 @@ function onLine(line: string): void {
 	}
 	received += 1;
 	if (shouldDie()) exit(script.dieAfter?.exitCode ?? 1);
-	void handle(request);
+	void handle(request, write);
 }
 
 const decoder = new TextDecoder();
-let buffer = "";
-for await (const chunk of Bun.stdin.stream()) {
-	buffer += decoder.decode(chunk, { stream: true });
-	const lines = buffer.split("\n");
-	buffer = lines.pop() ?? "";
-	for (const line of lines) onLine(line);
+
+/** Newline-framed reader: feed chunks, get whole lines. */
+function lineReader(onWholeLine: (line: string) => void): (chunk: Uint8Array) => void {
+	let buffer = "";
+	return (chunk) => {
+		buffer += decoder.decode(chunk, { stream: true });
+		const lines = buffer.split("\n");
+		buffer = lines.pop() ?? "";
+		for (const line of lines) onWholeLine(line);
+	};
 }
-exit(0);
+
+function serveStdio(): Promise<never> {
+	const write: Write = (value) => {
+		process.stdout.write(`${typeof value === "string" ? value : JSON.stringify(value)}\n`);
+	};
+	greet(write);
+	return (async () => {
+		const feed = lineReader((line) => onLine(line, write));
+		for await (const chunk of Bun.stdin.stream()) feed(chunk);
+		return exit(0);
+	})();
+}
+
+type Conn = { write(data: string): number };
+
+function serveSocket(path: string): void {
+	try {
+		unlinkSync(path);
+	} catch {
+		// nothing stale
+	}
+	const feeds = new WeakMap<object, (chunk: Uint8Array) => void>();
+	Bun.listen<undefined>({
+		unix: path,
+		socket: {
+			open(conn: Conn) {
+				const write: Write = (value) => {
+					conn.write(`${typeof value === "string" ? value : JSON.stringify(value)}\n`);
+				};
+				feeds.set(
+					conn,
+					lineReader((line) => onLine(line, write))
+				);
+				greet(write);
+			},
+			data(conn, chunk) {
+				feeds.get(conn)?.(chunk);
+			},
+			close() {},
+			error() {},
+		},
+	});
+	process.on("SIGTERM", () => exit(0));
+	process.on("SIGINT", () => exit(0));
+}
+
+if (socketPath) serveSocket(socketPath);
+else await serveStdio();
