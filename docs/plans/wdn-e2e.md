@@ -429,3 +429,40 @@ One wording bug found and fixed: the missing-helper row said "run `warden doctor
 - From a scratch `node_modules` with real copies of `warden` and `warden-darwin-arm64`, `node …/warden/bin/warden.mjs --version` runs the darwin-arm64 binary (`warden 0.1.0 (release 11cf342)`).
 - `warden-darwin-arm64/bin/warden doctor` finds the helper by the binary-dir rung (`sim-helper … (execPath)`) and `sim-helper-health` passes on a booted sim. The same holds for the package unpacked from `npm pack`, which drops the framework symlinks: `warden-simd` links `Versions/A/<Name>` directly, so they are not needed.
 - Not run: `npm publish`, provenance, the other three platform binaries (compiled, not executed), `warden update` against the asset, the Linux shim path.
+
+**Smoke (2026-10-16): `warden e2e example` and `example-dev` on two iPhone 17 simulators (WDN-E2E-T12).** Both suites on the example app (6 flows, 9 tests; `devtools` is skipped on Release), from `apps/example`, on `feature/faster-local-e2e-runner` + the pulsar patch (native fingerprint `0b2c5d1e`; Release `4aecbfa9`, dev client cached). Commands:
+
+```bash
+cd apps/example
+bun ../cli/src/cli.ts e2e example --all --wait 9m        # Release, 2 sims, per-flow, warmDrivers on
+bun ../cli/src/cli.ts e2e example-dev --all --wait 9m    # dev client + warden Metro (:8081), mode "single": one spec process per device
+# one flow by hand, same env contract as warden sets
+WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=nz.co.delacour.warden.example WARDEN_HELPER_DIR=packages/e2e/native/dist \
+  bun test --preload @delacour/warden-e2e/preload ./e2e/<flow>.e2e.ts
+```
+
+| suite | run | result | batch s | wall s | notes |
+|---|---|---|---|---|---|
+| example (Release) | 1 | 6/6 green | 94 | 160 | onboarding 11.8, settings 39.4, sign-in 20.4+13.8+20.3, todo-detail 21.2+26.1, todos 26.2, devtools skipped (0.2); warm step 2.2 s per sim |
+| example (Release) | 2 | 6/6 green | 102 | 152 | onboarding 15.0, settings 50.4, sign-in 26.0+14.3+19.5, todo-detail 24.5+26.9, todos 24.7; warm step 2.0 s. Not faster than run 1: the warm step is the same ~2 s and the machine load (50-500, sibling agents) dominates |
+| example-dev | 1 | 5/6, `todos` red | 113 | 155 | devtools 15.0 (runs on the dev client), onboarding 10.4, settings 25.0, sign-in 19.2+13.3+19.7, todo-detail 23.6+27.5; `todos` 49.0 red |
+| example-dev | 2 | 5/6, `todos` red | 112 | 147 | same shape (todos red at `fill(todo-input)`) |
+
+Failure artifacts verified with a temporary wrong expectation (reverted): `failure.png`, `screen-at-failure.txt` (full AX tree), `trace.jsonl` (step-start/step-end with the error and the expected/received text), the `✗ <flow> › <test> — <message> — artifacts <dir>` line, `e2e-report.json` `flows[].tests[]` (`status`, `durationMs`, `error`), exit code 1, sims left up. On the dev client the same failure adds `console.jsonl` and `network.jsonl`; when the app is unreadable the snapshot times out after 10 s and the trace gets `failure capture: snapshot: timed out after 10000ms` instead of `screen-at-failure.txt`. `WARDEN_METRO_URL` reaches the spec (`device.devtools` is defined), `--initialUrl` launches the dev client against it, and `devtools` evaluates, captures console and `fetch`, reads the React tree and reloads on it.
+
+Root causes found and fixed (each with fake-driver tests; commits on this branch):
+1. **Typing burst truncation** (`fill` lost tail characters about 1 round in 4): fixed upstream (simd 40 ms key hold / 30 ms pace; `screen/field.ts` read-back).
+2. **AX unreadable after the first app relaunch in a helper session** (`axbridge -> ax fallback`, snapshots "0 of 1 elements", every later flow stuck at `welcome-screen`): found by bisecting the helper (Settle/Ops change); fixed upstream (`7773fb7`: open a fresh quiescence stream and retry).
+3. **`device.openLink` gave up after 3 s** while a loaded host showed the "Open in …?" sheet later, and pressed Open once even when the press was lost: waits 8 s, re-presses (max 3) while the sheet stays up (`packages/e2e/src/device.ts`).
+4. **`device.alert` / `openLink` threw on a transient `E_AX_UNAVAILABLE`** right after a launch ("window-server frontmost returned no application object"): retried 5 x 300 ms.
+5. **iOS `settle` threw `E_TIMEOUT`** when the helper answered after the client's padded timer: now `{ quiet: false }` (settle is best effort).
+6. **devtools attached to the newest inspector page of ANY device** when two simulators share one Metro, so one device's `evaluate`/`reload` hit the other's app: `WARDEN_DEVICE_NAME` (set by `warden batch`) -> `env.deviceName` -> the target query (`deviceName`), `device_mismatch` instead of a wrong attach.
+7. **`reloadJs` fell back to Metro's `POST /reload`**, which reloads every device on that Metro (reset the other shard's app to Welcome mid-flow). `Page.reload` is unsupported on this Hermes, so it now evaluates `nativeModuleProxy.DevSettings.reload()` in the attached app first (verified live), then falls back to HTTP.
+8. Example flows: the first press on the tab bar or a list row after the sign-in navigation is dropped by the app (a bare tap 1-30 s later, no sheet showing; the second lands), so those two use `tapUntilVisible`; onboarding waits for each step's title before the next tap.
+
+Still flaky / open:
+- **`example-dev`: `todos` fails 5 runs out of 5 with `--all`** (and once in three runs on its own) at `fill(todo-input)`: the app is back on Welcome about 2.3 s after the fill starts (Metro logs one extra `iOS Bundled (1 module)` at that moment, so the JS context restarts; no crash report, no peer involvement: it also happens with `--count 1`). Ten fresh sign-ins that only wait 15 s afterwards never reset, and 8 consecutive `fill`s of the same text passed 6 times and failed twice with the app unresponsive ("fill did not take: expected "Buy milk" but the field holds "What needs doing?""; typed text never reached the field), so a dev-client reload or hang that needs the keyboard focus is the suspect. Release is unaffected (6/6 twice). Not fixed.
+- Release: a `simctl launch --terminate-running-process` can take > 30 s on one sim and be killed (`E_IO exited 143`, the 30 s `LAUNCH_MS` in `driver/ios/simctl.ts`); seen once, a manual launch took 32 s and the next 1 s.
+- `devtools: no results.jsonl — verdict from exit code 0` is printed for a fully skipped flow (harmless).
+- `console.jsonl` of a dev run holds lines from earlier tests of the same spec process (the ring buffer is not cleared per attempt).
+- Machine load average 50-550 (other agents) inflates every timing here; do not read run 2 vs run 1 as a warm-cache effect.
