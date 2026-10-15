@@ -124,6 +124,19 @@
         "@delacour/warden-tsconfig": "workspace:*",
       },
     },
+    "packages/e2e": {
+      "name": "@delacour/warden-e2e",
+      "version": "0.1.0",
+      "dependencies": {
+        "@delacour/warden-core": "workspace:*",
+        "@delacour/warden-types": "workspace:*",
+        "typescript": "^5.9.3",
+        "zod": "^4.4.3",
+      },
+      "devDependencies": {
+        "@delacour/warden-tsconfig": "workspace:*",
+      },
+    },
     "packages/tsconfig": {
       "name": "@delacour/warden-tsconfig",
       "version": "1.0.0",
@@ -337,6 +350,8 @@
     "@delacour/warden-demo": ["@delacour/warden-demo@workspace:scripts/demo"],
 
     "@delacour/warden-docs": ["@delacour/warden-docs@workspace:apps/docs"],
+
+    "@delacour/warden-e2e": ["@delacour/warden-e2e@workspace:packages/e2e"],
 
     "@delacour/warden-example": ["@delacour/warden-example@workspace:apps/example"],
 
