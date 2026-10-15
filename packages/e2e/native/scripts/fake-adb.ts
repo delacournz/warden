@@ -16,10 +16,23 @@
  *   big <n>            print n 'x' characters + newline
  *   args               print the argv this fake was started with
  *
+ * Canned output: with FAKE_ADB_RULES=<json file> of `{ "rules": [{ "match": "<prefix>", "stdout"?: "<text>",
+ * "stdoutFile"?: "<path, raw bytes>", "code"?: n }] }` the first rule whose `match` is a prefix of the shell
+ * command wins over the scripted commands above. One-shot host mode, `fake-adb.ts -s <serial> <args…>` with
+ * anything but `shell` (e.g. `exec-out uiautomator dump /dev/tty`, `exec-out screencap -p`, `install -r x.apk`),
+ * answers from the same rules matched against `<args…>`; `exec-out screencap -p` defaults to a tiny PNG header.
+ *
  * Env: FAKE_ADB_DIE_ON_START=1 exits immediately (a device that is gone).
  */
+import { readFileSync } from "node:fs";
 
 if (process.env.FAKE_ADB_DIE_ON_START === "1") process.exit(1);
+
+type Rule = { match: string; stdout?: string; stdoutFile?: string; code?: number };
+const rulesPath = process.env.FAKE_ADB_RULES;
+const rules: Rule[] = rulesPath ? (JSON.parse(readFileSync(rulesPath, "utf8")) as { rules: Rule[] }).rules : [];
+const ruleFor = (text: string): Rule | undefined => rules.find((r) => text.startsWith(r.match));
+const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const WRAPPED = /^\((.*)\) 2>&1 <\/dev\/null; echo "(__WDN_.+_)\$\?__"$/;
 const enc = new TextEncoder();
@@ -30,7 +43,33 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 type Outcome = { code: number; die?: number; split?: boolean };
 
+function ruleBytes(rule: Rule): Uint8Array {
+	if (rule.stdoutFile) return new Uint8Array(readFileSync(rule.stdoutFile));
+	return enc.encode(rule.stdout ?? "");
+}
+
+/** One-shot host invocation (`exec-out …`, `install …`): answer from the rules and exit. */
+function hostMode(args: string[]): never {
+	const text = args.join(" ");
+	const rule = ruleFor(text);
+	if (rule) {
+		process.stdout.write(ruleBytes(rule));
+		process.exit(rule.code ?? 0);
+	}
+	if (text === "exec-out screencap -p") process.stdout.write(PNG_HEADER);
+	process.exit(0);
+}
+
+const argvRest = process.argv.slice(2);
+const afterSerial = argvRest[0] === "-s" ? argvRest.slice(2) : argvRest;
+if (afterSerial[0] !== undefined && afterSerial[0] !== "shell") hostMode(afterSerial);
+
 async function execute(cmd: string): Promise<Outcome> {
+	const canned = ruleFor(cmd);
+	if (canned) {
+		process.stdout.write(ruleBytes(canned));
+		return { code: canned.code ?? 0 };
+	}
 	const space = cmd.indexOf(" ");
 	const verb = space < 0 ? cmd : cmd.slice(0, space);
 	const rest = space < 0 ? "" : cmd.slice(space + 1);
