@@ -86,3 +86,14 @@ Downloads `warden-simd-darwin-arm64.tgz` and `SHA256SUMS` from the GitHub releas
 - GitHub releases: `warden-simd-darwin-arm64.tgz` (the helper directory) and `SHA256SUMS`.
 
 The helper is ad-hoc signed without the hardened runtime, like Homebrew's `idb_companion`.
+
+## Android driver
+
+Android needs no helper and no `warden doctor` check: the driver is TypeScript over `adb` (`packages/e2e/src/driver/android/`), used by `warden ui` and the spec runner alike.
+
+- **One resident shell.** Each driver keeps a single `adb -s <serial> shell` process and writes one line per command, `(<cmd>) 2>&1 </dev/null; echo "__WDN_<id>_$?__"`, then reads until that sentinel. Commands run one at a time, in order; the exit code is the number in the sentinel. A timeout (default 10 s) kills the shell and the next command starts a new one. If the shell dies, that command fails with `E_HELPER_CRASHED` and one respawn is allowed; a respawn that also dies before finishing a command makes the session give up. Binary output never goes through it: screenshots use a separate `adb exec-out screencap -p`, and so does one of the dump routes.
+- **Opening a driver** takes one probe command (`sys.boot_completed`, the sdk level, `wm size`, `wm density`), polled for up to 30 s (`E_NOT_BOOTED` after that), then one command that sets the three animation scales to 0.
+- **Snapshots** are `uiautomator dump` parsed by a small XML walker (no dependency); the route that works is tried first next time (see [Drive a device](/docs/guides/agent-ui#android)). The snapshot is cached for a second for hit-tests and dropped after any input or app command.
+- **Input** goes through `input tap|swipe|text|keyevent|motionevent`. `pressKeyRepeat(key, n)` sends n key presses in one `input keyevent` call (32 per call); the typing layer uses it to empty a field in one round trip. Settling is snapshot hashing, `nativeSettle` is false.
+- **Apps:** `monkey -p <package> -c android.intent.category.LAUNCHER 1` to launch (after `am force-stop`), `am start -a android.intent.action.VIEW -d <url>`, `pm clear`, and host `adb install -r`.
+- **Unsupported** (they return `E_UNSUPPORTED`, or `E_UNSUPPORTED_TEXT` for non-ASCII text): pinch, clipboard, launch arguments and environment, shake, and key modifiers before Android 13.

@@ -59,6 +59,8 @@ export type OpenIosDriverOptions = {
 	defaultTimeoutMs?: number;
 	/** log each helper op and simctl call with its duration (`WARDEN_E2E_DEBUG=1`) */
 	debug?: boolean;
+	/** CoreSimulator devices directory for the host-side `AutomationEnabled` check (default `~/Library/Developer/CoreSimulator/Devices`) */
+	devicesRoot?: string;
 };
 
 const DEFAULT_QUIET_MS = 250;
@@ -131,6 +133,12 @@ export function createIosDriver(
 	const { udid, now, sleep } = opts;
 	const { client } = swap;
 	let axFailures = 0;
+	/**
+	 * The bundle `app.launch` started and no settle has confirmed yet. Right after `simctl launch` the previous
+	 * frontmost app (SpringBoard) is still the one the helper sees and it is already quiet, so the next native
+	 * settle names this bundle and the helper waits until it is frontmost.
+	 */
+	let launchedBundle: string | undefined;
 	const { ready } = client;
 	const nativeSettle = ready.ax.default === "axbridge" && ready.ax.bridge === "available";
 	let settleUnsupported = !nativeSettle;
@@ -226,12 +234,17 @@ export function createIosDriver(
 		const timeoutMs = o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS;
 		if (!settleUnsupported) {
 			// the helper's budget is `settleTimeoutMs`; the envelope `timeoutMs` is only our padded transport timer
+			const expected = launchedBundle;
 			const native = await client.request(
 				"settle",
-				{ quietMs, settleTimeoutMs: timeoutMs },
+				{ quietMs, settleTimeoutMs: timeoutMs, ...(expected === undefined ? {} : { bundleId: expected }) },
 				{ timeoutMs: timeoutMs + SETTLE_MARGIN_MS }
 			);
-			if (native.success) return { success: true, data: { quiet: native.data.quiet, waitedMs: native.data.waitedMs } };
+			if (native.success) {
+				// a mismatch means the app never came to the front: keep asking for it on the next settle
+				if (expected !== undefined && native.data.reason !== "frontmost_mismatch") launchedBundle = undefined;
+				return { success: true, data: { quiet: native.data.quiet, waitedMs: native.data.waitedMs } };
+			}
 			if (native.error.code !== "E_UNSUPPORTED") return native;
 			settleUnsupported = true;
 			opts.log?.("[ios] native settle unsupported, polling snapshot hashes");
@@ -363,8 +376,16 @@ export function createIosDriver(
 			return copied.success ? { success: true, data: set } : copied;
 		},
 		app: {
-			launch: (bundleId, o) => simctl.launch(bundleId, o),
-			terminate: (bundleId) => simctl.terminate(bundleId),
+			launch: async (bundleId, o) => {
+				const launched = await simctl.launch(bundleId, o);
+				if (launched.success) launchedBundle = bundleId;
+				return launched;
+			},
+			terminate: async (bundleId) => {
+				const terminated = await simctl.terminate(bundleId);
+				if (terminated.success && launchedBundle === bundleId) launchedBundle = undefined;
+				return terminated;
+			},
 			openUrl: (url) => simctl.openUrl(url),
 			install: (path) => simctl.install(path),
 			uninstall: (bundleId) => simctl.uninstall(bundleId),
@@ -428,7 +449,7 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 	const log: Logger = o.log ?? (() => undefined);
 	const now = o.now ?? Date.now;
 	const exec = o.debug ? timedExec(o.exec, log, now) : o.exec;
-	const simctl = createSimctl({ udid: o.udid, exec });
+	const simctl = createSimctl({ udid: o.udid, exec, ...(o.devicesRoot ? { devicesRoot: o.devicesRoot } : {}) });
 	const [client, automation] = await Promise.all([connect(o, log), simctl.enableAutomation()]);
 	if (!automation.success) log(`[ios] could not enable AX automation: ${automation.error.message}`);
 	if (!client.success) return client;

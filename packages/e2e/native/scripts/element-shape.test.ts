@@ -5,10 +5,12 @@ import { normalizeElements } from "../../src/driver/ios/normalize";
 import {
 	alertButtonsDataSchema,
 	elementAtPointDataSchema,
+	isWireElement,
 	parseLine,
 	type SnapshotData,
 	snapshotDataSchema,
 	type WireElement,
+	wireElementSchema,
 } from "../../src/driver/ios/simd-protocol";
 
 /**
@@ -47,6 +49,18 @@ describe("snapshot goldens", () => {
 			if (!parsed.success) return;
 			expectNoStrippedKeys(raw, parsed.data);
 			expect(parsed.data.elements.length).toBeGreaterThan(0);
+		});
+
+		/**
+		 * `snapshotDataSchema` validates elements with the hand-written `isWireElement` (no zod stripping), so the
+		 * drift guard for fields the schema lacks runs on `wireElementSchema` itself.
+		 */
+		test(`${name} elements carry nothing wireElementSchema drops, and isWireElement agrees`, () => {
+			const raw = load(name) as { elements: unknown[] };
+			for (const element of raw.elements) {
+				expectNoStrippedKeys(element, wireElementSchema.parse(element));
+				expect(isWireElement(element)).toBe(true);
+			}
 		});
 
 		test(`${name} elements are complete: preorder-path ids, depth, normFrame, traits, enabled`, () => {

@@ -75,6 +75,20 @@ describe("openIosDriver", () => {
 		expect(driver.capabilities).toMatchObject({ nativeSettle: true, unicodeText: true, alerts: true });
 	});
 
+	test("opening costs no xcrun call once the sim's plist has AutomationEnabled", async () => {
+		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" }, [
+			["plutil -extract AutomationEnabled", { stdout: "true\n" }],
+		]);
+		expect(joined(calls).filter((line) => line.startsWith("xcrun"))).toEqual([]);
+	});
+
+	test("opening writes AutomationEnabled once when the plist lacks it", async () => {
+		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" }, [
+			["plutil -extract AutomationEnabled", { exitCode: 1, stderr: "no such key" }],
+		]);
+		expect(joined(calls).filter((line) => line.includes("defaults write"))).toHaveLength(1);
+	});
+
 	test("an AutomationEnabled failure is logged, not fatal", async () => {
 		const calls: ExecCall[] = [];
 		const helper = fakeSimd(() => ({ data: null }));
@@ -464,6 +478,58 @@ describe("settle", () => {
 		expect(await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 1000 }))).toEqual({ quiet: true, waitedMs: 120 });
 		// the helper reads settleTimeoutMs; the envelope timeoutMs is the padded client timer
 		expect(helper.of("settle")[0]).toMatchObject({ quietMs: 100, settleTimeoutMs: 1000, timeoutMs: 3000 });
+	});
+
+	test("the first settle after app.launch names the launched bundle, later ones do not", async () => {
+		const { driver, helper } = await open(
+			(request) => (request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null }),
+			{},
+			[["xcrun simctl launch", {}]]
+		);
+		await unwrapped(driver.settle());
+		await unwrapped(driver.app.launch(BUNDLE));
+		await unwrapped(driver.settle());
+		await unwrapped(driver.settle());
+		const settles = helper.of("settle");
+		expect(settles[0]).not.toHaveProperty("bundleId");
+		expect(settles[1]).toMatchObject({ bundleId: BUNDLE });
+		expect(settles[2]).not.toHaveProperty("bundleId");
+	});
+
+	test("a frontmost_mismatch settle keeps asking for the launched bundle", async () => {
+		let answers = 0;
+		const { driver, helper } = await open(
+			(request) => {
+				if (request.op !== "settle") return { data: null };
+				answers += 1;
+				return {
+					data: { quiet: answers > 1, waitedMs: 5, ...(answers === 1 ? { reason: "frontmost_mismatch" } : {}) },
+				};
+			},
+			{},
+			[["xcrun simctl launch", {}]]
+		);
+		await unwrapped(driver.app.launch(BUNDLE));
+		expect((await unwrapped(driver.settle())).quiet).toBe(false);
+		expect((await unwrapped(driver.settle())).quiet).toBe(true);
+		const settles = helper.of("settle");
+		expect(settles[0]).toMatchObject({ bundleId: BUNDLE });
+		expect(settles[1]).toMatchObject({ bundleId: BUNDLE });
+	});
+
+	test("terminating the launched bundle stops naming it", async () => {
+		const { driver, helper } = await open(
+			(request) => (request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null }),
+			{},
+			[
+				["xcrun simctl launch", {}],
+				["xcrun simctl terminate", {}],
+			]
+		);
+		await unwrapped(driver.app.launch(BUNDLE));
+		await unwrapped(driver.app.terminate(BUNDLE));
+		await unwrapped(driver.settle());
+		expect(helper.of("settle")[0]).not.toHaveProperty("bundleId");
 	});
 
 	test("E_UNSUPPORTED falls back to snapshot-hash polling, and is remembered", async () => {

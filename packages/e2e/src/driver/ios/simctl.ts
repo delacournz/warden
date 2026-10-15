@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { nodeResetFs, type ResetFs, resetAppData } from "@delacour/warden-core/builds/install";
 import { type Exec, type ExecResult, execError } from "@delacour/warden-core/exec";
@@ -14,6 +14,7 @@ import { driverError } from "../errors";
 
 const XCRUN = ["xcrun", "simctl"] as const;
 
+const PLIST_READ_MS = 2_000;
 const SHORT_MS = 15_000;
 const LAUNCH_MS = 30_000;
 const INSTALL_MS = 10 * 60_000;
@@ -79,6 +80,27 @@ export const automationArgv = (udid: string): string[] => [
 	"AutomationEnabled",
 	"-bool",
 	"true",
+];
+
+/** Where CoreSimulator keeps every simulator's data directory on the host. */
+export const defaultDevicesRoot = (): string => join(homedir(), "Library", "Developer", "CoreSimulator", "Devices");
+
+/**
+ * The simulator's Accessibility preferences, readable from the host without booting anything through `xcrun`
+ * (`simctl spawn` costs 300-500 ms, a `plutil` read about 10 ms).
+ */
+export const automationPlistPath = (devicesRoot: string, udid: string): string =>
+	join(devicesRoot, udid, "data", "Library", "Preferences", "com.apple.Accessibility.plist");
+
+/** `plutil -extract AutomationEnabled raw -o - <plist>` prints `true` once the default is written. */
+export const automationReadArgv = (plist: string): string[] => [
+	"plutil",
+	"-extract",
+	"AutomationEnabled",
+	"raw",
+	"-o",
+	"-",
+	plist,
 ];
 
 export type StatusBarOverrides = {
@@ -159,6 +181,8 @@ export type SimctlDeps = {
 	scratchDir?: () => Promise<string>;
 	readFile?: (path: string) => Promise<Uint8Array>;
 	rmDir?: (path: string) => Promise<void>;
+	/** CoreSimulator's devices directory, for the host-side `AutomationEnabled` check; defaults to `~/Library/...` */
+	devicesRoot?: string;
 };
 
 export type Simctl = {
@@ -279,6 +303,12 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			const done = await runVoid(screenshotArgv(udid, path), LAUNCH_MS);
 			return done.success ? ok({ path }) : done;
 		},
-		enableAutomation: () => runVoid(automationArgv(udid)),
+		enableAutomation: async () => {
+			// the default survives helper and sim restarts, so after the first open it is already there
+			const plist = automationPlistPath(deps.devicesRoot ?? defaultDevicesRoot(), udid);
+			const current = await exec(automationReadArgv(plist), { timeoutMs: PLIST_READ_MS }).catch(() => undefined);
+			if (current?.exitCode === 0 && current.stdout.trim() === "true") return ok(undefined);
+			return runVoid(automationArgv(udid));
+		},
 	};
 }

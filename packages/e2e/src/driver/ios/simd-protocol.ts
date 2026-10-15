@@ -107,6 +107,65 @@ export const wireElementSchema: z.ZodType<WireElement> = z.lazy(() =>
 	})
 );
 
+const ROLE_SET: ReadonlySet<string> = new Set(ROLES);
+
+type Bag = Record<string, unknown>;
+
+const isBag = (value: unknown): value is Bag => typeof value === "object" && value !== null && !Array.isArray(value);
+const isNum = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const isNullish = (value: unknown): value is null | undefined => value === null || value === undefined;
+
+function isRect(value: unknown): value is Rect {
+	return isBag(value) && isNum(value.x) && isNum(value.y) && isNum(value.width) && isNum(value.height);
+}
+
+const OPTIONAL_STRINGS = ["id", "label", "identifier", "value", "text", "placeholder"] as const;
+const OPTIONAL_FLAGS = ["enabled", "focused", "hidden", "selected", "checked", "hittable"] as const;
+
+const isString = (value: unknown): value is string => typeof value === "string";
+const isBool = (value: unknown): value is boolean => typeof value === "boolean";
+const isPoint = (value: unknown): boolean => isBag(value) && isNum(value.x) && isNum(value.y);
+const isStringArray = (value: unknown): boolean => Array.isArray(value) && value.every(isString);
+
+/** Absent / null, or satisfying `check`. */
+const orNullish = (value: unknown, check: (value: unknown) => boolean): boolean => isNullish(value) || check(value);
+
+/** The optional, nullable fields of a node: right type or absent / null. */
+function hasValidOptionals(node: Bag): boolean {
+	return (
+		OPTIONAL_STRINGS.every((key) => orNullish(node[key], isString)) &&
+		OPTIONAL_FLAGS.every((key) => orNullish(node[key], isBool)) &&
+		orNullish(node.normFrame, isRect) &&
+		orNullish(node.traits, isStringArray) &&
+		orNullish(node.tapPoint, isPoint) &&
+		orNullish(node.pid, isNum) &&
+		orNullish(node.depth, isNum)
+	);
+}
+
+/**
+ * Structural check of one wire node and its subtree, equivalent to {@link wireElementSchema} (a test compares
+ * them) but cheaper: about 0.05 ms warm for a 35-node tree against 0.25 ms, and about 0.7 ms on the first call of
+ * a process against 2 ms (measured after the ready event had warmed zod). Unknown keys are accepted (a newer
+ * helper may add fields); `normalize.ts` reads only the known ones.
+ */
+export function isWireElement(value: unknown): value is WireElement {
+	if (!isBag(value)) return false;
+	if (!isString(value.role) || !ROLE_SET.has(value.role)) return false;
+	if (!isString(value.rawType) || !isRect(value.frame) || !hasValidOptionals(value)) return false;
+	const { children } = value;
+	if (isNullish(children)) return true;
+	return Array.isArray(children) && children.every(isWireElement);
+}
+
+/** Why `value` is not a wire element, from the zod schema (only computed once a check has already failed). */
+function wireElementProblem(value: unknown): string {
+	const parsed = wireElementSchema.safeParse(value);
+	if (parsed.success) return "invalid element";
+	const issue = parsed.error.issues[0];
+	return issue ? `${issue.path.join(".") || "(element)"}: ${issue.message}` : "invalid element";
+}
+
 // ---------- events ----------
 
 export const wireErrorSchema = z.object({
@@ -201,7 +260,7 @@ export const snapshotDataSchema = z.looseObject({
 	screen: screenInfoSchema,
 	modal: z.object({ pid: z.number().optional(), description: z.string().optional() }).nullish(),
 	truncated: z.boolean(),
-	elements: z.array(wireElementSchema),
+	elements: z.array(z.custom<WireElement>(isWireElement, { error: (issue) => wireElementProblem(issue.input) })),
 	ms: z.number(),
 	/** set when the helper answered from another backend than asked for (axbridge → ax) */
 	fallback: z.object({ from: z.string(), to: z.string(), reason: z.string() }).optional(),
@@ -221,7 +280,13 @@ export const screenshotDataSchema = z.looseObject({
 });
 export type ScreenshotData = z.infer<typeof screenshotDataSchema>;
 
-export const settleDataSchema = z.looseObject({ quiet: z.boolean(), waitedMs: z.number() });
+/** `reason: "frontmost_mismatch"`: `bundleId` was asked for and never became the frontmost app before the deadline. */
+export const settleDataSchema = z.looseObject({
+	quiet: z.boolean(),
+	waitedMs: z.number(),
+	reason: z.string().optional(),
+	frontmostPid: z.number().optional(),
+});
 export type SettleData = z.infer<typeof settleDataSchema>;
 
 /** `alertButtons`: the system alert / sheet on top, `null` when there is none. */

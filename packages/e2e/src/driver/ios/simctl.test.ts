@@ -16,10 +16,11 @@ import {
 
 const UDID = "UDID-1";
 const BUNDLE = "nz.co.delacour.warden.example";
+const automationPlist = "/devices/UDID-1/data/Library/Preferences/com.apple.Accessibility.plist";
 
 function harness(handlers: Parameters<typeof fakeExec>[0]) {
 	const calls: ExecCall[] = [];
-	const simctl = createSimctl({ udid: UDID, exec: fakeExec(handlers, calls), env: {} });
+	const simctl = createSimctl({ udid: UDID, exec: fakeExec(handlers, calls), env: {}, devicesRoot: "/devices" });
 	return { simctl, calls };
 }
 
@@ -184,10 +185,32 @@ describe("createSimctl", () => {
 		expect(joined(h.calls)[1]).toBe(`xcrun simctl status_bar ${UDID} clear`);
 	});
 
-	test("enableAutomation writes the Accessibility default", async () => {
+	test("enableAutomation writes the Accessibility default when the sim's plist does not have it", async () => {
 		const h = harness([["xcrun simctl spawn", {}]]);
 		expect((await h.simctl.enableAutomation()).success).toBe(true);
-		expect(joined(h.calls)[0]).toContain("AutomationEnabled -bool true");
+		expect(joined(h.calls).at(-1)).toContain("AutomationEnabled -bool true");
+	});
+
+	test("enableAutomation reads the sim's preference plist from the host first", async () => {
+		const h = harness([["xcrun simctl spawn", {}]]);
+		await h.simctl.enableAutomation();
+		expect(h.calls[0]?.cmd).toEqual(["plutil", "-extract", "AutomationEnabled", "raw", "-o", "-", automationPlist]);
+	});
+
+	test("enableAutomation spawns nothing in the sim when the plist already says true", async () => {
+		const h = harness([["plutil", { stdout: "true\n" }]]);
+		expect((await h.simctl.enableAutomation()).success).toBe(true);
+		expect(joined(h.calls)).toHaveLength(1);
+		expect(joined(h.calls).some((line) => line.includes("xcrun"))).toBe(false);
+	});
+
+	test("a plist that says false still gets the write", async () => {
+		const h = harness([
+			["plutil", { stdout: "false\n" }],
+			["xcrun simctl spawn", {}],
+		]);
+		await h.simctl.enableAutomation();
+		expect(joined(h.calls).some((line) => line.includes("AutomationEnabled -bool true"))).toBe(true);
 	});
 
 	test("screenshot with a path writes it; without one reads back PNG bytes and cleans up", async () => {
