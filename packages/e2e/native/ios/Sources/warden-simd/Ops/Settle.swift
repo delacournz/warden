@@ -285,6 +285,19 @@ actor QuiescenceMonitor {
     start()
   }
 
+  /// Opens a fresh stream and waits until it has reported on the frontmost app (or `timeoutMs` passes).
+  ///
+  /// This is what makes the bridge able to read an app that was relaunched while no stream was open: the guest
+  /// only attaches to a new process once a stream has bound to it, so every read of that process times out with
+  /// "did not respond" until then (`settle` repairs it for the same reason).
+  func recover(timeoutMs: Int) async {
+    restart()
+    let deadline = Self.clock() + Double(timeoutMs) / 1000
+    while state == nil, Self.clock() < deadline, !Task.isCancelled {
+      try? await Task.sleep(for: .milliseconds(25))
+    }
+  }
+
   /// One cheap tree read (the settle fallback's frame): the frontmost document encoded with sorted keys.
   private func readFrame() async throws -> Data {
     var options = AccessibilityRequestOptions(format: .complete, keys: [])

@@ -392,6 +392,33 @@ describe("Driver methods over the helper", () => {
 		});
 	});
 
+	test("health surfaces a degraded bridge as available plus the last read failure in detail", async () => {
+		const { driver } = await open((request) =>
+			request.op === "health"
+				? {
+						data: {
+							protocol: 1,
+							version: "0.1.0",
+							udid: UDID,
+							hid: { transport: "indigo" },
+							ax: {
+								default: "axbridge",
+								bridge: "degraded",
+								lastError: { message: "pid 7 did not respond", agoMs: 1500 },
+							},
+							screen: SCREEN,
+						},
+					}
+				: undefined
+		);
+		const health = await unwrapped(driver.health());
+		expect(health.bridge).toBe("available");
+		expect(health.detail).toMatchObject({
+			axBridge: "degraded",
+			axLastError: { message: "pid 7 did not respond", agoMs: 1500 },
+		});
+	});
+
 	test("alert: null, or title/message/buttons with filled ids", async () => {
 		let up = false;
 		const { driver } = await open((request) =>

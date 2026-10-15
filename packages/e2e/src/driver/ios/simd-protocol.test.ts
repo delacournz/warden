@@ -139,6 +139,22 @@ describe("data schemas", () => {
 			}).success
 		).toBe(true);
 	});
+
+	test("health reports a degraded bridge with the last read failure", () => {
+		const parsed = healthDataSchema.safeParse({
+			version: "1",
+			udid: "U",
+			hid: { transport: "dtuhid" },
+			ax: {
+				default: "axbridge",
+				bridge: "degraded",
+				lastError: { message: "pid 7 did not respond", agoMs: 2000 },
+			},
+			screen: { width: 1, height: 2, scale: 3 },
+		});
+		expect(parsed.success).toBe(true);
+		if (parsed.success) expect(parsed.data.ax.lastError?.agoMs).toBe(2000);
+	});
 });
 
 test("encodeRequest is one JSON line", () => {
