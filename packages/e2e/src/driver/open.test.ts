@@ -35,6 +35,29 @@ describe("openDriver", () => {
 		await result.data.close();
 	});
 
+	test("WARDEN_E2E_DEBUG=1 turns the latency log on", async () => {
+		const previous = process.env.WARDEN_E2E_DEBUG;
+		process.env.WARDEN_E2E_DEBUG = "1";
+		try {
+			const helper = fakeSimd(() => ({ data: null }));
+			const logs: string[] = [];
+			const result = await openDriver(env("ios"), {
+				exec: fakeExec([["xcrun", {}]]),
+				spawn: helper.spawn,
+				helperPath: "/x/warden-simd",
+				exists: () => false,
+				log: (line) => logs.push(line),
+			});
+			if (!result.success) throw new Error(result.error.message);
+			await result.data.tap({ x: 1, y: 1 });
+			await result.data.close();
+			expect(logs.some((line) => /^\[ios\] op tap \d+ ms$/.test(line))).toBe(true);
+		} finally {
+			if (previous === undefined) delete process.env.WARDEN_E2E_DEBUG;
+			else process.env.WARDEN_E2E_DEBUG = previous;
+		}
+	});
+
 	test("android is a stub until D9", async () => {
 		const result = await openDriver(env("android"));
 		expect(!result.success && result.error).toMatchObject({

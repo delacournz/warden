@@ -251,6 +251,17 @@ describe("crash handling (stdio)", () => {
 		expect(!third.success && third.error.code).toBe("E_HELPER_CRASHED");
 	});
 
+	test("the respawn budget refills once the helper answers (per crash window, not per lifetime)", async () => {
+		// every helper process answers one request and dies on its second
+		const { client } = await started({ dieAfter: { requests: 2 }, ops: { ok: { data: 1 } } });
+		const codes: string[] = [];
+		for (let call = 0; call < 6; call++) {
+			const result = await client.request("ok");
+			codes.push(result.success ? "ok" : result.error.code);
+		}
+		expect(codes).toEqual(["ok", "E_HELPER_CRASHED", "ok", "E_HELPER_CRASHED", "ok", "E_HELPER_CRASHED"]);
+	});
+
 	test("maxRespawns 0 never respawns", async () => {
 		const { client } = await started({ dieAfter: { requests: 1 }, ops: { ok: { data: 1 } } }, { maxRespawns: 0 });
 		await client.request("ok");

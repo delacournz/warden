@@ -44,6 +44,25 @@ describe("SLIM_DENYLIST", () => {
 	});
 });
 
+describe("warden-simd's HID + AX bridge services", () => {
+	test("are protected by NEVER_DISABLE, so a denylist entry for them cannot slip in", () => {
+		const needed = [
+			"dtuhidd",
+			"com.apple.dtuhidd",
+			"SimulatorFrameworkBridge-iOS",
+			"com.apple.SimulatorFrameworkBridge-iOS",
+			"com.apple.axbridge.service",
+			"com.apple.Accessibility",
+			"com.apple.accessibility.AccessibilityUIServer",
+			"com.apple.AccessibilityUIServer",
+		];
+		for (const label of needed) {
+			expect(NEVER_DISABLE.some((pattern) => pattern.test(label))).toBe(true);
+			expect(SLIM_DENYLIST).not.toContain(label);
+		}
+	});
+});
+
 describe("dictation daemons (the keyboard hangs the app without them)", () => {
 	test("are never disabled, and a sim an older denylist slimmed gets them back", () => {
 		for (const label of ["com.apple.assistantd", "com.apple.corespeechd"]) {

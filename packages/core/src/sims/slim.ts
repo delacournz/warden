@@ -67,6 +67,11 @@ export const NEVER_DISABLE: readonly RegExp[] = [
 	/runningboardd/i,
 	/testmanagerd/i,
 	/accessibility|\.AX|axd/i,
+	// warden-simd (and idb): host-side HID rides `dtuhidd` on Xcode 27, the AX tree comes from the
+	// in-sim `SimulatorFrameworkBridge-iOS` guest, and `AutomationEnabled` lives in com.apple.Accessibility.
+	/dtuhidd/i,
+	/SimulatorFrameworkBridge|axbridge/i,
+	/com\.apple\.Accessibility/i,
 	/kbd|InputUI|keyboard/i,
 	// Dictation availability. With these down the software keyboard re-queries it in a loop on the
 	// app's main thread (`AFDictationConnection … AvailabilityChanged`): the app pins a core and

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { el, snapshotOf } from "../driver.testing";
@@ -7,6 +7,7 @@ import type { Driver, Snapshot } from "../driver.types";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
+import { bunSpawn } from "./simd-transport";
 
 const UDID = "UDID-1";
 const BUNDLE = "nz.co.delacour.warden.example";
@@ -552,5 +553,193 @@ describe("close", () => {
 		const { driver, helper } = await open(() => ({ data: null }));
 		await driver.close();
 		expect(helper.of("shutdown")).toHaveLength(1);
+	});
+});
+
+const AX_STALE = { error: { code: "E_AX_UNAVAILABLE", message: "bridge not answering" } } as const;
+
+describe("bridge-stale recovery", () => {
+	test("a lone E_AX_UNAVAILABLE goes to the caller; the second in a row restarts the helper and retries", async () => {
+		let stale = true;
+		const { driver, helper, logs } = await open((request) => {
+			if (request.op === "shutdown") {
+				stale = false;
+				return undefined;
+			}
+			if (request.op === "snapshot") return stale ? AX_STALE : { data: snapshotData };
+			return undefined;
+		});
+		const first = await driver.snapshot();
+		expect(!first.success && first.error).toMatchObject({ code: "E_AX_UNAVAILABLE", retryable: true });
+		expect(helper.spawns).toHaveLength(1);
+
+		const second = await unwrapped(driver.snapshot());
+		expect(second.flat.length).toBeGreaterThan(0);
+		expect(helper.requests.map((request) => request.op)).toEqual(["snapshot", "snapshot", "shutdown", "snapshot"]);
+		expect(helper.spawns).toHaveLength(2);
+		expect(logs.some((line) => line.includes("AX bridge looks stale"))).toBe(true);
+	});
+
+	test("a success or another error in between resets the count", async () => {
+		const script: Array<"ax" | "ok" | "timeout"> = ["ax", "ok", "ax", "timeout", "ax"];
+		const { driver, helper } = await open((request) => {
+			if (request.op !== "snapshot") return undefined;
+			const step = script.shift() ?? "ok";
+			if (step === "ax") return AX_STALE;
+			if (step === "timeout") return { error: { code: "E_TIMEOUT", message: "slow" } };
+			return { data: snapshotData };
+		});
+		for (let call = 0; call < 5; call++) await driver.snapshot();
+		expect(helper.of("shutdown")).toHaveLength(0);
+		expect(helper.spawns).toHaveLength(1);
+	});
+
+	test("if the retry is still stale the error is returned and the restart is not repeated blindly", async () => {
+		const { driver, helper } = await open((request) => (request.op === "snapshot" ? AX_STALE : undefined));
+		await driver.snapshot();
+		const second = await driver.snapshot();
+		expect(!second.success && second.error.code).toBe("E_AX_UNAVAILABLE");
+		expect(helper.of("snapshot")).toHaveLength(3);
+		expect(helper.spawns).toHaveLength(2);
+		await driver.snapshot();
+		expect(helper.spawns).toHaveLength(2);
+	});
+
+	test("settle's hash polling gets the same recovery", async () => {
+		let stale = true;
+		let t = 0;
+		const { driver, helper } = await open(
+			(request) => {
+				if (request.op === "settle") return { error: { code: "E_UNSUPPORTED", message: "x" } };
+				if (request.op === "shutdown") {
+					stale = false;
+					return undefined;
+				}
+				if (request.op === "snapshot") return stale ? AX_STALE : { data: snapshotData };
+				return undefined;
+			},
+			{
+				now: () => t,
+				sleep: async (ms) => {
+					t += ms;
+				},
+			}
+		);
+		const first = await driver.settle({ quietMs: 100, timeoutMs: 1000 });
+		expect(!first.success && first.error.code).toBe("E_AX_UNAVAILABLE");
+		const second = await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 1000 }));
+		expect(second.quiet).toBe(true);
+		expect(helper.spawns).toHaveLength(2);
+	});
+
+	test("socket mode: shuts the daemon down and reconnects, falling back to a stdio spawn when it is gone", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "ios-driver-"));
+		const socketPath = join(dir, "simd.sock");
+		const ready = `${JSON.stringify({
+			event: "ready",
+			protocol: 1,
+			version: "daemon",
+			udid: UDID,
+			hid: { transport: "indigo" },
+			ax: { default: "axbridge", bridge: "available" },
+			screen: SCREEN,
+		})}\n`;
+		const seen: string[] = [];
+		const server = Bun.listen<{ buffer: string }>({
+			unix: socketPath,
+			socket: {
+				open(socket) {
+					socket.data = { buffer: "" };
+					socket.write(ready);
+				},
+				data(socket, chunk) {
+					socket.data.buffer += new TextDecoder().decode(chunk);
+					const lines = socket.data.buffer.split("\n");
+					socket.data.buffer = lines.pop() ?? "";
+					for (const line of lines) {
+						const request = JSON.parse(line) as { id: string; op: string };
+						seen.push(request.op);
+						if (request.op === "snapshot") {
+							socket.write(`${JSON.stringify({ id: request.id, ok: false, error: AX_STALE.error })}\n`);
+						} else {
+							if (request.op === "shutdown") server.stop();
+							socket.write(`${JSON.stringify({ id: request.id, ok: true, data: null })}\n`);
+						}
+					}
+				},
+			},
+		});
+		try {
+			const { driver, helper } = await open(
+				(request) => (request.op === "snapshot" ? { data: snapshotData } : undefined),
+				{
+					env: { simdSocket: socketPath },
+				}
+			);
+			await driver.snapshot();
+			const recovered = await unwrapped(driver.snapshot());
+			expect(recovered.flat.length).toBeGreaterThan(0);
+			expect(seen).toEqual(["snapshot", "snapshot", "shutdown"]);
+			expect(helper.spawns).toHaveLength(1);
+		} finally {
+			server.stop(true);
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("helper crash (real fake-simd process)", () => {
+	const FAKE = join(import.meta.dir, "../../../native/scripts/fake-simd.ts");
+
+	test("one E_HELPER_CRASHED surfaces, the next call succeeds on a respawned helper", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "ios-driver-crash-"));
+		const script = join(dir, "script.json");
+		writeFileSync(
+			script,
+			JSON.stringify({ dieAfter: { requests: 2, once: true, exitCode: 9 }, ops: { tap: { data: null } } })
+		);
+		try {
+			const { driver } = await open(() => undefined, {
+				spawn: (cmd) => bunSpawn([process.execPath, FAKE, "--script", script, ...cmd.slice(1)]),
+			});
+			expect((await driver.tap({ x: 1, y: 1 })).success).toBe(true);
+			const crashed = await driver.tap({ x: 1, y: 1 });
+			expect(!crashed.success && crashed.error).toMatchObject({ code: "E_HELPER_CRASHED", retryable: true });
+			expect((await driver.tap({ x: 1, y: 1 })).success).toBe(true);
+			expect((await driver.tap({ x: 1, y: 1 })).success).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("latency log (WARDEN_E2E_DEBUG)", () => {
+	test("debug logs each helper op and simctl call with its duration", async () => {
+		let t = 0;
+		const { driver, logs } = await open(
+			(request) => (request.op === "tap" ? { error: { code: "E_HID", message: "x" } } : { data: null }),
+			{
+				debug: true,
+				now: () => {
+					t += 7;
+					return t;
+				},
+			},
+			[["xcrun simctl terminate", {}]]
+		);
+		await driver.tap({ x: 1, y: 2 });
+		await driver.pressButton("home");
+		await driver.app.terminate(BUNDLE);
+		expect(logs).toContain("[ios] op tap 7 ms E_HID");
+		expect(logs).toContain("[ios] op pressButton 7 ms");
+		expect(logs).toContain("[ios] exec xcrun simctl terminate 7 ms (exit 0)");
+		expect(logs.some((line) => line.startsWith("[ios] exec xcrun simctl spawn"))).toBe(true);
+	});
+
+	test("without debug only the usual lines are logged", async () => {
+		const { driver, logs } = await open(() => ({ data: null }));
+		await driver.tap({ x: 1, y: 2 });
+		expect(logs.some((line) => line.startsWith("[ios] op "))).toBe(false);
+		expect(logs.some((line) => line.startsWith("[ios] exec "))).toBe(false);
 	});
 });

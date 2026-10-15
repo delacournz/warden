@@ -20,6 +20,7 @@ import type {
 } from "../driver.types";
 import { driverError } from "../errors";
 import { settleByHash, snapshotHash } from "../settle";
+import { type SwappableClient, swappableClient } from "./ios-session";
 import { locateHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
@@ -56,6 +57,8 @@ export type OpenIosDriverOptions = {
 	realpath?: (path: string) => string;
 	/** per-request default in ms, 10 s */
 	defaultTimeoutMs?: number;
+	/** log each helper op and simctl call with its duration (`WARDEN_E2E_DEBUG=1`) */
+	debug?: boolean;
 };
 
 const DEFAULT_QUIET_MS = 250;
@@ -121,11 +124,13 @@ function decodeBase64(png: string): Uint8Array {
 }
 
 export function createIosDriver(
-	client: SimdClient,
+	swap: SwappableClient,
 	simctl: Simctl,
 	opts: { udid: string; now: () => number; sleep: (ms: number) => Promise<void>; log?: Logger }
 ): Driver {
 	const { udid, now, sleep } = opts;
+	const { client } = swap;
+	let axFailures = 0;
 	const { ready } = client;
 	const nativeSettle = ready.ax.default === "axbridge" && ready.ax.bridge === "available";
 	let settleUnsupported = !nativeSettle;
@@ -148,12 +153,36 @@ export function createIosDriver(
 
 	const gestureTimeout = (durationMs: number | undefined, base = 0) => (durationMs ?? 0) + base + GESTURE_MARGIN_MS;
 
-	async function snapshot(o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }): DriverResult<Snapshot> {
+	const fetchSnapshot = async (o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }) => {
 		const result = await client.request(
 			"snapshot",
 			params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend })
 		);
-		return result.success ? { success: true, data: toSnapshot(result.data, now()) } : result;
+		return result.success ? ({ success: true, data: toSnapshot(result.data, now()) } as const) : result;
+	};
+
+	/**
+	 * The first `E_AX_UNAVAILABLE` goes to the caller (it is retryable); a second one in a row means the
+	 * in-sim AX bridge went stale, so restart the helper once and retry the snapshot.
+	 */
+	async function snapshot(o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }): DriverResult<Snapshot> {
+		const generation = swap.generation();
+		const first = await fetchSnapshot(o);
+		if (first.success) {
+			axFailures = 0;
+			return first;
+		}
+		if (first.error.code !== "E_AX_UNAVAILABLE") {
+			axFailures = 0;
+			return first;
+		}
+		axFailures += 1;
+		if (axFailures < 2) return first;
+		opts.log?.("[ios] E_AX_UNAVAILABLE twice in a row: AX bridge looks stale, restarting warden-simd");
+		const restarted = await swap.restart(generation);
+		if (!restarted.success) return restarted;
+		axFailures = 0;
+		return fetchSnapshot(o);
 	}
 
 	async function typeText(text: string): DriverResult<void> {
@@ -377,17 +406,31 @@ async function connect(o: OpenIosDriverOptions, log: Logger): Promise<Result<Sim
  */
 export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Driver> {
 	const log: Logger = o.log ?? (() => undefined);
-	const simctl = createSimctl({ udid: o.udid, exec: o.exec });
+	const now = o.now ?? Date.now;
+	const exec = o.debug ? timedExec(o.exec, log, now) : o.exec;
+	const simctl = createSimctl({ udid: o.udid, exec });
 	const [client, automation] = await Promise.all([connect(o, log), simctl.enableAutomation()]);
 	if (!automation.success) log(`[ios] could not enable AX automation: ${automation.error.message}`);
 	if (!client.success) return client;
+	const swap = swappableClient(client.data, {
+		now,
+		log,
+		reopen: () => connect(o, log),
+		...(o.debug ? { debug: true } : {}),
+	});
 	return {
 		success: true,
-		data: createIosDriver(client.data, simctl, {
-			udid: o.udid,
-			now: o.now ?? Date.now,
-			sleep: o.sleep ?? ((ms) => Bun.sleep(ms)),
-			log,
-		}),
+		data: createIosDriver(swap, simctl, { udid: o.udid, now, sleep: o.sleep ?? ((ms) => Bun.sleep(ms)), log }),
+	};
+}
+
+/** `[ios] exec xcrun simctl launch 270 ms (exit 0)` for every simctl call. */
+function timedExec(exec: Exec, log: Logger, now: () => number): Exec {
+	return async (cmd, opts) => {
+		const started = now();
+		const res = await exec(cmd, opts);
+		const label = cmd[0] === "sh" ? "sh (pbcopy)" : cmd.slice(0, 3).join(" ");
+		log(`[ios] exec ${label} ${Math.round(now() - started)} ms (exit ${res.exitCode})`);
+		return res;
 	};
 }

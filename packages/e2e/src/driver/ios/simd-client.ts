@@ -58,7 +58,11 @@ export type ClientOptions = {
 	defaultTimeoutMs?: number;
 	/** how long to wait for `ready`, 15 s */
 	readyTimeoutMs?: number;
-	/** respawns allowed over the client's lifetime after unexpected exits (stdio default 1, socket 0) */
+	/**
+	 * respawns allowed in a row after unexpected exits (stdio default 1, socket 0). The budget refills
+	 * as soon as the helper answers anything, so each crash gets one respawn but a helper that dies
+	 * before answering is not retried forever.
+	 */
 	maxRespawns?: number;
 	/** ask the helper to `shutdown` on close (stdio: yes; a shared socket daemon: no) */
 	shutdownOnClose?: boolean;
@@ -110,6 +114,8 @@ export async function createSimdClient(
 	let respawns = 0;
 	let closed = false;
 	let closing = false;
+	/** the helper already acknowledged `shutdown`, so `close()` need not ask again */
+	let shutdownAcked = false;
 	let current: Session | undefined;
 	let opening: Promise<Result<Session, DriverError>> | undefined;
 	/** why the last session died, when it was not a fatal */
@@ -136,6 +142,8 @@ export async function createSimdClient(
 	}
 
 	function handleResponse(response: SimdResponse): void {
+		// any answer proves the (re)spawned helper works: the respawn budget is per crash window
+		respawns = 0;
 		const entry = pending.get(response.id);
 		if (!entry) {
 			log?.(`[simd] response for unknown id ${response.id} (timed out?)`);
@@ -332,6 +340,7 @@ export async function createSimdClient(
 				});
 			}
 		});
+		if (result.success && op === "shutdown") shutdownAcked = true;
 		return result.success ? validate(op, result.data) : result;
 	}
 
@@ -358,7 +367,7 @@ export async function createSimdClient(
 			if (closed) return;
 			closing = true;
 			const session = current;
-			if (shutdownOnClose && session?.alive && !fatalError) {
+			if (shutdownOnClose && session?.alive && !fatalError && !shutdownAcked) {
 				await request("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
 			}
 			closed = true;
