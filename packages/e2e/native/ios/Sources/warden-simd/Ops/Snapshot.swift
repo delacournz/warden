@@ -81,8 +81,11 @@ struct SnapshotRequest: Sendable {
   var maxNodes: Int?
   /// Debug: also return idb's own serialized document as `raw` (used to capture test fixtures).
   var raw = false
+  /// Debug: read this process instead of the frontmost app (e.g. SpringBoard's pid, to see system prompts).
+  var pid: pid_t?
 
   init(_ params: JSON) throws {
+    pid = params["pid"]?.intValue.map { pid_t($0) }
     interactiveOnly = params["interactiveOnly"]?.boolValue ?? false
     backend = try parseBackend(params["backend"])
     keys = parseKeys(params["keys"], reachability: params["reachability"]?.boolValue ?? false)
@@ -250,8 +253,9 @@ extension Session {
     var options = AccessibilityRequestOptions(format: .complete, keys: request.keys)
     options.filter = .all
     let readOptions = options
+    let query: AccessibilityElementQuery = request.pid.map { .application(pid: $0) } ?? .frontmost
     var outcome = try await withAX(backend: request.backend, op: "snapshot") { reader in
-      try await reader.describe(.frontmost, options: readOptions).document
+      try await reader.describe(query, options: readOptions).document
     }
     if request.backend == nil, outcome.backend == .axbridge, Session.isEmptyRoot(outcome.value) {
       outcome = try await recoverEmptyRoot(first: outcome, options: readOptions)
@@ -366,23 +370,42 @@ extension Session {
       return .object(fields)
     }
     guard let container else { return nil }
-    var fields: [String: JSON] = ["description": .string(container.label ?? container.rawType)]
+    let firstText = container.preorder.dropFirst().filter { $0.role == .text }.compactMap { $0.text ?? $0.label }.first
+    var fields: [String: JSON] = ["description": .string(container.label ?? firstText ?? container.rawType)]
     if let pid = container.pid { fields["pid"] = .int(pid) }
     return .object(fields)
   }
 
   /// An alert / sheet container: an `Alert` / `Sheet` typed node, a UIKit alert controller view (what the guest
-  /// reports for SpringBoard permission prompts), or the element type idb named as the blocking modal.
+  /// reports for SpringBoard permission prompts), an in-page Safari dialog, or the element type idb named as the
+  /// blocking modal.
   static func isModalContainer(_ element: Element, modalType: String?) -> Bool {
-    element.role == .alert || element.role == .sheet || element.rawType.hasPrefix("_UIAlertController")
-      || (modalType != nil && element.rawType == modalType)
+    modalRank(element, modalType: modalType) != nil
   }
 
-  /// The last (drawn on top) modal container in preorder that offers at least one button.
-  static func topmostModal(in roots: [Element], modalType: String?) -> Element? {
-    roots.flatMap(\.preorder).last { element in
-      isModalContainer(element, modalType: modalType) && element.preorder.contains { $0.role == .button }
+  /// How strongly a container is "the" alert: 2 = a real alert or dialog (UIKit alert controller, `Alert`, Safari's
+  /// `SFDialogView`, idb's named modal), 1 = a sheet, 0 = a popover (a tip or menu, not something that asks a
+  /// question). nil = not a modal container.
+  static func modalRank(_ element: Element, modalType: String?) -> Int? {
+    if element.role == .alert || element.rawType.hasPrefix("_UIAlertController") || element.rawType == "SFDialogView"
+      || (modalType != nil && element.rawType == modalType)
+    {
+      return 2
     }
+    guard element.role == .sheet else { return nil }
+    return element.label == "Popover" || element.rawType.contains("Popover") ? 0 : 1
+  }
+
+  /// The best modal container that offers at least one button: highest rank wins (a Keychain sheet or "Open in ...?"
+  /// dialog beats a tip popover drawn over it), and among equals the last in preorder (drawn on top).
+  static func topmostModal(in roots: [Element], modalType: String?) -> Element? {
+    var best: (rank: Int, element: Element)?
+    for element in roots.flatMap(\.preorder) {
+      guard let rank = modalRank(element, modalType: modalType), element.preorder.contains(where: { $0.role == .button })
+      else { continue }
+      if best == nil || rank >= best!.rank { best = (rank, element) }
+    }
+    return best?.element
   }
 
   /// The `ax` reader answers `frontmost` with SpringBoard's alert host: an `Application` whose label is blank
