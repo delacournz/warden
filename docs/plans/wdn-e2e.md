@@ -327,3 +327,16 @@ Failures found and fixed (all with fake-host tests, no real adb in `bun test`):
 Android `fill` goes through the same layer as iOS: `typing.ts` (whole string in one `typeText`, no pacing needed) and the `screen/field.ts` read-back (`CONFIRM_READS`, stale-risk run), the field value being the node's `text`.
 
 Still open: a real permission-dialog `alert` run; example-app Android build (`warden app ensure android --project example`) and a re-run of `bench` on a quiet machine (the snapshotWarm target of < 800 ms is unverified; a dump alone took 3.5-8 s here); `drag` on Android is hold-then-move since the follow-up (sdk 26+: `input motionevent` DOWN, 8 interpolated MOVEs, UP in one shell line, CANCEL on failure; below 26 or with an unreadable sdk it falls back to one long `input swipe`, no hold; every `input` is a process start so the sleeps are lower bounds; NOT yet verified on a device, load was above 80); `pinch` and `clipboard` stay `E_UNSUPPORTED` and non-ASCII `typeText` stays `E_UNSUPPORTED_TEXT`.
+
+**ui-bench after D11 / open-path fix (2026-10-16, simd-core).** `bun run smoke:ui-bench` twice, iPhone 17 sim (own lease, released), release example app, helper rebuilt from this branch (`15a7c60`), load average 190 / 302 / 362 (run 1) and 239 / 302 / 359 (run 2), i.e. a heavily loaded machine, not a quiet one. `tree` skipped both times (`devtools_unavailable`): no Metro / dev client was running, and starting one was not cheap, so `warden ui bench --json --metro` was not run. ms:
+
+| metric | target | run 1 p50 | run 1 p95 | n | run 2 p50 | run 2 p95 | n | verdict |
+|---|---|---|---|---|---|---|---|---|
+| helperColdToSnapshot | <1500 | 3593.1 | 6379.1 | 3 | 958.9 | 997.8 | 3 | run 1 FAIL (x2.4), run 2 ok |
+| snapshotWarm | p50 <60 / p95 <120 | 106.3 | 148.5 | 20 | 64.6 | 80.2 | 20 | misses the p50 target on both runs (FAIL x1.8, then slow x1.08); p95 ok on run 2 |
+| pressHid | <30 | 7.5 | 19.9 | 20 | 3.7 | 13.5 | 20 | ok |
+| pressSettle | <600 | 442.5 | 496.1 | 5 | 411.7 | 430.8 | 5 | ok |
+| tree | <250 | - | - | 0 | - | - | 0 | skip (no dev client) |
+| openDriver | <500 | 8.8 | 9.8 | 5 | 8.4 | 10.4 | 5 | ok (was 570-730 on the loaded machine; 418 measured warm before the fix, now ~7) |
+
+Targets were not tuned. `snapshotWarm` still misses its plain p50 target on this machine (64.6 to 106.3 ms vs 60) and `helperColdToSnapshot` missed in one of two runs; both should be re-run on a quiet machine before calling them real. `openDriver` meets its target by a wide margin (the in-sim `AutomationEnabled` write that cost 380-480 ms per open is now skipped when the sim plist already has it).
