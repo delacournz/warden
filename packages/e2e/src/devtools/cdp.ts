@@ -4,6 +4,9 @@ import { type DevtoolsResult, devtoolsErr, type ExceptionDetails } from "./devto
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+/** Bun's (and undici's) `WebSocket` accepts request headers as a second argument; the DOM lib's type does not. */
+type HeaderWebSocketConstructor = new (url: string, options?: { headers?: Record<string, string> }) => WebSocket;
+
 export type CdpOptions = {
 	/** injectable for tests; defaults to the global one */
 	WebSocket?: typeof WebSocket;
@@ -104,13 +107,27 @@ function textOf(data: unknown): string | undefined {
 	return undefined;
 }
 
+/**
+ * The `Origin` Metro's inspector proxy requires: it rejects a debugger upgrade with no Origin (the 401 a bare
+ * `new WebSocket(url)` gets) and accepts its own base URL or a local hostname. Always the 127.0.0.1 origin of the
+ * socket's port: verified live against Expo's Metro, where `http://localhost:<port>` is accepted by the handshake
+ * but the socket is then dropped (1006), while `http://127.0.0.1:<port>` works whatever host the socket dials.
+ */
+export function inspectorOrigin(wsUrl: string): string | undefined {
+	if (!URL.canParse(wsUrl)) return undefined;
+	const url = new URL(wsUrl);
+	const port = url.port || (url.protocol === "wss:" ? "443" : "80");
+	return `http://127.0.0.1:${port}`;
+}
+
 /** Open a CDP JSON-RPC session over a WebSocket (Metro's `/inspector/debug`). */
 export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<DevtoolsResult<CdpClient>> {
-	const Impl = options.WebSocket ?? WebSocket;
+	const Impl = (options.WebSocket ?? WebSocket) as unknown as HeaderWebSocketConstructor;
 	const defaultTimeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	let ws: WebSocket;
 	try {
-		ws = new Impl(wsUrl);
+		const origin = inspectorOrigin(wsUrl);
+		ws = origin ? new Impl(wsUrl, { headers: { Origin: origin } }) : new Impl(wsUrl);
 	} catch (error) {
 		return devtoolsErr("devtools_unavailable", `bad inspector url ${wsUrl}: ${String(error)}`);
 	}
