@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
-import { KEY_PACE_MS } from "../agent-ui/actions";
+import { KEY_PACE_MS } from "@delacour/warden-e2e/driver/typing";
 import type { UiDeps } from "../agent-ui/driver";
 import { readState } from "../agent-ui/state";
 import type { VideoSpec } from "../agent-ui/video";

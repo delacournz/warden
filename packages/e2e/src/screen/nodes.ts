@@ -163,3 +163,23 @@ export function descendantsOf(universe: readonly NodeEntry[], ancestors: readonl
 		return false;
 	});
 }
+
+/** The snapshot entry of one element (its role, name, value and secure flag), for rules that need more than the `Element`. */
+export function entryOfElement(element: Element, template: Pick<Snapshot, "platform">): NodeEntry | undefined {
+	const flat: Element[] = [];
+	const walk = (e: Element): void => {
+		flat.push(e);
+		for (const child of e.children) walk(child);
+	};
+	walk(element);
+	const index = indexSnapshot({
+		platform: template.platform,
+		backend: "axbridge",
+		takenAt: 0,
+		screen: { width: 0, height: 0, scale: 1 },
+		elements: [element],
+		flat,
+		truncated: false,
+	});
+	return index.entries[0];
+}
