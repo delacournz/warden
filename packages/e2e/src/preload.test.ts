@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { installPreload, isCi, type PreloadDeps } from "./preload";
+import { installPreload, isCi, type PreloadDeps, versionMismatch } from "./preload";
 import type { Session } from "./session";
 
 function harness(env: Record<string, string | undefined>, onlySeen = false) {
@@ -24,6 +24,7 @@ function harness(env: Record<string, string | undefined>, onlySeen = false) {
 			log.sessions.push(opts);
 			return session;
 		},
+		version: "0.3.0",
 		onlySeen: () => onlySeen,
 		stderr: (text) => log.stderr.push(text),
 		exit: (code) => log.exits.push(code),
@@ -79,6 +80,34 @@ describe("installPreload", () => {
 		const ci = harness({ WARDEN_UDID: "U", WARDEN_BUNDLE_ID: "b", CI: "true" }, false);
 		installPreload(ci.deps);
 		await ci.log.hooks[0]?.();
+	});
+});
+
+describe("version handshake", () => {
+	const under = { WARDEN_UDID: "U", WARDEN_BUNDLE_ID: "b" };
+
+	test("a different warden version warns on stderr, still installs", () => {
+		const { deps, log } = harness({ ...under, WARDEN_VERSION: "0.4.0" });
+		installPreload(deps);
+		expect(log.stderr.join("")).toContain("@delacour/warden-e2e 0.3.0 does not match warden 0.4.0");
+		expect(log.stderr.join("")).toContain("bun add -d @delacour/warden-e2e@0.4.0");
+		expect(log.exits).toEqual([]);
+		expect(log.sessions).toHaveLength(1);
+	});
+
+	test("same version, or no WARDEN_VERSION (by-hand run), or not under warden: silent", () => {
+		for (const env of [{ ...under, WARDEN_VERSION: "0.3.0" }, under, { WARDEN_VERSION: "9.9.9" }]) {
+			const { deps, log } = harness(env);
+			installPreload(deps);
+			expect(log.stderr).toEqual([]);
+		}
+	});
+
+	test("versionMismatch", () => {
+		expect(versionMismatch(undefined, "1.0.0")).toBeUndefined();
+		expect(versionMismatch("1.0.0", "1.0.0")).toBeUndefined();
+		expect(versionMismatch("1.1.0", "1.0.0")).toContain("1.1.0");
+		expect(versionMismatch("1.1.0", "0.0.0-workspace")).toBeUndefined();
 	});
 });
 

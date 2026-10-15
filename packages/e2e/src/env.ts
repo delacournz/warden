@@ -20,6 +20,8 @@ export const ENV_NAMES = {
 	headless: "WARDEN_HEADLESS",
 	logTimestamps: "WARDEN_LOG_TIMESTAMPS",
 	worker: "WARDEN_WORKER",
+	/** the `warden` that started this process: the preload warns when it is not this package's version */
+	version: "WARDEN_VERSION",
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -66,6 +68,7 @@ const schema = z.object({
 	headless: toggle.default(false),
 	logTimestamps: toggle.default(false),
 	worker: z.string().optional(),
+	version: z.string().optional(),
 });
 
 export type E2eEnv = {
@@ -90,6 +93,8 @@ export type E2eEnv = {
 	logTimestamps: boolean;
 	/** nothing in this package reads it: the 0-based worker index, for specs that shard or name per-worker data (`guides/e2e`) */
 	worker?: string;
+	/** `WARDEN_VERSION`: the warden that started this run */
+	wardenVersion?: string;
 };
 
 type Parsed = z.infer<typeof schema>;
@@ -119,6 +124,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 			simd: v.simd,
 			simdSocket: v.simdSocket,
 			worker: v.worker,
+			wardenVersion: v.version,
 		}),
 	};
 }
