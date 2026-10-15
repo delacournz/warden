@@ -21,7 +21,7 @@ warden ui close --release --udid $UDID                  # 7. stop the helper and
 ```
 
 1. **Claim.** `warden claim ios --json` (or `android`); keep the returned `udid` (Android: the serial). Pass it on every call as `--udid <udid>` (`--serial` / `--lease <id>` also work), or export `WARDEN_UDID` once. With none of those, `warden ui` uses the single device you already lease.
-2. **Open.** A bundle id launches the app; a URL opens through the system. For a dev client, run `warden dev` or `warden app ensure` first, then `open <bundleId> --metro <metroUrl>`.
+2. **Open.** A bundle id launches the app; a URL opens through the system. For a dev client, run `warden dev` or `warden app ensure` first, then `open <bundleId> --metro <metroUrl>` (iOS; on Android see [Android](#android)).
 3. **Snapshot.** `snapshot -i` lists only interactive elements and anything with a `testID`. The `@eN` refs it prints are valid until the next `snapshot`, `find` or `--settle`.
 4. **Act on a ref or a selector.** Prefer `id=` selectors for anything you will touch twice: refs go stale when the screen changes.
 5. **Verify** with `wait`, `is` and `get`. A bare screenshot is not verification.
@@ -42,13 +42,13 @@ A line is `@ref [role] "name" id=<testID> value="…" <states> (x,y w×h)`. Stat
 
 | Command | Use |
 |---|---|
-| `snapshot [-i] [--all] [--depth n]` | the screen. `-i` filters to interactive elements and `testID`s; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels |
+| `snapshot [-i\|--interactive] [--all] [--depth n]` | the screen. `-i` filters to interactive elements and `testID`s; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels |
 | `snapshot --settle [ms]` | wait for a quiet screen (the tree hash is unchanged for 250 ms; default budget 3000 ms), then print what changed against the previous snapshot as `-` / `+` lines and a `= N unchanged` count |
 | `find <selector…>` | only the elements matching a [selector](#selectors), each with a fresh `@eN` |
 | `screenshot [path]` | a PNG; default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
 | `video start [path]` · `video stop` | record the screen (iOS `simctl recordVideo`, Android `screenrecord`, 3 min device limit); default `$WARDEN_HOME/ui/<udid>/videos/NNN.mp4` |
 
-`snapshot` and `find` bump the **generation** (`gen 4` above). An action with `--settle` takes a snapshot too, so it also starts a new generation and replaces the refs you held.
+`snapshot` and `find` bump the **generation** (`generation 4` above). So does anything else that takes a snapshot for you: an action with `--settle`, a `wait` that matches, a `scroll --until` that finds its target. The refs you held before are replaced.
 
 ## Targets and selectors
 
@@ -78,7 +78,7 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 
 | Command | Effect |
 |---|---|
-| `open <bundleId\|url> [--relaunch] [--metro <url>] [--args …]` | launch the app, or open a URL (on iOS the "Open in …?" sheet is accepted). `--relaunch` terminates a running app first; `--metro` starts the dev client on that Metro and remembers it for the devtools commands |
+| `open <bundleId\|url> [--relaunch] [--metro <url>] [--args …]` | launch the app, or open a URL (on iOS the "Open in …?" sheet is accepted). A bundle id that is already running is attached to, not restarted (`attached to <id>`, `--json` `attached: true`); `--relaunch` starts it fresh. `--metro` starts the dev client on that Metro and remembers it for the devtools commands |
 | `press <target>` (alias `tap`) · `longpress <target> [ms]` | tap, or press and hold (default 800 ms). `--verify` re-checks an `@eN` first |
 | `fill <target> <text>` | focus the field, empty it, type, then read it back (retried once). `--secure` skips the read-back and never echoes or records the text; `--no-verify` skips only the read-back. Use `--` before text that starts with `-` |
 | `type <text> [--submit]` | type into whatever has focus; `--submit` then presses Enter |
@@ -103,7 +103,7 @@ These poll the live screen every 100 ms for up to `--timeout` (default 5000 ms) 
 | `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` | prints `true` / `false`; exit 0 when true, 1 when false or nothing matches: usable in a shell `if` (`--json`: `{ matched, state, reason? }`) |
 | `get <selector> text\|value\|label\|id\|role\|frame\|count` | print one bare value (`frame` as `x y w h`; `count`: how many match, `0` is a success); no match is `target_not_found` |
 
-A `wait` that runs out fails (exit 1) with `wait_target_absent` (never in the tree), `wait_target_hidden` (in the tree, not visible), `wait_target_present` (`absent`: still visible), `wait_text_absent` or `wait_not_stable`. `--json` failures carry `details: { matched: false, waitedMs, reason }`. `wait` and `is` on a selector are recorded into an active flow (`wait` as a visible check); `wait absent|text|stable` are not.
+A `wait` that runs out fails (exit 1) with `wait_target_absent` (never in the tree), `wait_target_hidden` (in the tree, not visible), `wait_target_present` (`absent`: still visible), `wait_text_absent` or `wait_not_stable`. `--json` failures carry `details: { matched: false, waitedMs, reason }`. Into an active flow, `wait <selector>` (as a visible check), `is` and `get` (a text property) are recorded; `wait absent|text|stable` are not.
 
 ## The app's console, network and React tree
 
@@ -166,7 +166,7 @@ A `scroll` or direction `swipe` step in a flow names the **content's** direction
 { "ok": false, "command": "press", "error": { "code": "stale_ref", "message": "…", "hint": "run `warden ui snapshot` again" } }
 ```
 
-`generation` appears when the call took a snapshot; `warnings` only when there are any (a screen that did not settle in its budget, replay drift). Without `--json`, results go to stdout and errors and warnings to stderr.
+`generation` appears when the call took a snapshot; `warnings` only when there are any (a screen that did not settle in its budget, replay drift). A failure may also carry `device` and `error.details`. `is` answers `false` with `ok: true` and exit 1. Without `--json`, results go to stdout and errors and warnings to stderr.
 
 ## Android
 
@@ -177,9 +177,9 @@ What differs from iOS:
 - **Snapshots are `uiautomator dump`.** Roles come from the view class (`Button`, `EditText`, `TextView`, clickable `ViewGroup` becomes `button`), `id=` is the `resource-id` (or React Native `testID`) without its package prefix. `hittable` is derived (clickable, enabled, on screen). Where a dump may be written differs between images, so the first snapshot probes three routes (`/dev/stdout`, `exec-out … /dev/tty`, a file on `/sdcard`) and remembers the one that worked in `$WARDEN_HOME/ui/<serial>/android-dump-route`; later calls start there. A dump that comes back empty (`null root node`, common while a window opens) is retried 3 times, 400 ms apart, before `E_AX_UNAVAILABLE` (exit 3).
 - **Speed.** `warden ui bench` targets p50 800 ms for a warm snapshot and 120 ms for a press (iOS: 60 ms and 30 ms). A dump is a process start inside the emulator, so there is no fast path. On a heavily loaded machine (load average 50-170, other agents building) the same emulator gave snapshot p50 2.4 s and press p50 94 ms; the first call on a device is slower still while the dump routes are probed. Check `bench` on a quiet machine before trusting a number.
 - **`fill`** taps the field, clears it with one batched `input keyevent 67 …` call, types with `input text` (spaces, quotes and `%s` are escaped, a `%` before a space or `s` is split into a second call) and reads the value back with the same polling as iOS; each read is a fresh dump because input drops the cached snapshot. Secure fields type but are not read back.
-- **`drag`** is hold-then-move (`input motionevent` DOWN, 8 MOVEs, UP) on Android 8 (sdk 26) and later; older images get a long `swipe` with no hold. `longpress` and `swipe` are single `input swipe` calls. `back`, `home`, `rotate` and `appearance` (`cmd uimode`) work; `alert` reads `AlertDialog` and runtime-permission buttons.
+- `back`, `home`, `rotate` and `appearance` (`cmd uimode`) work; `alert` reads `AlertDialog` and runtime-permission buttons.
 - **`video`** uses `screenrecord`, which stops itself after 3 minutes.
-- **Not supported:** `pinch` and the clipboard (`E_UNSUPPORTED`, exit 1), text that is not printable ASCII (`E_UNSUPPORTED_TEXT`), key modifiers before Android 13, `open` launch arguments or environment (use `open <url>` for a dev-client Metro link), and `snapshot` backends other than uiautomator.
+- **Not supported:** `pinch` and the clipboard (`E_UNSUPPORTED`, exit 1), text that is not printable ASCII (`E_UNSUPPORTED_TEXT`), and `open <bundleId>` with `--metro` or `--args` (fails; use `open <url>` with the dev client's deep link instead).
 
 ## Options on every subcommand
 
@@ -212,4 +212,4 @@ Release only what you leased: `warden ui close --release`, or `warden release <l
 
 ### Speed targets
 
-`warden ui bench` times the loop's primitives on a leased device (warm snapshot, HID press, press with `--settle`, `tree`, cold helper start, opening a second driver) and checks them against fixed targets, for example a warm `snapshot -i` under 60 ms at p50 and a HID `press x y` under 30 ms on iOS. A metric passes up to its target times 1.5. The full table, the JSON shape and the `bun run smoke:ui-bench` gate are in the [CLI reference](/docs/reference/cli#warden-ui-bench).
+`warden ui bench [--runs n] [--metro url]` times the loop's primitives on a leased device (warm snapshot, HID press, press with `--settle`, `tree`, cold helper start, opening a second driver) and checks them against fixed targets, for example a warm `snapshot -i` under 60 ms at p50 and a HID `press x y` under 30 ms on iOS. A metric passes up to its target times 1.5. The full table, the JSON shape and the `bun run smoke:ui-bench` gate are in the [CLI reference](/docs/reference/cli#warden-ui-bench).
