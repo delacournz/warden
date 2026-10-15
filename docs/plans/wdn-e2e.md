@@ -324,4 +324,4 @@ Failures found and fixed (all with fake-host tests, no real adb in `bun test`):
 
 Android `fill` goes through the same layer as iOS: `typing.ts` (whole string in one `typeText`, no pacing needed) and the `screen/field.ts` read-back (`CONFIRM_READS`, stale-risk run), the field value being the node's `text`.
 
-Still open: a real permission-dialog `alert` run; example-app Android build (`warden app ensure android --project example`) and a re-run of `bench` on a quiet machine (the snapshotWarm target of < 800 ms is unverified; a dump alone took 3.5-8 s here); `drag` is a long swipe (no hold-then-move); `pinch`, `clipboard`, non-ASCII text are `E_UNSUPPORTED`.
+Still open: a real permission-dialog `alert` run; example-app Android build (`warden app ensure android --project example`) and a re-run of `bench` on a quiet machine (the snapshotWarm target of < 800 ms is unverified; a dump alone took 3.5-8 s here); `drag` on Android is a long `input swipe` (press + move duration), not hold-then-move; `pinch` and `clipboard` stay `E_UNSUPPORTED` and non-ASCII `typeText` stays `E_UNSUPPORTED_TEXT`.

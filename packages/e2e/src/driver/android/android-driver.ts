@@ -20,7 +20,7 @@ import type {
 	Snapshot,
 } from "../driver.types";
 import { driverErr } from "../errors";
-import { settleByHash, snapshotHash } from "../settle";
+import { DEFAULT_SETTLE_QUIET_MS, DEFAULT_SETTLE_TIMEOUT_MS, settleByHash, snapshotHash } from "../settle";
 import type { RepeatingKeys } from "../typing";
 import { type AdbSession, openAdbSession, type SpawnAdb } from "./adb-session";
 import { detectAlert } from "./android-alert";
@@ -113,8 +113,6 @@ const SNAPSHOT_ATTEMPTS = 3;
 const INPUT_TEXT_BASE_MS = 10_000;
 const INPUT_TEXT_PIECE_MS = 8_000;
 const SNAPSHOT_RETRY_MS = 400;
-const DEFAULT_SETTLE_QUIET_MS = 250;
-const DEFAULT_SETTLE_TIMEOUT_MS = 3_000;
 const SCREENSHOT_TIMEOUT_MS = 10_000;
 const DRAG_PRESS_MS = 500;
 const DRAG_MOVE_MS = 600;
