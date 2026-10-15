@@ -313,8 +313,6 @@ Exit codes: 0 ok · 1 failed or usage · 2 lease · 3 engine unavailable (`engin
 | `eval <expr>` · `tree` · `logs` · `network` · `reload` | dev client only (`--metro <url>`): `eval --await`; `tree --all --max <n> --screen <name>`; `logs [n]\|start [--bodies]\|stop\|mark <label>\|clear`; `network [n] --include headers,body --id <id>` |
 | `record start <name> [--out file]\|stop\|status` · `replay <file>` · `export <file> --to <spec>` | `replay`: `--from <i>`, `--update-snapshots`, `--settle [ms]`; `export`: `--ids <module>`, `--force` |
 
-## Agent UI
-
 ### `warden ui bench`
 
 `warden ui bench [--runs <n>] [--metro <url>] [--udid|--serial|--lease] [--json]` times the agent-loop primitives on a leased device and compares each with its target. `--runs` (default 20) is the sample count; the slow metrics are capped (cold start 3, settle and driver open 5). Run it on a device nobody else is using: the cold-start sample stops the device's helper first, and the press samples tap the middle of the screen.
