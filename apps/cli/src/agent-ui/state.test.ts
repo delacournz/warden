@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { el, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
@@ -49,6 +49,30 @@ describe("ui state", () => {
 		expect(back?.snapshot.flat.map((e) => e.id)).toEqual(["0", "0.0"]);
 		expect(back?.snapshot.elements).toEqual(snapshot.elements);
 		expect(readdirSync(uiDir(ctx, "U1"))).toEqual(["last-snapshot.json"]);
+	});
+
+	test("a file of the wrong shape reads as empty state, not as a half-typed object", () => {
+		const ctx = setup();
+		writeState(ctx, "U1", { generation: 1, updatedAt: 0 });
+		const state = join(uiDir(ctx, "U1"), "state.json");
+		writeFileSync(state, JSON.stringify({ generation: 5, recording: { file: 3 } }));
+		expect(readState(ctx, "U1")).toEqual({ generation: 0, updatedAt: 0 });
+		writeFileSync(state, JSON.stringify({ generation: "5" }));
+		expect(readState(ctx, "U1")).toEqual({ generation: 0, updatedAt: 0 });
+		writeFileSync(state, JSON.stringify({ generation: 5, helper: { pid: 7, socket: "/s" }, extra: true }));
+		expect(readState(ctx, "U1")).toEqual({ generation: 5, helper: { pid: 7, socket: "/s" }, updatedAt: 0 });
+
+		const snapshot = snapshotOf([el("button", { label: "Go", id: "go" })]);
+		writeLastSnapshot(ctx, "U1", { generation: 2, takenAt: 7, hash: "h", snapshot });
+		const file = join(uiDir(ctx, "U1"), "last-snapshot.json");
+		const stored = JSON.parse(readFileSync(file, "utf8"));
+		stored.snapshot.elements[0].frame = "wide";
+		writeFileSync(file, JSON.stringify(stored));
+		expect(readLastSnapshot(ctx, "U1")).toBeUndefined();
+		stored.snapshot.elements[0].frame = snapshot.elements[0]?.frame;
+		stored.snapshot.elements[0].children = [{ id: "x" }];
+		writeFileSync(file, JSON.stringify(stored));
+		expect(readLastSnapshot(ctx, "U1")).toBeUndefined();
 	});
 
 	test("a torn or foreign file reads as absent", () => {

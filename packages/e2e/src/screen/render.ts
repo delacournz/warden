@@ -74,7 +74,8 @@ export function renderEntryLine(entry: NodeEntry, options: { ref?: string; inden
 	return `${"  ".repeat(options.indent ?? 0)}${parts.join(" ")}`;
 }
 
-function isListed(entry: NodeEntry): boolean {
+/** The entries `interactiveOnly` lists: visible ones that are interactive or carry a testID. */
+export function isListed(entry: NodeEntry): boolean {
 	if (entry.states.hidden) return false;
 	const id = entry.element.identifier;
 	return isInteractiveRole(entry.role) || (id !== undefined && id !== "");
@@ -97,15 +98,30 @@ export function renderSnapshot(snapshot: Snapshot, options: RenderOptions): Rend
 	return { lines, shown: visible.length, total: index.entries.length, omitted };
 }
 
-/** `# ios axbridge 390×844@3x gen 12 · 5 of 8 elements (interactive)` */
+/**
+ * `# ios axbridge 390×844@3x gen 12 · 5 of 8 elements (interactive)` for spec failure artifacts; with `style: "cli"`
+ * the `warden ui snapshot` line, `generation 4 · axbridge · 393×852@3x · 5 of 41 elements` (`, truncated` at the end,
+ * the count is `41 elements` when nothing was cut).
+ */
 export function renderHeader(input: {
 	snapshot: Snapshot;
 	rendered: RenderedSnapshot;
 	interactiveOnly: boolean;
 	generation?: number;
+	style?: "spec" | "cli";
 }): string {
 	const { snapshot, rendered } = input;
 	const { width, height, scale } = snapshot.screen;
+	if (input.style === "cli") {
+		const count = rendered.shown === rendered.total ? `${rendered.total}` : `${rendered.shown} of ${rendered.total}`;
+		const parts = [
+			...(input.generation === undefined ? [] : [`generation ${input.generation}`]),
+			snapshot.backend,
+			`${width}×${height}@${scale}x`,
+			`${count} elements`,
+		];
+		return parts.join(" · ") + (snapshot.truncated ? ", truncated" : "");
+	}
 	const parts = [`# ${snapshot.platform} ${snapshot.backend} ${width}×${height}@${scale}x`];
 	if (input.generation !== undefined) parts.push(`gen ${input.generation}`);
 	let line = parts.join(" ");

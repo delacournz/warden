@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { CONFIRM_READS, confirmFieldValue, FIELD_POLL_MS, type FieldReading, STALE_RISK_READS } from "./field";
+import { failWith, fakeDriver, snapshotOf } from "../driver/driver.testing";
+import {
+	CONFIRM_READS,
+	confirmFieldValue,
+	FIELD_POLL_MS,
+	type FieldReading,
+	focusAndClear,
+	focusClearType,
+	STALE_RISK_READS,
+} from "./field";
+import { indexSnapshot } from "./nodes";
 import { fakeClock } from "./poll.testing";
+import { fieldFixture } from "./screen.testing";
 
 /** Reads that play back `readings` one per look (the last one repeats). */
 function scripted(readings: FieldReading[]) {
@@ -76,5 +87,45 @@ describe("confirmFieldValue", () => {
 	test("a failed read ends the wait at once", async () => {
 		const { run } = scripted([]);
 		expect(await run({ text: "hi" })).toEqual({ status: "failed", error: "no reading" });
+	});
+});
+
+describe("focusClearType", () => {
+	const field = () => fieldFixture({ value: "ab" }).driver;
+	const entryOf = (driver: ReturnType<typeof field>) => {
+		const found = indexSnapshot(driver.screen).entries.find((candidate) => candidate.element.identifier === "field");
+		if (found === undefined) throw new Error("no field");
+		return found;
+	};
+
+	test("taps the caret spot, backspaces what the field shows plus a spare, then types", async () => {
+		const driver = field();
+		const clock = fakeClock();
+		const result = await focusClearType(driver, clock.sleep, { x: 5, y: 6 }, entryOf(driver), "xy");
+		expect(result.success).toBe(true);
+		expect(driver.calls.map((call) => call.method)).toEqual(["tap", "key", "key", "key", "typeText", "typeText"]);
+		expect(driver.callsOf("tap")[0]?.point).toEqual({ x: 5, y: 6 });
+	});
+
+	test("a bare coordinate has nothing to clear, and empty text only clears", async () => {
+		const driver = field();
+		const clock = fakeClock();
+		await focusClearType(driver, clock.sleep, { x: 1, y: 2 }, undefined, "z");
+		expect(driver.calls.map((call) => call.method)).toEqual(["tap", "typeText"]);
+		const other = field();
+		await focusAndClear(other, clock.sleep, { x: 1, y: 2 }, entryOf(other));
+		expect(other.callsOf("typeText")).toEqual([]);
+		expect(other.callsOf("key")).toHaveLength(3);
+	});
+
+	test("a failed tap stops before any key", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([])],
+			onCall: (call) => (call.method === "tap" ? failWith("E_TIMEOUT") : undefined),
+		});
+		const clock = fakeClock();
+		const result = await focusClearType(driver, clock.sleep, { x: 1, y: 2 }, undefined, "z");
+		expect(result.success).toBe(false);
+		expect(driver.calls.map((call) => call.method)).toEqual(["tap"]);
 	});
 });

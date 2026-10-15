@@ -1,10 +1,11 @@
+import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-e2e/driver/settle";
 import { parseSelector } from "@delacour/warden-e2e/screen/selector";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
 import { runUi, type UiOptionValues } from "./run";
-import { DEFAULT_SETTLE_BUDGET_MS, findElements, type SnapshotRequest, snapshotText, takeSnapshot } from "./snapshot";
+import { findElements, type SnapshotRequest, snapshotText, takeSnapshot } from "./snapshot";
 
 export type SnapshotOptionValues = UiOptionValues & {
 	interactive?: true;
@@ -29,7 +30,7 @@ function parseRequest(opts: SnapshotOptionValues): Result<SnapshotRequest, UiErr
 		request.depth = depth.data;
 	}
 	if (opts.settle !== undefined) {
-		const budget = opts.settle === true ? ok(DEFAULT_SETTLE_BUDGET_MS) : positiveInt("--settle", opts.settle);
+		const budget = opts.settle === true ? ok(DEFAULT_SETTLE_TIMEOUT_MS) : positiveInt("--settle", opts.settle);
 		if (!budget.success) return budget;
 		request.settle = { budgetMs: budget.data };
 	}

@@ -9,23 +9,15 @@ import {
 	type Located,
 	type ResolvedTarget,
 } from "@delacour/warden-e2e/flows/replay";
-import { fieldValue, screenRect, visibleRect } from "@delacour/warden-e2e/screen/actions";
+import { contentPath, fieldValue, focusPoint, screenRect, visibleRect } from "@delacour/warden-e2e/screen/actions";
+import { focusClearType } from "@delacour/warden-e2e/screen/field";
 import { textOf } from "@delacour/warden-e2e/screen/locator";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import {
-	DEFAULT_LONGPRESS_MS,
-	DEFAULT_SCROLL_AMOUNT,
-	DEFAULT_SCROLL_MAX,
-	fingerPath,
-	focusClearType,
-	OPPOSITE,
-	SCROLL_PAUSE_MS,
-	SWIPE_MS,
-} from "./actions";
+import { DEFAULT_LONGPRESS_MS, DEFAULT_SCROLL_AMOUNT, DEFAULT_SCROLL_MAX, SCROLL_PAUSE_MS, SWIPE_MS } from "./actions";
 import { deviceFacade, nextShotPath, viaFacade } from "./controls";
 import type { UiDevice } from "./device";
-import type { UiDeps } from "./driver";
+import { fromDriver, type UiDeps } from "./driver";
 import { launchBundle } from "./open";
 import type { UiError } from "./output";
 
@@ -93,7 +85,7 @@ export function flowActors(
 		const screen = c.snapshot?.screen ?? (taken?.success ? taken.data.screen : undefined);
 		if (!screen) return fail("failed", "no screen to swipe in");
 		const rect = region?.element ? visibleRect(region.element.frame, screen) : screenRect(screen);
-		const path = fingerPath(OPPOSITE[way], rect, DEFAULT_SCROLL_AMOUNT);
+		const path = contentPath(way, rect, DEFAULT_SCROLL_AMOUNT);
 		return settled(await driver.swipe(path.from, path.to, { durationMs: SWIPE_MS, momentum: false }));
 	};
 
@@ -128,11 +120,11 @@ export function flowActors(
 			const typed = await focusClearType(
 				driver,
 				deps.sleep,
-				{ kind: "selector", point: at.point, ...(at.element ? { element: at.element } : {}) },
+				at.element ? focusPoint(at.element.frame) : at.point,
 				at.entry,
 				c.text(step.text)
 			);
-			return uiFailure(typed);
+			return uiFailure(fromDriver(typed));
 		},
 		async type(step, c) {
 			return settled(await typeText(driver, deps.sleep, c.text(step.text)));

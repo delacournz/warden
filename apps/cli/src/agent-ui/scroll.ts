@@ -1,5 +1,5 @@
 import type { Driver, Rect, ScreenInfo } from "@delacour/warden-e2e/driver/driver.types";
-import { visibleRect } from "@delacour/warden-e2e/screen/actions";
+import { contentPath, visibleRect } from "@delacour/warden-e2e/screen/actions";
 import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-e2e/screen/nodes";
 import { renderEntryLine } from "@delacour/warden-e2e/screen/render";
 import {
@@ -14,9 +14,7 @@ import type { CommandContext } from "../context";
 import { finishAction, parseSettle } from "./act";
 import {
 	DEFAULT_SCROLL_MAX,
-	fingerPath,
 	isWay,
-	OPPOSITE,
 	parseAmount,
 	regionOf,
 	SCROLL_PAUSE_MS,
@@ -79,7 +77,7 @@ async function scrollLoop(
 	plan: ScrollRequest,
 	area: { rect: Rect; screen: ScreenInfo }
 ): Promise<Result<ScrollRun, UiError>> {
-	const path = fingerPath(OPPOSITE[plan.way], area.rect, plan.amount);
+	const path = contentPath(plan.way, area.rect, plan.amount);
 	const swipe = async () =>
 		fromDriver(await driver.swipe(path.from, path.to, { durationMs: SWIPE_MS, momentum: false }));
 	if (plan.until === undefined) {

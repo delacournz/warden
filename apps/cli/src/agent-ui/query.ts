@@ -3,6 +3,7 @@ import { settleByHash, snapshotHash } from "@delacour/warden-e2e/driver/settle";
 import { fieldValue } from "@delacour/warden-e2e/screen/actions";
 import { textOf } from "@delacour/warden-e2e/screen/locator";
 import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-e2e/screen/nodes";
+import { poll } from "@delacour/warden-e2e/screen/poll";
 import { renderEntryLine } from "@delacour/warden-e2e/screen/render";
 import {
 	formatSelector,
@@ -53,7 +54,10 @@ type Polled<T> =
 	| { hit: true; value: T; snapshot: Snapshot; waitedMs: number }
 	| { hit: false; reason: UiErrorCode; waitedMs: number };
 
-/** Snapshot every 100 ms until `check` is satisfied or `timeoutMs` has passed (the last look is at the deadline). */
+/**
+ * Snapshot every 100 ms until `check` is satisfied or `timeoutMs` has passed (the last look is at the deadline).
+ * The loop is `screen/poll.ts`'s, the one the spec locators use.
+ */
 async function pollScreen<T>(
 	ctx: CommandContext,
 	deps: UiDeps,
@@ -62,15 +66,26 @@ async function pollScreen<T>(
 	check: (index: NodeIndex) => Verdict<T>
 ): Promise<Result<Polled<T>, UiError>> {
 	const start = ctx.now();
-	for (;;) {
-		const taken = await driver.snapshot();
-		if (!taken.success) return { success: false, error: driverUiError(taken.error) };
-		const verdict = check(indexSnapshot(taken.data));
-		const waitedMs = Math.max(0, ctx.now() - start);
-		if (verdict.done) return ok({ hit: true, value: verdict.value, snapshot: taken.data, waitedMs });
-		if (waitedMs >= timeoutMs) return ok({ hit: false, reason: verdict.reason, waitedMs });
-		await deps.sleep(Math.min(POLL_MS, timeoutMs - waitedMs));
+	type Look = { failed: UiError } | { value: T; snapshot: Snapshot };
+	const result = await poll<Look, UiErrorCode>(
+		async () => {
+			const taken = await driver.snapshot();
+			if (!taken.success) return { done: true, value: { failed: driverUiError(taken.error) } };
+			const verdict = check(indexSnapshot(taken.data));
+			return verdict.done
+				? { done: true, value: { value: verdict.value, snapshot: taken.data } }
+				: { done: false, state: verdict.reason };
+		},
+		{ intervalMs: POLL_MS, timeoutMs, now: ctx.now, sleep: (ms) => deps.sleep(ms) }
+	);
+	const waitedMs = Math.max(0, ctx.now() - start);
+	if (result.status === "done") {
+		const look = result.value;
+		if ("failed" in look) return { success: false, error: look.failed };
+		return ok({ hit: true, value: look.value, snapshot: look.snapshot, waitedMs });
 	}
+	const reason = result.status === "timeout" ? result.last : undefined;
+	return ok({ hit: false, reason: reason ?? "wait_target_absent", waitedMs });
 }
 
 function ownTexts(entry: NodeEntry): string[] {

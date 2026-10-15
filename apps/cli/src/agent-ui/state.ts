@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { DumpRoute } from "@delacour/warden-e2e/driver/android/android-dump";
 import type { Element, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import { z } from "zod";
 import type { CommandContext } from "../context";
 
 /** `$WARDEN_HOME/ui/<udid>`: everything `warden ui` remembers about one device between invocations. */
@@ -37,6 +38,68 @@ export type StoredSnapshot = {
 /** On disk `flat` is dropped (it aliases `elements`) and rebuilt on load. */
 type StoredSnapshotFile = Omit<StoredSnapshot, "snapshot"> & { snapshot: Omit<Snapshot, "flat"> };
 
+const rectSchema = z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() });
+const pointSchema = z.object({ x: z.number(), y: z.number() });
+
+const elementSchema: z.ZodType<Element> = z.lazy(() =>
+	z.object({
+		id: z.string(),
+		role: z.custom<Element["role"]>((value) => typeof value === "string"),
+		rawType: z.string(),
+		label: z.string().optional(),
+		identifier: z.string().optional(),
+		value: z.string().optional(),
+		text: z.string().optional(),
+		placeholder: z.string().optional(),
+		frame: rectSchema,
+		normFrame: rectSchema,
+		traits: z.array(z.string()),
+		enabled: z.boolean(),
+		focused: z.boolean().optional(),
+		hidden: z.boolean().optional(),
+		selected: z.boolean().optional(),
+		checked: z.boolean().optional(),
+		hittable: z.boolean().optional(),
+		tapPoint: pointSchema.optional(),
+		pid: z.number().optional(),
+		depth: z.number(),
+		children: z.array(elementSchema),
+	})
+);
+
+const storedSnapshotSchema = z.object({
+	generation: z.number(),
+	takenAt: z.number(),
+	hash: z.string(),
+	snapshot: z.object({
+		platform: z.enum(["ios", "android"]),
+		backend: z.enum(["axbridge", "ax", "uiautomator"]),
+		takenAt: z.number(),
+		screen: z.object({
+			width: z.number(),
+			height: z.number(),
+			scale: z.number(),
+			rotation: z.number().optional(),
+		}),
+		elements: z.array(elementSchema),
+		truncated: z.boolean(),
+		modal: z.object({ pid: z.number().optional(), description: z.string().optional() }).optional(),
+	}),
+});
+
+const stateSchema = z.object({
+	generation: z.number(),
+	metroUrl: z.string().optional(),
+	app: z.string().optional(),
+	recording: z.object({ file: z.string(), name: z.string(), startedAt: z.number() }).optional(),
+	helper: z.object({ pid: z.number(), socket: z.string() }).optional(),
+	collector: z.object({ pid: z.number(), startedAt: z.number() }).optional(),
+	video: z
+		.object({ pid: z.number(), path: z.string(), remote: z.string().optional(), startedAt: z.number() })
+		.optional(),
+	updatedAt: z.number().optional(),
+});
+
 const EMPTY_STATE: UiState = { generation: 0, updatedAt: 0 };
 
 /** Write `text` to `path` through a sibling temp file + rename, so readers never see half a file. */
@@ -54,19 +117,14 @@ function readJson(path: string): unknown {
 	}
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export function preorder(elements: readonly Element[]): Element[] {
 	return elements.flatMap((element) => [element, ...preorder(element.children)]);
 }
 
 export function readState(ctx: Pick<CommandContext, "env">, udid: string): UiState {
-	const raw = readJson(join(uiDir(ctx, udid), "state.json"));
-	if (!isRecord(raw) || typeof raw.generation !== "number") return { ...EMPTY_STATE };
-	// state.json is warden's own file; the generation check above is all a torn/foreign file must pass
-	return { ...EMPTY_STATE, ...(raw as Partial<UiState>), generation: raw.generation };
+	const parsed = stateSchema.safeParse(readJson(join(uiDir(ctx, udid), "state.json")));
+	if (!parsed.success) return { ...EMPTY_STATE };
+	return { ...EMPTY_STATE, ...parsed.data };
 }
 
 export function writeState(ctx: Pick<CommandContext, "env" | "now">, udid: string, state: UiState): void {
@@ -84,12 +142,9 @@ export function bumpGeneration(ctx: Pick<CommandContext, "env" | "now">, udid: s
 }
 
 export function readLastSnapshot(ctx: Pick<CommandContext, "env">, udid: string): StoredSnapshot | undefined {
-	const raw = readJson(join(uiDir(ctx, udid), "last-snapshot.json"));
-	if (!isRecord(raw) || !isRecord(raw.snapshot) || !Array.isArray(raw.snapshot.elements)) return undefined;
-	if (typeof raw.generation !== "number" || typeof raw.takenAt !== "number" || typeof raw.hash !== "string") {
-		return undefined;
-	}
-	const file = raw as unknown as StoredSnapshotFile;
+	const parsed = storedSnapshotSchema.safeParse(readJson(join(uiDir(ctx, udid), "last-snapshot.json")));
+	if (!parsed.success) return undefined;
+	const file: StoredSnapshotFile = parsed.data;
 	return { ...file, snapshot: { ...file.snapshot, flat: preorder(file.snapshot.elements) } };
 }
 

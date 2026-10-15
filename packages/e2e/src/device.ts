@@ -2,7 +2,13 @@ import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
 import type { Driver, Element, Orientation, Point, Snapshot } from "./driver/driver.types";
-import { type SettleOutcome, settleByHash, snapshotHash } from "./driver/settle";
+import {
+	DEFAULT_SETTLE_QUIET_MS,
+	DEFAULT_SETTLE_TIMEOUT_MS,
+	type SettleOutcome,
+	settleByHash,
+	snapshotHash,
+} from "./driver/settle";
 import { settled, toE2eError, unwrap } from "./driver/unwrap";
 import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
@@ -73,8 +79,6 @@ const DISMISS_BUTTONS = ["Cancel", "Don't Allow", "Not Now", "Dismiss", "No", "C
 
 const OPEN_LINK_WAIT_MS = 3000;
 const OPEN_LINK_POLL_MS = 100;
-const DEFAULT_SETTLE_QUIET_MS = 250;
-const DEFAULT_SETTLE_TIMEOUT_MS = 3000;
 
 function normalise(text: string): string {
 	return text.replace(/[‘’]/g, "'").trim().toLowerCase();

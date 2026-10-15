@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
+import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-e2e/driver/settle";
 import { exportFlow } from "@delacour/warden-e2e/flows/export";
 import type { Flow } from "@delacour/warden-e2e/flows/flow.schema";
 import { createFlowFile, readFlowFile, serializeFlow, writeFileAtomic } from "@delacour/warden-e2e/flows/record";
@@ -13,7 +14,7 @@ import { fromDriver, type UiDeps } from "./driver";
 import { flowActors } from "./flow-actors";
 import { reportError, type UiError, uiError } from "./output";
 import { runUi, type UiOptionValues, withUiOptions } from "./run";
-import { DEFAULT_SETTLE_BUDGET_MS, takeSnapshot } from "./snapshot";
+import { takeSnapshot } from "./snapshot";
 import { readState, writeState } from "./state";
 
 /** Where recordings go unless `--out` says otherwise, relative to the working directory. */
@@ -178,7 +179,7 @@ export function uiReplay(ctx: CommandContext, deps: UiDeps, file: string, opts: 
 				: {
 						...loaded.data.flow,
 						steps: loaded.data.flow.steps.map((step) =>
-							step.settle ? step : { ...step, settle: { timeoutMs: settle.data ?? DEFAULT_SETTLE_BUDGET_MS } }
+							step.settle ? step : { ...step, settle: { timeoutMs: settle.data ?? DEFAULT_SETTLE_TIMEOUT_MS } }
 						),
 					};
 		const driver = await env.driver();
@@ -194,7 +195,7 @@ export function uiReplay(ctx: CommandContext, deps: UiDeps, file: string, opts: 
 			},
 			act: flowActors(ctx, deps, device, driver.data, env.timeoutMs),
 			settle: async (options) => {
-				const budgetMs = options.timeoutMs ?? DEFAULT_SETTLE_BUDGET_MS;
+				const budgetMs = options.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS;
 				const taken = await takeSnapshot(ctx, deps, driver.data, device.udid, {
 					interactiveOnly: true,
 					all: false,

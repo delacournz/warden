@@ -1,10 +1,9 @@
 import type { Driver, Element, Rect, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import { assignRefs, type RefTable } from "@delacour/warden-e2e/driver/refs";
-import { settleByHash, snapshotHash } from "@delacour/warden-e2e/driver/settle";
+import { DEFAULT_SETTLE_QUIET_MS, settleByHash, snapshotHash } from "@delacour/warden-e2e/driver/settle";
 import { indexSnapshot, type NodeEntry } from "@delacour/warden-e2e/screen/nodes";
 import { resolve } from "@delacour/warden-e2e/screen/query";
-import { renderEntryLine, renderSnapshot } from "@delacour/warden-e2e/screen/render";
-import { isInteractiveRole } from "@delacour/warden-e2e/screen/roles";
+import { isListed, renderEntryLine, renderHeader, renderSnapshot } from "@delacour/warden-e2e/screen/render";
 import { type ParsedSelector, selectorToQuery } from "@delacour/warden-e2e/screen/selector";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -15,10 +14,6 @@ import { bumpGeneration, preorder, readLastSnapshot, writeLastSnapshot } from ".
 
 /** Lines printed by a plain `snapshot` before `… N more (use --all)`. */
 export const DEFAULT_MAX_LINES = 200;
-/** `--settle` with no value waits at most this long for a quiet screen. */
-export const DEFAULT_SETTLE_BUDGET_MS = 3000;
-/** The screen counts as settled once the hash stayed equal for this long. */
-export const SETTLE_QUIET_MS = 250;
 
 export type SnapshotRequest = {
 	/** `-i`: interactive roles and anything with a testID */
@@ -72,13 +67,6 @@ function pruneDepth(snapshot: Snapshot, levels: number): Snapshot {
 	return { ...snapshot, elements, flat: preorder(elements) };
 }
 
-/** The entries `renderSnapshot` lists with `interactiveOnly` (same rule as screen/render.ts). */
-function isListed(entry: NodeEntry): boolean {
-	if (entry.states.hidden) return false;
-	const id = entry.element.identifier;
-	return isInteractiveRole(entry.role) || (id !== undefined && id !== "");
-}
-
 export function elementJson(entry: NodeEntry, ref: string | undefined): ElementJson {
 	const { element, states } = entry;
 	return {
@@ -93,15 +81,6 @@ export function elementJson(entry: NodeEntry, ref: string | undefined): ElementJ
 		...(states.checked !== undefined ? { checked: states.checked } : {}),
 		frame: element.frame,
 	};
-}
-
-export function snapshotHeader(snapshot: Snapshot, generation: number, shown: number, total: number): string {
-	const { width, height, scale } = snapshot.screen;
-	const count = shown === total ? `${total} elements` : `${shown} of ${total} elements`;
-	return (
-		[`generation ${generation}`, snapshot.backend, `${width}×${height}@${scale}x`, count].join(" · ") +
-		(snapshot.truncated ? ", truncated" : "")
-	);
 }
 
 type Fetched = { snapshot: Snapshot; settle?: { quiet: boolean; waitedMs: number } };
@@ -129,7 +108,7 @@ async function fetchSnapshot(
 	};
 	try {
 		const outcome = await settleByHash(poll, {
-			quietMs: SETTLE_QUIET_MS,
+			quietMs: DEFAULT_SETTLE_QUIET_MS,
 			timeoutMs: settle.budgetMs,
 			now: ctx.now,
 			sleep: deps.sleep,
@@ -180,7 +159,13 @@ export async function takeSnapshot(
 		refs,
 		hash,
 		generation,
-		header: snapshotHeader(view, generation, rendered.shown, rendered.total),
+		header: renderHeader({
+			snapshot: view,
+			rendered,
+			interactiveOnly: request.interactiveOnly,
+			generation,
+			style: "cli",
+		}),
 		lines: rendered.lines,
 		elements: listed.map((entry) => elementJson(entry, refs.byId.get(entry.element.id))),
 		total: rendered.total,

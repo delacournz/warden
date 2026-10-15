@@ -1,4 +1,5 @@
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
+import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-e2e/driver/settle";
 import { E2eError } from "@delacour/warden-e2e/errors";
 import { formatSelector } from "@delacour/warden-e2e/screen/selector";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -9,7 +10,7 @@ import { flowRecordSink } from "./flow-sink";
 import { type UiError, type UiSuccess, uiError } from "./output";
 import { attachEvidence, evidenceOf, type RecordStep, type RecordTarget } from "./record";
 import type { UiOptionValues, UiRunEnv } from "./run";
-import { DEFAULT_SETTLE_BUDGET_MS, settleLines, type TakenSnapshot, takeSnapshot } from "./snapshot";
+import { settleLines, type TakenSnapshot, takeSnapshot } from "./snapshot";
 import { positiveInt } from "./snapshot-command";
 import { readLastSnapshot } from "./state";
 import { parseTarget, type ResolvedTarget, resolveTarget, type Target } from "./target";
@@ -23,7 +24,7 @@ export type ActionOptionValues = UiOptionValues & {
 /** `--settle [ms]` → the budget, or undefined when not asked for. */
 export function parseSettle(raw: true | string | undefined): Result<number | undefined, UiError> {
 	if (raw === undefined) return ok(undefined);
-	if (raw === true) return ok(DEFAULT_SETTLE_BUDGET_MS);
+	if (raw === true) return ok(DEFAULT_SETTLE_TIMEOUT_MS);
 	return positiveInt("--settle", raw);
 }
 

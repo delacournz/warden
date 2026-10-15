@@ -139,6 +139,8 @@ warden ui export .warden-ui/add-todo.flow.json --to e2e/add-todo.e2e.ts --ids e2
 | `replay <file> [--from i] [--update-snapshots] [--settle [ms]]` | re-run the flow on the device. Each step is resolved on a fresh snapshot and checked against where it was recorded. A step that no longer matches fails with `replay_divergence` (exit 1, with the step number and the screen). A changed screen alone is a drift warning. The file is rewritten only with `--update-snapshots` |
 | `export <file> --to <spec> [--ids <module>] [--force]` | write the flow as an `*.e2e.ts` spec for `@delacour/warden-e2e`. `--ids` merges the test ids into an `export const ids = { … }` module. Taps by coordinates export as a `FIXME` to resolve before you commit |
 
+A `scroll` or direction `swipe` step in a flow names the **content's** direction, like `warden ui scroll` and the spec `screen.swipe` (`down` reveals what is below). `warden ui swipe <dir>` names the finger's direction instead, so it is recorded as a from/to path.
+
 `fill --secure` text is never stored. Set `WARDEN_UI_SECRET_<NAME>` to the value when you record, and the flow names the variable instead; replay and the exported spec read it from the environment.
 
 ## Exit codes and `--json`

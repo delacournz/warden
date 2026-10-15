@@ -184,6 +184,23 @@ describe("renderHeader", () => {
 		);
 	});
 
+	test("the cli style: generation first, no platform, no mode, counts only when elements were cut", () => {
+		const cut = renderSnapshot(snapshot, { interactiveOnly: true, refs });
+		expect(renderHeader({ snapshot, rendered: cut, interactiveOnly: true, generation: 4, style: "cli" })).toBe(
+			"generation 4 · axbridge · 390×844@3x · 5 of 8 elements"
+		);
+		const all = renderSnapshot(snapshot, { interactiveOnly: false, refs });
+		expect(
+			renderHeader({
+				snapshot: { ...snapshot, truncated: true },
+				rendered: all,
+				interactiveOnly: false,
+				generation: 5,
+				style: "cli",
+			})
+		).toBe("generation 5 · axbridge · 390×844@3x · 8 elements, truncated");
+	});
+
 	test("full tree, truncated tree and modal", () => {
 		const rendered = renderSnapshot(snapshot, { interactiveOnly: false, refs });
 		expect(

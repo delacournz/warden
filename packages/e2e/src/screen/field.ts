@@ -1,4 +1,7 @@
-import type { Driver, DriverError } from "../driver/driver.types";
+import { ok } from "@delacour/warden-types/result";
+import type { Driver, DriverError, DriverResult, Point } from "../driver/driver.types";
+import { pressKeys, type Sleep, typeText } from "../driver/typing";
+import { clearKeyPresses } from "./actions";
 import { entryOfElement, type NodeEntry } from "./nodes";
 
 /**
@@ -83,4 +86,32 @@ export async function hitTestField(
 	if (!hit.data) return { ok: true, entry: undefined };
 	const entry = entryOfElement(hit.data, { platform: driver.platform });
 	return { ok: true, entry: entry?.role === wanted.role ? entry : undefined };
+}
+
+/**
+ * Taps `point` (the caret spot at the field's right end, `focusPoint`) and backspaces what `entry` shows; no `entry`
+ * (a bare coordinate) means nothing to clear. The one clear routine behind the spec `fill`/`clear` and `warden ui fill`.
+ */
+export async function focusAndClear(
+	driver: Driver,
+	sleep: Sleep,
+	point: Point,
+	entry: NodeEntry | undefined
+): DriverResult<void> {
+	const focused = await driver.tap(point);
+	if (!focused.success) return focused;
+	return pressKeys(driver, sleep, "Backspace", entry ? clearKeyPresses(entry) : 0);
+}
+
+/** `focusAndClear`, then types `text` (nothing for the empty string). */
+export async function focusClearType(
+	driver: Driver,
+	sleep: Sleep,
+	point: Point,
+	entry: NodeEntry | undefined,
+	text: string
+): DriverResult<void> {
+	const cleared = await focusAndClear(driver, sleep, point, entry);
+	if (!cleared.success) return cleared;
+	return text === "" ? ok(undefined) : typeText(driver, sleep, text);
 }

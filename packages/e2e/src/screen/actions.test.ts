@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { clearKeyPresses, fieldValue, focusPoint, isOnScreen, swipeVector, tapPointOf, visibleRect } from "./actions";
+import {
+	clearKeyPresses,
+	contentPath,
+	fieldValue,
+	focusPoint,
+	isOnScreen,
+	swipeVector,
+	tapPointOf,
+	visibleRect,
+} from "./actions";
 import { el, snap } from "./element.testing";
 import { indexSnapshot, type NodeEntry } from "./nodes";
 
@@ -29,6 +38,26 @@ describe("tapPointOf", () => {
 describe("focusPoint", () => {
 	test("near the right end, vertically centred, so the caret lands after the text", () => {
 		expect(focusPoint({ x: 24, y: 200, width: 300, height: 44 })).toEqual({ x: 24 + 300 * 0.9, y: 222 });
+	});
+});
+
+describe("contentPath", () => {
+	const rect = { x: 100, y: 200, width: 200, height: 400 };
+
+	test("names the content's direction: the finger travels the other way", () => {
+		expect(contentPath("down", rect, 0.5)).toEqual({ from: { x: 200, y: 500 }, to: { x: 200, y: 300 } });
+		expect(contentPath("up", rect, 0.5)).toEqual({ from: { x: 200, y: 300 }, to: { x: 200, y: 500 } });
+		expect(contentPath("right", rect, 0.5)).toEqual({ from: { x: 250, y: 400 }, to: { x: 150, y: 400 } });
+		expect(contentPath("left", rect, 0.5)).toEqual({ from: { x: 150, y: 400 }, to: { x: 250, y: 400 } });
+	});
+
+	test("the fraction scales the travel and stays centred", () => {
+		expect(contentPath("down", rect, 1)).toEqual({ from: { x: 200, y: 600 }, to: { x: 200, y: 200 } });
+	});
+
+	test("swipeVector is contentPath plus the momentum options", () => {
+		const { from, to } = swipeVector("left", rect, "none");
+		expect({ from, to }).toEqual(contentPath("left", rect, 0.5));
 	});
 });
 

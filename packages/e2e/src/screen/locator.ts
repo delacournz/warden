@@ -1,8 +1,7 @@
 import type { KeyName, Modifier, Point, Rect } from "../driver/driver.types";
-import { pressKeys, typeText } from "../driver/typing";
+import { typeText } from "../driver/typing";
 import { E2eError } from "../errors";
 import {
-	clearKeyPresses,
 	fieldValue,
 	focusPoint,
 	isOnScreen,
@@ -14,7 +13,14 @@ import {
 	visibleRect,
 } from "./actions";
 import type { Observed, Runtime } from "./context";
-import { CONFIRM_READS, confirmFieldValue, hitTestField, STALE_RISK_READS } from "./field";
+import {
+	CONFIRM_READS,
+	confirmFieldValue,
+	focusAndClear,
+	focusClearType,
+	hitTestField,
+	STALE_RISK_READS,
+} from "./field";
 import type { NodeEntry } from "./nodes";
 import type { PollStep } from "./poll";
 import {
@@ -392,10 +398,8 @@ export class Locator {
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
 			let firstHeld: string | undefined;
 			for (let attempt = 1; ; attempt += 1) {
-				await this.focusAndClear(target);
-				if (text !== "") {
-					this.rt.drive("fill", await typeText(target.observed.driver, this.pause, text));
-				}
+				const point = focusPoint(target.entry.element.frame);
+				this.rt.drive("fill", await focusClearType(target.observed.driver, this.pause, point, target.entry, text));
 				if (target.entry.secure) return;
 				const outcome = await this.confirm(target, text, budget);
 				if (outcome.ok) return;
@@ -518,8 +522,7 @@ export class Locator {
 	}
 
 	private async focusAndClear({ entry, observed }: Actionable): Promise<void> {
-		this.rt.drive("focus", await observed.driver.tap(focusPoint(entry.element.frame)));
-		this.rt.drive("clear", await pressKeys(observed.driver, this.pause, "Backspace", clearKeyPresses(entry)));
+		this.rt.drive("clear", await focusAndClear(observed.driver, this.pause, focusPoint(entry.element.frame), entry));
 	}
 
 	/** Sleeps on the runtime's clock (a fake one in tests), ending early when the attempt aborts. */

@@ -1,7 +1,20 @@
 import type { Driver, KeyName, Point, Rect, ScreenInfo } from "@delacour/warden-e2e/driver/driver.types";
-import { pressKeys, type Sleep, typeText } from "@delacour/warden-e2e/driver/typing";
-import { clearKeyPresses, fieldValue, focusPoint, screenRect, visibleRect } from "@delacour/warden-e2e/screen/actions";
-import { CONFIRM_READS, confirmFieldValue, hitTestField, STALE_RISK_READS } from "@delacour/warden-e2e/screen/field";
+import { typeText } from "@delacour/warden-e2e/driver/typing";
+import {
+	contentPath,
+	fieldValue,
+	focusPoint,
+	type SwipeDirection,
+	screenRect,
+	visibleRect,
+} from "@delacour/warden-e2e/screen/actions";
+import {
+	CONFIRM_READS,
+	confirmFieldValue,
+	focusClearType,
+	hitTestField,
+	STALE_RISK_READS,
+} from "@delacour/warden-e2e/screen/field";
 import { entryOfElement, indexSnapshot, type NodeEntry } from "@delacour/warden-e2e/screen/nodes";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -128,19 +141,9 @@ export function uiLongpress(
 
 type FillRun = { ok: true } | { ok: false; held: string };
 
-export async function focusClearType(
-	driver: Driver,
-	sleep: Sleep,
-	resolved: ResolvedTarget,
-	entry: NodeEntry | undefined,
-	text: string
-) {
-	const point = resolved.element ? focusPoint(resolved.element.frame) : resolved.point;
-	const focused = fromDriver(await driver.tap(point));
-	if (!focused.success) return focused;
-	const cleared = fromDriver(await pressKeys(driver, sleep, "Backspace", entry ? clearKeyPresses(entry) : 0));
-	if (!cleared.success) return cleared;
-	return text === "" ? ok(undefined) : fromDriver(await typeText(driver, sleep, text));
+/** Where a tap puts the caret after the text: the field's right end, or the bare coordinate given. */
+export function caretPoint(resolved: Pick<ResolvedTarget, "element" | "point">): Point {
+	return resolved.element ? focusPoint(resolved.element.frame) : resolved.point;
 }
 
 /**
@@ -209,7 +212,7 @@ async function typeAndConfirm(
 	const { entry, text } = plan;
 	const readable = plan.verify && !plan.secure && entry !== undefined;
 	for (let attempt = 1; attempt <= (readable ? 2 : 1); attempt += 1) {
-		const typed = await focusClearType(driver, deps.sleep, resolved, entry, text);
+		const typed = fromDriver(await focusClearType(driver, deps.sleep, caretPoint(resolved), entry, text));
 		if (!typed.success) return typed;
 		if (!readable) break;
 		const back = await readBack(ctx, deps, driver, entry, text, { budgetMs: plan.budgetMs, maxMs: plan.maxMs });
@@ -332,32 +335,24 @@ export function uiKey(ctx: CommandContext, deps: UiDeps, name: string, opts: Act
 	});
 }
 
-export type Way = "up" | "down" | "left" | "right";
+/** A direction word; `scroll` and the flow steps read it as the content's direction, `swipe` as the finger's. */
+export type Way = SwipeDirection;
 export const WAYS: readonly Way[] = ["up", "down", "left", "right"];
 
 export function isWay(word: string | undefined): word is Way {
 	return WAYS.some((way) => way === word);
 }
 
-/** The finger path inside `rect` that moves `distance` (0–1 of the rect) the way the finger travels (`up` = finger moves up). */
-export function fingerPath(way: Way, rect: Rect, distance: number): { from: Point; to: Point } {
-	const cx = rect.x + rect.width / 2;
-	const cy = rect.y + rect.height / 2;
-	const hx = (rect.width * distance) / 2;
-	const hy = (rect.height * distance) / 2;
-	switch (way) {
-		case "up":
-			return { from: { x: cx, y: cy + hy }, to: { x: cx, y: cy - hy } };
-		case "down":
-			return { from: { x: cx, y: cy - hy }, to: { x: cx, y: cy + hy } };
-		case "left":
-			return { from: { x: cx + hx, y: cy }, to: { x: cx - hx, y: cy } };
-		case "right":
-			return { from: { x: cx - hx, y: cy }, to: { x: cx + hx, y: cy } };
-	}
-}
-
 export const OPPOSITE: Record<Way, Way> = { up: "down", down: "up", left: "right", right: "left" };
+
+/**
+ * The finger path inside `rect` that moves `distance` (0-1 of the rect) the way the finger travels (`up` = the finger
+ * moves up, revealing what is below). The CLI's `swipe <dir>` convention: the shared geometry (`contentPath`) takes the
+ * content's direction, which is the opposite.
+ */
+export function fingerPath(way: Way, rect: Rect, distance: number): { from: Point; to: Point } {
+	return contentPath(OPPOSITE[way], rect, distance);
+}
 
 async function currentScreen(driver: Driver): Promise<Result<ScreenInfo, UiError>> {
 	const taken = await driver.snapshot({ interactiveOnly: true });

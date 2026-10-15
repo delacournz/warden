@@ -12,6 +12,7 @@ export const rectSchema = z.strictObject({ x: finite, y: finite, width: finite, 
 export const pointSchema = z.strictObject({ x: finite, y: finite });
 
 export const platformSchema = z.enum(["ios", "android"]);
+/** Scroll direction of a `swipe`/`scroll` step: where the content goes (`down` reveals what is below), as in `screen.swipe`. Not the finger's direction. */
 export const directionSchema = z.enum(["up", "down", "left", "right"]);
 export const momentumSchema = z.enum(["none", "slow", "fast"]);
 export const orientationSchema = z.enum(["portrait", "portraitUpsideDown", "landscapeLeft", "landscapeRight"]);

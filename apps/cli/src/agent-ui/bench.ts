@@ -1,6 +1,7 @@
 import type { Platform } from "@delacour/warden-core/types";
 import type { Driver, Point } from "@delacour/warden-e2e/driver/driver.types";
 import { openDriver } from "@delacour/warden-e2e/driver/open";
+import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-e2e/driver/settle";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
@@ -9,7 +10,7 @@ import { driverUiError, type UiDeps } from "./driver";
 import { socketPathFor, stopHelper } from "./helper";
 import type { UiError } from "./output";
 import { runUi, type UiOptionValues } from "./run";
-import { DEFAULT_SETTLE_BUDGET_MS, takeSnapshot } from "./snapshot";
+import { takeSnapshot } from "./snapshot";
 import { positiveInt } from "./snapshot-command";
 import { readState } from "./state";
 
@@ -288,7 +289,7 @@ export function uiBench(ctx: CommandContext, deps: UiDeps, opts: BenchOptionValu
 				return takeSnapshot(ctx, deps, driver, device.udid, {
 					interactiveOnly: true,
 					all: false,
-					settle: { budgetMs: DEFAULT_SETTLE_BUDGET_MS },
+					settle: { budgetMs: DEFAULT_SETTLE_TIMEOUT_MS },
 				});
 			});
 			if (!settle.success) return settle;

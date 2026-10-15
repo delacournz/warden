@@ -12,6 +12,11 @@ export type SettleDeps = {
 
 export type SettleOutcome = { quiet: boolean; waitedMs: number };
 
+/** A screen counts as settled once its hash stayed equal this long (`device.settle`, `warden ui --settle`). */
+export const DEFAULT_SETTLE_QUIET_MS = 250;
+/** How long a settle waits for quiet before it gives up. */
+export const DEFAULT_SETTLE_TIMEOUT_MS = 3000;
+
 const DEFAULT_POLL_MS = 50;
 
 /**

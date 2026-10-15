@@ -259,6 +259,14 @@ describe("swipe", () => {
 		]);
 	});
 
+	test("`swipe up` (finger direction) and `scroll down` (content direction) are the same gesture", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		await h.run("swipe", "up");
+		await h.run("scroll", "down");
+		const [finger, content] = h.driver.callsOf("swipe");
+		expect(finger).toMatchObject({ from: content?.from, to: content?.to });
+	});
+
 	test("x1 y1 x2 y2 is used as given", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(await h.run("swipe", "10", "20", "30", "40")).toBe(0);

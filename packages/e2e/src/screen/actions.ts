@@ -41,19 +41,29 @@ export function focusPoint(frame: Rect): Point {
 /** The finger path that scrolls `rect`'s content in `direction`, centred on the rect. */
 export function swipeVector(direction: SwipeDirection, rect: Rect, momentum: Momentum = "none"): SwipeVector {
 	const preset = MOMENTUM[momentum];
-	const centre = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-	const halfX = (rect.width * preset.fraction) / 2;
-	const halfY = (rect.height * preset.fraction) / 2;
 	const options = { durationMs: preset.durationMs, momentum: preset.momentum };
+	return { ...contentPath(direction, rect, preset.fraction), options };
+}
+
+/**
+ * The one swipe geometry: the finger path inside `rect`, centred, covering `fraction` (0-1) of it, that scrolls the
+ * content `direction` (`down` reveals what is below, so the finger travels up). Spec swipes, flow `swipe`/`scroll` steps
+ * and `warden ui scroll` use it as is; `warden ui swipe <dir>` names the finger's direction instead and flips it
+ * (`fingerPath` in the CLI).
+ */
+export function contentPath(direction: SwipeDirection, rect: Rect, fraction: number): { from: Point; to: Point } {
+	const centre = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+	const halfX = (rect.width * fraction) / 2;
+	const halfY = (rect.height * fraction) / 2;
 	switch (direction) {
 		case "down":
-			return { from: { x: centre.x, y: centre.y + halfY }, to: { x: centre.x, y: centre.y - halfY }, options };
+			return { from: { x: centre.x, y: centre.y + halfY }, to: { x: centre.x, y: centre.y - halfY } };
 		case "up":
-			return { from: { x: centre.x, y: centre.y - halfY }, to: { x: centre.x, y: centre.y + halfY }, options };
+			return { from: { x: centre.x, y: centre.y - halfY }, to: { x: centre.x, y: centre.y + halfY } };
 		case "right":
-			return { from: { x: centre.x + halfX, y: centre.y }, to: { x: centre.x - halfX, y: centre.y }, options };
+			return { from: { x: centre.x + halfX, y: centre.y }, to: { x: centre.x - halfX, y: centre.y } };
 		case "left":
-			return { from: { x: centre.x - halfX, y: centre.y }, to: { x: centre.x + halfX, y: centre.y }, options };
+			return { from: { x: centre.x - halfX, y: centre.y }, to: { x: centre.x + halfX, y: centre.y } };
 	}
 }
 
