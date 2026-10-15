@@ -1,11 +1,15 @@
 import { expect } from "@delacour/warden-e2e";
 import type { Device } from "@delacour/warden-e2e/device";
+import type { Locator } from "@delacour/warden-e2e/screen/locator";
 import type { Screen } from "@delacour/warden-e2e/screen/screen";
 import { ids } from "./ids";
 
 /** How long to wait for the todos screen after submitting sign-in, while clearing the Keychain sheet. */
 const SIGN_IN_TIMEOUT_MS = 15_000;
 const POLL_MS = 250;
+/** How long a tap gets to show its result before it is sent again, and how often. */
+const TAP_RESULT_MS = 4_000;
+const TAP_RETRIES = 2;
 /** iOS can show "Save Password?" this long after the todos screen is already up. */
 const SAVE_PASSWORD_GRACE_MS = 2_500;
 /** No sheet for this long: the last one has finished animating away. */
@@ -79,6 +83,27 @@ export async function expectTodosAfterSignIn(device: Device, screen: Screen): Pr
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Taps `target` and waits for `arrived`. The first touch after sign-in is sometimes lost while the screen is still
+ * finishing its transition (seen on a heavily loaded host), so a tap that brought nothing up is sent once more.
+ */
+export async function tapUntilVisible(target: Locator, arrived: Locator): Promise<void> {
+	await target.tap();
+	for (let attempt = 0; attempt < TAP_RETRIES; attempt += 1) {
+		if (await waitVisible(arrived, TAP_RESULT_MS)) return;
+		await target.tap();
+	}
+}
+
+async function waitVisible(target: Locator, ms: number): Promise<boolean> {
+	const deadline = Date.now() + ms;
+	while (Date.now() < deadline) {
+		if (await target.isVisible()) return true;
+		await sleep(POLL_MS);
+	}
+	return target.isVisible();
 }
 
 /** Fresh launch, signed in as `email`, on the todos tab. */
