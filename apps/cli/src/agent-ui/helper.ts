@@ -41,6 +41,8 @@ export type HelperDeps = {
 	now: () => number;
 	/** own pid, written into the spawn row so a crashed spawner is noticed */
 	pid: number;
+	/** file existence for the helper lookup (tests make the source-tree build invisible) */
+	exists?: (path: string) => boolean;
 };
 
 export const defaultHelperDeps: HelperDeps = {
@@ -185,6 +187,7 @@ function spawnHelper(
 		...(opts.helperPath !== undefined ? { helperPath: opts.helperPath } : {}),
 		env: { simd: host.env.WARDEN_SIMD, simdSocket: undefined, helperDir: host.env.WARDEN_HELPER_DIR },
 		wardenHome: wardenHome(host.env),
+		...(deps.exists ? { exists: deps.exists } : {}),
 	});
 	if (!located.success) return { success: false, error: driverUiError(located.error) };
 	const resources = join(located.data, "..", "Resources");

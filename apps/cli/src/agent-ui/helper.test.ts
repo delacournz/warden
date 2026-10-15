@@ -204,7 +204,7 @@ describe("ensureHelper", () => {
 
 	test("a missing helper binary: engine_unavailable with the doctor hint, nothing spawned", async () => {
 		const { s, socketPath, host } = setup();
-		const res = await ensureHelper(host, UDID, { socketPath, deps: s.deps });
+		const res = await ensureHelper(host, UDID, { socketPath, deps: { ...s.deps, exists: () => false } });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error.code).toBe("engine_unavailable");
 		expect(s.spawns).toEqual([]);
