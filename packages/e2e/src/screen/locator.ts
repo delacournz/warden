@@ -14,6 +14,7 @@ import {
 } from "./actions";
 import type { Observed, Runtime } from "./context";
 import type { NodeEntry } from "./nodes";
+import type { PollStep } from "./poll";
 import {
 	type RoleOptions,
 	roleQuery,
@@ -25,6 +26,7 @@ import {
 	withScope,
 } from "./queries";
 import { describeExpression, exactlyOne, type LocatorExpression, type Query, resolve } from "./query";
+import { type ReactMatch, reactTapPoint } from "./react-locator";
 import type { QueryRole } from "./roles";
 import { normalizeText, type TextMatch } from "./text";
 
@@ -58,9 +60,23 @@ function assertOptions(verb: string, options: object, allowed: readonly string[]
 type Seen =
 	| { kind: "none"; snapshot: Observed["snapshot"] }
 	| { kind: "blocked"; reason: string; snapshot: Observed["snapshot"] }
+	| { kind: "react"; snapshot: Observed["snapshot"]; matches: number }
 	| { kind: "driver"; message: string };
 
 type Actionable = { entry: NodeEntry; observed: Observed };
+
+/** A component found only in the React tree (no accessibility node): enough to tap, nothing more. */
+type ReactActionable = { react: ReactMatch; observed: Observed };
+
+const REACT_ONLY =
+	"exists only in the React tree, not in the accessibility tree, so only tap() and boundingBox() work on it; " +
+	"expose it to accessibility (accessible, accessibilityLabel) to use anything else";
+
+/** The testID of a plain `getByTestId` (no scope), the only query the React tree can answer. */
+function plainTestId(expr: LocatorExpression): TextMatch | undefined {
+	if (expr.kind !== "query" || expr.scope !== undefined || expr.query.kind !== "testId") return undefined;
+	return expr.query.value;
+}
 
 type ActionSpec = {
 	/** refuse disabled elements */
@@ -184,7 +200,16 @@ export class Locator {
 
 	private async single(): Promise<{ entry: NodeEntry; observed: Observed }> {
 		const { entries, observed } = await this.matches();
+		if (entries.length === 0 && (await this.reactCandidates(observed)).length > 0) {
+			throw new E2eError("NOT_ACTIONABLE", `${this} ${REACT_ONLY}`, this.rt.excerpt(observed.snapshot));
+		}
 		return { entry: this.exactlyOne(entries, observed), observed };
+	}
+
+	/** Components of the React tree that this locator names, when it is a plain `getByTestId` and the app has devtools. */
+	private async reactCandidates(observed: Observed): Promise<ReactMatch[]> {
+		const testId = plainTestId(this.expr);
+		return testId === undefined ? [] : this.rt.reactMatches(testId, observed);
 	}
 
 	private exactlyOne(entries: readonly NodeEntry[], observed: Observed): NodeEntry {
@@ -231,7 +256,12 @@ export class Locator {
 	}
 
 	async boundingBox(): Promise<Rect> {
-		return { ...(await this.single()).entry.element.frame };
+		const { entries, observed } = await this.matches();
+		if (entries.length === 0) {
+			const [only, ...others] = await this.reactCandidates(observed);
+			if (only !== undefined && others.length === 0) return { ...only.frame };
+		}
+		return { ...this.exactlyOne(entries, observed).element.frame };
 	}
 
 	/** Polls until the locator is `visible` (default), `hidden`, `attached` or `detached`; else `TIMEOUT`. */
@@ -267,9 +297,18 @@ export class Locator {
 		return this.rt.step(`${verb} ${this}`, run);
 	}
 
-	/** Waits for exactly one visible (and, per `spec`, enabled, on-screen) match. Several matches fail at once. */
-	private async actionable(spec: ActionSpec, timeoutMs: number): Promise<Actionable> {
-		const result = await this.rt.poll<Actionable, Seen>(async () => {
+	/**
+	 * Waits for exactly one visible (and, per `spec`, enabled, on-screen) match. Several matches fail at once.
+	 * With `allowReact` a component that only the React tree knows (a plain `getByTestId`) counts as a match.
+	 */
+	private actionable(spec: ActionSpec, timeoutMs: number): Promise<Actionable>;
+	private actionable(spec: ActionSpec, timeoutMs: number, allowReact: boolean): Promise<Actionable | ReactActionable>;
+	private async actionable(
+		spec: ActionSpec,
+		timeoutMs: number,
+		allowReact = false
+	): Promise<Actionable | ReactActionable> {
+		const result = await this.rt.poll<Actionable | ReactActionable, Seen>(async () => {
 			const observation = await this.rt.tryObserve();
 			if (!observation.ok) {
 				if (!observation.error.retryable) {
@@ -279,7 +318,7 @@ export class Locator {
 			}
 			const { observed } = observation;
 			const entries = resolve(this.expr, observed.index);
-			if (entries.length === 0) return { done: false, state: { kind: "none", snapshot: observed.snapshot } };
+			if (entries.length === 0) return this.reactStep(spec, observed, allowReact);
 			const entry = this.exactlyOne(entries, observed);
 			const reason = blockedReason(entry, spec, observed);
 			if (reason !== undefined) return { done: false, state: { kind: "blocked", reason, snapshot: observed.snapshot } };
@@ -294,6 +333,14 @@ export class Locator {
 				this.rt.excerpt(seen.snapshot)
 			);
 		}
+		if (seen?.kind === "react") {
+			throw new E2eError(
+				"NOT_ACTIONABLE",
+				`${this} ${REACT_ONLY} (waited ${timeoutMs} ms)`,
+				this.rt.excerpt(seen.snapshot),
+				seen.matches
+			);
+		}
 		if (seen?.kind === "driver") throw new E2eError("DRIVER", `snapshot kept failing: ${seen.message}`);
 		throw new E2eError(
 			"LOCATOR_NOT_FOUND",
@@ -306,11 +353,14 @@ export class Locator {
 		assertOptions("tap", options, ["position", "timeout"]);
 		return this.act("tap", async () => {
 			const withPosition = options.position !== undefined;
-			const { entry, observed } = await this.actionable(
+			const found = await this.actionable(
 				{ enabled: !withPosition, tapPointOnScreen: !withPosition },
-				options.timeout ?? this.rt.actionTimeout()
+				options.timeout ?? this.rt.actionTimeout(),
+				true
 			);
-			this.rt.drive("tap", await observed.driver.tap(tapPointOf(entry, options.position)));
+			const point =
+				"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
+			this.rt.drive("tap", await found.observed.driver.tap(point));
 		});
 	}
 
@@ -412,6 +462,32 @@ export class Locator {
 	/** Scrolls the screen until this locator is on screen. */
 	scrollTo(options: ScrollOptions = {}): Promise<void> {
 		return scrollUntilVisible(this.rt, this, options);
+	}
+
+	/** One poll step when the accessibility tree has no match: ask the React tree (plain `getByTestId` only). */
+	private async reactStep(
+		spec: ActionSpec,
+		observed: Observed,
+		allowReact: boolean
+	): Promise<PollStep<ReactActionable, Seen>> {
+		const found = await this.reactCandidates(observed);
+		const [match, ...others] = found;
+		if (match === undefined) return { done: false, state: { kind: "none", snapshot: observed.snapshot } };
+		if (!allowReact)
+			return { done: false, state: { kind: "react", snapshot: observed.snapshot, matches: found.length } };
+		if (others.length > 0) {
+			throw new E2eError(
+				"LOCATOR_AMBIGUOUS",
+				`${this} matched ${found.length} components in the React tree`,
+				this.rt.excerpt(observed.snapshot),
+				found.length
+			);
+		}
+		if (spec.tapPointOnScreen && !isOnScreen(match.tapPoint, observed.snapshot.screen)) {
+			const reason = "(React tree) has its tap point outside the screen";
+			return { done: false, state: { kind: "blocked", reason, snapshot: observed.snapshot } };
+		}
+		return { done: true, value: { react: match, observed } };
 	}
 
 	private async focus({ entry, observed }: Actionable): Promise<void> {

@@ -1,9 +1,12 @@
+import type { DevtoolsFacet } from "../devtools/devtools.types";
 import type { Driver, DriverError, DriverResult, Snapshot } from "../driver/driver.types";
 import { DEFAULT_ASSERTION_TIMEOUT_MS } from "../env";
 import { E2eError } from "../errors";
 import { indexSnapshot, type NodeIndex } from "./nodes";
 import { type Clock, type PollResult, type PollStep, poll, systemClock } from "./poll";
+import { locateByTestIdViaReact, type ReactMatch } from "./react-locator";
 import { renderHeader, renderSnapshot } from "./render";
+import type { TextMatch } from "./text";
 
 /**
  * What `screen` and `Locator` need from the test session. `Session` satisfies it as is; the optional members are
@@ -22,6 +25,11 @@ export type ScreenHost = {
 	step?: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
 	/** polling time source; tests inject a fake */
 	clock?: Clock;
+	/**
+	 * The running app's devtools, when there is one (a dev client with Metro). `getByTestId` falls back to the React
+	 * component tree through it when the accessibility tree has no such node.
+	 */
+	devtools?: () => Pick<DevtoolsFacet, "tree"> | undefined;
 };
 
 export type Observed = { driver: Driver; snapshot: Snapshot; index: NodeIndex };
@@ -30,8 +38,14 @@ export type Observation = { ok: true; observed: Observed } | { ok: false; error:
 
 /** Lines of the accessibility tree attached to a failure. */
 const EXCERPT_LINES = 40;
+/** The React tree is read at most this often while a locator polls. */
+const REACT_THROTTLE_MS = 450;
+/** One React tree read gives up after this long, so a stuck page cannot eat the action timeout. */
+const REACT_TIMEOUT_MS = 2000;
 
 export class Runtime {
+	private reactCache: { key: string; at: number; matches: ReactMatch[] } | undefined;
+
 	constructor(readonly host: ScreenHost) {}
 
 	get clock(): Clock {
@@ -78,6 +92,24 @@ export class Runtime {
 		}, this.actionTimeout());
 		if (result.status === "done") return result.value;
 		throw driverFailure("snapshot", result.last ?? { code: "E_TIMEOUT", message: "no snapshot", retryable: true });
+	}
+
+	/**
+	 * Components of the React tree whose testID matches, for `getByTestId` when the accessibility tree has none.
+	 * Empty without devtools. Reads are throttled: inside the window the previous answer for the same query is reused.
+	 */
+	async reactMatches(testId: TextMatch, observed: Observed): Promise<ReactMatch[]> {
+		const facet = this.host.devtools?.();
+		if (facet === undefined) return [];
+		const key = typeof testId === "string" ? `s:${testId}` : `r:${testId.toString()}`;
+		const cached = this.reactCache;
+		if (cached !== undefined && cached.key === key && this.clock.now() - cached.at < REACT_THROTTLE_MS) {
+			return cached.matches;
+		}
+		const view = { platform: observed.snapshot.platform, screen: observed.snapshot.screen };
+		const matches = await locateByTestIdViaReact(facet, testId, view, { timeoutMs: REACT_TIMEOUT_MS });
+		this.reactCache = { key, at: this.clock.now(), matches };
+		return matches;
 	}
 
 	/** The interactive part of the tree as text, for failure messages. */

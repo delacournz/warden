@@ -15,7 +15,11 @@ afterEach(async () => {
 
 const str = (value: string) => ({ type: "string", value });
 
-async function open(extra: Partial<OpenDevtoolsFacetOptions> = {}, replay = true) {
+async function open(
+	extra: Partial<OpenDevtoolsFacetOptions> = {},
+	replay = true,
+	onRequest?: NonNullable<Parameters<typeof startFakeMetro>[0]>["respond"]
+) {
 	const p = fakePage();
 	const fake = startFakeMetro({
 		respond: (request, connection) => {
@@ -23,6 +27,8 @@ async function open(extra: Partial<OpenDevtoolsFacetOptions> = {}, replay = true
 				connection.emit("Runtime.consoleAPICalled", { type: "log", args: [str("boot")], timestamp: 10 });
 			}
 			if (request.method === "Page.reload") return { result: {} };
+			const custom = onRequest?.(request, connection);
+			if (custom) return custom;
 			return p.respond(request, connection);
 		},
 	});
@@ -117,6 +123,31 @@ describe("openDevtoolsFacet", () => {
 		const { facet } = await open();
 		const written = await facet.attachArtifacts("/dev/null/cannot");
 		expect(!written.success && written.error.code).toBe("io_failed");
+	});
+
+	test("tree runs the page script and reads the answer back", async () => {
+		const answer = JSON.stringify({
+			screen: "Home",
+			truncated: false,
+			components: [{ id: 0, name: "View", testID: "home", parent: null, rect: { x: 1, y: 2, w: 3, h: 4 } }],
+		});
+		const sent: string[] = [];
+		const { facet } = await open({}, false, (request) => {
+			if (request.method !== "Runtime.evaluate") return undefined;
+			const expression = String(request.params.expression);
+			if (expression === "typeof __warden_cb") return { result: { result: { type: "string", value: "undefined" } } };
+			if (!expression.includes("__warden_tree_results")) return undefined;
+			sent.push(expression);
+			const value = expression.includes("delete") ? answer : "started";
+			return { result: { result: { type: "string", value } } };
+		});
+		const tree = await facet.tree({ pixelRatio: 2 });
+		expect(tree.success).toBe(true);
+		if (tree.success) {
+			expect(tree.data.screen).toBe("Home");
+			expect(tree.data.components[0]?.rect).toEqual({ x: 2, y: 4, width: 6, height: 8 });
+		}
+		expect(sent.length).toBeGreaterThanOrEqual(2);
 	});
 
 	test("close() ends the session", async () => {

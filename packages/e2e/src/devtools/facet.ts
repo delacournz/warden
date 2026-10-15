@@ -12,6 +12,7 @@ import {
 } from "./devtools.types";
 import { attachNetwork } from "./network";
 import { connectDevtools, type DevtoolsDevice } from "./session";
+import { fetchTree } from "./tree";
 
 export type OpenDevtoolsFacetOptions = {
 	/** the spec env: `metroUrl` is `WARDEN_METRO_URL`; absent = a release build, so `devtools_unavailable` */
@@ -79,6 +80,7 @@ export async function openDevtoolsFacet(o: OpenDevtoolsFacetOptions): Promise<De
 			mark: consoleCapture.mark,
 		},
 		network: { entries: network.entries, clear: network.clear },
+		tree: (options) => fetchTree(session, options, { sleep: o.sleep }),
 		get target() {
 			return session.target;
 		},
