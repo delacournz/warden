@@ -169,6 +169,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "react-native-pulsar@1.7.0": "patches/react-native-pulsar@1.7.0.patch",
+  },
   "overrides": {
     "mdast-util-to-markdown": "2.1.2",
   },
