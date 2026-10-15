@@ -301,6 +301,21 @@ describe("reloadJs", () => {
 		expect(fake.reloadPosts).toBe(0);
 	});
 
+	test("reloads only this device through DevSettings when Page.reload is unsupported", async () => {
+		const fake = metro({
+			respond: (r) => {
+				if (r.method === "Page.reload") return { error: { message: "not found" } };
+				if (r.method !== "Runtime.evaluate" || !String(r.params?.expression).includes("DevSettings")) return undefined;
+				queueMicrotask(() => fake.emit("Runtime.executionContextsCleared"));
+				return { result: { result: { type: "boolean", value: true } } };
+			},
+		});
+		const session = await connect(fake);
+		const reloaded = await session.reloadJs();
+		expect(reloaded).toEqual({ success: true, data: { method: "devsettings" } });
+		expect(fake.reloadPosts).toBe(0);
+	});
+
 	test("falls back to POST /reload when Page.reload is unsupported", async () => {
 		const fake = metro({
 			respond: (r) => (r.method === "Page.reload" ? { error: { message: "not found" } } : undefined),

@@ -54,8 +54,11 @@ export type DevtoolsSession = {
 		expression: string,
 		options?: { await?: boolean; timeoutMs?: number }
 	) => Promise<Result<unknown, EvaluateError>>;
-	/** `Page.reload` over CDP, else `POST <metro>/reload`; resolves once the app has reconnected. */
-	reloadJs: () => Promise<DevtoolsResult<{ method: "cdp" | "http" }>>;
+	/**
+	 * Reloads this device's JS: `Page.reload` over CDP, else `DevSettings.reload()` evaluated in the app, else
+	 * `POST <metro>/reload` (which reloads every device on that Metro); resolves once the app has reconnected.
+	 */
+	reloadJs: () => Promise<DevtoolsResult<{ method: ReloadMethod }>>;
 	/** the page currently attached (changes after a reconnect) */
 	readonly target: SelectedTarget;
 	/** false on legacy Hermes: `evaluateWithBinding` is refused */
@@ -75,6 +78,12 @@ export type DevtoolsSession = {
 	on: <E extends keyof SessionEvents>(event: E, handler: (arg: SessionEvents[E]) => void) => () => void;
 	close: () => void;
 };
+
+export type ReloadMethod = "cdp" | "devsettings" | "http";
+
+/** Reloads only the app this socket is attached to (new-architecture runtimes expose DevSettings on `nativeModuleProxy`). */
+const DEV_SETTINGS_RELOAD =
+	'(function(){var m=globalThis.nativeModuleProxy&&globalThis.nativeModuleProxy.DevSettings;if(!m||typeof m.reload!=="function")return false;setTimeout(function(){m.reload()},0);return true})()';
 
 export type SessionEvents = { reconnected: SelectedTarget; lost: DevtoolsError };
 
@@ -242,8 +251,18 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 			const live = await current();
 			if (!live.success) return live;
 			const startedAt = epoch;
-			let method: "cdp" | "http" = "cdp";
-			const reloaded = await live.data.cdp.send("Page.reload", {});
+			let method: ReloadMethod = "cdp";
+			let reloaded = await live.data.cdp.send("Page.reload", {});
+			if (!reloaded.success) {
+				const viaApp = await live.data.cdp.send("Runtime.evaluate", {
+					expression: DEV_SETTINGS_RELOAD,
+					returnByValue: true,
+				});
+				if (viaApp.success && isReloadAck(viaApp.data)) {
+					method = "devsettings";
+					reloaded = viaApp;
+				}
+			}
 			if (!reloaded.success) {
 				method = "http";
 				let status = 0;
@@ -331,4 +350,11 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 		},
 	};
 	return ok(session);
+}
+
+/** `Runtime.evaluate` answered `true`: the app scheduled its own reload. */
+function isReloadAck(data: unknown): boolean {
+	if (typeof data !== "object" || data === null || !("result" in data)) return false;
+	const { result } = data;
+	return typeof result === "object" && result !== null && "value" in result && result.value === true;
 }

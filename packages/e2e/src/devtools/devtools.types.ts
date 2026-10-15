@@ -134,7 +134,7 @@ export type DevtoolsFacet = {
 		expression: string,
 		options?: { await?: boolean; timeoutMs?: number }
 	) => Promise<Result<unknown, EvaluateError>>;
-	reloadJs: () => Promise<DevtoolsResult<{ method: "cdp" | "http" }>>;
+	reloadJs: () => Promise<DevtoolsResult<{ method: "cdp" | "devsettings" | "http" }>>;
 	console: {
 		lines: () => ConsoleLine[];
 		clear: () => void;
