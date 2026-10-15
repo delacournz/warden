@@ -59,7 +59,7 @@ describe("runnerReport", () => {
 
 describe("reportOutputDir", () => {
 	test("--output <dir> / --output=<dir>, else e2e's default .e2e; a placeholder means unknown", () => {
-		expect(reportOutputDir(["bunx", "e2e", "run", "{flowPaths}", "--output", ".e2e/dev"])).toBe(".e2e/dev");
+		expect(reportOutputDir(["bunx", "e2e", "run", "flows/a.yaml", "--output", ".e2e/dev"])).toBe(".e2e/dev");
 		expect(reportOutputDir(["e2e", "run", "--output=out"])).toBe("out");
 		expect(reportOutputDir(["bunx", "e2e", "run"])).toBe(".e2e");
 		expect(reportOutputDir(["e2e", "run", "--output", "out/{worker}"])).toBeUndefined();

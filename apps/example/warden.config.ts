@@ -42,10 +42,9 @@ const AFFECTED = {
  * warden config for the example app: a Release simulator build (JS embedded, no Metro at test time,
  * `EXPO_PUBLIC_E2E=1` baked in) keyed on native + JS, a Debug dev-client variant keyed on native
  * only, and two e2e suites over the same tester.army flows:
- * - `example`: the Release build, one runner per flow;
- * - `example-dev`: the dev client against a Metro warden starts for the run, one runner for the pool.
- * Both start every sim's agent-device runner in parallel before the flows (`warmRunners`, default on;
- * `warmRunners: false` to opt out).
+ * - `example`: the Release build, one spec process per flow;
+ * - `example-dev`: the dev client against a Metro warden starts for the run, one spec process per device.
+ * Flows run with `@delacour/warden-e2e` (`bun test`); `warmDrivers: false` opts out of the pre-warm.
  *
  * ```bash
  * warden e2e example                 # flows this branch needs, 2 sims (--all: every flow)
@@ -78,14 +77,12 @@ export default {
 	],
 	e2e: {
 		example: {
-			runner: ["bunx", "e2e", "run", "{flowPath}", "--retries", "0", "--output", ".e2e/{worker}-{seq}"],
 			count: 2,
 			app: true,
 			slim: true,
 			...AFFECTED,
 		},
 		"example-dev": {
-			runner: ["bunx", "e2e", "run", "{flowPaths}", "--retries", "0", "--output", ".e2e/dev"],
 			mode: "single",
 			count: 2,
 			app: { variant: "dev" },

@@ -25,7 +25,6 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 function suite(overrides: Partial<Record<keyof E2eSuiteConfig, unknown>> = {}): E2eSuiteConfig {
 	return e2eSuiteSchema.parse({
 		flowsDir: "flows",
-		runner: ["x", "{flowPath}"],
 		routerRoot: "src/app",
 		runAll: ["bun.lock", "ios/**"],
 		ignore: ["**/*.md"],

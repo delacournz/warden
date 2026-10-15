@@ -218,9 +218,14 @@ export async function prewarmMetro(url: string, platform: Platform): AsyncResult
 }
 
 /**
- * Relaunch the iOS dev client pointed at Metro. `--initialUrl` is read by expo-dev-launcher at
- * start, unlike `simctl openurl`, which raises an "Open in …?" alert on the device.
+ * The app-side launch arguments that point a dev client at Metro. `--initialUrl` is read by
+ * expo-dev-launcher at start, unlike `simctl openurl`, which raises an "Open in …?" alert on the device.
  */
+export function devClientLaunchArgs(url: string, launchArgs: readonly string[] = []): string[] {
+	return ["--initialUrl", url, ...launchArgs];
+}
+
+/** Relaunch the iOS dev client pointed at Metro (see `devClientLaunchArgs`). */
 export function devClientLaunchArgv(
 	udid: string,
 	bundleId: string,
@@ -234,9 +239,7 @@ export function devClientLaunchArgv(
 		"--terminate-running-process",
 		udid,
 		bundleId,
-		"--initialUrl",
-		url,
-		...launchArgs,
+		...devClientLaunchArgs(url, launchArgs),
 	];
 }
 

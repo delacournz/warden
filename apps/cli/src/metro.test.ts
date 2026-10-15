@@ -3,6 +3,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	devClientLaunchArgs,
 	devClientLaunchArgv,
 	type MetroDeps,
 	type MetroProc,
@@ -281,6 +282,18 @@ describe("prewarmMetro", () => {
 	test("no readable manifest → skipped, not an error", async () => {
 		const s = serve(() => new Response("nope", { status: 404 }));
 		expect(await prewarmMetro(metroUrl(s.port), "ios")).toEqual({ success: true, data: { bundled: false } });
+	});
+});
+
+describe("devClientLaunchArgs", () => {
+	test("--initialUrl first, then the extra launch args", () => {
+		expect(devClientLaunchArgs("http://127.0.0.1:8090")).toEqual(["--initialUrl", "http://127.0.0.1:8090"]);
+		expect(devClientLaunchArgs("http://127.0.0.1:8090", ["-Flag", "YES"])).toEqual([
+			"--initialUrl",
+			"http://127.0.0.1:8090",
+			"-Flag",
+			"YES",
+		]);
 	});
 });
 

@@ -9,11 +9,9 @@ export type JobVars = {
 	/** the first port leased for the run (Metro's, when warden owns Metro) */
 	port?: number;
 	metroUrl?: string;
-	/** this worker's private `AGENT_DEVICE_STATE_DIR` */
-	stateDir?: string;
 };
 
-const PLACEHOLDER = /\{(job|udid|worker|seq|leg|port|metroUrl|stateDir)\}/g;
+const PLACEHOLDER = /\{(job|udid|worker|seq|leg|port|metroUrl)\}/g;
 
 /** Substitute the placeholders `vars` has a value for (single pass; unknown or valueless `{…}` kept). */
 export function expandText(text: string, vars: Partial<JobVars>): string {

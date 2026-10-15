@@ -573,20 +573,13 @@ describe("warden batch", () => {
 			"{job}",
 			"--api",
 			"http://127.0.0.1:{port}",
-			"{stateDir}",
 		]);
 		const h = harness();
 		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "api --port 3000"]);
 		expect(h.probes).toEqual([{ kind: "http", url: "http://127.0.0.1:3000/health" }]);
 		const job = h.jobs()[0];
-		expect(job?.cmd).toEqual([
-			"run",
-			"a",
-			"--api",
-			"http://127.0.0.1:3000",
-			join(c.env.WARDEN_HOME ?? "", "batches", "b1", "agent-device", "0"),
-		]);
+		expect(job?.cmd).toEqual(["run", "a", "--api", "http://127.0.0.1:3000"]);
 		expect(job?.opts.group).toBe(true);
 		expect(h.timers.map((t) => [t.ms, t.cancelled])).toEqual([[90_000, true]]);
 		c.argv = ["ios", "--jobs", "a", "--job-timeout", "soon", "--", "run"];

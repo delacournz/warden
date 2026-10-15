@@ -70,8 +70,8 @@ export async function makeSuiteRepo(
 			e2e: {
 				mobile: {
 					flowsDir: "flows",
-					runner: ["run-flow", "{flowPath}", "--device", "{udid}"],
 					platform: "ios",
+					spec: { bundleId: "com.x" },
 					flows: {
 						chats: { entries: ["src/app/(app)/chats.tsx"] },
 						settings: { entries: ["src/app/(app)/settings.tsx"], required: false },
