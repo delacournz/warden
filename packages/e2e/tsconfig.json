@@ -1,5 +1,5 @@
 {
 	"extends": "@delacour/warden-tsconfig/tsconfig.base.json",
 	"compilerOptions": { "outDir": "./dist", "types": ["bun"] },
-	"include": ["src"]
+	"include": ["src", "native/scripts"]
 }

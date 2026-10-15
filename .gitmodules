@@ -1,0 +1,4 @@
+[submodule "packages/e2e/native/idb"]
+	path = packages/e2e/native/idb
+	url = https://github.com/facebook/idb.git
+	shallow = true
