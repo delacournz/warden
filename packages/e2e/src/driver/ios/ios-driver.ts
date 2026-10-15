@@ -288,10 +288,12 @@ export function createIosDriver(
 				id: udid,
 				version: d.version,
 				transport: d.hid.transport,
-				bridge: d.ax.bridge,
+				bridge: d.ax.bridge === "degraded" ? "available" : d.ax.bridge,
 				screen: d.screen,
 				detail: {
 					axDefault: d.ax.default,
+					...(d.ax.bridge === "degraded" ? { axBridge: "degraded" } : {}),
+					...(d.ax.lastError ? { axLastError: d.ax.lastError } : {}),
 					...(d.ax.error !== undefined ? { axError: d.ax.error } : {}),
 					...(d.socket ? { socket: d.socket } : {}),
 					...(d.xcode ? { xcode: d.xcode } : {}),

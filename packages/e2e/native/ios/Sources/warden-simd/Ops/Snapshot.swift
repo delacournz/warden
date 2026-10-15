@@ -150,6 +150,35 @@ extension Session {
     return false
   }
 
+  /// The app answered nothing in time (as opposed to being gone): what an app relaunched while no quiescence
+  /// stream was open looks like to the bridge.
+  static func isNotResponding(_ error: any Error) -> Bool {
+    if let error = error as? AXBridgeError, case .applicationNotResponding = error { return true }
+    if let error = error as? UIAutomationError, case .applicationNotResponding = error { return true }
+    return false
+  }
+
+  /// Runs `read`; when the app did not respond, runs `recover` (a fresh quiescence stream, see
+  /// `QuiescenceMonitor.recover`) and reads once more. Any other failure, and a second failure, propagate.
+  static func readRecovering<Value>(
+    read: () async throws -> Value, recover: () async -> Void, log: (String) -> Void
+  ) async throws -> Value {
+    do {
+      return try await read()
+    } catch {
+      guard isNotResponding(error) else { throw error }
+      log("axbridge: \(WireError.from(error).message); opening a quiescence stream and reading again")
+      await recover()
+      return try await read()
+    }
+  }
+
+  /// Gives the guest a stream bound to the current frontmost process. A no-op without a bridge.
+  func recoverBridge() async {
+    guard let monitor = try? quiescenceMonitor() else { return }
+    await monitor.recover(timeoutMs: 4000)
+  }
+
   /// Runs `body` on the requested reader (default: the session's `--ax`, i.e. `axbridge`). With no explicit
   /// `backend`, an `axbridge` read that fails with `bridgeUnavailable` / `applicationUnavailable` /
   /// `applicationNotResponding` (or a bridge that never came up) is retried once on `ax` and a `log` event says so.
@@ -168,8 +197,14 @@ extension Session {
     var reason: String
     if let reader = axBridgeReader {
       do {
-        return AXOutcome(value: try await body(reader), backend: .axbridge, fallback: nil)
+        let value = try await Session.readRecovering(
+          read: { try await body(reader) },
+          recover: { await self.recoverBridge() },
+          log: { OpLog.shared.log(.warn, $0, op: op) })
+        bridgeHealth.recordSuccess()
+        return AXOutcome(value: value, backend: .axbridge, fallback: nil)
       } catch {
+        if Session.isBridgeFailure(error) { bridgeHealth.recordFailure(WireError.from(error).message) }
         guard requested == nil, Session.isBridgeFailure(error), axHostReader != nil else { throw error }
         reason = WireError.from(error).message
       }

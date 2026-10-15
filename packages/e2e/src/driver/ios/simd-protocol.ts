@@ -242,8 +242,10 @@ export const healthDataSchema = z.looseObject({
 	hid: z.object({ transport: z.string() }),
 	ax: z.object({
 		default: z.string(),
-		bridge: z.enum(["available", "missing", "failed"]),
+		/** `degraded`: the guest is present but the last read through it failed (see `lastError`) */
+		bridge: z.enum(["available", "degraded", "missing", "failed"]),
 		error: z.string().optional(),
+		lastError: z.object({ message: z.string(), agoMs: z.number() }).optional(),
 	}),
 	screen: screenInfoSchema,
 	/** present when the helper serves a socket */

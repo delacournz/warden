@@ -28,6 +28,28 @@ enum BridgeStatus: Sendable, Equatable {
   }
 }
 
+/// Whether the last `axbridge` read worked. `health` without a probe would otherwise say `available` for as long as
+/// the resource exists, however many reads failed since.
+final class BridgeHealth: @unchecked Sendable {
+  struct Failure: Equatable {
+    var message: String
+    var at: Double
+  }
+
+  private let lock = NSLock()
+  private var failure: Failure?
+
+  func recordFailure(_ message: String, at now: Double = ProcessInfo.processInfo.systemUptime) {
+    lock.withLock { failure = Failure(message: message, at: now) }
+  }
+
+  func recordSuccess() {
+    lock.withLock { failure = nil }
+  }
+
+  var lastFailure: Failure? { lock.withLock { failure } }
+}
+
 /// One booted simulator, opened through idb's FBSimulatorControl: the simulator handle, a HID connection, and the AX
 /// readers (`axbridge` shared guest + host-side `ax`). Ops receive it as their context.
 final class Session: @unchecked Sendable {
@@ -51,6 +73,8 @@ final class Session: @unchecked Sendable {
   let socket = SocketStatus()
   /// Long-lived quiescence stream backing `settle`; created on first use.
   let quiescence = QuiescenceHolder()
+  /// The last `axbridge` read failure that was not repaired, for `health`.
+  let bridgeHealth = BridgeHealth()
   let orientationMemory = OrientationMemory()
 
   init(

@@ -6,7 +6,7 @@ import XCTest
 @testable import warden_simd
 
 /// A quiescence source the test drives by hand: `emit` pushes events into the stream the monitor last opened.
-private final class FakeReader: UIAutomation, @unchecked Sendable {
+final class FakeReader: UIAutomation, @unchecked Sendable {
   private let lock = NSLock()
   private var continuation: AsyncThrowingStream<QuiescenceEvent, Error>.Continuation?
   private(set) var opened = 0
