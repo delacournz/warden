@@ -1,13 +1,15 @@
 import type { App } from "../app";
 import type { Device } from "../device";
 import type { Platform } from "../driver/driver.types";
+import type { E2eError } from "../errors";
+import type { Screen } from "../screen/screen";
 import type { Session } from "../session";
 import type { TraceWriter } from "./trace";
 
-/** The `screen` fixture. TODO(T4): replace with the real `Screen` once it lands. */
-export type Screen = object;
+export type { App, Device, Screen };
 
-export type { App, Device };
+/** What every test receives from the runner; `test.extend` adds to it. */
+export type TestFixtures = BaseFixtures;
 
 /** What every test receives; `test.extend` adds to it. */
 export type BaseFixtures = { app: App; device: Device; screen: Screen; platform: Platform };
@@ -42,4 +44,6 @@ export type AttemptContext = {
 	depth: number;
 	/** files written into `dir`, relative to it (reported in `TestResult.artifacts`) */
 	readonly files: Set<string>;
+	/** failures kept by `expect.soft`; the attempt fails with all of them once the body has settled */
+	readonly softFailures: E2eError[];
 };

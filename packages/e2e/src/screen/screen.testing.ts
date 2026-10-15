@@ -8,12 +8,12 @@ export type TestHost = ScreenHost & { clock: FakeClock; steps: string[] };
 /** A host over a fake driver and a fake clock that records the step labels it is asked to report. */
 export function testHost(
 	driver: FakeDriver,
-	options: { actionTimeoutMs?: number; withSteps?: boolean } = {}
+	options: { actionTimeoutMs?: number; assertionTimeoutMs?: number; withSteps?: boolean } = {}
 ): TestHost {
 	const steps: string[] = [];
 	const host: TestHost = {
 		driver: async () => driver,
-		env: { actionTimeoutMs: options.actionTimeoutMs ?? 1000 },
+		env: { actionTimeoutMs: options.actionTimeoutMs ?? 1000, assertionTimeoutMs: options.assertionTimeoutMs ?? 5000 },
 		clock: fakeClock(),
 		steps,
 	};

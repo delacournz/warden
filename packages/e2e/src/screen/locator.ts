@@ -69,7 +69,16 @@ type ActionSpec = {
 	tapPointOnScreen: boolean;
 };
 
+const LOCATOR_BRAND = Symbol.for("@delacour/warden-e2e/locator");
+
+/** Whether `value` is a `Locator` (also across duplicated copies of this module, e.g. the bundled entry and the preload). */
+export function isLocator(value: unknown): value is Locator {
+	return typeof value === "object" && value !== null && LOCATOR_BRAND in value;
+}
+
 export class Locator {
+	readonly [LOCATOR_BRAND] = true;
+
 	constructor(
 		readonly expr: LocatorExpression,
 		private readonly rt: Runtime
@@ -158,9 +167,19 @@ export class Locator {
 
 	// ---- reads: one look at the screen, never waiting ----
 
-	private async matches(): Promise<{ entries: NodeEntry[]; observed: Observed }> {
+	/** The runtime (host, timeouts, clock) this locator runs on; the `expect` matchers poll through it. */
+	get runtime(): Runtime {
+		return this.rt;
+	}
+
+	/** One look at the screen: every current match and the snapshot they came from. Never waits. */
+	async look(): Promise<{ entries: NodeEntry[]; observed: Observed }> {
 		const observed = await this.rt.observe();
 		return { entries: resolve(this.expr, observed.index), observed };
+	}
+
+	private matches(): Promise<{ entries: NodeEntry[]; observed: Observed }> {
+		return this.look();
 	}
 
 	private async single(): Promise<{ entry: NodeEntry; observed: Observed }> {
@@ -432,14 +451,19 @@ export class Locator {
 }
 
 /** The strict one-match rule; the error carries the rendered screen. */
-function pickOne(rt: Runtime, expr: LocatorExpression, entries: readonly NodeEntry[], observed: Observed): NodeEntry {
+export function pickOne(
+	rt: Runtime,
+	expr: LocatorExpression,
+	entries: readonly NodeEntry[],
+	observed: Observed
+): NodeEntry {
 	const result = exactlyOne(expr, entries, { screen: rt.excerpt(observed.snapshot) });
 	if (!result.success) throw result.error;
 	return result.data;
 }
 
 /** Display text: the accessible name, else the text of everything inside. */
-function textOf(entry: NodeEntry): string {
+export function textOf(entry: NodeEntry): string {
 	return normalizeText(entry.name ?? "") || entry.subtreeText;
 }
 

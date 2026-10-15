@@ -2,6 +2,8 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import { createApp } from "../../app";
 import { createDevice } from "../../device";
 import { el, type FakeDriver, fakeDriver, snapshotOf } from "../../driver/driver.testing";
+import { screenHostFor } from "../../fixtures";
+import { createScreen } from "../../screen/screen";
 import { setDefaultDriverFactory, setDefaultFixtureFactory } from "../../session";
 
 /** Appends one line to `$FIXTURE_LOG` (the runner test reads it back to assert ordering). */
@@ -35,7 +37,7 @@ setDefaultFixtureFactory(async (ctx) => {
 	return {
 		app: createApp({ session, driver, env: session.env }),
 		device: createDevice({ session, driver, env: session.env }),
-		screen: {},
+		screen: createScreen(screenHostFor(ctx)),
 		platform: session.env.platform,
 	};
 });

@@ -73,6 +73,11 @@ export function setDefaultFixtureFactory(factory: FixtureFactory | undefined): v
 	defaultFixtures = factory;
 }
 
+/** Whether a default fixture factory is wired (so the preload leaves a test-installed one alone). */
+export function hasDefaultFixtureFactory(): boolean {
+	return defaultFixtures !== undefined;
+}
+
 const missingFactory: DriverFactory = async () => ({
 	success: false,
 	error: {
