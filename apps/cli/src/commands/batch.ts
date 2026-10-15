@@ -11,17 +11,20 @@ import { isPortFree } from "@delacour/warden-core/ports";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Platform } from "@delacour/warden-core/types";
+import { ENV_NAMES } from "@delacour/warden-e2e/env";
+import { readResults } from "@delacour/warden-e2e/runner/results";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
-import { type FlowMark, flowMarks, type TrackedFlow } from "../batch/flow-progress";
+import { type FlowMark, flowOf, resultsMarks, type TrackedFlow, testLine } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
-import { type RunnerReport, reportOutputDir, runnerReport } from "../batch/runner-report";
+import { type RunnerReport, resultsReport } from "../batch/runner-report";
 import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
 import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
 import { openStampedLog } from "../batch/stamped-log";
 import {
+	addRunnerFlows,
 	applyEvent,
 	applyFlowMarks,
 	applyRunnerReport,
@@ -204,7 +207,7 @@ const SERVE_KILL_GRACE_MS = 15_000;
 const JOB_KILL_GRACE_MS = 5_000;
 const READY_POLL_MS = 500;
 const FRAME_MS = 100;
-/** how often a run's flow progress is read */
+/** how often the jobs' `results.jsonl` are read for finished tests */
 const FLOW_POLL_MS = 1_000;
 
 const absolute = (cwd: string, path: string) => (isAbsolute(path) ? path : resolve(cwd, path));
@@ -357,6 +360,9 @@ export type Screenshots = ReadonlyMap<string, string>;
 /** Job logs by attempt: `<worker>:<seq>` → absolute log path. */
 export type Logs = ReadonlyMap<string, string>;
 
+/** Spec results by attempt: `<worker>:<seq>` → the `results.jsonl` the job writes (jobs whose env sets `WARDEN_E2E_OUT`). */
+export type ResultFiles = ReadonlyMap<string, string>;
+
 /** Key of one job attempt in `Screenshots` / `Logs`. */
 export const attemptKey = (r: { worker: number; seq: number }) => `${r.worker}:${r.seq}`;
 
@@ -404,13 +410,21 @@ type Display = {
 	event: (e: BatchEvent) => void;
 	/** flow results read off `worker`'s spec output */
 	flows: (worker: number, marks: Readonly<Record<string, FlowMark>>) => void;
+	/** finished tests, one line each (`--no-tui` only: the grid shows flows) */
+	tests: (lines: readonly string[]) => void;
 	/** the spec runner's report: the flows each device ran */
 	report: (report: RunnerReport) => void;
 	end: () => void;
 	cast?: Cast;
 };
 
-function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { current: BatchView }): Display {
+function display(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	view: { current: BatchView },
+	flows: readonly TrackedFlow[] | undefined
+): Display {
 	const { terminal } = deps;
 	const live = args.tui && terminal.isTTY;
 	const width = live ? terminal.columns : 100;
@@ -435,6 +449,10 @@ function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { 
 		cast,
 		event: (e) => {
 			view.current = applyEvent(view.current, e);
+			if (e.type === "job-start") {
+				const ids = shardFlowIds(flows, e.job);
+				if (ids.length > 0) view.current = addRunnerFlows(view.current, e.worker, ids);
+			}
 			if (!live) {
 				const text = plainLine(view.current, e);
 				if (text !== undefined) ctx.err(text);
@@ -445,6 +463,9 @@ function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { 
 			if (!live) announceFlows(ctx, view.current, worker, marks);
 			view.current = applyFlowMarks(view.current, worker, marks);
 			frame(false);
+		},
+		tests: (lines) => {
+			if (!live) for (const line of lines) ctx.err(line);
 		},
 		report: (report) => {
 			view.current = applyRunnerReport(view.current, report);
@@ -458,7 +479,14 @@ function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { 
 	};
 }
 
-/** Run every pool's queue behind the grid; a run with `flows` also ticks them off live from the job logs. */
+/** The flows of the shard job `job` (`shard-0`, or `shard-0@<leg>`), for the grid row that runs it. */
+function shardFlowIds(flows: readonly TrackedFlow[] | undefined, job: string): string[] {
+	return (flows ?? [])
+		.filter((f) => f.job !== undefined && (job === f.job || job.startsWith(`${f.job}@`)))
+		.map((f) => f.id);
+}
+
+/** Run every pool's queue behind the grid; a run with `flows` also ticks them off live from the jobs' `results.jsonl`. */
 async function runGrid(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -468,48 +496,48 @@ async function runGrid(
 	o: {
 		total: number;
 		startedAt: number;
-		cmd: readonly string[];
-		logs: ReadonlyMap<string, string>;
+		resultFiles: ResultFiles;
 		flows: readonly TrackedFlow[] | undefined;
 	}
 ): Promise<{ summary: BatchSummary; screen: Display }> {
 	const rows = queues.flatMap((q) => q.rows);
 	const { flows } = o;
-	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, flows) });
-	const poller = flows ? flowPoller(deps, flows, o.logs, screen) : undefined;
+	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, flows) }, flows);
+	const ended = new Set<string>();
+	const poller = flows ? flowPoller(deps, flows, o.resultFiles, ended, screen) : undefined;
 	try {
 		const summary = await runPools(queues, {
 			retry: args.retry,
 			now: ctx.now,
 			signal: r.signal,
-			onEvent: screen.event,
+			onEvent: (e) => {
+				if (e.type === "job-end") ended.add(attemptKey(e));
+				screen.event(e);
+			},
 		});
 		poller?.stop();
 		await poller?.poll();
-		if (flows) await readRunnerReport(deps, args.cwd, o.cmd, flows, o.startedAt, screen);
+		if (flows) await readRunnerReport(deps, o.resultFiles, flows, o.startedAt, screen);
 		return { summary, screen };
 	} finally {
 		poller?.stop();
 	}
 }
 
-/** Hand the runner's `report.json` (in its `--output` dir) to the display; a missing / stale one is skipped. */
+/** Hand every job's finished `results.jsonl` to the display as one report; missing files and stale results are skipped. */
 async function readRunnerReport(
 	deps: BatchDeps,
-	cwd: string,
-	cmd: readonly string[],
+	resultFiles: ResultFiles,
 	flows: readonly TrackedFlow[],
 	since: number,
 	screen: Display
 ): Promise<void> {
-	const dir = reportOutputDir(cmd);
-	if (dir === undefined) return;
-	const text = await deps.readFile(join(absolute(cwd, dir), "report.json")).catch(() => "");
-	const report = runnerReport(text, flows, since);
+	const texts = await Promise.all([...resultFiles.values()].map((path) => deps.readFile(path).catch(() => "")));
+	const report = resultsReport(texts.join("\n"), flows, since);
 	if (report) screen.report(report);
 }
 
-/** The grid's first frame: one runner per worker tracks `flows` when the run has them. */
+/** The grid's first frame: with sharded flows, one (empty) runner per worker that takes its shard's flows when the shard starts. */
 function startView(
 	rows: ReadonlyArray<{ worker: number; udid: string; name: string }>,
 	total: number,
@@ -517,12 +545,7 @@ function startView(
 	flows: readonly TrackedFlow[] | undefined
 ): BatchView {
 	const view = initialView(rows, total, startedAt);
-	return flows
-		? withRunners(
-				view,
-				flows.map((f) => f.id)
-			)
-		: view;
+	return flows?.some((f) => f.job !== undefined) ? withRunners(view, []) : view;
 }
 
 const tick = (mark: FlowMark) => (mark === "passed" ? "✓" : "✗");
@@ -549,27 +572,39 @@ function announceDevices(ctx: CommandContext, view: BatchView): void {
 }
 
 /**
- * Read each worker's latest job log and hand the flows it reports finished to
- * the display. `poll` reads once (also called after the run, so the last flows land); `stop` ends the timer.
+ * Read the `results.jsonl` of every job started so far: hand the flows it reports finished to the
+ * display (a job's flows count as passed once it has ended) and each new test as one line.
+ * `poll` reads once (also called after the run, so the last results land); `stop` ends the timer.
  */
 function flowPoller(
 	deps: BatchDeps,
 	flows: readonly TrackedFlow[],
-	logs: ReadonlyMap<string, string>,
+	resultFiles: ResultFiles,
+	ended: ReadonlySet<string>,
 	screen: Display
 ): { poll: () => Promise<void>; stop: () => void } {
 	let busy = false;
+	const printed = new Map<string, number>();
+	const settled = new Set<string>();
+	const pollOne = async (key: string, path: string) => {
+		const text = await deps.readFile(path).catch(() => "");
+		const final = ended.has(key);
+		screen.flows(Number(key.split(":")[0]), resultsMarks(text, flows, { final }));
+		const results = readResults(text);
+		const fresh = results.slice(printed.get(key) ?? 0);
+		printed.set(key, results.length);
+		const lines = fresh.flatMap((result) => {
+			const flow = flowOf(result, flows);
+			return flow ? [testLine(flow.id, result)] : [];
+		});
+		if (lines.length > 0) screen.tests(lines);
+		if (final) settled.add(key);
+	};
 	const poll = async () => {
 		if (busy) return;
 		busy = true;
 		try {
-			// attempt keys are `<worker>:<seq>` in spawn order: the last one per worker is its current log
-			const latest = new Map<number, string>();
-			for (const [key, log] of logs) latest.set(Number(key.split(":")[0]), log);
-			for (const [worker, log] of latest) {
-				const text = await deps.readFile(log).catch(() => "");
-				screen.flows(worker, flowMarks(text, flows));
-			}
+			for (const [key, path] of resultFiles) if (!settled.has(key)) await pollOne(key, path);
 		} finally {
 			busy = false;
 		}
@@ -622,6 +657,8 @@ type JobRunnerOptions = {
 	screenshots: Map<string, string>;
 	/** filled with each attempt's log (`attemptKey`); a later pass overwrites, so a failed attempt keeps the failing run's */
 	logs: Map<string, string>;
+	/** filled with each attempt's `results.jsonl` (`attemptKey`), for jobs whose env sets `WARDEN_E2E_OUT` */
+	resultFiles: Map<string, string>;
 	running: Set<ProcHandle>;
 	interrupted: () => boolean;
 };
@@ -671,7 +708,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 	/** env, argv and log of one spawn: the pool env + the caller's per-job env (`hooks.jobEnv`) + this worker's identity */
 	const plan = (w: BatchWorker, id: string, seq: number, pass: number) => {
 		const job = baseJob(id);
-		const env = {
+		const env: Record<string, string | undefined> = {
 			...o.env,
 			...o.hooks.jobEnv?.({
 				job,
@@ -703,6 +740,8 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 	const spawnOnce = async (w: BatchWorker, id: string, seq: number, pass: number): Promise<number> => {
 		const { job, env, log, argv } = plan(w, id, seq, pass);
 		o.logs.set(attemptKey({ worker: w.worker, seq }), log);
+		const out = env[ENV_NAMES.out];
+		if (out) o.resultFiles.set(attemptKey({ worker: w.worker, seq }), join(out, "results.jsonl"));
 		let proc: ProcHandle;
 		try {
 			const group = o.jobTimeoutMs !== undefined ? { group: true } : {};
@@ -773,6 +812,8 @@ export type SessionResult = {
 	screenshots?: Screenshots;
 	/** the log of each attempt (`attemptKey`): the failing run of that attempt when it failed */
 	logs?: Logs;
+	/** the `results.jsonl` of each attempt (`attemptKey`) whose job wrote one */
+	resultFiles?: ResultFiles;
 	/** every device the run leased, `worker` indexed */
 	devices?: Array<{ worker: number; udid: string; name: string; leg?: string }>;
 	/** per-device setup outcomes, when the session ran a setup */
@@ -787,7 +828,7 @@ export type SessionHooks = {
 	setup?: DeviceSetupSpec | undefined;
 	/** shut down the leased devices warden may shut down (see `shutdownReleasedDevices`) before releasing, when this says so of a finished, uninterrupted run */
 	shutdownIf?: (summary: BatchSummary) => boolean;
-	/** the flows the jobs run, tracked live from the jobs' output */
+	/** the flows the jobs run, tracked live from the jobs' `results.jsonl` */
 	flows?: readonly TrackedFlow[];
 	/** env added to one job's spawn (over the pool env, under the worker's own `WARDEN_UDID` / `WARDEN_WORKER` / `WARDEN_JOB…`) */
 	jobEnv?: (job: JobEnvInput) => Record<string, string>;
@@ -1134,6 +1175,7 @@ function poolQueues(
 		vars: RunVars;
 		screenshots: Map<string, string>;
 		logs: Map<string, string>;
+		resultFiles: Map<string, string>;
 	}
 ): Queue[] {
 	const qualified = r.pools.length > 1;
@@ -1161,6 +1203,7 @@ function poolQueues(
 			onTimeout,
 			screenshots: o.screenshots,
 			logs: o.logs,
+			resultFiles: o.resultFiles,
 			running: r.running,
 			interrupted: r.interrupted,
 			hooks: r.hooks,
@@ -1209,6 +1252,7 @@ async function supervise(
 	};
 	const screenshots = new Map<string, string>();
 	const logs = new Map<string, string>();
+	const resultFiles = new Map<string, string>();
 	const stopHold = holdLeases(ctx, deps, session.leaseIds, (signal) => {
 		controller.abort();
 		for (const job of r.running) job.kill(signal);
@@ -1245,14 +1289,21 @@ async function supervise(
 			const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
 			await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
 		}
-		const queues = poolQueues(ctx, deps, args, r, prepared, { jobs, cmd, env, vars, screenshots, logs });
+		const queues = poolQueues(ctx, deps, args, r, prepared, {
+			jobs,
+			cmd,
+			env,
+			vars,
+			screenshots,
+			logs,
+			resultFiles,
+		});
 		const total = queues.reduce((n, q) => n + q.jobs.length, 0);
 		const startedAt = ctx.now();
 		const { summary, screen } = await runGrid(ctx, deps, args, r, queues, {
 			total,
 			startedAt,
-			cmd,
-			logs,
+			resultFiles,
 			flows: hooks.flows,
 		});
 		const endedAt = ctx.now();
@@ -1262,7 +1313,16 @@ async function supervise(
 		const run: BatchRun = { batchId, batchDir, logDir, cmd, devices, total, startedAt, endedAt, summary, screenshots };
 		await report(ctx, deps, args, screen.cast ? { ...run, cast: screen.cast } : run);
 		if (!r.interrupted()) await shutdownDevices(ctx, hooks, session, summary);
-		return { code: exitFor(r.interrupted(), summary.ok), batchDir, summary, screenshots, logs, devices, setups };
+		return {
+			code: exitFor(r.interrupted(), summary.ok),
+			batchDir,
+			summary,
+			screenshots,
+			logs,
+			resultFiles,
+			devices,
+			setups,
+		};
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	} finally {

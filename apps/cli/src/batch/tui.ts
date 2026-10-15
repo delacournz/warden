@@ -67,6 +67,19 @@ const marked = (flows: RunnerView["flows"], marks: Readonly<Record<string, FlowM
 		return mark ? { id: f.id, mark } : { id: f.id };
 	});
 
+/** `worker`'s runner takes on `ids` (the shard its job runs): flows it already tracks keep their marks. */
+export function addRunnerFlows(view: BatchView, worker: number, ids: readonly string[]): BatchView {
+	if (!view.runners) return view;
+	return {
+		...view,
+		runners: view.runners.map((r) => {
+			if (r.worker !== worker) return r;
+			const fresh = ids.filter((id) => !r.flows.some((f) => f.id === id)).map((id) => ({ id }));
+			return { ...r, flows: [...r.flows, ...fresh] };
+		}),
+	};
+}
+
 /** Marks read off `worker`'s runner output (a new view; flows it doesn't track are ignored). */
 export function applyFlowMarks(view: BatchView, worker: number, marks: Readonly<Record<string, FlowMark>>): BatchView {
 	if (!view.runners) return view;

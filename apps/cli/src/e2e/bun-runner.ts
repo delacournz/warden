@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import type { Platform } from "@delacour/warden-core/types";
+import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { sourceDirFromCliPath } from "../update/build-info";
 
@@ -7,19 +8,6 @@ import { sourceDirFromCliPath } from "../update/build-info";
  * The built-in spec runner: `bun test --preload @delacour/warden-e2e/preload <flow files>`. Pure
  * argv / env / lookup helpers; `commands/e2e.ts` wires them into the batch jobs.
  */
-
-/** The spec process's env names (mirror of `ENV_NAMES` in `@delacour/warden-e2e/env`, which reads them). */
-const ENV = {
-	platform: "WARDEN_PLATFORM",
-	bundleId: "WARDEN_BUNDLE_ID",
-	launchArgs: "WARDEN_LAUNCH_ARGS",
-	out: "WARDEN_E2E_OUT",
-	timeout: "WARDEN_E2E_TIMEOUT",
-	actionTimeout: "WARDEN_E2E_ACTION_TIMEOUT",
-	assertionTimeout: "WARDEN_E2E_ASSERTION_TIMEOUT",
-	flowsDir: "WARDEN_E2E_FLOWS_DIR",
-	helperDir: "WARDEN_HELPER_DIR",
-} as const;
 
 /** `bun test`'s own per-test timeout sits this far past the spec's, so the spec's deadline error wins. */
 const BUN_TIMEOUT_MARGIN_MS = 30_000;
@@ -98,15 +86,15 @@ export type SpecEnvOptions = {
 /** The env contract of one spec process (the per-device `WARDEN_UDID` etc. come from batch). */
 export function specEnv(o: SpecEnvOptions): Record<string, string> {
 	return {
-		[ENV.platform]: o.platform,
-		[ENV.bundleId]: o.bundleId,
-		[ENV.launchArgs]: JSON.stringify(o.launchArgs),
-		[ENV.out]: o.out,
-		[ENV.timeout]: String(o.timeouts.timeoutMs),
-		[ENV.actionTimeout]: String(o.timeouts.actionTimeoutMs),
-		[ENV.assertionTimeout]: String(o.timeouts.assertionTimeoutMs),
-		[ENV.flowsDir]: o.flowsDir,
-		[ENV.helperDir]: o.helperDir,
+		[ENV_NAMES.platform]: o.platform,
+		[ENV_NAMES.bundleId]: o.bundleId,
+		[ENV_NAMES.launchArgs]: JSON.stringify(o.launchArgs),
+		[ENV_NAMES.out]: o.out,
+		[ENV_NAMES.timeout]: String(o.timeouts.timeoutMs),
+		[ENV_NAMES.actionTimeout]: String(o.timeouts.actionTimeoutMs),
+		[ENV_NAMES.assertionTimeout]: String(o.timeouts.assertionTimeoutMs),
+		[ENV_NAMES.flowsDir]: o.flowsDir,
+		[ENV_NAMES.helperDir]: o.helperDir,
 	};
 }
 

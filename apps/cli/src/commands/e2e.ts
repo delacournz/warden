@@ -1,9 +1,8 @@
-import { join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
 import type { E2eDeviceLeg, E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
 import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
 import { readySpec } from "@delacour/warden-core/batch/preset";
-import type { JobResult } from "@delacour/warden-core/batch/schedule";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import {
 	DEFAULT_SPEC_ACTION_TIMEOUT,
@@ -14,23 +13,22 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { resolveHeadless } from "@delacour/warden-core/headless";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import type { TrackedFlow } from "../batch/flow-progress";
+import { realPath, type TrackedFlow } from "../batch/flow-progress";
 import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
 import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { findBun, findPreload, runnerArgv, type SpecEnvOptions, shardFlows, specEnv } from "../e2e/bun-runner";
 import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
+import { exitGate, type FlowVerdict, type RunShape, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit } from "../output";
 import { type AffectedOpts, explain, runAffected, selectedFlows } from "./affected";
 import {
-	attemptKey,
 	type BatchArgs,
 	type BatchDeps,
 	type BatchLeg,
 	defaultBatchDeps,
-	legJob,
 	type MetroPlan,
 	parseBatchArgs,
 	runSession,
@@ -62,20 +60,6 @@ export type E2eOpts = ClaimFlagValues &
 		shutdown: boolean;
 	};
 
-/** One flow's outcome in `e2e-report.json`. */
-export type FlowVerdict = SelectedFlow & {
-	/** the device leg this verdict is for (suites with `devices`) */
-	leg?: string;
-	verdict: "passed" | "failed" | "not-run";
-	attempts: number;
-	/** the device the flow's last failed attempt ran on */
-	device?: { udid: string; name: string };
-	/** the runner output of that attempt */
-	log?: string;
-	/** the device as the flow's last failed attempt left it (png), when one could be captured */
-	screenshot?: string;
-};
-
 export type E2eReport = {
 	suite: string;
 	platform: Platform;
@@ -87,6 +71,8 @@ export type E2eReport = {
 	headless: boolean;
 	batchDir?: string;
 	flows: FlowVerdict[];
+	/** under CI: spec files with a `test.only` left in (the run fails) */
+	only?: string[];
 	/** per-device setup outcomes, when the suite has a `setup` */
 	setup?: DeviceSetup[];
 };
@@ -135,11 +121,6 @@ function deviceSetup(suite: E2eSuiteConfig): DeviceSetupSpec | undefined {
 	};
 }
 
-/** How the batch jobs map back to flows: the legs that ran, and in a `single` run the shard job each flow is in. */
-export type RunShape = { legs: ReadonlyArray<string | undefined>; shardOf?: ReadonlyMap<string, string> };
-
-const ONE_LEG: RunShape = { legs: [undefined] };
-
 /** `--devices all | default | <profile,…>` → the suite's legs to run (undefined: the suite has none, or `--profile` / `--count` replace them). */
 function selectLegs(
 	suite: E2eSuiteConfig,
@@ -178,51 +159,6 @@ async function metroPlan(suite: Suite, bundleId: string): Promise<Result<MetroPl
 	});
 }
 
-/** device / log / screenshot of a flow's failed attempts (the last one's device and log; the latest screenshot there is). */
-function lastFailure(session: SessionResult, failed: readonly JobResult[]): Partial<FlowVerdict> {
-	const last = failed.at(-1);
-	if (!last) return {};
-	const screenshot = failed
-		.map((r) => session.screenshots?.get(attemptKey(r)))
-		.reverse()
-		.find((path) => path !== undefined);
-	const log = session.logs?.get(attemptKey(last));
-	const name = session.devices?.find((d) => d.worker === last.worker)?.name ?? last.udid;
-	return {
-		device: { udid: last.udid, name },
-		...(log !== undefined ? { log } : {}),
-		...(screenshot !== undefined ? { screenshot } : {}),
-	};
-}
-
-/**
- * Batch outcome → per-flow verdicts (one per leg that ran); `ok` = every required flow passed on
- * every leg. In a `single` run the flows of a shard share its one job.
- */
-export function verdicts(
-	flows: readonly SelectedFlow[],
-	session: SessionResult,
-	shape: RunShape = ONE_LEG
-): { ok: boolean; flows: FlowVerdict[] } {
-	const results = session.summary?.results ?? [];
-	const failed = new Set(session.summary?.failed ?? []);
-	const qualified = shape.legs.length > 1;
-	const out = shape.legs.flatMap((leg) =>
-		flows.map((flow): FlowVerdict => {
-			const job = legJob(shape.shardOf?.get(flow.id) ?? flow.id, qualified ? leg : undefined);
-			const ran = results.filter((r) => r.job === job);
-			const verdict = ran.length === 0 ? "not-run" : failed.has(job) ? "failed" : "passed";
-			const failure = lastFailure(
-				session,
-				ran.filter((r) => r.exitCode !== 0)
-			);
-			return { ...flow, ...(leg !== undefined ? { leg } : {}), verdict, attempts: ran.length, ...failure };
-		})
-	);
-	const ok = session.summary !== undefined && out.every((f) => !f.required || f.verdict === "passed");
-	return { ok, flows: out };
-}
-
 /** Write the report (batch dir + `--report`), print it for `--json`. */
 async function publish(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, report: E2eReport): Promise<void> {
 	const text = `${JSON.stringify(report, null, 2)}\n`;
@@ -241,18 +177,36 @@ function failureDetail(flow: FlowVerdict): string {
 	return parts.length > 0 ? ` ${parts.join(" — ")}` : "";
 }
 
-/** Failed / not-run flows, then the one-line gate verdict. */
+/** `  ✗ <describe › title> — <first line of the error> — artifacts <dir>` for each test that failed. */
+function failedTests(flow: FlowVerdict): string[] {
+	return (flow.tests ?? [])
+		.filter((t) => t.status === "failed" || t.status === "timed-out")
+		.map((t) => {
+			const error = t.error?.split("\n")[0];
+			const parts = [t.title.join(" › "), error, t.artifacts ? `artifacts ${t.artifacts}` : undefined].filter(
+				(part) => part !== undefined && part !== ""
+			);
+			return `  ✗ ${parts.join(" — ")}`;
+		});
+}
+
+/** Failed / not-run flows with their failing tests, any `test.only`, then the one-line gate verdict. */
 function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	const { color } = ctx.ui;
 	for (const flow of report.flows.filter((f) => f.verdict !== "passed")) {
 		const tag = flow.required ? color.red(flow.verdict) : color.yellow(`${flow.verdict} (optional)`);
 		const leg = flow.leg !== undefined ? ` [${flow.leg}]` : "";
 		ctx.err(`warden e2e: ${flow.id}${leg} ${tag}${failureDetail(flow)}`);
+		for (const line of failedTests(flow)) ctx.err(color.red(line));
 	}
+	for (const file of report.only ?? []) ctx.err(color.red(`warden e2e: test.only left in ${file}`));
 	const passed = report.flows.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.flows.length} flow(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
 	ctx.err((report.ok ? color.green : color.red)(line));
 }
+
+/** `CI` is set to something other than empty / `0` / `false`. */
+const inCi = (env: Record<string, string | undefined>): boolean => !["", "0", "false", undefined].includes(env.CI);
 
 /** `--headless` / `--no-headless` > the suite's (else top-level) `headless` > `WARDEN_HEADLESS`. */
 function suiteHeadless(ctx: CommandContext, suite: Suite, opts: E2eOpts, passed: ReadonlySet<string>): boolean {
@@ -324,20 +278,33 @@ async function e2e(
 		argvs.get(jobs[0] ?? "") ?? [],
 		sessionHooks(suite, flows, shape, spec, argvs, opts.shutdown)
 	);
-	const result = verdicts(flows, session, shape);
-	const report: E2eReport = {
+	const result = await verdicts(flows, session, shape, { readFile: deps.readFile, ci: inCi(ctx.env) });
+	for (const warning of result.warnings) ctx.err(ctx.ui.color.yellow(`warden e2e: ${warning}`));
+	const report = buildReport(base, headless, single, session, result);
+	await publish(ctx, deps, opts, report);
+	if (session.code === 130) return 130;
+	printVerdict(ctx, report);
+	return result.ok ? 0 : 1;
+}
+
+/** `e2e-report.json` from the session and its verdicts. */
+function buildReport(
+	base: Pick<E2eReport, "suite" | "platform" | "base">,
+	headless: boolean,
+	single: boolean,
+	session: SessionResult,
+	result: Verdicts
+): E2eReport {
+	return {
 		...base,
 		...(single ? { mode: "single" as const } : {}),
 		ok: result.ok,
 		headless,
 		...(session.batchDir ? { batchDir: session.batchDir } : {}),
 		flows: result.flows,
+		...(result.only.length > 0 ? { only: result.only } : {}),
 		...(session.setups ? { setup: session.setups } : {}),
 	};
-	await publish(ctx, deps, opts, report);
-	if (session.code === 130) return 130;
-	printVerdict(ctx, report);
-	return result.ok ? 0 : 1;
 }
 
 /** Everything that can be refused before a device is leased: the platform, the spec runner, the run's flags. */
@@ -372,9 +339,9 @@ function sessionHooks(
 		setup: deviceSetup(suite.config),
 		// on unless the suite opts out; batch skips it off iOS
 		warmDrivers: suite.config.warmDrivers !== false,
-		...(shape.shardOf ? { flows: trackedFlows(suite, flows) } : {}),
+		flows: trackedFlows(flows, shape),
 		// a passed gate frees the sims; a failed one leaves them up to inspect
-		...(shutdown ? { shutdownIf: (summary) => verdicts(flows, { code: 0, summary }, shape).ok } : {}),
+		...(shutdown ? { shutdownIf: (summary) => exitGate(flows, summary, shape) } : {}),
 		argvFor: (job) => argvs.get(job) ?? [],
 		jobEnv: (job) =>
 			specEnv({
@@ -385,9 +352,12 @@ function sessionHooks(
 	};
 }
 
-/** `mode: "single"`: the flows as the runner prints them (relative to the suite cwd), for live progress (`results.jsonl` replaces this scraping). */
-function trackedFlows(suite: Suite, flows: readonly SelectedFlow[]): TrackedFlow[] {
-	return flows.map((f) => ({ id: f.id, path: relative(suite.cwd, f.file) }));
+/** The flows whose `results.jsonl` tests are followed live: their spec files, and the shard job that runs them in `single` mode. */
+function trackedFlows(flows: readonly SelectedFlow[], shape: RunShape): TrackedFlow[] {
+	return flows.map((f) => {
+		const job = shape.shardOf?.get(f.id);
+		return { id: f.id, path: realPath(f.file), ...(job !== undefined ? { job } : {}) };
+	});
 }
 
 /**

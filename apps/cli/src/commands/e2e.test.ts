@@ -3,9 +3,11 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
+import type { TestResult } from "@delacour/warden-e2e/runner/results";
+import { jsonl, result } from "../batch/results.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
-import { harness, type Spawned } from "./batch.testing";
+import { type Harness, harness, type Spawned } from "./batch.testing";
 import { createE2eCommand, type E2eReport } from "./e2e";
 
 let dir: string;
@@ -45,6 +47,13 @@ const PRELOAD = "/proj/node_modules/@delacour/warden-e2e/src/preload.ts";
 
 /** `bun test` argv of the default spec timeouts (2m + 30s) over these files */
 const bunTest = (...files: string[]) => [BUN, "test", "--preload", PRELOAD, "--timeout", "150000", ...files];
+
+/** Where a spawned job's spec process writes `results.jsonl`. */
+const resultsPath = (env: Record<string, string | undefined>) => join(env.WARDEN_E2E_OUT ?? "", "results.jsonl");
+
+/** `result()` for a spec file of the suite's flows dir. */
+const spec = (flow: string, title: string, status: TestResult["status"] = "passed", extra: Partial<TestResult> = {}) =>
+	result(join(dir, `flows/${flow}.yaml`), title, status, extra);
 
 const reportOf = (files: Map<string, string>, c: TestContext): E2eReport =>
 	JSON.parse(files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "e2e-report.json")) ?? "{}");
@@ -508,7 +517,7 @@ describe("warden e2e", () => {
 			]);
 		});
 
-		test("live flow progress: the grid marks each flow as the job's output reports it (log scraping until results.jsonl)", async () => {
+		test("live flow progress: the grid lists a device's shard and marks each flow as its results.jsonl reports it", async () => {
 			await resuite({ mode: "single" });
 			const c = setup(["--all"]);
 			const h = harness({ manual: true, isTTY: true });
@@ -516,21 +525,185 @@ describe("warden e2e", () => {
 			await waitFor(() => h.jobs().length > 0);
 			const job = h.jobs()[0];
 			h.files.set(
-				job?.opts.log ?? "",
-				" ✓ |ios| flows/chats.yaml (1 test) 2s\n ❯ |ios| flows/settings.yaml (1 test | 1 failed)\n"
+				resultsPath(job?.opts.env ?? {}),
+				jsonl(spec("chats", "open", "passed"), spec("settings", "toggle", "failed"))
 			);
 			job?.finish(1);
-			expect(await running).toBe(1);
+			expect(await running).toBe(0);
 			const screen = h.terminal.join("");
+			expect(screen).toContain("· chats  · settings");
 			expect(screen).toContain("✓ chats  ✗ settings");
+			expect(screen).toContain("2/2");
 		});
 
-		test("the process's exit code is the verdict of every flow in its shard", async () => {
+		test("each device's row lists only its own shard", async () => {
+			await resuite({ mode: "single", count: 2 });
+			const c = setup(["--all"]);
+			const h = harness({ isTTY: true });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const frame = h.terminal.join("").split("\u001b[0J").at(-1) ?? "";
+			const lines = frame.split("\n").filter((l) => l.includes("chats") || l.includes("settings"));
+			expect(lines).toHaveLength(2);
+			for (const line of lines) expect(line.includes("chats") && line.includes("settings")).toBe(false);
+		});
+
+		test("the process's exit code decides when it wrote no results, with a warning", async () => {
 			await resuite({ mode: "single" });
 			const c = setup(["--all"]);
 			const h = harness({ exitCodeFor: () => 1 });
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
 			expect(reportOf(h.files, c).flows.map((f) => f.verdict)).toEqual(["failed", "failed"]);
+			expect(c.stderr.join("\n")).toContain("shard-0: no results.jsonl — verdict from exit code 1");
+		});
+
+		test("per-flow verdicts from results.jsonl: a failing test fails its flow only, the exit code blames the rest", async () => {
+			await resuite({ mode: "single" });
+			const c = setup(["--all"]);
+			const h: Harness = harness({
+				exitCodeFor: (env) => {
+					h.files.set(
+						resultsPath(env),
+						jsonl(
+							spec("chats", "open", "passed"),
+							spec("settings", "toggle", "failed", { error: { message: "no such element" } })
+						)
+					);
+					return 1;
+				},
+			});
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const report = reportOf(h.files, c);
+			expect(report.flows.map((f) => [f.id, f.verdict])).toEqual([
+				["chats", "passed"],
+				["settings", "failed"],
+			]);
+			expect(report.flows[1]?.tests?.[0]).toMatchObject({
+				title: ["toggle"],
+				status: "failed",
+				error: "no such element",
+			});
+			expect(c.stderr.join("\n")).toContain("settings failed (optional)");
+		});
+	});
+
+	describe("results.jsonl", () => {
+		/** a harness whose jobs write `text` (or `build(env)`) as their results and exit with `exit` */
+		const writing = (build: (env: Record<string, string | undefined>) => string, exit = 0): Harness => {
+			const h: Harness = harness({
+				exitCodeFor: (env) => {
+					if (env.WARDEN_E2E_OUT) h.files.set(resultsPath(env), build(env));
+					return exit;
+				},
+			});
+			return h;
+		};
+
+		test("e2e-report.json carries each flow's tests (title path, status, duration, error, artifacts) and headless", async () => {
+			const h = writing(
+				() =>
+					jsonl(
+						spec("chats", "opens", "passed", { title: ["list", "opens"], durationMs: 2100 }),
+						spec("chats", "sends", "failed", {
+							error: { message: "LOCATOR_NOT_FOUND\nid=send" },
+							artifacts: { dir: "/o/chats/sends-a1b2c3", files: ["failure.png"] },
+						})
+					),
+				1
+			);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const report = reportOf(h.files, c);
+			expect(report.headless).toBe(false);
+			expect(report.flows[0]?.verdict).toBe("failed");
+			expect(report.flows[0]?.tests).toEqual([
+				{ title: ["list", "opens"], status: "passed", durationMs: 2100 },
+				{
+					title: ["sends"],
+					status: "failed",
+					durationMs: 1250,
+					error: "LOCATOR_NOT_FOUND\nid=send",
+					artifacts: "/o/chats/sends-a1b2c3",
+				},
+			]);
+			const text = c.stderr.join("\n");
+			expect(text).toContain("✗ sends — LOCATOR_NOT_FOUND — artifacts /o/chats/sends-a1b2c3");
+			expect(text).not.toContain("✗ list");
+		});
+
+		test("passed: tests recorded, no warning", async () => {
+			const h = writing(() => jsonl(spec("chats", "opens")));
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(reportOf(h.files, c).flows[0]?.tests).toHaveLength(1);
+			expect(c.stderr.join("\n")).not.toContain("no results.jsonl");
+		});
+
+		test("a timed-out test fails the flow even when the process exited 0", async () => {
+			const h = writing(() => jsonl(spec("chats", "slow", "timed-out")));
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(reportOf(h.files, c).flows[0]).toMatchObject({ verdict: "failed", tests: [{ status: "timed-out" }] });
+		});
+
+		test("no results file: the exit code decides, with a warning", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const pass = harness();
+			expect(await createE2eCommand(pass.deps).run(c)).toBe(0);
+			expect(c.stderr.join("\n")).toContain("chats: no results.jsonl — verdict from exit code 0");
+			expect(reportOf(pass.files, c).flows[0]).not.toHaveProperty("tests");
+			const fail = harness({ exitCodes: { chats: 1 } });
+			expect(await createE2eCommand(fail.deps).run(c)).toBe(1);
+		});
+
+		test("an unparseable results file counts as missing; a truncated last line is skipped", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const junk = writing(() => "this is not json\n{oops\n", 1);
+			expect(await createE2eCommand(junk.deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("chats: no results.jsonl — verdict from exit code 1");
+
+			const cut = writing(() => `${jsonl(spec("chats", "opens"))}{"file":"${join(dir, "flows/chats.yaml")}","ti`);
+			expect(await createE2eCommand(cut.deps).run(c)).toBe(0);
+			expect(reportOf(cut.files, c).flows[0]?.tests).toHaveLength(1);
+		});
+
+		test("test.only left in a spec fails the run under CI, even when everything passed; locally it does not", async () => {
+			const build = () => jsonl(spec("chats", "opens", "passed", { only: true }));
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			c.env = { ...c.env, CI: "true" };
+			const h = writing(build);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain(`test.only left in ${join(dir, "flows/chats.yaml")}`);
+			expect(reportOf(h.files, c)).toMatchObject({ ok: false, only: [join(dir, "flows/chats.yaml")] });
+			expect(reportOf(h.files, c).flows[0]?.verdict).toBe("passed");
+
+			c.env = { ...c.env, CI: "" };
+			expect(await createE2eCommand(writing(build).deps).run(c)).toBe(0);
+		});
+
+		test("--no-tui: a line per finished test as results arrive, then a line per finished flow", async () => {
+			await resuite({ mode: "single" });
+			const c = setup(["--all", "--no-tui"]);
+			const h = harness({ manual: true });
+			const running = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.jobs().length > 0);
+			const job = h.jobs()[0];
+			h.files.set(
+				resultsPath(job?.opts.env ?? {}),
+				jsonl(spec("chats", "opens", "passed", { title: ["list", "opens"] }), spec("settings", "toggle", "failed"))
+			);
+			job?.finish(1);
+			await running;
+			const text = c.stderr.join("\n");
+			expect(text).toContain("✓ chats › list › opens (1.25s)");
+			expect(text).toContain("✗ settings › toggle (1.25s)");
+			expect(text).toContain("warden-iphone-17-1 ✓ chats");
+		});
+
+		test("per-flow mode prints the same test lines", async () => {
+			const h = writing(() => jsonl(spec("chats", "opens")));
+			const c = setup(["--files", "src/chat/lazy.tsx", "--no-tui"]);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(c.stderr.join("\n")).toContain("✓ chats › opens (1.25s)");
 		});
 	});
 
