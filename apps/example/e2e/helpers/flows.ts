@@ -21,11 +21,16 @@ export async function launch(device: Device, screen: Screen): Promise<void> {
 	await expect(screen.getByTestId(ids.welcome.screen)).toBeVisible({ timeout: 30_000 });
 }
 
-/** Fresh launch → welcome → the three onboarding steps → sign-in screen. */
+/**
+ * Fresh launch → welcome → the three onboarding steps → sign-in screen. Each step animates in; a tap sent while
+ * the previous step is still moving is lost, so the UI settles between taps.
+ */
 export async function openSignIn(device: Device, screen: Screen): Promise<void> {
 	await launch(device, screen);
 	await screen.getByTestId(ids.welcome.next).tap();
+	await device.settle();
 	await screen.getByTestId(ids.welcome.next).tap();
+	await device.settle();
 	await screen.getByTestId(ids.welcome.getStarted).tap();
 	await expect(screen.getByTestId(ids.signIn.screen)).toBeVisible();
 }
