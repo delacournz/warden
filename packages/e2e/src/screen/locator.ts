@@ -1,4 +1,5 @@
 import type { KeyName, Modifier, Point, Rect } from "../driver/driver.types";
+import { pressKeys, typeText } from "../driver/typing";
 import { E2eError } from "../errors";
 import {
 	clearKeyPresses,
@@ -13,6 +14,7 @@ import {
 	visibleRect,
 } from "./actions";
 import type { Observed, Runtime } from "./context";
+import { CONFIRM_READS, confirmFieldValue, hitTestField, STALE_RISK_READS } from "./field";
 import type { NodeEntry } from "./nodes";
 import type { PollStep } from "./poll";
 import {
@@ -43,6 +45,8 @@ const WAIT_STATES: readonly WaitState[] = ["attached", "detached", "visible", "h
 const DEFAULT_MAX_SWIPES = 10;
 /** How long `fill` waits for the field to show what was typed. */
 const VERIFY_MS = 1000;
+/** A read-back always gets this long, even when the action timeout is nearly spent (it needs two reads 100 ms apart). */
+const CONFIRM_FLOOR_MS = 500;
 /** Quiet time asked of the driver after each scroll step. */
 const SCROLL_SETTLE = { quietMs: 150, timeoutMs: 1000 };
 
@@ -377,40 +381,58 @@ export class Locator {
 	}
 
 	/**
-	 * Replaces the content of a text field: focus with the caret at the end, backspace what is there, type, then check
-	 * the field shows the text (retrying once). Secure fields cannot be read back, so they are not verified.
+	 * Replaces the content of a text field: focus with the caret at the end, backspace what is there, type, then poll
+	 * until the field holds the text on consecutive reads (the accessibility value lags the keys). A mismatch is
+	 * retried once with a fresh clear and retype. Secure fields cannot be read back, so they are not verified.
 	 */
 	async fill(text: string, options: ActionOptions = {}): Promise<void> {
 		assertOptions("fill", options, ["timeout"]);
 		return this.act("fill", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
+			let firstHeld: string | undefined;
 			for (let attempt = 1; ; attempt += 1) {
 				await this.focusAndClear(target);
-				if (text !== "") this.rt.drive("fill", await target.observed.driver.typeText(text));
+				if (text !== "") {
+					this.rt.drive("fill", await typeText(target.observed.driver, this.pause, text));
+				}
 				if (target.entry.secure) return;
-				const held = await this.verify(text, Math.min(VERIFY_MS, budget.remaining()));
-				if (held.ok) return;
+				const outcome = await this.confirm(target, text, budget);
+				if (outcome.ok) return;
 				if (attempt === 2) {
+					const earlier = firstHeld === undefined ? "" : ` (first attempt held ${JSON.stringify(firstHeld)})`;
 					throw new E2eError(
 						"ACTION_FAILED",
-						`${this}: fill did not take: expected ${JSON.stringify(text)} but the field holds ${JSON.stringify(held.value)}`,
-						held.screen
+						`${this}: fill did not take: expected ${JSON.stringify(text)} but the field holds ${JSON.stringify(outcome.held)}${earlier}`,
+						outcome.screen
 					);
 				}
+				firstHeld = outcome.held;
 				target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
 			}
 		});
 	}
 
+	/** Empties a text field with Backspace, then checks it is empty (one more pass when it is not). */
 	async clear(options: ActionOptions = {}): Promise<void> {
 		assertOptions("clear", options, ["timeout"]);
 		return this.act("clear", async () => {
-			const target = await this.actionable(
-				{ enabled: true, tapPointOnScreen: false },
-				options.timeout ?? this.rt.actionTimeout()
-			);
-			await this.focusAndClear(target);
+			const budget = this.rt.budget(options.timeout);
+			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
+			for (let attempt = 1; ; attempt += 1) {
+				await this.focusAndClear(target);
+				if (target.entry.secure) return;
+				const outcome = await this.confirm(target, "", budget);
+				if (outcome.ok) return;
+				if (attempt === 2) {
+					throw new E2eError(
+						"ACTION_FAILED",
+						`${this}: clear did not empty the field: it holds ${JSON.stringify(outcome.held)}`,
+						outcome.screen
+					);
+				}
+				target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
+			}
 		});
 	}
 
@@ -423,7 +445,7 @@ export class Locator {
 				options.timeout ?? this.rt.actionTimeout()
 			);
 			await this.focus(target);
-			this.rt.drive("type", await target.observed.driver.typeText(text));
+			this.rt.drive("type", await typeText(target.observed.driver, this.pause, text));
 		});
 	}
 
@@ -497,32 +519,49 @@ export class Locator {
 
 	private async focusAndClear({ entry, observed }: Actionable): Promise<void> {
 		this.rt.drive("focus", await observed.driver.tap(focusPoint(entry.element.frame)));
-		const presses = clearKeyPresses(entry);
-		for (let press = 0; press < presses; press += 1) {
-			this.rt.drive("clear", await observed.driver.key("Backspace"));
-		}
+		this.rt.drive("clear", await pressKeys(observed.driver, this.pause, "Backspace", clearKeyPresses(entry)));
 	}
 
-	/** Polls (briefly) until the single match holds `text`; otherwise reports what it holds. */
-	private async verify(
+	/** Sleeps on the runtime's clock (a fake one in tests), ending early when the attempt aborts. */
+	private readonly pause = (ms: number): Promise<void> => this.rt.clock.sleep(ms, this.rt.host.signal);
+
+	/**
+	 * Polls until the field holds `text` on consecutive reads. Each read is a hit-test at the field's centre (a full
+	 * snapshot with the keyboard up takes 300-1000 ms and slows the app that is digesting the keys), falling back to a
+	 * scoped re-query when the hit-test cannot tell. The deadline is `VERIFY_MS`, extended while the value changes.
+	 */
+	private async confirm(
+		{ entry, observed }: Actionable,
 		text: string,
-		timeoutMs: number
-	): Promise<{ ok: true } | { ok: false; value: string; screen: string | undefined }> {
-		const result = await this.rt.poll<true, { value: string; screen: string | undefined }>(async () => {
-			const observation = await this.rt.tryObserve();
-			if (!observation.ok) return { done: false, state: { value: "(unreadable)", screen: undefined } };
-			const entries = resolve(this.expr, observation.observed.index);
-			const screen = this.rt.excerpt(observation.observed.snapshot);
-			const [entry] = entries;
-			if (entries.length !== 1 || entry === undefined) {
-				return { done: false, state: { value: `(${entries.length} matches)`, screen } };
-			}
-			const held = rawValue(entry);
-			const same = text === "" ? fieldValue(entry) === "" : held === text;
-			return same ? { done: true, value: true } : { done: false, state: { value: held, screen } };
-		}, timeoutMs);
-		if (result.status === "done") return { ok: true };
-		return { ok: false, value: result.last?.value ?? "", screen: result.last?.screen };
+		budget: { remaining(): number }
+	): Promise<{ ok: true } | { ok: false; held: string; screen: string | undefined }> {
+		const span = Math.max(budget.remaining(), CONFIRM_FLOOR_MS);
+		let screen: string | undefined;
+		const readValue = (found: NodeEntry): string => (text === "" ? fieldValue(found) : rawValue(found));
+		const outcome = await confirmFieldValue<never>({
+			text,
+			now: this.rt.clock.now,
+			sleep: this.pause,
+			budgetMs: Math.min(VERIFY_MS, span),
+			reads: text !== "" && rawValue(entry) === text ? STALE_RISK_READS : CONFIRM_READS,
+			maxMs: span,
+			read: async () => {
+				const hit = await hitTestField(observed.driver, entry);
+				if (hit.ok && hit.entry !== undefined)
+					return { ok: true, reading: { kind: "value", value: readValue(hit.entry) } };
+				const observation = await this.rt.tryObserve();
+				if (!observation.ok) return { ok: true, reading: { kind: "unreadable", note: "(unreadable)" } };
+				screen = this.rt.excerpt(observation.observed.snapshot);
+				const found = resolve(this.expr, observation.observed.index);
+				const [only] = found;
+				if (found.length !== 1 || only === undefined) {
+					return { ok: true, reading: { kind: "unreadable", note: `(${found.length} matches)` } };
+				}
+				return { ok: true, reading: { kind: "value", value: readValue(only) } };
+			},
+		});
+		if (outcome.status === "confirmed") return { ok: true };
+		return { ok: false, held: outcome.status === "mismatch" ? outcome.held : "(unreadable)", screen };
 	}
 }
 

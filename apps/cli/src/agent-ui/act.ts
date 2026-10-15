@@ -1,6 +1,5 @@
-import type { Driver, Element, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
 import { E2eError } from "@delacour/warden-e2e/errors";
-import { indexSnapshot, type NodeEntry } from "@delacour/warden-e2e/screen/nodes";
 import { formatSelector } from "@delacour/warden-e2e/screen/selector";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -137,26 +136,6 @@ export function recordTarget(target: Target, resolved: ResolvedTarget): RecordTa
 /** `@e3`, `id=email` or `(120,340)`: a target in one line of text. */
 export function targetLabel(target: RecordTarget): string {
 	return target.ref ?? target.selector ?? `(${Math.round(target.point.x)},${Math.round(target.point.y)})`;
-}
-
-/** The snapshot entry of one element (its role, name, value and secure flag), for rules that need more than the `Element`. */
-export function entryOfElement(element: Element, template: Pick<Snapshot, "platform">): NodeEntry | undefined {
-	const flat: Element[] = [];
-	const walk = (e: Element): void => {
-		flat.push(e);
-		for (const child of e.children) walk(child);
-	};
-	walk(element);
-	const index = indexSnapshot({
-		platform: template.platform,
-		backend: "axbridge",
-		takenAt: 0,
-		screen: { width: 0, height: 0, scale: 1 },
-		elements: [element],
-		flat,
-		truncated: false,
-	});
-	return index.entries[0];
 }
 
 /** A thrown `E2eError` (from `createDevice`) as a `warden ui` error. */

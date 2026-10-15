@@ -103,8 +103,8 @@ Actions wait for the element (up to `actionTimeout`) and then act:
 | Action | |
 |---|---|
 | `tap({ position? })`, `longPress({ durationMs? })` | touch the element's centre, or a point inside it |
-| `fill(text)` | replace the field's text, then check the field shows it; retries once. Secure fields skip the check |
-| `type(text)`, `clear()`, `press("Enter")` | keyboard input on the focused field |
+| `fill(text)` | replace the field's text (iOS keys are sent one character at a time, 25 ms apart), then poll until the field holds it on consecutive reads, since the accessibility value lags the keys by 100-200 ms; a mismatch is retried once with a fresh clear and retype, then fails with what the field holds. Secure fields skip the check |
+| `type(text)`, `clear()`, `press("Enter")` | keyboard input on the focused field; `clear()` checks the field is empty afterwards |
 | `swipe({ direction })`, `scrollTo()` | scroll the element, or scroll until it is visible |
 
 Reads never wait; they answer from the screen as it is now:

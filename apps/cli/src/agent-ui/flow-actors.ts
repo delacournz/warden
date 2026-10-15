@@ -1,4 +1,5 @@
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
+import { typeText } from "@delacour/warden-e2e/driver/typing";
 import type { Target } from "@delacour/warden-e2e/flows/flow.schema";
 import {
 	type ActContext,
@@ -134,7 +135,7 @@ export function flowActors(
 			return uiFailure(typed);
 		},
 		async type(step, c) {
-			return settled(await driver.typeText(c.text(step.text)));
+			return settled(await typeText(driver, deps.sleep, c.text(step.text)));
 		},
 		async key(step) {
 			return settled(await driver.key(step.key, step.modifiers));
