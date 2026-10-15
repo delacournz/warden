@@ -28,12 +28,15 @@ import { createAppCommands } from "./android-app";
 import {
 	animationScaleArgvs,
 	buttonKeycode,
+	DRAG_STEPS,
+	dragMotionCommand,
 	getpropArgv,
 	keycombinationArgv,
 	keyeventArgv,
 	keyNameKeycode,
 	keyRepeatArgvs,
 	longPressArgv,
+	MOTIONEVENT_MIN_SDK,
 	modifierKeycode,
 	rotationArgvs,
 	screencapArgv,
@@ -116,6 +119,8 @@ const SNAPSHOT_RETRY_MS = 400;
 const SCREENSHOT_TIMEOUT_MS = 10_000;
 const DRAG_PRESS_MS = 500;
 const DRAG_MOVE_MS = 600;
+/** worst case for one `input motionevent` process start under load */
+const DRAG_PROCESS_BUDGET_MS = 3_000;
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
 
 const unit = { success: true as const, data: undefined };
@@ -182,7 +187,7 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 		...(log ? { log } : {}),
 	});
 	if (!booted.success) return failed(booted.error);
-	const probed = options.screen ?? booted.data;
+	const probed = options.screen ?? booted.data.screen;
 	const screen = probed ? { success: true as const, data: probed } : await readScreen(session, serial);
 	if (!screen.success) return failed(screen.error);
 	const animations = await session.run(
@@ -191,7 +196,7 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 			.join("; ")
 	);
 	if (!animations.success || animations.data.exitCode !== 0) log?.("could not disable animations");
-	return { success: true, data: buildDriver(options, session, screen.data, clock, execBinary) };
+	return { success: true, data: buildDriver(options, session, screen.data, clock, execBinary, booted.data.sdk) };
 }
 
 function buildDriver(
@@ -199,7 +204,8 @@ function buildDriver(
 	session: AdbSession,
 	baseScreen: ScreenInfo,
 	clock: Clock,
-	execBinary: ExecBinary
+	execBinary: ExecBinary,
+	sdk: number | undefined
 ): Driver & RepeatingKeys {
 	const { serial, adb, exec, log } = options;
 	const dumper = createDumper({
@@ -305,6 +311,26 @@ function buildDriver(
 		);
 	};
 
+	/**
+	 * Hold-then-move on sdk 26+ (`input motionevent` DOWN, interpolated MOVEs, UP, one shell line); older images
+	 * and an unreadable sdk fall back to a long `input swipe` (no hold).
+	 */
+	const drag: Driver["drag"] = async (from, to, opts) => {
+		const timing = {
+			pressMs: opts?.pressMs ?? DRAG_PRESS_MS,
+			durationMs: opts?.durationMs ?? DRAG_MOVE_MS,
+			releaseMs: opts?.releaseMs ?? 0,
+		};
+		if (sdk === undefined || sdk < MOTIONEVENT_MIN_SDK) {
+			return input(shellCommand(swipeArgv(from, to, timing.pressMs + timing.durationMs + timing.releaseMs)));
+		}
+		const total = timing.pressMs + timing.durationMs + timing.releaseMs;
+		return input(
+			dragMotionCommand(from, to, timing),
+			INPUT_TEXT_BASE_MS + total + (DRAG_STEPS + 2) * DRAG_PROCESS_BUDGET_MS
+		);
+	};
+
 	const pressButton: Driver["pressButton"] = async (button: HardwareButton) => {
 		const code = buttonKeycode(button);
 		return code === undefined
@@ -405,16 +431,7 @@ function buildDriver(
 		tap,
 		longPress: (point, opts) => input(shellCommand(longPressArgv(point, opts?.durationMs))),
 		swipe: (from, to, opts) => input(shellCommand(swipeArgv(from, to, opts?.durationMs))),
-		drag: (from, to, opts) =>
-			input(
-				shellCommand(
-					swipeArgv(
-						from,
-						to,
-						(opts?.pressMs ?? DRAG_PRESS_MS) + (opts?.durationMs ?? DRAG_MOVE_MS) + (opts?.releaseMs ?? 0)
-					)
-				)
-			),
+		drag,
 		pinch: unsupported("pinch"),
 		typeText,
 		key,

@@ -9,6 +9,7 @@ import {
 	rotatedScreen,
 	rotationToOrientation,
 	screenFromProbe,
+	sdkFromProbe,
 	waitForBoot,
 } from "./android-device";
 import { fakeAndroidHost } from "./android-host.testing";
@@ -66,6 +67,14 @@ describe("screenFromProbe", () => {
 		});
 		expect(screenFromProbe("1\n")).toBeUndefined();
 		expect(screenFromProbe("1\nPhysical size: 100x200\n")?.scale).toBe(1);
+	});
+});
+
+describe("sdkFromProbe", () => {
+	test("second line of the probe", () => {
+		expect(sdkFromProbe("1\n34\nPhysical size: 1x2\n")).toBe(34);
+		expect(sdkFromProbe("1\n\nPhysical size: 1x2\n")).toBeUndefined();
+		expect(sdkFromProbe("1\n")).toBeUndefined();
 	});
 });
 

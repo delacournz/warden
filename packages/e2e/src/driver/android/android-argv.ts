@@ -35,6 +35,44 @@ export function swipeArgv(from: Point, to: Point, durationMs: number = DEFAULT_S
 	return ["input", "swipe", px(from.x), px(from.y), px(to.x), px(to.y), String(Math.max(1, Math.round(durationMs)))];
 }
 
+export type MotionAction = "DOWN" | "MOVE" | "UP" | "CANCEL";
+
+/** `input motionevent <action> x y` (Android 8 / sdk 26+): one touch event of a held gesture. */
+export function motionEventArgv(action: MotionAction, point: Point): string[] {
+	return ["input", "motionevent", action, px(point.x), px(point.y)];
+}
+
+/** Lowest sdk with `input motionevent` (Android 8.0). */
+export const MOTIONEVENT_MIN_SDK = 26;
+export const DRAG_STEPS = 8;
+
+/** Fractional seconds for toybox `sleep` (`0.500`). */
+export function sleepArgv(ms: number): string[] {
+	return ["sleep", (Math.max(0, ms) / 1000).toFixed(3)];
+}
+
+export type DragTiming = { pressMs: number; durationMs: number; releaseMs: number; steps?: number };
+
+/**
+ * One shell line for a hold-then-move drag: DOWN at `from`, sleep `pressMs`, `steps` MOVEs interpolated over
+ * `durationMs`, sleep `releaseMs`, UP at `to`. Chained with `&&`; if anything fails after DOWN the finger is
+ * lifted with CANCEL and the line exits 1. Each `input` is a process start, so the sleeps are lower bounds.
+ */
+export function dragMotionCommand(from: Point, to: Point, timing: DragTiming): string {
+	const steps = Math.max(1, timing.steps ?? DRAG_STEPS);
+	const parts: string[][] = [motionEventArgv("DOWN", from), sleepArgv(timing.pressMs)];
+	for (let i = 1; i <= steps; i++) {
+		const t = i / steps;
+		parts.push(
+			motionEventArgv("MOVE", { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }),
+			sleepArgv(timing.durationMs / steps)
+		);
+	}
+	parts.push(sleepArgv(timing.releaseMs), motionEventArgv("UP", to));
+	const cancel = shellCommand(motionEventArgv("CANCEL", to));
+	return `${parts.map((argv) => shellCommand(argv)).join(" && ")} || (${cancel}; exit 1)`;
+}
+
 /** `input` has no long-press verb: a swipe that stays in place for the duration. */
 export function longPressArgv(point: Point, durationMs: number = DEFAULT_LONG_PRESS_MS): string[] {
 	return swipeArgv(point, point, durationMs);

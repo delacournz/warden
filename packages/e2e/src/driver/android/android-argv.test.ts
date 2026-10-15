@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	animationScaleArgvs,
 	buttonKeycode,
+	dragMotionCommand,
 	dumpFileCommand,
 	dumpStdoutArgv,
 	dumpTtyHostArgv,
@@ -15,6 +16,7 @@ import {
 	longPressArgv,
 	modifierKeycode,
 	monkeyLaunchArgv,
+	motionEventArgv,
 	pidofArgv,
 	pmClearArgv,
 	pmPathArgv,
@@ -22,6 +24,7 @@ import {
 	screencapArgv,
 	shellCommand,
 	shellQuote,
+	sleepArgv,
 	startUrlArgv,
 	swipeArgv,
 	tapArgv,
@@ -222,5 +225,21 @@ describe("device/app query argv", () => {
 		expect(keycombinationArgv([113, 29])).toEqual(["input", "keycombination", "113", "29"]);
 		expect(modifierKeycode("shift")).toBe(59);
 		expect(modifierKeycode("ctrl")).toBe(113);
+	});
+});
+
+describe("hold-then-move drag", () => {
+	test("motion events and sleeps", () => {
+		expect(motionEventArgv("DOWN", { x: 1.4, y: 2.6 })).toEqual(["input", "motionevent", "DOWN", "1", "3"]);
+		expect(sleepArgv(1250)).toEqual(["sleep", "1.250"]);
+		expect(sleepArgv(-5)).toEqual(["sleep", "0.000"]);
+	});
+
+	test("one step line, CANCEL on failure", () => {
+		expect(
+			dragMotionCommand({ x: 0, y: 0 }, { x: 10, y: 20 }, { pressMs: 100, durationMs: 200, releaseMs: 0, steps: 1 })
+		).toBe(
+			"input motionevent DOWN 0 0 && sleep 0.100 && input motionevent MOVE 10 20 && sleep 0.200 && sleep 0.000 && input motionevent UP 10 20 || (input motionevent CANCEL 10 20; exit 1)"
+		);
 	});
 });

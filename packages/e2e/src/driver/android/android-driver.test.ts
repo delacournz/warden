@@ -24,8 +24,13 @@ function fakeClock() {
 	};
 }
 
+/** The boot probe's answer: boot flag, sdk level (omitted when `undefined`), wm size and density. */
+function probe(sdk: number | undefined): string {
+	return `1\n${sdk ?? ""}\nPhysical size: 1080x2400\nPhysical density: 420\n`;
+}
+
 const BASE_RULES: ShellRule[] = [
-	{ match: "getprop sys.boot_completed", reply: "1\nPhysical size: 1080x2400\nPhysical density: 420\n" },
+	{ match: "getprop sys.boot_completed", reply: probe(34) },
 	{ match: "uiautomator dump /dev/stdout", reply: `${SYNTHETIC_FORM_DUMP}` },
 ];
 
@@ -69,7 +74,7 @@ describe("open", () => {
 		expect(driver.platform).toBe("android");
 		expect(driver.id).toBe("emulator-5554");
 		expect(host.shell).toEqual([
-			"getprop sys.boot_completed; wm size; wm density",
+			"getprop sys.boot_completed; getprop ro.build.version.sdk; wm size; wm density",
 			"settings put global window_animation_scale 0; settings put global transition_animation_scale 0; settings put global animator_duration_scale 0",
 		]);
 	});
@@ -82,7 +87,7 @@ describe("open", () => {
 			],
 		});
 		expect(host.shell.slice(0, 3)).toEqual([
-			"getprop sys.boot_completed; wm size; wm density",
+			"getprop sys.boot_completed; getprop ro.build.version.sdk; wm size; wm density",
 			"wm size",
 			"wm density",
 		]);
@@ -266,20 +271,60 @@ describe("input", () => {
 		expect(lines.some((l) => /^tap 100,201 x1 in \d+ms$/.test(l))).toBe(true);
 	});
 
-	test("longPress, swipe, drag", async () => {
+	test("longPress and swipe are single input swipes", async () => {
 		const { driver, host } = await setup();
 		await value(driver.longPress({ x: 1, y: 2 }));
 		await value(driver.longPress({ x: 1, y: 2 }, { durationMs: 1000 }));
 		await value(driver.swipe({ x: 1, y: 2 }, { x: 3, y: 4 }, { durationMs: 200 }));
-		await value(driver.drag({ x: 1, y: 2 }, { x: 3, y: 4 }, { pressMs: 400, durationMs: 300, releaseMs: 100 }));
-		await value(driver.drag({ x: 1, y: 2 }, { x: 3, y: 4 }));
 		expect(host.shell.filter((c) => c.startsWith("input"))).toEqual([
 			"input swipe 1 2 1 2 600",
 			"input swipe 1 2 1 2 1000",
 			"input swipe 1 2 3 4 200",
-			"input swipe 1 2 3 4 800",
-			"input swipe 1 2 3 4 1100",
 		]);
+	});
+
+	test("drag on sdk 26+ is hold-then-move: DOWN, 8 interpolated MOVEs, UP in one shell line", async () => {
+		const { driver, host } = await setup();
+		await value(driver.drag({ x: 0, y: 0 }, { x: 80, y: 160 }, { pressMs: 400, durationMs: 800, releaseMs: 100 }));
+		const moves = Array.from(
+			{ length: 8 },
+			(_, i) => `input motionevent MOVE ${10 * (i + 1)} ${20 * (i + 1)} && sleep 0.100`
+		);
+		expect(host.shell.filter((c) => c.startsWith("input"))).toEqual([
+			`input motionevent DOWN 0 0 && sleep 0.400 && ${moves.join(" && ")} && sleep 0.100 && input motionevent UP 80 160 || (input motionevent CANCEL 80 160; exit 1)`,
+		]);
+	});
+
+	test("drag defaults hold 500 ms and move over 600 ms", async () => {
+		const { driver, host } = await setup();
+		await value(driver.drag({ x: 0, y: 0 }, { x: 8, y: 8 }));
+		const cmd = host.shell.find((c) => c.startsWith("input motionevent"));
+		expect(
+			cmd?.startsWith("input motionevent DOWN 0 0 && sleep 0.500 && input motionevent MOVE 1 1 && sleep 0.075")
+		).toBe(true);
+		expect(cmd?.endsWith("sleep 0.000 && input motionevent UP 8 8 || (input motionevent CANCEL 8 8; exit 1)")).toBe(
+			true
+		);
+	});
+
+	test("a failing drag line is E_HID (the line itself lifts the finger with CANCEL)", async () => {
+		const { driver } = await setup({
+			shell: [{ match: "input motionevent", reply: { stdout: "Error\n", exitCode: 1 } }],
+		});
+		const res = await driver.drag({ x: 0, y: 0 }, { x: 8, y: 8 });
+		expect(!res.success && res.error.code).toBe("E_HID");
+	});
+
+	test("drag falls back to one long input swipe below sdk 26 and when the sdk is unknown", async () => {
+		for (const sdk of [25, undefined]) {
+			const { driver, host } = await setup({ shell: [{ match: "getprop sys.boot_completed", reply: probe(sdk) }] });
+			await value(driver.drag({ x: 1, y: 2 }, { x: 3, y: 4 }, { pressMs: 400, durationMs: 300, releaseMs: 100 }));
+			await value(driver.drag({ x: 1, y: 2 }, { x: 3, y: 4 }));
+			expect(host.shell.filter((c) => c.startsWith("input"))).toEqual([
+				"input swipe 1 2 3 4 800",
+				"input swipe 1 2 3 4 1100",
+			]);
+		}
 	});
 
 	test("a failing input command is E_HID", async () => {

@@ -30,8 +30,23 @@ export function parseWmDensity(text: string): number | undefined {
 /** Errors that retrying cannot fix (no adb binary, closed session). */
 const isFatal = (error: { code: string }): boolean => error.code === "E_HELPER_MISSING" || error.code === "E_INTERNAL";
 
-/** Boot flag + `wm size` + `wm density` in ONE round trip (a `warden ui` call opens a fresh driver every time). */
-const BOOT_PROBE = `${shellCommand(getpropArgv("sys.boot_completed"))}; ${shellCommand(WM_SIZE_ARGV)}; ${shellCommand(WM_DENSITY_ARGV)}`;
+/** Boot flag + sdk level + `wm size` + `wm density` in ONE round trip (a `warden ui` call opens a fresh driver every time). */
+const BOOT_PROBE = [
+	getpropArgv("sys.boot_completed"),
+	getpropArgv("ro.build.version.sdk"),
+	WM_SIZE_ARGV,
+	WM_DENSITY_ARGV,
+]
+	.map((argv) => shellCommand(argv))
+	.join("; ");
+
+/** The sdk level on the probe's second line, if numeric. */
+export function sdkFromProbe(stdout: string): number | undefined {
+	const line = stdout.trimStart().split("\n")[1]?.trim() ?? "";
+	return /^\d+$/.test(line) ? Number(line) : undefined;
+}
+
+export type BootInfo = { screen: ScreenInfo | undefined; sdk: number | undefined };
 
 /** The screen out of a boot probe's output, if `wm` answered. */
 export function screenFromProbe(stdout: string): ScreenInfo | undefined {
@@ -42,20 +57,20 @@ export function screenFromProbe(stdout: string): ScreenInfo | undefined {
 
 /**
  * Poll the boot probe until `sys.boot_completed` is `1`; `E_NOT_BOOTED` after `timeoutMs`. Returns the screen
- * from the same round trip (undefined when `wm` printed nothing parseable; use {@link readScreen}).
+ * and sdk level from the same round trip (screen undefined when `wm` printed nothing parseable; use {@link readScreen}).
  */
 export async function waitForBoot(
 	session: AdbSession,
 	serial: string,
 	clock: Clock,
 	opts: { timeoutMs?: number; log?: Logger } = {}
-): DriverResult<ScreenInfo | undefined> {
+): DriverResult<BootInfo> {
 	const timeoutMs = opts.timeoutMs ?? BOOT_TIMEOUT_MS;
 	const deadline = clock.now() + timeoutMs;
 	for (;;) {
 		const res = await session.run(BOOT_PROBE, { timeoutMs: 5_000 });
 		if (res.success && res.data.stdout.trimStart().startsWith("1")) {
-			return { success: true, data: screenFromProbe(res.data.stdout) };
+			return { success: true, data: { screen: screenFromProbe(res.data.stdout), sdk: sdkFromProbe(res.data.stdout) } };
 		}
 		if (!res.success && isFatal(res.error)) return res;
 		if (clock.now() >= deadline) {
