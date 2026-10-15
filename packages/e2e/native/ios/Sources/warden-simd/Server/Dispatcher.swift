@@ -95,7 +95,7 @@ extension Dispatcher where Context == Session {
   /// Every op the helper serves. Later phases append their `Ops/*.swift` tables here.
   static func standard() -> Dispatcher<Session> {
     var handlers: [String: OpHandler] = [:]
-    for table in [HealthOps.ops] {
+    for table in [HealthOps.ops, SnapshotOps.ops] {
       handlers.merge(table) { _, new in new }
     }
     return Dispatcher(handlers: handlers)

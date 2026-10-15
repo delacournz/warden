@@ -1,0 +1,1075 @@
+{
+ "backend": "axbridge-persistent",
+ "elements": [
+  {
+   "children": [
+    {
+     "children": [
+      {
+       "children": [
+        {
+         "children": [
+          {
+           "children": [
+            {
+             "children": [
+              {
+               "children": [
+                {
+                 "children": [
+                  {
+                   "children": [
+                    {
+                     "children": [
+                      {
+                       "children": [
+                        {
+                         "children": [
+                          {
+                           "children": [
+                            {
+                             "children": [
+                              {
+                               "children": [
+                                {
+                                 "children": [
+                                  {
+                                   "children": [
+                                    {
+                                     "children": [
+                                      {
+                                       "children": [
+                                        {
+                                         "children": [],
+                                         "enabled": null,
+                                         "focused": false,
+                                         "frame": {
+                                          "height": 1,
+                                          "width": 402,
+                                          "x": 0,
+                                          "y": 117
+                                         },
+                                         "hidden": false,
+                                         "identifier": null,
+                                         "label": null,
+                                         "pid": 41229,
+                                         "placeholder": null,
+                                         "traits": [
+                                          "Scrollable"
+                                         ],
+                                         "type": "RCTViewComponentView",
+                                         "value": null
+                                        }
+                                       ],
+                                       "enabled": null,
+                                       "focused": false,
+                                       "frame": {
+                                        "height": 118,
+                                        "width": 402,
+                                        "x": 0,
+                                        "y": 0
+                                       },
+                                       "hidden": false,
+                                       "identifier": null,
+                                       "label": null,
+                                       "pid": 41229,
+                                       "placeholder": null,
+                                       "traits": [
+                                        "Scrollable"
+                                       ],
+                                       "type": "RCTViewComponentView",
+                                       "value": null
+                                      },
+                                      {
+                                       "children": [],
+                                       "enabled": null,
+                                       "focused": false,
+                                       "frame": {
+                                        "height": 22.666671752929688,
+                                        "width": 84.66666412353516,
+                                        "x": 20,
+                                        "y": 78.66666603088379
+                                       },
+                                       "hidden": false,
+                                       "identifier": "sign-in-back",
+                                       "label": "Back",
+                                       "pid": 41229,
+                                       "placeholder": null,
+                                       "traits": [
+                                        "Button",
+                                        "Scrollable"
+                                       ],
+                                       "type": "Button",
+                                       "value": null
+                                      }
+                                     ],
+                                     "enabled": null,
+                                     "focused": false,
+                                     "frame": {
+                                      "height": 118,
+                                      "width": 402,
+                                      "x": 0,
+                                      "y": 0
+                                     },
+                                     "hidden": false,
+                                     "identifier": null,
+                                     "label": null,
+                                     "pid": 41229,
+                                     "placeholder": null,
+                                     "traits": [
+                                      "Scrollable"
+                                     ],
+                                     "type": "RCTViewComponentView",
+                                     "value": null
+                                    },
+                                    {
+                                     "children": [],
+                                     "enabled": null,
+                                     "focused": false,
+                                     "frame": {
+                                      "height": 874,
+                                      "width": 402,
+                                      "x": 0,
+                                      "y": 0
+                                     },
+                                     "hidden": false,
+                                     "identifier": "sign-in-screen",
+                                     "label": null,
+                                     "pid": 41229,
+                                     "placeholder": null,
+                                     "traits": [
+                                      "Scrollable"
+                                     ],
+                                     "type": "RCTViewComponentView",
+                                     "value": null
+                                    },
+                                    {
+                                     "children": [
+                                      {
+                                       "children": [
+                                        {
+                                         "children": [
+                                          {
+                                           "children": [
+                                            {
+                                             "children": [
+                                              {
+                                               "children": [],
+                                               "enabled": null,
+                                               "focused": false,
+                                               "frame": {
+                                                "height": 118,
+                                                "width": 362,
+                                                "x": 20,
+                                                "y": 0
+                                               },
+                                               "hidden": false,
+                                               "identifier": null,
+                                               "label": null,
+                                               "pid": 41229,
+                                               "placeholder": null,
+                                               "traits": [
+                                                "Scrollable"
+                                               ],
+                                               "type": "RCTViewComponentView",
+                                               "value": null
+                                              },
+                                              {
+                                               "children": [
+                                                {
+                                                 "children": [],
+                                                 "enabled": null,
+                                                 "focused": false,
+                                                 "frame": {
+                                                  "height": 24,
+                                                  "width": 362,
+                                                  "x": 20,
+                                                  "y": 138
+                                                 },
+                                                 "hidden": false,
+                                                 "identifier": null,
+                                                 "label": "Any email works. Passwords need 8+ characters.",
+                                                 "pid": 41229,
+                                                 "placeholder": null,
+                                                 "traits": [
+                                                  "StaticText",
+                                                  "Scrollable"
+                                                 ],
+                                                 "type": "StaticText",
+                                                 "value": null
+                                                }
+                                               ],
+                                               "enabled": null,
+                                               "focused": false,
+                                               "frame": {
+                                                "height": 24,
+                                                "width": 362,
+                                                "x": 20,
+                                                "y": 138
+                                               },
+                                               "hidden": false,
+                                               "identifier": null,
+                                               "label": "Any email works. Passwords need 8+ characters.",
+                                               "pid": 41229,
+                                               "placeholder": null,
+                                               "traits": [
+                                                "StaticText",
+                                                "Scrollable"
+                                               ],
+                                               "type": "StaticText",
+                                               "value": null
+                                              },
+                                              {
+                                               "children": [
+                                                {
+                                                 "children": [],
+                                                 "enabled": null,
+                                                 "focused": false,
+                                                 "frame": {
+                                                  "height": 20,
+                                                  "width": 362,
+                                                  "x": 20,
+                                                  "y": 182
+                                                 },
+                                                 "hidden": false,
+                                                 "identifier": null,
+                                                 "label": "Email",
+                                                 "pid": 41229,
+                                                 "placeholder": null,
+                                                 "traits": [
+                                                  "StaticText",
+                                                  "Scrollable"
+                                                 ],
+                                                 "type": "StaticText",
+                                                 "value": null
+                                                }
+                                               ],
+                                               "enabled": null,
+                                               "focused": false,
+                                               "frame": {
+                                                "height": 20,
+                                                "width": 362,
+                                                "x": 20,
+                                                "y": 182
+                                               },
+                                               "hidden": false,
+                                               "identifier": null,
+                                               "label": "Email",
+                                               "pid": 41229,
+                                               "placeholder": null,
+                                               "traits": [
+                                                "StaticText",
+                                                "Scrollable"
+                                               ],
+                                               "type": "StaticText",
+                                               "value": null
+                                              },
+                                              {
+                                               "children": [
+                                                {
+                                                 "children": [],
+                                                 "enabled": null,
+                                                 "focused": false,
+                                                 "frame": {
+                                                  "height": 42,
+                                                  "width": 360,
+                                                  "x": 21,
+                                                  "y": 209
+                                                 },
+                                                 "hidden": false,
+                                                 "identifier": "sign-in-email",
+                                                 "label": null,
+                                                 "pid": 41229,
+                                                 "placeholder": null,
+                                                 "traits": [
+                                                  "TextEntry",
+                                                  "Scrollable",
+                                                  "TextOperationsAvailable"
+                                                 ],
+                                                 "type": "TextField",
+                                                 "value": "ada@example.com"
+                                                }
+                                               ],
+                                               "enabled": null,
+                                               "focused": false,
+                                               "frame": {
+                                                "height": 44,
+                                                "width": 362,
+                                                "x": 20,
+                                                "y": 208
+                                               },
+                                               "hidden": false,
+                                               "identifier": null,
+                                               "label": null,
+                                               "pid": 41229,
+                                               "placeholder": null,
+                                               "traits": [
+                                                "Scrollable"
+                                               ],
+                                               "type": "RCTTextInputComponentView",
+                                               "value": null
+                                              },
+                                              {
+                                               "children": [
+                                                {
+                                                 "children": [],
+                                                 "enabled": null,
+                                                 "focused": false,
+                                                 "frame": {
+                                                  "height": 20,
+                                                  "width": 362,
+                                                  "x": 20,
+                                                  "y": 272
+                                                 },
+                                                 "hidden": false,
+                                                 "identifier": null,
+                                                 "label": "Password",
+                                                 "pid": 41229,
+                                                 "placeholder": null,
+                                                 "traits": [
+                                                  "StaticText",
+                                                  "Scrollable"
+                                                 ],
+                                                 "type": "StaticText",
+                                                 "value": null
+                                                }
+                                               ],
+                                               "enabled": null,
+                                               "focused": false,
+                                               "frame": {
+                                                "height": 20,
+                                                "width": 362,
+                                                "x": 20,
+                                                "y": 272
+                                               },
+                                               "hidden": false,
+                                               "identifier": null,
+                                               "label": "Password",
+                                               "pid": 41229,
+                                               "placeholder": null,
+                                               "traits": [
+                                                "StaticText",
+                                                "Scrollable"
+                                               ],
+                                               "type": "StaticText",
+                                               "value": null
+                                              },
+                                              {
+                                               "children": [
+                                                {
+                                                 "children": [],
+                                                 "enabled": null,
+                                                 "focused": false,
+                                                 "frame": {
+                                                  "height": 42,
+                                                  "width": 360,
+                                                  "x": 21,
+                                                  "y": 299
+                                                 },
+                                                 "hidden": false,
+                                                 "identifier": "sign-in-password",
+                                                 "label": null,
+                                                 "pid": 41229,
+                                                 "placeholder": null,
+                                                 "traits": [
+                                                  "TextEntry",
+                                                  "SecureTextField",
+                                                  "Scrollable",
+                                                  "TextOperationsAvailable"
+                                                 ],
+                                                 "type": "SecureTextField",
+                                                 "value": "At least 8 characters"
+                                                }
+                                               ],
+                                               "enabled": null,
+                                               "focused": false,
+                                               "frame": {
+                                                "height": 44,
+                                                "width": 362,
+                                                "x": 20,
+                                                "y": 298
+                                               },
+                                               "hidden": false,
+                                               "identifier": null,
+                                               "label": null,
+                                               "pid": 41229,
+                                               "placeholder": null,
+                                               "traits": [
+                                                "Scrollable"
+                                               ],
+                                               "type": "RCTTextInputComponentView",
+                                               "value": null
+                                              },
+                                              {
+                                               "children": [],
+                                               "enabled": null,
+                                               "focused": false,
+                                               "frame": {
+                                                "height": 106,
+                                                "width": 362,
+                                                "x": 20,
+                                                "y": 362
+                                               },
+                                               "hidden": false,
+                                               "identifier": null,
+                                               "label": null,
+                                               "pid": 41229,
+                                               "placeholder": null,
+                                               "traits": [
+                                                "Scrollable"
+                                               ],
+                                               "type": "RCTViewComponentView",
+                                               "value": null
+                                              }
+                                             ],
+                                             "enabled": null,
+                                             "focused": false,
+                                             "frame": {
+                                              "height": 468,
+                                              "width": 402,
+                                              "x": 0,
+                                              "y": 0
+                                             },
+                                             "hidden": false,
+                                             "identifier": null,
+                                             "label": null,
+                                             "pid": 41229,
+                                             "placeholder": null,
+                                             "traits": [
+                                              "Scrollable"
+                                             ],
+                                             "type": "RCTViewComponentView",
+                                             "value": null
+                                            }
+                                           ],
+                                           "enabled": null,
+                                           "focused": false,
+                                           "frame": {
+                                            "height": 468,
+                                            "width": 402,
+                                            "x": 0,
+                                            "y": 0
+                                           },
+                                           "hidden": false,
+                                           "identifier": null,
+                                           "label": null,
+                                           "pid": 41229,
+                                           "placeholder": null,
+                                           "traits": [
+                                            "Scrollable"
+                                           ],
+                                           "type": "UIView",
+                                           "value": null
+                                          }
+                                         ],
+                                         "enabled": null,
+                                         "focused": false,
+                                         "frame": {
+                                          "height": 874,
+                                          "width": 402,
+                                          "x": 0,
+                                          "y": 0
+                                         },
+                                         "hidden": false,
+                                         "identifier": null,
+                                         "label": null,
+                                         "pid": 41229,
+                                         "placeholder": null,
+                                         "traits": [
+                                          "Scrollable"
+                                         ],
+                                         "type": "ScrollView",
+                                         "value": null
+                                        }
+                                       ],
+                                       "enabled": null,
+                                       "focused": false,
+                                       "frame": {
+                                        "height": 874,
+                                        "width": 402,
+                                        "x": 0,
+                                        "y": 0
+                                       },
+                                       "hidden": false,
+                                       "identifier": null,
+                                       "label": null,
+                                       "pid": 41229,
+                                       "placeholder": null,
+                                       "traits": [
+                                        "Scrollable"
+                                       ],
+                                       "type": "RCTScrollViewComponentView",
+                                       "value": null
+                                      }
+                                     ],
+                                     "enabled": null,
+                                     "focused": false,
+                                     "frame": {
+                                      "height": 874,
+                                      "width": 402,
+                                      "x": 0,
+                                      "y": 0
+                                     },
+                                     "hidden": false,
+                                     "identifier": null,
+                                     "label": null,
+                                     "pid": 41229,
+                                     "placeholder": null,
+                                     "traits": [
+                                      "Scrollable"
+                                     ],
+                                     "type": "ClippingScrollViewDecoratorView",
+                                     "value": null
+                                    },
+                                    {
+                                     "children": [
+                                      {
+                                       "children": [
+                                        {
+                                         "children": [],
+                                         "enabled": null,
+                                         "focused": false,
+                                         "frame": {
+                                          "height": 1,
+                                          "width": 402,
+                                          "x": 0,
+                                          "y": 768
+                                         },
+                                         "hidden": false,
+                                         "identifier": null,
+                                         "label": null,
+                                         "pid": 41229,
+                                         "placeholder": null,
+                                         "traits": [
+                                          "Scrollable"
+                                         ],
+                                         "type": "RCTViewComponentView",
+                                         "value": null
+                                        }
+                                       ],
+                                       "enabled": null,
+                                       "focused": false,
+                                       "frame": {
+                                        "height": 106,
+                                        "width": 402,
+                                        "x": 0,
+                                        "y": 768
+                                       },
+                                       "hidden": false,
+                                       "identifier": null,
+                                       "label": null,
+                                       "pid": 41229,
+                                       "placeholder": null,
+                                       "traits": [
+                                        "Scrollable"
+                                       ],
+                                       "type": "RCTViewComponentView",
+                                       "value": null
+                                      },
+                                      {
+                                       "children": [],
+                                       "enabled": null,
+                                       "focused": false,
+                                       "frame": {
+                                        "height": 44,
+                                        "width": 362,
+                                        "x": 20,
+                                        "y": 784
+                                       },
+                                       "hidden": false,
+                                       "identifier": "sign-in-submit",
+                                       "label": "Sign in",
+                                       "pid": 41229,
+                                       "placeholder": null,
+                                       "traits": [
+                                        "Button",
+                                        "Scrollable"
+                                       ],
+                                       "type": "Button",
+                                       "value": null
+                                      }
+                                     ],
+                                     "enabled": null,
+                                     "focused": false,
+                                     "frame": {
+                                      "height": 106,
+                                      "width": 402,
+                                      "x": 0,
+                                      "y": 768
+                                     },
+                                     "hidden": false,
+                                     "identifier": null,
+                                     "label": null,
+                                     "pid": 41229,
+                                     "placeholder": null,
+                                     "traits": [
+                                      "Scrollable"
+                                     ],
+                                     "type": "RCTViewComponentView",
+                                     "value": null
+                                    }
+                                   ],
+                                   "enabled": null,
+                                   "focused": false,
+                                   "frame": {
+                                    "height": 874,
+                                    "width": 402,
+                                    "x": 0,
+                                    "y": 0
+                                   },
+                                   "hidden": false,
+                                   "identifier": null,
+                                   "label": null,
+                                   "pid": 41229,
+                                   "placeholder": null,
+                                   "traits": [
+                                    "Scrollable"
+                                   ],
+                                   "type": "RNSSafeAreaViewComponentView",
+                                   "value": null
+                                  }
+                                 ],
+                                 "enabled": null,
+                                 "focused": false,
+                                 "frame": {
+                                  "height": 874,
+                                  "width": 402,
+                                  "x": 0,
+                                  "y": 0
+                                 },
+                                 "hidden": false,
+                                 "identifier": null,
+                                 "label": null,
+                                 "pid": 41229,
+                                 "placeholder": null,
+                                 "traits": [
+                                  "Scrollable"
+                                 ],
+                                 "type": "RNSScreenContentWrapper",
+                                 "value": null
+                                }
+                               ],
+                               "enabled": null,
+                               "focused": false,
+                               "frame": {
+                                "height": 874,
+                                "width": 402,
+                                "x": 0,
+                                "y": 0
+                               },
+                               "hidden": false,
+                               "identifier": null,
+                               "label": null,
+                               "pid": 41229,
+                               "placeholder": null,
+                               "traits": [
+                                "Scrollable"
+                               ],
+                               "type": "RNSScreenView",
+                               "value": null
+                              }
+                             ],
+                             "enabled": null,
+                             "focused": false,
+                             "frame": {
+                              "height": 874,
+                              "width": 402,
+                              "x": 0,
+                              "y": 0
+                             },
+                             "hidden": false,
+                             "identifier": null,
+                             "label": null,
+                             "pid": 41229,
+                             "placeholder": null,
+                             "traits": [
+                              "Scrollable"
+                             ],
+                             "type": "UIViewControllerWrapperView",
+                             "value": null
+                            }
+                           ],
+                           "enabled": null,
+                           "focused": false,
+                           "frame": {
+                            "height": 874,
+                            "width": 402,
+                            "x": 0,
+                            "y": 0
+                           },
+                           "hidden": false,
+                           "identifier": null,
+                           "label": null,
+                           "pid": 41229,
+                           "placeholder": null,
+                           "traits": [
+                            "Scrollable"
+                           ],
+                           "type": "UINavigationTransitionView",
+                           "value": null
+                          },
+                          {
+                           "children": [
+                            {
+                             "children": [],
+                             "enabled": null,
+                             "focused": false,
+                             "frame": {
+                              "height": 874,
+                              "width": 402,
+                              "x": 0,
+                              "y": 0
+                             },
+                             "hidden": false,
+                             "identifier": null,
+                             "label": null,
+                             "pid": 41229,
+                             "placeholder": null,
+                             "traits": [
+                              "Scrollable"
+                             ],
+                             "type": "FloatingBarHostingView",
+                             "value": null
+                            }
+                           ],
+                           "enabled": null,
+                           "focused": false,
+                           "frame": {
+                            "height": 874,
+                            "width": 402,
+                            "x": 0,
+                            "y": 0
+                           },
+                           "hidden": false,
+                           "identifier": null,
+                           "label": null,
+                           "pid": 41229,
+                           "placeholder": null,
+                           "traits": [
+                            "Scrollable"
+                           ],
+                           "type": "_UIFloatingBarContainerView",
+                           "value": null
+                          }
+                         ],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 874,
+                          "width": 402,
+                          "x": 0,
+                          "y": 0
+                         },
+                         "hidden": false,
+                         "identifier": null,
+                         "label": null,
+                         "pid": 41229,
+                         "placeholder": null,
+                         "traits": [
+                          "Scrollable"
+                         ],
+                         "type": "UILayoutContainerView",
+                         "value": null
+                        }
+                       ],
+                       "enabled": null,
+                       "focused": false,
+                       "frame": {
+                        "height": 874,
+                        "width": 402,
+                        "x": 0,
+                        "y": 0
+                       },
+                       "hidden": false,
+                       "identifier": null,
+                       "label": null,
+                       "pid": 41229,
+                       "placeholder": null,
+                       "traits": [
+                        "Scrollable"
+                       ],
+                       "type": "RNSScreenStackView",
+                       "value": null
+                      }
+                     ],
+                     "enabled": null,
+                     "focused": false,
+                     "frame": {
+                      "height": 874,
+                      "width": 402,
+                      "x": 0,
+                      "y": 0
+                     },
+                     "hidden": false,
+                     "identifier": null,
+                     "label": null,
+                     "pid": 41229,
+                     "placeholder": null,
+                     "traits": [
+                      "Scrollable"
+                     ],
+                     "type": "KeyboardControllerView",
+                     "value": null
+                    }
+                   ],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 874,
+                    "width": 402,
+                    "x": 0,
+                    "y": 0
+                   },
+                   "hidden": false,
+                   "identifier": null,
+                   "label": null,
+                   "pid": 41229,
+                   "placeholder": null,
+                   "traits": [
+                    "Scrollable"
+                   ],
+                   "type": "RNCSafeAreaProviderComponentView",
+                   "value": null
+                  }
+                 ],
+                 "enabled": null,
+                 "focused": false,
+                 "frame": {
+                  "height": 874,
+                  "width": 402,
+                  "x": 0,
+                  "y": 0
+                 },
+                 "hidden": false,
+                 "identifier": null,
+                 "label": null,
+                 "pid": 41229,
+                 "placeholder": null,
+                 "traits": [
+                  "Scrollable"
+                 ],
+                 "type": "RNCSafeAreaProviderComponentView",
+                 "value": null
+                }
+               ],
+               "enabled": null,
+               "focused": false,
+               "frame": {
+                "height": 874,
+                "width": 402,
+                "x": 0,
+                "y": 0
+               },
+               "hidden": false,
+               "identifier": null,
+               "label": null,
+               "pid": 41229,
+               "placeholder": null,
+               "traits": [
+                "Scrollable"
+               ],
+               "type": "RCTRootComponentView",
+               "value": null
+              }
+             ],
+             "enabled": null,
+             "focused": false,
+             "frame": {
+              "height": 874,
+              "width": 402,
+              "x": 0,
+              "y": 0
+             },
+             "hidden": false,
+             "identifier": null,
+             "label": null,
+             "pid": 41229,
+             "placeholder": null,
+             "traits": [
+              "Scrollable"
+             ],
+             "type": "RCTSurfaceView",
+             "value": null
+            }
+           ],
+           "enabled": null,
+           "focused": false,
+           "frame": {
+            "height": 874,
+            "width": 402,
+            "x": 0,
+            "y": 0
+           },
+           "hidden": false,
+           "identifier": null,
+           "label": null,
+           "pid": 41229,
+           "placeholder": null,
+           "traits": [
+            "Scrollable"
+           ],
+           "type": "RCTSurfaceHostingProxyRootView",
+           "value": null
+          }
+         ],
+         "enabled": null,
+         "focused": false,
+         "frame": {
+          "height": 874,
+          "width": 402,
+          "x": 0,
+          "y": 0
+         },
+         "hidden": false,
+         "identifier": null,
+         "label": null,
+         "pid": 41229,
+         "placeholder": null,
+         "traits": [
+          "None"
+         ],
+         "type": "UIDropShadowView",
+         "value": null
+        }
+       ],
+       "enabled": null,
+       "focused": false,
+       "frame": {
+        "height": 874,
+        "width": 402,
+        "x": 0,
+        "y": 0
+       },
+       "hidden": false,
+       "identifier": null,
+       "label": null,
+       "pid": 41229,
+       "placeholder": null,
+       "traits": [
+        "None"
+       ],
+       "type": "UITransitionView",
+       "value": null
+      }
+     ],
+     "enabled": null,
+     "focused": false,
+     "frame": {
+      "height": 874,
+      "width": 402,
+      "x": 0,
+      "y": 0
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": null,
+     "pid": 41229,
+     "placeholder": null,
+     "traits": [
+      "None"
+     ],
+     "type": "Application",
+     "value": null
+    },
+    {
+     "children": [
+      {
+       "children": [
+        {
+         "children": [],
+         "enabled": null,
+         "focused": false,
+         "frame": {
+          "height": 874,
+          "width": 402,
+          "x": 0,
+          "y": 0
+         },
+         "hidden": false,
+         "identifier": null,
+         "label": null,
+         "pid": 41229,
+         "placeholder": null,
+         "traits": [
+          "Scrollable"
+         ],
+         "type": "UIEditingOverlayGestureView",
+         "value": null
+        }
+       ],
+       "enabled": null,
+       "focused": false,
+       "frame": {
+        "height": 874,
+        "width": 402,
+        "x": 0,
+        "y": 0
+       },
+       "hidden": false,
+       "identifier": null,
+       "label": null,
+       "pid": 41229,
+       "placeholder": null,
+       "traits": [
+        "Scrollable"
+       ],
+       "type": "UITrackingWindowView",
+       "value": null
+      }
+     ],
+     "enabled": null,
+     "focused": false,
+     "frame": {
+      "height": 874,
+      "width": 402,
+      "x": 0,
+      "y": 0
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": null,
+     "pid": 41229,
+     "placeholder": null,
+     "traits": [
+      "None"
+     ],
+     "type": "Application",
+     "value": null
+    }
+   ],
+   "enabled": null,
+   "focused": false,
+   "frame": {
+    "height": 874,
+    "width": 402,
+    "x": 0,
+    "y": 0
+   },
+   "hidden": false,
+   "identifier": null,
+   "label": "warden-example",
+   "pid": 41229,
+   "placeholder": null,
+   "traits": [
+    "None"
+   ],
+   "type": "Other",
+   "value": null
+  }
+ ],
+ "modal": null,
+ "screen": {
+  "coordinate_space": "screen",
+  "height": 874,
+  "width": 402
+ },
+ "target": {
+  "kind": "frontmost",
+  "match_key": null,
+  "pid": null,
+  "value": null,
+  "x": null,
+  "y": null
+ },
+ "truncated": false
+}
