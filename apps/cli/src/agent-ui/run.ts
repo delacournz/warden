@@ -1,8 +1,10 @@
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
+import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
 import { resolveUiDevice, type UiDevice, type UiDeviceFlags } from "./device";
+import type { UiDeps } from "./driver";
 import { reportError, reportOk, type UiError, type UiExitCode, type UiSuccess, uiError } from "./output";
 
 /** Default per-command deadline when `--timeout` is not given. */
@@ -29,7 +31,13 @@ export function withUiOptions<Args extends unknown[], Opts extends OptionValues,
 export type UiOptionValues = UiDeviceFlags & { timeout?: string; record: boolean; json?: true };
 
 /** What a subcommand's work function gets besides the device. */
-export type UiRunEnv = { timeoutMs: number; record: boolean };
+export type UiRunEnv = {
+	timeoutMs: number;
+	record: boolean;
+	deps: UiDeps;
+	/** the device's driver, opened on first use (so `status` never needs an engine) and closed when the command ends */
+	driver: () => Promise<Result<Driver, UiError>>;
+};
 
 function parseTimeout(raw: string | undefined): Result<number, UiError> {
 	if (raw === undefined) return { success: true, data: DEFAULT_UI_TIMEOUT_MS };
@@ -46,6 +54,7 @@ function parseTimeout(raw: string | undefined): Result<number, UiError> {
  */
 export async function runUi(
 	ctx: CommandContext,
+	deps: UiDeps,
 	command: string,
 	opts: UiOptionValues,
 	work: (device: UiDevice, env: UiRunEnv) => Promise<Result<UiSuccess, UiError>>
@@ -57,9 +66,19 @@ export async function runUi(
 		const device = await resolveUiDevice(ctx, opts);
 		if (!device.success) return reportError(ctx, report, device.error);
 		const info = { udid: device.data.udid, platform: device.data.platform, name: device.data.name };
-		const done = await work(device.data, { timeoutMs: timeout.data, record: opts.record });
-		if (!done.success) return reportError(ctx, report, done.error, info);
-		return reportOk(ctx, report, done.data);
+		let opened: Promise<Result<Driver, UiError>> | undefined;
+		const driver = () => {
+			opened ??= deps.driver(ctx, device.data);
+			return opened;
+		};
+		try {
+			const done = await work(device.data, { timeoutMs: timeout.data, record: opts.record, deps, driver });
+			if (!done.success) return reportError(ctx, report, done.error, info);
+			return reportOk(ctx, report, done.data);
+		} finally {
+			const used = opened === undefined ? undefined : await opened;
+			if (used?.success) await used.data.close().catch(() => undefined);
+		}
 	} catch (error) {
 		return reportError(ctx, report, uiError("failed", errorMessage(error)));
 	}
