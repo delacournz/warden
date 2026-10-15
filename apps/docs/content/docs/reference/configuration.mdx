@@ -166,7 +166,7 @@ export default defineConfig({
 <TypeTable
   type={{
     project: { type: "string", description: "`projects[].name`: the specs, `serve` and `setup` run in its root, relative `serveReady` `file:` paths resolve against it, and `app` installs that project's build. Needed when the config has several projects and warden runs from the repo root." },
-    flowsDir: { type: "string", description: "Required. Directory of flows: YAML files, or `*.e2e.ts(x)` tests (other `.ts` files there are helpers; a helper change selects every flow importing it). Searched recursively; dot dirs, `node_modules` and `__baselines__` skipped." },
+    flowsDir: { type: "string", description: "Required. Directory of flows: `*.e2e.ts(x)` specs (other `.ts` files there are helpers; a helper change selects every flow importing it). Searched recursively; dot dirs, `node_modules` and `__baselines__` skipped." },
     spec: { type: "{ bundleId?; launchArgs?; timeout?; actionTimeout?; assertionTimeout? }", description: "How `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`, see [Write e2e specs](/docs/guides/specs)). `bundleId`: the app under test (default: the suite project's `bundleId` for the platform). `launchArgs`: passed by `app.open()` after `--initialUrl <metro url>` and `metro.launchArgs`. `timeout` (default `\"2m\"`): per test. `actionTimeout` (default `\"30s\"`): per tap, fill or wait for an element. `assertionTimeout` (default `\"5s\"`): polling timeout of `expect(locator)`. The specs run in the suite's `project` root, else the config file's directory." },
     runner: { type: "removed", description: "Setting it fails validation: `e2e.<suite>.runner was removed: flows run with @delacour/warden-e2e, see spec`. Move the app, launch arguments and timeouts into `spec`; there is no runner argv or `{…}` placeholder substitution any more." },
     mode: { type: '"per-flow" | "single"', description: "`per-flow`: one `bun test` process per flow, one worker per device. `single`: one process per device runs its share of the flows (sharded round-robin by flow id), so a device's specs run serially in one process and the devices run in parallel. Every flow still gets its own verdict from `results.jsonl`. Not with `passes` > 1.", default: '"per-flow"' },
@@ -227,7 +227,7 @@ Metro runs `bunx expo start --dev-client --port <p>` in the project root with `C
   type={{
     entries: { type: "string[]", description: "Files the flow drives; their imports, transitively, select it." },
     paths: { type: "string[]", description: "Globs that select the flow." },
-    platforms: { type: '("ios" | "android")[]', description: "Default: from the id (`-ios-`), then the `launch` map, else both." },
+    platforms: { type: '("ios" | "android")[]', description: "Default: from the id (`-ios-`), else both." },
     required: { type: "boolean", description: "A failure fails `warden e2e`; `false` = reported only." },
     maxDepth: { type: "number", description: "Overrides the suite's `maxDepth`." },
   }}

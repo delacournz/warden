@@ -11,7 +11,7 @@ warden affected mobile --base origin/main --explain   # what would run, and why
 warden e2e mobile --base origin/main --count 2        # run it: exit 0 = every required flow passed
 ```
 
-Flows stay in your repo's own `*.e2e.ts` files, written with [`@delacour/warden-e2e`](/docs/guides/specs), and the relative imports of a flow count as fragments; warden picks them, leases devices, runs them with `bun test` and reports.
+Flows stay in your repo's own `*.e2e.ts` files, written with [`@delacour/warden-e2e`](/docs/guides/specs), and the relative imports of a flow count as helpers; warden picks them, leases devices, runs them with `bun test` and reports.
 
 ## How flows are picked
 
@@ -23,10 +23,10 @@ Flows stay in your repo's own `*.e2e.ts` files, written with [`@delacour/warden-
    - **Runtime imports only.** `import type` / `export type` are dropped, as the bundler drops them.
    - **Router layouts.** With `routerRoot`, every `_layout` above an entry counts as an entry too (file-based routers render them around the route).
    - **`maxDepth`** limits how many import hops from an entry still count. Apps with hub modules (a session context, a shared API client) otherwise reach almost everything from every screen; `3` is a good start.
-5. **Flow files.** A changed flow selects itself; a changed fragment selects every flow that `run:`s it.
+5. **Flow files.** A changed flow selects itself; a changed helper (any other `.ts` file in the flows directory) selects every flow that imports it.
 6. **`always`** flows run every time, and so do flows with no `entries` / `paths` unless `unmapped` is `"skip"`.
 
-A flow runs on the platforms named in its config, else the `ios` / `android` token in its id (`store-ios-02-chats`), else its per-platform `launch` map, else both.
+A flow runs on the platforms named in its config, else the `ios` / `android` token in its id (`store-ios-02-chats`), else both.
 
 `--explain` prints the reason for each flow, including the shortest import chain:
 

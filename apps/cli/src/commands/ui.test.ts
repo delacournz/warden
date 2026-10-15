@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Owner } from "@delacour/warden-core/types";
 import { blockMessage } from "../device-lease";
-import { handlePreToolUse } from "../hooks/claude-pretool";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { uiCommand } from "./ui";
@@ -202,34 +201,5 @@ describe("warden ui status", () => {
 		};
 		expect(await uiCommand.run(c)).toBe(1);
 		expect(json(c)).toMatchObject({ ok: false, error: { code: "failed", message: "db gone" } });
-	});
-});
-
-describe("ensureCallerLease is shared by the hook and `warden ui`", () => {
-	test("a lease the hook created is the caller's lease in `ui` (same session), and vice versa", async () => {
-		const c = setup(["status", "--udid", UDID, "--json"]);
-		const hookDeps = {
-			store: () => c.db,
-			now: () => c.now(),
-			pidAlive: () => false,
-			gitInfo: () => undefined,
-			deviceState: async () => undefined,
-			shutdown: async () => ({ shutdown: [], notes: [] }),
-			maybeGc: () => {},
-			endInBackground: () => false,
-		};
-		const hook = (sessionId: string) =>
-			handlePreToolUse(
-				{ session_id: sessionId, cwd: "/w", tool_name: "mcp__argent__gesture-tap", tool_input: { udid: UDID } },
-				hookDeps
-			);
-		expect((await hook("me")).exitCode).toBe(0);
-		expect(await uiCommand.run(c)).toBe(0);
-		expect(json(c).result.lease.action).toBe("own");
-
-		c.argv = ["status", "--udid", UDID, "--json"];
-		const blocked = await hook("other");
-		expect(blocked.exitCode).toBe(2);
-		expect(blocked.stderr).toBe(blockMessage(UDID, "ios", mine));
 	});
 });

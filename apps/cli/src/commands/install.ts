@@ -4,7 +4,6 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { type Agent, detectAgents } from "../hooks/agents";
-import { patchArgentRules } from "../hooks/argent-rules";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
 import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook, mergeCodexHooks } from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
@@ -27,7 +26,7 @@ export type Runtime = { kind: "compiled"; execPath: string } | { kind: "dev"; cl
 /** Outside world for `warden install` beyond `CommandContext` (prompts come from `ctx.ui`). */
 export type InstallDeps = { runtime: Runtime };
 
-export type StepName = "binary" | "skill" | "settings" | "argent-rules" | "codex-hooks";
+export type StepName = "binary" | "skill" | "settings" | "codex-hooks";
 export type StepStatus = "written" | "unchanged" | "skipped" | "declined" | "dry-run" | "error";
 export type StepReport = { step: StepName; status: StepStatus; path: string; detail?: string };
 
@@ -214,7 +213,7 @@ async function installCodexHooks(
 	configPath: string
 ): Promise<StepReport> {
 	const toml = readIfExists(configPath);
-	if (codexTomlHasWardenHook(toml, "pretool") && codexTomlHasWardenHook(toml, "session-end")) {
+	if (codexTomlHasWardenHook(toml, "session-end")) {
 		return report("codex-hooks", "unchanged", configPath);
 	}
 	const before = readIfExists(path);
@@ -224,18 +223,6 @@ async function installCodexHooks(
 	if (!merged.success) return report("codex-hooks", "error", path, merged.error);
 	if (!merged.data.changed) return report("codex-hooks", "unchanged", path);
 	return guardedWrite(ctx, flags, "codex-hooks", path, before ?? "", formatJson(merged.data.settings, before));
-}
-
-async function installArgentRules(ctx: CommandContext, flags: Flags, path: string): Promise<StepReport> {
-	const before = readIfExists(path);
-	if (before === undefined) return report("argent-rules", "skipped", path, "argent rules not installed");
-	const patch = patchArgentRules(before);
-	if (patch.kind === "unchanged") {
-		return patch.reason === "already-patched"
-			? report("argent-rules", "unchanged", path)
-			: report("argent-rules", "skipped", path, "no <device_selection_rule> block found");
-	}
-	return guardedWrite(ctx, flags, "argent-rules", path, before, patch.text);
 }
 
 async function step(name: StepName, path: string, fn: () => StepReport | Promise<StepReport>): Promise<StepReport> {
@@ -277,10 +264,8 @@ async function install(
 		const claude = join(home, ".claude");
 		const skillPath = join(claude, "skills", "warden", "SKILL.md");
 		const settingsPath = join(claude, "settings.json");
-		const rulesPath = join(claude, "rules", "argent.md");
 		steps.push(await step("skill", skillPath, () => installSkill(ctx, skillPath, flags)));
 		steps.push(await step("settings", settingsPath, () => installSettings(ctx, flags, settingsPath)));
-		steps.push(await step("argent-rules", rulesPath, () => installArgentRules(ctx, flags, rulesPath)));
 	}
 	const hooksPath = codexHooksPath({ ...ctx.env, HOME: home });
 	const configPath = codexConfigPath({ ...ctx.env, HOME: home });
@@ -357,8 +342,7 @@ export function detectRuntime(main: string = Bun.main, execPath: string = proces
 export function createInstallCommand(deps: () => InstallDeps): Command {
 	return defineCommand({
 		name: "install",
-		summary:
-			"install warden to ~/.local/bin + hooks for detected agents (Claude Code: skill, hooks, argent rule; Codex: hooks)",
+		summary: "install warden to ~/.local/bin + hooks for detected agents (Claude Code: skill, hook; Codex: hook)",
 		register: (cmd, ctx, done) => {
 			cmd
 				.option("--claude", "install for Claude Code (default: every detected agent)")

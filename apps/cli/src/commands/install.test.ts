@@ -2,15 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Chalk } from "chalk";
-import { WARDEN_RULE_LINE } from "../hooks/argent-rules";
 import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import { installOrigin } from "../update/install-origin";
 import { createInstallCommand, detectRuntime, type InstallDeps, type Runtime } from "./install";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
-
-const ARGENT = "<device_selection_rule>\nDecision order:\n\n1. **Explicit user intent**\n</device_selection_rule>\n";
 
 type Setup = { c: TestContext; home: string; deps: InstallDeps; questions: string[]; ui: ScriptedUi };
 
@@ -48,9 +45,8 @@ const claudeFile = (home: string, ...parts: string[]) => join(home, ".claude", .
 const codexFile = (home: string, ...parts: string[]) => join(home, ".codex", ...parts);
 
 function seedClaude(home: string, settings: unknown = { model: "opus" }) {
-	mkdirSync(claudeFile(home, "rules"), { recursive: true });
+	mkdirSync(claudeFile(home), { recursive: true });
 	writeFileSync(claudeFile(home, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
-	writeFileSync(claudeFile(home, "rules", "argent.md"), ARGENT);
 }
 
 describe("warden install", () => {
@@ -121,19 +117,19 @@ describe("warden install", () => {
 		expect(installOrigin(c.env, target)).toBeUndefined();
 	});
 
-	test("--claude writes skill, merges hooks, patches argent rules after confirming", async () => {
+	test("--claude writes skill and merges the SessionEnd hook after confirming", async () => {
 		const { c, home, deps, questions } = setup(["--claude"]);
 		seedClaude(home);
 		expect(await runInstall(c, deps)).toBe(0);
 		expect(read(claudeFile(home, "skills", "warden", "SKILL.md"))).toStartWith("---\nname: warden\n");
 		const settings = JSON.parse(read(claudeFile(home, "settings.json")));
 		expect(settings.model).toBe("opus");
-		expect(settings.hooks.PreToolUse[0].hooks[0].command).toBe("$HOME/.local/bin/warden hook pretool");
-		expect(read(claudeFile(home, "rules", "argent.md"))).toContain(WARDEN_RULE_LINE);
-		expect(questions).toHaveLength(2);
+		expect(settings.hooks.PreToolUse).toBeUndefined();
+		expect(settings.hooks.SessionEnd[0].hooks[0].command).toBe("$HOME/.local/bin/warden hook session-end");
+		expect(questions).toHaveLength(1);
 		const out = c.stdout.join("\n");
 		expect(out).toContain("+ ");
-		expect(out).toContain("hook pretool");
+		expect(out).toContain("hook session-end");
 	});
 
 	test("--claude is idempotent", async () => {
@@ -141,26 +137,23 @@ describe("warden install", () => {
 		seedClaude(home);
 		await runInstall(c, deps);
 		const settings = read(claudeFile(home, "settings.json"));
-		const rules = read(claudeFile(home, "rules", "argent.md"));
 		questions.length = 0;
 		c.argv = ["--claude", "--json"];
 		c.stdout.length = 0;
 		expect(await runInstall(c, deps)).toBe(0);
 		expect(questions).toEqual([]);
 		expect(read(claudeFile(home, "settings.json"))).toBe(settings);
-		expect(read(claudeFile(home, "rules", "argent.md"))).toBe(rules);
 		const statuses = JSON.parse(c.stdout.join("\n")).steps.map((s: { status: string }) => s.status);
-		expect(statuses).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
+		expect(statuses).toEqual(["unchanged", "unchanged", "unchanged"]);
 	});
 
-	test("declined confirmation leaves settings + rules untouched", async () => {
-		const { c, home, deps } = setup(["--claude", "--json"], { confirm: [false, false, false, false] });
+	test("declined confirmation leaves settings untouched", async () => {
+		const { c, home, deps } = setup(["--claude", "--json"], { confirm: [false] });
 		seedClaude(home);
 		expect(await runInstall(c, deps)).toBe(0);
 		expect(JSON.parse(read(claudeFile(home, "settings.json")))).toEqual({ model: "opus" });
-		expect(read(claudeFile(home, "rules", "argent.md"))).toBe(ARGENT);
 		const steps = JSON.parse(c.stdout.join("\n")).steps;
-		expect(steps.map((s: { status: string }) => s.status)).toEqual(["written", "written", "declined", "declined"]);
+		expect(steps.map((s: { status: string }) => s.status)).toEqual(["written", "written", "declined"]);
 	});
 
 	test("non-interactive without --yes → skip guarded steps; --yes writes without asking", async () => {
@@ -185,15 +178,32 @@ describe("warden install", () => {
 		expect(existsSync(claudeFile(home, "skills"))).toBe(false);
 		expect(JSON.parse(read(claudeFile(home, "settings.json")))).toEqual({ model: "opus" });
 		expect(questions).toEqual([]);
-		expect(c.stdout.join("\n")).toContain(`+ ${WARDEN_RULE_LINE}`);
+		expect(c.stdout.join("\n")).toContain("hook session-end");
 	});
 
-	test("missing settings.json is created; missing argent.md is skipped", async () => {
+	test("missing settings.json is created", async () => {
 		const { c, home, deps } = setup(["--claude", "--yes", "--json"]);
 		expect(await runInstall(c, deps)).toBe(0);
-		expect(JSON.parse(read(claudeFile(home, "settings.json"))).hooks.PreToolUse).toHaveLength(1);
+		expect(JSON.parse(read(claudeFile(home, "settings.json"))).hooks.SessionEnd).toHaveLength(1);
 		const steps = JSON.parse(c.stdout.join("\n")).steps;
-		expect(steps[3]).toMatchObject({ step: "argent-rules", status: "skipped" });
+		expect(steps.map((x: { step: string }) => x.step)).toEqual(["binary", "skill", "settings"]);
+	});
+
+	test("hooks an older warden installed (the PreToolUse matcher) are removed, other hooks stay", async () => {
+		const { c, home, deps } = setup(["--claude", "--yes"]);
+		seedClaude(home, {
+			model: "opus",
+			hooks: {
+				PreToolUse: [
+					{ matcher: "mcp__old__.*", hooks: [{ type: "command", command: "$HOME/.local/bin/warden hook pretool" }] },
+					{ matcher: "Bash", hooks: [{ type: "command", command: "rtk-rewrite" }] },
+				],
+			},
+		});
+		expect(await runInstall(c, deps)).toBe(0);
+		const hooks = JSON.parse(read(claudeFile(home, "settings.json"))).hooks;
+		expect(hooks.PreToolUse).toEqual([{ matcher: "Bash", hooks: [{ type: "command", command: "rtk-rewrite" }] }]);
+		expect(hooks.SessionEnd).toHaveLength(1);
 	});
 
 	test("invalid settings.json → error step, file untouched, exit 1", async () => {
@@ -218,7 +228,7 @@ describe("warden install", () => {
 		seedClaude(home);
 		expect(await runInstall(c, deps)).toBe(0);
 		const steps = JSON.parse(c.stdout.join("\n")).steps.map((s: { step: string }) => s.step);
-		expect(steps).toEqual(["binary", "skill", "settings", "argent-rules"]);
+		expect(steps).toEqual(["binary", "skill", "settings"]);
 		expect(existsSync(codexFile(home, "hooks.json"))).toBe(false);
 	});
 
@@ -227,8 +237,7 @@ describe("warden install", () => {
 		mkdirSync(codexFile(home), { recursive: true });
 		expect(await runInstall(c, deps)).toBe(0);
 		const hooks = JSON.parse(read(codexFile(home, "hooks.json"))).hooks;
-		expect(hooks.PreToolUse[0].matcher).toBe("mcp__argent__.*|mcp__plugin_goldie_argent__.*");
-		expect(hooks.PreToolUse[0].hooks[0].command).toBe("$HOME/.local/bin/warden hook pretool");
+		expect(hooks.PreToolUse).toBeUndefined();
 		expect(hooks.SessionEnd[0].hooks[0]).toEqual({
 			type: "command",
 			command: "$HOME/.local/bin/warden hook session-end",
@@ -247,7 +256,7 @@ describe("warden install", () => {
 		mkdirSync(codexFile(home), { recursive: true });
 		expect(await runInstall(c, deps)).toBe(0);
 		const steps = JSON.parse(c.stdout.join("\n")).steps.map((s: { step: string }) => s.step);
-		expect(steps).toEqual(["binary", "skill", "settings", "argent-rules", "codex-hooks"]);
+		expect(steps).toEqual(["binary", "skill", "settings", "codex-hooks"]);
 	});
 
 	test("--claude forces Claude only, even when Codex is detected", async () => {
@@ -292,7 +301,7 @@ describe("warden install", () => {
 		await runInstall(c, deps);
 		const after = read(codexFile(home, "hooks.json"));
 		const hooks = JSON.parse(after).hooks;
-		expect(hooks.PreToolUse).toHaveLength(2);
+		expect(hooks.PreToolUse).toHaveLength(1);
 		expect(hooks.PreToolUse[0]).toEqual(existing.hooks.PreToolUse[0]);
 		questions.length = 0;
 		c.argv = ["--codex", "--json"];
@@ -309,11 +318,6 @@ describe("warden install", () => {
 		writeFileSync(
 			codexFile(home, "config.toml"),
 			[
-				"[[hooks.PreToolUse]]",
-				'matcher = "mcp__argent__.*"',
-				"[[hooks.PreToolUse.hooks]]",
-				'type = "command"',
-				'command = "warden hook pretool"',
 				"[[hooks.SessionEnd]]",
 				"[[hooks.SessionEnd.hooks]]",
 				'type = "command"',
@@ -365,34 +369,26 @@ describe("warden install (prompts + ui)", () => {
 		const { c, home, deps, ui } = setup(["--claude"]);
 		seedClaude(home);
 		expect(await runInstall(c, deps)).toBe(0);
-		expect(ui.events).toEqual([
-			`confirm: apply these changes to ${claudeFile(home, "settings.json")}?`,
-			`confirm: apply these changes to ${claudeFile(home, "rules", "argent.md")}?`,
-		]);
-		const out = c.stdout.join("\n");
-		expect(out.indexOf(`--- ${claudeFile(home, "settings.json")}`)).toBeLessThan(
-			out.indexOf(`--- ${claudeFile(home, "rules", "argent.md")}`)
-		);
+		expect(ui.events).toEqual([`confirm: apply these changes to ${claudeFile(home, "settings.json")}?`]);
+		expect(c.stdout.join("\n")).toContain(`--- ${claudeFile(home, "settings.json")}`);
 	});
 
-	test("cancelled prompt skips only that step; later steps still asked", async () => {
-		const { c, home, deps, questions } = setup(["--claude", "--json"], { confirm: [undefined, true] });
+	test("cancelled prompt skips only that step", async () => {
+		const { c, home, deps, questions } = setup(["--claude", "--json"], { confirm: [undefined] });
 		seedClaude(home);
 		expect(await runInstall(c, deps)).toBe(0);
-		expect(questions).toHaveLength(2);
+		expect(questions).toHaveLength(1);
 		expect(JSON.parse(read(claudeFile(home, "settings.json")))).toEqual({ model: "opus" });
-		expect(read(claudeFile(home, "rules", "argent.md"))).toContain(WARDEN_RULE_LINE);
 		const steps = JSON.parse(c.stdout.join("\n")).steps;
 		expect(steps[2]).toMatchObject({ step: "settings", status: "skipped", detail: "cancelled" });
-		expect(steps[3]).toMatchObject({ step: "argent-rules", status: "written" });
 	});
 
 	test("--json: diffs go to stderr, stdout is one JSON document", async () => {
 		const { c, home, deps } = setup(["--claude", "--yes", "--json"]);
 		seedClaude(home);
 		expect(await runInstall(c, deps)).toBe(0);
-		expect(JSON.parse(c.stdout.join("\n")).steps).toHaveLength(4);
-		expect(c.stderr.join("\n")).toContain("hook pretool");
+		expect(JSON.parse(c.stdout.join("\n")).steps).toHaveLength(3);
+		expect(c.stderr.join("\n")).toContain("hook session-end");
 	});
 
 	test("human mode colours the diff (+ green, - red, context dim) and step marks", async () => {
@@ -401,8 +397,7 @@ describe("warden install (prompts + ui)", () => {
 		seedClaude(home);
 		expect(await runInstall(c, deps)).toBe(0);
 		const out = c.stdout.join("\n");
-		expect(out).toContain(`\u001b[32m+ ${WARDEN_RULE_LINE}\u001b[39m`);
-		expect(out).toContain("\u001b[2m  Decision order:\u001b[22m");
+		expect(out).toContain('\u001b[32m+     "SessionEnd": [');
 		expect(out).toContain('\u001b[31m-   "model": "opus"\u001b[39m');
 		expect(out).toContain("\u001b[32m✓\u001b[39m settings");
 	});
@@ -427,7 +422,7 @@ describe("warden install (prompts + ui)", () => {
 		seedClaude(home);
 		expect(await runInstall(c, deps)).toBe(0);
 		expect(questions).toEqual([]);
-		expect(read(claudeFile(home, "rules", "argent.md"))).toContain(WARDEN_RULE_LINE);
+		expect(JSON.parse(read(claudeFile(home, "settings.json"))).hooks.SessionEnd).toHaveLength(1);
 	});
 });
 

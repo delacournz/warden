@@ -1,8 +1,10 @@
 import { err, ok, type Result } from "@delacour/warden-types/result";
-import { ARGENT_MATCHER } from "./claude-pretool";
-import { isJsonObject, isRecord, type JsonObject } from "./json";
+import { isJsonObject, isRecord, type Json, type JsonObject } from "./json";
 
 export type HookName = "pretool" | "session-end";
+
+/** Hooks older versions installed that `warden install` now removes (`warden hook pretool` is a no-op). */
+export const RETIRED_HOOKS: readonly HookName[] = ["pretool"];
 
 export type WardenHookSpec = {
 	event: "PreToolUse" | "SessionEnd";
@@ -12,10 +14,7 @@ export type WardenHookSpec = {
 };
 
 /** Hooks `warden install --claude` adds to `~/.claude/settings.json`. */
-export const WARDEN_HOOKS: readonly WardenHookSpec[] = [
-	{ event: "PreToolUse", name: "pretool", matcher: ARGENT_MATCHER, timeout: 30 },
-	{ event: "SessionEnd", name: "session-end", timeout: 30 },
-];
+export const WARDEN_HOOKS: readonly WardenHookSpec[] = [{ event: "SessionEnd", name: "session-end", timeout: 30 }];
 
 /** Matches `warden hook <name>` in any hook command (bare `warden` or a path to the binary). */
 function commandPattern(name: HookName): RegExp {
@@ -38,6 +37,34 @@ export function hasWardenHook(settings: unknown, name: HookName): boolean {
 
 export type MergedSettings = { settings: JsonObject; changed: boolean };
 
+/** Drops the `warden hook <name>` commands of retired hooks; a group left without hooks goes too. Returns whether anything went. */
+function removeRetired(hooks: JsonObject): boolean {
+	let removed = false;
+	for (const [event, groups] of Object.entries(hooks)) {
+		if (!Array.isArray(groups)) continue;
+		let touched = false;
+		const kept = groups.flatMap((group: Json): Json[] => {
+			if (!isJsonObject(group) || !Array.isArray(group.hooks)) return [group];
+			const left = group.hooks.filter(
+				(h) =>
+					!(
+						isRecord(h) &&
+						typeof h.command === "string" &&
+						RETIRED_HOOKS.some((name) => commandPattern(name).test(String(h.command)))
+					)
+			);
+			if (left.length === group.hooks.length) return [group];
+			touched = true;
+			removed = true;
+			return left.length > 0 ? [{ ...group, hooks: left }] : [];
+		});
+		if (!touched) continue;
+		if (kept.length > 0) hooks[event] = kept;
+		else delete hooks[event];
+	}
+	return removed;
+}
+
 /**
  * Add `specs` to a Claude-style hooks document (`{ hooks: { Event: [{ matcher?, hooks: [...] }] } }` —
  * Claude's settings.json and Codex's hooks.json share it). Pure + idempotent: other keys and hooks are
@@ -56,7 +83,7 @@ export function mergeWardenHooks(
 	const rawHooks = settings.hooks ?? {};
 	if (!isJsonObject(rawHooks)) return err(`${file} \`hooks\` is not an object`);
 	const hooks: JsonObject = rawHooks;
-	let changed = false;
+	let changed = removeRetired(hooks);
 	for (const spec of specs) {
 		const groups = hooks[spec.event] ?? [];
 		if (!Array.isArray(groups)) return err(`${file} \`hooks.${spec.event}\` is not an array`);

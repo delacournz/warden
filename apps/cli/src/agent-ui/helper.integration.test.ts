@@ -190,10 +190,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 				store: () => c.db,
 				now: c.now,
 				pidAlive: () => true,
-				gitInfo: () => undefined,
-				deviceState: async () => undefined,
 				shutdown: async () => ({ shutdown: [], notes: [] }),
-				maybeGc: () => undefined,
 				endInBackground: () => false,
 				stopHelper: stopHelperAfter(c),
 			}

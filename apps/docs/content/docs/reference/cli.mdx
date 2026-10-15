@@ -289,9 +289,9 @@ Install warden to `~/.local/bin` plus hooks for detected agents. `--claude`, `--
 
 `install --from local|github`, `--project`, `-a/--agent <agent...>`, `--copy`, `-y`, `--dry-run`.
 
-### `warden hook pretool | session-end`
+### `warden hook session-end`
 
-The agent hook entrypoints. Called by Claude Code / Codex, not by hand.
+The SessionEnd hook entrypoint: shuts down what the session booted and releases its leases. Called by Claude Code / Codex, not by hand. `warden hook pretool` still exists as a silent no-op, so a PreToolUse hook written by an older warden keeps working; `warden install` removes that hook.
 
 ### `warden doctor`
 

@@ -53,7 +53,7 @@ const resultsPath = (env: Record<string, string | undefined>) => join(env.WARDEN
 
 /** `result()` for a spec file of the suite's flows dir. */
 const spec = (flow: string, title: string, status: TestResult["status"] = "passed", extra: Partial<TestResult> = {}) =>
-	result(join(dir, `flows/${flow}.yaml`), title, status, extra);
+	result(join(dir, `flows/${flow}.e2e.ts`), title, status, extra);
 
 const reportOf = (files: Map<string, string>, c: TestContext): E2eReport =>
 	JSON.parse(files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "e2e-report.json")) ?? "{}");
@@ -68,7 +68,7 @@ describe("warden e2e", () => {
 		const jobs = h.jobs();
 		expect(jobs.map((j) => j.opts.env.WARDEN_JOB).sort()).toEqual(["chats", "settings"]);
 		const chats = jobs.find((j) => j.opts.env.WARDEN_JOB === "chats");
-		expect(chats?.cmd).toEqual(bunTest(join(dir, "flows/chats.yaml")));
+		expect(chats?.cmd).toEqual(bunTest(join(dir, "flows/chats.e2e.ts")));
 		expect(chats?.opts.cwd).toBe(dir);
 		const report = reportOf(h.files, c);
 		expect(report).toMatchObject({ suite: "mobile", platform: "ios", base: "main", ok: true });
@@ -370,7 +370,7 @@ describe("warden e2e", () => {
 				PRELOAD,
 				"--timeout",
 				"210000",
-				join(dir, "flows/chats.yaml"),
+				join(dir, "flows/chats.e2e.ts"),
 			]);
 			expect(job?.opts.env).toMatchObject({
 				WARDEN_PLATFORM: "ios",
@@ -471,7 +471,7 @@ describe("warden e2e", () => {
 	});
 
 	describe("mode: single", () => {
-		const flowFiles = () => ["chats", "settings"].map((id) => join(dir, `flows/${id}.yaml`));
+		const flowFiles = () => ["chats", "settings"].map((id) => join(dir, `flows/${id}.e2e.ts`));
 		const shardOf = (job: Spawned | undefined) => job?.opts.env.WARDEN_JOB;
 
 		test("one bun test process per device over its round-robin shard of the flows", async () => {
@@ -481,8 +481,8 @@ describe("warden e2e", () => {
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			const jobs = h.jobs().sort((a, b) => (shardOf(a) ?? "").localeCompare(shardOf(b) ?? ""));
 			expect(jobs.map(shardOf)).toEqual(["shard-0", "shard-1"]);
-			expect(jobs[0]?.cmd).toEqual(bunTest(join(dir, "flows/chats.yaml")));
-			expect(jobs[1]?.cmd).toEqual(bunTest(join(dir, "flows/settings.yaml")));
+			expect(jobs[0]?.cmd).toEqual(bunTest(join(dir, "flows/chats.e2e.ts")));
+			expect(jobs[1]?.cmd).toEqual(bunTest(join(dir, "flows/settings.e2e.ts")));
 			expect(new Set(jobs.map((j) => j.opts.env.WARDEN_UDID)).size).toBe(2);
 			for (const j of jobs) expect(j.opts.env.WARDEN_FLOWS).toBeUndefined();
 			expect(c.db.listLeases()).toEqual([]);
@@ -662,7 +662,7 @@ describe("warden e2e", () => {
 			expect(await createE2eCommand(junk.deps).run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain("chats: no results.jsonl — verdict from exit code 1");
 
-			const cut = writing(() => `${jsonl(spec("chats", "opens"))}{"file":"${join(dir, "flows/chats.yaml")}","ti`);
+			const cut = writing(() => `${jsonl(spec("chats", "opens"))}{"file":"${join(dir, "flows/chats.e2e.ts")}","ti`);
 			expect(await createE2eCommand(cut.deps).run(c)).toBe(0);
 			expect(reportOf(cut.files, c).flows[0]?.tests).toHaveLength(1);
 		});
@@ -673,8 +673,8 @@ describe("warden e2e", () => {
 			c.env = { ...c.env, CI: "true" };
 			const h = writing(build);
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
-			expect(c.stderr.join("\n")).toContain(`test.only left in ${join(dir, "flows/chats.yaml")}`);
-			expect(reportOf(h.files, c)).toMatchObject({ ok: false, only: [join(dir, "flows/chats.yaml")] });
+			expect(c.stderr.join("\n")).toContain(`test.only left in ${join(dir, "flows/chats.e2e.ts")}`);
+			expect(reportOf(h.files, c)).toMatchObject({ ok: false, only: [join(dir, "flows/chats.e2e.ts")] });
 			expect(reportOf(h.files, c).flows[0]?.verdict).toBe("passed");
 
 			c.env = { ...c.env, CI: "" };
@@ -729,7 +729,7 @@ describe("warden e2e", () => {
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			expect(h.jobs().map((j) => [j.cmd, j.opts.env.WARDEN_UDID, j.opts.env.WARDEN_LEG])).toEqual([
-				[bunTest(join(dir, "flows/chats.yaml")), "U1", "iphone-17"],
+				[bunTest(join(dir, "flows/chats.e2e.ts")), "U1", "iphone-17"],
 			]);
 			expect(reportOf(h.files, c).flows.map((f) => [f.id, f.leg, f.verdict])).toEqual([
 				["chats", "iphone-17", "passed"],
@@ -743,7 +743,7 @@ describe("warden e2e", () => {
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
 			const byLeg = new Map(h.jobs().map((j) => [j.opts.env.WARDEN_LEG, j]));
 			expect([...byLeg.keys()].sort()).toEqual(["ipad", "iphone-17"]);
-			expect(byLeg.get("ipad")?.cmd).toEqual(bunTest(join(dir, "flows/chats.yaml")));
+			expect(byLeg.get("ipad")?.cmd).toEqual(bunTest(join(dir, "flows/chats.e2e.ts")));
 			expect(byLeg.get("ipad")?.opts.env).toMatchObject({
 				WARDEN_UDID: "P1",
 				WARDEN_UDIDS: "P1",

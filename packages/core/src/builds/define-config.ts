@@ -293,7 +293,7 @@ export interface WardenE2eFlow {
 	/**
 	 * Platforms the flow runs on.
 	 *
-	 * @default from the id (`-ios-` / `-android-`), then the `launch` map, else both
+	 * @default from the id (`-ios-` / `-android-`), else both
 	 */
 	platforms?: WardenPlatform[] | undefined;
 	/** Overrides the suite's `maxDepth`. */
@@ -401,7 +401,7 @@ export interface WardenE2eSuite {
 	 * Needed when the config has several projects and warden runs from the repo root.
 	 */
 	project?: string | undefined;
-	/** Directory of flows: YAML files, or `*.e2e.ts(x)` tests whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
+	/** Directory of flows: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	flowsDir: string;
 	/**
 	 * Removed: flows run with `@delacour/warden-e2e` (`bun test`). A config that still sets it fails

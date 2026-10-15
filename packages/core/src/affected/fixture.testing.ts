@@ -60,8 +60,8 @@ export async function makeSuiteRepo(
 ): Promise<{ dir: string; write: (path: string, text: string) => void }> {
 	const repo = makeFixtureRepo();
 	const { dir, write } = repo;
-	write("flows/chats.yaml", "steps:\n  - launch: com.x\n");
-	write("flows/settings.yaml", "steps:\n  - launch: com.x\n");
+	write("flows/chats.e2e.ts", "export {};\n");
+	write("flows/settings.e2e.ts", "export {};\n");
 	write(".gitignore", "node_modules\n");
 	write(
 		"warden.config.json",
