@@ -2,8 +2,15 @@ import { afterAll, setDefaultTimeout } from "bun:test";
 import { defaultDriverFactory } from "./driver/open";
 import { readEnv } from "./env";
 import { E2eError } from "./errors";
+import { defaultFixtureFactory } from "./runner/fixtures";
 import { BUN_TIMEOUT_MARGIN_MS, onlyWasSeen } from "./runner/scope";
-import { getSession, hasDefaultDriverFactory, setDefaultDriverFactory } from "./session";
+import {
+	getSession,
+	hasDefaultDriverFactory,
+	hasDefaultFixtureFactory,
+	setDefaultDriverFactory,
+	setDefaultFixtureFactory,
+} from "./session";
 
 export { BUN_TIMEOUT_MARGIN_MS };
 
@@ -48,6 +55,7 @@ export function installPreload(deps: PreloadDeps): void {
 }
 
 if (!hasDefaultDriverFactory()) setDefaultDriverFactory(defaultDriverFactory);
+if (!hasDefaultFixtureFactory()) setDefaultFixtureFactory(defaultFixtureFactory);
 installPreload({
 	env: process.env,
 	setDefaultTimeout,

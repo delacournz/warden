@@ -181,6 +181,7 @@ export async function runAttempt<F extends object>(session: Session, spec: Attem
 			{ clock }
 		)
 	);
+	session.softFailures.length = 0;
 	session.enterAttempt(ctx);
 
 	let deadlineHit = false;
@@ -276,6 +277,17 @@ async function setUpAndRun<F extends object>(
 	}
 	// the one unchecked step of `test.extend`: its fixtures are typed `F`, built from the entries above
 	await spec.body(built as unknown as F);
+	throwSoftFailures(session);
+}
+
+/** `expect.soft` failures fail the attempt once the body is done (a body that threw reports its own error instead). */
+function throwSoftFailures(session: Session): void {
+	const { softFailures } = session;
+	const [first] = softFailures;
+	if (first === undefined) return;
+	if (softFailures.length === 1) throw first;
+	const lines = softFailures.map((error, index) => `${index + 1}) ${error.message}`);
+	throw new E2eError("ASSERTION", `${softFailures.length} soft assertions failed:\n${lines.join("\n")}`);
 }
 
 /** `failure.png` + `screen-at-failure.txt` from the already-open driver (never opens one); problems go to the trace. */

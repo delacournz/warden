@@ -223,6 +223,39 @@ describe("several files in one process", () => {
 	});
 });
 
+describe("default fixtures", () => {
+	test("screen taps through the real chain: fixture factory, locator, driver", async () => {
+		const run = await runSpec("screen");
+		expect(run.exitCode).toBe(1);
+		expect(run.log).toEqual(['taps=1 at {"x":195,"y":22}', "welcome=true", "snapshot has button=true"]);
+
+		const tapped = byTitle(run, "taps a locator through app, device and screen");
+		expect(tapped.status).toBe("passed");
+		const trace = readTrace(readFileSync(join(tapped.artifacts?.dir ?? "", "trace.jsonl"), "utf8"));
+		expect(trace.some((e) => e.type === "step-end" && e.kind === "locator" && /tap/.test(e.label))).toBe(true);
+
+		const missing = byTitle(run, "a locator that matches nothing fails with LOCATOR_NOT_FOUND and the screen excerpt");
+		expect(missing).toMatchObject({ status: "failed", error: { code: "LOCATOR_NOT_FOUND" } });
+		expect(missing.error?.message).toContain("missing");
+		expect(missing.artifacts?.files).toContain("screen-at-failure.txt");
+	});
+});
+
+describe("soft failures", () => {
+	test("fail the attempt after the body, are reported together, and reset for the next attempt", async () => {
+		const run = await runSpec("soft");
+		expect(run.exitCode).toBe(1);
+		const many = byTitle(run, "soft failures fail the attempt after the body");
+		expect(many).toMatchObject({ status: "failed", error: { code: "ASSERTION" } });
+		expect(many.error?.message).toContain("2 soft assertions failed");
+		expect(many.error?.message).toContain("1) first soft");
+		expect(many.error?.message).toContain("2) second soft");
+		expect(byTitle(run, "one soft failure is reported as is").error?.message).toBe("only soft");
+		expect(byTitle(run, "the list starts empty for every attempt").status).toBe("passed");
+		expect(run.log).toEqual(["body finished", "soft=0"]);
+	});
+});
+
 describe("launch", () => {
 	test("fresh (default) opens the app before the body with WARDEN_LAUNCH_ARGS; none leaves it to the body", async () => {
 		const run = await runSpec("launch", { WARDEN_LAUNCH_ARGS: '["--initialUrl","http://x"]' });

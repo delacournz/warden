@@ -1,13 +1,11 @@
 import type { App } from "../app";
 import type { Device } from "../device";
 import type { Platform } from "../driver/driver.types";
+import type { Screen } from "../screen/screen";
 import type { Session } from "../session";
 import type { TraceWriter } from "./trace";
 
-/** The `screen` fixture. TODO(T4): replace with the real `Screen` once it lands. */
-export type Screen = object;
-
-export type { App, Device };
+export type { App, Device, Screen };
 
 /** What every test receives; `test.extend` adds to it. */
 export type BaseFixtures = { app: App; device: Device; screen: Screen; platform: Platform };
