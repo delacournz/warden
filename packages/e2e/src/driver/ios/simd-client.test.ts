@@ -173,7 +173,7 @@ describe("requests", () => {
 			},
 		});
 		const snapshot = await client.request("snapshot", { interactiveOnly: true });
-		expect(snapshot.success && snapshot.data.elements[0]?.children[0]?.identifier).toBe("go");
+		expect(snapshot.success && snapshot.data.elements[0]?.children?.[0]?.identifier).toBe("go");
 		const settle = await client.request("settle", { quietMs: 100, timeoutMs: 1000 });
 		expect(!settle.success && settle.error.code).toBe("E_INTERNAL");
 		expect(!settle.success && settle.error.message).toContain("settle");

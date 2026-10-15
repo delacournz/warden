@@ -52,10 +52,22 @@ const ROLES = [
 
 const pointSchema = z.object({ x: z.number(), y: z.number() });
 
-/** One normalized AX node as the helper sends it (`flat` is derived client-side). */
-export const elementSchema: z.ZodType<Element> = z.lazy(() =>
+/**
+ * One AX node as the helper sends it. `id`, `normFrame`, `depth`, `traits`, `enabled` and `children`
+ * may be omitted (the TS driver fills them in `normalize.ts`), everything else is the `Element` shape.
+ */
+export type WireElement = Omit<Element, "id" | "normFrame" | "depth" | "children" | "traits" | "enabled"> & {
+	id?: string;
+	normFrame?: Rect;
+	depth?: number;
+	traits?: string[];
+	enabled?: boolean;
+	children?: WireElement[];
+};
+
+export const wireElementSchema: z.ZodType<WireElement> = z.lazy(() =>
 	z.object({
-		id: z.string(),
+		id: z.string().optional(),
 		role: z.enum(ROLES),
 		rawType: z.string(),
 		label: z.string().optional(),
@@ -64,9 +76,9 @@ export const elementSchema: z.ZodType<Element> = z.lazy(() =>
 		text: z.string().optional(),
 		placeholder: z.string().optional(),
 		frame: rectSchema,
-		normFrame: rectSchema,
-		traits: z.array(z.string()),
-		enabled: z.boolean(),
+		normFrame: rectSchema.optional(),
+		traits: z.array(z.string()).optional(),
+		enabled: z.boolean().optional(),
 		focused: z.boolean().optional(),
 		hidden: z.boolean().optional(),
 		selected: z.boolean().optional(),
@@ -74,8 +86,8 @@ export const elementSchema: z.ZodType<Element> = z.lazy(() =>
 		hittable: z.boolean().optional(),
 		tapPoint: pointSchema.optional(),
 		pid: z.number().optional(),
-		depth: z.number(),
-		children: z.array(elementSchema),
+		depth: z.number().optional(),
+		children: z.array(wireElementSchema).optional(),
 	})
 );
 
@@ -163,12 +175,12 @@ export const snapshotDataSchema = z.looseObject({
 	screen: screenInfoSchema,
 	modal: z.object({ pid: z.number().optional(), description: z.string().optional() }).optional(),
 	truncated: z.boolean(),
-	elements: z.array(elementSchema),
+	elements: z.array(wireElementSchema),
 	ms: z.number(),
 });
 export type SnapshotData = z.infer<typeof snapshotDataSchema>;
 
-export const elementAtPointDataSchema = elementSchema.nullable();
+export const elementAtPointDataSchema = wireElementSchema.nullable();
 
 /** `path` when the helper wrote the PNG itself, else `png` as base64. */
 export const screenshotDataSchema = z.looseObject({
@@ -182,6 +194,21 @@ export type ScreenshotData = z.infer<typeof screenshotDataSchema>;
 export const settleDataSchema = z.looseObject({ quiet: z.boolean(), waitedMs: z.number() });
 export type SettleData = z.infer<typeof settleDataSchema>;
 
+/** `alertButtons`: the system alert / sheet on top, `null` when there is none. */
+export const alertButtonsDataSchema = z
+	.object({
+		title: z.string().optional(),
+		message: z.string().optional(),
+		buttons: z.array(wireElementSchema),
+	})
+	.nullable();
+export type AlertButtonsData = z.infer<typeof alertButtonsDataSchema>;
+
+export const orientationDataSchema = z.object({
+	orientation: z.enum(["portrait", "portraitUpsideDown", "landscapeLeft", "landscapeRight"]),
+});
+export type OrientationData = z.infer<typeof orientationDataSchema>;
+
 /** Ops whose `data` the client validates and types; every other op's data stays `unknown`. */
 export const opSchemas = {
 	health: healthDataSchema,
@@ -189,14 +216,18 @@ export const opSchemas = {
 	elementAtPoint: elementAtPointDataSchema,
 	screenshot: screenshotDataSchema,
 	settle: settleDataSchema,
+	alertButtons: alertButtonsDataSchema,
+	orientation: orientationDataSchema,
 } as const;
 
 export type OpDataMap = {
 	health: HealthData;
 	snapshot: SnapshotData;
-	elementAtPoint: Element | null;
+	elementAtPoint: WireElement | null;
 	screenshot: ScreenshotData;
 	settle: SettleData;
+	alertButtons: AlertButtonsData;
+	orientation: OrientationData;
 };
 
 export type OpData<Op extends string> = Op extends keyof OpDataMap ? OpDataMap[Op] : unknown;

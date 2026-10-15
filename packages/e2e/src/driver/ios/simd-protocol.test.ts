@@ -112,7 +112,7 @@ describe("data schemas", () => {
 			ms: 31,
 		});
 		expect(parsed.success).toBe(true);
-		expect(parsed.success && parsed.data.elements[0]?.children[0]?.identifier).toBe("go");
+		expect(parsed.success && parsed.data.elements[0]?.children?.[0]?.identifier).toBe("go");
 	});
 
 	test("snapshot data rejects an unknown role", () => {

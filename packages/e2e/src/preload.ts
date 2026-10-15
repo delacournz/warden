@@ -1,6 +1,7 @@
 import { afterAll, setDefaultTimeout } from "bun:test";
+import { defaultDriverFactory } from "./driver/open";
 import { readEnv } from "./env";
-import { getSession } from "./session";
+import { getSession, setDefaultDriverFactory } from "./session";
 
 /** Headroom over the per-test timeout so warden's `AbortSignal` deadline fires before bun's own. */
 export const BUN_TIMEOUT_MARGIN_MS = 30_000;
@@ -32,6 +33,7 @@ export function installPreload(deps: PreloadDeps): void {
 	deps.afterAll(() => session.close());
 }
 
+setDefaultDriverFactory(defaultDriverFactory);
 installPreload({
 	env: process.env,
 	setDefaultTimeout,

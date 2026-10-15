@@ -319,7 +319,7 @@ export async function createSimdClient(
 			}, timeoutMs);
 			pending.set(id, { op, resolve, timer });
 			try {
-				transport.send(encodeRequest({ ...params, id, op, timeoutMs }));
+				transport.send(encodeRequest({ timeoutMs, ...params, id, op }));
 			} catch (error) {
 				clearTimeout(timer);
 				pending.delete(id);

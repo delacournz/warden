@@ -1,0 +1,284 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { nodeResetFs, type ResetFs, resetAppData } from "@delacour/warden-core/builds/install";
+import { type Exec, type ExecResult, execError } from "@delacour/warden-core/exec";
+import type { DriverError, DriverResult, LaunchOptions } from "../driver.types";
+import { driverError } from "../errors";
+
+/**
+ * Everything the iOS driver does through `xcrun simctl` instead of the helper: app lifecycle,
+ * clipboard, appearance, status bar, the screenshot fallback and the AX automation flag. Argv builders
+ * are pure; `createSimctl` binds them to an injected `Exec`.
+ */
+
+const XCRUN = ["xcrun", "simctl"] as const;
+
+const SHORT_MS = 15_000;
+const LAUNCH_MS = 30_000;
+const INSTALL_MS = 10 * 60_000;
+
+export const SIMCTL_CHILD_PREFIX = "SIMCTL_CHILD_";
+
+// ---------- argv builders ----------
+
+/** `xcrun simctl launch [--terminate-running-process] <udid> <bundle> <args…>` (env goes through `SIMCTL_CHILD_*`, see {@link launchEnv}). */
+export function launchArgv(udid: string, bundleId: string, opts: LaunchOptions = {}): string[] {
+	return [
+		...XCRUN,
+		"launch",
+		...(opts.relaunch === false ? [] : ["--terminate-running-process"]),
+		udid,
+		bundleId,
+		...(opts.args ?? []),
+	];
+}
+
+/** simctl forwards `SIMCTL_CHILD_<NAME>` from its own environment to the launched app as `<NAME>`. */
+export function launchEnv(env: Record<string, string> | undefined): Record<string, string> {
+	return Object.fromEntries(Object.entries(env ?? {}).map(([key, value]) => [`${SIMCTL_CHILD_PREFIX}${key}`, value]));
+}
+
+export const terminateArgv = (udid: string, bundleId: string): string[] => [...XCRUN, "terminate", udid, bundleId];
+export const openUrlArgv = (udid: string, url: string): string[] => [...XCRUN, "openurl", udid, url];
+export const installArgv = (udid: string, appPath: string): string[] => [...XCRUN, "install", udid, appPath];
+export const uninstallArgv = (udid: string, bundleId: string): string[] => [...XCRUN, "uninstall", udid, bundleId];
+/** Exit 0 and a path on stdout when installed; non-zero when not. */
+export const appContainerArgv = (udid: string, bundleId: string): string[] => [
+	...XCRUN,
+	"get_app_container",
+	udid,
+	bundleId,
+];
+/** Lists launchd jobs inside the simulator; a running app shows up as `UIKitApplication:<bundle>[…]` with a PID. */
+export const launchctlListArgv = (udid: string): string[] => [...XCRUN, "spawn", udid, "launchctl", "list"];
+export const pbpasteArgv = (udid: string): string[] => [...XCRUN, "pbpaste", udid];
+export const appearanceArgv = (udid: string, set?: "light" | "dark"): string[] => [
+	...XCRUN,
+	"ui",
+	udid,
+	"appearance",
+	...(set ? [set] : []),
+];
+export const screenshotArgv = (udid: string, path: string): string[] => [
+	...XCRUN,
+	"io",
+	udid,
+	"screenshot",
+	"--type=png",
+	path,
+];
+/** `AutomationEnabled` lets the AX bridge attach without the runner app; written once per open. */
+export const automationArgv = (udid: string): string[] => [
+	...XCRUN,
+	"spawn",
+	udid,
+	"defaults",
+	"write",
+	"com.apple.Accessibility",
+	"AutomationEnabled",
+	"-bool",
+	"true",
+];
+
+export type StatusBarOverrides = {
+	time?: string;
+	batteryLevel?: number;
+	batteryState?: "charged" | "charging" | "discharging";
+	wifiBars?: number;
+	cellularBars?: number;
+};
+
+/** Clean 9:41 status bar by default (stable screenshots); pass `undefined` fields to drop them. */
+export function statusBarOverrideArgv(udid: string, o: StatusBarOverrides = {}): string[] {
+	const time = o.time ?? "9:41";
+	const flags: Array<[string, string]> = [
+		["--time", time],
+		["--batteryState", o.batteryState ?? "charged"],
+		["--batteryLevel", String(o.batteryLevel ?? 100)],
+		["--wifiBars", String(o.wifiBars ?? 3)],
+		["--cellularBars", String(o.cellularBars ?? 4)],
+	];
+	return [...XCRUN, "status_bar", udid, "override", ...flags.flat()];
+}
+
+export const statusBarClearArgv = (udid: string): string[] => [...XCRUN, "status_bar", udid, "clear"];
+
+/**
+ * `simctl pbcopy` reads stdin and `Exec` has none, so the text rides as `$1` of a tiny `sh -c`
+ * (never interpolated into the script): `printf %s "$1" | xcrun simctl pbcopy "$2"`.
+ */
+export function pbcopyArgv(udid: string, text: string): string[] {
+	return ["sh", "-c", 'printf %s "$1" | xcrun simctl pbcopy "$2"', "sh", text, udid];
+}
+
+// ---------- parsing ----------
+
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** `launchctl list` rows are `PID  STATUS  LABEL`; PID is `-` for loaded-but-not-running jobs. */
+export function parseRunning(launchctlOutput: string, bundleId: string): boolean {
+	const row = new RegExp(`^\\s*(\\d+)\\s+\\S+\\s+UIKitApplication:${escapeRegExp(bundleId)}\\[`, "m");
+	return row.test(launchctlOutput);
+}
+
+// ---------- failures ----------
+
+/** Map a failed simctl run to a `DriverError`. `appCommand` marks launch-like calls where "not installed" means the app, not the device. */
+export function simctlFailure(argv: readonly string[], res: ExecResult, appCommand = false): DriverError {
+	const text = `${res.stderr}\n${res.stdout}`;
+	const message = execError(argv, res);
+	const detail = { argv, exitCode: res.exitCode };
+	if (/current state:\s*(Shutdown|Creating|Shutting Down)/i.test(text) || /Unable to .* not booted/i.test(text)) {
+		return driverError("E_NOT_BOOTED", message, { detail });
+	}
+	if (/Invalid device|No devices are booted|device .* not found/i.test(text)) {
+		return driverError("E_UNKNOWN_DEVICE", message, { detail });
+	}
+	if (
+		appCommand &&
+		/not installed|found nothing|FBSOpenApplicationServiceErrorDomain|No such (file|app)|unknown app/i.test(text)
+	) {
+		return driverError("E_APP_UNAVAILABLE", message, { detail });
+	}
+	return driverError("E_IO", message, { detail });
+}
+
+// ---------- runner ----------
+
+export type SimctlDeps = {
+	udid: string;
+	exec: Exec;
+	/** forwarded to core's installer helpers (resolves `adb`; unused on iOS but part of their deps) */
+	env?: Record<string, string | undefined>;
+	/** app data wipe filesystem; defaults to node fs */
+	resetFs?: ResetFs;
+	/** where the screenshot fallback writes before reading back; defaults to a fresh `os.tmpdir()` dir */
+	scratchDir?: () => Promise<string>;
+	readFile?: (path: string) => Promise<Uint8Array>;
+	rmDir?: (path: string) => Promise<void>;
+};
+
+export type Simctl = {
+	launch(bundleId: string, opts?: LaunchOptions): DriverResult<void>;
+	terminate(bundleId: string): DriverResult<void>;
+	openUrl(url: string): DriverResult<void>;
+	install(path: string): DriverResult<void>;
+	uninstall(bundleId: string): DriverResult<void>;
+	isInstalled(bundleId: string): DriverResult<boolean>;
+	isRunning(bundleId: string): DriverResult<boolean>;
+	clearData(bundleId: string, opts?: { keychain?: boolean }): DriverResult<void>;
+	pbcopy(text: string): DriverResult<void>;
+	pbpaste(): DriverResult<string>;
+	appearance(set?: "light" | "dark"): DriverResult<"light" | "dark">;
+	statusBar(overrides?: StatusBarOverrides | "clear"): DriverResult<void>;
+	/** `simctl io screenshot` to `path`, or (no path) to a scratch file read back as PNG bytes */
+	screenshot(path?: string): DriverResult<{ path?: string; png?: Uint8Array }>;
+	/** `defaults write com.apple.Accessibility AutomationEnabled -bool true` inside the sim */
+	enableAutomation(): DriverResult<void>;
+};
+
+const ok = <T>(data: T) => ({ success: true as const, data });
+
+export function createSimctl(deps: SimctlDeps): Simctl {
+	const { udid, exec } = deps;
+	const env = deps.env ?? {};
+
+	async function run(argv: string[], timeoutMs: number, appCommand = false, envOverride?: Record<string, string>) {
+		const res = await exec(argv, { timeoutMs, ...(envOverride ? { env: envOverride } : {}) });
+		return res.exitCode === 0
+			? { ok: true as const, res }
+			: { ok: false as const, error: simctlFailure(argv, res, appCommand) };
+	}
+
+	async function runVoid(argv: string[], timeoutMs = SHORT_MS, appCommand = false): ReturnType<Simctl["terminate"]> {
+		const result = await run(argv, timeoutMs, appCommand);
+		return result.ok ? ok(undefined) : { success: false, error: result.error };
+	}
+
+	const probe = async (bundleId: string) => {
+		const argv = appContainerArgv(udid, bundleId);
+		const res = await exec(argv, { timeoutMs: SHORT_MS });
+		return res.exitCode === 0 && res.stdout.trim() !== "";
+	};
+
+	async function screenshotToScratch(): ReturnType<Simctl["screenshot"]> {
+		const dir = await (deps.scratchDir ?? (() => mkdtemp(join(tmpdir(), "warden-shot-"))))();
+		const file = join(dir, "screen.png");
+		try {
+			const done = await runVoid(screenshotArgv(udid, file), LAUNCH_MS);
+			if (!done.success) return done;
+			const bytes = await (deps.readFile ?? ((p: string) => readFile(p)))(file);
+			return ok({ png: new Uint8Array(bytes) });
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			return { success: false, error: driverError("E_IO", `reading screenshot: ${reason}`) };
+		} finally {
+			await (deps.rmDir ?? ((p: string) => rm(p, { recursive: true, force: true })))(dir).catch(() => undefined);
+		}
+	}
+
+	return {
+		async launch(bundleId, opts = {}) {
+			const result = await run(launchArgv(udid, bundleId, opts), LAUNCH_MS, true, launchEnv(opts.env));
+			return result.ok ? ok(undefined) : { success: false, error: result.error };
+		},
+		async terminate(bundleId) {
+			const argv = terminateArgv(udid, bundleId);
+			const res = await exec(argv, { timeoutMs: SHORT_MS });
+			// "found nothing to terminate": already gone is the desired state
+			if (res.exitCode === 0 || /found nothing to terminate/i.test(`${res.stderr}${res.stdout}`)) return ok(undefined);
+			return { success: false, error: simctlFailure(argv, res) };
+		},
+		openUrl: (url) => runVoid(openUrlArgv(udid, url), SHORT_MS, true),
+		install: (path) => runVoid(installArgv(udid, path), INSTALL_MS),
+		async uninstall(bundleId) {
+			if (!(await probe(bundleId))) return ok(undefined);
+			return runVoid(uninstallArgv(udid, bundleId), INSTALL_MS);
+		},
+		async isInstalled(bundleId) {
+			return ok(await probe(bundleId));
+		},
+		async isRunning(bundleId) {
+			const result = await run(launchctlListArgv(udid), SHORT_MS);
+			return result.ok ? ok(parseRunning(result.res.stdout, bundleId)) : { success: false, error: result.error };
+		},
+		async clearData(bundleId, opts = {}) {
+			const reset = await resetAppData(
+				{ exec, env, fs: deps.resetFs ?? nodeResetFs },
+				{ platform: "ios", deviceId: udid },
+				bundleId,
+				opts.keychain ? { keychain: true } : {}
+			);
+			if (reset.success) return ok(undefined);
+			const code = /is not installed/.test(reset.error) ? "E_APP_UNAVAILABLE" : "E_IO";
+			return { success: false, error: driverError(code, reset.error) };
+		},
+		pbcopy: (text) => runVoid(pbcopyArgv(udid, text)),
+		async pbpaste() {
+			const result = await run(pbpasteArgv(udid), SHORT_MS);
+			return result.ok ? ok(result.res.stdout) : { success: false, error: result.error };
+		},
+		async appearance(set) {
+			if (set) {
+				const done = await runVoid(appearanceArgv(udid, set));
+				return done.success ? ok(set) : done;
+			}
+			const result = await run(appearanceArgv(udid), SHORT_MS);
+			if (!result.ok) return { success: false, error: result.error };
+			const value = result.res.stdout.trim();
+			if (value === "light" || value === "dark") return ok(value);
+			return { success: false, error: driverError("E_UNSUPPORTED", `simctl ui appearance reported \`${value}\``) };
+		},
+		statusBar: (overrides) =>
+			runVoid(overrides === "clear" ? statusBarClearArgv(udid) : statusBarOverrideArgv(udid, overrides)),
+		async screenshot(path) {
+			if (!path) return screenshotToScratch();
+			const done = await runVoid(screenshotArgv(udid, path), LAUNCH_MS);
+			return done.success ? ok({ path }) : done;
+		},
+		enableAutomation: () => runVoid(automationArgv(udid)),
+	};
+}
