@@ -141,3 +141,87 @@ export function animationScaleArgvs(): string[][] {
 export function screencapArgv(adb: string, serial: string): string[] {
 	return [adb, "-s", serial, "exec-out", "screencap", "-p"];
 }
+
+/** `getprop <key>` (boot flag, sdk level, model). */
+export function getpropArgv(key: string): string[] {
+	return ["getprop", key];
+}
+
+export const WM_SIZE_ARGV: readonly string[] = ["wm", "size"];
+export const WM_DENSITY_ARGV: readonly string[] = ["wm", "density"];
+
+export const DUMP_FILE_PATH = "/sdcard/warden-ui.xml";
+
+/** Route 1: dump straight to the session's stdout. */
+export function dumpStdoutArgv(): string[] {
+	return ["uiautomator", "dump", "/dev/stdout"];
+}
+
+/** Route 2 (host argv): `exec-out` gives uiautomator a tty-less stdout it accepts as `/dev/tty`. */
+export function dumpTtyHostArgv(adb: string, serial: string): string[] {
+	return [adb, "-s", serial, "exec-out", "uiautomator", "dump", "/dev/tty"];
+}
+
+/** Route 3: dump to a file on the device then `cat` it (works on every image). */
+export function dumpFileCommand(path: string = DUMP_FILE_PATH): string {
+	return `${shellCommand(["uiautomator", "dump", path])} >/dev/null 2>&1; ${shellCommand(["cat", path])}`;
+}
+
+/** Host argv: `adb -s <serial> install -r <apk>`. */
+export function installArgv(adb: string, serial: string, apkPath: string): string[] {
+	return [adb, "-s", serial, "install", "-r", apkPath];
+}
+
+export function uninstallArgv(adb: string, serial: string, packageName: string): string[] {
+	return [adb, "-s", serial, "uninstall", packageName];
+}
+
+/** Exit 0 and `package:/…` when installed, exit 1 and nothing otherwise. */
+export function pmPathArgv(packageName: string): string[] {
+	return ["pm", "path", packageName];
+}
+
+/** Exit 0 and the pids when running (API 24+). */
+export function pidofArgv(packageName: string): string[] {
+	return ["pidof", packageName];
+}
+
+export type RotationValue = 0 | 1 | 2 | 3;
+
+/** Lock auto-rotate off, then pin the rotation. */
+export function rotationArgvs(rotation: RotationValue): string[][] {
+	return [
+		["settings", "put", "system", "accelerometer_rotation", "0"],
+		["settings", "put", "system", "user_rotation", String(rotation)],
+	];
+}
+
+export function userRotationArgv(): string[] {
+	return ["settings", "get", "system", "user_rotation"];
+}
+
+export function uimodeGetArgv(): string[] {
+	return ["cmd", "uimode", "night"];
+}
+
+export function uimodeSetArgv(dark: boolean): string[] {
+	return ["cmd", "uimode", "night", dark ? "yes" : "no"];
+}
+
+/** `input keycombination` (API 33+): modifiers first, the key last. */
+export function keycombinationArgv(keycodes: readonly number[]): string[] {
+	return ["input", "keycombination", ...keycodes.map(String)];
+}
+
+export function modifierKeycode(modifier: "shift" | "cmd" | "alt" | "ctrl"): number {
+	switch (modifier) {
+		case "shift":
+			return 59;
+		case "cmd":
+			return 117;
+		case "alt":
+			return 57;
+		case "ctrl":
+			return 113;
+	}
+}

@@ -2,12 +2,22 @@ import { describe, expect, test } from "bun:test";
 import {
 	animationScaleArgvs,
 	buttonKeycode,
+	dumpFileCommand,
+	dumpStdoutArgv,
+	dumpTtyHostArgv,
 	forceStopArgv,
+	getpropArgv,
+	installArgv,
+	keycombinationArgv,
 	keyeventArgv,
 	keyNameKeycode,
 	longPressArgv,
+	modifierKeycode,
 	monkeyLaunchArgv,
+	pidofArgv,
 	pmClearArgv,
+	pmPathArgv,
+	rotationArgvs,
 	screencapArgv,
 	shellCommand,
 	shellQuote,
@@ -15,6 +25,10 @@ import {
 	swipeArgv,
 	tapArgv,
 	textArgv,
+	uimodeGetArgv,
+	uimodeSetArgv,
+	uninstallArgv,
+	userRotationArgv,
 } from "./android-argv";
 
 describe("shellQuote / shellCommand", () => {
@@ -146,5 +160,35 @@ describe("host argv", () => {
 			"screencap",
 			"-p",
 		]);
+	});
+});
+
+describe("device/app query argv", () => {
+	test("dump routes", () => {
+		expect(dumpStdoutArgv()).toEqual(["uiautomator", "dump", "/dev/stdout"]);
+		expect(dumpTtyHostArgv("adb", "s1")).toEqual(["adb", "-s", "s1", "exec-out", "uiautomator", "dump", "/dev/tty"]);
+		expect(dumpFileCommand()).toBe("uiautomator dump /sdcard/warden-ui.xml >/dev/null 2>&1; cat /sdcard/warden-ui.xml");
+	});
+
+	test("install/uninstall are host argv", () => {
+		expect(installArgv("adb", "s1", "/a b/app.apk")).toEqual(["adb", "-s", "s1", "install", "-r", "/a b/app.apk"]);
+		expect(uninstallArgv("adb", "s1", "com.x")).toEqual(["adb", "-s", "s1", "uninstall", "com.x"]);
+	});
+
+	test("queries and settings", () => {
+		expect(getpropArgv("sys.boot_completed")).toEqual(["getprop", "sys.boot_completed"]);
+		expect(pmPathArgv("com.x")).toEqual(["pm", "path", "com.x"]);
+		expect(pidofArgv("com.x")).toEqual(["pidof", "com.x"]);
+		expect(rotationArgvs(1)).toEqual([
+			["settings", "put", "system", "accelerometer_rotation", "0"],
+			["settings", "put", "system", "user_rotation", "1"],
+		]);
+		expect(userRotationArgv()).toEqual(["settings", "get", "system", "user_rotation"]);
+		expect(uimodeGetArgv()).toEqual(["cmd", "uimode", "night"]);
+		expect(uimodeSetArgv(true)).toEqual(["cmd", "uimode", "night", "yes"]);
+		expect(uimodeSetArgv(false)).toEqual(["cmd", "uimode", "night", "no"]);
+		expect(keycombinationArgv([113, 29])).toEqual(["input", "keycombination", "113", "29"]);
+		expect(modifierKeycode("shift")).toBe(59);
+		expect(modifierKeycode("ctrl")).toBe(113);
 	});
 });
