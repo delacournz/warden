@@ -6,10 +6,10 @@ import { ids } from "./ids";
 /** How long to wait for the todos screen after submitting sign-in, while clearing the Keychain sheet. */
 const SIGN_IN_TIMEOUT_MS = 15_000;
 const POLL_MS = 250;
-/** iOS shows "Save Password?" up to this long after the todos screen is already up. */
-const SAVE_PASSWORD_GRACE_MS = 3_000;
-/** Touches that land while the dismissed sheet is still animating away are lost. */
-const SHEET_DISMISS_MS = 1_000;
+/** iOS can show "Save Password?" this long after the todos screen is already up. */
+const SAVE_PASSWORD_GRACE_MS = 2_500;
+/** No sheet for this long: the last one has finished animating away. */
+const SHEET_QUIET_MS = 1_000;
 
 /**
  * The runner opens the app fresh before every test (`launch: "fresh"`), so a flow starts on the
@@ -30,42 +30,50 @@ export async function openSignIn(device: Device, screen: Screen): Promise<void> 
 	await expect(screen.getByTestId(ids.signIn.screen)).toBeVisible();
 }
 
-/** Fill and submit the sign-in form. */
-export async function submitSignIn(screen: Screen, email: string, password: string): Promise<void> {
+/**
+ * Fill and submit the sign-in form. Submits with Return on the password field by default: tapping the submit button
+ * while the keyboard is up loses the next tap on the todos screen, so flows that go on past sign-in use Return.
+ * Pass `via: "tap"` to press the button (flows that stay on the form and only read its errors).
+ */
+export async function submitSignIn(
+	screen: Screen,
+	email: string,
+	password: string,
+	via: "enter" | "tap" = "enter"
+): Promise<void> {
 	await screen.getByTestId(ids.signIn.email).fill(email);
 	await screen.getByTestId(ids.signIn.password).fill(password);
-	await screen.getByTestId(ids.signIn.submit).tap();
+	if (via === "tap") await screen.getByTestId(ids.signIn.submit).tap();
+	else await screen.getByTestId(ids.signIn.password).press("Enter");
 }
 
 /**
  * Waits for the todos screen after a successful sign-in and clears the "Save Password?" sheet. The sheet is a system
- * overlay the app's accessibility tree cannot see, it can appear after the todos screen, and while it is up the first
- * tap only dismisses it: so after the screen shows, keep answering it for a grace period.
+ * overlay: the app's accessibility tree cannot see it, it can appear after the todos screen is up, and a tap that
+ * lands while it is up or still animating away is lost. So once the screen shows, keep answering the sheet until none
+ * has appeared for `SHEET_QUIET_MS`, then let the UI settle.
  */
 export async function expectTodosAfterSignIn(device: Device, screen: Screen): Promise<void> {
 	const todos = screen.getByTestId(ids.todos.screen);
 	const deadline = Date.now() + SIGN_IN_TIMEOUT_MS;
+	let lastSheetAt = Date.now();
+	let shownAt: number | undefined;
 	while (Date.now() < deadline) {
-		await device.alert("dismiss");
+		if (await device.alert("dismiss")) lastSheetAt = Date.now();
 		if (await todos.isVisible()) {
-			await dismissSavePassword(device);
-			return;
+			shownAt ??= Date.now();
+			if (Date.now() - lastSheetAt >= SHEET_QUIET_MS && Date.now() - shownAt >= SAVE_PASSWORD_GRACE_MS) {
+				await device.settle();
+				return;
+			}
 		}
-		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+		await sleep(POLL_MS);
 	}
 	await expect(todos).toBeVisible({ timeout: 1 });
 }
 
-/** Presses "Not Now" when iOS offers to save the password, waiting up to the grace period for it to show. */
-async function dismissSavePassword(device: Device): Promise<void> {
-	const deadline = Date.now() + SAVE_PASSWORD_GRACE_MS;
-	while (Date.now() < deadline) {
-		if (await device.alert("dismiss")) {
-			await new Promise((resolve) => setTimeout(resolve, SHEET_DISMISS_MS));
-			return;
-		}
-		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-	}
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Fresh launch, signed in as `email`, on the todos tab. */
