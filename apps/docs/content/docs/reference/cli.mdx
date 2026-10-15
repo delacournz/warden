@@ -28,6 +28,7 @@ icon: Terminal
 | reclaim dead leases | `warden gc` |
 | sim + runtime disk usage, what can go | `warden sims` · `warden sims prune --dry-run` |
 | pick sims to delete (any owner) | `warden sims delete` (`--suggested -y` off a terminal) |
+| is the agent loop fast enough? | `warden ui bench [--runs n] [--json]` |
 | setup problems | `warden doctor` |
 | update warden | `warden update` (`--check` to only look) |
 
@@ -311,6 +312,23 @@ Exit codes: 0 ok · 1 failed or usage · 2 lease · 3 engine unavailable (`engin
 | `screenshot [path]` · `video start [path]\|stop` | default under `$WARDEN_HOME/ui/<udid>/` |
 | `eval <expr>` · `tree` · `logs` · `network` · `reload` | dev client only (`--metro <url>`): `eval --await`; `tree --all --max <n> --screen <name>`; `logs [n]\|start [--bodies]\|stop\|mark <label>\|clear`; `network [n] --include headers,body --id <id>` |
 | `record start <name> [--out file]\|stop\|status` · `replay <file>` · `export <file> --to <spec>` | `replay`: `--from <i>`, `--update-snapshots`, `--settle [ms]`; `export`: `--ids <module>`, `--force` |
+
+## Agent UI
+
+### `warden ui bench`
+
+`warden ui bench [--runs <n>] [--metro <url>] [--udid|--serial|--lease] [--json]` times the agent-loop primitives on a leased device and compares each with its target. `--runs` (default 20) is the sample count; the slow metrics are capped (cold start 3, settle and driver open 5). Run it on a device nobody else is using: the cold-start sample stops the device's helper first, and the press samples tap the middle of the screen.
+
+| Metric | What is timed | Target (p50) |
+|--------|---------------|--------------|
+| `helperColdToSnapshot` | helper stopped, then connect (spawn) to the first `snapshot -i` (iOS) | < 1500 ms |
+| `snapshotWarm` | `snapshot -i` against the resident helper | iOS p50 < 60 ms, p95 < 120 ms; Android < 800 ms |
+| `pressHid` | a tap at the screen centre, HID only | iOS < 30 ms; Android < 120 ms |
+| `pressSettle` | tap, then `--settle` (wait for a quiet screen, diff) on a static screen (iOS) | < 600 ms |
+| `tree` | `warden ui tree` against the dev client (iOS); `skipped: "devtools_unavailable"` without one | < 250 ms |
+| `openDriver` | a second driver client opened on the resident helper socket, as a spec does (iOS) | < 500 ms |
+
+A metric passes up to its target times 1.5 (`ok` in the JSON; a loaded machine shows up as `slow`, past the tolerance as `FAIL`). `--json` prints the usual `warden ui` envelope with `result.metrics` as `{ name: { p50, p95, samples, targetMs?, targetP95Ms?, ok? } }` in milliseconds (or `{ skipped, samples: 0 }`), plus `result.passed`. `warden ui bench` itself exits 0; `bun run smoke:ui-bench` (`scripts/smoke/ui-bench.ts`) claims a device, opens the example app, runs it and exits 1 when anything is over target x1.5.
 
 ## Setup
 

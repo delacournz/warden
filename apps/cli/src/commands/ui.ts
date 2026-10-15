@@ -1,4 +1,5 @@
 import { uiFill, uiKey, uiLongpress, uiPress, uiSwipe, uiType } from "../agent-ui/actions";
+import { uiBench } from "../agent-ui/bench";
 import { type CloseOptionValues, uiClose } from "../agent-ui/close";
 import { uiAlert, uiAppearance, uiHardware, uiRotate, uiScreenshot } from "../agent-ui/controls";
 import { registerDevtoolsCommands } from "../agent-ui/devtools-cli";
@@ -187,6 +188,13 @@ export function createUiCommand(deps: UiDeps): Command {
 					.description("print one property of an element (count = how many match)")
 					.argument("<args...>", "<selector> text|value|label|id|role|frame|count")
 			).action(async (words, opts) => done(await uiGet(ctx, deps, words, opts)));
+			withUiOptions(
+				cmd
+					.command("bench")
+					.description("time snapshot, press, settle, tree and driver open on this device against the speed targets")
+					.option("--runs <n>", "samples per metric (default 20; cold start, settle and open are capped at 3-5)")
+					.option("--metro <url>", "Metro URL for the tree metric")
+			).action(async (opts) => done(await uiBench(ctx, deps, opts)));
 			registerFlowCommands(cmd, ctx, done, deps);
 			registerDevtoolsCommands(cmd, ctx, done, deps);
 		},

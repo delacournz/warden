@@ -292,3 +292,18 @@ Planned; nothing implemented. Replanned after rebasing onto PR #22 (`b43e121`): 
 - On a machine saturated by other agents' xcodebuild/swift-frontend jobs, fingerprint + prebuild + pod install took ~3 min and the Debug xcodebuild was still compiling at the 15 min budget; aborted (dev process killed, lease released).
 - Retry options: run `warden dev ios` on an idle machine (the build is then cached under `e7dad4ac` for every later run), or `warden builds import <app> --hash e7dad4ac70bc4e328060cc16d6a0df9f1061df8c --project apps/example --profile local:dev` with a compatible dev client, then `warden ui open nz.co.delacour.warden.example --metro <url> --udid <udid>` and run `tree` (record timings), `eval "1+1"`, `logs start` -> interact -> `logs 20`, `network 10`, `reload`.
 - Still to confirm live: Hermes console replay-on-enable (expected: `Runtime.enable` replays buffered `consoleAPICalled`; `console.ts` dedupes by (timestamp, text) with per-connection counts), `tree` latency with the React DevTools hook + `measureInWindow`, and the detached `ui-collect` process / `state.json.collector`.
+
+**WDN-E2E-A11 (2026-10-16): `warden ui bench` + `scripts/smoke/ui-bench.ts`.** `warden ui bench [--runs n] [--metro url] [--json]` (`apps/cli/src/agent-ui/bench.ts`, targets in the exported `BENCH_TARGETS`, tolerance `BENCH_TOLERANCE` = 1.5); run the smoke with `bun run smoke:ui-bench -- [--udid <id>] [--platform ios|android] [--bundle <id>] [--runs <n>]` (claims a device unless `--udid`, opens `nz.co.delacour.warden.example`, exits 1 over target x1.5, releases only the lease id it claimed). The example app must be installed first (`cd apps/example && warden app ensure ios --udid <udid>`).
+
+First numbers, iPhone 17 sim on a very loaded machine (load average 160-650, another agent building with xcodebuild; helper = the `dist/warden-simd` of another worktree via `WARDEN_SIMD`), release build so no dev client (`tree` skipped). ms:
+
+| metric | run 1 p50 / p95 | run 2 p50 / p95 | target | n |
+|---|---|---|---|---|
+| helperColdToSnapshot | 1153.5 / 3312.3 | 752.0 / 766.9 | < 1500 | 3 |
+| snapshotWarm | 70.3 / 131.0 | 47.1 / 53.5 | p50 < 60, p95 < 120 | 20 |
+| pressHid | 2.6 / 8.3 | 1.2 / 1.9 | < 30 | 20 |
+| pressSettle | 443.9 / 458.2 | 413.8 / 439.4 | < 600 | 5 |
+| tree | skipped (devtools_unavailable) | skipped | < 250 | 0 |
+| openDriver | 571.7 / 732.8 | 728.0 / 752.9 | < 500 | 5 |
+
+Both runs passed the x1.5 gate (exit 0). `openDriver` is over its plain target but inside the tolerance in both runs and is the one to look at when the machine is quiet (it includes the driver's own setup besides the socket connect). `tree` and Android numbers are still to be recorded (needs a dev-client run and an emulator).

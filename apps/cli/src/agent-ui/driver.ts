@@ -3,6 +3,7 @@ import { openAndroidDriver } from "@delacour/warden-e2e/driver/android/android-d
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import type { BenchDeps } from "./bench";
 import type { UiDevice } from "./device";
 import type { DevtoolsDeps } from "./devtools-cli";
 import { connectHelper } from "./helper";
@@ -21,6 +22,8 @@ export type UiDeps = {
 	video?: VideoDeps;
 	/** how the devtools subcommands (eval, tree, logs, network, reload) reach Metro and spawn the collector */
 	devtools?: DevtoolsDeps;
+	/** clock and helper/driver plumbing of `bench` (default: wall clock, real helper) */
+	bench?: BenchDeps;
 };
 
 const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code"]>([

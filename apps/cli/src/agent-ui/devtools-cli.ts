@@ -124,7 +124,7 @@ async function metroFor(
 }
 
 /** Attach to the device's dev client, run `fn`, close the facet. */
-async function withFacet<T>(
+export async function withFacet<T>(
 	ctx: CommandContext,
 	deps: DevtoolsDeps,
 	device: UiDevice,
