@@ -48,10 +48,17 @@ Several agents and humans share this machine's simulators, emulators and ports. 
 
 Leases expire without a heartbeat: ~5 min for a bare agent `warden claim`, 30 min otherwise. Wrappers heartbeat for you.
 
-## Driving a device
+## Driving a device (warden ui)
 
-1. `warden claim ios --json` (or `android`) → use the returned device explicitly on every call (udid for iOS, serial for Android). Never let a tool pick one; with several booted devices it can touch someone else's.
-2. Short check: do it within the ~5 min of the bare claim, or `warden heartbeat <leaseId>` while you work.
-3. Longer exploration: run `warden dev ios --json [--profile X]` in the background (or `--udid <udid>` for a device you already claimed). It claims the device, holds it and a Metro port, starts a Metro verified to serve this checkout and opens the dev client; its first stdout line is `{ udid, port, metroUrl, leaseIds }`. Target that udid, and stop it (Ctrl-C / SIGTERM) to release what it leased.
-4. Poking at the screen yourself (snapshot, tap, type) is `warden ui`; its docs are guides/agent-ui (coming). For repeatable checks write a spec instead (row above).
-5. Subagents: release with `warden release <leaseId>` or `--mine --label <x>`, never bare `--mine`.
+1. `warden claim ios --json` (or `android`) → pass the returned device on every call (`--udid <udid>`; Android `--serial`), or `export WARDEN_UDID`. Never let a tool pick one. Keep the lease alive: `warden ui` heartbeats it on every call; for a long pause use `warden heartbeat <leaseId>`.
+2. Dev client: run `warden dev ios --json` in the background (claims a device and a Metro port, starts a Metro verified to serve this checkout, opens the dev client; first stdout line `{ udid, port, metroUrl, leaseIds }`), then `warden ui open <bundleId> --metro <metroUrl>`. Stop it (Ctrl-C / SIGTERM) to release what it leased.
+3. Loop: `warden ui open <bundleId|url>` → `snapshot -i` (lines `@e3 [button] "Sign in" id=sign-in-submit enabled hittable (x,y w×h)`) → act → verify → `close --release`.
+   - Act: `press|tap <@eN|selector|x y>`, `longpress`, `fill <target> <text> [--secure]`, `type <text> [--submit]`, `key Enter`, `scroll down [--until <selector>]`, `swipe up`, `alert accept|dismiss|get`, `home`, `back`, `rotate`, `appearance`. Add `--settle` to wait for a quiet screen and print what changed.
+   - Verify (not a screenshot): `wait <selector>` · `wait absent <selector>` · `wait text "…"` · `is <selector> visible|enabled|checked|…` (exit 0/1) · `get <selector> text|value|label|count`.
+   - Selector: `id=<testID>` (exact) `label=` `text=` `value=` (substring, case-insensitive) `role=` `editable=true` `nth=<i>`; values bare, `"quoted"` or `/regex/`. Prefer `id=`. `@eN` refs die on the next `snapshot`/`find`/`--settle`: exit 4 `stale_ref` → snapshot again. Coordinates only for canvas content.
+   - App internals (dev client): `eval <js>`, `tree`, `logs start` then `logs [n]`, `network`, `reload`; exit 3 `devtools_unavailable` on a release build.
+   - Keep it: `record start <name>` … `record stop`, `replay .warden-ui/<name>.flow.json`, `export <file> --to e2e/<name>.e2e.ts [--ids e2e/ids.ts]` (resolve each `FIXME`).
+4. `--json` on any call gives one `{ok, command, device, generation?, durationMs, result}` or `{ok:false, error:{code, message, hint?}}` document. Exit codes: 0 ok · 1 failed/usage · 2 lease (foreign device: `warden claim` another; none: add `--claim`) · 3 engine/devtools unavailable · 4 stale ref · 130 interrupted. Read the hint before retrying.
+5. A view missing from `snapshot`: the app must mark it `accessible` and give it a `testID`; `tree` shows it from the React side. Full reference: docs guide `guides/agent-ui`.
+6. For repeatable checks write a spec (row above) instead of replaying by hand.
+7. Done: `warden ui close --release` (or `warden release <leaseId>`). Subagents release by lease id or `--mine --label <x>`, never bare `--mine`.

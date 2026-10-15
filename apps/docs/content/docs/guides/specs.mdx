@@ -84,7 +84,7 @@ export const test = base.extend<{ email: string }>({
 | `getByText(text, { exact?, visible? })` | the visible text (innermost match) |
 | `getByLabel(text)` / `getByPlaceholder(text)` / `getByValue(text)` | accessibility label, field placeholder, field value |
 | `getByRole(role, name?, { checked?, disabled?, selected? })` | a role such as `button`, `textbox`, `switch`, with an optional name |
-| `locator("id=sign-in-submit role=button")` | the selector grammar of `warden ui` (guides/agent-ui, coming) |
+| `locator("id=sign-in-submit role=button")` | the selector grammar of [`warden ui`](/docs/guides/agent-ui#targets-and-selectors) |
 
 A string matches the whole text after whitespace is collapsed; `{ exact: false }` makes it a case-insensitive substring; a `RegExp` is tested as written. Refine a locator with `.filter({ hasText, has })`, `.first()`, `.last()` and `.nth(i)`.
 

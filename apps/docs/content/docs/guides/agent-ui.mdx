@@ -1,0 +1,191 @@
+---
+title: Drive a device (warden ui)
+description: warden ui - the agent CLI for looking at and driving a leased iOS simulator or Android emulator - snapshot, @refs, selectors, actions, waits, devtools, recorded flows, exit codes, the --json envelope and lease rules.
+icon: Smartphone
+---
+
+`warden ui` is how an agent looks at a device and drives it: read the screen as text, tap, type, scroll, wait, read the app's console and React tree, and record what it did as a flow that replays and exports to a spec. It runs on the same driver as [`@delacour/warden-e2e`](/docs/guides/specs) (see [iOS driver helper](/docs/reference/e2e-driver)), so there is nothing to install on the device and no daemon to manage. For checks that must keep passing, write a [spec](/docs/guides/specs); use `warden ui` to explore, reproduce a bug, or to get the selectors for a spec.
+
+Every call is stateless on the command line: the last snapshot, the recording and the Metro URL live under `$WARDEN_HOME/ui/<udid>/`.
+
+## The agent loop
+
+```bash
+warden claim ios --json                                 # 1. a device: use the returned udid on every call
+warden ui open com.example.app --udid $UDID             # 2. launch (add --metro <url> for a dev client)
+warden ui snapshot -i --udid $UDID                      # 3. what is on screen, as @eN lines
+warden ui press @e3 --settle --udid $UDID               # 4. act; --settle prints what changed
+warden ui wait id=todos-screen --udid $UDID             # 5. verify with wait / is / get, not a screenshot
+warden ui record start add-todo --udid $UDID            # 6. optional: record, then replay and export
+warden ui close --release --udid $UDID                  # 7. stop the helper and release the lease
+```
+
+1. **Claim.** `warden claim ios --json` (or `android`); keep the returned `udid` (Android: the serial). Pass it on every call as `--udid <udid>` (`--serial` / `--lease <id>` also work), or export `WARDEN_UDID` once. With none of those, `warden ui` uses the single device you already lease.
+2. **Open.** A bundle id launches the app; a URL opens through the system. For a dev client, run `warden dev` or `warden app ensure` first, then `open <bundleId> --metro <metroUrl>`.
+3. **Snapshot.** `snapshot -i` lists only interactive elements and anything with a `testID`. The `@eN` refs it prints are valid until the next `snapshot`, `find` or `--settle`.
+4. **Act on a ref or a selector.** Prefer `id=` selectors for anything you will touch twice: refs go stale when the screen changes.
+5. **Verify** with `wait`, `is` and `get`. A bare screenshot is not verification.
+6. **Record** when the sequence is worth keeping (see [Flows](#flows)).
+7. **Close.** `close --release` stops this device's helper and releases the lease. Leave the device alone only if another step of your task needs it.
+
+## Reading the screen
+
+```text
+$ warden ui snapshot -i --udid $UDID
+generation 4 · axbridge · 393×852@3x · 5 of 41 elements
+@e1 [textbox] "Add a todo" id=todo-input value="" enabled hittable (24,118 345×48)
+@e2 [button] "Add" id=todo-add enabled hittable (24,176 345×48)
+@e3 [checkbox] "Write specs" id=todo-1 unchecked enabled hittable (24,244 345×56)
+```
+
+A line is `@ref [role] "name" id=<testID> value="…" <states> (x,y w×h)`. States are `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`; the frame is `(x,y w×h)` in the screen units the header reports. The header says how many elements are shown and whether the backend truncated the tree.
+
+| Command | Use |
+|---|---|
+| `snapshot [-i] [--all] [--depth n]` | the screen. `-i` filters to interactive elements and `testID`s; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels |
+| `snapshot --settle [ms]` | wait for a quiet screen (the tree hash is unchanged for 250 ms; default budget 3000 ms), then print what changed against the previous snapshot as `-` / `+` lines and a `= N unchanged` count |
+| `find <selector…>` | only the elements matching a [selector](#selectors), each with a fresh `@eN` |
+| `screenshot [path]` | a PNG; default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
+| `video start [path]` · `video stop` | record the screen (iOS `simctl recordVideo`, Android `screenrecord`, 3 min device limit); default `$WARDEN_HOME/ui/<udid>/videos/NNN.mp4` |
+
+`snapshot` and `find` bump the **generation** (`gen 4` above). An action with `--settle` takes a snapshot too, so it also starts a new generation and replaces the refs you held.
+
+## Targets and selectors
+
+Actions take a **target**: an `@eN` ref, a selector, or screen coordinates `x y` (points). Coordinates are for canvas content with no accessibility node; everything else should be a selector.
+
+**Refs.** `@eN` comes from the latest snapshot of this device. A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot first (same id, else same role and name, else same position in the tree). When the element is no longer there the call fails with `stale_ref` (exit 4): take a new snapshot.
+
+**Selectors** are `key=value` words joined by spaces:
+
+| Key | Matches |
+|---|---|
+| `id=` | the `testID` / accessibility identifier, exactly |
+| `label=` | the accessibility label, case-insensitive substring |
+| `text=` | the visible text, case-insensitive substring |
+| `value=` | the element's value (field content, switch state), case-insensitive substring |
+| `role=` | the normalized role (`button`, `textbox`, `checkbox`, `switch`, `text`, `heading`, …), the same names on iOS and Android |
+| `editable=true\|false` | text fields vs everything else |
+| `nth=<i>` | the i-th match (0-based) when several remain |
+
+A value is bare (`id=sign-in`), quoted when it has spaces (`label="Sign in"`), or a regex (`text=/^\d+ left$/i`). Keys combine with AND: `role=button label=add`.
+
+When a selector matches several elements, an action picks the most specific visible one: visible first, then the most exact text terms, then the smallest frame, then reading order. Pin a different one with `nth=`. `wait`, `is`, `get` and `find` do not guess: they report every match.
+
+## Acting
+
+Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (default budget 3000 ms) and print what changed, so the next ref is already on your screen.
+
+| Command | Effect |
+|---|---|
+| `open <bundleId\|url> [--relaunch] [--metro <url>] [--args …]` | launch the app, or open a URL (on iOS the "Open in …?" sheet is accepted). `--relaunch` terminates a running app first; `--metro` starts the dev client on that Metro and remembers it for the devtools commands |
+| `press <target>` (alias `tap`) · `longpress <target> [ms]` | tap, or press and hold (default 800 ms). `--verify` re-checks an `@eN` first |
+| `fill <target> <text>` | focus the field, empty it, type, then read it back (retried once). `--secure` skips the read-back and never echoes or records the text; `--no-verify` skips only the read-back. Use `--` before text that starts with `-` |
+| `type <text> [--submit]` | type into whatever has focus; `--submit` then presses Enter |
+| `key <name>` | `Enter` `Backspace` `Tab` `Space` `Escape` `Delete` `Up` `Down` `Left` `Right` |
+| `scroll <up\|down\|left\|right> [amount]` | scroll the content that way (`down` reveals what is below). `amount` is the share of the region one swipe travels (0-1, default 0.5). `--in <target>` scrolls inside an element; `--until <selector>` swipes until the selector is on screen (at most `--max` swipes, default 10) and prints its fresh ref |
+| `swipe <up\|down\|left\|right \| x1 y1 x2 y2> [--from <target>]` | a raw finger swipe: `swipe up` moves the finger up, which reveals what is below. `--from` swipes inside an element |
+| `alert accept\|dismiss\|get` | answer the system alert or sheet on top, or read its title, message and buttons |
+| `home` · `back` | the home button; back is Android only |
+| `rotate [orientation]` | `portrait`, `portrait-upside-down`, `landscape-left`, `landscape-right`; without an argument it reads the current one |
+| `appearance [light\|dark]` | set or read light / dark mode |
+
+## Waiting and asserting
+
+These poll the live screen every 100 ms for up to `--timeout` (default 5000 ms) and never need a screenshot.
+
+| Command | Result |
+|---|---|
+| `wait <selector>` | until a match is on screen |
+| `wait absent <selector>` | until no match is |
+| `wait text "…"` | until that text is visible |
+| `wait stable [ms]` | until the screen has stopped changing |
+| `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` | exit 0 when true, 1 when false: usable in a shell `if` |
+| `get <selector> text\|value\|label\|id\|role\|frame\|count` | print one property of the match (`count`: how many match) |
+
+A `wait` that runs out fails with `wait_target_absent` (exit 1).
+
+## The app's console, network and React tree
+
+For a dev client launched with `open --metro <url>`. A release build, or a dev client with no Metro, fails with `devtools_unavailable` (exit 3). `--metro <url>` overrides the Metro for one call; otherwise warden uses `WARDEN_METRO_URL`, the URL `open --metro` remembered, then the Metro behind the ports your session leases.
+
+| Command | Effect |
+|---|---|
+| `eval <expression> [--await]` | run JavaScript in the app (Hermes) and print the value; an exception is reported as `failed` with its details |
+| `tree [--all] [--max n] [--screen <name>]` | the React components with `testID`, label, text, screen and rect. Use it for a `testID` the accessibility tree does not show; `--all` includes inactive screens |
+| `logs start [--bodies]` | start a background collector that records the app's console and `fetch` calls (`--bodies` also records bodies) |
+| `logs [n]` · `logs mark <label>` · `logs clear` · `logs stop` | read the last `n` console lines (default 50), drop a marker line, empty the log, stop the collector |
+| `network [n] [--include headers,body] [--id <id>]` | the recorded `fetch` calls; `--id` prints one in full |
+| `reload` | reload the app's JavaScript |
+
+`logs` and `network` read what `logs start` collected; run it before the action you want to observe.
+
+## Flows
+
+A **flow** is a recorded sequence of `warden ui` actions saved as `.warden-ui/<name>.flow.json`. It stores resolved selectors, never `@eN` refs, so it replays on a later run.
+
+```bash
+warden ui record start add-todo --udid $UDID    # every action is appended until record stop
+warden ui fill id=todo-input "Write docs" --udid $UDID
+warden ui press id=todo-add --settle --udid $UDID
+warden ui record stop --udid $UDID              # "stopped add-todo: 2 steps"
+warden ui replay .warden-ui/add-todo.flow.json --udid $UDID
+warden ui export .warden-ui/add-todo.flow.json --to e2e/add-todo.e2e.ts --ids e2e/ids.ts
+```
+
+| Command | Effect |
+|---|---|
+| `record start <name> [--out file]` · `record stop` · `record status` | begin, end or inspect the recording. `--no-record` on any action keeps that one step out |
+| `replay <file> [--from i] [--update-snapshots] [--settle [ms]]` | re-run the flow on the device. Each step is resolved on a fresh snapshot and checked against where it was recorded. A step that no longer matches fails with `replay_divergence` (exit 1, with the step number and the screen). A changed screen alone is a drift warning. The file is rewritten only with `--update-snapshots` |
+| `export <file> --to <spec> [--ids <module>] [--force]` | write the flow as an `*.e2e.ts` spec for `@delacour/warden-e2e`. `--ids` merges the test ids into an `export const ids = { … }` module. Taps by coordinates export as a `FIXME` to resolve before you commit |
+
+`fill --secure` text is never stored. Set `WARDEN_UI_SECRET_<NAME>` to the value when you record, and the flow names the variable instead; replay and the exported spec read it from the environment.
+
+## Exit codes and `--json`
+
+| Exit | Meaning | Error codes |
+|---|---|---|
+| 0 | ok | |
+| 1 | failed or bad usage | `failed`, `usage`, `target_not_found`, `wait_target_absent`, `replay_divergence` |
+| 2 | lease problem | `device_foreign`, `device_not_leased`, `no_device_leased`, `ambiguous_device`, `lease_not_found` |
+| 3 | engine unavailable | `engine_unavailable` (the iOS helper or `adb` cannot be reached), `devtools_unavailable` (no dev client or Metro) |
+| 4 | stale ref | `stale_ref`: take a new snapshot |
+| 130 | interrupted | `interrupted` |
+
+`--json` prints exactly one JSON document on stdout, success or failure:
+
+```json
+{ "ok": true, "command": "press", "device": { "udid": "…", "platform": "ios", "name": "iPhone 17" }, "generation": 5, "durationMs": 412, "result": { "action": "press", "target": { "ref": "@e2" } }, "warnings": [] }
+{ "ok": false, "command": "press", "error": { "code": "stale_ref", "message": "…", "hint": "run `warden ui snapshot` again" } }
+```
+
+`generation` appears when the call took a snapshot; `warnings` only when there are any (a screen that did not settle in its budget, replay drift). Without `--json`, results go to stdout and errors and warnings to stderr.
+
+## Options on every subcommand
+
+| Flag | Effect |
+|---|---|
+| `--udid <udid>` · `--serial <serial>` · `--lease <id>` | the device. Otherwise `WARDEN_UDID`, a single `WARDEN_UDIDS` entry, then your only device lease |
+| `--claim` | take a device when none is leased (`--platform ios\|android`, `--profile`, `--runtime` choose it), or take over a stale lease |
+| `--timeout <ms>` | per-command deadline (default 5000) |
+| `--no-record` | do not append this step to a running recording |
+| `--json` | the envelope above |
+
+`status` prints the device, your lease on it, the helper and the recording. `close` stops this device's helper; `--app [bundleId]` also quits the app (default: the one `open` launched) and `--release` frees the lease.
+
+## Lease rules
+
+`warden ui` checks the lease on every call, in the process, so a missing hook cannot let it touch someone else's device:
+
+- **Your lease:** the call proceeds and heartbeats the lease, so a device you keep driving does not expire.
+- **Another live session's lease:** exit 2 (`device_foreign`). Claim your own device and switch to it.
+- **No lease, or a stale one:** exit 2 with a hint, unless you pass `--claim`, which leases the device for your session (labelled `warden ui`).
+- **Several devices leased and none named:** exit 2 (`ambiguous_device`) listing them. Pick one with `--udid`.
+
+Release only what you leased: `warden ui close --release`, or `warden release <leaseId>`. Subagents never run `warden release --mine`, which would free the parent's devices: release the lease id you hold, or claim with `--label x` and use `release --mine --label x`.
+
+## Failure and speed
+
+- A command that fails prints a hint. Read it before retrying; `stale_ref` means snapshot again, `target_not_found` means the selector matched nothing (run `find`, or `snapshot --all`).
+- If a view is missing from the snapshot, mark it `accessible` and give it a `testID` in the app (the accessibility tree only exposes accessible views; see [Write e2e specs](/docs/guides/specs)), or use `tree` to find the React component.
+- The first call on a device starts its helper; later calls reuse it until it has been idle for 10 minutes. `warden e2e` and `warden batch` pre-warm it for their devices.

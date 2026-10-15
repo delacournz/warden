@@ -349,7 +349,7 @@ describe("warden e2e", () => {
 	});
 
 	describe("built-in runner", () => {
-		test("job env: the spec contract, an out dir per worker and attempt, no agent-device leftovers", async () => {
+		test("job env: the spec contract, an out dir per worker and attempt, no state-dir leftovers", async () => {
 			await resuite({
 				spec: {
 					bundleId: "com.demo",

@@ -2,6 +2,7 @@
 	"title": "Guides",
 	"pages": [
 		"agents",
+		"agent-ui",
 		"run-e2e",
 		"headless",
 		"specs",
