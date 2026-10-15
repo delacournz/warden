@@ -3,7 +3,7 @@ import { defaultDriverFactory } from "./driver/open";
 import { readEnv } from "./env";
 import { E2eError } from "./errors";
 import { BUN_TIMEOUT_MARGIN_MS, onlyWasSeen } from "./runner/scope";
-import { getSession, setDefaultDriverFactory } from "./session";
+import { getSession, hasDefaultDriverFactory, setDefaultDriverFactory } from "./session";
 
 export { BUN_TIMEOUT_MARGIN_MS };
 
@@ -47,7 +47,7 @@ export function installPreload(deps: PreloadDeps): void {
 	});
 }
 
-setDefaultDriverFactory(defaultDriverFactory);
+if (!hasDefaultDriverFactory()) setDefaultDriverFactory(defaultDriverFactory);
 installPreload({
 	env: process.env,
 	setDefaultTimeout,

@@ -63,6 +63,11 @@ export function setDefaultDriverFactory(factory: DriverFactory | undefined): voi
 	defaultFactory = factory;
 }
 
+/** Whether a default driver factory is wired (so the preload leaves a test-installed fake alone). */
+export function hasDefaultDriverFactory(): boolean {
+	return defaultFactory !== undefined;
+}
+
 /** Wires the `app`/`device`/`screen` factory used when `getSession` gets none. */
 export function setDefaultFixtureFactory(factory: FixtureFactory | undefined): void {
 	defaultFixtures = factory;
