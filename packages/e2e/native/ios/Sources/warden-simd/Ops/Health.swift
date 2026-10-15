@@ -73,6 +73,7 @@ extension Session {
     fields["coreSimulatorVersion"] = coreSimulatorVersion.map(JSON.string) ?? .null
     fields["state"] = .string(Session.describe(simulator.state))
     fields["uptimeMs"] = .int(uptimeMs)
+    if let socket = socket.json { fields["socket"] = socket }
     return .object(fields)
   }
 }
