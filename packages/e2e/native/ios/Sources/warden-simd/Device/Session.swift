@@ -37,7 +37,9 @@ final class Session: @unchecked Sendable {
   let hid: SimulatorHIDSession
   let hidTransport: String
   let axDefault: String
-  /// The in-guest reader (`.shared` persistence, automation mode on); nil when it could not be constructed.
+  /// The in-guest reader (`.exclusive` persistence, automation mode on): a guest this process owns, never the
+  /// simulator's shared one, which went stale across helper runs and left quiescence streams stuck. Nil when it
+  /// could not be constructed.
   let axBridgeReader: (any UIAutomation)?
   /// The host-side accessibility reader (`ax`), the per-request fallback.
   let axHostReader: (any UIAutomation)?
@@ -114,7 +116,7 @@ final class Session: @unchecked Sendable {
     } else {
       do {
         bridgeReader = try simulator.uiAutomation(
-          backend: .axBridge(persistence: .shared, frontmostMethod: .windowServer, automationMode: true))
+          backend: .axBridge(persistence: .exclusive, frontmostMethod: .windowServer, automationMode: true))
       } catch {
         bridge = .failed(error.localizedDescription)
       }

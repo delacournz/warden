@@ -30,6 +30,8 @@ struct Arguments: Equatable {
   var resources: String?
   var log: String?
   var verbose = false
+  /// Emits a `log` event per quiescence sample (`settle` diagnostics). `WARDEN_SIMD_TRACE=1` does the same.
+  var trace = false
   var hid: HIDChoice?
   var ax: AXChoice?
   /// Socket mode: serve many clients on this unix socket instead of stdio.
@@ -40,7 +42,7 @@ struct Arguments: Equatable {
   static let defaultIdleTimeout = 600
 
   static let usage = """
-    usage: warden-simd --udid <UDID> [--socket <path> [--idle-timeout <s>]] [--resources <dir>] [--log <file>] [--verbose]
+    usage: warden-simd --udid <UDID> [--socket <path> [--idle-timeout <s>]] [--resources <dir>] [--log <file>] [--verbose] [--trace]
                        [--hid indigo|dtuhid] [--ax axbridge|ax]
            warden-simd --health --udid <UDID>
            warden-simd --version
@@ -77,6 +79,8 @@ struct Arguments: Equatable {
         result.mode = .version
       case "--health":
         result.mode = .health
+      case "--trace":
+        result.trace = true
       case "--verbose":
         result.verbose = true
       case "--udid", "--resources", "--log", "--hid", "--ax", "--socket", "--idle-timeout":
