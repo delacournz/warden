@@ -566,16 +566,18 @@ Waves:
   - Bench resource columns for host CPU/RSS.
 - Regression guard: `bun run bench compare <baseline> <new>` must show no per-test regression > 5% before the PR is marked ready.
 
-## Follow-ups (reported by agents, not yet scheduled)
+## Follow-ups (reported by agents)
 
-| From | Follow-up |
-|---|---|
-| poller (2.3) | CLI `ui wait` (`apps/cli/src/agent-ui/query.ts`) still polls at a fixed 100 ms; move it to `screen/poll.ts`'s back-off. |
-| spawner (4.3) | Wire the per-command git facts cache into `claim-flags.ts` / `port.ts`. Other git spawns remain: `builds/local.ts:120`, `batch.ts:1483`, `affected/git.ts`, `cleanHead`. |
-| starter (4.1) | `gc` still loads heavy modules; `ui`/`run`/`dev`/`batch`/`e2e` load the driver eagerly. Compiled binary is 116 MB, mostly `typescript` bytecode. |
-| quiet (5.2) | A compiled binary has no `graph-worker.ts` on disk, so diff mode falls back to the in-process graph. Fix with a hidden `warden` subcommand or an embedded worker. |
-| typist (1.1) | iOS plain fields showing a placeholder still get selectAll + 1 Backspace; `ada@example.com` keeps 4 confirm reads. |
-| referee (6.1) | One bench test failed once under load and passed in 6 later runs: watch for a timing flake. |
+| From | Follow-up | Status |
+|---|---|---|
+| poller (2.3) | CLI `ui wait` (`apps/cli/src/agent-ui/query.ts`) still polls at a fixed 100 ms; move it to `screen/poll.ts`'s back-off. | Done: PERF-FU-1 (`ui wait` 100 ms → 250 ms after 1 s; `wait stable` keeps 100 ms). |
+| spawner (4.3) | Wire the per-command git facts cache into `claim-flags.ts` / `port.ts`. Other git spawns remain: `builds/local.ts:120`, `batch.ts:1483`, `affected/git.ts`, `cleanHead`. | Done: PERF-FU-2 (`CommandContext.git`; `affected` 5 → 4 spawns). `cleanHead` / `snapshotKey` keep `rev-parse HEAD`. |
+| starter (4.1) | `gc` still loads heavy modules; `ui`/`run`/`dev`/`batch`/`e2e` load the driver eagerly. Compiled binary is 116 MB, mostly `typescript` bytecode. | `gc` done: PERF-FU-3 (69 → 50 ms). `ui`/`run`/`dev`/`batch`/`e2e`: PERF-FU-5 in progress. Binary size open. |
+| quiet (5.2) | A compiled binary has no `graph-worker.ts` on disk, so diff mode falls back to the in-process graph. Fix with a hidden `warden` subcommand or an embedded worker. | Done: PERF-FU-4 (hidden `__affected-graph`; compiled parent 159 → ~80 MB). |
+| typist (1.1) | iOS plain fields showing a placeholder still get selectAll + 1 Backspace; `ada@example.com` keeps 4 confirm reads. | Targets restated at the pacing floor; type-over-selection in progress. |
+| referee (6.1) | One bench test failed once under load and passed in 6 later runs: watch for a timing flake. | Open. |
+| conductor (4.7) | Static round-robin sharding: duration-aware sharding from the previous run's `results.jsonl`. Crash blame is inferred from result order; a per-flow completion record from the spec runner would make it exact. | Open. |
+| conductor (4.6) | `native+js` fingerprint keys are v2: every such project rebuilds once after upgrading. | Expected. |
 
 ## Decisions (user, 2026-10-16)
 
