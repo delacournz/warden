@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { Exec } from "@delacour/warden-core/exec";
 import type { Lease, Owner } from "@delacour/warden-core/types";
 import { shutdownReleasedDevices } from "./device-shutdown";
 import { fakeSimctl } from "./simctl.testing";
@@ -27,6 +28,41 @@ describe("shutdownReleasedDevices", () => {
 		expect(result.shutdown).toEqual(["W", "BOOTED-BY-ME"]);
 		expect(result.notes.join("\n")).toContain("USERS");
 		expect(calls.filter((c) => c[2] === "shutdown").map((c) => c[3])).toEqual(["W", "BOOTED-BY-ME"]);
+	});
+
+	test("shuts devices down concurrently, reporting in lease order", async () => {
+		const started: string[] = [];
+		let release: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const exec: Exec = async (cmd) => {
+			if (cmd[2] !== "shutdown") return { exitCode: 127, stdout: "", stderr: "" };
+			started.push(cmd[3] ?? "");
+			await gate;
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		ctx = testContext([], { exec });
+		const running = shutdownReleasedDevices(ctx, [lease(ctx, "A", true), lease(ctx, "B", true)], owner);
+		await Bun.sleep(0);
+		expect(started.sort()).toEqual(["A", "B"]);
+		release();
+		expect((await running).shutdown).toEqual(["A", "B"]);
+	});
+
+	test("a throwing guard is a note and doesn't stop the other shutdowns", async () => {
+		ctx = testContext([], { exec: fakeSimctl([]) });
+		const result = await shutdownReleasedDevices(
+			ctx,
+			[lease(ctx, "A", true), lease(ctx, "B", true)],
+			owner,
+			async (l) => {
+				if (l.resource.kind === "device" && l.resource.id === "A") throw new Error("kaput");
+				return undefined;
+			}
+		);
+		expect(result.shutdown).toEqual(["B"]);
+		expect(result.notes.join("\n")).toContain("kaput");
 	});
 
 	test("shutdown failure is a note, not a throw", async () => {

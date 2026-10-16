@@ -148,17 +148,17 @@ describe("warden e2e", () => {
 		expect(c.stderr.join("\n")).toContain("● chats");
 	});
 
-	test("suite app: { clean: true } installs the app cleanly on every device", async () => {
-		await resuite({ app: { clean: true } });
+	test("suite app: { installMode, resetKeychain } reaches the ensure step on every device", async () => {
+		await resuite({ app: { installMode: "clean", resetKeychain: true } });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
 		const h = harness();
-		const seen: Array<boolean | undefined> = [];
+		const seen: Array<string | undefined> = [];
 		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
-			seen.push(opts.clean);
+			seen.push(`${opts.installMode}/${opts.resetKeychain}`);
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
-		expect(seen).toEqual([true]);
+		expect(seen).toEqual(["clean/true"]);
 	});
 
 	test("a two-platform suite needs --platform", async () => {
@@ -334,6 +334,79 @@ describe("warden e2e", () => {
 		});
 	});
 
+	describe("warmRunners", () => {
+		const BIN = "/proj/node_modules/.bin/agent-device";
+
+		test("single: every device's runner starts at once, after setup and before the job, in the job's daemon + sessions", async () => {
+			await resuite({ mode: "single", count: 2, runner: ["run-all"], setup: "prep {udid}" });
+			const c = setup(["--all"]);
+			const h = harness({ agentDeviceBin: BIN });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const [job] = h.jobs();
+			const udids = job?.opts.env.WARDEN_UDIDS?.split(",") ?? [];
+			const first = udids[0] ?? "";
+			expect(job?.opts.env.WARDEN_AGENT_SESSION).toBe(`warden-${first}`);
+			expect(h.warms().map((w) => w.cmd)).toEqual(
+				udids.map((udid, slot) => [
+					BIN,
+					"prepare",
+					"ios-runner",
+					"--platform",
+					"ios",
+					"--udid",
+					udid,
+					"--session",
+					`warden-${first}-${slot}`,
+				])
+			);
+			expect(h.warms().map((w) => w.opts.env.AGENT_DEVICE_STATE_DIR)).toEqual(
+				udids.map(() => job?.opts.env.AGENT_DEVICE_STATE_DIR)
+			);
+			const lastSetup = Math.max(...udids.map((u) => h.events.indexOf(`setup:${u}`)));
+			const warms = udids.map((u) => h.events.indexOf(`warm:${u}`));
+			expect(Math.min(...warms)).toBeGreaterThan(lastSetup);
+			expect(Math.max(...warms)).toBeLessThan(h.events.findIndex((e) => e.startsWith("job:")));
+		});
+
+		test("per-flow: each device warms in its own worker's daemon, as slot 0", async () => {
+			write("src/chat/lazy.tsx", "export const x = 2;\n");
+			write("src/settings/form.tsx", "export const y = 2;\n");
+			const c = setup(["--count", "2"]);
+			const h = harness({ agentDeviceBin: BIN });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warms()).toHaveLength(2);
+			for (const w of h.warms()) {
+				const udid = w.opts.env.WARDEN_UDID ?? "";
+				expect(w.cmd.slice(-2)).toEqual(["--session", `warden-${udid}-0`]);
+				const job = h.jobs().find((j) => j.opts.env.WARDEN_UDID === udid);
+				if (job) {
+					expect(job.opts.env.AGENT_DEVICE_STATE_DIR).toBe(w.opts.env.AGENT_DEVICE_STATE_DIR);
+					expect(job.opts.env.WARDEN_AGENT_SESSION).toBe(`warden-${udid}`);
+				}
+			}
+		});
+
+		test("a failed warm-up only warns; the flows still run", async () => {
+			await resuite({ mode: "single", count: 2, runner: ["run-all"] });
+			const c = setup(["--all"]);
+			const h = harness({ agentDeviceBin: BIN, warmExit: 1 });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.jobs()).toHaveLength(1);
+			expect(c.stderr.join("\n")).toMatch(/runner warm-up on \S+ exit 1 .*warm-\d\.log/);
+		});
+
+		test("off with warmRunners: false, and when the project has no agent-device", async () => {
+			await resuite({ mode: "single", runner: ["run-all"], warmRunners: false });
+			const off = harness({ agentDeviceBin: BIN });
+			expect(await createE2eCommand(off.deps).run(setup(["--all"]))).toBe(0);
+			expect(off.warms()).toEqual([]);
+			await resuite({ mode: "single", runner: ["run-all"] });
+			const none = harness();
+			expect(await createE2eCommand(none.deps).run(setup(["--all"]))).toBe(0);
+			expect(none.warms()).toEqual([]);
+		});
+	});
+
 	describe("mode: single", () => {
 		test("one runner process for every selected flow, handed the whole device pool", async () => {
 			await resuite({ mode: "single", count: 2, runner: ["run-all", "{flowPaths}", "--out", "out/{worker}"] });
@@ -358,6 +431,37 @@ describe("warden e2e", () => {
 				["chats", "passed"],
 				["settings", "passed"],
 			]);
+		});
+
+		test("live flow progress: the grid marks each flow as the runner's output reports it", async () => {
+			await resuite({ mode: "single", runner: ["run-all"] });
+			const c = setup(["--all"]);
+			const h = harness({ manual: true, isTTY: true });
+			const running = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.jobs().length > 0);
+			const job = h.jobs()[0];
+			h.files.set(
+				job?.opts.log ?? "",
+				" ✓ |ios| flows/chats.yaml (1 test) 2s\n ❯ |ios| flows/settings.yaml (1 test | 1 failed)\n"
+			);
+			job?.finish(1);
+			expect(await running).toBe(1);
+			const screen = h.terminal.join("");
+			expect(screen).toContain("✓ chats  ✗ settings");
+			expect(screen).toContain("2/2");
+		});
+
+		test("--no-tui: one line per flow as it finishes", async () => {
+			await resuite({ mode: "single", runner: ["run-all"] });
+			const c = setup(["--all", "--no-tui"]);
+			const h = harness({ manual: true });
+			const running = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.jobs().length > 0);
+			const job = h.jobs()[0];
+			h.files.set(job?.opts.log ?? "", " ✓ |ios| flows/chats.yaml (1 test) 2s\n");
+			job?.finish(0);
+			expect(await running).toBe(0);
+			expect(c.stderr.join("\n")).toContain("warden-iphone-17-1 ✓ chats");
 		});
 
 		test("the runner's exit code is the verdict of every flow", async () => {
@@ -433,6 +537,58 @@ describe("warden e2e", () => {
 			c.argv = ["--files", "src/chat/lazy.tsx", "--devices", "watch"];
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain('--devices: no leg "watch" (iphone-17, ipad)');
+		});
+	});
+
+	describe("headless", () => {
+		test("suite headless: runners get WARDEN_HEADLESS=1, every leg claims headless, the report says so", async () => {
+			await resuite({
+				headless: true,
+				devices: [
+					{ profile: "iphone-17", count: 1 },
+					{ profile: "ipad", count: 1, default: false },
+				],
+			});
+			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
+			const sim = fakeSimctl(sims);
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			ctx.cwd = dir;
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+			expect(h.jobs().map((j) => j.opts.env.WARDEN_HEADLESS)).toEqual(["1", "1"]);
+			expect(reportOf(h.files, ctx).headless).toBe(true);
+		});
+
+		test("top-level headless is the default; --no-headless beats it and clears WARDEN_HEADLESS", async () => {
+			await resuite({}, { headless: true });
+			const on = setup(["--files", "src/chat/lazy.tsx"]);
+			const h1 = harness();
+			expect(await createE2eCommand(h1.deps).run(on)).toBe(0);
+			expect(h1.jobs()[0]?.opts.env.WARDEN_HEADLESS).toBe("1");
+			expect(reportOf(h1.files, on).headless).toBe(true);
+			on.cleanup();
+
+			const off = setup(["--files", "src/chat/lazy.tsx", "--no-headless"]);
+			off.env = { ...off.env, WARDEN_HEADLESS: "1" };
+			const h2 = harness();
+			expect(await createE2eCommand(h2.deps).run(off)).toBe(0);
+			expect("WARDEN_HEADLESS" in (h2.jobs()[0]?.opts.env ?? {})).toBe(false);
+			expect(reportOf(h2.files, off).headless).toBe(false);
+		});
+
+		test("default: not headless; WARDEN_HEADLESS=1 turns it on; --dry-run reports it too", async () => {
+			const plain = setup(["--files", "src/chat/lazy.tsx"]);
+			const h1 = harness();
+			expect(await createE2eCommand(h1.deps).run(plain)).toBe(0);
+			expect(reportOf(h1.files, plain).headless).toBe(false);
+			plain.cleanup();
+
+			const env = setup(["--files", "src/chat/lazy.tsx", "--dry-run", "--json"]);
+			env.env = { ...env.env, WARDEN_HEADLESS: "1" };
+			expect(await createE2eCommand(harness().deps).run(env)).toBe(0);
+			expect(JSON.parse(env.stdout.join("\n")).headless).toBe(true);
 		});
 	});
 

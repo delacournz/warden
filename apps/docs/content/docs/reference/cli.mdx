@@ -46,6 +46,7 @@ Lease iOS sims / Android emulators — reuse, boot or create — booted and read
 | `--ttl <duration>` | `30m` (bare `claim` by an agent: `5m`) | lease TTL without heartbeat |
 | `--label <label>` | | shown in `warden ls` |
 | `--adopt` | | allow allocating foreign (non-warden) devices |
+| `--headless` / `--no-headless` | `WARDEN_HEADLESS`, else off | iOS: close the claimed sims' Simulator.app windows instead of tiling them; `--no-headless` overrides config and env. See [Headless e2e](/docs/guides/headless) |
 
 ### `warden release [leaseIds...]`
 
@@ -62,7 +63,9 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--project <dir>` | `--app`: project directory (default: cwd) |
 | `--bundle-id <id>` | `--app`: override the bundle id / package |
 | `--no-eas` / `--no-build` | `--app`: skip EAS downloads / local builds |
-| `--clean` | `--app`: uninstall the app first, so every run starts from a fresh container (even when the hash already matches) |
+| `--install-mode <clean\|reinstall>` | `--app`: `clean` = fresh app data each run without reinstalling an unchanged build (falls back to reinstall if the reset fails); `reinstall` = uninstall + install each run. Default: install only when the build differs |
+| `--reset-keychain` | `--install-mode`: also reset the iOS simulator's keychain (not cleared by uninstall either) |
+| `--clean` | deprecated alias of `--install-mode reinstall` |
 
 See [e2e scripts](/docs/guides/e2e).
 
@@ -83,7 +86,7 @@ Claim devices and fan a job queue out over them, one worker per device; the comm
 | `--logs <dir>` | per-job logs |
 | `--no-tui` | plain log lines instead of the live grid |
 
-`--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed. Every job gets its own `AGENT_DEVICE_STATE_DIR` (`<batch dir>/agent-device/<worker>`, also `{stateDir}`), so parallel runners never share an agent-device daemon; a value in the preset / suite `env` wins.
+With `--headless` (or the preset's `headless`), the leased sims' windows are closed at claim and again before the first job, serve and jobs get `WARDEN_HEADLESS=1`, and `batch.json` has `"headless": true`. `--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed. Every job gets its own `AGENT_DEVICE_STATE_DIR` (`<batch dir>/agent-device/<worker>`, also `{stateDir}`), so parallel runners never share an agent-device daemon; a value in the preset / suite `env` wins.
 
 If the first operand is the name of a preset in [`warden.config.ts`](/docs/reference/configuration#batches) `batches` (found by walking up from the cwd to the git root), that preset supplies the platform and defaults:
 
@@ -133,7 +136,7 @@ Select like `warden affected`, then run the flows like `warden batch` — the su
 | `--job-timeout <duration>` | overrides the suite's `jobTimeoutMs` (default 10 min) |
 | `--no-shutdown` | keep the devices running after the gate passes |
 
-The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. With [`metro`](/docs/reference/configuration#e2e) warden starts and verifies its own Metro before any flow and stops it last. With `devices`, every picked leg claims its own pool and runs the flows concurrently (`--profile` / `--count` replace the legs with one claim); the report then has one verdict per flow and leg. With `mode: "single"` one runner process per leg runs every selected flow and its exit code is their shared verdict. Flows run in id order (sorted file path), so `count: 1` is a stable serial run. Nothing affected → exit 0 without claiming. Every failed flow is named at the end with its device, runner log and failure screenshot (also `device`, `log`, `screenshot` on the flow in `e2e-report.json`). Leases are always released at the end; when the gate passes, the devices warden created (or booted for the run) are shut down first — a failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
+The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. With [`metro`](/docs/reference/configuration#e2e) warden starts and verifies its own Metro before any flow and stops it last. With `devices`, every picked leg claims its own pool and runs the flows concurrently (`--profile` / `--count` replace the legs with one claim); the report then has one verdict per flow and leg. With `mode: "single"` one runner process per leg runs every selected flow and its exit code is their shared verdict. While it runs, the grid (or, with `--no-tui`, one line per flow) ticks each flow off as the runner's output reports it: a line naming the flow's file that starts with `✓` (passed), or with `❯` / `×` and a failure count (failed), as tester.army's `e2e run` prints them. The grid's header bar has one cell per flow (one per job outside `single`): green passed, red failed, cyan running, dim pending; each device row has its own bar of the jobs it ran. In `single` mode every leased device gets a row, cyan while its runner works; when the run ends warden reads the runner's `report.json` (in its `--output` dir, default `.e2e`) and fills each device's bar with the flows it ran there. Flows run in id order (sorted file path), so `count: 1` is a stable serial run. `headless` (suite, else top-level) closes the leased sims' windows at claim and again before the first flow, unless `--no-headless`; `e2e-report.json` records `"headless"`. Nothing affected → exit 0 without claiming. Every failed flow is named at the end with its device, runner log and failure screenshot (also `device`, `log`, `screenshot` on the flow in `e2e-report.json`). Leases are always released at the end; when the gate passes, the devices warden created (or booted for the run) are shut down first — a failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
 
 ### `warden ls`
 
@@ -220,7 +223,7 @@ Permanently deletes simulators. With no udids it opens a multi-select menu (spac
 
 ### `warden arrange`
 
-macOS only. Lines up the open Simulator.app windows of warden sims in name order (`warden-iphone-17-2` before `-10`), left to right from the top-left of the main screen. Simulator windows can't be resized, so a row wider than the screen overlaps evenly, with every title bar left visible; windows wrap to a second row only if the screen is tall enough. Other simulators are left where they are, and Simulator.app is never launched. Every iOS claim (`claim`, `run`, `batch`, `e2e`) runs this automatically; set `WARDEN_ARRANGE=0` to turn that off. Moving windows uses System Events, so your terminal needs Accessibility access (System Settings → Privacy & Security → Accessibility).
+macOS only. Lines up the open Simulator.app windows of warden sims in name order (`warden-iphone-17-2` before `-10`), left to right from the top-left of the main screen. Simulator windows can't be resized, so a row wider than the screen overlaps evenly, with every title bar left visible; windows wrap to a second row only if the screen is tall enough. Other simulators are left where they are, and Simulator.app is never launched. Every iOS claim (`claim`, `run`, `batch`, `e2e`) runs this automatically unless it is [headless](/docs/guides/headless); set `WARDEN_ARRANGE=0` to turn that off. Moving windows uses System Events, so your terminal needs Accessibility access (System Settings → Privacy & Security → Accessibility).
 
 ### `warden clone <source>`
 
@@ -260,7 +263,7 @@ Print the project's native fingerprint (both platforms by default). `--project`,
 
 ### `warden app ensure [platform]`
 
-Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--clean` uninstalls the app first even when the hash matches; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`. See [App builds](/docs/guides/app-builds).
+Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--install-mode clean|reinstall` resets the installed app first (`clean`: fresh data, no reinstall of an unchanged build; `reinstall`: uninstall + install), `--reset-keychain` also resets the iOS sim keychain, `--clean` is a deprecated alias of `--install-mode reinstall`; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`. See [App builds](/docs/guides/app-builds).
 
 ### `warden dev [platform] [-- <expo start args>]`
 
@@ -268,7 +271,7 @@ The worktree-friendly `expo run:*`. Uses the device of `--udid` / `--lease` / yo
 
 Metro counts as ready (`--ready-timeout`, default `2m`) only once `/status` on that port is proven to serve **this** project root (the `X-React-Native-Project-Root` header, else the listening process's cwd). Another checkout's Metro on the port fails the command with `port <p> is served by <dir>, not this worktree` instead of being attached to.
 
-Then the dev client is opened on the device: iOS relaunches the app with `--initialUrl <metroUrl>` (no "Open in …?" alert); Android runs `adb reverse` and opens `exp+<slug>://expo-development-client/?url=…` (`--scheme` to override). `--no-open` skips this. `--json` prints one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready (Metro's own output goes to stderr). The device and port stay leased (heartbeat every 30 s) until Metro exits; Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--clean`, `--project`, `--bundle-id`.
+Then the dev client is opened on the device: iOS relaunches the app with `--initialUrl <metroUrl>` (no "Open in …?" alert); Android runs `adb reverse` and opens `exp+<slug>://expo-development-client/?url=…` (`--scheme` to override). `--no-open` skips this. `--json` prints one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready (Metro's own output goes to stderr). The device and port stay leased (heartbeat every 30 s) until Metro exits; Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--install-mode`, `--reset-keychain`, `--project`, `--bundle-id`. `--headless` closes the claimed sim's window and gives Metro `WARDEN_HEADLESS=1`; dev is headless only with the flag (config `headless` and `WARDEN_HEADLESS` don't apply).
 
 ### `warden builds ls | prune | import`
 

@@ -1,5 +1,6 @@
 import { constants } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
+import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import type { EnsureResult } from "@delacour/warden-core/builds/resolve";
 import type { ClaimOutcome } from "@delacour/warden-core/claim";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
@@ -10,6 +11,8 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
 import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
 import type { CommandContext } from "./context";
+import { installModeOption, legacyCleanOption, parseInstallFlags, RESET_KEYCHAIN_HELP } from "./install-flags";
+import type { Spinner } from "./ui";
 
 /** Shared by `warden run` and `warden batch`: claim devices + ports, child env, heartbeat, release. */
 
@@ -118,10 +121,20 @@ export function childEnv(
 	return env;
 }
 
+/** `WARDEN_HEADLESS=1` in a child env when the run is headless; removed otherwise, so children see the run's own value. */
+export function setHeadlessEnv(env: Record<string, string | undefined>, headless: boolean): void {
+	if (headless) env.WARDEN_HEADLESS = "1";
+	else delete env.WARDEN_HEADLESS;
+}
+
 /** `--app` family option values shared by `run` and `batch`. */
 export type AppFlagValues = {
 	app?: true;
-	/** `--clean` */
+	/** `--install-mode` */
+	installMode?: InstallMode;
+	/** `--reset-keychain` */
+	resetKeychain?: true;
+	/** `--clean`: deprecated alias of `--install-mode reinstall` */
 	clean?: true;
 	project?: string;
 	bundleId?: string;
@@ -145,7 +158,9 @@ export function withLeaseOptions<Args extends unknown[], Opts extends OptionValu
 			[] as string[]
 		)
 		.option("--app", "install the project's app (fingerprint → cache → EAS → build) on each device first")
-		.option("--clean", "--app: uninstall the app first, so every run starts from a fresh container")
+		.addOption(installModeOption("--app: "))
+		.option("--reset-keychain", RESET_KEYCHAIN_HELP)
+		.addOption(legacyCleanOption())
 		.option("--project <dir>", "--app: project directory (default: cwd)")
 		.option("--bundle-id <id>", "--app: override the bundle id / package")
 		.option("--variant <name>", "--app: install this projects[].variants build (dev, e2e…)")
@@ -155,19 +170,23 @@ export function withLeaseOptions<Args extends unknown[], Opts extends OptionValu
 
 /** `--app …` → ensure options (undefined without `--app`); the sub-flags need `--app`. */
 export function parseAppFlags(opts: AppFlagValues): Result<EnsureOptions | undefined> {
+	const install = parseInstallFlags(opts);
+	if (!install.success) return install;
 	if (opts.app) {
 		return ok({
 			eas: opts.eas,
 			build: opts.build,
-			...(opts.clean ? { clean: true } : {}),
+			...install.data,
 			...(opts.project !== undefined ? { project: opts.project } : {}),
 			...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
 			...(opts.variant !== undefined ? { variant: opts.variant } : {}),
 		});
 	}
 	const sub = opts.project ?? opts.bundleId ?? opts.variant;
-	if (sub !== undefined || !opts.eas || !opts.build || opts.clean) {
-		return err("--project / --no-eas / --no-build / --bundle-id / --variant / --clean need --app");
+	if (sub !== undefined || !opts.eas || !opts.build || install.data.installMode !== undefined) {
+		return err(
+			"--project / --no-eas / --no-build / --bundle-id / --variant / --install-mode / --reset-keychain / --clean need --app"
+		);
 	}
 	return ok(undefined);
 }
@@ -181,6 +200,8 @@ export type LeaseArgs = {
 	legFlags?: readonly ClaimFlags[];
 	ports: string[];
 	app?: EnsureOptions;
+	/** the devices + ports are held (before `--app` installs, which can take minutes) */
+	onLeased?: (outcome: ClaimOutcome) => void;
 };
 
 /** `--app`: ensure the app on every claimed device in parallel (waits for all, then reports the first failure); exports `WARDEN_APP_PATH` / `WARDEN_APP_HASH` into `env`. */
@@ -279,7 +300,12 @@ export async function claimAll(
 		const now = ctx.now();
 		for (const c of outcome.claimed) store.touchDevice(c.device.platform, c.device.id, now);
 	};
+	args.onLeased?.(outcome);
 	const env = childEnv(ctx.env, outcome, ports.data);
+	setHeadlessEnv(
+		env,
+		(args.legFlags ?? [args.flags]).some((f) => f.headless === true)
+	);
 	if (args.app) {
 		const ensure = deps.ensureApp ?? sessionEnsureApp();
 		const app = await ensureSessionApp(ctx, ensure, owner, outcome, args.app, env, name);
@@ -289,6 +315,25 @@ export async function claimAll(
 		}
 	}
 	return ok({ outcome, claims: claims.data, ports: ports.data, env, release, leaseIds });
+}
+
+/** `leased <name>, …` — the claim spinner's line. */
+export const leasedText = (outcome: ClaimOutcome) => `leased ${outcome.claimed.map((c) => c.device.name).join(", ")}`;
+
+/**
+ * With `--app` the installs run under the claim spinner: report the lease the moment it is held,
+ * so the install lines that follow read as happening on leased devices.
+ */
+export function leasedProgress(
+	spinner: Spinner,
+	color: CommandContext["ui"]["color"],
+	app: boolean
+): ((outcome: ClaimOutcome) => void) | undefined {
+	if (!app) return undefined;
+	return (outcome) => {
+		spinner.log(`${color.green("✔")} ${leasedText(outcome)}`);
+		spinner.update(`installing the app on ${outcome.claimed.length} device(s)…`);
+	};
 }
 
 /**

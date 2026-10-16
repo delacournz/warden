@@ -86,11 +86,20 @@ describe("batches in parseWardenConfig", () => {
 });
 
 describe("findBatchPreset", () => {
-	test("app: { clean: true } resolves to app + clean", () => {
+	test("app: { installMode, resetKeychain } resolves to app + installMode + resetKeychain", () => {
+		write(JSON_CONFIG_FILE, {
+			batches: { a: { platform: "ios", app: { installMode: "clean", resetKeychain: true }, cmd: ["x"] } },
+		});
+		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.preset).toMatchObject({ app: true, installMode: "clean", resetKeychain: true });
+	});
+
+	test("legacy app: { clean: true } resolves to installMode reinstall", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", app: { clean: true }, cmd: ["x"] } } });
 		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
 		if (!res.success) throw new Error(res.error);
-		expect(res.data.preset).toMatchObject({ app: true, clean: true });
+		expect(res.data.preset).toMatchObject({ app: true, installMode: "reinstall" });
 	});
 
 	test("app: { variant } resolves to app + variant", () => {
@@ -100,12 +109,38 @@ describe("findBatchPreset", () => {
 		expect(res.data.preset).toMatchObject({ app: true, variant: "e2e" });
 	});
 
-	test("app: true leaves clean unset", () => {
+	test("app: true leaves installMode unset", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", app: true, cmd: ["x"] } } });
 		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.preset?.app).toBe(true);
-		expect(res.data.preset?.clean).toBeUndefined();
+		expect(res.data.preset?.installMode).toBeUndefined();
+	});
+
+	test("headless: the preset's own wins over the top-level default", () => {
+		write(JSON_CONFIG_FILE, {
+			headless: true,
+			batches: { a: { platform: "ios", cmd: ["x"] }, b: { platform: "ios", headless: false, cmd: ["x"] } },
+		});
+		const a = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		const b = findBatchPreset({ start: dir, stopAt: dir, name: "b" });
+		if (!a.success || !b.success) throw new Error("config");
+		expect(a.data.preset?.headless).toBe(true);
+		expect(b.data.preset?.headless).toBe(false);
+	});
+
+	test("headless unset everywhere → undefined", () => {
+		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", cmd: ["x"] } } });
+		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.preset?.headless).toBeUndefined();
+	});
+
+	test("headless must be a boolean", () => {
+		const bad = parseWardenConfig({ headless: "yes", batches: { a: { platform: "ios", cmd: ["x"] } } });
+		expect(bad.success).toBe(false);
+		if (!bad.success) expect(bad.error).toContain("headless");
+		expect(parseWardenConfig({ batches: { a: { platform: "ios", headless: 1, cmd: ["x"] } } }).success).toBe(false);
 	});
 
 	test("no config → no preset, no names", () => {

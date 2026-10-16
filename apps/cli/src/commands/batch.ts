@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
@@ -7,6 +7,7 @@ import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delaco
 import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "@delacour/warden-core/batch/schedule";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
+import { resolveHeadless } from "@delacour/warden-core/headless";
 import { isPortFree } from "@delacour/warden-core/ports";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { wardenHome } from "@delacour/warden-core/store";
@@ -14,11 +15,26 @@ import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
+import { type FlowMark, flowMarks, type TrackedFlow } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
+import { type RunnerReport, reportOutputDir, runnerReport } from "../batch/runner-report";
 import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
 import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
-import { applyEvent, type BatchView, initialView, type LiveScreen, liveScreen, plainLine, render } from "../batch/tui";
+import { openStampedLog } from "../batch/stamped-log";
+import {
+	applyEvent,
+	applyFlowMarks,
+	applyRunnerReport,
+	type BatchView,
+	initialView,
+	type LiveScreen,
+	liveScreen,
+	plainLine,
+	render,
+	withRunners,
+} from "../batch/tui";
+import { agentDeviceStateDir, agentSession, findAgentDeviceBin, warmRunners, warmTargets } from "../batch/warm-runners";
 import {
 	type ClaimFlags,
 	type ClaimFlagValues,
@@ -40,6 +56,8 @@ import {
 	type LeaseArgs,
 	type LeaseSession,
 	type LeaseSessionDeps,
+	leasedProgress,
+	leasedText,
 	parseAppFlags,
 	processOnSignal,
 	splitCommand,
@@ -55,6 +73,7 @@ import {
 	startMetro,
 } from "../metro";
 import { emit, note, reportError, warn } from "../output";
+import { hideSimWindows } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 
 export type KillSignal = ForwardedSignal | "SIGKILL";
@@ -63,7 +82,7 @@ export type ProcHandle = { exited: Promise<number>; kill: (signal: KillSignal) =
 
 export type SpawnOptions = {
 	env: Record<string, string | undefined>;
-	/** stdout + stderr are appended to this file */
+	/** stdout + stderr are appended to this file, each line stamped `[HH:MM:SS.mmm] ` (and the child gets `WARDEN_LOG_TIMESTAMPS=1`) */
 	log: string;
 	/** own process group (detached); `kill` signals the whole group */
 	group?: boolean;
@@ -75,6 +94,8 @@ export type SpawnOptions = {
 	metro?: true;
 	/** a job (jobs with a timeout are `group` spawns too, so the whole tree can be killed) */
 	job?: true;
+	/** an agent-device runner warm-up (`hooks.warmRunners`) */
+	warm?: true;
 };
 
 /** Where the TUI goes (stderr by default). */
@@ -107,6 +128,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	metroProbe: (port: number, projectRoot: string) => Promise<MetroOwner>;
 	/** build the bundle once before the first job */
 	prewarm: (url: string, platform: Platform) => AsyncResult<{ bundled: boolean }>;
+	/** the project's `agent-device` bin (`hooks.warmRunners`); `undefined` = none, nothing to warm */
+	agentDeviceBin: (cwd: string) => string | undefined;
 };
 
 /** Commander option values of `warden batch`. */
@@ -180,6 +203,8 @@ const SERVE_KILL_GRACE_MS = 15_000;
 const JOB_KILL_GRACE_MS = 5_000;
 const READY_POLL_MS = 500;
 const FRAME_MS = 100;
+/** how often a `single` run's runner log is read for finished flows */
+const FLOW_POLL_MS = 1_000;
 
 const absolute = (cwd: string, path: string) => (isAbsolute(path) ? path : resolve(cwd, path));
 
@@ -342,7 +367,8 @@ function summaryJson(
 	endedAt: number,
 	devices: Device[],
 	summary: BatchSummary,
-	screenshots: Screenshots
+	screenshots: Screenshots,
+	headless: boolean
 ) {
 	return {
 		batchId,
@@ -350,6 +376,7 @@ function summaryJson(
 		startedAt,
 		endedAt,
 		ok: summary.ok,
+		headless,
 		devices: devices.map((d) => ({
 			worker: d.worker,
 			udid: d.udid,
@@ -372,16 +399,23 @@ function summaryJson(
 }
 
 /** TUI sinks: the terminal (live grid or plain lines) and the `tui.cast` mirror. */
-type Display = { event: (e: BatchEvent) => void; end: () => void; cast?: Cast };
+type Display = {
+	event: (e: BatchEvent) => void;
+	/** flow results read off `worker`'s runner output */
+	flows: (worker: number, marks: Readonly<Record<string, FlowMark>>) => void;
+	/** the `single` runner's report: the flows each device ran */
+	report: (report: RunnerReport) => void;
+	end: () => void;
+	cast?: Cast;
+};
 
 function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { current: BatchView }): Display {
 	const { terminal } = deps;
 	const live = args.tui && terminal.isTTY;
 	const width = live ? terminal.columns : 100;
-	// header + one row per device + the cursor row the grid's trailing newline leaves
-	const cast = args.record
-		? createCast({ width, height: view.current.devices.length + 2, startedAt: ctx.now() })
-		: undefined;
+	// the grid (header, device rows, flow lines) + the cursor row its trailing newline leaves
+	const height = render(view.current, { width, color: false }).split("\n").length + 1;
+	const cast = args.record ? createCast({ width, height, startedAt: ctx.now() }) : undefined;
 	const sinks: Array<{ screen: LiveScreen; color: boolean; last?: string }> = [];
 	if (live) sinks.push({ screen: liveScreen(terminal.write), color: ctx.ui.color.level > 0 });
 	if (cast) sinks.push({ screen: liveScreen((data) => cast.write(ctx.now(), data)), color: true });
@@ -406,11 +440,144 @@ function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { 
 			}
 			frame(false);
 		},
+		flows: (worker, marks) => {
+			if (!live) announceFlows(ctx, view.current, worker, marks);
+			view.current = applyFlowMarks(view.current, worker, marks);
+			frame(false);
+		},
+		report: (report) => {
+			view.current = applyRunnerReport(view.current, report);
+			if (!live) announceDevices(ctx, view.current);
+			frame(false);
+		},
 		end: () => {
 			stopFrames();
 			frame(true);
 		},
 	};
+}
+
+/** Run every pool's queue behind the grid; a `single` run with `flows` also ticks them off live from the runner logs. */
+async function runGrid(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	queues: readonly Queue[],
+	o: {
+		total: number;
+		startedAt: number;
+		cmd: readonly string[];
+		logs: ReadonlyMap<string, string>;
+		flows: readonly TrackedFlow[] | undefined;
+	}
+): Promise<{ summary: BatchSummary; screen: Display }> {
+	const rows = queues.flatMap((q) => q.rows);
+	// only a `single` runner runs several flows in one job
+	const flows = args.single ? o.flows : undefined;
+	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, flows) });
+	const poller = flows ? flowPoller(deps, flows, o.logs, screen) : undefined;
+	try {
+		const summary = await runPools(queues, {
+			retry: args.retry,
+			now: ctx.now,
+			signal: r.signal,
+			onEvent: screen.event,
+		});
+		poller?.stop();
+		await poller?.poll();
+		if (flows) await readRunnerReport(deps, args.cwd, o.cmd, flows, o.startedAt, screen);
+		return { summary, screen };
+	} finally {
+		poller?.stop();
+	}
+}
+
+/** `single`: hand the runner's `report.json` (in its `--output` dir) to the display; a missing / stale one is skipped. */
+async function readRunnerReport(
+	deps: BatchDeps,
+	cwd: string,
+	cmd: readonly string[],
+	flows: readonly TrackedFlow[],
+	since: number,
+	screen: Display
+): Promise<void> {
+	const dir = reportOutputDir(cmd);
+	if (dir === undefined) return;
+	const text = await deps.readFile(join(absolute(cwd, dir), "report.json")).catch(() => "");
+	const report = runnerReport(text, flows, since);
+	if (report) screen.report(report);
+}
+
+/** The grid's first frame: one runner per worker tracks `flows` when a `single` run has them. */
+function startView(
+	rows: ReadonlyArray<{ worker: number; udid: string; name: string }>,
+	total: number,
+	startedAt: number,
+	flows: readonly TrackedFlow[] | undefined
+): BatchView {
+	const view = initialView(rows, total, startedAt);
+	return flows
+		? withRunners(
+				view,
+				flows.map((f) => f.id)
+			)
+		: view;
+}
+
+const tick = (mark: FlowMark) => (mark === "passed" ? "✓" : "✗");
+
+/** `--no-tui`: one line per flow the first time it is marked (or its mark changes), named by the worker's pool. */
+function announceFlows(
+	ctx: CommandContext,
+	view: BatchView,
+	worker: number,
+	marks: Readonly<Record<string, FlowMark>>
+): void {
+	const [first, ...rest] = view.devices.filter((d) => d.worker === worker);
+	const name = `${first?.name ?? "?"}${rest.length > 0 ? ` +${rest.length}` : ""}`;
+	for (const f of view.runners?.find((r) => r.worker === worker)?.flows ?? []) {
+		const mark = marks[f.id];
+		if (mark && mark !== f.mark) ctx.err(`${name} ${tick(mark)} ${f.id}`);
+	}
+}
+
+/** `--no-tui`: after the runner's report, one line per device with the flows it ran. */
+function announceDevices(ctx: CommandContext, view: BatchView): void {
+	for (const d of view.devices)
+		if (d.ran && d.ran.length > 0) ctx.err(`${d.name}: ${d.ran.map((f) => `${tick(f.mark)} ${f.id}`).join("  ")}`);
+}
+
+/**
+ * `mode: "single"`: read each worker's latest runner log and hand the flows it reports finished to
+ * the display. `poll` reads once (also called after the run, so the last flows land); `stop` ends the timer.
+ */
+function flowPoller(
+	deps: BatchDeps,
+	flows: readonly TrackedFlow[],
+	logs: ReadonlyMap<string, string>,
+	screen: Display
+): { poll: () => Promise<void>; stop: () => void } {
+	let busy = false;
+	const poll = async () => {
+		if (busy) return;
+		busy = true;
+		try {
+			// attempt keys are `<worker>:<seq>` in spawn order: the last one per worker is its current log
+			const latest = new Map<number, string>();
+			for (const [key, log] of logs) latest.set(Number(key.split(":")[0]), log);
+			for (const [worker, log] of latest) {
+				const text = await deps.readFile(log).catch(() => "");
+				screen.flows(worker, flowMarks(text, flows));
+			}
+		} finally {
+			busy = false;
+		}
+	};
+	const stop = deps.every(FLOW_POLL_MS, () => {
+		void poll();
+	});
+	return { poll, stop };
 }
 
 /** Start one recording per device (in parallel); failures stop the ones that started. */
@@ -511,10 +678,13 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 	/** env, argv and log of one spawn: the pool env + this worker's own agent-device state dir */
 	const plan = (w: BatchWorker, id: string, seq: number, pass: number) => {
 		const job = baseJob(id);
-		const stateDir = o.env.AGENT_DEVICE_STATE_DIR ?? join(o.batchDir, "agent-device", String(w.worker));
+		const stateDir = agentDeviceStateDir(o.env, o.batchDir, w.worker);
+		const first = o.single ? (o.live[0] ?? w) : w;
 		const env = {
 			...o.env,
 			AGENT_DEVICE_STATE_DIR: stateDir,
+			// the session the runner names its agent-device sessions after (`-<slot>`): what `warmRunners` started
+			WARDEN_AGENT_SESSION: agentSession(first.udid),
 			WARDEN_UDID: w.udid,
 			WARDEN_WORKER: String(w.worker),
 			WARDEN_JOB: job,
@@ -588,7 +758,8 @@ type BatchRun = {
 
 /** Write `batch.json` (+ `tui.cast`), print `--json` / the closing lines. */
 async function report(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, r: BatchRun): Promise<void> {
-	const doc = summaryJson(r.batchId, r.cmd, r.startedAt, r.endedAt, r.devices, r.summary, r.screenshots);
+	const headless = args.flags.headless === true;
+	const doc = summaryJson(r.batchId, r.cmd, r.startedAt, r.endedAt, r.devices, r.summary, r.screenshots, headless);
 	await deps.writeFile(join(r.batchDir, "batch.json"), `${JSON.stringify(doc, null, 2)}\n`);
 	if (r.cast) await deps.writeFile(join(r.batchDir, "tui.cast"), r.cast.text());
 	if (args.json) emit(ctx, true, doc, "");
@@ -621,6 +792,10 @@ export type SessionHooks = {
 	setup?: DeviceSetupSpec | undefined;
 	/** shut down the leased devices warden may shut down (see `shutdownReleasedDevices`) before releasing, when this says so of a finished, uninterrupted run */
 	shutdownIf?: (summary: BatchSummary) => boolean;
+	/** `single` runs: the flows its runner runs, tracked live from the runner's output */
+	flows?: readonly TrackedFlow[];
+	/** iOS: start each device's agent-device runner in parallel after setup, before the first job */
+	warmRunners?: boolean;
 };
 
 /** `hooks.shutdownIf`: stop the session's devices while their leases are still held; failures only warn. */
@@ -799,7 +974,7 @@ async function openOnDevices(
 	);
 }
 
-/** The grid row of a pool's worker: in `single` mode one row stands for the whole pool. */
+/** A pool's scheduler workers: in `single` mode one worker (one runner) stands for the whole pool. */
 function workerRows(live: readonly Device[], single: boolean): Device[] {
 	const [first, ...rest] = live;
 	if (!single || !first) return [...live];
@@ -912,6 +1087,56 @@ async function startServe(
 type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
 
 /** Per-device setup of every pool, concurrently; `setups` is undefined when the run has no setup. */
+/** how long one device's runner warm-up may take (a cold simulator's runner start is ~20 s) */
+const WARM_TIMEOUT_MS = 120_000;
+
+/**
+ * `hooks.warmRunners`: start every live device's agent-device runner at once, in the daemon + session
+ * its job will resume, so the runner's engine (which warms devices one by one) finds them up. Skipped
+ * when the project has no `agent-device`; a failed warm-up only warns (the engine starts that runner).
+ */
+async function warmPools(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	prepared: readonly PreparedPool[],
+	env: Record<string, string | undefined>
+): Promise<void> {
+	const bin = deps.agentDeviceBin(args.cwd);
+	const count = prepared.reduce((n, p) => n + p.live.length, 0);
+	if (bin === undefined || count === 0) return;
+	const outcomes = await withSpinner(ctx, `warming ${count} automation runner(s)…`, () =>
+		Promise.all(
+			prepared.map((p) => {
+				const poolVars = poolEnv(env, p.pool, p.live);
+				return warmRunners({
+					targets: warmTargets(p.live, { single: args.single === true, env: poolVars, batchDir: r.batchDir }),
+					bin,
+					env: poolVars,
+					cwd: args.cwd,
+					logDir: r.logDir,
+					timeoutMs: WARM_TIMEOUT_MS,
+					spawn: (argv, o) => deps.spawn(argv, o),
+					after: deps.after,
+					track: (proc) => {
+						const handle = proc as ProcHandle;
+						r.running.add(handle);
+						return () => r.running.delete(handle);
+					},
+				});
+			})
+		)
+	);
+	for (const o of outcomes.flat()) {
+		if (o.ok) continue;
+		const why = o.timedOut ? `timed out after ${formatDuration(WARM_TIMEOUT_MS)}` : `exit ${o.exitCode}`;
+		ctx.err(
+			ctx.ui.color.yellow(`warden ${r.name}: runner warm-up on ${o.udid} ${why} — the runner starts it (log: ${o.log})`)
+		);
+	}
+}
+
 async function preparePools(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -940,7 +1165,8 @@ async function preparePools(
 	return { prepared, setups: r.hooks.setup ? prepared.flatMap((p) => p.setups ?? []) : undefined };
 }
 
-type Queue = { workers: Device[]; jobs: string[]; run: ReturnType<typeof jobRunner> };
+/** `rows`: the grid's rows (every live device; a `single` pool's share its one worker). */
+type Queue = { workers: Device[]; rows: Device[]; jobs: string[]; run: ReturnType<typeof jobRunner> };
 
 /** One job queue per pool: its workers (one per device, or one for the pool in `single` mode) and its job runner. */
 function poolQueues(
@@ -966,6 +1192,7 @@ function poolQueues(
 	};
 	return prepared.map((p) => ({
 		workers: workerRows(p.live, single),
+		rows: single ? p.live.map((d) => ({ ...d, worker: p.live[0]?.worker ?? d.worker })) : p.live,
 		jobs: o.jobs.map((job) => legJob(job, qualified ? p.pool.leg : undefined)),
 		run: jobRunner(deps, {
 			cmd: o.cmd,
@@ -1065,16 +1292,21 @@ async function supervise(
 			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
 		}
 		if (args.metro && services.metro) await openOnDevices(ctx, r.name, r.platform, args.metro, services.metro, live);
+		// a window can attach after the claim (boot lag, Simulator.app opened since): close it before the first job
+		if (r.platform === "ios" && args.flags.headless) {
+			const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
+			await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
+		}
+		if (r.hooks.warmRunners && r.platform === "ios") await warmPools(ctx, deps, args, r, prepared, env);
 		const queues = poolQueues(ctx, deps, args, r, prepared, { jobs, cmd, env, vars, screenshots, logs });
 		const total = queues.reduce((n, q) => n + q.jobs.length, 0);
 		const startedAt = ctx.now();
-		const rows = queues.flatMap((q) => q.workers);
-		const screen = display(ctx, deps, args, { current: initialView(rows, total, startedAt) });
-		const summary = await runPools(queues, {
-			retry: args.retry,
-			now: ctx.now,
-			signal: r.signal,
-			onEvent: screen.event,
+		const { summary, screen } = await runGrid(ctx, deps, args, r, queues, {
+			total,
+			startedAt,
+			cmd,
+			logs,
+			flows: hooks.flows,
 		});
 		const endedAt = ctx.now();
 		screen.end();
@@ -1146,7 +1378,8 @@ function presetOpts(preset: BatchPreset): Partial<BatchOpts> {
 		record: preset.record,
 		logs: preset.logs,
 		...(preset.app ? { app: true, project: preset.projectRoot } : {}),
-		...(preset.app && preset.clean ? { clean: true } : {}),
+		...(preset.app && preset.installMode !== undefined ? { installMode: preset.installMode } : {}),
+		...(preset.app && preset.resetKeychain ? { resetKeychain: true } : {}),
 		...(preset.app && preset.variant !== undefined ? { variant: preset.variant } : {}),
 	};
 	return Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined));
@@ -1208,7 +1441,12 @@ async function batch(
 	const cmd = split.data.cmd.length > 0 ? split.data.cmd : (preset?.cmd ?? []);
 	if (cmd.length === 0) return fail("missing command after -- (warden batch ios -- <cmd…>)");
 	const merged = preset ? mergePreset(preset, opts, passed) : { opts, base: {} };
-	const args = parseBatchArgs(platform, merged.opts, ctx.cwd, merged.base);
+	const headless = resolveHeadless({
+		flag: passed.has("headless") ? opts.headless : undefined,
+		config: preset?.headless,
+		env: ctx.env,
+	});
+	const args = parseBatchArgs(platform, { ...merged.opts, headless }, ctx.cwd, merged.base);
 	if (!args.success) return fail(args.error);
 	const jobs = await loadJobs(ctx, deps, args.data);
 	if (!jobs.success) return fail(jobs.error);
@@ -1235,9 +1473,12 @@ export async function runSession(
 		.join(" + ");
 	const claimed = await withSpinner(ctx, `claiming ${wanted} ${platform} device(s)…`, async (sctx, spinner) => {
 		const legFlags = lease.legs?.map((leg) => leg.flags);
-		const result = await claimAll(sctx, deps, owner, legFlags ? { ...lease, legFlags } : lease, name);
-		if (result.success) spinner.succeed(`leased ${result.data.outcome.claimed.map((c) => c.device.name).join(", ")}`);
-		else spinner.fail("claim failed");
+		const onLeased = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
+		const args = { ...lease, ...(legFlags ? { legFlags } : {}), ...(onLeased ? { onLeased } : {}) };
+		const result = await claimAll(sctx, deps, owner, args, name);
+		if (!result.success) spinner.fail(lease.app ? "claim / app install failed" : "claim failed");
+		else if (lease.app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
+		else spinner.succeed(leasedText(result.data.outcome));
 		return result;
 	});
 	if (!claimed.success) {
@@ -1302,23 +1543,31 @@ export function createBatchCommand(deps: BatchDeps): Command {
 	});
 }
 
+/** how long an exited job's output may still be draining into its log */
+const LOG_DRAIN_MS = 2000;
+
 export const defaultBatchDeps: BatchDeps = {
 	pid: process.pid,
 	isPortFree: (port) => isPortFree(port),
 	spawn(cmd, opts) {
-		mkdirSync(dirname(opts.log), { recursive: true });
-		const fd = openSync(opts.log, "a");
+		const log = openStampedLog(opts.log);
 		try {
 			const proc = Bun.spawn(cmd, {
-				env: opts.env,
+				env: { ...opts.env, WARDEN_LOG_TIMESTAMPS: "1" },
 				cwd: opts.cwd,
 				stdin: "ignore",
-				stdout: fd,
-				stderr: fd,
+				stdout: "pipe",
+				stderr: "pipe",
 				detached: opts.group === true,
 			});
+			const drained = Promise.all([log.pump(proc.stdout), log.pump(proc.stderr)]);
 			return {
-				exited: proc.exited.then((code) => exitCodeOf(proc, code)),
+				// a grandchild still holding the pipes can't hold up the exit past LOG_DRAIN_MS
+				exited: proc.exited.then(async (code) => {
+					await Promise.race([drained, Bun.sleep(LOG_DRAIN_MS)]);
+					log.close();
+					return exitCodeOf(proc, code);
+				}),
 				kill: (signal) => {
 					try {
 						if (opts.group) process.kill(-proc.pid, signal);
@@ -1328,8 +1577,9 @@ export const defaultBatchDeps: BatchDeps = {
 					}
 				},
 			};
-		} finally {
-			closeSync(fd);
+		} catch (e) {
+			log.close();
+			throw e;
 		}
 	},
 	probe: probeReady,
@@ -1363,6 +1613,7 @@ export const defaultBatchDeps: BatchDeps = {
 	},
 	metroProbe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	prewarm: prewarmMetro,
+	agentDeviceBin: (cwd) => findAgentDeviceBin(cwd, existsSync),
 };
 
 export const batchCommand: Command = createBatchCommand(defaultBatchDeps);

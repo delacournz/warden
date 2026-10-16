@@ -1,0 +1,67 @@
+---
+title: Headless e2e
+description: How warden runs simulators without a window, and the --headless switch that guarantees it even with Simulator.app open.
+icon: EyeOff
+---
+
+```bash
+warden e2e <suite> --headless
+```
+
+A headless run shows no simulator window, even with Simulator.app open, and never moves your own windows.
+
+## How headless e2e works
+
+1. **Boot.** warden boots iOS simulators with `xcrun simctl boot <udid>` + `bootstatus -b`. Simulator.app is only a *viewer*: the simulated iOS (launchd_sim, SpringBoard, your app) runs inside CoreSimulator whether or not a window exists. warden never launches Simulator.app. Android emulators start with `emulator -no-window -read-only`, so they are always headless.
+2. **Render.** The app draws into the device's own framebuffer. `simctl io screenshot` and agent-device snapshots read that, so screenshots and failure evidence need no window.
+3. **Drive.** `warden e2e` starts the runner (`bunx e2e run …`, tester.army), which uses agent-device. agent-device installs an XCTest runner on the sim and injects touches through XCTest, reading the accessibility tree. Links and installs go through `simctl`. Nothing touches a window.
+4. **Where windows come from.** If Simulator.app is already open, it attaches a window to every booted device, warden's included. Without `--headless`, every iOS claim then tiles those windows (`warden arrange`, off with `WARDEN_ARRANGE=0`). A reused sim that you already had open keeps its window.
+5. **Watching a run.** `open -a Simulator` attaches windows to the booted sims without touching leases. ⌘W closes a window. Quitting Simulator.app does not always keep the devices booted.
+
+## What `--headless` does
+
+- After the claim, warden closes the Simulator.app windows of the devices **this run leased**, instead of tiling them. A window is matched by its device name (the title before ` – iOS …`). Windows of other devices are never touched, and a reused sim that was open before has its window closed too.
+- `warden e2e` / `warden batch` close them again just before the first job, after Metro, `serve` and `setup` are up, because a window can attach late (a slow boot, or Simulator.app opened in the meantime).
+- By default Simulator.app shuts a device down when you close its window. For the close only, warden switches on Simulator's "keep running" setting (`defaults write com.apple.iphonesimulator DetachOnWindowClose -bool true`). The window detaches and the device stays booted. Afterwards warden puts the setting back exactly as it was: unset, `false` or `true`.
+- If a device still shuts down, warden waits for it to finish shutting down, boots it again without a window (`simctl boot` + `bootstatus -b`), closes any window Simulator.app reattached, and prints a warning.
+- Simulator.app is never launched. When it isn't running, there is nothing to do.
+- Headless never fails a run. A missing Accessibility permission or an osascript error is a yellow warning.
+- Serve, setup and runners get `WARDEN_HEADLESS=1`, so your own tools can honour it. On a run that isn't headless, `WARDEN_HEADLESS` is removed from their env.
+- `e2e-report.json` and `batch.json` record `"headless": true | false`.
+- Android: no change, because emulators already run with `-no-window`.
+
+Closing windows uses System Events, so your terminal needs Accessibility access (System Settings → Privacy & Security → Accessibility), the same as `warden arrange`.
+
+## Turning it on
+
+| Where | Applies to |
+|---|---|
+| `--headless` / `--no-headless` | `claim`, `run`, `batch`, `e2e`; `dev` takes `--headless` only |
+| `e2e.<suite>.headless` | that suite |
+| `batches.<name>.headless` | that preset |
+| top-level `headless` | every suite and preset that doesn't set its own |
+| `WARDEN_HEADLESS=1` | every `claim`, `run`, `batch`, `e2e` that nothing above decides |
+
+The first one that is set wins: CLI flag, then suite / preset, then top-level, then `WARDEN_HEADLESS`. Otherwise headless is off.
+
+```ts title="warden.config.ts"
+export default defineConfig({
+  headless: true,            // every suite and preset
+  e2e: {
+    mobile: { /* … */ },     // headless (top-level)
+    demo: { headless: false, /* … */ }, // keeps its windows
+  },
+});
+```
+
+`warden dev` is headless only with an explicit `--headless`. It ignores the top-level `headless` and `WARDEN_HEADLESS`, since dev is usually something you watch.
+
+## Watching a headless run
+
+```bash
+open -a Simulator    # windows appear for the booted sims; leases are untouched
+```
+
+A headless run closes these windows only at claim time and before the first job. Windows you open later stay open until you close them (⌘W).
+
+More: [Run e2e](/docs/guides/run-e2e), [configuration](/docs/reference/configuration), [environment](/docs/reference/environment).

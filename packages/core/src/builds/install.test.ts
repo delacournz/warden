@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "../exec";
-import { appMatchesArtifact, installApp, isAppInstalled, uninstallApp } from "./install";
+import { appMatchesArtifact, installApp, isAppInstalled, type ResetFs, resetAppData, uninstallApp } from "./install";
 
 function exec(handlers: Record<string, Partial<ExecResult>>, calls: string[] = []): Exec {
 	return async (cmd) => {
@@ -163,5 +163,146 @@ describe("appMatchesArtifact", () => {
 			success: true,
 			data: true,
 		});
+	});
+});
+
+const META = ".com.apple.mobile_container_manager.metadata.plist";
+
+/** Exact-match exec: argv joined → result; unknown commands succeed with empty output. */
+function exactExec(table: Record<string, Partial<ExecResult>>, calls: string[]): Exec {
+	return async (cmd) => {
+		const joined = cmd.join(" ");
+		calls.push(joined);
+		return { exitCode: 0, stdout: "", stderr: "", ...table[joined] };
+	};
+}
+
+function fakeFs(dirs: Record<string, string[]>, log: string[]): ResetFs {
+	return {
+		readdir: async (dir) => dirs[dir] ?? [],
+		rm: async (path) => {
+			log.push(`rm ${path}`);
+		},
+		mkdir: async (path) => {
+			log.push(`mkdir ${path}`);
+		},
+	};
+}
+
+describe("resetAppData", () => {
+	const dataCmd = "xcrun simctl get_app_container U1 com.x data";
+	const groupsCmd = "xcrun simctl get_app_container U1 com.x groups";
+	const base = {
+		"xcrun simctl get_app_container U1 com.x": { stdout: "/p/App.app" },
+		[dataCmd]: { stdout: "/data\n" },
+	};
+
+	test("iOS: terminate, defaults delete, wipe data keeping metadata, groups, privacy reset (in order)", async () => {
+		const calls: string[] = [];
+		const fsLog: string[] = [];
+		const e = exactExec({ ...base, [groupsCmd]: { stdout: "group.com.x\t/groups/g1\n" } }, calls);
+		const fs = fakeFs({ "/data": [META, "Documents", "Library"], "/groups/g1": [META, "shared.db"] }, fsLog);
+		const res = await resetAppData({ exec: e, env, fs }, ios, "com.x");
+		expect(res).toEqual({ success: true, data: undefined });
+		expect(calls).toEqual([
+			"xcrun simctl get_app_container U1 com.x",
+			"xcrun simctl terminate U1 com.x",
+			"xcrun simctl spawn U1 defaults delete com.x",
+			dataCmd,
+			groupsCmd,
+			"xcrun simctl privacy U1 reset all com.x",
+		]);
+		expect(fsLog).toEqual([
+			"rm /data/Documents",
+			"rm /data/Library",
+			"mkdir /data/Documents",
+			"mkdir /data/Library/Caches",
+			"mkdir /data/Library/Preferences",
+			"mkdir /data/tmp",
+			"rm /groups/g1/shared.db",
+		]);
+	});
+
+	test("iOS: terminate / defaults delete / groups failures are ignored", async () => {
+		const calls: string[] = [];
+		const e = exactExec(
+			{
+				...base,
+				"xcrun simctl terminate U1 com.x": { exitCode: 3 },
+				"xcrun simctl spawn U1 defaults delete com.x": { exitCode: 1 },
+				[groupsCmd]: { exitCode: 2 },
+			},
+			calls
+		);
+		const res = await resetAppData({ exec: e, env, fs: fakeFs({ "/data": ["a"] }, []) }, ios, "com.x");
+		expect(res.success).toBe(true);
+	});
+
+	test("iOS: no groups output is fine", async () => {
+		const fsLog: string[] = [];
+		const e = exactExec({ ...base, [groupsCmd]: { stdout: "\n" } }, []);
+		const res = await resetAppData({ exec: e, env, fs: fakeFs({ "/data": [] }, fsLog) }, ios, "com.x");
+		expect(res.success).toBe(true);
+		expect(fsLog.filter((l) => l.startsWith("rm"))).toEqual([]);
+	});
+
+	test("iOS: empty data container path → error", async () => {
+		const e = exactExec({ ...base, [dataCmd]: { stdout: "" } }, []);
+		const res = await resetAppData({ exec: e, env, fs: fakeFs({}, []) }, ios, "com.x");
+		expect(res.success).toBe(false);
+	});
+
+	test("iOS: privacy reset failure → error", async () => {
+		const e = exactExec({ ...base, "xcrun simctl privacy U1 reset all com.x": { exitCode: 1, stderr: "nope" } }, []);
+		const res = await resetAppData({ exec: e, env, fs: fakeFs({}, []) }, ios, "com.x");
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("privacy reset failed");
+	});
+
+	test("iOS: keychain reset only when asked", async () => {
+		const without: string[] = [];
+		await resetAppData({ exec: exactExec(base, without), env, fs: fakeFs({}, []) }, ios, "com.x");
+		expect(without).not.toContain("xcrun simctl keychain U1 reset");
+		const withKc: string[] = [];
+		const res = await resetAppData({ exec: exactExec(base, withKc), env, fs: fakeFs({}, []) }, ios, "com.x", {
+			keychain: true,
+		});
+		expect(res.success).toBe(true);
+		expect(withKc.at(-1)).toBe("xcrun simctl keychain U1 reset");
+		const bad = exactExec({ ...base, "xcrun simctl keychain U1 reset": { exitCode: 1 } }, []);
+		const failed = await resetAppData({ exec: bad, env, fs: fakeFs({}, []) }, ios, "com.x", { keychain: true });
+		expect(failed.success).toBe(false);
+	});
+
+	test("not installed → error naming bundle id and device", async () => {
+		const res = await resetAppData({ exec: exec({}), env, fs: fakeFs({}, []) }, ios, "com.x");
+		expect(res).toEqual({ success: false, error: "com.x is not installed on U1" });
+	});
+
+	test("Android: pm clear Success → ok", async () => {
+		const calls: string[] = [];
+		const e = exactExec(
+			{
+				"adb -s emulator-5554 shell pm path com.x": { stdout: "package:/x" },
+				"adb -s emulator-5554 shell pm clear com.x": { stdout: "Success\n" },
+			},
+			calls
+		);
+		const res = await resetAppData({ exec: e, env, fs: fakeFs({}, []) }, android, "com.x", { keychain: true });
+		expect(res.success).toBe(true);
+		expect(calls.at(-1)).toBe("adb -s emulator-5554 shell pm clear com.x");
+	});
+
+	test("Android: pm clear Failed → error", async () => {
+		const e = exactExec(
+			{
+				"adb -s emulator-5554 shell pm path com.x": { stdout: "package:/x" },
+				"adb -s emulator-5554 shell pm clear com.x": { stdout: "Failed\n" },
+			},
+			[]
+		);
+		const res = await resetAppData({ exec: e, env, fs: fakeFs({}, []) }, android, "com.x");
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("pm clear failed");
 	});
 });

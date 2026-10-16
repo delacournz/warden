@@ -3,8 +3,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { JSON_CONFIG_FILE } from "@delacour/warden-core/builds/config";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-core/exec";
+import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { scriptedUi, type TestContext, testContext } from "../testing";
 import { createBatchCommand } from "./batch";
 import { harness } from "./batch.testing";
 
@@ -405,6 +406,78 @@ describe("warden batch", () => {
 		expect(out.jobs).toHaveLength(1);
 	});
 
+	describe("headless", () => {
+		/** Simulator.app shows both leased sims' windows; every close is logged into `events`. */
+		function windowsExec(c: TestContext, events: string[]): void {
+			const base = c.exec;
+			const sims = [wardenSim(1, "Booted"), wardenSim(2, "Booted")];
+			c.exec = async (cmd, opts) => {
+				if (cmd[0] === "osascript") {
+					const script = cmd[4] ?? "";
+					if (script.includes("AXCloseButton")) events.push("close");
+					const windows = sims.map((s) => ({ title: `${s.name} – iOS 26.5`, width: 400, height: 800 }));
+					return {
+						exitCode: 0,
+						stdout: JSON.stringify({ screen: { x: 0, y: 0, width: 900, height: 900 }, windows }),
+						stderr: "",
+					};
+				}
+				if (cmd.join(" ") === "xcrun simctl list devices -j") {
+					return { exitCode: 0, stdout: simctlDevicesJson({ "iOS-26-5": sims }), stderr: "" };
+				}
+				return base(cmd, opts);
+			};
+		}
+		const darwin = process.platform === "darwin";
+
+		test("--headless: windows closed at claim and again before the first job; WARDEN_HEADLESS=1; batch.json headless", async () => {
+			const c = setup(["ios", "--count", "2", "--headless", "--jobs", "a", "--serve", "srv", "--", "x"]);
+			const h = harness();
+			windowsExec(c, h.events);
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			expect(h.serve()?.opts.env.WARDEN_HEADLESS).toBe("1");
+			expect(h.jobs()[0]?.opts.env.WARDEN_HEADLESS).toBe("1");
+			const closes = h.events.filter((e) => e === "close").length;
+			expect(closes).toBe(darwin ? 2 : 0);
+			if (darwin) expect(h.events.lastIndexOf("close")).toBeLessThan(h.events.indexOf("job:a"));
+			const batchDir = join(c.env.WARDEN_HOME ?? "", "batches", "b1");
+			expect(JSON.parse(h.files.get(join(batchDir, "batch.json")) ?? "{}").headless).toBe(true);
+		});
+
+		test("not headless: no window closed, batch.json headless false, WARDEN_HEADLESS unset", async () => {
+			const c = setup(["ios", "--jobs", "a", "--", "x"]);
+			const h = harness();
+			windowsExec(c, h.events);
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			expect(h.events).not.toContain("close");
+			expect("WARDEN_HEADLESS" in (h.jobs()[0]?.opts.env ?? {})).toBe(false);
+			const batchDir = join(c.env.WARDEN_HOME ?? "", "batches", "b1");
+			expect(JSON.parse(h.files.get(join(batchDir, "batch.json")) ?? "{}").headless).toBe(false);
+		});
+
+		test("preset headless (top-level default) applies; --no-headless beats it", async () => {
+			const on = setup(["smoke", "--jobs", "a"]);
+			writeFileSync(
+				join(on.cwd, JSON_CONFIG_FILE),
+				JSON.stringify({ headless: true, batches: { smoke: { platform: "ios", cmd: ["x"] } } })
+			);
+			const h1 = harness();
+			expect(await createBatchCommand(h1.deps).run(on)).toBe(0);
+			expect(h1.jobs()[0]?.opts.env.WARDEN_HEADLESS).toBe("1");
+			on.cleanup();
+
+			const off = setup(["smoke", "--jobs", "a", "--no-headless"]);
+			off.env = { ...off.env, WARDEN_HEADLESS: "1" };
+			writeFileSync(
+				join(off.cwd, JSON_CONFIG_FILE),
+				JSON.stringify({ batches: { smoke: { platform: "ios", headless: true, cmd: ["x"] } } })
+			);
+			const h2 = harness();
+			expect(await createBatchCommand(h2.deps).run(off)).toBe(0);
+			expect("WARDEN_HEADLESS" in (h2.jobs()[0]?.opts.env ?? {})).toBe(false);
+		});
+	});
+
 	test("--app ensures the app on every device before serve and jobs", async () => {
 		const c = setup(["ios", "--count", "2", "--jobs", "a,b", "--app", "--", "x"]);
 		const h = harness();
@@ -418,21 +491,55 @@ describe("warden batch", () => {
 		expect(h.jobs()[0]?.opts.env.WARDEN_APP_PATH).toBe("/c/A.app");
 	});
 
-	test("--clean is passed to the ensure step; it needs --app", async () => {
-		const c = setup(["ios", "--jobs", "a", "--app", "--clean", "--", "x"]);
+	test("--app: the lease is reported as soon as it is held, before any install", async () => {
+		const c = setup(["ios", "--count", "2", "--jobs", "a,b", "--app", "--", "x"]);
+		const ui = scriptedUi();
+		c.ui = ui;
 		const h = harness();
-		const seen: Array<boolean | undefined> = [];
-		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
-			seen.push(opts.clean);
+		h.deps.ensureApp = async (ctx, _owner, _platform, deviceId) => {
+			ctx.err(`installing on ${deviceId}`);
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
 		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
-		expect(seen).toEqual([true]);
+		const leased = ui.events.findIndex((e) => /leased warden-iphone-17-\d, warden-iphone-17-\d/.test(e));
+		const install = ui.events.findIndex((e) => e.includes("installing on"));
+		expect(leased).toBeGreaterThan(-1);
+		expect(leased).toBeLessThan(install);
+		expect(ui.events).toContain("spin: installing the app on 2 device(s)…");
+	});
+
+	test("--install-mode / --reset-keychain are passed to the ensure step; they need --app", async () => {
+		const c = setup(["ios", "--jobs", "a", "--app", "--install-mode", "clean", "--reset-keychain", "--", "x"]);
+		const h = harness();
+		const seen: Array<string | undefined> = [];
+		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+			seen.push(`${opts.installMode}/${opts.resetKeychain}`);
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(seen).toEqual(["clean/true"]);
 		ctx?.cleanup();
 
-		const bare = setup(["ios", "--jobs", "a", "--clean", "--", "x"]);
+		const bare = setup(["ios", "--jobs", "a", "--install-mode", "clean", "--", "x"]);
 		expect(await createBatchCommand(harness().deps).run(bare)).toBe(1);
 		expect(bare.stderr.join("\n")).toContain("--clean need --app");
+	});
+
+	test("deprecated --clean maps to installMode reinstall; --reset-keychain needs a mode", async () => {
+		const c = setup(["ios", "--jobs", "a", "--app", "--clean", "--", "x"]);
+		const h = harness();
+		const seen: Array<string | undefined> = [];
+		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+			seen.push(opts.installMode);
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(seen).toEqual(["reinstall"]);
+		ctx?.cleanup();
+
+		const bad = setup(["ios", "--jobs", "a", "--app", "--reset-keychain", "--", "x"]);
+		expect(await createBatchCommand(harness().deps).run(bad)).toBe(1);
+		expect(bad.stderr.join("\n")).toContain("--reset-keychain needs --install-mode");
 	});
 
 	test("--app exports WARDEN_APP_PATH / WARDEN_APP_HASH to serve as well as jobs", async () => {
@@ -751,20 +858,20 @@ describe("warden batch", () => {
 			}
 		});
 
-		test("preset app: { clean: true } installs cleanly", async () => {
+		test('preset app: { installMode: "reinstall" } reaches the ensure step', async () => {
 			const c = setup(["p"]);
 			writeConfig(c.cwd, {
 				projects: [{ name: "s", root: ".", bundleId: { ios: "x" } }],
-				batches: { p: { project: "s", platform: "ios", app: { clean: true }, jobs: ["a"], cmd: ["x"] } },
+				batches: { p: { project: "s", platform: "ios", app: { installMode: "reinstall" }, jobs: ["a"], cmd: ["x"] } },
 			});
 			const h = harness();
-			const seen: Array<boolean | undefined> = [];
+			const seen: Array<string | undefined> = [];
 			h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
-				seen.push(opts.clean);
+				seen.push(opts.installMode);
 				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 			};
 			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
-			expect(seen).toEqual([true]);
+			expect(seen).toEqual(["reinstall"]);
 		});
 
 		test("app: Release build, native+js key (custom fingerprint command) and clean install all reach the real ensure path", async () => {
@@ -782,7 +889,7 @@ describe("warden batch", () => {
 						build: { configuration: "Release", ios: "build-release" },
 					},
 				],
-				batches: { p: { project: "s", platform: "ios", app: { clean: true }, jobs: ["a"], cmd: ["x"] } },
+				batches: { p: { project: "s", platform: "ios", app: { installMode: "reinstall" }, jobs: ["a"], cmd: ["x"] } },
 			});
 			const native = "abc123def456";
 			const calls: string[] = [];
@@ -814,7 +921,16 @@ describe("warden batch", () => {
 						build: { ios: "build-release", configuration: "Release" },
 					},
 				],
-				batches: { p: { project: "s", platform: "ios", count: 2, app: { clean: true }, jobs: ["a", "b"], cmd: ["x"] } },
+				batches: {
+					p: {
+						project: "s",
+						platform: "ios",
+						count: 2,
+						app: { installMode: "reinstall" },
+						jobs: ["a", "b"],
+						cmd: ["x"],
+					},
+				},
 			});
 			const fingerprints: string[] = [];
 			const installs: string[] = [];

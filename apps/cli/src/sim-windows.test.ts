@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec } from "@delacour/warden-core/exec";
-import { arrangeSimWindows, autoArrangeSimWindows, deviceName, layoutWindows, type SimWindow } from "./sim-windows";
+import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
+import {
+	arrangeSimWindows,
+	autoArrangeSimWindows,
+	deviceName,
+	hideSimWindows,
+	layoutWindows,
+	type SimWindow,
+} from "./sim-windows";
 
 const screen = { x: 0, y: 33, width: 1728, height: 1021 };
 const sim = (title: string, width = 456, height = 972): SimWindow => ({ title, width, height });
@@ -145,5 +153,177 @@ describe("autoArrangeSimWindows", () => {
 		await autoArrangeSimWindows({ exec: fake.exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin", sleep }, []);
 		await autoArrangeSimWindows({ exec: fake.exec, env: {}, os: "linux", sleep }, []);
 		expect(fake.calls).toHaveLength(0);
+	});
+});
+
+type State = "Booted" | "Shutdown" | "Shutting Down";
+
+const done = (stdout = "", exitCode = 0, stderr = "") => ({ exitCode, stdout, stderr });
+
+/** `afterClose[udid]` on the `n`-th `simctl list` call (1-based; the last state repeats). */
+function stateAt(afterClose: Record<string, State | State[]>, udid: string, n: number): State {
+	const states = afterClose[udid] ?? "Booted";
+	return typeof states === "string" ? states : (states[Math.min(n - 1, states.length - 1)] ?? "Booted");
+}
+
+/**
+ * Simulator.app showing `titles` (undefined = not running). `afterClose`: each device's state per
+ * `simctl list` call once windows close (the last one repeats). `detach`: the user's
+ * `DetachOnWindowClose` (`defaults read` output; undefined = unset).
+ */
+function fakeSimulator(
+	leased: ReadonlyArray<{ udid: string; name: string }>,
+	titles: string[] | undefined,
+	afterClose: Record<string, State | State[]>,
+	detach: "0" | "1" | undefined
+) {
+	const calls: string[][] = [];
+	const warnings: string[] = [];
+	let lists = 0;
+	const windows = () => JSON.stringify({ screen, windows: (titles ?? []).map((t) => sim(t)) });
+	const list = () => {
+		lists++;
+		const sims = leased.map((d) => ({ udid: d.udid, name: d.name, state: stateAt(afterClose, d.udid, lists) }));
+		return done(simctlDevicesJson({ "iOS-26-5": sims }));
+	};
+	const readPref = () => (detach === undefined ? done("", 1, "does not exist") : done(`${detach}\n`));
+	const exec: Exec = async (cmd) => {
+		calls.push([...cmd]);
+		if (cmd[0] === "osascript") return done((cmd[4] ?? "").includes("NSScreen") ? windows() : "");
+		if (cmd[0] === "defaults" && cmd[1] === "read") return readPref();
+		return cmd.join(" ") === "xcrun simctl list devices -j" ? list() : done();
+	};
+	const deps = { exec, os: "darwin" as const, sleep: async () => {}, warn: (line: string) => warnings.push(line) };
+	return { deps, calls, warnings };
+}
+
+describe("hideSimWindows", () => {
+	const leased = [
+		{ udid: "U1", name: "warden-iphone-17-1" },
+		{ udid: "U2", name: "warden-iphone-17-2" },
+	];
+	const fake = (titles: string[] | undefined, afterClose: Record<string, State | State[]> = {}, detach?: "0" | "1") =>
+		fakeSimulator(leased, titles, afterClose, detach);
+	const defaultsCalls = (calls: string[][]) => calls.filter((c) => c[0] === "defaults").map((c) => c.join(" "));
+	const PREF = "com.apple.iphonesimulator DetachOnWindowClose";
+	const closeCalls = (calls: string[][]) =>
+		calls.filter((c) => c[0] === "osascript" && (c[4] ?? "").includes("AXCloseButton"));
+
+	test("closes only the windows of leased devices", async () => {
+		const f = fake(["warden-iphone-17-1 – iOS 26.5", "warden-iphone-17-3 – iOS 26.5", "iPhone 17 Pro – iOS 26.5"]);
+		const out = await hideSimWindows(f.deps, leased);
+		expect(out).toEqual({ closed: ["warden-iphone-17-1"], rebooted: [] });
+		const close = closeCalls(f.calls);
+		expect(close).toHaveLength(1);
+		expect(JSON.parse(close[0]?.[5] ?? "")).toEqual(["warden-iphone-17-1 – iOS 26.5"]);
+		expect(f.warnings).toEqual([]);
+	});
+
+	test("Simulator.app not running → no close, never launched", async () => {
+		const f = fake(undefined);
+		expect(await hideSimWindows(f.deps, leased)).toEqual({ closed: [], rebooted: [] });
+		expect(f.calls).toHaveLength(1);
+		expect(closeCalls(f.calls)).toHaveLength(0);
+		expect(f.calls.some((c) => c.join(" ").includes("open -a"))).toBe(false);
+	});
+
+	test("a device the close shut down is booted again headless, with a warning", async () => {
+		const f = fake(["warden-iphone-17-1 – iOS 26.5", "warden-iphone-17-2 – iOS 26.5"], { U2: "Shutdown" });
+		const out = await hideSimWindows(f.deps, leased);
+		expect(out).toEqual({ closed: ["warden-iphone-17-1", "warden-iphone-17-2"], rebooted: ["warden-iphone-17-2"] });
+		const simctl = f.calls.filter((c) => c[0] === "xcrun").map((c) => c.join(" "));
+		expect(simctl).toContain("xcrun simctl boot U2");
+		expect(simctl).toContain("xcrun simctl bootstatus U2 -b");
+		expect(simctl.some((c) => c.includes("U1") && c.includes("boot"))).toBe(false);
+		expect(f.warnings.join("\n")).toContain("warden-iphone-17-2");
+	});
+
+	test("closes with DetachOnWindowClose on (device keeps running), then deletes the unset preference again", async () => {
+		const f = fake(["warden-iphone-17-1 – iOS 26.5"]);
+		await hideSimWindows(f.deps, leased);
+		expect(defaultsCalls(f.calls)).toEqual([
+			`defaults read ${PREF}`,
+			`defaults write ${PREF} -bool true`,
+			`defaults delete ${PREF}`,
+		]);
+		const close = f.calls.findIndex((c) => (c[4] ?? "").includes("AXCloseButton"));
+		const write = f.calls.findIndex((c) => c.join(" ").includes("-bool true"));
+		const restore = f.calls.findIndex((c) => c[1] === "delete");
+		expect(write).toBeLessThan(close);
+		expect(restore).toBeGreaterThan(close);
+	});
+
+	test("a user's DetachOnWindowClose = false is put back; true is left alone", async () => {
+		const off = fake(["warden-iphone-17-1 – iOS 26.5"], {}, "0");
+		await hideSimWindows(off.deps, leased);
+		expect(defaultsCalls(off.calls).at(-1)).toBe(`defaults write ${PREF} -bool false`);
+		const on = fake(["warden-iphone-17-1 – iOS 26.5"], {}, "1");
+		await hideSimWindows(on.deps, leased);
+		expect(defaultsCalls(on.calls)).toEqual([`defaults read ${PREF}`]);
+	});
+
+	test("nothing to close → the preference is never touched", async () => {
+		const f = fake(["iPhone 17 Pro – iOS 26.5"]);
+		await hideSimWindows(f.deps, leased);
+		expect(defaultsCalls(f.calls)).toEqual([]);
+	});
+
+	test("a device still Shutting Down is waited for before it is booted again; its reattached window is closed again", async () => {
+		const f = fake(["warden-iphone-17-2 – iOS 26.5"], { U2: ["Shutting Down", "Shutting Down", "Shutdown"] });
+		const out = await hideSimWindows(f.deps, leased);
+		expect(out.rebooted).toEqual(["warden-iphone-17-2"]);
+		const lines = f.calls.map((c) => c.join(" "));
+		const lastList = lines.lastIndexOf("xcrun simctl list devices -j");
+		expect(lines.indexOf("xcrun simctl boot U2")).toBeGreaterThan(lastList);
+		expect(closeCalls(f.calls)).toHaveLength(2);
+		expect(defaultsCalls(f.calls).at(-1)).toBe(`defaults delete ${PREF}`);
+	});
+
+	test("osascript failure only warns", async () => {
+		const exec: Exec = async () => ({ exitCode: 1, stdout: "", stderr: "not allowed assistive access. (-1719)" });
+		const warnings: string[] = [];
+		const out = await hideSimWindows(
+			{ exec, os: "darwin", sleep: async () => {}, warn: (l) => warnings.push(l) },
+			leased
+		);
+		expect(out).toEqual({ closed: [], rebooted: [] });
+		expect(warnings.join("\n")).toContain("Accessibility");
+	});
+
+	test("a failed re-boot only warns", async () => {
+		const calls: string[][] = [];
+		const warnings: string[] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push([...cmd]);
+			if (cmd[0] === "osascript" && (cmd[4] ?? "").includes("NSScreen")) {
+				return {
+					exitCode: 0,
+					stdout: JSON.stringify({ screen, windows: [sim("warden-iphone-17-1 – iOS 26.5")] }),
+					stderr: "",
+				};
+			}
+			if (cmd.join(" ") === "xcrun simctl list devices -j") {
+				return {
+					exitCode: 0,
+					stdout: simctlDevicesJson({ "iOS-26-5": [{ udid: "U1", name: "warden-iphone-17-1", state: "Shutdown" }] }),
+					stderr: "",
+				};
+			}
+			if (cmd[2] === "bootstatus") return { exitCode: 1, stdout: "", stderr: "boom" };
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const out = await hideSimWindows(
+			{ exec, os: "darwin", sleep: async () => {}, warn: (l) => warnings.push(l) },
+			leased
+		);
+		expect(out.rebooted).toEqual([]);
+		expect(warnings.join("\n")).toContain("boom");
+	});
+
+	test("off macOS or nothing leased → no calls", async () => {
+		const f = fake(["warden-iphone-17-1 – iOS 26.5"]);
+		await hideSimWindows({ ...f.deps, os: "linux" }, leased);
+		await hideSimWindows(f.deps, []);
+		expect(f.calls).toHaveLength(0);
 	});
 });

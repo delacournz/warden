@@ -64,11 +64,12 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 - Flows are `e2e/*.e2e.ts`; helpers are in `e2e/helpers` (`ids.ts` mirrors the testIDs).
 - Use `test` from `@e2e-dev/mobile` and `expect` from `e2e`. Flows must be deterministic, so never use `agent.*`.
 - Start a flow with `launch` / `openSignIn` / `signedIn` from `e2e/helpers/flows.ts`, not a bare `app.open()`. They clear iOS prompts that cover the app: the "Open in warden-example?" prompt left by a deep link (it outlives a reinstall), and Keychain's "Save Password?" sheet after sign-in.
+- `e2e.config.ts` names its agent-device sessions after `WARDEN_AGENT_SESSION`: warden starts every sim's automation runner in parallel under that name before the run (`warmRunners`, default on), so the engine's one-by-one warm-up finds them up.
 - `e2e.config.ts` reads the devices and Metro warden exports (`e2e/helpers/launch.ts`): `WARDEN_UDID` for a per-flow job, the `WARDEN_UDIDS` pool for a `single` run, `WARDEN_METRO_URL` → `--initialUrl` for the dev client (`E2E_UDID` by hand).
 - `warden.config.ts` defines:
   - project `example`: a Release build keyed on native + JS;
   - variant `dev`: the Debug dev client, keyed on native only;
-  - suite `example`: 2 sims, clean install, slim, and the flow → screen `entries` that `warden affected` uses;
+  - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the flow → screen `entries` that `warden affected` uses;
   - suite `example-dev`: the same flows on the dev client. warden starts and verifies its own Metro (`metro`), and one runner drives the whole pool (`mode: "single"`).
 
 ```bash
@@ -84,5 +85,7 @@ Never start Metro or export device env vars for a suite: `warden e2e <suite>` do
 `e2e` 0.19 needs Node `^22.22.3 || >=24.8.0` on `PATH` (the runner is `bunx e2e`, a node bin); an older node fails every flow at once with exit 2.
 
 Assert a `Badge` / `Chip` with `expectLabel` / `expectRemaining` and type with `fillField` (`e2e/helpers/flows.ts`): the container's own text can read empty on iOS, and the engine sometimes cannot confirm text it did type.
+
+`e2e.config.ts` always adds `timestampsReporter` (`e2e/helpers/timestamps.ts`) beside `list`: one `▶`/`■` line per test start/end (with duration and device) and `▸`/`▪` per step. Under warden the log lines are already stamped, so it prints no clock of its own.
 
 Failure output is in `.e2e/<worker>-<seq>/` (`.e2e/dev/` for `example-dev`) (`report.json`, `artifacts/`) and in warden's batch logs and screenshots.

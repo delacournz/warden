@@ -1,4 +1,5 @@
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import type { InstallMode } from "./app-option.schema";
 
 /** Where `ensure` found the app. */
 export type ResolveSource = "installed" | "cache" | "eas" | "build";
@@ -24,6 +25,8 @@ export type DeviceSteps = {
 	matches?: (cachedPath: string) => AsyncResult<boolean>;
 	/** remove the app (and its data) so the install starts fresh; absent is fine */
 	uninstall: () => AsyncResult<void>;
+	/** `installMode: "clean"`: wipe the installed app's data (and the keychain when asked), keeping the binary */
+	reset: () => AsyncResult<void>;
 	/** install + record in `installs` */
 	install: (appPath: string) => AsyncResult<void>;
 };
@@ -35,8 +38,8 @@ export type DeviceSteps = {
 export type ResolveSteps = {
 	hash: string;
 	device?: DeviceSteps;
-	/** uninstall before installing, even when the device already has `hash` (a fresh app container per run) */
-	clean?: boolean;
+	/** `clean`: fresh app data without reinstalling an unchanged build; `reinstall`: uninstall + install even at `hash`; unset: install only when `hash` differs */
+	installMode?: InstallMode;
 	/** cached artifact path for `hash` (touches lastUsedAt) */
 	cached: () => string | undefined;
 	/** import `hash` from a legacy cache dir into the cache; path when found */
@@ -104,28 +107,59 @@ async function alreadyInstalled(steps: ResolveSteps, device: DeviceSteps): Promi
 	return ok(true);
 }
 
-/** Put `path` on the device: `clean` removes the old container first. */
+/** `reinstall`: uninstall first; `clean`: install over, then reset (falling back to uninstall + install); else install over. */
 async function installOnDevice(steps: ResolveSteps, device: DeviceSteps, path: string): AsyncResult<void> {
-	if (steps.clean) {
-		const gone = await device.uninstall();
-		if (!gone.success) return gone;
-	}
-	return device.install(path);
+	if (steps.installMode === "reinstall") return reinstall(device, path);
+	const done = await device.install(path);
+	if (!done.success || steps.installMode !== "clean") return done;
+	return resetOrReinstall(steps, device, path);
+}
+
+async function reinstall(device: DeviceSteps, path: string): AsyncResult<void> {
+	const gone = await device.uninstall();
+	return gone.success ? device.install(path) : gone;
+}
+
+/** Reset the app's data; when that fails, start over with an uninstall + install of `path`. */
+async function resetOrReinstall(steps: ResolveSteps, device: DeviceSteps, path: string): AsyncResult<void> {
+	const reset = await device.reset();
+	if (reset.success) return reset;
+	steps.log(`resetting app data failed (${reset.error}) — reinstalling`);
+	return reinstall(device, path);
+}
+
+/** Already at `hash`: keep the install; `clean` resets its data, falling back to uninstall + install. */
+async function keepInstalled(steps: ResolveSteps, device: DeviceSteps): AsyncResult<EnsureResult> {
+	const kept: EnsureResult = { appPath: steps.cached() ?? "", hash: steps.hash, source: "installed", installed: true };
+	if (steps.installMode !== "clean") return ok(kept);
+	const reset = await device.reset();
+	if (reset.success) return ok(kept);
+	steps.log(`resetting app data failed (${reset.error}) — reinstalling`);
+	return reinstallFound(steps, device);
+}
+
+/** The `clean` fallback for an app already at `hash`: locate the artifact again, then uninstall + install it. */
+async function reinstallFound(steps: ResolveSteps, device: DeviceSteps): AsyncResult<EnsureResult> {
+	const found = await locate(steps);
+	if (!found.success) return found;
+	const done = await reinstall(device, found.data.path);
+	if (!done.success) return done;
+	return ok({ appPath: found.data.path, hash: steps.hash, source: found.data.source, installed: true });
 }
 
 /**
  * The 5-step resolver, first hit wins: (1) already installed at this hash → nothing to do;
  * (2) warden cache; (3) legacy cache import; then under the build lock (4) EAS, (5) local build.
- * Whatever was found is installed on the device (a hash mismatch reinstalls; `clean` uninstalls first
- * and skips step 1, so every run starts from a fresh container). A new fingerprint misses 1–3 by
- * construction, so it never gets a stale binary.
+ * Whatever was found is installed over the old app (a hash mismatch reinstalls). `installMode: "clean"` keeps
+ * step 1 but resets the app's data either way; `reinstall` skips step 1 and uninstalls first. A new fingerprint
+ * misses 1–3 by construction, so it never gets a stale binary.
  */
 export async function resolveApp(steps: ResolveSteps): AsyncResult<EnsureResult> {
 	const { device, hash } = steps;
-	if (device && !steps.clean) {
+	if (device && steps.installMode !== "reinstall") {
 		const installed = await alreadyInstalled(steps, device);
 		if (!installed.success) return installed;
-		if (installed.data) return ok({ appPath: steps.cached() ?? "", hash, source: "installed", installed: true });
+		if (installed.data) return keepInstalled(steps, device);
 	}
 	const found = await locate(steps);
 	if (!found.success) return found;

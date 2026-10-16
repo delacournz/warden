@@ -132,9 +132,9 @@ describe("warden app ensure", () => {
 		expect(calls.some((cmdline) => cmdline.join(" ").startsWith("xcrun simctl install"))).toBe(false);
 	});
 
-	test("--clean: uninstalls then installs although the device is already at the hash", async () => {
+	test("--install-mode reinstall: uninstalls then installs although the device is already at the hash", async () => {
 		const calls: string[][] = [];
-		const c = setup(["ensure", "ios", "--udid", "U1", "--clean", "--json"], [], calls);
+		const c = setup(["ensure", "ios", "--udid", "U1", "--install-mode", "reinstall", "--json"], [], calls);
 		const base = c.exec;
 		let present = true;
 		c.exec = async (cmd, opts) => {
@@ -153,10 +153,22 @@ describe("warden app ensure", () => {
 		expect(verbs).toEqual(["xcrun simctl uninstall U1 com.demo", expect.stringContaining("xcrun simctl install U1")]);
 	});
 
-	test("--clean with --no-install is an error", async () => {
+	test("deprecated --clean still means --install-mode reinstall", async () => {
 		const c = setup(["ensure", "ios", "--no-install", "--clean"]);
 		expect(await createAppCommand(deps).run(c)).toBe(1);
-		expect(c.stderr.join("\n")).toContain("--clean needs a device");
+		expect(c.stderr.join("\n")).toContain("--install-mode needs a device");
+	});
+
+	test("--install-mode with --no-install is an error", async () => {
+		const c = setup(["ensure", "ios", "--no-install", "--install-mode", "clean"]);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--install-mode needs a device");
+	});
+
+	test("--reset-keychain without --install-mode is an error", async () => {
+		const c = setup(["ensure", "ios", "--udid", "U1", "--reset-keychain"]);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--reset-keychain needs --install-mode");
 	});
 
 	test("no --udid/--lease → the caller's single leased device", async () => {
