@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "./app";
-import { fakeDriver, snapshotOf } from "./driver/driver.testing";
+import { failWith, fakeDriver, snapshotOf } from "./driver/driver.testing";
 import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
 
@@ -48,6 +48,75 @@ describe("app.open", () => {
 		await app.open({ url: "myapp://home" });
 		expect(driver.calls.map((c) => c.method)).toEqual(["app.launch", "app.openUrl"]);
 		expect(driver.callsOf("app.openUrl")[0]?.url).toBe("myapp://home");
+	});
+});
+
+describe("app.open wait", () => {
+	test("by default it returns when the launch does: no settle", async () => {
+		const { driver, app } = setup();
+		await app.open();
+		expect(driver.calls.map((c) => c.method)).toEqual(["app.launch"]);
+	});
+
+	test('wait: "none" is the default spelled out', async () => {
+		const { driver, app } = setup();
+		await app.open({ wait: "none" });
+		expect(driver.calls.map((c) => c.method)).toEqual(["app.launch"]);
+	});
+
+	test('wait: "quiet" settles after the launch: frontmost (the iOS driver names the launched bundle) and still', async () => {
+		const { driver, app } = setup();
+		await app.open({ wait: "quiet" });
+		expect(driver.calls.map((c) => c.method)).toEqual(["app.launch", "settle"]);
+		expect(driver.callsOf("settle")[0]?.opts).toEqual({ quietMs: 250, timeoutMs: 3000 });
+	});
+
+	test('wait: "quiet" with a url settles after the link is opened', async () => {
+		const { driver, app } = setup();
+		await app.open({ url: "myapp://home", wait: "quiet" });
+		expect(driver.calls.map((c) => c.method)).toEqual(["app.launch", "app.openUrl", "settle"]);
+	});
+
+	test("an app that is not quiet in time is not an error: the next assertion says what is missing", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([])],
+			onCall: (call) => (call.method === "settle" ? { data: { quiet: false, waitedMs: 3000 } } : undefined),
+		});
+		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
+		await app.open({ wait: "quiet" });
+		expect(driver.callsOf("settle")).toHaveLength(1);
+	});
+
+	test("a driver that cannot settle is not an error either", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([])],
+			onCall: (call) => (call.method === "settle" ? failWith("E_UNSUPPORTED") : undefined),
+		});
+		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
+		await app.open({ wait: "quiet" });
+	});
+
+	test("a failing settle is", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([])],
+			onCall: (call) => (call.method === "settle" ? failWith("E_HELPER_CRASHED") : undefined),
+		});
+		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
+		const error = await app.open({ wait: "quiet" }).catch((e: unknown) => e);
+		expect((error as E2eError).code).toBe("DRIVER");
+	});
+
+	test("anything but quiet or none is refused before the app is launched", async () => {
+		const { driver, app } = setup();
+		const error = await app.open({ wait: "idle" as never }).catch((e: unknown) => e);
+		expect((error as E2eError).code).toBe("INVALID_ARGUMENT");
+		expect(driver.calls).toHaveLength(0);
+	});
+
+	test("restart does not wait", async () => {
+		const { driver, app } = setup();
+		await app.restart();
+		expect(driver.callsOf("settle")).toHaveLength(0);
 	});
 });
 

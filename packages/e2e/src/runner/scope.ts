@@ -6,7 +6,7 @@
  */
 import { DEFAULT_ACTION_TIMEOUT_MS, DEFAULT_ASSERTION_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, readEnv } from "../env";
 import { callerFile } from "./callsite";
-import type { BaseFixtures, LaunchMode } from "./fixtures.types";
+import type { BaseFixtures, LaunchMode, SystemAlerts } from "./fixtures.types";
 
 /** Headroom over the test timeout so warden's `AbortSignal` deadline fires before bun's own. */
 export const BUN_TIMEOUT_MARGIN_MS = 30_000;
@@ -16,6 +16,13 @@ export type UseOptions = {
 	actionTimeout?: number;
 	assertionTimeout?: number;
 	launch?: LaunchMode;
+	/**
+	 * Answer an alert or sheet over the app whenever a read or wait sees one (it already has the snapshot, so a screen
+	 * without one costs nothing): `dismiss` presses what `device.alert("dismiss")` would, `accept` what `("accept")`
+	 * would, `off` (default) leaves it. It also answers the app's own alerts, so a test that taps those buttons
+	 * itself keeps it `off`.
+	 */
+	systemAlerts?: SystemAlerts;
 };
 
 export type ResolvedUse = {
@@ -23,6 +30,7 @@ export type ResolvedUse = {
 	actionTimeoutMs: number;
 	assertionTimeoutMs: number;
 	launch: LaunchMode;
+	systemAlerts: SystemAlerts;
 };
 
 /** `beforeEach`/`afterEach` hooks get the base fixtures (bun's own hooks take no arguments). */
@@ -101,12 +109,13 @@ export function resolveUse(
 	defaults: Pick<ResolvedUse, "timeoutMs" | "actionTimeoutMs" | "assertionTimeoutMs">,
 	testTimeout?: number
 ): ResolvedUse {
-	const resolved: ResolvedUse = { ...defaults, launch: "fresh" };
+	const resolved: ResolvedUse = { ...defaults, launch: "fresh", systemAlerts: "off" };
 	for (const s of scopeChain(scope)) {
 		if (s.use.timeout !== undefined) resolved.timeoutMs = s.use.timeout;
 		if (s.use.actionTimeout !== undefined) resolved.actionTimeoutMs = s.use.actionTimeout;
 		if (s.use.assertionTimeout !== undefined) resolved.assertionTimeoutMs = s.use.assertionTimeout;
 		if (s.use.launch !== undefined) resolved.launch = s.use.launch;
+		if (s.use.systemAlerts !== undefined) resolved.systemAlerts = s.use.systemAlerts;
 	}
 	if (testTimeout !== undefined) resolved.timeoutMs = testTimeout;
 	return resolved;

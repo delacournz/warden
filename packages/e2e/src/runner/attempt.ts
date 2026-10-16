@@ -66,6 +66,7 @@ export async function buildBaseFixtures(
 		launch: use.launch,
 		actionTimeoutMs: use.actionTimeoutMs,
 		assertionTimeoutMs: use.assertionTimeoutMs,
+		systemAlerts: use.systemAlerts,
 	});
 }
 

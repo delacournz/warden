@@ -1,20 +1,27 @@
 import { type ElementSpec, el, type FakeDriver, fakeDriver, snapshotOf } from "../driver/driver.testing";
-import type { Platform } from "../driver/driver.types";
+import type { Driver, Platform } from "../driver/driver.types";
+import { cacheObservations } from "../driver/observation-cache";
 import type { ScreenHost } from "./context";
 import { type FakeClock, fakeClock } from "./poll.testing";
 
 export type TestHost = ScreenHost & { clock: FakeClock; steps: string[] };
 
-/** A host over a fake driver and a fake clock that records the step labels it is asked to report. */
+/**
+ * A host over a fake driver and a fake clock that records the step labels it is asked to report. `cache` puts the
+ * observation cache (`driver/observation-cache.ts`, as the session does) in front of the driver, aged by the fake
+ * clock; `driver.callsOf("snapshot")` then counts the snapshots that really reached the device.
+ */
 export function testHost(
 	driver: FakeDriver,
-	options: { actionTimeoutMs?: number; assertionTimeoutMs?: number; withSteps?: boolean } = {}
+	options: { actionTimeoutMs?: number; assertionTimeoutMs?: number; withSteps?: boolean; cache?: boolean } = {}
 ): TestHost {
 	const steps: string[] = [];
+	const clock = fakeClock();
+	const seen: Driver = options.cache === true ? cacheObservations(driver, { now: clock.now }) : driver;
 	const host: TestHost = {
-		driver: async () => driver,
+		driver: async () => seen,
 		env: { actionTimeoutMs: options.actionTimeoutMs ?? 1000, assertionTimeoutMs: options.assertionTimeoutMs ?? 5000 },
-		clock: fakeClock(),
+		clock,
 		steps,
 	};
 	if (options.withSteps !== false) {
