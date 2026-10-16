@@ -265,6 +265,11 @@ PERF-0.4 root-cause findings go here.
 - Tests: wire golden fixtures plus a fake server like `native/scripts/fake-simd.ts`. Never real adb in `bun test`.
 - Accept: per-snapshot ≤ 150 ms; Android suite ≤ 110 s, 8/8 passing, 3 reps.
 
+**PERF-3.4 · `WDN-PERF 3 - 🐛 fix: dismiss Android ANR dialogs`** (added by droid during PERF-3.1)
+- Problem: a system "isn't responding" dialog during a run blocks every read. `ALERT_BUTTON_IDS` (`driver/android/`) has no ANR button ids.
+- Do: capture a real ANR dump on a leased emulator first, then add `aerr_close` / `aerr_wait` (or whatever the dump shows) to `ALERT_BUTTON_IDS`, with a fixture test built from the dump.
+- Accept: the fixture dismisses the ANR dialog; no id is guessed without a captured dump.
+
 ### WDN-PERF-4 — CLI / core startup and orchestration
 
 **PERF-4.1 · `WDN-PERF 4 - ⚡️ perf: lazy command registry and lazy terminal UI`**
@@ -406,6 +411,17 @@ Waves:
   - `hyperfine` for CLI start.
   - Bench resource columns for host CPU/RSS.
 - Regression guard: `bun run bench compare <baseline> <new>` must show no per-test regression > 5% before the PR is marked ready.
+
+## Follow-ups (reported by agents, not yet scheduled)
+
+| From | Follow-up |
+|---|---|
+| poller (2.3) | CLI `ui wait` (`apps/cli/src/agent-ui/query.ts`) still polls at a fixed 100 ms; move it to `screen/poll.ts`'s back-off. |
+| spawner (4.3) | Wire the per-command git facts cache into `claim-flags.ts` / `port.ts`. Other git spawns remain: `builds/local.ts:120`, `batch.ts:1483`, `affected/git.ts`, `cleanHead`. |
+| starter (4.1) | `gc` still loads heavy modules; `ui`/`run`/`dev`/`batch`/`e2e` load the driver eagerly. Compiled binary is 116 MB, mostly `typescript` bytecode. |
+| quiet (5.2) | A compiled binary has no `graph-worker.ts` on disk, so diff mode falls back to the in-process graph. Fix with a hidden `warden` subcommand or an embedded worker. |
+| typist (1.1) | iOS plain fields showing a placeholder still get selectAll + 1 Backspace; `ada@example.com` keeps 4 confirm reads. |
+| referee (6.1) | One bench test failed once under load and passed in 6 later runs: watch for a timing flake. |
 
 ## Decisions (user, 2026-10-16)
 
