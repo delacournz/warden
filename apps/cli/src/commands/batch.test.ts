@@ -53,7 +53,11 @@ function releaseExec(base: Exec, root: string, native: string, calls: string[]):
 	let installed = true;
 	return async (cmd, opts) => {
 		const line = cmd.join(" ");
-		const canned: Record<string, string> = { "sh -c fp ios": native, "git ls-files": "src/a.ts\0" };
+		const canned: Record<string, string> = {
+			"sh -c fp ios": native,
+			"git ls-files -z -m": "",
+			"git ls-files": "? src/a.ts\0",
+		};
 		const hit = Object.keys(canned).find((prefix) => line.startsWith(prefix));
 		if (hit) return done(canned[hit]);
 		if (line === "sh -c build-release") {

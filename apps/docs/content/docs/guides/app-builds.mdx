@@ -80,7 +80,7 @@ export default defineConfig({
 });
 ```
 
-The cache and install key becomes `sha256(native fingerprint + a content hash of the matching files)`. The files are git-tracked and untracked-not-ignored ones under the project root, hashed with their paths, so a rename counts and build output never does. Globs that match nothing are an error. The post-build check uses the same key.
+The cache and install key becomes `sha256(native fingerprint + a content hash of the matching files)`. The files are git-tracked and untracked-not-ignored ones under the project root, hashed with their paths, so a rename counts and build output never does. A clean tracked file is identified by the blob id git already has in its index, so only edited, untracked or symlinked files are read (committing an edit does not change the key). The native fingerprint and this hash are computed side by side. Globs that match nothing are an error. The post-build check uses the same key. Upgrading from a release before this change rebuilds once: the key format is new.
 
 Trade-offs:
 

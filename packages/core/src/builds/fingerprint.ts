@@ -89,7 +89,9 @@ export function releaseKey(native: string): string {
 /**
  * The cache / install key of `project`. Native projects: the native fingerprint (salted for Release). JS-aware projects
  * (`fingerprint.include: "native+js"`): sha256 of the native fingerprint + a content hash of the
- * `jsInputs` files, so a JS-only change is a new build (a Release binary embeds its bundle).
+ * `jsInputs` files, so a JS-only change is a new build (a Release binary embeds its bundle). The two
+ * halves are independent, so they are computed side by side: the JS hash (a couple of `git ls-files`)
+ * hides inside the native fingerprint's runtime.
  */
 export async function computeCacheKey(
 	exec: Exec,
@@ -97,18 +99,22 @@ export async function computeCacheKey(
 	platform: Platform,
 	readFile?: ReadFile
 ): AsyncResult<CacheKey> {
-	const native = await computeFingerprint(exec, project, platform);
+	const [native, js] = await Promise.all([
+		computeFingerprint(exec, project, platform),
+		project.jsInputs === undefined
+			? undefined
+			: jsInputsHash({
+					exec,
+					root: project.root,
+					jsInputs: project.jsInputs,
+					...(readFile ? { readFile } : {}),
+				}),
+	]);
 	if (!native.success) return native;
-	if (project.jsInputs === undefined) {
+	if (js === undefined) {
 		const key = project.buildConfiguration === "Release" ? releaseKey(native.data) : native.data;
 		return ok({ key, native: native.data });
 	}
-	const js = await jsInputsHash({
-		exec,
-		root: project.root,
-		jsInputs: project.jsInputs,
-		...(readFile ? { readFile } : {}),
-	});
 	if (!js.success) return js;
 	return ok({ key: combineKey(native.data, js.data), native: native.data, js: js.data });
 }

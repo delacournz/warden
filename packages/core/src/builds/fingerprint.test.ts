@@ -87,7 +87,7 @@ describe("computeFingerprint", () => {
 describe("computeCacheKey", () => {
 	function host(js: string) {
 		const exec: Exec = async (cmd) => {
-			if (cmd[0] === "git") return { exitCode: 0, stdout: "src/a.ts", stderr: "" };
+			if (cmd[0] === "git") return { exitCode: 0, stdout: cmd.includes("-m") ? "" : "? src/a.ts", stderr: "" };
 			return { exitCode: 0, stdout: `{"hash":"${HASH}"}`, stderr: "" };
 		};
 		const readFile = async () => new TextEncoder().encode(js);
@@ -110,6 +110,45 @@ describe("computeCacheKey", () => {
 		expect(a.data.key).toBe(combineKey(HASH, a.data.js ?? ""));
 		expect(a.data.key).not.toBe(b.data.key);
 		expect(a.data.native).toBe(b.data.native);
+	});
+
+	test("the native fingerprint and the JS-input listing start together, not one after the other", async () => {
+		const started: string[] = [];
+		const gate = Promise.withResolvers<void>();
+		const exec: Exec = async (cmd) => {
+			started.push(cmd[0] === "git" ? "git" : "fingerprint");
+			await gate.promise;
+			if (cmd[0] === "git") return { exitCode: 0, stdout: cmd.includes("-m") ? "" : "? src/a.ts", stderr: "" };
+			return { exitCode: 0, stdout: `{"hash":"${HASH}"}`, stderr: "" };
+		};
+		const project = testProject({ fingerprintCommand: "fp", jsInputs: ["src/**"] });
+		const pending = computeCacheKey(exec, project, "ios", async () => new TextEncoder().encode("a"));
+		await Bun.sleep(0);
+		expect(started.sort()).toEqual(["fingerprint", "git", "git"]);
+		gate.resolve();
+		const res = await pending;
+		expect(res.success).toBe(true);
+	});
+
+	test("a failing native fingerprint wins over the JS half, whichever finishes first", async () => {
+		const exec: Exec = async (cmd) => {
+			if (cmd[0] === "git") return { exitCode: 128, stdout: "", stderr: "not a git repository" };
+			return { exitCode: 1, stdout: "", stderr: "Cannot find module" };
+		};
+		const project = testProject({ fingerprintCommand: "fp", jsInputs: ["src/**"] });
+		const res = await computeCacheKey(exec, project, "ios");
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("fingerprint failed");
+	});
+
+	test("native-only projects never list git", async () => {
+		const seen: string[] = [];
+		const exec: Exec = async (cmd) => {
+			seen.push(cmd[0] ?? "");
+			return { exitCode: 0, stdout: `{"hash":"${HASH}"}`, stderr: "" };
+		};
+		await computeCacheKey(exec, testProject({ fingerprintCommand: "fp" }), "ios");
+		expect(seen).toEqual(["sh"]);
 	});
 
 	test("a native-only Release key differs from the Debug one (same native hash, different binary)", async () => {
