@@ -340,10 +340,13 @@ final class InputTests: XCTestCase {
   func testCancelledWaiterLeavesTheQueue() async throws {
     let gate = HIDGate()
     let started = expectation(description: "first holds the gate")
+    // the first holder waits for the test, not a timer: a 150 ms sleep lost to a 20 ms one on a loaded CI runner
+    // and the "cancelled" waiter had already run
+    let hold = HoldLatch()
     let first = Task {
       try await gate.run {
         started.fulfill()
-        try await Task.sleep(nanoseconds: 150_000_000)
+        await hold.wait()
       }
     }
     await fulfillment(of: [started], timeout: 5)
@@ -356,6 +359,7 @@ final class InputTests: XCTestCase {
     } catch {
       XCTAssertTrue(error is CancellationError)
     }
+    hold.open()
     try await first.value
     let after = try await gate.run { 7 }
     XCTAssertEqual(after, 7)
@@ -365,5 +369,32 @@ final class InputTests: XCTestCase {
     let handlers = Dispatcher<Session>.standard().handlers
     for name in InputOps.names { XCTAssertNotNil(handlers[name], name) }
     XCTAssertNotNil(handlers["health"])
+  }
+}
+
+/// Blocks `wait()` callers until `open()`; opened once, it never blocks again.
+private final class HoldLatch: @unchecked Sendable {
+  private let lock = NSLock()
+  private var opened = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+      let blocked = lock.withLock { () -> Bool in
+        if opened { return false }
+        waiters.append(c)
+        return true
+      }
+      if !blocked { c.resume() }
+    }
+  }
+
+  func open() {
+    let pending = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+      opened = true
+      defer { waiters.removeAll() }
+      return waiters
+    }
+    for c in pending { c.resume() }
   }
 }

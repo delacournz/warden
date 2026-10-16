@@ -236,7 +236,8 @@ final class SettleFrontmostTests: XCTestCase {
     reader.emit(.targetChanged(pid: app))
     reader.emit(.state(.busy([.runLoopIdle, .animationsInactive]), pid: app))
     await reader.waitOpened(2)
-    try await Task.sleep(for: .milliseconds(1200))
+    // well inside FrontmostGate.repeatRestartMs (1500): the sleep may overrun on a loaded runner
+    try await Task.sleep(for: .milliseconds(900))
     XCTAssertEqual(reader.opened, 2, "the reopened stream is given time to bind before another restart")
     reader.emit(.state(.quiet, pid: app))
     let outcome = try await wait.value
