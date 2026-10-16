@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Driver, DriverResult } from "../driver.types";
+import { canDetectAlerts } from "../observation-cache";
 import { settleDetailOf } from "../settle";
 import { canRepeatKeys, canSelectAll } from "../typing";
 import { elementAt, openAndroidDriver } from "./android-driver";
@@ -270,23 +271,34 @@ describe("elementAtPoint", () => {
 		expect(off).toBeNull();
 	});
 
-	test("input and app commands drop the cached snapshot so a hit-test after typing sees the new value", async () => {
+	test("every hit-test dumps the screen itself, even right after a snapshot: a field confirm needs two real reads", async () => {
 		const { driver, host } = await setup();
 		await value(driver.snapshot());
-		await value(driver.typeText("x"));
 		await value(driver.elementAtPoint({ x: 1, y: 1 }));
-		await value(driver.tap({ x: 1, y: 1 }));
 		await value(driver.elementAtPoint({ x: 1, y: 1 }));
-		await value(driver.app.launch("com.x"));
-		await value(driver.elementAtPoint({ x: 1, y: 1 }));
-		expect(host.shell.filter((c) => c.includes("uiautomator dump")).length).toBe(4);
+		expect(host.shell.filter((c) => c.includes("uiautomator dump")).length).toBe(3);
 	});
 
-	test("reuses a fresh snapshot instead of dumping again", async () => {
-		const { driver, host } = await setup();
+	test("a hit-test sees what the screen holds after typing, not an earlier dump", async () => {
+		let typed = false;
+		const { driver } = await setup({
+			shell: [
+				{
+					match: "uiautomator dump /dev/stdout",
+					reply: () => (typed ? SYNTHETIC_FORM_DUMP.replace("Sign in", "Typed") : SYNTHETIC_FORM_DUMP),
+				},
+				{
+					match: "input text",
+					reply: () => {
+						typed = true;
+						return "";
+					},
+				},
+			],
+		});
 		await value(driver.snapshot());
-		await value(driver.elementAtPoint({ x: 1, y: 1 }));
-		expect(host.shell.filter((c) => c.includes("uiautomator dump")).length).toBe(1);
+		await value(driver.typeText("x"));
+		expect((await value(driver.elementAtPoint({ x: 100, y: 140 })))?.text).toBe("Typed");
 	});
 
 	test("elementAt prefers later siblings at equal depth", () => {
@@ -638,6 +650,26 @@ describe("settle and alert", () => {
 		const { driver: d2 } = await setup({ shell: [{ match: "uiautomator dump /dev/stdout", reply: dialog }] });
 		const alert = await value(d2.alert());
 		expect(alert?.buttons.map((b) => b.text)).toEqual(["OK"]);
+	});
+
+	test("alertIn reads the alert out of a snapshot already taken, without touching the device", async () => {
+		const dialog =
+			'<?xml version="1.0"?><hierarchy rotation="0"><node class="android.widget.FrameLayout" bounds="[0,0][1080,2400]" enabled="true" clickable="false">' +
+			'<node class="android.widget.Button" resource-id="android:id/button1" text="OK" bounds="[0,0][100,100]" enabled="true" clickable="true" />' +
+			"</node></hierarchy>";
+		const { driver, host } = await setup({ shell: [{ match: "uiautomator dump /dev/stdout", reply: dialog }] });
+		expect(canDetectAlerts(driver)).toBe(true);
+		if (!canDetectAlerts(driver)) return;
+		const snapshot = await value(driver.snapshot());
+		const dumps = host.shell.filter((c) => c.includes("uiautomator dump")).length;
+		expect(driver.alertIn(snapshot)?.buttons.map((b) => b.text)).toEqual(["OK"]);
+		expect(host.shell.filter((c) => c.includes("uiautomator dump")).length).toBe(dumps);
+	});
+
+	test("alertIn is null on a screen without an alert", async () => {
+		const { driver } = await setup();
+		if (!canDetectAlerts(driver)) throw new Error("no alertIn");
+		expect(driver.alertIn(await value(driver.snapshot()))).toBeNull();
 	});
 });
 

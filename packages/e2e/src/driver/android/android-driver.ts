@@ -3,7 +3,6 @@ import { dirname } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
 import type {
 	AlertInfo,
-	AppCommands,
 	Driver,
 	DriverCapabilities,
 	DriverError,
@@ -20,6 +19,7 @@ import type {
 	Snapshot,
 } from "../driver.types";
 import { driverErr } from "../errors";
+import type { DetectsAlerts } from "../observation-cache";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
@@ -127,7 +127,6 @@ const CAPABILITIES: DriverCapabilities = {
 	reachability: true,
 };
 
-const SNAPSHOT_CACHE_MS = 1_000;
 /** `uiautomator dump` waits for this long without accessibility events before it reads the screen. */
 const DUMP_IDLE_MS = 1_000;
 /** ...and stops waiting after this long, dumping a screen that never went idle. */
@@ -158,28 +157,6 @@ export function elementAt(flat: readonly Element[], point: Point): Element | nul
 	const deepest = (list: readonly Element[]): Element | undefined =>
 		list.reduce<Element | undefined>((best, e) => (best === undefined || e.depth >= best.depth ? e : best), undefined);
 	return deepest(inside.filter((e) => e.hittable)) ?? deepest(inside) ?? null;
-}
-
-/** Wrap every `AppCommands` method so the cached snapshot is dropped when the app changes what is on screen. */
-function invalidating(app: AppCommands, drop: () => void): AppCommands {
-	const wrap =
-		<A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
-		async (...args: A): Promise<R> => {
-			drop();
-			const result = await fn(...args);
-			drop();
-			return result;
-		};
-	return {
-		launch: wrap(app.launch),
-		terminate: wrap(app.terminate),
-		openUrl: wrap(app.openUrl),
-		install: app.install,
-		uninstall: app.uninstall,
-		isInstalled: app.isInstalled,
-		isRunning: app.isRunning,
-		clearData: wrap(app.clearData),
-	};
 }
 
 /**
@@ -243,7 +220,7 @@ function buildDriver(
 	clock: Clock,
 	execBinary: ExecBinary,
 	facts: DeviceFacts
-): Driver & RepeatingKeys & Partial<SelectsAll> {
+): Driver & RepeatingKeys & DetectsAlerts & Partial<SelectsAll> {
 	const { serial, adb, exec, log } = options;
 	const { sdk } = facts;
 	const initialRoute = options.dumpRoute ?? facts.savedRoute;
@@ -261,7 +238,6 @@ function buildDriver(
 			if (options.state) saving.push(options.state.update(serial, patchFor(sdk, { dumpRoute: route })));
 		},
 	});
-	let last: Snapshot | undefined;
 
 	async function dumpWithRetry(): ReturnType<typeof dumper.dump> {
 		let dumped = await dumper.dump();
@@ -289,14 +265,19 @@ function buildDriver(
 			if (error instanceof UiautomatorParseError) return driverErr("E_AX_UNAVAILABLE", error.message);
 			throw error;
 		}
-		last = { platform: "android", backend: "uiautomator", takenAt: clock.now(), screen, ...parsed, truncated: false };
-		return { success: true, data: last };
+		const taken: Snapshot = {
+			platform: "android",
+			backend: "uiautomator",
+			takenAt: clock.now(),
+			screen,
+			...parsed,
+			truncated: false,
+		};
+		return { success: true, data: taken };
 	}
 
 	const input = async (cmd: string, timeoutMs?: number): DriverResult<void> => {
-		last = undefined;
 		const res = await runChecked(session, cmd, "E_HID", timeoutMs);
-		last = undefined;
 		return res.success ? unit : res;
 	};
 
@@ -309,9 +290,13 @@ function buildDriver(
 		return { success: true, data: { ...taken.data, ...interactiveFilter(taken.data.elements) } };
 	};
 
+	/**
+	 * A hit-test is a whole dump: it never reuses an earlier snapshot. Its one caller, the read-back after a `fill`,
+	 * needs each read to be a new look at the field (a stale one defeats the check that the value held); screen reads
+	 * that can share a snapshot go through the runtime's observation cache (`observation-cache.ts`) instead.
+	 */
 	const elementAtPoint: Driver["elementAtPoint"] = async (point) => {
-		const fresh = last && clock.now() - last.takenAt < SNAPSHOT_CACHE_MS ? last : undefined;
-		const snap = fresh ? { success: true as const, data: fresh } : await takeSnapshot();
+		const snap = await takeSnapshot();
 		return snap.success ? { success: true, data: elementAt(snap.data.flat, point) } : snap;
 	};
 
@@ -507,21 +492,17 @@ function buildDriver(
 		orientation,
 		settle,
 		alert,
+		alertIn: (snapshot) => detectAlert(snapshot.flat),
 		appearance,
 		clipboard,
-		app: invalidating(
-			createAppCommands({
-				session,
-				exec,
-				adb,
-				serial,
-				...(log ? { log } : {}),
-				...(options.appPackage ? { appPackage: options.appPackage } : {}),
-			}),
-			() => {
-				last = undefined;
-			}
-		),
+		app: createAppCommands({
+			session,
+			exec,
+			adb,
+			serial,
+			...(log ? { log } : {}),
+			...(options.appPackage ? { appPackage: options.appPackage } : {}),
+		}),
 		close: async () => {
 			await facts.animations.restore();
 			await Promise.all(saving.splice(0));

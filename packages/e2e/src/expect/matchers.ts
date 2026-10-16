@@ -290,8 +290,8 @@ export class LocatorAssertions {
 		const hold = Math.min(NEGATION_GRACE_MS, timeoutMs);
 		let holdingSince: number | undefined;
 		type Last = { received: string; snapshot?: Snapshot };
-		const result = await rt.poll<true, Last>(async () => {
-			const observation = await rt.tryObserve();
+		const result = await rt.poll<true, Last>(async (attempt) => {
+			const observation = await rt.tryObserve({ reuse: attempt === 1 });
 			if (!observation.ok) {
 				failUnlessRetryable(observation.error);
 				holdingSince = undefined;
