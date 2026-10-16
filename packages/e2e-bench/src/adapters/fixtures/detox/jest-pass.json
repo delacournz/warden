@@ -1,0 +1,41 @@
+{
+	"numTotalTests": 3,
+	"numPassedTests": 2,
+	"numFailedTests": 1,
+	"numPendingTests": 0,
+	"success": false,
+	"testResults": [
+		{
+			"name": "/suite/sign-in.test.js",
+			"status": "failed",
+			"assertionResults": [
+				{
+					"ancestorTitles": ["sign-in"],
+					"fullName": "sign-in invalid email and short password show field errors",
+					"status": "passed",
+					"title": "invalid email and short password show field errors",
+					"duration": 4210,
+					"failureMessages": []
+				},
+				{
+					"ancestorTitles": ["sign-in"],
+					"fullName": "sign-in a locked account shows the form alert",
+					"status": "passed",
+					"title": "a locked account shows the form alert",
+					"duration": 3100,
+					"failureMessages": []
+				},
+				{
+					"ancestorTitles": ["sign-in"],
+					"fullName": "sign-in valid credentials land on todos",
+					"status": "failed",
+					"title": "valid credentials land on todos",
+					"duration": 15900,
+					"failureMessages": [
+						"Error: expect(received).toHaveText(expected)\n\nExpected: \"1 left\"\n    at Object.<anonymous> (sign-in.test.js:30:10)"
+					]
+				}
+			]
+		}
+	]
+}

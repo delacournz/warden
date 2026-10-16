@@ -1,0 +1,84 @@
+{
+	"numFailedTestSuites": 5,
+	"numFailedTests": 0,
+	"numPassedTestSuites": 0,
+	"numPassedTests": 0,
+	"numPendingTestSuites": 0,
+	"numPendingTests": 0,
+	"numRuntimeErrorTestSuites": 5,
+	"numTodoTests": 0,
+	"numTotalTestSuites": 5,
+	"numTotalTests": 0,
+	"openHandles": [],
+	"snapshot": {
+		"added": 0,
+		"didUpdate": false,
+		"failure": false,
+		"filesAdded": 0,
+		"filesRemoved": 0,
+		"filesRemovedList": [],
+		"filesUnmatched": 0,
+		"filesUpdated": 0,
+		"matched": 0,
+		"total": 0,
+		"unchecked": 0,
+		"uncheckedKeysByFile": [],
+		"unmatched": 0,
+		"updated": 0
+	},
+	"startTime": 1792124056814,
+	"success": false,
+	"testResults": [
+		{
+			"assertionResults": [],
+			"coverage": {},
+			"endTime": 1792124057178,
+			"message": "  ● Test suite failed to run\n\n    Command failed: applesimutils --version\n    /bin/sh: applesimutils: command not found\n\n\n",
+			"name": "/Users/chris/orca/workspaces/warden/e2e-bench/packages/e2e-bench/suites/detox/sign-in.test.js",
+			"startTime": 1792124057178,
+			"status": "failed",
+			"summary": ""
+		},
+		{
+			"assertionResults": [],
+			"coverage": {},
+			"endTime": 1792124057178,
+			"message": "  ● Test suite failed to run\n\n    Command failed: applesimutils --version\n    /bin/sh: applesimutils: command not found\n\n\n",
+			"name": "/Users/chris/orca/workspaces/warden/e2e-bench/packages/e2e-bench/suites/detox/todos.test.js",
+			"startTime": 1792124057178,
+			"status": "failed",
+			"summary": ""
+		},
+		{
+			"assertionResults": [],
+			"coverage": {},
+			"endTime": 1792124057178,
+			"message": "  ● Test suite failed to run\n\n    Command failed: applesimutils --version\n    /bin/sh: applesimutils: command not found\n\n\n",
+			"name": "/Users/chris/orca/workspaces/warden/e2e-bench/packages/e2e-bench/suites/detox/todo-detail.test.js",
+			"startTime": 1792124057178,
+			"status": "failed",
+			"summary": ""
+		},
+		{
+			"assertionResults": [],
+			"coverage": {},
+			"endTime": 1792124057178,
+			"message": "  ● Test suite failed to run\n\n    Command failed: applesimutils --version\n    /bin/sh: applesimutils: command not found\n\n\n",
+			"name": "/Users/chris/orca/workspaces/warden/e2e-bench/packages/e2e-bench/suites/detox/settings.test.js",
+			"startTime": 1792124057178,
+			"status": "failed",
+			"summary": ""
+		},
+		{
+			"assertionResults": [],
+			"coverage": {},
+			"endTime": 1792124057178,
+			"message": "  ● Test suite failed to run\n\n    Command failed: applesimutils --version\n    /bin/sh: applesimutils: command not found\n\n\n",
+			"name": "/Users/chris/orca/workspaces/warden/e2e-bench/packages/e2e-bench/suites/detox/onboarding.test.js",
+			"startTime": 1792124057178,
+			"status": "failed",
+			"summary": ""
+		}
+	],
+	"wasInterrupted": false
+}
