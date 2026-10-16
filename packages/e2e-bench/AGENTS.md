@@ -10,7 +10,7 @@ Benchmarks six mobile e2e frameworks (warden, maestro, argent, agent-device, tes
 | `src/args.ts` | flag parsing, `HELP` |
 | `src/orchestrator.ts` | `runBench`: claim, `app ensure`, per framework doctor → prepare → reps → teardown → residue, `writeReports`; writes `bench-results.json` after every framework |
 | `src/adapters/` | `adapter.types.ts` (`BenchAdapter`, `FRAMEWORK_IDS`, `RunContext`), `registry.ts` (`ADAPTERS`), one `<framework>.ts` each; `parse/` native reporter output → canonical `TestResult[]`; `fixtures/` real outputs |
-| `src/harness/` | `exec.ts` (the only spawn seam, `fakeExec` for tests), `device.ts` (claim/release), `app.ts` (`warden app ensure`), `phases.ts` (timing, per-phase logs), `sampler.ts` (ps CPU/RSS), `residue.ts`, `isolation.ts` (stop daemons/helpers, cold uninstall, reboot), `host.ts` (host facts, load average) |
+| `src/harness/` | `exec.ts` (the only spawn seam, `fakeExec` for tests), `device.ts` (claim/release), `app.ts` (`warden app ensure`), `phases.ts` (timing, per-phase logs), `sampler.ts` (ps CPU/RSS, Android `top` helper filter, pid + start-time tracking), `residue.ts`, `isolation.ts` (stop daemons/helpers, cold uninstall, reboot, Android animation-scale reset), `host.ts` (host facts, load average) |
 | `src/results/` | `schema.ts` (zod, `bench-results.json` v1, `CANONICAL_IDS`), `stats.ts`, `manifest.ts` (loads `suites/manifest.json`), `footprint.ts`, `write.ts` (atomic write / read) |
 | `src/report/` | `markdown.ts` (`FAIRNESS_RULES`), `html.ts` + `svg.ts` (self-contained), `compare.ts`, `tables.ts`, `format.ts` |
 | `suites/<framework>/` | the 8 parity tests per framework; `suites/manifest.json` is the join key (canonical id ↔ native name + step labels) |
