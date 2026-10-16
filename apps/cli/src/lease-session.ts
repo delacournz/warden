@@ -253,19 +253,68 @@ export type LeaseSession = {
 	release: () => Promise<void>;
 };
 
+/** The two halves of an ensure, injectable for tests: the device-independent prepare and the per-device install. */
+export type SessionAppDeps = {
+	prepare: (ctx: CommandContext, opts: EnsureOptions, platform: Platform) => AsyncResult<PreparedApp>;
+	install: (
+		ctx: CommandContext,
+		owner: Owner,
+		platform: Platform,
+		deviceId: string,
+		opts: EnsureOptions,
+		app: PreparedApp
+	) => AsyncResult<EnsureResult>;
+};
+
+const defaultSessionAppDeps: SessionAppDeps = {
+	prepare: prepareApp,
+	install: (ctx, owner, platform, deviceId, opts, app) =>
+		ensurePreparedApp(ctx, defaultAppDeps, owner, platform, deviceId, opts, app),
+};
+
+/** One session's app: `warm` starts the fingerprint early, `ensure` installs on one device once it is in. */
+export type SessionApp = {
+	/** load + fingerprint the project for `platform` now (idempotent); nothing depends on a device yet */
+	warm: (ctx: CommandContext, opts: EnsureOptions, platform: Platform) => void;
+	ensure: RunEnsureApp;
+};
+
 /**
- * The default `ensureApp` of one session: the project is loaded and fingerprinted once per platform,
- * then installed on each device (N devices used to mean N fingerprint runs).
+ * The default `ensureApp` of one session: the project is loaded and fingerprinted once per platform
+ * (started by `warm` as soon as the ports are leased, so it overlaps the device boot), then installed
+ * on each device (N devices used to mean N fingerprint runs).
  */
-function sessionEnsureApp(): RunEnsureApp {
+export function sessionEnsureApp(deps: SessionAppDeps = defaultSessionAppDeps): SessionApp {
 	const prepared = new Map<Platform, AsyncResult<PreparedApp>>();
-	return async (ctx, owner, platform, deviceId, opts) => {
-		const pending = prepared.get(platform) ?? prepareApp(ctx, opts, platform);
+	const prepare = (ctx: CommandContext, opts: EnsureOptions, platform: Platform): AsyncResult<PreparedApp> => {
+		const pending = prepared.get(platform) ?? deps.prepare(ctx, opts, platform);
 		prepared.set(platform, pending);
-		const app = await pending;
-		if (!app.success) return app;
-		return ensurePreparedApp(ctx, defaultAppDeps, owner, platform, deviceId, opts, app.data);
+		return pending;
 	};
+	return {
+		warm: (ctx, opts, platform) => {
+			// a throw surfaces where `ensure` awaits the same promise; nothing must trip on it before that
+			prepare(ctx, opts, platform).catch(() => undefined);
+		},
+		ensure: async (ctx, owner, platform, deviceId, opts) => {
+			const app = await prepare(ctx, opts, platform);
+			if (!app.success) return app;
+			return deps.install(ctx, owner, platform, deviceId, opts, app.data);
+		},
+	};
+}
+
+/** With `--app` and the default ensure: fingerprint every leg's platform now — it needs no device, the simulators boot meanwhile. */
+function warmSessionApp(
+	ctx: CommandContext,
+	deps: Pick<LeaseSessionDeps, "ensureApp">,
+	args: LeaseArgs
+): SessionApp | undefined {
+	if (!args.app || deps.ensureApp !== undefined) return undefined;
+	const app = sessionEnsureApp();
+	for (const platform of new Set((args.legFlags ?? [args.flags]).map((f) => f.request.platform)))
+		app.warm(ctx, args.app, platform);
+	return app;
 }
 
 /**
@@ -314,6 +363,7 @@ export async function claimAll(
 	const portLeaseIds = ports.data.map((p) => p.leaseId);
 	const releasePorts = () => releaseDevices(ctx, portLeaseIds, { touch: false });
 	args.onPorts?.(ports.data);
+	const sessionApp = warmSessionApp(ctx, deps, args);
 	if (args.aborted?.()) {
 		await releasePorts();
 		return err(INTERRUPTED);
@@ -342,7 +392,7 @@ export async function claimAll(
 			await release();
 			return err(INTERRUPTED);
 		}
-		const ensure = deps.ensureApp ?? sessionEnsureApp();
+		const ensure = deps.ensureApp ?? sessionApp?.ensure ?? sessionEnsureApp().ensure;
 		const app = await ensureSessionApp(ctx, ensure, owner, outcome, args.app, env, name);
 		if (!app.success) {
 			await release();
