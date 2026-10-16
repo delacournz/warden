@@ -24,7 +24,7 @@ Auditor 04. Scope: `warden-uiad` (`packages/e2e/native/android/src/.../uiad/{Mai
   - `android-driver.ts:258-260@dfcc68b`: it persists `uiadUnsupported: <build id>` in the per-serial state file. `uiad-backend.ts:86-87`: every later driver on that serial starts with the server off.
   - Nothing clears it except a new dex hash or an API-level change (`android-state.ts:151-161`). `grep uiadUnsupported` finds no other writer.
   - Emulator serials are reused (`emulator-5554` for any AVD on that port), so one bad start poisons every AVD at the same API level that later runs on that port.
-- **Impact**: when it fires, every snapshot is a ~1.9 s `uiautomator dump` instead of ~25 ms, and every input is an `input` JVM start. Measured on the same emulator in the PERF-3.3 acceptance: three flow files took 131 s with the dump driver against 15.7 s with the server (`docs/plans/wdn-perf.md:593`). How often it fires is unmeasured. It needs a `system_server` hiccup at connect time (emulator just booted, host load average ~200 per `wdn-perf.md:441`) or a different busy wording. Platform: android.
+- **Impact**: when it fires, every snapshot is a ~1.9 s `uiautomator dump` instead of ~25 ms, and every input is an `input` JVM start. Measured on the same emulator in the PERF-3.3 acceptance: three flow files took 131 s with the dump driver against 15.7 s with the server (`docs/plans/wdn-perf.md:593`). How often it fires is unmeasured. It needs a `system_server` hiccup at connect time (emulator just booted, host load average ~200 per `wdn-perf.md:453`) or a different busy wording. Platform: android.
 - **Proposed fix**:
   - `Main.java`: emit `connect_failed` only for deterministic causes: `NoSuchMethodException` / `ClassNotFoundException` / `NoSuchFieldException` / `LinkageError` in the cause chain. Give everything else a new `detail.reason: "connect_error"`, unwrap `InvocationTargetException`, and walk the cause chain for the busy check.
   - `uiad-backend.ts`: persist only `E_UNSUPPORTED` and deterministic `connect_failed`. Optionally require two persistent failures from two processes before writing, or store `{build, at}` and ignore entries older than 24 h.
@@ -53,7 +53,7 @@ Auditor 04. Scope: `warden-uiad` (`packages/e2e/native/android/src/.../uiad/{Mai
   - The tests pin "a server that died is a failed step" (`uiad-ops.test.ts:352`). None covers "the server answered `E_AX_UNAVAILABLE` to `typeText`".
 - **Impact**:
   - A fill that lands while a window is changing fails the step, although nothing was typed. A dump fallback that is not needed costs ~1.9 s.
-  - A restart costs ~100 ms (`wdn-perf.md:441`) and is one of the four starts allowed.
+  - A restart costs ~100 ms (`wdn-perf.md:444`) and is one of the four starts allowed.
   - Frequency unmeasured; android.
 - **Proposed fix**:
   - In `judge`, split "the server answered `ok:false`" from transport failures (`E_TIMEOUT`, `E_HELPER_CRASHED`). The client can tag answered errors (`detail.answered: true`) in `onResponse`.
@@ -72,8 +72,8 @@ Auditor 04. Scope: `warden-uiad` (`packages/e2e/native/android/src/.../uiad/{Mai
 - **Known?**: known-extended K6 (adds a level-dependent difference that a level-36 smoke run would not show)
 - **Evidence**:
   - `Uia.java:414-421@dfcc68b`: `clearCache()` calls `ua.clearCache()` inside `catch (Throwable ignored)`. The comment says "API 31+" and "older images have no cache API; their reads were uncached".
-  - The plan says `clearCache` is API 34+ (`wdn-perf.md:510`). `build.ts:30` accepts `android.jar` from platform 30. On API 26-33 the call is a `NoSuchMethodError`, swallowed on every snapshot (`Uia.java:267`) and in `focusedInput` (`Uia.java:609`).
-  - Whether those levels' `UiAutomation` reads go through `AccessibilityInteractionClient`'s cache, which events maintain, is exactly what the comment assumes and nothing checks. If they do, every "fresh" snapshot on 26-33 is the `fresh:false` read, which can "lag the app by an event" (`uiad-client.ts:50-51`, `wdn-perf.md:546`).
+  - The plan says `clearCache` is API 34+ (`wdn-perf.md:508`). `build.ts:30` accepts `android.jar` from platform 30. On API 26-33 the call is a `NoSuchMethodError`, swallowed on every snapshot (`Uia.java:267`) and in `focusedInput` (`Uia.java:609`).
+  - Whether those levels' `UiAutomation` reads go through `AccessibilityInteractionClient`'s cache, which events maintain, is exactly what the comment assumes and nothing checks. If they do, every "fresh" snapshot on 26-33 is the `fresh:false` read, which can "lag the app by an event" (`uiad-client.ts:50-51`, `wdn-perf.md:545`).
   - The reply carries no field that says whether the cache was cleared.
 - **Impact**: correctness, not time. On API 26-33 (none run on a device, `wdn-perf.md:521`) a read right after a change that sent no event yet can return the old tree. The host polls again, so the likely symptom is an extra poll, plus a rare wrong `not.toBeVisible` / `alert` verdict. Unmeasured.
 - **Proposed fix**:
@@ -107,7 +107,7 @@ Auditor 04. Scope: `warden-uiad` (`packages/e2e/native/android/src/.../uiad/{Mai
 - **Proposed fix**, in order:
   - (a) Instrument: time each `getChild`. Count calls over 1 ms as `remote` and sum their time. Return `{remote, remoteMs, rootMs}` in the snapshot data (additive wire). Note them on the span in `uiad-ops.ts:146-147`.
   - (b) On API 33+, try `getRootInActiveWindow(FLAG_PREFETCH_DESCENDANTS_DEPTH_FIRST | FLAG_PREFETCH_UNINTERRUPTIBLE)` through a cached `Method`, so the prefetch order matches the DFS. Compare `remote` before and after.
-  - (c) The plan's own idea (`wdn-perf.md:546`): skip `clearCache` when a `settle` just reported `events: 0` and no input went in since. `fresh:false` reads take 3 ms. Neither is implemented: the TS never sends `fresh`, and `uiad-ops.ts:170` drops `events`.
+  - (c) The plan's own idea (`wdn-perf.md:545`): skip `clearCache` when a `settle` just reported `events: 0` and no input went in since. `fresh:false` reads take 3 ms. Neither is implemented: the TS never sends `fresh`, and `uiad-ops.ts:170` drops `events`.
   - Files: `Uia.java`, `uiad-protocol.ts`, `uiad-ops.ts`.
 - **Effort**: M
 - **Risk**: med. A prefetch strategy can change which nodes the cache holds, but not what is read, because `getChild` still answers. (c) carries staleness risk and is a policy change. All of it needs a device.
@@ -118,10 +118,10 @@ Auditor 04. Scope: `warden-uiad` (`packages/e2e/native/android/src/.../uiad/{Mai
 ### 04-5 The edit quiet after `typeText` / `key` is always the full 80 ms, even when the next call is a read
 - **Category**: perf-latency
 - **Severity**: P2
-- **Known?**: new (refines the PERF-3.3 race fix, `wdn-perf.md:586`)
+- **Known?**: new (refines the PERF-3.3 race fix, `wdn-perf.md:588`)
 - **Evidence**:
   - `uiad-ops.ts:129-138@dfcc68b`: after every successful `typeText`/`key`, `edit` awaits `server.settle({quietMs: 80, timeoutMs: 1000})`.
-  - `Uia.java:447@dfcc68b`: `baseline = max(start, lastEventMs, lastInputMs)`. The quiet counts from the call, so it is never shorter than `quietMs` ("waits exactly quietMs", `wdn-perf.md:445`).
+  - `Uia.java:447@dfcc68b`: `baseline = max(start, lastEventMs, lastInputMs)`. The quiet counts from the call, so it is never shorter than `quietMs` ("waits exactly quietMs", `wdn-perf.md:448`).
   - The race this protects against is a **press** within ~20 ms after the text (`uiad-ops.ts:60-66`). But a spec `fill` follows `typeText` with confirm reads: at least `CONFIRM_READS = 2` reads `FIELD_POLL_MS = 50` ms apart (`screen/field.ts:16-21,58-90`). The next press comes ≥ 100 ms later anyway.
   - Measured `typeText` p50 202 ms, "80 ms of it the quiet wait" (`wdn-perf.md:594`).
 - **Impact**:
@@ -163,7 +163,7 @@ Auditor 04. Scope: `warden-uiad` (`packages/e2e/native/android/src/.../uiad/{Mai
 - **Category**: robustness
 - **Severity**: P2
 - **Known?**: new
-- **Evidence**: `native/android/scripts/build.ts:193-194@dfcc68b`: `const dist = resolve(outIndex >= 0 ? (argv[outIndex + 1] ?? "") : …)`. With `--out` last, `resolve("")` is `process.cwd()`. Then `build.ts:204`: `await rm(dist, { recursive: true, force: true })` deletes it. `--out .`, or `--out <existing dir>`, wipes that directory too. It runs before the toolchain check fails nothing; it runs after a successful `findToolchain`, so it fires on any machine that has an SDK.
+- **Evidence**: `native/android/scripts/build.ts:193-194@dfcc68b`: `const dist = resolve(outIndex >= 0 ? (argv[outIndex + 1] ?? "") : …)`. With `--out` last, `resolve("")` is `process.cwd()`. Then `build.ts:204`: `await rm(dist, { recursive: true, force: true })` deletes it. `--out .`, or `--out <existing dir>`, wipes that directory too. The `rm` runs right after a successful `findToolchain`, so it fires on any machine that has an SDK.
 - **Impact**: data loss on a by-hand call (`bun run --cwd packages/e2e android:build -- --out`) deletes `packages/e2e`, git-tracked work included. No time cost.
 - **Proposed fix**: refuse `--out` without a value, or with a value starting with `--`. Build into `<dist>/.build-<pid>` and delete only that, plus the files the script writes (`warden-uiad.dex`, `manifest.json`), never the directory. Add the case to `build.test.ts` by exporting an `outDir(argv)` helper. Additive.
 - **Effort**: S
@@ -256,7 +256,7 @@ Auditor 04. Scope: `warden-uiad` (`packages/e2e/native/android/src/.../uiad/{Mai
 - **Evidence**:
   - `Uia.java:271-290@dfcc68b`: the flag is switched on, `getWindows()` and each `w.getRoot()` run, and then the `finally` switches it **off** (`:289`) before `dump` walks those roots (`:308-314`).
   - For a window that is not the active one, every `getChild` the root's prefetch did not cache is then a query the system no longer allows for this client, and it comes back null. `dump` skips null children silently (`Uia.java:395`).
-  - The plan's measurement fits: "`scope:"all"` + windows (191 nodes)" against 189 for the active window alone (`wdn-perf.md:440`). The status bar and the navigation bar would add far more than 2 nodes.
+  - The plan's measurement fits: "`scope:"all"` + windows (191 nodes)" against 189 for the active window alone (`wdn-perf.md:438,441`). The status bar and the navigation bar would add far more than 2 nodes.
   - Each call also costs two `setServiceInfo` binder calls and makes `system_server` start and stop window tracking.
   - Today no production caller sends `scope` or `windows` (`grep` over `src/driver/android` and `apps/cli/src`). Only `smoke.ts:492` does.
 - **Impact**: none today. The first feature to read the IME or a system overlay would get truncated trees with no error.
@@ -272,9 +272,9 @@ Auditor 04. Scope: `warden-uiad` (`packages/e2e/native/android/src/.../uiad/{Mai
 - **Severity**: P3
 - **Known?**: new
 - **Evidence**:
-  - `build.ts:30@dfcc68b`: `MIN_PLATFORM = 30` and "the newest `platforms/android-N` (N >= 30)". But `Uia.java:417` calls `UiAutomation.clearCache()`, which exists in `android.jar` 34+ (`wdn-perf.md:510`). An SDK whose newest platform is 30-33 fails at `javac` with a symbol error, not with the clear "toolchain not found" message.
+  - `build.ts:30@dfcc68b`: `MIN_PLATFORM = 30` and "the newest `platforms/android-N` (N >= 30)". But `Uia.java:417` calls `UiAutomation.clearCache()`, which exists in `android.jar` 34+ (`wdn-perf.md:508`). An SDK whose newest platform is 30-33 fails at `javac` with a symbol error, not with the clear "toolchain not found" message.
   - The `build.ts:27` comment says "the server only calls API 24-26 methods itself", which is false (`clearCache`).
-  - The plan's wire table gives `maxNodes` (5000) and `rootWaitMs` (500) as defaults (`wdn-perf.md:493`). The Java defaults are 20000 and 600 (`Uia.java:249,253`), and the TS sends neither. `uiad-client.ts:68` says the ready timeout is 5 s; the plan's fallback table says 3 s (`wdn-perf.md:534`).
+  - The plan's wire table gives `maxNodes` (5000) and `rootWaitMs` (500) as defaults (`wdn-perf.md:493`). The Java defaults are 20000 and 600 (`Uia.java:249,253`), and the TS sends neither. `uiad-client.ts:68` says the ready timeout is 5 s; the plan's fallback table says 3 s (`wdn-perf.md:535`).
 - **Impact**: wasted time for whoever builds on an older SDK, or reads the plan as the contract.
 - **Proposed fix**: `MIN_PLATFORM = 34` plus the comment fix. Update the plan table to the Java defaults, or have `uiad-ops` send `maxNodes`/`rootWaitMs` explicitly so the contract lives in the TS. Additive.
 - **Effort**: S
