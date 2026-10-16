@@ -138,6 +138,21 @@ describe("isolate", () => {
 		expect(r.success).toBe(true);
 	});
 
+	test("android: force-stops every installed driver app of any framework before the app", async () => {
+		const exec = make();
+		await isolate({
+			...base(exec),
+			platform: "android",
+			udid: "emu-1",
+			allDrivers: ["com.argent.*", "dev.mobile.maestro*"],
+		});
+		const all = cmds(exec);
+		const driver = all.indexOf("adb -s emu-1 shell am force-stop dev.mobile.maestro-driver-ios");
+		expect(driver).toBeGreaterThan(-1);
+		expect(driver).toBeLessThan(all.indexOf("adb -s emu-1 shell am force-stop nz.co.delacour.warden.example"));
+		expect(all.some((c) => c.includes("force-stop other"))).toBe(false);
+	});
+
 	test("android warm: no uninstall, no reboot", async () => {
 		const exec = make();
 		await isolate({ ...base(exec), platform: "android", udid: "emu-1" });

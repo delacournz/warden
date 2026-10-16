@@ -22,6 +22,8 @@ export type IsolateInput = {
 	bundleId: string;
 	previous?: BenchAdapter;
 	next: BenchAdapter;
+	/** driver / runner app ids of every framework, stopped on the device before each framework (Android) */
+	allDrivers?: readonly string[];
 	cold: boolean;
 	rebootBetween: boolean;
 	log: (line: string) => void;
@@ -57,6 +59,24 @@ async function stopHelpers(input: IsolateInput): Promise<void> {
 	);
 	for (const dir of dirs)
 		await exec.run("agent-device", ["daemon", "stop", "--state-dir", dir, "--clean"], { timeoutMs: 30_000 });
+}
+
+/**
+ * Android: force-stops every installed driver app of any framework. A resident driver (maestro's
+ * `dev.mobile.maestro`, argent's `com.argent.androiddevtools`) holds the device's UiAutomation, which
+ * kills every later `uiautomator dump`, so the next framework must start without one.
+ */
+async function stopDriverApps(input: IsolateInput): Promise<string[]> {
+	const { exec, platform, udid } = input;
+	if (platform !== "android") return [];
+	const ids = [
+		...(input.previous?.residuePatterns.driverBundleIds ?? []),
+		...input.next.residuePatterns.driverBundleIds,
+		...(input.allDrivers ?? []),
+	];
+	const present = await listDriverApps(exec, platform, udid, ids);
+	for (const id of present) await exec.run("adb", ["-s", udid, "shell", "am", "force-stop", id], { timeoutMs: 30_000 });
+	return present;
 }
 
 /** Removes the next framework's driver apps that are present (cold runs only). */
@@ -114,6 +134,7 @@ export async function isolate(input: IsolateInput): AsyncResult<IsolateOutcome> 
 	const killed = await killMatching(input.exec, patterns, owner, { sleep: input.sleep });
 	for (const line of killed) input.log(`killed ${line}`);
 	await stopHelpers(input);
+	for (const id of await stopDriverApps(input)) input.log(`stopped driver app ${id}`);
 	const uninstalled = input.cold ? await uninstallDrivers(input) : [];
 	let rebooted = false;
 	if (input.rebootBetween) {

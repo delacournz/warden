@@ -4,6 +4,7 @@ import { basename, delimiter, dirname, join, relative, resolve } from "node:path
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { BenchAdapter, FrameworkId, RunContext } from "./adapters/adapter.types";
 import { DETOX_BEST_EFFORT } from "./adapters/detox";
+import { dismissAnr, hideErrorDialogs } from "./harness/anr";
 import { appFingerprint, type EnsuredApp, ensureApp, terminateApp } from "./harness/app";
 import { type ClaimedDevice, claimDevice, deviceInfo, releaseDevice } from "./harness/device";
 import type { Child, Exec, ExecOptions } from "./harness/exec";
@@ -186,6 +187,12 @@ async function repPhase(fc: FrameworkCtx, st: PhaseState, n: number): Promise<Ou
 	st.tickFile.path = join(repDir, "resources.ndjson");
 	const stopped = await terminateApp(s.exec, s.opts.platform, s.device.udid, BUNDLE_ID);
 	if (!stopped.success) ctx.log(`terminate app: ${stopped.error}`);
+	if (s.opts.platform === "android") {
+		const anr = await dismissAnr(s.exec, s.device.udid);
+		if (!anr.success) ctx.log(`anr check: ${anr.error}`);
+		else if (anr.data.dismissed)
+			ctx.log(`dismissed an "isn't responding" dialog for ${anr.data.packageName} before rep ${n}`);
+	}
 	const startedAt = s.deps.now().toISOString();
 	const { result, ms } = await timed("run", () => adapter.run(ctx));
 	if (!result.success) {
@@ -279,6 +286,7 @@ async function runFramework(
 		bundleId: BUNDLE_ID,
 		...(previous !== undefined ? { previous } : {}),
 		next: adapter,
+		allDrivers: deps.adapters.flatMap((a) => a.residuePatterns.driverBundleIds),
 		cold: !opts.keepDrivers,
 		rebootBetween: opts.rebootBetween,
 		log: s.log,
@@ -432,6 +440,10 @@ async function prepareRun(
 	});
 	if (!device.success) return device;
 	claimed.device = device.data;
+	if (opts.platform === "android") {
+		const hidden = await hideErrorDialogs(deps.exec, device.data.udid, true);
+		if (!hidden.success) deps.log(`hide_error_dialogs: ${hidden.error}`);
+	}
 	const info = await deviceInfo(deps.exec, opts.platform, device.data.udid);
 	const app = await ensureApp(deps.exec, {
 		platform: opts.platform,
@@ -551,6 +563,10 @@ export async function runBench(opts: BenchOptions, deps: BenchDeps): AsyncResult
 		return ok({ runDir, run: finished, interrupted });
 	} finally {
 		caffeinate?.kill();
+		if (claimed.device !== undefined && opts.platform === "android") {
+			const shown = await hideErrorDialogs(deps.exec, claimed.device.udid, false);
+			if (!shown.success) deps.log(`hide_error_dialogs restore: ${shown.error}`);
+		}
 		if (claimed.device?.leaseId !== undefined) {
 			const released = await releaseDevice(deps.exec, {
 				cliPath: deps.cliPath,
