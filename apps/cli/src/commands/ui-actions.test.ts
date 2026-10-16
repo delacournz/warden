@@ -175,7 +175,7 @@ describe("fill", () => {
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
 
-	test("a driver with select-all empties the field with one Backspace instead of one per character", async () => {
+	test("a driver with select-all types over the selection: no Backspace at all", async () => {
 		let typed = "";
 		const h = harness([typingScreen("a@b.co")], {
 			selectAll: true,
@@ -191,8 +191,8 @@ describe("fill", () => {
 		const methods: string[] = h.driver.calls
 			.map((call) => call.method)
 			.filter((m) => m !== "snapshot" && m !== "elementAtPoint");
-		expect(methods).toEqual(["tap", "selectAll", "key", "typeText", "close"]);
-		expect(h.driver.callsOf("key")).toEqual([{ method: "key", key: "Backspace" }]);
+		expect(methods).toEqual(["tap", "selectAll", "typeText", "close"]);
+		expect(h.driver.callsOf("key")).toEqual([]);
 		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true });
 	});
 
@@ -230,7 +230,6 @@ describe("fill", () => {
 		expect(methods).toEqual([
 			"tap",
 			"selectAll",
-			"key",
 			"typeText",
 			"tap",
 			...Array.from({ length: 4 }, () => "key"),

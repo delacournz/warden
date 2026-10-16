@@ -125,7 +125,7 @@ const FILL_TEXTS = ["ada@example.com", "grace@example.com", "password1"];
 
 /**
  * `--fills <n>`: fills the field n times through the same clear-and-type path as the spec `fill` (`focusClearType`: select
- * all and one Backspace on a driver that has it), reading each result back. Any read that is not exactly the text is a
+ * all, then the typed text replaces the selection, on a driver that has it), reading each result back. Any read that is not exactly the text is a
  * lost or extra character.
  */
 async function fillLoop(driver: Driver, identifier: string | undefined, fills: number): Promise<void> {

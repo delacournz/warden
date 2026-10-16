@@ -502,7 +502,7 @@ export class Locator {
 	}
 
 	/**
-	 * Replaces the content of a text field: focus with the caret at the end, empty it (select all and one Backspace when
+	 * Replaces the content of a text field: focus with the caret at the end, empty it (select all and type over the selection when
 	 * the driver can, nothing for a field that is empty or shows a placeholder), type, then poll until the field holds
 	 * the text on consecutive reads (the accessibility value lags the keys). A mismatch is retried once with one Backspace
 	 * per character and a retype (a field that refuses select-all). Secure fields cannot be read back, so they are not

@@ -104,7 +104,7 @@ Actions wait for the element (up to `actionTimeout`) and then act:
 | Action | |
 |---|---|
 | `tap({ position?, until?, retries?, windowMs?, pollMs? })`, `longPress({ durationMs? })` | touch the element's centre, or a point inside it. `until` makes the tap retrying (below) |
-| `fill(text)` | replace the field's text (focus with the caret at the end, empty it, type the whole string), then poll until the field holds it on consecutive reads, since the accessibility value lags the keys by 100-200 ms; a mismatch is retried once with a fresh clear and retype, then fails with what the field holds. Emptying is select all plus one Backspace on iOS and on Android 13+, one Backspace per character otherwise (and on the retry), and no keys for a field that is empty or shows its placeholder. Secure fields skip the check |
+| `fill(text)` | replace the field's text (focus with the caret at the end, empty it, type the whole string), then poll until the field holds it on consecutive reads, since the accessibility value lags the keys by 100-200 ms; a mismatch is retried once with a fresh clear and retype, then fails with what the field holds. Emptying is select all on iOS and on Android 13+, then the typed text replaces the selection (no Backspace); older Android and the retry press one Backspace per character, and a field that is empty or shows its placeholder gets no keys. Secure fields skip the check |
 | `type(text)`, `clear()`, `press("Enter", { modifiers? })` | keyboard input; the field is tapped first unless it already has focus. `clear()` checks the field is empty afterwards (secure fields skip the check) |
 | `swipe({ direction })`, `scrollTo()` | scroll the element, or scroll until it is visible |
 
