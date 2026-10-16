@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { ClaimedDevice } from "@delacour/warden-core/claim";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
-import { leasePidFor, parseClaimFlags, resolveAutoProfile, resolveOwner } from "./claim-flags";
+import type { InventoryDevice, Lease } from "@delacour/warden-core/types";
+import { bootedByClaim, leasePidFor, parseClaimFlags, resolveAutoProfile, resolveOwner } from "./claim-flags";
 import { type TestContext, testContext } from "./testing";
 
 let ctx: TestContext | undefined;
@@ -86,5 +88,27 @@ describe("resolveAutoProfile", () => {
 
 	test("no AVDs → error", () => {
 		expect(resolveAutoProfile([]).success).toBe(false);
+	});
+});
+
+describe("bootedByClaim", () => {
+	const claimed = (name: string, action: ClaimedDevice["action"], lease: Partial<Lease> = {}): ClaimedDevice => ({
+		action,
+		device: { platform: "ios", id: `U-${name}`, name, state: "booted", wardenCreated: true } satisfies InventoryDevice,
+		lease: { id: `L-${name}`, ...lease } as Lease,
+	});
+
+	test("a device that was already running is not one: its window (or lack of one) is already settled", () => {
+		expect(bootedByClaim({ claimed: [claimed("a", "reuse")] })).toEqual([]);
+	});
+
+	test("booted or created by the claim → its window may still be on its way", () => {
+		const outcome = { claimed: [claimed("a", "boot"), claimed("b", "create"), claimed("c", "reuse")] };
+		expect(bootedByClaim(outcome).map((c) => c.device.name)).toEqual(["a", "b"]);
+	});
+
+	test("a reused device the claim had to boot (it was shut down) counts: the lease says who booted it", () => {
+		const outcome = { claimed: [claimed("a", "reuse", { bootedByOwner: true })] };
+		expect(bootedByClaim(outcome).map((c) => c.device.name)).toEqual(["a"]);
 	});
 });

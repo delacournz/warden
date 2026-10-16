@@ -191,6 +191,7 @@ export function harness(
 							opts.warm === "snapshot-fail" ? { success: false, error: "AX denied" } : { success: true, data: null },
 						close: async () => {
 							h.warmClosed.push(udid);
+							h.events.push(`warm-close:${udid}`);
 						},
 					},
 				};

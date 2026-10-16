@@ -282,6 +282,60 @@ describe("warden e2e", () => {
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
+		test("runs the project's own node_modules/.bin/expo directly when node can run it, else bunx", async () => {
+			await resuite(suite, projects);
+			write("packages/ui/node_modules/.bin/expo", "#!/usr/bin/env node\n");
+			const withNode = harness();
+			withNode.deps.which = (cmd) => (cmd === "node" ? "/usr/bin/node" : cmd === "bun" ? BUN : null);
+			expect(await createE2eCommand(withNode.deps).run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
+			expect(withNode.metro()?.cmd).toEqual([
+				join(dir, "packages/ui/node_modules/.bin/expo"),
+				"start",
+				"--dev-client",
+				"--port",
+				"8081",
+			]);
+			ctx?.cleanup();
+
+			const noNode = harness();
+			expect(await createE2eCommand(noNode.deps).run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
+			expect(noNode.metro()?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081"]);
+		});
+
+		test("iOS: opening the dev client and closing a late simulator window run side by side", async () => {
+			if (process.platform !== "darwin") return;
+			await resuite({ ...suite, headless: true }, projects);
+			const sim = fakeSimctl([wardenSim(1, "Shutdown")]);
+			const launch = Promise.withResolvers<void>();
+			const reads: string[] = [];
+			const exec: Exec = async (cmd, opts) => {
+				if (cmd[0] === "git") return bunExec(cmd, opts);
+				if (cmd[0] === "osascript") {
+					if ((cmd[4] ?? "").includes("NSScreen")) reads.push("read");
+					const windows = [{ title: "warden-iphone-17-1 – iOS 26.5", width: 400, height: 800 }];
+					const screen = { x: 0, y: 0, width: 900, height: 900 };
+					return { exitCode: 0, stdout: JSON.stringify({ screen, windows }), stderr: "" };
+				}
+				if (cmd[0] === "xcrun" && cmd[2] === "launch") {
+					reads.push("launch:start");
+					await launch.promise;
+				}
+				return sim(cmd, opts);
+			};
+			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			ctx.cwd = dir;
+			const h = harness();
+			const run = createE2eCommand(h.deps).run(ctx);
+			await waitFor(() => reads.includes("launch:start"));
+			// the claim's own hide has read the windows once; the late one is the second read, while the launch is still pending
+			await waitFor(() => reads.filter((r) => r === "read").length === 2);
+			expect(reads.filter((r) => r === "read")).toHaveLength(2);
+			expect(h.jobs()).toEqual([]);
+			launch.resolve();
+			expect(await run).toBe(0);
+		});
+
 		test("open: false leaves launching the app to the specs", async () => {
 			await resuite({ ...suite, metro: { ...suite.metro, open: false } }, projects);
 			const calls: string[][] = [];
@@ -913,6 +967,102 @@ describe("warden e2e", () => {
 				"snapshot ok"
 			);
 			expect(h.warmClosed.sort()).toEqual(["U1", "U2"]);
+		});
+
+		test("the warm-up starts when a device is leased: before its app install ends, before setup", async () => {
+			await resuite(
+				{ project: "app", app: true, setup: "prep {udid}" },
+				{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] }
+			);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			const install = Promise.withResolvers<void>();
+			h.deps.ensureApp = async () => {
+				h.events.push("app:start");
+				await install.promise;
+				h.events.push("app:end");
+				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.warmed.length === 1);
+			expect(h.events).toContain("app:start");
+			expect(h.events).not.toContain("app:end");
+			expect(h.warmed).toEqual(["U1"]);
+			install.resolve();
+			expect(await run).toBe(0);
+			expect(h.events.indexOf("warm:U1")).toBeLessThan(h.events.indexOf("app:end"));
+			expect(h.events.indexOf("warm:U1")).toBeLessThan(h.events.findIndex((e) => e.startsWith("setup:")));
+			expect(jobEnv(h)).toEqual(["/tmp/warden-simd-U1.sock"]);
+		});
+
+		test("a device whose setup fails: its warmed helper is closed before the jobs, and only the others get a socket", async () => {
+			await resuite({ setup: "prep {udid}" });
+			write("src/chat/lazy.tsx", "export const x = 2;\n");
+			write("src/settings/form.tsx", "export const y = 2;\n");
+			const c = setup(["--count", "2"]);
+			let bad: string | undefined;
+			const h = harness({
+				exitCodeFor: (env) => {
+					if (env.WARDEN_JOB !== undefined) return 0;
+					bad ??= env.WARDEN_UDID;
+					return env.WARDEN_UDID === bad ? 3 : 0;
+				},
+			});
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const firstJob = h.events.findIndex((e) => e.startsWith("job:"));
+			expect(h.events.indexOf(`warm-close:${bad}`)).toBeGreaterThan(-1);
+			expect(h.events.indexOf(`warm-close:${bad}`)).toBeLessThan(firstJob);
+			expect(new Set(jobEnv(h)).size).toBe(1);
+			expect(jobEnv(h).every((socket) => socket !== undefined && !socket.includes(bad ?? "?"))).toBe(true);
+			expect([...h.warmClosed].sort()).toEqual(["U1", "U2"]);
+		});
+
+		test("setup failing everywhere: the run fails and every warmed helper is closed", async () => {
+			await resuite({ setup: "prep {udid}" });
+			write("src/chat/lazy.tsx", "export const x = 2;\n");
+			write("src/settings/form.tsx", "export const y = 2;\n");
+			const c = setup(["--count", "2"]);
+			const h = harness({ exitCodeFor: () => 1 });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect([...h.warmed].sort()).toEqual(["U1", "U2"]);
+			expect([...h.warmClosed].sort()).toEqual(["U1", "U2"]);
+		});
+
+		test("a run that fails after the claim (Metro never builds) still closes the warmed helpers", async () => {
+			await resuite(
+				{ project: "app", metro: {} },
+				{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] }
+			);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ prewarm: "fail" });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(h.jobs()).toEqual([]);
+			expect(h.warmClosed).toEqual(["U1"]);
+		});
+
+		test("legs: each device's warm log and socket follow its worker number, whatever order the legs landed in", async () => {
+			await resuite({
+				devices: [
+					{ profile: "iphone-17", count: 1 },
+					{ profile: "ipad", count: 1, default: false },
+				],
+			});
+			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
+			const sim = fakeSimctl(sims);
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			ctx.cwd = dir;
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+			const log = (worker: number) =>
+				h.files.get(join(ctx?.env.WARDEN_HOME ?? "", "batches", "b1", "logs", `warm-${worker}.log`)) ?? "";
+			expect(log(0)).toContain("warming U1");
+			expect(log(1)).toContain("warming P1");
+			expect(Object.fromEntries(h.jobs().map((j) => [j.opts.env.WARDEN_UDID, j.opts.env.WARDEN_SIMD_SOCKET]))).toEqual({
+				U1: "/tmp/warden-simd-U1.sock",
+				P1: "/tmp/warden-simd-P1.sock",
+			});
 		});
 
 		test("a headless run hides the simulator windows first", async () => {

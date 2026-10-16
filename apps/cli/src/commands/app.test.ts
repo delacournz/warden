@@ -74,7 +74,13 @@ async function seed(c: TestContext): Promise<string> {
 
 describe("warden app fingerprint (native+js)", () => {
 	test("the printed fingerprint is the JS-aware key; native is reported alongside", async () => {
-		const c = setup(["fingerprint", "ios", "--json"], [["git ls-files", { stdout: "src/a.ts" }]]);
+		const c = setup(
+			["fingerprint", "ios", "--json"],
+			[
+				["git ls-files -z -m", { stdout: "" }],
+				["git ls-files", { stdout: "? src/a.ts" }],
+			]
+		);
 		mkdirSync(join(c.cwd, "app", "src"), { recursive: true });
 		writeFileSync(join(c.cwd, "app", "src", "a.ts"), "export {}");
 		writeFileSync(

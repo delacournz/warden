@@ -24,7 +24,7 @@ describe("warden arrange", () => {
 		});
 		expect(await arrangeCommand.run(ctx)).toBe(0);
 		expect(ctx.stdout.join("\n")).toContain("warden-iphone-17-1, warden-iphone-17-2");
-		expect(calls).toHaveLength(2);
+		expect(calls.filter((cmd) => cmd[0] === "osascript")).toHaveLength(2);
 	});
 
 	test("--json", async () => {
@@ -40,8 +40,24 @@ describe("warden arrange", () => {
 	});
 
 	test("osascript failure → exit 1", async () => {
-		ctx = testContext([], { exec: async () => ({ exitCode: 1, stdout: "", stderr: "boom" }) });
+		ctx = testContext([], {
+			exec: async (cmd) =>
+				cmd[0] === "pgrep" ? { exitCode: 0, stdout: "", stderr: "" } : { exitCode: 1, stdout: "", stderr: "boom" },
+		});
 		expect(await arrangeCommand.run(ctx)).toBe(1);
 		expect(ctx.stderr.join("\n")).toContain("warden arrange:");
+	});
+
+	test("Simulator.app not running → nothing to arrange without starting osascript", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], {
+			exec: async (cmd) => {
+				calls.push([...cmd]);
+				return { exitCode: cmd[0] === "pgrep" ? 1 : 0, stdout: "", stderr: "" };
+			},
+		});
+		expect(await arrangeCommand.run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toContain("no warden simulator windows open");
+		expect(calls).toEqual([["pgrep", "-xq", "Simulator"]]);
 	});
 });

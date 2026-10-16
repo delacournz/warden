@@ -4,6 +4,7 @@ import type { Command as Commander, OptionValues } from "@commander-js/extra-typ
 import { expandArgv, expandText, jobSlug, parseJobLines, parseJobList } from "@delacour/warden-core/batch/expand";
 import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delacour/warden-core/batch/preset";
 import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "@delacour/warden-core/batch/schedule";
+import type { ClaimOutcome } from "@delacour/warden-core/claim";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
 import { resolveHeadless } from "@delacour/warden-core/headless";
@@ -15,6 +16,7 @@ import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
+import { type EarlyWarm, startEarlyWarm } from "../batch/early-warm";
 import { flowPoller } from "../batch/flow-poller";
 import type { FlowMark, TrackedFlow } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
@@ -37,8 +39,9 @@ import {
 	render,
 	withRunners,
 } from "../batch/tui";
-import { type WarmConnect, type WarmHelper, warmDrivers } from "../batch/warm-drivers";
+import type { WarmConnect, WarmHelper } from "../batch/warm-drivers";
 import {
+	bootedByClaim,
 	type ClaimFlags,
 	type ClaimFlagValues,
 	parseClaimFlags,
@@ -77,6 +80,7 @@ import {
 	type MetroOwner,
 	metroOwner,
 	prewarmMetro,
+	resolveExpoBin,
 	startMetro,
 } from "../metro";
 import { emit, note, reportError, warn } from "../output";
@@ -809,9 +813,10 @@ export type SessionHooks = {
 	/** env added to one job's spawn (over the pool env, under the worker's own `WARDEN_UDID` / `WARDEN_WORKER` / `WARDEN_JOB…`) */
 	jobEnv?: (job: JobEnvInput) => Record<string, string>;
 	/**
-	 * iOS: connect each device's socket helper and take one snapshot, in parallel after setup and
-	 * the window hide, before the first job; that device's jobs get `WARDEN_SIMD_SOCKET`. Undefined =
-	 * no warm-up. A failed warm-up only warns.
+	 * iOS: connect each device's socket helper and take one snapshot, in parallel, the moment the
+	 * device is leased (alongside the app install, Metro and `setup`); that device's jobs get
+	 * `WARDEN_SIMD_SOCKET` once the run is ready for them. Undefined = no warm-up. A failed warm-up
+	 * only warns.
 	 */
 	warmDrivers?: WarmConnect | undefined;
 };
@@ -986,6 +991,7 @@ function launchRunMetro(
 				now: ctx.now,
 				sleep: deps.sleep,
 				spawn: (cmd, env, cwd) => deps.spawn(cmd, { env, log: o.log, cwd, group: true, metro: true }),
+				expoBin: (root) => resolveExpoBin(root, deps.which),
 			},
 			{
 				projectRoot: plan.projectRoot,
@@ -1112,37 +1118,37 @@ type Services = {
 	serve?: ProcHandle | undefined;
 	metro?: Metro | undefined;
 	recordings: Recording[];
-	/** the warm socket helpers (`hooks.warmDrivers`) */
+	/** the warm socket helpers (`hooks.warmDrivers`) of the devices that run jobs */
 	helpers?: WarmHelper[];
+	/** the early warm-up while it has not been settled: `teardown` stops it */
+	warm?: EarlyWarm | undefined;
 };
 
 /**
- * `hooks.warmDrivers` on iOS: warm every live device's helper (failures warn); returns the
- * sockets by udid and keeps the helpers in `services` so `teardown` stops them.
+ * Collect the early warm-up (`hooks.warmDrivers`, started as each device was leased): its warnings
+ * are printed now, the helpers of devices that dropped out in setup are stopped, and the others go
+ * to `services` for `teardown`; fills `sockets` by udid for the devices that run jobs.
  */
-async function warmStep(
+async function settleWarm(
 	ctx: CommandContext,
-	deps: BatchDeps,
 	r: RunContext,
 	live: readonly Device[],
+	warm: EarlyWarm,
 	services: Services,
 	sockets: Map<string, string>
 ): Promise<void> {
-	const connect = r.hooks.warmDrivers;
-	if (!connect || r.platform !== "ios" || live.length === 0) return;
-	const { devices, helpers } = await warmDrivers(
-		{
-			devices: live,
-			logDir: r.logDir,
-			now: ctx.now,
-			after: deps.after,
-			writeFile: deps.writeFile,
-			signal: r.signal,
-		},
-		{ connect, warn: (line) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`)) }
+	services.warm = undefined;
+	const done = await warm.settled();
+	for (const line of done.warnings) ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
+	const running = new Set(live.map((d) => d.udid));
+	const dropped = new Set(
+		done.devices.flatMap((d) => (d.socketPath !== undefined && !running.has(d.udid) ? [d.socketPath] : []))
 	);
-	services.helpers = helpers;
-	for (const d of devices) if (d.socketPath !== undefined) sockets.set(d.udid, d.socketPath);
+	await Promise.all(done.helpers.filter((h) => dropped.has(h.socketPath)).map((h) => h.close().catch(() => {})));
+	services.helpers = done.helpers.filter((h) => !dropped.has(h.socketPath));
+	for (const d of done.devices) {
+		if (d.socketPath !== undefined && running.has(d.udid)) sockets.set(d.udid, d.socketPath);
+	}
 }
 
 /** Metro (started during the claim) → serve → recordings; resolves the job env + placeholder values once they are up. */
@@ -1293,6 +1299,24 @@ function runEnv(session: LeaseSession, args: BatchArgs, batchDir: string): Recor
 	};
 }
 
+/**
+ * Headless iOS: close any simulator window that attached after the claim hid them. A simulator the
+ * claim booted can show its window late; one that was already running had its window (or none)
+ * settled when the claim hid it, so when the claim booted nothing there is nothing new to look for.
+ */
+async function hideLateWindows(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	session: LeaseSession,
+	live: readonly Device[]
+): Promise<void> {
+	if (r.platform !== "ios" || !args.flags.headless || bootedByClaim(session.outcome).length === 0) return;
+	const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
+	await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
+}
+
 /** What `runSession` sets up before the claim and `supervise` carries on with. */
 type RunSetup = {
 	batchId: string;
@@ -1302,6 +1326,8 @@ type RunSetup = {
 	controller: AbortController;
 	/** the run's Metro, launched on the port lease (undefined: no `metro` plan, or no port) */
 	metro: MetroLaunch | undefined;
+	/** the iOS driver warm-up, started per leg as its devices were leased (undefined: no `warmDrivers` hook, or not iOS) */
+	warm: EarlyWarm | undefined;
 };
 
 /** Everything after the claim: Metro → serve → recordings → setup → jobs → stop serve / recordings / Metro → batch.json → release. */
@@ -1338,18 +1364,25 @@ async function supervise(
 		controller.abort();
 		for (const job of r.running) job.kill(signal);
 	});
-	const services: Services = { recordings: [] };
+	const services: Services = { recordings: [], warm: run.warm };
 	const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
 		reportError(ctx, r.name, message);
 		return { code: r.interrupted() ? 130 : 1, ...extra };
 	};
 	/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
 	const teardown = async () => {
-		const { serve, metro, recordings, helpers = [] } = services;
+		const { serve, metro, recordings, warm } = services;
+		const helpers = [...(services.helpers ?? [])];
 		services.serve = undefined;
 		services.metro = undefined;
 		services.recordings = [];
 		services.helpers = [];
+		services.warm = undefined;
+		if (warm) {
+			// a run that ended before it collected the warm-up: stop waiting for it and close what came up
+			warm.abort();
+			helpers.push(...(await warm.settled()).helpers);
+		}
 		if (serve) await stopServe(deps, serve);
 		await Promise.all(recordings.map((rec) => rec.stop()));
 		await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
@@ -1366,13 +1399,14 @@ async function supervise(
 			const failedLogs = (setups ?? []).filter((d) => !d.ok).map((d) => d.log);
 			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
 		}
-		if (args.metro && services.metro) await openOnDevices(ctx, r.name, r.platform, args.metro, services.metro, live);
-		// a window can attach after the claim (boot lag, Simulator.app opened since): close it before the first job
-		if (r.platform === "ios" && args.flags.headless) {
-			const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
-			await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
-		}
-		await warmStep(ctx, deps, r, live, services, sockets);
+		// independent of each other: the dev client's first launch loads the bundle while a late window closes
+		const metroPlan = args.metro;
+		const metroUp = services.metro;
+		await Promise.all([
+			metroPlan && metroUp ? openOnDevices(ctx, r.name, r.platform, metroPlan, metroUp, live) : undefined,
+			hideLateWindows(ctx, deps, args, r, session, live),
+		]);
+		if (run.warm) await settleWarm(ctx, r, live, run.warm, services, sockets);
 		const queues = poolQueues(ctx, deps, args, r, prepared, {
 			jobs,
 			cmd,
@@ -1544,6 +1578,14 @@ async function batch(
 	return (await runSession(ctx, deps, args.data, jobs.data, cmd)).code;
 }
 
+/** A warm-up the run never collected (the claim failed, a signal): stop waiting for it and close what came up. */
+async function closeWarm(warm: EarlyWarm | undefined): Promise<void> {
+	if (!warm) return;
+	warm.abort();
+	const { helpers } = await warm.settled();
+	await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
+}
+
 /**
  * Claim (at most one device per job, under a spinner) → supervise → release. With a `metro` plan the
  * run's Metro is launched the moment its port is leased, so it starts and prewarms while the devices
@@ -1574,6 +1616,19 @@ export async function runSession(
 	const interrupted = () => controller.signal.aborted;
 	let launch: MetroLaunch | undefined;
 	let claimDone = false;
+	// each leg's devices are warmed the moment they are leased, so it overlaps the install and Metro
+	const warm =
+		hooks.warmDrivers && platform === "ios"
+			? startEarlyWarm({
+					connect: hooks.warmDrivers,
+					legCounts: (lease.legs?.map((leg) => leg.flags) ?? [lease.flags]).map((flags) => flags.request.count),
+					logDir,
+					now: ctx.now,
+					after: deps.after,
+					writeFile: deps.writeFile,
+					signal: controller.signal,
+				})
+			: undefined;
 	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
 		deps.onSignal(signal, () => {
 			controller.abort();
@@ -1582,7 +1637,14 @@ export async function runSession(
 	);
 	const claimed = await withSpinner(ctx, `claiming ${wanted} ${platform} device(s)…`, async (sctx, spinner) => {
 		const legFlags = lease.legs?.map((leg) => leg.flags);
-		const onLeased = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
+		const progress = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
+		const onLeased =
+			progress || warm
+				? (outcome: ClaimOutcome, leg: number) => {
+						progress?.(outcome);
+						warm?.leased(outcome, leg);
+					}
+				: undefined;
 		const plan = lease.metro;
 		const onPorts = plan
 			? (ports: RunPort[]) => {
@@ -1619,6 +1681,7 @@ export async function runSession(
 	// before supervise re-subscribes (holdLeases), so the two never share a handler slot
 	for (const off of offSignals) off();
 	if (!claimed.success || interrupted()) {
+		await closeWarm(warm);
 		if (claimed.success) await claimed.data.release();
 		await launch?.stop();
 		const metro = launch ? await launch.pending : undefined;
@@ -1642,6 +1705,7 @@ export async function runSession(
 			logDir,
 			controller,
 			metro: launch,
+			warm,
 		}
 	);
 }

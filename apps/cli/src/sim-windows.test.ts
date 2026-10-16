@@ -66,6 +66,9 @@ describe("layoutWindows", () => {
 	});
 });
 
+/** the `osascript` calls of a fake's log (the `pgrep` guard before them is not one) */
+const osascripts = (calls: string[][]) => calls.filter((c) => c[0] === "osascript");
+
 describe("arrangeSimWindows", () => {
 	const scripted = (read: string, calls: string[][]): Exec => {
 		return async (cmd) => {
@@ -84,9 +87,10 @@ describe("arrangeSimWindows", () => {
 		});
 		const result = await arrangeSimWindows(scripted(read, calls));
 		expect(result).toEqual({ success: true, data: { arranged: ["warden-iphone-17-1", "warden-iphone-17-2"] } });
-		expect(calls).toHaveLength(2);
-		expect(calls[1]?.slice(0, 4)).toEqual(["osascript", "-l", "JavaScript", "-e"]);
-		expect(JSON.parse(calls[1]?.[5] ?? "")).toEqual([
+		const moves = osascripts(calls);
+		expect(moves).toHaveLength(2);
+		expect(moves[1]?.slice(0, 4)).toEqual(["osascript", "-l", "JavaScript", "-e"]);
+		expect(JSON.parse(moves[1]?.[5] ?? "")).toEqual([
 			{ title: "warden-iphone-17-1 – iOS 26.5", x: 0, y: 33 },
 			{ title: "warden-iphone-17-2 – iOS 26.5", x: 464, y: 33 },
 		]);
@@ -96,11 +100,38 @@ describe("arrangeSimWindows", () => {
 		const calls: string[][] = [];
 		const result = await arrangeSimWindows(scripted(JSON.stringify({ screen, windows: [] }), calls));
 		expect(result).toEqual({ success: true, data: { arranged: [] } });
-		expect(calls).toHaveLength(1);
+		expect(osascripts(calls)).toHaveLength(1);
+	});
+
+	test("Simulator.app not running (`pgrep -xq` finds nothing) → nothing to arrange, osascript never started", async () => {
+		const calls: string[][] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push([...cmd]);
+			return { exitCode: cmd[0] === "pgrep" ? 1 : 0, stdout: "", stderr: "" };
+		};
+		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [] } });
+		expect(calls).toEqual([["pgrep", "-xq", "Simulator"]]);
+	});
+
+	test.each([
+		["pgrep missing (127)", 127],
+		["pgrep failing (2)", 2],
+	])("%s → unknown, so osascript still looks", async (_name, exitCode) => {
+		const calls: string[][] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push([...cmd]);
+			if (cmd[0] === "pgrep") return { exitCode, stdout: "", stderr: "" };
+			return { exitCode: 0, stdout: JSON.stringify({ screen, windows: [] }), stderr: "" };
+		};
+		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [] } });
+		expect(osascripts(calls)).toHaveLength(1);
 	});
 
 	test("osascript failure → error mentioning Accessibility", async () => {
-		const exec: Exec = async () => ({ exitCode: 1, stdout: "", stderr: "not allowed assistive access. (-1719)" });
+		const exec: Exec = async (cmd) =>
+			cmd[0] === "pgrep"
+				? { exitCode: 0, stdout: "", stderr: "" }
+				: { exitCode: 1, stdout: "", stderr: "not allowed assistive access. (-1719)" };
 		const result = await arrangeSimWindows(exec);
 		expect(result.success).toBe(false);
 		expect(!result.success && result.error).toContain("Accessibility");
@@ -139,7 +170,25 @@ describe("autoArrangeSimWindows", () => {
 	test("Simulator.app not showing anything → one read, no wait", async () => {
 		const fake = reads([]);
 		await autoArrangeSimWindows({ exec: fake.exec, env: {}, os: "darwin", sleep }, ["warden-iphone-17-2"]);
-		expect(fake.calls).toHaveLength(1);
+		expect(osascripts(fake.calls)).toHaveLength(1);
+	});
+
+	test("Simulator.app not running → one pgrep, no osascript, no wait", async () => {
+		const waits: number[] = [];
+		const calls: string[][] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push([...cmd]);
+			return { exitCode: cmd[0] === "pgrep" ? 1 : 0, stdout: "", stderr: "" };
+		};
+		await autoArrangeSimWindows({ exec, env: {}, os: "darwin", sleep: async (ms) => void waits.push(ms) }, ["a"]);
+		expect(calls).toEqual([["pgrep", "-xq", "Simulator"]]);
+		expect(waits).toEqual([]);
+	});
+
+	test("no device to wait for (all reused) → arranged once, never waits for a window that cannot appear", async () => {
+		const fake = reads(["warden-iphone-17-1"]);
+		await autoArrangeSimWindows({ exec: fake.exec, env: {}, os: "darwin", sleep }, []);
+		expect(fake.reads()).toBe(1);
 	});
 
 	test("gives up after a few tries", async () => {
@@ -189,6 +238,7 @@ function fakeSimulator(
 	const readPref = () => (detach === undefined ? done("", 1, "does not exist") : done(`${detach}\n`));
 	const exec: Exec = async (cmd) => {
 		calls.push([...cmd]);
+		if (cmd[0] === "pgrep") return done("", titles === undefined ? 1 : 0);
 		if (cmd[0] === "osascript") return done((cmd[4] ?? "").includes("NSScreen") ? windows() : "");
 		if (cmd[0] === "defaults" && cmd[1] === "read") return readPref();
 		return cmd.join(" ") === "xcrun simctl list devices -j" ? list() : done();
@@ -219,10 +269,10 @@ describe("hideSimWindows", () => {
 		expect(f.warnings).toEqual([]);
 	});
 
-	test("Simulator.app not running → no close, never launched", async () => {
+	test("Simulator.app not running → no close, never launched, not even an osascript (one `pgrep -xq` only)", async () => {
 		const f = fake(undefined);
 		expect(await hideSimWindows(f.deps, leased)).toEqual({ closed: [], rebooted: [] });
-		expect(f.calls).toHaveLength(1);
+		expect(f.calls).toEqual([["pgrep", "-xq", "Simulator"]]);
 		expect(closeCalls(f.calls)).toHaveLength(0);
 		expect(f.calls.some((c) => c.join(" ").includes("open -a"))).toBe(false);
 	});
@@ -300,7 +350,10 @@ describe("hideSimWindows", () => {
 	});
 
 	test("osascript failure only warns", async () => {
-		const exec: Exec = async () => ({ exitCode: 1, stdout: "", stderr: "not allowed assistive access. (-1719)" });
+		const exec: Exec = async (cmd) =>
+			cmd[0] === "pgrep"
+				? { exitCode: 0, stdout: "", stderr: "" }
+				: { exitCode: 1, stdout: "", stderr: "not allowed assistive access. (-1719)" };
 		const warnings: string[] = [];
 		const out = await hideSimWindows(
 			{ exec, os: "darwin", sleep: async () => {}, warn: (l) => warnings.push(l) },

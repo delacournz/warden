@@ -39,6 +39,7 @@ import {
 	type MetroProc,
 	metroOwner,
 	metroUrl,
+	resolveExpoBin,
 } from "../metro";
 import { emit, heading, note, reportError, warn } from "../output";
 import { withSpinner } from "../spinner-context";
@@ -62,6 +63,8 @@ export type DevDeps = Omit<LeaseSessionDeps, "ensureApp"> & {
 	probe: (port: number, projectRoot: string) => Promise<MetroOwner>;
 	sleep: (ms: number) => Promise<void>;
 	ensureApp: RunEnsureApp;
+	/** the project's own `expo` bin to run directly (default: `bunx expo`) */
+	expoBin?: (projectRoot: string) => string | undefined;
 };
 
 type DevOpts = ClaimFlagValues & {
@@ -114,6 +117,19 @@ async function devScheme(ctx: CommandContext, project: Project, override: string
 	return res.exitCode === 0 && parsed.success
 		? ok(`exp+${parsed.data.slug}`)
 		: err("could not read the app slug from `expo config` — pass --scheme <scheme>");
+}
+
+/** The dev-client scheme, resolved on first ask and then shared: `devScheme` can spend 1-3 s in `expo config`. */
+type SchemeOf = () => AsyncResult<string>;
+
+function lazyScheme(ctx: CommandContext, project: Project, override: string | undefined): SchemeOf {
+	let pending: AsyncResult<string> | undefined;
+	return () => {
+		pending ??= devScheme(ctx, project, override).catch((error: unknown) =>
+			err(error instanceof Error ? error.message : String(error))
+		);
+		return pending;
+	};
 }
 
 /** `--udid` / `--lease` / the caller's single device lease of `platform`; undefined = claim one. */
@@ -211,15 +227,15 @@ async function openSession(
 
 /**
  * Point the dev client on `deviceId` at Metro. iOS: relaunch it with `--initialUrl` (`simctl openurl`
- * raises an "Open in …?" alert); Android: `adb reverse` first, so 127.0.0.1 reaches the host, then the
- * dev-client deep link.
+ * raises an "Open in …?" alert), which needs no scheme; Android: `adb reverse` first, so 127.0.0.1
+ * reaches the host, then the dev-client deep link (the only use of `scheme`).
  */
 async function openDevClient(
 	ctx: CommandContext,
 	platform: Platform,
 	deviceId: string,
 	project: Project,
-	scheme: string,
+	scheme: SchemeOf,
 	port: number
 ): AsyncResult<void> {
 	const run = async (argv: string[]): AsyncResult<void> => {
@@ -233,7 +249,9 @@ async function openDevClient(
 	if (platform === "ios") return run(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port)));
 	const reverse = await run(adbReverseArgv(deviceId, port));
 	if (!reverse.success) return reverse;
-	const url = devClientUrl(scheme, port);
+	const resolved = await scheme();
+	if (!resolved.success) return resolved;
+	const url = devClientUrl(resolved.data, port);
 	return run([
 		"adb",
 		"-s",
@@ -268,7 +286,7 @@ type Running = {
 	session: Session;
 	platform: Platform;
 	project: Project;
-	scheme: string;
+	scheme: SchemeOf;
 	launch: MetroLaunchHandle;
 	aborted: { now: boolean };
 };
@@ -290,11 +308,11 @@ async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Ru
 		if (opts.open) {
 			const opened = await openDevClient(ctx, r.platform, deviceId, r.project, r.scheme, port);
 			if (opened.success) note(ctx, `warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`);
-			else
-				warn(
-					ctx,
-					`warden dev: couldn't open the dev client (${opened.error}) — open ${devClientUrl(r.scheme, port)} yourself`
-				);
+			else {
+				const scheme = await r.scheme();
+				const link = scheme.success ? ` — open ${devClientUrl(scheme.data, port)} yourself` : "";
+				warn(ctx, `warden dev: couldn't open the dev client (${opened.error})${link}`);
+			}
 		}
 		if (json) emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds }, "");
 		else note(ctx, `warden dev: holding ${deviceId} + :${port} until Metro exits (WARDEN_UDID=${deviceId})`);
@@ -339,8 +357,10 @@ async function dev(
 		...(opts.variant === undefined ? { variantOptional: true } : {}),
 	});
 	if (!project.success) return fail(project.error);
-	const scheme = await devScheme(ctx, project.data.project, opts.scheme);
-	if (!scheme.success) return fail(scheme.error);
+	// only Android's deep link needs it, so it is read next to the claim + install, and never for iOS or --no-open
+	const scheme = lazyScheme(ctx, project.data.project, opts.scheme);
+	const schemeNeeded = opts.open && platform.data === "android";
+	if (schemeNeeded) void scheme();
 	const app = ensureOptions(start.data, variant, opts);
 	if (!app.success) return fail(app.error);
 
@@ -364,6 +384,7 @@ async function dev(
 					now: ctx.now,
 					sleep: deps.sleep,
 					spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, json ? "stderr" : "inherit"),
+					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
 				},
 				{
 					projectRoot: project.data.project.root,
@@ -405,11 +426,17 @@ async function dev(
 		await session.data.release();
 		return fail("Metro was not started");
 	}
+	const resolved = schemeNeeded ? await scheme() : undefined;
+	if (resolved && !resolved.success) {
+		await launch.stop();
+		await session.data.release();
+		return fail(resolved.error);
+	}
 	return runMetro(ctx, deps, opts, {
 		session: session.data,
 		platform: platform.data,
 		project: project.data.project,
-		scheme: scheme.data,
+		scheme,
 		launch,
 		aborted,
 	});
@@ -467,6 +494,7 @@ export const defaultDevDeps: DevDeps = {
 	sleep: (ms) => Bun.sleep(ms),
 	ensureApp: (ctx, owner, platform, deviceId, opts) =>
 		ensureAppFor(ctx, defaultAppDeps, owner, platform, deviceId, opts),
+	expoBin: (projectRoot) => resolveExpoBin(projectRoot, (cmd) => Bun.which(cmd)),
 };
 
 export const devCommand: Command = createDevCommand(defaultDevDeps);

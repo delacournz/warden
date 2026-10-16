@@ -1,7 +1,7 @@
 import { availableParallelism } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { defaultMax, profileSlug } from "@delacour/warden-core/allocate";
-import { type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
+import { type ClaimedDevice, type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
@@ -147,6 +147,15 @@ export function headlessDeps(ctx: CommandContext): HideDeps {
 	};
 }
 
+/**
+ * The claimed devices this claim had to boot or create: the only ones whose Simulator.app window can
+ * still be on its way. A device that was already running (`reuse`, not booted by the claim) keeps
+ * the window — or the lack of one, when it booted headless — it had.
+ */
+export function bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDevice[] {
+	return outcome.claimed.filter((c) => c.action !== "reuse" || c.lease.bootedByOwner === true);
+}
+
 /** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them). */
 export async function claimWithFlags(
 	ctx: CommandContext,
@@ -180,7 +189,7 @@ export async function claimWithFlags(
 		else
 			await autoArrangeSimWindows(
 				ctx,
-				sims.map((s) => s.name)
+				bootedByClaim(outcome.data).map((c) => c.device.name)
 			);
 	}
 	return outcome;

@@ -1,5 +1,6 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import type { Exec } from "@delacour/warden-core/exec";
+import { findNodeBin } from "@delacour/warden-core/node-bin";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
@@ -21,6 +22,8 @@ export type MetroDeps = {
 	now: () => number;
 	sleep: (ms: number) => Promise<void>;
 	spawn: (cmd: string[], env: Record<string, string | undefined>, cwd: string) => MetroProc;
+	/** the project's own `expo` bin, when it can be run directly (default: none, so `bunx expo`) */
+	expoBin?: (projectRoot: string) => string | undefined;
 };
 
 /** Who answers on a Metro port, relative to one project root. */
@@ -37,7 +40,8 @@ export type MetroOwner =
 const STATUS_RUNNING = "packager-status:running";
 const ROOT_HEADER = "X-React-Native-Project-Root";
 const PROBE_TIMEOUT_MS = 2_000;
-const READY_POLL_MS = 500;
+/** Metro takes seconds to come up, so a short poll costs nothing and ends the wait up to 350 ms sooner. */
+export const READY_POLL_MS = 150;
 const KILL_GRACE_MS = 15_000;
 /** A cold bundle of a large app. */
 const PREWARM_TIMEOUT_MS = 5 * 60_000;
@@ -47,9 +51,25 @@ export function metroUrl(port: number): string {
 	return `http://127.0.0.1:${port}`;
 }
 
-/** `expo start` for a dev client on `port`, plus the caller's extra args. */
-export function metroArgv(port: number, extra: readonly string[] = []): string[] {
-	return ["bunx", "expo", "start", "--dev-client", "--port", String(port), ...extra];
+/**
+ * `expo start` for a dev client on `port`, plus the caller's extra args. `expoBin` (the project's own
+ * `node_modules/.bin/expo`) runs directly; without it `bunx expo` resolves the bin first.
+ */
+export function metroArgv(port: number, extra: readonly string[] = [], expoBin?: string): string[] {
+	const start = ["start", "--dev-client", "--port", String(port), ...extra];
+	return expoBin === undefined ? ["bunx", "expo", ...start] : [expoBin, ...start];
+}
+
+/**
+ * The `node_modules/.bin/expo` nearest to `root`, when `node` is installed to run its shebang (bunx
+ * supplies its own otherwise); undefined → `bunx expo`. Saves bunx's resolution on every Metro start.
+ */
+export function resolveExpoBin(
+	root: string,
+	which: (cmd: string) => string | null | undefined,
+	exists: (path: string) => boolean = existsSync
+): string | undefined {
+	return which("node") ? findNodeBin(root, "expo", exists) : undefined;
 }
 
 function real(path: string): string {
@@ -170,7 +190,11 @@ async function waitForOurs(
 export async function startMetro(deps: MetroDeps, o: MetroOptions): AsyncResult<Metro> {
 	let proc: MetroProc;
 	try {
-		proc = deps.spawn(metroArgv(o.port, o.args), { ...o.env, EXPO_NO_TELEMETRY: "1" }, o.projectRoot);
+		proc = deps.spawn(
+			metroArgv(o.port, o.args, deps.expoBin?.(o.projectRoot)),
+			{ ...o.env, EXPO_NO_TELEMETRY: "1" },
+			o.projectRoot
+		);
 	} catch (error) {
 		return err(`could not start Metro: ${error instanceof Error ? error.message : String(error)}`);
 	}

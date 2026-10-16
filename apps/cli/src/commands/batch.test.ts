@@ -53,7 +53,11 @@ function releaseExec(base: Exec, root: string, native: string, calls: string[]):
 	let installed = true;
 	return async (cmd, opts) => {
 		const line = cmd.join(" ");
-		const canned: Record<string, string> = { "sh -c fp ios": native, "git ls-files": "src/a.ts\0" };
+		const canned: Record<string, string> = {
+			"sh -c fp ios": native,
+			"git ls-files -z -m": "",
+			"git ls-files": "? src/a.ts\0",
+		};
 		const hit = Object.keys(canned).find((prefix) => line.startsWith(prefix));
 		if (hit) return done(canned[hit]);
 		if (line === "sh -c build-release") {
@@ -483,7 +487,7 @@ describe("warden batch", () => {
 		}
 		const darwin = process.platform === "darwin";
 
-		test("--headless: windows closed at claim and again before the first job; WARDEN_HEADLESS=1; batch.json headless", async () => {
+		test("--headless: windows closed at the claim, not looked for again when it booted nothing; WARDEN_HEADLESS=1; batch.json headless", async () => {
 			const c = setup(["ios", "--count", "2", "--headless", "--jobs", "a", "--serve", "srv", "--", "x"]);
 			const h = harness();
 			windowsExec(c, h.events);
@@ -491,10 +495,23 @@ describe("warden batch", () => {
 			expect(h.serve()?.opts.env.WARDEN_HEADLESS).toBe("1");
 			expect(h.jobs()[0]?.opts.env.WARDEN_HEADLESS).toBe("1");
 			const closes = h.events.filter((e) => e === "close").length;
-			expect(closes).toBe(darwin ? 2 : 0);
+			expect(closes).toBe(darwin ? 1 : 0);
 			if (darwin) expect(h.events.lastIndexOf("close")).toBeLessThan(h.events.indexOf("job:a"));
 			const batchDir = join(c.env.WARDEN_HOME ?? "", "batches", "b1");
 			expect(JSON.parse(h.files.get(join(batchDir, "batch.json")) ?? "{}").headless).toBe(true);
+		});
+
+		test("--headless: a sim the claim booted can show its window late, so windows are closed again before the first job", async () => {
+			ctx = testContext(["ios", "--headless", "--jobs", "a", "--", "x"], {
+				exec: fakeSimctl([wardenSim(1, "Shutdown"), wardenSim(2, "Shutdown")]),
+			});
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			const c = ctx;
+			const h = harness();
+			windowsExec(c, h.events);
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			expect(h.events.filter((e) => e === "close").length).toBe(darwin ? 2 : 0);
+			if (darwin) expect(h.events.lastIndexOf("close")).toBeLessThan(h.events.indexOf("job:a"));
 		});
 
 		test("not headless: no window closed, batch.json headless false, WARDEN_HEADLESS unset", async () => {
