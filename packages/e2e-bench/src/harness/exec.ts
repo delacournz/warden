@@ -13,6 +13,8 @@ export type ExecOptions = {
 	/** every stdout/stderr line as it arrives (for the per-phase log) */
 	onLine?: (stream: "stdout" | "stderr", line: string) => void;
 	stdin?: string;
+	/** called with the child's pid right after spawn (the sampler's root pids) */
+	onSpawn?: (pid: number) => void;
 };
 
 export type ExecResult = {
@@ -105,6 +107,7 @@ export const realExec: Exec = {
 				spawnError: e instanceof Error ? e.message : String(e),
 			};
 		}
+		options.onSpawn?.(proc.pid);
 		let timedOut = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let killer: ReturnType<typeof setTimeout> | undefined;
@@ -132,6 +135,7 @@ export const realExec: Exec = {
 			stderr: "pipe",
 			stdin: "ignore",
 		});
+		options.onSpawn?.(proc.pid);
 		void drain(proc.stdout as ReadableStream<Uint8Array> | null, splitLines(options.onLine, "stdout"));
 		void drain(proc.stderr as ReadableStream<Uint8Array> | null, splitLines(options.onLine, "stderr"));
 		return {
