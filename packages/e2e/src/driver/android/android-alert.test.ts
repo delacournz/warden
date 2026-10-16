@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { detectAlert } from "./android-alert";
+import { REAL_ANR_DUMP, REAL_ANR_SCREEN } from "./anr.fixture";
 import { parseUiautomatorXml } from "./uiautomator";
 import { SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN } from "./uiautomator.fixture";
 
@@ -51,6 +52,16 @@ describe("detectAlert", () => {
 		const alert = detectAlert(parseUiautomatorXml(xml, SCREEN).flat);
 		expect(alert?.title).toBe("Allow Demo to send you notifications?");
 		expect(alert?.buttons.map((b) => b.identifier)).toEqual(["permission_allow_button", "permission_deny_button"]);
+	});
+
+	test("the real ANR dialog: Close app and Wait, titled by the app", () => {
+		const alert = detectAlert(parseUiautomatorXml(REAL_ANR_DUMP, REAL_ANR_SCREEN).flat);
+		expect(alert?.title).toBe("hang isn't responding");
+		expect(alert?.message).toBeUndefined();
+		expect(alert?.buttons.map((b) => [b.identifier, b.text, b.hittable])).toEqual([
+			["aerr_close", "Close app", true],
+			["aerr_wait", "Wait", true],
+		]);
 	});
 
 	test("an ordinary screen has no alert", () => {
