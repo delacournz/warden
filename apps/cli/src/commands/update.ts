@@ -6,7 +6,7 @@ import { type AsyncResult, type ErrorResult, err, ok, type Result } from "@delac
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { NPM_PACKAGE, platformPackageName, releaseTarget } from "../npm/platforms";
-import { emit } from "../output";
+import { emit, heading, note, reportError, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 import { type BuildInfo, currentBuild, describeBuild } from "../update/build-info";
 import { installBinary } from "../update/install-binary";
@@ -110,7 +110,7 @@ async function updateStandalone(
 	if (github.success || github.error.kind !== "unreachable") {
 		return github.success ? github : err(github.error.message);
 	}
-	ctx.err(ctx.ui.color.dim(`GitHub releases unavailable — trying npm (${NPM_PACKAGE})`));
+	note(ctx, `GitHub releases unavailable — trying npm (${NPM_PACKAGE})`);
 	const npm = await updateFromNpm(ctx, deps, flags, target);
 	return npm.success ? npm : err(`${github.error.message}\nnpm: ${npm.error}`);
 }
@@ -305,21 +305,20 @@ function reportText(ctx: CommandContext, report: UpdateReport): string {
 }
 
 async function update(ctx: CommandContext, deps: UpdateDeps, flags: Flags): Promise<number> {
-	const { color } = ctx.ui;
 	const target = flags.to ?? defaultTarget(ctx, deps);
+	if (!flags.json) heading(ctx, "update", describeBuild(deps.build));
 	const report = await plan(ctx, deps, flags, target);
 	if (!report.success) {
-		ctx.err(color.red(`warden update: ${report.error}`));
+		reportError(ctx, "update", report.error);
 		return 1;
 	}
 	emit(ctx, flags.json === true, report.data, reportText(ctx, report.data));
 	if (report.data.status === "updated") {
 		const resolved = deps.which("warden", ctx.env.PATH);
 		if (resolved !== report.data.path) {
-			ctx.err(
-				color.yellow(
-					`note: your PATH resolves \`warden\` to ${resolved ?? "nothing"}, not ${report.data.path} — add its directory to PATH (then \`hash -r\`)`
-				)
+			warn(
+				ctx,
+				`note: your PATH resolves \`warden\` to ${resolved ?? "nothing"}, not ${report.data.path} — add its directory to PATH (then \`hash -r\`)`
 			);
 		}
 	}
@@ -338,6 +337,7 @@ async function update(ctx: CommandContext, deps: UpdateDeps, flags: Flags): Prom
 export function createUpdateCommand(deps: UpdateDeps): Command {
 	return defineCommand({
 		name: "update",
+		group: "Setup",
 		summary: "update warden: rebuild from source (dev/local builds) or install the latest release",
 		register: (cmd, ctx, done) => {
 			cmd

@@ -4,7 +4,7 @@ import { resolveOwner } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { goldenDeps, type Sleep } from "../golden-deps";
-import { emit, formatTable } from "../output";
+import { emit, heading, plural, reportError, table } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type EnsureOpts = { profile?: string; runtime?: string; json?: true };
@@ -13,6 +13,7 @@ type PruneOpts = { all?: true; yes?: true; json?: true };
 async function ensure(ctx: CommandContext, sleep: Sleep | undefined, opts: EnsureOpts): Promise<number> {
 	const { color } = ctx.ui;
 	const profile = opts.profile ?? DEFAULT_PROFILE.ios;
+	if (!opts.json) heading(ctx, "golden ensure", profile);
 	const golden = await withSpinner(ctx, `ensuring golden ${profile} image…`, async (sctx, spinner) => {
 		const result = await ensureGolden(goldenDeps(sctx, resolveOwner(ctx), sleep), profile, opts.runtime);
 		if (result.success) spinner.succeed(`golden ${result.data.name} ${result.data.built ? "built" : "reused"}`);
@@ -34,7 +35,8 @@ async function ls(ctx: CommandContext, sleep: Sleep | undefined, json: boolean):
 	const { color } = ctx.ui;
 	const goldens = await listGoldens(goldenDeps(ctx, resolveOwner(ctx), sleep));
 	if (!goldens.success) return fail(ctx, goldens.error);
-	const table = formatTable(
+	const text = table(
+		ctx,
 		["NAME", "UDID", "STATE", "RUNTIME", "AVAILABLE"],
 		goldens.data.map((g) => [
 			g.name,
@@ -43,9 +45,15 @@ async function ls(ctx: CommandContext, sleep: Sleep | undefined, json: boolean):
 			g.runtimeId.split(".").pop() ?? "",
 			g.isAvailable ? color.green("yes") : color.red("no"),
 		]),
-		color
+		[
+			{ column: 0, min: 18 },
+			{ column: 1, min: 9 },
+		]
 	);
-	emit(ctx, json, goldens.data, goldens.data.length > 0 ? table : color.dim("no golden images"));
+	emit(ctx, json, goldens.data, goldens.data.length > 0 ? text : color.dim("no golden images"), {
+		scope: "golden ls",
+		detail: plural(goldens.data.length, "golden image"),
+	});
 	return 0;
 }
 
@@ -57,7 +65,7 @@ async function confirmPruneAll(ctx: CommandContext, sleep: Sleep | undefined, op
 	if (opts.yes) return 0;
 	const { ui } = ctx;
 	if (!ui.interactive || opts.json) {
-		ctx.err(ui.color.red("warden golden prune: --all deletes every golden image — pass --yes to confirm"));
+		reportError(ctx, "golden prune", "--all deletes every golden image — pass --yes to confirm");
 		return 1;
 	}
 	const goldens = await listGoldens(goldenDeps(ctx, resolveOwner(ctx), sleep));
@@ -89,7 +97,7 @@ async function prune(ctx: CommandContext, sleep: Sleep | undefined, opts: PruneO
 }
 
 function fail(ctx: CommandContext, error: string): number {
-	ctx.err(ctx.ui.color.red(`warden golden: ${error}`));
+	reportError(ctx, "golden", error);
 	return 1;
 }
 
@@ -101,6 +109,7 @@ export function createGoldenCommand(opts: { sleep?: Sleep } = {}): Command {
 	const { sleep } = opts;
 	return defineCommand({
 		name: "golden",
+		group: "Devices",
 		summary: "golden iOS images new sims are cloned from (fast boots): ensure | ls | prune",
 		register: (cmd, ctx, done) => {
 			cmd

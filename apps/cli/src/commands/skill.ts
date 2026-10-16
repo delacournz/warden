@@ -4,7 +4,7 @@ import { Option } from "@commander-js/extra-typings";
 import { wardenHome } from "@delacour/warden-core/store";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit } from "../output";
+import { emit, note, reportError } from "../output";
 import { SKILL_MD, SKILL_NAME } from "../skill";
 import { releaseRepo } from "../update/release";
 
@@ -61,13 +61,12 @@ function show(ctx: CommandContext, json: boolean): number {
 }
 
 async function install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallOpts): Promise<number> {
-	const { color } = ctx.ui;
 	const prefix = runner(deps);
 	if (!prefix) {
-		ctx.err(
-			color.red(
-				"warden skill: neither bunx nor npx found — install bun or node, or copy it by hand: `warden skill show`"
-			)
+		reportError(
+			ctx,
+			"skill",
+			"neither bunx nor npx found — install bun or node, or copy it by hand: `warden skill show`"
 		);
 		return 1;
 	}
@@ -82,7 +81,7 @@ async function install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallO
 		mkdirSync(dir, { recursive: true });
 		writeFileSync(join(dir, "SKILL.md"), SKILL_MD);
 	}
-	ctx.err(color.dim(`warden skill: ${cmd.join(" ")}`));
+	note(ctx, `warden skill: ${cmd.join(" ")}`);
 	return deps.runInteractive(cmd);
 }
 
@@ -90,6 +89,7 @@ async function install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallO
 export function createSkillCommand(deps: SkillDeps): Command {
 	return defineCommand({
 		name: "skill",
+		group: "Setup",
 		summary: "the warden agent skill: show (copy/paste) | install (bunx/npx skills add)",
 		register: (cmd, ctx, done) => {
 			cmd
