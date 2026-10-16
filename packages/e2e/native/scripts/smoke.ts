@@ -9,7 +9,7 @@
  * swipe → screenshot → settle → terminate → close. Prints the duration of each step; exits 1 when a
  * step fails; ops the helper does not implement yet (`E_BAD_REQUEST`) are reported as skipped. Lease the simulator first (`warden claim ios`) and install the app (`warden app ensure`).
  */
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec } from "@delacour/warden-core/exec";
@@ -36,6 +36,7 @@ if (!udid) {
 }
 const bundle = arg("bundle") ?? DEFAULT_BUNDLE;
 const out = arg("out") ?? mkdtempSync(join(tmpdir(), "warden-smoke-"));
+mkdirSync(out, { recursive: true });
 
 let failures = 0;
 
