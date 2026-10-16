@@ -96,6 +96,8 @@ export type EnsureInput = ProjectContext & {
 	download?: Download;
 	easPollMs?: number;
 	lockPollMs?: number;
+	/** per-command memo of the git facts, shared with `projectContext` (default: a short-lived shared one) */
+	git?: GitFactsCache;
 };
 
 /**
@@ -203,6 +205,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 				now: input.now,
 				log: input.log,
 				...(project.compilerCache === false ? { compilerCache: false } : {}),
+				...(input.git ? { git: input.git } : {}),
 			});
 			if (!built.success) return built;
 			const stored = await cache(built.data, "build", false);

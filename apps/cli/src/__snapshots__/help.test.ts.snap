@@ -1931,3 +1931,16 @@ exports[`help output unknown command suggests the closest registered one 1`] = `
 (Did you mean claim?)
 (add --help for usage)"
 `;
+
+exports[`help output warden __affected-graph --help (and nested subcommands) 1`] = `
+"$ warden __affected-graph --help
+Usage: warden __affected-graph [options] <request>
+
+walk the import graph for \`warden affected\` and print it as JSON (internal)
+
+Arguments:
+  request     the graph request, as JSON
+
+Options:
+  -h, --help  display help for command"
+`;

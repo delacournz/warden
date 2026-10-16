@@ -24,6 +24,14 @@ const WORKER_TIMEOUT_MS = 120_000;
 /** Where the walker runs as a script (next to this file; not on disk inside a compiled binary). */
 const WORKER_FILE = join(import.meta.dir, "graph-worker.ts");
 
+/** The hidden `warden` subcommand that runs the walker, which is how a compiled binary (no script on disk) starts one. */
+export const GRAPH_WORKER_SUBCOMMAND = "__affected-graph";
+
+/** A Bun-compiled binary runs its entry from the embedded `/$bunfs/` filesystem (`B:/~BUN/` on Windows). */
+export function compiledBinary(main: string = Bun.main, execPath: string = process.execPath): string | undefined {
+	return main.startsWith("/$bunfs/") || main.startsWith("B:/~BUN/") ? execPath : undefined;
+}
+
 /** Every file a diff run may start a walk from: each flow's entries (that exist) and the router layouts above them. */
 export function graphEntries(suite: E2eSuiteConfig, configDir: string, platform: Platform): string[] {
 	const entries = [...new Set(Object.values(suite.flows).flatMap((flow) => flow.entries))]
@@ -50,10 +58,15 @@ export type LoadGraphOptions = {
 	importCachePath?: string;
 	/** snapshots of finished walks live here (`$WARDEN_HOME/affected`); without it nothing is kept */
 	cacheDir?: string;
-	/** runs the walker; `null`: none (walk in this process). Default: `defaultBun()` */
+	/** runs the walker script; `null`: none (walk in this process). Default: `defaultBun()` */
 	bun?: string | null;
 	/** the walker script; default: `graph-worker.ts` next to this file */
 	worker?: string;
+	/**
+	 * the compiled `warden` binary, which runs the walker as `<self> __affected-graph <request>` (a binary has no script
+	 * to hand `bun`) and is preferred over `bun` + script; `null`: not compiled. Default: `compiledBinary()`
+	 */
+	self?: string | null;
 };
 
 /** How the graph was had: a snapshot of an earlier walk, a walker process, or a walk in this process (`warning` says why a walker could not be used). */
@@ -75,7 +88,16 @@ async function walkHere(opts: LoadGraphOptions, warning?: string): Promise<Loade
 	return { graph, via: "in-process", ...(warning !== undefined ? { warning } : {}) };
 }
 
-/** Run the walker script under `bun`: its table, or why there is none (`warning` unset: it could not even start). */
+/** The argv prefix that runs the walker: the compiled binary itself, else `bun` + the script, else none. */
+function workerCommand(opts: LoadGraphOptions): string[] | undefined {
+	const self = opts.self === undefined ? compiledBinary() : (opts.self ?? undefined);
+	if (self !== undefined) return [self, GRAPH_WORKER_SUBCOMMAND];
+	const bun = opts.bun === undefined ? defaultBun() : (opts.bun ?? undefined);
+	const worker = opts.worker ?? WORKER_FILE;
+	return bun !== undefined && existsSync(worker) ? [bun, worker] : undefined;
+}
+
+/** Run the walker (a script under `bun`, or the compiled binary's subcommand): its table, or why there is none (`warning` unset: it could not even start). */
 async function runWorker(
 	opts: LoadGraphOptions,
 	cmd: string[]
@@ -91,15 +113,14 @@ async function runWorker(
 /**
  * The import graph of one platform for the entries, without loading the TypeScript compiler here:
  * 1. a snapshot keyed by HEAD + the dirty state (`snapshotKey`) answers with no walk at all;
- * 2. else a `bun` process runs the walker and prints the table, which is then snapshotted;
- * 3. else (no bun or no script on disk, as in a compiled binary, or the walker failed) the walk
- *    is done here, lazily, as before.
+ * 2. else a process runs the walker and prints the table, which is then snapshotted: `bun graph-worker.ts` from
+ *    source, `<warden> __affected-graph` from a compiled binary;
+ * 3. else (no bun or no script on disk, or the walker failed) the walk is done here, lazily, as before.
  * A graph from 1 or 2 knows the imports of the files reachable from `entries` and nothing else.
  */
 export async function loadImportGraph(opts: LoadGraphOptions): Promise<LoadedGraph> {
-	const bun = opts.bun === undefined ? defaultBun() : (opts.bun ?? undefined);
-	const worker = opts.worker ?? WORKER_FILE;
-	if (bun === undefined || !existsSync(worker)) return walkHere(opts);
+	const worker = workerCommand(opts);
+	if (worker === undefined) return walkHere(opts);
 
 	const request: GraphRequest = {
 		platform: opts.platform,
@@ -114,7 +135,7 @@ export async function loadImportGraph(opts: LoadGraphOptions): Promise<LoadedGra
 	const known = key === undefined || cacheDir === undefined ? undefined : readSnapshot(cacheDir, key);
 	if (known) return fromTable(known, "snapshot");
 
-	const built = await runWorker(opts, [bun, worker, JSON.stringify(request)]);
+	const built = await runWorker(opts, [...worker, JSON.stringify(request)]);
 	if (!built.doc) return walkHere(opts, built.warning);
 	if (key !== undefined && cacheDir !== undefined) writeSnapshot(cacheDir, key, built.doc);
 	return fromTable(built.doc, "process");

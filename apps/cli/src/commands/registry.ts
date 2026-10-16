@@ -128,6 +128,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./ui")).uiCommand,
 	},
 	{
+		name: "__affected-graph",
+		summary: "walk the import graph for `warden affected` and print it as JSON (internal)",
+		hidden: true,
+		load: async () => (await import("./affected-graph")).affectedGraphCommand,
+	},
+	{
 		name: "ui-collect",
 		summary: "background console + network collector for `warden ui logs start` (internal)",
 		hidden: true,

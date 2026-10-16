@@ -109,6 +109,29 @@ describe("memoising", () => {
 		expect(git.calls).toHaveLength(2);
 	});
 
+	test("a read inside a checkout also answers for its toplevel", async () => {
+		const git = fakeGit(checkout);
+		const cache = createGitFactsCache();
+		await readGitFacts(git.exec, "/w/app/src", cache);
+		expect(await readGitFacts(git.exec, "/w/app", cache)).toEqual({
+			toplevel: "/w/app",
+			commonDir: "/w/main/.git",
+			branch: "feature/x",
+		});
+		expect(git.calls).toEqual([`/w/app/src ${COMBINED}`]);
+	});
+
+	test("the toplevel alias of a relative common dir is absolute, and a non-checkout makes no alias", async () => {
+		const git = fakeGit({ [COMBINED]: { stdout: "/w/app\n../.git\nrefs/heads/main\n" } });
+		const cache = createGitFactsCache();
+		await readGitFacts(git.exec, "/w/app/sub", cache);
+		expect((await readGitFacts(git.exec, "/w/app", cache))?.commonDir).toBe("/w/app/.git");
+		const none = fakeGit({});
+		await readGitFacts(none.exec, "/tmp/plain/sub", cache);
+		await readGitFacts(none.exec, "/tmp/plain", cache);
+		expect(none.calls).toHaveLength(2);
+	});
+
 	test("concurrent reads of one cwd share a single spawn", async () => {
 		const git = fakeGit(checkout);
 		const cache = createGitFactsCache();
@@ -184,6 +207,14 @@ describe("readGitFactsSync", () => {
 		const cache = createGitFactsCache();
 		readGitFactsSync("/w/app", { run: git.run, cache });
 		readGitFactsSync("/w/app", { run: git.run, cache });
+		expect(git.calls).toHaveLength(1);
+	});
+
+	test("a sync read inside a checkout also answers for its toplevel", () => {
+		const git = fakeGit(checkout);
+		const cache = createGitFactsCache();
+		readGitFactsSync("/w/app/src", { run: git.run, cache });
+		expect(readGitFactsSync("/w/app", { run: git.run, cache })?.branch).toBe("feature/x");
 		expect(git.calls).toHaveLength(1);
 	});
 

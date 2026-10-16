@@ -1,15 +1,10 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { wardenHome } from "@delacour/warden-core/store";
 import type { DumpRoute } from "@delacour/warden-e2e/driver/android/android-dump";
 import type { Element, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import { z } from "zod";
 import type { CommandContext } from "../context";
-
-/** `$WARDEN_HOME/ui/<udid>`: everything `warden ui` remembers about one device between invocations. */
-export function uiDir(ctx: Pick<CommandContext, "env">, udid: string): string {
-	return join(wardenHome(ctx.env), "ui", udid);
-}
+import { uiDir } from "./paths";
 
 /**
  * The device's resident `warden-simd`: its pid and socket, plus what it was started for. `owner` is the lease owner

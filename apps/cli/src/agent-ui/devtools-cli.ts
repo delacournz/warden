@@ -20,9 +20,10 @@ import { metroOwner } from "../metro";
 import type { UiDevice } from "./device";
 import type { UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
+import { uiDir } from "./paths";
 import { runUi, type UiOptionValues, type UiRunEnv, withUiOptions } from "./run";
 import { positiveInt } from "./snapshot-command";
-import { readState, uiDir, writeState } from "./state";
+import { readState, writeState } from "./state";
 
 /** Default number of lines `logs` / `network` show. */
 const DEFAULT_TAIL = 50;

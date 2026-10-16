@@ -80,7 +80,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `appearance` | `[light\|dark]` | no arg reads it |
 | `screenshot` | `[path]` | default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
 | `video` | `start [path]` / `stop` | 3 min device limit |
-| `wait` | `<sel>` / `absent <sel>` / `text "..."` / `stable [ms=250]` | polls 100 ms up to `--timeout` |
+| `wait` | `<sel>` / `absent <sel>` / `text "..."` / `stable [ms=250]` | polls 100 ms for 1 s, then 250 ms, up to `--timeout` |
 | `is` | `<sel> visible\|hittable\|enabled\|checked\|selected\|focused` | exit 0 true, 1 false (JSON still `ok:true`) |
 | `get` | `<sel> text\|value\|label\|id\|role\|frame\|count` | `frame` = `x y w h`; `count` 0 is success |
 | `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets; stops the device's helper: unshared device only |

@@ -22,7 +22,7 @@ import { evidenceOf, type RecordStep } from "./record";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { type ElementJson, elementJson, storeSnapshot } from "./snapshot";
 
-/** `wait` looks at the screen this often. */
+/** `wait stable` looks at the screen this often (a quiet window is judged on a fixed beat, so no back-off). */
 export const POLL_MS = 100;
 /** `wait stable` with no number: the screen must hold still this long. */
 export const DEFAULT_STABLE_MS = 250;
@@ -55,8 +55,8 @@ type Polled<T> =
 	| { hit: false; reason: UiErrorCode; waitedMs: number };
 
 /**
- * Snapshot every 100 ms until `check` is satisfied or `timeoutMs` has passed (the last look is at the deadline).
- * The loop is `screen/poll.ts`'s, the one the spec locators use.
+ * Snapshot until `check` is satisfied or `timeoutMs` has passed (the last look is at the deadline): every 100 ms for the
+ * first second, then every 250 ms. The loop and its schedule are `screen/poll.ts`'s, the ones the spec locators use.
  */
 async function pollScreen<T>(
 	ctx: CommandContext,
@@ -76,7 +76,7 @@ async function pollScreen<T>(
 				? { done: true, value: { value: verdict.value, snapshot: taken.data } }
 				: { done: false, state: verdict.reason };
 		},
-		{ intervalMs: POLL_MS, timeoutMs, now: ctx.now, sleep: (ms) => deps.sleep(ms) }
+		{ timeoutMs, now: ctx.now, sleep: (ms) => deps.sleep(ms) }
 	);
 	const waitedMs = Math.max(0, ctx.now() - start);
 	if (result.status === "done") {
@@ -236,7 +236,8 @@ async function runWait(
 }
 
 /**
- * `warden ui wait <selector> | absent <selector> | text "…" | stable [ms]`: poll every 100 ms (default 5000 ms, `--timeout`)
+ * `warden ui wait <selector> | absent <selector> | text "…" | stable [ms]`: poll every 100 ms for the first second, then
+ * every 250 ms (`stable` keeps 100 ms; default 5000 ms, `--timeout`)
  * until the element is visible / gone, the text shows, or the screen holds still. The screen that satisfied it is
  * stored as the next generation, so the printed `@eN` can be used straight away. A miss exits 1 with
  * `wait_target_absent` / `wait_target_hidden` / `wait_target_present` / `wait_text_absent` / `wait_not_stable`.

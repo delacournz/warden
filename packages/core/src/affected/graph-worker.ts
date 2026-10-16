@@ -19,8 +19,11 @@ export async function buildGraphDoc(request: GraphRequest): Promise<GraphDoc> {
 	return graphDoc(reached.keys(), graph.imports);
 }
 
-/** `bun graph-worker.ts '<request json>'` prints the table as JSON. */
+/**
+ * `bun graph-worker.ts '<request json>'` prints the table as JSON. `.then`, not top-level `await`: the compiled binary
+ * bundles this module (for `warden __affected-graph`) with `--bytecode`, which emits CommonJS.
+ */
 if (import.meta.main) {
 	const request = graphRequestSchema.parse(JSON.parse(process.argv[2] ?? ""));
-	process.stdout.write(JSON.stringify(await buildGraphDoc(request)));
+	buildGraphDoc(request).then((doc) => process.stdout.write(JSON.stringify(doc)));
 }

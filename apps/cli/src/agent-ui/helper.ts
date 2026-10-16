@@ -4,13 +4,12 @@ import {
 	existsSync,
 	mkdirSync,
 	openSync,
-	readdirSync,
 	readFileSync,
 	statSync,
 	unlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { type Store, wardenHome } from "@delacour/warden-core/store";
@@ -21,7 +20,9 @@ import { connectSimd, type SimdClient } from "@delacour/warden-e2e/driver/ios/si
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { driverUiError } from "./driver";
+import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
+import { simdDir } from "./paths";
 import { type HelperRecord, readState, type UiState, writeState } from "./state";
 
 /** How long a caller waits for a helper (its own spawn or another caller's) to start answering. */
@@ -186,10 +187,6 @@ export const defaultHelperDeps: HelperDeps = {
 
 /** The slice of a command context the helper lifecycle needs. */
 export type HelperHost = Pick<CommandContext, "env" | "now"> & Partial<Pick<CommandContext, "store" | "exec">>;
-
-export function simdDir(host: Pick<CommandContext, "env">): string {
-	return join(wardenHome(host.env), "simd");
-}
 
 /**
  * `$WARDEN_HOME/simd/<udid>.sock`. A unix socket path must fit in 104 bytes, so when `$WARDEN_HOME` is
@@ -618,14 +615,7 @@ export function sweepDeadHelpers(
 	deps: Pick<HelperDeps, "pidAlive"> = defaultHelperDeps
 ): string[] {
 	const removed: string[] = [];
-	const udids = new Set<string>();
-	const sockDir = simdDir(host);
-	if (existsSync(sockDir)) {
-		for (const name of readdirSync(sockDir)) if (name.endsWith(".sock")) udids.add(basename(name, ".sock"));
-	}
-	const uiRoot = join(wardenHome(host.env), "ui");
-	if (existsSync(uiRoot)) for (const name of readdirSync(uiRoot)) udids.add(name);
-	for (const udid of udids) {
+	for (const udid of knownUdids(host)) {
 		const state = readState(host, udid);
 		const record = state.helper;
 		if (record === undefined || deps.pidAlive(record.pid)) continue;

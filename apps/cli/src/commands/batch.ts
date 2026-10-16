@@ -7,6 +7,7 @@ import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "
 import type { ClaimOutcome } from "@delacour/warden-core/claim";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
+import { readGitFacts } from "@delacour/warden-core/git-facts";
 import { resolveHeadless } from "@delacour/warden-core/headless";
 import { isPortFree } from "@delacour/warden-core/ports";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
@@ -1480,8 +1481,7 @@ async function resolveTarget(
 		const platform = await resolvePlatform(ctx, target);
 		return platform.success ? ok({ platform: platform.data }) : platform;
 	}
-	const top = await ctx.exec(["git", "rev-parse", "--show-toplevel"], { cwd: ctx.cwd });
-	const stopAt = top.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : undefined;
+	const stopAt = (await readGitFacts(ctx.exec, ctx.cwd, ctx.git))?.toplevel;
 	const found = findBatchPreset({ start: ctx.cwd, name: target, ...(stopAt ? { stopAt } : {}) });
 	if (!found.success) return found;
 	const { preset, names } = found.data;
