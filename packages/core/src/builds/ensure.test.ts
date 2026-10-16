@@ -277,6 +277,30 @@ describe("ensureApp", () => {
 		expect(calls.some((c) => c.includes("eas"))).toBe(false);
 	});
 
+	test("the local build reads the git toplevel through the git cache projectContext used", async () => {
+		const root = join(dir, "app");
+		const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+		const calls: string[] = [];
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined === "sh -c make-ios") {
+				fakeApp(products, "Built.app");
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+			return { exitCode: 127, stdout: "", stderr: joined };
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		const git = createGitFactsCache();
+		git.store(root, { toplevel: root, commonDir: join(root, ".git"), branch: "main" });
+		const res = await ensureApp(
+			input(exec, { project, deviceId: undefined, build: true, eas: false, now: () => Date.now(), git })
+		);
+		expect(res.success).toBe(true);
+		expect(calls.filter((c) => c.startsWith("git"))).toEqual([]);
+	});
+
 	describe("JS-aware project (fingerprint.include native+js)", () => {
 		const eas = { profile: "development-simulator", trigger: true, workflow: ".eas/wf.yml" };
 		const jsProject = () => testProject({ root: join(dir, "app"), jsInputs: ["src/**"], eas });

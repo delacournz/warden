@@ -874,6 +874,38 @@ describe("warden batch", () => {
 			expect(broken.stderr.join("\n")).toContain(`invalid ${JSON_CONFIG_FILE}: batches.p.cmd`);
 		});
 
+		test("the preset walk stops at the git toplevel of the command's git cache, one lookup, no bare rev-parse", async () => {
+			const c = setup(["p", "--jobs", "a", "--", "x"]);
+			const sub = join(c.cwd, "sub");
+			mkdirSync(sub, { recursive: true });
+			writeConfig(c.cwd, { batches: { p: { platform: "ios", cmd: ["x"] } } });
+			const base = c.exec;
+			const git: string[] = [];
+			c.exec = async (cmd, opts) => {
+				if (cmd[0] === "git") git.push(cmd.slice(1).join(" "));
+				return base(cmd, opts);
+			};
+			c.cwd = sub;
+			c.git.store(sub, { toplevel: sub, commonDir: join(sub, ".git"), branch: "main" });
+			expect(await createBatchCommand(harness().deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain('unknown platform or preset "p"');
+			expect(git.filter((line) => line.startsWith("rev-parse"))).toEqual([]);
+		});
+
+		test("a cold cache asks git once, for the facts", async () => {
+			const c = setup(["nope", "--jobs", "a", "--", "x"]);
+			const base = c.exec;
+			const git: string[] = [];
+			c.exec = async (cmd, opts) => {
+				if (cmd[0] === "git") git.push(cmd.slice(1).join(" "));
+				return base(cmd, opts);
+			};
+			await createBatchCommand(harness().deps).run(c);
+			expect(git.filter((line) => line.startsWith("rev-parse"))).toEqual([
+				"rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD",
+			]);
+		});
+
 		test("fewer jobs than count → the claim is clamped to the job count", async () => {
 			const c = setup(["p"]);
 			writeConfig(c.cwd, {

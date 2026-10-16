@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
-import { type EnsureInput, ensureApp, type ProjectContext, projectContext } from "@delacour/warden-core/builds/ensure";
+import { type EnsureInput, ensureApp, type ProjectContext } from "@delacour/warden-core/builds/ensure";
 import { type CacheKey, computeCacheKey } from "@delacour/warden-core/builds/fingerprint";
 import type { EnsureResult } from "@delacour/warden-core/builds/resolve";
 import { processAlive } from "@delacour/warden-core/liveness";
@@ -12,6 +12,7 @@ import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import { emit, heading, reportError } from "../output";
+import { projectContextFor } from "../project-context";
 import { withSpinner } from "../spinner-context";
 
 /** Effects `app ensure` needs beyond `CommandContext` — injectable for tests. */
@@ -66,9 +67,7 @@ async function loadContext(
 	const start = projectStart(ctx, opts.project);
 	if (!start.success) return start;
 	const bundleId = opts.bundleId !== undefined && platform !== undefined ? { [platform]: opts.bundleId } : undefined;
-	return projectContext({
-		exec: ctx.exec,
-		env: ctx.env,
+	return projectContextFor(ctx, {
 		start: start.data,
 		...(bundleId ? { bundleId } : {}),
 		...(opts.variant !== undefined ? { variant: opts.variant } : {}),
@@ -140,6 +139,7 @@ export async function ensurePreparedApp(
 		...(deviceId !== undefined ? { deviceId } : {}),
 		...(deps.easPollMs !== undefined ? { easPollMs: deps.easPollMs } : {}),
 		...(deps.lockPollMs !== undefined ? { lockPollMs: deps.lockPollMs } : {}),
+		git: ctx.git,
 	};
 	return ensureApp(input);
 }

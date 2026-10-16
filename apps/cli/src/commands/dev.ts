@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
-import { projectContext } from "@delacour/warden-core/builds/ensure";
 import { DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { bunExec } from "@delacour/warden-core/exec";
@@ -41,6 +40,7 @@ import {
 	metroUrl,
 } from "../metro";
 import { emit, heading, note, reportError, warn } from "../output";
+import { projectContextFor } from "../project-context";
 import { withSpinner } from "../spinner-context";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 
@@ -330,9 +330,7 @@ async function dev(
 	const start = projectStart(ctx, opts.project);
 	if (!start.success) return fail(start.error);
 	const variant = opts.variant ?? "dev";
-	const project = await projectContext({
-		exec: ctx.exec,
-		env: ctx.env,
+	const project = await projectContextFor(ctx, {
 		start: start.data,
 		...(opts.bundleId !== undefined ? { bundleId: { [platform.data]: opts.bundleId } } : {}),
 		variant,

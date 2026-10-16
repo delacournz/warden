@@ -114,7 +114,7 @@ export function parseClaimFlags(
 /** Owner for this invocation: `--session`/hook id → CI → session env → the invoking shell (ppid). */
 export function resolveOwner(ctx: CommandContext, sessionId?: string): Owner {
 	const ownerCtx: OwnerContext = { env: ctx.env, pid: process.pid, ppid: process.ppid, cwd: ctx.cwd };
-	const git = readGitInfo(ctx.cwd);
+	const git = readGitInfo(ctx.cwd, { cache: ctx.git });
 	if (git) ownerCtx.git = git;
 	if (sessionId) ownerCtx.sessionId = sessionId;
 	return detectOwner(ownerCtx);
