@@ -16,6 +16,7 @@ const POLL_MS = 250;
 export async function launch(device: Device, screen: Screen): Promise<void> {
 	await device.alert("dismiss");
 	await expect(screen.getByTestId(ids.welcome.screen)).toBeVisible({ timeout: 30_000 });
+	await device.settle({ quietMs: 250, timeout: 3_000 });
 }
 
 /**
@@ -24,10 +25,8 @@ export async function launch(device: Device, screen: Screen): Promise<void> {
  */
 export async function openSignIn(device: Device, screen: Screen): Promise<void> {
 	await launch(device, screen);
-	await screen.getByTestId(ids.welcome.next).tap();
-	await expect(screen.getByTestId(ids.welcome.title)).toHaveText("Plan");
-	await screen.getByTestId(ids.welcome.next).tap();
-	await expect(screen.getByTestId(ids.welcome.title)).toHaveText("Test");
+	await nextStep(screen, "Plan");
+	await nextStep(screen, "Test");
 	await screen.getByTestId(ids.welcome.getStarted).tap();
 	await expect(screen.getByTestId(ids.signIn.screen)).toBeVisible();
 }
@@ -64,21 +63,57 @@ export async function expectTodosAfterSignIn(device: Device, screen: Screen): Pr
 const TAP_RESULT_MS = 4_000;
 const TAP_RETRIES = 2;
 
+export type TapUntilOptions = {
+	/** how long each press gets to show its result. Default 4 s. */
+	windowMs?: number;
+	/** how often `arrived` is checked. Default 250 ms. */
+	pollMs?: number;
+};
+
 /**
  * Taps `target` and waits for `arrived`, tapping again when nothing came up. The first press on the tab bar or a
  * list row after the sign-in navigation is dropped (reproduced with a bare tap 1-30 s later, with no sheet on
  * screen, on a quiet machine; a second tap always lands), so a flow's first press after `signedIn` goes through here.
  */
-export async function tapUntilVisible(target: Locator, arrived: Locator): Promise<void> {
+export async function tapUntil(
+	target: Locator,
+	arrived: () => Promise<boolean>,
+	options: TapUntilOptions = {}
+): Promise<void> {
+	const windowMs = options.windowMs ?? TAP_RESULT_MS;
+	const pollMs = options.pollMs ?? POLL_MS;
 	await target.tap();
 	for (let attempt = 0; attempt < TAP_RETRIES; attempt += 1) {
-		const deadline = Date.now() + TAP_RESULT_MS;
+		const deadline = Date.now() + windowMs;
 		while (Date.now() < deadline) {
-			if (await arrived.isVisible()) return;
-			await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+			if (await arrived()) return;
+			await new Promise((resolve) => setTimeout(resolve, pollMs));
 		}
 		await target.tap();
 	}
+}
+
+/** `tapUntil` for a target that shows up as `arrived` being visible. */
+export async function tapUntilVisible(target: Locator, arrived: Locator): Promise<void> {
+	await tapUntil(target, () => arrived.isVisible());
+}
+
+/**
+ * Presses Next on the welcome screen and waits for the step title to become `title`, re-sending the press when
+ * it did not change. The button is in the accessibility tree before it takes touches: the app replaces into
+ * `/welcome` with a native-stack animation, and the Button is an RNGH GestureDetector whose native handler attaches
+ * after mount. `app.open()` returns when `simctl launch` exits and a HID tap has no app-side ack, so a dropped
+ * first press looks exactly like a slow one; the title is the only signal. `getByText("Plan")` would be ambiguous
+ * with the Steps labels, and `text()` throws when nothing matches, hence the `isVisible` guard.
+ */
+export async function nextStep(screen: Screen, title: "Plan" | "Test", options: TapUntilOptions = {}): Promise<void> {
+	const heading = screen.getByTestId(ids.welcome.title);
+	await tapUntil(
+		screen.getByTestId(ids.welcome.next),
+		async () => (await heading.isVisible()) && (await heading.text()) === title,
+		options
+	);
+	await expect(heading).toHaveText(title);
 }
 
 const DEEP_LINK_ATTEMPTS = 3;
