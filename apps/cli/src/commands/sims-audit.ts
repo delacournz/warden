@@ -22,7 +22,7 @@ import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable } from "../output";
+import { emit, heading, reportError, table, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type OwnerFilter = SimOwner | "all";
@@ -31,7 +31,7 @@ type AuditOpts = CommonOpts & { owner?: string; stale?: string };
 type PruneOpts = CommonOpts & { dryRun?: true; yes?: true };
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
-	ctx.err(ctx.ui.color.red(`warden sims ${sub}: ${message}`));
+	reportError(ctx, `sims ${sub}`, message);
 	return 1;
 }
 
@@ -99,15 +99,17 @@ function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimEn
 		color.bold(e.name),
 		color.dim(e.udid),
 		e.isAvailable ? e.runtime : color.red(`${e.runtime} (unavailable)`),
-		e.state,
+		e.leased ? color.cyan("leased") : e.state === "Booted" ? color.green(e.state) : color.dim(e.state),
 		e.owner,
-		e.leased ? color.green("yes") : "",
 		lastUsed(e, now),
 		formatSize(e.bytes),
 		describeVerdict(e, color),
 	]);
 	const lines = [
-		formatTable(["NAME", "UDID", "RUNTIME", "STATE", "OWNER", "LEASED", "LAST USED", "SIZE", "VERDICT"], rows, color),
+		table(ctx, ["NAME", "UDID", "RUNTIME", "STATE", "OWNER", "LAST USED", "SIZE", "VERDICT"], rows, [
+			{ column: 0, min: 18 },
+			{ column: 1, min: 9 },
+		]),
 		"",
 		`total ${color.bold(formatSize(audit.totalBytes))} across ${audit.entries.length} sim(s)`,
 	];
@@ -159,7 +161,11 @@ function runtimesText(ctx: CommandContext, section: RuntimeSection): string {
 		describeRuntimeVerdict(r.verdict, color),
 	]);
 	const lines = [
-		formatTable(["RUNTIME", "BUILD", "IDENTIFIER", "SIMS", "LAST USED", "SIZE", "VERDICT"], rows, color),
+		table(ctx, ["RUNTIME", "BUILD", "IDENTIFIER", "SIMS", "LAST USED", "SIZE", "VERDICT"], rows, {
+			column: 2,
+			keep: "end",
+			min: 16,
+		}),
 		"",
 		`runtimes ${color.bold(formatSize(audit.totalBytes))} across ${audit.entries.length} runtime(s)`,
 	];
@@ -195,6 +201,7 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 	if (!parsed.success) return fail(ctx, "audit", parsed.error);
 	const owner = parseOwner(opts.owner);
 	if (!owner.success) return fail(ctx, "audit", owner.error);
+	if (!opts.json) heading(ctx, "sims audit", opts.owner && opts.owner !== "all" ? `owner ${opts.owner}` : undefined);
 	const audit = await withSpinner(ctx, "auditing simulators…", (sctx) => auditMachineSims(simsDeps(sctx), parsed.data));
 	if (!audit.success) return fail(ctx, "audit", audit.error);
 	const runtimes = await runtimeSection(ctx, audit.data);
@@ -214,7 +221,7 @@ const describeSim = (e: SimEntry) => `${e.name} ${e.udid} (${formatSize(e.bytes)
 /** Terminal confirm of the preview's deletes; true = go ahead. */
 async function confirmDeletes(ctx: CommandContext, preview: SimsPruneResult): Promise<boolean> {
 	const { ui } = ctx;
-	for (const e of preview.removed) ctx.err(ui.color.yellow(`will delete ${describeSim(e)}`));
+	for (const e of preview.removed) warn(ctx, `will delete ${describeSim(e)}`);
 	const answer = await ui.confirm(`Delete ${preview.removed.length} simulator(s) (${formatSize(preview.freedBytes)})?`);
 	if (answer === true) return true;
 	ui.cancelled("Aborted.");
@@ -245,6 +252,7 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 	const dryRun = opts.dryRun === true;
 	const ask = !dryRun && !opts.yes;
 	if (ask && !ctx.ui.interactive) return fail(ctx, "prune", "refusing to delete without --yes (or --dry-run)");
+	if (!opts.json) heading(ctx, "sims prune", dryRun ? "dry run" : undefined);
 	const deps = simsDeps(ctx);
 	const preview = await withSpinner(ctx, "auditing simulators…", () =>
 		pruneSims(deps, { ...parsed.data, dryRun: true })

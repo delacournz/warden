@@ -18,6 +18,8 @@ export type ScriptedUi = Ui & {
 export function scriptedUi(
 	opts: {
 		interactive?: boolean;
+		rich?: boolean;
+		columns?: number;
 		confirm?: Array<boolean | undefined>;
 		select?: Array<string | undefined>;
 		multiselect?: Array<string[] | undefined>;
@@ -26,6 +28,8 @@ export function scriptedUi(
 	const ui: ScriptedUi = {
 		color: new Chalk({ level: 0 }),
 		interactive: opts.interactive ?? false,
+		rich: opts.rich ?? false,
+		columns: opts.columns ?? 80,
 		events: [],
 		confirmAnswers: [...(opts.confirm ?? [])],
 		selectAnswers: [...(opts.select ?? [])],

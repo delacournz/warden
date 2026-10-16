@@ -1,5 +1,6 @@
 import type { BatchEvent } from "@delacour/warden-core/batch/schedule";
 import { formatDuration } from "@delacour/warden-core/duration";
+import { SYMBOLS } from "../ui";
 import type { FlowMark } from "./flow-progress";
 import type { RunnerReport } from "./runner-report";
 
@@ -242,17 +243,17 @@ function header(view: BatchView, max: number, color: boolean): string {
 	const done = passed + failed;
 	const state: Segment = view.result
 		? view.result.ok
-			? { text: "  ✓ done", style: "green" }
-			: { text: view.result.stopped ? "  ✗ stopped" : "  ✗ failed", style: "red" }
+			? { text: `  ${SYMBOLS.ok} done`, style: "green" }
+			: { text: view.result.stopped ? `  ${SYMBOLS.fail} stopped` : `  ${SYMBOLS.fail} failed`, style: "red" }
 		: { text: "" };
 	return line(
 		[
 			{ text: "warden batch  ", style: "bold" },
 			...segmentBar(overallCells(view), BAR_WIDTH),
 			{ text: `  ${done}/${total}  ` },
-			{ text: `✓${passed}`, style: "green" },
+			{ text: `${SYMBOLS.ok}${passed}`, style: "green" },
 			{ text: " " },
-			{ text: `✗${failed}`, style: failed > 0 ? "red" : "dim" },
+			{ text: `${SYMBOLS.fail}${failed}`, style: failed > 0 ? "red" : "dim" },
 			{ text: `  ${formatDuration(view.now - view.startedAt)}`, style: "dim" },
 			state,
 		],
@@ -264,9 +265,9 @@ function header(view: BatchView, max: number, color: boolean): string {
 type Columns = { id: number; name: number; job: number };
 
 function deviceStatus(d: DeviceView, width: number): Segment {
-	if (!d.current) return { text: pad(d.idle ? "· idle" : "· waiting", width), style: "dim" };
+	if (!d.current) return { text: pad(`${SYMBOLS.idle} ${d.idle ? "idle" : "waiting"}`, width), style: "dim" };
 	const retry = d.current.attempt > 0 ? ` (retry ${d.current.attempt})` : "";
-	return { text: pad(`▶ ${d.current.job}${retry}`, width), style: retry ? "yellow" : "cyan" };
+	return { text: pad(`${SYMBOLS.run} ${d.current.job}${retry}`, width), style: retry ? "yellow" : "cyan" };
 }
 
 /** A row's cells: the flows the report says it ran; a runner's device until then, one running cell while busy; else its jobs + the current one. */
@@ -288,9 +289,9 @@ function deviceRow(view: BatchView, d: DeviceView, cols: Columns, max: number, c
 			{ text: "  " },
 			deviceStatus(d, cols.job),
 			{ text: `  ${elapsed.padStart(6)}  `, style: "dim" },
-			{ text: `✓${String(passed).padEnd(3)}`, style: "green" },
+			{ text: `${SYMBOLS.ok}${String(passed).padEnd(3)}`, style: "green" },
 			{ text: " " },
-			{ text: `✗${String(failed).padEnd(3)}`, style: failed > 0 ? "red" : "dim" },
+			{ text: `${SYMBOLS.fail}${String(failed).padEnd(3)}`, style: failed > 0 ? "red" : "dim" },
 			{ text: " " },
 			...segmentBar(deviceCells(view, d), DEVICE_BAR_WIDTH),
 		],

@@ -3,7 +3,7 @@ import { describeOwner, ownerLocation, sameOwner } from "@delacour/warden-core/t
 import { resolveOwner, sessionOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit } from "../output";
+import { emit, warn } from "../output";
 
 type CheckOpts = { udid: string; session?: string; json?: true };
 
@@ -34,12 +34,13 @@ function check(ctx: CommandContext, opts: CheckOpts): number {
 	const where = ownerLocation(lease.owner);
 	const message = `device ${udid} leased by ${describeOwner(lease.owner)}${where ? ` (${where})` : ""}`;
 	if (json) emit(ctx, true, { udid, free: false, mine: false, leaseId: lease.id, owner: lease.owner }, "");
-	ctx.err(color.yellow(message));
+	warn(ctx, message);
 	return 2;
 }
 
 export const checkCommand = defineCommand({
 	name: "check",
+	group: "Lease",
 	summary: "exit 0 if a device is free or yours, 2 if another owner holds it",
 	register: (cmd, ctx, done) => {
 		cmd

@@ -11,7 +11,7 @@ import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
-import { emit } from "../output";
+import { emit, heading, plural, reportError } from "../output";
 import { providerFor } from "../providers";
 import { hasForegroundApp } from "../running-apps";
 import { withSpinner } from "../spinner-context";
@@ -77,7 +77,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const { color } = ctx.ui;
 	const idle = parseIdle(opts.idle);
 	if (!idle.success) {
-		ctx.err(color.red(`warden gc: ${idle.error}`));
+		reportError(ctx, "gc", idle.error);
 		return 1;
 	}
 	const store = ctx.store();
@@ -132,6 +132,8 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		for (const platform of PLATFORMS) await gcPlatform(sctx, platform, owner, plan);
 		return { ...plan, reclaimed };
 	};
+	if (!opts.quiet && !opts.json)
+		heading(ctx, "gc", `${plural(stale.length, "stale lease")} · idle > ${formatDuration(idle.data)}`);
 	// `--quiet` is the detached auto-gc: no terminal, so no spinner.
 	const { reclaimed, shutdown, forgotten, notes } = opts.quiet
 		? await shutDownIdle(ctx)
@@ -154,6 +156,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 
 export const gcCommand = defineCommand({
 	name: "gc",
+	group: "Lease",
 	summary: "reclaim stale leases; shut down idle warden devices (never deletes)",
 	register: (cmd, ctx, done) => {
 		cmd

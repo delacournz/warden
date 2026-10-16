@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
-import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { type BuildRecord, listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
 import { ccacheCleanup } from "@delacour/warden-core/builds/compiler-cache";
 import { LOCAL_PROFILE, projectContext } from "@delacour/warden-core/builds/ensure";
 import { formatSize, parseSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
@@ -12,12 +12,12 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable } from "../output";
+import { emit, heading, plural, reportError, table, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 import { projectStart } from "./app";
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
-	ctx.err(ctx.ui.color.red(`warden builds ${sub}: ${message}`));
+	reportError(ctx, `builds ${sub}`, message);
 	return 1;
 }
 
@@ -39,8 +39,15 @@ function lsCmd(ctx: CommandContext, json: boolean): number {
 	const text =
 		builds.length === 0
 			? color.dim("no cached builds")
-			: `${formatTable(["PROJECT", "PLATFORM", "HASH", "SOURCE", "PROFILE", "SIZE", "LAST USED", "PATH"], rows, color)}\n\ntotal ${color.bold(formatSize(total))}`;
-	emit(ctx, json, { builds, totalBytes: total }, text);
+			: `${table(ctx, ["PROJECT", "PLATFORM", "HASH", "SOURCE", "PROFILE", "SIZE", "LAST USED", "PATH"], rows, [
+					{ column: 7, keep: "end", min: 20 },
+					{ column: 0, keep: "end", min: 20 },
+					{ column: 4, min: 12 },
+				])}\n\ntotal ${color.bold(formatSize(total))}`;
+	emit(ctx, json, { builds, totalBytes: total }, text, {
+		scope: "builds",
+		detail: `${plural(builds.length, "build")} · ${formatSize(total)}`,
+	});
 	return 0;
 }
 
@@ -48,6 +55,16 @@ type PruneOpts = { maxSize?: string; dryRun?: true; yes?: true; json?: true };
 
 const describeBuild = (b: { projectKey: string; platform: string; hash: string; size: number }) =>
 	`${b.projectKey} ${b.platform} ${b.hash} (${formatSize(b.size)})`;
+
+/** List what an LRU prune removes and ask; true = go ahead (nothing to remove counts as yes). */
+async function confirmPrune(ctx: CommandContext, remove: readonly BuildRecord[]): Promise<boolean> {
+	if (remove.length === 0) return true;
+	for (const b of remove) warn(ctx, `will remove ${describeBuild(b)}`);
+	const freed = remove.reduce((sum, b) => sum + b.size, 0);
+	if ((await ctx.ui.confirm(`Remove ${remove.length} cached build(s) (${formatSize(freed)})?`)) === true) return true;
+	ctx.ui.cancelled("Aborted.");
+	return false;
+}
 
 /**
  * LRU-prune the cache down to `--max-size`. In a terminal (without `--yes` / `--dry-run`) shows
@@ -69,17 +86,14 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 			dryRun: dry,
 		});
 	const preview = prune(true);
-	if (!dryRun && ui.interactive && !opts.yes) {
-		if (preview.remove.length > 0) {
-			for (const b of preview.remove) ctx.err(color.yellow(`will remove ${describeBuild(b)}`));
-			const freed = preview.remove.reduce((sum, b) => sum + b.size, 0);
-			const answer = await ui.confirm(`Remove ${preview.remove.length} cached build(s) (${formatSize(freed)})?`);
-			if (answer !== true) {
-				ui.cancelled("Aborted.");
-				return 1;
-			}
-		}
+	if (!opts.json) {
+		heading(
+			ctx,
+			"builds prune",
+			`${plural(preview.remove.length, "build")} over ${formatSize(max.data)}${dryRun ? " · dry run" : ""}`
+		);
 	}
+	if (!dryRun && ui.interactive && !opts.yes && !(await confirmPrune(ctx, preview.remove))) return 1;
 	const plan = dryRun
 		? preview
 		: await withSpinner(ctx, `pruning ${preview.remove.length} build(s)…`, async () => prune(false));
@@ -156,6 +170,7 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 
 export const buildsCommand = defineCommand({
 	name: "builds",
+	group: "Builds",
 	summary: "list, prune (LRU) and import cached native app builds",
 	register: (cmd, ctx, done) => {
 		cmd

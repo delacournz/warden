@@ -8,7 +8,7 @@ import {
 	selectorFrom,
 	withSelectOptions,
 } from "../lease-select";
-import { emit } from "../output";
+import { emit, reportError } from "../output";
 
 type HeartbeatOpts = SelectOptionValues & { json?: true };
 
@@ -16,13 +16,13 @@ async function heartbeat(ctx: CommandContext, leaseIds: string[], opts: Heartbea
 	const { color } = ctx.ui;
 	const selector = selectorFrom(leaseIds, opts);
 	if (isEmptySelector(selector)) {
-		ctx.err(color.red(`warden heartbeat: ${NOTHING_SELECTED}`));
+		reportError(ctx, "heartbeat", NOTHING_SELECTED);
 		return 1;
 	}
 	const { leases, unknown } = selectLeases(ctx, selector);
 	const ids = leases.map((l) => l.id);
 	ctx.store().heartbeat(ids, ctx.now());
-	for (const u of unknown) ctx.err(color.red(`warden heartbeat: no lease for ${u}`));
+	for (const u of unknown) reportError(ctx, "heartbeat", `no lease for ${u}`);
 	emit(
 		ctx,
 		opts.json === true,
@@ -34,6 +34,7 @@ async function heartbeat(ctx: CommandContext, leaseIds: string[], opts: Heartbea
 
 export const heartbeatCommand = defineCommand({
 	name: "heartbeat",
+	group: "Lease",
 	summary: "refresh lease heartbeats so they don't go stale",
 	register: (cmd, ctx, done) => {
 		withSelectOptions(cmd.argument("[leaseIds...]", "lease ids to refresh"))

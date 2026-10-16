@@ -10,8 +10,9 @@ import { hasWardenHook } from "../hooks/claude-settings";
 import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook } from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
 import { NPM_PACKAGE } from "../npm/platforms";
-import { emit } from "../output";
+import { emit, plural } from "../output";
 import { RULE_MD, staleSkillFiles } from "../skill";
+import { SYMBOLS } from "../ui";
 import { type BuildInfo, currentBuild } from "../update/build-info";
 import { fetchHelper, tarExtractHelper } from "../update/fetch-helper";
 import { type InstallOrigin, installOrigin } from "../update/install-origin";
@@ -236,7 +237,7 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 	];
 }
 
-const MARK: Record<CheckStatus, string> = { ok: "✓", warn: "!", fail: "✗" };
+const MARK: Record<CheckStatus, string> = SYMBOLS;
 
 function mark(ctx: CommandContext, status: CheckStatus): string {
 	const { color } = ctx.ui;
@@ -292,13 +293,20 @@ async function doctor(
 			return `${mark(ctx, c.status)} ${c.name.padEnd(width)}  ${detail}`;
 		})
 		.join("\n");
-	emit(ctx, opts.json, { ok, checks, ...(fetched ? { helperFetch: fetched } : {}) }, text);
+	const count = (status: CheckStatus) => checks.filter((c) => c.status === status).length;
+	const detail = [
+		`${count("ok")} ok`,
+		...(count("warn") > 0 ? [plural(count("warn"), "warning")] : []),
+		...(count("fail") > 0 ? [`${count("fail")} failed`] : []),
+	].join(" · ");
+	emit(ctx, opts.json, { ok, checks, ...(fetched ? { helperFetch: fetched } : {}) }, text, { scope: "doctor", detail });
 	return ok ? 0 : 1;
 }
 
 export function createDoctorCommand(deps: DoctorDeps): Command {
 	return defineCommand({
 		name: "doctor",
+		group: "Setup",
 		summary:
 			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases",
 		register: (cmd, ctx, done) => {

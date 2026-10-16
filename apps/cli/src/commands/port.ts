@@ -17,7 +17,7 @@ import type { Result } from "@delacour/warden-types/result";
 import { err, ok } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable } from "../output";
+import { emit, plural, reportError, table, warn } from "../output";
 
 const DEFAULT_FROM = 8091;
 
@@ -40,7 +40,7 @@ function parseCount(raw: string | undefined, name: string, fallback: number): Re
 }
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
-	ctx.err(ctx.ui.color.red(`warden port ${sub}: ${message}`));
+	reportError(ctx, `port ${sub}`, message);
 	return 1;
 }
 
@@ -113,9 +113,9 @@ async function release(ctx: CommandContext, ports: string[], opts: PortReleaseOp
 	const lines = res.released.map((l) => color.green(`released ${portOf(l)} (${l.id})`));
 	emit(ctx, opts.json === true, res, lines.length > 0 ? lines.join("\n") : color.dim("nothing released"));
 	for (const l of res.denied) {
-		ctx.err(color.yellow(`port ${portOf(l)} is leased by ${describeOwner(l.owner)} — use --force to release it`));
+		warn(ctx, `port ${portOf(l)} is leased by ${describeOwner(l.owner)} — use --force to release it`);
 	}
-	for (const m of res.missing) ctx.err(color.red(`no port lease for ${m}`));
+	for (const m of res.missing) reportError(ctx, "port release", `no port lease for ${m}`);
 	return res.denied.length > 0 || res.missing.length > 0 ? 1 : 0;
 }
 
@@ -141,17 +141,19 @@ function ls(ctx: CommandContext, json: boolean): number {
 	const text =
 		leases.length === 0
 			? color.dim("no port leases")
-			: formatTable(
+			: table(
+					ctx,
 					["PORT", "STATE", "OWNER", "WHERE", "LABEL", "AGE", "HEARTBEAT", "LEASE"],
 					leases.map((l) => lsRow(ctx, l, now)),
-					color
+					{ column: 3, keep: "end", min: 16 }
 				);
-	emit(ctx, json, leases, text);
+	emit(ctx, json, leases, text, { scope: "port ls", detail: plural(leases.length, "port lease") });
 	return 0;
 }
 
 export const portCommand = defineCommand({
 	name: "port",
+	group: "Lease",
 	summary: "lease TCP ports from a range (bind-probed, never handed out twice)",
 	register: (cmd, ctx, done) => {
 		cmd

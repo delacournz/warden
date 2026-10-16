@@ -9,6 +9,7 @@ import type { ChalkInstance } from "chalk";
 import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { reportError, warn } from "../output";
 
 export type AffectedOpts = {
 	base?: string;
@@ -133,13 +134,13 @@ async function affected(ctx: CommandContext, suite: string | undefined, opts: Af
 	const { color } = ctx.ui;
 	const result = await runAffected(ctx, suite, opts);
 	if (!result.success) {
-		ctx.err(color.red(`warden affected: ${result.error}`));
+		reportError(ctx, "affected", result.error);
 		return 1;
 	}
 	const data = result.data;
 	const requiredOnly = opts.requiredOnly === true;
 	const warnings = [...data.warnings, ...data.selections.flatMap((s) => s.warnings.map((w) => `${s.platform}: ${w}`))];
-	for (const warning of warnings) ctx.err(color.yellow(`warden affected: ${warning}`));
+	for (const warning of warnings) warn(ctx, `warden affected: ${warning}`);
 	if (opts.json) ctx.out(JSON.stringify(jsonDoc(data, requiredOnly), null, 2));
 	else if (opts.explain) ctx.out(explain(data, requiredOnly, color));
 	else {
@@ -152,6 +153,7 @@ async function affected(ctx: CommandContext, suite: string | undefined, opts: Af
 
 export const affectedCommand = defineCommand({
 	name: "affected",
+	group: "Run",
 	summary: "list the e2e flows a change needs (git diff vs base → import graph → flows)",
 	register: (cmd, ctx, done) => {
 		cmd

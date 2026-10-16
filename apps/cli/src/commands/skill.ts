@@ -1,7 +1,7 @@
 import { Option } from "@commander-js/extra-typings";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit } from "../output";
+import { emit, note, reportError } from "../output";
 import { embeddedFile, RULE_PATH, SKILL_FILES, SKILL_MD, SKILL_NAME, SKILL_PATHS } from "../skill";
 import {
 	localSkillRoot,
@@ -39,13 +39,12 @@ function show(ctx: CommandContext, json: boolean, file?: string): number {
 }
 
 async function install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallOpts): Promise<number> {
-	const { color } = ctx.ui;
 	const prefix = runner(deps);
 	if (!prefix) {
-		ctx.err(
-			color.red(
-				"warden skill: neither bunx nor npx found — install bun or node, or copy it by hand: `warden skill show`"
-			)
+		reportError(
+			ctx,
+			"skill",
+			"neither bunx nor npx found — install bun or node, or copy it by hand: `warden skill show`"
 		);
 		return 1;
 	}
@@ -58,7 +57,7 @@ async function install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallO
 	if (opts.from === "local") {
 		stageSkillFolder(ctx);
 	}
-	ctx.err(color.dim(`warden skill: ${cmd.join(" ")}`));
+	note(ctx, `warden skill: ${cmd.join(" ")}`);
 	return deps.runInteractive(cmd, { stdout: opts.json ? "stderr" : "inherit" });
 }
 
@@ -66,6 +65,7 @@ async function install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallO
 export function createSkillCommand(deps: SkillDeps): Command {
 	return defineCommand({
 		name: "skill",
+		group: "Setup",
 		summary: "the warden agent skill: show (copy/paste) | install (bunx/npx skills add)",
 		register: (cmd, ctx, done) => {
 			cmd

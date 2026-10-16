@@ -2,6 +2,9 @@ import { cancel, confirm, isCancel, multiselect, type Option, select } from "@cl
 import { Chalk, type ChalkInstance } from "chalk";
 import ora from "ora";
 
+/** The glyphs every command shares with the `warden batch` grid. */
+export const SYMBOLS = { ok: "✓", fail: "✗", warn: "!", run: "▶", idle: "·" } as const;
+
 /** A long-running step: shows as a spinner on an interactive stderr, one line otherwise. */
 export type Spinner = {
 	update: (text: string) => void;
@@ -26,6 +29,10 @@ export type Ui = {
 	color: ChalkInstance;
 	/** true when prompts can be shown (stdin + stderr are TTYs) */
 	interactive: boolean;
+	/** true when a person is watching (stdout + stderr are TTYs): headings and status glyphs are added; piped output stays bare */
+	rich: boolean;
+	/** terminal width in columns (80 when unknown) */
+	columns: number;
 	spinner: (text: string) => Spinner;
 	/** undefined = cancelled (Ctrl-C / Esc) */
 	confirm: (message: string, initialValue?: boolean) => Promise<boolean | undefined>;
@@ -46,6 +53,11 @@ export function colorLevel(env: Record<string, string | undefined>, isTTY: boole
 	return isTTY ? 3 : 0;
 }
 
+/** Headings + glyphs only for a person at a terminal: both streams are TTYs, not CI, not a dumb terminal. */
+export function isRich(env: Record<string, string | undefined>, outTTY: boolean, errTTY: boolean): boolean {
+	return outTTY && errTTY && !env.CI && env.TERM !== "dumb";
+}
+
 function toOption<T extends string>(c: Choice<T>): Option<T> {
 	const option: { value: T; label: string; hint?: string; disabled?: boolean } = { value: c.value, label: c.label };
 	if (c.hint) option.hint = c.hint;
@@ -55,11 +67,19 @@ function toOption<T extends string>(c: Choice<T>): Option<T> {
 
 export function terminalUi(env: Record<string, string | undefined>): Ui {
 	const interactive = process.stdin.isTTY === true && process.stderr.isTTY === true;
+	const color = new Chalk({ level: colorLevel(env, process.stdout.isTTY === true) });
 	return {
-		color: new Chalk({ level: colorLevel(env, process.stdout.isTTY === true) }),
+		color,
 		interactive,
+		rich: isRich(env, process.stdout.isTTY === true, process.stderr.isTTY === true),
+		columns: process.stdout.columns ?? process.stderr.columns ?? 80,
 		spinner: (text) => {
-			const s = ora({ text, stream: process.stderr, isEnabled: process.stderr.isTTY === true && !env.CI }).start();
+			const s = ora({
+				text,
+				color: "cyan",
+				stream: process.stderr,
+				isEnabled: process.stderr.isTTY === true && !env.CI,
+			}).start();
 			return {
 				update: (t) => {
 					s.text = t;
@@ -72,10 +92,10 @@ export function terminalUi(env: Record<string, string | undefined>): Ui {
 					} else process.stderr.write(`${line}\n`);
 				},
 				succeed: (t) => {
-					s.succeed(t);
+					s.stopAndPersist({ symbol: color.green(SYMBOLS.ok), text: t ?? s.text });
 				},
 				fail: (t) => {
-					s.fail(t);
+					s.stopAndPersist({ symbol: color.red(SYMBOLS.fail), text: t ?? s.text });
 				},
 				stop: () => {
 					s.stop();

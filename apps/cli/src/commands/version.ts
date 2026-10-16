@@ -4,6 +4,7 @@ import { currentBuild, describeBuild } from "../update/build-info";
 
 export const versionCommand = defineCommand({
 	name: "version",
+	group: "Setup",
 	summary: "print warden's version and build channel (dev / local / release)",
 	register: (cmd, ctx, done) => {
 		cmd.option("--json", "machine-readable output").action((opts) => {
