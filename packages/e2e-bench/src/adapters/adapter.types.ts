@@ -1,4 +1,4 @@
-import type { AsyncResult } from "@delacour/warden-types/result";
+import type { AsyncResult, Result } from "@delacour/warden-types/result";
 import type { Exec } from "../harness/exec";
 import type { CanonicalId, Platform, RepResult, TestResult } from "../results/schema";
 
@@ -59,7 +59,7 @@ export type BenchAdapter = {
 	/** cold warm-up that is NOT part of a test (install a runner, start a server); measured as `prepareMs` */
 	prepare(ctx: RunContext): AsyncResult<void>;
 	/** one full suite pass; parses the framework's native output into canonical results */
-	run(ctx: RunContext): AsyncResult<RepResult>;
+	run(ctx: RunContext): Promise<Result<RepResult, AdapterError>>;
 	/** kill daemons, stop servers; measured as `teardownMs` */
 	teardown(ctx: RunContext): AsyncResult<void>;
 	residuePatterns: ResiduePatterns;
