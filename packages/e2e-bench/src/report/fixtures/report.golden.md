@@ -66,6 +66,8 @@
 | agent-device | host | 38.2% | 212.5% | 640.0 MB | 910.0 MB |
 | agent-device | sim | 31.7% | 140.2% | 1.4 GB | 1.6 GB |
 
+Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim` = every process of the device (the simulator's `launchd_sim` tree, or the emulator's `top`). RSS is a per-process sum, so shared framework pages are counted once per process: compare the numbers across frameworks, not against physical memory.
+
 ## Residue
 
 - **warden:** none

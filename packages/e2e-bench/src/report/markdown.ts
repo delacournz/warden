@@ -130,7 +130,15 @@ function resourcesSection(run: BenchRun): string[] {
 		[f.framework, "host", ...seriesCols(f.resources.host)],
 		[f.framework, "sim", ...seriesCols(f.resources.sim)],
 	]);
-	return ["## Resources", "", ...table(headers, rows)];
+	return [
+		"## Resources",
+		"",
+		...table(headers, rows),
+		"",
+		"Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim` = every process of the device " +
+			"(the simulator's `launchd_sim` tree, or the emulator's `top`). RSS is a per-process sum, so shared framework " +
+			"pages are counted once per process: compare the numbers across frameworks, not against physical memory.",
+	];
 }
 
 function residueSection(run: BenchRun): string[] {
