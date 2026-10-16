@@ -4,11 +4,9 @@ import type { Locator } from "@delacour/warden-e2e/screen/locator";
 import type { Screen } from "@delacour/warden-e2e/screen/screen";
 import { ids } from "./ids";
 
-/** How long to wait for the todos screen after submitting sign-in, while clearing the Keychain sheet. */
+/** How long to wait for the todos screen after submitting sign-in, while clearing any system sheet. */
 const SIGN_IN_TIMEOUT_MS = 15_000;
 const POLL_MS = 250;
-/** How long after the todos screen shows to wait for the "Save Password?" sheet (seen 1.3 s later). */
-const SAVE_PASSWORD_WAIT_MS = 5_000;
 
 /**
  * The runner opens the app fresh before every test (`launch: "fresh"`), so a flow starts on the
@@ -42,24 +40,14 @@ export async function submitSignIn(screen: Screen, email: string, password: stri
 }
 
 /**
- * Answers the iOS "Save Password?" sheet that follows a sign-in. It is a system sheet owned by SpringBoard, it
- * covers the app (testIDs behind it are filtered out of the snapshot while it shows) and it appears about 1.5 s
- * AFTER the todos screen is already visible, so a single check right after sign-in misses it. Polls for
- * `SAVE_PASSWORD_WAIT_MS` and returns once the sheet has been dismissed ("Not Now"), or when it never shows.
+ * Waits for the todos screen after a successful sign-in. The sign-in fields opt out of AutoFill in e2e builds
+ * (`NO_AUTOFILL` in `src/app/sign-in.tsx`), so iOS no longer raises the "Save Password?" sheet; a system alert
+ * that still covers the app (a leftover sheet) is dismissed while waiting.
+ *
+ * Why it matters: that sheet is hosted by SafariViewService, cold-launched, and showed up between 1 and 6 s after
+ * the todos screen. A flow that typed meanwhile sent its keys to no focused field, and the dev client reloaded its
+ * JS about 0.5 s into the typing (back to the welcome screen); the reload trigger is inferred from that timing.
  */
-export async function dismissSavePassword(device: Device): Promise<boolean> {
-	const deadline = Date.now() + SAVE_PASSWORD_WAIT_MS;
-	while (Date.now() < deadline) {
-		if (await device.alert("dismiss")) {
-			await device.settle({ quietMs: 600, timeout: 4000 });
-			return true;
-		}
-		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-	}
-	return false;
-}
-
-/** Waits for the todos screen after a successful sign-in, then clears the "Save Password?" sheet iOS shows over it. */
 export async function expectTodosAfterSignIn(device: Device, screen: Screen): Promise<void> {
 	const todos = screen.getByTestId(ids.todos.screen);
 	const deadline = Date.now() + SIGN_IN_TIMEOUT_MS;
@@ -70,7 +58,6 @@ export async function expectTodosAfterSignIn(device: Device, screen: Screen): Pr
 		if (!visible) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
 	}
 	if (!visible) await expect(todos).toBeVisible({ timeout: 1 });
-	await dismissSavePassword(device);
 }
 
 /** How long a tap gets to show its result before it is sent again, and how many times. */
