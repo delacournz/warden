@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
 	devClientLaunchArgs,
 	devClientLaunchArgv,
+	launchMetro,
 	type MetroDeps,
 	type MetroProc,
 	metroArgv,
@@ -252,6 +253,48 @@ describe("startMetro", () => {
 		if (!metro.success) throw new Error(metro.error);
 		await metro.data.stop();
 		expect(h.kills).toEqual(["SIGTERM", "SIGKILL"]);
+	});
+});
+
+describe("launchMetro", () => {
+	test("stop before Metro is ready: the proc is SIGTERMed once and pending resolves to an error", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "down" });
+		const launch = launchMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 60_000 });
+		await launch.stop();
+		const result = await launch.pending;
+		expect(result.success).toBe(false);
+		expect(launch.started).toBeUndefined();
+		expect(h.kills).toEqual(["SIGTERM"]);
+	});
+
+	test("stop after ready: one SIGTERM, started is cleared", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "ours" });
+		const launch = launchMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 5_000 });
+		const result = await launch.pending;
+		expect(result.success).toBe(true);
+		expect(launch.started?.port).toBe(8081);
+		await launch.stop();
+		expect(launch.started).toBeUndefined();
+		expect(h.kills).toEqual(["SIGTERM"]);
+	});
+
+	test("the caller's aborted still ends the wait", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "down" });
+		const launch = launchMetro(h.deps, {
+			projectRoot: root,
+			port: 8081,
+			env: {},
+			readyTimeoutMs: 60_000,
+			aborted: () => h.clock.now >= 1_000,
+		});
+		expect(await launch.pending).toEqual({ success: false, error: "interrupted while waiting for Metro" });
+		expect(h.kills).toEqual(["SIGTERM"]);
 	});
 });
 

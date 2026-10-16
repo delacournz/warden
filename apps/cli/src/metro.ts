@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import type { Exec } from "@delacour/warden-core/exec";
 import type { Platform } from "@delacour/warden-core/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 
 /**
@@ -184,6 +184,43 @@ export async function startMetro(deps: MetroDeps, o: MetroOptions): AsyncResult<
 		return err(failure.error);
 	}
 	return ok({ port: o.port, url: metroUrl(o.port), proc, stop: () => stopMetro(deps, proc) });
+}
+
+/** A Metro being started in the background; see `launchMetro`. */
+export type MetroLaunchHandle = {
+	/** settles once Metro is verified ready or failed; never rejects */
+	pending: Promise<Result<Metro>>;
+	/** set once ready */
+	started: Metro | undefined;
+	/** give up waiting, settle, stop whatever started */
+	stop: () => Promise<void>;
+};
+
+/**
+ * `startMetro` without waiting: the caller carries on (device claim, app install) and awaits
+ * `pending` later. `stop` cancels the readiness poll, so a Metro that never became ready is
+ * killed by `startMetro` itself, and stops one that did.
+ */
+export function launchMetro(deps: MetroDeps, o: MetroOptions): MetroLaunchHandle {
+	let cancelled = false;
+	const handle: MetroLaunchHandle = {
+		started: undefined,
+		pending: Promise.resolve(err("Metro not started")),
+		stop: async () => {
+			cancelled = true;
+			await handle.pending;
+			const metro = handle.started;
+			handle.started = undefined;
+			await metro?.stop();
+		},
+	};
+	handle.pending = startMetro(deps, { ...o, aborted: () => cancelled || (o.aborted?.() ?? false) })
+		.catch((error: unknown) => err(error instanceof Error ? error.message : String(error)))
+		.then((result) => {
+			if (result.success) handle.started = result.data;
+			return result;
+		});
+	return handle;
 }
 
 const manifestSchema = z.object({ launchAsset: z.object({ url: z.string().min(1) }) });
