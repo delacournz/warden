@@ -1,0 +1,6 @@
+steps:
+  - type: { into: { id: sign-in-email }, text: ada@example.com, submit: false }
+  - type: { into: { id: sign-in-password }, text: password1, submit: false }
+  - tap: { id: sign-in-submit }
+  - await: { visible: { id: todos-screen }, timeout: 15000 }
+  - await: { idle: true }

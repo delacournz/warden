@@ -1,0 +1,8 @@
+steps:
+  - await: { visible: { id: welcome-screen }, timeout: 30000 }
+  - await: { idle: true }
+  - run: next-plan
+  - run: next-test
+  - tap: { id: welcome-get-started }
+  - await: { visible: { id: sign-in-screen } }
+  - await: { idle: true }
