@@ -427,8 +427,17 @@ export interface WardenE2eSuite {
 	 */
 	mode?: "per-flow" | "single" | undefined;
 	/**
-	 * A spec process still going after this many milliseconds is killed (screenshot first) and counts
-	 * as failed.
+	 * What happens to the devices warden booted when the gate passes. `"always"`: shut them down.
+	 * `"idle"`: leave them booted, so the next run skips the 10-30 s boot, and let `warden gc` shut
+	 * them down once they have sat idle. A failed run always leaves them up. `--no-shutdown` wins.
+	 *
+	 * @default "idle" locally, "always" when the `CI` environment variable is set
+	 */
+	shutdown?: "always" | "idle" | undefined;
+	/**
+	 * Per flow: a spec process still going after this many milliseconds for each flow it runs (one
+	 * flow, or a device's share of them with `isolate: "device"`) is killed (screenshot first) and
+	 * counts as failed.
 	 *
 	 * @default 600000 (10 min)
 	 */

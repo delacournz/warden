@@ -1518,34 +1518,76 @@ describe("warden e2e", () => {
 	});
 
 	describe("device shutdown", () => {
-		/** setup() whose two sims warden created, so they're its to shut down */
-		function wardenSetup(argv: string[], calls: string[][]): TestContext {
+		/** setup() whose two sims warden created, so they're its to shut down; `CI` set as given (`undefined`: a local shell) */
+		function wardenSetup(argv: string[], calls: string[][], ci?: string): TestContext {
 			const c = setup(argv, calls);
+			c.env = { ...c.env, CI: ci };
 			for (const n of [1, 2])
 				c.db.recordDevice({ platform: "ios", id: `U${n}`, name: `warden-iphone-17-${n}`, profile: "iphone-17" }, 0);
 			return c;
 		}
 		const shutdowns = (calls: string[][]) => calls.filter((x) => x[2] === "shutdown").map((x) => x[3]);
 
-		test("gate passed → the leased devices warden created are shut down, then released", async () => {
+		test("under CI a passed gate shuts the devices warden created down, then releases them", async () => {
 			const calls: string[][] = [];
-			const c = wardenSetup(["--all", "--count", "2"], calls);
+			const c = wardenSetup(["--all", "--count", "2"], calls, "true");
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("gate failed → devices left running for inspection; leases still released", async () => {
+		test("locally a passed gate leaves the devices booted for the next run, and still releases them", async () => {
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--count", "2"], calls);
-			expect(await createE2eCommand(harness({ exitCodes: { chats: 1 } }).deps).run(c)).toBe(1);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("--no-shutdown keeps devices running after a pass", async () => {
+		test("CI set to 0, false or empty is a local shell", async () => {
+			for (const ci of ["0", "false", ""]) {
+				const calls: string[][] = [];
+				const c = wardenSetup(["--all", "--count", "2"], calls, ci);
+				expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+				expect(shutdowns(calls)).toEqual([]);
+			}
+		});
+
+		test("shutdown: always shuts down locally too", async () => {
+			await resuite({ shutdown: "always" });
 			const calls: string[][] = [];
-			const c = wardenSetup(["--all", "--no-shutdown"], calls);
+			const c = wardenSetup(["--all", "--count", "2"], calls);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
+		});
+
+		test("shutdown: idle keeps the devices booted under CI too", async () => {
+			await resuite({ shutdown: "idle" });
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--count", "2"], calls, "true");
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls)).toEqual([]);
+		});
+
+		test("gate failed → devices left running for inspection in every mode; leases still released", async () => {
+			for (const [shutdown, ci] of [
+				["always", "true"],
+				["always", undefined],
+				["idle", "true"],
+			] as const) {
+				await resuite({ shutdown });
+				const calls: string[][] = [];
+				const c = wardenSetup(["--all", "--count", "2"], calls, ci);
+				expect(await createE2eCommand(harness({ exitCodes: { chats: 1 } }).deps).run(c)).toBe(1);
+				expect(shutdowns(calls)).toEqual([]);
+				expect(c.db.listLeases()).toEqual([]);
+			}
+		});
+
+		test("--no-shutdown keeps devices running after a pass, whatever the suite or CI say", async () => {
+			await resuite({ shutdown: "always" });
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--no-shutdown"], calls, "true");
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
@@ -1554,6 +1596,7 @@ describe("warden e2e", () => {
 		test("a device that was already running and not warden's stays up", async () => {
 			const calls: string[][] = [];
 			const c = setup(["--all"], calls);
+			c.env = { ...c.env, CI: "true" };
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 		});

@@ -221,6 +221,17 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 /** `CI` is set to something other than empty / `0` / `false`. */
 const inCi = (env: Record<string, string | undefined>): boolean => !["", "0", "false", undefined].includes(env.CI);
 
+/**
+ * Whether a passed gate shuts the devices warden booted down before their leases are released:
+ * the suite's `shutdown`, else yes under CI (the runner is thrown away, free the RAM at once) and
+ * no locally (the next run reuses the booted sims instead of paying a 10-30 s boot; `warden gc`
+ * shuts them down once they have sat idle). `--no-shutdown` always wins.
+ */
+function shutsDownOnPass(ctx: CommandContext, suite: Suite, opts: E2eOpts): boolean {
+	if (!opts.shutdown) return false;
+	return (suite.config.shutdown ?? (inCi(ctx.env) ? "always" : "idle")) === "always";
+}
+
 /** `--headless` / `--no-headless` > the suite's (else top-level) `headless` > `WARDEN_HEADLESS`. */
 function suiteHeadless(ctx: CommandContext, suite: Suite, opts: E2eOpts, passed: ReadonlySet<string>): boolean {
 	return resolveHeadless({
@@ -248,9 +259,10 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 
 /**
  * `warden e2e [suite]`: the flows the change needs (see `warden affected`), run on leased devices
- * like `warden batch`, each `passes` times. Once the gate passes, the devices warden created (or
- * booted) are shut down before their leases are released; a failed run leaves them up. Exit 0 when every required flow passed (optional
- * failures are reported, not fatal), 1 otherwise, 130 when interrupted.
+ * like `warden batch`, each `passes` times. Once the gate passes under CI (or `shutdown: "always"`),
+ * the devices warden created (or booted) are shut down before their leases are released; locally
+ * they stay booted for the next run, and a failed run always leaves them up. Exit 0 when every
+ * required flow passed (optional failures are reported, not fatal), 1 otherwise, 130 when interrupted.
  */
 async function e2e(
 	ctx: CommandContext,
@@ -295,7 +307,10 @@ async function e2e(
 		args,
 		jobs.jobs,
 		jobs.argvs.get(jobs.jobs[0] ?? "") ?? [],
-		sessionHooks(suite, flows, shape, spec, runs, { shutdown: opts.shutdown, warm: warmHook(ctx, deps, suite, opts) })
+		sessionHooks(suite, flows, shape, spec, runs, {
+			shutdown: shutsDownOnPass(ctx, suite, opts),
+			warm: warmHook(ctx, deps, suite, opts),
+		})
 	);
 	const result = await verdicts(flows, session, shape, {
 		readFile: deps.readFile,
@@ -369,7 +384,7 @@ function sessionHooks(
 		// batch skips it off iOS
 		warmDrivers: o.warm,
 		flows: trackedFlows(flows, shape),
-		// a passed gate frees the sims; a failed one leaves them up to inspect
+		// a passed gate frees the sims when asked to; a failed one always leaves them up to inspect
 		...(o.shutdown ? { shutdownIf: (summary) => exitGate(flows, summary, shape) } : {}),
 		argvFor: (_job, run) => runs.argv(run),
 		jobEnv: (job) =>
@@ -571,7 +586,7 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--devices <legs>", "which e2e.<suite>.devices legs run: default | all | <profile,…>")
 				.option(
 					"--no-shutdown",
-					"keep the devices running after the gate passes (default: shut down the ones warden created)"
+					"keep the devices running after the gate passes (default: shut down the ones warden created under CI, leave them booted locally; suite shutdown)"
 				)
 				.option("--no-warm", "skip pre-warming the iOS socket helper per device (default: on; suite warmDrivers)")
 				.addHelpText(

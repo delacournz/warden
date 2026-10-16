@@ -149,7 +149,9 @@ export const e2eSuiteSchema = z
 		isolate: z.enum(["device", "flow"]).optional(),
 		/** the old spelling of `isolate`: per-flow = flow, single = device */
 		mode: z.enum(["per-flow", "single"]).optional(),
-		/** a spec process still going after this long is killed and counts as failed */
+		/** `always`: shut down the devices warden booted once the gate passes. `idle`: leave them booted for the next run and let `warden gc` reap them when idle. Default: `idle` locally, `always` under CI. `--no-shutdown` wins */
+		shutdown: z.enum(["always", "idle"]).optional(),
+		/** per flow: a spec process still going after this long for each flow it runs is killed and counts as failed */
 		jobTimeoutMs: z.number().int().min(1_000).default(DEFAULT_JOB_TIMEOUT_MS),
 		/** device legs, each with its own pool, run concurrently (replaces `profile` / `count`) */
 		devices: z.array(e2eDeviceLegSchema).min(1).optional(),

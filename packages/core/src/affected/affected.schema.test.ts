@@ -54,3 +54,12 @@ describe("suiteIsolation", () => {
 		expect(issues({ isolate: "suite" })).not.toEqual([]);
 	});
 });
+
+describe("e2e.<suite>.shutdown", () => {
+	test("always | idle, unset by default (the run decides: idle locally, always in CI)", () => {
+		expect(suite().shutdown).toBeUndefined();
+		expect(suite({ shutdown: "always" }).shutdown).toBe("always");
+		expect(suite({ shutdown: "idle" }).shutdown).toBe("idle");
+		expect(issues({ shutdown: "never" })).not.toEqual([]);
+	});
+});
