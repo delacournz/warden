@@ -3,10 +3,16 @@ import { openAdbSession } from "./adb-session";
 import { createAppCommands } from "./android-app";
 import { fakeAndroidHost } from "./android-host.testing";
 
-function setup(init: Parameters<typeof fakeAndroidHost>[0] = {}) {
+function setup(init: Parameters<typeof fakeAndroidHost>[0] = {}, appPackage?: string) {
 	const host = fakeAndroidHost(init);
 	const session = openAdbSession({ adb: "adb", serial: "s1", spawn: host.spawn });
-	const app = createAppCommands({ session, exec: host.exec, adb: "adb", serial: "s1" });
+	const app = createAppCommands({
+		session,
+		exec: host.exec,
+		adb: "adb",
+		serial: "s1",
+		...(appPackage ? { appPackage } : {}),
+	});
 	return { host, session, app };
 }
 
@@ -64,6 +70,16 @@ describe("app commands", () => {
 		expect(host.shell).toEqual(["am start -a android.intent.action.VIEW -d 'myapp://a?b=1&c=2'"]);
 		host.shellRules.unshift({ match: "am start", reply: "Error: Activity not started, unable to resolve Intent\n" });
 		const bad = await app.openUrl("nope://x");
+		expect(!bad.success && bad.error.code).toBe("E_APP_UNAVAILABLE");
+		await session.close();
+	});
+
+	test("openUrl with an app package targets that app only, and an unhandled url is still E_APP_UNAVAILABLE", async () => {
+		const { host, session, app } = setup({}, "nz.co.x");
+		expect((await app.openUrl("myapp://a?b=1&c=2")).success).toBe(true);
+		expect(host.shell).toEqual(["am start -a android.intent.action.VIEW -d 'myapp://a?b=1&c=2' -p nz.co.x"]);
+		host.shellRules.unshift({ match: "am start", reply: "Error: Activity not started, unable to resolve Intent\n" });
+		const bad = await app.openUrl("https://elsewhere.example/x");
 		expect(!bad.success && bad.error.code).toBe("E_APP_UNAVAILABLE");
 		await session.close();
 	});

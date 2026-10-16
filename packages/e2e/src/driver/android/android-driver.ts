@@ -24,9 +24,9 @@ import { DEFAULT_SETTLE_QUIET_MS, DEFAULT_SETTLE_TIMEOUT_MS, settleByHash, snaps
 import type { RepeatingKeys } from "../typing";
 import { type AdbSession, openAdbSession, type SpawnAdb } from "./adb-session";
 import { detectAlert } from "./android-alert";
+import { type AnimationGuard, disableAnimations } from "./android-animations";
 import { createAppCommands } from "./android-app";
 import {
-	animationScaleArgvs,
 	buttonKeycode,
 	DRAG_STEPS,
 	dragMotionCommand,
@@ -60,6 +60,7 @@ import {
 	waitForBoot,
 } from "./android-device";
 import { createDumper, type DumpRoute } from "./android-dump";
+import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
 import { interactiveFilter, parseUiautomatorXml, UiautomatorParseError } from "./uiautomator";
 
 /** Binary-safe host process runner (screenshots); `Exec` is text-only. */
@@ -96,8 +97,15 @@ export type AndroidDriverOptions = {
 	clock?: Clock;
 	/** the dump route that worked last time (a `warden ui` call is a fresh process; skips probing the others) */
 	dumpRoute?: DumpRoute;
-	/** told when a dump route is first found to work or changes, to persist it */
+	/** told when a dump route is first found to work or changes (`state`, when given, saves it too) */
 	onDumpRoute?: (route: DumpRoute) => void;
+	/**
+	 * What warden remembers about this device between processes (`$WARDEN_HOME/android/<serial>.json`): the dump
+	 * route that worked, and the animation scales to put back when the driver closes. Omit it and nothing is saved.
+	 */
+	state?: AndroidStateStore;
+	/** the app under test: `app.openUrl` is addressed to it (`am start -p`), so no other app or chooser takes the link */
+	appPackage?: string;
 	/** how long to wait for `sys.boot_completed`, default 30 s */
 	bootTimeoutMs?: number;
 };
@@ -111,6 +119,10 @@ const CAPABILITIES: DriverCapabilities = {
 };
 
 const SNAPSHOT_CACHE_MS = 1_000;
+/** `uiautomator dump` waits for this long without accessibility events before it reads the screen. */
+const DUMP_IDLE_MS = 1_000;
+/** ...and stops waiting after this long, dumping a screen that never went idle. */
+const DUMP_IDLE_TIMEOUT_MS = 10_000;
 /** uiautomator fails transiently (`null root node`) while a window is opening; a few quick retries ride it out. */
 const SNAPSHOT_ATTEMPTS = 3;
 const INPUT_TEXT_BASE_MS = 10_000;
@@ -163,8 +175,9 @@ function invalidating(app: AppCommands, drop: () => void): AppCommands {
 
 /**
  * Android `Driver`: one resident `adb shell` (inputs, `am`, `pm`, dumps), host `adb` for install and
- * `exec-out` (binary screenshots never touch the session). `settle` is implemented here with `settleByHash`
- * over snapshots, so the TS layer needs no fallback (`nativeSettle: false`).
+ * `exec-out` (binary screenshots never touch the session). `settle` is implemented here over snapshots (one dump,
+ * or `settleByHash` for a long quiet window), so the TS layer needs no fallback (`nativeSettle: false`). The
+ * animation scales it turns off on open are put back by `close`.
  */
 export async function openAndroidDriver(options: AndroidDriverOptions): DriverResult<Driver> {
 	const { serial, adb, log } = options;
@@ -182,22 +195,37 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 		return { success: false, error };
 	};
 
+	const savedState = options.state?.read(serial);
 	const booted = await waitForBoot(session, serial, clock, {
 		...(options.bootTimeoutMs !== undefined ? { timeoutMs: options.bootTimeoutMs } : {}),
 		...(log ? { log } : {}),
 	});
 	if (!booted.success) return failed(booted.error);
+	const sdk = booted.data.sdk;
 	const probed = options.screen ?? booted.data.screen;
 	const screen = probed ? { success: true as const, data: probed } : await readScreen(session, serial);
 	if (!screen.success) return failed(screen.error);
-	const animations = await session.run(
-		animationScaleArgvs()
-			.map((argv) => shellCommand(argv))
-			.join("; ")
-	);
-	if (!animations.success || animations.data.exitCode !== 0) log?.("could not disable animations");
-	return { success: true, data: buildDriver(options, session, screen.data, clock, execBinary, booted.data.sdk) };
+	const saved = forSdk((await savedState) ?? {}, sdk);
+	const animations = await disableAnimations({
+		session,
+		serial,
+		sdk,
+		pending: saved.animations,
+		...(options.state ? { state: options.state } : {}),
+		...(log ? { log } : {}),
+	});
+	return {
+		success: true,
+		data: buildDriver(options, session, screen.data, clock, execBinary, {
+			sdk,
+			savedRoute: saved.dumpRoute,
+			animations,
+		}),
+	};
 }
+
+/** What `openAndroidDriver` learned about the device that the driver needs: its API level, saved route, animation guard. */
+type DeviceFacts = { sdk: number | undefined; savedRoute: DumpRoute | undefined; animations: AnimationGuard };
 
 function buildDriver(
 	options: AndroidDriverOptions,
@@ -205,17 +233,24 @@ function buildDriver(
 	baseScreen: ScreenInfo,
 	clock: Clock,
 	execBinary: ExecBinary,
-	sdk: number | undefined
+	facts: DeviceFacts
 ): Driver & RepeatingKeys {
 	const { serial, adb, exec, log } = options;
+	const { sdk } = facts;
+	const initialRoute = options.dumpRoute ?? facts.savedRoute;
+	const saving: Promise<void>[] = [];
 	const dumper = createDumper({
 		session,
 		exec,
 		adb,
 		serial,
+		...(sdk !== undefined ? { sdk } : {}),
 		...(log ? { log } : {}),
-		...(options.dumpRoute ? { initialRoute: options.dumpRoute } : {}),
-		...(options.onDumpRoute ? { onRoute: options.onDumpRoute } : {}),
+		...(initialRoute ? { initialRoute } : {}),
+		onRoute: (route) => {
+			options.onDumpRoute?.(route);
+			if (options.state) saving.push(options.state.update(serial, patchFor(sdk, { dumpRoute: route })));
+		},
 	});
 	let last: Snapshot | undefined;
 
@@ -367,7 +402,20 @@ function buildDriver(
 		return { success: true, data: rotationToOrientation(Number.isNaN(n) ? 0 : n) };
 	};
 
+	/**
+	 * `uiautomator dump` waits for a second without accessibility events before it reads, so one dump is already
+	 * "quiet for 1 s": that is the whole settle for any `quietMs` it covers (the default 250 ms among them), instead of
+	 * two or more dumps compared by hash (3.8 s). A longer `quietMs` still compares successive dumps. A failed dump,
+	 * or one that took so long it gave up waiting for idle, is not quiet. `timeoutMs` bounds only that comparison.
+	 */
 	const settle: Driver["settle"] = async (opts) => {
+		const quietMs = opts?.quietMs ?? DEFAULT_SETTLE_QUIET_MS;
+		if (quietMs <= DUMP_IDLE_MS) {
+			const start = clock.now();
+			const taken = await takeSnapshot();
+			const waitedMs = clock.now() - start;
+			return { success: true, data: { quiet: taken.success && waitedMs < DUMP_IDLE_TIMEOUT_MS, waitedMs } };
+		}
 		const poll = async (): Promise<string> => {
 			const taken = await takeSnapshot();
 			if (!taken.success) return "unavailable";
@@ -375,7 +423,7 @@ function buildDriver(
 			return snapshotHash({ flat: taken.data.flat.map((e) => ({ ...e, value: e.value ?? e.text })) });
 		};
 		const outcome = await settleByHash(poll, {
-			quietMs: opts?.quietMs ?? DEFAULT_SETTLE_QUIET_MS,
+			quietMs,
 			timeoutMs: opts?.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS,
 			now: clock.now,
 			sleep: clock.sleep,
@@ -443,9 +491,23 @@ function buildDriver(
 		alert,
 		appearance,
 		clipboard,
-		app: invalidating(createAppCommands({ session, exec, adb, serial, ...(log ? { log } : {}) }), () => {
-			last = undefined;
-		}),
-		close: () => session.close(),
+		app: invalidating(
+			createAppCommands({
+				session,
+				exec,
+				adb,
+				serial,
+				...(log ? { log } : {}),
+				...(options.appPackage ? { appPackage: options.appPackage } : {}),
+			}),
+			() => {
+				last = undefined;
+			}
+		),
+		close: async () => {
+			await facts.animations.restore();
+			await Promise.all(saving.splice(0));
+			await session.close();
+		},
 	};
 }

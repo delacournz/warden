@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { E2eEnv } from "../env";
 import { setDefaultDriverFactory } from "../session";
 import { fakeAndroidHost } from "./android/android-host.testing";
+import { memoryAndroidState } from "./android/android-state";
 import { fakeExec } from "./ios/exec.testing";
 import { fakeSimd } from "./ios/simd.testing";
 import { defaultDriverFactory, openDriver } from "./open";
@@ -69,13 +73,66 @@ describe("openDriver", () => {
 		});
 		const result = await openDriver(env("android"), {
 			exec: host.exec,
-			android: { adb: "/sdk/platform-tools/adb", spawn: host.spawn, execBinary: host.execBinary },
+			android: {
+				adb: "/sdk/platform-tools/adb",
+				spawn: host.spawn,
+				execBinary: host.execBinary,
+				state: memoryAndroidState(),
+			},
 		});
 		expect(result.success).toBe(true);
 		if (!result.success) return;
 		expect(result.data.platform).toBe("android");
 		expect(host.spawns()).toBe(1);
 		await result.data.close();
+	});
+
+	test("android deep links target the app under test (env.bundleId)", async () => {
+		const host = fakeAndroidHost({
+			shell: [
+				{ match: "getprop sys.boot_completed", reply: "1\n" },
+				{ match: "wm size", reply: "Physical size: 1080x2400\n" },
+				{ match: "wm density", reply: "Physical density: 420\n" },
+			],
+		});
+		const result = await openDriver(env("android"), {
+			exec: host.exec,
+			android: { adb: "adb", spawn: host.spawn, execBinary: host.execBinary, state: memoryAndroidState() },
+		});
+		if (!result.success) throw new Error(result.error.message);
+		await result.data.app.openUrl("myapp://x");
+		expect(host.shell).toContain("am start -a android.intent.action.VIEW -d myapp://x -p nz.co.x");
+		await result.data.close();
+	});
+
+	test("android keeps its per-serial state under <wardenHome>/android", async () => {
+		const home = mkdtempSync(join(tmpdir(), "wdn-open-home-"));
+		const host = fakeAndroidHost({
+			shell: [
+				{ match: "getprop sys.boot_completed", reply: "1\n34\n" },
+				{ match: "wm size", reply: "Physical size: 1080x2400\n" },
+				{ match: "wm density", reply: "Physical density: 420\n" },
+				{ match: "uiautomator dump /dev/stdout", reply: "UI hierchary dumped to: /dev/stdout\n" },
+			],
+			host: [
+				{
+					match: /exec-out uiautomator dump \/dev\/tty$/,
+					reply: '<?xml version="1.0"?><hierarchy rotation="0"><node class="x" bounds="[0,0][1,1]" /></hierarchy>',
+				},
+			],
+		});
+		const result = await openDriver(env("android"), {
+			exec: host.exec,
+			wardenHome: home,
+			android: { adb: "adb", spawn: host.spawn, execBinary: host.execBinary },
+		});
+		if (!result.success) throw new Error(result.error.message);
+		await result.data.snapshot();
+		await result.data.close();
+		expect(JSON.parse(readFileSync(join(home, "android", "UDID-1.json"), "utf8"))).toEqual({
+			sdk: 34,
+			dumpRoute: "tty",
+		});
 	});
 
 	test("a missing helper is E_HELPER_MISSING", async () => {
