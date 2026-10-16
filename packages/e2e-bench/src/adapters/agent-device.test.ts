@@ -6,6 +6,7 @@ import { fakeExec } from "../harness/exec";
 import type { RunContext } from "./adapter.types";
 import {
 	agentDeviceAdapter,
+	agentDeviceEnv,
 	agentDevicePids,
 	agentDevicePrepareArgv,
 	agentDeviceTestArgv,
@@ -13,6 +14,7 @@ import {
 	defaultAgentDeviceDeps,
 	findAttemptDir,
 	nativeNameOfCase,
+	stateDirOf,
 } from "./agent-device";
 
 const packageRoot = join(import.meta.dir, "../..");
@@ -37,7 +39,9 @@ function ctxOf(exec: RunContext["exec"], overrides: Partial<RunContext> = {}): R
 	};
 }
 
-const adapter = createAgentDeviceAdapter(defaultAgentDeviceDeps);
+const HOME = mkdtempSync(join(tmpdir(), "ad-home-"));
+const STATE = join(HOME, ".agent-device-bench/agent-device");
+const adapter = createAgentDeviceAdapter({ ...defaultAgentDeviceDeps, home: () => HOME });
 
 /** Lays out what `agent-device test` leaves in `--artifacts-dir` for one script. */
 function writeAttempt(outDir: string, name: string, attempt: number, timing: string, script: string): void {
@@ -113,6 +117,7 @@ describe("doctor / prepare / teardown", () => {
 		expect(r.success).toBe(true);
 		expect(exec.calls.map((c) => c.args.slice(0, 2).join(" "))).toEqual(["prepare ios-runner", "daemon stop"]);
 		expect(exec.calls[1]?.args).not.toContain("--clean");
+		expect(exec.calls[1]?.args).toEqual(["daemon", "stop", "--state-dir", STATE]);
 	});
 	test("prepare does nothing on Android", async () => {
 		const exec = fakeExec([]);
@@ -125,19 +130,44 @@ describe("doctor / prepare / teardown", () => {
 		expect(r.success).toBe(false);
 	});
 	test("teardown stops the daemon with --clean and kills stray daemons", async () => {
-		const ps = "  101 /bun/agent-device daemon --foo\n  102 /usr/bin/vim\n  103 /x/AgentDeviceRunner\n";
+		const ps = [
+			`  101 /bun/agent-device daemon --state-dir ${STATE}`,
+			"  102 /usr/bin/vim",
+			"  103 xcodebuild AgentDeviceRunner -destination id=U1",
+			"  104 /bun/agent-device daemon --state-dir /Users/other/.agent-device",
+			"  105 xcodebuild AgentDeviceRunner -destination id=OTHER-UDID",
+		].join("\n");
 		const exec = fakeExec([
 			{ cmd: "agent-device", result: {} },
 			{ cmd: "ps", result: { stdout: ps } },
 			{ cmd: "kill", result: {} },
 		]);
 		expect((await adapter.teardown(ctxOf(exec))).success).toBe(true);
-		expect(exec.calls[0]?.args).toEqual(["daemon", "stop", "--clean"]);
+		expect(exec.calls[0]?.args).toEqual(["daemon", "stop", "--state-dir", STATE, "--clean"]);
+		expect(exec.calls[0]?.options?.env?.AGENT_DEVICE_STATE_DIR).toBe(STATE);
 		const killed = exec.calls.filter((c) => c.cmd === "kill").map((c) => c.args[0]);
 		expect(killed).toEqual(["101", "103"]);
 	});
 	test("agentDevicePids ignores itself and unrelated processes", () => {
-		expect(agentDevicePids("  5 agent-device daemon\n  6 node server\n", 5)).toEqual([]);
+		expect(agentDevicePids("  5 agent-device daemon U1\n  6 node server U1\n", 5, ["U1"])).toEqual([]);
+	});
+});
+
+describe("private state dir", () => {
+	test("defaults under ~/.agent-device-bench and honours the override", () => {
+		expect(stateDirOf({}, "/h")).toBe("/h/.agent-device-bench/agent-device");
+		expect(stateDirOf({ BENCH_AGENT_DEVICE_STATE_DIR: "/x" }, "/h")).toBe("/x");
+		expect(agentDeviceEnv({ A: "1" }, "/x")).toEqual({ A: "1", AGENT_DEVICE_STATE_DIR: "/x" });
+	});
+	test("doctor, prepare and run all spawn with it", async () => {
+		const exec = fakeExec([{ cmd: "agent-device", result: { stdout: "0.21.20" } }]);
+		const ctx = ctxOf(exec);
+		await adapter.doctor(ctx);
+		await adapter.prepare(ctx);
+		await adapter.run(ctx);
+		const envs = exec.calls.filter((c) => c.cmd === "agent-device").map((c) => c.options?.env?.AGENT_DEVICE_STATE_DIR);
+		expect(envs.length).toBeGreaterThanOrEqual(4);
+		expect(envs.every((e) => e === STATE)).toBe(true);
 	});
 });
 
@@ -232,6 +262,7 @@ describe("adapter shape", () => {
 		expect(agentDeviceAdapter.residuePatterns.driverBundleIds).toEqual([
 			"com.callstack.agentdevice.runner.uitests.xctrunner",
 		]);
-		expect(agentDeviceAdapter.residuePatterns.dirs).toEqual(["~/.agent-device"]);
+		expect(agentDeviceAdapter.residuePatterns.dirs).toEqual(["~/.agent-device-bench/agent-device"]);
+		expect(agentDeviceAdapter.residuePatterns.stateDirs).toEqual(["~/.agent-device-bench/agent-device"]);
 	});
 });

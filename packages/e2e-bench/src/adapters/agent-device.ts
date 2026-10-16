@@ -1,4 +1,5 @@
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { runOk } from "../harness/exec";
@@ -27,6 +28,7 @@ export type AgentDeviceDeps = {
 	/** names of the entries in `dir` (empty when it does not exist) */
 	listDir: (dir: string) => string[];
 	mkdir: (dir: string) => void;
+	home: () => string;
 };
 
 const readTextIfPresent = (path: string): string | undefined => {
@@ -49,7 +51,23 @@ export const defaultAgentDeviceDeps: AgentDeviceDeps = {
 	mkdir: (dir) => {
 		mkdirSync(dir, { recursive: true });
 	},
+	home: homedir,
 };
+
+/**
+ * The private state dir every agent-device call of the bench uses (`AGENT_DEVICE_STATE_DIR`), so the bench never
+ * shares a daemon, lease or runner with another session's global `~/.agent-device`. The cost: rep 1 builds the
+ * Apple runner into this dir (a cold start the global dir would have cached), same as tester-army.
+ * Override with `BENCH_AGENT_DEVICE_STATE_DIR`.
+ */
+export function stateDirOf(env: RunContext["env"], home: string): string {
+	return env.BENCH_AGENT_DEVICE_STATE_DIR ?? join(home, ".agent-device-bench/agent-device");
+}
+
+/** The caller's env plus the private state dir; used for every agent-device spawn. */
+export function agentDeviceEnv(env: RunContext["env"], stateDir: string): Record<string, string | undefined> {
+	return { ...env, AGENT_DEVICE_STATE_DIR: stateDir };
+}
 
 const suiteDir = (ctx: Pick<RunContext, "packageRoot">): string => join(ctx.packageRoot, "suites/agent-device");
 const bad = (error: AdapterError): { success: false; error: AdapterError } => ({ success: false, error });
@@ -98,8 +116,10 @@ export const agentDevicePrepareArgv = (udid: string): string[] => [
 	udid,
 ];
 
-async function doctor(ctx: RunContext): Promise<Doctor> {
-	const version = await ctx.exec.run("agent-device", ["--version"]);
+async function doctor(ctx: RunContext, deps: AgentDeviceDeps): Promise<Doctor> {
+	const version = await ctx.exec.run("agent-device", ["--version"], {
+		env: agentDeviceEnv(ctx.env, stateDirOf(ctx.env, deps.home())),
+	});
 	if (version.code !== 0)
 		return {
 			ok: false,
@@ -114,38 +134,53 @@ async function doctor(ctx: RunContext): Promise<Doctor> {
  * measured as `prepareMs`. It then stops the daemon WITHOUT `--clean`: agent-device documents that the prepare
  * daemon otherwise keeps the prepared runner lease while `test` starts its own daemon. The runner stays installed.
  */
-async function prepare(ctx: RunContext): Promise<Result<void>> {
+async function prepare(ctx: RunContext, deps: AgentDeviceDeps): Promise<Result<void>> {
 	if (ctx.platform !== "ios") return ok(undefined);
+	const stateDir = stateDirOf(ctx.env, deps.home());
+	const env = agentDeviceEnv(ctx.env, stateDir);
+	deps.mkdir(stateDir);
 	const prepared = await runOk(ctx.exec, "agent-device", agentDevicePrepareArgv(ctx.udid), {
-		env: ctx.env,
+		env,
 		timeoutMs: AGENT_DEVICE_PREPARE_TIMEOUT_MS,
 		onLine: (_s, line) => ctx.log(line),
 	});
 	if (!prepared.success) return err(prepared.error);
-	await ctx.exec.run("agent-device", ["daemon", "stop"], { env: ctx.env });
+	await ctx.exec.run("agent-device", ["daemon", "stop", "--state-dir", stateDir], { env });
 	return ok(undefined);
 }
 
 /** Daemon and runner processes agent-device leaves behind; matched on the `ps` command column. */
 export const AGENT_DEVICE_PROCESS_RE = /agent-device.*daemon|AgentDeviceRunner/i;
 
-/** Parses `ps -axo pid=,command=` lines and returns the pids of agent-device daemons / runners. */
-export function agentDevicePids(psOutput: string, selfPid: number): number[] {
+/**
+ * Parses `ps -axo pid=,command=` lines and returns the pids of agent-device daemons / runners that belong to
+ * THIS bench: the command line must also contain the private state dir or the leased device's udid, so another
+ * session's daemon (or its xcodebuild runner on another sim) is never touched.
+ */
+export function agentDevicePids(psOutput: string, selfPid: number, owners: readonly string[]): number[] {
 	const pids: number[] = [];
 	for (const line of psOutput.split("\n")) {
 		const m = /^\s*(\d+)\s+(.*)$/.exec(line);
 		if (m?.[1] === undefined || m[2] === undefined) continue;
 		const pid = Number(m[1]);
-		if (pid !== selfPid && AGENT_DEVICE_PROCESS_RE.test(m[2]) && !m[2].includes("bun test")) pids.push(pid);
+		const command = m[2];
+		const ours = owners.some((o) => command.includes(o));
+		if (pid !== selfPid && ours && AGENT_DEVICE_PROCESS_RE.test(command) && !command.includes("bun test"))
+			pids.push(pid);
 	}
 	return pids;
 }
 
-/** `daemon stop --clean` removes the retained runner processes and leases; then any stray daemon is killed. */
-async function teardown(ctx: RunContext): Promise<Result<void>> {
-	await ctx.exec.run("agent-device", ["daemon", "stop", "--clean"], { env: ctx.env, timeoutMs: 60_000 });
+/** `daemon stop --state-dir <private> --clean` removes only our daemon's runners and leases; then our strays are killed. */
+async function teardown(ctx: RunContext, deps: AgentDeviceDeps): Promise<Result<void>> {
+	const stateDir = stateDirOf(ctx.env, deps.home());
+	await ctx.exec.run("agent-device", ["daemon", "stop", "--state-dir", stateDir, "--clean"], {
+		env: agentDeviceEnv(ctx.env, stateDir),
+		timeoutMs: 60_000,
+	});
 	const ps = await ctx.exec.run("ps", ["-axo", "pid=,command="]);
-	for (const pid of agentDevicePids(ps.stdout, process.pid)) await ctx.exec.run("kill", [String(pid)]);
+	for (const pid of agentDevicePids(ps.stdout, process.pid, [stateDir, ctx.udid]))
+		await ctx.exec.run("kill", [String(pid)]);
 	return ok(undefined);
 }
 
@@ -233,6 +268,8 @@ function noJunit(
 async function run(ctx: RunContext, deps: AgentDeviceDeps): Promise<Result<RepResult, AdapterError>> {
 	const junitPath = join(ctx.outDir, "junit.xml");
 	deps.mkdir(ctx.outDir);
+	const stateDir = stateDirOf(ctx.env, deps.home());
+	deps.mkdir(stateDir);
 	const argv = agentDeviceTestArgv({
 		platform: ctx.platform,
 		udid: ctx.udid,
@@ -245,7 +282,7 @@ async function run(ctx: RunContext, deps: AgentDeviceDeps): Promise<Result<RepRe
 	const t0 = performance.now();
 	const ran = await ctx.exec.run("agent-device", argv, {
 		cwd: ctx.packageRoot,
-		env: ctx.env,
+		env: agentDeviceEnv(ctx.env, stateDir),
 		timeoutMs: AGENT_DEVICE_TIMEOUT_MS,
 		onLine: (_s, line) => ctx.log(line),
 	});
@@ -265,14 +302,15 @@ export function createAgentDeviceAdapter(deps: AgentDeviceDeps): BenchAdapter {
 	return {
 		id: "agent-device",
 		supports: ["ios", "android"],
-		doctor,
-		prepare,
+		doctor: (ctx) => doctor(ctx, deps),
+		prepare: (ctx) => prepare(ctx, deps),
 		run: (ctx) => run(ctx, deps),
-		teardown,
+		teardown: (ctx) => teardown(ctx, deps),
 		residuePatterns: {
 			processes: [/agent-device.*daemon/, /agent-device/],
 			driverBundleIds: ["com.callstack.agentdevice.runner.uitests.xctrunner"],
-			dirs: ["~/.agent-device"],
+			dirs: ["~/.agent-device-bench/agent-device"],
+			stateDirs: ["~/.agent-device-bench/agent-device"],
 		},
 	};
 }

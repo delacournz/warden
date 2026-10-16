@@ -50,6 +50,8 @@ export type ResiduePatterns = {
 	driverBundleIds: string[];
 	/** directories the framework writes outside the run's out dir (absolute, `~` allowed) */
 	dirs: string[];
+	/** private state dirs the framework owns (removed on reset; never a shared global dir) */
+	stateDirs?: string[];
 };
 
 export type BenchAdapter = {
