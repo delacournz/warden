@@ -553,6 +553,37 @@ Server also needs `Looper.prepareMainLooper()` + `Looper.loop()` on the main thr
 10. CI: add a job (GitHub `macos`/`ubuntu` + SDK) running `bun run --cwd packages/e2e android:build` freshness check, and an emulator matrix job (API 30, 33, 34, 35, 36, 37) running `bun native/android/scripts/smoke.ts --serial <emulator>` with the example app installed. Failing levels are added to the `dump`-only allowlist.
 11. Acceptance, on a leased emulator, idle host, caffeinated: per-snapshot p50 <= 150 ms (measure with `smoke.ts`, expect ~30 ms), Android suite <= 110 s with 8/8 passing over 3 reps (PERF-6.2: `bun run bench run --platform android --runs 3`, plus one `warden e2e example --platform android`), no dump calls in `trace.jsonl` unless the fallback fired, and `adb shell ps | grep uiad` empty after the run.
 
+### PERF-3.3 / PERF-3.4 status (implemented on `worktree-droid-arch`)
+
+Server is now **v0.2.0, protocol 1** (additive ops). New in the Java side beyond the table above: `swipe` takes `pressMs` / `releaseMs` (a drag is one request), `typeText{text}` (insert at the caret, replacing the selection, `ACTION_SET_TEXT` + `ACTION_SET_SELECTION`; unicode; `E_NO_ELEMENT` with no focus, `E_UNSUPPORTED` in a password field that already has text), `selectAll{}` (select the focused field's whole text), `setText` returns `""` for a field showing its hint.
+
+What each checklist item became:
+
+| # | Done as |
+|---|---|
+| 1 | `uiad-protocol.ts` (+test): zod for events / health / settle / text, hand-written `readNode` / `readSnapshotData` for the hot path. Golden fixtures are recorded by `native/android/scripts/record.ts` into `src/driver/android/fixtures/uiad-session.ndjson` (+ `-busy.ndjson`), not `native/android/fixtures` |
+| 2 | In-process `uiad.testing.ts` (`fakeUiad`: a `SimdSpawn` that replays the recorded session; knobs for fatal, no ready, exit, silence, die, delay) instead of a `native/scripts/fake-uiad.ts` process |
+| 3 | `uiad-client.ts` (`startUiad`: ready handshake, request ids and timeouts, a timed-out request kills the server, `onDeath`, `isBusy`, `neverSent`), `uiad-device.ts` (dex path by hash, write through `adb shell cat`, `ps` holder lookup, busy rule), `uiad-backend.ts` (lazy single-flight start, restarts, give-up rules), `uiad-ops.ts` (what the driver asks and which failures fall back). Restart-once-and-retry applies only to a request that never left; reads fall back to the dump, writes are surfaced (see AGENTS.md) |
+| 4 | `uiad-dex.generated.ts` via `bun run --cwd packages/e2e android:emit` (`build.ts --emit-ts`); `uiad-dex.test.ts` pins source hash, protocol, version, size and dex hash with no toolchain |
+| 5 | `parseUiadNodes` in `uiautomator.ts` shares `toElement` with the XML path; `uiad-nodes.test.ts` asserts equal `Element[]` for the same nodes as XML and as wire nodes |
+| 6 | `android-driver.ts`: `uiad?.op() ?? <old way>` per call; `capabilities.nativeSettle` / `unicodeText` true while the server is in use; `selectAll` offered on every level the server runs on; `alertIn` and `elementAtPoint` unchanged (fresh server snapshot) |
+| 7 | Lazy on first snapshot / settle / input; the only thing persisted is `uiadUnsupported: <build id>` in `$WARDEN_HOME/android/<serial>.json` (a start that can never work here); closed before the shell on `close()`; a dead pipe ends the server on its own (stdin EOF) |
+| 8 | Trace detail on the existing spans instead of new span names: `backend: "uiad" \| "dump"`, `uiadMs` (server time), `uiadStartMs`, `via: "stream"` |
+| 9 | `packages/e2e/AGENTS.md`, `apps/docs` (`agent-ui`, `e2e-driver`, `environment`), `skills/warden/references/{ui,troubleshooting}.md` (row 23: another UiAutomation client), bench sampler (`warden[-_.]?uiad` already matched `app_process / nz.co.delacour.warden.uiad.Main`; the real command line is now in the sampler test) |
+| 10 | Not done: no CI in this repo to extend; only API 37 has run on a device |
+| 11 | See below |
+
+Switches: `WARDEN_ANDROID_UIAD=0` forces the dump; `openDriver` enables the server only when no shell `spawn` is injected (a test never reaches a real adb); `warden ui` enables it too; API < 26 never.
+
+**A race the speed exposed.** With the server on, a press that followed `typeText` by about 20 ms was dropped 3 times in 20 on the example's sign-in form (a controlled React Native input is still sending the change to JS and back; `input text` took 300 ms to start and hid it; the 1.9 s dump hid everything). A quiet of 50 ms after the text (measured: 20/20 and 20/20 at 50 and 120 ms) fixed it, so `typeText` and `key` wait for 80 ms without accessibility events before returning. `todo-detail` ×10 went 7/10 before and 10/10 after, the dump driver 10/10.
+
+**PERF-3.4 (ANR).** Real dialog captured from a throwaway app that blocks its main thread: title `android:id/alertTitle` ("<app> isn't responding"), buttons `android:id/aerr_close` ("Close app") and `android:id/aerr_wait` ("Wait"); `ALERT_BUTTON_IDS` in `android-alert.ts` now has both and `anr.fixture.ts` pins the dump. A crash dialog (`aerr_restart`, `aerr_app_info`) could not be produced on this image.
+
+**Acceptance** (API 37 emulator, example app Release build, load average 13-134 from other agents, not an idle host; `bun test` per flow file with `WARDEN_UDID`, the by-hand route, because the `example` suite is `slim` and `warden e2e` refuses it on Android):
+- 8 of 8 tests (6 flow files; `devtools` is skipped on Release) passed in 6 of 6 repetitions with the server; one repetition (5 spec processes, 7 tests) takes 28-32 s wall. The dump driver (`WARDEN_ANDROID_UIAD=0`) on the same emulator, files run one after another: onboarding 12.1 s, settings 32.9 s and sign-in 86.0 s, 131 s for three files that take 15.7 s with the server (1.6, 5.0 and 9.1 s); the run was stopped there, so no full dump repetition was timed.
+- Snapshot through the driver (758 spans in the runs): p50 25 ms, p90 105 ms, p95 about 270 ms; the first one of a process (server start included) p50 140 ms. The slow tail is the app busy right after navigation (`todos-screen` polling after sign-in: 30 of 88 snapshots over 150 ms), where the server's own traverse is slow; on a quiet screen the driver measured p50 6 ms. A dump is 1.9-2.5 s on the same runs. Tap p50 32 ms, `typeText` p50 202 ms (80 ms of it the quiet wait), settle p50 253 ms for `quietMs` 250.
+- No `uiautomator dump` ran in any trace (`backend` is `uiad` on every snapshot span), and `ps` on the emulator shows no `warden.uiad` / `uiautomator` process after a run.
+
 ## Implementation team (≥ 5 per wave, `isolation: "worktree"` from `feature/warden-perf`; the lead integrates)
 
 | Agent | Role | Issues |

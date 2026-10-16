@@ -11,6 +11,8 @@ import type { DumpRoute } from "./android-dump";
  * - the API level it was learned on (a serial is reused by whatever image the emulator runs next, so the other
  *   fields are trusted only on the same level);
  * - the `uiautomator dump` route that worked (probing the wrong ones costs a whole dump each, ~2 s);
+ * - the build of `warden-uiad` that could not run here (an API level it does not support), so later processes go
+ *   straight to the dump instead of paying a failed start each time;
  * - the animation scales warden found before it turned them off, so a process that died without closing its
  *   driver does not leave the emulator animation-less for whatever runs next.
  *
@@ -21,6 +23,8 @@ import type { DumpRoute } from "./android-dump";
 export type AndroidDeviceState = {
 	sdk?: number | undefined;
 	dumpRoute?: DumpRoute | undefined;
+	/** `uiadBuildId()` of a `warden-uiad` build that failed to start here for a reason that will not change */
+	uiadUnsupported?: string | undefined;
 	/** the scales to put back (what they were before warden set them to 0), while warden's zeros are in place */
 	animations?: AnimationValues | undefined;
 };
@@ -30,6 +34,10 @@ const scaleValue = z.string().regex(/^(null|\d+(\.\d+)?)$/);
 const stateSchema = z.strictObject({
 	sdk: z.number().int().optional(),
 	dumpRoute: z.enum(["stdout", "tty", "file"]).optional(),
+	uiadUnsupported: z
+		.string()
+		.regex(/^[0-9a-f]{1,16}$/)
+		.optional(),
 	animations: z
 		.strictObject({
 			window_animation_scale: scaleValue,
@@ -156,6 +164,7 @@ function stripUndefined(state: AndroidDeviceState): AndroidDeviceState {
 	return {
 		...(state.sdk !== undefined ? { sdk: state.sdk } : {}),
 		...(state.dumpRoute !== undefined ? { dumpRoute: state.dumpRoute } : {}),
+		...(state.uiadUnsupported !== undefined ? { uiadUnsupported: state.uiadUnsupported } : {}),
 		...(state.animations !== undefined ? { animations: state.animations } : {}),
 	};
 }

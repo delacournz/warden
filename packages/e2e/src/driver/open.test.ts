@@ -8,7 +8,7 @@ import { fakeAndroidHost } from "./android/android-host.testing";
 import { memoryAndroidState } from "./android/android-state";
 import { fakeExec } from "./ios/exec.testing";
 import { fakeSimd } from "./ios/simd.testing";
-import { defaultDriverFactory, openDriver } from "./open";
+import { androidOptions, defaultDriverFactory, openDriver } from "./open";
 
 const env = (platform: "ios" | "android", extra: Partial<E2eEnv> = {}): E2eEnv => ({
 	udid: "UDID-1",
@@ -152,4 +152,49 @@ test("defaultDriverFactory has the session's DriverFactory shape", async () => {
 	const result = await defaultDriverFactory({ ...env("ios"), simd: "/nowhere/warden-simd" });
 	expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
 	setDefaultDriverFactory(undefined);
+});
+
+describe("androidOptions and the resident server", () => {
+	const withEnv = async (value: string | undefined, run: () => void | Promise<void>): Promise<void> => {
+		const previous = process.env.WARDEN_ANDROID_UIAD;
+		if (value === undefined) delete process.env.WARDEN_ANDROID_UIAD;
+		else process.env.WARDEN_ANDROID_UIAD = value;
+		try {
+			await run();
+		} finally {
+			if (previous === undefined) delete process.env.WARDEN_ANDROID_UIAD;
+			else process.env.WARDEN_ANDROID_UIAD = previous;
+		}
+	};
+
+	test("is on for a real device", async () => {
+		await withEnv(undefined, () => {
+			expect(androidOptions(env("android"), { android: { state: memoryAndroidState() } }, false).uiad).toBe(true);
+		});
+	});
+
+	test("WARDEN_ANDROID_UIAD=0 keeps the dump and input", async () => {
+		await withEnv("0", () => {
+			expect(androidOptions(env("android"), { android: { state: memoryAndroidState() } }, false).uiad).toBeUndefined();
+		});
+	});
+
+	test("an injected shell is a test: the server, which spawns its own adb, stays off", async () => {
+		await withEnv(undefined, () => {
+			const host = fakeAndroidHost();
+			const options = androidOptions(
+				env("android"),
+				{ android: { spawn: host.spawn, state: memoryAndroidState() } },
+				false
+			);
+			expect(options.uiad).toBeUndefined();
+		});
+	});
+
+	test("a caller's own choice wins", async () => {
+		await withEnv(undefined, () => {
+			const options = androidOptions(env("android"), { android: { uiad: false, state: memoryAndroidState() } }, false);
+			expect(options.uiad).toBe(false);
+		});
+	});
 });

@@ -5,6 +5,7 @@ import {
 	createAndroidStateStore,
 	memoryAndroidState,
 	parseAnimationValues,
+	patchFor,
 	planAnimations,
 	type StateFs,
 } from "./android-state";
@@ -82,6 +83,15 @@ describe("android state store", () => {
 		expect(await store.read("s")).toEqual({ sdk: 33, dumpRoute: "stdout", animations: ONES });
 	});
 
+	test("the uiad build that cannot run here is remembered with the API level it was learned on", async () => {
+		const { fs } = memoryFs();
+		const store = createAndroidStateStore({ dir: "/h", fs });
+		await store.update("s", patchFor(34, { uiadUnsupported: "779450f8" }));
+		expect(await store.read("s")).toEqual({ sdk: 34, uiadUnsupported: "779450f8" });
+		await store.update("s", patchFor(35, { dumpRoute: "tty" }));
+		expect(await store.read("s")).toEqual({ sdk: 35, dumpRoute: "tty" });
+	});
+
 	test("a serial that is not a safe file name cannot escape the directory", () => {
 		expect(androidStateFile("/h", "emulator-5554")).toBe("/h/emulator-5554.json");
 		expect(androidStateFile("/h", "192.168.1.5:5555")).toBe("/h/192.168.1.5:5555.json");
@@ -93,6 +103,7 @@ describe("android state store", () => {
 			"{not json",
 			"[]",
 			JSON.stringify({ dumpRoute: "carrier-pigeon" }),
+			JSON.stringify({ uiadUnsupported: "not a hash; rm -rf" }),
 			JSON.stringify({ sdk: "34" }),
 			JSON.stringify({ animations: { ...ONES, window_animation_scale: "1; reboot" } }),
 			JSON.stringify({ animations: { window_animation_scale: "1.0" } }),

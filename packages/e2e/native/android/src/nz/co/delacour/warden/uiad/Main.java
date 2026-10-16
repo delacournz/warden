@@ -22,7 +22,7 @@ import org.json.JSONObject;
  */
 public final class Main {
 	static final int PROTOCOL = 1;
-	static final String VERSION = "0.1.0";
+	static final String VERSION = "0.2.0";
 	private static final Charset ASCII = Charset.forName("US-ASCII");
 
 	private static FileOutputStream stdout;
@@ -143,13 +143,19 @@ public final class Main {
 					data = uia.tap((float) req.getDouble("x"), (float) req.getDouble("y"), req.optInt("count", 1), req.optLong("holdMs", 0), req.optLong("gapMs", 60), req.optBoolean("sync", true));
 					break;
 				case "swipe":
-					data = uia.swipe((float) req.getDouble("x1"), (float) req.getDouble("y1"), (float) req.getDouble("x2"), (float) req.getDouble("y2"), req.optLong("durationMs", 300), req.optInt("steps", 8));
+					data = uia.swipe((float) req.getDouble("x1"), (float) req.getDouble("y1"), (float) req.getDouble("x2"), (float) req.getDouble("y2"), req.optLong("durationMs", 300), req.optInt("steps", 8), req.optLong("pressMs", 0), req.optLong("releaseMs", 0));
 					break;
 				case "key":
 					data = uia.key(req.getInt("keyCode"), req.optInt("metaState", 0), req.optInt("times", 1), req.optLong("gapMs", 30), req.optBoolean("sync", true));
 					break;
 				case "setText":
 					data = uia.setText(req.getString("text"), req.optString("resourceId", null));
+					break;
+				case "typeText":
+					data = uia.typeText(req.getString("text"));
+					break;
+				case "selectAll":
+					data = uia.selectAll();
 					break;
 				case "screenshot":
 					data = uia.screenshot();

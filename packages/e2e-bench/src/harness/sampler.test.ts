@@ -77,6 +77,7 @@ describe("android sampling targets", () => {
 			"SnapshotInstrumentation",
 			"warden-uiad",
 			"app_process /system/bin --nice-name=warden_uiad com.warden.uiad.Main",
+			"app_process / nz.co.delacour.warden.uiad.Main",
 			"com.argent.androiddevtools",
 		];
 		for (const name of helpers) expect(isAndroidTarget(name), name).toBe(true);
