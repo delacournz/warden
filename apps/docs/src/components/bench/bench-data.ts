@@ -1,4 +1,5 @@
 import type { BenchSummary, SummaryFramework } from "@delacour/warden-e2e-bench/src/report/summary";
+import { orderSummaries } from "./bench-order";
 
 export type { BenchSummary, SummaryFramework };
 export type OkFramework = Extract<SummaryFramework, { status: "ok" }>;
@@ -18,14 +19,21 @@ const isSummary = (value: unknown): value is BenchSummary =>
 	"frameworks" in value &&
 	Array.isArray(value.frameworks);
 
-const PLATFORM_ORDER: Record<string, number> = { ios: 0, android: 1 };
+const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1).replace(/\.json$/, "");
 
-/** Every committed summary in `content/docs/bench/data/`, platforms in order, newest date first. */
-export const SUMMARIES: readonly BenchSummary[] = Object.values(modules)
-	.filter(isSummary)
-	.sort(
-		(a, b) => (PLATFORM_ORDER[a.platform] ?? 9) - (PLATFORM_ORDER[b.platform] ?? 9) || b.date.localeCompare(a.date)
-	);
+const ENTRIES = orderSummaries(
+	Object.entries(modules).flatMap(([path, value]) =>
+		isSummary(value) ? [{ slug: basename(path), summary: value }] : []
+	)
+);
+
+/** Every committed summary in `content/docs/bench/data/`, platforms in order, newest run first. */
+export const SUMMARIES: readonly BenchSummary[] = ENTRIES.map((e) => e.summary);
+
+const SLUGS = new Map(ENTRIES.map((e) => [e.summary.runId, e.slug]));
+
+/** The data file's basename, which is also the full report's: `docs/bench/<slug>.md`. */
+export const reportSlug = (s: BenchSummary): string => SLUGS.get(s.runId) ?? `${s.platform}-${s.date}`;
 
 export const isOk = (f: SummaryFramework): f is OkFramework => f.status === "ok";
 

@@ -3,7 +3,8 @@ import { createContext, type ReactElement, type ReactNode, use, useState } from 
 import { cn } from "@/lib/cn";
 import { gitConfig, githubUrl } from "@/lib/shared";
 import { Legend, ResourceCharts, StepChart, SuiteChart } from "./bench-chart";
-import { type BenchSummary, cleanFrameworks, isOk, label, PLATFORM_LABEL, SUMMARIES } from "./bench-data";
+import { type BenchSummary, cleanFrameworks, isOk, label, PLATFORM_LABEL, reportSlug, SUMMARIES } from "./bench-data";
+import { runLabel } from "./bench-order";
 import { FootprintTable, ResourceTable, StartupTable, TestMatrix, VersionTable } from "./bench-tables";
 
 const BenchContext = createContext<BenchSummary | undefined>(undefined);
@@ -14,8 +15,7 @@ function useSummary(): BenchSummary {
 	return summary;
 }
 
-const reportUrl = (s: BenchSummary): string =>
-	`${githubUrl}/blob/${gitConfig.branch}/docs/bench/${s.platform}-${s.date}.md`;
+const reportUrl = (s: BenchSummary): string => `${githubUrl}/blob/${gitConfig.branch}/docs/bench/${reportSlug(s)}.md`;
 
 function Pill({
 	active,
@@ -69,13 +69,13 @@ export function BenchProvider({ children }: { children: ReactNode }): ReactEleme
 						<fieldset aria-label="Run date" className="m-0 flex gap-2 border-0 p-0">
 							{dates.map(({ s, i }) => (
 								<Pill active={i === index} key={s.runId} onClick={() => setIndex(i)}>
-									{s.date}
+									{runLabel(s, SUMMARIES)}
 								</Pill>
 							))}
 						</fieldset>
 					) : null}
 					<p className="m-0 text-ink-2 text-sm">
-						{PLATFORM_LABEL[summary.platform] ?? summary.platform} run of {summary.date} ·{" "}
+						{PLATFORM_LABEL[summary.platform] ?? summary.platform} run of {runLabel(summary, SUMMARIES)} ·{" "}
 						<a className="underline underline-offset-2" href={reportUrl(summary)} rel="noreferrer" target="_blank">
 							full report
 						</a>
@@ -235,7 +235,7 @@ export function BenchRun(): ReactElement {
 				<dt className="text-ink-2">Report</dt>
 				<dd className="m-0">
 					<a className="underline underline-offset-2" href={reportUrl(s)} rel="noreferrer" target="_blank">
-						docs/bench/{s.platform}-{s.date}.md
+						docs/bench/{reportSlug(s)}.md
 					</a>
 				</dd>
 			</dl>
