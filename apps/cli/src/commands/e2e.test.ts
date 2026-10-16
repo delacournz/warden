@@ -1272,6 +1272,30 @@ describe("warden e2e", () => {
 				]);
 			});
 
+			test("the end-of-run grid shows the last attempt: a flow that failed and then passed on its retry is green", async () => {
+				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
+				const c = setup(["--all"]);
+				// results older than the run are ignored by the grid's report
+				const fresh = { startedAt: Number.MAX_SAFE_INTEGER };
+				const h: Harness = harness({
+					isTTY: true,
+					exitCodeFor: (env) => {
+						const first = attempt(env) === 0;
+						h.files.set(
+							resultsPath(env),
+							first
+								? jsonl(spec("chats", "open", "passed", fresh), spec("settings", "toggle", "failed", fresh))
+								: jsonl(spec("settings", "toggle", "passed", fresh))
+						);
+						return first ? 1 : 0;
+					},
+				});
+				expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+				const frame = h.terminal.join("").split("\u001b[0J").at(-1) ?? "";
+				expect(frame).toContain("✓ chats  ✓ settings");
+				expect(frame).not.toContain("✗ settings");
+			});
+
 			test("a flow that still fails after its retry fails the gate; the one that passed keeps its pass", async () => {
 				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
 				const c = setup(["--all"]);
