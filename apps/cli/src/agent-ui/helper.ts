@@ -15,8 +15,8 @@ import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { type Store, wardenHome } from "@delacour/warden-core/store";
 import type { Owner } from "@delacour/warden-core/types";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
-import { openIosDriver, resolveHelper } from "@delacour/warden-e2e/driver/ios/ios-driver";
-import { connectSimd, type SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
+import { resolveHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
+import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { driverUiError } from "./driver";
@@ -154,7 +154,8 @@ function isUpLine(line: string): boolean {
 }
 
 export const defaultHelperDeps: HelperDeps = {
-	connect: (socketPath) => connectSimd({ socketPath, readyTimeoutMs: 2000 }),
+	connect: async (socketPath) =>
+		(await import("@delacour/warden-e2e/driver/ios/simd-client")).connectSimd({ socketPath, readyTimeoutMs: 2000 }),
 	spawnDetached: ({ cmd, logPath, signalMs }) => {
 		const log = openSync(logPath, "a");
 		try {
@@ -522,6 +523,7 @@ export async function connectHelper(
 	const helper = await ensureHelper(ctx, udid, { ...opts, keepClient: true });
 	if (!helper.success) return helper;
 	const { client, socketPath } = helper.data;
+	const { openIosDriver } = await import("@delacour/warden-e2e/driver/ios/ios-driver");
 	const driver = await openIosDriver({
 		udid,
 		exec: ctx.exec,

@@ -1,8 +1,11 @@
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import type { Result } from "@delacour/warden-types/result";
 import { ENV_NAMES } from "../../env";
 import type { DriverError } from "../driver.types";
 import { driverError } from "../errors";
+import type { OpenIosDriverOptions } from "./ios-driver";
 
 export const HELPER_NAME = "warden-simd";
 
@@ -81,4 +84,23 @@ export function locateHelper(input: LocateHelperInput): Result<HelperLocation, D
 		if (input.exists(candidate.path)) return { success: true, data: candidate };
 	}
 	return missing(`${HELPER_NAME} not found (tried ${tried.join(", ")})`);
+}
+
+/**
+ * The helper binary: the explicit `helperPath`, else `locateHelper` over the env / install locations. Lives here,
+ * not in `ios-driver.ts`, so a caller that only needs the path (`warden ui` spawning or replacing the helper)
+ * does not load the driver and its protocol schemas.
+ */
+export function resolveHelper(o: OpenIosDriverOptions): Result<string, DriverError> {
+	if (o.helperPath !== undefined) return { success: true, data: o.helperPath };
+	const located = locateHelper({
+		env: { [ENV_NAMES.simd]: o.env?.simd, [ENV_NAMES.helperDir]: o.env?.helperDir },
+		execPath: o.execPath ?? process.execPath,
+		importDir: o.importDir ?? import.meta.dir,
+		wardenHome: o.wardenHome ?? resolveWardenHome(),
+		exists: o.exists ?? existsSync,
+		realpath: o.realpath ?? realpathSync,
+		...(o.version ? { version: o.version } : {}),
+	});
+	return located.success ? { success: true, data: located.data.path } : located;
 }
