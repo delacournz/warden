@@ -39,6 +39,68 @@ export type MarkOptions = {
 };
 
 /**
+ * One process's results folded into per-flow marks as they arrive (see `resultsMarks` for the
+ * rules). It keeps three facts, so adding a result is O(1): which flows have a result, which of them
+ * failed, and which flow the latest result belongs to: bun runs a file's tests together, so every
+ * other flow with a result is finished. `real` runs once per distinct path.
+ */
+export type FlowTracker = {
+	/** the tracked flow a result belongs to */
+	flowOf: (result: TestResult) => TrackedFlow | undefined;
+	/** fold in results, in file order */
+	add: (results: readonly TestResult[]) => void;
+	/** flows with a verdict so far; `final`: the process has exited */
+	marks: (final?: boolean) => Record<string, FlowMark>;
+	/** forget every result (the file was replaced) */
+	reset: () => void;
+};
+
+export function flowTracker(flows: readonly TrackedFlow[], real: (path: string) => string = realPath): FlowTracker {
+	const resolved = new Map<string, string>();
+	const resolve = (path: string): string => {
+		const known = resolved.get(path);
+		if (known !== undefined) return known;
+		const target = real(path);
+		resolved.set(path, target);
+		return target;
+	};
+	const byFile = new Map<string, TrackedFlow>();
+	for (const flow of flows) {
+		const file = resolve(flow.path);
+		if (!byFile.has(file)) byFile.set(file, flow);
+	}
+	const flowFor = (result: TestResult) => byFile.get(resolve(result.file));
+	const seen = new Set<string>();
+	const failed = new Set<string>();
+	let current: string | undefined;
+	return {
+		flowOf: flowFor,
+		add(results) {
+			for (const result of results) {
+				const flow = flowFor(result);
+				if (!flow) continue;
+				seen.add(flow.id);
+				current = flow.id;
+				if (failing(result)) failed.add(flow.id);
+			}
+		},
+		marks(final = false) {
+			const marks: Record<string, FlowMark> = {};
+			for (const id of seen) {
+				if (failed.has(id)) marks[id] = "failed";
+				else if (final || id !== current) marks[id] = "passed";
+			}
+			return marks;
+		},
+		reset() {
+			seen.clear();
+			failed.clear();
+			current = undefined;
+		},
+	};
+}
+
+/**
  * Per-flow results so far, from one process's `results.jsonl`. A flow with a failed / timed-out
  * test is `failed` at once. A flow is `passed` once it is finished: the process ended (`final`), or
  * a later result belongs to another file (bun runs a file's tests together, files one after the
@@ -49,23 +111,9 @@ export function resultsMarks(
 	flows: readonly TrackedFlow[],
 	options: MarkOptions = {}
 ): Record<string, FlowMark> {
-	const real = options.real ?? realPath;
-	const results = readResults(jsonl);
-	const owners = results.map((r) => flowOf(r, flows, real)?.id);
-	const marks: Record<string, FlowMark> = {};
-	const last = new Map<string, number>();
-	results.forEach((result, i) => {
-		const id = owners[i];
-		if (id === undefined) return;
-		last.set(id, i);
-		if (failing(result)) marks[id] = "failed";
-	});
-	for (const [id, at] of last) {
-		if (marks[id]) continue;
-		const finished = options.final === true || owners.slice(at + 1).some((o) => o !== undefined && o !== id);
-		if (finished) marks[id] = "passed";
-	}
-	return marks;
+	const tracker = flowTracker(flows, options.real);
+	tracker.add(readResults(jsonl));
+	return tracker.marks(options.final === true);
 }
 
 const SYMBOL: Record<TestResult["status"], string> = { passed: "✓", failed: "✗", "timed-out": "✗", skipped: "-" };

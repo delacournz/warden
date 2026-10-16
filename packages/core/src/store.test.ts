@@ -183,3 +183,77 @@ describe("device quarantine + slim state", () => {
 		migrated.close();
 	});
 });
+
+describe("pragmas", () => {
+	test("WAL with synchronous NORMAL: a commit does not fsync, a crash cannot corrupt", () => {
+		expect(store.db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode).toBe("wal");
+		expect(store.db.query<{ synchronous: number }, []>("PRAGMA synchronous").get()?.synchronous).toBe(1);
+		expect(store.db.query<{ timeout: number }, []>("PRAGMA busy_timeout").get()?.timeout).toBe(15000);
+	});
+});
+
+describe("gcWork", () => {
+	const IDLE = 20 * 60_000;
+	const NOW = 100 * 60_000;
+	const dead = () => false;
+	const device = (id: string) => ({ platform: "ios" as const, id, name: `warden-iphone-17-${id}` });
+	const lease = (id: string) => ({
+		kind: "device" as const,
+		platform: "ios" as const,
+		id,
+		name: `warden-iphone-17-${id}`,
+	});
+
+	test("nothing stale and nothing idle: no work", () => {
+		store.insertLease({ resource: lease("U1"), owner, ttlMs: 60_000 }, NOW);
+		store.recordDevice(device("U1"), NOW - 60_000);
+		store.recordDevice(device("U2"), NOW - 5 * 60_000);
+		expect(store.gcWork(NOW, IDLE, dead)).toEqual({ staleLeases: 0, idleDevices: 0 });
+	});
+
+	test("an empty store has no work", () => {
+		expect(store.gcWork(NOW, IDLE, dead)).toEqual({ staleLeases: 0, idleDevices: 0 });
+	});
+
+	test("a lease whose heartbeat expired and whose pid is gone is stale; a live pid keeps it", () => {
+		store.insertLease({ resource: lease("U1"), owner, ttlMs: 1_000, pid: 4242 }, 0);
+		store.insertLease({ resource: { kind: "port", port: 9 }, owner, ttlMs: 1_000 }, 0);
+		expect(store.gcWork(NOW, IDLE, dead).staleLeases).toBe(2);
+		expect(store.gcWork(NOW, IDLE, (pid) => pid === 4242).staleLeases).toBe(1);
+	});
+
+	test("an unleased device idle for the window is work; a leased or recently used one is not", () => {
+		store.recordDevice(device("U1"), NOW - IDLE);
+		store.recordDevice(device("U2"), NOW - IDLE - 1);
+		store.recordDevice(device("U3"), NOW - IDLE + 1);
+		store.insertLease({ resource: lease("U2"), owner, ttlMs: 60_000 }, NOW);
+		expect(store.gcWork(NOW, IDLE, dead).idleDevices).toBe(1);
+	});
+
+	test("a device that was already idle when the last gc ran is not work again until it is used", () => {
+		store.recordDevice(device("U1"), 10 * 60_000);
+		store.recordDevice(device("U2"), 70 * 60_000);
+		expect(store.gcWork(NOW, IDLE, dead).idleDevices).toBe(2);
+		store.setMeta("last_gc_at", String(60 * 60_000));
+		expect(store.gcWork(NOW, IDLE, dead).idleDevices).toBe(1);
+		store.setMeta("last_gc_at", String(NOW));
+		expect(store.gcWork(NOW, IDLE, dead).idleDevices).toBe(0);
+		store.touchDevice("ios", "U1", 105 * 60_000);
+		expect(store.gcWork(105 * 60_000 + IDLE, IDLE, dead).idleDevices).toBe(1);
+		expect(store.gcWork(105 * 60_000 + IDLE - 1, IDLE, dead).idleDevices).toBe(0);
+	});
+
+	test("devices of every platform count; the lease must be on that platform's device", () => {
+		store.recordDevice({ platform: "android", id: "emulator-5554", name: "warden-pixel-10-1" }, 0);
+		store.recordDevice({ platform: "ios", id: "emulator-5554", name: "warden-iphone-17-x" }, 0);
+		store.insertLease(
+			{
+				resource: { kind: "device", platform: "android", id: "emulator-5554", name: "warden-pixel-10-1" },
+				owner,
+				ttlMs: 60_000,
+			},
+			NOW
+		);
+		expect(store.gcWork(NOW, IDLE, dead).idleDevices).toBe(1);
+	});
+});

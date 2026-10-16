@@ -5,6 +5,7 @@ import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
+import { mapBounded } from "../bounded";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -17,26 +18,36 @@ import { withSpinner } from "../spinner-context";
 
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
 
+/** how many idle devices one platform shuts down at once */
+const SHUTDOWN_CONCURRENCY = 4;
+
 type ShutDevice = { platform: Platform; id: string; name: string };
 
-type GcPlan = {
-	now: number;
-	idleMs: number;
-	leased: Set<string>;
-	shutdown: ShutDevice[];
-	forgotten: ShutDevice[];
-	notes: string[];
-};
+/** What a pass reads: when it is, how idle is idle, and which devices someone holds. */
+type GcPlan = { now: number; idleMs: number; leased: ReadonlySet<string> };
 
-/** Shut down this platform's booted, unleased, idle warden-created devices. */
-async function gcPlatform(ctx: CommandContext, platform: Platform, owner: Owner, plan: GcPlan): Promise<void> {
+/** What one platform's pass did. */
+type PlatformOutcome = { shutdown: ShutDevice[]; forgotten: ShutDevice[]; notes: string[] };
+
+/**
+ * Shut down this platform's booted, unleased, idle warden-created devices, several at a time. Only
+ * devices in the store's `devices` table (warden made or launched them) are candidates: a booted
+ * device warden does not know is never in the list, however many go down at once.
+ */
+async function gcPlatform(
+	ctx: CommandContext,
+	platform: Platform,
+	owner: Owner,
+	plan: GcPlan
+): Promise<PlatformOutcome> {
+	const outcome: PlatformOutcome = { shutdown: [], forgotten: [], notes: [] };
 	const records = ctx.store().listDevices(platform);
-	if (records.length === 0) return;
+	if (records.length === 0) return outcome;
 	const provider = providerFor(platform, ctx, owner);
 	const inventory = await provider.inventory();
 	if (!inventory.success) {
-		plan.notes.push(`${platform}: skipped (${inventory.error})`);
-		return;
+		outcome.notes.push(`${platform}: skipped (${inventory.error})`);
+		return outcome;
 	}
 	const booted = new Set(inventory.data.filter((d) => d.state !== "shutdown").map((d) => d.id));
 	if (platform === "android") {
@@ -44,19 +55,22 @@ async function gcPlatform(ctx: CommandContext, platform: Platform, owner: Owner,
 		for (const r of records) {
 			if (listed.has(r.id) || plan.leased.has(`${platform}:${r.id}`)) continue;
 			ctx.store().forgetDevice(platform, r.id);
-			plan.forgotten.push({ platform, id: r.id, name: r.name });
+			outcome.forgotten.push({ platform, id: r.id, name: r.name });
 		}
 	}
 	const idle = records.filter(
 		(r) => booted.has(r.id) && !plan.leased.has(`${platform}:${r.id}`) && plan.now - r.lastUsedAt >= plan.idleMs
 	);
-	for (const record of idle) {
+	const results = await mapBounded(idle, SHUTDOWN_CONCURRENCY, async (record) => {
 		const result = await provider.shutdown(record.id);
-		if (result.success) {
-			await stopHelperAfter(ctx)(record.id);
-			plan.shutdown.push({ platform, id: record.id, name: record.name });
-		} else plan.notes.push(`shutdown ${record.id} failed: ${result.error}`);
+		if (result.success) await stopHelperAfter(ctx)(record.id);
+		return { record, result };
+	});
+	for (const { record, result } of results) {
+		if (result.success) outcome.shutdown.push({ platform, id: record.id, name: record.name });
+		else outcome.notes.push(`shutdown ${record.id} failed: ${result.error}`);
 	}
+	return outcome;
 }
 
 function parseIdle(raw: string | undefined): Result<number> {
@@ -65,12 +79,15 @@ function parseIdle(raw: string | undefined): Result<number> {
 
 type GcOpts = { idle?: string; quiet?: true; json?: true };
 
+/** Everything a pass reports. */
+type GcOutcome = PlatformOutcome & { reclaimed: string[] };
+
 /**
  * Stale leases (owner died without releasing, e.g. a Claude session killed before SessionEnd) are
  * reclaimed, and their devices shut down when the shutdown policy allows (warden-created, or booted
  * by that owner) — unless the lease went stale under 10 min ago or an app is running on the device,
  * which then stays up with its idle clock restarted. Then shut down warden-created devices (store `devices` table) that are
- * booted, unleased and idle longer than `--idle`. Foreign devices are never touched; nothing is
+ * booted, unleased and idle longer than `--idle` (both platforms at once, a few devices at a time). Foreign devices are never touched; nothing is
  * ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
  * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note.
  */
@@ -85,7 +102,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const now = ctx.now();
 	const owner = resolveOwner(ctx);
 	const stale = store.listLeases().filter((l) => l.resource.kind === "device" && !isLeaseAlive(l, now, processAlive));
-	const shutDownIdle = async (sctx: CommandContext): Promise<GcPlan & { reclaimed: string[] }> => {
+	const shutDownIdle = async (sctx: CommandContext): Promise<GcOutcome> => {
 		// A lease that only just went stale (agent between tool calls) or has an app running keeps its device.
 		const orphaned = await shutdownReleasedDevices(sctx, stale, owner, async (lease) => {
 			const r = lease.resource;
@@ -119,20 +136,21 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			store.touchDevice(l.resource.platform, l.resource.id, now);
 			leased.add(`${l.resource.platform}:${l.resource.id}`);
 		}
-		const plan: GcPlan = {
-			now,
-			idleMs: idle.data,
-			leased,
-			shutdown: stale.flatMap((l) =>
-				l.resource.kind === "device" && orphaned.shutdown.includes(l.resource.id)
-					? [{ platform: l.resource.platform, id: l.resource.id, name: l.resource.name }]
-					: []
-			),
-			forgotten: [],
-			notes: orphaned.notes,
+		const plan: GcPlan = { now, idleMs: idle.data, leased };
+		const platforms = await Promise.all(PLATFORMS.map((platform) => gcPlatform(sctx, platform, owner, plan)));
+		return {
+			reclaimed,
+			shutdown: [
+				...stale.flatMap((l) =>
+					l.resource.kind === "device" && orphaned.shutdown.includes(l.resource.id)
+						? [{ platform: l.resource.platform, id: l.resource.id, name: l.resource.name }]
+						: []
+				),
+				...platforms.flatMap((p) => p.shutdown),
+			],
+			forgotten: platforms.flatMap((p) => p.forgotten),
+			notes: [...orphaned.notes, ...platforms.flatMap((p) => p.notes)],
 		};
-		for (const platform of PLATFORMS) await gcPlatform(sctx, platform, owner, plan);
-		return { ...plan, reclaimed };
 	};
 	if (!opts.quiet && !opts.json)
 		heading(ctx, "gc", `${plural(stale.length, "stale lease")} · idle > ${formatDuration(idle.data)}`);

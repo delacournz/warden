@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { JSON_CONFIG_FILE } from "@delacour/warden-core/builds/config";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-core/exec";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { createBatchCommand } from "./batch";
+import { createBatchCommand, defaultBatchDeps } from "./batch";
 import { harness } from "./batch.testing";
 
 let ctx: TestContext | undefined;
@@ -396,6 +396,58 @@ describe("warden batch", () => {
 		expect(await createBatchCommand(h2.deps).run(c)).toBe(0);
 		expect(h2.terminal).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("▶ a");
+	});
+
+	test("TTY grid: redrawn at once on every event and on a 1 s tick, not ten times a second", async () => {
+		let clock = 1_000_000;
+		const c = setup(["ios", "--jobs", "a", "--", "x"]);
+		c.now = () => clock;
+		const h = harness({ isTTY: true, manual: true });
+		const running = createBatchCommand(h.deps).run(c);
+		await waitFor(() => h.jobs().length > 0);
+		expect(h.tickers.filter((t) => t.ms < 1_000)).toEqual([]);
+		const frames = h.tickers.filter((t) => t.ms === 1_000);
+		expect(frames).toHaveLength(1);
+		const draws = () => h.terminal.length;
+		const afterStart = draws();
+		expect(h.terminal.join("")).toContain("warden batch");
+
+		frames[0]?.fn();
+		expect(draws()).toBe(afterStart);
+
+		clock += 1_000;
+		frames[0]?.fn();
+		expect(draws()).toBe(afterStart + 1);
+		expect(h.terminal.at(-1)).toContain("1s");
+
+		clock += 400;
+		frames[0]?.fn();
+		expect(draws()).toBe(afterStart + 1);
+
+		h.jobs()[0]?.finish(0);
+		expect(await running).toBe(0);
+		expect(draws()).toBeGreaterThan(afterStart + 1);
+		expect(frames[0]?.stopped).toBe(true);
+	});
+
+	test("a grandchild that keeps the job's pipes open does not hold up the job's exit", async () => {
+		const c = setup(["ios", "--jobs", "a", "--", "x"]);
+		const log = join(c.cwd, "job.log");
+		const pidFile = join(c.cwd, "grandchild.pid");
+		const proc = defaultBatchDeps.spawn(["sh", "-c", `sleep 30 & echo $! > ${pidFile}; echo hello`], {
+			env: { PATH: c.env.PATH ?? process.env.PATH },
+			log,
+			cwd: c.cwd,
+		});
+		const started = performance.now();
+		try {
+			expect(await proc.exited).toBe(0);
+			expect(performance.now() - started).toBeLessThan(1_500);
+			expect(readFileSync(log, "utf8")).toMatch(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\] hello\n$/);
+		} finally {
+			const pid = Number(readFileSync(pidFile, "utf8").trim());
+			if (pid > 0) process.kill(pid);
+		}
 	});
 
 	test("--json: batch.json shape on stdout only", async () => {

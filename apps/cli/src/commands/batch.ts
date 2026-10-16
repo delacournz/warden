@@ -12,12 +12,13 @@ import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
-import { readResults } from "@delacour/warden-e2e/runner/results";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
-import { type FlowMark, flowOf, resultsMarks, type TrackedFlow, testLine } from "../batch/flow-progress";
+import { flowPoller } from "../batch/flow-poller";
+import type { FlowMark, TrackedFlow } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
+import { type ReadFrom, readFileFrom } from "../batch/results-tail";
 import { type RunnerReport, resultsReport } from "../batch/runner-report";
 import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
@@ -125,6 +126,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	/** write a file, creating its parent dirs */
 	writeFile: (path: string, data: string) => Promise<void>;
 	readFile: (path: string) => Promise<string>;
+	/** a file from a byte offset on: how the flow poller reads only what a `results.jsonl` gained */
+	readFrom: ReadFrom;
 	mkdir: (dir: string) => Promise<void>;
 	newId: () => string;
 	terminal: Terminal;
@@ -212,9 +215,8 @@ const SERVE_KILL_GRACE_MS = 15_000;
 /** SIGTERM → SIGKILL for a timed-out job. */
 const JOB_KILL_GRACE_MS = 5_000;
 const READY_POLL_MS = 500;
-const FRAME_MS = 100;
-/** how often the jobs' `results.jsonl` are read for finished tests */
-const FLOW_POLL_MS = 1_000;
+/** the grid is redrawn this often, and at once on every event: what changes between events is the clocks, which show whole seconds */
+const FRAME_MS = 1_000;
 
 const absolute = (cwd: string, path: string) => (isAbsolute(path) ? path : resolve(cwd, path));
 
@@ -575,50 +577,6 @@ function announceFlows(
 function announceDevices(ctx: CommandContext, view: BatchView): void {
 	for (const d of view.devices)
 		if (d.ran && d.ran.length > 0) ctx.err(`${d.name}: ${d.ran.map((f) => `${tick(f.mark)} ${f.id}`).join("  ")}`);
-}
-
-/**
- * Read the `results.jsonl` of every job started so far: hand the flows it reports finished to the
- * display (a job's flows count as passed once it has ended) and each new test as one line.
- * `poll` reads once (also called after the run, so the last results land); `stop` ends the timer.
- */
-function flowPoller(
-	deps: BatchDeps,
-	flows: readonly TrackedFlow[],
-	resultFiles: ResultFiles,
-	ended: ReadonlySet<string>,
-	screen: Display
-): { poll: () => Promise<void>; stop: () => void } {
-	let busy = false;
-	const printed = new Map<string, number>();
-	const settled = new Set<string>();
-	const pollOne = async (key: string, path: string) => {
-		const text = await deps.readFile(path).catch(() => "");
-		const final = ended.has(key);
-		screen.flows(Number(key.split(":")[0]), resultsMarks(text, flows, { final }));
-		const results = readResults(text);
-		const fresh = results.slice(printed.get(key) ?? 0);
-		printed.set(key, results.length);
-		const lines = fresh.flatMap((result) => {
-			const flow = flowOf(result, flows);
-			return flow ? [testLine(flow.id, result)] : [];
-		});
-		if (lines.length > 0) screen.tests(lines);
-		if (final) settled.add(key);
-	};
-	const poll = async () => {
-		if (busy) return;
-		busy = true;
-		try {
-			for (const [key, path] of resultFiles) if (!settled.has(key)) await pollOne(key, path);
-		} finally {
-			busy = false;
-		}
-	};
-	const stop = deps.every(FLOW_POLL_MS, () => {
-		void poll();
-	});
-	return { poll, stop };
 }
 
 /** Start one recording per device (in parallel); failures stop the ones that started. */
@@ -1745,6 +1703,8 @@ export function createBatchCommand(deps: BatchDeps): Command {
 
 /** how long an exited job's output may still be draining into its log */
 const LOG_DRAIN_MS = 2000;
+/** an exited job's pipes that stay silent this long are held open by a grandchild: stop waiting on them */
+const LOG_QUIET_MS = 250;
 
 export const defaultBatchDeps: BatchDeps = {
 	pid: process.pid,
@@ -1760,11 +1720,12 @@ export const defaultBatchDeps: BatchDeps = {
 				stderr: "pipe",
 				detached: opts.group === true,
 			});
-			const drained = Promise.all([log.pump(proc.stdout), log.pump(proc.stderr)]);
+			void log.pump(proc.stdout);
+			void log.pump(proc.stderr);
 			return {
-				// a grandchild still holding the pipes can't hold up the exit past LOG_DRAIN_MS
+				// a grandchild still holding the pipes can't hold up the exit: silent for LOG_QUIET_MS, or LOG_DRAIN_MS at most
 				exited: proc.exited.then(async (code) => {
-					await Promise.race([drained, Bun.sleep(LOG_DRAIN_MS)]);
+					await log.drained({ quietMs: LOG_QUIET_MS, maxMs: LOG_DRAIN_MS });
 					log.close();
 					return exitCodeOf(proc, code);
 				}),
@@ -1792,6 +1753,7 @@ export const defaultBatchDeps: BatchDeps = {
 		await writeFile(path, data);
 	},
 	readFile: (path) => readFile(path, "utf8"),
+	readFrom: readFileFrom,
 	mkdir: async (dir) => {
 		await mkdir(dir, { recursive: true });
 	},
