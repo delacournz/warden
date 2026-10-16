@@ -229,8 +229,8 @@ export class Locator {
 	}
 
 	/** One look at the screen: every current match and the snapshot they came from. Never waits. */
-	async look(): Promise<{ entries: NodeEntry[]; observed: Observed }> {
-		const observed = await this.rt.observe();
+	async look(options: { reuse?: boolean } = {}): Promise<{ entries: NodeEntry[]; observed: Observed }> {
+		const observed = await this.rt.observe(options);
 		return { entries: resolve(this.expr, observed.index), observed };
 	}
 
@@ -326,9 +326,10 @@ export class Locator {
 		return this.traced("isChecked", async () => (await this.single()).entry.states.checked === true);
 	}
 
+	/** Always a new snapshot: a frame is for aiming at, and one from a screen that was still moving is wrong. */
 	boundingBox(): Promise<Rect> {
 		return this.traced("boundingBox", async () => {
-			const { entries, observed } = await this.matches();
+			const { entries, observed } = await this.look({ reuse: false });
 			if (entries.length === 0) {
 				const [only, ...others] = await this.reactCandidates(observed);
 				if (only !== undefined && others.length === 0) return { ...only.frame };
@@ -377,6 +378,8 @@ export class Locator {
 	/**
 	 * Waits for exactly one visible (and, per `spec`, enabled, on-screen) match. Several matches fail at once.
 	 * With `allowReact` a component that only the React tree knows (a plain `getByTestId`) counts as a match.
+	 * Every look is a new snapshot, never the one a read or an `expect` kept: the action goes to where the element is
+	 * now, and a snapshot taken while the screen was still sliding in has it somewhere else.
 	 */
 	private actionable(spec: ActionSpec, timeoutMs: number): Promise<Actionable>;
 	private actionable(spec: ActionSpec, timeoutMs: number, allowReact: boolean): Promise<Actionable | ReactActionable>;
@@ -385,8 +388,8 @@ export class Locator {
 		timeoutMs: number,
 		allowReact = false
 	): Promise<Actionable | ReactActionable> {
-		const result = await this.rt.poll<Actionable | ReactActionable, Seen>(async (attempt) => {
-			const observation = await this.rt.tryObserve({ reuse: attempt === 1 });
+		const result = await this.rt.poll<Actionable | ReactActionable, Seen>(async () => {
+			const observation = await this.rt.tryObserve({ reuse: false });
 			if (!observation.ok) {
 				if (!observation.error.retryable) {
 					throw new E2eError("DRIVER", `snapshot failed: ${observation.error.code}: ${observation.error.message}`);

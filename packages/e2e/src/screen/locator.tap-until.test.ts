@@ -122,19 +122,20 @@ describe("tap({ until })", () => {
 		expect(host.clock.sleeps).toEqual([5, 5]);
 	});
 
-	test("a locator is checked on the snapshot of its own poll: one snapshot a check", async () => {
+	test("a locator is checked on the snapshot of its own poll: one snapshot a check, one a press", async () => {
 		const { driver, screen } = setup(99);
 		await screen.getByTestId("next").tap({ until: screen.getByText("Plan"), ...WINDOW });
 		const checksPerWindow = WINDOW.windowMs / WINDOW.pollMs + 1;
-		expect(driver.callsOf("snapshot")).toHaveLength(1 + 2 * checksPerWindow);
+		expect(driver.callsOf("tap")).toHaveLength(3);
+		expect(driver.callsOf("snapshot")).toHaveLength(3 + 2 * checksPerWindow);
 	});
 
-	test("a press after a check does not look at the screen again: it uses the check's snapshot", async () => {
+	test("a press after a check looks at the screen itself: the check's snapshot may be of a screen still moving", async () => {
 		const { driver, screen } = setup(99);
 		await screen.getByTestId("next").tap({ until: screen.getByText("Plan"), retries: 1, ...WINDOW });
 		const checksPerWindow = WINDOW.windowMs / WINDOW.pollMs + 1;
 		expect(driver.callsOf("tap")).toHaveLength(2);
-		expect(driver.callsOf("snapshot")).toHaveLength(1 + checksPerWindow);
+		expect(driver.callsOf("snapshot")).toHaveLength(2 + checksPerWindow);
 	});
 
 	test("the check that comes right after the press sees the screen the press left", async () => {
@@ -142,7 +143,7 @@ describe("tap({ until })", () => {
 		await screen.getByTestId("title").isVisible();
 		await screen.getByTestId("next").tap({ until: screen.getByText("Plan"), ...WINDOW });
 		expect(driver.callsOf("tap")).toHaveLength(1);
-		expect(driver.callsOf("snapshot")).toHaveLength(2);
+		expect(driver.callsOf("snapshot")).toHaveLength(3);
 	});
 
 	test("works without the observation cache too", async () => {
