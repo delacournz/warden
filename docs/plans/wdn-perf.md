@@ -650,7 +650,18 @@ iOS: `perf-ios-r1` vs `v1-ios-r2`, same host and unchanged suite, 3 reps, all fr
 | `warden version` cold | 70 ms / 97 MB | ≤ 30 ms / ≤ 50 MB | 27 ms / 41 MB (source), 28 ms / 57 MB (compiled) ✅ / RSS compiled ❌ |
 | Regression guard (no warden test > 5% slower) | | | every test −23.6% to −56.7% ✅ |
 
-Android: pending (`perf-android-r1`).
+Android: `perf-android-r3` vs `v2-android-r2`, same host and unchanged suite, 3 reps, all frameworks (`docs/bench/android-2026-10-16-perf.md`).
+
+| Metric | Baseline | Target | Result |
+|---|---|---|---|
+| Android warm suite | 465 s (91.7% pass) | ≤ 250 s after 3.1; ≤ 110 s, 8/8 after 3.3; stretch ≤ tester-army (76 s) | **29.07 s, 100% pass** (0.36× tester-army's 81.05 s) ✅ |
+| per-snapshot | ~1.9 s | ≤ 150 ms | p50 25 ms, p90 105 ms (droid-arch on device) ✅ |
+| step latency p95 | — | — | 415 ms |
+| host CPU avg / RSS avg | 0.6% / 113.7 MB | — | 3.0% / 118.2 MB (CPU-s per rep −69%) |
+| untraced time per rep | 142 s (of a 407 s `smoke-android-r2` rep) | ≤ 3 s | 7.67 s ❌ (largest 3.53 s in settings) |
+| regression guard | | | every test −89.1% to −98.3% ✅ |
+
+Runs `perf-android-r1` / `-r2` never reached the tests: a fresh checkout's first Android build trips two pre-existing `app ensure` bugs (follow-ups below); r3 ran after deleting the stale APK.
 
 ## Follow-ups (reported by agents)
 
@@ -668,6 +679,8 @@ Android: pending (`perf-android-r1`).
 | droid-arch (3.3) | `warden-uiad` only verified on API 37 (only image installed). Add an emulator matrix (API 30–36) in CI. p95 snapshot ~270 ms right after sign-in navigation under load. | Open. |
 | streamer (1.2) | AX guest wedges ~every 24 s (all quiescence queries `busy`), costing ~1.25 s in 3/8 tests per rep; cause inside the guest/idb unknown. Done (PERF-1.2b): `rebind` recycles guests older than `WARDEN_SIMD_GUEST_MAX_AGE_S` (default 12 s; 18 s still wedged): 8/8 via stream every rep, 0 wedges in 24 launches, warm suite 60.65 s. Cause unknown; threshold could follow the launch gap. |
 | lead (6.2) | Bench sampler has no per-process RSS split: add one, then attribute iOS host RSS 116 → 149 MB. Untraced 6.82 s/rep: find the unwrapped calls (largest in settings). | Open. |
+| lead (6.2) | Fresh checkout, first Android build: `expo run:android` prebuilds `android/`, which changes the native fingerprint mid-build, so `app ensure` refuses to cache ("fingerprint changed during the build"). Suggest: when the JS key is unchanged and the native dir did not exist before the build, re-key to the post-build fingerprint instead of refusing. | Open (pre-existing). |
+| lead (6.2) | `locateArtifact` (`packages/core/src/builds/local.ts`) only accepts outputs modified at or after the build start, so an up-to-date Gradle/xcodebuild run (nothing to rebuild after an uncached build) reports "no Release .apk was found". Together with the row above, a fresh checkout can't populate its Android cache without deleting the APK. Suggest: accept the newest candidate when the build succeeded and the post-build key equals the requested key. | Open (pre-existing). |
 | conductor (4.6) | `native+js` fingerprint keys are v2: every such project rebuilds once after upgrading. | Expected. |
 
 ## Decisions (user, 2026-10-16)
