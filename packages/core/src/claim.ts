@@ -144,6 +144,16 @@ type Realised = {
 	unhealthy?: { device: InventoryDevice; reason: string };
 };
 
+/**
+ * A device that was already Booted before this claim needs only the provider's cheap check: this claim
+ * did not boot it, so there is nothing to wait for. Any failure (or no such check) means the full
+ * `waitReady` + `probe`.
+ */
+async function isWarm(provider: DeviceProvider, item: Reserved, device: InventoryDevice): Promise<boolean> {
+	if (item.action !== "reuse" || device.state !== "booted" || !provider.verifyWarm) return false;
+	return (await provider.verifyWarm(device.id)).success;
+}
+
 async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 	const { provider, store, request } = input;
 	const readyMs = input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
@@ -178,6 +188,9 @@ async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 		if (!booted.success) return { ok: booted, leaseId: lease.id };
 		store.markBootedByOwner(lease.id);
 		lease = { ...lease, bootedByOwner: true };
+	}
+	if (await isWarm(provider, item, device)) {
+		return { ok: ok({ lease, device, action: item.action }), leaseId: lease.id };
 	}
 	const ready = await provider.waitReady(device.id, readyMs);
 	if (!ready.success) return { ok: ready, leaseId: lease.id };

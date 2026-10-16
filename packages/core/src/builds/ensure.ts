@@ -10,9 +10,10 @@ import { bundleIdFor, type EasSettings, loadProject, type Project } from "./conf
 import { type Download, resolveFromEas } from "./eas";
 import {
 	appMatchesArtifact,
+	type FileSize,
 	installApp,
-	isAppInstalled,
 	nodeResetFs,
+	probeApp,
 	type ResetFs,
 	resetAppData,
 	resetSimKeychain,
@@ -90,6 +91,8 @@ export type EnsureInput = ProjectContext & {
 	resetKeychain?: boolean;
 	/** filesystem for `installMode: "clean"`'s data wipe (default node:fs) */
 	resetFs?: ResetFs;
+	/** file sizes for the installed-app identity check (default node:fs) */
+	fileSize?: FileSize;
 	download?: Download;
 	easPollMs?: number;
 	lockPollMs?: number;
@@ -212,11 +215,12 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		const bundleId = bundleIdFor(project, platform);
 		if (!bundleId.success) return bundleId;
 		const target = { platform, deviceId };
-		const deps = { exec: input.exec, env };
+		const deps = { exec: input.exec, env, ...(input.fileSize ? { fileSize: input.fileSize } : {}) };
 		steps.device = {
 			installedHash: () => getInstall(store, platform, deviceId, bundleId.data)?.hash,
-			confirm: () => isAppInstalled(deps, target, bundleId.data),
-			matches: (cachedPath) => appMatchesArtifact(deps, target, bundleId.data, cachedPath),
+			confirm: () => probeApp(deps, target, bundleId.data),
+			matches: (cachedPath, installed) =>
+				appMatchesArtifact(deps, target, bundleId.data, cachedPath, installed.container),
 			uninstall: async () => {
 				input.log(`uninstalling ${bundleId.data} from ${deviceId} (${input.installMode ?? "reinstall"})`);
 				const gone = await uninstallApp(deps, target, bundleId.data);

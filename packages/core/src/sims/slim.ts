@@ -134,13 +134,46 @@ const launchctl = (udid: string, ...args: string[]) => ["xcrun", "simctl", "spaw
 
 export type SlimOptions = { dryRun?: boolean; restore?: boolean };
 
+/** How many `simctl spawn … launchctl` run at once: ~80 spawns serially took seconds, and launchd handles them in parallel. */
+export const SLIM_CONCURRENCY = 8;
+
+/**
+ * Run `task` over `items`, at most `limit` at a time. After the first failure no new item starts
+ * (those already running finish) and that failure is returned.
+ */
+async function eachBounded<T>(
+	items: readonly T[],
+	limit: number,
+	task: (item: T) => AsyncResult<void>
+): AsyncResult<void> {
+	let next = 0;
+	let failure: string | undefined;
+	const worker = async (): Promise<void> => {
+		while (failure === undefined && next < items.length) {
+			const item = items[next++] as T;
+			const done = await task(item);
+			if (!done.success && failure === undefined) failure = done.error;
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+	return failure === undefined ? ok(undefined) : err(failure);
+}
+
+/** `launchctl <args>` in the sim; a non-zero exit is an error result. */
+async function launchctlOk(exec: Exec, udid: string, ...args: string[]): AsyncResult<void> {
+	const cmd = launchctl(udid, ...args);
+	const res = await exec(cmd);
+	return res.exitCode === 0 ? ok(undefined) : err(execError(cmd, res));
+}
+
 /**
  * Disable (or with `restore`, re-enable) the denylisted jobs on one booted simulator; resolves to
  * the labels touched. Each job is `launchctl disable`d inside the simulator, which that device
  * remembers across its own reboots, then `bootout`ed so it stops now. The disabled state is kept
  * outside the device's `data/`, so a `simctl clone` of a slimmed image boots with nothing disabled.
  * Idempotent: a slimmed sim is a no-op (bar re-enabling labels a past denylist wrongly disabled). Widget and poster extensions are spawned by SpringBoard,
- * not launchd, so a few survive; starving their daemons still stops most of them.
+ * not launchd, so a few survive; starving their daemons still stops most of them. The per-job spawns
+ * run `SLIM_CONCURRENCY` at a time.
  */
 export async function slimSimulator(exec: Exec, udid: string, options: SlimOptions = {}): AsyncResult<string[]> {
 	const printCmd = launchctl(udid, "print-disabled", "system");
@@ -150,12 +183,10 @@ export async function slimSimulator(exec: Exec, udid: string, options: SlimOptio
 	if (options.restore) {
 		const labels = planRestore(disabled);
 		if (options.dryRun) return ok(labels);
-		for (const label of labels) {
-			const cmd = launchctl(udid, "enable", `system/${label}`);
-			const res = await exec(cmd);
-			if (res.exitCode !== 0) return err(execError(cmd, res));
-		}
-		return ok(labels);
+		const enabled = await eachBounded(labels, SLIM_CONCURRENCY, (label) =>
+			launchctlOk(exec, udid, "enable", `system/${label}`)
+		);
+		return enabled.success ? ok(labels) : enabled;
 	}
 	const listCmd = launchctl(udid, "list");
 	const listed = await exec(listCmd);
@@ -163,13 +194,16 @@ export async function slimSimulator(exec: Exec, udid: string, options: SlimOptio
 	const labels = planSlim(parseLaunchctlList(listed.stdout), disabled);
 	if (options.dryRun) return ok(labels);
 	// best effort, and only effective on the device's next boot
-	for (const label of planHeal(disabled)) await exec(launchctl(udid, "enable", `system/${label}`));
-	for (const label of labels) {
-		const cmd = launchctl(udid, "disable", `system/${label}`);
-		const res = await exec(cmd);
-		if (res.exitCode !== 0) return err(execError(cmd, res));
+	await eachBounded(planHeal(disabled), SLIM_CONCURRENCY, async (label) => {
+		await exec(launchctl(udid, "enable", `system/${label}`));
+		return ok(undefined);
+	});
+	const slimmed = await eachBounded(labels, SLIM_CONCURRENCY, async (label) => {
+		const disabledNow = await launchctlOk(exec, udid, "disable", `system/${label}`);
+		if (!disabledNow.success) return disabledNow;
 		// not loaded / already exited is fine: the disable is what persists
 		await exec(launchctl(udid, "bootout", `system/${label}`));
-	}
-	return ok(labels);
+		return ok(undefined);
+	});
+	return slimmed.success ? ok(labels) : slimmed;
 }

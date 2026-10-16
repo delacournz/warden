@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "../exec";
-import { probeIosHealth, springboardRunning } from "./health";
+import { probeIosHealth, probeIosWarm, springboardRunning } from "./health";
 
 const LIST = "PID\tStatus\tLabel\n412\t0\tUIKitApplication:com.apple.springboard[abcd][rb-legacy]\n-\t0\tcom.apple.foo";
 const never = () => new Promise<ExecResult>(() => {});
@@ -65,5 +65,55 @@ describe("probeIosHealth", () => {
 			"U1"
 		);
 		expect(res).toEqual({ success: false, error: "U1: SpringBoard is not running" });
+	});
+});
+
+describe("probeIosHealth ordering", () => {
+	test("print system and launchctl list are asked at the same time, not one after the other", async () => {
+		const started: string[] = [];
+		const finished: string[] = [];
+		const slow: Exec = async (cmd) => {
+			const name = cmd.includes("print") ? "print" : "list";
+			started.push(name);
+			await Bun.sleep(10);
+			finished.push(name);
+			return { exitCode: 0, stdout: name === "list" ? LIST : "", stderr: "" };
+		};
+		const res = await probeIosHealth({ exec: slow, timer: forever }, "U1");
+		expect(res.success).toBe(true);
+		expect(started).toEqual(["print", "list"]);
+		expect(finished).toHaveLength(2);
+	});
+
+	test("print system is still reported first when both fail", async () => {
+		const res = await probeIosHealth(
+			{ exec: exec({ "print system": done("", 1), "launchctl list": done("", 1) }), timer: forever },
+			"U1"
+		);
+		expect(res).toEqual({ success: false, error: "U1: launchctl print system exited 1" });
+	});
+});
+
+describe("probeIosWarm", () => {
+	test("one spawn: launchctl list answering with SpringBoard running", async () => {
+		const calls: string[] = [];
+		const counting: Exec = async (cmd) => {
+			calls.push(cmd.join(" "));
+			return { exitCode: 0, stdout: LIST, stderr: "" };
+		};
+		expect((await probeIosWarm({ exec: counting, timer: forever }, "U1")).success).toBe(true);
+		expect(calls).toEqual(["xcrun simctl spawn U1 launchctl list"]);
+	});
+
+	test("SpringBoard down, launchctl failing and a hung launchd all fail", async () => {
+		const down = await probeIosWarm(
+			{ exec: exec({ "launchctl list": done("PID\tStatus\tLabel") }), timer: forever },
+			"U1"
+		);
+		expect(down).toEqual({ success: false, error: "U1: SpringBoard is not running" });
+		const failing = await probeIosWarm({ exec: exec({ "launchctl list": done("", 1) }), timer: forever }, "U1");
+		expect(failing.success).toBe(false);
+		const hung = await probeIosWarm({ exec: exec({ "launchctl list": never }), timer: instant }, "U1");
+		expect(hung).toEqual({ success: false, error: "U1: launchctl list did not answer within 15s" });
 	});
 });

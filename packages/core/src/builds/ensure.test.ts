@@ -25,6 +25,9 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
+/** every file is 7 bytes: installed and cached builds look the same */
+const fileSize = async (): Promise<number> => 7;
+
 function fake(handlers: Array<[string, Partial<ExecResult>]>, calls: string[]): Exec {
 	return async (cmd) => {
 		const joined = cmd.join(" ");
@@ -81,20 +84,38 @@ describe("ensureApp", () => {
 				["xcrun simctl install U1", {}],
 				["xcrun simctl get_app_container U1 com.x.app", { stdout: "/data/App.app" }],
 				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
-				["stat -f %z", { stdout: "7\n" }],
 			],
 			calls
 		);
-		const first = await ensureApp(input(exec));
+		const first = await ensureApp(input(exec, { fileSize }));
 		expect(first).toEqual({ success: true, data: { appPath: path, hash: "H", source: "cache", installed: true } });
 		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe("H");
 		expect(getBuild(store, KEY, "ios", "H")?.lastUsedAt).toBe(5_000);
 
 		calls.length = 0;
-		const second = await ensureApp(input(exec));
+		const second = await ensureApp(input(exec, { fileSize }));
 		expect(second).toEqual({ success: true, data: { appPath: path, hash: "H", source: "installed", installed: true } });
 		expect(calls[0]).toBe("xcrun simctl get_app_container U1 com.x.app");
 		expect(calls.some((c) => c.startsWith("xcrun simctl install"))).toBe(false);
+	});
+
+	test("the already-installed check is three spawns: one get_app_container, two plutil, no stat", async () => {
+		await seedCache();
+		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		const calls: string[] = [];
+		const exec = fake(
+			[
+				["xcrun simctl get_app_container U1 com.x.app", { stdout: "/data/App.app\n" }],
+				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
+			],
+			calls
+		);
+		const res = await ensureApp(input(exec, { fileSize }));
+		expect(res.success && res.data.source).toBe("installed");
+		expect(calls).toHaveLength(3);
+		expect(calls.filter((c) => c.includes("get_app_container"))).toHaveLength(1);
+		expect(calls.filter((c) => c.startsWith("plutil"))).toHaveLength(2);
+		expect(calls.some((c) => c.startsWith("stat"))).toBe(false);
 	});
 
 	test("app on the device differs from the cached build → reinstall", async () => {
@@ -108,7 +129,6 @@ describe("ensureApp", () => {
 					{ stdout: JSON.stringify({ CFBundleVersion: "OLD", CFBundleExecutable: "App" }) },
 				],
 				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
-				["stat -f %z", { stdout: "7\n" }],
 			],
 			[]
 		);
@@ -168,7 +188,6 @@ describe("ensureApp", () => {
 				["xcrun simctl get_app_container U1 com.x.app groups", { exitCode: 1 }],
 				["xcrun simctl get_app_container U1 com.x.app", { stdout: "/data/App.app" }],
 				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
-				["stat -f %z", { stdout: "7\n" }],
 				["xcrun simctl terminate", {}],
 				["xcrun simctl spawn", {}],
 				["xcrun simctl privacy U1 reset all com.x.app", {}],
@@ -184,7 +203,7 @@ describe("ensureApp", () => {
 			},
 			mkdir: async () => {},
 		};
-		const res = await ensureApp(input(exec, { installMode: "clean", resetKeychain: true, resetFs }));
+		const res = await ensureApp(input(exec, { installMode: "clean", resetKeychain: true, resetFs, fileSize }));
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.source).toBe("installed");
 		expect(calls.some((c) => /simctl (un)?install/.test(c))).toBe(false);

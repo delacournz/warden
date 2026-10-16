@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
 import { getInstall, recordInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
@@ -9,7 +10,18 @@ import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing"
 import { type AppDeps, createAppCommand } from "./app";
 
 let ctx: TestContext | undefined;
-afterEach(() => ctx?.cleanup());
+let deviceDir: string | undefined;
+afterEach(() => {
+	ctx?.cleanup();
+	if (deviceDir) rmSync(deviceDir, { recursive: true, force: true });
+	deviceDir = undefined;
+});
+
+/** A real `.app` for `simctl get_app_container` to point at: the installed-app identity check reads its files. */
+function installedApp(): string {
+	deviceDir = mkdtempSync(join(tmpdir(), "warden-app-device-"));
+	return fakeApp(deviceDir);
+}
 
 const HASH = "abc123def456";
 const deps: AppDeps = { pid: 1, sleep: async () => {}, pidAlive: () => false };
@@ -113,9 +125,8 @@ describe("warden app ensure", () => {
 			["ensure", "ios", "--udid", "U1", "--json"],
 			[
 				["xcrun simctl install U1", {}],
-				["xcrun simctl get_app_container U1 com.demo", { stdout: "/x" }],
+				["xcrun simctl get_app_container U1 com.demo", { stdout: installedApp() }],
 				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
-				["stat -f %z", { stdout: "7\n" }],
 			],
 			calls
 		);

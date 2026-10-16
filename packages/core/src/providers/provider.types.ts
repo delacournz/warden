@@ -19,6 +19,12 @@ export interface DeviceProvider {
 	shutdown(id: string): AsyncResult<void>;
 	/** Is a booted device responsive? Absent = no probe (Android), treated as healthy. */
 	probe?(id: string): AsyncResult<void>;
+	/**
+	 * Cheap proof that a device already Booted when claimed is usable: when it succeeds the claim skips
+	 * `waitReady` and `probe`. A failure is not a verdict — the claim falls back to `waitReady` + `probe`.
+	 * Absent = always take the full path.
+	 */
+	verifyWarm?(id: string): AsyncResult<void>;
 }
 
 export type ProviderDeps = {
