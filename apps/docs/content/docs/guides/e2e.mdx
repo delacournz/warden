@@ -120,7 +120,6 @@ export default defineConfig({
       platform: "ios",
       app: { variant: "dev" },
       metro: { launchArgs: ["-E2E", "YES"] },
-      mode: "single",
       devices: [
         { profile: "iphone-17", count: 2 },
         { profile: "ipad-pro-11-inch-m5", default: false, env: { E2E_LAYOUT: "regular" } },
@@ -138,7 +137,16 @@ warden e2e mobile --devices all   # the iPad leg too, concurrently
 
 One command does the whole run: claim the devices of every leg, install the build, lease a port and start Metro on it in the project root, wait until that port is verified to serve **this** checkout, build the bundle once, open the app on each device with `--initialUrl`, run the specs ([`@delacour/warden-e2e`](/docs/guides/specs) under `bun test`), stop Metro, release. A spec reads `WARDEN_METRO_URL` and `WARDEN_UDID` (its own device) and never has to guess a port or start a bundler. If the leased port is answered by another worktree's Metro, the run stops with `port <p> is served by <dir>, not this worktree` before any flow.
 
-`mode: "single"` runs one `bun test` process per device instead of one per flow: the selected flows are sharded over the leg's devices round-robin by flow id, so the same flows always land together and a device's specs run serially in one process. Every flow still gets its own verdict, read from that process's `results.jsonl`.
+### Isolation
+
+By default (`isolate: "device"`) one `bun test` process runs per device: the selected flows are sharded over the leg's devices round-robin by flow id, so the same flows always land together and a device's specs run in order in one process. That saves bun's start, the preload and the driver connect (150-250 ms) on every flow after a device's first. Every flow still gets its own verdict, read from that process's `results.jsonl`, and its own per-test artifact directory.
+
+- **A crash** (the process is killed, or exits without finishing): flows whose tests passed before it keep their pass; the flow that was running and every flow it never reached fail, with the process log.
+- **Retries** (`retry`, `--retry`) rerun only the flows that did not pass, in a fresh process. A flow's verdict is the one from the last attempt that ran it, and `attempts` in `e2e-report.json` counts the attempts that ran it.
+- **`jobTimeoutMs` is per flow**: a process gets it once for each flow it runs.
+- **Load is split up front**, by flow id, not as devices free up. A suite whose flows differ a lot in length, on several devices, can keep one device busy after the others finish.
+
+`isolate: "flow"` keeps one process per flow and one worker per device: each flow starts from a fresh process and the devices share the flows dynamically, at the cost of the start-up above. A suite with `passes` above 1 runs this way unless it says otherwise (a flow's passes are re-runs of that flow). `mode: "single"` / `"per-flow"` is the old spelling of `isolate: "device"` / `"flow"`.
 
 ### Failure screenshots
 

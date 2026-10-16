@@ -208,12 +208,75 @@ describe("focusAndClear with select-all", () => {
 		expect(result.success).toBe(true);
 		expect(methods(driver)).toEqual(["tap", "selectAll", "key", "key", "key"]);
 	});
+});
 
-	test("focusClearType types after the select-all clear", async () => {
+describe("focusClearType with select-all types over the selection", () => {
+	test("a filled field: select all then type, no Backspace at all", async () => {
 		const { driver, state } = fieldFixture({ value: "old text", selectAll: true });
-		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
-		expect(methods(driver)).toEqual(["tap", "selectAll", "key", "typeText"]);
+		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
+		expect(result.success).toBe(true);
+		expect(methods(driver)).toEqual(["tap", "selectAll", "typeText"]);
+		expect(driver.callsOf("key")).toEqual([]);
 		expect(state.value).toBe("new");
+	});
+
+	test("iOS cannot tell a placeholder from text: select all then type, never a Backspace per placeholder character", async () => {
+		const { driver, state } = fieldFixture({ placeholder: "ada@example.com", placeholderMeta: false, selectAll: true });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "grace@example.com");
+		expect(methods(driver)).toEqual(["tap", "selectAll", "typeText"]);
+		expect(state.value).toBe("grace@example.com");
+	});
+
+	test("an empty field and a placeholder-only field are typed into with no select-all", async () => {
+		const empty = fieldFixture({ selectAll: true });
+		await focusClearType(empty.driver, fakeClock().sleep, POINT, entryOfField(empty.driver), "x");
+		expect(methods(empty.driver)).toEqual(["tap", "typeText"]);
+		const placeholder = fieldFixture({ placeholder: "Email", selectAll: true });
+		await focusClearType(placeholder.driver, fakeClock().sleep, POINT, entryOfField(placeholder.driver), "x");
+		expect(methods(placeholder.driver)).toEqual(["tap", "typeText"]);
+	});
+
+	test("empty text still has to delete the selection: select all and one Backspace", async () => {
+		const { driver, state } = fieldFixture({ value: "old", selectAll: true });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "");
+		expect(methods(driver)).toEqual(["tap", "selectAll", "key"]);
+		expect(state.value).toBe("");
+	});
+
+	test("the counted method presses Backspaces then types, with no select-all", async () => {
+		const { driver, state } = fieldFixture({ value: "ab", selectAll: true });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "counted");
+		expect(methods(driver)).toEqual(["tap", "key", "key", "key", "typeText"]);
+		expect(state.value).toBe("new");
+	});
+
+	test("a secure field holding dots is still backspaced by its dots before typing", async () => {
+		const { driver, state } = fieldFixture({ secure: true, value: "abc", selectAll: true });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "xy");
+		expect(methods(driver)).toEqual(["tap", "key", "key", "key", "key", "typeText"]);
+		expect(state.value).toBe("xy");
+	});
+
+	test("a select-all the driver rejects falls back to the counted presses, then types", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([el("textfield", { id: "field", value: "ab" })])],
+			selectAll: true,
+			onCall: (call) => (call.method === "selectAll" ? failWith("E_BAD_REQUEST") : undefined),
+		});
+		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
+		expect(result.success).toBe(true);
+		expect(methods(driver)).toEqual(["tap", "selectAll", "key", "key", "key", "typeText"]);
+	});
+
+	test("a failed typeText surfaces its error", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([el("textfield", { id: "field", value: "ab" })])],
+			selectAll: true,
+			onCall: (call) => (call.method === "typeText" ? failWith("E_TIMEOUT") : undefined),
+		});
+		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
+		expect(result.success).toBe(false);
+		expect(methods(driver)).toEqual(["tap", "selectAll", "typeText"]);
 	});
 });
 

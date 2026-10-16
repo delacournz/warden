@@ -124,6 +124,49 @@ describe("warden app fingerprint", () => {
 	});
 });
 
+describe("git facts of one command", () => {
+	const factsOf = (c: TestContext) => ({ toplevel: c.cwd, commonDir: join(c.cwd, ".git"), branch: "main" });
+	const rev = (calls: string[][]) => calls.map((x) => x.join(" ")).filter((line) => line.startsWith("git rev-parse"));
+
+	test("fingerprint reads the project's checkout from the command's git cache", async () => {
+		const calls: string[][] = [];
+		const c = setup(["fingerprint", "ios", "--json"], [], calls);
+		for (const dir of [c.cwd, join(c.cwd, "app"), realpathSync(join(c.cwd, "app"))]) c.git.store(dir, factsOf(c));
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(rev(calls)).toEqual([]);
+	});
+
+	test("a local build takes its ccache base dir from the same cache", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--no-install", "--no-eas", "--json"], [], calls);
+		writeFileSync(
+			join(c.cwd, "warden.config.json"),
+			JSON.stringify({
+				projects: [
+					{
+						name: "demo",
+						root: "app",
+						bundleId: { ios: "com.demo" },
+						fingerprint: { command: "fp {platform}" },
+						build: { ios: "make-ios" },
+					},
+				],
+			})
+		);
+		const products = join(c.cwd, "app", "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+		const recorded = c.exec;
+		c.exec = async (cmd, opts) => {
+			if (cmd.join(" ") !== "sh -c make-ios") return recorded(cmd, opts);
+			fakeApp(products, "Built.app");
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		for (const dir of [c.cwd, join(c.cwd, "app"), realpathSync(join(c.cwd, "app"))]) c.git.store(dir, factsOf(c));
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).source).toBe("build");
+		expect(rev(calls)).toEqual([]);
+	});
+});
+
 describe("warden app ensure", () => {
 	test("--udid: cache hit → simctl install, then installed on the second run", async () => {
 		const calls: string[][] = [];

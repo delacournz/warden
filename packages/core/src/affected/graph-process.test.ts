@@ -6,7 +6,8 @@ import { bunExec, type Exec, type ExecResult } from "../exec";
 import { findSuite } from "./affected";
 import { makeSuiteRepo } from "./fixture.testing";
 import { createImportGraph, reachable } from "./graph";
-import { graphEntries, loadImportGraph } from "./graph-process";
+import { compiledBinary, GRAPH_WORKER_SUBCOMMAND, graphEntries, loadImportGraph } from "./graph-process";
+import { buildGraphDoc } from "./graph-worker";
 
 let dir: string;
 let cacheDir: string;
@@ -159,6 +160,91 @@ describe("loadImportGraph", () => {
 		} finally {
 			rmSync(plain, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("compiledBinary", () => {
+	test("a Bun-compiled entry is embedded under /$bunfs/ (B:/~BUN/ on Windows): the binary is the exec path", () => {
+		expect(compiledBinary("/$bunfs/root/warden", "/usr/local/bin/warden")).toBe("/usr/local/bin/warden");
+		expect(compiledBinary("B:/~BUN/root/warden.exe", "C:\\warden.exe")).toBe("C:\\warden.exe");
+	});
+
+	test("a run from source is not compiled, and neither is this test process", () => {
+		expect(compiledBinary("/repo/apps/cli/src/cli.ts", "/usr/local/bin/bun")).toBeUndefined();
+		expect(compiledBinary()).toBeUndefined();
+	});
+});
+
+describe("loadImportGraph in a compiled binary (no worker script on disk)", () => {
+	const SELF = "/opt/warden/bin/warden";
+	let selfCalls: string[][];
+
+	/** The compiled binary's `__affected-graph`, played by the real walker; git and everything else is real. */
+	const asBinary: Exec = async (cmd, opts) => {
+		if (cmd[0] !== SELF) return counting(cmd, opts);
+		selfCalls.push([...cmd]);
+		return done(JSON.stringify(await buildGraphDoc(JSON.parse(cmd[2] ?? ""))));
+	};
+	beforeEach(() => {
+		selfCalls = [];
+	});
+
+	const compiled = (extra: Partial<Parameters<typeof loadImportGraph>[0]> = {}) =>
+		load({ exec: asBinary, self: SELF, bun: null, ...extra });
+
+	test("the binary runs its own hidden subcommand with the request, and the table is the in-process graph's", async () => {
+		const loaded = await compiled();
+		expect(loaded.via).toBe("process");
+		expect(loaded.warning).toBeUndefined();
+		expect(selfCalls).toHaveLength(1);
+		expect(selfCalls[0]?.slice(0, 2)).toEqual([SELF, GRAPH_WORKER_SUBCOMMAND]);
+		expect(JSON.parse(selfCalls[0]?.[2] ?? "")).toMatchObject({ platform: "ios", repoRoot: dir, entries: [chats()] });
+		expect(spawns).toHaveLength(0);
+		const direct = await createImportGraph({ platform: "ios", repoRoot: dir });
+		expect([...reachable([chats()], loaded.graph.imports)]).toEqual([...reachable([chats()], direct.imports)]);
+	});
+
+	test("the subcommand is `__affected-graph`", () => {
+		expect(GRAPH_WORKER_SUBCOMMAND).toBe("__affected-graph");
+	});
+
+	test("it wins over a bun and a script that are both there", async () => {
+		const loaded = await load({ exec: asBinary, self: SELF });
+		expect(loaded.via).toBe("process");
+		expect(selfCalls).toHaveLength(1);
+		expect(spawns).toHaveLength(0);
+	});
+
+	test("its table is snapshotted like a script worker's: the second call spawns nothing", async () => {
+		await compiled();
+		const again = await compiled();
+		expect(again.via).toBe("snapshot");
+		expect(selfCalls).toHaveLength(1);
+	});
+
+	test("a binary that fails, or prints garbage, falls back in-process with a warning naming it", async () => {
+		const crash = await compiled({
+			exec: async (cmd, o) => (cmd[0] === SELF ? done("", 1, "TypeError: boom") : counting(cmd, o)),
+		});
+		expect(crash.via).toBe("in-process");
+		expect(crash.warning).toContain(`${SELF} ${GRAPH_WORKER_SUBCOMMAND}`);
+		expect(crash.warning).toContain("boom");
+		const junk = await compiled({ exec: async (cmd, o) => (cmd[0] === SELF ? done("hello") : counting(cmd, o)) });
+		expect(junk.via).toBe("in-process");
+		expect(junk.warning).toContain("printed no import graph");
+		expect(readdirSync(cacheDir)).toEqual([]);
+	});
+
+	test("a binary that cannot start (exit 127) falls back silently", async () => {
+		const loaded = await compiled({ exec: async (cmd, o) => (cmd[0] === SELF ? done("", 127) : counting(cmd, o)) });
+		expect(loaded.via).toBe("in-process");
+		expect(loaded.warning).toBeUndefined();
+	});
+
+	test("self: null with no bun is the in-process walk, as before", async () => {
+		const loaded = await load({ exec: asBinary, self: null, bun: null });
+		expect(loaded.via).toBe("in-process");
+		expect(selfCalls).toHaveLength(0);
 	});
 });
 

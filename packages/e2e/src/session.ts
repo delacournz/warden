@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools/devtools.types";
 import { openDevtoolsFacet } from "./devtools/facet";
 import type { Driver, DriverResult } from "./driver/driver.types";
+import { cacheObservations } from "./driver/observation-cache";
 import { traceDriver } from "./driver/traced-driver";
 import { type E2eEnv, readEnv } from "./env";
 import { E2eError } from "./errors";
@@ -61,7 +62,8 @@ export type Session = {
 	readonly trace: TraceWriter | undefined;
 	/**
 	 * opened on first call, then shared; a failed open is thrown as `E2eError{code:"DRIVER"}` and retried next call.
-	 * Every call on it is a `driver.*` span in the running attempt's `trace.jsonl`.
+	 * Every call on it is a `driver.*` span in the running attempt's `trace.jsonl`, except a screen read that the
+	 * observation cache answers from the snapshot a read just took (`driver/observation-cache.ts`; it offers `observe`).
 	 */
 	driver(): Promise<Driver>;
 	/** the driver if it is already open; never opens one (failure capture must not start a device) */
@@ -195,7 +197,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 						const { code, message } = result.error;
 						throw new E2eError("DRIVER", `${code}: ${message}`);
 					}
-					current = traceDriver(result.data, { trace: () => attempt?.trace });
+					current = cacheObservations(traceDriver(result.data, { trace: () => attempt?.trace }));
 					return current;
 				},
 				(cause: unknown) => {

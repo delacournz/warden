@@ -49,6 +49,14 @@ describe("warden port claim", () => {
 		expect(lease?.pid).toBeUndefined();
 	});
 
+	test("the lease's owner location comes from the command's git cache", async () => {
+		const c = make(["claim"]);
+		c.git.store(c.cwd, { toplevel: "/w/app", commonDir: "/w/main/.git", branch: "feat" });
+		const { code } = await run(["claim", "--from", FROM, "--span", "20"], c);
+		expect(code).toBe(0);
+		expect(c.db.listLeases()[0]?.owner).toMatchObject({ kind: "agent", repo: "main", worktree: "app@feat" });
+	});
+
 	test("--count + --ttl + --json", async () => {
 		const { code, c } = await run(["claim", "--from", FROM, "--count", "2", "--ttl", "5m", "--json"]);
 		expect(code).toBe(0);

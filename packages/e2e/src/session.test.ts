@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { el, fakeDriver as scriptedDriver, snapshotOf } from "./driver/driver.testing";
 import type { Driver, DriverResult } from "./driver/driver.types";
+import { canObserve } from "./driver/observation-cache";
 import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
 import type { AttemptContext } from "./runner/fixtures.types";
@@ -209,6 +210,20 @@ describe("Session spans", () => {
 		await driver.snapshot();
 		expect(spansOf(first.events).map((s) => s.op)).toEqual(["driver.snapshot", "driver.tap"]);
 		expect(spansOf(second.events).map((s) => s.op)).toEqual(["driver.snapshot"]);
+	});
+
+	test("the driver offers the observation cache: a read it serves from memory writes no snapshot span, an input ends it", async () => {
+		const session = open();
+		const { attempt, events } = recordingAttempt();
+		const driver = await session.driver();
+		expect(canObserve(driver)).toBe(true);
+		if (!canObserve(driver)) return;
+		session.enterAttempt(attempt);
+		await driver.observe({ reuse: true });
+		await driver.observe({ reuse: true });
+		await driver.tap({ x: 1, y: 1 });
+		await driver.observe({ reuse: true });
+		expect(spansOf(events).map((s) => s.op)).toEqual(["driver.snapshot", "driver.tap", "driver.snapshot"]);
 	});
 
 	test("driver calls outside an attempt write nothing and still work", async () => {

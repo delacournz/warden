@@ -23,7 +23,7 @@ warden e2e example --flows todos,settings  # exactly these ids / globs
 | `--explain` / `--dry-run` | print why each flow was selected / select, run nothing |
 | `--report <file>` | also write `e2e-report.json` there |
 | `--devices default\|all\|<profile,...>` | which `devices` legs run |
-| `--no-shutdown` | keep devices up after a pass (default: shut down those warden created) |
+| `--no-shutdown` | keep devices up after a pass (default: shut down those warden created under CI; locally they stay booted and `warden gc` reaps them when idle; suite `shutdown`) |
 | `--no-warm` | skip the iOS driver warm-up |
 | claim flags | `--profile --runtime --count --max --wait --ttl --label --adopt --headless --no-headless --json` (`--json` prints the e2e report) |
 | lease flags | `--port <from:span>` (repeatable), `--app --install-mode clean\|reinstall --reset-keychain --project --bundle-id --variant --no-eas --no-build` |
@@ -35,8 +35,8 @@ Suite settings are defaults. A flag passed on the command line wins.
 
 **Preflight (fails before any claim):** bun >= 1.3 on PATH (or `WARDEN_BUN`), and `@delacour/warden-e2e` in the project. **What runs:** `bun test --preload @delacour/warden-e2e/preload --timeout <spec timeout + 30s> <files>`.
 
-- `mode: per-flow`: one process per flow, one worker per device.
-- `mode: single`: one `shard-<k>` process per device, flows spread round-robin by sorted id.
+- `isolate: device` (default): one `shard-<k>` process per device, flows spread round-robin by sorted id. A crash fails the flow it hit and the ones it never reached; a retry reruns only the flows that did not pass.
+- `isolate: flow`: one process per flow, one worker per device (the default with `passes > 1`). `mode: single` / `per-flow` is the old spelling.
 
 ## `warden affected [suite]`
 
@@ -94,9 +94,10 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | Key | Default | Meaning |
 |---|---|---|
 | `spec` | `{}` | `{ bundleId, launchArgs, timeout = "2m", actionTimeout = "30s", assertionTimeout = "5s" }`. `bundleId` defaults to the project's |
-| `mode` | `per-flow` | `per-flow` or `single` |
-| `jobTimeoutMs` | `600000` | a process past this is killed and counts as failed |
-| `passes` | `1` | consecutive green runs needed per flow. `single` with `passes > 1` is an error |
+| `isolate` | `device` | `device` or `flow` (`flow` when `passes > 1`) |
+| `shutdown` | `idle` locally, `always` under CI | `always`: shut down warden's devices after a passed gate. `idle`: leave them booted for the next run (`warden gc` reaps idle ones). A failed run always leaves them up |
+| `jobTimeoutMs` | `600000` | per flow: a process past this for each flow it runs is killed and counts as failed |
+| `passes` | `1` | consecutive green runs needed per flow. `isolate: device` with `passes > 1` is an error |
 | `retry` | `0` | re-run a failed job on the same device |
 
 Removed: `runner` (use `spec`), `warmRunners` (use `warmDrivers`).
@@ -138,7 +139,6 @@ e2e: {
 		...AFFECTED,
 	},
 	"example-dev": {
-		mode: "single",
 		count: 2,
 		app: { variant: "dev" },
 		metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
@@ -184,7 +184,7 @@ e2e/<w>-<seq>/<flowId>/<title>-<hash6>/   trace.jsonl screenshots/ failure.png s
 5. `metro.log`, `logs/warm-*.log`, `logs/setup-*.log`.
 6. A crash: `~/Library/Logs/DiagnosticReports/<app>-*.ips`.
 
-A failed run leaves sims booted. Clean up with `warden release <leaseId> --shutdown` (a parent session: `--mine --shutdown`). A device that keeps failing: `warden release <id> --bad "<why>"`.
+A failed run leaves sims booted (so does a passed local one, until `warden gc` reaps them as idle). Clean up with `warden release <leaseId> --shutdown` (a parent session: `--mine --shutdown`). A device that keeps failing: `warden release <id> --bad "<why>"`.
 
 ## `warden run` and `warden batch`
 

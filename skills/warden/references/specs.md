@@ -42,7 +42,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 - `test(title, [options], async ({ app, device, screen, platform }) => ...)`
 - `options`: `{ timeout, skip, only, platforms: ("ios"|"android")[], retry }`. `retry` is bun's retry; only the last attempt lands in `results.jsonl`.
 - `test.skip`, `test.only`, `test.todo(title)`, `test.skipIf(cond)(title, body)`.
-- `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none" })` applies to the file or the enclosing `describe`.
+- `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none", systemAlerts?: "accept" | "dismiss" | "off" })` applies to the file or the enclosing `describe`. `systemAlerts` (default `"off"`): reads, actions and `expect` that see an alert on top answer it (`device.alert(mode)`, 3 answers max per look) and look again. Answers the app's own alerts too.
 - `test.extend<Extra>({ name: async (base, use) => { await use(value) } })` returns a `test` with the extra fixture.
 - `describe(title, [{ serial }], body)`. `serial` is accepted but changes nothing (bun runs a file's tests in order).
 - `beforeEach/afterEach` receive the fixtures. `beforeAll/afterAll` receive `app`, `device`, `screen`, `platform` only.
@@ -55,7 +55,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 
 | Member | Does |
 |---|---|
-| `open({ url?, args?, env? })` | terminate, relaunch with `WARDEN_LAUNCH_ARGS` + `args`, then open `url` |
+| `open({ url?, args?, env?, wait?: "quiet" \| "none" })` | terminate, relaunch with `WARDEN_LAUNCH_ARGS` + `args`, then open `url`; `wait: "quiet"` then settles (frontmost + still, 250 ms quiet, 3 s max, never an error); default `"none"` |
 | `close()` | terminate |
 | `restart()` | relaunch with `WARDEN_LAUNCH_ARGS` |
 | `reinstall()` | uninstall + install from `WARDEN_APP_PATH` (throws without it) |
@@ -109,10 +109,11 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 ### `Locator`
 
 - **Scope:** `getBy*`, `locator()`, `filter({ hasText?, has? })`, `first()`, `last()`, `nth(i)`.
-- **Reads (no waiting):** `count() all() text() allTexts() value() isVisible() isHidden() isEnabled() isChecked() boundingBox()`.
+- **Reads (no waiting):** `count() all() text() allTexts() value() isVisible() isHidden() isEnabled() isChecked() boundingBox()`, and `read()` = `{ visible, text?, value?, checked? }` from one look (no match: `{ visible: false }`; `checked` only for switch/checkbox). Prefer it over several single reads.
+- **Snapshot reuse:** the runner keeps the last whole-screen snapshot (iOS 150 ms, Android 1 s) and reuses it for the first look of a read, action or `expect` when nothing was done since (tap, key, launch, settle drop it). `fill` confirm reads and `device.snapshot()` are always real.
 - **Wait:** `waitFor({ state: "attached" | "detached" | "visible" | "hidden", timeout? })`. Default state is `visible`.
 - **Actions** wait for exactly one visible match. Several matches fail with `LOCATOR_AMBIGUOUS`.
-  - `tap({ position?, timeout? })`, `longPress({ durationMs? })`
+  - `tap({ position?, timeout?, until?, retries = 2, windowMs = 4000, pollMs = 250 })`, `longPress({ durationMs? })`. `until` (a locator that must be visible, or `async () => boolean`) makes the tap retrying: after each tap it polls for `windowMs`, re-taps when `until` did not hold. The last tap is not waited on (the next assertion reports what is missing). `retries`/`windowMs`/`pollMs` without `until` are `INVALID_ARGUMENT`. Replaces hand-written `tapUntil` helpers.
   - `fill(text)` backspaces, types, verifies on two reads, retries once. Secure fields are not verified.
   - `clear()`, `type(text)` (at the caret)
   - `press(key, { modifiers? })` sends a KEY (`Enter Backspace Tab Space Escape Delete Up Down Left Right`), it is not a tap. Use `tap()` to tap.

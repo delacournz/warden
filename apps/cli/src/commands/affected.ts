@@ -43,6 +43,7 @@ export function affectedInput(
 	return ok({
 		exec: ctx.exec,
 		cwd: ctx.cwd,
+		git: ctx.git,
 		cacheDir: join(wardenHome(ctx.env), "affected"),
 		...(suite !== undefined ? { suite } : {}),
 		...(opts.base !== undefined ? { base: opts.base } : {}),

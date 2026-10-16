@@ -37,6 +37,8 @@ export type AffectedInput = {
 	only?: SelectInput["only"];
 	/** persist parsed imports under this dir (one file per config dir), e.g. `$WARDEN_HOME/affected` */
 	cacheDir?: string;
+	/** per-command memo of the git facts (default: a short-lived shared one) */
+	git?: GitFactsCache;
 };
 
 export type Affected = {
@@ -101,7 +103,7 @@ async function loadChanges(input: AffectedInput, suite: Suite, base: string): As
 			input.files.map((f) => ({ path: relative(suite.configDir, join(input.cwd, f)), status: "modified" as const }))
 		);
 	}
-	const changed = await changedFiles(input.exec, suite.configDir, base);
+	const changed = await changedFiles(input.exec, suite.configDir, base, input.git);
 	if (!changed.success) return changed;
 	return ok(rebase(changed.data.files, changed.data.top, suite.configDir));
 }
@@ -134,7 +136,7 @@ const usesGit = (input: AffectedInput): boolean => !input.files && !input.only;
 
 /** Changed files → the flows each platform must run (with reasons), per `e2e.<suite>`. */
 export async function computeAffected(input: AffectedInput): AsyncResult<Affected> {
-	const suite = await findSuite(input.exec, input.cwd, input.suite);
+	const suite = await findSuite(input.exec, input.cwd, input.suite, input.git);
 	if (!suite.success) return suite;
 	const { config, configDir } = suite.data;
 	const base = input.base ?? config.base;

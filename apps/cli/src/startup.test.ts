@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -24,9 +24,9 @@ beforeAll(() => {
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-async function loadedBy(args: string[]): Promise<string[]> {
+async function loadedBy(args: string[], home: string = join(scratch, "home")): Promise<string[]> {
 	const proc = Bun.spawn(["bun", "--preload", preload, resolve(SRC, "cli.ts"), ...args], {
-		env: { ...process.env, WARDEN_HOME: join(scratch, "home"), NO_COLOR: "1", CI: "1" },
+		env: { ...process.env, WARDEN_HOME: home, NO_COLOR: "1", CI: "1" },
 		stdout: "ignore",
 		stderr: "pipe",
 		stdin: "ignore",
@@ -72,6 +72,140 @@ describe("cold start", () => {
 			expect(has(files, "/node_modules/ora/")).toBe(false);
 			expect(has(files, "/node_modules/@clack/")).toBe(false);
 		}
+	});
+});
+
+describe("cold start: gc and release", () => {
+	const HEAVY = [
+		"/packages/e2e/",
+		"/node_modules/zod/",
+		"/node_modules/typescript/",
+		"/agent-ui/helper.ts",
+		"/agent-ui/state.ts",
+	];
+	const heavyIn = (files: string[]) => HEAVY.filter((needle) => has(files, needle));
+
+	/** A `$WARDEN_HOME` laid out like a machine that has run `warden ui`: a resident helper's record and socket dir. */
+	function homeWithHelper(pid: number): string {
+		const home = mkdtempSync(join(scratch, "home-"));
+		mkdirSync(join(home, "simd"), { recursive: true });
+		mkdirSync(join(home, "ui", "UDID-1"), { recursive: true });
+		writeFileSync(join(home, "simd", "UDID-1.sock"), "");
+		writeFileSync(
+			join(home, "ui", "UDID-1", "state.json"),
+			JSON.stringify({ generation: 1, helper: { pid, socket: join(home, "simd", "UDID-1.sock") } })
+		);
+		return home;
+	}
+
+	test("`warden gc` imports its own command and none of the e2e driver, zod, typescript or the helper module", async () => {
+		const files = await loadedBy(["gc", "--json"]);
+		expect(commandModules(files)).toEqual(["gc.ts"]);
+		expect(heavyIn(files)).toEqual([]);
+	});
+
+	test("`warden gc --quiet` (the detached auto-gc) loads nothing heavy either", async () => {
+		expect(heavyIn(await loadedBy(["gc", "--quiet"]))).toEqual([]);
+	});
+
+	test("gc with a live helper on record still loads nothing heavy", async () => {
+		const home = homeWithHelper(process.pid);
+		expect(heavyIn(await loadedBy(["gc", "--json"], home))).toEqual([]);
+	});
+
+	test("gc with a dead helper on record sweeps it (and only then loads the helper module)", async () => {
+		const dead = Bun.spawn(["true"]);
+		await dead.exited;
+		const home = homeWithHelper(dead.pid);
+		const files = await loadedBy(["gc", "--json"], home);
+		expect(has(files, "/agent-ui/helper.ts")).toBe(true);
+		const state = JSON.parse(readFileSync(join(home, "ui", "UDID-1", "state.json"), "utf8"));
+		expect(state.helper).toBeUndefined();
+	});
+
+	test("`warden release` imports its own command and none of the heavy modules", async () => {
+		const files = await loadedBy(["release", "--mine", "--json"]);
+		expect(commandModules(files).filter((f) => f !== "ls.ts")).toEqual(["release.ts"]);
+		expect(heavyIn(files)).toEqual([]);
+	});
+});
+
+/** What opening a device loads: the iOS and Android drivers and the helper socket client. */
+const DRIVERS = [
+	"/packages/e2e/src/driver/ios/ios-driver.ts",
+	"/packages/e2e/src/driver/ios/simd-client.ts",
+	"/packages/e2e/src/driver/android/",
+];
+const loaded = (files: string[], needles: string[]) => needles.filter((needle) => has(files, needle));
+
+describe("cold start: batch and e2e", () => {
+	test("`warden batch` and `warden e2e` register without loading a device driver or the helper lifecycle", async () => {
+		for (const args of [
+			["batch", "--help"],
+			["e2e", "--help"],
+		]) {
+			const files = await loadedBy(args);
+			expect(loaded(files, [...DRIVERS, "/agent-ui/helper.ts"])).toEqual([]);
+		}
+	});
+});
+
+describe("cold start: warden ui", () => {
+	/** Implementation modules of the other subcommands: a call loads its own and none of these. */
+	const OTHERS = [
+		"/agent-ui/flows-command.ts",
+		"/agent-ui/devtools-cli.ts",
+		"/agent-ui/bench.ts",
+		"/agent-ui/video.ts",
+		"/agent-ui/controls.ts",
+		"/agent-ui/ui-driver.ts",
+	];
+	const without = (needles: string[], skip: string) => needles.filter((needle) => needle !== skip);
+
+	test("`ui --help` and `ui <sub> --help` load registration only: no implementation, no e2e package, no zod", async () => {
+		for (const args of [
+			["ui", "--help"],
+			["ui", "snapshot", "--help"],
+			["ui", "record", "start", "--help"],
+		]) {
+			const files = await loadedBy(args);
+			expect(loaded(files, [...OTHERS, "/packages/e2e/", "/node_modules/zod/", "/agent-ui/helper.ts"])).toEqual([]);
+			expect(loaded(files, ["/agent-ui/actions.ts", "/agent-ui/snapshot-command.ts", "/agent-ui/run.ts"])).toEqual([]);
+		}
+	});
+
+	test("`ui snapshot` without a lease loads its own module, not the other subcommands or any driver", async () => {
+		const files = await loadedBy(["ui", "snapshot", "--json"]);
+		expect(has(files, "/agent-ui/snapshot-command.ts")).toBe(true);
+		expect(loaded(files, [...OTHERS, ...DRIVERS, "/agent-ui/actions.ts", "/agent-ui/query.ts"])).toEqual([]);
+	});
+
+	test("`ui press` without a lease loads its own module and no driver", async () => {
+		const files = await loadedBy(["ui", "press", "@e1", "--json"]);
+		expect(has(files, "/agent-ui/actions.ts")).toBe(true);
+		expect(loaded(files, [...OTHERS, ...DRIVERS, "/agent-ui/query.ts"])).toEqual([]);
+	});
+
+	test("`ui status` and `ui close` read the helper record without loading a driver", async () => {
+		for (const [sub, own] of [
+			["status", "/agent-ui/status.ts"],
+			["close", "/agent-ui/close.ts"],
+		] as const) {
+			const files = await loadedBy(["ui", sub, "--json"]);
+			expect(has(files, own)).toBe(true);
+			expect(loaded(files, [...OTHERS, ...DRIVERS, "/agent-ui/actions.ts", "/agent-ui/snapshot-command.ts"])).toEqual(
+				[]
+			);
+		}
+	});
+
+	test("the flow and devtools subcommands load their own module, each without the other", async () => {
+		const record = await loadedBy(["ui", "record", "status", "--json"]);
+		expect(has(record, "/agent-ui/flows-command.ts")).toBe(true);
+		expect(loaded(record, [...DRIVERS, "/agent-ui/devtools-cli.ts"])).toEqual([]);
+		const logs = await loadedBy(["ui", "logs", "--json"]);
+		expect(has(logs, "/agent-ui/devtools-cli.ts")).toBe(true);
+		expect(loaded(logs, [...without(OTHERS, "/agent-ui/devtools-cli.ts"), ...DRIVERS])).toEqual([]);
 	});
 });
 

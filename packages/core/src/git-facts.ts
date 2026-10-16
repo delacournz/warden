@@ -60,6 +60,15 @@ export function createGitFactsCache(options: GitFactsCacheOptions = {}): GitFact
 	};
 }
 
+/**
+ * Store what was read for `cwd`, and under the checkout's own toplevel too: the facts of a checkout are the same from
+ * its root as from any directory inside it, so a later read of the root (a config dir, a project root) is free.
+ */
+function remember(cache: GitFactsCache, cwd: string, facts: GitFacts | undefined): void {
+	cache.store(cwd, facts);
+	if (facts !== undefined && facts.toplevel !== cwd) cache.store(facts.toplevel, facts);
+}
+
 /** Cache for callers that were not given one: short-lived on purpose (see `DEFAULT_GIT_FACTS_TTL_MS`). */
 export const sharedGitFacts: GitFactsCache = createGitFactsCache();
 
@@ -119,7 +128,7 @@ export function readGitFactsSync(cwd: string, options: GitFactsSyncOptions = {})
 	const script = probe(cwd);
 	let step = script.next();
 	while (!step.done) step = script.next(run(cwd, step.value));
-	cache.store(cwd, step.value);
+	remember(cache, cwd, step.value);
 	return step.value;
 }
 
@@ -144,7 +153,7 @@ export async function readGitFacts(
 	const inFlight = cache.pending.get(cwd);
 	if (inFlight) return inFlight;
 	const read = readAsync(exec, cwd).then((found) => {
-		cache.store(cwd, found);
+		remember(cache, cwd, found);
 		return found;
 	});
 	cache.pending.set(cwd, read);

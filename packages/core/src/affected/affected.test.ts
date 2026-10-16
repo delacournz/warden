@@ -83,6 +83,24 @@ describe("computeAffected", () => {
 		}
 	});
 
+	test("computeAffected asks git for the toplevel once, through the facts cache (also across calls)", async () => {
+		write("src/settings/form.tsx", "export const changed = 1;\n");
+		const spawns: string[] = [];
+		const exec: Exec = (cmd, opts) => {
+			spawns.push(cmd.slice(cmd[0] === "git" ? 1 : 0).join(" "));
+			return bunExec(cmd, opts);
+		};
+		const git = createGitFactsCache();
+		for (let i = 0; i < 2; i++) {
+			const res = await computeAffected({ exec, cwd: join(dir, "src"), git });
+			expect(res.success).toBe(true);
+		}
+		const facts = "rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD";
+		expect(spawns.filter((s) => s === facts)).toHaveLength(1);
+		expect(spawns.filter((s) => s === "rev-parse --show-toplevel")).toHaveLength(0);
+		expect(spawns.filter((s) => s.startsWith("diff "))).toHaveLength(2);
+	});
+
 	test("findSuite asks git once per cwd, however often it is called", async () => {
 		const spawns: string[] = [];
 		const counting: Exec = (cmd, opts) => {

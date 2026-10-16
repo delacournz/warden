@@ -16,6 +16,15 @@ export type BaseFixtures = { app: App; device: Device; screen: Screen; platform:
 
 export type LaunchMode = "fresh" | "none";
 
+/**
+ * `test.use({ systemAlerts })`: what to do when a read or wait sees an alert or sheet over the app (a permission
+ * prompt, "Open in …?", the Keychain "Save Password?" sheet, an app alert). `accept` / `dismiss` answer it with the
+ * buttons `device.alert("accept")` / `("dismiss")` press; `off` (the default) leaves it for the test.
+ */
+export type SystemAlerts = "accept" | "dismiss" | "off";
+
+export const SYSTEM_ALERTS: readonly SystemAlerts[] = ["accept", "dismiss", "off"];
+
 /** What a fixture factory gets for one attempt (or, for `beforeAll`/`afterAll`, the idle session). */
 export type FixtureContext = {
 	session: Session;
@@ -24,6 +33,8 @@ export type FixtureContext = {
 	launch: LaunchMode;
 	actionTimeoutMs: number;
 	assertionTimeoutMs: number;
+	/** absent = `off` */
+	systemAlerts?: SystemAlerts;
 };
 
 /**

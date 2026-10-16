@@ -105,14 +105,41 @@ export async function hitTestField(
  */
 export type ClearMethod = "auto" | "counted";
 
+/** What `focusAndSelect` left behind: `selection` = the text is selected and the next key replaces it; `none` = already empty or already backspaced away. */
+type Prepared = { pending: "selection" } | { pending: "none" };
+
 /**
- * Taps `point` (the caret spot at the field's right end, `focusPoint`) and empties what `entry` shows; no `entry`
- * (a bare coordinate) means nothing to clear. A field that holds nothing, or only a placeholder, gets no keys. The one
- * clear routine behind the spec `fill`/`clear` and `warden ui fill`.
+ * Taps `point` (the caret spot at the field's right end, `focusPoint`) and gets `entry` ready for new text; no `entry`
+ * (a bare coordinate) means nothing to clear. A field that holds nothing, or only a placeholder, gets no keys.
  *
- * Plain text is selected whole and deleted with one Backspace when the driver offers select-all (a driver that
- * rejects it gets the counted presses). Secure fields are always backspaced by their dots: they cannot be read back,
- * so a select-all that did nothing would go unnoticed.
+ * Plain text is selected whole when the driver offers select-all and the method is `auto`: the caller then types over
+ * the selection (or presses one Backspace to delete it) and the whole text goes without one key per character. A
+ * driver that rejects select-all gets the counted presses. Secure fields are always backspaced by their dots: they
+ * cannot be read back, so a select-all that did nothing would go unnoticed.
+ */
+async function focusAndSelect(
+	driver: Driver,
+	sleep: Sleep,
+	point: Point,
+	entry: NodeEntry | undefined,
+	method: ClearMethod
+): DriverResult<Prepared> {
+	const focused = await driver.tap(point);
+	if (!focused.success) return focused;
+	if (entry === undefined) return ok({ pending: "none" });
+	const content = fieldContent(entry);
+	if (content.kind === "empty") return ok({ pending: "none" });
+	if (content.kind === "text" && method === "auto" && canSelectAll(driver)) {
+		const selected = await driver.selectAll();
+		if (selected.success) return ok({ pending: "selection" });
+	}
+	const pressed = await pressKeys(driver, sleep, "Backspace", clearKeyPresses(entry));
+	return pressed.success ? ok({ pending: "none" }) : pressed;
+}
+
+/**
+ * Taps `point` and empties what `entry` shows: select-all and one Backspace when the driver offers it, else one
+ * Backspace per character (see `focusAndSelect`). The clear routine behind the spec `clear` and `warden ui clear`.
  */
 export async function focusAndClear(
 	driver: Driver,
@@ -121,19 +148,17 @@ export async function focusAndClear(
 	entry: NodeEntry | undefined,
 	method: ClearMethod = "auto"
 ): DriverResult<void> {
-	const focused = await driver.tap(point);
-	if (!focused.success) return focused;
-	if (entry === undefined) return ok(undefined);
-	const content = fieldContent(entry);
-	if (content.kind === "empty") return ok(undefined);
-	if (content.kind === "text" && method === "auto" && canSelectAll(driver)) {
-		const selected = await driver.selectAll();
-		if (selected.success) return pressKeys(driver, sleep, "Backspace", 1);
-	}
-	return pressKeys(driver, sleep, "Backspace", clearKeyPresses(entry));
+	const prepared = await focusAndSelect(driver, sleep, point, entry, method);
+	if (!prepared.success) return prepared;
+	return prepared.data.pending === "selection" ? pressKeys(driver, sleep, "Backspace", 1) : ok(undefined);
 }
 
-/** `focusAndClear`, then types `text` (nothing for the empty string). */
+/**
+ * Empties the field as `focusAndClear` does, then types `text` (nothing for the empty string). A selected text is not
+ * deleted first: the first typed character replaces the whole selection, which saves a Backspace. If the select-all
+ * did not take, the old text stays and the typed text lands after it; the confirm read sees that and the retry uses the
+ * counted method.
+ */
 export async function focusClearType(
 	driver: Driver,
 	sleep: Sleep,
@@ -142,7 +167,9 @@ export async function focusClearType(
 	text: string,
 	method: ClearMethod = "auto"
 ): DriverResult<void> {
-	const cleared = await focusAndClear(driver, sleep, point, entry, method);
-	if (!cleared.success) return cleared;
-	return text === "" ? ok(undefined) : typeText(driver, sleep, text);
+	const prepared = await focusAndSelect(driver, sleep, point, entry, method);
+	if (!prepared.success) return prepared;
+	if (text === "")
+		return prepared.data.pending === "selection" ? pressKeys(driver, sleep, "Backspace", 1) : ok(undefined);
+	return typeText(driver, sleep, text);
 }

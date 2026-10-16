@@ -81,6 +81,30 @@ describe("resolveOwner", () => {
 	});
 });
 
+describe("resolveOwner git facts", () => {
+	test("repo and worktree come from the command's git cache, with no git spawn of their own", () => {
+		ctx = testContext([]);
+		ctx.git.store(ctx.cwd, { toplevel: "/w/app", commonDir: "/w/main/.git", branch: "feat" });
+		expect(resolveOwner({ ...ctx, env: { WARDEN_SESSION_ID: "abc" } })).toMatchObject({
+			kind: "agent",
+			repo: "main",
+			worktree: "app@feat",
+		});
+		expect(resolveOwner(ctx)).toMatchObject({ kind: "user", repo: "main", worktree: "app@feat" });
+	});
+
+	test("a cache of another command is not consulted", () => {
+		ctx = testContext([]);
+		const other = testContext([]);
+		try {
+			other.git.store(other.cwd, { toplevel: "/w/app", commonDir: "/w/main/.git", branch: "feat" });
+			expect(resolveOwner({ ...ctx, cwd: other.cwd })).not.toHaveProperty("repo");
+		} finally {
+			other.cleanup();
+		}
+	});
+});
+
 describe("resolveAutoProfile", () => {
 	test("android auto → first AVD slug", () => {
 		expect(resolveAutoProfile(["Pixel_10", "Pixel_9_Pro_Store"])).toEqual({ success: true, data: "pixel-10" });

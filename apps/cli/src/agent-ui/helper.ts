@@ -4,24 +4,25 @@ import {
 	existsSync,
 	mkdirSync,
 	openSync,
-	readdirSync,
 	readFileSync,
 	statSync,
 	unlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { type Store, wardenHome } from "@delacour/warden-core/store";
 import type { Owner } from "@delacour/warden-core/types";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
-import { openIosDriver, resolveHelper } from "@delacour/warden-e2e/driver/ios/ios-driver";
-import { connectSimd, type SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
+import { resolveHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
+import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { driverUiError } from "./driver";
+import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
+import { simdDir } from "./paths";
 import { type HelperRecord, readState, type UiState, writeState } from "./state";
 
 /** How long a caller waits for a helper (its own spawn or another caller's) to start answering. */
@@ -153,7 +154,8 @@ function isUpLine(line: string): boolean {
 }
 
 export const defaultHelperDeps: HelperDeps = {
-	connect: (socketPath) => connectSimd({ socketPath, readyTimeoutMs: 2000 }),
+	connect: async (socketPath) =>
+		(await import("@delacour/warden-e2e/driver/ios/simd-client")).connectSimd({ socketPath, readyTimeoutMs: 2000 }),
 	spawnDetached: ({ cmd, logPath, signalMs }) => {
 		const log = openSync(logPath, "a");
 		try {
@@ -186,10 +188,6 @@ export const defaultHelperDeps: HelperDeps = {
 
 /** The slice of a command context the helper lifecycle needs. */
 export type HelperHost = Pick<CommandContext, "env" | "now"> & Partial<Pick<CommandContext, "store" | "exec">>;
-
-export function simdDir(host: Pick<CommandContext, "env">): string {
-	return join(wardenHome(host.env), "simd");
-}
 
 /**
  * `$WARDEN_HOME/simd/<udid>.sock`. A unix socket path must fit in 104 bytes, so when `$WARDEN_HOME` is
@@ -525,6 +523,7 @@ export async function connectHelper(
 	const helper = await ensureHelper(ctx, udid, { ...opts, keepClient: true });
 	if (!helper.success) return helper;
 	const { client, socketPath } = helper.data;
+	const { openIosDriver } = await import("@delacour/warden-e2e/driver/ios/ios-driver");
 	const driver = await openIosDriver({
 		udid,
 		exec: ctx.exec,
@@ -618,14 +617,7 @@ export function sweepDeadHelpers(
 	deps: Pick<HelperDeps, "pidAlive"> = defaultHelperDeps
 ): string[] {
 	const removed: string[] = [];
-	const udids = new Set<string>();
-	const sockDir = simdDir(host);
-	if (existsSync(sockDir)) {
-		for (const name of readdirSync(sockDir)) if (name.endsWith(".sock")) udids.add(basename(name, ".sock"));
-	}
-	const uiRoot = join(wardenHome(host.env), "ui");
-	if (existsSync(uiRoot)) for (const name of readdirSync(uiRoot)) udids.add(name);
-	for (const udid of udids) {
+	for (const udid of knownUdids(host)) {
 		const state = readState(host, udid);
 		const record = state.helper;
 		if (record === undefined || deps.pidAlive(record.pid)) continue;

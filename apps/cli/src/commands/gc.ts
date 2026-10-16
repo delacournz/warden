@@ -4,6 +4,7 @@ import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
+import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { mapBounded } from "../bounded";
 import { resolveOwner } from "../claim-flags";
@@ -124,7 +125,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			})
 		).map((l) => l.id);
 		// resident helpers (a live pid on a live socket) are not residue: only records whose process is gone are swept
-		(await import("../agent-ui/helper")).sweepDeadHelpers(sctx);
+		await sweepDeadHelpersLazily(sctx);
 		const leased = new Set(
 			store
 				.listLeases()

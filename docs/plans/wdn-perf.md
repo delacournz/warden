@@ -56,7 +56,7 @@ Already fine, leave alone: sqlite store (WAL, busy_timeout, cached statements, s
 | Metric | Now | Target |
 |---|---|---|
 | iOS warm suite median | 101.9 s | **≤ 75 s** (≤ 0.8× agent-device) |
-| iOS `fill` (email, empty field) | 2.75 s | ≤ 1.3 s |
+| iOS `fill` (email, empty field) | 2.75 s | ≤ 0.3 s + typing at the pacing floor (≈ 1.45 s for 15 chars, ≈ 1.1 s for a 9-char password; restated 2026-10-16 after the on-device run) |
 | iOS settle after launch / first read after relaunch | 2.33 s / 1.3 s | ≤ 0.4 s / ≤ 0.3 s |
 | iOS `openLink` without a sheet | 8.9 s | ≤ 1.5 s |
 | iOS prepare | 729 ms | ≤ 300 ms |
@@ -156,7 +156,8 @@ Not done, and why:
   5. `STALE_RISK_READS` only applies when the field held the text before and was not showing its placeholder.
   6. Android: same capability via `input keycombination 113 29` + DEL on API ≥ 33. Otherwise keep `pressKeyRepeat` (`driver/android/android-argv.ts:89-95`, where batched keyevent 67 drops keys in RN).
 - Tests first: an empty field with a placeholder value sends 0 Backspaces; a filled field sends selectAll + 1; secure placeholder → 0; mismatch → fallback; confirm read count is 2 for placeholder-equal text. Plus `swift test --package-path packages/e2e/native/ios`.
-- Accept: on device, email fill ≤ 1.3 s, password ≤ 1.0 s, 0 lost characters over 25 fills (`native/scripts/smoke.ts`).
+- Accept: on device, fill overhead beyond typing ≤ 0.3 s (≈ 1.45 s for a 15-char email, ≈ 1.1 s for a 9-char password at hold 40 / pace 30), 0 lost characters over 25 fills (`native/scripts/smoke.ts`).
+- Measured 2026-10-16 (head 3bbaee6): 25/25 lossless; email 1261 ms (12 chars) to 1666 ms (18 chars); password 1066–1109 ms. Typing is 60–76 ms per char (double letters wait the 300 ms repeat gap); the rest is snapshot ~85 ms + select-all ~90 ms + 1 Backspace ~75 ms + 2 confirms ~65 ms. The original ≤ 1.3 s / ≤ 1.0 s targets sit below the lossless pacing floor.
 - Risk: RN `contextMenuHidden` or custom inputs refuse Cmd+A. The verify step and fallback cover that.
 
 **PERF-1.2 · `WDN-PERF 1 - 🐛 fix: quiescence stream rebinds on app relaunch`** (after PERF-0.4)
@@ -397,6 +398,159 @@ Not done, and why:
 - Replace the hand-rolled helpers in `apps/example/e2e/helpers/flows.ts` and `packages/e2e-bench/suites/warden/helpers/flows.ts` with the PERF-2.4 APIs. Keep the same retry semantics, which is the bench parity rule in `packages/e2e-bench/AGENTS.md`, and document it in the bench README.
 - Re-run the warden-only bench and report it as a separate "idiomatic warden" row. The headline comparison stays the unchanged suite.
 
+## Android server (PERF-3.2)
+
+Spike result for PERF-3.2. Prototype: `packages/e2e/native/android/` (`src/**/*.java`, `scripts/build.ts`, `scripts/smoke.ts`, `scripts/build.test.ts`). Server name `warden-uiad`, protocol 1, v0.1.0. Verified only on one image: emulator-5554, Android 17 / API 37, `sdk_gphone16k_arm64`, example app todos screen (147-189 nodes).
+
+### Decision
+
+Design (a): a ~25 KB dex run with `app_process` as the shell user, NDJSON on stdin/stdout. Not (b) instrumentation APK + `adb forward`.
+
+| | (a) `app_process` dex | (b) instrumentation APK + forward |
+|---|---|---|
+| Install state on device | none (one file in `/data/local/tmp`, rewritten if the hash differs) | APK(s) installed + signed, survive in package list, uninstall/upgrade paths |
+| Transport | the `adb shell` pipe itself | `adb forward tcp:N`, so a port lease + teardown per device |
+| Start cost | 76-128 ms (UiAutomation connect 6-12 ms) | 0.75-0.94 s per `am instrument` start (agent-device helper, one-shot, measured) |
+| Dead host | stdin EOF ends the process; killed `adb` client also removed the device process (before=1 after=0) | instrumentation outlives the host unless explicitly killed |
+| Hidden API | `UiAutomation` ctor + `connect(int)` via reflection (what `uiautomator` itself does) | none (`UiAutomation` from `InstrumentationRegistry` is public) |
+| Build | `javac` + `d8`, ~25 KB, no Gradle | Gradle/AAPT, APK signing |
+
+(a) wins on install state, port, and start cost. Cost of (a): hidden-API drift (see below) and no app-process context (no `Context`, fine for a11y + input).
+
+Deviation from the original brief: the server cannot share the existing sentinel-protocol resident shell in `adb-session.ts` (its FIFO sentinel framing would interleave with NDJSON). It takes its own `adb shell` child: `spawnAdb(["adb","-s",serial,"shell","exec env CLASSPATH=/data/local/tmp/warden-uiad-<hash8>.dex app_process / nz.co.delacour.warden.uiad.Main"])`. `exec env` avoids an extra `sh -c` process holding the pipe.
+
+### Measured (host wall over adb to the emulator; 20 samples; quiet host unless noted)
+
+| Operation | Today | uiad |
+|---|---|---|
+| snapshot, 189 nodes, fresh (`clearCache` first; default) | `uiautomator dump` exec-out tty: p50 1902 ms, min 1887-1896, p95 1917-1930, max ~2003 (parse < 1 ms) | rtt p50 31, min 28, p95 39, max 41 ms (server traverse p50 28 ms) |
+| snapshot, 147 nodes, fresh | same ~1.9 s | p50 23 ms |
+| snapshot, cached (`fresh:false`) | n/a | p50 3 ms, p95 3 |
+| snapshot `scope:"all"` + windows (191 nodes) | n/a | p50 35 ms, p95 45 |
+| first snapshot after server start | n/a | 34-66 ms |
+| server start (spawn `adb shell` -> `ready`) | n/a | 76-128 ms (3 runs: 98, 111, 128) |
+| restart after `shutdown` / stdin EOF / SIGKILL of `adb` client | n/a | new server connects first attempt in 86-102 ms |
+| tap rtt (DOWN+UP injected) | `input tap` / agent-device ~330 ms | p50 34 ms (min 30); `sync:false` 33 ms |
+| key rtt | `input keyevent` | p50 27-87 ms (noisy) |
+| `setText` (`ACTION_SET_TEXT`) | `input text` per chunk | 9-34 ms |
+| `settle` on an idle screen | polling dumps | waits exactly `quietMs` (250 -> 251; 100 -> 101; 150 -> 153) |
+| `screenshot` op | `exec-out screencap -p` 117 ms | grab 28-116 + encode 42-72 ms, rtt 70-167 ms: no win, keep screencap |
+| device-side footprint | 0 resident | VmRSS ~143 MB, 0 CPU ticks idle over 10 s |
+| `wire -> XML -> parseUiautomatorXml` adapter (prototype only) | | 1-2 ms; the real path skips XML |
+
+About 60x on the hot path: target "snapshot <= 150 ms" is met with 4-5x headroom on a quiet host. Under extreme host load (load average ~200 from parallel agents) the same run gave fresh p50 140 ms / p95 239 ms, cached p50 10 ms, tap p50 85 ms, cold start 270-445 ms, `dump` p50 2052 ms / p95 2554 ms. So the p95 budget is only safe on a non-oversubscribed host (the PERF-6.2 bench rule: idle host).
+
+Parity: with the stock service flags and children skipped when `!isVisibleToUser()` (as the stock dumper does), the snapshot, converted by the existing `parseUiautomatorXml`, is identical to `uiautomator dump` on both screens (189 = 189 and 147 = 147 nodes; ids, roles, identifiers, labels, frames, traits, hittable, depth all equal). RN `testID` maps to `resource-id` exactly as today (raw `welcome-screen`; platform ids `pkg:id/name`; the normaliser strips `pkg:id/`).
+
+Settle: the events-based settle (`quietMs` after the last significant accessibility event or injected input) waited 335-540 ms after real taps and ~850-1260 ms through navigation (sign-in submit). React Native updates arrive asynchronously, so `quietMs` below ~100 ms is unsafe; default 250.
+
+### Single-client rule (the main operational risk)
+
+Android allows one `UiAutomation` connection per device. Observed:
+
+- Second `warden-uiad` -> `fatal` event, code `E_AX_UNAVAILABLE`, `detail.reason:"uiautomation_busy"`, ~75-190 ms (message: `UiAutomationService ... already registered!`).
+- `uiautomator dump` while uiad runs dies with `Killed` (exactly what happens today whenever any foreign holder exists), so falling back to `dump` does NOT help when the slot is busy.
+- Maestro's driver instrumentation (`am instrument ... dev.mobile.maestro.test/...`) also makes uiad report `uiautomation_busy`. `dumpsys accessibility` does not list the holder; `ps -A -o PID,NAME,ARGS | grep -E 'instrument|uiautomator|uiad'` does.
+- After the holder exits, the slot is free immediately.
+
+Handling in the client (PERF-3.3):
+
+1. One server per leased serial, owned by the driver that holds the lease. Never start a second one from the same host process.
+2. On `uiautomation_busy`: list holders with the `ps` line above. Holder is a `warden-uiad` process (our own stale one, e.g. from a crashed host): `kill` it by pid, retry once. Holder is anything else: do not touch it; return `E_AX_UNAVAILABLE` with the holder's command line in `detail` ("another UiAutomation client holds the device: <ARGS>"). Because the device is leased, a foreign holder means a non-warden tool is on warden's device, which is a user error to surface rather than paper over.
+3. On exit/close: send `shutdown`, then close stdin; always `kill` the `adb shell` child. If the host dies, stdin EOF removes the device process.
+
+### Wire protocol (v1; style mirrors `driver/ios/simd-protocol.ts`)
+
+NDJSON, one object per line, ASCII only on the wire (non-ASCII as `\uXXXX`). Requests `{id, op, ...params}`; ops run one at a time, in order (the server is single-threaded; unlike simd there is no out-of-order reply). Replies `{id, ok:true, data}` or `{id, ok:false, error:{code, message, retryable}}`. Events `{event:"ready"|"log"|"fatal", ...}`. `System.out` is redirected to stderr so a stray print can never corrupt the stream.
+
+Events:
+
+| event | shape |
+|---|---|
+| `ready` | `{event:"ready", protocol:1, version:"0.1.0", data:Health}` first line after `UiAutomation` connected |
+| `log` | `{event:"log", level:"debug"\|"info"\|"warn"\|"error", message}` |
+| `fatal` | `{event:"fatal", error:{code, message, retryable, detail?:{reason:"uiautomation_busy"\|"connect_failed"}}}`, then exit code 3 (connect) or 4 (internal) |
+
+`Health` = `{version, protocol, sdk, release, model, uid, pid, uiAutomation:{state:"connected", connect:"connect(int)"\|"connect()", connectMs}, events:{count, lastAgoMs}, uptimeMs, screen:{width,height,scale,rotation}, displayError?}`. `screen` comes from the hidden `DisplayManagerGlobal.getRealDisplay(0)`; if that fails it is zeros plus `displayError` and the host falls back to `wm size` / `wm density`.
+
+Ops:
+
+| op | request params (defaults) | `data` |
+|---|---|---|
+| `health` | - | `Health` |
+| `snapshot` | `scope:"active"\|"all"` ("active"), `maxNodes` (5000), `idleMs`, `rootWaitMs` (500), `skipInvisible` (true), `fresh` (true: `clearCache()` first), `windows` (false; true or `scope:"all"` temporarily enables interactive-window retrieval) | `{backend:"uiad", screen, windows?:[{id,type,layer,active?,focused?,title?,bounds:[l,t,r,b]}], elements:[Node], truncated, nodes, readMs, ms}` |
+| `settle` | `quietMs` (250), `timeoutMs` (3000) | `{quiet, waitedMs, via:"events", events, firstEventMs?, reason?:"timeout"}` |
+| `tap` | `x, y, count` (1), `holdMs` (0), `gapMs` (60), `sync` (true) | `{downMs, upMs, via:"inject3"\|"inject2"}` |
+| `swipe` | `x1, y1, x2, y2, durationMs` (300), `steps` (8) | `{...}` timing as `tap` |
+| `key` | `keyCode, metaState` (0), `times` (1), `gapMs` (30), `sync` (true) | `{}` |
+| `setText` | `text, resourceId?` (default: the input-focused node) | `{text}` the node's text after the action (verify-by-readback) |
+| `screenshot` | - | `{width, height, grabMs, encodeMs, png:<base64>}` (kept for completeness; not used) |
+| `shutdown` | - | `{}`, then the process exits |
+
+`Node` (flags are omitted when false; `disabled` is true only when the node is disabled): `{class, pkg, id, text, desc, hint, bounds:[l,t,r,b], clickable, longClickable, checkable, checked, scrollable, selected, focused, focusable, password, editable, disabled, invisible, order, children}`. `id` is the raw `resource-id` including the `pkg:id/` prefix. `bounds` = `getBoundsInScreen` intersected with the display rect (as the API 34+ `AccessibilityNodeInfoHelper` does; no window clipping). The names are deliberately close to the XML attributes so `uiautomator.ts` can build an `Element` from a `Node` without a second code path.
+
+Error codes: `E_AX_UNAVAILABLE` (null root, busy, connect failure; `retryable` true for a null root), `E_UNSUPPORTED`, `E_HID` (injection or `ACTION_SET_TEXT` refused), `E_NO_ELEMENT` (nothing focused / `resourceId` not found), `E_BAD_REQUEST`, `E_INTERNAL`, `E_IO`. These are already `DriverErrorCode` members, so the wire code passes through unchanged (an unknown code becomes `E_INTERNAL` with the code kept in `detail`, as `mapWireError` does for simd); `detail.reason` is carried into `DriverError.detail`.
+
+### Hidden-API drift
+
+Public SDK (stable): everything on `AccessibilityNodeInfo` (`getHintText`, `getDrawingOrder`, `isEditable` all exist from API 26/24/18+, guarded by `Build.VERSION.SDK_INT`), `UiAutomation.getRootInActiveWindow`, `takeScreenshot`, `setServiceInfo`, `setOnAccessibilityEventListener`, `clearCache` (API 34+, in try/catch).
+
+Hidden (all via reflection; each has a typed fallback and is reported in `health`):
+
+| Member | Use | If missing |
+|---|---|---|
+| `android.app.UiAutomationConnection` class + no-arg ctor | the binder `UiAutomation` needs | `fatal` `connect_failed` -> driver falls back to `uiautomator dump` |
+| `UiAutomation(Looper, IUiAutomationConnection)` ctor | how `UiAutomationShellWrapper` creates it | same |
+| `UiAutomation.connect(int flags)` then `connect()` | connect (flags 0) | `connect()` tried second; both fail -> `connect_failed` |
+| `UiAutomation.disconnect()` / `destroy()` | clean teardown | ignored |
+| `UiAutomation.injectInputEvent(ev, sync, waitForAnimations)` (3-arg) then 2-arg | input (`waitForAnimations=false`) | falls back to 2-arg; `via` reports which |
+| `DisplayManagerGlobal.getRealDisplay(0)` | real display size/rotation | zeros + `displayError`; host uses `wm size` |
+
+Only API 37 could be exercised here: the machine has a single system image (android-37.1 `google_apis_playstore_ps16k` arm64). API 30-36 are untested. Mitigation: PERF-3.3 adds a CI emulator matrix (API 30, 33, 34, 35, 36, 37; arm64 + x86_64) that runs `scripts/smoke.ts` (parity with `dump`, tap, setText, settle, busy refusal). Any smoke failure on a level routes that level to the `dump` fallback via a version allowlist until fixed.
+
+Server also needs `Looper.prepareMainLooper()` + `Looper.loop()` on the main thread (without a main looper `AccessibilityInteractionClient` NPEs and the process is "Killed"); protocol I/O runs on a second thread. `FLAG_RETRIEVE_INTERACTIVE_WINDOWS` is NOT left on: it changed `isVisibleToUser` for 3 zero-height svg nodes and broke exact parity with the dump, so it is toggled only for `scope:"all"`. Service flags otherwise stay stock (`|= FLAG_INCLUDE_NOT_IMPORTANT_VIEWS`, i.e. 0x10012).
+
+### Build and packaging
+
+- `bun run --cwd packages/e2e android:build` = `scripts/build.ts`: `javac -source 8 -target 8 -bootclasspath android.jar`, then `d8 --release --min-api 26 --lib android.jar` -> `native/android/dist/warden-uiad.dex` (24.4-25 KB) + `dist/manifest.json` `{protocol, version, bytes, dexSha256, sourceSha256, minApi, d8, javac, androidJar, builtAt}`. 1-4 s. Needs JDK 11+ (21 here) and Android SDK build-tools (`d8`; newest stable picked, 29-37 present) + any `platforms/android-N` >= 30 with `android.jar`. SDK from `WARDEN_ANDROID_SDK` / `ANDROID_HOME` / `ANDROID_SDK_ROOT` / `~/Library/Android/sdk` / `~/Android/Sdk`. No Gradle, no Kotlin. Pure helpers are unit tested in `native/android/scripts/build.test.ts` (13 tests, no toolchain).
+- Packaging: commit a generated module `packages/e2e/src/driver/android/uiad-dex.generated.ts` exporting `{ base64, dexSha256, sourceSha256, protocol, version }` (~33 KB). It works in the bundled `@delacour/warden-e2e` (Bun.build) and the compiled `apps/cli` binary with no extra asset, and needs no JDK for consumers. A toolchain-free test asserts the module's `sourceSha256` equals the hash of the committed Java sources (d8 output is not byte-reproducible across build-tools versions, so the source hash is the freshness check, not the dex hash). A CI job with the SDK rebuilds and fails on `git diff` of the generated file only when `sourceSha256` differs.
+- Device install: write the dex through the stdin pipe (no host temp file): `cat > /data/local/tmp/warden-uiad-<hash8>.dex && chmod 444 ...`, skipped when `test -f` already succeeds (measured 29-67 ms; `adb push` 29-62 ms). Hash in the file name = no stale dex after an upgrade, and old files can be pruned by pattern. The file is owned by the shell user, mode 444; nothing else on the device is modified.
+
+### Fallbacks
+
+| Situation | Behaviour |
+|---|---|
+| dex write / launch failure, `connect_failed`, `E_UNSUPPORTED`, protocol mismatch, no `ready` within 3 s | `capabilities.nativeSettle=false`, use today's `uiautomator dump` path; remember per serial for the lease (do not retry every command) |
+| `uiautomation_busy` | do NOT fall back to `dump` (it dies with `Killed`); kill our own stale uiad else refuse naming the holder |
+| uiad dies mid-run (EOF on stdout) | one restart (~100 ms) and retry the in-flight idempotent op (`snapshot`, `settle`, `health`); non-idempotent ops (`tap`, `key`, `setText`) surface the error |
+| Android < API 26 (no 3-arg inject guarantee, no hint text) | `dump` path |
+| `WARDEN_ANDROID_UIAD=0` | force the `dump` path |
+
+### Risks
+
+- Single-client contention with Maestro/agent-device/`uiautomator` (see above). Mitigated by leasing; detection + message on busy.
+- Hidden-API drift per API level; only API 37 verified. CI matrix + reflection + typed fallback.
+- Client node cache: `fresh:false` reads 2-3 ms but can be stale if an app mutates without events. Default `fresh:true`; the PERF-2.1 observation cache decides when `fresh:false` is safe (right after a `settle` that saw zero events).
+- Input injection costs ~15-25 ms per event on the device (tap 30-40 ms rtt); `sync:false` and the 3-arg inject did not reduce it, so tap is already near the floor.
+- Settle by events is heuristic (async RN commits): keep `quietMs >= 100`, default 250, expose `timeoutMs`, and let the driver confirm with a second snapshot hash when it needs exactness (PERF-2.1).
+- ~143 MB device RSS while resident; negligible CPU idle. On a memory-starved emulator this is notable but below the Android Studio emulator baseline.
+- `warden ui` is a fresh process per command, so each invocation pays one ~85 ms server start (still well under the 1.9 s dump). Optional follow-up: a daemon mode (`adb forward localabstract` + a lease-scoped socket) to share one server across `warden ui` calls; the client's transport is an interface so this is additive.
+- The server shows up in `ps` as `app_process ... nz.co.delacour.warden.uiad.Main`: PERF-6.1 must include `warden.uiad` in the bench sampler regex so its CPU/RSS is counted against warden.
+
+### PERF-3.3 checklist (do in order; TDD; never real adb in `bun test`)
+
+1. `packages/e2e/src/driver/android/uiad-protocol.ts` (+ test): zod schemas for events/replies/`Node`/`snapshot` data/error codes, mirroring `ios/simd-protocol.ts`; golden fixtures under `native/android/fixtures/*.ndjson` captured by a new `scripts/smoke.ts --record <dir>` flag (one per op, plus `fatal` busy).
+2. `packages/e2e/native/scripts/fake-uiad.ts` (like `fake-simd.ts`): speaks the protocol from fixtures, with knobs for latency, busy, crash mid-op, event bursts.
+3. `uiad-client.ts` (+ test): `openUiad({serial, spawn, now, log})` -> `{ health, snapshot, settle, tap, swipe, key, setText, close }`; NDJSON framing over the `spawnAdb` child (inject `SpawnAdb` as `adb-session.ts` does); request ids, per-op timeouts (default 10 s; `snapshot` 5 s), `ready` timeout 3 s, restart-once, stderr -> `log` events, kill on `close`. Busy handling per section above (`ps` holder lookup injected as `Exec`).
+4. Generate and commit `uiad-dex.generated.ts` from `scripts/build.ts` (add `--emit-ts`); freshness test as above; `deps.ts` stays untouched (no download needed).
+5. `uiautomator.ts`: export `elementsFromNodes(nodes: UiadNode[], screen)` that reuses the XML path's per-node builder (`role`, `hittable`, `tapPoint`, identifier, label, traits, depth); a shared test runs both `fixture.xml` and the same tree as JSON and asserts equal `Element[]` (this is the parity guarantee). Keep XML parser as is.
+6. `android-driver.ts`: behind `capabilities.nativeSettle` and an internal `snapshotBackend: "uiad" | "dump"`: `snapshot()`, `settle()`, `tap`/`swipe`/`pressKey` (via uiad ops, keep `input`-based fallbacks), `typeText`/fill (`setText` with readback; fall back to `input text` when `E_NO_ELEMENT` or the readback differs; keep select-all semantic from PERF-1.1), `alert` helper reads from the snapshot. Respect the frozen Driver interface (`driver.types.ts`): expose extras through optional extension types like `RepeatingKeys`.
+7. Start/stop: open lazily on first snapshot/settle (not at driver open, so flows that only `openUrl` pay nothing); install dex by hash; persist `{backend, route}` per serial (extend the `onDumpRoute` store from PERF-3.1); close on driver close, on lease release, and on SIGINT (kill the `adb shell` child).
+8. Trace spans for PERF-0.2: `android.uiad.start`, `android.uiad.snapshot`, `android.uiad.settle`, `android.dump` (fallback) so `trace.jsonl` shows the backend per step.
+9. Docs: `packages/e2e/AGENTS.md` (server layout, protocol, busy rule, build + regenerate steps, fallbacks), `apps/docs` troubleshooting entry ("another UiAutomation client holds the device"), bench sampler regex (PERF-6.1).
+10. CI: add a job (GitHub `macos`/`ubuntu` + SDK) running `bun run --cwd packages/e2e android:build` freshness check, and an emulator matrix job (API 30, 33, 34, 35, 36, 37) running `bun native/android/scripts/smoke.ts --serial <emulator>` with the example app installed. Failing levels are added to the `dump`-only allowlist.
+11. Acceptance, on a leased emulator, idle host, caffeinated: per-snapshot p50 <= 150 ms (measure with `smoke.ts`, expect ~30 ms), Android suite <= 110 s with 8/8 passing over 3 reps (PERF-6.2: `bun run bench run --platform android --runs 3`, plus one `warden e2e example --platform android`), no dump calls in `trace.jsonl` unless the fallback fired, and `adb shell ps | grep uiad` empty after the run.
+
 ## Implementation team (≥ 5 per wave, `isolation: "worktree"` from `feature/warden-perf`; the lead integrates)
 
 | Agent | Role | Issues |
@@ -429,22 +583,25 @@ Waves:
 - Then `bun run typecheck && bun run check`. Prefer call-count and fake-clock assertions over wall-time asserts.
 - Swift changes: `bun run --cwd packages/e2e native:build`, then `dist/warden-simd --health --udid <udid>` (expect `ax.bridge=available`), then `bun native/scripts/smoke.ts --udid <udid>` on a leased sim (also with `--kill-bridge` / `--kill-helper`).
 - End to end:
-  - `warden e2e example` on a claimed sim: 8/8 pass, `trace.jsonl` spans show settle `via:"stream"` and fills ≤ 1.3 s.
+  - `warden e2e example` on a claimed sim: 8/8 pass, `trace.jsonl` spans show settle `via:"stream"` and fill overhead ≤ 0.3 s beyond typing.
   - Then PERF-6.2 benches (3 reps, idle host, caffeinated) checked against the Targets table.
   - `hyperfine` for CLI start.
   - Bench resource columns for host CPU/RSS.
 - Regression guard: `bun run bench compare <baseline> <new>` must show no per-test regression > 5% before the PR is marked ready.
 
-## Follow-ups (reported by agents, not yet scheduled)
+## Follow-ups (reported by agents)
 
-| From | Follow-up |
-|---|---|
-| poller (2.3) | CLI `ui wait` (`apps/cli/src/agent-ui/query.ts`) still polls at a fixed 100 ms; move it to `screen/poll.ts`'s back-off. |
-| spawner (4.3) | Wire the per-command git facts cache into `claim-flags.ts` / `port.ts`. Other git spawns remain: `builds/local.ts:120`, `batch.ts:1483`, `affected/git.ts`, `cleanHead`. |
-| starter (4.1) | `gc` still loads heavy modules; `ui`/`run`/`dev`/`batch`/`e2e` load the driver eagerly. Compiled binary is 116 MB, mostly `typescript` bytecode. |
-| quiet (5.2) | A compiled binary has no `graph-worker.ts` on disk, so diff mode falls back to the in-process graph. Fix with a hidden `warden` subcommand or an embedded worker. |
-| typist (1.1) | iOS plain fields showing a placeholder still get selectAll + 1 Backspace; `ada@example.com` keeps 4 confirm reads. |
-| referee (6.1) | One bench test failed once under load and passed in 6 later runs: watch for a timing flake. |
+| From | Follow-up | Status |
+|---|---|---|
+| poller (2.3) | CLI `ui wait` (`apps/cli/src/agent-ui/query.ts`) still polls at a fixed 100 ms; move it to `screen/poll.ts`'s back-off. | Done: PERF-FU-1 (`ui wait` 100 ms → 250 ms after 1 s; `wait stable` keeps 100 ms). |
+| spawner (4.3) | Wire the per-command git facts cache into `claim-flags.ts` / `port.ts`. Other git spawns remain: `builds/local.ts:120`, `batch.ts:1483`, `affected/git.ts`, `cleanHead`. | Done: PERF-FU-2 (`CommandContext.git`; `affected` 5 → 4 spawns). `cleanHead` / `snapshotKey` keep `rev-parse HEAD`. |
+| starter (4.1) | `gc` still loads heavy modules; `ui`/`run`/`dev`/`batch`/`e2e` load the driver eagerly. Compiled binary is 116 MB, mostly `typescript` bytecode. | `gc` done: PERF-FU-3 (69 → 50 ms). PERF-FU-5 done: `ui <sub>` 372 → 41–205 modules, `ui snapshot` 70 → 55 ms / 91 → 62 MB; `batch`/`e2e` no longer load the iOS driver at start. `run`/`dev` still load core zod config schemas early. Binary size open. |
+| quiet (5.2) | A compiled binary has no `graph-worker.ts` on disk, so diff mode falls back to the in-process graph. Fix with a hidden `warden` subcommand or an embedded worker. | Done: PERF-FU-4 (hidden `__affected-graph`; compiled parent 159 → ~80 MB). |
+| typist (1.1) | iOS plain fields showing a placeholder still get selectAll + 1 Backspace; `ada@example.com` keeps 4 confirm reads. | Done: type over the selection (no Backspace); 125/125 fills lossless; email 1083 ms (12 chars) / 1294 ms (15) / 1504 ms (18); every sign-in fill 2 confirm reads. Password ≈ 1.09 s is typing-bound. |
+| referee (6.1) | One bench test failed once under load and passed in 6 later runs: watch for a timing flake. | Open. |
+| conductor (4.7) | Static round-robin sharding: duration-aware sharding from the previous run's `results.jsonl`. Crash blame is inferred from result order; a per-flow completion record from the spec runner would make it exact. | Open. |
+| typist (1.1) | Under host load (load avg 14–41), `smoke.ts` raw `typeText` into an uncleared field garbled text in 2 of 5 runs (`"lol, World 123!H"`). Not the fill path, not compared against the old build. Re-run smoke on an idle host before 6.2; if it reproduces, it's a pacing-under-load bug. | Open. |
+| conductor (4.6) | `native+js` fingerprint keys are v2: every such project rebuilds once after upgrading. | Expected. |
 
 ## Decisions (user, 2026-10-16)
 
