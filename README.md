@@ -190,6 +190,16 @@ Dev-client suites add `metro: {}`: `warden e2e <suite>` then leases a port, star
 
 Flows are `*.e2e.ts` specs written with `@delacour/warden-e2e` (`bun add -d @delacour/warden-e2e`, same version as warden) and run by `bun test`: `test("…", async ({ app, device, screen }) => { await expect(screen.getByTestId("x")).toBeVisible(); })`. `warden e2e` leases the devices, installs the build, sets `WARDEN_UDID` / `WARDEN_BUNDLE_ID` / `WARDEN_LAUNCH_ARGS` and friends, and judges each flow from the spec's `results.jsonl`; `spec: { bundleId, launchArgs, timeout, actionTimeout, assertionTimeout }` on the suite tunes it, `warmDrivers: false` (or `--no-warm`) skips the iOS helper pre-warm. A failed test leaves `failure.png`, `screen-at-failure.txt` and `trace.jsonl` under `<batchDir>/e2e/<worker>-<seq>/`. See the docs guide *Write e2e specs*.
 
+### Benchmarks
+
+`packages/e2e-bench` runs the same 8-test suite through warden, Maestro, Argent, agent-device, tester.army and Detox on one leased device and writes a Markdown + HTML report (suite and per-test timings, cold start, resources, residue).
+
+```bash
+bun run bench doctor && bun run bench run --platform ios --runs 3
+```
+
+See [packages/e2e-bench/README.md](packages/e2e-bench/README.md) for fairness rules and caveats, and [docs/bench/](docs/bench/) for published results.
+
 ### App builds
 
 ```bash
