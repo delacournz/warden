@@ -16,6 +16,7 @@ icon: Variable
 | `WARDEN_ARRANGE=0` | don't tile Simulator.app windows after iOS claims |
 | `WARDEN_HEADLESS=1` | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/guides/headless)); `warden dev` ignores it |
 | `WARDEN_AUTO_GC=0` | turn off background auto-gc |
+| `WARDEN_ANDROID_UIAD=0` | Android: don't use the resident UiAutomation server (`warden-uiad`); snapshots, settle and input go through `uiautomator dump` and `input` ([Android driver](/docs/reference/e2e-driver#android-driver)) |
 | `WARDEN_BACKGROUND=0` | turn off every detached worker (auto-gc, SessionEnd shutdown) |
 | `WARDEN_RELEASE_REPO` | GitHub repo `warden update` downloads releases from (default `delacournz/warden`) |
 | `WARDEN_SIMD`, `WARDEN_HELPER_DIR`, `WARDEN_SIMD_SOCKET`, `WARDEN_HELPER_URL` | the iOS driver helper: binary, directory, running socket, download URL ([iOS driver helper](/docs/reference/e2e-driver)) |

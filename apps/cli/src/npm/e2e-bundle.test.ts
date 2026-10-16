@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { bunExec } from "@delacour/warden-core/exec";
+import { UIAD_DEX } from "@delacour/warden-e2e/driver/android/uiad-dex.generated";
 
 /** Bun writes node built-ins without the `node:` prefix. */
 const BUILTINS = new Set(["fs", "fs/promises", "path", "os", "crypto", "async_hooks"]);
@@ -39,6 +40,16 @@ describe("bundleE2e (the real packages/e2e)", () => {
 		);
 		expect(thirdParty).toEqual(["zod"]);
 		expect(imports.has("bun:test")).toBe(true);
+	}, 60_000);
+
+	test("ships the Android server: the dex warden-uiad is started from is inside the bundle, byte for byte", async () => {
+		await bundle("9.8.7");
+		const bundled = readdirSync(out)
+			.map((file) => readFileSync(join(out, file), "utf8"))
+			.join("\n");
+		expect(bundled).toContain(UIAD_DEX.base64);
+		expect(bundled).toContain(UIAD_DEX.dexSha256);
+		expect(bundled).toContain("nz.co.delacour.warden.uiad.Main");
 	}, 60_000);
 
 	test("the entries share one chunk (a single session module) and WARDEN_E2E_VERSION is the published version", async () => {
