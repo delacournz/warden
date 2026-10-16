@@ -1,9 +1,13 @@
 name: ci
 
 # PRs from maintainers (write/maintain/admin on the repo) run on every push.
-# Everyone else gets a failing `ci` until a maintainer approves the current
-# head commit; ci-approve.yml then re-runs this workflow. A new push needs a
-# fresh approval. Require the `ci` check on main.
+# Fork PRs don't start at all until a maintainer clicks "Approve workflows to
+# run": the repo requires approval for all external contributors, and that
+# setting is the security boundary — a fork PR runs its own copy of this file,
+# so it can strip the gate below. The gate is a second check: `checks` only runs
+# once a maintainer has also approved the PR's current head commit. Approve the
+# PR first, then the run (or re-run it after approving). A new push needs both
+# again. Require the `ci` check on main.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]

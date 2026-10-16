@@ -9,11 +9,12 @@ permissions: {}
 # Build and publish are split so dependency code never runs next to publish
 # credentials: `build` installs/compiles with a read-only token and no secrets;
 # `publish` holds the OIDC + release write permissions but never installs or
-# executes repo dependencies. Both stay on GitHub-hosted runners — npm trusted
-# publishing and provenance don't support self-hosted ones.
+# executes repo dependencies. `build` runs on Namespace like CI; `publish` stays
+# on a GitHub-hosted runner — npm trusted publishing + provenance refuse
+# self-hosted ones, which is what a Namespace profile is to GitHub.
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: namespace-profile-mac-small
     permissions:
       contents: read
     steps:
