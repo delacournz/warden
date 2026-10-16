@@ -238,6 +238,26 @@ describe("hideSimWindows", () => {
 		expect(f.warnings.join("\n")).toContain("warden-iphone-17-2");
 	});
 
+	test("a device the close shut down is reported to onShutDown before it is booted again; devices that stayed up are not", async () => {
+		const f = fake(["warden-iphone-17-1 – iOS 26.5", "warden-iphone-17-2 – iOS 26.5"], { U2: "Shutdown" });
+		const events: string[] = [];
+		const exec: typeof f.deps.exec = async (cmd) => {
+			if (cmd.join(" ").startsWith("xcrun simctl boot ")) events.push(`boot ${cmd[3]}`);
+			return f.deps.exec(cmd);
+		};
+		await hideSimWindows(
+			{
+				...f.deps,
+				exec,
+				onShutDown: async (udid) => {
+					events.push(`shut down ${udid}`);
+				},
+			},
+			leased
+		);
+		expect(events).toEqual(["shut down U2", "boot U2"]);
+	});
+
 	test("closes with DetachOnWindowClose on (device keeps running), then deletes the unset preference again", async () => {
 		const f = fake(["warden-iphone-17-1 – iOS 26.5"]);
 		await hideSimWindows(f.deps, leased);

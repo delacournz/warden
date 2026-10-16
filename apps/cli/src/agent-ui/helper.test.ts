@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Owner } from "@delacour/warden-core/types";
 import type { DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
 import type { Result } from "@delacour/warden-types/result";
@@ -9,10 +10,14 @@ import {
 	ensureHelper,
 	type HelperDeps,
 	helperStatus,
+	ownerKey,
 	type SpawnSpec,
+	type StartOutcome,
+	type StartSignal,
 	socketPathFor,
 	stopHelper,
 	sweepDeadHelpers,
+	watchStart,
 } from "./helper";
 import { readState, writeState } from "./state";
 
@@ -34,6 +39,15 @@ type Sim = {
 	up: { value: boolean };
 	/** a spawn flips `up` after this many ms of fake time (undefined: never) */
 	listenAfterMs: { value: number | undefined };
+	/** every `sleep` the code under test asked for */
+	sleeps: number[];
+	/** clients closed / connects tried, in total and since the spawn */
+	closes: { count: number };
+	connects: { total: number; afterSpawn: number };
+	/** what a spawn returns as the child's stdout signal (undefined: a spawner without one, like an old helper's) */
+	signal: { make: (() => StartSignal) | undefined };
+	/** mtime of helper binaries by path */
+	mtimes: Map<string, number>;
 };
 
 function sim(): Sim {
@@ -44,16 +58,26 @@ function sim(): Sim {
 	const spawns: SpawnSpec[] = [];
 	const kills: Array<[number, string]> = [];
 	const listenAfterMs: Sim["listenAfterMs"] = { value: 0 };
+	const sleeps: number[] = [];
+	const closes = { count: 0 };
+	const connects = { total: 0, afterSpawn: 0 };
+	const signal: Sim["signal"] = { make: undefined };
+	const mtimes = new Map<string, number>();
 	let spawnedAt: number | undefined;
 	const client = {
 		request: async (op: string) => {
 			requests.push(op);
+			if (op === "shutdown") up.value = false;
 			return { success: true, data: null };
 		},
-		close: async () => undefined,
+		close: async () => {
+			closes.count += 1;
+		},
 	} as unknown as SimdClient;
 	const deps: HelperDeps = {
 		connect: async (): Promise<Result<SimdClient, DriverError>> => {
+			connects.total += 1;
+			if (spawnedAt !== undefined) connects.afterSpawn += 1;
 			if (spawnedAt !== undefined && listenAfterMs.value !== undefined && clock.t - spawnedAt >= listenAfterMs.value) {
 				up.value = true;
 			}
@@ -63,7 +87,7 @@ function sim(): Sim {
 			spawns.push(spec);
 			spawnedAt = clock.t;
 			alive.add(4242);
-			return { pid: 4242 };
+			return { pid: 4242, ...(signal.make ? { signal: signal.make() } : {}) };
 		},
 		pidAlive: (pid) => alive.has(pid),
 		kill: (pid, signal) => {
@@ -71,12 +95,14 @@ function sim(): Sim {
 			alive.delete(pid);
 		},
 		sleep: async (ms) => {
+			sleeps.push(ms);
 			clock.t += ms;
 		},
 		now: () => clock.t,
 		pid: 111,
+		mtime: (path) => mtimes.get(path),
 	};
-	return { clock, deps, requests, spawns, kills, alive, up, listenAfterMs };
+	return { clock, deps, requests, spawns, kills, alive, up, listenAfterMs, sleeps, closes, connects, signal, mtimes };
 }
 
 function setup(): { c: TestContext; s: Sim; socketPath: string; host: Parameters<typeof ensureHelper>[0] } {
@@ -227,6 +253,279 @@ describe("ensureHelper", () => {
 	});
 });
 
+const agentA: Owner = { kind: "agent", sessionId: "A", cwd: "/w" };
+const agentB: Owner = { kind: "agent", sessionId: "B", cwd: "/w" };
+
+function lease(c: TestContext, owner: Owner): void {
+	c.db.insertLease(
+		{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner, ttlMs: 3_600_000 },
+		c.now()
+	);
+}
+
+/** A child stdout signal that already resolved to `outcome`; `detached.count` counts `detach()` calls. */
+function signalOf(outcome: StartOutcome, detached: { count: number }): () => StartSignal {
+	return () => ({
+		up: Promise.resolve(outcome),
+		detach: () => {
+			detached.count += 1;
+		},
+	});
+}
+
+describe("ensureHelper: starting", () => {
+	test("a helper that signals ready: one connect after the spawn, no polling, no sleep", async () => {
+		const { s, socketPath, host } = setup();
+		const detached = { count: 0 };
+		s.signal.make = signalOf("up", detached);
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
+		expect(s.connects.afterSpawn).toBe(1);
+		expect(s.sleeps).toEqual([]);
+		expect(s.clock.t).toBe(1_000_000);
+	});
+
+	test("keepClient hands the connected client over, still open; otherwise the probe client is closed", async () => {
+		const kept = setup();
+		kept.s.signal.make = signalOf("up", { count: 0 });
+		const keptRes = await ensureHelper(kept.host, UDID, {
+			socketPath: kept.socketPath,
+			helperPath: "/h/w",
+			keepClient: true,
+			deps: kept.s.deps,
+		});
+		expect(keptRes.success && keptRes.data.client !== undefined).toBe(true);
+		expect(kept.s.closes.count).toBe(0);
+		ctx?.cleanup();
+
+		const dropped = setup();
+		dropped.s.signal.make = signalOf("up", { count: 0 });
+		const droppedRes = await ensureHelper(dropped.host, UDID, {
+			socketPath: dropped.socketPath,
+			helperPath: "/h/w",
+			deps: dropped.s.deps,
+		});
+		expect(droppedRes.success && droppedRes.data.client).toBeUndefined();
+		expect(dropped.s.closes.count).toBe(1);
+	});
+
+	test("keepClient on a helper that is already listening: the one connect is the client handed over", async () => {
+		const { s, socketPath, host } = setup();
+		s.up.value = true;
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", keepClient: true, deps: s.deps });
+		expect(res.success && res.data.client !== undefined).toBe(true);
+		expect(s.connects.total).toBe(1);
+		expect(s.closes.count).toBe(0);
+		expect(s.spawns).toEqual([]);
+	});
+
+	test("a spawner with no stdout signal (an older helper) is polled until its socket answers", async () => {
+		const { s, socketPath, host } = setup();
+		s.listenAfterMs.value = 350;
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+		expect(res.success).toBe(true);
+		expect(s.sleeps.length).toBeGreaterThanOrEqual(3);
+		expect(s.sleeps.every((ms) => ms === 100)).toBe(true);
+	});
+
+	test.each(["closed", "timeout"] as const)(
+		"a signal that ends '%s' without 'up' falls back to polling",
+		async (outcome) => {
+			const { s, socketPath, host } = setup();
+			s.listenAfterMs.value = 250;
+			s.signal.make = signalOf(outcome, { count: 0 });
+			const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+			expect(res.success).toBe(true);
+			expect(s.sleeps.length).toBeGreaterThanOrEqual(2);
+		}
+	);
+
+	test("a helper that dies before it signals: fails with the log tail, without waiting out the poll budget", async () => {
+		const { s, socketPath, host } = setup();
+		s.listenAfterMs.value = undefined;
+		const spawn = s.deps.spawnDetached;
+		const deps: HelperDeps = {
+			...s.deps,
+			spawnDetached: (spec) => {
+				const out = spawn(spec);
+				writeFileSync(spec.logPath, "dyld: Library not loaded\n");
+				s.alive.delete(out.pid);
+				return { ...out, signal: signalOf("closed", { count: 0 })() };
+			},
+		};
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error.message).toContain("exited before it was ready: dyld: Library not loaded");
+		expect(s.clock.t - 1_000_000).toBeLessThan(1000);
+	});
+
+	test("the stdout signal is released when ensureHelper returns, whether it worked or not", async () => {
+		const worked = setup();
+		const detached = { count: 0 };
+		worked.s.signal.make = signalOf("up", detached);
+		await ensureHelper(worked.host, UDID, { socketPath: worked.socketPath, helperPath: "/h/w", deps: worked.s.deps });
+		expect(detached.count).toBe(1);
+		ctx?.cleanup();
+
+		const failed = setup();
+		failed.s.listenAfterMs.value = undefined;
+		failed.s.signal.make = signalOf("timeout", detached);
+		const res = await ensureHelper(failed.host, UDID, {
+			socketPath: failed.socketPath,
+			helperPath: "/h/w",
+			deps: failed.s.deps,
+		});
+		expect(res.success).toBe(false);
+		expect(detached.count).toBe(2);
+	});
+
+	test("the record keeps the lease owner and the helper binary it was spawned from", async () => {
+		const { s, c, socketPath, host } = setup();
+		lease(c, agentA);
+		s.mtimes.set("/h/w", 300);
+		await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+		expect(readState(c, UDID).helper).toEqual({
+			pid: 4242,
+			socket: socketPath,
+			owner: ownerKey(agentA),
+			binary: { path: "/h/w", mtimeMs: 300 },
+		});
+	});
+
+	test("$WARDEN_SIMD_IDLE_TIMEOUT sets the helper's idle exit; the option wins; a bad value is a usage error", async () => {
+		const env = setup();
+		env.c.env = { ...env.c.env, WARDEN_SIMD_IDLE_TIMEOUT: "90s" };
+		await ensureHelper(env.host, UDID, { socketPath: env.socketPath, helperPath: "/h/w", deps: env.s.deps });
+		expect(env.s.spawns[0]?.cmd.slice(-2)).toEqual(["--idle-timeout", "90"]);
+		ctx?.cleanup();
+
+		const option = setup();
+		option.c.env = { ...option.c.env, WARDEN_SIMD_IDLE_TIMEOUT: "90s" };
+		await ensureHelper(option.host, UDID, {
+			socketPath: option.socketPath,
+			helperPath: "/h/w",
+			idleTimeout: "2m",
+			deps: option.s.deps,
+		});
+		expect(option.s.spawns[0]?.cmd.slice(-2)).toEqual(["--idle-timeout", "120"]);
+		ctx?.cleanup();
+
+		const bad = setup();
+		bad.c.env = { ...bad.c.env, WARDEN_SIMD_IDLE_TIMEOUT: "soon" };
+		const res = await ensureHelper(bad.host, UDID, {
+			socketPath: bad.socketPath,
+			helperPath: "/h/w",
+			deps: bad.s.deps,
+		});
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error.code).toBe("usage");
+		expect(bad.s.spawns).toEqual([]);
+	});
+});
+
+describe("ensureHelper: a resident helper", () => {
+	function resident(owner?: Owner, record: { owner?: string; binary?: { path: string; mtimeMs: number } } = {}) {
+		const t = setup();
+		if (owner) lease(t.c, owner);
+		t.s.up.value = true;
+		t.s.alive.add(777);
+		writeState(t.c, UDID, {
+			generation: 0,
+			updatedAt: 0,
+			helper: { pid: 777, socket: t.socketPath, ...record },
+		});
+		return t;
+	}
+
+	test("the owner that started it uses it again: no stop, no spawn, one connect", async () => {
+		const { s, socketPath, host } = resident(agentA, { owner: ownerKey(agentA) });
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: false } });
+		expect(s.requests).toEqual([]);
+		expect(s.spawns).toEqual([]);
+		expect(s.connects.total).toBe(1);
+	});
+
+	test("the lease passed to another owner: the helper is stopped and a fresh one spawned for the new owner", async () => {
+		const { s, c, socketPath, host } = resident(agentB, { owner: ownerKey(agentA) });
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
+		expect(s.requests).toEqual(["shutdown"]);
+		expect(s.spawns).toHaveLength(1);
+		expect(readState(c, UDID).helper).toEqual({ pid: 4242, socket: socketPath, owner: ownerKey(agentB) });
+	});
+
+	test("a record with no owner (older warden) or a device with no lease is not guessed at: it is reused", async () => {
+		const noOwner = resident(agentB, {});
+		const first = await ensureHelper(noOwner.host, UDID, {
+			socketPath: noOwner.socketPath,
+			helperPath: "/h/w",
+			deps: noOwner.s.deps,
+		});
+		expect(first).toEqual({ success: true, data: { socketPath: noOwner.socketPath, spawned: false } });
+		expect(noOwner.s.spawns).toEqual([]);
+		ctx?.cleanup();
+
+		const noLease = resident(undefined, { owner: ownerKey(agentA) });
+		const second = await ensureHelper(noLease.host, UDID, {
+			socketPath: noLease.socketPath,
+			helperPath: "/h/w",
+			deps: noLease.s.deps,
+		});
+		expect(second).toEqual({ success: true, data: { socketPath: noLease.socketPath, spawned: false } });
+		expect(noLease.s.spawns).toEqual([]);
+	});
+
+	test("the helper binary changed since it was spawned (rebuilt, upgraded): replaced; unchanged: reused", async () => {
+		const changed = resident(agentA, { owner: ownerKey(agentA), binary: { path: "/h/w", mtimeMs: 100 } });
+		changed.s.mtimes.set("/h/w", 200);
+		const res = await ensureHelper(changed.host, UDID, {
+			socketPath: changed.socketPath,
+			helperPath: "/h/w",
+			deps: changed.s.deps,
+		});
+		expect(res.success && res.data.spawned).toBe(true);
+		expect(changed.s.requests).toEqual(["shutdown"]);
+		expect(readState(changed.c, UDID).helper?.binary).toEqual({ path: "/h/w", mtimeMs: 200 });
+		ctx?.cleanup();
+
+		const same = resident(agentA, { owner: ownerKey(agentA), binary: { path: "/h/w", mtimeMs: 100 } });
+		same.s.mtimes.set("/h/w", 100);
+		const reused = await ensureHelper(same.host, UDID, {
+			socketPath: same.socketPath,
+			helperPath: "/h/w",
+			deps: same.s.deps,
+		});
+		expect(reused.success && reused.data.spawned).toBe(false);
+		expect(same.s.spawns).toEqual([]);
+	});
+
+	test("another caller already replacing it (live spawn row): waits for the new helper, never stops it twice", async () => {
+		const { s, c, socketPath, host } = resident(agentB, { owner: ownerKey(agentA) });
+		c.db.setMeta(`simd_spawn:${UDID}`, JSON.stringify({ pid: 999, at: s.clock.t }));
+		s.alive.add(999);
+		let polls = 0;
+		const connect = s.deps.connect;
+		const deps: HelperDeps = {
+			...s.deps,
+			connect: async (path) => {
+				polls += 1;
+				if (polls === 3)
+					writeState(c, UDID, {
+						generation: 0,
+						updatedAt: 0,
+						helper: { pid: 888, socket: socketPath, owner: ownerKey(agentB) },
+					});
+				return connect(path);
+			},
+		};
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: false } });
+		expect(s.requests).toEqual([]);
+		expect(s.spawns).toEqual([]);
+	});
+});
+
 describe("stopHelper", () => {
 	test("nothing running: a no-op, and a dead record is forgotten", async () => {
 		const { c, s, socketPath } = setup();
@@ -322,3 +621,77 @@ function rmSyncQuiet(path: string): void {
 		// already gone
 	}
 }
+
+describe("watchStart (the child's stdout)", () => {
+	const encoder = new TextEncoder();
+	const READY = JSON.stringify({ event: "ready", socket: "/s.sock", pid: 9, udid: UDID, protocol: 1 });
+
+	function stream(chunks: string[], opts: { end: boolean; cancelled?: { count: number } }): ReadableStream<Uint8Array> {
+		return new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+				if (opts.end) controller.close();
+			},
+			cancel() {
+				if (opts.cancelled) opts.cancelled.count += 1;
+			},
+		});
+	}
+
+	function logFile(): string {
+		const c = testContext([]);
+		ctx = c;
+		return join(c.cwd, "child.log");
+	}
+
+	test("the ready line, even split across chunks, means the socket is up; every line lands in the log", async () => {
+		const logPath = logFile();
+		const half = Math.floor(READY.length / 2);
+		const signal = watchStart(
+			stream(['{"event":"log","level":"info","message":"hid ok"}\n', READY.slice(0, half), `${READY.slice(half)}\n`], {
+				end: false,
+			}),
+			{ logPath, timeoutMs: 5000 }
+		);
+		expect(await signal.up).toBe("up");
+		signal.detach();
+		const log = readFileSync(logPath, "utf8");
+		expect(log).toContain("hid ok");
+		expect(log).toContain(READY);
+	});
+
+	test("an older helper's `listening on` log line counts too", async () => {
+		const logPath = logFile();
+		const line = JSON.stringify({ event: "log", level: "info", message: "listening on /s.sock (idle timeout 600s)" });
+		const signal = watchStart(stream([`${line}\n`], { end: false }), { logPath, timeoutMs: 5000 });
+		expect(await signal.up).toBe("up");
+		signal.detach();
+	});
+
+	test("a per-connection ready (no socket) and other events are not the signal", async () => {
+		const logPath = logFile();
+		const handshake = JSON.stringify({ event: "ready", protocol: 1, udid: UDID });
+		const fatal = JSON.stringify({ event: "fatal", error: { code: "E_NOT_BOOTED", message: "Shutdown" } });
+		const signal = watchStart(stream([`${handshake}\n`, `${fatal}\n`], { end: true }), { logPath, timeoutMs: 5000 });
+		expect(await signal.up).toBe("closed");
+		expect(readFileSync(logPath, "utf8")).toContain("E_NOT_BOOTED");
+	});
+
+	test("stdout ending with nothing at all is 'closed'; a silent stdout is 'timeout'", async () => {
+		const logPath = logFile();
+		expect(await watchStart(stream([], { end: true }), { logPath, timeoutMs: 5000 }).up).toBe("closed");
+		const silent = watchStart(stream([], { end: false }), { logPath, timeoutMs: 20 });
+		expect(await silent.up).toBe("timeout");
+		silent.detach();
+	});
+
+	test("detach stops reading the pipe", async () => {
+		const logPath = logFile();
+		const cancelled = { count: 0 };
+		const signal = watchStart(stream([`${READY}\n`], { end: false, cancelled }), { logPath, timeoutMs: 5000 });
+		await signal.up;
+		signal.detach();
+		await Bun.sleep(5);
+		expect(cancelled.count).toBe(1);
+	});
+});

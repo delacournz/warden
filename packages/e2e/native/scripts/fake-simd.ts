@@ -8,12 +8,16 @@
  * daemon mode): every connection gets its own `ready` (plus `startup` lines) and answers requests from the
  * same script; `shutdown` closes every connection, removes the socket file and exits 0; the socket file is
  * also removed on SIGTERM / normal exit. A stale file at the path is replaced. `--idle-timeout` is ignored.
+ * Once listening it announces itself on stdout like the real helper (see `announce`); stdout stays a pipe.
  *
  * Script shape (all keys optional):
  *   stderr:   lines written to stderr at startup
  *   exitBeforeReady: exit code to exit with right after writing stderr
  *   ready:    false (never send `ready`) | partial `ready` event fields merged over the default
  *   startup:  raw lines written right after `ready` (garbage-line tests)
+ *   announce: socket mode, what stdout says once the socket listens: "ready" (default: the helper's process-level
+ *             `{"event":"ready","socket","pid",…}` line), "legacy" (an older helper: only a `listening on …` log
+ *             line) or "none" (nothing)
  *   fatal:    { error: {code,message,retryable?,detail?}, beforeReady?: boolean } emit `fatal`, exit 3
  *   dieAfter: { requests: N, exitCode?: number, once?: boolean } exit on the Nth request without answering;
  *             `once` leaves a `<script>.died` marker so a respawned process behaves normally
@@ -43,6 +47,7 @@ type Script = {
 	stderr?: string[];
 	ready?: false | Record<string, unknown>;
 	startup?: string[];
+	announce?: "ready" | "legacy" | "none";
 	fatal?: { error: WireError; beforeReady?: boolean };
 	dieAfter?: { requests: number; exitCode?: number; once?: boolean };
 	ops?: Record<string, OpScript>;
@@ -208,6 +213,17 @@ function serveSocket(path: string): void {
 	});
 	process.on("SIGTERM", () => exit(0));
 	process.on("SIGINT", () => exit(0));
+	announce(path);
+}
+
+/** What the real helper prints on stdout once its socket accepts (`Server/Announce.swift`, `main.swift`). */
+function announce(path: string): void {
+	const mode = script.announce ?? "ready";
+	const line = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
+	if (mode === "ready") line({ ...defaultReady, socket: path, pid: process.pid });
+	if (mode !== "none") {
+		line({ event: "log", level: "info", message: `listening on ${path} (idle timeout 600s)` });
+	}
 }
 
 if (socketPath) serveSocket(socketPath);

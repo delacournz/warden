@@ -4,8 +4,7 @@ import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
-import { sweepDeadHelpers } from "../agent-ui/helper";
-import { stopHelperAfterOnDemand } from "../agent-ui/helper-after";
+import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -53,8 +52,10 @@ async function gcPlatform(ctx: CommandContext, platform: Platform, owner: Owner,
 	);
 	for (const record of idle) {
 		const result = await provider.shutdown(record.id);
-		if (result.success) plan.shutdown.push({ platform, id: record.id, name: record.name });
-		else plan.notes.push(`shutdown ${record.id} failed: ${result.error}`);
+		if (result.success) {
+			await stopHelperAfter(ctx)(record.id);
+			plan.shutdown.push({ platform, id: record.id, name: record.name });
+		} else plan.notes.push(`shutdown ${record.id} failed: ${result.error}`);
 	}
 }
 
@@ -102,10 +103,11 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			await releaseDevices(sctx, staleIds, {
 				touch: false,
 				only: (l) => !isLeaseAlive(l, now, processAlive),
-				after: stopHelperAfterOnDemand(sctx),
+				after: stopHelperAfter(sctx),
 			})
 		).map((l) => l.id);
-		sweepDeadHelpers(sctx);
+		// resident helpers (a live pid on a live socket) are not residue: only records whose process is gone are swept
+		(await import("../agent-ui/helper")).sweepDeadHelpers(sctx);
 		const leased = new Set(
 			store
 				.listLeases()

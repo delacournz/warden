@@ -29,6 +29,7 @@ const result = await ensureHelper({ env: { WARDEN_HOME: home }, now: Date.now, s
 			return defaultHelperDeps.spawnDetached({
 				cmd: [process.execPath, fake, "--script", script, ...spec.cmd.slice(1)],
 				logPath: spec.logPath,
+				signalMs: spec.signalMs,
 			});
 		},
 	},

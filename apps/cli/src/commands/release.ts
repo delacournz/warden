@@ -1,7 +1,7 @@
 import { PENDING_PREFIX } from "@delacour/warden-core/claim";
 import { wardenNameProfile } from "@delacour/warden-core/inventory";
 import { describeOwner, type Lease, sameOwner } from "@delacour/warden-core/types";
-import { stopHelperAfterOnDemand } from "../agent-ui/helper-after";
+import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -81,7 +81,10 @@ async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picke
 	return { kind: "ids", ids: answer };
 }
 
-/** Release the selected leases; with `--shutdown`, first shut down the devices warden may shut down. */
+/**
+ * Release the selected leases; with `--shutdown`, first shut down the devices warden may shut down and stop every
+ * released device's `warden-simd`. Without it the helper stays resident for the next run (idle timeout reaps it).
+ */
 async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): Promise<number> {
 	const { color } = ctx.ui;
 	const selector = selectorFrom(ids, opts);
@@ -106,7 +109,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 	await releaseDevices(
 		ctx,
 		leases.map((l) => l.id),
-		{ after: stopHelperAfterOnDemand(ctx) }
+		{ after: opts.shutdown ? stopHelperAfter(ctx) : undefined }
 	);
 
 	for (const u of unknown) reportError(ctx, "release", `no lease for ${u}`);

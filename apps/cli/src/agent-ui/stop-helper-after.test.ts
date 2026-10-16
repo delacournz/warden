@@ -1,0 +1,73 @@
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { StopOutcome } from "./helper";
+import { type HelperLoader, stopHelperAfter } from "./stop-helper-after";
+
+const IOS = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
+const PHONE = "00008110-001A2B3C4D5E6F70";
+const ANDROID = "emulator-5554";
+const ctx = { env: { WARDEN_HOME: "/h" }, now: () => 0 };
+
+function loader(): { load: HelperLoader; loads: number; stopped: string[] } {
+	const seen = { loads: 0, stopped: [] as string[] };
+	const stop: StopOutcome = { stopped: true, how: "shutdown" };
+	return {
+		load: async () => {
+			seen.loads += 1;
+			return {
+				stopHelper: async (_host, udid) => {
+					seen.stopped.push(udid);
+					return stop;
+				},
+			};
+		},
+		get loads() {
+			return seen.loads;
+		},
+		stopped: seen.stopped,
+	};
+}
+
+describe("stopHelperAfter", () => {
+	test("stops the helper of a released iOS device", async () => {
+		const l = loader();
+		await stopHelperAfter(ctx, l.load)(IOS);
+		await stopHelperAfter(ctx, l.load)(PHONE);
+		expect(l.stopped).toEqual([IOS, PHONE]);
+	});
+
+	test("an Android serial or a CDP target has no helper: nothing is loaded for it", async () => {
+		const l = loader();
+		await stopHelperAfter(ctx, l.load)(ANDROID);
+		await stopHelperAfter(ctx, l.load)("chromium-cdp-9222");
+		expect(l.loads).toBe(0);
+		expect(l.stopped).toEqual([]);
+	});
+
+	test("the helper module is loaded when a stop happens, not before", async () => {
+		const l = loader();
+		const after = stopHelperAfter(ctx, l.load);
+		expect(l.loads).toBe(0);
+		await after(IOS);
+		expect(l.loads).toBe(1);
+	});
+});
+
+describe("startup cost", () => {
+	const read = (path: string) => readFileSync(join(import.meta.dir, path), "utf8");
+	const staticImports = (source: string) =>
+		[...source.matchAll(/^import\s+(?!type\b)[^;]*?from\s+"([^"]+)"/gms)].map((m) => m[1]);
+
+	test("the module imports no helper, driver or e2e code statically", () => {
+		const imports = staticImports(read("stop-helper-after.ts"));
+		expect(imports.filter((spec) => /helper|driver|close|warden-e2e/.test(spec ?? ""))).toEqual([]);
+	});
+
+	test("release, gc and the hook reach the helper only through it", () => {
+		for (const file of ["../commands/release.ts", "../commands/hook.ts", "../commands/gc.ts", "../lease-session.ts"]) {
+			const imports = staticImports(read(file));
+			expect(imports.filter((spec) => /agent-ui\/(close|helper)$/.test(spec ?? ""))).toEqual([]);
+		}
+	});
+});

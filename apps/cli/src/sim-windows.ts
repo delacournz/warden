@@ -178,6 +178,8 @@ export type HideDeps = {
 	exec: Exec;
 	/** headless never fails a run: problems come out here */
 	warn: (line: string) => void;
+	/** a device the window close shut down, before it is booted again: whatever is bound to its old boot (a resident `warden-simd`) must go */
+	onShutDown?: (udid: string) => Promise<void>;
 	os?: NodeJS.Platform;
 	sleep?: (ms: number) => Promise<void>;
 };
@@ -298,6 +300,7 @@ async function rebootShutDown(deps: HideDeps, sims: readonly LeasedSim[]): Promi
 	const rebooted: string[] = [];
 	for (const sim of down) {
 		deps.warn(`headless: closing ${sim.name}'s window shut it down — booting it again without a window`);
+		await deps.onShutDown?.(sim.udid);
 		await deps.exec(["xcrun", "simctl", "boot", sim.udid]);
 		const ready = await deps.exec(["xcrun", "simctl", "bootstatus", sim.udid, "-b"], { timeoutMs: BOOT_TIMEOUT_MS });
 		if (ready.exitCode === 0) rebooted.push(sim.name);
