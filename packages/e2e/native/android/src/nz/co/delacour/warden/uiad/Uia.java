@@ -543,11 +543,13 @@ final class Uia {
 		return "{\"downMs\":" + downMs + ",\"upMs\":" + upMs + ",\"via\":" + q(injectNoAnimationWait != null ? "inject3" : "inject2") + "}";
 	}
 
-	String swipe(float x1, float y1, float x2, float y2, long durationMs, int steps) throws OpError {
+	/** DOWN at the start, hold `pressMs`, `steps` MOVEs over `durationMs`, hold `releaseMs`, UP at the end. */
+	String swipe(float x1, float y1, float x2, float y2, long durationMs, int steps, long pressMs, long releaseMs) throws OpError {
 		long down = SystemClock.uptimeMillis();
 		MotionEvent d = motion(down, MotionEvent.ACTION_DOWN, x1, y1);
 		inject(d, false);
 		d.recycle();
+		if (pressMs > 0) SystemClock.sleep(pressMs);
 		int n = Math.max(1, steps);
 		for (int i = 1; i <= n; i++) {
 			if (durationMs > 0) SystemClock.sleep(Math.max(1, durationMs / n));
@@ -556,6 +558,7 @@ final class Uia {
 			inject(m, false);
 			m.recycle();
 		}
+		if (releaseMs > 0) SystemClock.sleep(releaseMs);
 		MotionEvent u = motion(down, MotionEvent.ACTION_UP, x2, y2);
 		inject(u, true);
 		u.recycle();
@@ -576,7 +579,7 @@ final class Uia {
 		return "{}";
 	}
 
-	/** Replace the text of the focused input (or the node with `resourceId`) with `ACTION_SET_TEXT`; unicode safe. */
+	/** Replace the text of the focused input (or the node with `resourceId`) with `ACTION_SET_TEXT`; unicode safe. Replies with the text it now holds (empty while the field shows its hint). */
 	String setText(String text, String resourceId) throws OpError {
 		AccessibilityNodeInfo root = activeRoot(500);
 		if (root == null) throw new OpError("E_AX_UNAVAILABLE", "no root node for the active window", true);
@@ -596,9 +599,80 @@ final class Uia {
 		target.refresh();
 		StringBuilder sb = new StringBuilder(64);
 		sb.append("{\"text\":");
-		Json.str(sb, target.getText() == null ? "" : target.getText());
+		Json.str(sb, target.getText() == null || target.isShowingHintText() ? "" : target.getText());
 		sb.append('}');
 		return sb.toString();
+	}
+
+	/** The input-focused node of the active window, fresh (not from the client cache). */
+	private AccessibilityNodeInfo focusedInput() throws OpError {
+		clearCache();
+		AccessibilityNodeInfo root = activeRoot(500);
+		if (root == null) throw new OpError("E_AX_UNAVAILABLE", "no root node for the active window", true);
+		AccessibilityNodeInfo target = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+		if (target == null) throw new OpError("E_NO_ELEMENT", "no focused input", false);
+		target.refresh();
+		return target;
+	}
+
+	/** What the field really holds: a field showing its hint holds nothing; a password field's text is not readable. */
+	private static CharSequence heldText(AccessibilityNodeInfo node) throws OpError {
+		CharSequence text = node.getText();
+		if (text == null || node.isShowingHintText()) return "";
+		if (node.isPassword() && text.length() > 0) {
+			throw new OpError("E_UNSUPPORTED", "the text of a password field is not readable, so it cannot be edited in place", false);
+		}
+		return text;
+	}
+
+	private boolean setSelection(AccessibilityNodeInfo node, int start, int end) {
+		Bundle args = new Bundle();
+		args.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, start);
+		args.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, end);
+		return node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args);
+	}
+
+	/**
+	 * Type `text` at the caret of the focused input, replacing the selection, like a keyboard would: the new text is
+	 * `before + text + after` through `ACTION_SET_TEXT` and the caret is put after it. Unicode safe.
+	 */
+	String typeText(String text) throws OpError {
+		AccessibilityNodeInfo target = focusedInput();
+		CharSequence held = heldText(target);
+		int length = held.length();
+		int start = target.getTextSelectionStart();
+		int end = target.getTextSelectionEnd();
+		if (start < 0 || end < 0) {
+			start = length;
+			end = length;
+		}
+		int from = Math.min(Math.min(start, end), length);
+		int to = Math.min(Math.max(start, end), length);
+		String next = held.subSequence(0, from).toString() + text + held.subSequence(to, length).toString();
+		Bundle args = new Bundle();
+		args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, next);
+		boolean ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
+		lastInputMs = SystemClock.uptimeMillis();
+		if (!ok) throw new OpError("E_HID", "ACTION_SET_TEXT was refused by the node", false);
+		int caret = from + text.length();
+		boolean placed = setSelection(target, caret, caret);
+		lastInputMs = SystemClock.uptimeMillis();
+		target.refresh();
+		StringBuilder sb = new StringBuilder(next.length() + 64);
+		sb.append("{\"text\":");
+		Json.str(sb, target.getText() == null || target.isShowingHintText() ? "" : target.getText());
+		sb.append(",\"caret\":").append(caret).append(",\"caretPlaced\":").append(placed).append('}');
+		return sb.toString();
+	}
+
+	/** Select the whole text of the focused input (`ACTION_SET_SELECTION`), so the next key or text replaces it. */
+	String selectAll() throws OpError {
+		AccessibilityNodeInfo target = focusedInput();
+		int length = heldText(target).length();
+		boolean ok = setSelection(target, 0, length);
+		lastInputMs = SystemClock.uptimeMillis();
+		if (!ok) throw new OpError("E_HID", "ACTION_SET_SELECTION was refused by the node", false);
+		return "{\"length\":" + length + "}";
 	}
 
 	/** PNG as base64 (`UiAutomation.takeScreenshot`); a host `screencap` is the fallback. */
