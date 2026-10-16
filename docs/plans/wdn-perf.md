@@ -73,7 +73,30 @@ Already fine, leave alone: sqlite store (WAL, busy_timeout, cached statements, s
 | Android | `smoke-android-r2` (1 rep) | `packages/e2e-bench/.bench/smoke-android-r2` | warden 407.4 s, agent-device 104.5 s |
 | Android | `v2-android-r2` (3 reps, `docs/bench/android-2026-10-16.md`) | `packages/e2e-bench/.bench/v2-android-r2` (e2e-bench worktree) | warden 465.0 s (91.7% pass, 8.3% flake), tester-army 76.4 s (100%), agent-device 46.2 s (83%), maestro 276.0 s |
 
-PERF-0.4 root-cause findings go here.
+### PERF-0.4 root cause: iOS settle stuck at 2.33 s, slow first read after relaunch (on device, `warden-iphone-17-5`, helper `WARDEN_SIMD_TRACE=1`)
+
+Before = `warden` bench, 2 reps, head `3bbaee6`, host load avg 36 (`perf04-before`); after = 3 reps, PERF-1.2 (`perf04-after`), same device and app build. Per-test numbers are span details (`via`, settle ms, first snapshot ms) from `results.jsonl`.
+
+| Metric | Before | After |
+|---|---|---|
+| Warm suite (median of reps) | 79.99 s (cold rep 75.01 s) | 62.92 s |
+| settle after launch, median | 2329 ms (rep 1: 3 stream at 262-270 ms, 5 snapshot at 2305-2367 ms; rep 2: 8 snapshot) | 272 / 265 / 262 ms per rep |
+| `via` per rep (stream / snapshot) | 3 / 5, then 0 / 8 | 5 / 3, 5 / 3, 5 / 3 (the 3 snapshot settles are 1.22-1.42 s, see 3 below) |
+| First snapshot after launch | 430-600 ms | 6-95 ms |
+| First `expect` of the next screen (`welcomeExpect`), median | 1443 / 1354 ms | 977 / 677 / 666 ms (includes the app drawing the screen: 31 ms when it was already up, 1.1-1.3 s when still booting) |
+| Helper log, read path | 16 relaunches: 16 `did not respond ... opening a quiescence stream` warns, 29 `stream restart`, 13 `stuck for ... restarting it` | 25 binds: 25 with `restarts=0`, 0 such warns, 0 warn-level lines, 1 `stream failed` (the guest's own, debug level) |
+| Relaunch probe (terminate + launch, no typing) | first read 1.6-1.7 s | 60 cycles: first read 21-90 ms (290-580 ms right after a guest reap), settle 253-380 ms except 5 wedge cycles at 1.24-1.30 s |
+
+Root causes, in the order they cost time:
+
+1. **First read races the stream.** A read made right after `simctl launch` reaches an app the stream has not bound: `E_APP_NOT_RESPONDING` in 16/16 relaunches. `recover` then restarted the stream (new guest ~0.18 s to open, first state 1.15-1.3 s later) and re-read: 1.6-1.7 s. The restart is unnecessary: the stream follows a relaunch by itself (`targetChanged(new pid)` then `state`) 0.25-0.4 s after the pid exists, bind ~0.7 s from launch (settle-first probe: bind 0.72-0.78 s, first read 30-90 ms, no failure). Fix: `rebind` on launch, `recover(pid:)` waits 900 ms for the stream to follow before restarting.
+2. **Restarts raced themselves.** `restart()` did not await the old stream task (log: `stream ended` and `stream opening` in the same ms at all 29 restarts), so the old task's reset could clobber the new stream's state; `waitQuiet` read `state/pid/now` before the launchd pid lookup (150-350 ms under load) and restarted a stream that had followed during it (`frontmost 3660 is stale (target ...)` right after `targetChanged(new)`). Fix: awaited restart, state re-read after the lookup. No two stream guests were seen alive together (`ps` sampled every 30 ms).
+3. **A wedged guest, the persistent 2.33 s.** The helper's long-lived guest (`SimulatorFrameworkBridge-iOS serve`, `.exclusive`, started with the helper) stops reporting quiet: every quiescence query answers `busy(runLoopIdle, animationsInactive)` for every process (SpringBoard and Settings too) until that process is ended. It survives any number of stream restarts, idle time, a replaced reader object (a new guest started, the old one stayed alive and stuck) and any number of client processes (it is helper-lifetime state; a fresh helper starts clean); ending the oldest guest restored `via:"stream"` in 5/5, 6/6 and 8/8 cycles afterwards. It is not typing (the probe never types), not the relaunch count, not failed reads: an idle probe (settle once a second, no relaunch) flips to `via:"snapshot"` at 26.5 s after the helper started; with relaunches the onsets were 21.4, 45.1, 67.6, 93.1 and 116.9 s after the stream first opened (22.6-25.5 s apart, every ~11 cycles). Cause inside the guest/idb not found. Fix: `reapWedgedGuests` ends the simulator's guests after a `snapshot` settle on guests that had reported quiet, then restarts the stream (5 reaps in 60 cycles, 9 in the 3-rep bench); a wedge now costs one ~1.25 s settle plus ~0.3 s on the next read instead of 2.3 s on every settle for the rest of the run.
+
+Not done, and why:
+
+- Plan item "dead old pid -> restart the stream at once" (PERF-1.2.3) is not implemented: a restart takes 1.15-1.3 s to its first state, the stream follows a relaunch itself in 0.6-0.7 s from launch, so restarting early is slower and churns guests. The first restart grace went 500 -> 900 ms instead.
+- Targets not met yet: settle after launch is 262-272 ms median (<= 0.4 s) but 3 of 8 settles per rep still hit the wedge (1.2-1.4 s) because a guest wedges every ~24 s and a test takes ~8 s. Follow-ups: find the guest/idb cause, or recycle the guests before they wedge (~20 s of age, during `rebind`, saves ~1 s per wedge); `welcomeExpect` is dominated by the app's own render time once the first read is fast.
 
 ## Phases
 
