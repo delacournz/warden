@@ -155,7 +155,7 @@ Commit `dfcc68b`. Scope: sqlite store, port leasing, `warden affected` (git, gra
 - Category: robustness
 - Severity: P3
 - Known?: new
-- Evidence: `cache.ts:116-120` does `writeFileSync(path, JSON.stringify(...))` straight onto the live file (the snapshot writer next door uses temp + rename, `graph-snapshot.ts:299-302`). One file serves every platform and every process for a config dir (`affected.ts:458-459`), so two `warden affected --platform ios|android` runs in parallel (the documented usage in `affected.ts:171`) can leave a reader with a torn file, which parses as empty (`cache.ts:96-101`) and costs a full re-scan. Entries are keyed by absolute path and never removed, so deleted or renamed files accumulate.
+- Evidence: `cache.ts:116-120` does `writeFileSync(path, JSON.stringify(...))` straight onto the live file (the snapshot writer next door uses temp + rename, `graph-snapshot.ts:299-302`). One file serves every platform and every process for a config dir (`affected.ts:458-459`), so two `warden affected --platform ios|android` runs in parallel (the documented usage, `apps/cli/src/commands/affected.ts:171`) can leave a reader with a torn file, which parses as empty (`cache.ts:96-101`) and costs a full re-scan. Entries are keyed by absolute path and never removed, so deleted or renamed files accumulate.
 - Impact: perf only, never wrong results (a torn cache reads as empty). Negligible per run.
 - Proposed fix: write to `<path>.<pid>.tmp` then `renameSync`; on `save`, drop entries whose file no longer exists. Additive.
 - Effort: S
@@ -209,7 +209,7 @@ Commit `dfcc68b`. Scope: sqlite store, port leasing, `warden affected` (git, gra
 
 ## Owned files not read
 
-- `packages/core/src/types.ts` and `duration.ts` read in full; `affected/fixture.testing.ts`, `affected/affected.schema.ts`, `batch/preset.schema.ts` and the test files other than the ones named in Findings were not read line by line (tests were run: `src/affected` and `src/batch`, 128 pass; `ports.test.ts` 1 fail, see 18-2).
+- `packages/core/src/types.ts` (not opened; nothing heavy is expected, and `resourceKey` is only called from `insertLease`), `affected/fixture.testing.ts`, `affected/affected.schema.ts`, `batch/preset.schema.ts` and the test files other than the ones named in Findings were not read line by line (tests were run: `src/affected` and `src/batch`, 128 pass; `ports.test.ts` 1 fail, see 18-2).
 - `apps/cli/src/commands/dev.test.ts`, `run.test.ts`, `affected.test.ts`: not read.
 
 ## Questions for the user
