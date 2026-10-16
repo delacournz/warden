@@ -162,25 +162,36 @@ extension Session {
     return false
   }
 
-  /// Runs `read`; when the app did not respond, runs `recover` (a fresh quiescence stream, see
+  /// The pid of the process that did not respond, when the error names one.
+  static func notRespondingPid(_ error: any Error) -> pid_t? {
+    if let error = error as? AXBridgeError, case let .applicationNotResponding(pid) = error { return pid }
+    if let error = error as? UIAutomationError, case let .applicationNotResponding(_, pid, _) = error { return pid }
+    return nil
+  }
+
+  /// Runs `read`; when the app did not respond, runs `recover` with the pid that did not (a stream bound to it, see
   /// `QuiescenceMonitor.recover`) and reads once more. Any other failure, and a second failure, propagate.
+  ///
+  /// This is the safety net: `rebind` (called when the client relaunches its app) binds the stream before the first
+  /// read, so a read only gets here for an app that was started some other way.
   static func readRecovering<Value>(
-    read: () async throws -> Value, recover: () async -> Void, log: (String) -> Void
+    read: () async throws -> Value, recover: (pid_t?) async -> Void, log: (String) -> Void
   ) async throws -> Value {
     do {
       return try await read()
     } catch {
       guard isNotResponding(error) else { throw error }
       log("axbridge: \(WireError.from(error).message); opening a quiescence stream and reading again")
-      await recover()
+      await recover(notRespondingPid(error))
       return try await read()
     }
   }
 
-  /// Gives the guest a stream bound to the current frontmost process. A no-op without a bridge.
-  func recoverBridge() async {
+  /// Gives the guest a stream bound to `pid` (the process that did not respond), or to the current frontmost process
+  /// without one. A no-op without a bridge.
+  func recoverBridge(pid: pid_t? = nil) async {
     guard let monitor = try? quiescenceMonitor() else { return }
-    await monitor.recover(timeoutMs: 4000)
+    await monitor.recover(pid: pid, timeoutMs: 4000)
   }
 
   /// Runs `body` on the requested reader (default: the session's `--ax`, i.e. `axbridge`). With no explicit
@@ -203,7 +214,7 @@ extension Session {
       do {
         let value = try await Session.readRecovering(
           read: { try await body(reader) },
-          recover: { await self.recoverBridge() },
+          recover: { pid in await self.recoverBridge(pid: pid) },
           log: { OpLog.shared.log(.warn, $0, op: op) })
         bridgeHealth.recordSuccess()
         return AXOutcome(value: value, backend: .axbridge, fallback: nil)

@@ -78,6 +78,8 @@ export type OpenIosDriverOptions = {
 const DEFAULT_QUIET_MS = 250;
 const DEFAULT_SETTLE_TIMEOUT_MS = 5_000;
 const SETTLE_MARGIN_MS = 2_000;
+/** How long `app.launch` lets the helper wait for its stream to follow the new process; the helper answers earlier. */
+const REBIND_TIMEOUT_MS = 3_000;
 const GESTURE_MARGIN_MS = 5_000;
 /** `frontmost` is one launchd lookup; a helper that has not answered in this long is busy, and the caller carries on without. */
 const FRONTMOST_TIMEOUT_MS = 3_000;
@@ -173,6 +175,7 @@ export function createIosDriver(
 	const nativeSettle = ready.ax.default === "axbridge" && ready.ax.bridge === "available";
 	const bridgeUp = ready.ax.bridge === "available";
 	let settleUnsupported = !nativeSettle;
+	let rebindUnsupported = false;
 
 	const capabilities: DriverCapabilities = {
 		pinch: true,
@@ -254,6 +257,32 @@ export function createIosDriver(
 			if (error instanceof DriverFailure) return fail(error.error);
 			throw error;
 		}
+	}
+
+	/**
+	 * Right after `simctl launch` the helper's quiescence stream still reports on the previous frontmost app; the first
+	 * AX read then fails with `did not respond` and the repair costs seconds. `rebind` makes the helper wait (briefly,
+	 * and without restarting a stream that follows by itself) until the stream reports on the new process, so the
+	 * first read and settle after a launch are fast. Best effort: any failure leaves the launch as it was.
+	 */
+	async function rebind(bundleId: string): Promise<boolean> {
+		if (rebindUnsupported || settleUnsupported) return false;
+		const reply = await client.request(
+			"rebind",
+			{ bundleId, rebindTimeoutMs: REBIND_TIMEOUT_MS },
+			{ timeoutMs: REBIND_TIMEOUT_MS + SETTLE_MARGIN_MS }
+		);
+		if (!reply.success) {
+			if (reply.error.code === "E_UNSUPPORTED" || reply.error.code === "E_BAD_REQUEST") rebindUnsupported = true;
+			noteSpanDetail("rebind", reply.error.code);
+			opts.log?.(`[ios] rebind after launch failed (${reply.error.code}): ${reply.error.message}`);
+			return false;
+		}
+		noteSpanDetail("rebind", reply.data.bound ? "bound" : (reply.data.reason ?? "unbound"));
+		noteSpanDetail("rebindMs", reply.data.waitedMs);
+		if (reply.data.restarts !== undefined && reply.data.restarts > 0)
+			noteSpanDetail("rebindRestarts", reply.data.restarts);
+		return reply.data.bound;
 	}
 
 	async function settle(o: { quietMs?: number; timeoutMs?: number } = {}): DriverResult<SettleDetail> {
@@ -434,7 +463,10 @@ export function createIosDriver(
 		app: {
 			launch: async (bundleId, o) => {
 				const launched = await simctl.launch(bundleId, o);
-				if (launched.success) launchedBundle = bundleId;
+				if (launched.success) {
+					launchedBundle = bundleId;
+					if (await rebind(bundleId)) launchedBundle = undefined;
+				}
 				return launched;
 			},
 			terminate: async (bundleId) => {

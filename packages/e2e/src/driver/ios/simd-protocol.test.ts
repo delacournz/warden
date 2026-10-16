@@ -10,6 +10,7 @@ import {
 	mapWireError,
 	parseLine,
 	protocolVersion,
+	rebindDataSchema,
 	settleDataSchema,
 	snapshotDataSchema,
 } from "./simd-protocol";
@@ -140,6 +141,19 @@ describe("data schemas", () => {
 			via: "snapshot",
 			reason: "frontmost_mismatch",
 		});
+	});
+
+	test("rebind data: bound with its pid and restarts, or unbound with a reason", () => {
+		expect(rebindDataSchema.parse({ bound: true, waitedMs: 700, pid: 4242, restarts: 0 })).toMatchObject({
+			bound: true,
+			pid: 4242,
+		});
+		expect(rebindDataSchema.parse({ bound: false, waitedMs: 3000, reason: "timeout" })).toMatchObject({
+			bound: false,
+			reason: "timeout",
+		});
+		expect(rebindDataSchema.safeParse({ waitedMs: 5 }).success).toBe(false);
+		expect(rebindDataSchema.safeParse(null).success).toBe(false);
 	});
 
 	test("a settle via this client does not know is read as no via, not as a protocol error", () => {

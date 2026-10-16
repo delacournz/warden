@@ -737,6 +737,72 @@ describe("settle", () => {
 		expect(settles[1]).toMatchObject({ bundleId: BUNDLE });
 	});
 
+	test("app.launch asks the helper to rebind its stream to the launched bundle, and the next settle need not name it", async () => {
+		const { driver, helper } = await open(
+			(request) => {
+				if (request.op === "rebind") return { data: { bound: true, waitedMs: 700, pid: 4242, restarts: 0 } };
+				return request.op === "settle" ? { data: { quiet: true, waitedMs: 5, via: "stream" } } : { data: null };
+			},
+			{},
+			[["xcrun simctl launch", {}]]
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
+		expect(helper.of("rebind")).toHaveLength(1);
+		expect(helper.of("rebind")[0]).toMatchObject({ bundleId: BUNDLE, rebindTimeoutMs: 3000, timeoutMs: 5000 });
+		expect(notes).toEqual({ rebind: "bound", rebindMs: 700 });
+		await unwrapped(driver.settle());
+		expect(helper.of("settle")[0]).not.toHaveProperty("bundleId");
+	});
+
+	test("an unbound rebind leaves the next settle naming the launched bundle", async () => {
+		const { driver, helper } = await open(
+			(request) => {
+				if (request.op === "rebind") return { data: { bound: false, waitedMs: 3000, reason: "timeout", restarts: 1 } };
+				return request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null };
+			},
+			{},
+			[["xcrun simctl launch", {}]]
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
+		expect(notes).toEqual({ rebind: "timeout", rebindMs: 3000, rebindRestarts: 1 });
+		await unwrapped(driver.settle());
+		expect(helper.of("settle")[0]).toMatchObject({ bundleId: BUNDLE });
+	});
+
+	test("a failing rebind never fails the launch, and an unsupported one is not asked again", async () => {
+		const { driver, helper, logs } = await open(
+			(request) => {
+				if (request.op === "rebind") return { error: { code: "E_BAD_REQUEST", message: 'unknown op "rebind"' } };
+				return { data: null };
+			},
+			{},
+			[
+				["xcrun simctl launch", {}],
+				["xcrun simctl launch", {}],
+			]
+		);
+		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
+		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
+		expect(helper.of("rebind")).toHaveLength(1);
+		expect(logs.some((line) => line.includes("rebind"))).toBe(true);
+	});
+
+	test("a rebind that times out or errors is logged and the launch still succeeds", async () => {
+		const { driver, helper } = await open(
+			(request) => (request.op === "rebind" ? { error: { code: "E_INTERNAL", message: "boom" } } : { data: null }),
+			{},
+			[
+				["xcrun simctl launch", {}],
+				["xcrun simctl launch", {}],
+			]
+		);
+		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
+		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
+		expect(helper.of("rebind")).toHaveLength(2);
+	});
+
 	test("terminating the launched bundle stops naming it", async () => {
 		const { driver, helper } = await open(
 			(request) => (request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null }),
