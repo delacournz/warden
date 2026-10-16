@@ -9,6 +9,7 @@ import { parseArgentAggregate } from "./parse/argent-report";
 
 const packageRoot = join(import.meta.dir, "../..");
 const fixture = readFileSync(join(import.meta.dir, "fixtures/argent/flow-run-dir.json"), "utf8");
+const noGrpc = readFileSync(join(import.meta.dir, "fixtures/argent/flow-run-android-no-grpc.json"), "utf8");
 
 function ctx(exec: RunContext["exec"]): RunContext {
 	return {
@@ -59,6 +60,18 @@ describe("argent adapter", () => {
 		const r = await argentAdapter.run(ctx(exec));
 		expect(r.success).toBe(true);
 		expect(exec.calls[0]?.args).toContain("--json");
+	});
+	test("every flow failing because the emulator has no gRPC registration is unsupported, not failed", async () => {
+		const r = await argentAdapter.run({
+			...ctx(fakeExec([{ cmd: "argent", result: { code: 1, stdout: noGrpc } }])),
+			platform: "android",
+			udid: "emulator-5554",
+		});
+		expect(r.success).toBe(false);
+		if (r.success) return;
+		expect(r.error.kind).toBe("unsupported");
+		if (r.error.kind !== "unsupported") return;
+		expect(r.error.reason).toContain("gRPC");
 	});
 	test("run fails on garbage output", async () => {
 		const r = await argentAdapter.run(ctx(fakeExec([{ cmd: "argent", result: { code: 2, stdout: "boom" } }])));

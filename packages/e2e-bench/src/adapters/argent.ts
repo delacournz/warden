@@ -11,6 +11,7 @@ import {
 	type Platform,
 	type ResiduePatterns,
 	type RunContext,
+	unsupported,
 } from "./adapter.types";
 import { type ArgentFlow, parseArgentAggregate } from "./parse/argent-report";
 
@@ -23,6 +24,20 @@ const REPORT_FILE = "argent-report.json";
  */
 export function argentRunArgs(suiteDir: string, udid: string, platform: Platform): string[] {
 	return ["flow", "run", suiteDir, "--device", udid, "--platform", platform, "--json"];
+}
+
+/**
+ * Argent drives an Android emulator through its gRPC endpoint, found via the emulator's
+ * `avd/running/pid_*.ini` (`grpc.port` + `grpc.token`). A `-read-only` headless emulator (how warden
+ * launches them) registers no such file, so every step fails at the first tap with this message.
+ */
+const NO_GRPC_RE = /not found among running emulators/;
+
+/** True when every flow failed and each one names the missing gRPC registration. */
+export function isNoGrpcRun(flows: readonly ArgentFlow[]): boolean {
+	return (
+		flows.length > 0 && flows.every((f) => f.status === "failed" && f.error !== undefined && NO_GRPC_RE.test(f.error))
+	);
 }
 
 /** Maps parsed flows onto the manifest; an unmapped native name is a parity breach. */
@@ -94,6 +109,14 @@ async function run(ctx: RunContext): Promise<Result<RepResult, AdapterError>> {
 			success: false,
 			error: failed(`${parsed.error}; stderr: ${r.stderr.trim().split("\n").slice(-3).join(" ")}`),
 		};
+	if (isNoGrpcRun(parsed.data)) {
+		return {
+			success: false,
+			error: unsupported(
+				`argent found no gRPC registration for ${ctx.udid} (avd/running/pid_*.ini with grpc.port + grpc.token); warden launches emulators -read-only and headless, which register none`
+			),
+		};
+	}
 	const tests = toTestResults(parsed.data, ctx.packageRoot);
 	if (!tests.success) return { success: false, error: failed(tests.error) };
 	return ok({
