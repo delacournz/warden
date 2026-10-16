@@ -95,10 +95,20 @@ Root causes, in the order they cost time:
 
 After merging `feature/warden-perf` (7d845db): 3 reps, 3 of 32 tests failed (`perf12-merged*`): after sign-in the observation cache gave a tap a snapshot of the todos screen still sliding in, and the tap landed on the wrong element. Not the rebind: the cause is cacher's snapshot reuse, fixed in `5115432` (actions and `boundingBox` never reuse a snapshot). With that applied: 3 reps 100% pass, warm suite 64.73 s, settle median 268-294 ms, `via` 5 stream / 3 snapshot per rep, host load 17.8 (`perf12-fix`).
 
+PERF-1.2b, recycling the guests in `rebind` before they wedge (same sim, 3 reps each, host load 6-10, `perf12b-*`):
+
+| `WARDEN_SIMD_GUEST_MAX_AGE_S` | Warm suite | settle median | `via` per rep (stream / snapshot) | Launches that recycled |
+|---|---|---|---|---|
+| 0 (reactive reap only) | 63.00 s | 260-304 ms | 5/3, 5/3, 5/3 | 0 |
+| 18 | 61.02 s | 260-263 ms | 6/2, 7/1, 7/1 | 5 |
+| 12 (default) | 59.88 s, 60.65 s (two runs) | 257-267 ms | 8/0 in all 6 reps | 11 of 24 |
+
+A recycle costs +0.51 s inside `rebind` (1610 ms against 1097 ms), the first snapshot after it is unchanged (32 ms against 30 ms); a wedge costs a 1245 ms settle against 260 ms plus ~0.45 s on the next read and settle. 18 s is too late for ~8 s tests: a guest at 17 s old at launch wedges mid-test. 12 s is tuned to this suite's cadence; a suite with much longer or much shorter tests may want `WARDEN_SIMD_GUEST_MAX_AGE_S` set (guests wedge from ~21 s).
+
 Not done, and why:
 
 - Plan item "dead old pid -> restart the stream at once" (PERF-1.2.3) is not implemented: a restart takes 1.15-1.3 s to its first state, the stream follows a relaunch itself in 0.6-0.7 s from launch, so restarting early is slower and churns guests. The first restart grace went 500 -> 900 ms instead.
-- Targets not met yet: settle after launch is 262-272 ms median (<= 0.4 s) but 3 of 8 settles per rep still hit the wedge (1.2-1.4 s) because a guest wedges every ~24 s and a test takes ~8 s. Follow-ups: find the guest/idb cause, or recycle the guests before they wedge (~20 s of age, during `rebind`, saves ~1 s per wedge); `welcomeExpect` is dominated by the app's own render time once the first read is fast.
+- Targets not met after PERF-1.2 alone: settle after launch was 262-272 ms median (<= 0.4 s) but 3 of 8 settles per rep still hit the wedge (1.2-1.4 s) because a guest wedges every ~24 s and a test takes ~8 s. PERF-1.2b (above) removes them: 8/8 `via:"stream"` per rep. Follow-ups: find the guest/idb cause, or recycle the guests before they wedge (~20 s of age, during `rebind`, saves ~1 s per wedge); `welcomeExpect` is dominated by the app's own render time once the first read is fast.
 
 ## Phases
 

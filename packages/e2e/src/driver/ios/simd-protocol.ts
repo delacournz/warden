@@ -306,6 +306,8 @@ export const rebindDataSchema = z.looseObject({
 	waitedMs: z.number(),
 	pid: z.number().optional(),
 	restarts: z.number().optional(),
+	/** the helper ended its AX guests first because they were old enough to be about to wedge */
+	recycled: z.boolean().optional(),
 	reason: z.string().optional(),
 });
 export type RebindData = z.infer<typeof rebindDataSchema>;

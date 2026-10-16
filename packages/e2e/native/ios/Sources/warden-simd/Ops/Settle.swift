@@ -615,46 +615,89 @@ actor QuiescenceMonitor {
   }
 }
 
-/// Lazily creates the session's monitor on first use.
-/// When a quiescence stream that reports every process busy should cost the simulator's AX guests.
+/// When the simulator's AX guests are ended: after a stream that reports every process busy (a wedged guest), and
+/// before one would, when an app is relaunched.
 ///
-/// Observed live: after some number of app relaunches the helper's long-lived guest (the one started with the helper)
-/// answers every quiescence query with `busy(runLoopIdle, animationsInactive)`, for SpringBoard and every app, through
-/// any number of stream restarts and a replaced reader, until that guest process is killed. Reads (`snapshot`) are
-/// unaffected, so `settle` falls back to comparing snapshots (`via: "snapshot"`) and every later settle waits out the
-/// stuck-stream window first.
+/// Observed live: about 22-26 s after a guest starts the helper's long-lived guest answers every quiescence query with
+/// `busy(runLoopIdle, animationsInactive)`, for SpringBoard and every app, through any number of stream restarts and a
+/// replaced reader, until that guest process is killed. Reads (`snapshot`) are unaffected, so `settle` falls back to
+/// comparing snapshots (`via: "snapshot"`, ~1.25 s) and every later settle waits out the stuck-stream window first.
 ///
 /// A fallback is only evidence of a wedged guest when this guest generation has already shown it can report quiet;
 /// otherwise the app is just busy (a spinner) and fresh guests would fall back the same way. The interval keeps a
-/// screen that really never settles from killing guests back to back.
+/// screen that really never settles from killing guests back to back. `recycleAfterSeconds` is the age at which
+/// `rebind` replaces the guests before they wedge (`WARDEN_SIMD_GUEST_MAX_AGE_S`, `0` = never). It has to leave room
+/// for the test that follows: guests start wedging ~21 s after they start, so with ~8 s between launches 12 s is the
+/// age after which the next launch would be too late (measured: 18 s still left 1-2 wedged settles per 8 tests, 12 s
+/// none).
 struct WedgePolicy: Equatable, Sendable {
   var minIntervalSeconds = 5.0
+  var recycleAfterSeconds: Double? = 12
 
   func shouldReap(streamQuiets: Int, lastReapedAt: Double?, now: Double) -> Bool {
     guard streamQuiets > 0 else { return false }
     guard let lastReapedAt else { return true }
     return now - lastReapedAt >= minIntervalSeconds
   }
+
+  func shouldRecycle(guestAge: Double, lastReapedAt: Double?, now: Double) -> Bool {
+    guard let recycleAfterSeconds, guestAge >= recycleAfterSeconds else { return false }
+    guard let lastReapedAt else { return true }
+    return now - lastReapedAt >= minIntervalSeconds
+  }
+
+  /// Defaults, with the recycle age from `WARDEN_SIMD_GUEST_MAX_AGE_S`: seconds, `0` turns recycling off, anything
+  /// else that is not a positive number keeps the default.
+  static func configured(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> WedgePolicy {
+    var policy = WedgePolicy()
+    guard let raw = environment["WARDEN_SIMD_GUEST_MAX_AGE_S"], let seconds = Double(raw) else { return policy }
+    if seconds == 0 {
+      policy.recycleAfterSeconds = nil
+    } else if seconds > 0 {
+      policy.recycleAfterSeconds = seconds
+    }
+    return policy
+  }
 }
 
-/// What `WedgePolicy` needs to know, per helper: quiet verdicts the stream gave since the guests were last reaped.
+/// What `WedgePolicy` needs to know, per helper: quiet verdicts the stream gave since the guests were last ended, and
+/// when they started (the helper start, then every reap).
 final class WedgeWatch: @unchecked Sendable {
   private let lock = NSLock()
+  private let policy: WedgePolicy
   private var streamQuiets = 0
   private var lastReapedAt: Double?
+  private var guestsSince: Double
   private var reapCount = 0
+
+  init(now: Double = ProcessInfo.processInfo.systemUptime, policy: WedgePolicy = .configured()) {
+    self.guestsSince = now
+    self.policy = policy
+  }
 
   /// A settle the stream answered quiet: the current guests can report quiescence.
   func noteStreamQuiet() { lock.withLock { streamQuiets += 1 } }
 
-  func wantsReap(policy: WedgePolicy = WedgePolicy(), now: Double = ProcessInfo.processInfo.systemUptime) -> Bool {
+  func wantsReap(now: Double = ProcessInfo.processInfo.systemUptime) -> Bool {
     lock.withLock { policy.shouldReap(streamQuiets: streamQuiets, lastReapedAt: lastReapedAt, now: now) }
+  }
+
+  /// Seconds since the current guests started.
+  func guestAge(now: Double = ProcessInfo.processInfo.systemUptime) -> Double {
+    lock.withLock { now - guestsSince }
+  }
+
+  func wantsRecycle(now: Double = ProcessInfo.processInfo.systemUptime) -> Bool {
+    lock.withLock {
+      policy.shouldRecycle(guestAge: now - guestsSince, lastReapedAt: lastReapedAt, now: now)
+    }
   }
 
   func didReap(now: Double = ProcessInfo.processInfo.systemUptime) {
     lock.withLock {
       streamQuiets = 0
       lastReapedAt = now
+      guestsSince = now
       reapCount += 1
     }
   }
@@ -719,6 +762,45 @@ struct GuestReaper: Sendable {
       return parse(String(decoding: data, as: UTF8.self))
     },
     end: { pid in _ = Darwin.kill(pid, SIGTERM) })
+}
+
+/// Ending this simulator's AX guests and starting over on fresh ones.
+enum GuestRecycling {
+  /// Ends the guests of `udid` and reopens the monitor's stream (which starts a fresh guest). Returns the pids it
+  /// ended; nothing found means nothing changed, and the guests are not counted as new. `settleSeconds` lets the ended
+  /// guests exit before the next stream asks for one.
+  static func endGuests(
+    udid: String, wedge: WedgeWatch, reaper: GuestReaper, monitor: QuiescenceMonitor,
+    now: Double = ProcessInfo.processInfo.systemUptime, settleSeconds: Double = 0.15
+  ) async -> [pid_t] {
+    let ended = reaper.reap(udid: udid)
+    guard !ended.isEmpty else { return [] }
+    wedge.didReap(now: now)
+    if settleSeconds > 0 { try? await Task.sleep(for: .seconds(settleSeconds)) }
+    await monitor.restart()
+    return ended
+  }
+}
+
+/// What `rebind` does before it waits for the stream to bind: forgets the bundle's remembered pid (the relaunch made
+/// it stale), and replaces guests old enough to be about to wedge, while the launched app is still starting and the
+/// wait for its stream would be paid anyway (`WedgePolicy.recycleAfterSeconds`). Returns whether guests were replaced.
+enum RebindPrelude {
+  static func run(
+    bundleId: String, pids: BundlePidMemory, udid: String, wedge: WedgeWatch, reaper: GuestReaper,
+    monitor: QuiescenceMonitor?, now: Double = ProcessInfo.processInfo.systemUptime, settleSeconds: Double = 0.15
+  ) async -> Bool {
+    pids.remember(nil, for: bundleId)
+    guard let monitor, wedge.wantsRecycle(now: now) else { return false }
+    let age = wedge.guestAge(now: now)
+    let ended = await GuestRecycling.endGuests(
+      udid: udid, wedge: wedge, reaper: reaper, monitor: monitor, now: now, settleSeconds: settleSeconds)
+    guard !ended.isEmpty else { return false }
+    OpLog.shared.log(
+      .info, "recycled \(ended.count) AX guest(s) after \(Int(age)) s, before they wedge (reap \(wedge.reaps))",
+      op: "rebind")
+    return true
+  }
 }
 
 /// Lazily creates the session's monitor on first use.
@@ -789,13 +871,10 @@ extension Session {
   func reapWedgedGuests(reaper: GuestReaper = .system) async {
     let wedge = quiescence.wedge
     guard wedge.wantsReap(), let monitor = quiescence.existing else { return }
-    let reaped = reaper.reap(udid: udid)
+    let reaped = await GuestRecycling.endGuests(udid: udid, wedge: wedge, reaper: reaper, monitor: monitor)
     guard !reaped.isEmpty else { return }
-    wedge.didReap()
     OpLog.shared.log(
       .info, "quiescence stuck on every process; ended \(reaped.count) AX guest(s) (reap \(wedge.reaps))", op: "settle")
-    try? await Task.sleep(for: .milliseconds(150))
-    await monitor.restart()
   }
 
   /// `rebind{bundleId, rebindTimeoutMs}`: waits until the quiescence stream has reported on the bundle's process, so
@@ -806,16 +885,19 @@ extension Session {
       throw WireError(.unsupported, "rebind needs the axbridge backend (ax: \(axDefault), bridge: \(bridge.name))")
     }
     let started = ContinuousClock.now
-    // A launch makes the remembered pid (and the launched-before pid `frontmost` compares with) stale: forget it, the
-    // lookups below remember the new process.
-    bundlePids.remember(nil, for: request.bundleId)
-    let outcome = try await quiescenceMonitor().bind(
-      bundleId: request.bundleId, timeoutMs: request.timeoutMs,
+    let monitor = try quiescenceMonitor()
+    let recycled = await RebindPrelude.run(
+      bundleId: request.bundleId, pids: bundlePids, udid: udid, wedge: quiescence.wedge, reaper: .system,
+      monitor: monitor)
+    let remainingMs = max(0, request.timeoutMs - Session.elapsedMs(since: started))
+    let outcome = await monitor.bind(
+      bundleId: request.bundleId, timeoutMs: remainingMs,
       resolvePid: { bundleId in await self.resolveBundlePid(bundleId) })
     var reply: [String: JSON] = [
       "bound": .bool(outcome.bound), "waitedMs": .int(Session.elapsedMs(since: started)),
       "restarts": .int(outcome.restarts),
     ]
+    if recycled { reply["recycled"] = .bool(true) }
     if let pid = outcome.pid { reply["pid"] = .int(Int(pid)) }
     if let reason = outcome.reason { reply["reason"] = .string(reason) }
     return .object(reply)
