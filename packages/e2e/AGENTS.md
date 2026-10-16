@@ -15,6 +15,12 @@ warden's own mobile e2e stack (plan: `docs/plans/wdn-e2e.md`). No lease / build 
 | `flows/` | `.flow.json` schema, record, replay, export |
 | `native/` | `warden-simd` Swift package on idb's library package (`native/ios`), scripts (`deps`, `build`, `smoke`, `fake-simd`) |
 
+## Publishing
+Published as `@delacour/warden-e2e` (manifest from `apps/cli/src/npm/manifests.ts`, staged by `build:npm`) in lock-step with `@delacour/warden`; this `package.json` stays `private`.
+- Public surface is `src/index.ts` (`.`) and `src/preload.ts` (`./preload`), bundled by `Bun.build` (`apps/cli/src/npm/e2e-bundle.ts`) into `index.mjs` / `preload.mjs` + one shared chunk: workspace packages inlined, `bun:test` and `zod` external. Everything else (`driver/*`, `env`, `runner/results`, ...) is workspace-private; `apps/cli` is compiled separately and imports it from the workspace, so it is deliberately not in the package `exports`.
+- Declarations come from the TypeScript compiler API (`apps/cli/src/npm/declarations.ts`): `types/**` holds what the two entries reach, workspace imports rewritten to relative paths; `index.d.ts` / `preload.d.ts` re-export it. A type the public API exposes must be reachable from the entries. Consumers need `moduleResolution: bundler` (Bun's default) and `@types/bun`.
+- A new third-party runtime import must be added to `E2E_EXTERNALS` and this package's `dependencies` (the bundle test fails on any bare import other than `zod`).
+
 ## Rules
 - Never run real `simctl` / `adb` / `warden-simd` in `bun test` — inject `Exec`, use `driver.testing.ts` / `native/scripts/fake-simd.ts`. Smoke scripts live in `native/scripts` and are run by hand.
 - `Result` / `AsyncResult` from `@delacour/warden-types/result`; `DriverResult<T>` = `AsyncResult<T, DriverError>`.
