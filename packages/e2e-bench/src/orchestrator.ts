@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { BenchAdapter, FrameworkId, RunContext } from "./adapters/adapter.types";
@@ -9,7 +10,7 @@ import type { Child, Exec, ExecOptions } from "./harness/exec";
 import { hostInfo } from "./harness/host";
 import { isolate } from "./harness/isolation";
 import { openPhaseLog, timed } from "./harness/phases";
-import { diffResidue, snapshotResidue } from "./harness/residue";
+import { diffResidue, type Owner, ownerFilter, snapshotResidue } from "./harness/residue";
 import { startSampler, type Tick } from "./harness/sampler";
 import { ms as fmtMs, pct as fmtPct, ratio as fmtRatio } from "./report/format";
 import { renderMarkdown } from "./report/markdown";
@@ -282,6 +283,8 @@ async function runFramework(
 		log: s.log,
 		repoRoot: deps.repoRoot,
 		cliPath: deps.cliPath,
+		benchPids: () => [...s.pids],
+		ownedPaths: ownedPathsOf(s),
 		sleep: deps.sleep,
 	});
 	if (!isolated.success)
@@ -295,6 +298,12 @@ async function runFramework(
 	return measure(fc, doctor.version);
 }
 
+/** Directories only this bench writes to: the run dir, agent-device bench state, warden's simd dir for the device. */
+function ownedPathsOf(s: Session): string[] {
+	const wardenHome = process.env.WARDEN_HOME ?? join(homedir(), ".warden");
+	return [s.runDir, join(homedir(), ".agent-device-bench"), join(wardenHome, "simd", s.device.udid)];
+}
+
 /** The measured part: residue snapshot, sampler, phases, then residue / footprint / stats. */
 async function measure(fc: FrameworkCtx, version: string): Promise<FrameworkResult> {
 	const { s, adapter, fwDir } = fc;
@@ -304,12 +313,14 @@ async function measure(fc: FrameworkCtx, version: string): Promise<FrameworkResu
 		udid: s.device.udid,
 		patterns: adapter.residuePatterns,
 	};
+	const owner: Owner = { udid: s.device.udid, benchPids: () => [...s.pids], ownedPaths: ownedPathsOf(s) };
 	const before = await snapshotResidue(probe);
 	const st: PhaseState = { reps: [], prepareMs: 0, teardownMs: 0, tickFile: { path: join(fwDir, "resources.ndjson") } };
 	const sampler = startSampler({
 		exec: s.deps.exec,
 		rootPids: () => [...s.pids],
 		processPatterns: adapter.residuePatterns.processes,
+		owned: (rows) => ownerFilter(rows, owner),
 		simUdid: s.device.udid,
 		platform: s.opts.platform,
 		...(s.deps.samplerIntervalMs !== undefined ? { intervalMs: s.deps.samplerIntervalMs } : {}),
@@ -324,7 +335,7 @@ async function measure(fc: FrameworkCtx, version: string): Promise<FrameworkResu
 	const resources = await sampler.stop();
 	const problem = toResult(outcome, adapter.id, version, st.reps);
 	if (problem !== undefined) return problem;
-	const residue = await diffResidue({ ...probe, before });
+	const residue = await diffResidue({ ...probe, owner, before });
 	const footprint = await footprintOf({ packageRoot: s.deps.packageRoot, framework: adapter.id, exec: s.deps.exec });
 	return {
 		framework: adapter.id,

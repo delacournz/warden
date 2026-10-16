@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fakeExec } from "./exec";
+import { ownerFilter } from "./residue";
 import { androidTotals, parseAdbTop, parsePs, startSampler, summarize, type Tick } from "./sampler";
 
 const fx = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
@@ -9,7 +10,7 @@ const fx = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name
 describe("parsePs", () => {
 	test("parses rows and skips the header", () => {
 		const rows = parsePs(fx("ps.txt"));
-		expect(rows).toHaveLength(9);
+		expect(rows).toHaveLength(14);
 		expect(rows[2]).toEqual({
 			pid: 101,
 			ppid: 100,
@@ -59,7 +60,8 @@ describe("startSampler", () => {
 		const sampler = startSampler({
 			exec,
 			rootPids: () => [100],
-			processPatterns: [/maestro/],
+			processPatterns: [/maestro/, /simulator-server/],
+			owned: (rows) => ownerFilter(rows, { udid: "AAAA-BBBB", benchPids: () => [100, 300], ownedPaths: [] }),
 			simUdid: "AAAA-BBBB",
 			platform: "ios",
 			sink: (t) => sunk.push(t),
@@ -96,6 +98,7 @@ describe("startSampler", () => {
 			exec,
 			rootPids: () => [],
 			processPatterns: [],
+			owned: () => [],
 			simUdid: "emulator-5554",
 			platform: "android",
 			intervalMs: 500,

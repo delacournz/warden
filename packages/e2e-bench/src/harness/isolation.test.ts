@@ -19,7 +19,12 @@ const stub = (id: BenchAdapter["id"], residuePatterns: BenchAdapter["residuePatt
 	residuePatterns,
 });
 
-const next = stub("maestro", { processes: [], driverBundleIds: ["dev.mobile.maestro-driver-ios*"], dirs: [] });
+const next = stub("maestro", {
+	processes: [],
+	driverBundleIds: ["dev.mobile.maestro-driver-ios*"],
+	dirs: [],
+	stateDirs: ["~/.agent-device-bench/agent-device"],
+});
 const previous = stub("argent", { processes: [/oldframework/], driverBundleIds: [], dirs: [] });
 
 function make(extra: { adbBoot?: boolean } = {}): FakeExec {
@@ -52,7 +57,10 @@ function make(extra: { adbBoot?: boolean } = {}): FakeExec {
 const base = (exec: FakeExec) => ({
 	exec,
 	platform: "ios" as const,
-	udid: "U",
+	udid: "AAAA-BBBB",
+	benchPids: () => [100, 300, 900],
+	ownedPaths: ["/Users/x/.agent-device-bench"],
+	home: "/h",
 	bundleId: "nz.co.delacour.warden.example",
 	previous,
 	next,
@@ -79,12 +87,11 @@ describe("isolate", () => {
 		const exec = make();
 		const r = await isolate(base(exec));
 		expect(cmds(exec)).toEqual([
-			"kill -TERM 102 300 900",
-			"kill -KILL 102 300 900",
-			"bun /repo/apps/cli/src/cli.ts ui close --udid U",
-			"argent server stop",
-			"agent-device daemon stop --clean",
-			"xcrun simctl terminate U nz.co.delacour.warden.example",
+			"kill -TERM 102 300 600 900",
+			"kill -KILL 102 300 600 900",
+			"bun /repo/apps/cli/src/cli.ts ui close --udid AAAA-BBBB",
+			"agent-device daemon stop --state-dir /h/.agent-device-bench/agent-device --clean",
+			"xcrun simctl terminate AAAA-BBBB nz.co.delacour.warden.example",
 		]);
 		expect(r).toEqual({
 			success: true,
@@ -92,15 +99,23 @@ describe("isolate", () => {
 		});
 	});
 
+	test("never kills or stops anything foreign", async () => {
+		const exec = make();
+		await isolate(base(exec));
+		const killArgs = exec.calls.filter((c) => c.cmd === "kill").flatMap((c) => c.args);
+		for (const foreign of ["500", "501", "502", "503"]) expect(killArgs).not.toContain(foreign);
+		expect(cmds(exec).some((c) => c.startsWith("argent") || c === "agent-device daemon stop --clean")).toBe(false);
+	});
+
 	test("ios cold + reboot: uninstalls next's drivers, reboots, then terminates", async () => {
 		const exec = make();
 		const r = await isolate({ ...base(exec), cold: true, rebootBetween: true });
-		expect(cmds(exec).slice(5)).toEqual([
-			"xcrun simctl uninstall U dev.mobile.maestro-driver-iosUITests.xctrunner",
-			"xcrun simctl shutdown U",
-			"xcrun simctl boot U",
-			"xcrun simctl bootstatus U -b",
-			"xcrun simctl terminate U nz.co.delacour.warden.example",
+		expect(cmds(exec).slice(4)).toEqual([
+			"xcrun simctl uninstall AAAA-BBBB dev.mobile.maestro-driver-iosUITests.xctrunner",
+			"xcrun simctl shutdown AAAA-BBBB",
+			"xcrun simctl boot AAAA-BBBB",
+			"xcrun simctl bootstatus AAAA-BBBB -b",
+			"xcrun simctl terminate AAAA-BBBB nz.co.delacour.warden.example",
 		]);
 		expect(r.success && r.data).toMatchObject({
 			uninstalled: ["dev.mobile.maestro-driver-iosUITests.xctrunner"],

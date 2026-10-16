@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import type { ResiduePatterns } from "../adapters/adapter.types";
 import type { Platform, Residue } from "../results/schema";
 import type { Exec } from "./exec";
-import { parsePs } from "./sampler";
+import { type PsRow, parsePs, withDescendants } from "./sampler";
 
 export type Snapshot = { dirKb: Record<string, number> };
 
@@ -52,13 +52,31 @@ export async function listDriverApps(
 
 type ProcessEntry = { pid: number; line: string };
 
+/** What counts as ours: the leased device, pids the bench spawned, and private state dirs. */
+export type Owner = { udid?: string; benchPids: () => readonly number[]; ownedPaths: readonly string[] };
+
 /**
- * Processes matching any pattern as `pid command`, never including this process or its ancestors
- * (the bench's own command line can mention a framework name).
+ * Only processes this bench owns: command mentions our udid / serial or one of our private paths, or the
+ * pid is one the bench spawned; plus all descendants. Other sessions' helpers never pass.
+ */
+export function ownerFilter(rows: readonly PsRow[], owner: Owner): PsRow[] {
+	const seeds = new Set<number>(owner.benchPids());
+	for (const r of rows) {
+		const hitsUdid = owner.udid !== undefined && owner.udid !== "" && r.command.includes(owner.udid);
+		if (hitsUdid || owner.ownedPaths.some((p) => p !== "" && r.command.includes(p))) seeds.add(r.pid);
+	}
+	const owned = withDescendants(rows, seeds);
+	return rows.filter((r) => owned.has(r.pid));
+}
+
+/**
+ * Owned processes matching any pattern as `pid command`, never including this process or its ancestors
+ * (the bench's own command line can mention a framework name). Patterns only filter inside the owned set.
  */
 export async function listMatchingProcesses(
 	exec: Exec,
 	patterns: readonly RegExp[],
+	owner: Owner,
 	selfPid: number = process.pid
 ): Promise<ProcessEntry[]> {
 	if (patterns.length === 0) return [];
@@ -71,7 +89,7 @@ export async function listMatchingProcesses(
 		protectedPids.add(pid);
 		pid = byPid.get(pid)?.ppid;
 	}
-	return rows
+	return ownerFilter(rows, owner)
 		.filter((row) => !protectedPids.has(row.pid) && patterns.some((p) => p.test(row.command)))
 		.map((row) => ({ pid: row.pid, line: `${row.pid} ${row.command}` }));
 }
@@ -91,13 +109,14 @@ export type ResidueInput = {
 	platform: Platform;
 	udid: string;
 	patterns: ResiduePatterns;
+	owner: Owner;
 	before?: Snapshot;
 	home?: string;
 	selfPid?: number;
 };
 
 /** Directory sizes now; call before a framework runs and pass to `checkResidue` after. */
-export async function snapshotResidue(input: Omit<ResidueInput, "before">): Promise<Snapshot> {
+export async function snapshotResidue(input: Omit<ResidueInput, "before" | "owner">): Promise<Snapshot> {
 	const home = input.home ?? homedir();
 	const dirKb: Record<string, number> = {};
 	for (const dir of input.patterns.dirs) {
@@ -110,7 +129,7 @@ export async function snapshotResidue(input: Omit<ResidueInput, "before">): Prom
 /** What the framework left behind: matching processes, driver apps and directory growth vs `before`. */
 export async function checkResidue(input: ResidueInput): Promise<Residue> {
 	const now = await snapshotResidue(input);
-	const processes = await listMatchingProcesses(input.exec, input.patterns.processes, input.selfPid);
+	const processes = await listMatchingProcesses(input.exec, input.patterns.processes, input.owner, input.selfPid);
 	const driverApps = await listDriverApps(input.exec, input.platform, input.udid, input.patterns.driverBundleIds);
 	const paths = Object.entries(now.dirKb)
 		.map(([path, kb]) => ({ path, deltaBytes: (kb - (input.before?.dirKb[path] ?? 0)) * 1024 }))
@@ -134,16 +153,17 @@ export type KillOptions = {
 export async function killMatching(
 	exec: Exec,
 	patterns: readonly RegExp[],
+	owner: Owner,
 	options: KillOptions = {}
 ): Promise<string[]> {
 	const signal = options.signal ?? "SIGTERM";
-	const found = await listMatchingProcesses(exec, patterns, options.selfPid);
+	const found = await listMatchingProcesses(exec, patterns, owner, options.selfPid);
 	if (found.length === 0) return [];
 	const flag = signal === "SIGKILL" ? "-KILL" : "-TERM";
 	await exec.run("kill", [flag, ...found.map((p) => String(p.pid))]);
 	if (signal === "SIGTERM") {
 		await (options.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms))))(options.graceMs ?? 3_000);
-		const survivors = await listMatchingProcesses(exec, patterns, options.selfPid);
+		const survivors = await listMatchingProcesses(exec, patterns, owner, options.selfPid);
 		if (survivors.length > 0) await exec.run("kill", ["-KILL", ...survivors.map((p) => String(p.pid))]);
 	}
 	return found.map((p) => p.line);

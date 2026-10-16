@@ -85,14 +85,15 @@ function total(rows: readonly PsRow[], pids: ReadonlySet<number>): { cpuPct: num
 	return { cpuPct, rssBytes: rssKb * 1024 };
 }
 
-/** Roots from `rootPids` plus any process whose command matches a pattern, with all their descendants. */
+/** Roots from `rootPids` plus any owned process whose command matches a pattern, with all their descendants. */
 export function hostPids(
 	rows: readonly PsRow[],
 	rootPids: readonly number[],
-	patterns: readonly RegExp[]
+	patterns: readonly RegExp[],
+	owned: readonly PsRow[]
 ): Set<number> {
 	const seeds = new Set(rootPids);
-	for (const r of rows) if (patterns.some((p) => p.test(r.command))) seeds.add(r.pid);
+	for (const r of owned) if (patterns.some((p) => p.test(r.command))) seeds.add(r.pid);
 	return withDescendants(rows, seeds);
 }
 
@@ -130,6 +131,8 @@ export type SamplerOptions = {
 	exec: Exec;
 	rootPids: () => number[];
 	processPatterns: RegExp[];
+	/** restricts pattern matches to processes the bench owns (see `ownerFilter`) */
+	owned: (rows: readonly PsRow[]) => readonly PsRow[];
 	/** iOS udid or Android serial */
 	simUdid?: string;
 	platform: Platform;
@@ -177,7 +180,7 @@ export function startSampler(options: SamplerOptions): { stop(): Promise<{ host:
 		const ps = await options.exec.run("ps", ["-axo", "pid,ppid,rss,%cpu,command"], { timeoutMs: 5_000 });
 		if (ps.code !== 0) return;
 		const rows = parsePs(ps.stdout);
-		const host = hostPids(rows, options.rootPids(), options.processPatterns);
+		const host = hostPids(rows, options.rootPids(), options.processPatterns, options.owned(rows));
 		const h = total(rows, host);
 		let sim: SimReading = { cpuPct: 0, rssBytes: 0 };
 		if (options.platform === "ios" && options.simUdid !== undefined) {

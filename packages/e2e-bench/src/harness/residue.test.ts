@@ -8,15 +8,24 @@ import {
 	killMatching,
 	listDriverApps,
 	matchesBundle,
+	type Owner,
+	ownerFilter,
 	parsePmList,
 	parseSimctlListApps,
 	snapshotResidue,
 } from "./residue";
+import { parsePs } from "./sampler";
 
 const fx = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
 
+const owner: Owner = {
+	udid: "AAAA-BBBB",
+	benchPids: () => [100, 300],
+	ownedPaths: ["/Users/x/.agent-device-bench"],
+};
+
 const patterns: ResiduePatterns = {
-	processes: [/maestro/, /warden-simd/],
+	processes: [/maestro/, /warden-simd/, /daemon/, /simulator-server/, /xcodebuild/],
 	driverBundleIds: ["dev.mobile.maestro-driver-ios*", "com.facebook.WebDriverAgentRunner.xctrunner"],
 	dirs: ["~/.maestro"],
 };
@@ -65,7 +74,7 @@ describe("checkResidue", () => {
 			{ cmd: "xcrun", result: { stdout: fx("simctl-listapps.txt") } },
 			{ cmd: "du", result: () => ({ stdout: `${du}\t/home/u/.maestro\n` }) },
 		]);
-		const input = { exec, platform: "ios" as const, udid: "U", patterns, home: "/home/u", selfPid: 100 };
+		const input = { exec, platform: "ios" as const, udid: "U", patterns, owner, home: "/home/u", selfPid: 100 };
 		const before = await snapshotResidue(input);
 		expect(before.dirKb).toEqual({ "/home/u/.maestro": 100 });
 		du = 150;
@@ -74,6 +83,7 @@ describe("checkResidue", () => {
 		expect(r.processes).toEqual([
 			"102 /Users/x/bin/warden-simd --udid AAAA-BBBB",
 			"300 /opt/homebrew/bin/java -jar maestro-cli.jar",
+			"600 /Users/x/.agent-device-bench/agent-device/daemon.js --state",
 		]);
 		expect(r.driverApps).toHaveLength(2);
 		expect(r.paths).toEqual([{ path: "/home/u/.maestro", deltaBytes: 50 * 1024 }]);
@@ -84,7 +94,7 @@ describe("checkResidue", () => {
 			{ cmd: "ps", result: { stdout: fx("ps.txt") } },
 			{ cmd: "du", result: { code: 1, stderr: "No such file" } },
 		]);
-		const r = await checkResidue({ exec, platform: "ios", udid: "U", patterns, home: "/h", selfPid: 1 });
+		const r = await checkResidue({ exec, platform: "ios", udid: "U", patterns, owner, home: "/h", selfPid: 1 });
 		expect(r.paths).toEqual([]);
 	});
 });
@@ -96,7 +106,10 @@ describe("killMatching", () => {
 			{ cmd: "kill", result: {} },
 		]);
 		const slept: number[] = [];
-		const killed = await killMatching(exec, [/maestro/], { sleep: async (ms) => void slept.push(ms), selfPid: 1 });
+		const killed = await killMatching(exec, [/maestro/], owner, {
+			sleep: async (ms) => void slept.push(ms),
+			selfPid: 1,
+		});
 		expect(killed).toEqual(["300 /opt/homebrew/bin/java -jar maestro-cli.jar"]);
 		expect(slept).toEqual([3000]);
 		const kills = exec.calls.filter((c) => c.cmd === "kill").map((c) => c.args);
@@ -108,7 +121,39 @@ describe("killMatching", () => {
 
 	test("nothing matched = no kill", async () => {
 		const exec = fakeExec([{ cmd: "ps", result: { stdout: fx("ps.txt") } }]);
-		expect(await killMatching(exec, [/nomatch/])).toEqual([]);
+		expect(await killMatching(exec, [/nomatch/], owner)).toEqual([]);
 		expect(exec.calls.some((c) => c.cmd === "kill")).toBe(false);
+	});
+});
+
+describe("ownerFilter", () => {
+	const rows = parsePs(fx("ps.txt"));
+	const pids = (o: Owner) => ownerFilter(rows, o).map((r) => r.pid);
+
+	test("udid match, bench-pid trees and owned paths are ours; foreign helpers are not", () => {
+		expect(pids(owner)).toEqual([100, 101, 102, 200, 201, 202, 300, 600]);
+		for (const foreign of [500, 501, 502, 503]) expect(pids(owner)).not.toContain(foreign);
+	});
+
+	test("nothing owned means nothing returned", () => {
+		expect(pids({ benchPids: () => [], ownedPaths: [] })).toEqual([]);
+	});
+
+	test("a foreign udid is owned only when it is ours", () => {
+		expect(pids({ udid: "1A0EC51B-FOREIGN", benchPids: () => [], ownedPaths: [] })).toEqual([500, 502]);
+	});
+});
+
+describe("killMatching ownership", () => {
+	test("never kills a foreign session's matching helpers", async () => {
+		const exec = fakeExec([
+			{ cmd: "ps", result: { stdout: fx("ps.txt") } },
+			{ cmd: "kill", result: {} },
+		]);
+		const killed = await killMatching(exec, [/simulator-server/, /daemon/, /tool-server/, /xcodebuild/], owner, {
+			sleep: async () => undefined,
+			selfPid: 1,
+		});
+		expect(killed).toEqual(["600 /Users/x/.agent-device-bench/agent-device/daemon.js --state"]);
 	});
 });

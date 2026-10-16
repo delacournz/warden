@@ -1,10 +1,11 @@
+import { homedir } from "node:os";
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { BenchAdapter } from "../adapters/adapter.types";
 import type { Platform } from "../results/schema";
 import type { Exec } from "./exec";
-import { killMatching, listDriverApps } from "./residue";
+import { killMatching, listDriverApps, type Owner } from "./residue";
 
-/** Every framework's long-lived helpers; killed before each framework so one never inherits another's daemons. */
+/** Every framework's long-lived helpers; killed (only when owned by this bench) so one never inherits another's daemons. */
 export const KNOWN_PROCESS_PATTERNS: RegExp[] = [
 	/warden-simd/,
 	/argent.*(simulator-server|ax-service|tool-server)/,
@@ -26,6 +27,11 @@ export type IsolateInput = {
 	log: (line: string) => void;
 	repoRoot: string;
 	cliPath: string;
+	/** pids the bench spawned (its tracking exec) */
+	benchPids: () => readonly number[];
+	/** private dirs whose processes are ours (run out dir, agent-device bench state, warden simd dir) */
+	ownedPaths: readonly string[];
+	home?: string;
 	sleep?: (ms: number) => Promise<void>;
 	/** max `sys.boot_completed` polls after an Android reboot (1 s apart) */
 	bootPolls?: number;
@@ -35,13 +41,22 @@ export type IsolateOutcome = { killed: string[]; uninstalled: string[]; rebooted
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** Stops each framework's helper through its own CLI when installed; every failure is ignored. */
+/**
+ * Stops helpers we own: this device's warden helper, and agent-device daemons only through their
+ * private state dirs. Never the global agent-device daemon or the shared argent tool-server.
+ */
 async function stopHelpers(input: IsolateInput): Promise<void> {
 	const { exec, udid, repoRoot, cliPath } = input;
 	await exec.run("bun", [cliPath, "ui", "close", "--udid", udid], { cwd: repoRoot, timeoutMs: 30_000 });
-	if (exec.which("argent") !== undefined) await exec.run("argent", ["server", "stop"], { timeoutMs: 30_000 });
-	if (exec.which("agent-device") !== undefined)
-		await exec.run("agent-device", ["daemon", "stop", "--clean"], { timeoutMs: 30_000 });
+	if (exec.which("agent-device") === undefined) return;
+	const home = input.home ?? homedir();
+	const dirs = new Set(
+		[...(input.previous?.residuePatterns.stateDirs ?? []), ...(input.next.residuePatterns.stateDirs ?? [])].map((d) =>
+			d === "~" || d.startsWith("~/") ? home + d.slice(1) : d
+		)
+	);
+	for (const dir of dirs)
+		await exec.run("agent-device", ["daemon", "stop", "--state-dir", dir, "--clean"], { timeoutMs: 30_000 });
 }
 
 /** Removes the next framework's driver apps that are present (cold runs only). */
@@ -95,7 +110,8 @@ async function stopApp(input: IsolateInput): Promise<void> {
  */
 export async function isolate(input: IsolateInput): AsyncResult<IsolateOutcome> {
 	const patterns = [...(input.previous?.residuePatterns.processes ?? []), ...KNOWN_PROCESS_PATTERNS];
-	const killed = await killMatching(input.exec, patterns, { sleep: input.sleep });
+	const owner: Owner = { udid: input.udid, benchPids: input.benchPids, ownedPaths: input.ownedPaths };
+	const killed = await killMatching(input.exec, patterns, owner, { sleep: input.sleep });
 	for (const line of killed) input.log(`killed ${line}`);
 	await stopHelpers(input);
 	const uninstalled = input.cold ? await uninstallDrivers(input) : [];
