@@ -771,10 +771,9 @@ extension Session {
       throw WireError(.unsupported, "settle needs the axbridge backend (ax: \(axDefault), bridge: \(bridge.name))")
     }
     let started = ContinuousClock.now
-    let simulator = self.simulator
     let outcome = try await quiescenceMonitor().waitQuiet(
       quietMs: request.quietMs, timeoutMs: request.timeoutMs, bundleId: request.bundleId,
-      resolvePid: { bundleId in try? await simulator.application.processID(forBundleID: bundleId) })
+      resolvePid: { bundleId in await self.resolveBundlePid(bundleId) })
     let waitedMs = Session.elapsedMs(since: started)
     if outcome.quiet, outcome.via == "stream" { quiescence.wedge.noteStreamQuiet() }
     if outcome.via == "snapshot" { await reapWedgedGuests() }
@@ -807,10 +806,12 @@ extension Session {
       throw WireError(.unsupported, "rebind needs the axbridge backend (ax: \(axDefault), bridge: \(bridge.name))")
     }
     let started = ContinuousClock.now
-    let simulator = self.simulator
+    // A launch makes the remembered pid (and the launched-before pid `frontmost` compares with) stale: forget it, the
+    // lookups below remember the new process.
+    bundlePids.remember(nil, for: request.bundleId)
     let outcome = try await quiescenceMonitor().bind(
       bundleId: request.bundleId, timeoutMs: request.timeoutMs,
-      resolvePid: { bundleId in try? await simulator.application.processID(forBundleID: bundleId) })
+      resolvePid: { bundleId in await self.resolveBundlePid(bundleId) })
     var reply: [String: JSON] = [
       "bound": .bool(outcome.bound), "waitedMs": .int(Session.elapsedMs(since: started)),
       "restarts": .int(outcome.restarts),

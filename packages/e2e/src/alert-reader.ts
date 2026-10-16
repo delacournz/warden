@@ -31,9 +31,10 @@ export type AlertReader = (backend?: AlertBackend, modalLooks?: number) => Promi
  * With `backend`, and a driver that can read one reader (`driver/alerts.ts`), that reader is read ONCE: a screen without
  * an alert costs one tree read where `driver.alert()` reads both readers, and nothing sleeps. A modal that is up but
  * shows no buttons yet (`buttons: []`) is looked at again `modalLooks` times, `ALERT_MODAL_RETRY_MS` apart, then reported
- * as it is. If that read fails, or there is no `backend`, the two-reader `driver.alert()` answers instead, retrying a
- * transient failure (the AX bridge briefly names no frontmost application right after a launch or sheet change) after a
- * short sleep.
+ * as it is. If the bridge read fails (it answers nothing for ~0.2 s after a launch, while its quiescence stream is not
+ * bound to the new process), the host reader is read once: what `driver.alert()` would answer when one of its two readers
+ * fails, for one read instead of two. If that fails too, or there is no `backend`, the two-reader `driver.alert()`
+ * answers instead, retrying a transient failure after a short sleep.
  */
 export function createAlertReader({ driver, clock, signal }: AlertReaderDeps): AlertReader {
 	const read = (backend?: AlertBackend) =>
@@ -66,6 +67,11 @@ export function createAlertReader({ driver, clock, signal }: AlertReaderDeps): A
 		if (backend !== undefined && canReadAlertOn(driver)) {
 			const one = await readOne(backend, modalLooks);
 			if (one.success) return one.data;
+			// the bridge answers nothing for ~0.2 s after a launch: ask the host reader once rather than the bridge again
+			if (backend === "axbridge") {
+				const host = await readOne("ax", 0);
+				if (host.success) return host.data;
+			}
 		}
 		return readBoth();
 	};

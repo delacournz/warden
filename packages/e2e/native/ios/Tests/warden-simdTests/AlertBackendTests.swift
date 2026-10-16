@@ -219,4 +219,27 @@ final class AlertBackendTests: XCTestCase {
 
     XCTAssertEqual(Session.frontmostReply(target: nil, frontmost: nil)["frontmost"], .bool(false))
   }
+
+  func testACachedPidIsTheTargetOnlyWhenItIsTheFrontmostOneAndStillRunning() {
+    XCTAssertTrue(Session.cachedPidIsFrontmost(cached: 42, frontmost: 42, isAlive: { _ in true }))
+    XCTAssertFalse(Session.cachedPidIsFrontmost(cached: 42, frontmost: 42, isAlive: { _ in false }), "a dead process is a stale stream")
+    XCTAssertFalse(Session.cachedPidIsFrontmost(cached: 42, frontmost: 7, isAlive: { _ in true }))
+    XCTAssertFalse(Session.cachedPidIsFrontmost(cached: nil, frontmost: 7, isAlive: { _ in true }))
+    XCTAssertFalse(Session.cachedPidIsFrontmost(cached: 42, frontmost: nil, isAlive: { _ in true }))
+  }
+
+  func testTheProcessCheckKnowsThisProcessAndNotAnImpossiblePid() {
+    XCTAssertTrue(Session.processExists(ProcessInfo.processInfo.processIdentifier))
+    XCTAssertFalse(Session.processExists(Int32.max))
+  }
+
+  func testBundlePidMemoryRemembersAndForgets() {
+    let memory = BundlePidMemory()
+    XCTAssertNil(memory.pid(for: "com.example.app"))
+    memory.remember(42, for: "com.example.app")
+    XCTAssertEqual(memory.pid(for: "com.example.app"), 42)
+    XCTAssertNil(memory.pid(for: "com.example.other"))
+    memory.remember(nil, for: "com.example.app")
+    XCTAssertNil(memory.pid(for: "com.example.app"))
+  }
 }
