@@ -105,4 +105,18 @@ describe("withRatios", () => {
 		expect(rb?.stats.perTest["onboarding/steps-to-sign-in"].ratioToFastest).toBe(1.5);
 		expect(ra?.stats.perTest["todos/add-complete-filter"].ratioToFastest).toBeUndefined();
 	});
+
+	test("a framework that failed a test never sets the pace", () => {
+		const broken: RepResult = { ...rep(1, false, 5000, 500), tests: [t("onboarding/steps-to-sign-in", 500, "failed")] };
+		const a = { name: "a", stats: frameworkStats({ reps: [broken], prepareMs: 0, teardownMs: 0 }) };
+		const b = {
+			name: "b",
+			stats: frameworkStats({ reps: [rep(1, false, 20_000, 1500)], prepareMs: 0, teardownMs: 0 }),
+		};
+		const [ra, rb] = withRatios([a, b]);
+		expect(rb?.stats.ratioToFastestSuite).toBe(1);
+		expect(ra?.stats.ratioToFastestSuite).toBe(0.25);
+		expect(rb?.stats.perTest["onboarding/steps-to-sign-in"].ratioToFastest).toBe(1);
+		expect(ra?.stats.perTest["onboarding/steps-to-sign-in"].ratioToFastest).toBe(0.33);
+	});
 });

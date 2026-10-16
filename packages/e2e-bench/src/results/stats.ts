@@ -155,14 +155,22 @@ export function frameworkStats(input: FrameworkStatsInput): FrameworkStats {
 
 /**
  * Cross-framework ratios: each framework's warm suite median and per-test medians over the fastest
- * framework's. Only frameworks with a finite median take part; the fastest gets 1.
+ * framework's. Only frameworks with a finite median AND a 100% pass rate (suite-wide for the suite ratio,
+ * per test for the test ratio) can be "fastest": a failed test ends early, so it would win on time alone.
  */
 export function withRatios<T extends { stats: FrameworkStats }>(frameworks: readonly T[]): T[] {
-	const suiteMedians = frameworks.map((f) => f.stats.warmSuiteWall.median).filter(Number.isFinite);
+	const suiteMedians = frameworks
+		.filter((f) => f.stats.passRate === 1)
+		.map((f) => f.stats.warmSuiteWall.median)
+		.filter(Number.isFinite);
 	const fastestSuite = suiteMedians.length > 0 ? Math.min(...suiteMedians) : undefined;
 	const fastestTest: Partial<Record<CanonicalId, number>> = {};
 	for (const id of CANONICAL_IDS) {
-		const medians = frameworks.map((f) => f.stats.perTest[id]?.median ?? Number.NaN).filter(Number.isFinite);
+		const medians = frameworks
+			.map((f) => f.stats.perTest[id])
+			.filter((t) => t !== undefined && t.passRate === 1)
+			.map((t) => t.median)
+			.filter(Number.isFinite);
 		if (medians.length > 0) fastestTest[id] = Math.min(...medians);
 	}
 	return frameworks.map((f) => {
