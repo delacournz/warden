@@ -577,6 +577,7 @@ Waves:
 | typist (1.1) | iOS plain fields showing a placeholder still get selectAll + 1 Backspace; `ada@example.com` keeps 4 confirm reads. | Done: type over the selection (no Backspace); 125/125 fills lossless; email 1083 ms (12 chars) / 1294 ms (15) / 1504 ms (18); every sign-in fill 2 confirm reads. Password ≈ 1.09 s is typing-bound. |
 | referee (6.1) | One bench test failed once under load and passed in 6 later runs: watch for a timing flake. | Open. |
 | conductor (4.7) | Static round-robin sharding: duration-aware sharding from the previous run's `results.jsonl`. Crash blame is inferred from result order; a per-flow completion record from the spec runner would make it exact. | Open. |
+| typist (1.1) | Under host load (load avg 14–41), `smoke.ts` raw `typeText` into an uncleared field garbled text in 2 of 5 runs (`"lol, World 123!H"`). Not the fill path, not compared against the old build. Re-run smoke on an idle host before 6.2; if it reproduces, it's a pacing-under-load bug. | Open. |
 | conductor (4.6) | `native+js` fingerprint keys are v2: every such project rebuilds once after upgrading. | Expected. |
 
 ## Decisions (user, 2026-10-16)
