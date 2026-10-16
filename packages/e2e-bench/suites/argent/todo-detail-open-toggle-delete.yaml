@@ -1,0 +1,20 @@
+steps:
+  - launch: nz.co.delacour.warden.example
+  - run: fragments/signed-in-ada
+  - tap: { id: todo-title-welcome }
+  - await: { idle: true, timeout: 4000 }
+  - when: { hidden: { id: todo-detail-title } }
+    steps:
+      - tap: { id: todo-title-welcome }
+      - await: { idle: true, timeout: 4000 }
+      - when: { hidden: { id: todo-detail-title } }
+        steps:
+          - tap: { id: todo-title-welcome }
+  - await: { visible: { id: todo-detail-title } }
+  - assert: { text: { in: { id: todo-detail-title }, equals: Explore the example app } }
+  - assert: { text: { in: { id: todo-detail-status }, equals: Active } }
+  - tap: { id: todo-detail-toggle }
+  - assert: { text: { in: { id: todo-detail-status }, equals: Done } }
+  - tap: { id: todo-detail-delete }
+  - await: { visible: { id: todos-screen } }
+  - assert: { hidden: { id: todo-row-welcome } }

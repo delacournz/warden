@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_E2E_RUNNER } from "@delacour/warden-core/affected/affected.defaults";
+import { DEV_MENU_OFF_ARGS } from "@delacour/warden-core/affected/affected.defaults";
 import { findWardenConfig } from "@delacour/warden-core/builds/config";
 import { type TestContext, testContext } from "../testing";
+import { currentBuild } from "../update/build-info";
 import { initCommand } from "./init";
 
 let ctx: TestContext | undefined;
@@ -23,7 +24,7 @@ function setup(argv: string[], expo: Record<string, unknown>, dependencies: Reco
 const read = (c: TestContext, file: string) => readFileSync(join(c.cwd, file), "utf8");
 
 describe("warden init", () => {
-	test("a fresh app: bundle id into app.json, warden.config.ts, e2e.config.ts and a first flow; names what to install", async () => {
+	test("a fresh app: bundle id into app.json, warden.config.ts and a first spec; names what to install", async () => {
 		const c = setup(["--bundle-id", "com.demo.fresh"], { slug: "fresh", version: "1.0.0" });
 		expect(await initCommand.run(c)).toBe(0);
 
@@ -44,33 +45,31 @@ describe("warden init", () => {
 		expect(found.data.config.e2e?.fresh).toMatchObject({
 			project: "fresh",
 			flowsDir: "e2e",
-			runner: DEFAULT_E2E_RUNNER,
-			mode: "single",
+			isolate: "device",
 			platform: "ios",
 			count: 2,
 			app: true,
-			metro: { enabled: true },
+			metro: { enabled: true, launchArgs: DEV_MENU_OFF_ARGS },
 		});
-
-		expect(read(c, "e2e.config.ts")).toContain('bundleId: "com.demo.fresh"');
-		expect(read(c, "e2e.config.ts")).toContain("WARDEN_METRO_URL");
-		expect(read(c, "e2e/smoke.e2e.ts")).toContain('from "@e2e-dev/mobile"');
+		expect(found.data.config.e2e?.fresh).not.toHaveProperty("runner");
+		expect(existsSync(join(c.cwd, "e2e.config.ts"))).toBe(false);
+		expect(read(c, "e2e/smoke.e2e.ts")).toContain('from "@delacour/warden-e2e"');
 
 		const log = c.stderr.join("\n");
 		expect(log).toContain("bunx expo install expo-dev-client");
-		expect(log).toContain("bun add -d e2e @e2e-dev/mobile");
+		expect(log).toContain(`bun add -d @delacour/warden-e2e@${currentBuild().version}`);
 		expect(log).toContain("warden dev");
 	});
 
 	test("ids already in app.json are kept; installed packages are not asked for again", async () => {
 		const expo = { slug: "fresh", ios: { bundleIdentifier: "com.a.ios" }, android: { package: "com.a.droid" } };
-		const c = setup(["--json"], expo, { "expo-dev-client": "1", e2e: "1", "@e2e-dev/mobile": "1" });
+		const c = setup(["--json"], expo, { "expo-dev-client": "1", "@delacour/warden-e2e": "1" });
 		expect(await initCommand.run(c)).toBe(0);
 		expect(JSON.parse(read(c, "app.json"))).toEqual({ expo });
 		expect(read(c, "warden.config.ts")).toContain('{ ios: "com.a.ios", android: "com.a.droid" }');
 		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
 			root: c.cwd,
-			written: ["warden.config.ts", "e2e.config.ts", "e2e/smoke.e2e.ts"],
+			written: ["warden.config.ts", "e2e/smoke.e2e.ts"],
 			skipped: [],
 			install: [],
 		});
@@ -91,10 +90,7 @@ describe("warden init", () => {
 		expect(await initCommand.run(c)).toBe(0);
 		expect(read(c, "warden.config.ts")).toBe("export default {};\n");
 		expect(existsSync(join(c.cwd, "e2e/smoke.e2e.ts"))).toBe(false);
-		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({
-			written: ["e2e.config.ts"],
-			skipped: ["warden.config.ts"],
-		});
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ written: [], skipped: ["warden.config.ts"] });
 
 		c.argv = ["--force"];
 		expect(await initCommand.run(c)).toBe(0);
@@ -107,7 +103,7 @@ describe("warden init", () => {
 		expect(await initCommand.run(c)).toBe(0);
 		expect(read(c, "warden.config.json")).toBe("{}\n");
 		expect(existsSync(join(c.cwd, "warden.config.ts"))).toBe(false);
-		expect(JSON.parse(c.stdout.join("\n")).written).toEqual(["e2e.config.ts", "e2e/smoke.e2e.ts"]);
+		expect(JSON.parse(c.stdout.join("\n")).written).toEqual(["e2e/smoke.e2e.ts"]);
 	});
 
 	test("--dry-run writes nothing", async () => {

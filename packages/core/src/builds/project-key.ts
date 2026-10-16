@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { type AsyncResult, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
+import { type GitFactsCache, readGitFacts } from "../git-facts";
 
 /**
  * Canonical `host/owner/repo` for a git remote, so every spelling of the same repo agrees:
@@ -83,25 +84,21 @@ function realpath(path: string): string {
 	}
 }
 
-/** Impure (via `exec`): project key for `root` from git toplevel / common dir / origin remote. */
-export async function readProjectKey(exec: Exec, dir: string): AsyncResult<string> {
+/**
+ * Impure (via `exec`): project key for `root` from git toplevel / common dir / origin remote. The
+ * checkout facts are one memoised `git rev-parse` (shared with the owner and project lookups through
+ * `cache`); only the remote costs a spawn of its own.
+ */
+export async function readProjectKey(exec: Exec, dir: string, cache?: GitFactsCache): AsyncResult<string> {
 	// git reports real paths; `/var` vs `/private/var` (macOS tmp) must not look like a different dir
 	const root = realpath(dir);
-	const top = await git(exec, root, ["rev-parse", "--show-toplevel"]);
-	if (!top) return ok(projectKey({ root }));
-	const toplevel = realpath(top);
-	const common = await git(exec, root, ["rev-parse", "--git-common-dir"]);
+	const facts = await readGitFacts(exec, root, cache);
+	if (!facts) return ok(projectKey({ root }));
+	const toplevel = realpath(facts.toplevel);
 	let remote = await git(exec, root, ["config", "--get", "remote.origin.url"]);
 	if (!remote) {
 		const first = (await git(exec, root, ["remote"]))?.split("\n")[0];
 		if (first) remote = await git(exec, root, ["config", "--get", `remote.${first}.url`]);
 	}
-	return ok(
-		projectKey({
-			root,
-			toplevel,
-			...(common ? { commonDir: isAbsolute(common) ? common : resolve(root, common) } : {}),
-			...(remote ? { remote } : {}),
-		})
-	);
+	return ok(projectKey({ root, toplevel, commonDir: facts.commonDir, ...(remote ? { remote } : {}) }));
 }

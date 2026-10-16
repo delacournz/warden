@@ -19,9 +19,19 @@ export type Command = {
 	/** heading this command is listed under in `warden --help` */
 	group?: CommandGroup;
 	summary: string;
+	/** left out of `--help` (internal workers) */
+	hidden?: true;
 	register: Register;
 	/** parse `ctx.argv` as this command's arguments and run it (what tests call) */
 	run: (ctx: CommandContext) => Promise<number>;
+};
+
+/**
+ * A command as the registry lists it: everything root `--help` and dispatch need, plus a `load` that imports
+ * the command's module only when it is needed. `registry.test.ts` pins each listing to the module it loads.
+ */
+export type CommandEntry = Pick<Command, "name" | "aliases" | "group" | "summary" | "hidden"> & {
+	load: () => Promise<Command>;
 };
 
 /** `warden --help` sections, in the order they are shown. */
@@ -75,9 +85,16 @@ function usageError(ui: Ui, argv: readonly string[], names: ReadonlySet<string>,
  * Build a fresh commander program (option values persist on a program between parses) with
  * `commands`, parse `argv`, run the matching action. Help → 0; usage errors → 1 (commander has
  * already printed them, in red, to ctx.err); otherwise the action's exit code.
+ * `known` is every command name the CLI has (defaults to `commands`): a lazily loaded program registers
+ * only the dispatched command but still scopes its usage errors as `warden <command>`.
  */
-export async function runProgram(commands: readonly Command[], argv: string[], ctx: CommandContext): Promise<number> {
-	const names = new Set(commands.flatMap((c) => [c.name, ...(c.aliases ?? [])]));
+export async function runProgram(
+	commands: readonly Command[],
+	argv: string[],
+	ctx: CommandContext,
+	known: readonly Pick<Command, "name" | "aliases">[] = commands
+): Promise<number> {
+	const names = new Set(known.flatMap((c) => [c.name, ...(c.aliases ?? [])]));
 	const program = new Commander("warden")
 		.description(PROGRAM_DESCRIPTION)
 		.exitOverride()
@@ -98,7 +115,9 @@ export async function runProgram(commands: readonly Command[], argv: string[], c
 		(a, b) => COMMAND_GROUPS.indexOf(a.group ?? "Setup") - COMMAND_GROUPS.indexOf(b.group ?? "Setup")
 	);
 	for (const command of grouped) {
-		const sub = program.command(command.name).description(command.summary);
+		const sub = program
+			.command(command.name, command.hidden ? { hidden: true } : undefined)
+			.description(command.summary);
 		if (command.group) sub.helpGroup(`${command.group}:`);
 		for (const alias of command.aliases ?? []) sub.alias(alias);
 		command.register(sub, ctx, (n) => {
@@ -113,4 +132,21 @@ export async function runProgram(commands: readonly Command[], argv: string[], c
 		throw error;
 	}
 	return code;
+}
+
+/**
+ * `runProgram` over a lazy listing: `warden <command> …` imports that command's module and no other; root
+ * `--help`, no arguments, `help <command>` and anything unrecognised load them all, because commander
+ * prints argument placeholders, suggests "did you mean" names and rejects unknown commands from the
+ * registered set.
+ */
+export async function runLazyProgram(
+	entries: readonly CommandEntry[],
+	argv: string[],
+	ctx: CommandContext
+): Promise<number> {
+	const first = argv[0];
+	const target = first === undefined ? undefined : entries.find((e) => e.name === first || e.aliases?.includes(first));
+	const commands = await Promise.all((target ? [target] : entries).map((entry) => entry.load()));
+	return runProgram(commands, argv, ctx, entries);
 }

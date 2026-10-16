@@ -1,7 +1,7 @@
 import {
 	DEFAULT_E2E_COUNT,
-	DEFAULT_E2E_RUNNER,
 	DEFAULT_FLOWS_DIR,
+	DEV_MENU_OFF_ARGS,
 } from "@delacour/warden-core/affected/affected.defaults";
 
 export type InitApp = { name: string; bundleId: { ios?: string; android?: string } };
@@ -19,7 +19,8 @@ export function wardenConfigSource(app: InitApp): string {
 	return `/**
  * warden config.
  * - \`warden dev\`: the dev client on a leased simulator, on a Metro port of its own.
- * - \`warden e2e\`: the flows in ${DEFAULT_FLOWS_DIR}/ on the dev client, spread over leased simulators (\`--count N\`).
+ * - \`warden e2e\`: the \`*.e2e.ts\` specs in ${DEFAULT_FLOWS_DIR}/ (\`@delacour/warden-e2e\`) on the dev client, one
+ *   \`bun test\` process per leased simulator (\`--count N\`).
  * For autocompletion: \`bun add -d @delacour/warden\` and wrap this in \`defineConfig\` from "@delacour/warden/config".
  */
 export default {
@@ -29,74 +30,26 @@ export default {
 			project: ${name},
 			flowsDir: ${str(DEFAULT_FLOWS_DIR)},
 			platform: "ios",
-			runner: [${DEFAULT_E2E_RUNNER.map(str).join(", ")}],
-			mode: "single",
+			isolate: "device",
 			count: ${DEFAULT_E2E_COUNT},
 			app: true,
-			metro: {},
+			// no Expo dev menu, onboarding sheet or floating button over the app
+			metro: { launchArgs: [${DEV_MENU_OFF_ARGS.map(str).join(", ")}] },
 		},
 	},
 };
 `;
 }
 
-/** The starter tester.army `e2e.config.ts`: drives the devices warden leased, on the Metro warden started. */
-export function e2eConfigSource(bundleId: string): string {
-	return `import { mobile } from "@e2e-dev/mobile";
-import type { E2EConfig } from "e2e";
+/** A first spec: the app opens. */
+export const SMOKE_FLOW_SOURCE = `import { test } from "@delacour/warden-e2e";
 
-/**
- * tester.army e2e config, run by \`warden e2e\`: warden leases the simulators, installs the dev build
- * and starts Metro, then one \`e2e run\` drives the whole pool (one worker per device).
- * By hand: \`E2E_UDID=<udid> bunx e2e run ${DEFAULT_FLOWS_DIR}/smoke.e2e.ts\` (the app must already be installed).
- */
-const env = process.env;
-// a single-runner suite gets the pool in WARDEN_UDIDS; a per-flow job its one device in WARDEN_UDID
-const pool = env.WARDEN_FLOW_PATHS === undefined ? [] : (env.WARDEN_UDIDS ?? "").split(",").filter(Boolean);
-const one = env.WARDEN_UDID ?? env.E2E_UDID;
-const devices = pool.length > 0 ? pool : one ? [one] : [];
-const [first] = devices;
-const metroUrl = env.WARDEN_METRO_URL;
+// the flow opens the app itself; a system prompt over the app is dismissed wherever a step meets one
+test.use({ launch: "none", systemAlerts: "dismiss" });
 
-/** No Expo dev menu, onboarding sheet or floating button over the app. */
-const DEV_MENU_OFF = [
-	"-EXDevMenuShowsAtLaunch",
-	"NO",
-	"-EXDevMenuIsOnboardingFinished",
-	"YES",
-	"-EXDevMenuShowFloatingActionButton",
-	"NO",
-];
-
-export default {
-	tests: ["${DEFAULT_FLOWS_DIR}/**/*.e2e.ts"],
-	targets: [
-		{
-			name: "ios",
-			engine: mobile({
-				platform: "ios",
-				...(first ? { device: devices.length > 1 ? devices : first, session: \`warden-\${first}\` } : {}),
-			}),
-			app: {
-				bundleId: ${str(bundleId)},
-				// --initialUrl loads the bundle from warden's Metro, skipping the dev launcher's server picker
-				...(metroUrl ? { launchArguments: ["--initialUrl", metroUrl, ...DEV_MENU_OFF] } : {}),
-			},
-		},
-	],
-	workers: Math.max(1, devices.length),
-} satisfies E2EConfig;
-`;
-}
-
-/** A first flow: the app opens. */
-export const SMOKE_FLOW_SOURCE = `import { test } from "@e2e-dev/mobile";
-
-test("the app opens", async ({ app, device }) => {
-	await app.open();
-	// a prompt left over from an earlier run would cover the app
-	await device.alert("dismiss").catch(() => undefined);
-	// next: assert on your first screen, e.g.
-	// await expect(screen.getByTestId("home")).toBeVisible();   (expect from "e2e", screen from the fixtures)
+test("the app opens", async ({ app }) => {
+	await app.open({ wait: "quiet" });
+	// next: assert on your first screen, e.g. (import expect from "@delacour/warden-e2e")
+	// await expect(screen.getByTestId("home")).toBeVisible({ timeout: 30_000 });
 });
 `;

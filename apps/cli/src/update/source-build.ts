@@ -6,12 +6,26 @@ import { type BuildInfo, DEFINE_KEY } from "./build-info";
 
 export type EmbeddedBuild = Exclude<BuildInfo, { channel: "dev" }>;
 
-/** `bun build --compile` argv that embeds `info` (read back by `currentBuild()`). */
+/** What `bun build --compile` writes next to the outfile when a source map is requested (the map is also embedded). */
+export const STRAY_SOURCE_MAP = "cli.js.map";
+
+/**
+ * `bun build --compile` argv that embeds `info` (read back by `currentBuild()`).
+ *
+ * `--minify --bytecode` take a cold `warden version` from ~120 ms to ~27 ms: the plain binary re-parses the whole
+ * 10 MB bundle (typescript included) on every start, bytecode skips that. `--sourcemap=linked` is what keeps stack
+ * traces and uncaught-error excerpts readable (otherwise a minified one-line bundle is printed); the map is embedded
+ * in the binary and `STRAY_SOURCE_MAP` is left beside it. Constraints: bytecode is CommonJS, so no top-level `await`
+ * in anything bundled (`cli.ts` uses `.then`).
+ */
 export function compileArgs(opts: { entry: string; outfile: string; info: EmbeddedBuild; target?: string }): string[] {
 	return [
 		"bun",
 		"build",
 		"--compile",
+		"--minify",
+		"--bytecode",
+		"--sourcemap=linked",
 		opts.entry,
 		"--outfile",
 		opts.outfile,

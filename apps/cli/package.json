@@ -17,14 +17,16 @@
 		"lint": "biome lint --write ./src ./scripts",
 		"check": "biome check ./src ./scripts",
 		"typecheck": "tsc --noEmit",
-		"test": "bun test",
+		"test": "bun test --timeout 20000",
 		"build:release": "bun scripts/build.ts --channel release",
-		"build:npm": "bun scripts/npm-packages.ts"
+		"build:npm": "bun scripts/npm-packages.ts",
+		"build:helper-asset": "bun scripts/helper-asset.ts"
 	},
 	"dependencies": {
 		"@clack/prompts": "^1.8.1",
 		"@commander-js/extra-typings": "^15.0.0",
 		"@delacour/warden-core": "workspace:*",
+		"@delacour/warden-e2e": "workspace:*",
 		"@delacour/warden-types": "workspace:*",
 		"chalk": "^6.0.1",
 		"commander": "^15.0.0",

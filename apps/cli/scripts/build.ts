@@ -5,13 +5,13 @@
  *   bun scripts/build.ts --channel release   → dist/warden-<os>-<arch> for every release target + dist/checksums.txt
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { bunExec } from "@delacour/warden-core/exec";
 import cliPackage from "../package.json" with { type: "json" };
 import { RELEASE_TARGETS } from "../src/npm/platforms";
-import { buildFromSource, compileArgs, sourceCommit } from "../src/update/source-build";
+import { buildFromSource, compileArgs, STRAY_SOURCE_MAP, sourceCommit } from "../src/update/source-build";
 
 const cliRoot = resolve(import.meta.dir, "..");
 const sourceDir = resolve(cliRoot, "..", "..");
@@ -23,10 +23,14 @@ async function run(cmd: string[]): Promise<void> {
 	if (result.exitCode !== 0) throw new Error(`${cmd.join(" ")}\n${result.stderr}`);
 }
 
+/** The binary embeds its source map; the loose copy `bun build --compile` leaves in `dist/` would ride along in dist.tgz. */
+const dropStraySourceMap = () => rmSync(join(dist, STRAY_SOURCE_MAP), { force: true });
+
 mkdirSync(dist, { recursive: true });
 if (values.channel === "local") {
 	const built = await buildFromSource(bunExec, sourceDir, cliPackage.version, join(dist, "warden"), Date.now);
 	if (!built.success) throw new Error(built.error);
+	dropStraySourceMap();
 	console.log(`built dist/warden ${built.data.version} (local ${built.data.commit ?? "?"})`);
 } else if (values.channel === "release") {
 	const commit = process.env.GITHUB_SHA?.slice(0, 7) ?? (await sourceCommit(bunExec, sourceDir));
@@ -41,6 +45,7 @@ if (values.channel === "local") {
 		const name = `warden-${target}`;
 		const outfile = join(dist, name);
 		await run(compileArgs({ entry: join(cliRoot, "src", "cli.ts"), outfile, info, target: `bun-${target}` }));
+		dropStraySourceMap();
 		sums.push(`${createHash("sha256").update(readFileSync(outfile)).digest("hex")}  ${name}`);
 		console.log(`built dist/${name}`);
 	}

@@ -1,0 +1,9 @@
+steps:
+  - launch: nz.co.delacour.warden.example
+  - await: { visible: { id: welcome-screen }, timeout: 30000 }
+  - await: { idle: true }
+  - assert: { text: { in: { id: welcome-title }, equals: Welcome } }
+  - run: fragments/next-plan
+  - run: fragments/next-test
+  - tap: { id: welcome-get-started }
+  - await: { visible: { id: sign-in-screen } }

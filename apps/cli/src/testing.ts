@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
+import { createGitFactsCache } from "@delacour/warden-core/git-facts";
 import { openStore, type Store } from "@delacour/warden-core/store";
 import { Chalk } from "chalk";
 import type { CommandContext } from "./context";
@@ -87,6 +88,7 @@ export function testContext(argv: string[], overrides: Partial<CommandContext> =
 		err: (line) => stderr.push(line),
 		store: () => db,
 		exec,
+		git: createGitFactsCache(),
 		readStdin: async () => "",
 		ui: scriptedUi(),
 		...overrides,

@@ -1,0 +1,18 @@
+steps:
+  - launch: nz.co.delacour.warden.example
+  - run: fragments/signed-in-ada
+  - type: { into: { id: todo-input }, text: Write e2e flows, submit: false }
+  - tap: { id: todo-add }
+  - assert: { text: { in: { id: todo-title-todo-1 }, equals: Write e2e flows } }
+  - assert: { text: { in: { id: todos-remaining }, equals: 2 left } }
+  # checkbox checked state is not readable by argent; the remaining count asserts the effect
+  - tap: { id: todo-check-todo-1 }
+  - assert: { text: { in: { id: todos-remaining }, equals: 1 left } }
+  - tap: { id: todos-filter-active }
+  - assert: { visible: { id: todo-row-welcome } }
+  - assert: { hidden: { id: todo-row-todo-1 } }
+  - tap: { id: todo-check-welcome }
+  - assert: { visible: { id: todos-empty } }
+  - tap: { id: todos-filter-done }
+  - assert: { visible: { id: todo-row-todo-1 } }
+  - assert: { text: { in: { id: todos-remaining }, equals: 0 left } }

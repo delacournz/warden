@@ -171,11 +171,19 @@ describe("warden claim → arrange", () => {
 		expect(c.stderr.join("\n")).toContain("re-enabled 1 slimmed job(s)");
 	});
 
-	test("a clean device is only checked, never touched", async () => {
+	test("a device that was never slimmed costs no print-disabled spawn", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], fakeSimctl([wardenSim(2, "Booted")], calls));
+		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(calls.some((x) => x.includes("print-disabled"))).toBe(false);
+		expect(c.stderr.join("\n")).not.toContain("slimmed");
+	});
+
+	test("a sim the store has no record of is left alone too", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], fakeSimctl([wardenSim(2, "Booted")], calls));
 		expect(await claimCommand.run(c)).toBe(0);
-		expect(calls.some((x) => x.includes("enable"))).toBe(false);
-		expect(c.stderr.join("\n")).not.toContain("slimmed");
+		expect(calls.some((x) => x.includes("print-disabled"))).toBe(false);
 	});
 });

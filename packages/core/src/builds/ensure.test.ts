@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
+import { createGitFactsCache } from "../git-facts";
 import { openStore, type Store } from "../store";
 import { fakeApp, testProject } from "./builds.testing";
 import { getBuild, getInstall, recordInstall, storeArtifact } from "./cache";
@@ -23,6 +24,9 @@ afterEach(() => {
 	store.close();
 	rmSync(dir, { recursive: true, force: true });
 });
+
+/** every file is 7 bytes: installed and cached builds look the same */
+const fileSize = async (): Promise<number> => 7;
 
 function fake(handlers: Array<[string, Partial<ExecResult>]>, calls: string[]): Exec {
 	return async (cmd) => {
@@ -80,20 +84,38 @@ describe("ensureApp", () => {
 				["xcrun simctl install U1", {}],
 				["xcrun simctl get_app_container U1 com.x.app", { stdout: "/data/App.app" }],
 				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
-				["stat -f %z", { stdout: "7\n" }],
 			],
 			calls
 		);
-		const first = await ensureApp(input(exec));
+		const first = await ensureApp(input(exec, { fileSize }));
 		expect(first).toEqual({ success: true, data: { appPath: path, hash: "H", source: "cache", installed: true } });
 		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe("H");
 		expect(getBuild(store, KEY, "ios", "H")?.lastUsedAt).toBe(5_000);
 
 		calls.length = 0;
-		const second = await ensureApp(input(exec));
+		const second = await ensureApp(input(exec, { fileSize }));
 		expect(second).toEqual({ success: true, data: { appPath: path, hash: "H", source: "installed", installed: true } });
 		expect(calls[0]).toBe("xcrun simctl get_app_container U1 com.x.app");
 		expect(calls.some((c) => c.startsWith("xcrun simctl install"))).toBe(false);
+	});
+
+	test("the already-installed check is three spawns: one get_app_container, two plutil, no stat", async () => {
+		await seedCache();
+		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		const calls: string[] = [];
+		const exec = fake(
+			[
+				["xcrun simctl get_app_container U1 com.x.app", { stdout: "/data/App.app\n" }],
+				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
+			],
+			calls
+		);
+		const res = await ensureApp(input(exec, { fileSize }));
+		expect(res.success && res.data.source).toBe("installed");
+		expect(calls).toHaveLength(3);
+		expect(calls.filter((c) => c.includes("get_app_container"))).toHaveLength(1);
+		expect(calls.filter((c) => c.startsWith("plutil"))).toHaveLength(2);
+		expect(calls.some((c) => c.startsWith("stat"))).toBe(false);
 	});
 
 	test("app on the device differs from the cached build → reinstall", async () => {
@@ -107,7 +129,6 @@ describe("ensureApp", () => {
 					{ stdout: JSON.stringify({ CFBundleVersion: "OLD", CFBundleExecutable: "App" }) },
 				],
 				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
-				["stat -f %z", { stdout: "7\n" }],
 			],
 			[]
 		);
@@ -167,7 +188,6 @@ describe("ensureApp", () => {
 				["xcrun simctl get_app_container U1 com.x.app groups", { exitCode: 1 }],
 				["xcrun simctl get_app_container U1 com.x.app", { stdout: "/data/App.app" }],
 				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
-				["stat -f %z", { stdout: "7\n" }],
 				["xcrun simctl terminate", {}],
 				["xcrun simctl spawn", {}],
 				["xcrun simctl privacy U1 reset all com.x.app", {}],
@@ -183,7 +203,7 @@ describe("ensureApp", () => {
 			},
 			mkdir: async () => {},
 		};
-		const res = await ensureApp(input(exec, { installMode: "clean", resetKeychain: true, resetFs }));
+		const res = await ensureApp(input(exec, { installMode: "clean", resetKeychain: true, resetFs, fileSize }));
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.source).toBe("installed");
 		expect(calls.some((c) => /simctl (un)?install/.test(c))).toBe(false);
@@ -255,6 +275,30 @@ describe("ensureApp", () => {
 		expect(record?.profile).toBe("development-simulator");
 		expect(res.data.appPath).toBe(record?.path ?? "");
 		expect(calls.some((c) => c.includes("eas"))).toBe(false);
+	});
+
+	test("the local build reads the git toplevel through the git cache projectContext used", async () => {
+		const root = join(dir, "app");
+		const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+		const calls: string[] = [];
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined === "sh -c make-ios") {
+				fakeApp(products, "Built.app");
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+			return { exitCode: 127, stdout: "", stderr: joined };
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		const git = createGitFactsCache();
+		git.store(root, { toplevel: root, commonDir: join(root, ".git"), branch: "main" });
+		const res = await ensureApp(
+			input(exec, { project, deviceId: undefined, build: true, eas: false, now: () => Date.now(), git })
+		);
+		expect(res.success).toBe(true);
+		expect(calls.filter((c) => c.startsWith("git"))).toEqual([]);
 	});
 
 	describe("JS-aware project (fingerprint.include native+js)", () => {
@@ -385,7 +429,9 @@ describe("projectContext", () => {
 		);
 		const exec: Exec = async (cmd) => {
 			const joined = cmd.join(" ");
-			if (joined === "git rev-parse --show-toplevel") return { exitCode: 0, stdout: `${repo}\n`, stderr: "" };
+			if (joined === "git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD") {
+				return { exitCode: 0, stdout: `${repo}\n${repo}/.git\nrefs/heads/main\n`, stderr: "" };
+			}
 			if (joined === "git config --get remote.origin.url")
 				return { exitCode: 0, stdout: "git@github.com:o/r.git", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "" };
@@ -404,5 +450,31 @@ describe("projectContext", () => {
 			variantOptional: true,
 		});
 		expect(optional.success).toBe(true);
+	});
+
+	test("project + key cost two git spawns (one rev-parse, the remote), shared through the git cache", async () => {
+		const repo = join(realpathSync(dir), "repo2");
+		mkdirSync(join(repo, "apps", "a"), { recursive: true });
+		writeFileSync(
+			join(repo, JSON_CONFIG_FILE),
+			JSON.stringify({ projects: [{ name: "a", root: ".", bundleId: { ios: "com.a" } }] })
+		);
+		const spawns: string[] = [];
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			spawns.push(joined);
+			if (joined === "git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD") {
+				return { exitCode: 0, stdout: `${repo}\n${repo}/.git\nrefs/heads/main\n`, stderr: "" };
+			}
+			if (joined === "git config --get remote.origin.url")
+				return { exitCode: 0, stdout: "git@github.com:o/r.git", stderr: "" };
+			return { exitCode: 1, stdout: "", stderr: "" };
+		};
+		const res = await projectContext({ exec, env, start: repo, git: createGitFactsCache() });
+		expect(res.success).toBe(true);
+		expect(spawns).toEqual([
+			"git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD",
+			"git config --get remote.origin.url",
+		]);
 	});
 });

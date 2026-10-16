@@ -196,3 +196,95 @@ figure.shiki {
 		transition-duration: 0.01ms !important;
 	}
 }
+
+/*
+ * Benchmark comparison charts. The SVG comes from the bench package's pure builders and carries no colour:
+ * each series gets an `s-<framework>` class that maps to a slot of the validated categorical palette, and
+ * text wears the site's ink tokens. Light and dark follow the `.dark` toggle. Colour is never the only
+ * encoding: every bar has a text label and a native tooltip.
+ */
+.bench {
+	--bench-1: #2a78d6;
+	--bench-2: #eb6834;
+	--bench-3: #1baf7a;
+	--bench-4: #eda100;
+	--bench-5: #e87ba4;
+	--bench-6: #008300;
+}
+.dark .bench {
+	--bench-1: #3987e5;
+	--bench-2: #d95926;
+	--bench-3: #199e70;
+	--bench-4: #c98500;
+	--bench-5: #d55181;
+	--bench-6: #008300;
+}
+.bench .s-warden {
+	--c: var(--bench-1);
+}
+.bench .s-maestro {
+	--c: var(--bench-2);
+}
+.bench .s-argent {
+	--c: var(--bench-3);
+}
+.bench .s-agent-device {
+	--c: var(--bench-4);
+}
+.bench .s-tester-army {
+	--c: var(--bench-5);
+}
+.bench .s-detox {
+	--c: var(--bench-6);
+}
+.bench svg.chart {
+	display: block;
+	width: 100%;
+	height: auto;
+	overflow: visible;
+}
+.bench .chart text {
+	font: 14px var(--font-sans);
+	fill: var(--color-ink-2);
+}
+.bench .chart text.group {
+	fill: var(--color-ink);
+	font-weight: 600;
+}
+.bench .chart text.val {
+	fill: var(--color-ink);
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+}
+.bench .chart text.best {
+	font-weight: 700;
+}
+.bench .chart .grid {
+	stroke: var(--color-hairline);
+	stroke-width: 1;
+}
+.bench .chart .mark {
+	fill: var(--c);
+}
+.bench .chart .box {
+	fill: var(--c);
+	fill-opacity: 0.35;
+	stroke: var(--c);
+	stroke-width: 1;
+}
+.bench .chart .whisker {
+	stroke: var(--color-ink-2);
+	stroke-width: 1.5;
+}
+.bench .chart .median {
+	stroke: var(--color-ink);
+	stroke-width: 2.5;
+}
+.bench .chart .marker {
+	fill: var(--color-ink);
+	stroke: var(--color-surface);
+	stroke-width: 2;
+}
+.bench .sw {
+	background: var(--c);
+}

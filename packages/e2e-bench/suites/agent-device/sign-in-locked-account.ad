@@ -1,0 +1,16 @@
+open nz.co.delacour.warden.example --relaunch
+wait "id=\"welcome-screen\"" 30000
+press "id=\"welcome-next\""
+wait "id=\"welcome-title\" text=\"Plan\"" 4000
+press "id=\"welcome-next\""
+wait "id=\"welcome-title\" text=\"Test\"" 4000
+press "id=\"welcome-get-started\""
+wait "id=\"sign-in-screen\"" 4000
+wait stable 500 5000
+press "id=\"sign-in-email\""
+type "locked@example.com"
+press "id=\"sign-in-password\""
+type "password1"
+press "id=\"sign-in-submit\""
+wait "id=\"sign-in-error\"" 4000
+wait "text=\"This account is locked. Try another email.\"" 4000

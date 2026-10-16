@@ -1,0 +1,13 @@
+appId: nz.co.delacour.warden.example
+---
+# Fresh launch, signed in as EMAIL, waiting up to 15 s for the todos screen.
+- runFlow: open-sign-in.yaml
+- runFlow:
+    file: submit-sign-in.yaml
+    env:
+      EMAIL: "${EMAIL}"
+      PASSWORD: "password1"
+- extendedWaitUntil:
+    visible:
+      id: "todos-screen"
+    timeout: 15000

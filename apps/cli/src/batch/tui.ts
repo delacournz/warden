@@ -18,11 +18,11 @@ export type DeviceView = {
 	idle: boolean;
 	/** finished jobs, in order (a retried attempt only counts once it is final) */
 	results: FlowMark[];
-	/** `mode: "single"`: the flows this device ran, from the runner's report */
+	/** device isolation: the flows this device ran, from the runner's report */
 	ran?: Array<{ id: string; mark: FlowMark }>;
 };
 
-/** `mode: "single"`: the one runner of `worker`, running every flow, marked as its output reports them. */
+/** device isolation: the one runner of `worker`, running every flow, marked as its output reports them. */
 export type RunnerView = { worker: number; flows: Array<{ id: string; mark?: FlowMark }> };
 
 export type BatchView = {
@@ -67,6 +67,19 @@ const marked = (flows: RunnerView["flows"], marks: Readonly<Record<string, FlowM
 		const mark = marks[f.id] ?? f.mark;
 		return mark ? { id: f.id, mark } : { id: f.id };
 	});
+
+/** `worker`'s runner takes on `ids` (the shard its job runs): flows it already tracks keep their marks. */
+export function addRunnerFlows(view: BatchView, worker: number, ids: readonly string[]): BatchView {
+	if (!view.runners) return view;
+	return {
+		...view,
+		runners: view.runners.map((r) => {
+			if (r.worker !== worker) return r;
+			const fresh = ids.filter((id) => !r.flows.some((f) => f.id === id)).map((id) => ({ id }));
+			return { ...r, flows: [...r.flows, ...fresh] };
+		}),
+	};
+}
 
 /** Marks read off `worker`'s runner output (a new view; flows it doesn't track are ignored). */
 export function applyFlowMarks(view: BatchView, worker: number, marks: Readonly<Record<string, FlowMark>>): BatchView {

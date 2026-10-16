@@ -49,7 +49,11 @@ function harness(): Harness {
 }
 
 /** A context whose cwd holds an Expo app (`app.json`, slug `demo`). */
-function setup(argv: string[], calls: string[][], extra: Array<[string, { stdout?: string }]> = []): TestContext {
+function setup(
+	argv: string[],
+	calls: string[][],
+	extra: Array<[string, { stdout?: string; exitCode?: number }]> = []
+): TestContext {
 	ctx = testContext(argv, {
 		exec: fakeSimctl([wardenSim(1, "Booted")], calls, [
 			["git rev-parse --show-toplevel", { stdout: "" }],
@@ -97,7 +101,9 @@ describe("warden dev", () => {
 		const metro = h.spawned[0];
 		expect(metro?.cwd).toBe(c.cwd);
 		expect(metro?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081", "--clear"]);
-		expect(metro?.env.WARDEN_UDID_0).toBe("U1");
+		// Metro starts before the device is claimed: its env carries the port, not the udid
+		expect(metro?.env.WARDEN_PORT_0).toBe("8081");
+		expect(metro?.env.WARDEN_PORT).toBeUndefined();
 		expect(metro?.stdout).toBe("inherit");
 		expect(calls).toContainEqual(devClientLaunchArgv("U1", "com.demo", "http://127.0.0.1:8081"));
 		expect(calls.some((cmd) => cmd.includes("openurl"))).toBe(false);
@@ -199,16 +205,56 @@ describe("warden dev", () => {
 		expect(await running).toBe(0);
 	});
 
-	test("app not ready → exit 1, Metro never started, nothing leased", async () => {
+	test("app not ready → Metro was started early and is killed, exit 1, nothing leased", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls);
 		const h = harness();
 		h.deps.ensureApp = async () => ({ success: false, error: "local build failed" });
+		const kills: string[] = [];
+		const spawn = h.deps.spawn;
+		h.deps.spawn = (cmd, env, cwd, stdout) => {
+			const child = spawn(cmd, env, cwd, stdout);
+			return {
+				exited: child.exited,
+				kill: (signal) => {
+					kills.push(signal);
+					h.finish(143);
+				},
+			};
+		};
 		expect(await createDevCommand(h.deps).run(c)).toBe(1);
-		expect(h.spawned).toEqual([]);
+		expect(h.spawned).toHaveLength(1);
+		expect(kills).toEqual(["SIGTERM"]);
 		expect(c.db.listLeases()).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("local build failed");
 	});
+
+	for (const [name, argv] of [
+		["claimed device", ["ios"]],
+		["--udid U1", ["ios", "--udid", "U1"]],
+	] as const) {
+		test(`Metro is spawned before the app install finishes (${name})`, async () => {
+			const calls: string[][] = [];
+			const c = setup([...argv], calls);
+			const h = harness();
+			const gate = Promise.withResolvers<void>();
+			h.deps.ensureApp = async (_ctx, _owner, _platform, deviceId, opts) => {
+				h.ensured.push({ deviceId, opts });
+				await gate.promise;
+				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+			};
+			const running = createDevCommand(h.deps).run(c);
+			await waitFor(() => h.spawned.length === 1 && h.ensured.length === 1);
+			expect(h.spawned).toHaveLength(1);
+			expect(h.ensured).toHaveLength(1);
+			expect(calls.some((cmd) => cmd.includes("launch"))).toBe(false);
+			gate.resolve();
+			await waitFor(() => calls.some((cmd) => cmd.includes("launch")));
+			h.finish(0);
+			expect(await running).toBe(0);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+	}
 
 	test("Metro never ready → Metro killed, exit 1, released", async () => {
 		const calls: string[][] = [];
@@ -265,6 +311,125 @@ describe("warden dev", () => {
 		expect(calls.some((cmd) => cmd.includes("launch"))).toBe(false);
 		h.finish(0);
 		expect(await running).toBe(0);
+	});
+
+	test("Metro runs the project's own expo bin directly (no bunx) when there is one", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios", "--", "--clear"], calls);
+		const h = harness();
+		h.deps.expoBin = (root) => `${root}/node_modules/.bin/expo`;
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		expect(h.spawned[0]?.cmd).toEqual([
+			`${c.cwd}/node_modules/.bin/expo`,
+			"start",
+			"--dev-client",
+			"--port",
+			"8081",
+			"--clear",
+		]);
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	describe("the dev-client scheme (an app.json without a slug needs `expo config`, 1-3 s)", () => {
+		const noSlug = (c: TestContext) =>
+			writeFileSync(
+				join(c.cwd, "app.json"),
+				JSON.stringify({ expo: { ios: { bundleIdentifier: "com.demo" }, android: { package: "com.demo" } } })
+			);
+		const expoConfig = (calls: string[][]) => calls.filter((cmd) => cmd.join(" ").startsWith("bunx expo config"));
+		const slugOut: [string, { stdout: string }] = ["bunx expo config", { stdout: JSON.stringify({ slug: "demo" }) }];
+
+		test("ios: never read — the dev client is opened with --initialUrl, not a deep link", async () => {
+			const calls: string[][] = [];
+			const c = setup(["ios"], calls, [slugOut]);
+			noSlug(c);
+			const h = harness();
+			const running = createDevCommand(h.deps).run(c);
+			await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+			expect(expoConfig(calls)).toEqual([]);
+			h.finish(0);
+			expect(await running).toBe(0);
+		});
+
+		test("ios: read only to word the hint when the dev client could not be opened", async () => {
+			const calls: string[][] = [];
+			const c = setup(["ios"], calls, [slugOut]);
+			noSlug(c);
+			const exec = c.exec;
+			c.exec = async (cmd, opts) =>
+				cmd.includes("launch") ? { exitCode: 1, stdout: "", stderr: "boom" } : exec(cmd, opts);
+			const h = harness();
+			const running = createDevCommand(h.deps).run(c);
+			await waitFor(() => c.stderr.join("\n").includes("yourself"));
+			expect(expoConfig(calls)).toHaveLength(1);
+			expect(c.stderr.join("\n")).toContain(devClientUrl("exp+demo", 8081));
+			h.finish(0);
+			expect(await running).toBe(0);
+		});
+
+		test("android: read while the app installs, not before the claim, and used for the deep link", async () => {
+			const calls: string[][] = [];
+			const c = setup(["android", "--udid", "emulator-5554"], calls, [slugOut]);
+			noSlug(c);
+			const h = harness();
+			const gate = Promise.withResolvers<void>();
+			let configReadBeforeInstallEnded = false;
+			h.deps.ensureApp = async (_ctx, _owner, _platform, deviceId, opts) => {
+				h.ensured.push({ deviceId, opts });
+				await waitFor(() => expoConfig(calls).length > 0);
+				configReadBeforeInstallEnded = expoConfig(calls).length > 0;
+				await gate.promise;
+				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+			};
+			const running = createDevCommand(h.deps).run(c);
+			await waitFor(() => h.ensured.length === 1);
+			gate.resolve();
+			await waitFor(() => calls.some((cmd) => cmd.includes("am")));
+			expect(configReadBeforeInstallEnded).toBe(true);
+			expect(calls.map((cmd) => cmd.join(" "))).toContain(
+				`adb -s emulator-5554 shell am start -a android.intent.action.VIEW -d ${devClientUrl("exp+demo", 8081)} com.demo`
+			);
+			h.finish(0);
+			expect(await running).toBe(0);
+		});
+
+		test("android --no-open: never read (nothing opens a deep link)", async () => {
+			const calls: string[][] = [];
+			const c = setup(["android", "--udid", "emulator-5554", "--no-open"], calls, [slugOut]);
+			noSlug(c);
+			const h = harness();
+			const running = createDevCommand(h.deps).run(c);
+			await waitFor(() => c.stderr.join("\n").includes("holding"));
+			expect(expoConfig(calls)).toEqual([]);
+			h.finish(0);
+			expect(await running).toBe(0);
+		});
+
+		test("android: an unreadable slug still fails the run — Metro stopped, nothing leased", async () => {
+			const calls: string[][] = [];
+			const c = setup(["android", "--udid", "emulator-5554"], calls, [["bunx expo config", { exitCode: 1 }]]);
+			noSlug(c);
+			const h = harness();
+			const kills: string[] = [];
+			const spawn = h.deps.spawn;
+			h.deps.spawn = (cmd, env, cwd, stdout) => {
+				const child = spawn(cmd, env, cwd, stdout);
+				return {
+					exited: child.exited,
+					kill: (signal) => {
+						kills.push(signal);
+						h.finish(143);
+					},
+				};
+			};
+			expect(await createDevCommand(h.deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("could not read the app slug");
+			expect(kills).toEqual(["SIGTERM"]);
+			expect(c.db.listLeases()).toEqual([]);
+			expect(calls.some((cmd) => cmd.includes("am"))).toBe(false);
+		});
 	});
 
 	test("--project that is not a directory → clear error before anything is claimed", async () => {

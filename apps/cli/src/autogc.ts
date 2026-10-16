@@ -1,9 +1,18 @@
 import { spawn } from "node:child_process";
+import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
+import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import type { CommandContext } from "./context";
 
-/** Background `warden gc` runs at most this often, machine-wide. */
+/** Background `warden gc` is considered at most this often, machine-wide. */
 export const AUTO_GC_INTERVAL_MS = 10 * 60_000;
-const META_KEY = "auto_gc_spawned_at";
+const META_KEY = "auto_gc_checked_at";
+/** The background pass yields to the run that started it. */
+const NICENESS = "10";
+
+/** `nice -n 10` when this machine has `nice`, else nothing: the pass then runs at normal priority. */
+export function niceCommand(which: (cmd: string) => string | null | undefined = Bun.which): string[] {
+	return which("nice") ? ["nice", "-n", NICENESS] : [];
+}
 
 /** argv that re-runs this warden: the compiled binary, or `bun <cli.ts>` from source. */
 export function selfCommand(): string[] {
@@ -19,19 +28,27 @@ export function backgroundAllowed(env: Record<string, string | undefined>): bool
 export function spawnDetached(cmd: string[], env: Record<string, string | undefined>): void {
 	const [bin, ...args] = cmd;
 	if (!bin) return;
-	spawn(bin, args, { detached: true, stdio: "ignore", env }).unref();
+	const child = spawn(bin, args, { detached: true, stdio: "ignore", env });
+	child.on("error", () => {
+		// the binary vanished or cannot run: nothing to reap now, the next interval tries again
+	});
+	child.unref();
 }
 
 /**
- * Kick off `warden gc --quiet` if none was started in the last `AUTO_GC_INTERVAL_MS` (throttle kept
- * in the store, so every hook/claim across every process shares it). This is what reaps sims left
- * behind by sessions that died without a SessionEnd — their leases go stale, gc shuts them down.
- * `WARDEN_AUTO_GC=0` disables. The child gets the context's env, so it gcs the same `WARDEN_HOME`.
+ * Kick off `nice -n 10 warden gc --quiet` when there is something for it to do: at most once per
+ * `AUTO_GC_INTERVAL_MS` (the throttle is kept in the store, so every hook/claim across every
+ * process shares it) it looks at the store: a lease whose owner died, or a warden device that went
+ * idle since the last pass. Nothing there, nothing is spawned (a pass is a full warden process,
+ * ~100 MB). This is what reaps sims left behind by sessions that died without a SessionEnd: their
+ * leases go stale, gc shuts them down. `WARDEN_AUTO_GC=0` disables. The child gets the context's
+ * env, so it gcs the same `WARDEN_HOME`.
  */
 export function maybeAutoGc(
 	ctx: CommandContext,
 	self: string[] = selfCommand(),
-	run: (cmd: string[]) => void = (cmd) => spawnDetached(cmd, { ...process.env, ...ctx.env })
+	run: (cmd: string[]) => void = (cmd) => spawnDetached(cmd, { ...process.env, ...ctx.env }),
+	opts: { nice?: string[]; pidAlive?: PidAlive } = {}
 ): void {
 	if (ctx.env.WARDEN_AUTO_GC === "0" || !backgroundAllowed(ctx.env)) return;
 	const store = ctx.store();
@@ -42,5 +59,8 @@ export function maybeAutoGc(
 		store.setMeta(META_KEY, String(now));
 		return true;
 	});
-	if (due) run([...self, "gc", "--quiet"]);
+	if (!due) return;
+	const work = store.gcWork(now, DEFAULT_IDLE_MS, opts.pidAlive ?? processAlive);
+	if (work.staleLeases === 0 && work.idleDevices === 0) return;
+	run([...(opts.nice ?? niceCommand()), ...self, "gc", "--quiet"]);
 }

@@ -64,13 +64,13 @@ async function supervise(
 	cmd: string[],
 	env: Record<string, string | undefined>,
 	leaseIds: string[],
-	release: () => void
+	release: () => Promise<void>
 ): Promise<number> {
 	let child: ChildHandle;
 	try {
 		child = deps.spawn(cmd, env);
 	} catch (error) {
-		release();
+		await release();
 		reportError(ctx, "run", error instanceof Error ? error.message : String(error));
 		return 127;
 	}
@@ -79,7 +79,7 @@ async function supervise(
 		return await child.exited;
 	} finally {
 		stop();
-		release();
+		await release();
 	}
 }
 

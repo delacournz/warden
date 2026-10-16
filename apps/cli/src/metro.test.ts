@@ -3,13 +3,17 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	devClientLaunchArgs,
 	devClientLaunchArgv,
+	launchMetro,
 	type MetroDeps,
 	type MetroProc,
 	metroArgv,
 	metroOwner,
 	metroUrl,
 	prewarmMetro,
+	READY_POLL_MS,
+	resolveExpoBin,
 	startMetro,
 } from "./metro";
 import { fakeExec } from "./testing";
@@ -254,6 +258,143 @@ describe("startMetro", () => {
 	});
 });
 
+describe("Metro readiness poll", () => {
+	test("polls every READY_POLL_MS (150 ms) until the port serves this root", async () => {
+		const root = tempDir();
+		const h = harness();
+		const sleeps: number[] = [];
+		const sleep = h.deps.sleep;
+		h.deps.sleep = async (ms) => {
+			sleeps.push(ms);
+			await sleep(ms);
+		};
+		let probes = 0;
+		h.deps.probe = async () => (++probes > 4 ? { kind: "ours" } : { kind: "down" });
+		const metro = await startMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 60_000 });
+		expect(metro.success).toBe(true);
+		expect(READY_POLL_MS).toBe(150);
+		expect(sleeps).toEqual([150, 150, 150, 150]);
+	});
+});
+
+describe("metroArgv", () => {
+	test("without a local bin: bunx expo", () => {
+		expect(metroArgv(8081, ["--clear"])).toEqual([
+			"bunx",
+			"expo",
+			"start",
+			"--dev-client",
+			"--port",
+			"8081",
+			"--clear",
+		]);
+	});
+
+	test("with the project's own expo bin: run it directly, no bunx", () => {
+		expect(metroArgv(8081, ["--clear"], "/proj/node_modules/.bin/expo")).toEqual([
+			"/proj/node_modules/.bin/expo",
+			"start",
+			"--dev-client",
+			"--port",
+			"8081",
+			"--clear",
+		]);
+	});
+});
+
+describe("resolveExpoBin", () => {
+	const present = new Set(["/repo/node_modules/.bin/expo"]);
+	const exists = (path: string) => present.has(path);
+
+	test("node is installed and the project (or a parent) has the bin → that bin", () => {
+		expect(resolveExpoBin("/repo/apps/a", () => "/usr/bin/node", exists)).toBe("/repo/node_modules/.bin/expo");
+	});
+
+	test("no node on PATH: its shebang could not run, so bunx expo", () => {
+		expect(resolveExpoBin("/repo/apps/a", () => null, exists)).toBeUndefined();
+	});
+
+	test("no local expo bin: bunx expo", () => {
+		expect(resolveExpoBin("/other/a", () => "/usr/bin/node", exists)).toBeUndefined();
+	});
+});
+
+describe("startMetro spawn command", () => {
+	test("uses deps.expoBin(projectRoot) when it finds one", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "ours" });
+		h.deps.expoBin = (projectRoot) => `${projectRoot}/node_modules/.bin/expo`;
+		const metro = await startMetro(h.deps, {
+			projectRoot: root,
+			port: 8081,
+			env: {},
+			args: ["--clear"],
+			readyTimeoutMs: 5_000,
+		});
+		expect(metro.success).toBe(true);
+		expect(h.spawned[0]?.cmd).toEqual([
+			`${root}/node_modules/.bin/expo`,
+			"start",
+			"--dev-client",
+			"--port",
+			"8081",
+			"--clear",
+		]);
+	});
+
+	test("falls back to bunx expo when there is no bin", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "ours" });
+		h.deps.expoBin = () => undefined;
+		await startMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 5_000 });
+		expect(h.spawned[0]?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081"]);
+	});
+});
+
+describe("launchMetro", () => {
+	test("stop before Metro is ready: the proc is SIGTERMed once and pending resolves to an error", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "down" });
+		const launch = launchMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 60_000 });
+		await launch.stop();
+		const result = await launch.pending;
+		expect(result.success).toBe(false);
+		expect(launch.started).toBeUndefined();
+		expect(h.kills).toEqual(["SIGTERM"]);
+	});
+
+	test("stop after ready: one SIGTERM, started is cleared", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "ours" });
+		const launch = launchMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 5_000 });
+		const result = await launch.pending;
+		expect(result.success).toBe(true);
+		expect(launch.started?.port).toBe(8081);
+		await launch.stop();
+		expect(launch.started).toBeUndefined();
+		expect(h.kills).toEqual(["SIGTERM"]);
+	});
+
+	test("the caller's aborted still ends the wait", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "down" });
+		const launch = launchMetro(h.deps, {
+			projectRoot: root,
+			port: 8081,
+			env: {},
+			readyTimeoutMs: 60_000,
+			aborted: () => h.clock.now >= 1_000,
+		});
+		expect(await launch.pending).toEqual({ success: false, error: "interrupted while waiting for Metro" });
+		expect(h.kills).toEqual(["SIGTERM"]);
+	});
+});
+
 describe("prewarmMetro", () => {
 	test("fetches the manifest for the platform, then its launch bundle", async () => {
 		const seen: string[] = [];
@@ -281,6 +422,18 @@ describe("prewarmMetro", () => {
 	test("no readable manifest → skipped, not an error", async () => {
 		const s = serve(() => new Response("nope", { status: 404 }));
 		expect(await prewarmMetro(metroUrl(s.port), "ios")).toEqual({ success: true, data: { bundled: false } });
+	});
+});
+
+describe("devClientLaunchArgs", () => {
+	test("--initialUrl first, then the extra launch args", () => {
+		expect(devClientLaunchArgs("http://127.0.0.1:8090")).toEqual(["--initialUrl", "http://127.0.0.1:8090"]);
+		expect(devClientLaunchArgs("http://127.0.0.1:8090", ["-Flag", "YES"])).toEqual([
+			"--initialUrl",
+			"http://127.0.0.1:8090",
+			"-Flag",
+			"YES",
+		]);
 	});
 });
 

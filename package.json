@@ -15,14 +15,17 @@
 		"test": "turbo test",
 		"cli:link": "bun apps/cli/scripts/link.ts link",
 		"cli:unlink": "bun apps/cli/scripts/link.ts unlink",
+		"smoke:ui-bench": "bun scripts/smoke/ui-bench.ts",
 		"demo:compose": "bun scripts/demo/compose.ts",
 		"demo:fixture": "bun scripts/demo/fixture.ts",
-		"nuke": "rm -rf node_modules ./apps/**/node_modules ./packages/**/node_modules && bun install --no-cache -f"
+		"nuke": "rm -rf node_modules ./apps/**/node_modules ./packages/**/node_modules && bun install --no-cache -f",
+		"bench": "bun packages/e2e-bench/src/cli.ts"
 	},
 	"workspaces": [
 		"apps/*",
 		"packages/*",
-		"scripts/demo"
+		"scripts/demo",
+		"scripts/smoke"
 	],
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.14",
@@ -36,5 +39,8 @@
 	},
 	"overrides": {
 		"mdast-util-to-markdown": "2.1.2"
+	},
+	"patchedDependencies": {
+		"react-native-pulsar@1.7.0": "patches/react-native-pulsar@1.7.0.patch"
 	}
 }

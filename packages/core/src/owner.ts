@@ -1,4 +1,5 @@
 import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { type GitFactsSyncOptions, readGitFactsSync } from "./git-facts";
 import type { Owner } from "./types";
 
 export type GitInfo = { repo: string; worktree: string };
@@ -46,18 +47,13 @@ export function parseGitInfo(raw: { toplevel: string; commonDir: string; branch:
 	return { repo, worktree: raw.branch ? `${dir}@${raw.branch}` : dir };
 }
 
-function git(cwd: string, args: string[]): string | undefined {
-	const out = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" });
-	return out.exitCode === 0 ? out.stdout.toString().trim() : undefined;
-}
-
-/** Impure: read git toplevel / common dir / branch for `cwd`. */
-export function readGitInfo(cwd: string): GitInfo | undefined {
-	const toplevel = git(cwd, ["rev-parse", "--show-toplevel"]);
-	const commonDir = git(cwd, ["rev-parse", "--git-common-dir"]);
-	if (!toplevel || !commonDir) return undefined;
-	const branch = git(cwd, ["branch", "--show-current"]) ?? "";
-	return parseGitInfo({ toplevel, commonDir: isAbsolute(commonDir) ? commonDir : resolve(cwd, commonDir), branch });
+/**
+ * Impure: git toplevel / common dir / branch for `cwd` — one `git rev-parse`, memoised per cwd (see
+ * `git-facts`). Pass `cache` to scope the memo to one command; the default is a short-lived shared one.
+ */
+export function readGitInfo(cwd: string, options: GitFactsSyncOptions = {}): GitInfo | undefined {
+	const facts = readGitFactsSync(cwd, options);
+	return facts ? parseGitInfo(facts) : undefined;
 }
 
 /** Impure convenience: owner for the current process. */

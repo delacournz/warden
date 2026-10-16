@@ -1,0 +1,132 @@
+---
+title: Benchmark e2e frameworks
+description: Run the same 8-test suite through warden, Maestro, Argent, agent-device, tester.army and Detox on one device and compare the numbers.
+icon: Gauge
+---
+
+`packages/e2e-bench` answers one question: how long does the same suite take in each framework, on the same build and the same device. It runs warden, Maestro, Argent, agent-device, tester.army and Detox one at a time and writes a Markdown and an HTML report. No LLM is involved.
+
+## Run it
+
+From the repo root:
+
+```bash
+bun run bench doctor                         # is every framework installed? prints install hints
+bun run bench run --platform ios --runs 3    # full run on a device warden claims
+bun run bench run --frameworks warden,maestro --runs 2 --udid <leased-udid>
+bun run bench report .bench/<run-id>         # re-render the reports
+bun run bench compare .bench/<run-a> .bench/<run-b>
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--platform ios\|android` | `ios` | which leg to run |
+| `--frameworks a,b` | all six | comma list of `warden,maestro,argent,agent-device,tester-army,detox` |
+| `--runs N` | `3` | reps per framework. Rep 1 is cold, the rest are warm |
+| `--retries N` | `0` | forwarded to every framework |
+| `--udid X` | claim one | reuse a device you leased; nothing is claimed or released |
+| `--reboot-between` | off | reboot the device between frameworks |
+| `--out DIR` | `.bench/<timestamp>-<platform>` | output directory |
+| `--skip-doctor` | off | skip the per-framework doctor |
+| `--force` | off | run even when the load average is above the core count |
+| `--keep-drivers` | off | keep driver apps installed (no cold uninstall) |
+| `--node-bin PATH` | none | node bin dir to put first on `PATH` |
+
+A full iOS run takes about an hour. Keep the Mac awake and use a dedicated simulator. Ctrl-C tears down, releases the lease and still writes results.
+
+### Prerequisites
+
+| Framework | Needs |
+|---|---|
+| warden | `bun run --cwd packages/e2e native:build` for the iOS helper |
+| Maestro | `brew install maestro` and Java 17+ (`brew install openjdk@21`) |
+| Argent | `bun add -g @swmansion/argent` |
+| agent-device | `bun add -g agent-device` |
+| tester.army | Node `^22.22.3 \|\| >=24.8` (for example `nvm install 24`) |
+| Detox | `brew tap wix/brew && brew install applesimutils` |
+
+The harness never installs global tools. `bench doctor` prints the exact command for anything missing.
+
+| Variable | Effect |
+|---|---|
+| `BENCH_NODE_BIN` | node bin dir used for tester.army when the default Node is too old |
+| `BENCH_TESTER_ARMY_STATE_DIR` | private agent-device state dir for tester.army |
+| `BENCH_DETOX_ANDROID` | `1` opts into the Detox Android leg (needs an instrumented build) |
+
+## Read the report
+
+A run writes `.bench/<run-id>/`:
+
+```
+bench-results.json   machine-readable, schema v1
+report.md            the tables below
+report.html          one self-contained file with charts
+logs/                one log per framework and phase
+artifacts/<fw>/rep-<n>/   native reporter output and resource samples
+```
+
+- **Summary table.** One row per framework: warm suite median and p95, ratio to the fastest, cold rep 1, cold-start cost, prepare and teardown time, overhead, pass and flake rate, residue and footprint. Warm numbers exclude rep 1.
+- **Per-test matrix.** Median milliseconds per canonical test and framework, with the ratio to the fastest in bold. Compare per-test totals first; step timings are not equally defined in every tool.
+- **Cold start.** Rep 1 minus the warm median, plus the time spent in prepare. This is the cost of installing a runner app or starting a daemon, not steady-state speed.
+- **Overhead.** Suite wall time minus the sum of test durations: what the framework spends outside the tests (process start, device attach, reporting).
+- **Residue.** Processes, driver apps and directories left behind after teardown. A healthy run leaves none unless `--keep-drivers` is set.
+- **Footprint.** Lines and bytes of suite source, size of package-local dependencies and binaries. A rough measure of what you maintain.
+- **Resources.** Host and simulator CPU and RSS, sampled every 500 ms.
+- **Unsupported and failed.** Detox on React Native 0.86 usually lands here with the attach error. A native test name missing from the manifest is a parity breach and fails the framework.
+
+## Fairness rules
+
+- Same `.app` for every framework, with its sha256 recorded.
+- Zero LLM calls.
+- Same assertions per canonical test id.
+- Same retry helpers: dropped first tap, dropped deep link, system alerts.
+- Fresh app launch per test.
+- `retries=0`.
+- Frameworks run sequentially, with daemons stopped between them.
+- `caffeinate -dims` held for the run.
+- Warm medians exclude rep 1.
+- Machine-readable reporters only.
+- Host otherwise idle, with the load average recorded.
+- Android `sim` counts the app and every framework's on-device helpers, matched case-insensitively.
+- Host processes are tracked by pid and start time, so a reused pid is never counted.
+- Android animation scales are reset to the device's original values before every framework and restored at the end.
+
+## Caveats per framework
+
+| Framework | Gap |
+|---|---|
+| warden | Copied from the example app, retries written with warden's own options: `tap({ until })`, a deep-link retry, `systemAlerts: "dismiss"`. The hand-rolled helpers it replaced ran the published headline numbers; the idiomatic run is reported beside them. |
+| Maestro | Retries are `retry:` blocks that rerun the tap and the wait together. Checkbox state is read from the accessibility text. Step durations include Maestro's own polling. |
+| Argent | Retries are nested `when:` guards capped at two retaps. The checked state of a checkbox is not readable, so the remaining-count assertion covers the effect. |
+| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`. Needs a runner prepare step and a daemon. |
+| tester.army | Has its own copy of the hand-rolled helpers warden used before. Runs with a private agent-device state dir and Node 24 on `PATH`. |
+| Detox | Best effort: Detox 20.51 supports React Native up to 0.84 and the app is on 0.86. Failures to attach are reported as `unsupported`. Permissions are pre-granted instead of dismissing system alerts. Android needs an instrumented build. |
+
+## Add a framework
+
+1. Add the id to `FRAMEWORK_IDS` in `adapter.types.ts`.
+2. Write `src/adapters/<id>.ts` exporting a `BenchAdapter` with `doctor`, `prepare`, `run`, `teardown` and `residuePatterns`. Spawn only through the injected `ctx.exec`.
+3. Add a parser under `src/adapters/parse/` and a real output sample under `src/adapters/fixtures/`, and test against it with `fakeExec`.
+4. Register it in `src/adapters/registry.ts`.
+5. Add a `native.<id>` name for every test in `suites/manifest.json`.
+6. Create `suites/<id>/` with all 8 tests and the same retries as `apps/example/e2e/helpers/flows.ts`. Document any gap in the caveats.
+
+## Add a canonical test
+
+1. Add the id to `CANONICAL_IDS` in `src/results/schema.ts`.
+2. Add an entry to `suites/manifest.json` with a title, the step labels and a native name per framework.
+3. Write the test in every `suites/<framework>/` with identical assertions and retries.
+4. Run `bun run --cwd packages/e2e-bench test` and `bun run bench doctor`.
+
+## Results
+
+The [framework comparison](/docs/bench/comparison) page charts the published runs: warm suite time, per-test medians, step latency, cold start, resources, residue and footprint. The full Markdown reports live in `docs/bench/` in the repo.
+
+To publish a run, write its slim summary into the docs site and commit the report next to it:
+
+```bash
+bun run bench summary packages/e2e-bench/.bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json
+cp packages/e2e-bench/.bench/<run>/report.md docs/bench/<platform>-<date>.md
+```
+
+The comparison page picks up every `*.json` in `apps/docs/content/docs/bench/data/`, with a platform and date selector when there is more than one. `bench run` also writes `summary.json` next to `report.md`.

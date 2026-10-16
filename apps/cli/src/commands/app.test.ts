@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
 import { getInstall, recordInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
@@ -9,7 +10,18 @@ import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing"
 import { type AppDeps, createAppCommand } from "./app";
 
 let ctx: TestContext | undefined;
-afterEach(() => ctx?.cleanup());
+let deviceDir: string | undefined;
+afterEach(() => {
+	ctx?.cleanup();
+	if (deviceDir) rmSync(deviceDir, { recursive: true, force: true });
+	deviceDir = undefined;
+});
+
+/** A real `.app` for `simctl get_app_container` to point at: the installed-app identity check reads its files. */
+function installedApp(): string {
+	deviceDir = mkdtempSync(join(tmpdir(), "warden-app-device-"));
+	return fakeApp(deviceDir);
+}
 
 const HASH = "abc123def456";
 const deps: AppDeps = { pid: 1, sleep: async () => {}, pidAlive: () => false };
@@ -62,7 +74,13 @@ async function seed(c: TestContext): Promise<string> {
 
 describe("warden app fingerprint (native+js)", () => {
 	test("the printed fingerprint is the JS-aware key; native is reported alongside", async () => {
-		const c = setup(["fingerprint", "ios", "--json"], [["git ls-files", { stdout: "src/a.ts" }]]);
+		const c = setup(
+			["fingerprint", "ios", "--json"],
+			[
+				["git ls-files -z -m", { stdout: "" }],
+				["git ls-files", { stdout: "? src/a.ts" }],
+			]
+		);
 		mkdirSync(join(c.cwd, "app", "src"), { recursive: true });
 		writeFileSync(join(c.cwd, "app", "src", "a.ts"), "export {}");
 		writeFileSync(
@@ -106,6 +124,49 @@ describe("warden app fingerprint", () => {
 	});
 });
 
+describe("git facts of one command", () => {
+	const factsOf = (c: TestContext) => ({ toplevel: c.cwd, commonDir: join(c.cwd, ".git"), branch: "main" });
+	const rev = (calls: string[][]) => calls.map((x) => x.join(" ")).filter((line) => line.startsWith("git rev-parse"));
+
+	test("fingerprint reads the project's checkout from the command's git cache", async () => {
+		const calls: string[][] = [];
+		const c = setup(["fingerprint", "ios", "--json"], [], calls);
+		for (const dir of [c.cwd, join(c.cwd, "app"), realpathSync(join(c.cwd, "app"))]) c.git.store(dir, factsOf(c));
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(rev(calls)).toEqual([]);
+	});
+
+	test("a local build takes its ccache base dir from the same cache", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--no-install", "--no-eas", "--json"], [], calls);
+		writeFileSync(
+			join(c.cwd, "warden.config.json"),
+			JSON.stringify({
+				projects: [
+					{
+						name: "demo",
+						root: "app",
+						bundleId: { ios: "com.demo" },
+						fingerprint: { command: "fp {platform}" },
+						build: { ios: "make-ios" },
+					},
+				],
+			})
+		);
+		const products = join(c.cwd, "app", "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+		const recorded = c.exec;
+		c.exec = async (cmd, opts) => {
+			if (cmd.join(" ") !== "sh -c make-ios") return recorded(cmd, opts);
+			fakeApp(products, "Built.app");
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		for (const dir of [c.cwd, join(c.cwd, "app"), realpathSync(join(c.cwd, "app"))]) c.git.store(dir, factsOf(c));
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).source).toBe("build");
+		expect(rev(calls)).toEqual([]);
+	});
+});
+
 describe("warden app ensure", () => {
 	test("--udid: cache hit → simctl install, then installed on the second run", async () => {
 		const calls: string[][] = [];
@@ -113,9 +174,8 @@ describe("warden app ensure", () => {
 			["ensure", "ios", "--udid", "U1", "--json"],
 			[
 				["xcrun simctl install U1", {}],
-				["xcrun simctl get_app_container U1 com.demo", { stdout: "/x" }],
+				["xcrun simctl get_app_container U1 com.demo", { stdout: installedApp() }],
 				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
-				["stat -f %z", { stdout: "7\n" }],
 			],
 			calls
 		);

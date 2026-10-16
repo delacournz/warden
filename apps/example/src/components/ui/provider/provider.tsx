@@ -26,7 +26,7 @@ export type DelacourProviderProps = {
 	 * the OS reduce-motion setting says. Defaults to `false`.
 	 *
 	 * For an E2E build. A test runner that waits for the screen to stop moving
-	 * before each gesture (Argent, Detox, Maestro) pays its whole timeout on any
+	 * before each gesture (agent-driven tools, Detox, Maestro) pays its whole timeout on any
 	 * screen holding a loop that never ends. Motion that *is* the behaviour — a
 	 * `Spinner`, an indeterminate `Progress` — keeps moving either way.
 	 */

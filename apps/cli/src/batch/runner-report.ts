@@ -1,77 +1,66 @@
-import type { FlowMark, TrackedFlow } from "./flow-progress";
+import { readResults } from "@delacour/warden-e2e/runner/results";
+import { type FlowMark, failing, flowOf, realPath, type TrackedFlow } from "./flow-progress";
 
-/** What a `mode: "single"` runner's report says: each flow's verdict, and the flows each device ran. */
+/** What a run's `results.jsonl` files say: each flow's verdict, and the flows each device ran. */
 export type RunnerReport = {
 	flows: Record<string, FlowMark>;
-	/** udid → the flows it ran, in report order, each marked by that device's last attempt */
+	/** udid → the flows it ran, in result order, each marked by that device's tests */
 	devices: Record<string, Array<{ id: string; mark: FlowMark }>>;
 };
 
-type Attempt = { status?: unknown; environment?: { device?: unknown } };
-type Result = { file?: unknown; status?: unknown; attempts?: unknown };
+/** `id`'s mark on `udid`, set in the order flows first appeared on that device. */
+type DeviceMarks = Map<string, Map<string, FlowMark>>;
 
-const FAILED = new Set(["failed", "interrupted", "timedOut", "error"]);
-
-/** `passed`, or a failure (an interrupted test failed too); skipped / unknown statuses mark nothing. */
-const markOf = (status: unknown): FlowMark | undefined =>
-	status === "passed" ? "passed" : typeof status === "string" && FAILED.has(status) ? "failed" : undefined;
-
-function parse(text: string): { startedAt: number; results: Result[] } | undefined {
-	try {
-		const doc: { run?: { startedAt?: unknown; results?: unknown } } = JSON.parse(text);
-		const startedAt = typeof doc.run?.startedAt === "string" ? Date.parse(doc.run.startedAt) : Number.NaN;
-		if (Number.isNaN(startedAt) || !Array.isArray(doc.run?.results)) return undefined;
-		return { startedAt, results: doc.run.results };
-	} catch {
-		return undefined;
+/**
+ * One attempt's results folded into `marks`. Within the attempt a failure sticks (a flow fails if
+ * any of its tests did); a later attempt then replaces the mark the earlier one left for the same
+ * flow on the same device, since a retry runs on the device that failed.
+ */
+function foldAttempt(
+	marks: DeviceMarks,
+	jsonl: string,
+	flows: readonly TrackedFlow[],
+	since: number,
+	real: (path: string) => string
+): void {
+	const attempt: DeviceMarks = new Map();
+	for (const result of readResults(jsonl)) {
+		const flow = flowOf(result, flows, real);
+		if (!flow || result.startedAt < since) continue;
+		const ran = attempt.get(result.device.udid) ?? new Map<string, FlowMark>();
+		attempt.set(result.device.udid, ran);
+		if (ran.get(flow.id) !== "failed") ran.set(flow.id, failing(result) ? "failed" : "passed");
 	}
-}
-
-/** Mark `id` on `device`: a flow appears once per device, a failure sticks. */
-function markDevice(devices: RunnerReport["devices"], device: string, id: string, mark: FlowMark): void {
-	const ran = devices[device] ?? [];
-	devices[device] = ran;
-	const seen = ran.find((f) => f.id === id);
-	if (!seen) ran.push({ id, mark });
-	else if (mark === "failed") seen.mark = "failed";
+	for (const [udid, ran] of attempt) {
+		const device = marks.get(udid) ?? new Map<string, FlowMark>();
+		marks.set(udid, device);
+		for (const [id, mark] of ran) device.set(id, mark);
+	}
 }
 
 /**
- * Read tester.army `e2e run`'s `report.json` (`run.results[]`: one per test, with its `file`, `status`
- * and `attempts[].environment.device`). A flow fails if any of its tests did. Tests skipped, files not
- * tracked, and a report that started before `since` (a previous run's) are ignored.
+ * The finished run's results as the grid's report. `attempts` are the jobs' `results.jsonl` texts
+ * (a single text is one attempt), in the order the attempts ran: a flow's mark on a device is the
+ * last attempt's, so a flow that failed and then passed on its retry is passed. A flow fails if any
+ * device ended it failed (device legs run every flow on each of their devices) and within one
+ * attempt if any of its tests failed or timed out; skipped tests count as passed. Results of files
+ * not tracked, started before `since`, or without a valid line are ignored; no usable result at all
+ * gives `undefined`.
  */
-export function runnerReport(text: string, flows: readonly TrackedFlow[], since: number): RunnerReport | undefined {
-	const doc = parse(text);
-	if (!doc || doc.startedAt < since) return undefined;
+export function resultsReport(
+	attempts: string | readonly string[],
+	flows: readonly TrackedFlow[],
+	since: number,
+	real: (path: string) => string = realPath
+): RunnerReport | undefined {
+	const marks: DeviceMarks = new Map();
+	for (const jsonl of typeof attempts === "string" ? [attempts] : attempts)
+		foldAttempt(marks, jsonl, flows, since, real);
+	if (marks.size === 0) return undefined;
 	const report: RunnerReport = { flows: {}, devices: {} };
-	for (const result of doc.results) {
-		const flow = flows.find((f) => f.path === result.file);
-		const mark = markOf(result.status);
-		if (!flow || !mark) continue;
-		if (report.flows[flow.id] !== "failed") report.flows[flow.id] = mark;
-		for (const [device, am] of lastByDevice(result.attempts)) markDevice(report.devices, device, flow.id, am);
+	for (const [udid, ran] of marks) {
+		report.devices[udid] = [...ran].map(([id, mark]) => ({ id, mark }));
+		for (const [id, mark] of ran) if (report.flows[id] !== "failed") report.flows[id] = mark;
 	}
 	return report;
-}
-
-/** Each device's last attempt at one test. */
-function lastByDevice(attempts: unknown): Map<string, FlowMark> {
-	const last = new Map<string, FlowMark>();
-	for (const a of Array.isArray(attempts) ? (attempts as Attempt[]) : []) {
-		const device = a.environment?.device;
-		const mark = markOf(a.status);
-		if (typeof device === "string" && mark) last.set(device, mark);
-	}
-	return last;
-}
-
-/** Where the runner argv writes its report: `--output <dir>` / `--output=<dir>`, else e2e's `.e2e`; undefined when it varies per job. */
-export function reportOutputDir(argv: readonly string[]): string | undefined {
-	let dir = ".e2e";
-	argv.forEach((arg, i) => {
-		if (arg === "--output" && argv[i + 1] !== undefined) dir = argv[i + 1] ?? dir;
-		else if (arg.startsWith("--output=")) dir = arg.slice("--output=".length);
-	});
-	return dir.includes("{") ? undefined : dir;
 }

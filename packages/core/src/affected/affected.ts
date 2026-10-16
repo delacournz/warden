@@ -3,13 +3,13 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { CONFIG_FILE, findWardenConfig, loadProject, type ParsedWardenConfig } from "../builds/config";
 import type { Exec } from "../exec";
+import { type GitFactsCache, readGitFacts } from "../git-facts";
 import type { Platform } from "../types";
-import { DEFAULT_E2E_COUNT, DEFAULT_E2E_RUNNER, DEFAULT_FLOWS_DIR } from "./affected.defaults";
+import { DEFAULT_E2E_COUNT, DEFAULT_FLOWS_DIR, DEV_MENU_OFF_ARGS } from "./affected.defaults";
 import { type E2eSuiteConfig, e2eSuiteSchema } from "./affected.schema";
-import { type ImportCache, openImportCache } from "./cache";
 import { scanFlows } from "./flows";
 import { type ChangedFile, changedFiles } from "./git";
-import { createImportGraph } from "./graph";
+import { graphEntries, type LoadedGraph, loadImportGraph } from "./graph-process";
 import { type SelectInput, type Selection, selectFlows } from "./select";
 
 export type Suite = {
@@ -41,6 +41,8 @@ export type AffectedInput = {
 	only?: SelectInput["only"];
 	/** persist parsed imports under this dir (one file per config dir), e.g. `$WARDEN_HOME/affected` */
 	cacheDir?: string;
+	/** per-command memo of the git facts (default: a short-lived shared one) */
+	git?: GitFactsCache;
 };
 
 export type Affected = {
@@ -54,8 +56,9 @@ export type Affected = {
 };
 
 /**
- * The suite of an Expo app that configures none: every flow under `e2e/`, one tester.army runner for
- * the pool, against the dev client (the `dev` variant when the project has one) on a Metro warden owns.
+ * The suite of an Expo app that configures none: every `*.e2e.ts` flow under `e2e/`, one
+ * `@delacour/warden-e2e` spec process per device, against the dev client (the `dev` variant when the
+ * project has one) on a Metro warden owns.
  */
 function defaultSuite(cwd: string, stopAt: string | undefined, headless: boolean | undefined): Result<Suite> {
 	const project = loadProject({
@@ -73,12 +76,11 @@ function defaultSuite(cwd: string, stopAt: string | undefined, headless: boolean
 		);
 	const config = e2eSuiteSchema.parse({
 		flowsDir: DEFAULT_FLOWS_DIR,
-		runner: DEFAULT_E2E_RUNNER,
-		mode: "single",
+		isolate: "device",
 		platform: "ios",
 		count: DEFAULT_E2E_COUNT,
 		app: variant === undefined ? true : { variant },
-		metro: {},
+		metro: { launchArgs: DEV_MENU_OFF_ARGS },
 	});
 	return ok({
 		name,
@@ -91,18 +93,12 @@ function defaultSuite(cwd: string, stopAt: string | undefined, headless: boolean
 	});
 }
 
-/** The git toplevel of `cwd` (undefined outside a repo). */
-async function gitTop(exec: Exec, cwd: string): Promise<string | undefined> {
-	const top = await exec(["git", "rev-parse", "--show-toplevel"], { cwd });
-	return (top.exitCode === 0 && top.stdout.trim()) || undefined;
-}
-
 /**
  * `e2e.<name>` from the nearest warden config (walking up to the git root); with no suite configured
  * and none named, the default suite of the Expo app around `cwd`.
  */
-export async function findSuite(exec: Exec, cwd: string, name?: string): AsyncResult<Suite> {
-	const stopAt = await gitTop(exec, cwd);
+export async function findSuite(exec: Exec, cwd: string, name?: string, git?: GitFactsCache): AsyncResult<Suite> {
+	const stopAt = (await readGitFacts(exec, cwd, git))?.toplevel;
 	const found = findWardenConfig(cwd, stopAt);
 	if (!found.success) return found;
 	const suites = found.data?.config.e2e ?? {};
@@ -153,7 +149,7 @@ async function loadChanges(input: AffectedInput, suite: Suite, base: string): As
 			input.files.map((f) => ({ path: relative(suite.configDir, join(input.cwd, f)), status: "modified" as const }))
 		);
 	}
-	const changed = await changedFiles(input.exec, suite.configDir, base);
+	const changed = await changedFiles(input.exec, suite.configDir, base, input.git);
 	if (!changed.success) return changed;
 	return ok(rebase(changed.data.files, changed.data.top, suite.configDir));
 }
@@ -163,12 +159,21 @@ function platformsOf(input: AffectedInput, suite: Suite): Platform[] {
 	return suite.config.platform ? [suite.config.platform] : ["ios", "android"];
 }
 
-function importGraphFor(config: E2eSuiteConfig, configDir: string, platform: Platform, cache: ImportCache) {
-	return createImportGraph({
+/** The graph of one platform: a snapshot or a worker process when it can be, so the TypeScript compiler stays out of this process. */
+function importGraphFor(
+	input: AffectedInput,
+	{ config, configDir }: Suite,
+	platform: Platform,
+	importCachePath: string | undefined
+): Promise<LoadedGraph> {
+	return loadImportGraph({
+		exec: input.exec,
 		platform,
 		repoRoot: configDir,
-		cache,
+		entries: graphEntries(config, configDir, platform),
 		...(config.tsconfig ? { fallbackTsconfig: join(configDir, config.tsconfig) } : {}),
+		...(importCachePath !== undefined ? { importCachePath } : {}),
+		...(input.cacheDir !== undefined ? { cacheDir: input.cacheDir } : {}),
 	});
 }
 
@@ -177,7 +182,7 @@ const usesGit = (input: AffectedInput): boolean => !input.files && !input.only;
 
 /** Changed files → the flows each platform must run (with reasons), per `e2e.<suite>`. */
 export async function computeAffected(given: AffectedInput): AsyncResult<Affected> {
-	const suite = await findSuite(given.exec, given.cwd, given.suite);
+	const suite = await findSuite(given.exec, given.cwd, given.suite, given.git);
 	if (!suite.success) return suite;
 	// a suite nobody mapped has nothing to diff against: every flow runs
 	const everything = suite.data.implicit && !given.files && !given.only;
@@ -188,12 +193,13 @@ export async function computeAffected(given: AffectedInput): AsyncResult<Affecte
 	if (!changes.success) return changes;
 	const scan = scanFlows(join(configDir, config.flowsDir));
 	const needsGraph = Object.values(config.flows).some((f) => f.entries.length > 0) && changes.data.length > 0;
-	const cache = openImportCache(
-		input.cacheDir === undefined ? undefined : join(input.cacheDir, `${Bun.hash(configDir).toString(36)}.json`)
-	);
+	const importCachePath =
+		input.cacheDir === undefined ? undefined : join(input.cacheDir, `${Bun.hash(configDir).toString(36)}.json`);
 	const selections: Selection[] = [];
+	const warnings = [...scan.warnings];
 	for (const platform of platformsOf(input, suite.data)) {
-		const graph = needsGraph ? await importGraphFor(config, configDir, platform, cache) : undefined;
+		const loaded = needsGraph ? await importGraphFor(input, suite.data, platform, importCachePath) : undefined;
+		if (loaded?.warning !== undefined) warnings.push(loaded.warning);
 		selections.push(
 			selectFlows({
 				suite: config,
@@ -201,17 +207,17 @@ export async function computeAffected(given: AffectedInput): AsyncResult<Affecte
 				platform,
 				changes: changes.data,
 				flows: scan.flows,
-				...(graph ? { imports: graph.imports } : {}),
+				...(loaded ? { imports: loaded.graph.imports } : {}),
 				...(input.only ? { only: input.only } : {}),
 			})
 		);
+		loaded?.graph.save();
 	}
-	cache.save();
 	return ok({
 		suite: suite.data,
 		...(usesGit(input) ? { base } : {}),
 		changes: changes.data,
 		selections,
-		warnings: scan.warnings,
+		warnings,
 	});
 }

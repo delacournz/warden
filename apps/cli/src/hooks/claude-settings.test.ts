@@ -15,16 +15,10 @@ describe("mergeClaudeSettings", () => {
 		expect(changed).toBe(true);
 		expect(settings).toEqual({
 			hooks: {
-				PreToolUse: [
-					{
-						matcher: "mcp__argent__.*|mcp__plugin_goldie_argent__.*",
-						hooks: [{ type: "command", command: `${BIN} hook pretool`, timeout: 30 }],
-					},
-				],
 				SessionEnd: [{ hooks: [{ type: "command", command: `${BIN} hook session-end`, timeout: 30 }] }],
 			},
 		});
-		expect(WARDEN_HOOKS.map((h) => h.event)).toEqual(["PreToolUse", "SessionEnd"]);
+		expect(WARDEN_HOOKS.map((h) => h.event)).toEqual(["SessionEnd"]);
 	});
 
 	test("preserves other settings and existing hooks, appends without clobbering", () => {
@@ -43,8 +37,8 @@ describe("mergeClaudeSettings", () => {
 		expect(settings.permissions).toEqual({ allow: ["Bash(ls)"] });
 		const hooks = settings.hooks as Record<string, unknown[]>;
 		expect(hooks.Stop).toEqual(before.hooks.Stop);
-		expect(hooks.PreToolUse).toHaveLength(2);
-		expect(hooks.PreToolUse?.[0]).toEqual(before.hooks.PreToolUse[0]);
+		expect(hooks.PreToolUse).toEqual(before.hooks.PreToolUse);
+		expect(hooks.SessionEnd).toHaveLength(1);
 	});
 
 	test("idempotent: second merge changes nothing", () => {
@@ -56,27 +50,59 @@ describe("mergeClaudeSettings", () => {
 
 	test("an existing warden hook with a bare `warden` command counts as installed", () => {
 		const existing = {
+			hooks: { SessionEnd: [{ hooks: [{ type: "command", command: "warden hook session-end" }] }] },
+		};
+		const { settings, changed } = ok(existing);
+		expect(changed).toBe(false);
+		expect((settings.hooks as Record<string, unknown[]>).SessionEnd).toHaveLength(1);
+	});
+
+	test("the retired PreToolUse hook of older versions is removed, other PreToolUse hooks stay", () => {
+		const existing = {
 			hooks: {
-				PreToolUse: [{ matcher: "mcp__argent__.*", hooks: [{ type: "command", command: "warden hook pretool" }] }],
+				PreToolUse: [
+					{ matcher: "mcp__old__.*", hooks: [{ type: "command", command: `${BIN} hook pretool`, timeout: 30 }] },
+					{ matcher: "Bash", hooks: [{ type: "command", command: "rtk-rewrite" }] },
+					{
+						matcher: "mixed",
+						hooks: [
+							{ type: "command", command: "warden hook pretool" },
+							{ type: "command", command: "keep-me" },
+						],
+					},
+				],
+				SessionEnd: [{ hooks: [{ type: "command", command: `${BIN} hook session-end`, timeout: 30 }] }],
 			},
 		};
-		const hooks = ok(existing).settings.hooks as Record<string, unknown[]>;
-		expect(hooks.PreToolUse).toHaveLength(1);
-		expect(hooks.SessionEnd).toHaveLength(1);
+		const { settings, changed } = ok(existing);
+		expect(changed).toBe(true);
+		expect((settings.hooks as Record<string, unknown>).PreToolUse).toEqual([
+			{ matcher: "Bash", hooks: [{ type: "command", command: "rtk-rewrite" }] },
+			{ matcher: "mixed", hooks: [{ type: "command", command: "keep-me" }] },
+		]);
+		expect((settings.hooks as Record<string, unknown[]>).SessionEnd).toHaveLength(1);
+	});
+
+	test("a PreToolUse event left empty is dropped", () => {
+		const existing = {
+			hooks: { PreToolUse: [{ matcher: "x", hooks: [{ type: "command", command: "warden hook pretool" }] }] },
+		};
+		const { settings } = ok(existing);
+		expect(Object.keys(settings.hooks as object)).toEqual(["SessionEnd"]);
 	});
 
 	test("rejects non-object settings / hooks", () => {
 		expect(mergeClaudeSettings([], BIN).success).toBe(false);
 		expect(mergeClaudeSettings("x", BIN).success).toBe(false);
 		expect(mergeClaudeSettings({ hooks: [] }, BIN).success).toBe(false);
-		expect(mergeClaudeSettings({ hooks: { PreToolUse: {} } }, BIN).success).toBe(false);
+		expect(mergeClaudeSettings({ hooks: { SessionEnd: {} } }, BIN).success).toBe(false);
 	});
 });
 
 describe("hasWardenHook", () => {
-	test("detects the pretool hook", () => {
-		expect(hasWardenHook(ok({}).settings, "pretool")).toBe(true);
-		expect(hasWardenHook({}, "pretool")).toBe(false);
-		expect(hasWardenHook({ hooks: { PreToolUse: [{ hooks: [{ command: "other" }] }] } }, "pretool")).toBe(false);
+	test("detects the session-end hook", () => {
+		expect(hasWardenHook(ok({}).settings, "session-end")).toBe(true);
+		expect(hasWardenHook({}, "session-end")).toBe(false);
+		expect(hasWardenHook({ hooks: { SessionEnd: [{ hooks: [{ command: "other" }] }] } }, "session-end")).toBe(false);
 	});
 });

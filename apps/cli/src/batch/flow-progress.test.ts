@@ -1,65 +1,110 @@
 import { describe, expect, test } from "bun:test";
-import { flowMarks } from "./flow-progress";
+import { flowTracker, resultsMarks, testLine } from "./flow-progress";
+import { jsonl, result } from "./results.testing";
 
-const flows = ["onboarding", "settings", "sign-in", "todo-detail", "todos"].map((id) => ({
-	id,
-	path: `e2e/${id}.e2e.ts`,
-}));
+const flows = ["onboarding", "settings", "sign-in", "todos"].map((id) => ({ id, path: `/app/e2e/${id}.e2e.ts` }));
+const file = (id: string) => `/app/e2e/${id}.e2e.ts`;
+const identity = (path: string) => path;
+const marks = (text: string, final = false) => resultsMarks(text, flows, { final, real: identity });
 
-/** A real `e2e run` (tester.army list reporter) log, interrupted mid-run. */
-const RUN = `
- RUN  e2e v0.19.0 /Users/me/apps/example
-      run 01a139be · targets: ios
+describe("resultsMarks", () => {
+	test("a flow is passed once a later result belongs to another file; the last flow waits for the process to end", () => {
+		const text = jsonl(
+			result(file("onboarding"), "welcome"),
+			result(file("onboarding"), "skip"),
+			result(file("settings"), "toggle")
+		);
+		expect(marks(text)).toEqual({ onboarding: "passed" });
+		expect(marks(text, true)).toEqual({ onboarding: "passed", settings: "passed" });
+	});
 
-ℹ booting 4AC630AF (1 of 2)
- ✓ mobile engine for target "ios" prepared 31.36s
- ✓ |ios| e2e/onboarding.e2e.ts (1 test) 6.79s
- ✓ |ios| e2e/settings.e2e.ts (1 test) 25.71s
-interrupted: stopping the running test and tearing down (interrupt again to force)
- ↓ |ios| e2e/todos.e2e.ts (1 test | 1 skipped)
- ❯ |ios| e2e/sign-in.e2e.ts (3 tests | 1 interrupted) 32.93s
-   ✓ invalid email and short password show field errors 19.88s
-   × valid credentials land on todos (interrupted) 83ms
- ❯ |ios| e2e/todo-detail.e2e.ts (2 tests | 1 failed | 1 skipped) 14.01s
-   × open a todo, mark it done, then delete it 14.01s
-`;
+	test("a failed or timed-out test fails its flow at once; a later pass does not undo it", () => {
+		const text = jsonl(
+			result(file("sign-in"), "valid", "passed"),
+			result(file("sign-in"), "invalid", "failed"),
+			result(file("sign-in"), "again", "passed"),
+			result(file("todos"), "slow", "timed-out")
+		);
+		expect(marks(text)).toEqual({ "sign-in": "failed", todos: "failed" });
+	});
 
-describe("flowMarks", () => {
-	test("file-level ✓ = passed, ❯ with a failure = failed; skipped and test-level lines mark nothing", () => {
-		expect(flowMarks(RUN, flows)).toEqual({
-			onboarding: "passed",
-			settings: "passed",
-			"sign-in": "failed",
-			"todo-detail": "failed",
+	test("skipped tests count as passed once finished; files that are not tracked are ignored", () => {
+		const text = jsonl(result(file("todos"), "later", "skipped"), result("/app/e2e/other.e2e.ts", "x", "failed"));
+		expect(marks(text, true)).toEqual({ todos: "passed" });
+	});
+
+	test("nothing yet, an unparseable file and a truncated last line", () => {
+		expect(marks("")).toEqual({});
+		expect(marks("not json\n{also not\n", true)).toEqual({});
+		const truncated = `${jsonl(result(file("onboarding"), "welcome"))}{"file":"${file("settings")}","title":["x"],"sta`;
+		expect(marks(truncated, true)).toEqual({ onboarding: "passed" });
+	});
+
+	test("a result's file is compared after symlinks are resolved", () => {
+		const text = jsonl(result("/private/app/e2e/todos.e2e.ts", "t"));
+		const real = (path: string) => path.replace(/^\/private/, "");
+		expect(resultsMarks(text, flows, { final: true, real })).toEqual({ todos: "passed" });
+	});
+});
+
+describe("flowTracker", () => {
+	const track = (real = identity) => flowTracker(flows, real);
+
+	test("results added in pieces give the marks of the whole text at every step", () => {
+		const all = [
+			result(file("onboarding"), "welcome"),
+			result(file("settings"), "toggle", "failed"),
+			result("/app/e2e/other.e2e.ts", "x"),
+			result(file("settings"), "again"),
+			result(file("todos"), "add"),
+			result(file("sign-in"), "valid", "timed-out"),
+			result(file("todos"), "later"),
+		];
+		const tracker = track();
+		all.forEach((one, i) => {
+			tracker.add([one]);
+			for (const final of [false, true])
+				expect(tracker.marks(final)).toEqual(marks(jsonl(...all.slice(0, i + 1)), final));
 		});
 	});
 
-	test("warden's line stamps are ignored", () => {
-		const stamped = RUN.split("\n")
-			.map((line) => `[23:51:23.412] ${line}`)
-			.join("\n");
-		expect(flowMarks(stamped, flows)).toEqual(flowMarks(RUN, flows));
-		expect(flowMarks(stamped, flows)).toHaveProperty("onboarding", "passed");
+	test("flowOf names the tracked flow of a result, nothing for another file", () => {
+		const tracker = track();
+		expect(tracker.flowOf(result(file("todos"), "t"))?.id).toBe("todos");
+		expect(tracker.flowOf(result("/app/e2e/other.e2e.ts", "t"))).toBeUndefined();
 	});
 
-	test("nothing finished yet → no marks", () => {
-		expect(flowMarks(" RUN  e2e v0.19.0\nℹ booting X (1 of 2)\n", flows)).toEqual({});
+	test("reset forgets every result", () => {
+		const tracker = track();
+		tracker.add([result(file("onboarding"), "a", "failed"), result(file("settings"), "b")]);
+		expect(tracker.marks()).toEqual({ onboarding: "failed" });
+		tracker.reset();
+		expect(tracker.marks(true)).toEqual({});
+		tracker.add([result(file("todos"), "c")]);
+		expect(tracker.marks(true)).toEqual({ todos: "passed" });
 	});
 
-	test("ANSI colour is ignored", () => {
-		expect(flowMarks("\u001b[32m ✓\u001b[39m |ios| e2e/todos.e2e.ts (1 test) 3s\n", flows)).toEqual({
-			todos: "passed",
+	test("a path is resolved once however many results name it", () => {
+		const seen: string[] = [];
+		const tracker = track((path) => {
+			seen.push(path);
+			return path;
 		});
+		const before = seen.length;
+		tracker.add(Array.from({ length: 200 }, (_, i) => result(file("todos"), `t${i}`)));
+		expect(seen.length - before).toBe(0);
+		tracker.add(Array.from({ length: 200 }, (_, i) => result("/app/e2e/other.e2e.ts", `t${i}`)));
+		expect(seen.length - before).toBe(1);
 	});
+});
 
-	test("a path only matches whole: todos does not match todos-extra, detail does not match todo-detail", () => {
-		const out = " ✓ |ios| e2e/todos-extra.e2e.ts (1 test)\n ✓ |ios| e2e/todo-detail.e2e.ts (1 test)\n";
-		expect(flowMarks(out, [...flows, { id: "detail", path: "detail.e2e.ts" }])).toEqual({ "todo-detail": "passed" });
-	});
-
-	test("a file-level × is a failure; the last line for a flow wins (retries)", () => {
-		const out = " × |ios| e2e/todos.e2e.ts (1 test | 1 failed)\n ✓ |ios| e2e/todos.e2e.ts (1 test) 2s\n";
-		expect(flowMarks(out, flows)).toEqual({ todos: "passed" });
-		expect(flowMarks(" × |ios| e2e/todos.e2e.ts\n", flows)).toEqual({ todos: "failed" });
+describe("testLine", () => {
+	test("✓ / ✗ <flow> › <describe> › <title> (N.NNs)", () => {
+		expect(testLine("todos", result(file("todos"), "add", "passed", { title: ["list", "add"] }))).toBe(
+			"✓ todos › list › add (1.25s)"
+		);
+		expect(testLine("todos", result(file("todos"), "add", "failed"))).toBe("✗ todos › add (1.25s)");
+		expect(testLine("todos", result(file("todos"), "add", "timed-out"))).toStartWith("✗ ");
+		expect(testLine("todos", result(file("todos"), "add", "skipped"))).toStartWith("- ");
 	});
 });

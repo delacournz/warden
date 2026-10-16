@@ -1,23 +1,25 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { SKILL_MD } from "../skill";
+import { RULE_MD, SKILL_FILES, SKILL_MD, SKILL_PATHS } from "../skill";
 import { type TestContext, testContext } from "../testing";
 import { createSkillCommand, type SkillDeps } from "./skill";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
-type Harness = { deps: SkillDeps; runs: string[][] };
+type Harness = { deps: SkillDeps; runs: string[][]; runOpts: Array<{ stdout: string } | undefined> };
 
 function harness(opts: { which?: Record<string, string>; exitCode?: number } = {}): Harness {
 	const which = opts.which ?? { bunx: "/opt/bun/bin/bunx", npx: "/usr/bin/npx" };
 	const h: Harness = {
 		runs: [],
+		runOpts: [],
 		deps: {
 			which: (cmd) => which[cmd] ?? null,
-			runInteractive: async (cmd) => {
+			runInteractive: async (cmd, runOptions) => {
 				h.runs.push(cmd);
+				h.runOpts.push(runOptions);
 				return opts.exitCode ?? 0;
 			},
 		},
@@ -36,7 +38,34 @@ describe("warden skill show", () => {
 	test("--json", async () => {
 		ctx = testContext(["show", "--json"]);
 		expect(await createSkillCommand(harness().deps).run(ctx)).toBe(0);
-		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ name: "warden", content: SKILL_MD });
+		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ name: "warden", content: SKILL_MD, files: SKILL_FILES });
+	});
+
+	test("--file prints one embedded file (skill reference or the rule)", async () => {
+		ctx = testContext(["show", "--file", "references/ui.md"]);
+		expect(await createSkillCommand(harness().deps).run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toBe(SKILL_FILES["references/ui.md"].trimEnd());
+		ctx.cleanup();
+		ctx = testContext(["show", "--file", "rules/warden.md"]);
+		expect(await createSkillCommand(harness().deps).run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toBe(RULE_MD.trimEnd());
+	});
+
+	test("--file --json → { name, file, content }", async () => {
+		ctx = testContext(["show", "--file", "references/specs.md", "--json"]);
+		expect(await createSkillCommand(harness().deps).run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({
+			name: "warden",
+			file: "references/specs.md",
+			content: SKILL_FILES["references/specs.md"],
+		});
+	});
+
+	test("--file unknown → exit 1, stderr lists the embedded files", async () => {
+		ctx = testContext(["show", "--file", "nope"]);
+		expect(await createSkillCommand(harness().deps).run(ctx)).toBe(1);
+		expect(ctx.stdout).toEqual([]);
+		expect(ctx.stderr.join("\n")).toContain("references/ui.md");
 	});
 });
 
@@ -47,7 +76,18 @@ describe("warden skill install", () => {
 		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
 		const dir = join(ctx.env.WARDEN_HOME ?? "", "skill");
 		expect(readFileSync(join(dir, "warden", "SKILL.md"), "utf8")).toBe(SKILL_MD);
+		for (const p of SKILL_PATHS) expect(readFileSync(join(dir, "warden", p), "utf8")).toBe(SKILL_FILES[p]);
 		expect(h.runs).toEqual([["bunx", "skills", "add", dir, "--skill", "warden", "-g"]]);
+	});
+
+	test("local install recreates the folder from scratch (drops stale files)", async () => {
+		const h = harness();
+		ctx = testContext(["install"]);
+		const old = join(ctx.env.WARDEN_HOME ?? "", "skill", "warden", "references", "old.md");
+		mkdirSync(join(old, ".."), { recursive: true });
+		writeFileSync(old, "old");
+		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
+		expect(existsSync(old)).toBe(false);
 	});
 
 	test("--from github installs from the repo (updatable with `skills update`)", async () => {
@@ -70,6 +110,16 @@ describe("warden skill install", () => {
 				"-y",
 			],
 		]);
+	});
+
+	test("--json sends the skills CLI's stdout to stderr; otherwise inherited", async () => {
+		const h = harness();
+		ctx = testContext(["install", "--json"]);
+		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
+		ctx.cleanup();
+		ctx = testContext(["install"]);
+		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
+		expect(h.runOpts).toEqual([{ stdout: "stderr" }, { stdout: "inherit" }]);
 	});
 
 	test("--project installs into the current project (no -g); --copy passes through", async () => {

@@ -1,6 +1,6 @@
 ---
 title: Agents
-description: Claude Code and Codex hooks that lease devices per session.
+description: Rules for agents sharing devices, and the Claude Code and Codex SessionEnd hook that shuts down and releases what a session leased.
 icon: Bot
 ---
 
@@ -8,49 +8,42 @@ icon: Bot
 
 ## Rules for agents
 
-- **Claim before use.** `warden claim ios --json` (or `android`), then use the returned `udid` / `serial` for every argent / simctl / adb call. Never pick a device from `list-devices` or `simctl list` on your own.
+- **Claim before use.** `warden claim ios --json` (or `android`), then use the returned `udid` / `serial` for every simctl / adb / `warden ui` call. Never pick a device from `list-devices` or `simctl list` on your own.
 - **Never touch a booted device you did not claim** — it belongs to another session.
-- If the hook blocks an argent call, run `warden claim` and switch to the returned device.
-- **Release when done:** `warden release --mine` (add `--shutdown` to stop sims warden created).
+- **Drive the device with `warden ui`** (snapshot, tap, type, wait, record): see [Drive a device](/docs/guides/agent-ui). It checks the lease on every call and refuses a device another session leased; run `warden claim` and switch to the returned device. For checks that must keep passing, write a [spec](/docs/guides/specs) instead.
+- **Release when done:** `warden ui close --release`, or `warden release <leaseId>` (add `--shutdown` to stop sims warden created). Subagents never run `warden release --mine`, which frees the parent's leases too: release the lease id you hold, or claim with `--label x` and run `release --mine --label x`.
 
 ## Claude Code
 
-`warden install --claude` adds:
+`warden install --claude` adds the hook, skill and rule below. It also removes the `PreToolUse` hook (`warden hook pretool`, a device-lease hook for MCP device tools) that older versions installed; `warden hook pretool` stays a no-op so an old config keeps working.
 
 <Accordions>
-<Accordion title="PreToolUse hook">
-
-Matches `mcp__argent__.*|mcp__plugin_goldie_argent__.*`. An unleased device is auto-claimed for the session (argent is retired: do not rely on this to hold a lease), and a device leased by another owner is **blocked** (exit 2) with the owner and repo/worktree.
-
-</Accordion>
 <Accordion title="SessionEnd hook">
 
 **Shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself, are shut down; one that was already running (your own Simulator.app) is released but left on.
 
-On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim on its next argent call.
+On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim with its next `warden claim`.
 
 </Accordion>
 <Accordion title="Sessions that die without SessionEnd">
 
-Killed or terminal closed: their leases go stale after their TTL (30 min; 5 min for a bare agent claim), and `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by hook activity and by `claim` / `run` (`WARDEN_AUTO_GC=0` turns this off).
+Killed or terminal closed: their leases go stale after their TTL (30 min; 5 min for a bare agent claim), and `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by `claim` / `run` (`WARDEN_AUTO_GC=0` turns this off).
 
 </Accordion>
-<Accordion title="Skill + argent rule">
+<Accordion title="Skill and rule">
 
-Installs `~/.claude/skills/warden/SKILL.md` and adds a "claim via warden first" line to the argent `device_selection_rule`.
+Stages the embedded skill folder in `$WARDEN_HOME/skill/warden/` and installs it with the vercel skills CLI (`bunx skills add <dir> --skill warden -g -a claude-code -y`, `npx` fallback; `--dry-run` prints the command). The CLI places it at `~/.agents/skills/warden` and symlinks `~/.claude/skills/warden`. Without bun or node the step is skipped; use `warden skill show`. The rule `~/.claude/rules/warden.md` is written directly. A leftover `~/.claude/rules/agent-device.md` or `argent.md` from the retired setup is reported by `warden install` but never deleted.
 
 </Accordion>
 </Accordions>
 
 ## Codex
 
-`warden install --codex` merges the same two hooks into `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`). Hooks already declared in `config.toml` `[[hooks.*]]` tables count as installed. Codex hooks use Claude's format and stdin JSON, and a PreToolUse exit 2 + stderr blocks the call, so `warden hook pretool|session-end` serves both agents unchanged:
+`warden install --codex` merges the SessionEnd hook into `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`). Hooks already declared in `config.toml` `[[hooks.*]]` tables count as installed. Codex hooks use Claude's format and stdin JSON, so `warden hook session-end` serves both agents unchanged:
 
 ```json title="~/.codex/hooks.json"
 {
   "hooks": {
-    "PreToolUse": [{ "matcher": "mcp__argent__.*|mcp__plugin_goldie_argent__.*",
-                     "hooks": [{ "type": "command", "command": "$HOME/.local/bin/warden hook pretool", "timeout": 30 }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "command": "$HOME/.local/bin/warden hook session-end", "timeout": 3 }] }]
   }
 }

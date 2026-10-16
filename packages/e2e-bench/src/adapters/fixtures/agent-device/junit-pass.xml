@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="agent-device replay suite" tests="8" failures="0" skipped="0" time="104.012">
+    <testcase classname="/repo/packages/e2e-bench/suites/agent-device" name="onboarding-steps-to-sign-in.ad" file="/repo/packages/e2e-bench/suites/agent-device/onboarding-steps-to-sign-in.ad" time="4.751">
+      <system-out>status: passed&#10;durationMs: 4751&#10;attempts: 1&#10;session: bench-a4:test:a286d985b0188445:1-onboarding-steps-to-sign-in:attempt-1&#10;replayed: 8&#10;healed: 0&#10;artifactsDir: /out/artifacts/a286d985b0188445/packages__e2e-bench__suites__agent-device__onboarding-steps-to-sign-in.ad</system-out>
+    </testcase>
+    <testcase classname="/repo/packages/e2e-bench/suites/agent-device" name="settings-account-switches-sign-out.ad" file="/repo/packages/e2e-bench/suites/agent-device/settings-account-switches-sign-out.ad" time="17.294">
+      <system-out>status: passed&#10;durationMs: 17294&#10;attempts: 1&#10;session: bench-a4:test:a286d985b0188445:2-settings-account-switches-sign-out:attempt-1&#10;replayed: 22&#10;healed: 0&#10;artifactsDir: /out/artifacts/a286d985b0188445/packages__e2e-bench__suites__agent-device__settings-account-switches-sign-out.ad</system-out>
+    </testcase>
+    <testcase classname="/repo/packages/e2e-bench/suites/agent-device" name="sign-in-field-errors.ad" file="/repo/packages/e2e-bench/suites/agent-device/sign-in-field-errors.ad" time="19.960">
+      <system-out>status: passed&#10;durationMs: 19960&#10;attempts: 1&#10;session: bench-a4:test:a286d985b0188445:3-sign-in-field-errors:attempt-1&#10;replayed: 16&#10;healed: 0&#10;artifactsDir: /out/artifacts/a286d985b0188445/packages__e2e-bench__suites__agent-device__sign-in-field-errors.ad</system-out>
+    </testcase>
+    <testcase classname="/repo/packages/e2e-bench/suites/agent-device" name="sign-in-locked-account.ad" file="/repo/packages/e2e-bench/suites/agent-device/sign-in-locked-account.ad" time="10.775">
+      <system-out>status: passed&#10;durationMs: 10775&#10;attempts: 1&#10;session: bench-a4:test:a286d985b0188445:4-sign-in-locked-account:attempt-1&#10;replayed: 13&#10;healed: 0&#10;artifactsDir: /out/artifacts/a286d985b0188445/packages__e2e-bench__suites__agent-device__sign-in-locked-account.ad</system-out>
+    </testcase>
+    <testcase classname="/repo/packages/e2e-bench/suites/agent-device" name="sign-in-valid-credentials.ad" file="/repo/packages/e2e-bench/suites/agent-device/sign-in-valid-credentials.ad" time="10.907">
+      <system-out>status: passed&#10;durationMs: 10907&#10;attempts: 1&#10;session: bench-a4:test:a286d985b0188445:5-sign-in-valid-credentials:attempt-1&#10;replayed: 13&#10;healed: 0&#10;artifactsDir: /out/artifacts/a286d985b0188445/packages__e2e-bench__suites__agent-device__sign-in-valid-credentials.ad</system-out>
+    </testcase>
+    <testcase classname="/repo/packages/e2e-bench/suites/agent-device" name="todo-detail-deep-link.ad" file="/repo/packages/e2e-bench/suites/agent-device/todo-detail-deep-link.ad" time="11.077">
+      <system-out>status: passed&#10;durationMs: 11077&#10;attempts: 1&#10;session: bench-a4:test:a286d985b0188445:6-todo-detail-deep-link:attempt-1&#10;replayed: 15&#10;healed: 0&#10;artifactsDir: /out/artifacts/a286d985b0188445/packages__e2e-bench__suites__agent-device__todo-detail-deep-link.ad</system-out>
+    </testcase>
+    <testcase classname="/repo/packages/e2e-bench/suites/agent-device" name="todo-detail-open-toggle-delete.ad" file="/repo/packages/e2e-bench/suites/agent-device/todo-detail-open-toggle-delete.ad" time="12.633">
+      <system-out>status: passed&#10;durationMs: 12633&#10;attempts: 1&#10;session: bench-a4:test:a286d985b0188445:7-todo-detail-open-toggle-delete:attempt-1&#10;replayed: 20&#10;healed: 0&#10;artifactsDir: /out/artifacts/a286d985b0188445/packages__e2e-bench__suites__agent-device__todo-detail-open-toggle-delete.ad</system-out>
+    </testcase>
+    <testcase classname="/repo/packages/e2e-bench/suites/agent-device" name="todos-add-complete-filter.ad" file="/repo/packages/e2e-bench/suites/agent-device/todos-add-complete-filter.ad" time="16.613">
+      <system-out>status: passed&#10;durationMs: 16613&#10;attempts: 1&#10;session: bench-a4:test:a286d985b0188445:8-todos-add-complete-filter:attempt-1&#10;replayed: 26&#10;healed: 0&#10;artifactsDir: /out/artifacts/a286d985b0188445/packages__e2e-bench__suites__agent-device__todos-add-complete-filter.ad</system-out>
+    </testcase>
+  </testsuite>
+</testsuites>

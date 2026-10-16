@@ -1,0 +1,8 @@
+steps:
+  - launch: nz.co.delacour.warden.example
+  - run: fragments/open-sign-in
+  - type: { into: { id: sign-in-email }, text: locked@example.com, submit: false }
+  - type: { into: { id: sign-in-password }, text: password1, submit: false }
+  - tap: { id: sign-in-submit }
+  - assert: { visible: { id: sign-in-error } }
+  - assert: { visible: { text: This account is locked. Try another email. } }

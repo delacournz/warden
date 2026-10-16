@@ -1,5 +1,5 @@
 import { redirect } from "@tanstack/react-router";
-import { createMiddleware, createStart } from "@tanstack/react-start";
+import { createCsrfMiddleware, createMiddleware, createStart } from "@tanstack/react-start";
 import { isMarkdownPreferred } from "fumadocs-core/negotiation";
 import { docsRoute, encodeMarkdownUrl } from "@/lib/shared";
 
@@ -20,8 +20,13 @@ const llmMiddleware = createMiddleware().server(({ next, request }) => {
 	return next();
 });
 
+/** Rejects cross-site calls to server fns (same-origin RPC only). */
+const csrfMiddleware = createCsrfMiddleware({
+	filter: (ctx) => ctx.handlerType === "serverFn",
+});
+
 export const startInstance = createStart(() => {
 	return {
-		requestMiddleware: [llmMiddleware],
+		requestMiddleware: [csrfMiddleware, llmMiddleware],
 	};
 });

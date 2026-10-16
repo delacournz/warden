@@ -1,0 +1,11 @@
+steps:
+  - tap: { id: welcome-next }
+  - await: { idle: true, timeout: 4000 }
+  - when: { visible: { id: welcome-title, text: Plan } }
+    steps:
+      - tap: { id: welcome-next }
+      - await: { idle: true, timeout: 4000 }
+      - when: { visible: { id: welcome-title, text: Plan } }
+        steps:
+          - tap: { id: welcome-next }
+  - await: { visible: { id: welcome-title, text: Test } }

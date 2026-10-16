@@ -1,0 +1,1835 @@
+{
+	"ok": false,
+	"total": 8,
+	"passed": 0,
+	"failed": 8,
+	"skipped": 0,
+	"durationMs": 83255,
+	"flows": [
+		{
+			"path": "onboarding-steps-to-sign-in.yaml",
+			"status": "fail",
+			"report": {
+				"flow": "onboarding-steps-to-sign-in",
+				"device": "emulator-5554",
+				"executionPrerequisite": "",
+				"ok": false,
+				"passed": 5,
+				"failed": 0,
+				"skipped": 10,
+				"errored": 1,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "onboarding-steps-to-sign-in",
+						"status": "pass",
+						"durationMs": 1971
+					},
+					{
+						"index": 1,
+						"kind": "await",
+						"flow": "onboarding-steps-to-sign-in",
+						"target": "visible id=welcome-screen",
+						"status": "pass",
+						"durationMs": 750
+					},
+					{
+						"index": 2,
+						"kind": "idle",
+						"flow": "onboarding-steps-to-sign-in",
+						"status": "pass",
+						"warning": "settled on the UI tree alone — this screen could not be screenshotted on enough polls to compare a pair of them, so animation that moves pixels without moving nodes (a push, a fade, a dismissing modal) was not waited out. Follow this with the element check the next step actually needs.",
+						"durationMs": 7533
+					},
+					{
+						"index": 3,
+						"kind": "assert",
+						"flow": "onboarding-steps-to-sign-in",
+						"target": "id=welcome-title equals \"Welcome\"",
+						"status": "pass",
+						"durationMs": 18
+					},
+					{
+						"index": 4,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "fragments/next-plan.yaml",
+						"durationMs": 1
+					},
+					{
+						"index": 5,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 1,
+						"status": "error",
+						"reason": "[Tool:gesture-tap] Service dependency failed: [SimulatorServer:emulator-5554] simulator-server exited with code 1 before becoming ready:\nError: emulator \"emulator-5554\" not found among running emulators (a token-less `-grpc` launch omits grpc.token; check avd/running/*.ini)",
+						"durationMs": 839
+					},
+					{
+						"index": 6,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 1
+					},
+					{
+						"index": 7,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 1
+					},
+					{
+						"index": 8,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 2
+					},
+					{
+						"index": 9,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 2
+					},
+					{
+						"index": 10,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 11,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 12,
+						"kind": "await",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 1
+					},
+					{
+						"index": 13,
+						"kind": "run",
+						"status": "skip",
+						"flow": "next-test",
+						"target": "fragments/next-test.yaml"
+					},
+					{
+						"index": 14,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "onboarding-steps-to-sign-in",
+						"target": "id=welcome-get-started"
+					},
+					{
+						"index": 15,
+						"kind": "await",
+						"status": "skip",
+						"flow": "onboarding-steps-to-sign-in",
+						"target": "visible id=sign-in-screen"
+					}
+				],
+				"startedAt": 1792135942106,
+				"durationMs": 11293
+			}
+		},
+		{
+			"path": "settings-account-switches-sign-out.yaml",
+			"status": "fail",
+			"report": {
+				"flow": "settings-account-switches-sign-out",
+				"device": "emulator-5554",
+				"executionPrerequisite": "",
+				"ok": false,
+				"passed": 5,
+				"failed": 0,
+				"skipped": 31,
+				"errored": 1,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "settings-account-switches-sign-out",
+						"status": "pass",
+						"durationMs": 1765
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "fragments/open-sign-in.yaml",
+						"durationMs": 1
+					},
+					{
+						"index": 2,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 21
+					},
+					{
+						"index": 3,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"warning": "settled on the UI tree alone — this screen could not be screenshotted on enough polls to compare a pair of them, so animation that moves pixels without moving nodes (a push, a fade, a dismissing modal) was not waited out. Follow this with the element check the next step actually needs.",
+						"durationMs": 7528
+					},
+					{
+						"index": 4,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 1,
+						"durationMs": 1
+					},
+					{
+						"index": 5,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "error",
+						"reason": "[Tool:gesture-tap] Service dependency failed: [SimulatorServer:emulator-5554] simulator-server exited with code 1 before becoming ready:\nError: emulator \"emulator-5554\" not found among running emulators (a token-less `-grpc` launch omits grpc.token; check avd/running/*.ini)",
+						"durationMs": 807
+					},
+					{
+						"index": 6,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 2
+					},
+					{
+						"index": 7,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 8,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 10,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 11,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "await",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 13,
+						"kind": "run",
+						"status": "skip",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 1
+					},
+					{
+						"index": 14,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 1
+					},
+					{
+						"index": 15,
+						"kind": "await",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 1
+					},
+					{
+						"index": 16,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"depth": 1
+					},
+					{
+						"index": 17,
+						"kind": "type",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "into id=sign-in-email ← \"grace@example.com\""
+					},
+					{
+						"index": 18,
+						"kind": "type",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "into id=sign-in-password ← \"password1\""
+					},
+					{
+						"index": 19,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=sign-in-submit"
+					},
+					{
+						"index": 20,
+						"kind": "await",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "visible id=todos-screen"
+					},
+					{
+						"index": 21,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out"
+					},
+					{
+						"index": 22,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=tab-settings"
+					},
+					{
+						"index": 23,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out"
+					},
+					{
+						"index": 24,
+						"kind": "when",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "hidden id=settings-email"
+					},
+					{
+						"index": 25,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=tab-settings",
+						"depth": 1
+					},
+					{
+						"index": 26,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"depth": 1
+					},
+					{
+						"index": 27,
+						"kind": "when",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "hidden id=settings-email",
+						"depth": 1
+					},
+					{
+						"index": 28,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=tab-settings",
+						"depth": 2
+					},
+					{
+						"index": 29,
+						"kind": "await",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "visible id=settings-email"
+					},
+					{
+						"index": 30,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=settings-email equals \"grace@example.com\""
+					},
+					{
+						"index": 31,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "visible id=settings-notifications"
+					},
+					{
+						"index": 32,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=settings-notifications"
+					},
+					{
+						"index": 33,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=settings-dark-mode"
+					},
+					{
+						"index": 34,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=settings-dark-mode"
+					},
+					{
+						"index": 35,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=settings-sign-out"
+					},
+					{
+						"index": 36,
+						"kind": "await",
+						"status": "skip",
+						"flow": "settings-account-switches-sign-out",
+						"target": "visible id=welcome-screen"
+					}
+				],
+				"startedAt": 1792135953406,
+				"durationMs": 10284
+			}
+		},
+		{
+			"path": "sign-in-field-errors.yaml",
+			"status": "fail",
+			"report": {
+				"flow": "sign-in-field-errors",
+				"device": "emulator-5554",
+				"executionPrerequisite": "",
+				"ok": false,
+				"passed": 5,
+				"failed": 0,
+				"skipped": 19,
+				"errored": 1,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "sign-in-field-errors",
+						"status": "pass",
+						"durationMs": 1780
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "fragments/open-sign-in.yaml",
+						"durationMs": 1
+					},
+					{
+						"index": 2,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 20
+					},
+					{
+						"index": 3,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"warning": "settled on the UI tree alone — this screen could not be screenshotted on enough polls to compare a pair of them, so animation that moves pixels without moving nodes (a push, a fade, a dismissing modal) was not waited out. Follow this with the element check the next step actually needs.",
+						"durationMs": 7529
+					},
+					{
+						"index": 4,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 1,
+						"durationMs": 1
+					},
+					{
+						"index": 5,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "error",
+						"reason": "[Tool:gesture-tap] Service dependency failed: [SimulatorServer:emulator-5554] simulator-server exited with code 1 before becoming ready:\nError: emulator \"emulator-5554\" not found among running emulators (a token-less `-grpc` launch omits grpc.token; check avd/running/*.ini)",
+						"durationMs": 802
+					},
+					{
+						"index": 6,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 2
+					},
+					{
+						"index": 7,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 8,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 10,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 11,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "await",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 13,
+						"kind": "run",
+						"status": "skip",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 1
+					},
+					{
+						"index": 14,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 1
+					},
+					{
+						"index": 15,
+						"kind": "await",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 1
+					},
+					{
+						"index": 16,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"depth": 1
+					},
+					{
+						"index": 17,
+						"kind": "type",
+						"status": "skip",
+						"flow": "sign-in-field-errors",
+						"target": "into id=sign-in-email ← \"not-an-email\""
+					},
+					{
+						"index": 18,
+						"kind": "type",
+						"status": "skip",
+						"flow": "sign-in-field-errors",
+						"target": "into id=sign-in-password ← \"password1\""
+					},
+					{
+						"index": 19,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "sign-in-field-errors",
+						"target": "id=sign-in-submit"
+					},
+					{
+						"index": 20,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "sign-in-field-errors",
+						"target": "id=sign-in-email-error equals \"Enter a valid email address.\""
+					},
+					{
+						"index": 21,
+						"kind": "type",
+						"status": "skip",
+						"flow": "sign-in-field-errors",
+						"target": "into id=sign-in-email ← \"ada@example.com\""
+					},
+					{
+						"index": 22,
+						"kind": "type",
+						"status": "skip",
+						"flow": "sign-in-field-errors",
+						"target": "into id=sign-in-password ← \"short\""
+					},
+					{
+						"index": 23,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "sign-in-field-errors",
+						"target": "id=sign-in-submit"
+					},
+					{
+						"index": 24,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "sign-in-field-errors",
+						"target": "id=sign-in-password-error equals \"Password must be at least 8 characters.\""
+					}
+				],
+				"startedAt": 1792135963698,
+				"durationMs": 10292
+			}
+		},
+		{
+			"path": "sign-in-locked-account.yaml",
+			"status": "fail",
+			"report": {
+				"flow": "sign-in-locked-account",
+				"device": "emulator-5554",
+				"executionPrerequisite": "",
+				"ok": false,
+				"passed": 5,
+				"failed": 0,
+				"skipped": 16,
+				"errored": 1,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "sign-in-locked-account",
+						"status": "pass",
+						"durationMs": 1751
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "fragments/open-sign-in.yaml",
+						"durationMs": 1
+					},
+					{
+						"index": 2,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 16
+					},
+					{
+						"index": 3,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"warning": "settled on the UI tree alone — this screen could not be screenshotted on enough polls to compare a pair of them, so animation that moves pixels without moving nodes (a push, a fade, a dismissing modal) was not waited out. Follow this with the element check the next step actually needs.",
+						"durationMs": 7527
+					},
+					{
+						"index": 4,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 1,
+						"durationMs": 0
+					},
+					{
+						"index": 5,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "error",
+						"reason": "[Tool:gesture-tap] Service dependency failed: [SimulatorServer:emulator-5554] simulator-server exited with code 1 before becoming ready:\nError: emulator \"emulator-5554\" not found among running emulators (a token-less `-grpc` launch omits grpc.token; check avd/running/*.ini)",
+						"durationMs": 791
+					},
+					{
+						"index": 6,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 2
+					},
+					{
+						"index": 7,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 8,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 10,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 11,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "await",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 13,
+						"kind": "run",
+						"status": "skip",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 1
+					},
+					{
+						"index": 14,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 1
+					},
+					{
+						"index": 15,
+						"kind": "await",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 1
+					},
+					{
+						"index": 16,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"depth": 1
+					},
+					{
+						"index": 17,
+						"kind": "type",
+						"status": "skip",
+						"flow": "sign-in-locked-account",
+						"target": "into id=sign-in-email ← \"locked@example.com\""
+					},
+					{
+						"index": 18,
+						"kind": "type",
+						"status": "skip",
+						"flow": "sign-in-locked-account",
+						"target": "into id=sign-in-password ← \"password1\""
+					},
+					{
+						"index": 19,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "sign-in-locked-account",
+						"target": "id=sign-in-submit"
+					},
+					{
+						"index": 20,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "sign-in-locked-account",
+						"target": "visible id=sign-in-error"
+					},
+					{
+						"index": 21,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "sign-in-locked-account",
+						"target": "visible \"This account is locked. Try another email.\""
+					}
+				],
+				"startedAt": 1792135973997,
+				"durationMs": 10256
+			}
+		},
+		{
+			"path": "sign-in-valid-credentials.yaml",
+			"status": "fail",
+			"report": {
+				"flow": "sign-in-valid-credentials",
+				"device": "emulator-5554",
+				"executionPrerequisite": "",
+				"ok": false,
+				"passed": 5,
+				"failed": 0,
+				"skipped": 17,
+				"errored": 1,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "sign-in-valid-credentials",
+						"status": "pass",
+						"durationMs": 1784
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "fragments/open-sign-in.yaml",
+						"durationMs": 1
+					},
+					{
+						"index": 2,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 20
+					},
+					{
+						"index": 3,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"warning": "settled on the UI tree alone — this screen could not be screenshotted on enough polls to compare a pair of them, so animation that moves pixels without moving nodes (a push, a fade, a dismissing modal) was not waited out. Follow this with the element check the next step actually needs.",
+						"durationMs": 7528
+					},
+					{
+						"index": 4,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 1,
+						"durationMs": 1
+					},
+					{
+						"index": 5,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "error",
+						"reason": "[Tool:gesture-tap] Service dependency failed: [SimulatorServer:emulator-5554] simulator-server exited with code 1 before becoming ready:\nError: emulator \"emulator-5554\" not found among running emulators (a token-less `-grpc` launch omits grpc.token; check avd/running/*.ini)",
+						"durationMs": 798
+					},
+					{
+						"index": 6,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 2
+					},
+					{
+						"index": 7,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 8,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 10,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 11,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "await",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 13,
+						"kind": "run",
+						"status": "skip",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 1
+					},
+					{
+						"index": 14,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 1
+					},
+					{
+						"index": 15,
+						"kind": "await",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 1
+					},
+					{
+						"index": 16,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"depth": 1
+					},
+					{
+						"index": 17,
+						"kind": "type",
+						"status": "skip",
+						"flow": "sign-in-valid-credentials",
+						"target": "into id=sign-in-email ← \"Ada@Example.com\""
+					},
+					{
+						"index": 18,
+						"kind": "type",
+						"status": "skip",
+						"flow": "sign-in-valid-credentials",
+						"target": "into id=sign-in-password ← \"password1\""
+					},
+					{
+						"index": 19,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "sign-in-valid-credentials",
+						"target": "id=sign-in-submit"
+					},
+					{
+						"index": 20,
+						"kind": "await",
+						"status": "skip",
+						"flow": "sign-in-valid-credentials",
+						"target": "visible id=todos-screen"
+					},
+					{
+						"index": 21,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "sign-in-valid-credentials"
+					},
+					{
+						"index": 22,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "sign-in-valid-credentials",
+						"target": "id=todos-remaining equals \"1 left\""
+					}
+				],
+				"startedAt": 1792135984258,
+				"durationMs": 10283
+			}
+		},
+		{
+			"path": "todo-detail-deep-link.yaml",
+			"status": "fail",
+			"report": {
+				"flow": "todo-detail-deep-link",
+				"device": "emulator-5554",
+				"executionPrerequisite": "",
+				"ok": false,
+				"passed": 6,
+				"failed": 0,
+				"skipped": 22,
+				"errored": 1,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "todo-detail-deep-link",
+						"status": "pass",
+						"durationMs": 1751
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "signed-in-ada",
+						"target": "fragments/signed-in-ada.yaml",
+						"durationMs": 1
+					},
+					{
+						"index": 2,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "open-sign-in.yaml",
+						"depth": 1,
+						"durationMs": 0
+					},
+					{
+						"index": 3,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 22
+					},
+					{
+						"index": 4,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 2,
+						"status": "pass",
+						"warning": "settled on the UI tree alone — this screen could not be screenshotted on enough polls to compare a pair of them, so animation that moves pixels without moving nodes (a push, a fade, a dismissing modal) was not waited out. Follow this with the element check the next step actually needs.",
+						"durationMs": 7528
+					},
+					{
+						"index": 5,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 2,
+						"durationMs": 1
+					},
+					{
+						"index": 6,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3,
+						"status": "error",
+						"reason": "[Tool:gesture-tap] Service dependency failed: [SimulatorServer:emulator-5554] simulator-server exited with code 1 before becoming ready:\nError: emulator \"emulator-5554\" not found among running emulators (a token-less `-grpc` launch omits grpc.token; check avd/running/*.ini)",
+						"durationMs": 801
+					},
+					{
+						"index": 7,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 8,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 10,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 4
+					},
+					{
+						"index": 11,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 5
+					},
+					{
+						"index": 13,
+						"kind": "await",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 14,
+						"kind": "run",
+						"status": "skip",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 2
+					},
+					{
+						"index": 15,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 2
+					},
+					{
+						"index": 16,
+						"kind": "await",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 2
+					},
+					{
+						"index": 17,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"depth": 2
+					},
+					{
+						"index": 18,
+						"kind": "run",
+						"status": "skip",
+						"flow": "submit-ada",
+						"target": "submit-ada.yaml",
+						"depth": 1
+					},
+					{
+						"index": 19,
+						"kind": "tool",
+						"status": "skip",
+						"flow": "todo-detail-deep-link"
+					},
+					{
+						"index": 20,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "todo-detail-deep-link"
+					},
+					{
+						"index": 21,
+						"kind": "when",
+						"status": "skip",
+						"flow": "todo-detail-deep-link",
+						"target": "hidden id=todo-detail-title"
+					},
+					{
+						"index": 22,
+						"kind": "tool",
+						"status": "skip",
+						"flow": "todo-detail-deep-link",
+						"depth": 1
+					},
+					{
+						"index": 23,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "todo-detail-deep-link",
+						"depth": 1
+					},
+					{
+						"index": 24,
+						"kind": "when",
+						"status": "skip",
+						"flow": "todo-detail-deep-link",
+						"target": "hidden id=todo-detail-title",
+						"depth": 1
+					},
+					{
+						"index": 25,
+						"kind": "tool",
+						"status": "skip",
+						"flow": "todo-detail-deep-link",
+						"depth": 2
+					},
+					{
+						"index": 26,
+						"kind": "await",
+						"status": "skip",
+						"flow": "todo-detail-deep-link",
+						"target": "visible id=todo-detail-title"
+					},
+					{
+						"index": 27,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todo-detail-deep-link",
+						"target": "id=todo-detail-title equals \"Run the e2e suite with warden\""
+					},
+					{
+						"index": 28,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todo-detail-deep-link",
+						"target": "id=todo-detail-status equals \"Done\""
+					}
+				],
+				"startedAt": 1792135994549,
+				"durationMs": 10261
+			}
+		},
+		{
+			"path": "todo-detail-open-toggle-delete.yaml",
+			"status": "fail",
+			"report": {
+				"flow": "todo-detail-open-toggle-delete",
+				"device": "emulator-5554",
+				"executionPrerequisite": "",
+				"ok": false,
+				"passed": 6,
+				"failed": 0,
+				"skipped": 27,
+				"errored": 1,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "todo-detail-open-toggle-delete",
+						"status": "pass",
+						"durationMs": 1757
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "signed-in-ada",
+						"target": "fragments/signed-in-ada.yaml",
+						"durationMs": 0
+					},
+					{
+						"index": 2,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "open-sign-in.yaml",
+						"depth": 1,
+						"durationMs": 1
+					},
+					{
+						"index": 3,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 20
+					},
+					{
+						"index": 4,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 2,
+						"status": "pass",
+						"warning": "settled on the UI tree alone — this screen could not be screenshotted on enough polls to compare a pair of them, so animation that moves pixels without moving nodes (a push, a fade, a dismissing modal) was not waited out. Follow this with the element check the next step actually needs.",
+						"durationMs": 7528
+					},
+					{
+						"index": 5,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 2,
+						"durationMs": 1
+					},
+					{
+						"index": 6,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3,
+						"status": "error",
+						"reason": "[Tool:gesture-tap] Service dependency failed: [SimulatorServer:emulator-5554] simulator-server exited with code 1 before becoming ready:\nError: emulator \"emulator-5554\" not found among running emulators (a token-less `-grpc` launch omits grpc.token; check avd/running/*.ini)",
+						"durationMs": 796
+					},
+					{
+						"index": 7,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 8,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 10,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 4
+					},
+					{
+						"index": 11,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 5
+					},
+					{
+						"index": 13,
+						"kind": "await",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 14,
+						"kind": "run",
+						"status": "skip",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 2
+					},
+					{
+						"index": 15,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 2
+					},
+					{
+						"index": 16,
+						"kind": "await",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 2
+					},
+					{
+						"index": 17,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"depth": 2
+					},
+					{
+						"index": 18,
+						"kind": "run",
+						"status": "skip",
+						"flow": "submit-ada",
+						"target": "submit-ada.yaml",
+						"depth": 1
+					},
+					{
+						"index": 19,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-title-welcome"
+					},
+					{
+						"index": 20,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete"
+					},
+					{
+						"index": 21,
+						"kind": "when",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "hidden id=todo-detail-title"
+					},
+					{
+						"index": 22,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-title-welcome",
+						"depth": 1
+					},
+					{
+						"index": 23,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"depth": 1
+					},
+					{
+						"index": 24,
+						"kind": "when",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "hidden id=todo-detail-title",
+						"depth": 1
+					},
+					{
+						"index": 25,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-title-welcome",
+						"depth": 2
+					},
+					{
+						"index": 26,
+						"kind": "await",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "visible id=todo-detail-title"
+					},
+					{
+						"index": 27,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-detail-title equals \"Explore the example app\""
+					},
+					{
+						"index": 28,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-detail-status equals \"Active\""
+					},
+					{
+						"index": 29,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-detail-toggle"
+					},
+					{
+						"index": 30,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-detail-status equals \"Done\""
+					},
+					{
+						"index": 31,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-detail-delete"
+					},
+					{
+						"index": 32,
+						"kind": "await",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "visible id=todos-screen"
+					},
+					{
+						"index": 33,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "hidden id=todo-row-welcome"
+					}
+				],
+				"startedAt": 1792136004815,
+				"durationMs": 10255
+			}
+		},
+		{
+			"path": "todos-add-complete-filter.yaml",
+			"status": "fail",
+			"report": {
+				"flow": "todos-add-complete-filter",
+				"device": "emulator-5554",
+				"executionPrerequisite": "",
+				"ok": false,
+				"passed": 6,
+				"failed": 0,
+				"skipped": 26,
+				"errored": 1,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "todos-add-complete-filter",
+						"status": "pass",
+						"durationMs": 1759
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "signed-in-ada",
+						"target": "fragments/signed-in-ada.yaml",
+						"durationMs": 1
+					},
+					{
+						"index": 2,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "open-sign-in.yaml",
+						"depth": 1,
+						"durationMs": 0
+					},
+					{
+						"index": 3,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 17
+					},
+					{
+						"index": 4,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 2,
+						"status": "pass",
+						"warning": "settled on the UI tree alone — this screen could not be screenshotted on enough polls to compare a pair of them, so animation that moves pixels without moving nodes (a push, a fade, a dismissing modal) was not waited out. Follow this with the element check the next step actually needs.",
+						"durationMs": 7528
+					},
+					{
+						"index": 5,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 2,
+						"durationMs": 0
+					},
+					{
+						"index": 6,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3,
+						"status": "error",
+						"reason": "[Tool:gesture-tap] Service dependency failed: [SimulatorServer:emulator-5554] simulator-server exited with code 1 before becoming ready:\nError: emulator \"emulator-5554\" not found among running emulators (a token-less `-grpc` launch omits grpc.token; check avd/running/*.ini)",
+						"durationMs": 801
+					},
+					{
+						"index": 7,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 8,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 10,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "next-plan",
+						"depth": 4
+					},
+					{
+						"index": 11,
+						"kind": "when",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 5
+					},
+					{
+						"index": 13,
+						"kind": "await",
+						"status": "skip",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 14,
+						"kind": "run",
+						"status": "skip",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 2
+					},
+					{
+						"index": 15,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 2
+					},
+					{
+						"index": 16,
+						"kind": "await",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 2
+					},
+					{
+						"index": 17,
+						"kind": "idle",
+						"status": "skip",
+						"flow": "open-sign-in",
+						"depth": 2
+					},
+					{
+						"index": 18,
+						"kind": "run",
+						"status": "skip",
+						"flow": "submit-ada",
+						"target": "submit-ada.yaml",
+						"depth": 1
+					},
+					{
+						"index": 19,
+						"kind": "type",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "into id=todo-input ← \"Write e2e flows\""
+					},
+					{
+						"index": 20,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todo-add"
+					},
+					{
+						"index": 21,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todo-title-todo-1 equals \"Write e2e flows\""
+					},
+					{
+						"index": 22,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todos-remaining equals \"2 left\""
+					},
+					{
+						"index": 23,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todo-check-todo-1"
+					},
+					{
+						"index": 24,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todos-remaining equals \"1 left\""
+					},
+					{
+						"index": 25,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todos-filter-active"
+					},
+					{
+						"index": 26,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "visible id=todo-row-welcome"
+					},
+					{
+						"index": 27,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "hidden id=todo-row-todo-1"
+					},
+					{
+						"index": 28,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todo-check-welcome"
+					},
+					{
+						"index": 29,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "visible id=todos-empty"
+					},
+					{
+						"index": 30,
+						"kind": "tap",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todos-filter-done"
+					},
+					{
+						"index": 31,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "visible id=todo-row-todo-1"
+					},
+					{
+						"index": 32,
+						"kind": "assert",
+						"status": "skip",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todos-remaining equals \"0 left\""
+					}
+				],
+				"startedAt": 1792136015074,
+				"durationMs": 10261
+			}
+		}
+	]
+}

@@ -3,6 +3,9 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 /** The published npm package; its `warden` bin is a JS shim that runs the matching platform package's binary. */
 export const NPM_PACKAGE = "@delacour/warden";
 
+/** `warden e2e`'s spec API (`test`, `expect`, the preload), published in lock-step with `@delacour/warden`. */
+export const E2E_PACKAGE = "@delacour/warden-e2e";
+
 /** Every `bun build --compile` target shipped as a GitHub release asset and an npm platform package. */
 export const RELEASE_TARGETS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"] as const;
 export type ReleaseTarget = (typeof RELEASE_TARGETS)[number];

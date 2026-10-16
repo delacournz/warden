@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
 import { type BuildRecord, listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
 import { ccacheCleanup } from "@delacour/warden-core/builds/compiler-cache";
-import { LOCAL_PROFILE, projectContext } from "@delacour/warden-core/builds/ensure";
+import { LOCAL_PROFILE } from "@delacour/warden-core/builds/ensure";
 import { formatSize, parseSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { formatDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
@@ -13,6 +13,7 @@ import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, heading, plural, reportError, table, warn } from "../output";
+import { projectContextFor } from "../project-context";
 import { withSpinner } from "../spinner-context";
 import { projectStart } from "./app";
 
@@ -137,9 +138,7 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 	const start = projectStart(ctx, opts.project);
 	if (!start.success) return fail(ctx, "import", start.error);
 	const bundle = opts.bundleId;
-	const project = await projectContext({
-		exec: ctx.exec,
-		env: ctx.env,
+	const project = await projectContextFor(ctx, {
 		start: start.data,
 		...(bundle !== undefined ? { bundleId: { [platform.data]: bundle } } : {}),
 	});
