@@ -9,6 +9,7 @@ import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-co
 import { listAvds } from "@delacour/warden-core/providers/android";
 import type { DeviceRequest, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
 import { autoArrangeSimWindows, type HideDeps, hideSimWindows } from "./sim-windows";
@@ -137,9 +138,13 @@ export function resolveAutoProfile(avds: readonly string[]): Result<string> {
 		: err("no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
 }
 
-/** `hideSimWindows` deps from a command context: problems are yellow `warden: …` lines. */
+/** `hideSimWindows` deps from a command context: problems are yellow `warden: …` lines; a device the close shut down loses its resident helper. */
 export function headlessDeps(ctx: CommandContext): HideDeps {
-	return { exec: ctx.exec, warn: (line) => ctx.err(ctx.ui.color.yellow(`warden: ${line}`)) };
+	return {
+		exec: ctx.exec,
+		warn: (line) => ctx.err(ctx.ui.color.yellow(`warden: ${line}`)),
+		onShutDown: stopHelperAfter(ctx),
+	};
 }
 
 /** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them). */

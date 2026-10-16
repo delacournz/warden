@@ -7,6 +7,7 @@ import type { Driver, Snapshot } from "../driver.types";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
+import { spawnSimd } from "./simd-client";
 import { bunSpawn } from "./simd-transport";
 
 const UDID = "UDID-1";
@@ -186,6 +187,42 @@ describe("openIosDriver", () => {
 		const { helper, logs } = await open(() => ({ data: null }), { socketPath: "/nonexistent/simd.sock" });
 		expect(helper.spawns).toHaveLength(1);
 		expect(logs.some((line) => line.includes("spawning a helper on stdio"))).toBe(true);
+	});
+
+	test("a pre-connected client is used as is: no second connect, no spawn, no helper lookup", async () => {
+		const helper = fakeSimd((request) => (request.op === "snapshot" ? { data: snapshotData } : { data: null }));
+		const connected = await spawnSimd({ helperPath: "/opt/warden-simd", udid: UDID, spawn: helper.spawn });
+		if (!connected.success) throw new Error(connected.error.message);
+		const result = await openIosDriver({
+			udid: UDID,
+			exec: fakeExec([["xcrun simctl spawn UDID-1 defaults", {}]], []),
+			client: connected.data,
+			socketPath: "/nonexistent/simd.sock",
+			exists: () => false,
+		});
+		if (!result.success) throw new Error(result.error.message);
+		opened.push(result.data);
+		await unwrapped(result.data.snapshot());
+		expect(helper.spawns).toHaveLength(1);
+		expect(helper.of("snapshot")).toHaveLength(1);
+	});
+
+	test("a pre-connected client needs no helper binary on disk", async () => {
+		const helper = fakeSimd(() => ({ data: null }));
+		const connected = await spawnSimd({ helperPath: "/opt/warden-simd", udid: UDID, spawn: helper.spawn });
+		if (!connected.success) throw new Error(connected.error.message);
+		const result = await openIosDriver({
+			udid: UDID,
+			exec: fakeExec([], []),
+			client: connected.data,
+			exists: () => false,
+			realpath: (path) => path,
+			execPath: "/usr/local/bin/warden",
+			importDir: "/nowhere",
+			wardenHome: "/home/.warden",
+		});
+		expect(result.success).toBe(true);
+		if (result.success) opened.push(result.data);
 	});
 });
 

@@ -87,6 +87,8 @@ func runSocket(session: Session, path: String, idleTimeout: Int, output: OutputC
     return ExitCode.bootstrap
   }
   terminator.install { server.requestStop(.signal) }
+  output.send(Announce.readyEvent(fields: session.readyFields(), socket: path, pid: getpid()))
+  Announce.detach(STDOUT_FILENO, onto: STDERR_FILENO)
   output.log(.info, "listening on \(path) (idle timeout \(idleTimeout)s)")
   let reason = await server.run()
   output.log(.info, "stopping: \(reason.rawValue)")

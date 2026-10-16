@@ -1,5 +1,4 @@
 import { processAlive } from "@delacour/warden-core/liveness";
-import { stopHelperAfter } from "../agent-ui/close";
 import { backgroundAllowed, selfCommand, spawnDetached } from "../autogc";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -13,7 +12,6 @@ function hookDeps(ctx: CommandContext): HookDeps {
 		now: ctx.now,
 		pidAlive: processAlive,
 		shutdown: (leases, owner) => shutdownReleasedDevices(ctx, leases, owner),
-		stopHelper: stopHelperAfter(ctx),
 		endInBackground: (sessionId) => {
 			if (!backgroundAllowed(ctx.env)) return false;
 			spawnDetached([...selfCommand(), "release", "--session", sessionId, "--shutdown"], {

@@ -47,6 +47,12 @@ export type OpenIosDriverOptions = {
 	helperPath?: string;
 	/** explicit helper socket (wins over `env.simdSocket`) */
 	socketPath?: string;
+	/**
+	 * An already connected (handshaken) helper client: used instead of connecting, so a caller that just
+	 * connected to learn the helper was up does not connect twice. The driver owns it from here (`close()`
+	 * closes it); a restart still reconnects through the socket / spawn path.
+	 */
+	client?: SimdClient;
 	now?: () => number;
 	sleep?: (ms: number) => Promise<void>;
 	/** for `locateHelper` / `$WARDEN_HOME/simd/<version>`; defaults read the process */
@@ -459,11 +465,14 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 	const simctl = createSimctl({ udid: o.udid, exec, ...(o.devicesRoot ? { devicesRoot: o.devicesRoot } : {}) });
 	// a driver that cannot start (no socket, no helper binary) fails before any simctl call: the AutomationEnabled
 	// write takes seconds on a cold machine and would only delay the E_HELPER_MISSING answer
-	if (!(o.socketPath ?? o.env?.simdSocket)) {
+	if (!o.client && !(o.socketPath ?? o.env?.simdSocket)) {
 		const helper = resolveHelper(o);
 		if (!helper.success) return helper;
 	}
-	const [client, automation] = await Promise.all([connect(o, log), simctl.enableAutomation()]);
+	const connecting: Promise<Result<SimdClient, DriverError>> = o.client
+		? Promise.resolve({ success: true, data: o.client })
+		: connect(o, log);
+	const [client, automation] = await Promise.all([connecting, simctl.enableAutomation()]);
 	if (!automation.success) log(`[ios] could not enable AX automation: ${automation.error.message}`);
 	if (!client.success) return client;
 	const swap = swappableClient(client.data, {

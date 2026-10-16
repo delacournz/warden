@@ -11,6 +11,13 @@ export function uiDir(ctx: Pick<CommandContext, "env">, udid: string): string {
 	return join(wardenHome(ctx.env), "ui", udid);
 }
 
+/**
+ * The device's resident `warden-simd`: its pid and socket, plus what it was started for. `owner` is the lease owner
+ * at spawn (`ownerKey`) and `binary` the helper executable (path + mtime): when either differs at the next use the
+ * helper is replaced, not reused. Both are absent on records written by an older warden, which are always reused.
+ */
+export type HelperRecord = { pid: number; socket: string; owner?: string; binary?: { path: string; mtimeMs: number } };
+
 /** `state.json`. `generation` bumps only on `snapshot`, `snapshot --settle` and `find`. */
 export type UiState = {
 	generation: number;
@@ -19,7 +26,7 @@ export type UiState = {
 	app?: string;
 	/** the flow being recorded (`warden ui record start`) */
 	recording?: { file: string; name: string; startedAt: number };
-	helper?: { pid: number; socket: string };
+	helper?: HelperRecord;
 	/** the running `logs start` collector (`warden ui-collect`): host pid and start time */
 	collector?: { pid: number; startedAt: number };
 	/** the running `video start` recorder: host pid, output file, and (Android) the file on the device */
@@ -92,7 +99,14 @@ const stateSchema = z.object({
 	metroUrl: z.string().optional(),
 	app: z.string().optional(),
 	recording: z.object({ file: z.string(), name: z.string(), startedAt: z.number() }).optional(),
-	helper: z.object({ pid: z.number(), socket: z.string() }).optional(),
+	helper: z
+		.object({
+			pid: z.number(),
+			socket: z.string(),
+			owner: z.string().optional(),
+			binary: z.object({ path: z.string(), mtimeMs: z.number() }).optional(),
+		})
+		.optional(),
 	collector: z.object({ pid: z.number(), startedAt: z.number() }).optional(),
 	video: z
 		.object({ pid: z.number(), path: z.string(), remote: z.string().optional(), startedAt: z.number() })

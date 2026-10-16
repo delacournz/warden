@@ -1,5 +1,6 @@
 import { shouldShutdown } from "@delacour/warden-core/shutdown-policy";
 import type { Lease, Owner } from "@delacour/warden-core/types";
+import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import type { CommandContext } from "./context";
 import { errorMessage } from "./hooks/json";
 import { providerFor } from "./providers";
@@ -20,7 +21,7 @@ type DeviceShutdown =
 
 /**
  * Shut down the devices behind `leases` that `shouldShutdown` allows: warden-created ones and ones
- * the lease owner booted. A device that was already running when leased (e.g. the user's own
+ * the lease owner booted; each shut-down iOS device's `warden-simd` is stopped with it. A device that was already running when leased (e.g. the user's own
  * Simulator.app sim) is left running. Call while the leases are still held, so nobody is handed a
  * device mid-shutdown. Failures become notes — releasing must still go ahead. `guard` (gc's stale
  * grace + running-app check) can veto a shutdown the policy would allow. Devices shut down
@@ -48,7 +49,11 @@ export async function shutdownReleasedDevices(
 			const veto = await guard?.(lease);
 			if (veto !== undefined) return { kind: "kept", id: r.id, note: `left ${r.name} (${r.id}) running: ${veto}` };
 			const result = await providerFor(r.platform, ctx, owner).shutdown(r.id);
-			if (result.success) return { kind: "shutdown", id: r.id };
+			if (result.success) {
+				// a resident `warden-simd` is bound to the boot that just ended
+				await stopHelperAfter(ctx)(r.id);
+				return { kind: "shutdown", id: r.id };
+			}
 			return { kind: "failed", note: `shutdown ${r.id} failed: ${result.error}` };
 		} catch (error) {
 			return { kind: "failed", note: `shutdown ${r.id} failed: ${errorMessage(error)}` };
