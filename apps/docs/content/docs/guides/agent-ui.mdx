@@ -92,7 +92,7 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 
 ## Waiting and asserting
 
-These poll the live screen every 100 ms for up to `--timeout` (default 5000 ms) and never need a screenshot.
+These poll the live screen every 100 ms for the first second, then every 250 ms (`wait stable` keeps 100 ms), for up to `--timeout` (default 5000 ms) and never need a screenshot.
 
 | Command | Result |
 |---|---|
