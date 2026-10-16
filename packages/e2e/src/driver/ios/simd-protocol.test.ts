@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { el, snapshotOf } from "../driver.testing";
 import {
+	alertButtonsDataSchema,
 	createLineSplitter,
 	elementAtPointDataSchema,
 	encodeRequest,
+	frontmostDataSchema,
 	healthDataSchema,
 	mapWireError,
 	parseLine,
@@ -154,6 +156,24 @@ describe("data schemas", () => {
 				extra: "kept",
 			}).success
 		).toBe(true);
+	});
+
+	test("frontmost: the verdict with the pids it compared, extra keys allowed", () => {
+		expect(frontmostDataSchema.parse({ frontmost: true, pid: 12, frontmostPid: 12 })).toEqual({
+			frontmost: true,
+			pid: 12,
+			frontmostPid: 12,
+		});
+		expect(frontmostDataSchema.parse({ frontmost: false, extra: 1 }).frontmost).toBe(false);
+		expect(frontmostDataSchema.safeParse({ pid: 1 }).success).toBe(false);
+	});
+
+	test("alertButtons: null, an alert, and a modal with no readable buttons yet", () => {
+		expect(alertButtonsDataSchema.parse(null)).toBeNull();
+		expect(alertButtonsDataSchema.parse({ title: "Open in “app”?", buttons: [] })).toEqual({
+			title: "Open in “app”?",
+			buttons: [],
+		});
 	});
 
 	test("health reports a degraded bridge with the last read failure", () => {

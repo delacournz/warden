@@ -296,6 +296,13 @@ export const settleDataSchema = z.looseObject({
 });
 export type SettleData = z.infer<typeof settleDataSchema>;
 
+/**
+ * `alertButtons` params. No `backend` reads both readers (`ax` first, then `axbridge`); `ax` or `axbridge` reads only
+ * that one: one tree read instead of two, errors propagate (nothing else answered), and an `axbridge` read that sees a
+ * modal without readable buttons answers `{ buttons: [] }` instead of `null`.
+ */
+export type AlertButtonsParams = { backend?: "ax" | "axbridge" };
+
 /** `alertButtons`: the system alert / sheet on top, `null` when there is none. */
 export const alertButtonsDataSchema = z
 	.object({
@@ -305,6 +312,18 @@ export const alertButtonsDataSchema = z
 	})
 	.nullable();
 export type AlertButtonsData = z.infer<typeof alertButtonsDataSchema>;
+
+/**
+ * `frontmost{bundleId}`: whether that app's process is the one the quiescence stream reports as frontmost. A read of the
+ * helper's state (one launchd lookup), no tree read and no waiting. `pid` is the bundle's process (absent when it is not
+ * running), `frontmostPid` the stream's (absent while no stream has reported).
+ */
+export const frontmostDataSchema = z.looseObject({
+	frontmost: z.boolean(),
+	pid: z.number().optional(),
+	frontmostPid: z.number().optional(),
+});
+export type FrontmostData = z.infer<typeof frontmostDataSchema>;
 
 /**
  * `orientation`: a real read may also say `faceUp` / `faceDown` / `unknown` (flat device); `source` tells
@@ -332,6 +351,7 @@ export const opSchemas = {
 	screenshot: screenshotDataSchema,
 	settle: settleDataSchema,
 	alertButtons: alertButtonsDataSchema,
+	frontmost: frontmostDataSchema,
 	orientation: orientationDataSchema,
 } as const;
 
@@ -342,6 +362,7 @@ export type OpDataMap = {
 	screenshot: ScreenshotData;
 	settle: SettleData;
 	alertButtons: AlertButtonsData;
+	frontmost: FrontmostData;
 	orientation: OrientationData;
 };
 

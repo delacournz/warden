@@ -1,7 +1,11 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { ACCEPT_BUTTONS, centre, DISMISS_BUTTONS, findButton, firstOf, nameOf } from "./alert-buttons";
+import { createAlertReader } from "./alert-reader";
 import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
-import type { AlertInfo, Driver, Element, Orientation, Point, Snapshot } from "./driver/driver.types";
+import { linkKey, OPEN_LINK_WAIT_MS, sheetlessFor, waitForLink } from "./device-link";
+import { canProbeFrontmost } from "./driver/alerts";
+import type { Driver, Element, Orientation, Snapshot } from "./driver/driver.types";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
@@ -15,6 +19,7 @@ import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
 import { type Clock, type FixtureSession, systemClock } from "./fixture-session";
 import { screenshotPath } from "./runner/artifacts";
+import type { Locator } from "./screen/locator";
 import { renderHeader, renderSnapshot } from "./screen/render";
 
 export type AlertAction = "accept" | "dismiss" | { button: string };
@@ -22,6 +27,14 @@ export type AlertAction = "accept" | "dismiss" | { button: string };
 export type OpenLinkOptions = {
 	/** answer iOS's "Open in …?" sheet with "Open". Default true. */
 	accept?: boolean;
+	/**
+	 * Return as soon as this locator is visible and no sheet is up, instead of when the link is known to be handled.
+	 * Use it when the link leads to a screen the app is not already showing; the wait still ends at `waitMs`
+	 * (without an error: the next assertion reports the missing screen).
+	 */
+	until?: Locator;
+	/** The longest `openLink` waits, in ms. Default 8000. */
+	waitMs?: number;
 };
 
 export type SnapshotTextOptions = { interactiveOnly?: boolean };
@@ -41,7 +54,13 @@ export type Device = {
 	 * with that name (`ACTION_FAILED` when absent). Resolves false when no alert is showing.
 	 */
 	alert(action: AlertAction): Promise<boolean>;
-	/** Opens a URL from outside the app; on iOS accepts the "Open in …?" sheet when it shows within 8 s, pressing again if the sheet stays up. */
+	/**
+	 * Opens a URL from outside the app. On iOS it accepts the "Open in …?" sheet when one shows (pressing again if it
+	 * stays up) and returns once the link is handled: the sheet was answered, or none showed for 1.2 s while the app is
+	 * in front (so a link without a sheet costs about 1.3 s, and later links with the same scheme in this session return
+	 * as soon as the app is in front). While another app (SpringBoard, Safari) is in front it keeps looking for the sheet
+	 * for up to `waitMs` (8 s). Pass `until` to return when the target screen is visible.
+	 */
 	openLink(url: string, options?: OpenLinkOptions): Promise<void>;
 	home(): Promise<void>;
 	/** Android back key; `INVALID_ARGUMENT` on iOS (there is none). */
@@ -80,45 +99,6 @@ export type DeviceDeps = {
 	clock?: Clock;
 };
 
-const ACCEPT_BUTTONS = ["OK", "Allow", "Open", "Continue", "Yes", "Done", "Allow While Using App", "Allow Once"];
-const DISMISS_BUTTONS = ["Cancel", "Don't Allow", "Not Now", "Dismiss", "No", "Close"];
-
-/** A loaded machine can show the sheet several seconds after `openUrl` returns. */
-const OPEN_LINK_WAIT_MS = 8000;
-const OPEN_LINK_POLL_MS = 100;
-const ALERT_READ_ATTEMPTS = 5;
-const ALERT_READ_RETRY_MS = 300;
-const OPEN_LINK_MAX_PRESSES = 3;
-
-function normalise(text: string): string {
-	return text.replace(/[‘’]/g, "'").trim().toLowerCase();
-}
-
-function nameOf(button: Element): string | undefined {
-	return button.label ?? button.text ?? button.value;
-}
-
-function findButton(buttons: readonly Element[], wanted: string): Element | undefined {
-	const target = normalise(wanted);
-	return buttons.find((button) => {
-		const name = nameOf(button);
-		return name !== undefined && normalise(name) === target;
-	});
-}
-
-function firstOf(buttons: readonly Element[], names: readonly string[]): Element | undefined {
-	for (const name of names) {
-		const found = findButton(buttons, name);
-		if (found !== undefined) return found;
-	}
-	return undefined;
-}
-
-function centre(element: Element): Point {
-	const { x, y, width, height } = element.frame;
-	return element.tapPoint ?? { x: x + width / 2, y: y + height / 2 };
-}
-
 function nextShotNumber(dir: string, issued: ReadonlyMap<string, number>): number {
 	let highest = issued.get(dir) ?? 0;
 	try {
@@ -141,16 +121,22 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 		await unwrap(() => driver.tap(centre(button)), action, signal());
 	};
 
-	/**
-	 * `driver.alert()`, retrying a transient failure (the AX bridge briefly names no frontmost application right
-	 * after a launch or sheet change) before giving up.
-	 */
-	const readAlert = async (): Promise<AlertInfo | null> => {
-		for (let attempt = 1; ; attempt += 1) {
-			const result = await settled(() => driver.alert(), "read alert", signal());
-			if (result.success) return result.data;
-			if (!result.error.retryable || attempt >= ALERT_READ_ATTEMPTS) throw toE2eError(result.error, "read alert");
-			await clock.sleep(ALERT_READ_RETRY_MS);
+	const readAlert = createAlertReader({ driver, clock, signal });
+
+	/** Whether the app under test is in front; `undefined` when the driver (or the bundle id) cannot say. */
+	const appInFront = async (): Promise<boolean | undefined> => {
+		if (env.bundleId === "" || !canProbeFrontmost(driver)) return undefined;
+		const result = await settled(() => driver.isFrontmost(env.bundleId), "probe frontmost app", signal());
+		return result.success ? result.data : undefined;
+	};
+
+	/** `until.isVisible()`; a locator that cannot answer yet (several matches, a driver hiccup) is not visible yet. */
+	const isVisible = async (locator: Locator): Promise<boolean> => {
+		try {
+			return await locator.isVisible();
+		} catch (error) {
+			if (signal()?.aborted) throw error;
+			return false;
 		}
 	};
 
@@ -177,7 +163,8 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 		},
 
 		async alert(action) {
-			const info = await readAlert();
+			// the bridge also sees what the app itself shows (Keychain "Save Password?"), so it answers "none" alone
+			const info = await readAlert("axbridge");
 			if (info === null || info.buttons.length === 0) return false;
 			const { buttons } = info;
 			let target: Element | undefined;
@@ -196,25 +183,24 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 		},
 
 		async openLink(url, options = {}) {
-			await unwrap(() => driver.app.openUrl(url), `open ${url}`, signal());
-			if (options.accept === false || driver.platform !== "ios" || !driver.capabilities.alerts) return;
-			const deadline = clock.now() + OPEN_LINK_WAIT_MS;
-			let presses = 0;
-			for (;;) {
-				const info = await readAlert();
-				const open = info === null ? undefined : findButton(info.buttons, "Open");
-				if (open === undefined) {
-					// answered (or never shown): nothing left to press once the sheet is gone
-					if (presses > 0 || clock.now() >= deadline) return;
-				} else if (presses < OPEN_LINK_MAX_PRESSES) {
-					// a press that lands while the sheet is still animating in is lost, so look again after each one
-					await pressAlertButton(open, "accept open-in sheet");
-					presses += 1;
-				} else {
-					return;
-				}
-				await clock.sleep(OPEN_LINK_POLL_MS);
+			const waitMs = options.waitMs ?? OPEN_LINK_WAIT_MS;
+			if (!Number.isFinite(waitMs) || waitMs < 0) {
+				throw new E2eError("INVALID_ARGUMENT", `openLink waitMs must be a non-negative number, got ${String(waitMs)}`);
 			}
+			await unwrap(() => driver.app.openUrl(url), `open ${url}`, signal());
+			const answersSheet = options.accept !== false && driver.platform === "ios" && driver.capabilities.alerts;
+			if (!answersSheet && options.until === undefined) return;
+			await waitForLink(
+				{
+					clock,
+					readAlert,
+					press: (button) => pressAlertButton(button, "accept open-in sheet"),
+					appInFront,
+					isVisible,
+					sheetless: sheetlessFor(session),
+				},
+				{ key: linkKey(url), answersSheet, waitMs, ...(options.until === undefined ? {} : { until: options.until }) }
+			);
 		},
 
 		async home() {

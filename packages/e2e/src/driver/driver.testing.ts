@@ -1,4 +1,5 @@
 import type { Result } from "@delacour/warden-types/result";
+import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "./alerts";
 import type {
 	AlertInfo,
 	AppCommands,
@@ -171,6 +172,8 @@ export type DriverCall =
 	| { method: "orientation"; set?: Orientation }
 	| { method: "settle"; opts?: { quietMs?: number; timeoutMs?: number } }
 	| { method: "alert" }
+	| { method: "alertOn"; backend: AlertBackend }
+	| { method: "isFrontmost"; bundleId: string }
 	| { method: "appearance"; set?: "light" | "dark" }
 	| { method: "clipboard"; set?: string }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
@@ -198,10 +201,18 @@ export type FakeDriverOptions = {
 	selectAll?: boolean;
 	/** inspect every call (after it is recorded); return an override to fail it or fake its result */
 	onCall?: (call: DriverCall) => FakeOverride | undefined;
+	/**
+	 * Offer the optional `alertOn` capability (`driver/alerts.ts`); the listed readers see the screen's alert, the
+	 * others report none. Absent = a driver with only `alert()`.
+	 */
+	alertBackends?: readonly AlertBackend[];
+	/** Offer the optional `isFrontmost` capability: the bundle id of the app in front (evaluated per call). */
+	frontmost?: () => string | undefined;
 };
 
 export type FakeDriver = Driver &
-	Partial<SelectsAll> & {
+	Partial<SelectsAll> &
+	Partial<ReadsAlertOn & ProbesFrontmost> & {
 		/** every call so far, in order */
 		readonly calls: DriverCall[];
 		/** the screen `snapshot()` currently returns */
@@ -417,6 +428,16 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		},
 	};
 	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
+	const { alertBackends, frontmost } = options;
+	if (alertBackends !== undefined) {
+		driver.alertOn = async (backend) =>
+			run<AlertInfo | null>({ method: "alertOn", backend }, () =>
+				alertBackends.includes(backend) ? findAlert(currentScreen()) : null
+			);
+	}
+	if (frontmost !== undefined) {
+		driver.isFrontmost = async (bundleId) => run({ method: "isFrontmost", bundleId }, () => frontmost() === bundleId);
+	}
 	return driver;
 }
 

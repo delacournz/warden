@@ -5,6 +5,7 @@ import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import type { Result } from "@delacour/warden-types/result";
 import type { E2eEnv } from "../../env";
 import { ENV_NAMES } from "../../env";
+import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
 import type {
 	AlertInfo,
 	Driver,
@@ -27,7 +28,7 @@ import { locateHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
 import { connectSimd, type SimdClient, spawnSimd } from "./simd-client";
-import type { SettleData } from "./simd-protocol";
+import type { AlertButtonsData, SettleData } from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
 import { typeTextBudgetMs } from "./type-budget";
 
@@ -39,6 +40,9 @@ import { typeTextBudgetMs } from "./type-budget";
  */
 
 export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir">;
+
+/** The iOS driver is a `Driver` plus the optional capabilities of `driver/alerts.ts`. */
+export type IosDriver = Driver & SelectsAll & ReadsAlertOn & ProbesFrontmost;
 
 export type OpenIosDriverOptions = {
 	udid: string;
@@ -71,6 +75,8 @@ const DEFAULT_QUIET_MS = 250;
 const DEFAULT_SETTLE_TIMEOUT_MS = 5_000;
 const SETTLE_MARGIN_MS = 2_000;
 const GESTURE_MARGIN_MS = 5_000;
+/** `frontmost` is one launchd lookup; a helper that has not answered in this long is busy, and the caller carries on without. */
+const FRONTMOST_TIMEOUT_MS = 3_000;
 
 /** USB HID keyboard-page usage ids for the keys `Driver.key` offers. */
 export const KEY_USAGE: Readonly<Record<KeyName, number>> = {
@@ -149,7 +155,7 @@ export function createIosDriver(
 	swap: SwappableClient,
 	simctl: Simctl,
 	opts: { udid: string; now: () => number; sleep: (ms: number) => Promise<void>; log?: Logger }
-): Driver & SelectsAll {
+): IosDriver {
 	const { udid, now, sleep } = opts;
 	const { client } = swap;
 	let axFailures = 0;
@@ -161,6 +167,7 @@ export function createIosDriver(
 	let launchedBundle: string | undefined;
 	const { ready } = client;
 	const nativeSettle = ready.ax.default === "axbridge" && ready.ax.bridge === "available";
+	const bridgeUp = ready.ax.bridge === "available";
 	let settleUnsupported = !nativeSettle;
 
 	const capabilities: DriverCapabilities = {
@@ -290,15 +297,31 @@ export function createIosDriver(
 		return simctl.screenshot(o?.path);
 	}
 
-	async function alert(): DriverResult<AlertInfo | null> {
-		const result = await client.request("alertButtons");
-		if (!result.success) return result;
-		if (result.data === null) return { success: true, data: null };
-		const { title, message, buttons } = result.data;
+	function toAlertInfo(data: NonNullable<AlertButtonsData>): AlertInfo {
+		const { title, message, buttons } = data;
 		const info: AlertInfo = { buttons: normalizeElements(buttons, client.ready.screen).elements };
 		if (title !== undefined) info.title = title;
 		if (message !== undefined) info.message = message;
-		return { success: true, data: info };
+		return info;
+	}
+
+	/** The helper's `alertButtons`: both readers without a `backend`, only that one with it. */
+	async function readAlert(backend?: AlertBackend): DriverResult<AlertInfo | null> {
+		const result = await client.request("alertButtons", params({ backend }));
+		if (!result.success) return result;
+		return { success: true, data: result.data === null ? null : toAlertInfo(result.data) };
+	}
+
+	const alert = (): DriverResult<AlertInfo | null> => readAlert();
+
+	/** Without the bridge `axbridge` has nothing to read: the host reader is the one reader left. */
+	const alertOn = (backend: AlertBackend): DriverResult<AlertInfo | null> =>
+		readAlert(backend === "axbridge" && !bridgeUp ? "ax" : backend);
+
+	async function isFrontmost(bundleId: string): DriverResult<boolean> {
+		if (!bridgeUp) return fail(driverError("E_UNSUPPORTED", "frontmost needs the axbridge backend"));
+		const result = await client.request("frontmost", { bundleId }, { timeoutMs: FRONTMOST_TIMEOUT_MS });
+		return result.success ? { success: true, data: result.data.frontmost } : result;
 	}
 
 	async function health(): DriverResult<HealthInfo> {
@@ -346,7 +369,7 @@ export function createIosDriver(
 		return sendVoid("pressButton", { button: BUTTONS[button] });
 	}
 
-	const driver: Driver & SelectsAll = {
+	const driver: IosDriver = {
 		platform: "ios",
 		id: udid,
 		capabilities,
@@ -396,6 +419,8 @@ export function createIosDriver(
 		orientation,
 		settle,
 		alert,
+		alertOn,
+		isFrontmost,
 		appearance: (set) => simctl.appearance(set),
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();

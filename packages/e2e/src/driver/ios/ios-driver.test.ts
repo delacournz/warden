@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { canProbeFrontmost, canReadAlertOn } from "../alerts";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
 import { settleDetailOf } from "../settle";
@@ -460,6 +461,93 @@ describe("Driver methods over the helper", () => {
 		expect(alert?.title).toBe("Allow notifications?");
 		expect(alert?.message).toBe("Updates");
 		expect(alert?.buttons.map((button) => `${button.id}:${button.label}`)).toEqual(["0:Allow", "1:Don't Allow"]);
+	});
+});
+
+describe("system alerts through one reader and the frontmost probe", () => {
+	const allowButtons = [
+		{ role: "button", rawType: "Button", label: "Allow", frame: { x: 0, y: 0, width: 100, height: 44 } },
+		{ role: "button", rawType: "Button", label: "Don't Allow", frame: { x: 100, y: 0, width: 100, height: 44 } },
+	];
+
+	test("alertOn sends the backend and reads the same payload as alert()", async () => {
+		const { driver, helper } = await open((request) =>
+			request.op === "alertButtons" ? { data: { title: "Allow?", buttons: allowButtons } } : undefined
+		);
+		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		const alert = await unwrapped(driver.alertOn("ax"));
+		expect(alert?.title).toBe("Allow?");
+		expect(alert?.buttons.map((button) => button.label)).toEqual(["Allow", "Don't Allow"]);
+		expect((await unwrapped(driver.alertOn("axbridge")))?.buttons).toHaveLength(2);
+		expect(helper.of("alertButtons").map((request) => request.backend)).toEqual(["ax", "axbridge"]);
+	});
+
+	test("alert() still reads both readers (no backend on the wire)", async () => {
+		const { driver, helper } = await open((request) => (request.op === "alertButtons" ? { data: null } : undefined));
+		expect(await unwrapped(driver.alert())).toBeNull();
+		expect(helper.of("alertButtons")[0]).not.toHaveProperty("backend");
+	});
+
+	test("alertOn: no alert is null; a modal without readable buttons is an alert with no buttons", async () => {
+		let reply: unknown = null;
+		const { driver } = await open((request) => (request.op === "alertButtons" ? { data: reply } : undefined));
+		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		expect(await unwrapped(driver.alertOn("axbridge"))).toBeNull();
+		reply = { title: "Open this page in “app”?", buttons: [] };
+		expect(await unwrapped(driver.alertOn("axbridge"))).toEqual({ title: "Open this page in “app”?", buttons: [] });
+	});
+
+	test("alertOn passes a helper failure on", async () => {
+		const { driver } = await open((request) =>
+			request.op === "alertButtons"
+				? { error: { code: "E_AX_UNAVAILABLE", message: "bridge unavailable", retryable: true } }
+				: undefined
+		);
+		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		const result = await driver.alertOn("axbridge");
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error.code).toBe("E_AX_UNAVAILABLE");
+	});
+
+	test("isFrontmost asks the helper about the bundle and answers its verdict", async () => {
+		let frontmost = false;
+		const { driver, helper } = await open((request) =>
+			request.op === "frontmost" ? { data: { frontmost, pid: 12, frontmostPid: frontmost ? 12 : 3 } } : undefined
+		);
+		if (!canProbeFrontmost(driver)) throw new Error("the iOS driver probes the frontmost app");
+		expect(await unwrapped(driver.isFrontmost(BUNDLE))).toBe(false);
+		frontmost = true;
+		expect(await unwrapped(driver.isFrontmost(BUNDLE))).toBe(true);
+		expect(helper.of("frontmost")[0]).toMatchObject({ bundleId: BUNDLE });
+	});
+
+	test("without the AX bridge alertOn('axbridge') reads the host reader and isFrontmost is never asked", async () => {
+		const helper = fakeSimd((request) => (request.op === "alertButtons" ? { data: null } : undefined), {
+			ready: { ax: { default: "ax", bridge: "missing" } },
+		});
+		const result = await openIosDriver({
+			udid: UDID,
+			exec: fakeExec([["xcrun", {}]]),
+			spawn: helper.spawn,
+			helperPath: "/opt/warden-simd",
+			exists: () => false,
+		});
+		if (!result.success) throw new Error(result.error.message);
+		opened.push(result.data);
+		const driver = result.data;
+		if (!canReadAlertOn(driver) || !canProbeFrontmost(driver)) throw new Error("iOS driver capabilities expected");
+		expect(await unwrapped(driver.alertOn("axbridge"))).toBeNull();
+		expect(helper.of("alertButtons")[0]).toMatchObject({ backend: "ax" });
+		const front = await driver.isFrontmost(BUNDLE);
+		expect(!front.success && front.error.code).toBe("E_UNSUPPORTED");
+		expect(helper.of("frontmost")).toHaveLength(0);
+	});
+
+	test("isFrontmost against a helper without the op is a failure the caller can ignore", async () => {
+		const { driver } = await open(() => undefined);
+		if (!canProbeFrontmost(driver)) throw new Error("the iOS driver probes the frontmost app");
+		const result = await driver.isFrontmost(BUNDLE);
+		expect(result.success).toBe(false);
 	});
 });
 
