@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type Exec, execError } from "../exec";
+import { findNodeBin } from "../node-bin";
 import type { Platform } from "../types";
 import { FINGERPRINT_TIMEOUT_MS } from "./builds.defaults";
 import type { Project } from "./config";
@@ -43,11 +43,7 @@ export function parseFingerprintOutput(stdout: string): Result<string> {
 
 /** `node_modules/.bin/fingerprint` nearest to `root` (hoisted monorepos put it at the repo root). */
 export function findFingerprintBin(root: string, exists: (path: string) => boolean = existsSync): string | undefined {
-	for (let dir = root; ; dir = dirname(dir)) {
-		const bin = join(dir, "node_modules", ".bin", "fingerprint");
-		if (exists(bin)) return bin;
-		if (dirname(dir) === dir) return undefined;
-	}
+	return findNodeBin(root, "fingerprint", exists);
 }
 
 /**

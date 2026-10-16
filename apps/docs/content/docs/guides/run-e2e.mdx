@@ -90,7 +90,7 @@ When the run ends, every failed flow is listed with its failing tests, the first
 
 `e2e-report.json` gives each flow `verdict`, `attempts` and `tests[]` (`title`, `status`, `durationMs`, `error`, `artifacts`). A flow fails when any of its tests failed or timed out, or its process exited non-zero. When a process wrote no `results.jsonl` at all (a crash before the first test), the verdict falls back to the exit code with a warning. Under `CI`, a `test.only` left in a spec fails the run and is listed under `only`.
 
-Before the first flow, warden starts the iOS driver helper of every leased device at once and takes one accessibility snapshot on each (`warmDrivers`, on by default), so the first spec on a device does not pay the cold start. Jobs get `WARDEN_SIMD_SOCKET` and connect in milliseconds. `warmDrivers: false` on the suite, or `--no-warm`, turns it off; a failed warm-up only warns.
+As soon as each device is leased, warden starts its iOS driver helper and takes one accessibility snapshot (`warmDrivers`, on by default), while the app installs and Metro builds, so the first spec on a device does not pay the cold start. Jobs get `WARDEN_SIMD_SOCKET` and connect in milliseconds. `warmDrivers: false` on the suite, or `--no-warm`, turns it off; a failed warm-up only warns.
 
 ## Don't
 
