@@ -12,7 +12,7 @@ import { describeOwner } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit } from "../output";
+import { emit, heading, note, plural, reportError } from "../output";
 import { withSpinner } from "../spinner-context";
 import type { Choice } from "../ui";
 import { IDLE_HELP, parseRuleOpts, registerSimsAudit, STALE_HELP, simsDeps } from "./sims-audit";
@@ -21,7 +21,7 @@ type Deleted = { id: string; name: string };
 type Failed = Deleted & { error: string };
 
 function fail(ctx: CommandContext, message: string): number {
-	ctx.err(ctx.ui.color.red(`warden sims delete: ${message}`));
+	reportError(ctx, "sims delete", message);
 	return 1;
 }
 
@@ -107,7 +107,7 @@ async function selectSims(
 	if (opts.suggested) {
 		const picked = sims.filter(isSuggested);
 		if (picked.length > 0) return { kind: "picked", sims: picked };
-		ctx.err(ui.color.dim("no suggested simulators"));
+		note(ctx, "no suggested simulators");
 		return { kind: "exit", code: 0 };
 	}
 	if (udids.length > 0) {
@@ -125,7 +125,7 @@ async function selectSims(
 	const chosen = new Set(answer);
 	const picked = sims.filter((s) => chosen.has(s.udid));
 	if (picked.length > 0) return { kind: "picked", sims: picked };
-	ctx.err(ui.color.dim("nothing selected"));
+	note(ctx, "nothing selected");
 	return { kind: "exit", code: 0 };
 }
 
@@ -179,17 +179,19 @@ async function deleteCmd(ctx: CommandContext, udids: string[], opts: DeleteOpts)
 	const sims = await listSims(ctx, rules.data);
 	if (!sims.success) return fail(ctx, sims.error);
 	if (sims.data.length === 0) {
-		ctx.err(color.dim("no simulators"));
+		note(ctx, "no simulators");
 		return 0;
 	}
 	const selection = await selectSims(ctx, sims.data, udids, opts);
 	if (selection.kind === "exit") return selection.code;
 	const picked = selection.sims;
+	if (!opts.json)
+		heading(ctx, "sims delete", `${plural(picked.length, "simulator")}${opts.dryRun ? " · dry run" : ""}`);
 	if (opts.dryRun) return dryRun(ctx, picked, opts.json === true);
 	if (!opts.yes && !(await confirmDelete(ctx, picked))) return 1;
 
 	const result = await withSpinner(ctx, `deleting ${picked.length} simulator(s)…`, (sctx) => deleteAll(sctx, picked));
-	for (const f of result.failed) ctx.err(color.red(`skipped ${f.name} (${f.id}): ${f.error}`));
+	for (const f of result.failed) reportError(ctx, "sims delete", `skipped ${f.name} (${f.id}): ${f.error}`);
 	const text = result.deleted.map((d) => color.green(`deleted ${d.name} (${d.id})`)).join("\n");
 	if (opts.json || text) emit(ctx, opts.json === true, result, text);
 	return result.failed.length > 0 ? 1 : 0;
@@ -197,6 +199,7 @@ async function deleteCmd(ctx: CommandContext, udids: string[], opts: DeleteOpts)
 
 export const simsCommand = defineCommand({
 	name: "sims",
+	group: "Devices",
 	summary: "simulator + runtime disk audit (default), prune idle warden sims, delete (multi-select)",
 	register: (cmd, ctx, done) => {
 		registerSimsAudit(cmd, ctx, done);

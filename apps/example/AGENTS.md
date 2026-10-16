@@ -81,7 +81,7 @@ bun run e2e --all                    # warden e2e example (this checkout's warde
 bun run e2e:dev -- --all             # warden e2e example-dev: dev client + warden's Metro
 bun run e2e:affected -- --explain    # which flows this branch needs
 bun run e2e:flow todos               # one flow
-WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=nz.co.delacour.warden.example bun test e2e/todos.e2e.ts   # by hand, on an installed build
+WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=nz.co.delacour.warden.example bun test --preload @delacour/warden-e2e/preload e2e/todos.e2e.ts   # by hand, on an installed build
 ```
 
 Never start Metro or export device env vars for a suite: `warden e2e <suite>` does both. By hand, the build must already be installed on the sim (`WARDEN_UDID`); add `WARDEN_PLATFORM=android` for an emulator and `WARDEN_METRO_URL` for a dev client.

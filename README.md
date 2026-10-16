@@ -45,12 +45,13 @@ Agent skill only, for Claude Code, Codex, Cursor and others via the [`skills`](h
 
 ```bash
 warden skill show | pbcopy                 # raw SKILL.md to paste by hand
+warden skill show --file references/ui.md  # print one file of the skill folder
 warden skill install                       # bunx skills add ~/.warden/skill --skill warden -g (this binary's copy)
 warden skill install --from github         # bunx skills add delacournz/warden --skill warden -g (updatable via `skills update`)
 warden skill install --project -a claude-code -y   # into the current project, one agent, no prompts
 ```
 
-The skill's source is `skills/warden/SKILL.md`, which is embedded in the binary. `npx` is used when `bunx` isn't available; `--dry-run` prints the command.
+The skill is a folder, `skills/warden/` (`SKILL.md` + `references/{ui,specs,suites,troubleshooting}.md`), embedded in the binary. `npx` is used when `bunx` isn't available; `--dry-run` prints the command.
 
 For source builds and one-shot installs, `~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`.
 
@@ -188,7 +189,7 @@ An `e2e.<suite>` in `warden.config.ts` maps flow files to the screens they drive
 
 Dev-client suites add `metro: {}`: `warden e2e <suite>` then leases a port, starts its own Metro in the project root, waits until that port is proven to serve this checkout (another worktree's Metro on it fails the run instead of being attached to), prewarms the bundle and exports `WARDEN_METRO_URL` / `WARDEN_PORT` to the spec processes. `devices: [{ profile, count, env, default }]` runs several device legs concurrently (`--devices all`), `mode: "single"` runs one spec process per device over its share of the flows, and `jobTimeoutMs` (default 10 min) kills a hung spec process.
 
-Flows are `*.e2e.ts` specs written with `@delacour/warden-e2e` (`bun add -d @delacour/warden-e2e`, same version as warden) and run by `bun test`: `test("…", async ({ app, device, screen }) => { await expect(screen.getByTestId("x")).toBeVisible(); })`. `warden e2e` leases the devices, installs the build, sets `WARDEN_UDID` / `WARDEN_BUNDLE_ID` / `WARDEN_LAUNCH_ARGS` and friends, and judges each flow from the spec's `results.jsonl`; `spec: { bundleId, launchArgs, timeout, actionTimeout, assertionTimeout }` on the suite tunes it, `warmDrivers: false` (or `--no-warm`) skips the iOS helper pre-warm. A failed test leaves `failure.png`, `screen-at-failure.txt` and `trace.jsonl` under `<batchDir>/e2e/<worker>-<seq>/`. See the docs guide *Write e2e specs*.
+Flows are `*.e2e.ts` specs written with `@delacour/warden-e2e` (`bun add -d @delacour/warden-e2e`, same version as warden) and run by `bun test --preload @delacour/warden-e2e/preload` (or a `bunfig.toml` preload): `test("…", async ({ app, device, screen }) => { await expect(screen.getByTestId("x")).toBeVisible(); })`. `warden e2e` leases the devices, installs the build, sets `WARDEN_UDID` / `WARDEN_BUNDLE_ID` / `WARDEN_LAUNCH_ARGS` and friends, and judges each flow from the spec's `results.jsonl`; `spec: { bundleId, launchArgs, timeout, actionTimeout, assertionTimeout }` on the suite tunes it, `warmDrivers: false` (or `--no-warm`) skips the iOS helper pre-warm. A failed test leaves `failure.png`, `screen-at-failure.txt` and `trace.jsonl` under `<batchDir>/e2e/<worker>-<seq>/`. See the docs guide *Write e2e specs*.
 
 ### Benchmarks
 
@@ -239,7 +240,7 @@ Claim, then pass the device explicitly: `warden claim ios --json` → use the re
 
 - a **SessionEnd** hook, which **shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself (they were off when it first touched them), are shut down. A sim that was already running when the agent picked it up, such as your own Simulator.app one, is released but left on. On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim with its next `warden claim`.
 - **Sessions that die without SessionEnd** (killed or terminal closed): their leases go stale after their TTL (30 min; 5 min for a bare agent claim). `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by `claim`/`run` (`WARDEN_AUTO_GC=0` turns this off), as well as on demand.
-- the `~/.claude/skills/warden/SKILL.md` skill.
+- the skill folder (`SKILL.md` + `references/`), staged in `$WARDEN_HOME/skill/warden/` and installed with the vercel skills CLI (`bunx skills add <dir> --skill warden -g -a claude-code -y`, `npx` fallback; `--dry-run` prints the command), which places it at `~/.agents/skills/warden` and symlinks `~/.claude/skills/warden`. Without bun or node this step is skipped; use `warden skill show`. It also writes, directly, the rule `~/.claude/rules/warden.md`. A leftover `~/.claude/rules/agent-device.md` or `argent.md` from the retired setup is reported but never deleted.
 
 It also removes the `PreToolUse` device-lease hook older versions installed (`warden hook pretool` stays a no-op, so an old config keeps working).
 

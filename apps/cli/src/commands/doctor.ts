@@ -10,7 +10,9 @@ import { hasWardenHook } from "../hooks/claude-settings";
 import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook } from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
 import { NPM_PACKAGE } from "../npm/platforms";
-import { emit } from "../output";
+import { emit, plural } from "../output";
+import { RULE_MD, staleSkillFiles } from "../skill";
+import { SYMBOLS } from "../ui";
 import { type BuildInfo, currentBuild } from "../update/build-info";
 import { fetchHelper, tarExtractHelper } from "../update/fetch-helper";
 import { type InstallOrigin, installOrigin } from "../update/install-origin";
@@ -142,9 +144,28 @@ function codexHook(ctx: CommandContext): Probe {
 	});
 }
 
-function skillPresent(home: string): Probe {
-	const path = join(home, ".claude", "skills", "warden", "SKILL.md");
-	return existsSync(path) ? { ok: true, detail: path } : { ok: false, detail: "run `warden install --claude`" };
+const INSTALL_HINT = "run `warden install --claude`";
+
+/** The skill folder under `~/.claude/skills/warden`: every embedded file present and current. */
+function skillProbe(home: string): Probe {
+	const dir = join(home, ".claude", "skills", "warden");
+	if (!existsSync(join(dir, "SKILL.md"))) return { ok: false, detail: INSTALL_HINT };
+	const { missing, outdated } = staleSkillFiles(dir);
+	if (missing.length === 0 && outdated.length === 0) return { ok: true, detail: dir };
+	const parts = [
+		...(missing.length > 0 ? [`missing ${missing.join(", ")}`] : []),
+		...(outdated.length > 0 ? [`outdated ${outdated.join(", ")}`] : []),
+	];
+	return { ok: false, detail: `${parts.join("; ")} — ${INSTALL_HINT}` };
+}
+
+/** `~/.claude/rules/warden.md` matches the embedded rule. */
+function ruleProbe(home: string): Probe {
+	const path = join(home, ".claude", "rules", "warden.md");
+	if (!existsSync(path)) return { ok: false, detail: INSTALL_HINT };
+	return readFileSync(path, "utf8") === RULE_MD
+		? { ok: true, detail: path }
+		: { ok: false, detail: `outdated — ${INSTALL_HINT}` };
 }
 
 function staleLeases(ctx: CommandContext): Probe {
@@ -210,12 +231,13 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		check("path", "optional", onPath(ctx, home)),
 		check("claude-hook", "optional", claudeHook(home)),
 		check("codex-hook", "optional", codexHook(ctx)),
-		check("skill", "optional", skillPresent(home)),
+		check("skill", "optional", skillProbe(home)),
+		check("rule", "optional", ruleProbe(home)),
 		check("stale-leases", "optional", staleLeases(ctx)),
 	];
 }
 
-const MARK: Record<CheckStatus, string> = { ok: "✓", warn: "!", fail: "✗" };
+const MARK: Record<CheckStatus, string> = SYMBOLS;
 
 function mark(ctx: CommandContext, status: CheckStatus): string {
 	const { color } = ctx.ui;
@@ -271,13 +293,20 @@ async function doctor(
 			return `${mark(ctx, c.status)} ${c.name.padEnd(width)}  ${detail}`;
 		})
 		.join("\n");
-	emit(ctx, opts.json, { ok, checks, ...(fetched ? { helperFetch: fetched } : {}) }, text);
+	const count = (status: CheckStatus) => checks.filter((c) => c.status === status).length;
+	const detail = [
+		`${count("ok")} ok`,
+		...(count("warn") > 0 ? [plural(count("warn"), "warning")] : []),
+		...(count("fail") > 0 ? [`${count("fail")} failed`] : []),
+	].join(" · ");
+	emit(ctx, opts.json, { ok, checks, ...(fetched ? { helperFetch: fetched } : {}) }, text, { scope: "doctor", detail });
 	return ok ? 0 : 1;
 }
 
 export function createDoctorCommand(deps: DoctorDeps): Command {
 	return defineCommand({
 		name: "doctor",
+		group: "Setup",
 		summary:
 			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases",
 		register: (cmd, ctx, done) => {

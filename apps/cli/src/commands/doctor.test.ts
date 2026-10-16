@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { bunExec } from "@delacour/warden-core/exec";
 import { MIGRATIONS } from "@delacour/warden-core/store";
 import { Chalk } from "chalk";
@@ -10,6 +10,7 @@ import { mergeClaudeSettings } from "../hooks/claude-settings";
 import { mergeCodexHooks } from "../hooks/codex-hooks";
 import { fakeHelperDist } from "../npm/helper.testing";
 import { packHelper } from "../npm/helper-asset";
+import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "../skill";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { createDoctorCommand, type DoctorCheck, doctorCommand, installProbe } from "./doctor";
 import type { HelperDeps } from "./doctor-helper";
@@ -43,8 +44,13 @@ function installEverything(home: string, env: TestContext["env"]): TestContext["
 	mkdirSync(bin, { recursive: true });
 	writeFileSync(join(bin, "warden"), "#!/bin/sh\n");
 	chmodSync(join(bin, "warden"), 0o755);
-	mkdirSync(join(home, ".claude", "skills", "warden"), { recursive: true });
-	writeFileSync(join(home, ".claude", "skills", "warden", "SKILL.md"), "---\nname: warden\n---\n");
+	for (const p of SKILL_PATHS) {
+		const file = join(home, ".claude", "skills", "warden", p);
+		mkdirSync(dirname(file), { recursive: true });
+		writeFileSync(file, SKILL_FILES[p]);
+	}
+	mkdirSync(join(home, ".claude", "rules"), { recursive: true });
+	writeFileSync(join(home, ".claude", "rules", "warden.md"), RULE_MD);
 	const merged = mergeClaudeSettings({}, "$HOME/.local/bin/warden");
 	if (!merged.success) throw new Error(merged.error);
 	writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify(merged.data.settings));
@@ -65,6 +71,7 @@ describe("warden doctor", () => {
 		expect(r.path).toMatchObject({ status: "warn", level: "optional" });
 		expect(r["claude-hook"]?.status).toBe("warn");
 		expect(r.skill?.status).toBe("warn");
+		expect(r.rule?.status).toBe("warn");
 		expect(r["stale-leases"]?.status).toBe("ok");
 		expect(JSON.parse(c.stdout.join("\n")).ok).toBe(true);
 	});
@@ -78,6 +85,37 @@ describe("warden doctor", () => {
 		expect(await doctorCommand.run(c)).toBe(0);
 		expect(checks(c).filter((x) => x.status !== "ok")).toEqual([]);
 		expect(byName(c)["sim-helper"]?.detail).toContain(helper);
+	});
+
+	test("skill: SKILL.md present but a reference missing → warn naming it", async () => {
+		const c = setup(["--json"]);
+		c.env = installEverything(c.cwd, c.env);
+		rmSync(join(c.cwd, ".claude", "skills", "warden", "references", "ui.md"));
+		await doctorCommand.run(c);
+		expect(byName(c).skill?.status).toBe("warn");
+		expect(byName(c).skill?.detail).toContain("missing references/ui.md");
+	});
+
+	test("skill: a differing file → warn outdated", async () => {
+		const c = setup(["--json"]);
+		c.env = installEverything(c.cwd, c.env);
+		writeFileSync(join(c.cwd, ".claude", "skills", "warden", "references", "suites.md"), "old");
+		await doctorCommand.run(c);
+		expect(byName(c).skill?.status).toBe("warn");
+		expect(byName(c).skill?.detail).toContain("outdated references/suites.md");
+	});
+
+	test("rule: differs from the embedded copy → warn outdated; absent → warn", async () => {
+		const c = setup(["--json"]);
+		c.env = installEverything(c.cwd, c.env);
+		writeFileSync(join(c.cwd, ".claude", "rules", "warden.md"), "old");
+		await doctorCommand.run(c);
+		expect(byName(c).rule).toMatchObject({ status: "warn", level: "optional" });
+		expect(byName(c).rule?.detail).toContain("outdated");
+		rmSync(join(c.cwd, ".claude", "rules", "warden.md"));
+		c.stdout.length = 0;
+		await doctorCommand.run(c);
+		expect(byName(c).rule?.status).toBe("warn");
 	});
 
 	test("install: always reported, ok", async () => {
@@ -183,6 +221,7 @@ describe("warden doctor", () => {
 		const out = c.stdout.join("\n");
 		expect(out).toContain("✓ db");
 		expect(out).toContain("! skill");
+		expect(out).toContain("! rule");
 	});
 
 	test("colour: ✓ green, ! yellow, ✗ red; --json stays plain", async () => {

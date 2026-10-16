@@ -11,7 +11,7 @@ import { parsePlatform, resolveOwner, resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
-import { emit } from "../output";
+import { emit, heading, reportError } from "../output";
 import { withSpinner } from "../spinner-context";
 
 /** Effects `app ensure` needs beyond `CommandContext` — injectable for tests. */
@@ -212,7 +212,7 @@ function projectOptions(opts: ProjectOpts): Pick<EnsureOptions, "project" | "bun
 }
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
-	ctx.err(ctx.ui.color.red(`warden app ${sub}: ${message}`));
+	reportError(ctx, `app ${sub}`, message);
 	return 1;
 }
 
@@ -238,6 +238,7 @@ async function ensureCmd(
 	if (install.data.installMode !== undefined && device.data === undefined) {
 		return fail(ctx, "ensure", "--install-mode needs a device (drop --no-install)");
 	}
+	if (!opts.json) heading(ctx, "app ensure", `${platform.data}${device.data ? ` · ${device.data}` : ""}`);
 	const res = await withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {
 		const result = await ensureAppFor(sctx, deps, owner, platform.data, device.data, {
 			...projectOptions(opts),
@@ -307,6 +308,7 @@ async function fingerprintCmd(
 export function createAppCommand(deps: AppDeps): Command {
 	return defineCommand({
 		name: "app",
+		group: "Builds",
 		summary: "fingerprint an Expo app and install the matching build (installed → cache → EAS → local build)",
 		register: (cmd, ctx, done) => {
 			cmd

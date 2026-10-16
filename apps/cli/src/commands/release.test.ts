@@ -142,4 +142,35 @@ describe("warden release", () => {
 		expect(out.quarantined).toEqual(["2"]);
 		expect(out.notes.join(" ")).toContain("FOREIGN");
 	});
+
+	test("nothing selected in a terminal: pick leases from a menu (own ones ticked)", async () => {
+		const c = setup([]);
+		const mine = lease(c, "U1");
+		const theirs = lease(c, "U2", other);
+		const ui = scriptedUi({ interactive: true, multiselect: [[mine.id]] });
+		c.ui = ui;
+		expect(await releaseCommand.run(c)).toBe(0);
+		expect(ui.events).toContain(`multiselect: Release which leases? [*${mine.id} +${theirs.id}]`);
+		expect(c.db.listLeases().map((l) => l.id)).toEqual([theirs.id]);
+	});
+
+	test("menu cancelled or empty: nothing released, exit 1 / 0", async () => {
+		const c = setup([]);
+		const mine = lease(c, "U1");
+		const ui = scriptedUi({ interactive: true, multiselect: [undefined, []] });
+		c.ui = ui;
+		expect(await releaseCommand.run(c)).toBe(1);
+		expect(ui.events).toContain("cancelled: Aborted.");
+		expect(await releaseCommand.run(c)).toBe(0);
+		expect(c.db.listLeases().map((l) => l.id)).toEqual([mine.id]);
+	});
+
+	test("nothing selected with --json or no leases: still a usage error", async () => {
+		const c = setup(["--json"]);
+		c.ui = scriptedUi({ interactive: true });
+		expect(await releaseCommand.run(c)).toBe(1);
+		lease(c, "U1");
+		expect(await releaseCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("nothing selected");
+	});
 });

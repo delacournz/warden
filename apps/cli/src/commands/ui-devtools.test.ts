@@ -42,16 +42,19 @@ type Harness = {
 	probes: number[];
 };
 
-/** A leased device, a fake Metro with scripted evaluate answers, and a fake collector spawner. */
+/** A leased device, a fake Metro with scripted evaluate answers (the reload probe answers `expo` and clears the JS context like a real reload), and a fake collector spawner. */
 function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}) {
 	const page = fakePage();
 	const evaluated: string[] = [];
 	const fake = startFakeMetro({
 		respond: (request, connection) => {
-			if (request.method === "Page.reload") return { result: {} };
 			if (request.method === "Runtime.evaluate") {
 				const expression = String(request.params.expression);
 				evaluated.push(expression);
+				if (expression.includes("reloadAppAsync")) {
+					queueMicrotask(() => fake.emit("Runtime.executionContextsCleared"));
+					return { result: { result: { type: "string", value: "expo" } } };
+				}
 				if (expression === "typeof __warden_cb") return { result: { result: { type: "string", value: "undefined" } } };
 				if (expression.includes("__warden_tree_results")) {
 					const value = expression.includes("delete") ? TREE_ANSWER : "started";
@@ -209,10 +212,11 @@ describe("warden ui tree", () => {
 });
 
 describe("warden ui reload", () => {
-	test("reloads the app's JS", async () => {
+	test("reloads only this app's JS through expo.reloadAppAsync, never POST /reload", async () => {
 		const h = harness();
 		expect(await h.run("reload", "--metro", h.fake.url, "--json")).toBe(0);
-		expect(["cdp", "http"]).toContain((result(h.json()) as { method: string }).method);
+		expect((result(h.json()) as { method: string }).method).toBe("expo");
+		expect(h.fake.reloadPosts).toBe(0);
 	});
 });
 
