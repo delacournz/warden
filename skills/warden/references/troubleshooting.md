@@ -4,8 +4,8 @@
 
 | # | Symptom | Cause | Fix |
 |---|---|---|---|
-| 1 | First tap after launch or navigation ignored | View is in the AX tree before it takes touches | Settle, then re-tap: `warden ui press <t> --settle` then `wait`; in a spec `device.settle()` then tap again (example app: `tapUntil`) |
-| 2 | testIDs vanish 1-6 s after sign-in; keys go nowhere | iOS "Save Password?" sheet | App under the e2e flag: `autoComplete="off"` + `textContentType="oneTimeCode"`. Spec: `device.alert("dismiss")`. Never `defaults write` |
+| 1 | First tap after launch or navigation ignored | View is in the AX tree before it takes touches | Settle, then re-tap: `warden ui press <t> --settle` then `wait`; in a spec `tap({ until: <what the tap opens> })` re-sends it |
+| 2 | testIDs vanish 1-6 s after sign-in; keys go nowhere | iOS "Save Password?" sheet | App under the e2e flag: `autoComplete="off"` + `textContentType="oneTimeCode"`. Spec: `test.use({ systemAlerts: "dismiss" })` or `device.alert("dismiss")`. Never `defaults write` |
 | 3 | `--settle` not quiet, or `frontmost_mismatch` | Still animating, or a SpringBoard prompt is up | Warning only. After a relaunch allow 2-7 s. `warden ui alert get` |
 | 4 | Settle takes ~2.5 s | Two helpers on one simulator | `warden ui close --udid <udid>`, or kill the stale `warden-simd --udid <udid>` |
 | 5 | `reload_failed`, or reload hit other devices | `reload` fell back to Metro's broadcast `/reload` | `warden ui open <bundleId> --relaunch --udid <udid>`, then `warden ui logs start` |
@@ -14,7 +14,7 @@
 | 8 | "0 of 1 elements", or `ax` fallback after relaunch | Helper's stream is reopening | Wait ~2 s; else `warden ui close --udid <udid>` restarts the helper. `warden doctor` shows `degraded` |
 | 9 | Dropped characters | Key pacing too fast | Never lower `WARDEN_SIMD_PACE_MS` / `WARDEN_SIMD_HOLD_MS`. `fill` verifies and retries |
 | 10 | App back at Welcome mid-test | Native crash | Read `~/Library/Logs/DiagnosticReports/<app>-*.ips` |
-| 11 | Deep link ignored | Opened while the app was settling | `device.openLink(url)` again (example app: `openDeepLink`) |
+| 11 | Deep link ignored | Opened while the app was settling | `device.openLink(url, { until })` again (example app: `openDeepLink`) |
 | 12 | `E_AX_UNAVAILABLE` right after launch | Transient | Built-in 5x300 ms retry. `simctl launch` can take >30 s under load |
 | 13 | Exit 3 `engine_unavailable` | No `warden-simd` helper | `warden doctor --fetch-helper` (Intel Mac: no helper) |
 | 14 | Locator not found | View is not `accessible` | Fix the component (`accessible` + `testID`); inspect with `warden ui snapshot -i` and `warden ui tree` |

@@ -1,9 +1,11 @@
 import { expect, test } from "@delacour/warden-e2e";
-import { signedIn } from "./helpers/flows";
+import { FLOW_OPTIONS, signedIn } from "./helpers/flows";
 import { ids } from "./helpers/ids";
 
-test("add, complete and filter todos", async ({ device, screen }) => {
-	await signedIn(device, screen);
+test.use(FLOW_OPTIONS);
+
+test("add, complete and filter todos", async ({ app, screen }) => {
+	await signedIn(app, screen);
 	const remaining = screen.getByTestId(ids.todos.remaining);
 
 	await screen.getByTestId(ids.todos.input).fill("Write e2e flows");
