@@ -45,7 +45,7 @@ PERF-4.4 / PERF-4.6 check:
     - (a) `sessionEnsureApp` caches one `PreparedApp` (the pre-build key) per platform (`apps/cli/src/lease-session.ts:285-301@dfcc68b`). Device 2 waits on the build lock, then re-checks `steps.cached()` with the **pre-build** key (`resolve.ts:63@dfcc68b`), misses, and builds again.
     - (b) Every other fresh worktree of the same project (shared `projectKey`, `project-key.ts:54-62`) computes the pre-build key and misses forever.
     - (c) `recordInstall` stores the requested `hash` (`ensure.ts:241`), so the next run in the same worktree (now keyed post-build) reinstalls.
-- Impact: measured. Bench runs `perf-android-r1` / `-r2` "never reached the tests" (`wdn-perf.md:673`). On every fresh checkout or worktree, the first `warden e2e --app` costs a full native build (minutes) and still fails.
+- Impact: measured. Bench runs `perf-android-r1` / `-r2` "never reached the tests" (`wdn-perf.md:664`). On every fresh checkout or worktree, the first `warden e2e --app` costs a full native build (minutes) and still fails.
 - Proposed fix:
   - In `runLocalBuild`, record `nativeDirExisted = existsSync(join(root, platform))` before the build.
   - After the build, if `after.key !== hash`, accept when all of these hold:
@@ -81,7 +81,7 @@ PERF-4.4 / PERF-4.6 check:
     - `isApkOf` (`local.ts:47-52`) accepts **any** path segment ending in `release`, so `outputs/apk/androidTest/release/app-release-androidTest.apk` (left by a Detox or instrumentation build) qualifies and could be the newest file.
     - On iOS the newest candidate can belong to another project (17-3).
   - `local.test.ts:25-37@dfcc68b` pins the current rule (`since` in the future → `undefined`).
-- Impact: measured. With 17-1, "a fresh checkout can't populate its Android cache without deleting the APK" (`wdn-perf.md:691`); r3 ran only after a manual delete (`wdn-perf.md:673`).
+- Impact: measured. With 17-1, "a fresh checkout can't populate its Android cache without deleting the APK" (`wdn-perf.md:691`); r3 ran only after a manual delete (`wdn-perf.md:664`).
 - Proposed fix:
   - When the build exits 0 and no candidate is `>= since`, fall back to the newest candidate, but only if all of these hold:
     - (a) the post-build key equals the requested key, or re-keys per 17-1;

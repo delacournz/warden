@@ -103,7 +103,7 @@ Auditor 03. Commit `dfcc68b`. HEAD is `d6629f7`, and `git diff dfcc68b HEAD -- p
 - Known?: new
 - Evidence:
   - `settled()` races the call against the attempt's `AbortSignal` and throws `TIMEOUT` on abort. The underlying `client.request` keeps its pending entry and timer (`packages/e2e/src/driver/unwrap.ts:39-56@dfcc68b`, `simd-client.ts:318-342@dfcc68b`).
-  - There is no `cancel` op on the wire (`simd-protocol.ts` op table `:385-395@dfcc68b`; the Swift dispatcher has none).
+  - There is no `cancel` op on the wire (`simd-protocol.ts` op table `:363-373@dfcc68b`; the Swift dispatcher has none).
   - The helper finishes the op. A `typeText` budget can be 10 s+, a `longPress` or `swipe` has its own duration, and a `rebind` takes up to 3 s.
   - The next attempt's `app.open` (`packages/e2e/src/app.ts:77@dfcc68b`, owned by 09) runs `simctl launch` while those HID events still land.
 - Impact: estimated, iOS, only on attempts that end mid-input (test deadline). Keys from the old attempt land in the relaunching app or in SpringBoard, which can turn a retry red. No bench number exists (retries = 0 there).
@@ -137,7 +137,7 @@ Auditor 03. Commit `dfcc68b`. HEAD is `d6629f7`, and `git diff dfcc68b HEAD -- p
 - Evidence:
   - `simctlFailure` maps the domain name, whatever the code, to `E_APP_UNAVAILABLE` for app commands (`simctl.ts:162-167@dfcc68b`). The test uses "error 4", the not-installed case (`simctl.test.ts:95-117@dfcc68b`).
   - The same domain also carries transient denials (code 1, "request was denied by service delegate (SBMainWorkspace)", seen right after a terminate or while SpringBoard is busy).
-  - `E_APP_UNAVAILABLE` is not retryable and maps to `DRIVER` (`unwrap.ts:8-16,18-22@dfcc68b`).
+  - `E_APP_UNAVAILABLE` is not retryable and maps to `DRIVER` (`unwrap.ts:7-15,17-21@dfcc68b`).
 - Impact: estimated, iOS. A transient launch denial fails the test with "app unavailable" instead of being retried (a retry costs ~0.3–1 s).
 - Proposed fix: map only "not installed | found nothing | No such app | error 4" to `E_APP_UNAVAILABLE`. Map other FBS codes to `E_IO` with `retryable: true`, and retry `launch` / `openUrl` once after 300 ms. The change is additive, in `simctl.ts`.
 - Effort: S
@@ -151,7 +151,7 @@ Auditor 03. Commit `dfcc68b`. HEAD is `d6629f7`, and `git diff dfcc68b HEAD -- p
 - Severity: P3
 - Known?: new
 - Evidence:
-  - `toE2eError` keeps only the code and message (`unwrap.ts:24-26@dfcc68b`); `driverFailure` does the same (`screen/context.ts:218-220@dfcc68b`, owned by 07). The `detail` that is lost includes simctl `{argv, exitCode}` (`simctl.ts:155@dfcc68b`), timeout `{op, timeoutMs}` (`simd-client.ts:323-325@dfcc68b`), typing `rest` and wire `wireCode` (`simd-protocol.ts:378-385@dfcc68b`).
+  - `toE2eError` keeps only the code and message (`unwrap.ts:24-26@dfcc68b`); `driverFailure` does the same (`screen/context.ts:218-220@dfcc68b`, owned by 07). The `detail` that is lost includes simctl `{argv, exitCode}` (`simctl.ts:155@dfcc68b`), timeout `{op, timeoutMs}` (`simd-client.ts:323-325@dfcc68b`), typing `rest` and wire `wireCode` (`simd-protocol.ts:419-428@dfcc68b`).
   - `results.jsonl` and the failure text therefore cannot say which op timed out after how long, or which wire code was unknown.
 - Impact: n/a (diagnosis time).
 - Proposed fix: add `cause: DriverError` to `E2eError` (or a `detail` field) and print `detail` scalars in the failure excerpt. The change is additive.
@@ -203,7 +203,7 @@ Auditor 03. Commit `dfcc68b`. HEAD is `d6629f7`, and `git diff dfcc68b HEAD -- p
 - K15: known-confirmed, for the driver side. `app.launch` clears the `launchedBundle` gate as soon as `rebind` answers `bound` (`ios-driver.ts:468-469@dfcc68b`). The settle in `app.open({wait:"quiet"})` then judges the app's own run loop with no further condition, so an RN app idle while its JS loads reads as quiet before the welcome screen. The policy fix belongs to 09 (`app.ts:58-65`).
 - K16: known-extended (03-7, 03-10). A timeout maps to non-retryable `E_IO` with no "timed out", and the span does not split simctl time from rebind time.
 - K18: known-confirmed. `settle{bundleId}` is sent only while the gate is set, that is, when `rebind` did not bind (`ios-driver.ts:294-302@dfcc68b`).
-- Plan claim "hand-written wire validator (no zod on snapshots)" (`docs/plans/wdn-perf.md:50`): confirmed with a caveat. Element trees go through the hand-written `isWireElement` (`simd-protocol.ts:156-163@dfcc68b`, via `z.custom` at `:270`). Each reply still goes through two small zod parses: the `responseSchema` envelope (`:225-230`) and the top-level `snapshotDataSchema` (`:265-277`, called at `simd-client.ts:288-302`). `alertButtons` and `elementAtPoint` still run the full recursive zod `wireElementSchema` (`:340-347,280`). At 170 snapshots per rep and the module's own measurement (0.05 ms warm per tree), the remaining zod cost is estimated at a few ms per rep. Not worth a finding.
+- Plan claim "hand-written wire validator (no zod on snapshots)" (`docs/plans/wdn-perf.md:50`): confirmed with a caveat. Element trees go through the hand-written `isWireElement` (`simd-protocol.ts:152-159@dfcc68b`, via `z.custom` at `:265`). Each reply still goes through two small zod parses: the `responseSchema` envelope (`:207-210`) and the top-level `snapshotDataSchema` (`:260-272`, called at `simd-client.ts:288-302`). `alertButtons` and `elementAtPoint` still run the full recursive zod `wireElementSchema` (`:323-330,274`). At 170 snapshots per rep and the module's own measurement (0.05 ms warm per tree), the remaining zod cost is estimated at a few ms per rep. Not worth a finding.
 - Other hotspots checked and found cheap (no finding): the `traceDriver` Proxy plus `AsyncLocalStorage.run` cost one Map lookup, one ALS frame and one span object per call, and no span is created outside an attempt (`traced-driver.ts:51-53@dfcc68b`). The NDJSON splitter re-splits the buffered tail per chunk, which is negligible at ~18 KB snapshots. There is one `setTimeout` per request, cleared on answer, and the pending map entry is removed on timeout. `open.ts` / `openIosDriver` run the helper connect and the AutomationEnabled probe in parallel (`ios-driver.ts:536@dfcc68b`; the AutomationEnabled ordering finding is 16's). `capabilities` is built once per driver. `pressKeys` on iOS is one RPC per Backspace, but pacing (70 ms/key) dominates the RPC cost, and `selectAll` covers the plain-text case. `locate-helper` costs at most three `existsSync` calls and one `realpathSync`, run twice on the stdio path (`ios-driver.ts:530,505@dfcc68b`), which is microseconds.
 
 ## Gaps I could not assess here
