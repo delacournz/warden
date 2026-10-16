@@ -16,6 +16,9 @@ export const FAIRNESS_RULES: readonly string[] = [
 	"Warm medians exclude rep 1 (cold)",
 	"Machine-readable reporters only",
 	"Host otherwise idle; load average recorded",
+	"Android `sim` counts the app and every framework's on-device helpers (uiautomator, instrumentation runners, Maestro, agent-device, Argent, warden-uiad), matched case-insensitively",
+	"Host processes are tracked by pid and start time, so a reused pid is never counted",
+	"Android animation scales are reset to the device's original values before every framework and restored at the end",
 ];
 
 /** Escapes a value for a GFM table cell. */
@@ -147,8 +150,9 @@ function resourcesSection(run: BenchRun): string[] {
 		"",
 		...table(headers, rows),
 		"",
-		"Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim` = every process of the device " +
-			"(the simulator's `launchd_sim` tree, or the emulator's `top`). RSS is a per-process sum, so shared framework " +
+		"Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim` = every process of the " +
+			"simulator's `launchd_sim` tree, or on Android the app under test plus every framework's on-device helpers " +
+			"from `top` (every 2 s). RSS is a per-process sum, so shared framework " +
 			"pages are counted once per process: compare the numbers across frameworks, not against physical memory.",
 	];
 }

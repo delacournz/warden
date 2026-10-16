@@ -2,8 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BenchAdapter } from "../adapters/adapter.types";
-import { type FakeExec, fakeExec } from "./exec";
-import { isolate, KNOWN_PROCESS_PATTERNS } from "./isolation";
+import { type FakeExec, type FakeRule, fakeExec } from "./exec";
+import {
+	ANIMATION_SETTINGS,
+	type AnimationBaselines,
+	isolate,
+	KNOWN_PROCESS_PATTERNS,
+	readAnimationScales,
+	recordAnimationScales,
+	restoreAnimationScales,
+} from "./isolation";
 
 const fx = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
 
@@ -27,10 +35,45 @@ const next = stub("maestro", {
 });
 const previous = stub("argent", { processes: [/oldframework/], driverBundleIds: [], dirs: [] });
 
-function make(extra: { adbBoot?: boolean } = {}): FakeExec {
+/** The device's global settings; a missing key is what `settings get` prints as `null`. */
+type Settings = Map<string, string>;
+
+const allScales = (value: string): Settings => new Map(ANIMATION_SETTINGS.map((key) => [key, value]));
+
+/** `adb shell settings get|put|delete global <key>` over an in-memory settings table. */
+function settingsRules(settings: Settings): FakeRule[] {
+	const isSettings = (verb: string) => (a: readonly string[]) =>
+		a[3] === "settings" && a[4] === verb && a[5] === "global";
+	return [
+		{
+			cmd: "adb",
+			match: isSettings("get"),
+			result: (a) => ({ stdout: `${settings.get(a[6] ?? "") ?? "null"}\n` }),
+		},
+		{
+			cmd: "adb",
+			match: isSettings("put"),
+			result: (a) => {
+				settings.set(a[6] ?? "", a[7] ?? "");
+				return {};
+			},
+		},
+		{
+			cmd: "adb",
+			match: isSettings("delete"),
+			result: (a) => {
+				settings.delete(a[6] ?? "");
+				return { stdout: "Deleted 1 rows\n" };
+			},
+		},
+	];
+}
+
+function make(extra: { adbBoot?: boolean; settings?: Settings } = {}): FakeExec {
 	let polls = 0;
 	return fakeExec(
 		[
+			...settingsRules(extra.settings ?? allScales("1.0")),
 			{ cmd: "ps", result: { stdout: `${fx("ps.txt")}  900     1   100   0.0 /bin/oldframework run\n` } },
 			{ cmd: "kill", result: {} },
 			{ cmd: "xcrun", match: (a) => a[1] === "listapps", result: { stdout: fx("simctl-listapps.txt") } },
@@ -56,6 +99,7 @@ function make(extra: { adbBoot?: boolean } = {}): FakeExec {
 
 const base = (exec: FakeExec) => ({
 	exec,
+	animationBaselines: new Map() as AnimationBaselines,
 	platform: "ios" as const,
 	udid: "AAAA-BBBB",
 	benchPids: () => [100, 300, 900],
@@ -133,6 +177,9 @@ describe("isolate", () => {
 			"adb -s emu-1 wait-for-device",
 			"adb -s emu-1 shell getprop sys.boot_completed",
 			"adb -s emu-1 shell getprop sys.boot_completed",
+			"adb -s emu-1 shell settings get global window_animation_scale",
+			"adb -s emu-1 shell settings get global transition_animation_scale",
+			"adb -s emu-1 shell settings get global animator_duration_scale",
 			"adb -s emu-1 shell am force-stop nz.co.delacour.warden.example",
 		]);
 		expect(r.success).toBe(true);
@@ -167,5 +214,160 @@ describe("isolate", () => {
 		]);
 		const r = await isolate({ ...base(exec), rebootBetween: true });
 		expect(r).toEqual({ success: false, error: "simctl boot failed: boom" });
+	});
+});
+
+const SCALES = ["window_animation_scale", "transition_animation_scale", "animator_duration_scale"];
+const settingCalls = (exec: FakeExec, verb: string) =>
+	exec.calls
+		.filter((c) => c.cmd === "adb" && c.args[3] === "settings" && c.args[4] === verb)
+		.map((c) => c.args.slice(5).join(" "));
+
+describe("animation scales", () => {
+	test("the three settings warden's driver zeroes", () => {
+		const names: string[] = [...ANIMATION_SETTINGS];
+		expect(names).toEqual(SCALES);
+	});
+
+	test("read: values as printed, `null` as unset", async () => {
+		const settings: Settings = new Map([
+			["window_animation_scale", "0.5"],
+			["animator_duration_scale", "1"],
+		]);
+		const r = await readAnimationScales(make({ settings }), "emu-1");
+		expect(r).toEqual({
+			success: true,
+			data: { window_animation_scale: "0.5", transition_animation_scale: undefined, animator_duration_scale: "1" },
+		});
+	});
+
+	test("read: a failing adb or a non-numeric value is an error (the value is later passed to a device shell)", async () => {
+		const down = fakeExec([{ cmd: "adb", result: { code: 1, stderr: "device offline" } }]);
+		const a = await readAnimationScales(down, "emu-1");
+		expect(a.success).toBe(false);
+		const settings: Settings = allScales("1.0");
+		settings.set("window_animation_scale", "1.0; reboot");
+		const b = await readAnimationScales(make({ settings }), "emu-1");
+		expect(b).toEqual({ success: false, error: "window_animation_scale: unexpected value '1.0; reboot'" });
+	});
+
+	test("record: the first reading wins, later calls keep it", async () => {
+		const settings = allScales("1.0");
+		const exec = make({ settings });
+		const baselines: AnimationBaselines = new Map();
+		await recordAnimationScales(exec, "emu-1", baselines);
+		for (const key of SCALES) settings.set(key, "0");
+		const again = await recordAnimationScales(exec, "emu-1", baselines);
+		expect(again.success && again.data.window_animation_scale).toBe("1.0");
+		expect(baselines.get("emu-1")?.animator_duration_scale).toBe("1.0");
+		expect(settingCalls(exec, "get")).toHaveLength(3);
+	});
+
+	test("restore: without a recorded baseline it does nothing", async () => {
+		const exec = make();
+		const r = await restoreAnimationScales(exec, "emu-1", new Map());
+		expect(r).toEqual({ success: true, data: [] });
+		expect(exec.calls).toHaveLength(0);
+	});
+
+	test("restore: puts back only the scales that differ and says what changed", async () => {
+		const settings = allScales("1.0");
+		const exec = make({ settings });
+		const baselines: AnimationBaselines = new Map();
+		await recordAnimationScales(exec, "emu-1", baselines);
+		settings.set("window_animation_scale", "0");
+		settings.set("animator_duration_scale", "0");
+		const r = await restoreAnimationScales(exec, "emu-1", baselines);
+		expect(r).toEqual({
+			success: true,
+			data: ["window_animation_scale 0 -> 1.0", "animator_duration_scale 0 -> 1.0"],
+		});
+		expect(settingCalls(exec, "put")).toEqual([
+			"global window_animation_scale 1.0",
+			"global animator_duration_scale 1.0",
+		]);
+		expect([...settings.entries()]).toEqual([...allScales("1.0").entries()]);
+	});
+
+	test("restore: a scale that was unset is deleted again, not written", async () => {
+		const settings: Settings = new Map([["window_animation_scale", "1.0"]]);
+		const exec = make({ settings });
+		const baselines: AnimationBaselines = new Map();
+		await recordAnimationScales(exec, "emu-1", baselines);
+		for (const key of SCALES) settings.set(key, "0");
+		const r = await restoreAnimationScales(exec, "emu-1", baselines);
+		expect(r.success && r.data).toEqual([
+			"window_animation_scale 0 -> 1.0",
+			"transition_animation_scale 0 -> unset",
+			"animator_duration_scale 0 -> unset",
+		]);
+		expect(settingCalls(exec, "delete")).toEqual([
+			"global transition_animation_scale",
+			"global animator_duration_scale",
+		]);
+		expect(settings.has("transition_animation_scale")).toBe(false);
+	});
+
+	test("restore: a failed write is an error naming the setting", async () => {
+		const settings = allScales("1.0");
+		const baselines: AnimationBaselines = new Map();
+		await recordAnimationScales(make({ settings }), "emu-1", baselines);
+		for (const key of SCALES) settings.set(key, "0");
+		const exec = fakeExec([
+			...settingsRules(settings).slice(0, 1),
+			{ cmd: "adb", match: (a) => a[4] === "put", result: { code: 1, stderr: "denied" } },
+		]);
+		const r = await restoreAnimationScales(exec, "emu-1", baselines);
+		expect(r.success).toBe(false);
+		expect(!r.success && r.error).toContain("window_animation_scale");
+	});
+
+	test("isolate (android) records on the first call and writes nothing", async () => {
+		const exec = make();
+		const input = { ...base(exec), platform: "android" as const, udid: "emu-1" };
+		const r = await isolate(input);
+		expect(r.success).toBe(true);
+		expect(input.animationBaselines.get("emu-1")).toEqual({
+			window_animation_scale: "1.0",
+			transition_animation_scale: "1.0",
+			animator_duration_scale: "1.0",
+		});
+		expect(settingCalls(exec, "put")).toEqual([]);
+	});
+
+	test("isolate (android) undoes what the previous framework did, before the app is stopped", async () => {
+		const settings = allScales("1.0");
+		const input = { ...base(make({ settings })), platform: "android" as const, udid: "emu-1" };
+		const lines: string[] = [];
+		await isolate({ ...input, log: (l) => lines.push(l) });
+		for (const key of SCALES) settings.set(key, "0");
+		const second = make({ settings });
+		const r = await isolate({ ...input, exec: second, log: (l) => lines.push(l) });
+		expect(r.success).toBe(true);
+		const all = cmds(second);
+		const lastPut = all.indexOf("adb -s emu-1 shell settings put global animator_duration_scale 1.0");
+		expect(lastPut).toBeGreaterThan(-1);
+		expect(lastPut).toBeLessThan(all.indexOf("adb -s emu-1 shell am force-stop nz.co.delacour.warden.example"));
+		expect([...settings.values()]).toEqual(["1.0", "1.0", "1.0"]);
+		expect(lines).toContain("restored animation scale window_animation_scale 0 -> 1.0");
+	});
+
+	test("isolate (android) with unreadable settings logs and carries on", async () => {
+		const exec = fakeExec([
+			{ cmd: "ps", result: { stdout: fx("ps.txt") } },
+			{ cmd: "adb", match: (a) => a[4] === "get", result: { code: 1, stderr: "offline" } },
+			{ cmd: "adb", result: {} },
+			{ cmd: "bun", result: {} },
+		]);
+		const lines: string[] = [];
+		const r = await isolate({ ...base(exec), platform: "android", udid: "emu-1", log: (l) => lines.push(l) });
+		expect(r.success).toBe(true);
+		expect(lines.some((l) => l.startsWith("animation scales:"))).toBe(true);
+	});
+
+	test("isolate (ios) never touches device settings", async () => {
+		const exec = make();
+		await isolate(base(exec));
+		expect(exec.calls.some((c) => c.args.includes("settings"))).toBe(false);
 	});
 });

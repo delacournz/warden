@@ -87,6 +87,9 @@ artifacts/<fw>/rep-<n>/   native reporter output and resource samples
 - Warm medians exclude rep 1.
 - Machine-readable reporters only.
 - Host otherwise idle, with the load average recorded.
+- Android `sim` counts the app and every framework's on-device helpers, matched case-insensitively.
+- Host processes are tracked by pid and start time, so a reused pid is never counted.
+- Android animation scales are reset to the device's original values before every framework and restored at the end.
 
 ## Caveats per framework
 

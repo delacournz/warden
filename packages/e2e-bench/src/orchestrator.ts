@@ -9,7 +9,7 @@ import { appFingerprint, type EnsuredApp, ensureApp, terminateApp } from "./harn
 import { type ClaimedDevice, claimDevice, deviceInfo, releaseDevice } from "./harness/device";
 import type { Child, Exec, ExecOptions } from "./harness/exec";
 import { hostInfo } from "./harness/host";
-import { isolate } from "./harness/isolation";
+import { isolate, recordAnimationScales, restoreAnimationScales } from "./harness/isolation";
 import { openPhaseLog, timed } from "./harness/phases";
 import { diffResidue, type Owner, ownerFilter, snapshotResidue } from "./harness/residue";
 import { startSampler, type Tick } from "./harness/sampler";
@@ -443,6 +443,8 @@ async function prepareRun(
 	if (opts.platform === "android") {
 		const hidden = await hideErrorDialogs(deps.exec, device.data.udid, true);
 		if (!hidden.success) deps.log(`hide_error_dialogs: ${hidden.error}`);
+		const scales = await recordAnimationScales(deps.exec, device.data.udid);
+		if (!scales.success) deps.log(`animation scales: ${scales.error}`);
 	}
 	const info = await deviceInfo(deps.exec, opts.platform, device.data.udid);
 	const app = await ensureApp(deps.exec, {
@@ -566,6 +568,8 @@ export async function runBench(opts: BenchOptions, deps: BenchDeps): AsyncResult
 		if (claimed.device !== undefined && opts.platform === "android") {
 			const shown = await hideErrorDialogs(deps.exec, claimed.device.udid, false);
 			if (!shown.success) deps.log(`hide_error_dialogs restore: ${shown.error}`);
+			const scales = await restoreAnimationScales(deps.exec, claimed.device.udid);
+			if (!scales.success) deps.log(`animation scales restore: ${scales.error}`);
 		}
 		if (claimed.device?.leaseId !== undefined) {
 			const released = await releaseDevice(deps.exec, {
