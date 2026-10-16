@@ -8,7 +8,16 @@ import { mergeClaudeSettings } from "../hooks/claude-settings";
 import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook, mergeCodexHooks } from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
 import { lineDiff } from "../hooks/text-diff";
-import { SKILL_MD as skill } from "../skill";
+import { RULE_MD, SKILL_NAME, staleSkillFiles } from "../skill";
+import {
+	CLAUDE_AGENT,
+	localSkillRoot,
+	realSkillDeps,
+	runner,
+	type SkillDeps,
+	skillsAddArgs,
+	stageSkillFolder,
+} from "../skill-cli";
 import { type InstallOrigin, recordInstallOrigin } from "../update/install-origin";
 import {
 	describePackageInstall,
@@ -24,10 +33,10 @@ export const HOOK_BINARY = "$HOME/.local/bin/warden";
 export type Runtime = { kind: "compiled"; execPath: string } | { kind: "dev"; cliPath: string };
 
 /** Outside world for `warden install` beyond `CommandContext` (prompts come from `ctx.ui`). */
-export type InstallDeps = { runtime: Runtime };
+export type InstallDeps = { runtime: Runtime; skill: SkillDeps };
 
-export type StepName = "binary" | "skill" | "settings" | "codex-hooks";
-export type StepStatus = "written" | "unchanged" | "skipped" | "declined" | "dry-run" | "error";
+export type StepName = "binary" | "skill" | "rule" | "settings" | "codex-hooks";
+export type StepStatus = "written" | "unchanged" | "skipped" | "declined" | "dry-run" | "failed" | "error";
 export type StepReport = { step: StepName; status: StepStatus; path: string; detail?: string };
 
 export type InstallFlags = { claude?: true; codex?: true; yes?: true; dryRun?: true; shim?: true; json?: true };
@@ -119,15 +128,43 @@ function binarySource(runtime: Runtime): BinarySource {
 	};
 }
 
-function installSkill(ctx: CommandContext, path: string, flags: Flags): StepReport {
+/**
+ * Claude Code skill: stage the embedded folder under `$WARDEN_HOME/skill/warden` and let the `skills` CLI
+ * (`skills add … -a claude-code`) place it in `~/.claude/skills/warden`. Already-current on disk → unchanged.
+ */
+async function installSkill(ctx: CommandContext, deps: SkillDeps, dir: string, flags: Flags): Promise<StepReport> {
+	const { missing, outdated } = staleSkillFiles(dir);
+	if (missing.length === 0 && outdated.length === 0) return report("skill", "unchanged", dir);
+	const prefix = runner(deps);
+	if (!prefix)
+		return report("skill", "skipped", dir, "neither bunx nor npx found — install bun or node, or `warden skill show`");
+	const root = localSkillRoot(ctx);
+	const cmd = [...prefix, ...skillsAddArgs(root, { agent: [CLAUDE_AGENT], yes: flags.yes })];
+	if (flags.dryRun)
+		return report("skill", "dry-run", dir, `would stage ${join(root, SKILL_NAME)} and run ${cmd.join(" ")}`);
+	stageSkillFolder(ctx);
+	ctx.err(flags.json ? `warden install: ${cmd.join(" ")}` : ctx.ui.color.dim(`warden install: ${cmd.join(" ")}`));
+	const code = await deps.runInteractive(cmd, { stdout: flags.json ? "stderr" : "inherit" });
+	return code === 0
+		? report("skill", "written", dir, cmd.join(" "))
+		: report("skill", "failed", dir, `skills CLI exited ${code}`);
+}
+
+/** `~/.claude/rules/warden.md`: the always-loaded rule. */
+function installRule(ctx: CommandContext, path: string, flags: Flags): StepReport {
 	const current = readIfExists(path);
-	if (current === skill) return report("skill", "unchanged", path);
+	if (current === RULE_MD) return report("rule", "unchanged", path);
 	if (flags.dryRun) {
-		showDiff(ctx, flags, lineDiff(current ?? "", skill, path));
-		return report("skill", "dry-run", path);
+		showDiff(ctx, flags, lineDiff(current ?? "", RULE_MD, path));
+		return report("rule", "dry-run", path);
 	}
-	atomicWrite(path, skill);
-	return report("skill", "written", path);
+	atomicWrite(path, RULE_MD);
+	return report("rule", "written", path);
+}
+
+/** Rules from the retired agent-device / argent setup that exist under `claudeDir` (never deleted by install). */
+export function legacyRules(claudeDir: string): string[] {
+	return ["agent-device.md", "argent.md"].map((f) => join(claudeDir, "rules", f)).filter((p) => existsSync(p));
 }
 
 /** Diff lines coloured like git: + green, - red, context dim. */
@@ -239,6 +276,7 @@ const MARK: Record<StepStatus, string> = {
 	"dry-run": "·",
 	skipped: "!",
 	declined: "!",
+	failed: "✗",
 	error: "✗",
 };
 
@@ -262,9 +300,11 @@ async function install(
 	const steps: StepReport[] = [await step("binary", binary, () => installBinary(ctx, binary, deps.runtime, flags))];
 	if (agents.includes("claude")) {
 		const claude = join(home, ".claude");
-		const skillPath = join(claude, "skills", "warden", "SKILL.md");
+		const skillDir = join(claude, "skills", "warden");
+		const rulePath = join(claude, "rules", "warden.md");
 		const settingsPath = join(claude, "settings.json");
-		steps.push(await step("skill", skillPath, () => installSkill(ctx, skillPath, flags)));
+		steps.push(await step("skill", skillDir, () => installSkill(ctx, deps.skill, skillDir, flags)));
+		steps.push(await step("rule", rulePath, () => installRule(ctx, rulePath, flags)));
 		steps.push(await step("settings", settingsPath, () => installSettings(ctx, flags, settingsPath)));
 	}
 	const hooksPath = codexHooksPath({ ...ctx.env, HOME: home });
@@ -275,7 +315,13 @@ async function install(
 	return steps;
 }
 
-function installNotes(flags: Flags, agents: Agent[], steps: StepReport[], binaryPresent: boolean): string[] {
+function installNotes(
+	flags: Flags,
+	agents: Agent[],
+	steps: StepReport[],
+	binaryPresent: boolean,
+	home: string
+): string[] {
 	const notes: string[] = [];
 	if (agents.length === 0) {
 		notes.push("note: no Claude Code or Codex detected — installed the binary only (--claude / --codex to force)");
@@ -285,6 +331,13 @@ function installNotes(flags: Flags, agents: Agent[], steps: StepReport[], binary
 	}
 	if (steps.some((s) => s.step === "codex-hooks" && s.status === "written")) {
 		notes.push("note: Codex skips new hooks until trusted — run /hooks in Codex to review and trust warden's");
+	}
+	if (agents.includes("claude")) {
+		for (const p of legacyRules(join(home, ".claude"))) {
+			notes.push(
+				`note: ${p} is from the retired agent-device/argent setup — warden's rule is ~/.claude/rules/warden.md; delete it if unused`
+			);
+		}
 	}
 	return notes;
 }
@@ -300,6 +353,7 @@ function mark(ctx: CommandContext, status: StepStatus): string {
 		case "skipped":
 		case "declined":
 			return color.yellow(MARK[status]);
+		case "failed":
 		case "error":
 			return color.red(MARK[status]);
 	}
@@ -322,14 +376,14 @@ export async function runInstall(ctx: CommandContext, deps: InstallDeps, flags: 
 	const agents = targetAgents(ctx, flags);
 	const steps = await install(ctx, deps, flags, home, agents);
 	const binaryPresent = existsSync(join(home, ".local", "bin", "warden"));
-	const notes = installNotes(flags, agents, steps, binaryPresent);
+	const notes = installNotes(flags, agents, steps, binaryPresent, home);
 	if (flags.json) {
 		ctx.out(JSON.stringify({ steps, notes }, null, 2));
 	} else {
 		for (const s of steps) ctx.out(stepLine(ctx, s));
 		for (const n of notes) ctx.out(color.yellow(n));
 	}
-	return steps.some((s) => s.status === "error") ? 1 : 0;
+	return steps.some((s) => s.status === "error" || s.status === "failed") ? 1 : 0;
 }
 
 /** Bun-compiled binaries run their entry from the embedded `/$bunfs/` filesystem. */
@@ -342,7 +396,7 @@ export function detectRuntime(main: string = Bun.main, execPath: string = proces
 export function createInstallCommand(deps: () => InstallDeps): Command {
 	return defineCommand({
 		name: "install",
-		summary: "install warden to ~/.local/bin + hooks for detected agents (Claude Code: skill, hook; Codex: hook)",
+		summary: "install warden to ~/.local/bin + hooks for detected agents (Claude Code: skill, rule, hook; Codex: hook)",
 		register: (cmd, ctx, done) => {
 			cmd
 				.option("--claude", "install for Claude Code (default: every detected agent)")
@@ -356,4 +410,7 @@ export function createInstallCommand(deps: () => InstallDeps): Command {
 	});
 }
 
-export const installCommand: Command = createInstallCommand(() => ({ runtime: detectRuntime() }));
+export const installCommand: Command = createInstallCommand(() => ({
+	runtime: detectRuntime(),
+	skill: realSkillDeps(),
+}));

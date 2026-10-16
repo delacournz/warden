@@ -11,6 +11,7 @@ import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook } from "../hook
 import { errorMessage } from "../hooks/json";
 import { NPM_PACKAGE } from "../npm/platforms";
 import { emit } from "../output";
+import { RULE_MD, staleSkillFiles } from "../skill";
 import { type BuildInfo, currentBuild } from "../update/build-info";
 import { fetchHelper, tarExtractHelper } from "../update/fetch-helper";
 import { type InstallOrigin, installOrigin } from "../update/install-origin";
@@ -142,9 +143,28 @@ function codexHook(ctx: CommandContext): Probe {
 	});
 }
 
-function skillPresent(home: string): Probe {
-	const path = join(home, ".claude", "skills", "warden", "SKILL.md");
-	return existsSync(path) ? { ok: true, detail: path } : { ok: false, detail: "run `warden install --claude`" };
+const INSTALL_HINT = "run `warden install --claude`";
+
+/** The skill folder under `~/.claude/skills/warden`: every embedded file present and current. */
+function skillProbe(home: string): Probe {
+	const dir = join(home, ".claude", "skills", "warden");
+	if (!existsSync(join(dir, "SKILL.md"))) return { ok: false, detail: INSTALL_HINT };
+	const { missing, outdated } = staleSkillFiles(dir);
+	if (missing.length === 0 && outdated.length === 0) return { ok: true, detail: dir };
+	const parts = [
+		...(missing.length > 0 ? [`missing ${missing.join(", ")}`] : []),
+		...(outdated.length > 0 ? [`outdated ${outdated.join(", ")}`] : []),
+	];
+	return { ok: false, detail: `${parts.join("; ")} — ${INSTALL_HINT}` };
+}
+
+/** `~/.claude/rules/warden.md` matches the embedded rule. */
+function ruleProbe(home: string): Probe {
+	const path = join(home, ".claude", "rules", "warden.md");
+	if (!existsSync(path)) return { ok: false, detail: INSTALL_HINT };
+	return readFileSync(path, "utf8") === RULE_MD
+		? { ok: true, detail: path }
+		: { ok: false, detail: `outdated — ${INSTALL_HINT}` };
 }
 
 function staleLeases(ctx: CommandContext): Probe {
@@ -210,7 +230,8 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		check("path", "optional", onPath(ctx, home)),
 		check("claude-hook", "optional", claudeHook(home)),
 		check("codex-hook", "optional", codexHook(ctx)),
-		check("skill", "optional", skillPresent(home)),
+		check("skill", "optional", skillProbe(home)),
+		check("rule", "optional", ruleProbe(home)),
 		check("stale-leases", "optional", staleLeases(ctx)),
 	];
 }
