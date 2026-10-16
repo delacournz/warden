@@ -4,8 +4,11 @@
  * `native/ios/Package.swift` links against.
  *
  * Default: download the pinned release tarball (`idb.lock.json`) into `~/Library/Caches/warden-idb/<sha256>.tar.gz`,
- * verify its sha256, extract. `--from-source`: build the same layout from the `native/idb` submodule with idb's own
- * `build.sh`. Idempotent: `idb-libraries/.warden-idb.json` records what is installed.
+ * verify its sha256, extract. `--from-source`: build the same layout with idb's own `build.sh` from a shallow clone of
+ * the pinned tag in `~/Library/Caches/warden-idb/src/<tag>`, or from `WARDEN_IDB_SRC` (a patched checkout).
+ * Idempotent: `idb-libraries/.warden-idb.json` records what is installed.
+ *
+ * No git submodule on purpose: `git worktree remove` refuses any worktree with a populated submodule.
  */
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
@@ -41,6 +44,11 @@ export function parseLock(text: string): IdbLock {
 
 export function cachePath(home: string, sha256: string): string {
 	return join(home, "Library", "Caches", "warden-idb", `${sha256}.tar.gz`);
+}
+
+/** Where `--from-source` keeps its shallow idb checkout for `version`, shared by every worktree. */
+export function sourcePath(home: string, version: string): string {
+	return join(home, "Library", "Caches", "warden-idb", "src", version);
 }
 
 export async function sha256OfFile(path: string): Promise<string> {
@@ -135,7 +143,9 @@ export async function installLibraries(
 	return "installed";
 }
 
-export type SourceDeps = { exec: Exec; repoRoot: string; idbDir: string; dest: string; log: (line: string) => void };
+export const IDB_REPO = "https://github.com/facebook/idb.git";
+
+export type SourceDeps = { exec: Exec; srcDir: string; dest: string; log: (line: string) => void };
 
 async function run(exec: Exec, cmd: readonly string[], cwd?: string): Promise<string> {
 	const result = await exec(cmd, { cwd });
@@ -143,8 +153,24 @@ async function run(exec: Exec, cmd: readonly string[], cwd?: string): Promise<st
 	return result.stdout;
 }
 
-/** The tag the submodule's HEAD sits on; fetches the tag first when the shallow clone lacks it. */
-async function submoduleTag(exec: Exec, idbDir: string, version: string): Promise<string> {
+/** Shallow-clone idb at `version` into `srcDir` unless a checkout is already there; a failed clone leaves nothing. */
+async function ensureCheckout(exec: Exec, srcDir: string, version: string, log: (line: string) => void): Promise<void> {
+	if (existsSync(join(srcDir, ".git"))) return;
+	log(`cloning idb ${version} (shallow) -> ${srcDir}`);
+	await mkdir(dirname(srcDir), { recursive: true });
+	const partial = `${srcDir}.partial-${process.pid}`;
+	await rm(partial, { recursive: true, force: true });
+	try {
+		await run(exec, ["git", "clone", "--depth", "1", "--branch", version, IDB_REPO, partial]);
+	} catch (error) {
+		await rm(partial, { recursive: true, force: true });
+		throw error;
+	}
+	await rename(partial, srcDir);
+}
+
+/** The tag the checkout's HEAD sits on; fetches the tag first when the shallow clone lacks it. */
+async function checkoutTag(exec: Exec, idbDir: string, version: string): Promise<string> {
 	const describe = ["git", "-C", idbDir, "describe", "--tags", "--exact-match"] as const;
 	let result = await exec(describe);
 	if (result.exitCode !== 0) {
@@ -155,29 +181,27 @@ async function submoduleTag(exec: Exec, idbDir: string, version: string): Promis
 	return result.stdout.trim();
 }
 
-/** Build the library package from the `native/idb` submodule with idb's `build.sh`. */
+/** Build the library package from an idb checkout at the lock tag (cloned on demand) with idb's `build.sh`. */
 export async function buildFromSource(lock: IdbLock, deps: SourceDeps): Promise<void> {
-	const { exec, repoRoot, idbDir, dest, log } = deps;
-	log("initialising the idb submodule (shallow)");
-	await run(exec, ["git", "-C", repoRoot, "submodule", "update", "--init", "--depth", "1", "--", idbDir]);
-	const tag = await submoduleTag(exec, idbDir, lock.version);
+	const { exec, srcDir, dest, log } = deps;
+	await ensureCheckout(exec, srcDir, lock.version, log);
+	const tag = await checkoutTag(exec, srcDir, lock.version);
 	if (tag !== lock.version) {
 		throw new Error(
-			`idb submodule is at ${tag} but idb.lock.json pins ${lock.version}: ` +
-				`run \`git -C ${idbDir} fetch --depth 1 origin tag ${lock.version} && git -C ${idbDir} checkout ${lock.version}\` or update the lock`
+			`idb checkout ${srcDir} is at ${tag} but idb.lock.json pins ${lock.version}: ` +
+				`run \`git -C ${srcDir} fetch --depth 1 origin tag ${lock.version} && git -C ${srcDir} checkout ${lock.version}\` or update the lock`
 		);
 	}
-	log(`building idb libraries ${lock.version} from source (this takes a while)`);
-	await run(exec, ["./build.sh", "build", "libraries"], idbDir);
-	await run(exec, ["./build.sh", "build", "library-package"], idbDir);
+	log(`building idb libraries ${lock.version} from source in ${srcDir} (this takes a while)`);
+	await run(exec, ["./build.sh", "build", "libraries"], srcDir);
+	await run(exec, ["./build.sh", "build", "library-package"], srcDir);
 	const staged = `${dest}.staging-${process.pid}`;
 	await rm(staged, { recursive: true, force: true });
-	await cp(join(idbDir, "Build", "LibraryPackage"), staged, { recursive: true, verbatimSymlinks: true });
+	await cp(join(srcDir, "Build", "LibraryPackage"), staged, { recursive: true, verbatimSymlinks: true });
 	await swapIn(staged, dest, { version: lock.version, source: "source" });
 }
 
 export const NATIVE_DIR = resolve(import.meta.dir, "..");
-const REPO_ROOT = resolve(NATIVE_DIR, "..", "..", "..");
 
 export async function main(argv: readonly string[]): Promise<number> {
 	const unknown = argv.filter((arg) => arg !== "--from-source");
@@ -188,12 +212,14 @@ export async function main(argv: readonly string[]): Promise<number> {
 	const log = (line: string) => console.log(`deps: ${line}`);
 	const lock = parseLock(await readFile(join(NATIVE_DIR, "idb.lock.json"), "utf8"));
 	const dest = join(NATIVE_DIR, "idb-libraries");
+	const home = process.env.HOME ?? homedir();
 	if (argv.includes("--from-source")) {
-		await buildFromSource(lock, { exec: bunExec, repoRoot: REPO_ROOT, idbDir: join(NATIVE_DIR, "idb"), dest, log });
+		const srcDir = process.env.WARDEN_IDB_SRC || sourcePath(home, lock.version);
+		await buildFromSource(lock, { exec: bunExec, srcDir, dest, log });
 		log(`built ${lock.version} from source -> ${dest}`);
 		return 0;
 	}
-	const tarball = await ensureTarball(lock, { home: process.env.HOME ?? homedir(), fetchImpl: fetch, log });
+	const tarball = await ensureTarball(lock, { home, fetchImpl: fetch, log });
 	const outcome = await installLibraries(lock, tarball.path, dest);
 	log(outcome === "up-to-date" ? `${dest} already at ${lock.version}` : `extracted ${lock.version} -> ${dest}`);
 	return 0;

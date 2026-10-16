@@ -22,7 +22,7 @@ Best-of-three mix: argent's host driver + in-sim AX bridge + RN devtools facet +
 
 | # | Decision | Why |
 |---|---|---|
-| 1 | **iOS driver = own Swift helper `warden-simd`** linking idb's MIT `FBControlCore` / `FBSimulatorControl` / `FBSimulatorAX` via idb's **library package** (`idb-libraries.macos-arm64.tar.gz`, pinned tag, sha256 in `native/idb.lock.json`; git submodule `packages/e2e/native/idb` at the same tag for `--from-source` builds/patches). | Host-side HID (Indigo on Xcode 26, DTUHID on Xcode 27, negotiated by idb) and AX via the pre-built, pre-signed in-sim `SimulatorFrameworkBridge-iOS` guest (whole tree in one round trip, ~30 ms warm, spawned by `SimDevice.spawn`, shared across processes, idle-exits) with host-side `AccessibilityPlatformTranslation` (`ax`) as fallback. No runner app, no daemon. Same technique argent and idb use. |
+| 1 | **iOS driver = own Swift helper `warden-simd`** linking idb's MIT `FBControlCore` / `FBSimulatorControl` / `FBSimulatorAX` via idb's **library package** (`idb-libraries.macos-arm64.tar.gz`, pinned tag, sha256 in `native/idb.lock.json`; `--from-source` shallow-clones the same tag into `~/Library/Caches/warden-idb/src/<tag>`, or builds `WARDEN_IDB_SRC` for patches; no git submodule, since `git worktree remove` refuses worktrees with one). | Host-side HID (Indigo on Xcode 26, DTUHID on Xcode 27, negotiated by idb) and AX via the pre-built, pre-signed in-sim `SimulatorFrameworkBridge-iOS` guest (whole tree in one round trip, ~30 ms warm, spawned by `SimDevice.spawn`, shared across processes, idle-exits) with host-side `AccessibilityPlatformTranslation` (`ax`) as fallback. No runner app, no daemon. Same technique argent and idb use. |
 | 2 | **Spec runner = `bun test` + preload.** `@delacour/warden-e2e` exports `test`/`describe`/hooks/`expect` wrapping `bun:test`. | Timeouts, `-t`, `--bail`, junit reporter for free; bun is the repo runtime; warden already requires it for `warden.config.ts`. |
 | 3 | **v1 scope**: iOS driver, spec API, `warden e2e` built-in runner, example-app migration, **plus** Android driver (adb + uiautomator, no instrumentation APK), `warden ui` agent CLI, RN Metro/Hermes CDP facet (logs/network/eval/React tree), recorded flows (`.flow.json`) with replay + export to `*.e2e.ts`. | User's choice. |
 | 4 | Driver code lives in `packages/e2e/src/driver/` (not core); the CLI imports `@delacour/warden-e2e/driver/*` from the workspace; the npm package bundles it. Core stays leases/providers/builds. | Keeps the private-API surface in one package; core remains free of UI automation. |
@@ -54,7 +54,6 @@ warden ui  ──uses────▶ Driver via socket helper; refs in $WARDEN_H
 packages/e2e/                                   @delacour/warden-e2e (workspace private; npm manifest generated)
   package.json  tsconfig.json  biome.jsonc      exports "./*": "./src/*.ts"; scripts fmt lint check typecheck test native:deps native:build native:smoke
   native/
-    idb/                                        git submodule facebook/idb @ pinned tag (same as idb.lock.json)
     idb.lock.json                               { version, tarball, sha256 }
     idb-libraries/  dist/                       gitignored (deps output / build output)
     ios/Package.swift  Sources/warden-simd/{main,Protocol/{Wire,NDJSON},Server/{Stdio,Socket,Dispatcher},Device/Session,Ops/{Snapshot,Input,Keyboard,Screenshot,Settle,Health},Model/Element}.swift
@@ -92,7 +91,7 @@ Error codes: `E_BAD_REQUEST E_TIMEOUT E_NOT_BOOTED E_UNKNOWN_UDID E_HID E_AX_UNA
 
 Normalized `Element` (shared with Android): `{ id, role, rawType, label?, identifier?(testID), value?, text?, placeholder?, frame{x,y,width,height}, normFrame, traits[], enabled, focused?, hidden?, selected?, checked?, hittable?, tapPoint?, pid?, depth, children[] }`. Role map: XCUI type → `button|text|textfield|securefield|searchfield|image|switch|slider|link|cell|list|scrollview|tab|tabbar|alert|sheet|keyboard|navbar|toolbar|window|application|other`; trait `button` upgrades `Other`. Android: class → role, `resource-id` (pkg prefix stripped) → identifier, `content-desc` → label, `bounds` → frame, flags → traits.
 
-Key idb calls (verify names in the submodule when implementing): `SimulatorControlBootstrap.withConfiguration` → `set.simulator(withUDID:)`; `sim.hid.connect()` / `SimulatorHID(for:transport:)`, `SimulatorHIDEvent.tapAt/swipe/drag/pinchAt/shortButtonPress/shortKeyPress/keyboard/delay/composite`, `hid.send(event:logger:drain:.perEvent)`; `sim.uiAutomation(backend: .axBridge(persistence: .shared, automationMode: true))` and `.accessibility`; `describe(.frontmost, options{format:.complete, filter:.interactable|.all, keys})`, `hitTest(at:)`, `quiescence(.frontmost, parameters:)`; `SimulatorScreenshotCommands(simulator:).take`; `sim.orientation`, `sim.hardware.lock/shake`; `BundledResources.hostDirectoryPath` for the guest. Helper lookup (TS): `WARDEN_SIMD` (file) → `WARDEN_HELPER_DIR` → dir of `realpath(process.execPath)` → `packages/e2e/native/dist` (source) → `$WARDEN_HOME/simd/<warden version>/` → `E_HELPER_MISSING` with `warden doctor` hint.
+Key idb calls (verify names in the idb source at the pinned tag when implementing): `SimulatorControlBootstrap.withConfiguration` → `set.simulator(withUDID:)`; `sim.hid.connect()` / `SimulatorHID(for:transport:)`, `SimulatorHIDEvent.tapAt/swipe/drag/pinchAt/shortButtonPress/shortKeyPress/keyboard/delay/composite`, `hid.send(event:logger:drain:.perEvent)`; `sim.uiAutomation(backend: .axBridge(persistence: .shared, automationMode: true))` and `.accessibility`; `describe(.frontmost, options{format:.complete, filter:.interactable|.all, keys})`, `hitTest(at:)`, `quiescence(.frontmost, parameters:)`; `SimulatorScreenshotCommands(simulator:).take`; `sim.orientation`, `sim.hardware.lock/shake`; `BundledResources.hostDirectoryPath` for the guest. Helper lookup (TS): `WARDEN_SIMD` (file) → `WARDEN_HELPER_DIR` → dir of `realpath(process.execPath)` → `packages/e2e/native/dist` (source) → `$WARDEN_HOME/simd/<warden version>/` → `E_HELPER_MISSING` with `warden doctor` hint.
 
 ## Android driver (TS only, v1)
 
@@ -265,7 +264,7 @@ Each implementing agent: own worktree branched from `feature/faster-local-e2e-ru
 
 ## Risks
 
-- Private API drift per Xcode (CoreSimulator version gates, DTUHID XPC, AXRuntime): pinned idb tag + submodule for patches + `health`/`doctor` surfacing + macOS CI job.
+- Private API drift per Xcode (CoreSimulator version gates, DTUHID XPC, AXRuntime): pinned idb tag + `native:deps --from-source` (`WARDEN_IDB_SRC` for a patched checkout) + `health`/`doctor` surfacing + macOS CI job.
 - idb Swift API churn: thin `Session`/`Ops` layer, XCTest fixtures fail loudly.
 - arm64-only helper; Intel macs get a clear `E_HELPER_MISSING`.
 - AX sparsity for plain `View testID` (release builds): axbridge granularity + React-tree accelerator (dev) + example AGENTS rule to mark targets `accessible`.
