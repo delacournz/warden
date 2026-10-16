@@ -1,0 +1,16 @@
+open nz.co.delacour.warden.example --relaunch
+wait "id=\"welcome-screen\"" 30000
+press "id=\"welcome-next\""
+wait "id=\"welcome-title\" text=\"Plan\"" 4000
+press "id=\"welcome-next\""
+wait "id=\"welcome-title\" text=\"Test\"" 4000
+press "id=\"welcome-get-started\""
+wait "id=\"sign-in-screen\"" 4000
+fill "id=\"sign-in-email\"" "not-an-email"
+fill "id=\"sign-in-password\"" "password1"
+press "id=\"sign-in-submit\""
+wait "id=\"sign-in-email-error\" text=\"Enter a valid email address.\"" 4000
+fill "id=\"sign-in-email\"" "ada@example.com"
+fill "id=\"sign-in-password\"" "short"
+press "id=\"sign-in-submit\""
+wait "id=\"sign-in-password-error\" text=\"Password must be at least 8 characters.\"" 4000

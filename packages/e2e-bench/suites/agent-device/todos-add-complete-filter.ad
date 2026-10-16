@@ -1,0 +1,26 @@
+open nz.co.delacour.warden.example --relaunch
+wait "id=\"welcome-screen\"" 30000
+press "id=\"welcome-next\""
+wait "id=\"welcome-title\" text=\"Plan\"" 4000
+press "id=\"welcome-next\""
+wait "id=\"welcome-title\" text=\"Test\"" 4000
+press "id=\"welcome-get-started\""
+wait "id=\"sign-in-screen\"" 4000
+fill "id=\"sign-in-email\"" "ada@example.com"
+fill "id=\"sign-in-password\"" "password1"
+press "id=\"sign-in-submit\""
+wait "id=\"todos-screen\"" 15000
+fill "id=\"todo-input\"" "Write e2e flows"
+press "id=\"todo-add\""
+wait "id=\"todo-title-todo-1\" text=\"Write e2e flows\"" 4000
+wait "text=\"2 left\"" 4000
+press "id=\"todo-check-todo-1\""
+wait "text=\"1 left\"" 4000
+press "id=\"todos-filter-active\""
+wait "id=\"todo-row-welcome\"" 4000
+wait absent "id=\"todo-row-todo-1\"" 4000
+press "id=\"todo-check-welcome\""
+wait "id=\"todos-empty\"" 4000
+press "id=\"todos-filter-done\""
+wait "id=\"todo-row-todo-1\"" 4000
+wait "text=\"0 left\"" 4000
