@@ -13,6 +13,13 @@ const SLOW_POLL_MS = 250;
 /** No sheet for this long, read by both readers, with the app in front = the link opened without one. */
 const QUIET_MS = 1200;
 const MAX_PRESSES = 3;
+/**
+ * A sheet ignores touches while it animates in, and the first read can see it that early (observed on a fresh
+ * simulator: three presses 120 ms apart, from the first read that saw the sheet, were all lost). Press only once it has
+ * been up this long, and leave this long between presses and before giving up on the last one.
+ */
+const SHEET_SETTLE_MS = 500;
+const PRESS_GAP_MS = 600;
 
 /**
  * What `openLink` remembers per session: the links (see {@link linkKey}) that opened without an "Open in …?" sheet.
@@ -58,6 +65,9 @@ type Watch = {
 	/** still reading alerts */
 	looking: boolean;
 	presses: number;
+	/** when the sheet now up was first seen */
+	sheetSeenAt: number | undefined;
+	lastPressAt: number | undefined;
 	/** when a sheet was last seen (the start, until one is): the quiet window counts from here */
 	lastSheetAt: number;
 };
@@ -93,13 +103,20 @@ async function lookForSheet(
 	if (open === undefined) {
 		// answered: nothing left to press once the sheet is gone
 		if (watch.presses > 0) watch.looking = false;
+		watch.sheetSeenAt = undefined;
 		return { sheetUp: false, confirmed: !cheap, finished: false };
 	}
-	watch.lastSheetAt = clock.now();
+	const now = clock.now();
+	watch.lastSheetAt = now;
+	watch.sheetSeenAt ??= now;
+	const since = (at: number | undefined) => (at === undefined ? Number.POSITIVE_INFINITY : now - at);
+	const settled = since(watch.sheetSeenAt) >= SHEET_SETTLE_MS && since(watch.lastPressAt) >= PRESS_GAP_MS;
+	if (!settled) return { sheetUp: true, confirmed: false, finished: false };
 	if (watch.presses >= MAX_PRESSES) return { sheetUp: true, confirmed: false, finished: plan.until === undefined };
-	// a press that lands while the sheet is still animating in is lost, so look again after each one
+	// a press can still be lost, so look again after each one
 	await deps.press(open);
 	watch.presses += 1;
+	watch.lastPressAt = clock.now();
 	return { sheetUp: true, confirmed: false, finished: false };
 }
 
@@ -117,6 +134,17 @@ async function reachedTarget(deps: LinkDeps, plan: LinkPlan, watch: Watch, look:
 }
 
 /**
+ * How long to sleep before the next look, `sinceSheet` ms after the sheet was last seen (or the link opened). The first
+ * look after the quiet window is the one that ends the wait, so the poll that crosses the window's end is cut short to
+ * land on it instead of overshooting by up to a slow poll.
+ */
+function nextPollMs(sinceSheet: number): number {
+	const poll = sinceSheet < FAST_WINDOW_MS ? FAST_POLL_MS : SLOW_POLL_MS;
+	const untilQuiet = QUIET_MS - sinceSheet;
+	return untilQuiet > 0 ? Math.min(poll, untilQuiet) : poll;
+}
+
+/**
  * Waits for a link `openUrl` just opened to be handled (see `Device.openLink`): the sheet answered, or the app in front
  * with no sheet for 1.2 s, or `until` visible, or `waitMs` over. Reads alerts every 100 ms for the first second, every
  * 250 ms after. While another app (SpringBoard, Safari) is in front no sheet-free verdict is reached, so it waits on.
@@ -127,7 +155,13 @@ export async function waitForLink(deps: LinkDeps, plan: LinkPlan): Promise<void>
 	const deadline = started + plan.waitMs;
 	// a link that already opened without a sheet is not read for alerts, but still waits to be handed over to the app
 	const remembered = plan.answersSheet && sheetless.has(plan.key);
-	const watch: Watch = { looking: plan.answersSheet, presses: 0, lastSheetAt: started };
+	const watch: Watch = {
+		looking: plan.answersSheet,
+		presses: 0,
+		sheetSeenAt: undefined,
+		lastPressAt: undefined,
+		lastSheetAt: started,
+	};
 	for (;;) {
 		const look = await lookForSheet(deps, plan, watch, started, remembered);
 		if (look.finished || (await reachedTarget(deps, plan, watch, look)) || clock.now() >= deadline) return;
@@ -136,6 +170,6 @@ export async function waitForLink(deps: LinkDeps, plan: LinkPlan): Promise<void>
 			if (plan.until === undefined) return;
 			watch.looking = false;
 		}
-		await clock.sleep(clock.now() - watch.lastSheetAt < FAST_WINDOW_MS ? FAST_POLL_MS : SLOW_POLL_MS);
+		await clock.sleep(nextPollMs(clock.now() - watch.lastSheetAt));
 	}
 }

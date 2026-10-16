@@ -527,10 +527,9 @@ extension Session {
       throw WireError(.unsupported, "settle needs the axbridge backend (ax: \(axDefault), bridge: \(bridge.name))")
     }
     let started = ContinuousClock.now
-    let simulator = self.simulator
     let outcome = try await quiescenceMonitor().waitQuiet(
       quietMs: request.quietMs, timeoutMs: request.timeoutMs, bundleId: request.bundleId,
-      resolvePid: { bundleId in try? await simulator.application.processID(forBundleID: bundleId) })
+      resolvePid: { bundleId in await self.resolveBundlePid(bundleId) })
     let elapsed = (ContinuousClock.now - started).components
     let waitedMs = Int(elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000)
     var reply: [String: JSON] = [

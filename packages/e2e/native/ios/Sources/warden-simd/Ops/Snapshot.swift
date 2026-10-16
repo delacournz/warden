@@ -558,19 +558,48 @@ struct FrontmostRequest: Sendable, Equatable {
 }
 
 extension Session {
-  /// Whether `bundleId`'s process is the one the quiescence stream reports as frontmost: the helper's own state plus one
-  /// launchd lookup, no tree read and no waiting (what `settle{bundleId}` decides, without its wait, its quiet judgement
-  /// or its stream restarts). A stream that has reported nothing yet answers `frontmost: false`: the stream is opened here
-  /// when it is not open, so the next call knows. Needs the bridge, like `settle`.
+  /// Whether `bundleId`'s process is the one the quiescence stream reports as frontmost: the helper's own state, no tree
+  /// read and no waiting (what `settle{bundleId}` decides, without its wait, its quiet judgement or its stream restarts).
+  /// The launchd lookup that turns the bundle id into a pid costs ~150 ms, so the pid is remembered per bundle (by this op and by `settle{bundleId}`): while
+  /// the stream's frontmost pid is that remembered pid and the process still exists, the answer is a comparison. Any
+  /// other state (first call, a relaunch, another app in front) looks the pid up again. A stream that has reported
+  /// nothing yet answers `frontmost: false`: the stream is opened here when it is not open, so the next call knows.
+  /// Needs the bridge, like `settle`.
   func frontmost(_ request: FrontmostRequest) async throws -> JSON {
     guard axDefault == "axbridge", axBridgeReader != nil else {
       throw WireError(.unsupported, "frontmost needs the axbridge backend (ax: \(axDefault), bridge: \(bridge.name))")
     }
     let monitor = try quiescenceMonitor()
     await monitor.start()
-    let target: pid_t? = try? await simulator.application.processID(forBundleID: request.bundleId)
     let front = await monitor.currentFrontmostPid()
-    return Session.frontmostReply(target: target, frontmost: front)
+    if let front,
+      Session.cachedPidIsFrontmost(
+        cached: bundlePids.pid(for: request.bundleId), frontmost: front, isAlive: Session.processExists)
+    {
+      return Session.frontmostReply(target: front, frontmost: front)
+    }
+    let target = await resolveBundlePid(request.bundleId)
+    return Session.frontmostReply(target: target, frontmost: await monitor.currentFrontmostPid())
+  }
+
+  /// The pid of the running process of `bundleId` (one launchd lookup, ~150 ms), nil when it is not running. Remembered
+  /// per bundle for `frontmost`, so the lookup `settle{bundleId}` already paid is not paid again by the next probe.
+  func resolveBundlePid(_ bundleId: String) async -> pid_t? {
+    let pid: pid_t? = try? await simulator.application.processID(forBundleID: bundleId)
+    bundlePids.remember(pid, for: bundleId)
+    return pid
+  }
+
+  /// The remembered pid of the bundle is the frontmost one and that process still runs. A stream stuck on the pid of an
+  /// app that was relaunched reports a dead pid, which must not count as the new process being in front.
+  static func cachedPidIsFrontmost(cached: pid_t?, frontmost: pid_t?, isAlive: (pid_t) -> Bool) -> Bool {
+    guard let cached, let frontmost, cached == frontmost else { return false }
+    return isAlive(frontmost)
+  }
+
+  /// Simulator processes are host processes: signal 0 only checks that the pid exists.
+  static func processExists(_ pid: pid_t) -> Bool {
+    kill(pid, 0) == 0 || errno == EPERM
   }
 
   static func frontmostReply(target: pid_t?, frontmost: pid_t?) -> JSON {
@@ -578,5 +607,18 @@ extension Session {
     if let target { reply["pid"] = .int(Int(target)) }
     if let frontmost { reply["frontmostPid"] = .int(Int(frontmost)) }
     return .object(reply)
+  }
+}
+
+/// The pid each bundle id last resolved to (see `Session.frontmost`).
+final class BundlePidMemory: @unchecked Sendable {
+  private let lock = NSLock()
+  private var pids: [String: pid_t] = [:]
+
+  func pid(for bundleId: String) -> pid_t? { lock.withLock { pids[bundleId] } }
+
+  /// `nil` forgets the bundle.
+  func remember(_ pid: pid_t?, for bundleId: String) {
+    lock.withLock { pids[bundleId] = pid }
   }
 }

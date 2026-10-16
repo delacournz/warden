@@ -178,12 +178,36 @@ describe("device.alert on a driver that reads one backend", () => {
 		expect(clock.time()).toBeLessThan(1500);
 	});
 
-	test("a failed one-backend read falls straight through to the two-reader read, without sleeping", async () => {
+	test("a bridge that does not answer (right after a launch) is followed by one host read, not the two-reader read", async () => {
+		const { device, driver, clock } = backends([snapshotOf([])], {
+			onCall: (c) =>
+				c.method === "alertOn" && c.backend === "axbridge" ? failWith("E_APP_NOT_RESPONDING") : undefined,
+		});
+		expect(await device.alert("dismiss")).toBe(false);
+		expect(driver.calls).toEqual([
+			{ method: "alertOn", backend: "axbridge" },
+			{ method: "alertOn", backend: "ax" },
+		]);
+		expect(clock.time()).toBe(0);
+	});
+
+	test("a sheet the host reader sees is answered even when the bridge does not answer", async () => {
+		const { device, driver, clock } = backends([withAlert("Cancel", "Open")], {
+			onCall: (c) =>
+				c.method === "alertOn" && c.backend === "axbridge" ? failWith("E_APP_NOT_RESPONDING") : undefined,
+		});
+		expect(await device.alert("accept")).toBe(true);
+		expect(driver.callsOf("alert")).toHaveLength(0);
+		expect(driver.callsOf("tap")).toHaveLength(1);
+		expect(clock.time()).toBe(0);
+	});
+
+	test("when both single reads fail the two-reader read answers", async () => {
 		const { device, driver, clock } = backends([withAlert("Cancel", "OK")], {
 			onCall: (c) => (c.method === "alertOn" ? failWith("E_AX_UNAVAILABLE") : undefined),
 		});
 		expect(await device.alert("accept")).toBe(true);
-		expect(driver.calls.map((c) => c.method).slice(0, 2)).toEqual(["alertOn", "alert"]);
+		expect(driver.calls.map((c) => c.method).slice(0, 3)).toEqual(["alertOn", "alertOn", "alert"]);
 		expect(clock.time()).toBe(0);
 	});
 });
@@ -222,6 +246,40 @@ describe("device.openLink", () => {
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		await device.openLink("myapp://x");
 		expect(driver.callsOf("tap")).toHaveLength(3);
+	});
+
+	/** taps on a sheet that stays up, with the fake time of each tap */
+	function stubbornSheet(opts: { sheetAt?: number; tapsToDismiss?: number } = {}) {
+		const clock = fakeClock();
+		const { sheetAt = 0, tapsToDismiss = Number.POSITIVE_INFINITY } = opts;
+		const tapTimes: number[] = [];
+		const driver: ReturnType<typeof fakeDriver> = fakeDriver({
+			screens: () =>
+				clock.time() >= sheetAt && tapTimes.length < tapsToDismiss ? withAlert("Cancel", "Open") : snapshotOf([]),
+			onCall: (c) => {
+				if (c.method === "tap") tapTimes.push(clock.time());
+				return undefined;
+			},
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
+		return { device, clock, tapTimes };
+	}
+
+	test("gives a sheet that just appeared time to finish animating in before pressing Open", async () => {
+		const { device, tapTimes } = stubbornSheet({ sheetAt: 300, tapsToDismiss: 1 });
+		await device.openLink("myapp://x");
+		expect(tapTimes).toHaveLength(1);
+		expect(tapTimes[0]).toBeGreaterThanOrEqual(800);
+		expect(tapTimes[0]).toBeLessThanOrEqual(900);
+	});
+
+	test("leaves a press time to land before pressing again, and before giving up", async () => {
+		const { device, clock, tapTimes } = stubbornSheet();
+		await device.openLink("myapp://x");
+		expect(tapTimes).toHaveLength(3);
+		expect((tapTimes[1] ?? 0) - (tapTimes[0] ?? 0)).toBeGreaterThanOrEqual(600);
+		expect((tapTimes[2] ?? 0) - (tapTimes[1] ?? 0)).toBeGreaterThanOrEqual(600);
+		expect(clock.time() - (tapTimes[2] ?? 0)).toBeGreaterThanOrEqual(600);
 	});
 
 	test("gives up after 8 s without a sheet", async () => {
@@ -276,11 +334,10 @@ describe("device.openLink without a sheet", () => {
 
 	const reads = (driver: FakeDriver) => driver.callsOf("alert").length + driver.callsOf("alertOn").length;
 
-	test("returns within 1.5 s of fake time once the app is in front and no sheet showed", async () => {
+	test("returns when the quiet window ends once the app is in front and no sheet showed", async () => {
 		const { driver, device, clock } = link();
 		await device.openLink("myapp://x");
-		expect(clock.time()).toBeGreaterThanOrEqual(1200);
-		expect(clock.time()).toBeLessThanOrEqual(1500);
+		expect(clock.time()).toBe(1200);
 		expect(driver.callsOf("tap")).toHaveLength(0);
 	});
 
@@ -293,7 +350,7 @@ describe("device.openLink without a sheet", () => {
 		expect(methods[methods.length - 1]).toBe("alert");
 	});
 
-	test("polls every 100 ms for the first second, then every 250 ms", async () => {
+	test("polls every 100 ms for the first second, then lines up with the end of the quiet window, then every 250 ms", async () => {
 		const { driver, device, clock } = link({ frontAt: 3000 });
 		const times: number[] = [];
 		const base = driver.alertOn;
@@ -309,7 +366,7 @@ describe("device.openLink without a sheet", () => {
 		};
 		await device.openLink("myapp://x");
 		expect(times.slice(0, 11)).toEqual([0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]);
-		expect(times.slice(11, 14)).toEqual([1250, 1500, 1750]);
+		expect(times.slice(11, 14)).toEqual([1200, 1450, 1700]);
 	});
 
 	test("waits for the full window while another app is in front (SpringBoard, Safari)", async () => {
@@ -333,7 +390,7 @@ describe("device.openLink without a sheet", () => {
 		const { driver, device, clock } = link({ sheetAt: 500 });
 		await device.openLink("myapp://x");
 		expect(driver.callsOf("tap")).toHaveLength(1);
-		expect(clock.time()).toBeLessThan(1000);
+		expect(clock.time()).toBeLessThan(1500);
 	});
 
 	test("a driver that cannot say what is in front keeps the old full wait", async () => {
