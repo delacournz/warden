@@ -6,7 +6,14 @@ import type { NodeEntry } from "../screen/nodes";
 import { resolve } from "../screen/query";
 import { matchesText, normalizeText, type TextMatch } from "../screen/text";
 
-/** A negated matcher passes only after its condition held this long without a break (or the whole timeout, if shorter). */
+/**
+ * A negated matcher passes only after its condition held this long without a break (or the whole timeout, if shorter).
+ *
+ * It is not cut short when the screen settles. A snapshot carries no quiescence flag, so knowing the screen is quiet
+ * takes a `driver.settle()` call per assertion: an extra round trip on iOS and a second `uiautomator dump` (~1.9 s,
+ * longer than the window it would save) on Android. The wait costs no device reads beyond the polls the matcher makes
+ * anyway, so it stays a plain hold.
+ */
 export const NEGATION_GRACE_MS = 1000;
 
 export type AssertionOptions = { timeout?: number };
@@ -84,8 +91,9 @@ function containsText(value: string, expected: TextMatch, ignoreCase: boolean): 
 }
 
 /**
- * The locator matchers of `expect(locator)`. Each one polls every 100 ms until its condition holds or the assertion
- * timeout passes, then fails with `ASSERTION`. `.not` inverts the condition (and must see it hold for a grace window).
+ * The locator matchers of `expect(locator)`. Each one polls (100 ms apart for the first second, then 250 ms) until its
+ * condition holds or the assertion timeout passes, then fails with `ASSERTION`. `.not` inverts the condition (and must
+ * see it hold for a grace window; the polls land exactly on its end).
  * Except `toHaveCount`, a matcher needs exactly one match: none keeps polling, several fail at once.
  */
 export class LocatorAssertions {
@@ -306,6 +314,7 @@ export class LocatorAssertions {
 					received: judgement.kind === "missing" ? NOT_FOUND : judgement.received,
 					snapshot: observed.snapshot,
 				},
+				...(holdingSince === undefined ? {} : { maxWaitMs: holdingSince + hold - now }),
 			};
 		}, timeoutMs);
 		if (result.status === "done") return;
