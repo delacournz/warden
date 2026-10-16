@@ -1,0 +1,23 @@
+{
+    "com.apple.mobilesafari" =     {
+        ApplicationType = System;
+        Bundle = "file:///Library/Developer/CoreSimulator/Volumes/iOS/RuntimeRoot/Applications/MobileSafari.app/";
+        CFBundleDisplayName = Safari;
+        CFBundleIdentifier = "com.apple.mobilesafari";
+        CFBundleName = Safari;
+    };
+    "nz.co.delacour.warden.example" =     {
+        ApplicationType = User;
+        Bundle = "file:///Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/A/Example.app/";
+        CFBundleDisplayName = Example;
+        CFBundleIdentifier = "nz.co.delacour.warden.example";
+    };
+    "com.facebook.WebDriverAgentRunner.xctrunner" =     {
+        ApplicationType = User;
+        CFBundleIdentifier = "com.facebook.WebDriverAgentRunner.xctrunner";
+    };
+    "dev.mobile.maestro-driver-iosUITests.xctrunner" =     {
+        ApplicationType = User;
+        CFBundleIdentifier = "dev.mobile.maestro-driver-iosUITests.xctrunner";
+    };
+}
