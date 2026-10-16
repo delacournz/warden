@@ -537,7 +537,7 @@ async function runGrid(
 	}
 }
 
-/** Hand every job's finished `results.jsonl` to the display as one report; missing files and stale results are skipped. */
+/** Hand every job's finished `results.jsonl` to the display as one report (the last attempt of a flow wins); missing files and stale results are skipped. */
 async function readRunnerReport(
 	deps: BatchDeps,
 	resultFiles: ResultFiles,
@@ -546,7 +546,7 @@ async function readRunnerReport(
 	screen: Display
 ): Promise<void> {
 	const texts = await Promise.all([...resultFiles.values()].map((path) => deps.readFile(path).catch(() => "")));
-	const report = resultsReport(texts.join("\n"), flows, since);
+	const report = resultsReport(texts, flows, since);
 	if (report) screen.report(report);
 }
 
