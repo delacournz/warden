@@ -5,7 +5,14 @@ import { join } from "node:path";
 import type { Driver, DriverResult } from "../driver.types";
 import { canRepeatKeys } from "../typing";
 import { elementAt, openAndroidDriver } from "./android-driver";
-import { fakeAndroidHost, type HostRule, PNG_BYTES, type ShellRule } from "./android-host.testing";
+import {
+	type FakeAndroidHost,
+	fakeAndroidHost,
+	type HostRule,
+	PNG_BYTES,
+	type ShellRule,
+} from "./android-host.testing";
+import { type AndroidStateStore, memoryAndroidState } from "./android-state";
 import { parseUiautomatorXml } from "./uiautomator";
 import { SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN } from "./uiautomator.fixture";
 
@@ -36,7 +43,17 @@ const BASE_RULES: ShellRule[] = [
 
 const open: Driver[] = [];
 
-async function setup(opts: { shell?: ShellRule[]; host?: HostRule[]; screen?: boolean } = {}) {
+async function setup(
+	opts: {
+		shell?: ShellRule[];
+		host?: HostRule[];
+		screen?: boolean;
+		state?: AndroidStateStore;
+		appPackage?: string;
+		dumpRoute?: "stdout" | "tty" | "file";
+		onDumpRoute?: (route: "stdout" | "tty" | "file") => void;
+	} = {}
+) {
 	const host = fakeAndroidHost({
 		shell: [...(opts.shell ?? []), ...BASE_RULES],
 		...(opts.host ? { host: opts.host } : {}),
@@ -52,6 +69,10 @@ async function setup(opts: { shell?: ShellRule[]; host?: HostRule[]; screen?: bo
 		log: (l) => lines.push(l),
 		clock,
 		...(opts.screen ? { screen: SCREEN } : {}),
+		...(opts.state ? { state: opts.state } : {}),
+		...(opts.appPackage ? { appPackage: opts.appPackage } : {}),
+		...(opts.dumpRoute ? { dumpRoute: opts.dumpRoute } : {}),
+		...(opts.onDumpRoute ? { onDumpRoute: opts.onDumpRoute } : {}),
 	});
 	if (!res.success) throw new Error(`open failed: ${res.error.code} ${res.error.message}`);
 	open.push(res.data);
@@ -69,13 +90,13 @@ async function value<T>(p: DriverResult<T>): Promise<T> {
 }
 
 describe("open", () => {
-	test("one probe round trip for boot + screen, one command to turn animations off", async () => {
+	test("one probe round trip for boot + screen, one command to read the animation scales and turn them off", async () => {
 		const { driver, host } = await setup();
 		expect(driver.platform).toBe("android");
 		expect(driver.id).toBe("emulator-5554");
 		expect(host.shell).toEqual([
 			"getprop sys.boot_completed; getprop ro.build.version.sdk; wm size; wm density",
-			"settings put global window_animation_scale 0; settings put global transition_animation_scale 0; settings put global animator_duration_scale 0",
+			"settings get global window_animation_scale; settings get global transition_animation_scale; settings get global animator_duration_scale; settings put global window_animation_scale 0; settings put global transition_animation_scale 0; settings put global animator_duration_scale 0",
 		]);
 	});
 
@@ -184,9 +205,12 @@ describe("snapshot", () => {
 		expect(snap.screen).toMatchObject({ width: 2400, height: 1080, rotation: 1 });
 	});
 
-	test("route fallback goes stdout -> tty -> file and is remembered", async () => {
+	test("route fallback goes stdout -> tty -> file below API 30 and is remembered", async () => {
 		const { driver, host } = await setup({
-			shell: [{ match: "uiautomator dump /dev/stdout", reply: "UI hierchary dumped to: /dev/stdout\n" }],
+			shell: [
+				{ match: "getprop sys.boot_completed", reply: probe(29) },
+				{ match: "uiautomator dump /dev/stdout", reply: "UI hierchary dumped to: /dev/stdout\n" },
+			],
 			host: [{ match: /exec-out uiautomator dump \/dev\/tty$/, reply: SYNTHETIC_FORM_DUMP }],
 		});
 		await value(driver.snapshot());
@@ -195,6 +219,16 @@ describe("snapshot", () => {
 		expect(host.shell.filter((c) => c === "uiautomator dump /dev/stdout").length).toBe(1);
 		const health = await value(driver.health());
 		expect(health.detail?.dumpRoute).toBe("tty");
+	});
+
+	test("API 30+ probes tty first, so a working tty never runs the failing stdout dump", async () => {
+		const { driver, host } = await setup({
+			shell: [{ match: "uiautomator dump /dev/stdout", reply: "UI hierchary dumped to: /dev/stdout\n" }],
+			host: [{ match: /exec-out uiautomator dump \/dev\/tty$/, reply: SYNTHETIC_FORM_DUMP }],
+		});
+		await value(driver.snapshot());
+		expect(host.shell.filter((c) => c.includes("uiautomator dump"))).toEqual([]);
+		expect(host.host.filter((a) => a.includes("exec-out")).length).toBe(1);
 	});
 
 	test("a transient 'null root node' is retried and then succeeds", async () => {
@@ -486,14 +520,73 @@ describe("device state", () => {
 });
 
 describe("settle and alert", () => {
-	test("settle is implemented here via snapshot hashing", async () => {
-		const { driver } = await setup();
-		const out = await value(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+	const dumps = (host: FakeAndroidHost): number =>
+		host.shell.filter((c) => c.includes("uiautomator dump")).length +
+		host.host.filter((a) => a.includes("uiautomator")).length;
+
+	test("settle is one dump: uiautomator already waits for a second of idle before it reads", async () => {
+		const { driver, host } = await setup({ dumpRoute: "stdout" });
+		const before = dumps(host);
+		const out = await value(driver.settle({ quietMs: 250, timeoutMs: 3000 }));
+		expect(dumps(host) - before).toBe(1);
 		expect(out.quiet).toBe(true);
-		expect(out.waitedMs).toBeGreaterThanOrEqual(100);
 	});
 
-	test("settle gives up when the UI keeps changing", async () => {
+	test("the default settle is one dump too, and reports how long it took", async () => {
+		const { driver, host, clock } = await setup({
+			dumpRoute: "stdout",
+			shell: [
+				{
+					match: "uiautomator dump /dev/stdout",
+					reply: () => {
+						clock.advance(1_900);
+						return SYNTHETIC_FORM_DUMP;
+					},
+				},
+			],
+		});
+		const before = dumps(host);
+		const out = await value(driver.settle());
+		expect(dumps(host) - before).toBe(1);
+		expect(out).toEqual({ quiet: true, waitedMs: 1_900 });
+	});
+
+	test("a dump that waited out uiautomator's 10 s idle limit saw a screen that never went quiet", async () => {
+		const { driver, clock } = await setup({
+			dumpRoute: "stdout",
+			shell: [
+				{
+					match: "uiautomator dump /dev/stdout",
+					reply: () => {
+						clock.advance(10_400);
+						return SYNTHETIC_FORM_DUMP;
+					},
+				},
+			],
+		});
+		expect(await value(driver.settle())).toEqual({ quiet: false, waitedMs: 10_400 });
+	});
+
+	test("a settle whose dump fails is not quiet", async () => {
+		const bad = "ERROR: null root node returned by UiTestAutomationBridge.\n";
+		const { driver } = await setup({
+			shell: [{ match: "uiautomator", reply: bad }],
+			host: [{ match: "adb", reply: bad }],
+		});
+		const out = await value(driver.settle({ quietMs: 250, timeoutMs: 3000 }));
+		expect(out.quiet).toBe(false);
+	});
+
+	test("a quiet window longer than the dump's own idle wait still compares successive dumps", async () => {
+		const { driver, host } = await setup({ dumpRoute: "stdout" });
+		const before = dumps(host);
+		const out = await value(driver.settle({ quietMs: 1_500, timeoutMs: 4_000 }));
+		expect(dumps(host) - before).toBeGreaterThan(2);
+		expect(out.quiet).toBe(true);
+		expect(out.waitedMs).toBeGreaterThanOrEqual(1_500);
+	});
+
+	test("that comparison gives up when the UI keeps changing", async () => {
 		let n = 0;
 		const { driver } = await setup({
 			shell: [
@@ -503,7 +596,7 @@ describe("settle and alert", () => {
 				},
 			],
 		});
-		const out = await value(driver.settle({ quietMs: 100, timeoutMs: 400 }));
+		const out = await value(driver.settle({ quietMs: 1_500, timeoutMs: 2_000 }));
 		expect(out.quiet).toBe(false);
 	});
 
@@ -529,11 +622,231 @@ describe("app commands and close", () => {
 		expect(host.shell).toContain("am force-stop com.x");
 	});
 
+	test("openUrl targets the app under test with -p", async () => {
+		const { driver, host } = await setup({ appPackage: "nz.co.x" });
+		await value(driver.app.openUrl("myapp://todo/1"));
+		expect(host.shell).toContain("am start -a android.intent.action.VIEW -d myapp://todo/1 -p nz.co.x");
+	});
+
+	test("openUrl without a known app package leaves the intent open to any handler", async () => {
+		const { driver, host } = await setup();
+		await value(driver.app.openUrl("myapp://todo/1"));
+		expect(host.shell).toContain("am start -a android.intent.action.VIEW -d myapp://todo/1");
+	});
+
 	test("close shuts the shell and is idempotent", async () => {
 		const { driver } = await setup();
 		await driver.close();
 		await driver.close();
 		const res = await driver.tap({ x: 1, y: 1 });
 		expect(res.success).toBe(false);
+	});
+});
+
+const XML_TRAILER = "UI hierchary dumped to: /dev/stdout\n";
+const NULL_ROOT = "ERROR: null root node returned by UiTestAutomationBridge.\n";
+const ONLY_FILE_ROUTE: { shell: ShellRule[]; host: HostRule[] } = {
+	shell: [
+		{ match: "uiautomator dump /dev/stdout", reply: XML_TRAILER },
+		{ match: /^rm -f \/sdcard\/warden-ui\.xml/, reply: SYNTHETIC_FORM_DUMP },
+	],
+	host: [{ match: /exec-out uiautomator dump \/dev\/tty$/, reply: NULL_ROOT }],
+};
+const routeProbes = (host: FakeAndroidHost): number =>
+	host.host.filter((a) => a.includes("exec-out") && a.includes("uiautomator")).length +
+	host.shell.filter((c) => c.includes("uiautomator dump") || c.startsWith("rm -f /sdcard/warden-ui.xml")).length;
+
+describe("remembered dump route", () => {
+	test("a route found in one driver is not probed for again by the next, per serial", async () => {
+		const state = memoryAndroidState();
+		const first = await setup({ ...ONLY_FILE_ROUTE, state });
+		await value(first.driver.snapshot());
+		expect(routeProbes(first.host)).toBe(3);
+		await first.driver.close();
+		expect(await state.read("emulator-5554")).toEqual({ sdk: 34, dumpRoute: "file" });
+
+		const second = await setup({ ...ONLY_FILE_ROUTE, state });
+		await value(second.driver.snapshot());
+		await value(second.driver.snapshot());
+		expect(routeProbes(second.host)).toBe(2);
+		expect(second.host.host.filter((a) => a.includes("exec-out")).length).toBe(0);
+		expect(second.host.shell.filter((c) => c.includes("/dev/stdout")).length).toBe(0);
+	});
+
+	test("another serial has its own route", async () => {
+		const state = memoryAndroidState();
+		await state.update("emulator-9999", (s) => ({ ...s, sdk: 34, dumpRoute: "file" }));
+		const { driver, host } = await setup({ ...ONLY_FILE_ROUTE, state });
+		await value(driver.snapshot());
+		expect(routeProbes(host)).toBe(3);
+	});
+
+	test("a remembered route that no longer works is re-probed and the working one is saved", async () => {
+		const state = memoryAndroidState();
+		await state.update("emulator-5554", (s) => ({ ...s, sdk: 34, dumpRoute: "tty" }));
+		const { driver, host } = await setup({
+			state,
+			shell: [{ match: "uiautomator dump /dev/stdout", reply: SYNTHETIC_FORM_DUMP }],
+			host: [{ match: /exec-out uiautomator dump \/dev\/tty$/, reply: XML_TRAILER }],
+		});
+		await value(driver.snapshot());
+		expect(host.host.filter((a) => a.includes("exec-out")).length).toBe(1);
+		await driver.close();
+		expect(await state.read("emulator-5554")).toEqual({ sdk: 34, dumpRoute: "stdout" });
+	});
+
+	test("a different API level means a different image: the old route is not trusted", async () => {
+		const state = memoryAndroidState();
+		await state.update("emulator-5554", (s) => ({ ...s, sdk: 28, dumpRoute: "file" }));
+		const { driver, host } = await setup({ ...ONLY_FILE_ROUTE, state });
+		await value(driver.snapshot());
+		expect(routeProbes(host)).toBe(3);
+		await driver.close();
+		expect(await state.read("emulator-5554")).toEqual({ sdk: 34, dumpRoute: "file" });
+	});
+
+	test("a route the caller passes wins over the saved one and is still reported when it changes", async () => {
+		const state = memoryAndroidState();
+		await state.update("emulator-5554", (s) => ({ ...s, sdk: 34, dumpRoute: "file" }));
+		const routes: string[] = [];
+		const { driver, host } = await setup({
+			state,
+			dumpRoute: "stdout",
+			onDumpRoute: (r) => routes.push(r),
+			shell: [{ match: "uiautomator dump /dev/stdout", reply: XML_TRAILER }],
+			host: [{ match: /exec-out uiautomator dump \/dev\/tty$/, reply: SYNTHETIC_FORM_DUMP }],
+		});
+		await value(driver.snapshot());
+		expect(host.shell.filter((c) => c.includes("/dev/stdout")).length).toBe(1);
+		expect(routes).toEqual(["tty"]);
+	});
+
+	test("with no store nothing is saved and the driver still works", async () => {
+		const { driver } = await setup(ONLY_FILE_ROUTE);
+		const snap = await value(driver.snapshot());
+		expect(snap.flat.length).toBeGreaterThan(10);
+	});
+});
+
+/** A fake `settings` store behind the shell: `get`, `put` and `delete` on the `global` table, `; `-separated. */
+function settingsRule(values: Map<string, string>): ShellRule {
+	return {
+		match: /^settings (get|put|delete) global /,
+		reply: (command) => {
+			let out = "";
+			for (const part of command.split("; ")) {
+				const get = /^settings get global (\w+)$/.exec(part);
+				if (get?.[1]) out += `${values.get(get[1]) ?? "null"}\n`;
+				const put = /^settings put global (\w+) (\S+)$/.exec(part);
+				if (put?.[1] && put[2] !== undefined) values.set(put[1], put[2]);
+				const del = /^settings delete global (\w+)$/.exec(part);
+				if (del?.[1]) values.delete(del[1]);
+			}
+			return out;
+		},
+	};
+}
+
+const SCALES = ["window_animation_scale", "transition_animation_scale", "animator_duration_scale"] as const;
+const scalesAt = (value: string): Map<string, string> => new Map(SCALES.map((k) => [k, value]));
+const ONES = {
+	window_animation_scale: "1.0",
+	transition_animation_scale: "1.0",
+	animator_duration_scale: "1.0",
+};
+
+describe("animation scales", () => {
+	test("opening turns them off, closing puts the recorded values back", async () => {
+		const values = scalesAt("1.0");
+		const state = memoryAndroidState();
+		const { driver, host } = await setup({ shell: [settingsRule(values)], state });
+		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		expect((await state.read("emulator-5554")).animations).toEqual(ONES);
+
+		await driver.close();
+		expect([...values.entries()]).toEqual(SCALES.map((k) => [k, "1.0"]));
+		expect(host.shell.at(-1)).toBe(
+			"settings put global window_animation_scale 1.0; settings put global transition_animation_scale 1.0; settings put global animator_duration_scale 1.0"
+		);
+		expect((await state.read("emulator-5554")).animations).toBeUndefined();
+	});
+
+	test("a scale that was never set is deleted again, not set to a guess", async () => {
+		const values = new Map<string, string>([["window_animation_scale", "0.5"]]);
+		const { driver } = await setup({ shell: [settingsRule(values)], state: memoryAndroidState() });
+		expect(values.get("transition_animation_scale")).toBe("0");
+		await driver.close();
+		expect([...values.entries()]).toEqual([["window_animation_scale", "0.5"]]);
+	});
+
+	test("scales that were already off are left alone and nothing is saved", async () => {
+		const values = scalesAt("0");
+		const state = memoryAndroidState();
+		const { driver, host } = await setup({ shell: [settingsRule(values)], state });
+		await driver.close();
+		expect(host.shell.filter((c) => c.startsWith("settings")).length).toBe(1);
+		expect(await state.read("emulator-5554")).toEqual({});
+	});
+
+	test("without a store they are still restored when the driver closes", async () => {
+		const values = scalesAt("1.0");
+		const { driver } = await setup({ shell: [settingsRule(values)] });
+		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		await driver.close();
+		expect([...values.values()]).toEqual(["1.0", "1.0", "1.0"]);
+	});
+
+	test("a crash that never closed the driver leaves the originals in the file for the next open to restore", async () => {
+		const values = scalesAt("1.0");
+		const state = memoryAndroidState();
+		const crashed = fakeAndroidHost({ shell: [settingsRule(values), ...BASE_RULES] });
+		const opened = await openAndroidDriver({
+			serial: "emulator-5554",
+			adb: "adb",
+			exec: crashed.exec,
+			spawn: crashed.spawn,
+			clock: fakeClock(),
+			state,
+		});
+		expect(opened.success).toBe(true);
+		expect([...values.values()]).toEqual(["0", "0", "0"]);
+
+		const next = await setup({ shell: [settingsRule(values)], state });
+		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		expect((await state.read("emulator-5554")).animations).toEqual(ONES);
+		await next.driver.close();
+		expect([...values.values()]).toEqual(["1.0", "1.0", "1.0"]);
+		expect((await state.read("emulator-5554")).animations).toBeUndefined();
+	});
+
+	test("a restore that fails keeps the originals in the file", async () => {
+		const values = scalesAt("1.0");
+		const state = memoryAndroidState();
+		const { driver, lines } = await setup({
+			shell: [
+				{ match: /^settings put global window_animation_scale 1\.0/, reply: { stdout: "Error\n", exitCode: 1 } },
+				settingsRule(values),
+			],
+			state,
+		});
+		await driver.close();
+		expect(lines.some((l) => l.includes("could not restore"))).toBe(true);
+		expect((await state.read("emulator-5554")).animations).toEqual(ONES);
+	});
+
+	test("scales that cannot be read are neither recorded nor 'restored'", async () => {
+		const state = memoryAndroidState();
+		const { driver, host } = await setup({ state });
+		await driver.close();
+		expect(host.shell.filter((c) => c.startsWith("settings")).length).toBe(1);
+		expect((await state.read("emulator-5554")).animations).toBeUndefined();
+	});
+
+	test("closing twice restores once", async () => {
+		const values = scalesAt("1.0");
+		const { driver, host } = await setup({ shell: [settingsRule(values)] });
+		await driver.close();
+		await driver.close();
+		expect(host.shell.filter((c) => c.startsWith("settings put global window_animation_scale 1.0")).length).toBe(1);
 	});
 });

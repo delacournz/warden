@@ -7,12 +7,30 @@ import { dumpFileCommand, dumpStdoutArgv, dumpTtyHostArgv, shellCommand } from "
 /**
  * Fetching a `uiautomator dump`. Images disagree on where the XML may go (on the Pixel 10 AVD
  * `dump /dev/stdout` prints only the trailer, `exec-out … dump /dev/tty` works), so three routes are
- * tried in order and the first that yields a `<hierarchy>` is remembered and tried first next time.
+ * tried in order and the first that yields a `<hierarchy>` is remembered and tried first next time. A
+ * failed probe is a whole dump (~2 s), so the order is a guess worth getting right: see {@link routeOrder}.
  */
 
 export type DumpRoute = "stdout" | "tty" | "file";
 
 export const DUMP_ROUTES: readonly DumpRoute[] = ["stdout", "tty", "file"];
+
+/**
+ * From this API level `tty` is tried before `stdout` when nothing is remembered. Measured on the API 36 and 37
+ * emulator images, where `/dev/stdout` returns only the trailer; the cut-off at 30 is WDN-PERF's guess for the
+ * levels in between (a wrong guess costs one failed dump, once per device, then the route is remembered).
+ */
+export const TTY_FIRST_SDK = 30;
+
+/**
+ * The order to try the routes in: `known` (a route that worked before) first, else `tty` first from
+ * {@link TTY_FIRST_SDK}, else `stdout`; the rest follow in that order.
+ */
+export function routeOrder(sdk: number | undefined, known?: DumpRoute): DumpRoute[] {
+	const guess: readonly DumpRoute[] =
+		sdk !== undefined && sdk >= TTY_FIRST_SDK ? ["tty", "stdout", "file"] : DUMP_ROUTES;
+	return known ? [known, ...guess.filter((r) => r !== known)] : [...guess];
+}
 
 export const DUMP_TIMEOUT_MS = 20_000;
 
@@ -22,6 +40,8 @@ export type DumpDeps = {
 	adb: string;
 	serial: string;
 	log?: Logger;
+	/** the device's API level: decides which route is tried first when none is remembered */
+	sdk?: number;
 	/** route to try first (remembered from an earlier process) */
 	initialRoute?: DumpRoute;
 	/** called whenever the working route changes (including the first discovery) */
@@ -73,8 +93,7 @@ export function createDumper(deps: DumpDeps): Dumper {
 	return {
 		route: () => known,
 		async dump() {
-			const order = known ? [known, ...DUMP_ROUTES.filter((r) => r !== known)] : [...DUMP_ROUTES];
-			const found = await tryRoutes(order);
+			const found = await tryRoutes(routeOrder(deps.sdk, known));
 			if ("xml" in found) {
 				if (known !== found.route) deps.log?.(`uiautomator dump route: ${found.route}`);
 				if (known !== found.route) deps.onRoute?.(found.route);

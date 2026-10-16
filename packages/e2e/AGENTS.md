@@ -29,6 +29,14 @@ Published as `@delacour/warden-e2e` (manifest from `apps/cli/src/npm/manifests.t
 - Tests colocated (`*.test.ts`), TDD, no `any`.
 - Flow export goldens live in `src/flows/export.golden/*.e2e.ts` (biome-ignored, typechecked by `tsc`); regenerate with `UPDATE_GOLDEN=1 bun test src/flows/export.test.ts` and review the diff.
 
+## Android driver internals (`src/driver/android`)
+One resident `adb shell` per driver; every snapshot is a `uiautomator dump` (~1.9 s: JVM start plus its own `waitForIdle(1000, 10000)`).
+- **Settle** is one dump (`quiet` unless it failed or took ≥ 10 s) for any `quietMs` ≤ 1 s; only a longer window compares successive dumps by hash. `driver/settle.ts`'s `settleByHash` is shared with iOS's fallback and `warden ui`, so Android's shortcut lives in `android-driver.ts`.
+- **Per-serial state** (`android-state.ts`): `$WARDEN_HOME/android/<serial>.json` = `{sdk, dumpRoute, animations}`, written atomically and best effort (an unreadable or hand-edited file reads as empty; values are validated before they reach a shell). It is trusted only on the API level it was written on. `openDriver` supplies the file store; tests pass `memoryAndroidState()`, never the real home.
+- **Dump route**: the saved route is tried first; with none, `tty` first from API 30 (`routeOrder` in `android-dump.ts`), else `stdout`. A saved route that fails re-probes the others and the route that worked is saved. `warden ui` also keeps its own `android-dump-route` file and passes it as `dumpRoute` (wins over the saved one).
+- **Animation scales**: open reads `window/transition/animator` scales and sets them to 0 in one shell call; the values to restore (`planAnimations`) are saved in the state file, and `close` puts them back (an unset scale is `settings delete`d). A process that dies without closing leaves the originals in the file; the next driver on that emulator sees zeros plus saved originals and restores them on its close.
+- **`openUrl`** is `am start -p <env.bundleId>`, so only the app under test can take a link.
+
 ## `warden-simd` internals (`native/ios/Sources/warden-simd`)
 NDJSON over stdio or a unix socket (`~/.warden/simd/<udid>.sock`, `warden e2e` passes it as `WARDEN_SIMD_SOCKET`). The wire is `src/driver/ios/simd-protocol.ts`; Swift output is pinned by goldens in `Tests/warden-simdTests/Fixtures` (`WARDEN_SIMD_UPDATE_GOLDEN=1 swift test` rewrites them, `native/scripts/element-shape.test.ts` parses them with the zod schemas).
 - **AX guests**: `Session.open` builds one `.exclusive` `axbridge` reader (a guest private to this helper, `automationMode: true`) plus a host `ax` reader for per-request fallback. A bridge failure with no explicit `backend` is retried on `ax`, with a `log` warn and `snapshot.fallback.reason`. A bridge answer of one childless area-less root is re-read once, then read on `ax` (`Session.recoverFromEmptyRoot`).

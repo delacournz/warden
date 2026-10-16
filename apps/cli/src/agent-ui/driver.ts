@@ -1,6 +1,8 @@
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { wardenHome } from "@delacour/warden-core/store";
 import { openAndroidDriver } from "@delacour/warden-e2e/driver/android/android-driver";
 import type { DumpRoute } from "@delacour/warden-e2e/driver/android/android-dump";
+import { androidStateDir, createAndroidStateStore } from "@delacour/warden-e2e/driver/android/android-state";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -49,7 +51,8 @@ export function driverUiError(error: DriverError): UiError {
 /**
  * The real driver for a device. iOS: the device's `warden-simd` daemon (`connectHelper` spawns it on first
  * use, closing the driver only disconnects). Android: an adb-backed driver owned by this command (closed with it); the uiautomator dump route that worked
- * is remembered per device (`android-dump-route`) because every `warden ui` call is a fresh process.
+ * is remembered per device (`android-dump-route`) because every `warden ui` call is a fresh process, and the driver's own
+ * per-serial state (`$WARDEN_HOME/android/<serial>.json`) keeps the animation scales it must put back when it closes.
  */
 export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<Result<Driver, UiError>> {
 	if (device.platform === "ios") return connectHelper(ctx, device.udid);
@@ -59,6 +62,7 @@ export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<R
 			serial: device.udid,
 			adb: androidTools(ctx.env).adb,
 			exec: ctx.exec,
+			state: createAndroidStateStore({ dir: androidStateDir(wardenHome(ctx.env)) }),
 			...(remembered ? { dumpRoute: remembered } : {}),
 			onDumpRoute: (route: DumpRoute) => writeDumpRoute(ctx, device.udid, route),
 		})
