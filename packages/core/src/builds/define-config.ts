@@ -293,7 +293,7 @@ export interface WardenE2eFlow {
 	/**
 	 * Platforms the flow runs on.
 	 *
-	 * @default from the id (`-ios-` / `-android-`), then the `launch` map, else both
+	 * @default from the id (`-ios-` / `-android-`), else both
 	 */
 	platforms?: WardenPlatform[] | undefined;
 	/** Overrides the suite's `maxDepth`. */
@@ -305,7 +305,7 @@ export interface WardenE2eFlow {
 /**
  * `e2e.<suite>.metro`: one warden-owned Metro per run. It is started in the project root on a leased
  * port, counts as ready only once that port is verified to serve this checkout (never another
- * worktree's Metro), and is stopped at the end. Runners get `WARDEN_METRO_URL` / `WARDEN_PORT`.
+ * worktree's Metro), and is stopped at the end. Specs get `WARDEN_METRO_URL` / `WARDEN_PORT`.
  */
 export interface WardenE2eMetro {
 	/** @default true */
@@ -323,7 +323,7 @@ export interface WardenE2eMetro {
 	 */
 	launchArgs?: string[] | undefined;
 	/**
-	 * Open the app on each device once Metro is ready. `false` for a runner that installs the app
+	 * Open the app on each device once Metro is ready. `false` for a spec that installs the app
 	 * itself and so has to launch it too (`WARDEN_METRO_URL` is what it points the dev client at).
 	 *
 	 * @default true
@@ -345,6 +345,32 @@ export interface WardenE2eMetro {
 	readyTimeout?: string | undefined;
 }
 
+/** `e2e.<suite>.spec`: how `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`). */
+export interface WardenE2eSpec {
+	/** The app under test. Default: the suite project's `bundleId` for the platform. */
+	bundleId?: string | undefined;
+	/** Launch arguments `app.open()` passes, after `--initialUrl <metro url>` and `metro.launchArgs`. */
+	launchArgs?: string[] | undefined;
+	/**
+	 * Per-test timeout.
+	 *
+	 * @default "2m"
+	 */
+	timeout?: string | undefined;
+	/**
+	 * Per-action timeout (tap, fill, waiting for an element).
+	 *
+	 * @default "30s"
+	 */
+	actionTimeout?: string | undefined;
+	/**
+	 * Polling timeout of `expect(locator)`.
+	 *
+	 * @default "5s"
+	 */
+	assertionTimeout?: string | undefined;
+}
+
 /** `e2e.<suite>.devices[]`: one leg of the run with its own device pool. */
 export interface WardenE2eDeviceLeg {
 	/** Device profile; also the leg's name (`{leg}`, `WARDEN_LEG`, `--devices <profile>`). */
@@ -355,7 +381,7 @@ export interface WardenE2eDeviceLeg {
 	 * @default 1
 	 */
 	count?: number | undefined;
-	/** Added to this leg's setup and runner env. */
+	/** Added to this leg's setup and spec env. */
 	env?: Record<string, string> | undefined;
 	/**
 	 * `false`: the leg only runs with `--devices all` or `--devices <profile>`.
@@ -371,31 +397,29 @@ export interface WardenE2eDeviceLeg {
  */
 export interface WardenE2eSuite {
 	/**
-	 * `projects[].name`: the runner, `serve` and `setup` run in its root and `app` installs its build.
+	 * `projects[].name`: the specs, `serve` and `setup` run in its root and `app` installs its build.
 	 * Needed when the config has several projects and warden runs from the repo root.
 	 */
 	project?: string | undefined;
-	/** Directory of flows: YAML files, or `*.e2e.ts(x)` tests whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
+	/** Directory of flows: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	flowsDir: string;
 	/**
-	 * Runner argv. `{udid}` `{worker}` `{seq}` `{leg}` `{port}` `{metroUrl}` `{stateDir}` are substituted;
-	 * per flow also `{flow}` `{flowPath}`. In `mode: "single"` an argument that is exactly `{flows}` /
-	 * `{flowPaths}` becomes one argument per selected flow (they are also in `WARDEN_FLOWS` /
-	 * `WARDEN_FLOW_PATHS`, comma-separated).
-	 *
-	 * @example ["<flow-runner>", "run", "{flowPath}", "--device", "{udid}"]
+	 * Removed: flows run with `@delacour/warden-e2e` (`bun test`). A config that still sets it fails
+	 * validation; use `spec` for what the argv used to carry.
 	 */
-	runner: string[];
+	runner?: undefined;
+	/** How the specs run: the app under test, its launch arguments and the timeouts. */
+	spec?: WardenE2eSpec | undefined;
 	/**
-	 * `"per-flow"`: one runner process per flow, one worker per device. `"single"`: one runner process
-	 * per device leg for every selected flow; the runner shards over `WARDEN_UDIDS` itself and its exit
-	 * code is the verdict of all of them.
+	 * `"per-flow"`: one `bun test` process per flow, one worker per device. `"single"`: one process per
+	 * device runs its share of the flows (sharded round-robin by flow id), so the specs of a device run
+	 * serially in one process and the devices run in parallel.
 	 *
 	 * @default "per-flow"
 	 */
 	mode?: "per-flow" | "single" | undefined;
 	/**
-	 * A runner process still going after this many milliseconds is killed (screenshot first) and counts
+	 * A spec process still going after this many milliseconds is killed (screenshot first) and counts
 	 * as failed.
 	 *
 	 * @default 600000 (10 min)
@@ -500,9 +524,9 @@ export interface WardenE2eSuite {
 	profile?: string | undefined;
 	/** Ensure the app on every device first. */
 	app?: WardenAppOption | undefined;
-	/** Ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner. */
+	/** Ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every spec process. */
 	ports?: string[] | undefined;
-	/** Added to the serve, setup and runner env. */
+	/** Added to the serve, setup and spec env. */
 	env?: Record<string, string> | undefined;
 	/** `sh -c` once per run before the flows, in its own process group; killed at the end. `{port}` / `{metroUrl}` are substituted. `--serve` overrides. */
 	serve?: string | undefined;
@@ -521,15 +545,15 @@ export interface WardenE2eSuite {
 	setup?: string | undefined;
 	/** iOS only: switch off the simulator daemons flows never need on each leased device, before `setup`. */
 	slim?: boolean | undefined;
+	/** Removed: renamed `warmDrivers`. */
+	warmRunners?: undefined;
 	/**
-	 * iOS: before the flows, start every leased device's agent-device automation runner at once, in the
-	 * daemon + session the runner resumes (`WARDEN_AGENT_SESSION`), so the e2e engine (which warms
-	 * devices one by one, ~20 s each) finds them up. A failed warm-up only warns. Skipped when the
-	 * project has no `agent-device` bin.
+	 * iOS: before the flows, start every leased device's automation helper at once (and take one
+	 * snapshot), so the first spec on each device does not pay the cold start. A failed warm-up only warns.
 	 *
 	 * @default true
 	 */
-	warmRunners?: boolean | undefined;
+	warmDrivers?: boolean | undefined;
 	/**
 	 * iOS: close the Simulator.app windows of this run's devices, so it shows nothing even with Simulator.app
 	 * open. Overrides the top-level `headless`; `--headless` / `--no-headless` override both. Android is always headless.

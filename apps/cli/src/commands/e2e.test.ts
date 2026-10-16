@@ -3,9 +3,11 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
+import type { TestResult } from "@delacour/warden-e2e/runner/results";
+import { jsonl, result } from "../batch/results.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
-import { harness } from "./batch.testing";
+import { scriptedUi, type TestContext, testContext } from "../testing";
+import { type Harness, harness, type Spawned } from "./batch.testing";
 import { createE2eCommand, type E2eReport } from "./e2e";
 
 let dir: string;
@@ -40,11 +42,24 @@ async function waitFor(cond: () => boolean): Promise<void> {
 	for (let i = 0; i < 500 && !cond(); i++) await Bun.sleep(1);
 }
 
+const BUN = "/usr/bin/bun";
+const PRELOAD = "/proj/node_modules/@delacour/warden-e2e/src/preload.ts";
+
+/** `bun test` argv of the default spec timeouts (2m + 30s) over these files */
+const bunTest = (...files: string[]) => [BUN, "test", "--preload", PRELOAD, "--timeout", "150000", ...files];
+
+/** Where a spawned job's spec process writes `results.jsonl`. */
+const resultsPath = (env: Record<string, string | undefined>) => join(env.WARDEN_E2E_OUT ?? "", "results.jsonl");
+
+/** `result()` for a spec file of the suite's flows dir. */
+const spec = (flow: string, title: string, status: TestResult["status"] = "passed", extra: Partial<TestResult> = {}) =>
+	result(join(dir, `flows/${flow}.e2e.ts`), title, status, extra);
+
 const reportOf = (files: Map<string, string>, c: TestContext): E2eReport =>
 	JSON.parse(files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "e2e-report.json")) ?? "{}");
 
 describe("warden e2e", () => {
-	test("runs the affected flows with the suite's runner, in the config dir; report + gate pass", async () => {
+	test("runs the affected flows with bun test, in the config dir; report + gate pass", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
@@ -53,12 +68,7 @@ describe("warden e2e", () => {
 		const jobs = h.jobs();
 		expect(jobs.map((j) => j.opts.env.WARDEN_JOB).sort()).toEqual(["chats", "settings"]);
 		const chats = jobs.find((j) => j.opts.env.WARDEN_JOB === "chats");
-		expect(chats?.cmd).toEqual([
-			"run-flow",
-			join(dir, "flows/chats.yaml"),
-			"--device",
-			chats?.opts.env.WARDEN_UDID ?? "",
-		]);
+		expect(chats?.cmd).toEqual(bunTest(join(dir, "flows/chats.e2e.ts")));
 		expect(chats?.opts.cwd).toBe(dir);
 		const report = reportOf(h.files, c);
 		expect(report).toMatchObject({ suite: "mobile", platform: "ios", base: "main", ok: true });
@@ -168,7 +178,7 @@ describe("warden e2e", () => {
 		expect(c.stderr.join("\n")).toContain("pass --platform");
 	});
 
-	test("suite project: runner + serve run in the project root and its app is installed", async () => {
+	test("suite project: specs + serve run in the project root and its app is installed", async () => {
 		await resuite(
 			{ project: "app", app: true, serve: "bun api", serveReady: "file:ready.txt" },
 			{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] }
@@ -206,19 +216,17 @@ describe("warden e2e", () => {
 		expect(h2.serve()?.cmd).toEqual(["sh", "-c", "bun other"]);
 	});
 
-	test("serve / serveReady see the leased port ({port}); runners get WARDEN_PORT and a private agent-device state dir", async () => {
+	test("serve / serveReady see the leased port ({port}); specs get WARDEN_PORT", async () => {
 		await resuite({ serve: "bun api --port {port}", serveReady: "tcp:{port}", ports: ["8091:5"] });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
-		c.env = { ...c.env, AGENT_DEVICE_STATE_DIR: "/shared/by/the/shell" };
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "bun api --port 8091"]);
 		expect(h.probes).toEqual([{ kind: "tcp", host: "127.0.0.1", port: 8091 }]);
 		const job = h.jobs()[0];
 		expect(job?.opts.env.WARDEN_PORT).toBe("8091");
-		expect(job?.opts.env.AGENT_DEVICE_STATE_DIR).toBe(
-			join(c.env.WARDEN_HOME ?? "", "batches", "b1", "agent-device", job?.opts.env.WARDEN_WORKER ?? "")
-		);
+		expect(job?.opts.env.AGENT_DEVICE_STATE_DIR).toBeUndefined();
+		expect(job?.opts.env.WARDEN_AGENT_SESSION).toBeUndefined();
 	});
 
 	describe("metro", () => {
@@ -226,10 +234,7 @@ describe("warden e2e", () => {
 		const suite = { project: "app", metro: { launchArgs: ["-E2E", "YES"], env: { EXPO_PUBLIC_E2E: "1" } } };
 
 		test("starts its own Metro in the project root on the first leased port, prewarms, opens the app, stops it last", async () => {
-			await resuite(
-				{ ...suite, ports: ["8091:5"], runner: ["run-flow", "{flowPath}", "{metroUrl}", "{port}"] },
-				projects
-			);
+			await resuite({ ...suite, ports: ["8091:5"], spec: { launchArgs: ["--seed", "7"] } }, projects);
 			const calls: string[][] = [];
 			const c = setup(["--files", "src/chat/lazy.tsx"], calls);
 			const h = harness();
@@ -243,7 +248,15 @@ describe("warden e2e", () => {
 			expect(h.metroProbes).toEqual([`8081 ${root}`]);
 			expect(h.prewarmed).toEqual(["ios http://127.0.0.1:8081"]);
 			const job = h.jobs()[0];
-			expect(job?.cmd.slice(2)).toEqual(["http://127.0.0.1:8081", "8081"]);
+			expect(JSON.parse(job?.opts.env.WARDEN_LAUNCH_ARGS ?? "[]")).toEqual([
+				"--initialUrl",
+				"http://127.0.0.1:8081",
+				"-E2E",
+				"YES",
+				"--seed",
+				"7",
+			]);
+			expect(job?.opts.env.WARDEN_BUNDLE_ID).toBe("com.x");
 			expect(job?.opts.env).toMatchObject({
 				WARDEN_METRO_URL: "http://127.0.0.1:8081",
 				WARDEN_PORT: "8081",
@@ -269,7 +282,7 @@ describe("warden e2e", () => {
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("open: false leaves launching the app to the runner", async () => {
+		test("open: false leaves launching the app to the specs", async () => {
 			await resuite({ ...suite, metro: { ...suite.metro, open: false } }, projects);
 			const calls: string[][] = [];
 			const c = setup(["--files", "src/chat/lazy.tsx"], calls);
@@ -299,10 +312,128 @@ describe("warden e2e", () => {
 			expect(c.stderr.join("\n")).toContain("SyntaxError");
 			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
 		});
+
+		const installed = {
+			success: true,
+			data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true },
+		} as const;
+
+		test("Metro starts and prewarms while the app is still installing; stopped last", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			const install = Promise.withResolvers<void>();
+			let ensures = 0;
+			h.deps.ensureApp = async () => {
+				ensures++;
+				await install.promise;
+				return installed;
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.prewarmed.length === 1);
+			expect(ensures).toBe(1);
+			expect(h.metro()).toBeDefined();
+			expect(h.jobs()).toEqual([]);
+			install.resolve();
+			expect(await run).toBe(0);
+			expect(h.events.indexOf("metro:start")).toBeLessThan(h.events.findIndex((e) => e.startsWith("job:")));
+			expect(h.events.at(-1)).toBe("metro:SIGTERM");
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("the install fails → the early Metro is stopped, no flow runs, nothing stays leased", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			h.deps.ensureApp = async () => ({ success: false, error: "no build" });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+			expect(c.stderr.join("\n")).toContain("no build");
+		});
+
+		test("the device claim fails → the early Metro is stopped and the port lease released", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			// no warden sim exists and none may be created: the device claim fails after the port lease
+			const sim = fakeSimctl([]);
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			ctx = testContext(["--files", "src/chat/lazy.tsx", "--max", "0"], { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			ctx.cwd = dir;
+			const c = ctx;
+			const h = harness();
+			h.deps.ensureApp = async () => installed;
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("Metro turns out foreign while the app installs → exit 1 naming the other checkout, no flow", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			const probe = Promise.withResolvers<void>();
+			h.deps.metroProbe = async () => {
+				await probe.promise;
+				return { kind: "foreign", root: "/other/worktree/app" };
+			};
+			let ensures = 0;
+			h.deps.ensureApp = async () => {
+				ensures++;
+				probe.resolve();
+				await Bun.sleep(5);
+				return installed;
+			};
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(ensures).toBe(1);
+			expect(h.jobs()).toEqual([]);
+			expect(c.stderr.join("\n")).toContain("port 8081 is served by /other/worktree/app, not this worktree");
+			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("SIGINT during the install → exit 130, the early Metro is stopped, nothing stays leased", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			const install = Promise.withResolvers<void>();
+			h.deps.ensureApp = async () => {
+				await install.promise;
+				return installed;
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.signals.has("SIGINT") && h.prewarmed.length === 1);
+			h.signals.get("SIGINT")?.();
+			install.resolve();
+			expect(await run).toBe(130);
+			expect(h.metro()?.kills).toContain("SIGTERM");
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("Metro's readiness is announced once, under the claim spinner when it is up before the app", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const ui = scriptedUi();
+			c.ui = ui;
+			const h = harness();
+			h.deps.ensureApp = async () => {
+				await waitFor(() => h.prewarmed.length === 1);
+				await Bun.sleep(5);
+				return installed;
+			};
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const announced = ui.events.filter((e) => /Metro on :8081 serves/.test(e));
+			expect(announced).toHaveLength(1);
+			expect(ui.events.indexOf(announced[0] ?? "")).toBeLessThan(ui.events.indexOf("ok: app ready on 1 device(s)"));
+			expect(ui.events.filter((e) => e.startsWith("spin: starting Metro"))).toEqual([]);
+		});
 	});
 
 	describe("jobTimeoutMs", () => {
-		test("a runner still going after the timeout is shot, killed, and its flow fails with exit 124", async () => {
+		test("a spec process still going after the timeout is shot, killed, and its flow fails with exit 124", async () => {
 			await resuite({ jobTimeoutMs: 90_000 });
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness({ manual: true });
@@ -326,150 +457,372 @@ describe("warden e2e", () => {
 			expect(batch.jobs[0].exitCode).toBe(124);
 		});
 
-		test("a runner that finishes in time disarms its timeout; the default is 10 min", async () => {
+		test("a spec process that finishes in time disarms its timeout; the default is 10 min", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
-			expect(h.timers.map((t) => [t.ms, t.cancelled])).toEqual([[600_000, true]]);
+			// the 120 s timer is the warm-up's
+			expect(h.timers.filter((t) => t.ms !== 120_000).map((t) => [t.ms, t.cancelled])).toEqual([[600_000, true]]);
 		});
 	});
 
-	describe("warmRunners", () => {
-		const BIN = "/proj/node_modules/.bin/agent-device";
-
-		test("single: every device's runner starts at once, after setup and before the job, in the job's daemon + sessions", async () => {
-			await resuite({ mode: "single", count: 2, runner: ["run-all"], setup: "prep {udid}" });
-			const c = setup(["--all"]);
-			const h = harness({ agentDeviceBin: BIN });
+	describe("built-in runner", () => {
+		test("job env: the spec contract, an out dir per worker and attempt, no state-dir leftovers", async () => {
+			await resuite({
+				spec: {
+					bundleId: "com.demo",
+					launchArgs: ["--seed", "7"],
+					timeout: "3m",
+					actionTimeout: "20s",
+					assertionTimeout: "2s",
+				},
+			});
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
-			const [job] = h.jobs();
-			const udids = job?.opts.env.WARDEN_UDIDS?.split(",") ?? [];
-			const first = udids[0] ?? "";
-			expect(job?.opts.env.WARDEN_AGENT_SESSION).toBe(`warden-${first}`);
-			expect(h.warms().map((w) => w.cmd)).toEqual(
-				udids.map((udid, slot) => [
-					BIN,
-					"prepare",
-					"ios-runner",
-					"--platform",
-					"ios",
-					"--udid",
-					udid,
-					"--session",
-					`warden-${first}-${slot}`,
-				])
+			const job = h.jobs()[0];
+			expect(job?.cmd).toEqual([
+				BUN,
+				"test",
+				"--preload",
+				PRELOAD,
+				"--timeout",
+				"210000",
+				join(dir, "flows/chats.e2e.ts"),
+			]);
+			expect(job?.opts.env).toMatchObject({
+				WARDEN_PLATFORM: "ios",
+				WARDEN_BUNDLE_ID: "com.demo",
+				WARDEN_LAUNCH_ARGS: '["--seed","7"]',
+				WARDEN_E2E_OUT: join(c.env.WARDEN_HOME ?? "", "batches", "b1", "e2e", `${job?.opts.env.WARDEN_WORKER}-0`),
+				WARDEN_E2E_TIMEOUT: "180000",
+				WARDEN_E2E_ACTION_TIMEOUT: "20000",
+				WARDEN_E2E_ASSERTION_TIMEOUT: "2000",
+				WARDEN_E2E_FLOWS_DIR: join(dir, "flows"),
+				WARDEN_HELPER_DIR: "/opt/warden",
+			});
+			for (const gone of ["WARDEN_AGENT_SESSION", "WARDEN_FLOWS", "WARDEN_FLOW_PATHS"])
+				expect(job?.opts.env[gone]).toBeUndefined();
+		});
+
+		test("defaults: 2m / 30s / 5s, no launch args without Metro, WARDEN_HELPER_DIR from the shell wins", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			c.env = { ...c.env, WARDEN_HELPER_DIR: "/mine" };
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.jobs()[0]?.opts.env).toMatchObject({
+				WARDEN_BUNDLE_ID: "com.x",
+				WARDEN_LAUNCH_ARGS: "[]",
+				WARDEN_E2E_TIMEOUT: "120000",
+				WARDEN_E2E_ACTION_TIMEOUT: "30000",
+				WARDEN_E2E_ASSERTION_TIMEOUT: "5000",
+				WARDEN_HELPER_DIR: "/mine",
+			});
+		});
+
+		test("the bundle id falls back to the project's for the platform", async () => {
+			await resuite(
+				{ project: "app", spec: undefined },
+				{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.project" } }] }
 			);
-			expect(h.warms().map((w) => w.opts.env.AGENT_DEVICE_STATE_DIR)).toEqual(
-				udids.map(() => job?.opts.env.AGENT_DEVICE_STATE_DIR)
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.jobs()[0]?.opts.env.WARDEN_BUNDLE_ID).toBe("com.project");
+		});
+
+		test("no bundle id anywhere fails before any device is leased", async () => {
+			await resuite({ spec: undefined });
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("e2e.mobile: no bundle id — set spec.bundleId or projects[].bundleId.ios");
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("bun missing: WARDEN_BUN is used, else an error before leasing", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const none = harness({ bun: null });
+			expect(await createE2eCommand(none.deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("bun >= 1.3 is required on PATH (or set WARDEN_BUN)");
+			expect(none.jobs()).toEqual([]);
+
+			c.env = { ...c.env, WARDEN_BUN: "/opt/bun" };
+			const set = harness({ bun: null });
+			expect(await createE2eCommand(set.deps).run(c)).toBe(0);
+			expect(set.jobs()[0]?.cmd[0]).toBe("/opt/bun");
+		});
+
+		test("@delacour/warden-e2e missing: the error says what to install", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ preload: null });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("bun add -d @delacour/warden-e2e");
+			expect(h.jobs()).toEqual([]);
+		});
+
+		test("a bad spec duration is a config error naming the key", async () => {
+			await resuite({ spec: { bundleId: "com.x", timeout: "soon" } });
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("e2e.mobile.spec.timeout");
+		});
+
+		test("--dry-run needs neither bun nor the preload", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx", "--dry-run"]);
+			expect(await createE2eCommand(harness({ bun: null, preload: null }).deps).run(c)).toBe(0);
+		});
+
+		test("a leftover runner / warmRunners key is a migration error", async () => {
+			await resuite({ runner: ["bunx", "e2e", "run", "{flowPath}"] });
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain(
+				"e2e.mobile.runner was removed: flows run with @delacour/warden-e2e, see spec"
 			);
-			const lastSetup = Math.max(...udids.map((u) => h.events.indexOf(`setup:${u}`)));
-			const warms = udids.map((u) => h.events.indexOf(`warm:${u}`));
-			expect(Math.min(...warms)).toBeGreaterThan(lastSetup);
-			expect(Math.max(...warms)).toBeLessThan(h.events.findIndex((e) => e.startsWith("job:")));
-		});
-
-		test("per-flow: each device warms in its own worker's daemon, as slot 0", async () => {
-			write("src/chat/lazy.tsx", "export const x = 2;\n");
-			write("src/settings/form.tsx", "export const y = 2;\n");
-			const c = setup(["--count", "2"]);
-			const h = harness({ agentDeviceBin: BIN });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
-			expect(h.warms()).toHaveLength(2);
-			for (const w of h.warms()) {
-				const udid = w.opts.env.WARDEN_UDID ?? "";
-				expect(w.cmd.slice(-2)).toEqual(["--session", `warden-${udid}-0`]);
-				const job = h.jobs().find((j) => j.opts.env.WARDEN_UDID === udid);
-				if (job) {
-					expect(job.opts.env.AGENT_DEVICE_STATE_DIR).toBe(w.opts.env.AGENT_DEVICE_STATE_DIR);
-					expect(job.opts.env.WARDEN_AGENT_SESSION).toBe(`warden-${udid}`);
-				}
-			}
-		});
-
-		test("a failed warm-up only warns; the flows still run", async () => {
-			await resuite({ mode: "single", count: 2, runner: ["run-all"] });
-			const c = setup(["--all"]);
-			const h = harness({ agentDeviceBin: BIN, warmExit: 1 });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
-			expect(h.jobs()).toHaveLength(1);
-			expect(c.stderr.join("\n")).toMatch(/runner warm-up on \S+ exit 1 .*warm-\d\.log/);
-		});
-
-		test("off with warmRunners: false, and when the project has no agent-device", async () => {
-			await resuite({ mode: "single", runner: ["run-all"], warmRunners: false });
-			const off = harness({ agentDeviceBin: BIN });
-			expect(await createE2eCommand(off.deps).run(setup(["--all"]))).toBe(0);
-			expect(off.warms()).toEqual([]);
-			await resuite({ mode: "single", runner: ["run-all"] });
-			const none = harness();
-			expect(await createE2eCommand(none.deps).run(setup(["--all"]))).toBe(0);
-			expect(none.warms()).toEqual([]);
+			await resuite({ warmRunners: false });
+			const w = setup(["--files", "src/chat/lazy.tsx"]);
+			expect(await createE2eCommand(harness().deps).run(w)).toBe(1);
+			expect(w.stderr.join("\n")).toContain("e2e.mobile.warmRunners was removed: renamed to warmDrivers");
 		});
 	});
 
 	describe("mode: single", () => {
-		test("one runner process for every selected flow, handed the whole device pool", async () => {
-			await resuite({ mode: "single", count: 2, runner: ["run-all", "{flowPaths}", "--out", "out/{worker}"] });
+		const flowFiles = () => ["chats", "settings"].map((id) => join(dir, `flows/${id}.e2e.ts`));
+		const shardOf = (job: Spawned | undefined) => job?.opts.env.WARDEN_JOB;
+
+		test("one bun test process per device over its round-robin shard of the flows", async () => {
+			await resuite({ mode: "single", count: 2 });
 			const c = setup(["--all"]);
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
-			const jobs = h.jobs();
-			expect(jobs).toHaveLength(1);
-			expect(jobs[0]?.cmd).toEqual([
-				"run-all",
-				join(dir, "flows/chats.yaml"),
-				join(dir, "flows/settings.yaml"),
-				"--out",
-				"out/0",
-			]);
-			expect(jobs[0]?.opts.env.WARDEN_UDIDS?.split(",").sort()).toEqual(["U1", "U2"]);
-			expect(jobs[0]?.opts.env.WARDEN_FLOWS).toBe("chats,settings");
+			const jobs = h.jobs().sort((a, b) => (shardOf(a) ?? "").localeCompare(shardOf(b) ?? ""));
+			expect(jobs.map(shardOf)).toEqual(["shard-0", "shard-1"]);
+			expect(jobs[0]?.cmd).toEqual(bunTest(join(dir, "flows/chats.e2e.ts")));
+			expect(jobs[1]?.cmd).toEqual(bunTest(join(dir, "flows/settings.e2e.ts")));
+			expect(new Set(jobs.map((j) => j.opts.env.WARDEN_UDID)).size).toBe(2);
+			for (const j of jobs) expect(j.opts.env.WARDEN_FLOWS).toBeUndefined();
 			expect(c.db.listLeases()).toEqual([]);
 			const report = reportOf(h.files, c);
-			expect(report.ok).toBe(true);
+			expect(report).toMatchObject({ ok: true, mode: "single" });
 			expect(report.flows.map((f) => [f.id, f.verdict])).toEqual([
 				["chats", "passed"],
 				["settings", "passed"],
 			]);
 		});
 
-		test("live flow progress: the grid marks each flow as the runner's output reports it", async () => {
-			await resuite({ mode: "single", runner: ["run-all"] });
+		test("one device runs every flow in one process; shards never outnumber flows", async () => {
+			await resuite({ mode: "single", count: 1 });
+			const one = harness();
+			expect(await createE2eCommand(one.deps).run(setup(["--all"]))).toBe(0);
+			expect(one.jobs().map((j) => j.cmd)).toEqual([bunTest(...flowFiles())]);
+			expect(one.jobs().map(shardOf)).toEqual(["shard-0"]);
+
+			await resuite({ mode: "single", count: 5 });
+			const many = harness();
+			expect(await createE2eCommand(many.deps).run(setup(["--all"]))).toBe(0);
+			expect(many.jobs()).toHaveLength(2);
+		});
+
+		test("a failing shard fails only its flows", async () => {
+			await resuite({ mode: "single", count: 2 });
+			const c = setup(["--all"]);
+			const h = harness({ exitCodes: { "shard-1": 1 } });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(reportOf(h.files, c).flows.map((f) => [f.id, f.verdict])).toEqual([
+				["chats", "passed"],
+				["settings", "failed"],
+			]);
+		});
+
+		test("live flow progress: the grid lists a device's shard and marks each flow as its results.jsonl reports it", async () => {
+			await resuite({ mode: "single" });
 			const c = setup(["--all"]);
 			const h = harness({ manual: true, isTTY: true });
 			const running = createE2eCommand(h.deps).run(c);
 			await waitFor(() => h.jobs().length > 0);
 			const job = h.jobs()[0];
 			h.files.set(
-				job?.opts.log ?? "",
-				" ✓ |ios| flows/chats.yaml (1 test) 2s\n ❯ |ios| flows/settings.yaml (1 test | 1 failed)\n"
+				resultsPath(job?.opts.env ?? {}),
+				jsonl(spec("chats", "open", "passed"), spec("settings", "toggle", "failed"))
 			);
 			job?.finish(1);
-			expect(await running).toBe(1);
+			expect(await running).toBe(0);
 			const screen = h.terminal.join("");
+			expect(screen).toContain("· chats  · settings");
 			expect(screen).toContain("✓ chats  ✗ settings");
 			expect(screen).toContain("2/2");
 		});
 
-		test("--no-tui: one line per flow as it finishes", async () => {
-			await resuite({ mode: "single", runner: ["run-all"] });
+		test("each device's row lists only its own shard", async () => {
+			await resuite({ mode: "single", count: 2 });
+			const c = setup(["--all"]);
+			const h = harness({ isTTY: true });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const frame = h.terminal.join("").split("\u001b[0J").at(-1) ?? "";
+			const lines = frame.split("\n").filter((l) => l.includes("chats") || l.includes("settings"));
+			expect(lines).toHaveLength(2);
+			for (const line of lines) expect(line.includes("chats") && line.includes("settings")).toBe(false);
+		});
+
+		test("the process's exit code decides when it wrote no results, with a warning", async () => {
+			await resuite({ mode: "single" });
+			const c = setup(["--all"]);
+			const h = harness({ exitCodeFor: () => 1 });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(reportOf(h.files, c).flows.map((f) => f.verdict)).toEqual(["failed", "failed"]);
+			expect(c.stderr.join("\n")).toContain("shard-0: no results.jsonl — verdict from exit code 1");
+		});
+
+		test("per-flow verdicts from results.jsonl: a failing test fails its flow only, the exit code blames the rest", async () => {
+			await resuite({ mode: "single" });
+			const c = setup(["--all"]);
+			const h: Harness = harness({
+				exitCodeFor: (env) => {
+					h.files.set(
+						resultsPath(env),
+						jsonl(
+							spec("chats", "open", "passed"),
+							spec("settings", "toggle", "failed", { error: { message: "no such element" } })
+						)
+					);
+					return 1;
+				},
+			});
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const report = reportOf(h.files, c);
+			expect(report.flows.map((f) => [f.id, f.verdict])).toEqual([
+				["chats", "passed"],
+				["settings", "failed"],
+			]);
+			expect(report.flows[1]?.tests?.[0]).toMatchObject({
+				title: ["toggle"],
+				status: "failed",
+				error: "no such element",
+			});
+			expect(c.stderr.join("\n")).toContain("settings failed (optional)");
+		});
+	});
+
+	describe("results.jsonl", () => {
+		/** a harness whose jobs write `text` (or `build(env)`) as their results and exit with `exit` */
+		const writing = (build: (env: Record<string, string | undefined>) => string, exit = 0): Harness => {
+			const h: Harness = harness({
+				exitCodeFor: (env) => {
+					if (env.WARDEN_E2E_OUT) h.files.set(resultsPath(env), build(env));
+					return exit;
+				},
+			});
+			return h;
+		};
+
+		test("e2e-report.json carries each flow's tests (title path, status, duration, error, artifacts) and headless", async () => {
+			const h = writing(
+				() =>
+					jsonl(
+						spec("chats", "opens", "passed", { title: ["list", "opens"], durationMs: 2100 }),
+						spec("chats", "sends", "failed", {
+							error: { message: "LOCATOR_NOT_FOUND\nid=send" },
+							artifacts: { dir: "/o/chats/sends-a1b2c3", files: ["failure.png"] },
+						})
+					),
+				1
+			);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const report = reportOf(h.files, c);
+			expect(report.headless).toBe(false);
+			expect(report.flows[0]?.verdict).toBe("failed");
+			expect(report.flows[0]?.tests).toEqual([
+				{ title: ["list", "opens"], status: "passed", durationMs: 2100 },
+				{
+					title: ["sends"],
+					status: "failed",
+					durationMs: 1250,
+					error: "LOCATOR_NOT_FOUND\nid=send",
+					artifacts: "/o/chats/sends-a1b2c3",
+				},
+			]);
+			const text = c.stderr.join("\n");
+			expect(text).toContain("✗ sends — LOCATOR_NOT_FOUND — artifacts /o/chats/sends-a1b2c3");
+			expect(text).not.toContain("✗ list");
+		});
+
+		test("passed: tests recorded, no warning", async () => {
+			const h = writing(() => jsonl(spec("chats", "opens")));
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(reportOf(h.files, c).flows[0]?.tests).toHaveLength(1);
+			expect(c.stderr.join("\n")).not.toContain("no results.jsonl");
+		});
+
+		test("a timed-out test fails the flow even when the process exited 0", async () => {
+			const h = writing(() => jsonl(spec("chats", "slow", "timed-out")));
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(reportOf(h.files, c).flows[0]).toMatchObject({ verdict: "failed", tests: [{ status: "timed-out" }] });
+		});
+
+		test("no results file: the exit code decides, with a warning", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const pass = harness();
+			expect(await createE2eCommand(pass.deps).run(c)).toBe(0);
+			expect(c.stderr.join("\n")).toContain("chats: no results.jsonl — verdict from exit code 0");
+			expect(reportOf(pass.files, c).flows[0]).not.toHaveProperty("tests");
+			const fail = harness({ exitCodes: { chats: 1 } });
+			expect(await createE2eCommand(fail.deps).run(c)).toBe(1);
+		});
+
+		test("an unparseable results file counts as missing; a truncated last line is skipped", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const junk = writing(() => "this is not json\n{oops\n", 1);
+			expect(await createE2eCommand(junk.deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("chats: no results.jsonl — verdict from exit code 1");
+
+			const cut = writing(() => `${jsonl(spec("chats", "opens"))}{"file":"${join(dir, "flows/chats.e2e.ts")}","ti`);
+			expect(await createE2eCommand(cut.deps).run(c)).toBe(0);
+			expect(reportOf(cut.files, c).flows[0]?.tests).toHaveLength(1);
+		});
+
+		test("test.only left in a spec fails the run under CI, even when everything passed; locally it does not", async () => {
+			const build = () => jsonl(spec("chats", "opens", "passed", { only: true }));
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			c.env = { ...c.env, CI: "true" };
+			const h = writing(build);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain(`test.only left in ${join(dir, "flows/chats.e2e.ts")}`);
+			expect(reportOf(h.files, c)).toMatchObject({ ok: false, only: [join(dir, "flows/chats.e2e.ts")] });
+			expect(reportOf(h.files, c).flows[0]?.verdict).toBe("passed");
+
+			c.env = { ...c.env, CI: "" };
+			expect(await createE2eCommand(writing(build).deps).run(c)).toBe(0);
+		});
+
+		test("--no-tui: a line per finished test as results arrive, then a line per finished flow", async () => {
+			await resuite({ mode: "single" });
 			const c = setup(["--all", "--no-tui"]);
 			const h = harness({ manual: true });
 			const running = createE2eCommand(h.deps).run(c);
 			await waitFor(() => h.jobs().length > 0);
 			const job = h.jobs()[0];
-			h.files.set(job?.opts.log ?? "", " ✓ |ios| flows/chats.yaml (1 test) 2s\n");
-			job?.finish(0);
-			expect(await running).toBe(0);
-			expect(c.stderr.join("\n")).toContain("warden-iphone-17-1 ✓ chats");
+			h.files.set(
+				resultsPath(job?.opts.env ?? {}),
+				jsonl(spec("chats", "opens", "passed", { title: ["list", "opens"] }), spec("settings", "toggle", "failed"))
+			);
+			job?.finish(1);
+			await running;
+			const text = c.stderr.join("\n");
+			expect(text).toContain("✓ chats › list › opens (1.25s)");
+			expect(text).toContain("✗ settings › toggle (1.25s)");
+			expect(text).toContain("warden-iphone-17-1 ✓ chats");
 		});
 
-		test("the runner's exit code is the verdict of every flow", async () => {
-			await resuite({ mode: "single", runner: ["run-all"] });
-			const c = setup(["--all"]);
-			const h = harness({ exitCodeFor: () => 1 });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
-			expect(reportOf(h.files, c).flows.map((f) => f.verdict)).toEqual(["failed", "failed"]);
+		test("per-flow mode prints the same test lines", async () => {
+			const h = writing(() => jsonl(spec("chats", "opens")));
+			const c = setup(["--files", "src/chat/lazy.tsx", "--no-tui"]);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(c.stderr.join("\n")).toContain("✓ chats › opens (1.25s)");
 		});
 	});
 
@@ -489,12 +842,12 @@ describe("warden e2e", () => {
 		};
 
 		test("by default only the default legs run", async () => {
-			await resuite({ devices, runner: ["run-flow", "{flow}", "{leg}"] });
+			await resuite({ devices });
 			const c = legSetup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			expect(h.jobs().map((j) => [j.cmd, j.opts.env.WARDEN_UDID, j.opts.env.WARDEN_LEG])).toEqual([
-				[["run-flow", "chats", "iphone-17"], "U1", "iphone-17"],
+				[bunTest(join(dir, "flows/chats.e2e.ts")), "U1", "iphone-17"],
 			]);
 			expect(reportOf(h.files, c).flows.map((f) => [f.id, f.leg, f.verdict])).toEqual([
 				["chats", "iphone-17", "passed"],
@@ -502,13 +855,13 @@ describe("warden e2e", () => {
 		});
 
 		test("--devices all: every leg claims its own pool and runs every flow, with its env and only its devices", async () => {
-			await resuite({ devices, runner: ["run-flow", "{flow}", "{leg}"] });
+			await resuite({ devices });
 			const c = legSetup(["--files", "src/chat/lazy.tsx", "--devices", "all"]);
 			const h = harness({ exitCodeFor: (env) => (env.WARDEN_LEG === "ipad" ? 1 : 0) });
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
 			const byLeg = new Map(h.jobs().map((j) => [j.opts.env.WARDEN_LEG, j]));
 			expect([...byLeg.keys()].sort()).toEqual(["ipad", "iphone-17"]);
-			expect(byLeg.get("ipad")?.cmd).toEqual(["run-flow", "chats", "ipad"]);
+			expect(byLeg.get("ipad")?.cmd).toEqual(bunTest(join(dir, "flows/chats.e2e.ts")));
 			expect(byLeg.get("ipad")?.opts.env).toMatchObject({
 				WARDEN_UDID: "P1",
 				WARDEN_UDIDS: "P1",
@@ -540,8 +893,97 @@ describe("warden e2e", () => {
 		});
 	});
 
+	describe("warmDrivers", () => {
+		const jobEnv = (h: Harness) => h.jobs().map((j) => j.opts.env.WARDEN_SIMD_SOCKET);
+
+		test("every leased iOS device is warmed before the first job; its jobs get WARDEN_SIMD_SOCKET", async () => {
+			write("src/chat/lazy.tsx", "export const x = 2;\n");
+			write("src/settings/form.tsx", "export const y = 2;\n");
+			const c = setup(["--count", "2"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warmed.sort()).toEqual(["U1", "U2"]);
+			const firstJob = h.events.findIndex((e) => e.startsWith("job:"));
+			expect(h.events.lastIndexOf("warm:U1")).toBeLessThan(firstJob);
+			expect(h.events.lastIndexOf("warm:U2")).toBeLessThan(firstJob);
+			for (const job of h.jobs()) {
+				expect(job.opts.env.WARDEN_SIMD_SOCKET).toBe(`/tmp/warden-simd-${job.opts.env.WARDEN_UDID}.sock`);
+			}
+			expect(h.files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "logs", "warm-0.log"))).toContain(
+				"snapshot ok"
+			);
+			expect(h.warmClosed.sort()).toEqual(["U1", "U2"]);
+		});
+
+		test("a headless run hides the simulator windows first", async () => {
+			if (process.platform !== "darwin") return;
+			await resuite({ headless: true });
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			const base = c.exec;
+			c.exec = async (cmd, opts) => {
+				if (cmd[0] !== "osascript") return base(cmd, opts);
+				if ((cmd[4] ?? "").includes("AXCloseButton")) h.events.push("close");
+				const windows = [{ title: "warden-iphone-17-1 – iOS 26.5", width: 400, height: 800 }];
+				return {
+					exitCode: 0,
+					stdout: JSON.stringify({ screen: { x: 0, y: 0, width: 900, height: 900 }, windows }),
+					stderr: "",
+				};
+			};
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const close = h.events.lastIndexOf("close");
+			expect(close).toBeGreaterThanOrEqual(0);
+			expect(close).toBeLessThan(h.events.indexOf("warm:U1"));
+			expect(h.events.indexOf("warm:U1")).toBeLessThan(h.events.findIndex((e) => e.startsWith("job:")));
+		});
+
+		test("a failed warm-up only warns: jobs still run, with no socket", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ warm: "fail" });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(c.stderr.join("\n")).toContain("warm U1: helper did not start");
+			expect(jobEnv(h)).toEqual([undefined]);
+			expect(h.jobs()).toHaveLength(1);
+		});
+
+		test("a helper that cannot snapshot warns, is stopped, and its jobs get no socket", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ warm: "snapshot-fail" });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(c.stderr.join("\n")).toContain("snapshot failed: AX denied");
+			expect(jobEnv(h)).toEqual([undefined]);
+			expect(h.warmClosed).toEqual(["U1"]);
+		});
+
+		test("suite warmDrivers: false skips it", async () => {
+			await resuite({ warmDrivers: false });
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warmed).toEqual([]);
+			expect(jobEnv(h)).toEqual([undefined]);
+		});
+
+		test("--no-warm skips it", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx", "--no-warm"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warmed).toEqual([]);
+		});
+
+		test("single mode warms once per device, before its shard starts", async () => {
+			await resuite({ mode: "single" });
+			const c = setup(["--all"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warmed).toEqual(["U1"]);
+			expect(jobEnv(h)).toEqual(["/tmp/warden-simd-U1.sock"]);
+		});
+	});
+
 	describe("headless", () => {
-		test("suite headless: runners get WARDEN_HEADLESS=1, every leg claims headless, the report says so", async () => {
+		test("suite headless: specs get WARDEN_HEADLESS=1, every leg claims headless, the report says so", async () => {
 			await resuite({
 				headless: true,
 				devices: [

@@ -70,7 +70,7 @@ everything — a root layout, an `App.tsx`.
 - **`isMotionCalm` is a behaviour prop, not a layer-named one.** It feeds
   `CalmMotionProvider` (`hooks/use-calm-motion.tsx`), which `useCalmMotion()`
   reads beside the OS reduce-motion setting. It exists for E2E builds: a runner
-  that waits for the screen to settle before each gesture (Argent waits up to
+  that waits for the screen to settle before each gesture (agent-driven tools wait up to
   3 s) pays the whole wait on a screen holding a never-ending loop. Only
   decorative loops ask — `Skeleton` today; `Spinner` and an indeterminate
   `Progress` are the behaviour and keep moving. The context defaults to `false`,

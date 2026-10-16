@@ -23,6 +23,8 @@ import { runCommand } from "./run";
 import { simCommand } from "./sim";
 import { simsCommand } from "./sims";
 import { skillCommand } from "./skill";
+import { uiCommand } from "./ui";
+import { uiCollectCommand } from "./ui-collect";
 import { updateCommand } from "./update";
 import { versionCommand } from "./version";
 
@@ -46,6 +48,8 @@ export const COMMANDS: readonly Command[] = [
 	gcCommand,
 	portCommand,
 	appCommand,
+	uiCommand,
+	uiCollectCommand,
 	buildsCommand,
 	hookCommand,
 	installCommand,

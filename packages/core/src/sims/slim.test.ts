@@ -37,9 +37,28 @@ describe("SLIM_DENYLIST", () => {
 		expect(new Set(SLIM_DENYLIST).size).toBe(SLIM_DENYLIST.length);
 	});
 
-	test("never touches what SpringBoard, installs, argent's AX tree or typing need", () => {
+	test("never touches what SpringBoard, installs, the e2e driver's AX tree or typing need", () => {
 		for (const label of SLIM_DENYLIST) {
 			for (const pattern of NEVER_DISABLE) expect(pattern.test(label)).toBe(false);
+		}
+	});
+});
+
+describe("warden-simd's HID + AX bridge services", () => {
+	test("are protected by NEVER_DISABLE, so a denylist entry for them cannot slip in", () => {
+		const needed = [
+			"dtuhidd",
+			"com.apple.dtuhidd",
+			"SimulatorFrameworkBridge-iOS",
+			"com.apple.SimulatorFrameworkBridge-iOS",
+			"com.apple.axbridge.service",
+			"com.apple.Accessibility",
+			"com.apple.accessibility.AccessibilityUIServer",
+			"com.apple.AccessibilityUIServer",
+		];
+		for (const label of needed) {
+			expect(NEVER_DISABLE.some((pattern) => pattern.test(label))).toBe(true);
+			expect(SLIM_DENYLIST).not.toContain(label);
 		}
 	});
 });

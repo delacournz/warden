@@ -97,7 +97,9 @@ describe("warden dev", () => {
 		const metro = h.spawned[0];
 		expect(metro?.cwd).toBe(c.cwd);
 		expect(metro?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081", "--clear"]);
-		expect(metro?.env.WARDEN_UDID_0).toBe("U1");
+		// Metro starts before the device is claimed: its env carries the port, not the udid
+		expect(metro?.env.WARDEN_PORT_0).toBe("8081");
+		expect(metro?.env.WARDEN_PORT).toBeUndefined();
 		expect(metro?.stdout).toBe("inherit");
 		expect(calls).toContainEqual(devClientLaunchArgv("U1", "com.demo", "http://127.0.0.1:8081"));
 		expect(calls.some((cmd) => cmd.includes("openurl"))).toBe(false);
@@ -167,16 +169,56 @@ describe("warden dev", () => {
 		expect(await running).toBe(0);
 	});
 
-	test("app not ready → exit 1, Metro never started, nothing leased", async () => {
+	test("app not ready → Metro was started early and is killed, exit 1, nothing leased", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls);
 		const h = harness();
 		h.deps.ensureApp = async () => ({ success: false, error: "local build failed" });
+		const kills: string[] = [];
+		const spawn = h.deps.spawn;
+		h.deps.spawn = (cmd, env, cwd, stdout) => {
+			const child = spawn(cmd, env, cwd, stdout);
+			return {
+				exited: child.exited,
+				kill: (signal) => {
+					kills.push(signal);
+					h.finish(143);
+				},
+			};
+		};
 		expect(await createDevCommand(h.deps).run(c)).toBe(1);
-		expect(h.spawned).toEqual([]);
+		expect(h.spawned).toHaveLength(1);
+		expect(kills).toEqual(["SIGTERM"]);
 		expect(c.db.listLeases()).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("local build failed");
 	});
+
+	for (const [name, argv] of [
+		["claimed device", ["ios"]],
+		["--udid U1", ["ios", "--udid", "U1"]],
+	] as const) {
+		test(`Metro is spawned before the app install finishes (${name})`, async () => {
+			const calls: string[][] = [];
+			const c = setup([...argv], calls);
+			const h = harness();
+			const gate = Promise.withResolvers<void>();
+			h.deps.ensureApp = async (_ctx, _owner, _platform, deviceId, opts) => {
+				h.ensured.push({ deviceId, opts });
+				await gate.promise;
+				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+			};
+			const running = createDevCommand(h.deps).run(c);
+			await waitFor(() => h.spawned.length === 1 && h.ensured.length === 1);
+			expect(h.spawned).toHaveLength(1);
+			expect(h.ensured).toHaveLength(1);
+			expect(calls.some((cmd) => cmd.includes("launch"))).toBe(false);
+			gate.resolve();
+			await waitFor(() => calls.some((cmd) => cmd.includes("launch")));
+			h.finish(0);
+			expect(await running).toBe(0);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+	}
 
 	test("Metro never ready → Metro killed, exit 1, released", async () => {
 		const calls: string[][] = [];

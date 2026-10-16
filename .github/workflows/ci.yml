@@ -82,10 +82,79 @@ jobs:
       - run: bun run check
       - run: bun run test
 
+  # Paths filter for the native job: did this change touch packages/e2e/native/**?
+  native-changes:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: namespace-profile-linux-small
+    outputs:
+      native: ${{ steps.paths.outputs.native }}
+    steps:
+      - id: paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[].filename')
+          else
+            files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$AFTER" --jq '.files[].filename' 2>/dev/null || echo "packages/e2e/native/")
+          fi
+          if echo "$files" | grep -q '^packages/e2e/native/'; then
+            echo "native=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "native=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # warden-simd (Swift, links idb's library package): deps + build + swift test. macOS-only, so it has its own job.
+  # No `submodules: true`: native:deps downloads the pinned idb release tarball; only `native:deps --from-source`
+  # needs the packages/e2e/native/idb submodule and initialises it itself. swift test uses fixtures, no simulator.
+  native:
+    needs: native-changes
+    if: needs.native-changes.outputs.native == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      # idb's library package is built with a recent Swift; use the newest Xcode the runner image has.
+      - run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: ~/Library/Caches/warden-idb
+          key: warden-idb-${{ hashFiles('packages/e2e/native/idb.lock.json') }}
+
+      # SwiftPM build products (idb's library package compiles for minutes); the idb tarball is cached above.
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: packages/e2e/native/ios/.build
+          key: warden-simd-build-${{ runner.os }}-${{ hashFiles('packages/e2e/native/idb.lock.json', 'packages/e2e/native/ios/Package.swift') }}-${{ hashFiles('packages/e2e/native/ios/Sources/**', 'packages/e2e/native/ios/Tests/**') }}
+          restore-keys: |
+            warden-simd-build-${{ runner.os }}-${{ hashFiles('packages/e2e/native/idb.lock.json', 'packages/e2e/native/ios/Package.swift') }}-
+
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd packages/e2e native:deps
+      - run: bun run --cwd packages/e2e native:build
+      - run: swift test --package-path packages/e2e/native/ios
+
   # Single required status check. Skipped jobs count as passing for branch
   # protection, so this fails explicitly when CI hasn't been approved/run.
   ci:
-    needs: [gate, checks]
+    needs: [gate, checks, native-changes, native]
     if: always()
     runs-on: namespace-profile-linux-small
     steps:
@@ -93,7 +162,12 @@ jobs:
           GATE: ${{ needs.gate.result }}
           RUN: ${{ needs.gate.outputs.run }}
           CHECKS: ${{ needs.checks.result }}
+          NATIVE: ${{ needs.native.result }}
+          NATIVE_CHANGES: ${{ needs.native-changes.result }}
         run: |
           if [ "$GATE" != "success" ]; then echo "gate $GATE" >&2; exit 1; fi
           if [ "$RUN" != "true" ]; then echo "awaiting maintainer approval" >&2; exit 1; fi
           if [ "$CHECKS" != "success" ]; then echo "checks $CHECKS" >&2; exit 1; fi
+          if [ "$NATIVE_CHANGES" != "success" ]; then echo "native-changes $NATIVE_CHANGES" >&2; exit 1; fi
+          # native is skipped when the change does not touch packages/e2e/native/**.
+          if [ "$NATIVE" != "success" ] && [ "$NATIVE" != "skipped" ]; then echo "native $NATIVE" >&2; exit 1; fi

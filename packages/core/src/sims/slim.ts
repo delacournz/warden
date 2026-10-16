@@ -10,7 +10,7 @@ import { type Exec, execError } from "../exec";
  * widgets and posters they feed. Every label here was checked present on an iOS 26.5 iPhone sim.
  */
 
-/** Jobs the slimmer switches off. Deliberately conservative: nothing an app under test, argent or the keyboard uses. */
+/** Jobs the slimmer switches off. Deliberately conservative: nothing an app under test, the e2e driver or the keyboard uses. */
 export const SLIM_DENYLIST: readonly string[] = [
 	// Siri + speech (not `assistantd` / `corespeechd`: the keyboard asks them about dictation, see NEVER_DISABLE)
 	"com.apple.assistant_cdmd",
@@ -57,7 +57,7 @@ export const SLIM_DENYLIST: readonly string[] = [
 
 /**
  * Labels that must stay up whatever the denylist grows into: the home screen, app install/launch,
- * XCTest, the accessibility tree argent's `describe` reads, typing, asset downloads and search.
+ * XCTest, the accessibility tree the e2e driver reads, typing, asset downloads and search.
  */
 export const NEVER_DISABLE: readonly RegExp[] = [
 	/SpringBoard/i,
@@ -67,6 +67,11 @@ export const NEVER_DISABLE: readonly RegExp[] = [
 	/runningboardd/i,
 	/testmanagerd/i,
 	/accessibility|\.AX|axd/i,
+	// warden-simd (and idb): host-side HID rides `dtuhidd` on Xcode 27, the AX tree comes from the
+	// in-sim `SimulatorFrameworkBridge-iOS` guest, and `AutomationEnabled` lives in com.apple.Accessibility.
+	/dtuhidd/i,
+	/SimulatorFrameworkBridge|axbridge/i,
+	/com\.apple\.Accessibility/i,
 	/kbd|InputUI|keyboard/i,
 	// Dictation availability. With these down the software keyboard re-queries it in a loop on the
 	// app's main thread (`AFDictationConnection … AvailabilityChanged`): the app pins a core and

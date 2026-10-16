@@ -40,5 +40,5 @@ yarn-error.*
 /ios
 /android
 
-# e2e (tester.army) results
+# e2e results (by-hand runs)
 .e2e/

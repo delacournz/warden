@@ -1,31 +1,12 @@
-import type { FlowMark, TrackedFlow } from "./flow-progress";
+import { readResults } from "@delacour/warden-e2e/runner/results";
+import { type FlowMark, failing, flowOf, realPath, type TrackedFlow } from "./flow-progress";
 
-/** What a `mode: "single"` runner's report says: each flow's verdict, and the flows each device ran. */
+/** What a run's `results.jsonl` files say: each flow's verdict, and the flows each device ran. */
 export type RunnerReport = {
 	flows: Record<string, FlowMark>;
-	/** udid → the flows it ran, in report order, each marked by that device's last attempt */
+	/** udid → the flows it ran, in result order, each marked by that device's tests */
 	devices: Record<string, Array<{ id: string; mark: FlowMark }>>;
 };
-
-type Attempt = { status?: unknown; environment?: { device?: unknown } };
-type Result = { file?: unknown; status?: unknown; attempts?: unknown };
-
-const FAILED = new Set(["failed", "interrupted", "timedOut", "error"]);
-
-/** `passed`, or a failure (an interrupted test failed too); skipped / unknown statuses mark nothing. */
-const markOf = (status: unknown): FlowMark | undefined =>
-	status === "passed" ? "passed" : typeof status === "string" && FAILED.has(status) ? "failed" : undefined;
-
-function parse(text: string): { startedAt: number; results: Result[] } | undefined {
-	try {
-		const doc: { run?: { startedAt?: unknown; results?: unknown } } = JSON.parse(text);
-		const startedAt = typeof doc.run?.startedAt === "string" ? Date.parse(doc.run.startedAt) : Number.NaN;
-		if (Number.isNaN(startedAt) || !Array.isArray(doc.run?.results)) return undefined;
-		return { startedAt, results: doc.run.results };
-	} catch {
-		return undefined;
-	}
-}
 
 /** Mark `id` on `device`: a flow appears once per device, a failure sticks. */
 function markDevice(devices: RunnerReport["devices"], device: string, id: string, mark: FlowMark): void {
@@ -37,41 +18,26 @@ function markDevice(devices: RunnerReport["devices"], device: string, id: string
 }
 
 /**
- * Read tester.army `e2e run`'s `report.json` (`run.results[]`: one per test, with its `file`, `status`
- * and `attempts[].environment.device`). A flow fails if any of its tests did. Tests skipped, files not
- * tracked, and a report that started before `since` (a previous run's) are ignored.
+ * The finished run's results (every job's `results.jsonl`, concatenated) as the grid's report. A
+ * flow fails if any of its tests failed or timed out; skipped tests count as passed. Results of
+ * files not tracked, started before `since`, or without a valid line are ignored; no usable result
+ * at all gives `undefined`.
  */
-export function runnerReport(text: string, flows: readonly TrackedFlow[], since: number): RunnerReport | undefined {
-	const doc = parse(text);
-	if (!doc || doc.startedAt < since) return undefined;
+export function resultsReport(
+	jsonl: string,
+	flows: readonly TrackedFlow[],
+	since: number,
+	real: (path: string) => string = realPath
+): RunnerReport | undefined {
 	const report: RunnerReport = { flows: {}, devices: {} };
-	for (const result of doc.results) {
-		const flow = flows.find((f) => f.path === result.file);
-		const mark = markOf(result.status);
-		if (!flow || !mark) continue;
+	let seen = false;
+	for (const result of readResults(jsonl)) {
+		const flow = flowOf(result, flows, real);
+		if (!flow || result.startedAt < since) continue;
+		seen = true;
+		const mark: FlowMark = failing(result) ? "failed" : "passed";
 		if (report.flows[flow.id] !== "failed") report.flows[flow.id] = mark;
-		for (const [device, am] of lastByDevice(result.attempts)) markDevice(report.devices, device, flow.id, am);
+		markDevice(report.devices, result.device.udid, flow.id, mark);
 	}
-	return report;
-}
-
-/** Each device's last attempt at one test. */
-function lastByDevice(attempts: unknown): Map<string, FlowMark> {
-	const last = new Map<string, FlowMark>();
-	for (const a of Array.isArray(attempts) ? (attempts as Attempt[]) : []) {
-		const device = a.environment?.device;
-		const mark = markOf(a.status);
-		if (typeof device === "string" && mark) last.set(device, mark);
-	}
-	return last;
-}
-
-/** Where the runner argv writes its report: `--output <dir>` / `--output=<dir>`, else e2e's `.e2e`; undefined when it varies per job. */
-export function reportOutputDir(argv: readonly string[]): string | undefined {
-	let dir = ".e2e";
-	argv.forEach((arg, i) => {
-		if (arg === "--output" && argv[i + 1] !== undefined) dir = argv[i + 1] ?? dir;
-		else if (arg.startsWith("--output=")) dir = arg.slice("--output=".length);
-	});
-	return dir.includes("{") ? undefined : dir;
+	return seen ? report : undefined;
 }

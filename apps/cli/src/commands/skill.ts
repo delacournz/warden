@@ -1,62 +1,40 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { Option } from "@commander-js/extra-typings";
-import { wardenHome } from "@delacour/warden-core/store";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, note, reportError } from "../output";
-import { SKILL_MD, SKILL_NAME } from "../skill";
+import { embeddedFile, RULE_PATH, SKILL_FILES, SKILL_MD, SKILL_NAME, SKILL_PATHS } from "../skill";
+import {
+	localSkillRoot,
+	realSkillDeps,
+	runner,
+	type SkillDeps,
+	type SkillsAddOpts,
+	skillsAddArgs,
+	stageSkillFolder,
+} from "../skill-cli";
 import { releaseRepo } from "../update/release";
 
-/** Outside world for `warden skill`, injectable for tests. */
-export type SkillDeps = {
-	which: (cmd: string) => string | null;
-	/** run with the terminal attached (the skills CLI may prompt); resolves to its exit code */
-	runInteractive: (cmd: string[]) => Promise<number>;
-};
+export type { SkillDeps };
 
 const SOURCES = ["local", "github"] as const;
 type Source = (typeof SOURCES)[number];
 
-export type SkillInstallOpts = {
-	from: Source;
-	project?: true;
-	agent?: string[];
-	copy?: true;
-	yes?: true;
-	dryRun?: true;
-	json?: true;
-};
+export type SkillInstallOpts = SkillsAddOpts & { from: Source; dryRun?: true; json?: true };
 
-/** `bunx` when bun is installed, else `npx --yes`. */
-function runner(deps: SkillDeps): string[] | undefined {
-	if (deps.which("bunx")) return ["bunx"];
-	if (deps.which("npx")) return ["npx", "--yes"];
-	return undefined;
-}
-
-/** Stable dir holding this binary's skill copy — the skills CLI may symlink to it, so it must outlive the call. */
-function localSkillRoot(ctx: CommandContext): string {
-	return join(wardenHome(ctx.env), "skill");
-}
-
-export function skillsAddArgs(source: string, opts: Omit<SkillInstallOpts, "from">): string[] {
-	return [
-		"skills",
-		"add",
-		source,
-		"--skill",
-		SKILL_NAME,
-		...(opts.project ? [] : ["-g"]),
-		...(opts.agent ?? []).flatMap((a) => ["-a", a]),
-		...(opts.copy ? ["--copy"] : []),
-		...(opts.yes ? ["-y"] : []),
-	];
-}
-
-/** Raw SKILL.md on stdout, never coloured — made to be piped (`warden skill show | pbcopy`). */
-function show(ctx: CommandContext, json: boolean): number {
-	emit(ctx, json, { name: SKILL_NAME, content: SKILL_MD }, SKILL_MD.trimEnd());
+/** Raw SKILL.md (or `--file <path>`) on stdout, never coloured — made to be piped (`warden skill show | pbcopy`). */
+function show(ctx: CommandContext, json: boolean, file?: string): number {
+	if (file === undefined) {
+		emit(ctx, json, { name: SKILL_NAME, content: SKILL_MD, files: SKILL_FILES }, SKILL_MD.trimEnd());
+		return 0;
+	}
+	const content = embeddedFile(file);
+	if (content === undefined) {
+		ctx.err(
+			ctx.ui.color.red(`warden skill: no embedded file ${file} — one of: ${[...SKILL_PATHS, RULE_PATH].join(", ")}`)
+		);
+		return 1;
+	}
+	emit(ctx, json, { name: SKILL_NAME, file, content }, content.trimEnd());
 	return 0;
 }
 
@@ -77,12 +55,10 @@ async function install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallO
 		return 0;
 	}
 	if (opts.from === "local") {
-		const dir = join(source.local, SKILL_NAME);
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "SKILL.md"), SKILL_MD);
+		stageSkillFolder(ctx);
 	}
 	note(ctx, `warden skill: ${cmd.join(" ")}`);
-	return deps.runInteractive(cmd);
+	return deps.runInteractive(cmd, { stdout: opts.json ? "stderr" : "inherit" });
 }
 
 /** Show or install the warden agent skill. */
@@ -95,8 +71,9 @@ export function createSkillCommand(deps: SkillDeps): Command {
 			cmd
 				.command("show")
 				.description("print SKILL.md to copy/paste (e.g. `warden skill show | pbcopy`)")
+				.option("--file <path>", "print one embedded file (references/ui.md, rules/warden.md, …)")
 				.option("--json", "machine-readable output")
-				.action((opts) => done(show(ctx, opts.json === true)));
+				.action((opts) => done(show(ctx, opts.json === true, opts.file)));
 			cmd
 				.command("install")
 				.description("install via `bunx skills add` (npx fallback)")
@@ -115,7 +92,4 @@ export function createSkillCommand(deps: SkillDeps): Command {
 		},
 	});
 }
-export const skillCommand: Command = createSkillCommand({
-	which: (cmd) => Bun.which(cmd),
-	runInteractive: (cmd) => Bun.spawn(cmd, { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exited,
-});
+export const skillCommand: Command = createSkillCommand(realSkillDeps());

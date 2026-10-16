@@ -1,9 +1,11 @@
 import { PENDING_PREFIX } from "@delacour/warden-core/claim";
 import { wardenNameProfile } from "@delacour/warden-core/inventory";
 import { describeOwner, type Lease, sameOwner } from "@delacour/warden-core/types";
+import { stopHelperAfter } from "../agent-ui/close";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { releaseDevices } from "../device-lease";
 import { type ShutdownOutcome, shutdownReleasedDevices } from "../device-shutdown";
 import {
 	isEmptySelector,
@@ -97,14 +99,15 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 					return outcome;
 				})
 			: { shutdown: [], notes: [], kept: [] };
-	const store = ctx.store();
 	const bad =
 		opts.bad !== undefined
 			? quarantineReleased(ctx, leases, typeof opts.bad === "string" ? opts.bad : undefined)
 			: { quarantined: [], notes: [] };
-	store.deleteLeases(leases.map((l) => l.id));
-	const now = ctx.now();
-	for (const l of leases) if (l.resource.kind === "device") store.touchDevice(l.resource.platform, l.resource.id, now);
+	await releaseDevices(
+		ctx,
+		leases.map((l) => l.id),
+		{ after: stopHelperAfter(ctx) }
+	);
 
 	for (const u of unknown) reportError(ctx, "release", `no lease for ${u}`);
 	const title = { scope: "release", detail: plural(leases.length, "lease") };

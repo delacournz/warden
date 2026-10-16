@@ -38,26 +38,37 @@ function diagnose(source: string): string[] {
 	return ts.getPreEmitDiagnostics(program).map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"));
 }
 
+/** Each `diagnose` runs a full tsc program; under load that takes well over bun's 5 s default. */
+const TSC_TIMEOUT_MS = 60_000;
+
 describe("buildConfigEntry", () => {
-	test("a consumer config typechecks under node16 resolution", () => {
-		expect(
-			diagnose(`import { defineConfig, type WardenConfig } from "@delacour/warden/config";
+	test(
+		"a consumer config typechecks under node16 resolution",
+		() => {
+			expect(
+				diagnose(`import { defineConfig, type WardenConfig } from "@delacour/warden/config";
 const shared: WardenConfig["batches"] = { smoke: { platform: "ios", cmd: ["true"] } };
 export default defineConfig(({ env }) => ({
 	projects: [{ name: "app", bundleId: { ios: env.IOS_BUNDLE_ID ?? "com.x.app" }, build: { configuration: "Release" } }],
 	batches: shared,
 }));`)
-		).toEqual([]);
-	});
+			).toEqual([]);
+		},
+		TSC_TIMEOUT_MS
+	);
 
-	test("typos and wrong values are type errors", () => {
-		const typo = diagnose(`import { defineConfig } from "@delacour/warden/config";
+	test(
+		"typos and wrong values are type errors",
+		() => {
+			const typo = diagnose(`import { defineConfig } from "@delacour/warden/config";
 export default defineConfig({ projects: [{ name: "app", bundleId: {}, bundelId: {} }] });`);
-		expect(typo.join("\n")).toContain("'bundelId' does not exist in type 'WardenProject'");
-		const value = diagnose(`import { defineConfig } from "@delacour/warden/config";
+			expect(typo.join("\n")).toContain("'bundelId' does not exist in type 'WardenProject'");
+			const value = diagnose(`import { defineConfig } from "@delacour/warden/config";
 export default defineConfig(() => ({ e2e: { m: { flowsDir: "f", runner: [], unmatched: "all" } } }));`);
-		expect(value.join("\n")).toContain('"all"');
-	});
+			expect(value.join("\n")).toContain('"all"');
+		},
+		TSC_TIMEOUT_MS
+	);
 
 	test("the .d.ts keeps the TSDoc; the .mjs runs", async () => {
 		const dts = await Bun.file(join(pkg, CONFIG_ENTRY_DTS)).text();

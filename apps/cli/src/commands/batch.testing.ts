@@ -10,8 +10,6 @@ export type Harness = {
 	jobs: () => Spawned[];
 	/** per-device `setup` spawns */
 	setups: () => Spawned[];
-	/** agent-device runner warm-ups (`hooks.warmRunners`) */
-	warms: () => Spawned[];
 	serve: () => Spawned | undefined;
 	/** the run's own Metro */
 	metro: () => Spawned | undefined;
@@ -30,6 +28,10 @@ export type Harness = {
 	shots: string[];
 	/** every `slim` request: the udid */
 	slimmed: string[];
+	/** every warm-up `connect`: the udid */
+	warmed: string[];
+	/** every warm helper stopped: the udid */
+	warmClosed: string[];
 };
 
 /**
@@ -53,17 +55,18 @@ export function harness(
 		metroOwner?: MetroOwner;
 		/** the prewarm outcome: "fail" = the bundle does not build */
 		prewarm?: "ok" | "fail";
-		/** the project's agent-device bin (default: none, so runners are not warmed) */
-		agentDeviceBin?: string;
-		/** a runner warm-up's exit code (default 0) */
-		warmExit?: number;
+		/** the warm-up helper: "fail" = cannot connect, "snapshot-fail" = connects but cannot snapshot (default "ok") */
+		warm?: "ok" | "fail" | "snapshot-fail";
+		/** `bun` on PATH (default `/usr/bin/bun`; null = not installed) */
+		bun?: string | null;
+		/** where `@delacour/warden-e2e/preload` resolves (default under `/proj/node_modules`; null = not installed) */
+		preload?: string | null;
 	} = {}
 ): Harness {
 	const h: Harness = {
 		spawned: [],
 		jobs: () => h.spawned.filter((s) => s.opts.job),
 		setups: () => h.spawned.filter((s) => s.opts.setup),
-		warms: () => h.spawned.filter((s) => s.opts.warm),
 		serve: () => h.spawned.find((s) => s.opts.group && !s.opts.job && !s.opts.metro),
 		metro: () => h.spawned.find((s) => s.opts.metro),
 		files: new Map(),
@@ -74,6 +77,8 @@ export function harness(
 		terminal: [],
 		shots: [],
 		slimmed: [],
+		warmed: [],
+		warmClosed: [],
 		timers: [],
 		metroProbes: [],
 		prewarmed: [],
@@ -90,16 +95,9 @@ export function harness(
 				const job = spawnOpts.env.WARDEN_JOB;
 				const daemon = spawnOpts.metro ? "metro" : spawnOpts.group && !spawnOpts.job ? "serve" : undefined;
 				h.events.push(
-					daemon
-						? `${daemon}:start`
-						: spawnOpts.setup
-							? `setup:${spawnOpts.env.WARDEN_UDID}`
-							: spawnOpts.warm
-								? `warm:${spawnOpts.env.WARDEN_UDID}`
-								: `job:${job}`
+					daemon ? `${daemon}:start` : spawnOpts.setup ? `setup:${spawnOpts.env.WARDEN_UDID}` : `job:${job}`
 				);
-				if (spawnOpts.warm) queueMicrotask(() => resolveExit(opts.warmExit ?? 0));
-				else if (!daemon && !opts.manual)
+				if (!daemon && !opts.manual)
 					queueMicrotask(() => resolveExit(opts.exitCodeFor?.(spawnOpts.env) ?? opts.exitCodes?.[job ?? ""] ?? 0));
 				return {
 					exited,
@@ -164,7 +162,28 @@ export function harness(
 				h.metroProbes.push(`${port} ${projectRoot}`);
 				return opts.metroOwner ?? { kind: "ours" };
 			},
-			agentDeviceBin: () => opts.agentDeviceBin,
+			which: (cmd) => (cmd === "bun" ? (opts.bun === undefined ? "/usr/bin/bun" : opts.bun) : null),
+			resolveModule: (specifier) => {
+				if (opts.preload === null) throw new Error(`Cannot find package '${specifier}'`);
+				return opts.preload ?? "/proj/node_modules/@delacour/warden-e2e/src/preload.ts";
+			},
+			helperDir: () => "/opt/warden",
+			warmConnect: () => async (udid) => {
+				h.warmed.push(udid);
+				h.events.push(`warm:${udid}`);
+				if (opts.warm === "fail") return { success: false, error: "helper did not start" };
+				return {
+					success: true,
+					data: {
+						socketPath: `/tmp/warden-simd-${udid}.sock`,
+						snapshot: async () =>
+							opts.warm === "snapshot-fail" ? { success: false, error: "AX denied" } : { success: true, data: null },
+						close: async () => {
+							h.warmClosed.push(udid);
+						},
+					},
+				};
+			},
 			prewarm: async (url, platform) => {
 				h.prewarmed.push(`${platform} ${url}`);
 				return opts.prewarm === "fail"

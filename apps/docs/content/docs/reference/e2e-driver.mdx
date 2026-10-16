@@ -1,0 +1,108 @@
+---
+title: iOS driver helper
+description: warden-simd, the helper that taps and reads the accessibility tree of iOS simulators - where warden looks for it, the variables that steer it, and what warden doctor reports.
+icon: Cpu
+---
+
+## What it is
+
+`warden-simd` is a small macOS binary the iOS e2e driver and `warden ui` talk to. It does the three things `xcrun simctl` cannot:
+
+- host-side touch and keyboard input (HID)
+- the accessibility tree of the frontmost app, in one round trip, through a prebuilt guest that runs inside the simulator
+- fast screenshots, orientation, and waiting for the UI to settle
+
+Everything else (install, launch, open URL, permissions, pasteboard, appearance, status bar, video) stays on `xcrun simctl`. There is no runner app to build or install on the simulator and no long-lived daemon: a helper starts on demand for a device and exits after ten idle minutes.
+
+It links the MIT-licensed `FBControlCore`, `FBSimulatorControl` and `FBSimulatorAX` libraries from [idb](https://github.com/facebook/idb), pinned to one release.
+
+<Callout type="warn">
+The helper uses private CoreSimulator and Accessibility APIs, the same ones idb and Xcode use. They can change in any Xcode release. `warden doctor` shows the idb and Xcode versions the helper was built with, and the probe below tells you when a new Xcode has broken it.
+</Callout>
+
+## Platforms
+
+| Machine | Helper |
+|---|---|
+| macOS arm64 | shipped |
+| macOS x64 | not in this version (idb's libraries are arm64-only); `warden doctor` says so. Android e2e is unaffected. |
+| Linux | n/a, there is no iOS |
+
+## Where warden looks
+
+The first match wins. An override that points at nothing is an error, never a fall-through, so a stale setting cannot quietly pick another binary.
+
+1. `WARDEN_SIMD`: the path of the `warden-simd` file
+2. `WARDEN_HELPER_DIR`: a directory containing `warden-simd`
+3. next to the running `warden` binary (this is where the npm `@delacour/warden-darwin-arm64` package puts it)
+4. `packages/e2e/native/dist/` in a warden source checkout (`bun run --cwd packages/e2e native:deps && native:build`)
+5. `$WARDEN_HOME/simd/<warden version>/`, filled by `warden doctor --fetch-helper`
+
+The helper needs its neighbours: `Resources/SimulatorFrameworkBridge-iOS` (the in-simulator guest) and two stub `*.framework` directories. They live in the same directory as the binary, and `manifest.json` next to them records the helper, idb and Xcode versions. Keep the directory together if you copy it.
+
+A standalone `warden` binary (from GitHub releases, or replaced by `warden update`) has no helper beside it. Run `warden doctor --fetch-helper` once per version to put one in `$WARDEN_HOME/simd/<version>/`.
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `WARDEN_SIMD` | use this `warden-simd` binary |
+| `WARDEN_HELPER_DIR` | look for `warden-simd` in this directory |
+| `WARDEN_SIMD_PACE_MS`, `WARDEN_SIMD_HOLD_MS`, `WARDEN_SIMD_REPEAT_GAP_MS` | key timing for `typeText`: gap after each key (30 ms), hold per key (40 ms), extra wait before a repeated key (300 ms). The client sends the whole string; the helper paces it. |
+| `WARDEN_SIMD_SOCKET` | path of a running helper's socket. `warden e2e` and `warden batch` start one helper per leased device before the flows and set this for each job, so spec workers connect in milliseconds. Unset (a by-hand `bun test` run), the driver starts a helper on stdio itself. |
+| `WARDEN_SIMD_STREAM_IDLE_S` | seconds of no `settle` after which the helper closes its quiescence stream. Unset or `0` (the default) keeps it open for the helper's life. See "After an app relaunch" below. |
+| `WARDEN_HELPER_URL` | `--fetch-helper` only: directory URL holding `warden-simd-darwin-arm64.tgz` and `SHA256SUMS`, instead of the GitHub release for this version |
+| `WARDEN_RELEASE_REPO` | GitHub repo `--fetch-helper` downloads from (default `delacournz/warden`) |
+
+## `warden doctor`
+
+```bash
+warden doctor
+```
+
+```text
+✓ sim-helper         /Users/me/.warden/simd/0.3.0/warden-simd (warden-home) — warden-simd 0.1.0, idb 1.1.8, xcode 26.6 (17F113)
+✓ sim-helper-health  4A1B…: hid.transport=indigo ax.bridge=available
+```
+
+`sim-helper` is the path the lookup found, which step found it, and the build info from `manifest.json`. When nothing is found it warns, lists every path it tried, and names the fix. These rows only ever warn; `doctor` still exits 0.
+
+`sim-helper-health` runs `warden-simd --health --udid <udid>` against the first booted iOS simulator, with a 5 second limit, and prints what it negotiated:
+
+- `hid.transport` is how input reaches the simulator: `indigo` (Xcode 26) or `dtuhid` (Xcode 27).
+- `ax.bridge` is the fast accessibility path. `available` means the in-simulator guest answered. `missing` or `failed` means snapshots fall back to the slower host-side accessibility API, with the reason printed.
+- `degraded` means the guest is there but the last read through it failed, so reads may be falling back to the slower path. The row warns with `ax.lastError` (the failure and how long ago it happened), for example `ax.bridge=degraded (last read failed, 4s ago: The application with pid 7 did not respond ...)`. A fresh `--health` process has no read history, so `doctor` also asks a helper that is already serving that simulator (over `~/.warden/simd/<udid>.sock`); only that one can report `degraded`. The next successful read clears it.
+
+With no booted simulator there is nothing to probe and the row says so. `doctor` does not boot one.
+
+### After an app relaunch
+
+The guest only reads a freshly launched app once a quiescence stream (the one `settle` uses) is bound to its process. The helper keeps one stream open for its whole life, so an app you terminate and launch again is readable straight away (about 100 ms for the first read in our measurements). If the stream is not open (it was closed, or the helper was started with `WARDEN_SIMD_STREAM_IDLE_S`), the first read after a relaunch fails with `E_APP_NOT_RESPONDING`; the helper then opens a stream, waits for its first state and reads again, which costs about 2 seconds once. The retry is logged as a `warn` event, and a read that still fails falls back to host-side accessibility and marks the bridge `degraded`.
+
+`WARDEN_SIMD_STREAM_IDLE_S=<seconds>` closes an idle stream after that long (unset or `0` keeps it open). Use it only if another quiescence consumer shares the simulator: two concurrent streams leave each other stuck.
+
+### `--fetch-helper`
+
+```bash
+warden doctor --fetch-helper
+```
+
+Downloads `warden-simd-darwin-arm64.tgz` and `SHA256SUMS` from the GitHub release `v<version>` (or `WARDEN_HELPER_URL`), checks the tarball against the sum, and unpacks it into `$WARDEN_HOME/simd/<version>/`. Nothing is unpacked when the checksum does not match. Then it runs the usual checks, so the `sim-helper` rows show the result. It exits 1 if the download fails or the machine is not macOS arm64.
+
+## How it is shipped
+
+- npm: `@delacour/warden-darwin-arm64` carries `bin/warden-simd` and its resources next to `bin/warden`. The package.json records the helper build under `warden.helper`.
+- GitHub releases: `warden-simd-darwin-arm64.tgz` (the helper directory) and `SHA256SUMS`.
+
+The helper is ad-hoc signed without the hardened runtime, like Homebrew's `idb_companion`.
+
+## Android driver
+
+Android needs no helper and no `warden doctor` check: the driver is TypeScript over `adb` (`packages/e2e/src/driver/android/`), used by `warden ui` and the spec runner alike.
+
+- **One resident shell.** Each driver keeps a single `adb -s <serial> shell` process and writes one line per command, `(<cmd>) 2>&1 </dev/null; echo "__WDN_<id>_$?__"`, then reads until that sentinel. Commands run one at a time, in order; the exit code is the number in the sentinel. A timeout (default 10 s) kills the shell and the next command starts a new one. If the shell dies, that command fails with `E_HELPER_CRASHED` and one respawn is allowed; a respawn that also dies before finishing a command makes the session give up. Binary output never goes through it: screenshots use a separate `adb exec-out screencap -p`, and so does one of the dump routes.
+- **Opening a driver** takes one probe command (`sys.boot_completed`, the sdk level, `wm size`, `wm density`), polled for up to 30 s (`E_NOT_BOOTED` after that), then one command that sets the three animation scales to 0.
+- **Snapshots** are `uiautomator dump` parsed by a small XML walker (no dependency); the route that works is tried first next time (see [Drive a device](/docs/guides/agent-ui#android)). The snapshot is cached for a second for hit-tests and dropped after any input or app command.
+- **Input** goes through `input tap|swipe|text|keyevent|motionevent`. `pressKeyRepeat(key, n)` sends n key presses in one `input keyevent` call (32 per call); the typing layer uses it to empty a field in one round trip. Settling is snapshot hashing, `nativeSettle` is false.
+- **Apps:** `monkey -p <package> -c android.intent.category.LAUNCHER 1` to launch (after `am force-stop`), `am start -a android.intent.action.VIEW -d <url>`, `pm clear`, and host `adb install -r`.
+- **Unsupported** (they return `E_UNSUPPORTED`, or `E_UNSUPPORTED_TEXT` for non-ASCII text): pinch, clipboard, launch arguments and environment, shake, and key modifiers before Android 13.

@@ -189,7 +189,13 @@ export type Project = {
 export function parseWardenConfig(raw: unknown, file: string = CONFIG_FILE): Result<ParsedWardenConfig> {
 	const parsed = wardenConfigSchema.safeParse(raw);
 	if (parsed.success) return ok(parsed.data);
-	const issues = parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+	const issues = parsed.error.issues
+		.map((i) => {
+			const where = i.path.join(".") || "(root)";
+			// a message that already names its path (a removed key's migration hint) is not prefixed twice
+			return i.message.startsWith(where) ? i.message : `${where}: ${i.message}`;
+		})
+		.join("; ");
 	return err(`invalid ${file}: ${issues}`);
 }
 

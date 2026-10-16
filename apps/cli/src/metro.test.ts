@@ -3,7 +3,9 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	devClientLaunchArgs,
 	devClientLaunchArgv,
+	launchMetro,
 	type MetroDeps,
 	type MetroProc,
 	metroArgv,
@@ -254,6 +256,48 @@ describe("startMetro", () => {
 	});
 });
 
+describe("launchMetro", () => {
+	test("stop before Metro is ready: the proc is SIGTERMed once and pending resolves to an error", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "down" });
+		const launch = launchMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 60_000 });
+		await launch.stop();
+		const result = await launch.pending;
+		expect(result.success).toBe(false);
+		expect(launch.started).toBeUndefined();
+		expect(h.kills).toEqual(["SIGTERM"]);
+	});
+
+	test("stop after ready: one SIGTERM, started is cleared", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "ours" });
+		const launch = launchMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 5_000 });
+		const result = await launch.pending;
+		expect(result.success).toBe(true);
+		expect(launch.started?.port).toBe(8081);
+		await launch.stop();
+		expect(launch.started).toBeUndefined();
+		expect(h.kills).toEqual(["SIGTERM"]);
+	});
+
+	test("the caller's aborted still ends the wait", async () => {
+		const root = tempDir();
+		const h = harness();
+		h.deps.probe = async () => ({ kind: "down" });
+		const launch = launchMetro(h.deps, {
+			projectRoot: root,
+			port: 8081,
+			env: {},
+			readyTimeoutMs: 60_000,
+			aborted: () => h.clock.now >= 1_000,
+		});
+		expect(await launch.pending).toEqual({ success: false, error: "interrupted while waiting for Metro" });
+		expect(h.kills).toEqual(["SIGTERM"]);
+	});
+});
+
 describe("prewarmMetro", () => {
 	test("fetches the manifest for the platform, then its launch bundle", async () => {
 		const seen: string[] = [];
@@ -281,6 +325,18 @@ describe("prewarmMetro", () => {
 	test("no readable manifest → skipped, not an error", async () => {
 		const s = serve(() => new Response("nope", { status: 404 }));
 		expect(await prewarmMetro(metroUrl(s.port), "ios")).toEqual({ success: true, data: { bundled: false } });
+	});
+});
+
+describe("devClientLaunchArgs", () => {
+	test("--initialUrl first, then the extra launch args", () => {
+		expect(devClientLaunchArgs("http://127.0.0.1:8090")).toEqual(["--initialUrl", "http://127.0.0.1:8090"]);
+		expect(devClientLaunchArgs("http://127.0.0.1:8090", ["-Flag", "YES"])).toEqual([
+			"--initialUrl",
+			"http://127.0.0.1:8090",
+			"-Flag",
+			"YES",
+		]);
 	});
 });
 

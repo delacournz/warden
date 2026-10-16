@@ -14,6 +14,7 @@ import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, resolveOwner, resolvePlatform, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { releaseDevices } from "../device-lease";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import {
 	childEnv,
@@ -21,6 +22,7 @@ import {
 	claimRunPorts,
 	exitCodeOf,
 	holdLeases,
+	INTERRUPTED,
 	intervalEvery,
 	type LeaseSessionDeps,
 	processOnSignal,
@@ -31,11 +33,12 @@ import {
 import {
 	adbReverseArgv,
 	devClientLaunchArgv,
+	launchMetro,
+	type MetroLaunchHandle,
 	type MetroOwner,
 	type MetroProc,
 	metroOwner,
 	metroUrl,
-	startMetro,
 } from "../metro";
 import { emit, heading, note, reportError, warn } from "../output";
 import { withSpinner } from "../spinner-context";
@@ -132,9 +135,15 @@ function heldDevice(ctx: CommandContext, owner: Owner, platform: Platform, opts:
 type Session = {
 	deviceId: string;
 	port: number;
-	env: Record<string, string | undefined>;
 	leaseIds: string[];
-	release: () => void;
+	release: () => Promise<void>;
+};
+
+/** What `openSession` needs from `dev()`: start Metro once the port is known, and stop waiting on a signal / dead Metro. */
+type EarlyMetro = {
+	/** called with the leased port, and the device when it is already known, before the app install */
+	start: (port: number, deviceId: string | undefined) => void;
+	aborted: () => boolean;
 };
 
 /** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
@@ -144,7 +153,8 @@ async function openSession(
 	owner: Owner,
 	platform: Platform,
 	opts: DevOpts,
-	app: EnsureOptions
+	app: EnsureOptions,
+	early: EarlyMetro
 ): AsyncResult<Session> {
 	const held = heldDevice(ctx, owner, platform, opts);
 	if (!held.success) return held;
@@ -153,38 +163,50 @@ async function openSession(
 		const flags = parseClaimFlags(platform, { ...opts, headless: opts.headless === true });
 		if (!flags.success) return flags;
 		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
-		const session = await claimAll(ctx, deps, owner, { flags: flags.data, ports: [opts.port], app }, "dev");
+		const session = await claimAll(
+			ctx,
+			deps,
+			owner,
+			{
+				flags: flags.data,
+				ports: [opts.port],
+				app,
+				onPorts: (leased) => {
+					const first = leased[0]?.port;
+					if (first !== undefined) early.start(first, undefined);
+				},
+				aborted: early.aborted,
+			},
+			"dev"
+		);
 		if (!session.success) return session;
-		const { outcome, ports, env, leaseIds, release } = session.data;
+		const { outcome, ports, leaseIds, release } = session.data;
 		const deviceId = outcome.claimed[0]?.device.id;
 		const port = ports[0]?.port;
 		if (deviceId === undefined || port === undefined) {
-			release();
+			await release();
 			return err("claim returned no device / port");
 		}
-		return ok({ deviceId, port, env, leaseIds, release });
+		return ok({ deviceId, port, leaseIds, release });
 	}
 	const deviceId = held.data;
 	const ports = await claimRunPorts(ctx, owner, [opts.port], deps.pid, deps.isPortFree, "warden dev");
 	if (!ports.success) return ports;
 	const leaseIds = ports.data.map((p) => p.leaseId);
-	const release = () => ctx.store().deleteLeases(leaseIds);
+	const release = () => releaseDevices(ctx, leaseIds, { touch: false }).then(() => undefined);
 	const port = ports.data[0]?.port;
 	if (port === undefined) {
-		release();
+		await release();
 		return err("no Metro port leased");
 	}
+	early.start(port, deviceId);
 	const ensured = await deps.ensureApp(ctx, owner, platform, deviceId, app);
 	if (!ensured.success) {
-		release();
+		await release();
 		return err(`app on ${deviceId}: ${ensured.error}`);
 	}
 	ctx.err(`warden dev: app ${ensured.data.source} on ${deviceId} [${ensured.data.hash}]`);
-	const env = childEnv(ctx.env, { claimed: [], reclaimed: [] }, ports.data);
-	env.WARDEN_UDIDS = deviceId;
-	env.WARDEN_UDID_0 = deviceId;
-	setHeadlessEnv(env, opts.headless === true);
-	return ok({ deviceId, port, env, leaseIds, release });
+	return ok({ deviceId, port, leaseIds, release });
 }
 
 /**
@@ -242,38 +264,25 @@ function ensureOptions(start: string, variant: string, opts: DevOpts): Result<En
 	});
 }
 
-type Running = { session: Session; platform: Platform; project: Project; scheme: string; timeoutMs: number };
+type Running = {
+	session: Session;
+	platform: Platform;
+	project: Project;
+	scheme: string;
+	launch: MetroLaunchHandle;
+	aborted: { now: boolean };
+};
 
-/** Metro on the leased port (verified to serve this project), the dev client opened on it; resolves with Metro's exit code. */
+/** Metro (started early, verified to serve this project) with the dev client opened on it; resolves with Metro's exit code. */
 async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Running): Promise<number> {
-	const { deviceId, port, env, leaseIds, release } = r.session;
+	const { deviceId, port, leaseIds, release } = r.session;
 	const json = opts.json === true;
-	const aborted = { now: false };
-	let metroProc: MetroProc | undefined;
 	const stop = holdLeases(ctx, deps, leaseIds, (signal) => {
-		aborted.now = true;
-		metroProc?.kill(signal);
+		r.aborted.now = true;
+		r.launch.started?.proc.kill(signal);
 	});
 	try {
-		const metro = await startMetro(
-			{
-				probe: deps.probe,
-				now: ctx.now,
-				sleep: deps.sleep,
-				spawn: (cmd, metroEnv, cwd) => {
-					metroProc = deps.spawn(cmd, metroEnv, cwd, json ? "stderr" : "inherit");
-					return metroProc;
-				},
-			},
-			{
-				projectRoot: r.project.root,
-				port,
-				env,
-				args: splitCommand(ctx.argv).cmd,
-				readyTimeoutMs: r.timeoutMs,
-				aborted: () => aborted.now,
-			}
-		);
+		const metro = await r.launch.pending;
 		if (!metro.success) {
 			reportError(ctx, "dev", metro.error);
 			return 1;
@@ -292,7 +301,7 @@ async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Ru
 		return await metro.data.proc.exited;
 	} finally {
 		stop();
-		release();
+		await release();
 	}
 }
 
@@ -335,20 +344,74 @@ async function dev(
 	const app = ensureOptions(start.data, variant, opts);
 	if (!app.success) return fail(app.error);
 
+	const json = opts.json === true;
+	const aborted = { now: false };
+	let launch: MetroLaunchHandle | undefined;
+	let metroFailed = false;
+	const early: EarlyMetro = {
+		start: (port, deviceId) => {
+			// the env a session child gets, minus what is not leased yet (the device, when it is still being claimed)
+			const env = childEnv(ctx.env, { claimed: [], reclaimed: [] }, [{ leaseId: "", port }]);
+			delete env.WARDEN_LEASE_IDS;
+			if (deviceId !== undefined) {
+				env.WARDEN_UDIDS = deviceId;
+				env.WARDEN_UDID_0 = deviceId;
+			}
+			setHeadlessEnv(env, opts.headless === true);
+			const handle = launchMetro(
+				{
+					probe: deps.probe,
+					now: ctx.now,
+					sleep: deps.sleep,
+					spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, json ? "stderr" : "inherit"),
+				},
+				{
+					projectRoot: project.data.project.root,
+					port,
+					env,
+					args: splitCommand(ctx.argv).cmd,
+					readyTimeoutMs: timeout.data,
+					aborted: () => aborted.now,
+				}
+			);
+			launch = handle;
+			void handle.pending.then((result) => {
+				if (!result.success) metroFailed = true;
+			});
+		},
+		aborted: () => aborted.now || metroFailed,
+	};
+	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
+		deps.onSignal(signal, () => {
+			aborted.now = true;
+			void launch?.stop();
+		})
+	);
 	if (!opts.json) heading(ctx, "dev", `${platform.data} · ${project.data.project.name}`);
 	const session = await withSpinner(ctx, `preparing the ${platform.data} dev build…`, async (sctx, spinner) => {
-		const result = await openSession(sctx, deps, owner, platform.data, opts, app.data);
+		const result = await openSession(sctx, deps, owner, platform.data, opts, app.data, early);
 		if (result.success) spinner.succeed(`${platform.data} dev build on ${result.data.deviceId}`);
 		else spinner.fail(`${platform.data} dev build not ready`);
 		return result;
 	});
-	if (!session.success) return fail(session.error);
+	for (const off of offSignals) off();
+	if (!session.success) {
+		await launch?.stop();
+		// a claim given up because Metro itself failed: Metro's error is the cause
+		const metro = session.error === INTERRUPTED ? await launch?.pending : undefined;
+		return fail(metro !== undefined && !metro.success ? metro.error : session.error);
+	}
+	if (launch === undefined) {
+		await session.data.release();
+		return fail("Metro was not started");
+	}
 	return runMetro(ctx, deps, opts, {
 		session: session.data,
 		platform: platform.data,
 		project: project.data.project,
 		scheme: scheme.data,
-		timeoutMs: timeout.data,
+		launch,
+		aborted,
 	});
 }
 

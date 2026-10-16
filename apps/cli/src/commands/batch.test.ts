@@ -83,6 +83,7 @@ describe("warden batch", () => {
 		const a = jobs[0];
 		const udid = a?.opts.env.WARDEN_UDID;
 		expect(a?.cmd).toEqual(["run", "a", `--on=${udid}`, `w${a?.opts.env.WARDEN_WORKER}s0`]);
+		expect(a?.opts.env.WARDEN_DEVICE_NAME).toBeString();
 		expect(a?.opts.env.WARDEN_JOB_SEQ).toBe("0");
 		expect(a?.opts.env.WARDEN_UDIDS?.split(",").sort()).toEqual(["U1", "U2"]);
 		expect(a?.opts.env.WARDEN_SESSION_ID).toBe("me");
@@ -555,6 +556,14 @@ describe("warden batch", () => {
 		}
 	});
 
+	test("a failed device claim leaves no port lease (ports are leased first so Metro can start early)", async () => {
+		const c = setup(["ios", "--count", "3", "--max", "2", "--jobs", "a,b,c", "--port", "8091:1", "--", "x"]);
+		const h = harness();
+		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		expect(h.jobs()).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
 	test("{port} is the first leased port in the job argv, --serve and --serve-ready; --job-timeout is validated", async () => {
 		const c = setup([
 			"ios",
@@ -573,20 +582,13 @@ describe("warden batch", () => {
 			"{job}",
 			"--api",
 			"http://127.0.0.1:{port}",
-			"{stateDir}",
 		]);
 		const h = harness();
 		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "api --port 3000"]);
 		expect(h.probes).toEqual([{ kind: "http", url: "http://127.0.0.1:3000/health" }]);
 		const job = h.jobs()[0];
-		expect(job?.cmd).toEqual([
-			"run",
-			"a",
-			"--api",
-			"http://127.0.0.1:3000",
-			join(c.env.WARDEN_HOME ?? "", "batches", "b1", "agent-device", "0"),
-		]);
+		expect(job?.cmd).toEqual(["run", "a", "--api", "http://127.0.0.1:3000"]);
 		expect(job?.opts.group).toBe(true);
 		expect(h.timers.map((t) => [t.ms, t.cancelled])).toEqual([[90_000, true]]);
 		c.argv = ["ios", "--jobs", "a", "--job-timeout", "soon", "--", "run"];

@@ -19,6 +19,8 @@ export type Command = {
 	/** heading this command is listed under in `warden --help` */
 	group?: CommandGroup;
 	summary: string;
+	/** left out of `--help` (internal workers) */
+	hidden?: true;
 	register: Register;
 	/** parse `ctx.argv` as this command's arguments and run it (what tests call) */
 	run: (ctx: CommandContext) => Promise<number>;
@@ -98,7 +100,9 @@ export async function runProgram(commands: readonly Command[], argv: string[], c
 		(a, b) => COMMAND_GROUPS.indexOf(a.group ?? "Setup") - COMMAND_GROUPS.indexOf(b.group ?? "Setup")
 	);
 	for (const command of grouped) {
-		const sub = program.command(command.name).description(command.summary);
+		const sub = program
+			.command(command.name, command.hidden ? { hidden: true } : undefined)
+			.description(command.summary);
 		if (command.group) sub.helpGroup(`${command.group}:`);
 		for (const alias of command.aliases ?? []) sub.alias(alias);
 		command.register(sub, ctx, (n) => {

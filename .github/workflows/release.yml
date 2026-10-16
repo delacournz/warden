@@ -26,6 +26,19 @@ jobs:
         with:
           bun-version-file: package.json
 
+      # warden-simd links idb's library package, built with a recent Swift: use the newest Xcode on the runner image.
+      - name: Select newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: ~/Library/Caches/warden-idb
+          key: warden-idb-${{ hashFiles('packages/e2e/native/idb.lock.json') }}
+
       - run: bun install --frozen-lockfile
 
       - name: Tag must match apps/cli version
@@ -40,14 +53,26 @@ jobs:
       - run: bun run check
       - run: bun run test
 
+      # The iOS driver helper (packages/e2e/native/dist), shipped in @delacour/warden-darwin-arm64 and as a release
+      # asset. The runner is arm64 (macos-latest): the helper is built for the machine it builds on.
+      - name: Build warden-simd
+        run: |
+          bun run --cwd packages/e2e native:deps
+          bun run --cwd packages/e2e native:build
+
       - name: Build release binaries
         run: bun run --cwd apps/cli build:release
+
+      # warden-simd-darwin-arm64.tgz + SHA256SUMS: what `warden doctor --fetch-helper` downloads into
+      # $WARDEN_HOME/simd/<version>/ (a self-updated or standalone binary has no helper next to it).
+      - name: Pack warden-simd release asset
+        run: bun run --cwd apps/cli build:helper-asset
 
       # Repository / homepage / bugs links go into the manifests only once the repo is public.
       - name: Stage npm packages
         env:
           WARDEN_NPM_REPO_LINKS: ${{ github.event.repository.private == false && '1' || '0' }}
-        run: bun run --cwd apps/cli build:npm
+        run: bun run --cwd apps/cli build:npm --require-helper
 
       # Tarball keeps the binaries' executable bit, which artifacts drop.
       - run: tar -czf dist.tgz -C apps/cli dist
@@ -83,9 +108,10 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/warden-* dist/checksums.txt --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/warden-* dist/checksums.txt dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
 
-      # Platform packages first so @delacour/warden's optionalDependencies resolve the moment it lands.
+      # Platform packages first so @delacour/warden's optionalDependencies resolve the moment it lands;
+      # @delacour/warden-e2e last (exact peer dependency on @delacour/warden, same version).
       # Already-published versions are skipped, so a re-run finishes a partial publish.
       # Auth is OIDC trusted publishing (npm >= 11.5.1); NPM_TOKEN is only a fallback until
       # the trusted publisher is configured on npmjs.com, then delete the secret.
@@ -97,7 +123,7 @@ jobs:
         run: |
           provenance=""
           if [ "$REPO_PRIVATE" = "false" ]; then provenance="--provenance"; fi
-          for dir in dist/npm/warden-*/ dist/npm/warden/; do
+          for dir in dist/npm/warden-darwin-*/ dist/npm/warden-linux-*/ dist/npm/warden/ dist/npm/warden-e2e/; do
             name=$(node -p "require('./$dir/package.json').name")
             version=$(node -p "require('./$dir/package.json').version")
             if npm view "$name@$version" version > /dev/null 2>&1; then

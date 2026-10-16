@@ -1,0 +1,152 @@
+{
+ "backend": "ax",
+ "elements": [
+  {
+   "children": [
+    {
+     "children": [],
+     "enabled": true,
+     "focused": false,
+     "frame": {
+      "height": 42.333333333333314,
+      "width": 260,
+      "x": 71,
+      "y": 290
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": "Allow \u201cMaps\u201d to use your location?",
+     "pid": 44557,
+     "placeholder": null,
+     "traits": [
+      "StaticText",
+      "Scrollable"
+     ],
+     "type": "StaticText",
+     "value": null
+    },
+    {
+     "children": [],
+     "enabled": true,
+     "focused": false,
+     "frame": {
+      "height": 98,
+      "width": 260,
+      "x": 71,
+      "y": 339.6666666666667
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": "Your location is used to show your position on the map, get directions, estimate travel times, improve search results, and display relevant ads where available in Maps.",
+     "pid": 44557,
+     "placeholder": null,
+     "traits": [
+      "StaticText",
+      "Scrollable"
+     ],
+     "type": "StaticText",
+     "value": null
+    },
+    {
+     "children": [],
+     "enabled": true,
+     "focused": false,
+     "frame": {
+      "height": 48,
+      "width": 288,
+      "x": 57,
+      "y": 458
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": "Allow Once",
+     "pid": 44557,
+     "placeholder": null,
+     "traits": [
+      "Button",
+      "Scrollable"
+     ],
+     "type": "Button",
+     "value": null
+    },
+    {
+     "children": [],
+     "enabled": true,
+     "focused": false,
+     "frame": {
+      "height": 48,
+      "width": 288,
+      "x": 57,
+      "y": 514
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": "Allow While Using App",
+     "pid": 44557,
+     "placeholder": null,
+     "traits": [
+      "Button",
+      "Scrollable"
+     ],
+     "type": "Button",
+     "value": null
+    },
+    {
+     "children": [],
+     "enabled": true,
+     "focused": false,
+     "frame": {
+      "height": 48,
+      "width": 288,
+      "x": 57,
+      "y": 570
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": "Don\u2019t Allow",
+     "pid": 44557,
+     "placeholder": null,
+     "traits": [
+      "Button",
+      "Scrollable"
+     ],
+     "type": "Button",
+     "value": null
+    }
+   ],
+   "enabled": true,
+   "focused": false,
+   "frame": {
+    "height": 874,
+    "width": 402,
+    "x": 0,
+    "y": 0
+   },
+   "hidden": false,
+   "identifier": null,
+   "label": " ",
+   "pid": 44557,
+   "placeholder": null,
+   "traits": [
+    "None"
+   ],
+   "type": "Application",
+   "value": null
+  }
+ ],
+ "modal": null,
+ "screen": {
+  "coordinate_space": "screen",
+  "height": 874,
+  "width": 402
+ },
+ "target": {
+  "kind": "frontmost",
+  "match_key": null,
+  "pid": null,
+  "value": null,
+  "x": null,
+  "y": null
+ },
+ "truncated": false
+}

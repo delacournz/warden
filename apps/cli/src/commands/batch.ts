@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
@@ -12,17 +11,20 @@ import { isPortFree } from "@delacour/warden-core/ports";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Platform } from "@delacour/warden-core/types";
+import { ENV_NAMES } from "@delacour/warden-e2e/env";
+import { readResults } from "@delacour/warden-e2e/runner/results";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
-import { type FlowMark, flowMarks, type TrackedFlow } from "../batch/flow-progress";
+import { type FlowMark, flowOf, resultsMarks, type TrackedFlow, testLine } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
-import { type RunnerReport, reportOutputDir, runnerReport } from "../batch/runner-report";
+import { type RunnerReport, resultsReport } from "../batch/runner-report";
 import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
 import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
 import { openStampedLog } from "../batch/stamped-log";
 import {
+	addRunnerFlows,
 	applyEvent,
 	applyFlowMarks,
 	applyRunnerReport,
@@ -34,7 +36,7 @@ import {
 	render,
 	withRunners,
 } from "../batch/tui";
-import { agentDeviceStateDir, agentSession, findAgentDeviceBin, warmRunners, warmTargets } from "../batch/warm-runners";
+import { type WarmConnect, type WarmHelper, warmDrivers } from "../batch/warm-drivers";
 import {
 	type ClaimFlags,
 	type ClaimFlagValues,
@@ -46,12 +48,15 @@ import {
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { shutdownReleasedDevices } from "../device-shutdown";
+import { helperDir } from "../e2e/bun-runner";
+import { warmConnect } from "../e2e/warm-connect";
 import {
 	type AppFlagValues,
 	claimAll,
 	exitCodeOf,
 	type ForwardedSignal,
 	holdLeases,
+	INTERRUPTED,
 	intervalEvery,
 	type LeaseArgs,
 	type LeaseSession,
@@ -60,6 +65,7 @@ import {
 	leasedText,
 	parseAppFlags,
 	processOnSignal,
+	type RunPort,
 	splitCommand,
 	withLeaseOptions,
 } from "../lease-session";
@@ -94,7 +100,7 @@ export type SpawnOptions = {
 	metro?: true;
 	/** a job (jobs with a timeout are `group` spawns too, so the whole tree can be killed) */
 	job?: true;
-	/** an agent-device runner warm-up (`hooks.warmRunners`) */
+	/** a driver warm-up (`hooks.warmDrivers`) */
 	warm?: true;
 };
 
@@ -128,8 +134,14 @@ export type BatchDeps = LeaseSessionDeps & {
 	metroProbe: (port: number, projectRoot: string) => Promise<MetroOwner>;
 	/** build the bundle once before the first job */
 	prewarm: (url: string, platform: Platform) => AsyncResult<{ bundled: boolean }>;
-	/** the project's `agent-device` bin (`hooks.warmRunners`); `undefined` = none, nothing to warm */
-	agentDeviceBin: (cwd: string) => string | undefined;
+	/** how `hooks.warmDrivers` reaches one device's socket helper (default: `e2e/warm-connect`) */
+	warmConnect: (ctx: CommandContext) => WarmConnect;
+	/** `Bun.which`: where a command is on PATH */
+	which: (cmd: string) => string | null | undefined;
+	/** `Bun.resolveSync`: the file a package specifier resolves to from `from` (throws when it does not) */
+	resolveModule: (specifier: string, from: string) => string;
+	/** where the spec drivers' native helper lives next to this warden (`WARDEN_HELPER_DIR`) */
+	helperDir: () => string;
 };
 
 /** Commander option values of `warden batch`. */
@@ -168,7 +180,7 @@ export type MetroPlan = {
 	bundleId?: string;
 };
 
-/** A validated `warden batch` run (what `runSession` takes); `warden e2e` adds legs, `single` and `metro`. */
+/** A validated `warden batch` run (what `runSession` takes); `warden e2e` adds legs and `metro`. */
 export type BatchArgs = LeaseArgs & {
 	json: boolean;
 	jobs: BatchJobsSource;
@@ -187,8 +199,6 @@ export type BatchArgs = LeaseArgs & {
 	jobTimeoutMs?: number;
 	/** device legs, claimed instead of `flags`; each runs every job on its own devices */
 	legs?: BatchLeg[];
-	/** one job process per leg, handed the whole pool (`WARDEN_UDIDS`), instead of one worker per device */
-	single?: boolean;
 	metro?: MetroPlan;
 };
 
@@ -203,7 +213,7 @@ const SERVE_KILL_GRACE_MS = 15_000;
 const JOB_KILL_GRACE_MS = 5_000;
 const READY_POLL_MS = 500;
 const FRAME_MS = 100;
-/** how often a `single` run's runner log is read for finished flows */
+/** how often the jobs' `results.jsonl` are read for finished tests */
 const FLOW_POLL_MS = 1_000;
 
 const absolute = (cwd: string, path: string) => (isAbsolute(path) ? path : resolve(cwd, path));
@@ -356,6 +366,9 @@ export type Screenshots = ReadonlyMap<string, string>;
 /** Job logs by attempt: `<worker>:<seq>` → absolute log path. */
 export type Logs = ReadonlyMap<string, string>;
 
+/** Spec results by attempt: `<worker>:<seq>` → the `results.jsonl` the job writes (jobs whose env sets `WARDEN_E2E_OUT`). */
+export type ResultFiles = ReadonlyMap<string, string>;
+
 /** Key of one job attempt in `Screenshots` / `Logs`. */
 export const attemptKey = (r: { worker: number; seq: number }) => `${r.worker}:${r.seq}`;
 
@@ -401,15 +414,23 @@ function summaryJson(
 /** TUI sinks: the terminal (live grid or plain lines) and the `tui.cast` mirror. */
 type Display = {
 	event: (e: BatchEvent) => void;
-	/** flow results read off `worker`'s runner output */
+	/** flow results read off `worker`'s spec output */
 	flows: (worker: number, marks: Readonly<Record<string, FlowMark>>) => void;
-	/** the `single` runner's report: the flows each device ran */
+	/** finished tests, one line each (`--no-tui` only: the grid shows flows) */
+	tests: (lines: readonly string[]) => void;
+	/** the spec runner's report: the flows each device ran */
 	report: (report: RunnerReport) => void;
 	end: () => void;
 	cast?: Cast;
 };
 
-function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { current: BatchView }): Display {
+function display(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	view: { current: BatchView },
+	flows: readonly TrackedFlow[] | undefined
+): Display {
 	const { terminal } = deps;
 	const live = args.tui && terminal.isTTY;
 	const width = live ? terminal.columns : 100;
@@ -434,6 +455,10 @@ function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { 
 		cast,
 		event: (e) => {
 			view.current = applyEvent(view.current, e);
+			if (e.type === "job-start") {
+				const ids = shardFlowIds(flows, e.job);
+				if (ids.length > 0) view.current = addRunnerFlows(view.current, e.worker, ids);
+			}
 			if (!live) {
 				const text = plainLine(view.current, e);
 				if (text !== undefined) ctx.err(text);
@@ -444,6 +469,9 @@ function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { 
 			if (!live) announceFlows(ctx, view.current, worker, marks);
 			view.current = applyFlowMarks(view.current, worker, marks);
 			frame(false);
+		},
+		tests: (lines) => {
+			if (!live) for (const line of lines) ctx.err(line);
 		},
 		report: (report) => {
 			view.current = applyRunnerReport(view.current, report);
@@ -457,7 +485,14 @@ function display(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, view: { 
 	};
 }
 
-/** Run every pool's queue behind the grid; a `single` run with `flows` also ticks them off live from the runner logs. */
+/** The flows of the shard job `job` (`shard-0`, or `shard-0@<leg>`), for the grid row that runs it. */
+function shardFlowIds(flows: readonly TrackedFlow[] | undefined, job: string): string[] {
+	return (flows ?? [])
+		.filter((f) => f.job !== undefined && (job === f.job || job.startsWith(`${f.job}@`)))
+		.map((f) => f.id);
+}
+
+/** Run every pool's queue behind the grid; a run with `flows` also ticks them off live from the jobs' `results.jsonl`. */
 async function runGrid(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -467,49 +502,48 @@ async function runGrid(
 	o: {
 		total: number;
 		startedAt: number;
-		cmd: readonly string[];
-		logs: ReadonlyMap<string, string>;
+		resultFiles: ResultFiles;
 		flows: readonly TrackedFlow[] | undefined;
 	}
 ): Promise<{ summary: BatchSummary; screen: Display }> {
 	const rows = queues.flatMap((q) => q.rows);
-	// only a `single` runner runs several flows in one job
-	const flows = args.single ? o.flows : undefined;
-	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, flows) });
-	const poller = flows ? flowPoller(deps, flows, o.logs, screen) : undefined;
+	const { flows } = o;
+	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, flows) }, flows);
+	const ended = new Set<string>();
+	const poller = flows ? flowPoller(deps, flows, o.resultFiles, ended, screen) : undefined;
 	try {
 		const summary = await runPools(queues, {
 			retry: args.retry,
 			now: ctx.now,
 			signal: r.signal,
-			onEvent: screen.event,
+			onEvent: (e) => {
+				if (e.type === "job-end") ended.add(attemptKey(e));
+				screen.event(e);
+			},
 		});
 		poller?.stop();
 		await poller?.poll();
-		if (flows) await readRunnerReport(deps, args.cwd, o.cmd, flows, o.startedAt, screen);
+		if (flows) await readRunnerReport(deps, o.resultFiles, flows, o.startedAt, screen);
 		return { summary, screen };
 	} finally {
 		poller?.stop();
 	}
 }
 
-/** `single`: hand the runner's `report.json` (in its `--output` dir) to the display; a missing / stale one is skipped. */
+/** Hand every job's finished `results.jsonl` to the display as one report; missing files and stale results are skipped. */
 async function readRunnerReport(
 	deps: BatchDeps,
-	cwd: string,
-	cmd: readonly string[],
+	resultFiles: ResultFiles,
 	flows: readonly TrackedFlow[],
 	since: number,
 	screen: Display
 ): Promise<void> {
-	const dir = reportOutputDir(cmd);
-	if (dir === undefined) return;
-	const text = await deps.readFile(join(absolute(cwd, dir), "report.json")).catch(() => "");
-	const report = runnerReport(text, flows, since);
+	const texts = await Promise.all([...resultFiles.values()].map((path) => deps.readFile(path).catch(() => "")));
+	const report = resultsReport(texts.join("\n"), flows, since);
 	if (report) screen.report(report);
 }
 
-/** The grid's first frame: one runner per worker tracks `flows` when a `single` run has them. */
+/** The grid's first frame: with sharded flows, one (empty) runner per worker that takes its shard's flows when the shard starts. */
 function startView(
 	rows: ReadonlyArray<{ worker: number; udid: string; name: string }>,
 	total: number,
@@ -517,12 +551,7 @@ function startView(
 	flows: readonly TrackedFlow[] | undefined
 ): BatchView {
 	const view = initialView(rows, total, startedAt);
-	return flows
-		? withRunners(
-				view,
-				flows.map((f) => f.id)
-			)
-		: view;
+	return flows?.some((f) => f.job !== undefined) ? withRunners(view, []) : view;
 }
 
 const tick = (mark: FlowMark) => (mark === "passed" ? "✓" : "✗");
@@ -549,27 +578,39 @@ function announceDevices(ctx: CommandContext, view: BatchView): void {
 }
 
 /**
- * `mode: "single"`: read each worker's latest runner log and hand the flows it reports finished to
- * the display. `poll` reads once (also called after the run, so the last flows land); `stop` ends the timer.
+ * Read the `results.jsonl` of every job started so far: hand the flows it reports finished to the
+ * display (a job's flows count as passed once it has ended) and each new test as one line.
+ * `poll` reads once (also called after the run, so the last results land); `stop` ends the timer.
  */
 function flowPoller(
 	deps: BatchDeps,
 	flows: readonly TrackedFlow[],
-	logs: ReadonlyMap<string, string>,
+	resultFiles: ResultFiles,
+	ended: ReadonlySet<string>,
 	screen: Display
 ): { poll: () => Promise<void>; stop: () => void } {
 	let busy = false;
+	const printed = new Map<string, number>();
+	const settled = new Set<string>();
+	const pollOne = async (key: string, path: string) => {
+		const text = await deps.readFile(path).catch(() => "");
+		const final = ended.has(key);
+		screen.flows(Number(key.split(":")[0]), resultsMarks(text, flows, { final }));
+		const results = readResults(text);
+		const fresh = results.slice(printed.get(key) ?? 0);
+		printed.set(key, results.length);
+		const lines = fresh.flatMap((result) => {
+			const flow = flowOf(result, flows);
+			return flow ? [testLine(flow.id, result)] : [];
+		});
+		if (lines.length > 0) screen.tests(lines);
+		if (final) settled.add(key);
+	};
 	const poll = async () => {
 		if (busy) return;
 		busy = true;
 		try {
-			// attempt keys are `<worker>:<seq>` in spawn order: the last one per worker is its current log
-			const latest = new Map<number, string>();
-			for (const [key, log] of logs) latest.set(Number(key.split(":")[0]), log);
-			for (const [worker, log] of latest) {
-				const text = await deps.readFile(log).catch(() => "");
-				screen.flows(worker, flowMarks(text, flows));
-			}
+			for (const [key, path] of resultFiles) if (!settled.has(key)) await pollOne(key, path);
 		} finally {
 			busy = false;
 		}
@@ -609,7 +650,6 @@ type JobRunnerOptions = {
 	live: readonly Device[];
 	/** job ids carry `@<leg>` (several legs) */
 	qualified: boolean;
-	single: boolean;
 	vars: RunVars;
 	cwd: string;
 	batchDir: string;
@@ -623,6 +663,10 @@ type JobRunnerOptions = {
 	screenshots: Map<string, string>;
 	/** filled with each attempt's log (`attemptKey`); a later pass overwrites, so a failed attempt keeps the failing run's */
 	logs: Map<string, string>;
+	/** filled with each attempt's `results.jsonl` (`attemptKey`), for jobs whose env sets `WARDEN_E2E_OUT` */
+	resultFiles: Map<string, string>;
+	/** each warm device's helper socket (udid → path), filled by the warm step before the first job */
+	sockets: ReadonlyMap<string, string>;
 	running: Set<ProcHandle>;
 	interrupted: () => boolean;
 };
@@ -650,6 +694,14 @@ function watchdog(deps: BatchDeps, timeoutMs: number | undefined, proc: ProcHand
 	};
 }
 
+/** `WARDEN_DEVICE_NAME`: lets a spec tell its own device from the others on a shared Metro. */
+const deviceNameEnv = (name: string | undefined): Record<string, string> =>
+	name === undefined ? {} : { [ENV_NAMES.deviceName]: name };
+
+/** `WARDEN_SIMD_SOCKET` for a job on a device whose helper is warm. */
+const socketEnv = (socketPath: string | undefined): Record<string, string> =>
+	socketPath === undefined ? {} : { [ENV_NAMES.simdSocket]: socketPath };
+
 /**
  * The per-job `run` for `runBatch`: expand the argv, spawn with the job env + log, track it for
  * SIGINT. With `passes` > 1 the job is spawned again after each green run (`WARDEN_PASS`, one log
@@ -659,33 +711,32 @@ function watchdog(deps: BatchDeps, timeoutMs: number | undefined, proc: ProcHand
 function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 	const { leg } = o.pool;
 	const baseJob = (id: string) => (o.qualified && leg !== undefined ? id.slice(0, -(leg.length + 1)) : id);
-	/** the device(s) of a failed attempt, next to its log (`….log` → `….png`, further pool devices `….<i>.png`); never throws */
+	/** the device of a failed attempt, next to its log (`….log` → `….png`); never throws */
 	const shoot = async (w: BatchWorker, seq: number, log: string): Promise<void> => {
 		const key = attemptKey({ worker: w.worker, seq });
-		const targets = o.single ? o.live : [w];
-		await Promise.all(
-			targets.map(async (device, i) => {
-				const path = log.replace(/\.log$/, i === 0 ? ".png" : `.${i}.png`);
-				try {
-					if ((await deps.screenshot(o.platform, device.udid, path)) && !o.screenshots.has(key))
-						o.screenshots.set(key, path);
-				} catch {
-					// best effort
-				}
-			})
-		);
+		const path = log.replace(/\.log$/, ".png");
+		try {
+			if ((await deps.screenshot(o.platform, w.udid, path)) && !o.screenshots.has(key)) o.screenshots.set(key, path);
+		} catch {
+			// best effort
+		}
 	};
-	/** env, argv and log of one spawn: the pool env + this worker's own agent-device state dir */
+	/** env, argv and log of one spawn: the pool env + the caller's per-job env (`hooks.jobEnv`) + this worker's identity */
 	const plan = (w: BatchWorker, id: string, seq: number, pass: number) => {
 		const job = baseJob(id);
-		const stateDir = agentDeviceStateDir(o.env, o.batchDir, w.worker);
-		const first = o.single ? (o.live[0] ?? w) : w;
-		const env = {
+		const env: Record<string, string | undefined> = {
 			...o.env,
-			AGENT_DEVICE_STATE_DIR: stateDir,
-			// the session the runner names its agent-device sessions after (`-<slot>`): what `warmRunners` started
-			WARDEN_AGENT_SESSION: agentSession(first.udid),
+			...o.hooks.jobEnv?.({
+				job,
+				worker: w.worker,
+				seq,
+				udid: w.udid,
+				batchDir: o.batchDir,
+				metroUrl: o.vars.metroUrl,
+			}),
+			...socketEnv(o.sockets.get(w.udid)),
 			WARDEN_UDID: w.udid,
+			...deviceNameEnv(o.live.find((d) => d.udid === w.udid)?.name),
 			WARDEN_WORKER: String(w.worker),
 			WARDEN_JOB: job,
 			WARDEN_JOB_SEQ: String(seq),
@@ -698,7 +749,6 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			udid: w.udid,
 			worker: w.worker,
 			seq,
-			stateDir,
 			...o.vars,
 			...(leg !== undefined ? { leg } : {}),
 		};
@@ -708,6 +758,8 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 	const spawnOnce = async (w: BatchWorker, id: string, seq: number, pass: number): Promise<number> => {
 		const { job, env, log, argv } = plan(w, id, seq, pass);
 		o.logs.set(attemptKey({ worker: w.worker, seq }), log);
+		const out = env[ENV_NAMES.out];
+		if (out) o.resultFiles.set(attemptKey({ worker: w.worker, seq }), join(out, "results.jsonl"));
 		let proc: ProcHandle;
 		try {
 			const group = o.jobTimeoutMs !== undefined ? { group: true } : {};
@@ -778,6 +830,8 @@ export type SessionResult = {
 	screenshots?: Screenshots;
 	/** the log of each attempt (`attemptKey`): the failing run of that attempt when it failed */
 	logs?: Logs;
+	/** the `results.jsonl` of each attempt (`attemptKey`) whose job wrote one */
+	resultFiles?: ResultFiles;
 	/** every device the run leased, `worker` indexed */
 	devices?: Array<{ worker: number; udid: string; name: string; leg?: string }>;
 	/** per-device setup outcomes, when the session ran a setup */
@@ -792,10 +846,27 @@ export type SessionHooks = {
 	setup?: DeviceSetupSpec | undefined;
 	/** shut down the leased devices warden may shut down (see `shutdownReleasedDevices`) before releasing, when this says so of a finished, uninterrupted run */
 	shutdownIf?: (summary: BatchSummary) => boolean;
-	/** `single` runs: the flows its runner runs, tracked live from the runner's output */
+	/** the flows the jobs run, tracked live from the jobs' `results.jsonl` */
 	flows?: readonly TrackedFlow[];
-	/** iOS: start each device's agent-device runner in parallel after setup, before the first job */
-	warmRunners?: boolean;
+	/** env added to one job's spawn (over the pool env, under the worker's own `WARDEN_UDID` / `WARDEN_WORKER` / `WARDEN_JOB…`) */
+	jobEnv?: (job: JobEnvInput) => Record<string, string>;
+	/**
+	 * iOS: connect each device's socket helper and take one snapshot, in parallel after setup and
+	 * the window hide, before the first job; that device's jobs get `WARDEN_SIMD_SOCKET`. Undefined =
+	 * no warm-up. A failed warm-up only warns.
+	 */
+	warmDrivers?: WarmConnect | undefined;
+};
+
+/** What `hooks.jobEnv` knows about the spawn it is building. */
+export type JobEnvInput = {
+	job: string;
+	worker: number;
+	seq: number;
+	udid: string;
+	batchDir: string;
+	/** the run's Metro, when it has one */
+	metroUrl: string | undefined;
 };
 
 /** `hooks.shutdownIf`: stop the session's devices while their leases are still held; failures only warn. */
@@ -894,22 +965,63 @@ function poolEnv(
 	return { ...env, ...pool.env, ...(pool.leg !== undefined ? { WARDEN_LEG: pool.leg } : {}) };
 }
 
-/** Start the run's Metro on its leased port (verified to serve this project) and prewarm the bundle. */
-async function startRunMetro(
+/** The run's Metro, started the moment its port was leased; what the claim phase and `startServices` share. */
+type MetroLaunch = {
+	port: number;
+	platform: Platform;
+	log: string;
+	/** `bundling` once the server answered; `up` once the bundle is warm; `failed` once anything went wrong */
+	state: "starting" | "bundling" | "up" | "failed";
+	/** never rejects */
+	pending: Promise<Result<Metro>>;
+	/** set once the server answered (before the prewarm): what `stop` kills even when the bundle failed */
+	started: Metro | undefined;
+	/** give up waiting (a failed claim, a signal), settle, kill whatever is running */
+	stop: () => Promise<void>;
+	/** `✔ Metro on :port serves root`, printed once wherever it is first observed */
+	announce: (log: (line: string) => void) => void;
+};
+
+/**
+ * Start the run's Metro on its leased port and prewarm the bundle without waiting for either: the
+ * device claim (sims booting) and the app installs go on meanwhile, `awaitRunMetro` collects the
+ * result. The server is called ready only once the port is verified to serve this project root.
+ */
+function launchRunMetro(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	plan: MetroPlan,
 	o: {
-		port: number | undefined;
+		port: number;
 		env: Record<string, string | undefined>;
 		log: string;
 		platform: Platform;
 		interrupted: () => boolean;
-		started: (metro: Metro) => void;
 	}
-): AsyncResult<Metro> {
-	if (o.port === undefined) return err("metro: no port leased for it");
-	const metro = await withSpinner(ctx, `starting Metro on :${o.port}…`, async (_sctx, spinner) => {
+): MetroLaunch {
+	let cancelled = false;
+	let announced = false;
+	const launch: MetroLaunch = {
+		port: o.port,
+		platform: o.platform,
+		log: o.log,
+		state: "starting",
+		started: undefined,
+		pending: Promise.resolve(err("Metro not started")),
+		stop: async () => {
+			cancelled = true;
+			await launch.pending;
+			const metro = launch.started;
+			launch.started = undefined;
+			await metro?.stop();
+		},
+		announce: (log) => {
+			if (announced) return;
+			announced = true;
+			log(`${ctx.ui.color.green("✔")} Metro on :${o.port} serves ${plan.projectRoot}`);
+		},
+	};
+	const run = async (): AsyncResult<Metro> => {
 		const started = await startMetro(
 			{
 				probe: deps.metroProbe,
@@ -919,30 +1031,49 @@ async function startRunMetro(
 			},
 			{
 				projectRoot: plan.projectRoot,
-				port: o.port ?? 0,
+				port: o.port,
 				// CI: no interactive prompts (a busy port fails instead of asking) and no file watching
 				env: { ...o.env, ...plan.env, CI: "1" },
 				readyTimeoutMs: plan.readyTimeoutMs,
-				aborted: o.interrupted,
+				aborted: () => cancelled || o.interrupted(),
 			}
 		);
-		if (!started.success) {
-			spinner.fail("Metro not ready");
-			return started;
-		}
-		o.started(started.data);
+		if (!started.success) return started;
+		launch.started = started.data;
 		if (plan.prewarm) {
-			spinner.update(`Metro on :${o.port}: building the ${o.platform} bundle…`);
+			launch.state = "bundling";
 			const warmed = await deps.prewarm(started.data.url, o.platform);
-			if (!warmed.success) {
-				spinner.fail("Metro could not build the bundle");
-				return warmed;
-			}
+			if (!warmed.success) return warmed;
 		}
-		spinner.succeed(`Metro on :${o.port} serves ${plan.projectRoot}`);
 		return started;
-	});
-	return metro.success ? metro : err(`${metro.error} (log: ${o.log})`);
+	};
+	launch.pending = run()
+		.catch((error: unknown) => err(error instanceof Error ? error.message : String(error)))
+		.then((result) => {
+			launch.state = result.success ? "up" : "failed";
+			return result;
+		});
+	return launch;
+}
+
+/**
+ * The early-started Metro's outcome: a spinner only while it is still starting (it usually is up
+ * before the app installs finish); failures carry the log path.
+ */
+async function awaitRunMetro(ctx: CommandContext, launch: MetroLaunch): AsyncResult<Metro> {
+	const settled = launch.state === "up" || launch.state === "failed";
+	const metro = settled
+		? await launch.pending
+		: await withSpinner(ctx, `starting Metro on :${launch.port}…`, async (_sctx, spinner) => {
+				if (launch.state === "bundling")
+					spinner.update(`Metro on :${launch.port}: building the ${launch.platform} bundle…`);
+				const result = await launch.pending;
+				if (!result.success) spinner.fail("Metro not ready");
+				return result;
+			});
+	if (!metro.success) return err(`${metro.error} (log: ${launch.log})`);
+	launch.announce(ctx.err);
+	return metro;
 }
 
 /**
@@ -972,13 +1103,6 @@ async function openOnDevices(
 			if (res.exitCode !== 0) warn(ctx, `warden ${name}: ${execError(argv, res)}`);
 		})
 	);
-}
-
-/** A pool's scheduler workers: in `single` mode one worker (one runner) stands for the whole pool. */
-function workerRows(live: readonly Device[], single: boolean): Device[] {
-	const [first, ...rest] = live;
-	if (!single || !first) return [...live];
-	return [{ ...first, name: rest.length > 0 ? `${first.name} +${rest.length}` : first.name }];
 }
 
 /** One scheduler per pool, run concurrently; their events feed one grid and their summaries merge. */
@@ -1026,29 +1150,59 @@ type RunContext = {
 };
 
 /** The long-lived children of a run, stopped by `teardown`. */
-type Services = { serve?: ProcHandle | undefined; metro?: Metro | undefined; recordings: Recording[] };
+type Services = {
+	serve?: ProcHandle | undefined;
+	metro?: Metro | undefined;
+	recordings: Recording[];
+	/** the warm socket helpers (`hooks.warmDrivers`) */
+	helpers?: WarmHelper[];
+};
 
-/** Metro → serve → recordings; resolves the job env + placeholder values once they are up. */
+/**
+ * `hooks.warmDrivers` on iOS: warm every live device's helper (failures warn); returns the
+ * sockets by udid and keeps the helpers in `services` so `teardown` stops them.
+ */
+async function warmStep(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	r: RunContext,
+	live: readonly Device[],
+	services: Services,
+	sockets: Map<string, string>
+): Promise<void> {
+	const connect = r.hooks.warmDrivers;
+	if (!connect || r.platform !== "ios" || live.length === 0) return;
+	const { devices, helpers } = await warmDrivers(
+		{
+			devices: live,
+			logDir: r.logDir,
+			now: ctx.now,
+			after: deps.after,
+			writeFile: deps.writeFile,
+			signal: r.signal,
+		},
+		{ connect, warn: (line) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`)) }
+	);
+	services.helpers = helpers;
+	for (const d of devices) if (d.socketPath !== undefined) sockets.set(d.udid, d.socketPath);
+}
+
+/** Metro (started during the claim) → serve → recordings; resolves the job env + placeholder values once they are up. */
 async function startServices(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	args: BatchArgs,
 	r: RunContext,
 	baseEnv: Record<string, string | undefined>,
-	services: Services
+	services: Services,
+	metro: MetroLaunch | undefined
 ): AsyncResult<{ env: Record<string, string | undefined>; vars: RunVars }> {
 	if (args.metro) {
-		const started = await startRunMetro(ctx, deps, args.metro, {
-			port: r.port,
-			env: baseEnv,
-			log: join(r.batchDir, "metro.log"),
-			platform: r.platform,
-			interrupted: r.interrupted,
-			started: (metro) => {
-				services.metro = metro;
-			},
-		});
-		if (!started.success) return started;
+		if (!metro) return err("metro: no port leased for it");
+		const up = await awaitRunMetro(ctx, metro);
+		// before the early return: a Metro whose bundle failed is still running, and teardown must kill it
+		services.metro = metro.started;
+		if (!up.success) return up;
 	}
 	const metroUrl = services.metro?.url;
 	const vars: RunVars = {
@@ -1087,56 +1241,6 @@ async function startServe(
 type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
 
 /** Per-device setup of every pool, concurrently; `setups` is undefined when the run has no setup. */
-/** how long one device's runner warm-up may take (a cold simulator's runner start is ~20 s) */
-const WARM_TIMEOUT_MS = 120_000;
-
-/**
- * `hooks.warmRunners`: start every live device's agent-device runner at once, in the daemon + session
- * its job will resume, so the runner's engine (which warms devices one by one) finds them up. Skipped
- * when the project has no `agent-device`; a failed warm-up only warns (the engine starts that runner).
- */
-async function warmPools(
-	ctx: CommandContext,
-	deps: BatchDeps,
-	args: BatchArgs,
-	r: RunContext,
-	prepared: readonly PreparedPool[],
-	env: Record<string, string | undefined>
-): Promise<void> {
-	const bin = deps.agentDeviceBin(args.cwd);
-	const count = prepared.reduce((n, p) => n + p.live.length, 0);
-	if (bin === undefined || count === 0) return;
-	const outcomes = await withSpinner(ctx, `warming ${count} automation runner(s)…`, () =>
-		Promise.all(
-			prepared.map((p) => {
-				const poolVars = poolEnv(env, p.pool, p.live);
-				return warmRunners({
-					targets: warmTargets(p.live, { single: args.single === true, env: poolVars, batchDir: r.batchDir }),
-					bin,
-					env: poolVars,
-					cwd: args.cwd,
-					logDir: r.logDir,
-					timeoutMs: WARM_TIMEOUT_MS,
-					spawn: (argv, o) => deps.spawn(argv, o),
-					after: deps.after,
-					track: (proc) => {
-						const handle = proc as ProcHandle;
-						r.running.add(handle);
-						return () => r.running.delete(handle);
-					},
-				});
-			})
-		)
-	);
-	for (const o of outcomes.flat()) {
-		if (o.ok) continue;
-		const why = o.timedOut ? `timed out after ${formatDuration(WARM_TIMEOUT_MS)}` : `exit ${o.exitCode}`;
-		ctx.err(
-			ctx.ui.color.yellow(`warden ${r.name}: runner warm-up on ${o.udid} ${why} — the runner starts it (log: ${o.log})`)
-		);
-	}
-}
-
 async function preparePools(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -1165,10 +1269,10 @@ async function preparePools(
 	return { prepared, setups: r.hooks.setup ? prepared.flatMap((p) => p.setups ?? []) : undefined };
 }
 
-/** `rows`: the grid's rows (every live device; a `single` pool's share its one worker). */
+/** `rows`: the grid's rows (every live device). */
 type Queue = { workers: Device[]; rows: Device[]; jobs: string[]; run: ReturnType<typeof jobRunner> };
 
-/** One job queue per pool: its workers (one per device, or one for the pool in `single` mode) and its job runner. */
+/** One job queue per pool: its workers (one per device) and its job runner. */
 function poolQueues(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -1182,17 +1286,18 @@ function poolQueues(
 		vars: RunVars;
 		screenshots: Map<string, string>;
 		logs: Map<string, string>;
+		resultFiles: Map<string, string>;
+		sockets: ReadonlyMap<string, string>;
 	}
 ): Queue[] {
 	const qualified = r.pools.length > 1;
-	const single = args.single === true;
 	const onTimeout = (job: string, w: BatchWorker) => {
 		const after = formatDuration(args.jobTimeoutMs ?? 0);
 		reportError(ctx, r.name, `${job} still running on ${w.udid} after ${after} — killing it`);
 	};
 	return prepared.map((p) => ({
-		workers: workerRows(p.live, single),
-		rows: single ? p.live.map((d) => ({ ...d, worker: p.live[0]?.worker ?? d.worker })) : p.live,
+		workers: p.live,
+		rows: p.live,
 		jobs: o.jobs.map((job) => legJob(job, qualified ? p.pool.leg : undefined)),
 		run: jobRunner(deps, {
 			cmd: o.cmd,
@@ -1200,7 +1305,6 @@ function poolQueues(
 			pool: p.pool,
 			live: p.live,
 			qualified,
-			single,
 			vars: o.vars,
 			cwd: args.cwd,
 			batchDir: r.batchDir,
@@ -1211,6 +1315,8 @@ function poolQueues(
 			onTimeout,
 			screenshots: o.screenshots,
 			logs: o.logs,
+			resultFiles: o.resultFiles,
+			sockets: o.sockets,
 			running: r.running,
 			interrupted: r.interrupted,
 			hooks: r.hooks,
@@ -1220,16 +1326,25 @@ function poolQueues(
 
 /** The run env before Metro is up: lease env + preset / suite env + `WARDEN_BATCH_DIR` / `WARDEN_PORT`. */
 function runEnv(session: LeaseSession, args: BatchArgs, batchDir: string): Record<string, string | undefined> {
-	// the invoking shell's agent-device state dir must not leak into the jobs: each worker gets its own
-	const { AGENT_DEVICE_STATE_DIR: _shared, ...sessionEnv } = session.env;
 	const port = session.ports[0]?.port;
 	return {
-		...sessionEnv,
+		...session.env,
 		...args.env,
 		WARDEN_BATCH_DIR: batchDir,
 		...(port !== undefined ? { WARDEN_PORT: String(port) } : {}),
 	};
 }
+
+/** What `runSession` sets up before the claim and `supervise` carries on with. */
+type RunSetup = {
+	batchId: string;
+	batchDir: string;
+	logDir: string;
+	/** aborted by SIGINT / SIGTERM, from the claim on */
+	controller: AbortController;
+	/** the run's Metro, launched on the port lease (undefined: no `metro` plan, or no port) */
+	metro: MetroLaunch | undefined;
+};
 
 /** Everything after the claim: Metro → serve → recordings → setup → jobs → stop serve / recordings / Metro → batch.json → release. */
 async function supervise(
@@ -1239,12 +1354,10 @@ async function supervise(
 	jobs: string[],
 	cmd: string[],
 	session: LeaseSession,
-	hooks: SessionHooks & { name: string }
+	hooks: SessionHooks & { name: string },
+	run: RunSetup
 ): Promise<SessionResult> {
-	const batchId = deps.newId();
-	const batchDir = args.record ?? join(wardenHome(ctx.env), "batches", batchId);
-	const logDir = args.logs ?? join(batchDir, "logs");
-	const controller = new AbortController();
+	const { batchId, batchDir, logDir, controller } = run;
 	const pools = buildPools(session, args);
 	const r: RunContext = {
 		name: hooks.name,
@@ -1261,6 +1374,8 @@ async function supervise(
 	};
 	const screenshots = new Map<string, string>();
 	const logs = new Map<string, string>();
+	const resultFiles = new Map<string, string>();
+	const sockets = new Map<string, string>();
 	const stopHold = holdLeases(ctx, deps, session.leaseIds, (signal) => {
 		controller.abort();
 		for (const job of r.running) job.kill(signal);
@@ -1272,17 +1387,19 @@ async function supervise(
 	};
 	/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
 	const teardown = async () => {
-		const { serve, metro, recordings } = services;
+		const { serve, metro, recordings, helpers = [] } = services;
 		services.serve = undefined;
 		services.metro = undefined;
 		services.recordings = [];
+		services.helpers = [];
 		if (serve) await stopServe(deps, serve);
 		await Promise.all(recordings.map((rec) => rec.stop()));
+		await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
 		await metro?.stop();
 	};
 	try {
 		await deps.mkdir(logDir);
-		const up = await startServices(ctx, deps, args, r, runEnv(session, args, batchDir), services);
+		const up = await startServices(ctx, deps, args, r, runEnv(session, args, batchDir), services, run.metro);
 		if (!up.success) return fail(up.error, { batchDir });
 		const { env, vars } = up.data;
 		const { prepared, setups } = await preparePools(ctx, deps, args, r, env);
@@ -1297,31 +1414,48 @@ async function supervise(
 			const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
 			await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
 		}
-		if (r.hooks.warmRunners && r.platform === "ios") await warmPools(ctx, deps, args, r, prepared, env);
-		const queues = poolQueues(ctx, deps, args, r, prepared, { jobs, cmd, env, vars, screenshots, logs });
+		await warmStep(ctx, deps, r, live, services, sockets);
+		const queues = poolQueues(ctx, deps, args, r, prepared, {
+			jobs,
+			cmd,
+			env,
+			vars,
+			screenshots,
+			logs,
+			resultFiles,
+			sockets,
+		});
 		const total = queues.reduce((n, q) => n + q.jobs.length, 0);
 		const startedAt = ctx.now();
 		const { summary, screen } = await runGrid(ctx, deps, args, r, queues, {
 			total,
 			startedAt,
-			cmd,
-			logs,
+			resultFiles,
 			flows: hooks.flows,
 		});
 		const endedAt = ctx.now();
 		screen.end();
 		await teardown();
 		const { devices } = r;
-		const run: BatchRun = { batchId, batchDir, logDir, cmd, devices, total, startedAt, endedAt, summary, screenshots };
-		await report(ctx, deps, args, screen.cast ? { ...run, cast: screen.cast } : run);
+		const done: BatchRun = { batchId, batchDir, logDir, cmd, devices, total, startedAt, endedAt, summary, screenshots };
+		await report(ctx, deps, args, screen.cast ? { ...done, cast: screen.cast } : done);
 		if (!r.interrupted()) await shutdownDevices(ctx, hooks, session, summary);
-		return { code: exitFor(r.interrupted(), summary.ok), batchDir, summary, screenshots, logs, devices, setups };
+		return {
+			code: exitFor(r.interrupted(), summary.ok),
+			batchDir,
+			summary,
+			screenshots,
+			logs,
+			resultFiles,
+			devices,
+			setups,
+		};
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	} finally {
 		await teardown();
 		stopHold();
-		session.release();
+		await session.release();
 	}
 }
 
@@ -1411,10 +1545,9 @@ const clampFlags = (flags: ClaimFlags, jobCount: number): ClaimFlags =>
 
 /**
  * More devices than jobs would idle: claim at most one device per job, per leg (same `args` when no
- * change). A `single` run hands its one job the whole pool, so nothing is clamped.
+ * change).
  */
 export function clampToJobs(args: BatchArgs, jobCount: number): BatchArgs {
-	if (args.single) return args;
 	const flags = clampFlags(args.flags, jobCount);
 	const legs = args.legs?.map((leg) => ({ ...leg, flags: clampFlags(leg.flags, jobCount) }));
 	const unchanged = flags === args.flags && (legs ?? []).every((leg, i) => leg.flags === args.legs?.[i]?.flags);
@@ -1453,7 +1586,12 @@ async function batch(
 	return (await runSession(ctx, deps, args.data, jobs.data, cmd)).code;
 }
 
-/** Claim (at most one device per job, under a spinner) → supervise → release. */
+/**
+ * Claim (at most one device per job, under a spinner) → supervise → release. With a `metro` plan the
+ * run's Metro is launched the moment its port is leased, so it starts and prewarms while the devices
+ * boot and the app installs; until `supervise` holds the leases, SIGINT / SIGTERM abort the claim and
+ * stop that Metro (a detached process, which the terminal's Ctrl-C would otherwise leave on the port).
+ */
 export async function runSession(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -1471,21 +1609,83 @@ export async function runSession(
 	const wanted = (lease.legs?.map((leg) => leg.flags) ?? [lease.flags])
 		.map((flags) => `${flags.request.count} ${flags.request.profile}`)
 		.join(" + ");
+	const batchId = deps.newId();
+	const batchDir = lease.record ?? join(wardenHome(ctx.env), "batches", batchId);
+	const logDir = lease.logs ?? join(batchDir, "logs");
+	const controller = new AbortController();
+	const interrupted = () => controller.signal.aborted;
+	let launch: MetroLaunch | undefined;
+	let claimDone = false;
+	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
+		deps.onSignal(signal, () => {
+			controller.abort();
+			void launch?.stop();
+		})
+	);
 	const claimed = await withSpinner(ctx, `claiming ${wanted} ${platform} device(s)…`, async (sctx, spinner) => {
 		const legFlags = lease.legs?.map((leg) => leg.flags);
 		const onLeased = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
-		const args = { ...lease, ...(legFlags ? { legFlags } : {}), ...(onLeased ? { onLeased } : {}) };
+		const plan = lease.metro;
+		const onPorts = plan
+			? (ports: RunPort[]) => {
+					const port = ports[0]?.port;
+					if (port === undefined) return;
+					launch = launchRunMetro(sctx, deps, plan, {
+						port,
+						platform,
+						log: join(batchDir, "metro.log"),
+						env: { ...ctx.env, ...lease.env, WARDEN_BATCH_DIR: batchDir, WARDEN_PORT: String(port) },
+						interrupted,
+					});
+					// up before the claim is done: say so above the claim spinner (the overlap is the point)
+					void launch.pending.then((result) => {
+						if (result.success && !claimDone) launch?.announce(sctx.err);
+					});
+				}
+			: undefined;
+		const aborted = () => interrupted() || launch?.state === "failed";
+		const args = {
+			...lease,
+			...(legFlags ? { legFlags } : {}),
+			...(onLeased ? { onLeased } : {}),
+			...(onPorts ? { onPorts } : {}),
+			aborted,
+		};
 		const result = await claimAll(sctx, deps, owner, args, name);
+		claimDone = true;
 		if (!result.success) spinner.fail(lease.app ? "claim / app install failed" : "claim failed");
 		else if (lease.app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
 		else spinner.succeed(leasedText(result.data.outcome));
 		return result;
 	});
-	if (!claimed.success) {
-		reportError(ctx, name, claimed.error);
-		return { code: 1 };
+	// before supervise re-subscribes (holdLeases), so the two never share a handler slot
+	for (const off of offSignals) off();
+	if (!claimed.success || interrupted()) {
+		if (claimed.success) await claimed.data.release();
+		await launch?.stop();
+		const metro = launch ? await launch.pending : undefined;
+		const claimError = claimed.success || claimed.error === INTERRUPTED ? undefined : claimed.error;
+		const metroError = launch && metro && !metro.success ? `${metro.error} (log: ${launch.log})` : undefined;
+		const reason = claimError ?? (interrupted() ? INTERRUPTED : (metroError ?? INTERRUPTED));
+		reportError(ctx, name, reason);
+		return { code: interrupted() ? 130 : 1 };
 	}
-	return supervise(ctx, deps, lease, jobs, cmd, claimed.data, { ...hooks, name });
+	return supervise(
+		ctx,
+		deps,
+		lease,
+		jobs,
+		cmd,
+		claimed.data,
+		{ ...hooks, name },
+		{
+			batchId,
+			batchDir,
+			logDir,
+			controller,
+			metro: launch,
+		}
+	);
 }
 
 /** Queue options shared by `warden batch` and `warden e2e`. */
@@ -1613,7 +1813,10 @@ export const defaultBatchDeps: BatchDeps = {
 	},
 	metroProbe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	prewarm: prewarmMetro,
-	agentDeviceBin: (cwd) => findAgentDeviceBin(cwd, existsSync),
+	warmConnect,
+	which: (cmd) => Bun.which(cmd),
+	resolveModule: (specifier, from) => Bun.resolveSync(specifier, from),
+	helperDir: () => helperDir(Bun.main, process.execPath),
 };
 
 export const batchCommand: Command = createBatchCommand(defaultBatchDeps);

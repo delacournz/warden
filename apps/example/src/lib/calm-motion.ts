@@ -3,7 +3,7 @@
  * asks — `DelacourProvider`'s `isMotionCalm`.
  *
  * The app's half is for automation, not accessibility. A UI test runner that waits for the screen
- * to stop moving before every gesture (Argent waits up to 3 s, Detox and Maestro idle-wait the
+ * to stop moving before every gesture (agent-driven tools wait up to 3 s, Detox and Maestro idle-wait the
  * same way) pays the whole wait on any screen holding a loop that never ends — a shimmering
  * skeleton turns every tap there into a timeout. An E2E build passes `isMotionCalm` and the loops
  * hold still.
