@@ -634,6 +634,9 @@ Waves:
 | referee (6.1) | One bench test failed once under load and passed in 6 later runs: watch for a timing flake. | Open. |
 | conductor (4.7) | Static round-robin sharding: duration-aware sharding from the previous run's `results.jsonl`. Crash blame is inferred from result order; a per-flow completion record from the spec runner would make it exact. | Open. |
 | typist (1.1) | Under host load (load avg 14–41), `smoke.ts` raw `typeText` into an uncleared field garbled text in 2 of 5 runs (`"lol, World 123!H"`). Not the fill path, not compared against the old build. Re-run smoke on an idle host before 6.2; if it reproduces, it's a pacing-under-load bug. | Open. |
+| droid-arch (3.3) | `warden e2e <suite> --platform android` refuses suites with `slim: true` (`platformError` in `commands/e2e.ts`, tested). Suggest: skip slim on Android with a note instead of refusing, so one suite config serves both platforms. | Suggestion. |
+| droid-arch (3.3) | `warden-uiad` only verified on API 37 (only image installed). Add an emulator matrix (API 30–36) in CI. p95 snapshot ~270 ms right after sign-in navigation under load. | Open. |
+| streamer (1.2) | AX guest wedges ~every 24 s (all quiescence queries `busy`), costing ~1.25 s in 3/8 tests per rep; cause inside the guest/idb unknown. Proactive recycle in `rebind` being tried. | In progress. |
 | conductor (4.6) | `native+js` fingerprint keys are v2: every such project rebuilds once after upgrading. | Expected. |
 
 ## Decisions (user, 2026-10-16)
