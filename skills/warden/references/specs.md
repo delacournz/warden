@@ -24,7 +24,7 @@ preload = ["@delacour/warden-e2e/preload"]
 ```
 e2e/<flow>.e2e.ts        flow id = path under flowsDir minus .e2e.ts (e2e/auth/sign-in.e2e.ts -> auth/sign-in)
 e2e/helpers/ids.ts       export const ids = { ... } as const   (mirrors the app's testIDs)
-e2e/helpers/flows.ts     shared steps (launch, signedIn, tapUntil)
+e2e/helpers/flows.ts     shared steps (launch, signedIn, nextStep, openDeepLink)
 e2e/helpers/poll.ts      pollUntil
 ```
 
@@ -165,37 +165,24 @@ test("add, complete and filter todos", async ({ device, screen }) => {
 
 ## Helper patterns (`apps/example/e2e/helpers/flows.ts`)
 
-The first press after a launch or navigation can be dropped, and a HID tap has no ack. So flows wait for the result and re-tap.
+The first press after a launch or navigation can be dropped, and a HID tap has no ack. So flows wait for the result and re-tap, with the built-in options instead of hand-written loops.
+
+Every flow file starts with `test.use(FLOW_OPTIONS)`, where `FLOW_OPTIONS = { launch: "none", systemAlerts: "dismiss" }`: the flow opens the app itself, and a system sheet that covers the app is dismissed wherever a read, tap or assertion meets one.
 
 ```ts
-export async function launch(device: Device, screen: Screen): Promise<void> {
-	await device.alert("dismiss");
+export async function launch(app: Pick<App, "open">, screen: Screen): Promise<void> {
+	await app.open({ wait: "quiet" });   // in front and still (settle), never an error
 	await expect(screen.getByTestId(ids.welcome.screen)).toBeVisible({ timeout: 30_000 });
-	await device.settle({ quietMs: 250, timeout: 3_000 });
 }
 
-export async function tapUntil(
-	target: Locator,
-	arrived: () => Promise<boolean>,
-	options: { windowMs?: number; pollMs?: number } = {}   // defaults 4000 / 250
-): Promise<void> {
-	await target.tap();
-	for (let attempt = 0; attempt < 2; attempt += 1) {      // up to 2 more taps
-		const deadline = Date.now() + (options.windowMs ?? 4_000);
-		while (Date.now() < deadline) {
-			if (await arrived()) return;
-			await new Promise((r) => setTimeout(r, options.pollMs ?? 250));
-		}
-		await target.tap();
-	}
-}
+await screen.getByTestId(ids.tabs.settings).tap({ until: screen.getByTestId(ids.settings.email) });   // 4 s a press, 2 re-sends
 ```
 
-- `nextStep(screen, title)`: `tapUntil` on the Next button until the step title shows, then `toHaveText`.
-- `expectTodosAfterSignIn`: loop `device.alert("dismiss")` + `isVisible()` for up to 15 s, then one final `toBeVisible({ timeout: 1 })` for the error.
-- `openDeepLink`: up to 3 `device.openLink(url)`, each waiting 6 s for the target screen.
+- `nextStep(screen, title)`: `tap({ until })` on the Next button, where `until` reads the title with `locator.read()` (`visible && text === title`), then `toHaveText`.
+- `expectTodosAfterSignIn(screen)`: `toBeVisible({ timeout: 15_000 })`; `systemAlerts` dismisses a sheet meanwhile.
+- `openDeepLink(device, screen, url, testId)`: up to 3 `device.openLink(url, { until, waitMs: 6_000 })`, checking the target screen after each.
 - `pollUntil(read, accept, 10_000)` in `helpers/poll.ts` polls a read until `accept` likes it.
-- Helpers take `Device` / `Screen` / `Locator` as parameters; import them as types from the package root.
+- Helpers take `App` / `Device` / `Screen` as parameters (`Pick` of what they use); import them as types from the package root.
 
 ## Accessibility rule
 
