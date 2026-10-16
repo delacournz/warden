@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -24,9 +24,9 @@ beforeAll(() => {
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-async function loadedBy(args: string[]): Promise<string[]> {
+async function loadedBy(args: string[], home: string = join(scratch, "home")): Promise<string[]> {
 	const proc = Bun.spawn(["bun", "--preload", preload, resolve(SRC, "cli.ts"), ...args], {
-		env: { ...process.env, WARDEN_HOME: join(scratch, "home"), NO_COLOR: "1", CI: "1" },
+		env: { ...process.env, WARDEN_HOME: home, NO_COLOR: "1", CI: "1" },
 		stdout: "ignore",
 		stderr: "pipe",
 		stdin: "ignore",
@@ -72,6 +72,61 @@ describe("cold start", () => {
 			expect(has(files, "/node_modules/ora/")).toBe(false);
 			expect(has(files, "/node_modules/@clack/")).toBe(false);
 		}
+	});
+});
+
+describe("cold start: gc and release", () => {
+	const HEAVY = [
+		"/packages/e2e/",
+		"/node_modules/zod/",
+		"/node_modules/typescript/",
+		"/agent-ui/helper.ts",
+		"/agent-ui/state.ts",
+	];
+	const heavyIn = (files: string[]) => HEAVY.filter((needle) => has(files, needle));
+
+	/** A `$WARDEN_HOME` laid out like a machine that has run `warden ui`: a resident helper's record and socket dir. */
+	function homeWithHelper(pid: number): string {
+		const home = mkdtempSync(join(scratch, "home-"));
+		mkdirSync(join(home, "simd"), { recursive: true });
+		mkdirSync(join(home, "ui", "UDID-1"), { recursive: true });
+		writeFileSync(join(home, "simd", "UDID-1.sock"), "");
+		writeFileSync(
+			join(home, "ui", "UDID-1", "state.json"),
+			JSON.stringify({ generation: 1, helper: { pid, socket: join(home, "simd", "UDID-1.sock") } })
+		);
+		return home;
+	}
+
+	test("`warden gc` imports its own command and none of the e2e driver, zod, typescript or the helper module", async () => {
+		const files = await loadedBy(["gc", "--json"]);
+		expect(commandModules(files)).toEqual(["gc.ts"]);
+		expect(heavyIn(files)).toEqual([]);
+	});
+
+	test("`warden gc --quiet` (the detached auto-gc) loads nothing heavy either", async () => {
+		expect(heavyIn(await loadedBy(["gc", "--quiet"]))).toEqual([]);
+	});
+
+	test("gc with a live helper on record still loads nothing heavy", async () => {
+		const home = homeWithHelper(process.pid);
+		expect(heavyIn(await loadedBy(["gc", "--json"], home))).toEqual([]);
+	});
+
+	test("gc with a dead helper on record sweeps it (and only then loads the helper module)", async () => {
+		const dead = Bun.spawn(["true"]);
+		await dead.exited;
+		const home = homeWithHelper(dead.pid);
+		const files = await loadedBy(["gc", "--json"], home);
+		expect(has(files, "/agent-ui/helper.ts")).toBe(true);
+		const state = JSON.parse(readFileSync(join(home, "ui", "UDID-1", "state.json"), "utf8"));
+		expect(state.helper).toBeUndefined();
+	});
+
+	test("`warden release` imports its own command and none of the heavy modules", async () => {
+		const files = await loadedBy(["release", "--mine", "--json"]);
+		expect(commandModules(files).filter((f) => f !== "ls.ts")).toEqual(["release.ts"]);
+		expect(heavyIn(files)).toEqual([]);
 	});
 });
 
