@@ -17,6 +17,7 @@ export async function main(
 	return runLazyProgram(entries, normalised, makeContext(normalised));
 }
 
+/** `.then`, not top-level `await`: `bun build --bytecode` emits CommonJS, which has no top-level await. */
 if (import.meta.main) {
-	process.exit(await main(process.argv.slice(2)));
+	main(process.argv.slice(2)).then((code) => process.exit(code));
 }
