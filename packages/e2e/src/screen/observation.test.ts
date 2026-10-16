@@ -42,13 +42,13 @@ describe("reads that follow each other", () => {
 		expect(snapshots(driver)).toBe(1);
 	});
 
-	test("a tap between them makes it two", async () => {
+	test("a tap between them makes it three: the tap looks for itself, and so does the read after it", async () => {
 		const { driver, screen } = setup();
 		const title = screen.getByTestId("title");
 		await title.isVisible();
 		await screen.getByTestId("next").tap();
 		await title.text();
-		expect(snapshots(driver)).toBe(2);
+		expect(snapshots(driver)).toBe(3);
 	});
 
 	test.each([
@@ -104,12 +104,54 @@ describe("assertions and actions", () => {
 		expect(snapshots(driver)).toBe(1);
 	});
 
-	test("a tap on what an assertion just saw does not look again", async () => {
+	test("a tap takes its own look, even right after an assertion saw the element", async () => {
 		const { driver, screen } = setup();
 		await expectLocator(screen.getByTestId("next")).toBeVisible();
 		await screen.getByTestId("next").tap();
-		expect(snapshots(driver)).toBe(1);
+		expect(snapshots(driver)).toBe(2);
 		expect(driver.callsOf("tap")).toHaveLength(1);
+	});
+
+	/** A screen still sliding in when the first snapshot is taken: the button is at y 300 then, and at y 600 once it settles. */
+	function slidingIn() {
+		let looks = 0;
+		const driver = fakeDriver({
+			screens: () => {
+				looks += 1;
+				const y = looks === 1 ? 300 : 600;
+				return snapshotOf([
+					el("button", { id: "next", label: "Next", hittable: true, frame: { x: 24, y, width: 300, height: 44 } }),
+				]);
+			},
+		});
+		return { driver, screen: createScreen(testHost(driver, { cache: true })) };
+	}
+
+	test("so the tap lands where the screen has settled, not where an assertion saw it moving", async () => {
+		const { driver, screen } = slidingIn();
+		await expectLocator(screen.getByTestId("next")).toBeVisible();
+		await screen.getByTestId("next").tap();
+		expect(driver.callsOf("tap")[0]?.point).toEqual({ x: 174, y: 622 });
+	});
+
+	test("longPress aims the same way", async () => {
+		const { driver, screen } = slidingIn();
+		await expectLocator(screen.getByTestId("next")).toBeVisible();
+		await screen.getByTestId("next").longPress();
+		expect(driver.callsOf("longPress")[0]?.point).toEqual({ x: 174, y: 622 });
+	});
+
+	test("so does a tap at a position inside the element", async () => {
+		const { driver, screen } = slidingIn();
+		await expectLocator(screen.getByTestId("next")).toBeVisible();
+		await screen.getByTestId("next").tap({ position: { x: 1, y: 1 } });
+		expect(driver.callsOf("tap")[0]?.point).toEqual({ x: 25, y: 601 });
+	});
+
+	test("boundingBox is a new look too: a frame is for aiming", async () => {
+		const { screen } = slidingIn();
+		await screen.getByTestId("next").isVisible();
+		expect((await screen.getByTestId("next").boundingBox()).y).toBe(600);
 	});
 
 	test("the assertion after a tap looks at the screen the tap left", async () => {
