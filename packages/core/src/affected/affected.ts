@@ -4,10 +4,9 @@ import { CONFIG_FILE, findWardenConfig, type ParsedWardenConfig } from "../build
 import type { Exec } from "../exec";
 import type { Platform } from "../types";
 import type { E2eSuiteConfig } from "./affected.schema";
-import { type ImportCache, openImportCache } from "./cache";
 import { scanFlows } from "./flows";
 import { type ChangedFile, changedFiles } from "./git";
-import { createImportGraph } from "./graph";
+import { graphEntries, type LoadedGraph, loadImportGraph } from "./graph-process";
 import { type SelectInput, type Selection, selectFlows } from "./select";
 
 export type Suite = {
@@ -112,12 +111,21 @@ function platformsOf(input: AffectedInput, suite: Suite): Platform[] {
 	return suite.config.platform ? [suite.config.platform] : ["ios", "android"];
 }
 
-function importGraphFor(config: E2eSuiteConfig, configDir: string, platform: Platform, cache: ImportCache) {
-	return createImportGraph({
+/** The graph of one platform: a snapshot or a worker process when it can be, so the TypeScript compiler stays out of this process. */
+function importGraphFor(
+	input: AffectedInput,
+	{ config, configDir }: Suite,
+	platform: Platform,
+	importCachePath: string | undefined
+): Promise<LoadedGraph> {
+	return loadImportGraph({
+		exec: input.exec,
 		platform,
 		repoRoot: configDir,
-		cache,
+		entries: graphEntries(config, configDir, platform),
 		...(config.tsconfig ? { fallbackTsconfig: join(configDir, config.tsconfig) } : {}),
+		...(importCachePath !== undefined ? { importCachePath } : {}),
+		...(input.cacheDir !== undefined ? { cacheDir: input.cacheDir } : {}),
 	});
 }
 
@@ -134,12 +142,13 @@ export async function computeAffected(input: AffectedInput): AsyncResult<Affecte
 	if (!changes.success) return changes;
 	const scan = scanFlows(join(configDir, config.flowsDir));
 	const needsGraph = Object.values(config.flows).some((f) => f.entries.length > 0) && changes.data.length > 0;
-	const cache = openImportCache(
-		input.cacheDir === undefined ? undefined : join(input.cacheDir, `${Bun.hash(configDir).toString(36)}.json`)
-	);
+	const importCachePath =
+		input.cacheDir === undefined ? undefined : join(input.cacheDir, `${Bun.hash(configDir).toString(36)}.json`);
 	const selections: Selection[] = [];
+	const warnings = [...scan.warnings];
 	for (const platform of platformsOf(input, suite.data)) {
-		const graph = needsGraph ? await importGraphFor(config, configDir, platform, cache) : undefined;
+		const loaded = needsGraph ? await importGraphFor(input, suite.data, platform, importCachePath) : undefined;
+		if (loaded?.warning !== undefined) warnings.push(loaded.warning);
 		selections.push(
 			selectFlows({
 				suite: config,
@@ -147,17 +156,17 @@ export async function computeAffected(input: AffectedInput): AsyncResult<Affecte
 				platform,
 				changes: changes.data,
 				flows: scan.flows,
-				...(graph ? { imports: graph.imports } : {}),
+				...(loaded ? { imports: loaded.graph.imports } : {}),
 				...(input.only ? { only: input.only } : {}),
 			})
 		);
+		loaded?.graph.save();
 	}
-	cache.save();
 	return ok({
 		suite: suite.data,
 		...(usesGit(input) ? { base } : {}),
 		changes: changes.data,
 		selections,
-		warnings: scan.warnings,
+		warnings,
 	});
 }

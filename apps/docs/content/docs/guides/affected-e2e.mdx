@@ -91,7 +91,7 @@ git fetch origin main
 warden e2e mobile --base origin/main --count 2 --report e2e-report.json
 ```
 
-The same command runs locally or in a pre-push hook. Parsed imports are cached under `$WARDEN_HOME/affected`, so repeat runs only re-read changed files.
+The same command runs locally or in a pre-push hook. Parsed imports are cached under `$WARDEN_HOME/affected`, so repeat runs only re-read changed files. The import graph is built in a separate `bun` process, so the TypeScript compiler never loads into warden, and the finished graph is kept for the current commit and working-tree state: running again without touching a source file, tsconfig or `node_modules` reads it back without building anything.
 
 ### Feeding a batch preset
 
