@@ -27,8 +27,10 @@ export type SummaryRow = {
 	flakeRate?: number;
 	residue?: { processes: number; driverApps: number; paths: number };
 	footprint?: { loc: number; depsBytes: number };
-	/** true for the ok framework with the lowest warm suite median */
+	/** true for the framework whose suite ratio is exactly 1 (fastest among fully passing frameworks) */
 	fastest: boolean;
+	/** true when some test did not pass in every rep, so its timing is not comparable */
+	failing: boolean;
 };
 
 const isOk = (f: FrameworkResult): f is OkFrameworkResult => f.status === "ok";
@@ -59,11 +61,12 @@ function okRow(f: OkFrameworkResult): SummaryRow {
 		flakeRate: s.flakeRate,
 		residue: residueCounts(f.residue),
 		footprint: { loc: f.footprint.testSourceLoc, depsBytes: f.footprint.depsBytes },
-		fastest: false,
+		fastest: f.stats.ratioToFastestSuite === 1,
+		failing: f.stats.passRate < 1,
 	};
 }
 
-/** Summary rows in run order, with `fastest` set on the lowest warm suite median. */
+/** Summary rows in run order; `fastest` follows the stats ratio (1), never a failing framework. */
 export function summaryRows(run: BenchRun): SummaryRow[] {
 	const rows: SummaryRow[] = run.frameworks.map((f) =>
 		isOk(f)
@@ -73,14 +76,13 @@ export function summaryRows(run: BenchRun): SummaryRow[] {
 					status: f.status,
 					...(f.version !== undefined ? { version: f.version } : {}),
 					fastest: false,
+					failing: false,
 				}
 	);
-	const medians = rows.flatMap((r) => (r.suiteMedianMs !== undefined ? [r.suiteMedianMs] : []));
-	const best = medians.length > 0 ? Math.min(...medians) : undefined;
-	return rows.map((r) => ({ ...r, fastest: best !== undefined && r.suiteMedianMs === best }));
+	return rows;
 }
 
-export type MatrixCell = { medianMs: number; ratio?: number; fastest: boolean };
+export type MatrixCell = { medianMs: number; ratio?: number; fastest: boolean; failing: boolean };
 
 export type MatrixRow = {
 	id: CanonicalId;
@@ -100,13 +102,13 @@ export function perTestMatrix(run: BenchRun, manifest: Manifest): PerTestMatrix 
 			const t = f.stats.perTest[id];
 			return t !== undefined && Number.isFinite(t.median) ? [{ f, t }] : [];
 		});
-		const best = medians.length > 0 ? Math.min(...medians.map((m) => m.t.median)) : undefined;
 		const cells: Partial<Record<FrameworkKey, MatrixCell>> = {};
 		for (const { f, t } of medians) {
 			cells[f.framework] = {
 				medianMs: t.median,
 				...(t.ratioToFastest !== undefined ? { ratio: t.ratioToFastest } : {}),
-				fastest: t.median === best,
+				fastest: t.ratioToFastest === 1,
+				failing: t.passRate < 1,
 			};
 		}
 		return { id, title: manifest.tests[id]?.title ?? id, cells };

@@ -1,6 +1,6 @@
 import type { Manifest } from "../results/manifest";
 import type { BenchRun, FrameworkResult, OkFrameworkResult, Series } from "../results/schema";
-import { bytes, DASH, ms, pct, ratio } from "./format";
+import { bytes, DASH, ms, pct, ratio, signedMs } from "./format";
 import { type PerTestMatrix, perTestMatrix, type SummaryRow, summaryRows } from "./tables";
 
 /** The fairness rules, as recorded in every report header (see docs/plans/wdn-bench.md). */
@@ -20,6 +20,18 @@ export const FAIRNESS_RULES: readonly string[] = [
 
 /** Escapes a value for a GFM table cell. */
 const cell = (text: string): string => text.replaceAll("|", "\\|").replaceAll("\n", " ");
+
+/** Marks a number from a framework that failed some test: `8738 ✗ (0.53×)` in matrices. */
+const flag = (text: string, failing: boolean, ratioValue?: number): string => {
+	if (!failing || text === DASH) return text;
+	if (ratioValue === undefined) return `${text} ✗`;
+	const suffix = ` (${ratio(ratioValue)})`;
+	return text.endsWith(suffix) ? `${text.slice(0, -suffix.length)} ✗${suffix}` : `${text} ✗`;
+};
+
+/** A negative cold-start cost means rep 1 was not slower. */
+const coldStart = (n: number | undefined): string =>
+	n !== undefined && Number.isFinite(n) && n < 0 ? `none (rep 1 not slower, ${signedMs(n)})` : ms(n);
 
 const bold = (text: string, on: boolean): string => (on && text !== DASH ? `**${text}**` : text);
 
@@ -78,11 +90,11 @@ function summarySection(run: BenchRun): string[] {
 		r.framework,
 		r.status,
 		optional(r.version),
-		bold(ms(r.suiteMedianMs), r.fastest),
+		flag(bold(ms(r.suiteMedianMs), r.fastest), r.failing),
 		ms(r.suiteP95Ms),
 		ratio(r.ratio),
 		ms(r.coldRep1Ms),
-		ms(r.coldStartMs),
+		coldStart(r.coldStartMs),
 		ms(r.prepareMs),
 		ms(r.teardownMs),
 		ms(r.overheadMs),
@@ -102,7 +114,7 @@ function matrixSection(matrix: PerTestMatrix): string[] {
 			const c = row.cells[fw];
 			if (!c) return DASH;
 			const text = `${Math.round(c.medianMs)}${c.ratio !== undefined ? ` (${ratio(c.ratio)})` : ""}`;
-			return bold(text, c.fastest);
+			return flag(bold(text, c.fastest), c.failing, c.ratio);
 		}),
 	]);
 	return ["## Per-test medians (ms)", "", ...table(headers, rows)];

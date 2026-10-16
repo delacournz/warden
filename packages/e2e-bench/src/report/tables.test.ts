@@ -52,3 +52,20 @@ describe("perTestMatrix", () => {
 		}
 	});
 });
+
+describe("failing frameworks are never fastest", () => {
+	test("a faster but failing cell is flagged, not fastest", () => {
+		const bad = structuredClone(run);
+		const fw = bad.frameworks.find((f) => f.framework === "maestro");
+		if (fw?.status !== "ok") throw new Error("sample changed");
+		fw.stats.passRate = 0.9;
+		const t = fw.stats.perTest["sign-in/field-errors"];
+		if (!t) throw new Error("sample changed");
+		t.passRate = 0.66;
+		t.median = 100;
+		t.ratioToFastest = 0.02;
+		const row = perTestMatrix(bad, manifest).rows.find((r) => r.id === "sign-in/field-errors");
+		expect(row?.cells.maestro).toMatchObject({ fastest: false, failing: true });
+		expect(summaryRows(bad).find((r) => r.framework === "maestro")?.failing).toBe(true);
+	});
+});
