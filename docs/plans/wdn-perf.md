@@ -632,6 +632,26 @@ Waves:
   - Bench resource columns for host CPU/RSS.
 - Regression guard: `bun run bench compare <baseline> <new>` must show no per-test regression > 5% before the PR is marked ready.
 
+## Results (PERF-6.2)
+
+iOS: `perf-ios-r1` vs `v1-ios-r2`, same host and unchanged suite, 3 reps, all frameworks (`docs/bench/ios-2026-10-16-perf.md`).
+
+| Metric | Baseline | Target | Result |
+|---|---|---|---|
+| iOS warm suite median | 101.9 s | ≤ 75 s (≤ 0.8× agent-device) | **60.81 s** (0.59× agent-device's 102.66 s) ✅ |
+| iOS fill overhead beyond typing | ~1.3–1.7 s | ≤ 0.3 s | ~0.3 s (email 12/15/18 chars: 1083/1294/1504 ms) ✅ |
+| iOS settle after launch / first read after relaunch | 2.33 s / 1.3 s | ≤ 0.4 s / ≤ 0.3 s | 258–267 ms, 8/8 `via:"stream"` / 6–95 ms ✅ |
+| iOS `openLink` without a sheet / deep-link test | 8.9 s / 19.3 s | ≤ 1.5 s / ≤ 11.5 s | 1.41 s / 8.38 s ✅ |
+| gap `app.open` → next step | 0.36 s | ≤ 0.1 s | ~1 ms ✅ |
+| iOS prepare | 729 ms | ≤ 300 ms | warm (resident helper) 182–185 ms ✅; bench (cold by isolation) 708 ms ❌ |
+| iOS host CPU avg / RSS avg | 9.4% / 116 MB | ≤ 5% / ≤ 110 MB | 12.1% / 149 MB ❌ (CPU-s per rep −23%; avg up because the suite is 40% shorter; RSS unattributed) |
+| Untraced time per rep | 35 s | ≤ 3 s | 6.82 s ❌ (largest 1.14 s in settings) |
+| step latency p95 | 2.76 s | — | 1.60 s |
+| `warden version` cold | 70 ms / 97 MB | ≤ 30 ms / ≤ 50 MB | 27 ms / 41 MB (source), 28 ms / 57 MB (compiled) ✅ / RSS compiled ❌ |
+| Regression guard (no warden test > 5% slower) | | | every test −23.6% to −56.7% ✅ |
+
+Android: pending (`perf-android-r1`).
+
 ## Follow-ups (reported by agents)
 
 | From | Follow-up | Status |
@@ -643,10 +663,11 @@ Waves:
 | typist (1.1) | iOS plain fields showing a placeholder still get selectAll + 1 Backspace; `ada@example.com` keeps 4 confirm reads. | Done: type over the selection (no Backspace); 125/125 fills lossless; email 1083 ms (12 chars) / 1294 ms (15) / 1504 ms (18); every sign-in fill 2 confirm reads. Password ≈ 1.09 s is typing-bound. |
 | referee (6.1) | One bench test failed once under load and passed in 6 later runs: watch for a timing flake. | Open. |
 | conductor (4.7) | Static round-robin sharding: duration-aware sharding from the previous run's `results.jsonl`. Crash blame is inferred from result order; a per-flow completion record from the spec runner would make it exact. | Open. |
-| typist (1.1) | Under host load (load avg 14–41), `smoke.ts` raw `typeText` into an uncleared field garbled text in 2 of 5 runs (`"lol, World 123!H"`). Not the fill path, not compared against the old build. Re-run smoke on an idle host before 6.2; if it reproduces, it's a pacing-under-load bug. | Open. |
+| typist (1.1) | Under host load (load avg 14–41), `smoke.ts` raw `typeText` into an uncleared field garbled text in 2 of 5 runs (`"lol, World 123!H"`). Not the fill path, not compared against the old build. Re-run smoke on an idle host before 6.2; if it reproduces, it's a pacing-under-load bug. | Idle host (load 4–5, head 50cc12f): 3/3 smoke runs read back exact, 75/75 fills exact → load-only. Pacing under heavy load stays a known limit. |
 | droid-arch (3.3) | `warden e2e <suite> --platform android` refuses suites with `slim: true` (`platformError` in `commands/e2e.ts`, tested). Suggest: skip slim on Android with a note instead of refusing, so one suite config serves both platforms. | Suggestion. |
 | droid-arch (3.3) | `warden-uiad` only verified on API 37 (only image installed). Add an emulator matrix (API 30–36) in CI. p95 snapshot ~270 ms right after sign-in navigation under load. | Open. |
 | streamer (1.2) | AX guest wedges ~every 24 s (all quiescence queries `busy`), costing ~1.25 s in 3/8 tests per rep; cause inside the guest/idb unknown. Done (PERF-1.2b): `rebind` recycles guests older than `WARDEN_SIMD_GUEST_MAX_AGE_S` (default 12 s; 18 s still wedged): 8/8 via stream every rep, 0 wedges in 24 launches, warm suite 60.65 s. Cause unknown; threshold could follow the launch gap. |
+| lead (6.2) | Bench sampler has no per-process RSS split: add one, then attribute iOS host RSS 116 → 149 MB. Untraced 6.82 s/rep: find the unwrapped calls (largest in settings). | Open. |
 | conductor (4.6) | `native+js` fingerprint keys are v2: every such project rebuilds once after upgrading. | Expected. |
 
 ## Decisions (user, 2026-10-16)
