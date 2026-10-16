@@ -70,6 +70,9 @@ import {
 } from "./android-device";
 import { createDumper, type DumpRoute } from "./android-dump";
 import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
+import { createUiadBackend, type UiadOptions } from "./uiad-backend";
+import { UIAD_MIN_SDK } from "./uiad-device";
+import { createUiadOps, type UiadOps } from "./uiad-ops";
 import { interactiveFilter, parseUiautomatorXml, UiautomatorParseError } from "./uiautomator";
 
 /** Binary-safe host process runner (screenshots); `Exec` is text-only. */
@@ -117,8 +120,15 @@ export type AndroidDriverOptions = {
 	appPackage?: string;
 	/** how long to wait for `sys.boot_completed`, default 30 s */
 	bootTimeoutMs?: number;
+	/**
+	 * Use the resident UiAutomation server (`warden-uiad`) for snapshots, settle and input, with `uiautomator dump`
+	 * and `input` as the fallback for any call it cannot do. Off unless given: `true` for the defaults, or the seams
+	 * (a fake spawn, a fake dex push) a test replaces. API 26 and up only.
+	 */
+	uiad?: boolean | UiadOptions;
 };
 
+/** What the dump-and-`input` driver reports; with the server on, `unicodeText` and `nativeSettle` are true. */
 const CAPABILITIES: DriverCapabilities = {
 	pinch: false,
 	unicodeText: false,
@@ -205,13 +215,53 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 		data: buildDriver(options, session, screen.data, clock, execBinary, {
 			sdk,
 			savedRoute: saved.dumpRoute,
+			savedUiadUnsupported: saved.uiadUnsupported,
 			animations,
 		}),
 	};
 }
 
 /** What `openAndroidDriver` learned about the device that the driver needs: its API level, saved route, animation guard. */
-type DeviceFacts = { sdk: number | undefined; savedRoute: DumpRoute | undefined; animations: AnimationGuard };
+type DeviceFacts = {
+	sdk: number | undefined;
+	savedRoute: DumpRoute | undefined;
+	/** the `warden-uiad` build a past process found cannot run on this device */
+	savedUiadUnsupported: string | undefined;
+	animations: AnimationGuard;
+};
+
+/**
+ * The resident server's ops, when the caller asked for it and the device runs an API level it is built for;
+ * `undefined` means the dump and `input` do everything. A start that can never work on this device is written to
+ * the state file (`uiadUnsupported`) so the next process does not try it.
+ */
+function openUiad(input: {
+	options: AndroidDriverOptions;
+	session: AdbSession;
+	baseScreen: ScreenInfo;
+	clock: Clock;
+	facts: DeviceFacts;
+	saving: Promise<void>[];
+}): UiadOps | undefined {
+	const { options, session, baseScreen, clock, facts, saving } = input;
+	const { sdk } = facts;
+	const asked = options.uiad === true ? {} : options.uiad || undefined;
+	if (asked === undefined || sdk === undefined || sdk < UIAD_MIN_SDK) return undefined;
+	const { serial, adb, log, state } = options;
+	const backend = createUiadBackend({
+		session,
+		adb,
+		serial,
+		clock,
+		options: asked,
+		...(log ? { log } : {}),
+		...(facts.savedUiadUnsupported !== undefined ? { unsupportedBuild: facts.savedUiadUnsupported } : {}),
+		onUnsupported: (buildId) => {
+			if (state) saving.push(state.update(serial, patchFor(sdk, { uiadUnsupported: buildId })));
+		},
+	});
+	return createUiadOps({ backend, baseScreen, clock, ...(log ? { log } : {}) });
+}
 
 function buildDriver(
 	options: AndroidDriverOptions,
@@ -239,6 +289,8 @@ function buildDriver(
 		},
 	});
 
+	const uiad = openUiad({ options, session, baseScreen, clock, facts, saving });
+
 	async function dumpWithRetry(): ReturnType<typeof dumper.dump> {
 		let dumped = await dumper.dump();
 		for (
@@ -253,7 +305,8 @@ function buildDriver(
 		return dumped;
 	}
 
-	async function takeSnapshot(): DriverResult<Snapshot> {
+	async function dumpSnapshot(): DriverResult<Snapshot> {
+		noteSpanDetail("backend", "dump");
 		const dumped = await dumpWithRetry();
 		if (!dumped.success) return dumped;
 		let parsed: ReturnType<typeof parseUiautomatorXml>;
@@ -274,6 +327,11 @@ function buildDriver(
 			truncated: false,
 		};
 		return { success: true, data: taken };
+	}
+
+	/** The server's snapshot when it is running (tens of ms); else, or when it cannot be used, `uiautomator dump` (about 2 s). */
+	async function takeSnapshot(): DriverResult<Snapshot> {
+		return (await uiad?.snapshot()) ?? dumpSnapshot();
 	}
 
 	const input = async (cmd: string, timeoutMs?: number): DriverResult<void> => {
@@ -302,14 +360,18 @@ function buildDriver(
 
 	const tap: Driver["tap"] = async (point, opts) => {
 		const t0 = clock.now();
-		const once = opts?.durationMs ? longPressArgv(point, opts.durationMs) : tapArgv(point);
 		const count = Math.max(1, opts?.count ?? 1);
-		const res = await input(Array.from({ length: count }, () => shellCommand(once)).join("; "));
+		const once = opts?.durationMs ? longPressArgv(point, opts.durationMs) : tapArgv(point);
+		const res =
+			(await uiad?.tap(point, { count, ...(opts?.durationMs ? { durationMs: opts.durationMs } : {}) })) ??
+			(await input(Array.from({ length: count }, () => shellCommand(once)).join("; ")));
 		log?.(`tap ${Math.round(point.x)},${Math.round(point.y)} x${count} in ${clock.now() - t0}ms`);
 		return res;
 	};
 
 	const typeText: Driver["typeText"] = async (text) => {
+		const fast = text === "" ? undefined : await uiad?.typeText(text);
+		if (fast !== undefined) return fast;
 		const argvs = textArgvs(text);
 		if (!argvs.success) return argvs;
 		if (argvs.data.length === 0) return unit;
@@ -322,7 +384,7 @@ function buildDriver(
 
 	const key: Driver["key"] = async (name: KeyName, modifiers: readonly Modifier[] = []) => {
 		const code = keyNameKeycode(name);
-		if (modifiers.length === 0) return input(shellCommand(keyeventArgv(code)));
+		if (modifiers.length === 0) return (await uiad?.key(code)) ?? input(shellCommand(keyeventArgv(code)));
 		const res = await session.run(shellCommand(keycombinationArgv([...modifiers.map(modifierKeycode), code])));
 		if (!res.success) return res;
 		return res.data.exitCode === 0
@@ -334,14 +396,29 @@ function buildDriver(
 	const pressKeyRepeat: RepeatingKeys["pressKeyRepeat"] = async (name, times) => {
 		const argvs = keyRepeatArgvs(keyNameKeycode(name), times);
 		if (argvs.length === 0) return unit;
+		const fast = await uiad?.key(keyNameKeycode(name), Math.floor(times));
+		if (fast !== undefined) return fast;
 		return input(
 			argvs.map((argv) => shellCommand(argv)).join(" && "),
 			INPUT_TEXT_BASE_MS + INPUT_TEXT_PIECE_MS * argvs.length
 		);
 	};
 
-	/** See `SelectsAll`: Ctrl+A, only on the Androids that have `input keycombination`. */
-	const selectAll: SelectsAll["selectAll"] = () => input(shellCommand(selectAllArgv()));
+	/**
+	 * See `SelectsAll`: the server selects the focused field's text whole; without it, Ctrl+A on the Androids that
+	 * have `input keycombination`. A refusal here is not an error for the caller, which presses Backspace per character.
+	 */
+	const selectAll: SelectsAll["selectAll"] = async () => {
+		const fast = await uiad?.selectAll();
+		if (fast !== undefined) return fast;
+		if (sdk === undefined || sdk < SELECT_ALL_MIN_SDK) {
+			return driverErr(
+				"E_UNSUPPORTED",
+				"select-all needs the warden-uiad server or Android 13+ (`input keycombination`)"
+			);
+		}
+		return input(shellCommand(selectAllArgv()));
+	};
 
 	/**
 	 * Hold-then-move on sdk 26+ (`input motionevent` DOWN, interpolated MOVEs, UP, one shell line); older images
@@ -353,6 +430,8 @@ function buildDriver(
 			durationMs: opts?.durationMs ?? DRAG_MOVE_MS,
 			releaseMs: opts?.releaseMs ?? 0,
 		};
+		const fast = await uiad?.drag(from, to, timing);
+		if (fast !== undefined) return fast;
 		if (sdk === undefined || sdk < MOTIONEVENT_MIN_SDK) {
 			return input(shellCommand(swipeArgv(from, to, timing.pressMs + timing.durationMs + timing.releaseMs)));
 		}
@@ -365,9 +444,8 @@ function buildDriver(
 
 	const pressButton: Driver["pressButton"] = async (button: HardwareButton) => {
 		const code = buttonKeycode(button);
-		return code === undefined
-			? driverErr("E_UNSUPPORTED", `Android has no ${button} button`)
-			: input(shellCommand(keyeventArgv(code)));
+		if (code === undefined) return driverErr("E_UNSUPPORTED", `Android has no ${button} button`);
+		return (await uiad?.key(code)) ?? input(shellCommand(keyeventArgv(code)));
 	};
 
 	const screenshot: Driver["screenshot"] = async (opts) => {
@@ -402,14 +480,20 @@ function buildDriver(
 	/**
 	 * `uiautomator dump` waits for a second without accessibility events before it reads, so one dump is already
 	 * "quiet for 1 s": that is the whole settle for any `quietMs` it covers (the default 250 ms among them), instead of
-	 * two or more dumps compared by hash (3.8 s). A longer `quietMs` still compares successive dumps. A failed dump,
+	 * two or more dumps compared by hash (3.8 s). A longer `quietMs` still compares successive snapshots. A failed dump,
 	 * or one that took so long it gave up waiting for idle, is not quiet. `timeoutMs` bounds only that comparison.
+	 * With the server on, none of this runs unless the server could not do the settle: it waits for the accessibility
+	 * events to stop by itself, for any `quietMs`. (The single dump is the dump's idle wait, which a server snapshot
+	 * does not have, so it is always a real dump here.)
 	 */
 	const settle = async (opts?: { quietMs?: number; timeoutMs?: number }): DriverResult<SettleDetail> => {
 		const quietMs = opts?.quietMs ?? DEFAULT_SETTLE_QUIET_MS;
+		const timeoutMs = opts?.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS;
+		const fast = await uiad?.settle({ quietMs, timeoutMs });
+		if (fast !== undefined) return fast;
 		if (quietMs <= DUMP_IDLE_MS) {
 			const start = clock.now();
-			const taken = await takeSnapshot();
+			const taken = await dumpSnapshot();
 			const waitedMs = clock.now() - start;
 			noteSpanDetail("via", "snapshot");
 			return {
@@ -425,7 +509,7 @@ function buildDriver(
 		};
 		const outcome = await settleByHash(poll, {
 			quietMs,
-			timeoutMs: opts?.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS,
+			timeoutMs,
 			now: clock.now,
 			sleep: clock.sleep,
 		});
@@ -464,7 +548,7 @@ function buildDriver(
 			version: `Android ${text(release)} (sdk ${text(sdk)})`,
 			transport: "adb",
 			screen: baseScreen,
-			detail: { model: text(model), dumpRoute: dumper.route() ?? null },
+			detail: { model: text(model), dumpRoute: dumper.route() ?? null, uiad: uiad?.status() ?? "off" },
 		};
 		return { success: true, data: info };
 	};
@@ -474,19 +558,23 @@ function buildDriver(
 	return {
 		platform: "android",
 		id: serial,
-		capabilities: CAPABILITIES,
+		get capabilities(): DriverCapabilities {
+			return uiad?.enabled() ? { ...CAPABILITIES, unicodeText: true, nativeSettle: true } : CAPABILITIES;
+		},
 		health,
 		snapshot,
 		elementAtPoint,
 		tap,
-		longPress: (point, opts) => input(shellCommand(longPressArgv(point, opts?.durationMs))),
-		swipe: (from, to, opts) => input(shellCommand(swipeArgv(from, to, opts?.durationMs))),
+		longPress: async (point, opts) =>
+			(await uiad?.longPress(point, opts?.durationMs)) ?? input(shellCommand(longPressArgv(point, opts?.durationMs))),
+		swipe: async (from, to, opts) =>
+			(await uiad?.swipe(from, to, opts?.durationMs)) ?? input(shellCommand(swipeArgv(from, to, opts?.durationMs))),
 		drag,
 		pinch: unsupported("pinch"),
 		typeText,
 		key,
 		pressKeyRepeat,
-		...(sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK ? { selectAll } : {}),
+		...(uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK) ? { selectAll } : {}),
 		pressButton,
 		screenshot,
 		orientation,
@@ -504,6 +592,7 @@ function buildDriver(
 			...(options.appPackage ? { appPackage: options.appPackage } : {}),
 		}),
 		close: async () => {
+			await uiad?.stop();
 			await facts.animations.restore();
 			await Promise.all(saving.splice(0));
 			await session.close();

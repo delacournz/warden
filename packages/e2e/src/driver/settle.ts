@@ -12,15 +12,16 @@ export type SettleDeps = {
 
 export type SettleOutcome = { quiet: boolean; waitedMs: number };
 
-/** How a settle decided: the helper's quiescence `stream`, the helper's `snapshot` stability fallback, or client-side snapshot `hash` polling. */
+/** How a settle decided: the helper's quiescence `stream` (iOS `warden-simd`, Android `warden-uiad`: the accessibility events stopped), the `snapshot` stability fallback, or client-side snapshot `hash` polling. */
 export type SettleVia = "stream" | "snapshot" | "hash";
 
 /**
  * What a driver's `settle` may report beyond the frozen `{ quiet, waitedMs }` of `Driver["settle"]` (a driver
  * returns this wider object; the contract in `driver.types.ts` is unchanged). iOS passes the helper's reply through:
  * `via`, `reason` (`frontmost_mismatch` when the launched app never came to the front, `helper_timeout` when the
- * helper answered after the client's padded timer) and `frontmostPid`. Android says `snapshot` when one `uiautomator dump`
- * covered the whole quiet window and `hash` when it compared successive dumps; the iOS hash fallback says `hash`.
+ * helper answered after the client's padded timer) and `frontmostPid`. Android says `stream` when `warden-uiad` waited
+ * for the events to stop, else `snapshot` when one `uiautomator dump` covered the whole quiet window and `hash` when it
+ * compared successive snapshots; the iOS hash fallback says `hash`.
  */
 export type SettleDetail = SettleOutcome & { via?: SettleVia; reason?: string; frontmostPid?: number };
 
