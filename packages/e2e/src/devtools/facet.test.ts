@@ -26,7 +26,6 @@ async function open(
 			if (request.method === "Runtime.enable" && replay) {
 				connection.emit("Runtime.consoleAPICalled", { type: "log", args: [str("boot")], timestamp: 10 });
 			}
-			if (request.method === "Page.reload") return { result: {} };
 			const custom = onRequest?.(request, connection);
 			if (custom) return custom;
 			return p.respond(request, connection);

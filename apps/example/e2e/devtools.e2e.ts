@@ -53,7 +53,7 @@ devtoolsTest(
 		await screen.getByTestId(ids.welcome.next).tap();
 		await expect(screen.getByTestId(ids.welcome.title)).toHaveText("Plan");
 		const reloaded = await devtools.reloadJs();
-		expect(reloaded.success).toBe(true);
+		expect(reloaded).toEqual({ success: true, data: { method: "expo" } });
 		await expect(screen.getByTestId(ids.welcome.title)).toHaveText("Welcome", { timeout: 30_000 });
 	}
 );

@@ -284,45 +284,125 @@ describe("reconnect", () => {
 });
 
 describe("reloadJs", () => {
-	test("Page.reload through CDP, then waits for the app to come back", async () => {
-		const fake = metro({
+	/** Scripts the reload probe: answers `value`, and (when `cleared`) the JS context then dies like a real reload. */
+	function reloadMetro(value: unknown, cleared: boolean): FakeMetro {
+		const fake: FakeMetro = metro({
 			respond: (r) => {
-				if (r.method !== "Page.reload") return undefined;
-				queueMicrotask(() => fake.emit("Runtime.executionContextsCleared"));
-				return { result: {} };
+				if (r.method !== "Runtime.evaluate" || !String(r.params?.expression).includes("reloadAppAsync")) {
+					return undefined;
+				}
+				if (cleared) queueMicrotask(() => fake.emit("Runtime.executionContextsCleared"));
+				return { result: { result: { type: typeof value, value } } };
 			},
 		});
-		const session = await connect(fake);
+		return fake;
+	}
+
+	function reloadEvaluates(fake: FakeMetro) {
+		return fake.requests.filter(
+			(r) => r.method === "Runtime.evaluate" && String(r.params.expression).includes("reloadAppAsync")
+		);
+	}
+
+	test("reloads only this device through expo.reloadAppAsync and waits for the reconnect", async () => {
+		const fake = reloadMetro("expo", true);
+		const lines: string[] = [];
+		const session = await connect(fake, { log: (line) => lines.push(line) });
 		const reconnected: string[] = [];
 		session.on("reconnected", (target) => reconnected.push(target.id));
 		const reloaded = await session.reloadJs();
-		expect(reloaded).toEqual({ success: true, data: { method: "cdp" } });
+		expect(reloaded).toEqual({ success: true, data: { method: "expo" } });
 		expect(reconnected).toHaveLength(1);
 		expect(fake.reloadPosts).toBe(0);
+		expect(lines).toContain("devtools: reload via expo");
 	});
 
-	test("reloads only this device through DevSettings when Page.reload is unsupported", async () => {
-		const fake = metro({
-			respond: (r) => {
-				if (r.method === "Page.reload") return { error: { message: "not found" } };
-				if (r.method !== "Runtime.evaluate" || !String(r.params?.expression).includes("DevSettings")) return undefined;
-				queueMicrotask(() => fake.emit("Runtime.executionContextsCleared"));
-				return { result: { result: { type: "boolean", value: true } } };
-			},
-		});
+	test("falls to DevSettings when the evaluate answers devsettings", async () => {
+		const fake = reloadMetro("devsettings", true);
 		const session = await connect(fake);
-		const reloaded = await session.reloadJs();
-		expect(reloaded).toEqual({ success: true, data: { method: "devsettings" } });
+		expect(await session.reloadJs()).toEqual({ success: true, data: { method: "devsettings" } });
 		expect(fake.reloadPosts).toBe(0);
 	});
 
-	test("falls back to POST /reload when Page.reload is unsupported", async () => {
+	test("a devsettings reload that never restarts the JS context fails without a broadcast", async () => {
+		const fake = reloadMetro("devsettings", false);
+		const lines: string[] = [];
+		const session = await connect(fake, { reloadWaitMs: 20, log: (line) => lines.push(line) });
+		const reloaded = await session.reloadJs();
+		expect(!reloaded.success && reloaded.error.code).toBe("reload_failed");
+		expect(!reloaded.success && reloaded.error.message).toContain("did not restart within 20 ms");
+		expect(fake.reloadPosts).toBe(0);
+		expect(lines).toContain("devtools: reload via devsettings not observed after 20 ms");
+	});
+
+	test("an expo reload that never restarts fails too", async () => {
+		const fake = reloadMetro("expo", false);
+		const session = await connect(fake, { reloadWaitMs: 20 });
+		const reloaded = await session.reloadJs();
+		expect(!reloaded.success && reloaded.error.code).toBe("reload_failed");
+		expect(fake.reloadPosts).toBe(0);
+	});
+
+	test("POST /reload only when the app has neither reload API", async () => {
+		const fake = reloadMetro(false, false);
+		const session = await connect(fake, {
+			reloadWaitMs: 1_000,
+			sleep: (ms) => Bun.sleep(ms === 1_000 ? 400 : Math.min(ms, 5)),
+		});
+		const reloadPosted = fake.reloadPosts;
+		const pending = session.reloadJs();
+		await until(() => fake.reloadPosts === reloadPosted + 1);
+		fake.emit("Runtime.executionContextsCleared");
+		expect(await pending).toEqual({ success: true, data: { method: "http" } });
+		expect(fake.reloadPosts).toBe(1);
+	});
+
+	test("POST /reload that the app never acts on is reload_failed", async () => {
+		const fake = reloadMetro(false, false);
+		const session = await connect(fake, { reloadWaitMs: 20 });
+		const reloaded = await session.reloadJs();
+		expect(!reloaded.success && reloaded.error.code).toBe("reload_failed");
+		expect(fake.reloadPosts).toBe(1);
+	});
+
+	test("a reload probe that errors fails without a broadcast", async () => {
 		const fake = metro({
-			respond: (r) => (r.method === "Page.reload" ? { error: { message: "not found" } } : undefined),
+			respond: (r) =>
+				r.method === "Runtime.evaluate" && String(r.params?.expression).includes("reloadAppAsync")
+					? { error: { message: "runtime is gone" } }
+					: undefined,
 		});
 		const session = await connect(fake, { reloadWaitMs: 20 });
 		const reloaded = await session.reloadJs();
-		expect(reloaded).toEqual({ success: true, data: { method: "http" } });
-		expect(fake.reloadPosts).toBe(1);
+		expect(reloaded).toEqual({
+			success: false,
+			error: { code: "cdp_protocol", message: "reload probe failed: runtime is gone" },
+		});
+		expect(fake.reloadPosts).toBe(0);
+	});
+
+	test("POST /reload answering non-200 stays devtools_unavailable", async () => {
+		const fake = reloadMetro(false, false);
+		const real = globalThis.fetch;
+		const broken = await connectDevtools({
+			...options(fake, { reloadWaitMs: 20 }),
+			fetch: (input, init) =>
+				String(input).endsWith("/reload") ? Promise.resolve(new Response("nope", { status: 500 })) : real(input, init),
+		});
+		if (!broken.success) throw new Error(broken.error.message);
+		cleanup.push(() => broken.data.close());
+		const reloaded = await broken.data.reloadJs();
+		expect(!reloaded.success && reloaded.error.code).toBe("devtools_unavailable");
+	});
+
+	test("never sends Page.reload and never awaits the evaluate's promise", async () => {
+		const fake = reloadMetro("expo", true);
+		const session = await connect(fake);
+		await session.reloadJs();
+		expect(fake.requests.some((r) => r.method === "Page.reload")).toBe(false);
+		const evaluates = reloadEvaluates(fake);
+		expect(evaluates).toHaveLength(1);
+		expect(evaluates[0]?.params.awaitPromise).not.toBe(true);
+		expect(evaluates[0]?.params.returnByValue).toBe(true);
 	});
 });

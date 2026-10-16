@@ -16,7 +16,7 @@ export const WARDEN_BINDING = "__warden_cb";
 
 const RECONNECT_BACKOFF_MS = 200;
 const RECONNECT_ATTEMPTS = 10;
-const RELOAD_WAIT_MS = 3_000;
+const RELOAD_WAIT_MS = 5_000;
 const HANDSHAKE_OPTIONAL_TIMEOUT_MS = 3_000;
 
 export type DevtoolsDevice = {
@@ -44,7 +44,7 @@ export type ConnectDevtoolsOptions = {
 	maxReconnectAttempts?: number;
 	/** Called for every CDP event from the moment each socket opens, handshake included (so replays are seen). */
 	taps?: readonly CdpTap[];
-	/** how long `reloadJs` waits for the app to start tearing its JS context down (default 3 s) */
+	/** how long `reloadJs` waits for the app to start tearing its JS context down (default 5 s) */
 	reloadWaitMs?: number;
 };
 
@@ -55,8 +55,10 @@ export type DevtoolsSession = {
 		options?: { await?: boolean; timeoutMs?: number }
 	) => Promise<Result<unknown, EvaluateError>>;
 	/**
-	 * Reloads this device's JS: `Page.reload` over CDP, else `DevSettings.reload()` evaluated in the app, else
-	 * `POST <metro>/reload` (which reloads every device on that Metro); resolves once the app has reconnected.
+	 * Reloads this device's JS: `expo.reloadAppAsync()` evaluated in the app, else `DevSettings.reload()`, else (only
+	 * when the app has neither) `POST <metro>/reload`, which reloads every device on that Metro. Never `Page.reload`:
+	 * RN handles it inside the inspector dispatch on the main thread and a bridgeless host freezes. Fails with
+	 * `reload_failed` when the JS context did not restart in time; resolves once the app has reconnected.
 	 */
 	reloadJs: () => Promise<DevtoolsResult<{ method: ReloadMethod }>>;
 	/** the page currently attached (changes after a reconnect) */
@@ -79,11 +81,14 @@ export type DevtoolsSession = {
 	close: () => void;
 };
 
-export type ReloadMethod = "cdp" | "devsettings" | "http";
+export type ReloadMethod = "expo" | "devsettings" | "http";
 
-/** Reloads only the app this socket is attached to (new-architecture runtimes expose DevSettings on `nativeModuleProxy`). */
-const DEV_SETTINGS_RELOAD =
-	'(function(){var m=globalThis.nativeModuleProxy&&globalThis.nativeModuleProxy.DevSettings;if(!m||typeof m.reload!=="function")return false;setTimeout(function(){m.reload()},0);return true})()';
+/**
+ * Reloads only the app this socket is attached to, scheduled with `setTimeout` so the evaluate replies first.
+ * `expo.reloadAppAsync` is per app and works in a dev client; `DevSettings.reload` is a no-op under expo-dev-launcher.
+ */
+const RELOAD_EXPRESSION =
+	'(function(){var g=globalThis;if(g.expo&&typeof g.expo.reloadAppAsync==="function"){setTimeout(function(){g.expo.reloadAppAsync("warden e2e reloadJs")},0);return "expo"}var m=g.nativeModuleProxy&&g.nativeModuleProxy.DevSettings;if(m&&typeof m.reload==="function"){setTimeout(function(){m.reload()},0);return "devsettings"}return false})()';
 
 export type SessionEvents = { reconnected: SelectedTarget; lost: DevtoolsError };
 
@@ -251,36 +256,28 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 			const live = await current();
 			if (!live.success) return live;
 			const startedAt = epoch;
-			let method: ReloadMethod = "cdp";
-			let reloaded = await live.data.cdp.send("Page.reload", {});
-			if (!reloaded.success) {
-				const viaApp = await live.data.cdp.send("Runtime.evaluate", {
-					expression: DEV_SETTINGS_RELOAD,
-					returnByValue: true,
-				});
-				if (viaApp.success && isReloadAck(viaApp.data)) {
-					method = "devsettings";
-					reloaded = viaApp;
-				}
+			const waitMs = o.reloadWaitMs ?? RELOAD_WAIT_MS;
+			const probe = await live.data.cdp.send("Runtime.evaluate", {
+				expression: RELOAD_EXPRESSION,
+				returnByValue: true,
+			});
+			if (!probe.success) {
+				log(`devtools: reload probe failed: ${probe.error.message}`);
+				return devtoolsErr(probe.error.code, `reload probe failed: ${probe.error.message}`);
 			}
-			if (!reloaded.success) {
-				method = "http";
-				let status = 0;
+			const method: ReloadMethod = readReloadMethod(probe.data) ?? "http";
+			if (method === "http") {
+				log("devtools: reload via http");
 				try {
 					const res = await o.fetch(`${metroUrl.replace(/\/+$/, "")}/reload`, { method: "POST" });
-					status = res.ok ? 200 : res.status;
+					if (!res.ok) {
+						return devtoolsErr("devtools_unavailable", `reload failed: POST /reload answered ${res.status}`);
+					}
 				} catch (error) {
-					return devtoolsErr(
-						"devtools_unavailable",
-						`reload failed: Page.reload unsupported and POST /reload threw ${String(error)}`
-					);
+					return devtoolsErr("devtools_unavailable", `reload failed: POST /reload threw ${String(error)}`);
 				}
-				if (status !== 200) {
-					return devtoolsErr(
-						"devtools_unavailable",
-						`reload failed: Page.reload unsupported and POST /reload answered ${status}`
-					);
-				}
+			} else {
+				log(`devtools: reload via ${method}`);
 			}
 			if (epoch === startedAt) {
 				await new Promise<void>((resolve) => {
@@ -289,8 +286,15 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 						resolve();
 					};
 					epochWaiters.add(wake);
-					void sleep(o.reloadWaitMs ?? RELOAD_WAIT_MS).then(wake);
+					void sleep(waitMs).then(wake);
 				});
+			}
+			if (epoch === startedAt && state.kind === "up") {
+				log(`devtools: reload via ${method} not observed after ${waitMs} ms`);
+				return devtoolsErr(
+					"reload_failed",
+					`reload via ${method} acknowledged but the JS context did not restart within ${waitMs} ms`
+				);
 			}
 			if (state.kind === "reconnecting") {
 				const back = await state.done;
@@ -352,9 +356,10 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 	return ok(session);
 }
 
-/** `Runtime.evaluate` answered `true`: the app scheduled its own reload. */
-function isReloadAck(data: unknown): boolean {
-	if (typeof data !== "object" || data === null || !("result" in data)) return false;
+/** The method the reload expression scheduled, or `undefined` when the app has neither JS reload API. */
+function readReloadMethod(data: unknown): "expo" | "devsettings" | undefined {
+	if (typeof data !== "object" || data === null || !("result" in data)) return undefined;
 	const { result } = data;
-	return typeof result === "object" && result !== null && "value" in result && result.value === true;
+	if (typeof result !== "object" || result === null || !("value" in result)) return undefined;
+	return result.value === "expo" || result.value === "devsettings" ? result.value : undefined;
 }

@@ -39,7 +39,7 @@ describe("createDeviceDevtools", () => {
 		const stub = stubFacet();
 		stub.tree = { components: [{ id: 0, name: "View", parent: null }], truncated: false };
 		const devtools = createDeviceDevtools(source(() => ok(stub.facet)).src);
-		expect(await devtools.reloadJs()).toEqual(ok({ method: "cdp" }));
+		expect(await devtools.reloadJs()).toEqual(ok({ method: "expo" }));
 		const tree = await devtools.tree({ all: true });
 		expect(tree.success && tree.data.components).toHaveLength(1);
 		expect(stub.treeCalls).toEqual([{ all: true }]);

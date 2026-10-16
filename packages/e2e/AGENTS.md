@@ -11,7 +11,7 @@ warden's own mobile e2e stack (plan: `docs/plans/wdn-e2e.md`). No lease / build 
 | `runner/` | `test`/`describe`/hooks over `bun:test`, attempts, `results.jsonl`, artifacts |
 | `screen/` | locator query model, roles, text matching, actions, polling, text render + selector parser (shared with `warden ui`), `field.ts` (fill/clear/confirm a text field) |
 | `expect/` | `expect` wrapper + locator matchers |
-| `devtools/` | Metro inspector discovery, Hermes CDP, console/network/React tree. Metro's inspector proxy 401s a debugger upgrade without an `Origin`: `openCdp` sends `http://127.0.0.1:<port>` (`localhost` is accepted, then the socket is dropped with 1006) |
+| `devtools/` | Metro inspector discovery, Hermes CDP, console/network/React tree. Metro's inspector proxy 401s a debugger upgrade without an `Origin`: `openCdp` sends `http://127.0.0.1:<port>` (`localhost` is accepted, then the socket is dropped with 1006). `reloadJs` = `expo.reloadAppAsync` → `DevSettings` → `POST /reload` (only if neither exists); `Page.reload` freezes bridgeless hosts, `DevSettings.reload` is a no-op under expo-dev-launcher; no epoch change = `reload_failed` |
 | `flows/` | `.flow.json` schema, record, replay, export |
 | `native/` | `warden-simd` Swift package on idb's library package (`native/ios`), scripts (`deps`, `build`, `smoke`, `fake-simd`) |
 

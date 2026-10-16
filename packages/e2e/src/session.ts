@@ -38,6 +38,7 @@ export const openDevtools: DevtoolsOpener = (env) =>
 		fetch,
 		WebSocket,
 		timeoutMs: 5_000,
+		log: (line) => process.stderr.write(`[devtools] ${line}\n`),
 	});
 
 export type Session = {

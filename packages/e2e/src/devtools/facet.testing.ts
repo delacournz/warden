@@ -43,7 +43,7 @@ export function stubFacet(): StubFacet {
 				return ok(undefined);
 			},
 			async reloadJs() {
-				return ok({ method: "cdp" as const });
+				return ok({ method: "expo" as const });
 			},
 			console: {
 				lines: () => stub.consoleLines,
