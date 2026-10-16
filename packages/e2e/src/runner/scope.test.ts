@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { E2eError } from "../errors";
 import {
 	createScope,
 	currentScope,
@@ -11,6 +12,7 @@ import {
 	runInScope,
 	scopeChain,
 } from "./scope";
+import { test as specTest } from "./test";
 
 const defaults = { timeoutMs: 120_000, actionTimeoutMs: 30_000, assertionTimeoutMs: 5_000 };
 
@@ -81,17 +83,39 @@ describe("resolveUse", () => {
 		runInScope(outer, () => {
 			inner = createScope("use-inner", false);
 		});
-		expect(resolveUse(outer, defaults)).toEqual({ ...defaults, launch: "fresh" });
+		expect(resolveUse(outer, defaults)).toEqual({ ...defaults, launch: "fresh", systemAlerts: "off" });
 
-		outer.use = { timeout: 1000, actionTimeout: 2000, launch: "none" };
-		if (inner) inner.use = { timeout: 3000, assertionTimeout: 40 };
+		outer.use = { timeout: 1000, actionTimeout: 2000, launch: "none", systemAlerts: "dismiss" };
+		if (inner) inner.use = { timeout: 3000, assertionTimeout: 40, systemAlerts: "accept" };
 		expect(resolveUse(inner ?? outer, defaults)).toEqual({
 			timeoutMs: 3000,
 			actionTimeoutMs: 2000,
 			assertionTimeoutMs: 40,
 			launch: "none",
+			systemAlerts: "accept",
 		});
 		expect(resolveUse(inner ?? outer, defaults, 99).timeoutMs).toBe(99);
+	});
+
+	test("systemAlerts is off unless a scope says otherwise, and the nearest scope wins", () => {
+		const outer = createScope("alerts-outer", false);
+		let inner: ReturnType<typeof createScope> | undefined;
+		runInScope(outer, () => {
+			inner = createScope("alerts-inner", false);
+		});
+		expect(resolveUse(inner ?? outer, defaults).systemAlerts).toBe("off");
+		outer.use = { systemAlerts: "dismiss" };
+		expect(resolveUse(inner ?? outer, defaults).systemAlerts).toBe("dismiss");
+		if (inner) inner.use = { systemAlerts: "off" };
+		expect(resolveUse(inner ?? outer, defaults).systemAlerts).toBe("off");
+		expect(resolveUse(outer, defaults).systemAlerts).toBe("dismiss");
+	});
+});
+
+describe("test.use systemAlerts", () => {
+	test("takes dismiss, accept or off and refuses anything else", () => {
+		expect(() => specTest.use({ systemAlerts: "maybe" as never })).toThrow(E2eError);
+		expect(() => specTest.use({ systemAlerts: true as never })).toThrow(/systemAlerts/);
 	});
 });
 

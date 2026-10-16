@@ -4,7 +4,7 @@ import { E2eError } from "../errors";
 import { getSession } from "../session";
 import { buildBaseFixtures, type FixtureEntry, type FixtureSetup, runAttempt } from "./attempt";
 import { callerFile } from "./callsite";
-import type { BaseFixtures } from "./fixtures.types";
+import { type BaseFixtures, SYSTEM_ALERTS } from "./fixtures.types";
 import {
 	BUN_TIMEOUT_MARGIN_MS,
 	createScope,
@@ -139,6 +139,12 @@ function makeTest<F extends object>(fixtures: readonly FixtureEntry[]): TestApi<
 			return makeCallable<F>(fixtures, condition ? "skip" : "run");
 		},
 		use(options: UseOptions): void {
+			if (options.systemAlerts !== undefined && !SYSTEM_ALERTS.includes(options.systemAlerts)) {
+				throw new E2eError(
+					"INVALID_ARGUMENT",
+					`test.use: systemAlerts must be one of ${SYSTEM_ALERTS.map((mode) => `"${mode}"`).join(", ")}, got ${JSON.stringify(options.systemAlerts)}`
+				);
+			}
 			const scope = currentScope();
 			scope.use = { ...scope.use, ...options };
 		},

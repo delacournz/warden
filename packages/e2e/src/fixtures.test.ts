@@ -71,3 +71,51 @@ describe("screenHostFor devtools", () => {
 		expect(tree && !tree.success && tree.error.message).toBe("Metro is down");
 	});
 });
+
+describe("screenHostFor systemAlerts", () => {
+	const ctxFor = (systemAlerts: "accept" | "dismiss" | "off" | undefined) => {
+		const out = mkdtempSync(join(tmpdir(), "wdn-fixtures-"));
+		dirs.push(out);
+		const env: E2eEnv = {
+			udid: "U",
+			platform: "ios",
+			bundleId: "com.example.app",
+			launchArgs: [],
+			out,
+			timeoutMs: 1000,
+			actionTimeoutMs: 1000,
+			assertionTimeoutMs: 1000,
+			headless: false,
+			logTimestamps: false,
+		};
+		return {
+			session: createSession({ env, exitHook: false }),
+			signal: new AbortController().signal,
+			launch: "none" as const,
+			actionTimeoutMs: 1000,
+			assertionTimeoutMs: 1000,
+			...(systemAlerts === undefined ? {} : { systemAlerts }),
+		};
+	};
+
+	test.each([undefined, "off"] as const)("%s: the host answers nothing", (mode) => {
+		const alert = async (): Promise<boolean> => true;
+		expect(screenHostFor(ctxFor(mode), { alert }).answerSystemAlert).toBeUndefined();
+	});
+
+	test("without a device there is nothing to answer with", () => {
+		expect(screenHostFor(ctxFor("dismiss")).answerSystemAlert).toBeUndefined();
+	});
+
+	test.each(["accept", "dismiss"] as const)("%s: answering is device.alert(%s)", async (mode) => {
+		const asked: unknown[] = [];
+		const host = screenHostFor(ctxFor(mode), {
+			alert: async (action) => {
+				asked.push(action);
+				return true;
+			},
+		});
+		expect(await host.answerSystemAlert?.()).toBe(true);
+		expect(asked).toEqual([mode]);
+	});
+});
