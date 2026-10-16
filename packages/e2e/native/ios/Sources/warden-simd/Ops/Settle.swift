@@ -259,6 +259,7 @@ actor QuiescenceMonitor {
     frontmostPid = nil
     streamOpen = false
     openingSince = nil
+    openedAt = nil
   }
 
   /// By default the stream stays open for the helper's lifetime: the guest binds it to whatever is frontmost
@@ -310,28 +311,38 @@ actor QuiescenceMonitor {
     frontmostPid = nil
     streamOpen = false
     openingSince = nil
+    openedAt = nil
   }
 
   /// When the current stream began opening, nil once it is open (or closed). Opening costs 0.5 s on a quiet machine
   /// and seconds on a loaded one; a stream still opening has not latched on anything yet.
   private var openingSince: Double?
   private var streamOpen = false
+  /// When the current stream finished opening; a stream reports its target a little after that.
+  private var openedAt: Double?
   static let openingPatienceSeconds = 4.0
+  /// How long a freshly opened stream gets to report its first frontmost pid before it can count as latched.
+  static let bindGraceSeconds = 0.5
 
   private func markOpening() {
     openingSince = Self.clock()
+    openedAt = nil
     streamOpen = false
   }
 
   private func markOpen() {
     openingSince = nil
+    openedAt = Self.clock()
     streamOpen = true
   }
 
-  /// Restarting a stream that is still opening (for up to `openingPatienceSeconds`) only throws that work away.
+  /// Restarting a stream that is still opening (for up to `openingPatienceSeconds`) only throws that work away, and
+  /// one that opened under `bindGraceSeconds` ago and has not reported a pid yet is still binding, not latched
+  /// (observed live: a stream restarted 3 ms after it opened because the bundle's pid was already old).
   private func isStillOpening(now: Double) -> Bool {
-    guard !streamOpen, let openingSince else { return false }
-    return now - openingSince < Self.openingPatienceSeconds
+    if !streamOpen, let openingSince { return now - openingSince < Self.openingPatienceSeconds }
+    if streamOpen, frontmostPid == nil, let openedAt { return now - openedAt < Self.bindGraceSeconds }
+    return false
   }
 
   private func snapshot() -> (state: QuiescenceState?, since: Double, error: (any Error)?, pid: pid_t?) {

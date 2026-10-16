@@ -57,8 +57,17 @@ final class FakeReader: UIAutomation, @unchecked Sendable {
     lock.withLock { continuation }?.yield(event)
   }
 
-  func waitOpened(_ count: Int = 1) async {
-    while lock.withLock({ opened }) < count { try? await Task.sleep(for: .milliseconds(5)) }
+  /// Waits for the `count`-th stream to open; fails the test instead of hanging when it never does (a scheduling
+  /// stall on a loaded machine once turned a missed restart into a hung `swift test`).
+  func waitOpened(_ count: Int = 1, timeoutMs: Int = 10_000) async {
+    let deadline = ContinuousClock.now + .milliseconds(timeoutMs)
+    while lock.withLock({ opened }) < count {
+      if ContinuousClock.now >= deadline {
+        XCTFail("stream \(count) did not open within \(timeoutMs) ms (opened \(lock.withLock { opened }))")
+        return
+      }
+      try? await Task.sleep(for: .milliseconds(5))
+    }
   }
 
   private func unsupported() -> UIAutomationError {
@@ -262,6 +271,28 @@ final class SettleFrontmostTests: XCTestCase {
     XCTAssertEqual(reader.requests, 1, "the first open is still in flight and must not be restarted")
     reader.releaseOpens()
     await reader.waitOpened()
+    reader.emit(.state(.quiet, pid: app))
+    let outcome = try await wait.value
+    XCTAssertTrue(outcome.quiet)
+    XCTAssertEqual(reader.requests, 1)
+    await monitor.stop()
+  }
+
+  /// A stream that has just opened reports its target a few ms later. With the bundle's pid already old, that gap
+  /// must not count as a latched stream (observed live: a restart 3 ms after the stream opened).
+  func testAFreshlyOpenedStreamGetsTimeToBindBeforeARestart() async throws {
+    let reader = FakeReader()
+    reader.holdOpens = true
+    let monitor = QuiescenceMonitor(reader: reader)
+    let script = PidScript([app])
+    let wait = Task {
+      try await monitor.waitQuiet(quietMs: 0, timeoutMs: 8000, bundleId: "a.b", resolvePid: script.resolver)
+    }
+    try await Task.sleep(for: .milliseconds(700))  // the pid is now older than the first-restart grace
+    reader.releaseOpens()
+    await reader.waitOpened()
+    try await Task.sleep(for: .milliseconds(200))
+    XCTAssertEqual(reader.requests, 1, "a stream that opened 200 ms ago is still binding, not latched")
     reader.emit(.state(.quiet, pid: app))
     let outcome = try await wait.value
     XCTAssertTrue(outcome.quiet)
