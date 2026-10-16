@@ -4,7 +4,7 @@ import PackageDescription
 // warden-simd: the iOS-simulator helper behind @delacour/warden-e2e.
 //
 // It links idb's *library package* (`../idb-libraries`, produced by `bun native/scripts/deps.ts`: the pinned
-// release tarball, or a `--from-source` build of the `../idb` submodule). `FBSimulatorAX` pulls in
+// release tarball, or a `--from-source` build of a shallow idb clone at the pinned tag). `FBSimulatorAX` pulls in
 // FBSimulatorControl + FBControlCore + the private-framework stubs + FBSimulatorBridgeProtocol.
 let package = Package(
   name: "warden-simd",

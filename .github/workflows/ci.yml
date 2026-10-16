@@ -110,8 +110,8 @@ jobs:
           fi
 
   # warden-simd (Swift, links idb's library package): deps + build + swift test. macOS-only, so it has its own job.
-  # No `submodules: true`: native:deps downloads the pinned idb release tarball; only `native:deps --from-source`
-  # needs the packages/e2e/native/idb submodule and initialises it itself. swift test uses fixtures, no simulator.
+  # native:deps downloads the pinned idb release tarball (no idb checkout; `--from-source` shallow-clones the tag
+  # into ~/Library/Caches/warden-idb/src itself). swift test uses fixtures, no simulator.
   native:
     needs: native-changes
     if: needs.native-changes.outputs.native == 'true'

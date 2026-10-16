@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
@@ -12,6 +12,7 @@ import {
 	installLibraries,
 	parseLock,
 	sha256OfFile,
+	sourcePath,
 } from "./deps";
 
 const ok = (stdout = ""): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
@@ -148,43 +149,78 @@ describe("installLibraries", () => {
 	});
 });
 
+describe("sourcePath", () => {
+	test("keys the idb checkout by tag under ~/Library/Caches/warden-idb/src", () => {
+		expect(sourcePath("/Users/x", "v1.7.2")).toBe("/Users/x/Library/Caches/warden-idb/src/v1.7.2");
+	});
+});
+
 describe("buildFromSource", () => {
 	const lock: IdbLock = { version: "v1.7.2", tarball: "t", sha256: "a".repeat(64) };
 
-	function fakeExec(describeOutput: string): { exec: Exec; calls: string[] } {
-		const calls: string[] = [];
-		const exec: Exec = async (cmd) => {
-			calls.push(cmd.join(" "));
+	/** Lay out what idb's `build.sh build library-package` leaves behind in a checkout. */
+	function fakeCheckout(dir: string): void {
+		mkdirSync(join(dir, ".git"), { recursive: true });
+		mkdirSync(join(dir, "Build", "LibraryPackage", "Resources"), { recursive: true });
+		writeFileSync(join(dir, "Build", "LibraryPackage", "Package.swift"), "// pkg");
+		writeFileSync(join(dir, "Build", "LibraryPackage", "Resources", "SimulatorFrameworkBridge-iOS"), "guest");
+	}
+
+	/** `git clone` lays out a checkout at its last argument; `describe` answers `describeOutput`. */
+	function fakeExec(describeOutput: string): { exec: Exec; calls: { cmd: string; cwd?: string }[] } {
+		const calls: { cmd: string; cwd?: string }[] = [];
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: cmd.join(" "), cwd: opts?.cwd });
+			if (cmd[0] === "git" && cmd[1] === "clone") fakeCheckout(cmd[cmd.length - 1] ?? "");
 			if (cmd.includes("describe")) return ok(describeOutput);
 			return ok();
 		};
 		return { exec, calls };
 	}
 
-	test("inits the shallow submodule, checks the tag, builds libraries then the package", async () => {
-		const idbDir = join(root, "idb");
-		mkdirSync(join(idbDir, "Build", "LibraryPackage", "Resources"), { recursive: true });
-		writeFileSync(join(idbDir, "Build", "LibraryPackage", "Package.swift"), "// pkg");
-		writeFileSync(join(idbDir, "Build", "LibraryPackage", "Resources", "SimulatorFrameworkBridge-iOS"), "guest");
-		const { exec, calls } = fakeExec("v1.7.2\n");
+	test("shallow-clones idb at the lock tag, then builds libraries then the package in the checkout", async () => {
+		const srcDir = join(root, "src", "v1.7.2");
 		const dest = join(root, "idb-libraries");
-		await buildFromSource(lock, { exec, repoRoot: root, idbDir, dest, log: () => {} });
-		expect(calls[0]).toContain("submodule update --init --depth 1");
-		expect(calls.some((c) => c.includes("describe --tags --exact-match"))).toBe(true);
-		const buildLibs = calls.findIndex((c) => c.endsWith("build.sh build libraries"));
-		const buildPkg = calls.findIndex((c) => c.endsWith("build.sh build library-package"));
+		const { exec, calls } = fakeExec("v1.7.2\n");
+		await buildFromSource(lock, { exec, srcDir, dest, log: () => {} });
+		expect(calls[0]?.cmd).toStartWith("git clone --depth 1 --branch v1.7.2 https://github.com/facebook/idb.git ");
+		expect(existsSync(join(srcDir, ".git"))).toBe(true);
+		expect(calls.some((c) => c.cmd === `git -C ${srcDir} describe --tags --exact-match`)).toBe(true);
+		const buildLibs = calls.findIndex((c) => c.cmd === "./build.sh build libraries" && c.cwd === srcDir);
+		const buildPkg = calls.findIndex((c) => c.cmd === "./build.sh build library-package" && c.cwd === srcDir);
 		expect(buildLibs).toBeGreaterThan(-1);
 		expect(buildPkg).toBeGreaterThan(buildLibs);
 		expect(readFileSync(join(dest, "Package.swift"), "utf8")).toBe("// pkg");
 		expect(JSON.parse(readFileSync(join(dest, ".warden-idb.json"), "utf8")).source).toBe("source");
 	});
 
-	test("fails when the submodule is on a different tag than the lock", async () => {
+	test("reuses an existing checkout without cloning", async () => {
+		const srcDir = join(root, "idb");
+		fakeCheckout(srcDir);
+		const { exec, calls } = fakeExec("v1.7.2\n");
+		await buildFromSource(lock, { exec, srcDir, dest: join(root, "idb-libraries"), log: () => {} });
+		expect(calls.some((c) => c.cmd.startsWith("git clone"))).toBe(false);
+	});
+
+	test("leaves no checkout behind when the clone fails", async () => {
+		const srcDir = join(root, "src", "v1.7.2");
+		const exec: Exec = async (cmd) => {
+			if (cmd[1] === "clone") mkdirSync(cmd[cmd.length - 1] ?? "", { recursive: true });
+			return { exitCode: 128, stdout: "", stderr: "fatal: Remote branch v1.7.2 not found" };
+		};
+		await expect(buildFromSource(lock, { exec, srcDir, dest: join(root, "d"), log: () => {} })).rejects.toThrow(
+			/Remote branch/
+		);
+		expect(existsSync(srcDir)).toBe(false);
+		expect(readdirSync(join(root, "src"))).toEqual([]);
+	});
+
+	test("fails when the checkout is on a different tag than the lock", async () => {
+		const srcDir = join(root, "idb");
+		fakeCheckout(srcDir);
 		const { exec } = fakeExec("v1.6.0\n");
-		const idbDir = join(root, "idb");
-		mkdirSync(idbDir, { recursive: true });
-		await expect(
-			buildFromSource(lock, { exec, repoRoot: root, idbDir, dest: join(root, "d"), log: () => {} })
-		).rejects.toThrow(/v1\.6\.0.*v1\.7\.2/);
+		await expect(buildFromSource(lock, { exec, srcDir, dest: join(root, "d"), log: () => {} })).rejects.toThrow(
+			/v1\.6\.0.*v1\.7\.2/
+		);
 	});
 });
