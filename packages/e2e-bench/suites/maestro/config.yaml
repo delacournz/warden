@@ -1,0 +1,3 @@
+# Only top-level flows are tests; common/ holds subflows invoked with runFlow.
+flows:
+  - "*.yaml"

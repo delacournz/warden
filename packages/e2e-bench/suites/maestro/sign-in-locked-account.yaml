@@ -1,0 +1,13 @@
+appId: nz.co.delacour.warden.example
+name: sign-in-locked-account
+---
+- runFlow: common/open-sign-in.yaml
+- runFlow:
+    file: common/submit-sign-in.yaml
+    env:
+      EMAIL: "locked@example.com"
+      PASSWORD: "password1"
+- assertVisible:
+    id: "sign-in-error"
+- assertVisible:
+    text: "This account is locked. Try another email."

@@ -1,0 +1,14 @@
+appId: nz.co.delacour.warden.example
+---
+# Parity with flows.ts nextStep: press Next, wait up to 4 s for the step title TITLE, retap (max 2 retaps).
+# The first Next press on the welcome screen can be dropped while the screen is still attaching its handlers.
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: "welcome-next"
+      - extendedWaitUntil:
+          visible:
+            id: "welcome-title"
+            text: "${TITLE}"
+          timeout: 4000

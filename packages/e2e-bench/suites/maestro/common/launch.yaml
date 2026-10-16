@@ -1,0 +1,10 @@
+appId: nz.co.delacour.warden.example
+---
+# Fresh launch (state is in-memory, so stopApp gives the signed-out welcome screen).
+- launchApp:
+    clearState: false
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "welcome-screen"
+    timeout: 30000

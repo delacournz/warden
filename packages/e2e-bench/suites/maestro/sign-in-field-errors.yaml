@@ -1,0 +1,20 @@
+appId: nz.co.delacour.warden.example
+name: sign-in-field-errors
+---
+- runFlow: common/open-sign-in.yaml
+- runFlow:
+    file: common/submit-sign-in.yaml
+    env:
+      EMAIL: "not-an-email"
+      PASSWORD: "password1"
+- assertVisible:
+    id: "sign-in-email-error"
+    text: "Enter a valid email address."
+- runFlow:
+    file: common/submit-sign-in.yaml
+    env:
+      EMAIL: "ada@example.com"
+      PASSWORD: "short"
+- assertVisible:
+    id: "sign-in-password-error"
+    text: "Password must be at least 8 characters."

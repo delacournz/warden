@@ -1,0 +1,46 @@
+appId: nz.co.delacour.warden.example
+name: todos-add-complete-filter
+---
+- runFlow:
+    file: common/signed-in.yaml
+    env:
+      EMAIL: "ada@example.com"
+- tapOn:
+    id: "todo-input"
+- inputText: "Write e2e flows"
+- tapOn:
+    id: "todo-add"
+- assertVisible:
+    id: "todo-title-todo-1"
+    text: "Write e2e flows"
+- assertVisible:
+    text: "2 left"
+    childOf:
+      id: "todos-remaining"
+- tapOn:
+    id: "todo-check-todo-1"
+- assertVisible:
+    id: "todo-check-todo-1"
+    text: "checkbox, checked"
+- assertVisible:
+    text: "1 left"
+    childOf:
+      id: "todos-remaining"
+- tapOn:
+    id: "todos-filter-active"
+- assertVisible:
+    id: "todo-row-welcome"
+- assertNotVisible:
+    id: "todo-row-todo-1"
+- tapOn:
+    id: "todo-check-welcome"
+- assertVisible:
+    id: "todos-empty"
+- tapOn:
+    id: "todos-filter-done"
+- assertVisible:
+    id: "todo-row-todo-1"
+- assertVisible:
+    text: "0 left"
+    childOf:
+      id: "todos-remaining"
