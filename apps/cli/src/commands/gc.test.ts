@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { Exec } from "@delacour/warden-core/exec";
 import type { Owner } from "@delacour/warden-core/types";
-import { fakeSimctl } from "../simctl.testing";
+import { fakeSimctl, wardenSim } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { gcCommand } from "./gc";
 
@@ -167,5 +168,91 @@ describe("warden gc", () => {
 		expect(c.stdout).toEqual([]);
 		expect(ui.events).toEqual([]);
 		expect(c.db.getMeta("last_gc_at")).toBe(String(NOW));
+	});
+});
+
+describe("warden gc: parallel shutdown", () => {
+	/** `base` with every `simctl shutdown` taking `ms`, counting how many are under way at once */
+	function slowShutdowns(base: Exec, ms: number): { exec: Exec; peak: () => number; order: string[] } {
+		let running = 0;
+		let peak = 0;
+		const order: string[] = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[1] !== "simctl" || cmd[2] !== "shutdown") return base(cmd, opts);
+			running++;
+			peak = Math.max(peak, running);
+			order.push(cmd[3] ?? "");
+			await Bun.sleep(ms);
+			running--;
+			return base(cmd, opts);
+		};
+		return { exec, peak: () => peak, order };
+	}
+
+	/** ten idle booted warden sims, plus: a leased one, a recently used one, an idle one already shut down, a foreign booted one */
+	function crowd(extra: Array<[string, { exitCode?: number; stderr?: string }]> = []) {
+		const calls: string[][] = [];
+		const idle = Array.from({ length: 10 }, (_, i) => wardenSim(10 + i, "Booted"));
+		const sims = [
+			...idle,
+			wardenSim(1, "Booted"),
+			wardenSim(2, "Booted"),
+			wardenSim(3, "Shutdown"),
+			{ udid: "FOREIGN", name: "iPhone 17", state: "Booted" as const },
+		];
+		const c = testContext(["--json"], { now: () => NOW, exec: fakeSimctl(sims, calls, extra) });
+		ctx = c;
+		for (const sim of idle) c.db.recordDevice({ platform: "ios", id: sim.udid, name: sim.name }, 0);
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
+		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2" }, NOW - 60_000);
+		c.db.recordDevice({ platform: "ios", id: "U3", name: "warden-iphone-17-3" }, 0);
+		c.db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
+				owner: agent,
+				ttlMs: 60_000,
+			},
+			NOW
+		);
+		return { c, calls, idle };
+	}
+
+	test("idle devices go down several at a time, never more than the bound, each once", async () => {
+		const { c, calls, idle } = crowd();
+		const slow = slowShutdowns(c.exec, 15);
+		c.exec = slow.exec;
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(slow.peak()).toBeGreaterThan(1);
+		expect(slow.peak()).toBeLessThanOrEqual(4);
+		const wanted = idle.map((s) => s.udid).sort();
+		expect([...slow.order].sort()).toEqual(wanted);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.shutdown.map((d: { id: string }) => d.id)).toEqual(idle.map((s) => s.udid).sort());
+		expect(calls.filter((x) => x[2] === "shutdown").map((x) => x[3])).toHaveLength(idle.length);
+	});
+
+	test("only warden's own idle, booted, unleased devices are shut down: foreign, leased, recent and already-down ones are untouched", async () => {
+		const { c, idle } = crowd();
+		const slow = slowShutdowns(c.exec, 5);
+		c.exec = slow.exec;
+		expect(await gcCommand.run(c)).toBe(0);
+		const shut = new Set(slow.order);
+		expect(shut).toEqual(new Set(idle.map((s) => s.udid)));
+		for (const left of ["FOREIGN", "U1", "U2", "U3"]) expect(shut.has(left)).toBe(false);
+	});
+
+	test("one shutdown that fails is a note; the others still go down", async () => {
+		const { c, idle } = crowd([["xcrun simctl shutdown U13", { exitCode: 1, stderr: "Unable to shutdown device" }]]);
+		const slow = slowShutdowns(c.exec, 5);
+		c.exec = slow.exec;
+		expect(await gcCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.shutdown.map((d: { id: string }) => d.id)).toEqual(
+			idle
+				.map((s) => s.udid)
+				.filter((id) => id !== "U13")
+				.sort()
+		);
+		expect(out.notes.join("\n")).toContain("shutdown U13 failed");
 	});
 });

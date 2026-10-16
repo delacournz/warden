@@ -15,6 +15,13 @@ private final class Counter: @unchecked Sendable {
   var logged: [String] { lock.withLock { lines } }
 }
 
+private final class PidBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var pid: pid_t?
+  func set(_ pid: pid_t?) { lock.withLock { self.pid = pid } }
+  var value: pid_t? { lock.withLock { pid } }
+}
+
 /// An app relaunched while no quiescence stream was open answers the bridge with "did not respond" until a stream
 /// binds to it; `readRecovering` opens that stream and reads again, and `health` stops claiming the bridge is fine.
 final class RelaunchRecoveryTests: XCTestCase {
@@ -34,7 +41,7 @@ final class RelaunchRecoveryTests: XCTestCase {
     let reads = Counter()
     let recovers = Counter()
     let value = try await Session.readRecovering(
-      read: script([], calls: reads), recover: { recovers.bump() }, log: { _ in })
+      read: script([], calls: reads), recover: { _ in recovers.bump() }, log: { _ in })
     XCTAssertEqual(value, "ok")
     XCTAssertEqual(reads.count, 1)
     XCTAssertEqual(recovers.count, 0)
@@ -45,7 +52,7 @@ final class RelaunchRecoveryTests: XCTestCase {
     let recovers = Counter()
     let logs = Counter()
     let value = try await Session.readRecovering(
-      read: script([notResponding], calls: reads), recover: { recovers.bump() }, log: { logs.add($0) })
+      read: script([notResponding], calls: reads), recover: { _ in recovers.bump() }, log: { logs.add($0) })
     XCTAssertEqual(value, "ok")
     XCTAssertEqual(reads.count, 2)
     XCTAssertEqual(recovers.count, 1)
@@ -53,12 +60,25 @@ final class RelaunchRecoveryTests: XCTestCase {
     XCTAssertTrue(logs.logged[0].contains("did not respond"))
   }
 
+  /// The failing process is handed to `recover`, so a stream that already follows it is not restarted.
+  func testRecoverIsToldWhichProcessDidNotRespond() async throws {
+    let reads = Counter()
+    let named = PidBox()
+    _ = try await Session.readRecovering(
+      read: script([notResponding], calls: reads), recover: { named.set($0) }, log: { _ in })
+    XCTAssertEqual(named.value, 42)
+    XCTAssertEqual(Session.notRespondingPid(notResponding), 42)
+    XCTAssertEqual(
+      Session.notRespondingPid(UIAutomationError.applicationNotResponding(backend: .accessibility, pid: 7)), 7)
+    XCTAssertNil(Session.notRespondingPid(AXBridgeError.applicationUnavailable(pid: 42)))
+  }
+
   func testTheUIAutomationFlavourOfNotRespondingRecoversToo() async throws {
     let reads = Counter()
     let recovers = Counter()
     let error = UIAutomationError.applicationNotResponding(backend: .accessibility, pid: 1)
     _ = try await Session.readRecovering(
-      read: script([error], calls: reads), recover: { recovers.bump() }, log: { _ in })
+      read: script([error], calls: reads), recover: { _ in recovers.bump() }, log: { _ in })
     XCTAssertEqual(recovers.count, 1)
   }
 
@@ -67,7 +87,7 @@ final class RelaunchRecoveryTests: XCTestCase {
     let recovers = Counter()
     do {
       _ = try await Session.readRecovering(
-        read: script([notResponding, notResponding], calls: reads), recover: { recovers.bump() }, log: { _ in })
+        read: script([notResponding, notResponding], calls: reads), recover: { _ in recovers.bump() }, log: { _ in })
       XCTFail("expected the second failure to propagate")
     } catch {
       XCTAssertTrue(Session.isNotResponding(error))
@@ -81,7 +101,7 @@ final class RelaunchRecoveryTests: XCTestCase {
     let recovers = Counter()
     do {
       _ = try await Session.readRecovering(
-        read: script([AXBridgeError.applicationUnavailable(pid: 42)], calls: reads), recover: { recovers.bump() },
+        read: script([AXBridgeError.applicationUnavailable(pid: 42)], calls: reads), recover: { _ in recovers.bump() },
         log: { _ in })
       XCTFail("expected the failure to propagate")
     } catch {

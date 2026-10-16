@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { el, snapshotOf } from "../driver.testing";
 import {
+	alertButtonsDataSchema,
 	createLineSplitter,
 	elementAtPointDataSchema,
 	encodeRequest,
+	frontmostDataSchema,
 	healthDataSchema,
 	mapWireError,
 	parseLine,
 	protocolVersion,
+	rebindDataSchema,
 	settleDataSchema,
 	snapshotDataSchema,
 } from "./simd-protocol";
@@ -128,6 +131,36 @@ describe("data schemas", () => {
 		expect(elementAtPointDataSchema.safeParse(null).success).toBe(true);
 		expect(settleDataSchema.safeParse({ quiet: true, waitedMs: 12 }).success).toBe(true);
 		expect(settleDataSchema.safeParse({ quiet: "yes" }).success).toBe(false);
+		expect(settleDataSchema.parse({ quiet: true, waitedMs: 5, via: "stream", frontmostPid: 9 })).toMatchObject({
+			via: "stream",
+			frontmostPid: 9,
+		});
+		expect(
+			settleDataSchema.parse({ quiet: false, waitedMs: 5, via: "snapshot", reason: "frontmost_mismatch" })
+		).toMatchObject({
+			via: "snapshot",
+			reason: "frontmost_mismatch",
+		});
+	});
+
+	test("rebind data: bound with its pid and restarts, or unbound with a reason", () => {
+		expect(rebindDataSchema.parse({ bound: true, waitedMs: 700, pid: 4242, restarts: 0 })).toMatchObject({
+			bound: true,
+			pid: 4242,
+		});
+		expect(rebindDataSchema.parse({ bound: false, waitedMs: 3000, reason: "timeout" })).toMatchObject({
+			bound: false,
+			reason: "timeout",
+		});
+		expect(rebindDataSchema.parse({ bound: true, waitedMs: 1500, recycled: true })).toMatchObject({ recycled: true });
+		expect(rebindDataSchema.safeParse({ waitedMs: 5 }).success).toBe(false);
+		expect(rebindDataSchema.safeParse(null).success).toBe(false);
+	});
+
+	test("a settle via this client does not know is read as no via, not as a protocol error", () => {
+		const parsed = settleDataSchema.safeParse({ quiet: true, waitedMs: 5, via: "a-future-mode" });
+		expect(parsed.success).toBe(true);
+		expect(parsed.success && parsed.data.via).toBeUndefined();
 		expect(
 			healthDataSchema.safeParse({
 				version: "1",
@@ -138,6 +171,24 @@ describe("data schemas", () => {
 				extra: "kept",
 			}).success
 		).toBe(true);
+	});
+
+	test("frontmost: the verdict with the pids it compared, extra keys allowed", () => {
+		expect(frontmostDataSchema.parse({ frontmost: true, pid: 12, frontmostPid: 12 })).toEqual({
+			frontmost: true,
+			pid: 12,
+			frontmostPid: 12,
+		});
+		expect(frontmostDataSchema.parse({ frontmost: false, extra: 1 }).frontmost).toBe(false);
+		expect(frontmostDataSchema.safeParse({ pid: 1 }).success).toBe(false);
+	});
+
+	test("alertButtons: null, an alert, and a modal with no readable buttons yet", () => {
+		expect(alertButtonsDataSchema.parse(null)).toBeNull();
+		expect(alertButtonsDataSchema.parse({ title: "Open in “app”?", buttons: [] })).toEqual({
+			title: "Open in “app”?",
+			buttons: [],
+		});
 	});
 
 	test("health reports a degraded bridge with the last read failure", () => {

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+	animationReadArgvs,
+	animationRestoreArgvs,
 	animationScaleArgvs,
 	buttonKeycode,
 	dragMotionCommand,
@@ -21,7 +23,9 @@ import {
 	pmClearArgv,
 	pmPathArgv,
 	rotationArgvs,
+	SELECT_ALL_MIN_SDK,
 	screencapArgv,
+	selectAllArgv,
 	shellCommand,
 	shellQuote,
 	sleepArgv,
@@ -75,6 +79,11 @@ describe("input argv", () => {
 		expect(keyRepeatArgvs(67, 0)).toEqual([]);
 		const chunks = keyRepeatArgvs(67, 70);
 		expect(chunks.map((c) => c.length - 2)).toEqual([32, 32, 6]);
+	});
+
+	test("select all is Ctrl+A through keycombination, which needs API 33", () => {
+		expect(selectAllArgv()).toEqual(["input", "keycombination", "113", "29"]);
+		expect(SELECT_ALL_MIN_SDK).toBe(33);
 	});
 
 	test("hardware button and key name keycodes", () => {
@@ -168,6 +177,20 @@ describe("app argv", () => {
 		]);
 	});
 
+	test("open url can target the app under test with -p", () => {
+		expect(startUrlArgv("myapp://todo/1", "nz.co.x")).toEqual([
+			"am",
+			"start",
+			"-a",
+			"android.intent.action.VIEW",
+			"-d",
+			"myapp://todo/1",
+			"-p",
+			"nz.co.x",
+		]);
+		expect(startUrlArgv("myapp://todo/1", undefined)).toEqual(startUrlArgv("myapp://todo/1"));
+	});
+
 	test("launch, force-stop, clear", () => {
 		expect(monkeyLaunchArgv("com.x")).toEqual(["monkey", "-p", "com.x", "-c", "android.intent.category.LAUNCHER", "1"]);
 		expect(forceStopArgv("com.x")).toEqual(["am", "force-stop", "com.x"]);
@@ -179,6 +202,30 @@ describe("app argv", () => {
 			["settings", "put", "global", "window_animation_scale", "0"],
 			["settings", "put", "global", "transition_animation_scale", "0"],
 			["settings", "put", "global", "animator_duration_scale", "0"],
+		]);
+	});
+});
+
+describe("animation scale argv", () => {
+	test("reading asks for all three scales in a fixed order", () => {
+		expect(animationReadArgvs()).toEqual([
+			["settings", "get", "global", "window_animation_scale"],
+			["settings", "get", "global", "transition_animation_scale"],
+			["settings", "get", "global", "animator_duration_scale"],
+		]);
+	});
+
+	test("restoring puts a value back and deletes a setting that was unset", () => {
+		expect(
+			animationRestoreArgvs({
+				window_animation_scale: "1.0",
+				transition_animation_scale: "null",
+				animator_duration_scale: "0.5",
+			})
+		).toEqual([
+			["settings", "put", "global", "window_animation_scale", "1.0"],
+			["settings", "delete", "global", "transition_animation_scale"],
+			["settings", "put", "global", "animator_duration_scale", "0.5"],
 		]);
 	});
 });

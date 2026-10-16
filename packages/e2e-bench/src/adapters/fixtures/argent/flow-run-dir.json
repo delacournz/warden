@@ -1,0 +1,2707 @@
+{
+	"ok": true,
+	"total": 8,
+	"passed": 8,
+	"failed": 0,
+	"skipped": 0,
+	"durationMs": 135645,
+	"flows": [
+		{
+			"path": "onboarding-steps-to-sign-in.yaml",
+			"status": "pass",
+			"report": {
+				"flow": "onboarding-steps-to-sign-in",
+				"device": "1A0EC51B-7069-4001-AF8A-432CA3B2D1FD",
+				"executionPrerequisite": "",
+				"ok": true,
+				"passed": 14,
+				"failed": 0,
+				"skipped": 10,
+				"errored": 0,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "onboarding-steps-to-sign-in",
+						"status": "pass",
+						"durationMs": 2088
+					},
+					{
+						"index": 1,
+						"kind": "await",
+						"flow": "onboarding-steps-to-sign-in",
+						"target": "visible id=welcome-screen",
+						"status": "pass",
+						"durationMs": 324
+					},
+					{
+						"index": 2,
+						"kind": "idle",
+						"flow": "onboarding-steps-to-sign-in",
+						"status": "pass",
+						"durationMs": 516
+					},
+					{
+						"index": 3,
+						"kind": "assert",
+						"flow": "onboarding-steps-to-sign-in",
+						"target": "id=welcome-title equals \"Welcome\"",
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 4,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "fragments/next-plan.yaml",
+						"durationMs": 2
+					},
+					{
+						"index": 5,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 322
+					},
+					{
+						"index": 6,
+						"kind": "idle",
+						"flow": "next-plan",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 959
+					},
+					{
+						"index": 7,
+						"kind": "when",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 1,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Welcome\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1021
+					},
+					{
+						"index": 8,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 2
+					},
+					{
+						"index": 9,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"depth": 2
+					},
+					{
+						"index": 10,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 11,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 12,
+						"kind": "await",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 14
+					},
+					{
+						"index": 13,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-test",
+						"target": "fragments/next-test.yaml",
+						"durationMs": 6
+					},
+					{
+						"index": 14,
+						"kind": "tap",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 320
+					},
+					{
+						"index": 15,
+						"kind": "idle",
+						"flow": "next-test",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 1071
+					},
+					{
+						"index": 16,
+						"kind": "when",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 1,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Plan\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1017
+					},
+					{
+						"index": 17,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 2
+					},
+					{
+						"index": 18,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"depth": 2
+					},
+					{
+						"index": 19,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2
+					},
+					{
+						"index": 20,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 21,
+						"kind": "await",
+						"flow": "next-test",
+						"target": "visible \"Test\" id=welcome-title",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 8
+					},
+					{
+						"index": 22,
+						"kind": "tap",
+						"flow": "onboarding-steps-to-sign-in",
+						"target": "id=welcome-get-started",
+						"status": "pass",
+						"durationMs": 320
+					},
+					{
+						"index": 23,
+						"kind": "await",
+						"flow": "onboarding-steps-to-sign-in",
+						"target": "visible id=sign-in-screen",
+						"status": "pass",
+						"durationMs": 321
+					}
+				],
+				"startedAt": 1792124429899,
+				"durationMs": 8657
+			}
+		},
+		{
+			"path": "settings-account-switches-sign-out.yaml",
+			"status": "pass",
+			"report": {
+				"flow": "settings-account-switches-sign-out",
+				"device": "1A0EC51B-7069-4001-AF8A-432CA3B2D1FD",
+				"executionPrerequisite": "",
+				"ok": true,
+				"passed": 30,
+				"failed": 0,
+				"skipped": 15,
+				"errored": 0,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "settings-account-switches-sign-out",
+						"status": "pass",
+						"durationMs": 2101
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "fragments/open-sign-in.yaml",
+						"durationMs": 22
+					},
+					{
+						"index": 2,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 396
+					},
+					{
+						"index": 3,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 522
+					},
+					{
+						"index": 4,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 1,
+						"durationMs": 2
+					},
+					{
+						"index": 5,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 317
+					},
+					{
+						"index": 6,
+						"kind": "idle",
+						"flow": "next-plan",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 1056
+					},
+					{
+						"index": 7,
+						"kind": "when",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 2,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Welcome\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1013
+					},
+					{
+						"index": 8,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 10,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 11,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "await",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 6
+					},
+					{
+						"index": 13,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 1,
+						"durationMs": 5
+					},
+					{
+						"index": 14,
+						"kind": "tap",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 322
+					},
+					{
+						"index": 15,
+						"kind": "idle",
+						"flow": "next-test",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 1071
+					},
+					{
+						"index": 16,
+						"kind": "when",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Plan\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1016
+					},
+					{
+						"index": 17,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 18,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"depth": 3
+					},
+					{
+						"index": 19,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 20,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 21,
+						"kind": "await",
+						"flow": "next-test",
+						"target": "visible \"Test\" id=welcome-title",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 6
+					},
+					{
+						"index": 22,
+						"kind": "tap",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 320
+					},
+					{
+						"index": 23,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 326
+					},
+					{
+						"index": 24,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 781
+					},
+					{
+						"index": 25,
+						"kind": "type",
+						"flow": "settings-account-switches-sign-out",
+						"target": "into id=sign-in-email ← \"grace@example.com\"",
+						"status": "pass",
+						"durationMs": 2591
+					},
+					{
+						"index": 26,
+						"kind": "type",
+						"flow": "settings-account-switches-sign-out",
+						"target": "into id=sign-in-password ← \"password1\"",
+						"status": "pass",
+						"durationMs": 1754
+					},
+					{
+						"index": 27,
+						"kind": "tap",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=sign-in-submit",
+						"status": "pass",
+						"durationMs": 333
+					},
+					{
+						"index": 28,
+						"kind": "await",
+						"flow": "settings-account-switches-sign-out",
+						"target": "visible id=todos-screen",
+						"status": "pass",
+						"durationMs": 651
+					},
+					{
+						"index": 29,
+						"kind": "idle",
+						"flow": "settings-account-switches-sign-out",
+						"status": "pass",
+						"durationMs": 1032
+					},
+					{
+						"index": 30,
+						"kind": "tap",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=tab-settings",
+						"status": "pass",
+						"durationMs": 339
+					},
+					{
+						"index": 31,
+						"kind": "idle",
+						"flow": "settings-account-switches-sign-out",
+						"status": "pass",
+						"durationMs": 756
+					},
+					{
+						"index": 32,
+						"kind": "when",
+						"flow": "settings-account-switches-sign-out",
+						"target": "hidden id=settings-email",
+						"status": "skip",
+						"reason": "condition not met (hidden id=\"settings-email\") — block skipped (3 steps)",
+						"durationMs": 1025
+					},
+					{
+						"index": 33,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=tab-settings",
+						"depth": 1
+					},
+					{
+						"index": 34,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "settings-account-switches-sign-out",
+						"depth": 1
+					},
+					{
+						"index": 35,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "settings-account-switches-sign-out",
+						"target": "hidden id=settings-email",
+						"depth": 1
+					},
+					{
+						"index": 36,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=tab-settings",
+						"depth": 2
+					},
+					{
+						"index": 37,
+						"kind": "await",
+						"flow": "settings-account-switches-sign-out",
+						"target": "visible id=settings-email",
+						"status": "pass",
+						"durationMs": 11
+					},
+					{
+						"index": 38,
+						"kind": "assert",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=settings-email equals \"grace@example.com\"",
+						"status": "pass",
+						"durationMs": 13
+					},
+					{
+						"index": 39,
+						"kind": "assert",
+						"flow": "settings-account-switches-sign-out",
+						"target": "visible id=settings-notifications",
+						"status": "pass",
+						"durationMs": 11
+					},
+					{
+						"index": 40,
+						"kind": "tap",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=settings-notifications",
+						"status": "pass",
+						"durationMs": 328
+					},
+					{
+						"index": 41,
+						"kind": "tap",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=settings-dark-mode",
+						"status": "pass",
+						"durationMs": 336
+					},
+					{
+						"index": 42,
+						"kind": "tap",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=settings-dark-mode",
+						"status": "pass",
+						"durationMs": 330
+					},
+					{
+						"index": 43,
+						"kind": "tap",
+						"flow": "settings-account-switches-sign-out",
+						"target": "id=settings-sign-out",
+						"status": "pass",
+						"durationMs": 331
+					},
+					{
+						"index": 44,
+						"kind": "await",
+						"flow": "settings-account-switches-sign-out",
+						"target": "visible id=welcome-screen",
+						"status": "pass",
+						"durationMs": 322
+					}
+				],
+				"startedAt": 1792124438567,
+				"durationMs": 19732
+			}
+		},
+		{
+			"path": "sign-in-field-errors.yaml",
+			"status": "pass",
+			"report": {
+				"flow": "sign-in-field-errors",
+				"device": "1A0EC51B-7069-4001-AF8A-432CA3B2D1FD",
+				"executionPrerequisite": "",
+				"ok": true,
+				"passed": 23,
+				"failed": 0,
+				"skipped": 10,
+				"errored": 0,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "sign-in-field-errors",
+						"status": "pass",
+						"durationMs": 1846
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "fragments/open-sign-in.yaml",
+						"durationMs": 3
+					},
+					{
+						"index": 2,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 273
+					},
+					{
+						"index": 3,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 753
+					},
+					{
+						"index": 4,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 1,
+						"durationMs": 1
+					},
+					{
+						"index": 5,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 315
+					},
+					{
+						"index": 6,
+						"kind": "idle",
+						"flow": "next-plan",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 1034
+					},
+					{
+						"index": 7,
+						"kind": "when",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 2,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Welcome\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1016
+					},
+					{
+						"index": 8,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 10,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 11,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "await",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 13,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 1,
+						"durationMs": 6
+					},
+					{
+						"index": 14,
+						"kind": "tap",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 320
+					},
+					{
+						"index": 15,
+						"kind": "idle",
+						"flow": "next-test",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 1039
+					},
+					{
+						"index": 16,
+						"kind": "when",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Plan\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1011
+					},
+					{
+						"index": 17,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 18,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"depth": 3
+					},
+					{
+						"index": 19,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 20,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 21,
+						"kind": "await",
+						"flow": "next-test",
+						"target": "visible \"Test\" id=welcome-title",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 5
+					},
+					{
+						"index": 22,
+						"kind": "tap",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 319
+					},
+					{
+						"index": 23,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 326
+					},
+					{
+						"index": 24,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 846
+					},
+					{
+						"index": 25,
+						"kind": "type",
+						"flow": "sign-in-field-errors",
+						"target": "into id=sign-in-email ← \"not-an-email\"",
+						"status": "pass",
+						"durationMs": 2075
+					},
+					{
+						"index": 26,
+						"kind": "type",
+						"flow": "sign-in-field-errors",
+						"target": "into id=sign-in-password ← \"password1\"",
+						"status": "pass",
+						"durationMs": 1758
+					},
+					{
+						"index": 27,
+						"kind": "tap",
+						"flow": "sign-in-field-errors",
+						"target": "id=sign-in-submit",
+						"status": "pass",
+						"durationMs": 323
+					},
+					{
+						"index": 28,
+						"kind": "assert",
+						"flow": "sign-in-field-errors",
+						"target": "id=sign-in-email-error equals \"Enter a valid email address.\"",
+						"status": "pass",
+						"durationMs": 314
+					},
+					{
+						"index": 29,
+						"kind": "type",
+						"flow": "sign-in-field-errors",
+						"target": "into id=sign-in-email ← \"ada@example.com\"",
+						"status": "pass",
+						"durationMs": 2387
+					},
+					{
+						"index": 30,
+						"kind": "type",
+						"flow": "sign-in-field-errors",
+						"target": "into id=sign-in-password ← \"short\"",
+						"status": "pass",
+						"durationMs": 1351
+					},
+					{
+						"index": 31,
+						"kind": "tap",
+						"flow": "sign-in-field-errors",
+						"target": "id=sign-in-submit",
+						"status": "pass",
+						"durationMs": 333
+					},
+					{
+						"index": 32,
+						"kind": "assert",
+						"flow": "sign-in-field-errors",
+						"target": "id=sign-in-password-error equals \"Password must be at least 8 characters.\"",
+						"status": "pass",
+						"durationMs": 317
+					}
+				],
+				"startedAt": 1792124458317,
+				"durationMs": 18333
+			}
+		},
+		{
+			"path": "sign-in-locked-account.yaml",
+			"status": "pass",
+			"report": {
+				"flow": "sign-in-locked-account",
+				"device": "1A0EC51B-7069-4001-AF8A-432CA3B2D1FD",
+				"executionPrerequisite": "",
+				"ok": true,
+				"passed": 20,
+				"failed": 0,
+				"skipped": 10,
+				"errored": 0,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "sign-in-locked-account",
+						"status": "pass",
+						"durationMs": 1837
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "fragments/open-sign-in.yaml",
+						"durationMs": 5
+					},
+					{
+						"index": 2,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 224
+					},
+					{
+						"index": 3,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 1215
+					},
+					{
+						"index": 4,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 1,
+						"durationMs": 1
+					},
+					{
+						"index": 5,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 318
+					},
+					{
+						"index": 6,
+						"kind": "idle",
+						"flow": "next-plan",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 1002
+					},
+					{
+						"index": 7,
+						"kind": "when",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 2,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Welcome\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1016
+					},
+					{
+						"index": 8,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 10,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 11,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "await",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 6
+					},
+					{
+						"index": 13,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 1,
+						"durationMs": 3
+					},
+					{
+						"index": 14,
+						"kind": "tap",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 334
+					},
+					{
+						"index": 15,
+						"kind": "idle",
+						"flow": "next-test",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 979
+					},
+					{
+						"index": 16,
+						"kind": "when",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Plan\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1013
+					},
+					{
+						"index": 17,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 18,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"depth": 3
+					},
+					{
+						"index": 19,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 20,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 21,
+						"kind": "await",
+						"flow": "next-test",
+						"target": "visible \"Test\" id=welcome-title",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 22,
+						"kind": "tap",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 318
+					},
+					{
+						"index": 23,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 321
+					},
+					{
+						"index": 24,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 739
+					},
+					{
+						"index": 25,
+						"kind": "type",
+						"flow": "sign-in-locked-account",
+						"target": "into id=sign-in-email ← \"locked@example.com\"",
+						"status": "pass",
+						"durationMs": 2694
+					},
+					{
+						"index": 26,
+						"kind": "type",
+						"flow": "sign-in-locked-account",
+						"target": "into id=sign-in-password ← \"password1\"",
+						"status": "pass",
+						"durationMs": 1758
+					},
+					{
+						"index": 27,
+						"kind": "tap",
+						"flow": "sign-in-locked-account",
+						"target": "id=sign-in-submit",
+						"status": "pass",
+						"durationMs": 325
+					},
+					{
+						"index": 28,
+						"kind": "assert",
+						"flow": "sign-in-locked-account",
+						"target": "visible id=sign-in-error",
+						"status": "pass",
+						"durationMs": 329
+					},
+					{
+						"index": 29,
+						"kind": "assert",
+						"flow": "sign-in-locked-account",
+						"target": "visible \"This account is locked. Try another email.\"",
+						"status": "pass",
+						"durationMs": 10
+					}
+				],
+				"startedAt": 1792124476660,
+				"durationMs": 14708
+			}
+		},
+		{
+			"path": "sign-in-valid-credentials.yaml",
+			"status": "pass",
+			"report": {
+				"flow": "sign-in-valid-credentials",
+				"device": "1A0EC51B-7069-4001-AF8A-432CA3B2D1FD",
+				"executionPrerequisite": "",
+				"ok": true,
+				"passed": 21,
+				"failed": 0,
+				"skipped": 10,
+				"errored": 0,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "sign-in-valid-credentials",
+						"status": "pass",
+						"durationMs": 1902
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "fragments/open-sign-in.yaml",
+						"durationMs": 5
+					},
+					{
+						"index": 2,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 689
+					},
+					{
+						"index": 3,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 773
+					},
+					{
+						"index": 4,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 1,
+						"durationMs": 3
+					},
+					{
+						"index": 5,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 327
+					},
+					{
+						"index": 6,
+						"kind": "idle",
+						"flow": "next-plan",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 1047
+					},
+					{
+						"index": 7,
+						"kind": "when",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 2,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Welcome\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1015
+					},
+					{
+						"index": 8,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 9,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"depth": 3
+					},
+					{
+						"index": 10,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 11,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "await",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 13,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 1,
+						"durationMs": 10
+					},
+					{
+						"index": 14,
+						"kind": "tap",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 352
+					},
+					{
+						"index": 15,
+						"kind": "idle",
+						"flow": "next-test",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 863
+					},
+					{
+						"index": 16,
+						"kind": "when",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 2,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Plan\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1015
+					},
+					{
+						"index": 17,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 3
+					},
+					{
+						"index": 18,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"depth": 3
+					},
+					{
+						"index": 19,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3
+					},
+					{
+						"index": 20,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 21,
+						"kind": "await",
+						"flow": "next-test",
+						"target": "visible \"Test\" id=welcome-title",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 22,
+						"kind": "tap",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 318
+					},
+					{
+						"index": 23,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 322
+					},
+					{
+						"index": 24,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 1,
+						"status": "pass",
+						"durationMs": 723
+					},
+					{
+						"index": 25,
+						"kind": "type",
+						"flow": "sign-in-valid-credentials",
+						"target": "into id=sign-in-email ← \"Ada@Example.com\"",
+						"status": "pass",
+						"durationMs": 2613
+					},
+					{
+						"index": 26,
+						"kind": "type",
+						"flow": "sign-in-valid-credentials",
+						"target": "into id=sign-in-password ← \"password1\"",
+						"status": "pass",
+						"durationMs": 1779
+					},
+					{
+						"index": 27,
+						"kind": "tap",
+						"flow": "sign-in-valid-credentials",
+						"target": "id=sign-in-submit",
+						"status": "pass",
+						"durationMs": 325
+					},
+					{
+						"index": 28,
+						"kind": "await",
+						"flow": "sign-in-valid-credentials",
+						"target": "visible id=todos-screen",
+						"status": "pass",
+						"durationMs": 635
+					},
+					{
+						"index": 29,
+						"kind": "idle",
+						"flow": "sign-in-valid-credentials",
+						"status": "pass",
+						"durationMs": 1097
+					},
+					{
+						"index": 30,
+						"kind": "assert",
+						"flow": "sign-in-valid-credentials",
+						"target": "id=todos-remaining equals \"1 left\"",
+						"status": "pass",
+						"durationMs": 14
+					}
+				],
+				"startedAt": 1792124491377,
+				"durationMs": 16106
+			}
+		},
+		{
+			"path": "todo-detail-deep-link.yaml",
+			"status": "pass",
+			"report": {
+				"flow": "todo-detail-deep-link",
+				"device": "1A0EC51B-7069-4001-AF8A-432CA3B2D1FD",
+				"executionPrerequisite": "",
+				"ok": true,
+				"passed": 27,
+				"failed": 0,
+				"skipped": 15,
+				"errored": 0,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "todo-detail-deep-link",
+						"status": "pass",
+						"durationMs": 1940
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "signed-in-ada",
+						"target": "fragments/signed-in-ada.yaml",
+						"durationMs": 2
+					},
+					{
+						"index": 2,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "open-sign-in.yaml",
+						"depth": 1,
+						"durationMs": 1
+					},
+					{
+						"index": 3,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 165
+					},
+					{
+						"index": 4,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 733
+					},
+					{
+						"index": 5,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 2,
+						"durationMs": 2
+					},
+					{
+						"index": 6,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 317
+					},
+					{
+						"index": 7,
+						"kind": "idle",
+						"flow": "next-plan",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 1040
+					},
+					{
+						"index": 8,
+						"kind": "when",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Welcome\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1021
+					},
+					{
+						"index": 9,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 10,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"depth": 4
+					},
+					{
+						"index": 11,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 5
+					},
+					{
+						"index": 13,
+						"kind": "await",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 13
+					},
+					{
+						"index": 14,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 2,
+						"durationMs": 5
+					},
+					{
+						"index": 15,
+						"kind": "tap",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 328
+					},
+					{
+						"index": 16,
+						"kind": "idle",
+						"flow": "next-test",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 983
+					},
+					{
+						"index": 17,
+						"kind": "when",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Plan\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1015
+					},
+					{
+						"index": 18,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 19,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"depth": 4
+					},
+					{
+						"index": 20,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 4
+					},
+					{
+						"index": 21,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 5
+					},
+					{
+						"index": 22,
+						"kind": "await",
+						"flow": "next-test",
+						"target": "visible \"Test\" id=welcome-title",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 23,
+						"kind": "tap",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 320
+					},
+					{
+						"index": 24,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 316
+					},
+					{
+						"index": 25,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 794
+					},
+					{
+						"index": 26,
+						"kind": "run",
+						"status": "pass",
+						"flow": "submit-ada",
+						"target": "submit-ada.yaml",
+						"depth": 1,
+						"durationMs": 2
+					},
+					{
+						"index": 27,
+						"kind": "type",
+						"flow": "submit-ada",
+						"target": "into id=sign-in-email ← \"ada@example.com\"",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 2380
+					},
+					{
+						"index": 28,
+						"kind": "type",
+						"flow": "submit-ada",
+						"target": "into id=sign-in-password ← \"password1\"",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 1757
+					},
+					{
+						"index": 29,
+						"kind": "tap",
+						"flow": "submit-ada",
+						"target": "id=sign-in-submit",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 320
+					},
+					{
+						"index": 30,
+						"kind": "await",
+						"flow": "submit-ada",
+						"target": "visible id=todos-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 642
+					},
+					{
+						"index": 31,
+						"kind": "idle",
+						"flow": "submit-ada",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 953
+					},
+					{
+						"index": 32,
+						"kind": "tool",
+						"flow": "todo-detail-deep-link",
+						"status": "pass",
+						"tool": "open-url",
+						"result": {
+							"opened": true,
+							"url": "warden-example://todo/warden"
+						},
+						"args": {
+							"url": "warden-example://todo/warden",
+							"udid": "1A0EC51B-7069-4001-AF8A-432CA3B2D1FD"
+						},
+						"durationMs": 130
+					},
+					{
+						"index": 33,
+						"kind": "idle",
+						"flow": "todo-detail-deep-link",
+						"status": "pass",
+						"durationMs": 1229
+					},
+					{
+						"index": 34,
+						"kind": "when",
+						"flow": "todo-detail-deep-link",
+						"target": "hidden id=todo-detail-title",
+						"status": "skip",
+						"reason": "condition not met (hidden id=\"todo-detail-title\") — block skipped (3 steps)",
+						"durationMs": 1015
+					},
+					{
+						"index": 35,
+						"kind": "tool",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "todo-detail-deep-link",
+						"depth": 1
+					},
+					{
+						"index": 36,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "todo-detail-deep-link",
+						"depth": 1
+					},
+					{
+						"index": 37,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "todo-detail-deep-link",
+						"target": "hidden id=todo-detail-title",
+						"depth": 1
+					},
+					{
+						"index": 38,
+						"kind": "tool",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "todo-detail-deep-link",
+						"depth": 2
+					},
+					{
+						"index": 39,
+						"kind": "await",
+						"flow": "todo-detail-deep-link",
+						"target": "visible id=todo-detail-title",
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 40,
+						"kind": "assert",
+						"flow": "todo-detail-deep-link",
+						"target": "id=todo-detail-title equals \"Run the e2e suite with warden\"",
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 41,
+						"kind": "assert",
+						"flow": "todo-detail-deep-link",
+						"target": "id=todo-detail-status equals \"Done\"",
+						"status": "pass",
+						"durationMs": 6
+					}
+				],
+				"startedAt": 1792124507492,
+				"durationMs": 17734
+			}
+		},
+		{
+			"path": "todo-detail-open-toggle-delete.yaml",
+			"status": "pass",
+			"report": {
+				"flow": "todo-detail-open-toggle-delete",
+				"device": "1A0EC51B-7069-4001-AF8A-432CA3B2D1FD",
+				"executionPrerequisite": "",
+				"ok": true,
+				"passed": 32,
+				"failed": 0,
+				"skipped": 15,
+				"errored": 0,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "todo-detail-open-toggle-delete",
+						"status": "pass",
+						"durationMs": 1838
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "signed-in-ada",
+						"target": "fragments/signed-in-ada.yaml",
+						"durationMs": 1
+					},
+					{
+						"index": 2,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "open-sign-in.yaml",
+						"depth": 1,
+						"durationMs": 2
+					},
+					{
+						"index": 3,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 379
+					},
+					{
+						"index": 4,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 513
+					},
+					{
+						"index": 5,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 2,
+						"durationMs": 3
+					},
+					{
+						"index": 6,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 320
+					},
+					{
+						"index": 7,
+						"kind": "idle",
+						"flow": "next-plan",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 1053
+					},
+					{
+						"index": 8,
+						"kind": "when",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Welcome\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1014
+					},
+					{
+						"index": 9,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 10,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"depth": 4
+					},
+					{
+						"index": 11,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 5
+					},
+					{
+						"index": 13,
+						"kind": "await",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 6
+					},
+					{
+						"index": 14,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 2,
+						"durationMs": 3
+					},
+					{
+						"index": 15,
+						"kind": "tap",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 363
+					},
+					{
+						"index": 16,
+						"kind": "idle",
+						"flow": "next-test",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 1015
+					},
+					{
+						"index": 17,
+						"kind": "when",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Plan\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1016
+					},
+					{
+						"index": 18,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 19,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"depth": 4
+					},
+					{
+						"index": 20,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 4
+					},
+					{
+						"index": 21,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 5
+					},
+					{
+						"index": 22,
+						"kind": "await",
+						"flow": "next-test",
+						"target": "visible \"Test\" id=welcome-title",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 23,
+						"kind": "tap",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 316
+					},
+					{
+						"index": 24,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 321
+					},
+					{
+						"index": 25,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 707
+					},
+					{
+						"index": 26,
+						"kind": "run",
+						"status": "pass",
+						"flow": "submit-ada",
+						"target": "submit-ada.yaml",
+						"depth": 1,
+						"durationMs": 2
+					},
+					{
+						"index": 27,
+						"kind": "type",
+						"flow": "submit-ada",
+						"target": "into id=sign-in-email ← \"ada@example.com\"",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 2390
+					},
+					{
+						"index": 28,
+						"kind": "type",
+						"flow": "submit-ada",
+						"target": "into id=sign-in-password ← \"password1\"",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 1752
+					},
+					{
+						"index": 29,
+						"kind": "tap",
+						"flow": "submit-ada",
+						"target": "id=sign-in-submit",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 322
+					},
+					{
+						"index": 30,
+						"kind": "await",
+						"flow": "submit-ada",
+						"target": "visible id=todos-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 637
+					},
+					{
+						"index": 31,
+						"kind": "idle",
+						"flow": "submit-ada",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 988
+					},
+					{
+						"index": 32,
+						"kind": "tap",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-title-welcome",
+						"status": "pass",
+						"durationMs": 337
+					},
+					{
+						"index": 33,
+						"kind": "idle",
+						"flow": "todo-detail-open-toggle-delete",
+						"status": "pass",
+						"durationMs": 1208
+					},
+					{
+						"index": 34,
+						"kind": "when",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "hidden id=todo-detail-title",
+						"status": "skip",
+						"reason": "condition not met (hidden id=\"todo-detail-title\") — block skipped (3 steps)",
+						"durationMs": 1018
+					},
+					{
+						"index": 35,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-title-welcome",
+						"depth": 1
+					},
+					{
+						"index": 36,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "todo-detail-open-toggle-delete",
+						"depth": 1
+					},
+					{
+						"index": 37,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "hidden id=todo-detail-title",
+						"depth": 1
+					},
+					{
+						"index": 38,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-title-welcome",
+						"depth": 2
+					},
+					{
+						"index": 39,
+						"kind": "await",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "visible id=todo-detail-title",
+						"status": "pass",
+						"durationMs": 5
+					},
+					{
+						"index": 40,
+						"kind": "assert",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-detail-title equals \"Explore the example app\"",
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 41,
+						"kind": "assert",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-detail-status equals \"Active\"",
+						"status": "pass",
+						"durationMs": 5
+					},
+					{
+						"index": 42,
+						"kind": "tap",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-detail-toggle",
+						"status": "pass",
+						"durationMs": 317
+					},
+					{
+						"index": 43,
+						"kind": "assert",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-detail-status equals \"Done\"",
+						"status": "pass",
+						"durationMs": 319
+					},
+					{
+						"index": 44,
+						"kind": "tap",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "id=todo-detail-delete",
+						"status": "pass",
+						"durationMs": 311
+					},
+					{
+						"index": 45,
+						"kind": "await",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "visible id=todos-screen",
+						"status": "pass",
+						"durationMs": 320
+					},
+					{
+						"index": 46,
+						"kind": "assert",
+						"flow": "todo-detail-open-toggle-delete",
+						"target": "hidden id=todo-row-welcome",
+						"status": "pass",
+						"durationMs": 15
+					}
+				],
+				"startedAt": 1792124525237,
+				"durationMs": 19096
+			}
+		},
+		{
+			"path": "todos-add-complete-filter.yaml",
+			"status": "pass",
+			"report": {
+				"flow": "todos-add-complete-filter",
+				"device": "1A0EC51B-7069-4001-AF8A-432CA3B2D1FD",
+				"executionPrerequisite": "",
+				"ok": true,
+				"passed": 36,
+				"failed": 0,
+				"skipped": 10,
+				"errored": 0,
+				"steps": [
+					{
+						"index": 0,
+						"kind": "launch",
+						"flow": "todos-add-complete-filter",
+						"status": "pass",
+						"durationMs": 1939
+					},
+					{
+						"index": 1,
+						"kind": "run",
+						"status": "pass",
+						"flow": "signed-in-ada",
+						"target": "fragments/signed-in-ada.yaml",
+						"durationMs": 2
+					},
+					{
+						"index": 2,
+						"kind": "run",
+						"status": "pass",
+						"flow": "open-sign-in",
+						"target": "open-sign-in.yaml",
+						"depth": 1,
+						"durationMs": 3
+					},
+					{
+						"index": 3,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=welcome-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 228
+					},
+					{
+						"index": 4,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 740
+					},
+					{
+						"index": 5,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-plan",
+						"target": "next-plan.yaml",
+						"depth": 2,
+						"durationMs": 8
+					},
+					{
+						"index": 6,
+						"kind": "tap",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 316
+					},
+					{
+						"index": 7,
+						"kind": "idle",
+						"flow": "next-plan",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 1021
+					},
+					{
+						"index": 8,
+						"kind": "when",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 3,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Welcome\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1015
+					},
+					{
+						"index": 9,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 10,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"depth": 4
+					},
+					{
+						"index": 11,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "visible \"Welcome\" id=welcome-title",
+						"depth": 4
+					},
+					{
+						"index": 12,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-plan",
+						"target": "id=welcome-next",
+						"depth": 5
+					},
+					{
+						"index": 13,
+						"kind": "await",
+						"flow": "next-plan",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 7
+					},
+					{
+						"index": 14,
+						"kind": "run",
+						"status": "pass",
+						"flow": "next-test",
+						"target": "next-test.yaml",
+						"depth": 2,
+						"durationMs": 3
+					},
+					{
+						"index": 15,
+						"kind": "tap",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 319
+					},
+					{
+						"index": 16,
+						"kind": "idle",
+						"flow": "next-test",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 1002
+					},
+					{
+						"index": 17,
+						"kind": "when",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 3,
+						"status": "skip",
+						"reason": "condition not met (visible text=\"Plan\" id=\"welcome-title\") — block skipped (3 steps)",
+						"durationMs": 1013
+					},
+					{
+						"index": 18,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 4
+					},
+					{
+						"index": 19,
+						"kind": "idle",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"depth": 4
+					},
+					{
+						"index": 20,
+						"kind": "when",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "visible \"Plan\" id=welcome-title",
+						"depth": 4
+					},
+					{
+						"index": 21,
+						"kind": "tap",
+						"status": "skip",
+						"reason": "when block skipped",
+						"flow": "next-test",
+						"target": "id=welcome-next",
+						"depth": 5
+					},
+					{
+						"index": 22,
+						"kind": "await",
+						"flow": "next-test",
+						"target": "visible \"Test\" id=welcome-title",
+						"depth": 3,
+						"status": "pass",
+						"durationMs": 6
+					},
+					{
+						"index": 23,
+						"kind": "tap",
+						"flow": "open-sign-in",
+						"target": "id=welcome-get-started",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 320
+					},
+					{
+						"index": 24,
+						"kind": "await",
+						"flow": "open-sign-in",
+						"target": "visible id=sign-in-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 322
+					},
+					{
+						"index": 25,
+						"kind": "idle",
+						"flow": "open-sign-in",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 715
+					},
+					{
+						"index": 26,
+						"kind": "run",
+						"status": "pass",
+						"flow": "submit-ada",
+						"target": "submit-ada.yaml",
+						"depth": 1,
+						"durationMs": 1
+					},
+					{
+						"index": 27,
+						"kind": "type",
+						"flow": "submit-ada",
+						"target": "into id=sign-in-email ← \"ada@example.com\"",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 2376
+					},
+					{
+						"index": 28,
+						"kind": "type",
+						"flow": "submit-ada",
+						"target": "into id=sign-in-password ← \"password1\"",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 1755
+					},
+					{
+						"index": 29,
+						"kind": "tap",
+						"flow": "submit-ada",
+						"target": "id=sign-in-submit",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 319
+					},
+					{
+						"index": 30,
+						"kind": "await",
+						"flow": "submit-ada",
+						"target": "visible id=todos-screen",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 633
+					},
+					{
+						"index": 31,
+						"kind": "idle",
+						"flow": "submit-ada",
+						"depth": 2,
+						"status": "pass",
+						"durationMs": 1063
+					},
+					{
+						"index": 32,
+						"kind": "type",
+						"flow": "todos-add-complete-filter",
+						"target": "into id=todo-input ← \"Write e2e flows\"",
+						"status": "pass",
+						"durationMs": 2413
+					},
+					{
+						"index": 33,
+						"kind": "tap",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todo-add",
+						"status": "pass",
+						"durationMs": 341
+					},
+					{
+						"index": 34,
+						"kind": "assert",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todo-title-todo-1 equals \"Write e2e flows\"",
+						"status": "pass",
+						"durationMs": 336
+					},
+					{
+						"index": 35,
+						"kind": "assert",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todos-remaining equals \"2 left\"",
+						"status": "pass",
+						"durationMs": 15
+					},
+					{
+						"index": 36,
+						"kind": "tap",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todo-check-todo-1",
+						"status": "pass",
+						"durationMs": 338
+					},
+					{
+						"index": 37,
+						"kind": "assert",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todos-remaining equals \"1 left\"",
+						"status": "pass",
+						"durationMs": 338
+					},
+					{
+						"index": 38,
+						"kind": "tap",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todos-filter-active",
+						"status": "pass",
+						"durationMs": 337
+					},
+					{
+						"index": 39,
+						"kind": "assert",
+						"flow": "todos-add-complete-filter",
+						"target": "visible id=todo-row-welcome",
+						"status": "pass",
+						"durationMs": 12
+					},
+					{
+						"index": 40,
+						"kind": "assert",
+						"flow": "todos-add-complete-filter",
+						"target": "hidden id=todo-row-todo-1",
+						"status": "pass",
+						"durationMs": 327
+					},
+					{
+						"index": 41,
+						"kind": "tap",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todo-check-welcome",
+						"status": "pass",
+						"durationMs": 329
+					},
+					{
+						"index": 42,
+						"kind": "assert",
+						"flow": "todos-add-complete-filter",
+						"target": "visible id=todos-empty",
+						"status": "pass",
+						"durationMs": 330
+					},
+					{
+						"index": 43,
+						"kind": "tap",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todos-filter-done",
+						"status": "pass",
+						"durationMs": 331
+					},
+					{
+						"index": 44,
+						"kind": "assert",
+						"flow": "todos-add-complete-filter",
+						"target": "visible id=todo-row-todo-1",
+						"status": "pass",
+						"durationMs": 334
+					},
+					{
+						"index": 45,
+						"kind": "assert",
+						"flow": "todos-add-complete-filter",
+						"target": "id=todos-remaining equals \"0 left\"",
+						"status": "pass",
+						"durationMs": 15
+					}
+				],
+				"startedAt": 1792124544341,
+				"durationMs": 21161
+			}
+		}
+	]
+}

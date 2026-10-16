@@ -1,3 +1,4 @@
+import { memoryReadFrom } from "../batch/results.testing";
 import type { ReadySpec } from "../batch/serve";
 import type { MetroOwner } from "../metro";
 import type { BatchDeps, KillSignal, ProcHandle, SpawnOptions } from "./batch";
@@ -15,6 +16,8 @@ export type Harness = {
 	metro: () => Spawned | undefined;
 	/** armed `after` timers (job timeouts): call `fire` to expire one */
 	timers: Array<{ ms: number; fire: () => void; cancelled: boolean }>;
+	/** every `every` interval (heartbeats, the grid's redraw, the flow poller): call `fn` to fire one tick */
+	tickers: Array<{ ms: number; fn: () => void; stopped: boolean }>;
 	/** every Metro probe: `<port> <projectRoot>` */
 	metroProbes: string[];
 	prewarmed: string[];
@@ -80,6 +83,7 @@ export function harness(
 		warmed: [],
 		warmClosed: [],
 		timers: [],
+		tickers: [],
 		metroProbes: [],
 		prewarmed: [],
 		deps: {
@@ -141,6 +145,7 @@ export function harness(
 				if (data === undefined) throw new Error(`ENOENT: ${path}`);
 				return data;
 			},
+			readFrom: (path, offset) => memoryReadFrom(h.files)(path, offset),
 			mkdir: async (dir) => {
 				h.dirs.push(dir);
 			},
@@ -150,7 +155,13 @@ export function harness(
 				h.signals.set(signal, handler);
 				return () => h.signals.delete(signal);
 			},
-			every: (_ms, _fn) => () => {},
+			every: (ms, fn) => {
+				const ticker = { ms, fn, stopped: false };
+				h.tickers.push(ticker);
+				return () => {
+					ticker.stopped = true;
+				};
+			},
 			after: (ms, fn) => {
 				const timer = { ms, fire: fn, cancelled: false };
 				h.timers.push(timer);
@@ -180,6 +191,7 @@ export function harness(
 							opts.warm === "snapshot-fail" ? { success: false, error: "AX denied" } : { success: true, data: null },
 						close: async () => {
 							h.warmClosed.push(udid);
+							h.events.push(`warm-close:${udid}`);
 						},
 					},
 				};

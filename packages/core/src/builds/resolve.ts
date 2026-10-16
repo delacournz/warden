@@ -15,14 +15,17 @@ export type EnsureResult = {
 
 export type EasStepOutcome = { kind: "hit"; path: string } | { kind: "miss"; reason: string };
 
+/** What the device probe found: is the app there, and (iOS) its container so `matches` need not ask again. */
+export type InstalledApp = { present: boolean; container?: string };
+
 /** Device half of the resolver — absent when only the artifact is wanted. */
 export type DeviceSteps = {
 	/** hash recorded in the `installs` table for this device + bundle id */
 	installedHash: () => string | undefined;
 	/** does the device really have the bundle id (simctl get_app_container / pm path)? */
-	confirm: () => AsyncResult<boolean>;
-	/** does the installed app match the cached build at `cachedPath` (CFBundleVersion + binary)? Absent = trust the record. */
-	matches?: (cachedPath: string) => AsyncResult<boolean>;
+	confirm: () => AsyncResult<InstalledApp>;
+	/** does the installed app (as `confirm` found it) match the cached build at `cachedPath` (CFBundleVersion + binary)? Absent = trust the record. */
+	matches?: (cachedPath: string, installed: InstalledApp) => AsyncResult<boolean>;
 	/** remove the app (and its data) so the install starts fresh; absent is fine */
 	uninstall: () => AsyncResult<void>;
 	/** `installMode: "clean"`: wipe the installed app's data (and the keychain when asked), keeping the binary */
@@ -93,13 +96,13 @@ async function alreadyInstalled(steps: ResolveSteps, device: DeviceSteps): Promi
 	if (device.installedHash() !== steps.hash) return ok(false);
 	const confirmed = await device.confirm();
 	if (!confirmed.success) return confirmed;
-	if (!confirmed.data) {
+	if (!confirmed.data.present) {
 		steps.log("install record is stale (app missing on device) — reinstalling");
 		return ok(false);
 	}
 	const cached = device.matches ? steps.cached() : undefined;
 	if (device.matches && cached) {
-		const same = await device.matches(cached);
+		const same = await device.matches(cached, confirmed.data);
 		if (!same.success) return same;
 		if (!same.data) steps.log("app on device differs from the cached build — reinstalling");
 		return ok(same.data);

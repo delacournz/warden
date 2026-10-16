@@ -1,6 +1,22 @@
-import { cancel, confirm, isCancel, multiselect, type Option, select } from "@clack/prompts";
+import type { Option } from "@clack/prompts";
 import { Chalk, type ChalkInstance } from "chalk";
-import ora from "ora";
+
+/** Memoised on first call. */
+function lazy<T>(load: () => T): () => T {
+	let value: T | undefined;
+	return () => {
+		value ??= load();
+		return value;
+	};
+}
+
+/**
+ * ora and @clack/prompts (≈35 modules, 15–20 ms) only matter when a command shows a spinner or asks a question, so
+ * they load on first use rather than for every `warden` invocation (hooks, heartbeats, `ls`). `require`, not
+ * `import()`: `spinner` and `cancelled` are synchronous.
+ */
+const loadOra = lazy(() => (require("ora") as typeof import("ora")).default);
+const loadClack = lazy(() => require("@clack/prompts") as typeof import("@clack/prompts"));
 
 /** The glyphs every command shares with the `warden batch` grid. */
 export const SYMBOLS = { ok: "✓", fail: "✗", warn: "!", run: "▶", idle: "·" } as const;
@@ -74,7 +90,7 @@ export function terminalUi(env: Record<string, string | undefined>): Ui {
 		rich: isRich(env, process.stdout.isTTY === true, process.stderr.isTTY === true),
 		columns: process.stdout.columns ?? process.stderr.columns ?? 80,
 		spinner: (text) => {
-			const s = ora({
+			const s = loadOra()({
 				text,
 				color: "cyan",
 				stream: process.stderr,
@@ -103,14 +119,17 @@ export function terminalUi(env: Record<string, string | undefined>): Ui {
 			};
 		},
 		confirm: async (message, initialValue = false) => {
+			const { confirm, isCancel } = loadClack();
 			const answer = await confirm({ message, initialValue, output: process.stderr });
 			return isCancel(answer) ? undefined : answer;
 		},
 		select: async <T extends string>(message: string, choices: Choice<T>[]): Promise<T | undefined> => {
+			const { select, isCancel } = loadClack();
 			const answer = await select<T>({ message, output: process.stderr, options: choices.map(toOption) });
 			return isCancel(answer) ? undefined : answer;
 		},
 		multiselect: async <T extends string>(message: string, choices: Choice<T>[]): Promise<T[] | undefined> => {
+			const { multiselect, isCancel } = loadClack();
 			const answer = await multiselect<T>({
 				message,
 				output: process.stderr,
@@ -120,6 +139,6 @@ export function terminalUi(env: Record<string, string | undefined>): Ui {
 			});
 			return isCancel(answer) ? undefined : answer;
 		},
-		cancelled: (message) => cancel(message, { output: process.stderr }),
+		cancelled: (message) => loadClack().cancel(message, { output: process.stderr }),
 	};
 }

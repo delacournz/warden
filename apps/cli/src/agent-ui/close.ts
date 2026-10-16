@@ -6,6 +6,7 @@ import { stopHelper } from "./helper";
 import { uiError } from "./output";
 import { runUi, type UiOptionValues } from "./run";
 import { readState } from "./state";
+import { stopHelperAfter } from "./stop-helper-after";
 
 export type CloseOptionValues = UiOptionValues & {
 	/** `--app` alone = true (the app `open` launched), `--app com.x.y` = that bundle id */
@@ -13,17 +14,10 @@ export type CloseOptionValues = UiOptionValues & {
 	release?: true;
 };
 
-/** `after` hook for `releaseDevices`: stop the device's helper when its lease goes away. */
-export function stopHelperAfter(ctx: Pick<CommandContext, "env" | "now">): (udid: string) => Promise<void> {
-	return async (udid) => {
-		await stopHelper(ctx, udid);
-	};
-}
-
 /**
  * `warden ui close [--app] [--release]`: end this device's `warden ui` session. Stops the helper daemon
- * (≤ ~2.3 s even if it ignores `shutdown`); `--app` terminates the app first; `--release` also releases
- * the lease, which stops the helper through `releaseDevices`.
+ * (≤ ~2.3 s even if it ignores `shutdown`) — closing is the explicit way to end a resident helper, which a plain
+ * release leaves to its idle timeout; `--app` terminates the app first; `--release` also releases the lease.
  */
 export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValues): Promise<number> {
 	return runUi(ctx, deps, "close", opts, async (device, env) => {

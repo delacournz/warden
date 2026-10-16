@@ -1,0 +1,8 @@
+Tasks: 450 total,   1 running, 449 sleeping,   0 stopped,   0 zombie
+  Mem:  3919952K total,  3788588K used,   131364K free,    10416K buffers
+ 800%cpu  40%user   0%nice  20%sys 740%idle   0%iow   0%irq   0%sirq   0%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 4321 u0_a123      10 -10  14G 250M 120M S  25.0   6.5   0:30.11 nz.co.delacour.warden.example
+ 5000 shell        20   0  12G  80M  40M S  10.5   2.1   0:05.00 app_process / com.android.commands.uiautomator runtime
+ 5100 u0_a124      20   0  11G  60M  30M S   4.5   1.5   0:02.00 androidx.test.runner instrumentation
+ 1000 system       18  -2  15G 400M 200M S   9.0  10.0   1:00.00 system_server

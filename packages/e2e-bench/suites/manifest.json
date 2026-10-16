@@ -1,0 +1,136 @@
+{
+	"$comment": "Canonical parity test ids → each framework's native test name (what its reporter prints) and the expected step labels. `bench doctor` fails a framework whose suite is missing an id; an unmapped native name in a framework's output is a parity breach (status failed, phase run).",
+	"tests": {
+		"onboarding/steps-to-sign-in": {
+			"title": "onboarding steps through to sign-in",
+			"steps": ["launch", "assert welcome", "next → Plan", "next → Test", "get started", "assert sign-in"],
+			"native": {
+				"warden": "onboarding.e2e.ts › onboarding steps through to sign-in",
+				"maestro": "onboarding-steps-to-sign-in",
+				"argent": "onboarding-steps-to-sign-in",
+				"agent-device": "onboarding-steps-to-sign-in",
+				"tester-army": "onboarding steps through to sign-in",
+				"detox": "onboarding steps through to sign-in"
+			}
+		},
+		"sign-in/field-errors": {
+			"title": "invalid email and short password show field errors",
+			"steps": [
+				"open sign-in",
+				"submit invalid email",
+				"assert email error",
+				"submit short password",
+				"assert password error"
+			],
+			"native": {
+				"warden": "sign-in.e2e.ts › invalid email and short password show field errors",
+				"maestro": "sign-in-field-errors",
+				"argent": "sign-in-field-errors",
+				"agent-device": "sign-in-field-errors",
+				"tester-army": "invalid email and short password show field errors",
+				"detox": "invalid email and short password show field errors"
+			}
+		},
+		"sign-in/locked-account": {
+			"title": "a locked account shows the form alert",
+			"steps": ["open sign-in", "submit locked", "assert form error", "assert alert text"],
+			"native": {
+				"warden": "sign-in.e2e.ts › a locked account shows the form alert",
+				"maestro": "sign-in-locked-account",
+				"argent": "sign-in-locked-account",
+				"agent-device": "sign-in-locked-account",
+				"tester-army": "a locked account shows the form alert",
+				"detox": "a locked account shows the form alert"
+			}
+		},
+		"sign-in/valid-credentials": {
+			"title": "valid credentials land on todos",
+			"steps": ["open sign-in", "submit valid", "assert todos", "assert 1 left"],
+			"native": {
+				"warden": "sign-in.e2e.ts › valid credentials land on todos",
+				"maestro": "sign-in-valid-credentials",
+				"argent": "sign-in-valid-credentials",
+				"agent-device": "sign-in-valid-credentials",
+				"tester-army": "valid credentials land on todos",
+				"detox": "valid credentials land on todos"
+			}
+		},
+		"todos/add-complete-filter": {
+			"title": "add, complete and filter todos",
+			"steps": [
+				"signed in",
+				"add todo",
+				"assert todo-1 + 2 left",
+				"check todo-1",
+				"assert checked + 1 left",
+				"filter active",
+				"check welcome",
+				"assert empty",
+				"filter done",
+				"assert 0 left"
+			],
+			"native": {
+				"warden": "todos.e2e.ts › add, complete and filter todos",
+				"maestro": "todos-add-complete-filter",
+				"argent": "todos-add-complete-filter",
+				"agent-device": "todos-add-complete-filter",
+				"tester-army": "add, complete and filter todos",
+				"detox": "add, complete and filter todos"
+			}
+		},
+		"todo-detail/open-toggle-delete": {
+			"title": "open a todo, mark it done, then delete it",
+			"steps": [
+				"signed in",
+				"open welcome row",
+				"assert title + Active",
+				"toggle",
+				"assert Done",
+				"delete",
+				"assert todos + row gone"
+			],
+			"native": {
+				"warden": "todo-detail.e2e.ts › open a todo, mark it done, then delete it",
+				"maestro": "todo-detail-open-toggle-delete",
+				"argent": "todo-detail-open-toggle-delete",
+				"agent-device": "todo-detail-open-toggle-delete",
+				"tester-army": "open a todo, mark it done, then delete it",
+				"detox": "open a todo, mark it done, then delete it"
+			}
+		},
+		"todo-detail/deep-link": {
+			"title": "deep link opens a todo by id",
+			"steps": ["signed in", "open warden-example://todo/warden", "assert title", "assert Done"],
+			"native": {
+				"warden": "todo-detail.e2e.ts › deep link opens a todo by id",
+				"maestro": "todo-detail-deep-link",
+				"argent": "todo-detail-deep-link",
+				"agent-device": "todo-detail-deep-link",
+				"tester-army": "deep link opens a todo by id",
+				"detox": "deep link opens a todo by id"
+			}
+		},
+		"settings/account-switches-sign-out": {
+			"title": "settings shows the account, toggles switches and signs out",
+			"steps": [
+				"signed in as grace",
+				"settings tab",
+				"assert email",
+				"assert notifications on",
+				"toggle notifications off",
+				"dark mode on",
+				"dark mode off",
+				"sign out",
+				"assert welcome"
+			],
+			"native": {
+				"warden": "settings.e2e.ts › settings shows the account, toggles switches and signs out",
+				"maestro": "settings-account-switches-sign-out",
+				"argent": "settings-account-switches-sign-out",
+				"agent-device": "settings-account-switches-sign-out",
+				"tester-army": "settings shows the account, toggles switches and signs out",
+				"detox": "settings shows the account, toggles switches and signs out"
+			}
+		}
+	}
+}

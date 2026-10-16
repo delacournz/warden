@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ok } from "@delacour/warden-types/result";
 import { failWith, fakeDriver, snapshotOf } from "./driver.testing";
-import { pressKeys, type RepeatingKeys, typeText } from "./typing";
+import { canSelectAll, pressKeys, type RepeatingKeys, type SelectsAll, typeText } from "./typing";
 
 function recorder() {
 	const sleeps: number[] = [];
@@ -71,5 +71,27 @@ describe("pressKeys with a repeating driver", () => {
 		expect(sleeps).toEqual([]);
 		await pressKeys(driver, sleep, "Backspace", 1);
 		expect(base.callsOf("key")).toHaveLength(1);
+	});
+});
+
+describe("canSelectAll", () => {
+	test("is true only for a driver that offers selectAll", () => {
+		expect(canSelectAll(fakeDriver({ screens: [snapshotOf([])] }))).toBe(false);
+		expect(canSelectAll(fakeDriver({ screens: [snapshotOf([])], selectAll: true }))).toBe(true);
+	});
+
+	test("selectAll is recorded as one call", async () => {
+		const driver = fakeDriver({ screens: [snapshotOf([])], selectAll: true });
+		if (!canSelectAll(driver)) throw new Error("expected selectAll");
+		expect((await driver.selectAll()).success).toBe(true);
+		expect(driver.callsOf("selectAll")).toEqual([{ method: "selectAll" }]);
+	});
+
+	test("an extra method matching the capability type is enough", () => {
+		const base = fakeDriver({ screens: [snapshotOf([])] });
+		const driver = Object.assign(base, {
+			selectAll: async () => ok(undefined),
+		} satisfies Record<keyof SelectsAll, unknown>);
+		expect(canSelectAll(driver)).toBe(true);
 	});
 });

@@ -15,7 +15,15 @@ import {
 } from "./android-argv";
 import { runChecked } from "./android-device";
 
-export type AppDeps = { session: AdbSession; exec: Exec; adb: string; serial: string; log?: Logger };
+export type AppDeps = {
+	session: AdbSession;
+	exec: Exec;
+	adb: string;
+	serial: string;
+	log?: Logger;
+	/** the app under test: `openUrl` is addressed to it (`am start -p`) so no other handler or chooser can take the link */
+	appPackage?: string;
+};
 
 const ok = { success: true as const, data: undefined };
 
@@ -71,7 +79,7 @@ export function createAppCommands(deps: AppDeps): AppCommands {
 	};
 
 	const openUrl: AppCommands["openUrl"] = async (url) => {
-		const res = await session.run(shellCommand(startUrlArgv(url)));
+		const res = await session.run(shellCommand(startUrlArgv(url, deps.appPackage)));
 		if (!res.success) return res;
 		if (res.data.exitCode !== 0 || /^Error:|Exception/m.test(res.data.stdout)) {
 			return driverErr("E_APP_UNAVAILABLE", `no activity handles ${url}: ${res.data.stdout.trim().slice(0, 200)}`);

@@ -1,0 +1,15 @@
+  PID  PPID    RSS  %CPU COMMAND
+    1     0  12816   1.5 /sbin/launchd
+  100     1 204800  10.0 bun /repo/apps/cli/src/cli.ts e2e example
+  101   100 102400  20.5 /usr/bin/node /repo/runner.js --flag value
+  102   101  51200   5.0 /Users/x/bin/warden-simd --udid AAAA-BBBB
+  200     1  40960   3.0 /Applications/Xcode.app/launchd_sim /Users/x/Library/Developer/CoreSimulator/Devices/AAAA-BBBB/data/var/run/launchd_bootstrap.plist
+  201   200  81920   7.5 /Users/x/Library/Developer/CoreSimulator/Volumes/iOS/RuntimeRoot/usr/libexec/backboardd
+  202   201  30720   2.0 /Users/x/Library/Developer/CoreSimulator/Devices/AAAA-BBBB/data/Containers/Bundle/Application/A/Example.app/Example
+  300     1  20480   1.0 /opt/homebrew/bin/java -jar maestro-cli.jar
+  400     1   1024   0.0 /bin/zsh -l
+  500     1  50000   2.0 /opt/x/simulator-server ios --id 1A0EC51B-FOREIGN
+  501     1  60000   2.0 node /home/o/.agent-device/daemon.js
+  502     1  70000   2.0 xcodebuild test-without-building -destination id=1A0EC51B-FOREIGN AgentDeviceRunner
+  503     1  80000   2.0 node /opt/argent/tool-server.cjs
+  600     1  10000   1.0 /Users/x/.agent-device-bench/agent-device/daemon.js --state

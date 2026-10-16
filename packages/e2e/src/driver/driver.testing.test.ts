@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { canProbeFrontmost, canReadAlertOn } from "./alerts";
 import { el, failWith, fakeDriver, snapshotOf, unwrap } from "./driver.testing";
 
 const home = snapshotOf([
@@ -149,6 +150,31 @@ describe("fakeDriver", () => {
 		expect(alert?.title).toBe("Allow notifications?");
 		expect(alert?.message).toBe("Updates");
 		expect(alert?.buttons.map((b) => b.label)).toEqual(["Allow", "Don't Allow"]);
+	});
+
+	test("a plain fake has neither optional capability", () => {
+		const d = fakeDriver({ screens: [home] });
+		expect(canReadAlertOn(d)).toBe(false);
+		expect(canProbeFrontmost(d)).toBe(false);
+	});
+
+	test("alertBackends offers alertOn: listed readers see the alert, the others none", async () => {
+		const sheet = snapshotOf([el("alert", { label: "Title", children: [el("button", { label: "Open" })] })]);
+		const d = fakeDriver({ screens: [sheet], alertBackends: ["ax"] });
+		if (!canReadAlertOn(d)) throw new Error("alertOn expected");
+		expect(unwrap(await d.alertOn("ax"))?.buttons.map((b) => b.label)).toEqual(["Open"]);
+		expect(unwrap(await d.alertOn("axbridge"))).toBeNull();
+		expect(d.callsOf("alertOn").map((c) => c.backend)).toEqual(["ax", "axbridge"]);
+	});
+
+	test("frontmost offers isFrontmost against the app in front now", async () => {
+		let front: string | undefined = "com.apple.springboard";
+		const d = fakeDriver({ screens: [home], frontmost: () => front });
+		if (!canProbeFrontmost(d)) throw new Error("isFrontmost expected");
+		expect(unwrap(await d.isFrontmost("com.example.app"))).toBe(false);
+		front = "com.example.app";
+		expect(unwrap(await d.isFrontmost("com.example.app"))).toBe(true);
+		expect(d.callsOf("isFrontmost")).toHaveLength(2);
 	});
 
 	test("capabilities can be overridden", () => {

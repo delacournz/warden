@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type Exec, execError } from "../exec";
+import { findNodeBin } from "../node-bin";
 import type { Platform } from "../types";
 import { FINGERPRINT_TIMEOUT_MS } from "./builds.defaults";
 import type { Project } from "./config";
@@ -43,11 +43,7 @@ export function parseFingerprintOutput(stdout: string): Result<string> {
 
 /** `node_modules/.bin/fingerprint` nearest to `root` (hoisted monorepos put it at the repo root). */
 export function findFingerprintBin(root: string, exists: (path: string) => boolean = existsSync): string | undefined {
-	for (let dir = root; ; dir = dirname(dir)) {
-		const bin = join(dir, "node_modules", ".bin", "fingerprint");
-		if (exists(bin)) return bin;
-		if (dirname(dir) === dir) return undefined;
-	}
+	return findNodeBin(root, "fingerprint", exists);
 }
 
 /**
@@ -93,7 +89,9 @@ export function releaseKey(native: string): string {
 /**
  * The cache / install key of `project`. Native projects: the native fingerprint (salted for Release). JS-aware projects
  * (`fingerprint.include: "native+js"`): sha256 of the native fingerprint + a content hash of the
- * `jsInputs` files, so a JS-only change is a new build (a Release binary embeds its bundle).
+ * `jsInputs` files, so a JS-only change is a new build (a Release binary embeds its bundle). The two
+ * halves are independent, so they are computed side by side: the JS hash (a couple of `git ls-files`)
+ * hides inside the native fingerprint's runtime.
  */
 export async function computeCacheKey(
 	exec: Exec,
@@ -101,18 +99,22 @@ export async function computeCacheKey(
 	platform: Platform,
 	readFile?: ReadFile
 ): AsyncResult<CacheKey> {
-	const native = await computeFingerprint(exec, project, platform);
+	const [native, js] = await Promise.all([
+		computeFingerprint(exec, project, platform),
+		project.jsInputs === undefined
+			? undefined
+			: jsInputsHash({
+					exec,
+					root: project.root,
+					jsInputs: project.jsInputs,
+					...(readFile ? { readFile } : {}),
+				}),
+	]);
 	if (!native.success) return native;
-	if (project.jsInputs === undefined) {
+	if (js === undefined) {
 		const key = project.buildConfiguration === "Release" ? releaseKey(native.data) : native.data;
 		return ok({ key, native: native.data });
 	}
-	const js = await jsInputsHash({
-		exec,
-		root: project.root,
-		jsInputs: project.jsInputs,
-		...(readFile ? { readFile } : {}),
-	});
 	if (!js.success) return js;
 	return ok({ key: combineKey(native.data, js.data), native: native.data, js: js.data });
 }

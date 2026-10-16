@@ -22,20 +22,50 @@ export const e2eFlowSchema = z
 	})
 	.strict();
 
+/** How a suite's spec processes are laid out: one per device running its share of the flows, or one per flow. */
+export type E2eIsolation = "device" | "flow";
+
 type RunSettings = {
-	mode: "per-flow" | "single";
+	isolate?: E2eIsolation | undefined;
+	/** the old spelling of `isolate` */
+	mode?: "per-flow" | "single" | undefined;
 	passes: number;
 	count?: number | undefined;
 	profile?: string | undefined;
 	devices?: Array<{ profile: string; default: boolean }> | undefined;
 };
 
-/** What `mode` and `devices` rule out. */
+const MODE_ISOLATION = { "per-flow": "flow", single: "device" } as const satisfies Record<
+	NonNullable<RunSettings["mode"]>,
+	E2eIsolation
+>;
+
+/** What the suite asked for, by either spelling (`isolate`, else the old `mode`); undefined = left to the default. */
+function askedIsolation(suite: Pick<RunSettings, "isolate" | "mode">): E2eIsolation | undefined {
+	return suite.isolate ?? (suite.mode === undefined ? undefined : MODE_ISOLATION[suite.mode]);
+}
+
+/**
+ * The isolation a suite runs with: what it asked for (`isolate`, else the old `mode`), else one
+ * process per device, except that `passes` > 1 needs a process per flow (a flow's passes are
+ * re-runs of that flow).
+ */
+export function suiteIsolation(suite: Pick<RunSettings, "isolate" | "mode" | "passes">): E2eIsolation {
+	return askedIsolation(suite) ?? (suite.passes > 1 ? "flow" : "device");
+}
+
+/** What `isolate` / `mode` and `devices` rule out. */
 function runIssues(suite: RunSettings): Array<{ message: string; path: string[] }> {
 	const issues: Array<{ message: string; path: string[] }> = [];
-	if (suite.mode === "single" && suite.passes > 1)
+	const asked = askedIsolation(suite);
+	if (suite.isolate !== undefined && suite.mode !== undefined && MODE_ISOLATION[suite.mode] !== suite.isolate)
 		issues.push({
-			message: 'passes > 1 needs mode "per-flow" (one process cannot be re-run per flow)',
+			message: `mode "${suite.mode}" means isolate "${MODE_ISOLATION[suite.mode]}", not "${suite.isolate}" (drop mode)`,
+			path: ["mode"],
+		});
+	else if (asked === "device" && suite.passes > 1)
+		issues.push({
+			message: 'passes > 1 needs isolate "flow" (one process cannot be re-run per flow)',
 			path: ["passes"],
 		});
 	const { devices } = suite;
@@ -115,9 +145,13 @@ export const e2eSuiteSchema = z
 		runner: removedKey("runner", "flows run with @delacour/warden-e2e, see spec"),
 		/** the spec runner's settings: app under test, launch args, timeouts */
 		spec: e2eSpecSchema.optional(),
-		/** per-flow: one `bun test` process per flow, one worker per device. single: one process per device runs its shard of the flows (round-robin by flow id) */
-		mode: z.enum(["per-flow", "single"]).default("per-flow"),
-		/** a spec process still going after this long is killed and counts as failed */
+		/** device (default): one `bun test` process per device runs its shard of the flows (round-robin by flow id). flow: one process per flow, one worker per device */
+		isolate: z.enum(["device", "flow"]).optional(),
+		/** the old spelling of `isolate`: per-flow = flow, single = device */
+		mode: z.enum(["per-flow", "single"]).optional(),
+		/** `always`: shut down the devices warden booted once the gate passes. `idle`: leave them booted for the next run and let `warden gc` reap them when idle. Default: `idle` locally, `always` under CI. `--no-shutdown` wins */
+		shutdown: z.enum(["always", "idle"]).optional(),
+		/** per flow: a spec process still going after this long for each flow it runs is killed and counts as failed */
 		jobTimeoutMs: z.number().int().min(1_000).default(DEFAULT_JOB_TIMEOUT_MS),
 		/** device legs, each with its own pool, run concurrently (replaces `profile` / `count`) */
 		devices: z.array(e2eDeviceLegSchema).min(1).optional(),

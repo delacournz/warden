@@ -8,7 +8,8 @@ import { el, fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.t
 import { ok } from "@delacour/warden-types/result";
 import type { DevtoolsDeps } from "../agent-ui/devtools-cli";
 import type { UiDeps } from "../agent-ui/driver";
-import { readState, uiDir, writeState } from "../agent-ui/state";
+import { uiDir } from "../agent-ui/paths";
+import { readState, writeState } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createUiCommand } from "./ui";

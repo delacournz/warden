@@ -121,6 +121,16 @@ function parseRead(stdout: string): Result<{ screen: ScreenArea; windows: SimWin
 const osascript = (exec: Exec, script: string, ...args: string[]) =>
 	exec(["osascript", "-l", "JavaScript", "-e", script, ...args], { timeoutMs: 15_000 });
 
+/**
+ * Is Simulator.app running? `pgrep -xq` (~10 ms) answers before an osascript JXA start (35 ms and
+ * up) is spent asking an app that is not there — the usual case for a headless run. Only a plain
+ * "no match" (exit 1) says no; any other outcome (pgrep missing or failing) means "ask osascript".
+ */
+async function simulatorRunning(exec: Exec): Promise<boolean> {
+	const found = await exec(["pgrep", "-xq", "Simulator"]);
+	return found.exitCode !== 1;
+}
+
 function scriptError(cmd: string, result: { exitCode: number; stdout: string; stderr: string }): string {
 	const hint = /assistive|-1719|-25211|not allowed/i.test(result.stderr)
 		? " — allow your terminal in System Settings → Privacy & Security → Accessibility"
@@ -133,6 +143,7 @@ function scriptError(cmd: string, result: { exitCode: number; stdout: string; st
  * launches Simulator.app: no windows → nothing to do. Returns the device names it arranged.
  */
 export async function arrangeSimWindows(exec: Exec): AsyncResult<{ arranged: string[] }> {
+	if (!(await simulatorRunning(exec))) return ok({ arranged: [] });
 	const read = await osascript(exec, READ_SCRIPT);
 	if (read.exitCode !== 0) return err(scriptError("(read windows)", read));
 	const parsed = parseRead(read.stdout);
@@ -156,8 +167,10 @@ const SETTLE_MS = 500;
 
 /**
  * After a claim: best-effort arrange (macOS, unless `WARDEN_ARRANGE=0`). A freshly booted sim's
- * window can lag the boot, so while Simulator.app is showing windows but not yet every claimed
- * device, retry briefly. Errors are swallowed — window layout never fails a claim.
+ * window can lag the boot, so while Simulator.app is showing windows but not yet every device in
+ * `claimed`, retry briefly. `claimed` is who to wait for: the sims this claim booted — a sim that
+ * was already running keeps whatever window (or none, when it booted headless) it had, so waiting
+ * for it would only burn the retries. Errors are swallowed — window layout never fails a claim.
  */
 export async function autoArrangeSimWindows(deps: AutoArrangeDeps, claimed: readonly string[]): Promise<void> {
 	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0") return;
@@ -178,6 +191,8 @@ export type HideDeps = {
 	exec: Exec;
 	/** headless never fails a run: problems come out here */
 	warn: (line: string) => void;
+	/** a device the window close shut down, before it is booted again: whatever is bound to its old boot (a resident `warden-simd`) must go */
+	onShutDown?: (udid: string) => Promise<void>;
 	os?: NodeJS.Platform;
 	sleep?: (ms: number) => Promise<void>;
 };
@@ -218,6 +233,7 @@ async function restoreDetachPref(deps: HideDeps, before: DetachPref): Promise<vo
 
 /** Titles of the open Simulator.app windows that belong to `sims`; undefined after a warned error. */
 async function leasedTitles(deps: HideDeps, sims: readonly LeasedSim[]): Promise<string[] | undefined> {
+	if (!(await simulatorRunning(deps.exec))) return [];
 	const read = await osascript(deps.exec, READ_SCRIPT);
 	if (read.exitCode !== 0) {
 		deps.warn(`headless: ${scriptError("(read windows)", read)}`);
@@ -298,6 +314,7 @@ async function rebootShutDown(deps: HideDeps, sims: readonly LeasedSim[]): Promi
 	const rebooted: string[] = [];
 	for (const sim of down) {
 		deps.warn(`headless: closing ${sim.name}'s window shut it down — booting it again without a window`);
+		await deps.onShutDown?.(sim.udid);
 		await deps.exec(["xcrun", "simctl", "boot", sim.udid]);
 		const ready = await deps.exec(["xcrun", "simctl", "bootstatus", sim.udid, "-b"], { timeoutMs: BOOT_TIMEOUT_MS });
 		if (ready.exitCode === 0) rebooted.push(sim.name);

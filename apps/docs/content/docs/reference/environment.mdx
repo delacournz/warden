@@ -16,6 +16,7 @@ icon: Variable
 | `WARDEN_ARRANGE=0` | don't tile Simulator.app windows after iOS claims |
 | `WARDEN_HEADLESS=1` | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/guides/headless)); `warden dev` ignores it |
 | `WARDEN_AUTO_GC=0` | turn off background auto-gc |
+| `WARDEN_ANDROID_UIAD=0` | Android: don't use the resident UiAutomation server (`warden-uiad`); snapshots, settle and input go through `uiautomator dump` and `input` ([Android driver](/docs/reference/e2e-driver#android-driver)) |
 | `WARDEN_BACKGROUND=0` | turn off every detached worker (auto-gc, SessionEnd shutdown) |
 | `WARDEN_RELEASE_REPO` | GitHub repo `warden update` downloads releases from (default `delacournz/warden`) |
 | `WARDEN_SIMD`, `WARDEN_HELPER_DIR`, `WARDEN_SIMD_SOCKET`, `WARDEN_HELPER_URL` | the iOS driver helper: binary, directory, running socket, download URL ([iOS driver helper](/docs/reference/e2e-driver)) |
@@ -64,6 +65,7 @@ icon: Variable
 | `WARDEN_SIMD_SOCKET` | the pre-warmed iOS helper's socket (`warmDrivers`); unset, the driver starts a helper itself |
 | `WARDEN_SIMD`, `WARDEN_HELPER_DIR` | where the `warden-simd` binary is ([iOS driver helper](/docs/reference/e2e-driver)); `warden e2e` sets `WARDEN_HELPER_DIR` |
 | `WARDEN_SIMD_PACE_MS`, `WARDEN_SIMD_HOLD_MS`, `WARDEN_SIMD_REPEAT_GAP_MS` | read by the helper process: default keyboard pacing in ms (quiet after each key 30, key down to up 40, extra pause before a repeated key 300). A request's `paceMs` / `holdMs` / `repeatGapMs` wins. A React Native text field digests about 45-50 ms per key, so lower values lose characters |
+| `WARDEN_SIMD_IDLE_TIMEOUT` | how long a `warden-simd` that `warden` starts keeps running with no client and no request: a duration, `10m` by default ([iOS driver helper](/docs/reference/e2e-driver)) |
 | `WARDEN_SIMD_STREAM_IDLE_S` | read by the helper process: close the quiescence stream after this many seconds without a `settle`. Unset or `0` keeps it open for the helper's life ([iOS driver helper](/docs/reference/e2e-driver)) |
 | `WARDEN_SIMD_TRACE` | `1`: the helper logs one debug event per quiescence sample (same as `warden-simd --trace`). Set it yourself |
 | `WARDEN_HEADLESS` | `1` on a headless run |

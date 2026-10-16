@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { el, snap } from "./element.testing";
-import { descendantsOf, indexSnapshot, isWithin } from "./nodes";
+import { allFixtureSnapshots } from "./fixtures.testing";
+import { descendantsOf, indexSnapshot, isWithin, type NodeEntry, type NodeIndex } from "./nodes";
+import { normalizeText } from "./text";
 
 describe("indexSnapshot structure", () => {
 	const leafA = el("button", { label: "A", identifier: "a" });
@@ -200,4 +202,91 @@ describe("subtreeText", () => {
 		const index = indexSnapshot(snap([el("other", {}, [el("text", { label: "x" }), el("text", { label: "y" })])]));
 		expect(index.entries[0]?.fragments).toEqual(["x", "y"]);
 	});
+});
+
+/**
+ * The subtree text as it was computed while indexing, kept here as the reference the lazy version must equal: a
+ * node's own texts (label, text, value, name) minus anything its descendants already say, then the descendants' texts.
+ */
+function eagerSubtree(index: NodeIndex): { fragments: string[]; subtreeText: string }[] {
+	const result: { fragments: string[]; subtreeText: string }[] = [];
+	const visit = (entry: NodeEntry): string[] => {
+		const below = entry.children.flatMap(visit);
+		const belowText = below.join(" ");
+		const seen = new Set<string>();
+		for (const raw of [entry.element.label, entry.element.text, entry.value]) {
+			const text = raw === undefined ? "" : normalizeText(raw);
+			if (text !== "") seen.add(text);
+		}
+		if (entry.name !== undefined && normalizeText(entry.name) !== "") seen.add(normalizeText(entry.name));
+		const own = [...seen].filter((text) => text !== belowText && !below.includes(text));
+		const fragments = [...own, ...below];
+		result[entry.position] = { fragments, subtreeText: fragments.join(" ") };
+		return fragments;
+	};
+	for (const entry of index.entries) if (entry.parent === undefined) visit(entry);
+	return result;
+}
+
+/** A fixed shuffle (a multiplicative walk over the positions), so the order is odd but the test is repeatable. */
+function scrambled<T>(items: readonly T[]): T[] {
+	const count = items.length;
+	if (count < 3) return [...items];
+	let step = 7;
+	while (count % step === 0 || step >= count) step += 2;
+	return items.map((_, position) => items[(position * step + 1) % count] as T);
+}
+
+describe("lazy subtree text", () => {
+	test("is not built by indexing: the accessors compute on first read and then keep their answer", () => {
+		const index = indexSnapshot(snap([el("other", {}, [el("text", { label: "x" }), el("text", { label: "y" })])]));
+		const [root] = index.entries;
+		for (const key of ["fragments", "subtreeText"] as const) {
+			expect(typeof Object.getOwnPropertyDescriptor(root, key)?.get).toBe("function");
+		}
+		expect(root?.fragments).toBe(root?.fragments);
+		expect(root?.subtreeText).toBe("x y");
+	});
+
+	test("reading a child first, then its parent, gives the parent the child's answer", () => {
+		const index = indexSnapshot(
+			snap([el("other", { label: "Hello" }, [el("text", { label: "Hello" })]), el("text", { label: "tail" })])
+		);
+		const [parent, child] = index.entries;
+		expect(child?.subtreeText).toBe("Hello");
+		expect(parent?.subtreeText).toBe("Hello");
+		expect(parent?.fragments).toEqual(["Hello"]);
+	});
+
+	for (const { name, snapshot } of allFixtureSnapshots()) {
+		describe(name, () => {
+			const orders: Record<string, (entries: readonly NodeEntry[]) => NodeEntry[]> = {
+				"document order": (entries) => [...entries],
+				"deepest first": (entries) => [...entries].reverse(),
+				"scrambled order": scrambled,
+			};
+			for (const [label, order] of Object.entries(orders)) {
+				test(`equals the eager computation for every node, read in ${label}`, () => {
+					const index = indexSnapshot(snapshot);
+					const reference = eagerSubtree(indexSnapshot(snapshot));
+					expect(index.entries.length).toBe(reference.length);
+					expect(reference.some((texts) => texts.subtreeText !== "")).toBe(true);
+					for (const entry of order(index.entries)) {
+						const want = reference[entry.position];
+						expect(entry.subtreeText).toBe(want?.subtreeText as string);
+						expect(entry.fragments).toEqual(want?.fragments as string[]);
+					}
+				});
+			}
+
+			test("reading only the root does not change what a node deep inside answers", () => {
+				const lazy = indexSnapshot(snapshot);
+				const eager = indexSnapshot(snapshot);
+				void lazy.entries[0]?.subtreeText;
+				const deepest = [...lazy.entries].sort((a, b) => b.depth - a.depth)[0];
+				if (deepest === undefined) return;
+				expect(deepest.subtreeText).toBe(eager.entries[deepest.position]?.subtreeText as string);
+			});
+		});
+	}
 });

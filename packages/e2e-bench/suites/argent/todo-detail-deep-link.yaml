@@ -1,0 +1,18 @@
+steps:
+  - launch: nz.co.delacour.warden.example
+  - run: fragments/signed-in-ada
+  - tool: open-url
+    args: { url: "warden-example://todo/warden" }
+  - await: { idle: true, timeout: 6000 }
+  - when: { hidden: { id: todo-detail-title } }
+    steps:
+      - tool: open-url
+        args: { url: "warden-example://todo/warden" }
+      - await: { idle: true, timeout: 6000 }
+      - when: { hidden: { id: todo-detail-title } }
+        steps:
+          - tool: open-url
+            args: { url: "warden-example://todo/warden" }
+  - await: { visible: { id: todo-detail-title } }
+  - assert: { text: { in: { id: todo-detail-title }, equals: Run the e2e suite with warden } }
+  - assert: { text: { in: { id: todo-detail-status }, equals: Done } }

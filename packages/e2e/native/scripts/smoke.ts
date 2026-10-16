@@ -2,19 +2,24 @@
 /**
  * Hand-run smoke test of the iOS driver against a real, booted simulator (never part of `bun test`):
  *
- *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--out <dir>] [--kill-bridge] [--kill-helper]
+ *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--out <dir>] [--fills <n>] [--kill-bridge] [--kill-helper]
  *
- * open → health → launch → settle → snapshot → tap first button → fill a textfield (if present) →
+ * open → health → launch → settle → snapshot → tap first button → fill a textfield (if present; `--fills <n>` then
+ * fills it n more times through the spec `fill` clear path and counts the lost characters) →
  * swipe → screenshot → settle → terminate → close. Prints the duration of each step; exits 1 when a
  * step fails; ops the helper does not implement yet (`E_BAD_REQUEST`) are reported as skipped. Lease the simulator first (`warden claim ios`) and install the app (`warden app ensure`).
  */
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec } from "@delacour/warden-core/exec";
-import type { Driver, DriverResult, Element, Point, Snapshot } from "../../src/driver/driver.types";
+import { canProbeFrontmost, canReadAlertOn } from "../../src/driver/alerts";
+import type { AlertInfo, Driver, DriverResult, Element, Point, Snapshot } from "../../src/driver/driver.types";
 import { openIosDriver } from "../../src/driver/ios/ios-driver";
 import { ENV_NAMES } from "../../src/env";
+import { focusPoint } from "../../src/screen/actions";
+import { focusClearType } from "../../src/screen/field";
+import { indexSnapshot } from "../../src/screen/nodes";
 
 const DEFAULT_BUNDLE = "nz.co.delacour.warden.example";
 const TYPED = "Hello, World 123!";
@@ -31,6 +36,7 @@ if (!udid) {
 }
 const bundle = arg("bundle") ?? DEFAULT_BUNDLE;
 const out = arg("out") ?? mkdtempSync(join(tmpdir(), "warden-smoke-"));
+mkdirSync(out, { recursive: true });
 
 let failures = 0;
 
@@ -116,6 +122,44 @@ async function readBack(
 	return { ...(value !== undefined ? { value } : {}), ms: Math.round(performance.now() - started) };
 }
 
+const FILL_TEXTS = ["ada@example.com", "grace@example.com", "password1"];
+
+/**
+ * `--fills <n>`: fills the field n times through the same clear-and-type path as the spec `fill` (`focusClearType`: select
+ * all, then the typed text replaces the selection, on a driver that has it), reading each result back. Any read that is not exactly the text is a
+ * lost or extra character.
+ */
+async function fillLoop(driver: Driver, identifier: string | undefined, fills: number): Promise<void> {
+	let lost = 0;
+	let totalMs = 0;
+	for (let fill = 0; fill < fills; fill += 1) {
+		const text = FILL_TEXTS[fill % FILL_TEXTS.length] as string;
+		const snap = await driver.snapshot();
+		const entry = snap.success
+			? indexSnapshot(snap.data).entries.find((candidate) => candidate.element.identifier === identifier)
+			: undefined;
+		if (!entry) {
+			lost += 1;
+			process.stdout.write(`FAIL  fill #${fill + 1}: field ${identifier ?? "?"} not found\n`);
+			continue;
+		}
+		const started = performance.now();
+		const typed = await focusClearType(driver, (ms) => Bun.sleep(ms), focusPoint(entry.element.frame), entry, text);
+		const back = typed.success ? await readBack(driver, identifier, (value) => value === text) : undefined;
+		totalMs += Math.round(performance.now() - started);
+		if (back?.value !== text) {
+			lost += 1;
+			process.stdout.write(
+				`FAIL  fill #${fill + 1} ${JSON.stringify(text)} -> ${JSON.stringify(back?.value)} ${typed.success ? "" : typed.error.code}\n`
+			);
+		}
+	}
+	if (lost > 0) failures += 1;
+	process.stdout.write(
+		`${lost === 0 ? "ok   " : "FAIL "} ${fills} fills            ${Math.round(totalMs / Math.max(1, fills))} ms each incl. read back, ${lost} not exact\n`
+	);
+}
+
 async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 	const field = await reachTextfield(driver);
 	if (field) {
@@ -139,12 +183,40 @@ async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 		process.stdout.write(
 			`${pastedOk ? "ok   " : "FAIL "} read back (paste)  ${String(pasted.ms).padStart(5)} ms  ${JSON.stringify(pasted.value)}\n`
 		);
+		const fills = Number(arg("fills") ?? 0);
+		if (fills > 0) await fillLoop(driver, field.identifier, fills);
 	} else process.stdout.write("skip  fill                     no textfield reachable\n");
 
 	const { width, height } = snapshot.screen;
 	await step("swipe up", () =>
 		driver.swipe({ x: width / 2, y: height * 0.7 }, { x: width / 2, y: height * 0.3 }, { durationMs: 300 })
 	);
+}
+
+/**
+ * `alert` through both readers against one reader at a time, and the frontmost probe (PERF-1.3 / 1.4): on a quiet app
+ * screen each one-reader read should cost about half of the two-reader `alert()`, and the app that was just launched is
+ * in front while a system app is not.
+ */
+async function systemAlertChecks(driver: Driver): Promise<void> {
+	const describe = (alert: AlertInfo | null) => (alert === null ? "none" : `${alert.buttons.length} buttons`);
+	await step("alert (both)", () => driver.alert(), describe);
+	if (canReadAlertOn(driver)) {
+		await step("alert (bridge only)", () => driver.alertOn("axbridge"), describe);
+		await step("alert (host only)", () => driver.alertOn("ax"), describe);
+	}
+	if (canProbeFrontmost(driver)) {
+		await step(
+			"frontmost (app)",
+			() => driver.isFrontmost(bundle),
+			(front) => `frontmost=${front}`
+		);
+		await step(
+			"frontmost (settings)",
+			() => driver.isFrontmost("com.apple.Preferences"),
+			(front) => `frontmost=${front}`
+		);
+	}
 }
 
 /** Without a snapshot (helper lacks the AX ops) there are no elements to aim at, so exercise raw HID at the screen centre. */
@@ -241,6 +313,7 @@ await step(
 	() => driver.settle({ timeoutMs: 10_000 }),
 	(s) => `quiet=${s.quiet} waited=${s.waitedMs} ms`
 );
+await systemAlertChecks(driver);
 const snapshot = await step(
 	"snapshot",
 	() => driver.snapshot(),

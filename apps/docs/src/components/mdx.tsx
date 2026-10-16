@@ -6,6 +6,17 @@ import { TypeTable } from "fumadocs-ui/components/type-table";
 import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { MDXComponents } from "mdx/types";
 import type { ComponentProps } from "react";
+import {
+	BenchFootprint,
+	BenchHero,
+	BenchMatrix,
+	BenchProvider,
+	BenchResources,
+	BenchRun,
+	BenchStartup,
+	BenchSteps,
+	BenchSuite,
+} from "@/components/bench/bench-comparison";
 import { isFileHref } from "@/lib/shared";
 
 /**
@@ -23,6 +34,15 @@ export function getMDXComponents(components?: MDXComponents) {
 		a: Anchor,
 		Accordion,
 		Accordions,
+		BenchFootprint,
+		BenchHero,
+		BenchMatrix,
+		BenchProvider,
+		BenchResources,
+		BenchRun,
+		BenchStartup,
+		BenchSteps,
+		BenchSuite,
 		File,
 		Files,
 		Folder,

@@ -1,0 +1,25 @@
+open nz.co.delacour.warden.example --relaunch
+wait "id=\"welcome-screen\"" 30000
+press "id=\"welcome-next\""
+wait "id=\"welcome-title\" text=\"Plan\"" 4000
+press "id=\"welcome-next\""
+wait "id=\"welcome-title\" text=\"Test\"" 4000
+press "id=\"welcome-get-started\""
+wait "id=\"sign-in-screen\"" 4000
+wait stable 500 5000
+press "id=\"sign-in-email\""
+type "grace@example.com"
+press "id=\"sign-in-password\""
+type "password1"
+press "id=\"sign-in-submit\""
+wait "id=\"todos-screen\"" 15000
+press "id=\"tab-settings\""
+wait "id=\"settings-email\" text=\"grace@example.com\"" 4000
+wait "id=\"settings-notifications\" value=\"1\"" 4000
+press "id=\"settings-notifications\""
+wait "id=\"settings-notifications\" value=\"0\"" 4000
+press "id=\"settings-dark-mode\""
+wait "id=\"settings-dark-mode\" value=\"1\"" 4000
+press "id=\"settings-dark-mode\""
+press "id=\"settings-sign-out\""
+wait "id=\"welcome-screen\"" 4000

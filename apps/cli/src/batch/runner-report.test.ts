@@ -48,3 +48,66 @@ describe("resultsReport", () => {
 		expect(resultsReport(truncated, flows, 0, identity)?.flows).toEqual({ todos: "passed" });
 	});
 });
+
+describe("resultsReport over retried attempts", () => {
+	const first = jsonl(
+		result(file("onboarding"), "welcome", "passed", on("A")),
+		result(file("sign-in"), "valid", "passed", on("A")),
+		result(file("sign-in"), "invalid", "failed", on("A"))
+	);
+
+	test("a flow that failed and then passed on the retry is passed: the last attempt decides", () => {
+		const retry = jsonl(
+			result(file("sign-in"), "valid", "passed", on("A")),
+			result(file("sign-in"), "invalid", "passed", on("A"))
+		);
+		expect(resultsReport([first, retry], flows, 0, identity)).toEqual({
+			flows: { onboarding: "passed", "sign-in": "passed" },
+			devices: {
+				A: [
+					{ id: "onboarding", mark: "passed" },
+					{ id: "sign-in", mark: "passed" },
+				],
+			},
+		});
+	});
+
+	test("a flow the retry did not run keeps its earlier mark", () => {
+		const retry = jsonl(result(file("sign-in"), "invalid", "passed", on("A")));
+		expect(resultsReport([first, retry], flows, 0, identity)?.flows).toEqual({
+			onboarding: "passed",
+			"sign-in": "passed",
+		});
+		const failedRetry = jsonl(result(file("sign-in"), "invalid", "failed", on("A")));
+		expect(resultsReport([first, failedRetry], flows, 0, identity)?.flows["sign-in"]).toBe("failed");
+	});
+
+	test("a flow that passed and then failed on a later attempt is failed", () => {
+		const passing = jsonl(result(file("todos"), "t", "passed", on("A")));
+		const failing = jsonl(result(file("todos"), "t", "failed", on("A")));
+		expect(resultsReport([passing, failing], flows, 0, identity)?.flows).toEqual({ todos: "failed" });
+	});
+
+	test("a failure on one device is not undone by a pass on another (device legs)", () => {
+		const onB = jsonl(result(file("sign-in"), "invalid", "passed", on("B")));
+		const report = resultsReport([first, onB], flows, 0, identity);
+		expect(report?.flows["sign-in"]).toBe("failed");
+		expect(report?.devices).toEqual({
+			A: [
+				{ id: "onboarding", mark: "passed" },
+				{ id: "sign-in", mark: "failed" },
+			],
+			B: [{ id: "sign-in", mark: "passed" }],
+		});
+	});
+
+	test("attempts from before the run started are ignored, and an empty attempt changes nothing", () => {
+		const stale = jsonl(result(file("todos"), "t", "failed", { ...on("A"), startedAt: 1 }));
+		const fresh = jsonl(result(file("todos"), "t", "passed", { ...on("A"), startedAt: 9_000 }));
+		expect(resultsReport([stale, fresh, ""], flows, 5_000, identity)?.flows).toEqual({ todos: "passed" });
+	});
+
+	test("a single text is one attempt, as before", () => {
+		expect(resultsReport(first, flows, 0, identity)).toEqual(resultsReport([first], flows, 0, identity));
+	});
+});

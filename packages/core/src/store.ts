@@ -351,6 +351,26 @@ export class Store {
 	forgetDevice(platform: Platform, id: string): void {
 		this.db.query("DELETE FROM devices WHERE platform = ? AND id = ?").run(platform, id);
 	}
+
+	/**
+	 * What a `warden gc` pass could find to do, from the store alone (no simulator is asked):
+	 * - `staleLeases`: leases whose heartbeat expired and whose process is gone;
+	 * - `idleDevices`: recorded devices nobody holds that went idle (unused for `idleMs`) after the
+	 *   last pass (`last_gc_at`). Whether one is still booted only the provider knows; a pass that
+	 *   ran after the device went idle has dealt with it, so it is not work again until it is used.
+	 */
+	gcWork(now: number, idleMs: number, pidAlive: PidAlive): { staleLeases: number; idleDevices: number } {
+		const staleLeases = this.listLeases().filter((l) => !isLeaseAlive(l, now, pidAlive)).length;
+		const lastGc = Number(this.getMeta("last_gc_at") ?? 0);
+		const row = this.db
+			.query<{ n: number }, [number, number, number]>(
+				`SELECT COUNT(*) AS n FROM devices d
+				 WHERE d.last_used_at <= ?1 - ?2 AND d.last_used_at + ?2 > ?3
+				   AND NOT EXISTS (SELECT 1 FROM leases l WHERE l.resource_key = 'device:' || d.platform || ':' || d.id)`
+			)
+			.get(now, idleMs, lastGc);
+		return { staleLeases, idleDevices: row?.n ?? 0 };
+	}
 }
 
 function migrate(db: Database): void {
@@ -373,6 +393,7 @@ export function openStore(path: string = defaultDbPath()): Store {
 	const db = new Database(path, { create: true, strict: true });
 	db.exec("PRAGMA busy_timeout = 15000");
 	db.exec("PRAGMA journal_mode = WAL");
+	db.exec("PRAGMA synchronous = NORMAL");
 	db.exec("PRAGMA foreign_keys = ON");
 	migrate(db);
 	return new Store(db);

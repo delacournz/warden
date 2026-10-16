@@ -44,6 +44,8 @@ export function motionEventArgv(action: MotionAction, point: Point): string[] {
 
 /** Lowest sdk with `input motionevent` (Android 8.0). */
 export const MOTIONEVENT_MIN_SDK = 26;
+/** `input keycombination` (and so select-all by Ctrl+A) exists from Android 13. */
+export const SELECT_ALL_MIN_SDK = 33;
 export const DRAG_STEPS = 8;
 
 /** Fractional seconds for toybox `sleep` (`0.500`). */
@@ -178,8 +180,10 @@ export function textArgvs(text: string): Result<string[][], DriverError> {
 	return { success: true, data: splitForInputText(text).map((piece) => ["input", "text", piece.replace(/ /g, "%s")]) };
 }
 
-export function startUrlArgv(url: string): string[] {
-	return ["am", "start", "-a", "android.intent.action.VIEW", "-d", url];
+/** `am start` a VIEW intent for `url`; `packageName` (`-p`) pins it to the app under test instead of any handler. */
+export function startUrlArgv(url: string, packageName?: string): string[] {
+	const argv = ["am", "start", "-a", "android.intent.action.VIEW", "-d", url];
+	return packageName === undefined ? argv : [...argv, "-p", packageName];
 }
 
 /** Launch a package's launcher activity without knowing its activity name. */
@@ -195,15 +199,33 @@ export function pmClearArgv(packageName: string): string[] {
 	return ["pm", "clear", packageName];
 }
 
-/** Turn all three animation scales off (flake source in e2e). */
+/** The three global settings that scale animations (flake source in e2e), in the order they are read and saved. */
+export const ANIMATION_SETTINGS = [
+	"window_animation_scale",
+	"transition_animation_scale",
+	"animator_duration_scale",
+] as const;
+
+export type AnimationSetting = (typeof ANIMATION_SETTINGS)[number];
+
+/** A value per animation setting as `settings get global` prints it: a number, or `null` when never set. */
+export type AnimationValues = Record<AnimationSetting, string>;
+
+/** Turn all three animation scales off. */
 export function animationScaleArgvs(): string[][] {
-	return ["window_animation_scale", "transition_animation_scale", "animator_duration_scale"].map((key) => [
-		"settings",
-		"put",
-		"global",
-		key,
-		"0",
-	]);
+	return ANIMATION_SETTINGS.map((key) => ["settings", "put", "global", key, "0"]);
+}
+
+/** Read all three animation scales, one value per output line. */
+export function animationReadArgvs(): string[][] {
+	return ANIMATION_SETTINGS.map((key) => ["settings", "get", "global", key]);
+}
+
+/** Put saved scales back: a value is `put` again, a setting that was never set (`null`) is deleted. */
+export function animationRestoreArgvs(values: AnimationValues): string[][] {
+	return ANIMATION_SETTINGS.map((key) =>
+		values[key] === "null" ? ["settings", "delete", "global", key] : ["settings", "put", "global", key, values[key]]
+	);
 }
 
 /** Host argv: `adb -s <serial> exec-out screencap -p` (binary PNG on stdout). */
@@ -285,6 +307,13 @@ export function uimodeSetArgv(dark: boolean): string[] {
 /** `input keycombination` (API 33+): modifiers first, the key last. */
 export function keycombinationArgv(keycodes: readonly number[]): string[] {
 	return ["input", "keycombination", ...keycodes.map(String)];
+}
+
+const KEYCODE_A = 29;
+
+/** Ctrl+A: select the whole text of the focused field (API 33+, see `SELECT_ALL_MIN_SDK`). */
+export function selectAllArgv(): string[] {
+	return keycombinationArgv([modifierKeycode("ctrl"), KEYCODE_A]);
 }
 
 export function modifierKeycode(modifier: "shift" | "cmd" | "alt" | "ctrl"): number {

@@ -1,0 +1,26 @@
+steps:
+  - launch: nz.co.delacour.warden.example
+  - run: fragments/open-sign-in
+  - type: { into: { id: sign-in-email }, text: grace@example.com, submit: false }
+  - type: { into: { id: sign-in-password }, text: password1, submit: false }
+  - tap: { id: sign-in-submit }
+  - await: { visible: { id: todos-screen }, timeout: 15000 }
+  - await: { idle: true }
+  - tap: { id: tab-settings }
+  - await: { idle: true, timeout: 4000 }
+  - when: { hidden: { id: settings-email } }
+    steps:
+      - tap: { id: tab-settings }
+      - await: { idle: true, timeout: 4000 }
+      - when: { hidden: { id: settings-email } }
+        steps:
+          - tap: { id: tab-settings }
+  - await: { visible: { id: settings-email } }
+  - assert: { text: { in: { id: settings-email }, equals: grace@example.com } }
+  # argent flows cannot read a switch's on/off state (text is the label only): the toggle assertions of the other frameworks are not expressible, the taps are kept
+  - assert: { visible: { id: settings-notifications } }
+  - tap: { id: settings-notifications }
+  - tap: { id: settings-dark-mode }
+  - tap: { id: settings-dark-mode }
+  - tap: { id: settings-sign-out }
+  - await: { visible: { id: welcome-screen } }

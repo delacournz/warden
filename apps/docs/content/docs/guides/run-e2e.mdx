@@ -41,7 +41,6 @@ The flows are `*.e2e.ts` specs written with [`@delacour/warden-e2e`](/docs/guide
   app: { variant: "dev" },
   metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
   spec: { bundleId: "com.example.app" },
-  mode: "single",
   count: 2,
   jobTimeoutMs: 15 * 60_000,
 },
@@ -49,8 +48,8 @@ The flows are `*.e2e.ts` specs written with [`@delacour/warden-e2e`](/docs/guide
 
 - `spec` says how the specs run: the app under test (`bundleId`, default the project's), extra `launchArgs` and the `timeout`, `actionTimeout` and `assertionTimeout`. See the [field reference](/docs/reference/configuration#e2e).
 - `metro: {}` makes warden lease a port, start `expo start --dev-client` there in the project root, and call it ready only once that port is proven to serve **this** checkout. Another worktree's Metro on the port stops the run with `port <p> is served by <dir>, not this worktree`.
-- `mode: "single"` runs one spec process per device, each with its share of the flows (sharded round-robin by flow id), instead of one process per flow.
-- `jobTimeoutMs` kills a spec process that hangs (exit 124) so the run always ends.
+- By default one spec process runs per device, each with its share of the flows (sharded round-robin by flow id), so the process start, the preload and the driver connect are paid once per device instead of once per flow. `isolate: "flow"` runs one process per flow instead; see [Isolation](/docs/guides/e2e#isolation).
+- `jobTimeoutMs` is per flow: a spec process that hangs is killed (exit 124) once it has run that long for each flow it was given, so the run always ends.
 
 The specs read what warden exports and need no config file of their own. With a Metro suite, warden passes `--initialUrl <metro url>` as the first launch argument, which is what the Expo dev client reads at launch, so every `app.open()` in a flow lands on warden's bundler.
 
@@ -90,7 +89,7 @@ When the run ends, every failed flow is listed with its failing tests, the first
 
 `e2e-report.json` gives each flow `verdict`, `attempts` and `tests[]` (`title`, `status`, `durationMs`, `error`, `artifacts`). A flow fails when any of its tests failed or timed out, or its process exited non-zero. When a process wrote no `results.jsonl` at all (a crash before the first test), the verdict falls back to the exit code with a warning. Under `CI`, a `test.only` left in a spec fails the run and is listed under `only`.
 
-Before the first flow, warden starts the iOS driver helper of every leased device at once and takes one accessibility snapshot on each (`warmDrivers`, on by default), so the first spec on a device does not pay the cold start. Jobs get `WARDEN_SIMD_SOCKET` and connect in milliseconds. `warmDrivers: false` on the suite, or `--no-warm`, turns it off; a failed warm-up only warns.
+As soon as each device is leased, warden starts its iOS driver helper and takes one accessibility snapshot (`warmDrivers`, on by default), while the app installs and Metro builds, so the first spec on a device does not pay the cold start. Jobs get `WARDEN_SIMD_SOCKET` and connect in milliseconds. `warmDrivers: false` on the suite, or `--no-warm`, turns it off; a failed warm-up only warns.
 
 ## Don't
 

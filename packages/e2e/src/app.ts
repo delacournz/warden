@@ -1,5 +1,6 @@
 import type { Driver, LaunchOptions } from "./driver/driver.types";
-import { unwrap } from "./driver/unwrap";
+import { DEFAULT_SETTLE_QUIET_MS, DEFAULT_SETTLE_TIMEOUT_MS } from "./driver/settle";
+import { settled, toE2eError, unwrap } from "./driver/unwrap";
 import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
 import type { FixtureSession } from "./fixture-session";
@@ -10,13 +11,23 @@ export type OpenOptions = {
 	/** appended after `WARDEN_LAUNCH_ARGS` */
 	args?: readonly string[];
 	env?: Record<string, string>;
+	/**
+	 * `"none"` (default): return when the launch call returns, which is before the app is on screen. `"quiet"`: then
+	 * also wait for the app to be frontmost and the screen to stop moving (what `device.settle()` waits for, 250 ms of
+	 * quiet, at most 3 s). That is a best-effort wait, never an error: an app that is not quiet in time is returned as
+	 * it is, so assert on what the test needs.
+	 */
+	wait?: "quiet" | "none";
 };
+
+const WAITS: readonly string[] = ["quiet", "none"];
 
 /** The app under test (`WARDEN_BUNDLE_ID`). */
 export type App = {
 	/**
 	 * Launches the app (terminating a running instance first) with `WARDEN_LAUNCH_ARGS` + `args`, then
-	 * opens `url` if given. The runner calls this for the per-test `launch: "fresh"` default.
+	 * opens `url` if given, then waits when `wait: "quiet"`. The runner calls this (with no options) for the per-test
+	 * `launch: "fresh"` default.
 	 */
 	open(options?: OpenOptions): Promise<void>;
 	close(): Promise<void>;
@@ -40,7 +51,24 @@ export type AppDeps = {
 
 export function createApp({ session, driver, env }: AppDeps): App {
 	const bundleId = env.bundleId;
+	/**
+	 * One `settle`. iOS names the bundle `app.launch` started (the helper holds "quiet" back until that app is in front);
+	 * a driver that cannot settle is left alone, as `device.settle()` would poll instead.
+	 */
+	const waitUntilQuiet = async (): Promise<void> => {
+		const quiet = await settled(
+			() => driver.settle({ quietMs: DEFAULT_SETTLE_QUIET_MS, timeoutMs: DEFAULT_SETTLE_TIMEOUT_MS }),
+			`wait for ${bundleId}`,
+			session.signal
+		);
+		if (!quiet.success && quiet.error.code !== "E_UNSUPPORTED") throw toE2eError(quiet.error, `wait for ${bundleId}`);
+	};
+
 	const launch = async (options: OpenOptions = {}): Promise<void> => {
+		const wait = options.wait ?? "none";
+		if (!WAITS.includes(wait)) {
+			throw new E2eError("INVALID_ARGUMENT", `app.open wait must be "quiet" or "none", got ${JSON.stringify(wait)}`);
+		}
 		const opts: LaunchOptions = {
 			args: [...env.launchArgs, ...(options.args ?? [])],
 			relaunch: true,
@@ -51,6 +79,7 @@ export function createApp({ session, driver, env }: AppDeps): App {
 			const url = options.url;
 			await unwrap(() => driver.app.openUrl(url), `open ${url}`, session.signal);
 		}
+		if (wait === "quiet") await waitUntilQuiet();
 	};
 
 	const terminate = (): Promise<void> =>

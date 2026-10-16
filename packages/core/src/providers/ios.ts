@@ -3,7 +3,7 @@ import { profileSlug } from "../allocate";
 import { type Exec, execError } from "../exec";
 import { isGoldenName } from "../golden/golden";
 import type { DeviceState, InventoryDevice } from "../types";
-import { probeIosHealth, realTimer } from "./health";
+import { probeIosHealth, probeIosWarm, realTimer } from "./health";
 import type { DeviceProvider, ProviderDeps } from "./provider.types";
 
 const RUNTIME_PREFIX = "com.apple.CoreSimulator.SimRuntime.";
@@ -312,5 +312,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		shutdown: (id) => idempotent(exec, ["shutdown", id], "Shutdown"),
 
 		probe: (id) => probeIosHealth({ exec, timer: deps.timer ?? realTimer }, id),
+
+		verifyWarm: (id) => probeIosWarm({ exec, timer: deps.timer ?? realTimer }, id),
 	};
 }

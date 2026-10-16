@@ -7,6 +7,7 @@ import {
 	planHeal,
 	planRestore,
 	planSlim,
+	SLIM_CONCURRENCY,
 	SLIM_DENYLIST,
 	SLIM_RETIRED,
 	slimSimulator,
@@ -144,5 +145,65 @@ describe("slimSimulator", () => {
 		const res = await slimSimulator(failing, "U1");
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("not booted");
+	});
+
+	describe("concurrency", () => {
+		const everything = SLIM_DENYLIST.map((label) => `\t"${label}" => disabled`).join("\n");
+		const running = `PID\tStatus\tLabel\n${SLIM_DENYLIST.map((label, i) => `${100 + i}\t0\t${label}`).join("\n")}`;
+
+		/** Exec that records how many `launchctl enable|disable|bootout` are in flight at once. */
+		function gauge(failOn?: string) {
+			const stats = { inFlight: 0, peak: 0, started: [] as string[] };
+			const exec: Exec = async (cmd) => {
+				const verb = cmd[5] ?? "";
+				const key = cmd.slice(5).join(" ");
+				if (verb === "print-disabled") return { exitCode: 0, stdout: everything, stderr: "" };
+				if (verb === "list") return { exitCode: 0, stdout: running, stderr: "" };
+				stats.started.push(key);
+				stats.inFlight++;
+				stats.peak = Math.max(stats.peak, stats.inFlight);
+				await Bun.sleep(2);
+				stats.inFlight--;
+				return key === failOn ? { exitCode: 1, stdout: "", stderr: "boom" } : { exitCode: 0, stdout: "", stderr: "" };
+			};
+			return { exec, stats };
+		}
+
+		test("slimming runs the per-job spawns in parallel, never more than SLIM_CONCURRENCY at once", async () => {
+			const { exec, stats } = gauge();
+			const res = await slimSimulator(exec, "U1");
+			expect(res.success && res.data).toEqual([...SLIM_DENYLIST]);
+			expect(stats.started).toHaveLength(SLIM_DENYLIST.length * 2);
+			expect(stats.peak).toBeGreaterThan(1);
+			expect(stats.peak).toBeLessThanOrEqual(SLIM_CONCURRENCY);
+		});
+
+		test("restoring is bounded the same way and re-enables everything", async () => {
+			const { exec, stats } = gauge();
+			const res = await slimSimulator(exec, "U1", { restore: true });
+			expect(res.success && res.data).toEqual([...SLIM_DENYLIST]);
+			expect(stats.started).toHaveLength(SLIM_DENYLIST.length);
+			expect(stats.peak).toBeGreaterThan(1);
+			expect(stats.peak).toBeLessThanOrEqual(SLIM_CONCURRENCY);
+		});
+
+		test("a failing disable stops new jobs from starting and is the error returned", async () => {
+			const first = SLIM_DENYLIST[0] as string;
+			const { exec, stats } = gauge(`disable system/${first}`);
+			const res = await slimSimulator(exec, "U1");
+			expect(res.success).toBe(false);
+			if (!res.success) expect(res.error).toContain("boom");
+			expect(stats.started.filter((s) => s.startsWith("disable")).length).toBeLessThanOrEqual(SLIM_CONCURRENCY);
+		});
+
+		test("each job is disabled before it is booted out", async () => {
+			const { exec, stats } = gauge();
+			await slimSimulator(exec, "U1");
+			for (const label of SLIM_DENYLIST) {
+				expect(stats.started.indexOf(`disable system/${label}`)).toBeLessThan(
+					stats.started.indexOf(`bootout system/${label}`)
+				);
+			}
+		});
 	});
 });

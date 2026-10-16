@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec } from "../exec";
+import { createGitFactsCache } from "../git-facts";
 import { fakeApp, testProject } from "./builds.testing";
 import { releaseKey } from "./fingerprint";
 import { artifactCandidates, locateArtifact, runLocalBuild } from "./local";
@@ -145,9 +146,13 @@ describe("runLocalBuild compiler cache env", () => {
 		const root = join(dir, "app");
 		const out = join(root, "ios", "build", SIM);
 		const envs: Array<Record<string, string | undefined> | undefined> = [];
+		const gitCalls: string[] = [];
 		const exec: Exec = async (cmd, opts) => {
 			const joined = cmd.join(" ");
-			if (joined === "git rev-parse --show-toplevel") return { exitCode: 0, stdout: `${root}\n`, stderr: "" };
+			if (cmd[0] === "git") {
+				gitCalls.push(joined);
+				return { exitCode: 0, stdout: `${root}\n${root}/.git\nrefs/heads/main\n`, stderr: "" };
+			}
 			if (joined === "xcodebuild -version") return { exitCode: 0, stdout: "Xcode 26.0\n", stderr: "" };
 			if (cmd[2] === "xb") {
 				envs.push(opts?.env);
@@ -157,7 +162,7 @@ describe("runLocalBuild compiler cache env", () => {
 			return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
 		};
 		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "xb", android: "x" } });
-		return { root, envs, exec, project };
+		return { root, envs, gitCalls, exec, project };
 	}
 	const common = { now: () => Date.now(), log: () => {} };
 
@@ -179,6 +184,59 @@ describe("runLocalBuild compiler cache env", () => {
 			COMPILATION_CACHE_ENABLE_CACHING: "YES",
 			EXPO_NO_TELEMETRY: "1",
 		});
+	});
+
+	test("the ccache base dir is the git facts' toplevel: one rev-parse, shared through the git cache", async () => {
+		const s = iosSetup();
+		const git = createGitFactsCache();
+		await runLocalBuild({
+			...common,
+			exec: s.exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: "/w",
+			git,
+		});
+		expect(s.gitCalls).toEqual(["git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD"]);
+		expect(s.envs[0]?.CCACHE_BASEDIR).toBe(s.root);
+	});
+
+	test("facts the caller already read cost no git spawn at all", async () => {
+		const s = iosSetup();
+		const git = createGitFactsCache();
+		git.store(s.root, { toplevel: s.root, commonDir: join(s.root, ".git"), branch: "main" });
+		await runLocalBuild({
+			...common,
+			exec: s.exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: "/w",
+			git,
+		});
+		expect(s.gitCalls).toEqual([]);
+		expect(s.envs[0]?.CCACHE_BASEDIR).toBe(s.root);
+	});
+
+	test("a project outside any checkout still builds, with no ccache base dir", async () => {
+		const s = iosSetup();
+		const exec: Exec = async (cmd, opts) =>
+			cmd[0] === "git" ? { exitCode: 128, stdout: "", stderr: "fatal" } : s.exec(cmd, opts);
+		await runLocalBuild({
+			...common,
+			exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: "/w",
+			git: createGitFactsCache(),
+		});
+		expect(s.envs[0]?.USE_CCACHE).toBe("1");
+		expect(s.envs[0]?.CCACHE_BASEDIR).toBeUndefined();
 	});
 
 	test("compilerCache:false → no cache env", async () => {

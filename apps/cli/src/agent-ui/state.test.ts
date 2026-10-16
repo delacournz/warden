@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "@delacour/warden-core/store";
 import { el, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import { uiDir } from "./paths";
 import {
 	commitGeneration,
 	readDumpRoute,
 	readLastSnapshot,
 	readState,
-	uiDir,
 	writeDumpRoute,
 	writeLastSnapshot,
 	writeState,

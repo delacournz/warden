@@ -1,8 +1,10 @@
 import { type Device, expect, test } from "@delacour/warden-e2e";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
-import { launch } from "./helpers/flows";
+import { FLOW_OPTIONS, launch } from "./helpers/flows";
 import { ids } from "./helpers/ids";
 import { pollUntil } from "./helpers/poll";
+
+test.use(FLOW_OPTIONS);
 
 /**
  * `device.devtools` talks to the app's JS runtime through Metro, so it only exists on the dev client
@@ -23,8 +25,8 @@ function devtoolsOf(device: Device): NonNullable<Device["devtools"]> {
  */
 devtoolsTest(
 	"devtools evaluates, captures console and fetch, reads the React tree and reloads",
-	async ({ device, screen }) => {
-		await launch(device, screen);
+	async ({ app, device, screen }) => {
+		await launch(app, screen);
 		const devtools = devtoolsOf(device);
 
 		expect(await devtools.evaluate("1+1")).toEqual({ success: true, data: 2 });

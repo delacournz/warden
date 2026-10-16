@@ -70,3 +70,66 @@ describe("openStampedLog", () => {
 		expect(readFileSync(path, "utf8").split("\n").sort()).toEqual(["", `${T}err`, `${T}out`]);
 	});
 });
+
+/** a pipe a grandchild still holds: `push` writes to it, and it never ends */
+function heldOpen() {
+	let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+	const stream = new ReadableStream<Uint8Array>({
+		start(c) {
+			controller = c;
+		},
+	});
+	return {
+		stream,
+		push: (text: string) => controller?.enqueue(new TextEncoder().encode(text)),
+		end: () => controller?.close(),
+	};
+}
+
+describe("StampedLog.drained", () => {
+	const windowMs = { quietMs: 40, maxMs: 600 };
+
+	test("is done at once when every stream has ended", async () => {
+		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
+		const log = openStampedLog(join(dir, "job.log"), () => AT);
+		const pumped = Promise.all([log.pump(streamOf("a\n")), log.pump(streamOf("b\n"))]);
+		await pumped;
+		const started = performance.now();
+		await log.drained(windowMs);
+		expect(performance.now() - started).toBeLessThan(windowMs.quietMs);
+		log.close();
+	});
+
+	test("a stream a grandchild keeps open stops holding the exit once it has been silent for quietMs", async () => {
+		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
+		const path = join(dir, "job.log");
+		const log = openStampedLog(path, () => AT);
+		const held = heldOpen();
+		void log.pump(held.stream);
+		held.push("last words\n");
+		const started = performance.now();
+		await log.drained(windowMs);
+		const waited = performance.now() - started;
+		expect(waited).toBeGreaterThanOrEqual(windowMs.quietMs - 5);
+		expect(waited).toBeLessThan(windowMs.maxMs / 2);
+		log.close();
+		expect(readFileSync(path, "utf8")).toBe(`${T}last words\n`);
+		held.end();
+	});
+
+	test("output still arriving keeps the wait going, up to maxMs", async () => {
+		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
+		const log = openStampedLog(join(dir, "job.log"), () => AT);
+		const held = heldOpen();
+		void log.pump(held.stream);
+		const chatter = setInterval(() => held.push("x\n"), 10);
+		const started = performance.now();
+		await log.drained({ quietMs: 40, maxMs: 200 });
+		const waited = performance.now() - started;
+		clearInterval(chatter);
+		expect(waited).toBeGreaterThanOrEqual(195);
+		expect(waited).toBeLessThan(400);
+		log.close();
+		held.end();
+	});
+});

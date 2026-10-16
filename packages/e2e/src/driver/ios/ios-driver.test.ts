@@ -2,11 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { canProbeFrontmost, canReadAlertOn } from "../alerts";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
+import { settleDetailOf } from "../settle";
+import { collectSpanDetail, type SpanDetail } from "../span-detail";
+import { canSelectAll } from "../typing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
+import { spawnSimd } from "./simd-client";
 import { bunSpawn } from "./simd-transport";
 
 const UDID = "UDID-1";
@@ -186,6 +191,42 @@ describe("openIosDriver", () => {
 		const { helper, logs } = await open(() => ({ data: null }), { socketPath: "/nonexistent/simd.sock" });
 		expect(helper.spawns).toHaveLength(1);
 		expect(logs.some((line) => line.includes("spawning a helper on stdio"))).toBe(true);
+	});
+
+	test("a pre-connected client is used as is: no second connect, no spawn, no helper lookup", async () => {
+		const helper = fakeSimd((request) => (request.op === "snapshot" ? { data: snapshotData } : { data: null }));
+		const connected = await spawnSimd({ helperPath: "/opt/warden-simd", udid: UDID, spawn: helper.spawn });
+		if (!connected.success) throw new Error(connected.error.message);
+		const result = await openIosDriver({
+			udid: UDID,
+			exec: fakeExec([["xcrun simctl spawn UDID-1 defaults", {}]], []),
+			client: connected.data,
+			socketPath: "/nonexistent/simd.sock",
+			exists: () => false,
+		});
+		if (!result.success) throw new Error(result.error.message);
+		opened.push(result.data);
+		await unwrapped(result.data.snapshot());
+		expect(helper.spawns).toHaveLength(1);
+		expect(helper.of("snapshot")).toHaveLength(1);
+	});
+
+	test("a pre-connected client needs no helper binary on disk", async () => {
+		const helper = fakeSimd(() => ({ data: null }));
+		const connected = await spawnSimd({ helperPath: "/opt/warden-simd", udid: UDID, spawn: helper.spawn });
+		if (!connected.success) throw new Error(connected.error.message);
+		const result = await openIosDriver({
+			udid: UDID,
+			exec: fakeExec([], []),
+			client: connected.data,
+			exists: () => false,
+			realpath: (path) => path,
+			execPath: "/usr/local/bin/warden",
+			importDir: "/nowhere",
+			wardenHome: "/home/.warden",
+		});
+		expect(result.success).toBe(true);
+		if (result.success) opened.push(result.data);
 	});
 });
 
@@ -460,6 +501,93 @@ describe("Driver methods over the helper", () => {
 	});
 });
 
+describe("system alerts through one reader and the frontmost probe", () => {
+	const allowButtons = [
+		{ role: "button", rawType: "Button", label: "Allow", frame: { x: 0, y: 0, width: 100, height: 44 } },
+		{ role: "button", rawType: "Button", label: "Don't Allow", frame: { x: 100, y: 0, width: 100, height: 44 } },
+	];
+
+	test("alertOn sends the backend and reads the same payload as alert()", async () => {
+		const { driver, helper } = await open((request) =>
+			request.op === "alertButtons" ? { data: { title: "Allow?", buttons: allowButtons } } : undefined
+		);
+		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		const alert = await unwrapped(driver.alertOn("ax"));
+		expect(alert?.title).toBe("Allow?");
+		expect(alert?.buttons.map((button) => button.label)).toEqual(["Allow", "Don't Allow"]);
+		expect((await unwrapped(driver.alertOn("axbridge")))?.buttons).toHaveLength(2);
+		expect(helper.of("alertButtons").map((request) => request.backend)).toEqual(["ax", "axbridge"]);
+	});
+
+	test("alert() still reads both readers (no backend on the wire)", async () => {
+		const { driver, helper } = await open((request) => (request.op === "alertButtons" ? { data: null } : undefined));
+		expect(await unwrapped(driver.alert())).toBeNull();
+		expect(helper.of("alertButtons")[0]).not.toHaveProperty("backend");
+	});
+
+	test("alertOn: no alert is null; a modal without readable buttons is an alert with no buttons", async () => {
+		let reply: unknown = null;
+		const { driver } = await open((request) => (request.op === "alertButtons" ? { data: reply } : undefined));
+		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		expect(await unwrapped(driver.alertOn("axbridge"))).toBeNull();
+		reply = { title: "Open this page in “app”?", buttons: [] };
+		expect(await unwrapped(driver.alertOn("axbridge"))).toEqual({ title: "Open this page in “app”?", buttons: [] });
+	});
+
+	test("alertOn passes a helper failure on", async () => {
+		const { driver } = await open((request) =>
+			request.op === "alertButtons"
+				? { error: { code: "E_AX_UNAVAILABLE", message: "bridge unavailable", retryable: true } }
+				: undefined
+		);
+		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		const result = await driver.alertOn("axbridge");
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error.code).toBe("E_AX_UNAVAILABLE");
+	});
+
+	test("isFrontmost asks the helper about the bundle and answers its verdict", async () => {
+		let frontmost = false;
+		const { driver, helper } = await open((request) =>
+			request.op === "frontmost" ? { data: { frontmost, pid: 12, frontmostPid: frontmost ? 12 : 3 } } : undefined
+		);
+		if (!canProbeFrontmost(driver)) throw new Error("the iOS driver probes the frontmost app");
+		expect(await unwrapped(driver.isFrontmost(BUNDLE))).toBe(false);
+		frontmost = true;
+		expect(await unwrapped(driver.isFrontmost(BUNDLE))).toBe(true);
+		expect(helper.of("frontmost")[0]).toMatchObject({ bundleId: BUNDLE });
+	});
+
+	test("without the AX bridge alertOn('axbridge') reads the host reader and isFrontmost is never asked", async () => {
+		const helper = fakeSimd((request) => (request.op === "alertButtons" ? { data: null } : undefined), {
+			ready: { ax: { default: "ax", bridge: "missing" } },
+		});
+		const result = await openIosDriver({
+			udid: UDID,
+			exec: fakeExec([["xcrun", {}]]),
+			spawn: helper.spawn,
+			helperPath: "/opt/warden-simd",
+			exists: () => false,
+		});
+		if (!result.success) throw new Error(result.error.message);
+		opened.push(result.data);
+		const driver = result.data;
+		if (!canReadAlertOn(driver) || !canProbeFrontmost(driver)) throw new Error("iOS driver capabilities expected");
+		expect(await unwrapped(driver.alertOn("axbridge"))).toBeNull();
+		expect(helper.of("alertButtons")[0]).toMatchObject({ backend: "ax" });
+		const front = await driver.isFrontmost(BUNDLE);
+		expect(!front.success && front.error.code).toBe("E_UNSUPPORTED");
+		expect(helper.of("frontmost")).toHaveLength(0);
+	});
+
+	test("isFrontmost against a helper without the op is a failure the caller can ignore", async () => {
+		const { driver } = await open(() => undefined);
+		if (!canProbeFrontmost(driver)) throw new Error("the iOS driver probes the frontmost app");
+		const result = await driver.isFrontmost(BUNDLE);
+		expect(result.success).toBe(false);
+	});
+});
+
 describe("typeText", () => {
 	test("plain text goes straight to the helper", async () => {
 		const { driver, helper, calls } = await open(() => ({ data: null }));
@@ -501,6 +629,25 @@ describe("typeText", () => {
 	});
 });
 
+describe("selectAll", () => {
+	test("is one selectAll request, and the typing layer can find it", async () => {
+		const { driver, helper } = await open(() => ({ data: {} }));
+		expect(canSelectAll(driver)).toBe(true);
+		if (!canSelectAll(driver)) return;
+		await unwrapped(driver.selectAll());
+		expect(helper.requests.map((request) => request.op)).toEqual(["selectAll"]);
+	});
+
+	test("a helper that has no such op answers with its error, for the caller to fall back", async () => {
+		const { driver } = await open(() => ({
+			error: { code: "E_BAD_REQUEST", message: 'unknown input op "selectAll"' },
+		}));
+		if (!canSelectAll(driver)) throw new Error("expected selectAll");
+		const result = await driver.selectAll();
+		expect(!result.success && result.error.code).toBe("E_BAD_REQUEST");
+	});
+});
+
 describe("settle", () => {
 	test("native settle: params and timeout margin", async () => {
 		const { driver, helper } = await open((request) =>
@@ -515,7 +662,42 @@ describe("settle", () => {
 		const { driver } = await open((request) =>
 			request.op === "settle" ? { error: { code: "E_TIMEOUT", message: "slow" } } : undefined
 		);
-		expect(await unwrapped(driver.settle({ timeoutMs: 1000 }))).toEqual({ quiet: false, waitedMs: 3000 });
+		expect(settleDetailOf(await unwrapped(driver.settle({ timeoutMs: 1000 })))).toEqual({
+			quiet: false,
+			waitedMs: 3000,
+			reason: "helper_timeout",
+		});
+	});
+
+	test("the helper's via, reason and frontmostPid are kept, not dropped", async () => {
+		const { driver } = await open((request) =>
+			request.op === "settle"
+				? { data: { quiet: false, waitedMs: 8010, via: "stream", reason: "frontmost_mismatch", frontmostPid: 4242 } }
+				: undefined
+		);
+		expect(settleDetailOf(await unwrapped(driver.settle({ timeoutMs: 8000 })))).toEqual({
+			quiet: false,
+			waitedMs: 8010,
+			via: "stream",
+			reason: "frontmost_mismatch",
+			frontmostPid: 4242,
+		});
+	});
+
+	test("a snapshot-stability settle says so", async () => {
+		const { driver } = await open((request) =>
+			request.op === "settle" ? { data: { quiet: true, waitedMs: 2330, via: "snapshot" } } : undefined
+		);
+		expect(settleDetailOf(await unwrapped(driver.settle()))).toEqual({ quiet: true, waitedMs: 2330, via: "snapshot" });
+	});
+
+	test("the call's span gets the same verdict as detail", async () => {
+		const { driver } = await open((request) =>
+			request.op === "settle" ? { data: { quiet: true, waitedMs: 260, via: "stream", frontmostPid: 77 } } : undefined
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => driver.settle());
+		expect(notes).toEqual({ via: "stream", frontmostPid: 77 });
 	});
 
 	test("the first settle after app.launch names the launched bundle, later ones do not", async () => {
@@ -555,6 +737,86 @@ describe("settle", () => {
 		expect(settles[1]).toMatchObject({ bundleId: BUNDLE });
 	});
 
+	test("app.launch asks the helper to rebind its stream to the launched bundle, and the next settle need not name it", async () => {
+		const { driver, helper } = await open(
+			(request) => {
+				if (request.op === "rebind") return { data: { bound: true, waitedMs: 700, pid: 4242, restarts: 0 } };
+				return request.op === "settle" ? { data: { quiet: true, waitedMs: 5, via: "stream" } } : { data: null };
+			},
+			{},
+			[["xcrun simctl launch", {}]]
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
+		expect(helper.of("rebind")).toHaveLength(1);
+		expect(helper.of("rebind")[0]).toMatchObject({ bundleId: BUNDLE, rebindTimeoutMs: 3000, timeoutMs: 5000 });
+		expect(notes).toEqual({ rebind: "bound", rebindMs: 700 });
+		await unwrapped(driver.settle());
+		expect(helper.of("settle")[0]).not.toHaveProperty("bundleId");
+	});
+
+	test("a rebind that recycled the helper's guests says so on the launch span", async () => {
+		const { driver } = await open(
+			(request) =>
+				request.op === "rebind"
+					? { data: { bound: true, waitedMs: 1500, pid: 4242, restarts: 1, recycled: true } }
+					: { data: null },
+			{},
+			[["xcrun simctl launch", {}]]
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
+		expect(notes).toEqual({ rebind: "bound", rebindMs: 1500, rebindRestarts: 1, rebindRecycled: true });
+	});
+
+	test("an unbound rebind leaves the next settle naming the launched bundle", async () => {
+		const { driver, helper } = await open(
+			(request) => {
+				if (request.op === "rebind") return { data: { bound: false, waitedMs: 3000, reason: "timeout", restarts: 1 } };
+				return request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null };
+			},
+			{},
+			[["xcrun simctl launch", {}]]
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
+		expect(notes).toEqual({ rebind: "timeout", rebindMs: 3000, rebindRestarts: 1 });
+		await unwrapped(driver.settle());
+		expect(helper.of("settle")[0]).toMatchObject({ bundleId: BUNDLE });
+	});
+
+	test("a failing rebind never fails the launch, and an unsupported one is not asked again", async () => {
+		const { driver, helper, logs } = await open(
+			(request) => {
+				if (request.op === "rebind") return { error: { code: "E_BAD_REQUEST", message: 'unknown op "rebind"' } };
+				return { data: null };
+			},
+			{},
+			[
+				["xcrun simctl launch", {}],
+				["xcrun simctl launch", {}],
+			]
+		);
+		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
+		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
+		expect(helper.of("rebind")).toHaveLength(1);
+		expect(logs.some((line) => line.includes("rebind"))).toBe(true);
+	});
+
+	test("a rebind that times out or errors is logged and the launch still succeeds", async () => {
+		const { driver, helper } = await open(
+			(request) => (request.op === "rebind" ? { error: { code: "E_INTERNAL", message: "boom" } } : { data: null }),
+			{},
+			[
+				["xcrun simctl launch", {}],
+				["xcrun simctl launch", {}],
+			]
+		);
+		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
+		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
+		expect(helper.of("rebind")).toHaveLength(2);
+	});
+
 	test("terminating the launched bundle stops naming it", async () => {
 		const { driver, helper } = await open(
 			(request) => (request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null }),
@@ -586,8 +848,11 @@ describe("settle", () => {
 				},
 			}
 		);
-		const first = await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+		const notes: SpanDetail = {};
+		const first = await collectSpanDetail(notes, () => unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 })));
 		expect(first.quiet).toBe(true);
+		expect(first).toMatchObject({ via: "hash" });
+		expect(notes.via).toBe("hash");
 		expect(helper.of("settle")).toHaveLength(1);
 		const snapshotsAfterFirst = helper.of("snapshot").length;
 		expect(snapshotsAfterFirst).toBeGreaterThanOrEqual(3);

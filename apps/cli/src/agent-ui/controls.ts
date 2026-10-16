@@ -9,8 +9,9 @@ import { type ActionOptionValues, finishAction, fromE2eError, parseSettle } from
 import type { UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
+import { uiDir } from "./paths";
 import { runUi } from "./run";
-import { readState, uiDir } from "./state";
+import { readState } from "./state";
 
 /** `createDevice` over a `warden ui` driver: alerts, `openLink`, home/back, driven by the command's clock. */
 export function deviceFacade(

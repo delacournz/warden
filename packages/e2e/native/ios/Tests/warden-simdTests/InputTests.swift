@@ -247,6 +247,19 @@ final class InputTests: XCTestCase {
     XCTAssertEqual(recorder.events, [KeyboardMap.paste])
   }
 
+  /// Cmd+A is held and followed by a pause like every key, so the selection exists before the Backspace that follows.
+  func testSelectAllSendsPacedCmdA() async throws {
+    let recorder = Recorder()
+    _ = try await call(engine(recorder), "selectAll", [:])
+    XCTAssertEqual(recorder.events, [KeyboardMap.selectAll(paceMs: 30, holdMs: 40)])
+  }
+
+  func testSelectAllTakesPacingOverrides() async throws {
+    let recorder = Recorder()
+    _ = try await call(engine(recorder), "selectAll", ["paceMs": 0, "holdMs": 0])
+    XCTAssertEqual(recorder.events, [KeyboardMap.selectAll()])
+  }
+
   // MARK: typeText
 
   func testTypeTextSendsOneCompositeAndReportsCount() async throws {

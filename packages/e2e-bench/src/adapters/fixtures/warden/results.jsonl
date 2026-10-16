@@ -1,0 +1,4 @@
+{"file":"/repo/packages/e2e-bench/suites/warden/onboarding.e2e.ts","title":["onboarding steps through to sign-in"],"status":"passed","durationMs":9210,"startedAt":1760600000000,"artifacts":{"dir":"/out/onboarding/onboarding-steps-through-to-sign-in-a1b2c3","files":["trace.jsonl"]},"device":{"udid":"U1","platform":"ios"}}
+{"file":"/repo/packages/e2e-bench/suites/warden/sign-in.e2e.ts","title":["a locked account shows the form alert"],"status":"failed","durationMs":14000,"startedAt":1760600010000,"error":{"message":"expected sign-in-form-error to be visible"},"artifacts":{"dir":"/out/sign-in/a-locked-account-d4e5f6","files":["failure.png","screen-at-failure.txt","trace.jsonl"]},"device":{"udid":"U1","platform":"ios"}}
+not json
+{"file":"/repo/packages/e2e-bench/suites/warden/todos.e2e.ts","title":["add, complete and filter todos"],"status":"timed-out","durationMs":120000,"startedAt":1760600030000,"device":{"udid":"U1","platform":"ios"}}

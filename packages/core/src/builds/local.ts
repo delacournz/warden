@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
+import { type GitFactsCache, readGitFacts } from "../git-facts";
 import { wardenHome as resolveWardenHome } from "../store";
 import type { Platform } from "../types";
 import type { BuildConfiguration } from "./builds.defaults";
@@ -102,6 +103,8 @@ export type LocalBuildDeps = {
 	compilerCache?: boolean;
 	/** warden home for the shared ccache (default: resolved from `env`) */
 	wardenHome?: string;
+	/** per-command memo of the git facts (default: a short-lived shared one) */
+	git?: GitFactsCache;
 };
 
 async function probe(deps: LocalBuildDeps, argv: string[], cwd?: string): Promise<string | undefined> {
@@ -113,11 +116,19 @@ async function probe(deps: LocalBuildDeps, argv: string[], cwd?: string): Promis
 	}
 }
 
+/** The project's git toplevel from the facts the command already read; a failed read is no toplevel, never a failed build. */
+async function gitToplevel(deps: LocalBuildDeps): Promise<string | undefined> {
+	try {
+		return (await readGitFacts(deps.exec, deps.project.root, deps.git))?.toplevel;
+	} catch {
+		return undefined;
+	}
+}
+
 async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 	if (deps.compilerCache === false) return {};
-	const { platform, project } = deps;
-	const gitTop =
-		platform === "ios" ? await probe(deps, ["git", "rev-parse", "--show-toplevel"], project.root) : undefined;
+	const { platform } = deps;
+	const gitTop = platform === "ios" ? await gitToplevel(deps) : undefined;
 	const xcode = platform === "ios" ? await probe(deps, ["xcodebuild", "-version"]) : undefined;
 	return compilerCacheEnv({
 		platform,

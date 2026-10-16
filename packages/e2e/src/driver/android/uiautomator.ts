@@ -1,4 +1,5 @@
 import type { Element, Rect, Role } from "../driver.types";
+import type { UiadNode } from "./uiad-protocol";
 
 /** Thrown when the text has no `<hierarchy>` (e.g. `ERROR: null root node returned by UiTestAutomationBridge.`). */
 export class UiautomatorParseError extends Error {
@@ -292,6 +293,11 @@ export function parseUiautomatorXml(xml: string, screen: { width: number; height
 	const body = end >= 0 ? xml.slice(start, end + "</hierarchy>".length) : xml.slice(start);
 	const forest = parseForest(body);
 	if (!forest) throw new UiautomatorParseError("unparseable uiautomator output");
+	return buildTree(forest, screen);
+}
+
+/** The normalized tree of a node forest: preorder-path ids, roles, frames, traits. The one place that builds `Element`s. */
+function buildTree(forest: readonly RawNode[], screen: { width: number; height: number }): ParsedTree {
 	const build = (raw: RawNode, id: string, depth: number): Element => {
 		const element = toElement(raw, id, depth, screen);
 		element.children = raw.children.map((child, i) => build(child, `${id}.${i}`, depth + 1));
@@ -299,6 +305,42 @@ export function parseUiautomatorXml(xml: string, screen: { width: number; height
 	};
 	const elements = forest.map((raw, i) => build(raw, String(i), 0));
 	return { elements, flat: flatten(elements) };
+}
+
+/** A `UiadNode` as the attribute map a `<node>` of the dump would have had, so both sources share {@link toElement}. */
+function rawFromUiad(node: UiadNode): RawNode {
+	const [l, t, r, b] = node.bounds;
+	const attrs = new Map<string, string>();
+	const text = (key: string, value: string | undefined): void => {
+		if (value !== undefined) attrs.set(key, value);
+	};
+	const flag = (key: string, on: boolean | undefined): void => {
+		if (on) attrs.set(key, "true");
+	};
+	text("class", node.class);
+	text("resource-id", node.id);
+	text("text", node.text);
+	text("content-desc", node.desc);
+	text("hint", node.hint);
+	attrs.set("bounds", `[${l},${t}][${r},${b}]`);
+	flag("clickable", node.clickable);
+	flag("long-clickable", node.longClickable);
+	flag("checkable", node.checkable);
+	flag("checked", node.checked);
+	flag("scrollable", node.scrollable);
+	flag("selected", node.selected);
+	flag("focused", node.focused);
+	flag("password", node.password);
+	if (node.disabled) attrs.set("enabled", "false");
+	return { attrs, children: (node.children ?? []).map(rawFromUiad) };
+}
+
+/**
+ * The normalized tree of a `warden-uiad` snapshot: the same `Element`s, ids and depths `parseUiautomatorXml` gives for
+ * the same screen (the server writes the dump's attributes and skips the same invisible nodes), without the XML.
+ */
+export function parseUiadNodes(nodes: readonly UiadNode[], screen: { width: number; height: number }): ParsedTree {
+	return buildTree(nodes.map(rawFromUiad), screen);
 }
 
 function isInteractive(element: Element): boolean {

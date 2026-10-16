@@ -13,7 +13,10 @@ afterEach(() => ctx?.cleanup());
 function setup(argv: string[]): TestContext {
 	ctx = testContext(argv);
 	ctx.exec = fakeExec([
-		["git rev-parse --show-toplevel", { stdout: realpathSync(ctx.cwd) }],
+		[
+			"git rev-parse --show-toplevel --git-common-dir",
+			{ stdout: `${realpathSync(ctx.cwd)}\n${realpathSync(ctx.cwd)}/.git\nrefs/heads/main\n` },
+		],
 		["git config --get remote.origin.url", { stdout: "git@github.com:o/r.git" }],
 		["git", { exitCode: 1 }],
 	]);

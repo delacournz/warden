@@ -1,10 +1,9 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
-import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import type { Result } from "@delacour/warden-types/result";
 import type { E2eEnv } from "../../env";
-import { ENV_NAMES } from "../../env";
+import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
 import type {
 	AlertInfo,
 	Driver,
@@ -19,12 +18,15 @@ import type {
 	Snapshot,
 } from "../driver.types";
 import { driverError } from "../errors";
-import { settleByHash, snapshotHash } from "../settle";
+import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
+import { noteSpanDetail } from "../span-detail";
+import type { SelectsAll } from "../typing";
 import { type SwappableClient, swappableClient } from "./ios-session";
-import { locateHelper } from "./locate-helper";
+import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
 import { connectSimd, type SimdClient, spawnSimd } from "./simd-client";
+import type { AlertButtonsData, SettleData } from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
 import { typeTextBudgetMs } from "./type-budget";
 
@@ -37,6 +39,9 @@ import { typeTextBudgetMs } from "./type-budget";
 
 export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir">;
 
+/** The iOS driver is a `Driver` plus the optional capabilities of `driver/alerts.ts`. */
+export type IosDriver = Driver & SelectsAll & ReadsAlertOn & ProbesFrontmost;
+
 export type OpenIosDriverOptions = {
 	udid: string;
 	env?: IosDriverEnv;
@@ -47,6 +52,12 @@ export type OpenIosDriverOptions = {
 	helperPath?: string;
 	/** explicit helper socket (wins over `env.simdSocket`) */
 	socketPath?: string;
+	/**
+	 * An already connected (handshaken) helper client: used instead of connecting, so a caller that just
+	 * connected to learn the helper was up does not connect twice. The driver owns it from here (`close()`
+	 * closes it); a restart still reconnects through the socket / spawn path.
+	 */
+	client?: SimdClient;
 	now?: () => number;
 	sleep?: (ms: number) => Promise<void>;
 	/** for `locateHelper` / `$WARDEN_HOME/simd/<version>`; defaults read the process */
@@ -67,7 +78,11 @@ export type OpenIosDriverOptions = {
 const DEFAULT_QUIET_MS = 250;
 const DEFAULT_SETTLE_TIMEOUT_MS = 5_000;
 const SETTLE_MARGIN_MS = 2_000;
+/** How long `app.launch` lets the helper wait for its stream to follow the new process; the helper answers earlier. */
+const REBIND_TIMEOUT_MS = 3_000;
 const GESTURE_MARGIN_MS = 5_000;
+/** `frontmost` is one launchd lookup; a helper that has not answered in this long is busy, and the caller carries on without. */
+const FRONTMOST_TIMEOUT_MS = 3_000;
 
 /** USB HID keyboard-page usage ids for the keys `Driver.key` offers. */
 export const KEY_USAGE: Readonly<Record<KeyName, number>> = {
@@ -107,6 +122,22 @@ function fail(error: DriverError) {
 	return { success: false as const, error };
 }
 
+/** The helper's whole settle verdict, for the caller and for the span timing the call; absent fields stay absent. */
+function nativeDetail(data: SettleData): SettleDetail {
+	const { quiet, waitedMs, via, reason, frontmostPid } = data;
+	const detail: SettleDetail = {
+		quiet,
+		waitedMs,
+		...(via === undefined ? {} : { via }),
+		...(reason === undefined ? {} : { reason }),
+		...(frontmostPid === undefined ? {} : { frontmostPid }),
+	};
+	if (via !== undefined) noteSpanDetail("via", via);
+	if (reason !== undefined) noteSpanDetail("reason", reason);
+	if (frontmostPid !== undefined) noteSpanDetail("frontmostPid", frontmostPid);
+	return detail;
+}
+
 /** Carries a `DriverError` out of a `settleByHash` poll callback. */
 class DriverFailure extends Error {
 	constructor(readonly error: DriverError) {
@@ -130,7 +161,7 @@ export function createIosDriver(
 	swap: SwappableClient,
 	simctl: Simctl,
 	opts: { udid: string; now: () => number; sleep: (ms: number) => Promise<void>; log?: Logger }
-): Driver {
+): IosDriver {
 	const { udid, now, sleep } = opts;
 	const { client } = swap;
 	let axFailures = 0;
@@ -142,7 +173,9 @@ export function createIosDriver(
 	let launchedBundle: string | undefined;
 	const { ready } = client;
 	const nativeSettle = ready.ax.default === "axbridge" && ready.ax.bridge === "available";
+	const bridgeUp = ready.ax.bridge === "available";
 	let settleUnsupported = !nativeSettle;
+	let rebindUnsupported = false;
 
 	const capabilities: DriverCapabilities = {
 		pinch: true,
@@ -208,10 +241,7 @@ export function createIosDriver(
 		return sendVoid("paste");
 	}
 
-	async function hashSettle(o: {
-		quietMs: number;
-		timeoutMs: number;
-	}): DriverResult<{ quiet: boolean; waitedMs: number }> {
+	async function hashSettle(o: { quietMs: number; timeoutMs: number }): DriverResult<SettleDetail> {
 		try {
 			const outcome = await settleByHash(
 				async () => {
@@ -221,16 +251,42 @@ export function createIosDriver(
 				},
 				{ quietMs: o.quietMs, timeoutMs: o.timeoutMs, now, sleep }
 			);
-			return { success: true, data: outcome };
+			noteSpanDetail("via", "hash");
+			return { success: true, data: { ...outcome, via: "hash" } };
 		} catch (error) {
 			if (error instanceof DriverFailure) return fail(error.error);
 			throw error;
 		}
 	}
 
-	async function settle(
-		o: { quietMs?: number; timeoutMs?: number } = {}
-	): DriverResult<{ quiet: boolean; waitedMs: number }> {
+	/**
+	 * Right after `simctl launch` the helper's quiescence stream still reports on the previous frontmost app; the first
+	 * AX read then fails with `did not respond` and the repair costs seconds. `rebind` makes the helper wait (briefly,
+	 * and without restarting a stream that follows by itself) until the stream reports on the new process, so the
+	 * first read and settle after a launch are fast. Best effort: any failure leaves the launch as it was.
+	 */
+	async function rebind(bundleId: string): Promise<boolean> {
+		if (rebindUnsupported || settleUnsupported) return false;
+		const reply = await client.request(
+			"rebind",
+			{ bundleId, rebindTimeoutMs: REBIND_TIMEOUT_MS },
+			{ timeoutMs: REBIND_TIMEOUT_MS + SETTLE_MARGIN_MS }
+		);
+		if (!reply.success) {
+			if (reply.error.code === "E_UNSUPPORTED" || reply.error.code === "E_BAD_REQUEST") rebindUnsupported = true;
+			noteSpanDetail("rebind", reply.error.code);
+			opts.log?.(`[ios] rebind after launch failed (${reply.error.code}): ${reply.error.message}`);
+			return false;
+		}
+		noteSpanDetail("rebind", reply.data.bound ? "bound" : (reply.data.reason ?? "unbound"));
+		noteSpanDetail("rebindMs", reply.data.waitedMs);
+		if (reply.data.restarts !== undefined && reply.data.restarts > 0)
+			noteSpanDetail("rebindRestarts", reply.data.restarts);
+		if (reply.data.recycled === true) noteSpanDetail("rebindRecycled", true);
+		return reply.data.bound;
+	}
+
+	async function settle(o: { quietMs?: number; timeoutMs?: number } = {}): DriverResult<SettleDetail> {
 		const quietMs = o.quietMs ?? DEFAULT_QUIET_MS;
 		const timeoutMs = o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS;
 		if (!settleUnsupported) {
@@ -244,11 +300,15 @@ export function createIosDriver(
 			if (native.success) {
 				// a mismatch means the app never came to the front: keep asking for it on the next settle
 				if (expected !== undefined && native.data.reason !== "frontmost_mismatch") launchedBundle = undefined;
-				return { success: true, data: { quiet: native.data.quiet, waitedMs: native.data.waitedMs } };
+				return { success: true, data: nativeDetail(native.data) };
 			}
 			// settle is best effort: a loaded machine answering after the padded timer means "not quiet", not a failure
 			if (native.error.code === "E_TIMEOUT") {
-				return { success: true, data: { quiet: false, waitedMs: timeoutMs + SETTLE_MARGIN_MS } };
+				noteSpanDetail("reason", "helper_timeout");
+				return {
+					success: true,
+					data: { quiet: false, waitedMs: timeoutMs + SETTLE_MARGIN_MS, reason: "helper_timeout" },
+				};
 			}
 			if (native.error.code !== "E_UNSUPPORTED") return native;
 			settleUnsupported = true;
@@ -271,15 +331,31 @@ export function createIosDriver(
 		return simctl.screenshot(o?.path);
 	}
 
-	async function alert(): DriverResult<AlertInfo | null> {
-		const result = await client.request("alertButtons");
-		if (!result.success) return result;
-		if (result.data === null) return { success: true, data: null };
-		const { title, message, buttons } = result.data;
+	function toAlertInfo(data: NonNullable<AlertButtonsData>): AlertInfo {
+		const { title, message, buttons } = data;
 		const info: AlertInfo = { buttons: normalizeElements(buttons, client.ready.screen).elements };
 		if (title !== undefined) info.title = title;
 		if (message !== undefined) info.message = message;
-		return { success: true, data: info };
+		return info;
+	}
+
+	/** The helper's `alertButtons`: both readers without a `backend`, only that one with it. */
+	async function readAlert(backend?: AlertBackend): DriverResult<AlertInfo | null> {
+		const result = await client.request("alertButtons", params({ backend }));
+		if (!result.success) return result;
+		return { success: true, data: result.data === null ? null : toAlertInfo(result.data) };
+	}
+
+	const alert = (): DriverResult<AlertInfo | null> => readAlert();
+
+	/** Without the bridge `axbridge` has nothing to read: the host reader is the one reader left. */
+	const alertOn = (backend: AlertBackend): DriverResult<AlertInfo | null> =>
+		readAlert(backend === "axbridge" && !bridgeUp ? "ax" : backend);
+
+	async function isFrontmost(bundleId: string): DriverResult<boolean> {
+		if (!bridgeUp) return fail(driverError("E_UNSUPPORTED", "frontmost needs the axbridge backend"));
+		const result = await client.request("frontmost", { bundleId }, { timeoutMs: FRONTMOST_TIMEOUT_MS });
+		return result.success ? { success: true, data: result.data.frontmost } : result;
 	}
 
 	async function health(): DriverResult<HealthInfo> {
@@ -327,7 +403,7 @@ export function createIosDriver(
 		return sendVoid("pressButton", { button: BUTTONS[button] });
 	}
 
-	const driver: Driver = {
+	const driver: IosDriver = {
 		platform: "ios",
 		id: udid,
 		capabilities,
@@ -371,11 +447,14 @@ export function createIosDriver(
 			),
 		typeText,
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
+		selectAll: () => sendVoid("selectAll"),
 		pressButton,
 		screenshot,
 		orientation,
 		settle,
 		alert,
+		alertOn,
+		isFrontmost,
 		appearance: (set) => simctl.appearance(set),
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();
@@ -385,7 +464,10 @@ export function createIosDriver(
 		app: {
 			launch: async (bundleId, o) => {
 				const launched = await simctl.launch(bundleId, o);
-				if (launched.success) launchedBundle = bundleId;
+				if (launched.success) {
+					launchedBundle = bundleId;
+					if (await rebind(bundleId)) launchedBundle = undefined;
+				}
 				return launched;
 			},
 			terminate: async (bundleId) => {
@@ -417,21 +499,6 @@ async function trySocket(o: OpenIosDriverOptions, log: Logger): Promise<SimdClie
 	return undefined;
 }
 
-/** The helper binary: the explicit `helperPath`, else `locateHelper` over the env / install locations. */
-export function resolveHelper(o: OpenIosDriverOptions): Result<string, DriverError> {
-	if (o.helperPath !== undefined) return { success: true, data: o.helperPath };
-	const located = locateHelper({
-		env: { [ENV_NAMES.simd]: o.env?.simd, [ENV_NAMES.helperDir]: o.env?.helperDir },
-		execPath: o.execPath ?? process.execPath,
-		importDir: o.importDir ?? import.meta.dir,
-		wardenHome: o.wardenHome ?? resolveWardenHome(),
-		exists: o.exists ?? existsSync,
-		realpath: o.realpath ?? realpathSync,
-		...(o.version ? { version: o.version } : {}),
-	});
-	return located.success ? { success: true, data: located.data.path } : located;
-}
-
 async function connect(o: OpenIosDriverOptions, log: Logger): Promise<Result<SimdClient, DriverError>> {
 	const socket = await trySocket(o, log);
 	if (socket) return { success: true, data: socket };
@@ -459,11 +526,14 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 	const simctl = createSimctl({ udid: o.udid, exec, ...(o.devicesRoot ? { devicesRoot: o.devicesRoot } : {}) });
 	// a driver that cannot start (no socket, no helper binary) fails before any simctl call: the AutomationEnabled
 	// write takes seconds on a cold machine and would only delay the E_HELPER_MISSING answer
-	if (!(o.socketPath ?? o.env?.simdSocket)) {
+	if (!o.client && !(o.socketPath ?? o.env?.simdSocket)) {
 		const helper = resolveHelper(o);
 		if (!helper.success) return helper;
 	}
-	const [client, automation] = await Promise.all([connect(o, log), simctl.enableAutomation()]);
+	const connecting: Promise<Result<SimdClient, DriverError>> = o.client
+		? Promise.resolve({ success: true, data: o.client })
+		: connect(o, log);
+	const [client, automation] = await Promise.all([connecting, simctl.enableAutomation()]);
 	if (!automation.success) log(`[ios] could not enable AX automation: ${automation.error.message}`);
 	if (!client.success) return client;
 	const swap = swappableClient(client.data, {

@@ -108,6 +108,13 @@ final class KeyboardTests: XCTestCase {
     XCTAssertEqual(KeyboardMap.paste, KeyboardMap.chord(usage: 0x19, modifiers: [0xE3]))
   }
 
+  func testSelectAllIsCmdA() {
+    XCTAssertEqual(KeyboardMap.selectAll(), KeyboardMap.chord(usage: 0x04, modifiers: [0xE3]))
+    XCTAssertEqual(
+      KeyboardMap.selectAll(paceMs: 30, holdMs: 40),
+      KeyboardMap.chord(usage: 0x04, modifiers: [0xE3], paceMs: 30, holdMs: 40))
+  }
+
   func testNamedKeysCoverTheTypeScriptKeyNames() {
     // Mirrors KeyName in packages/e2e/src/driver/driver.types.ts and KEY_USAGE in ios-driver.ts.
     let expected: [String: UInt32] = [

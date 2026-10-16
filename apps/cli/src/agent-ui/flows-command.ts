@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import type { Command as Commander } from "@commander-js/extra-typings";
 import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-e2e/driver/settle";
 import { exportFlow } from "@delacour/warden-e2e/flows/export";
 import type { Flow } from "@delacour/warden-e2e/flows/flow.schema";
@@ -13,7 +12,7 @@ import { parseSettle } from "./act";
 import { fromDriver, type UiDeps } from "./driver";
 import { flowActors } from "./flow-actors";
 import { reportError, type UiError, uiError } from "./output";
-import { runUi, type UiOptionValues, withUiOptions } from "./run";
+import { runUi, type UiOptionValues } from "./run";
 import { takeSnapshot } from "./snapshot";
 import { readState, writeState } from "./state";
 
@@ -381,49 +380,4 @@ export async function uiExport(ctx: CommandContext, file: string, opts: ExportOp
 	} catch (error) {
 		return reportError(ctx, report, uiError("failed", errorMessage(error)));
 	}
-}
-
-// ---- registration ------------------------------------------------------------------------------------------------
-
-/** `record start|stop|status`, `replay` and `export` on `warden ui` (called once from `commands/ui.ts`). */
-export function registerFlowCommands(
-	cmd: Commander,
-	ctx: CommandContext,
-	done: (code: number) => void,
-	deps: UiDeps
-): void {
-	const record = cmd
-		.command("record")
-		.description("record warden ui actions as a replayable flow: start <name> | stop | status");
-	withUiOptions(
-		record
-			.command("start")
-			.description("start recording to .warden-ui/<name>.flow.json")
-			.argument("<name>", "flow name")
-			.option("--out <file>", "write the flow here instead")
-	).action(async (name, opts) => done(await uiRecordStart(ctx, deps, name, opts)));
-	withUiOptions(record.command("stop").description("stop recording and print the step count")).action(async (opts) =>
-		done(await uiRecordStop(ctx, deps, opts))
-	);
-	withUiOptions(record.command("status").description("is a recording running, and how long is it")).action(
-		async (opts) => done(await uiRecordStatus(ctx, deps, opts))
-	);
-	withUiOptions(
-		cmd
-			.command("replay")
-			.description("re-run a recorded flow; a screen that no longer matches is a replay_divergence (exit 1)")
-			.argument("<file>", "a .flow.json")
-			.option("--from <i>", "start at this step index")
-			.option("--update-snapshots", "rewrite the file with the positions and screen hashes seen now")
-			.option("--settle [ms]", "settle after every step, not only the recorded ones (default budget 3000 ms)")
-	).action(async (file, opts) => done(await uiReplay(ctx, deps, file, opts)));
-	cmd
-		.command("export")
-		.description("write a recorded flow as an e2e spec for @delacour/warden-e2e")
-		.argument("<file>", "a .flow.json")
-		.requiredOption("--to <path>", "spec file to write, e.g. e2e/sign-in.e2e.ts")
-		.option("--ids <path>", "ids module to merge test ids into (export const ids = { … })")
-		.option("--force", "overwrite an existing spec")
-		.option("--json", "machine-readable output: one JSON document on stdout")
-		.action(async (file, opts) => done(await uiExport(ctx, file, opts)));
 }

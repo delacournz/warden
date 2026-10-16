@@ -187,9 +187,19 @@ warden e2e mobile --base origin/main --count 2        # run them on leased devic
 
 An `e2e.<suite>` in `warden.config.ts` maps flow files to the screens they drive (`entries`) and globs (`paths`). Warden takes the git diff against the merge-base, walks each flow's import graph with the TypeScript resolver (tsconfig `paths`, workspace packages, per-platform `.ios` / `.android` files, type-only imports dropped), and runs only the flows a changed file reaches, with `runAll` globs (lockfile, native dirs) selecting everything. `warden e2e` runs them like `warden batch`, each `passes` times, and writes `e2e-report.json`. See the [Affected e2e guide](apps/docs/content/docs/guides/affected-e2e.mdx).
 
-Dev-client suites add `metro: {}`: `warden e2e <suite>` then leases a port, starts its own Metro in the project root, waits until that port is proven to serve this checkout (another worktree's Metro on it fails the run instead of being attached to), prewarms the bundle and exports `WARDEN_METRO_URL` / `WARDEN_PORT` to the spec processes. `devices: [{ profile, count, env, default }]` runs several device legs concurrently (`--devices all`), `mode: "single"` runs one spec process per device over its share of the flows, and `jobTimeoutMs` (default 10 min) kills a hung spec process.
+Dev-client suites add `metro: {}`: `warden e2e <suite>` then leases a port, starts its own Metro in the project root, waits until that port is proven to serve this checkout (another worktree's Metro on it fails the run instead of being attached to), prewarms the bundle and exports `WARDEN_METRO_URL` / `WARDEN_PORT` to the spec processes. `devices: [{ profile, count, env, default }]` runs several device legs concurrently (`--devices all`), a spec process runs per device over its share of the flows (`isolate: "flow"` runs one per flow), and `jobTimeoutMs` (default 10 min per flow) kills a hung spec process.
 
 Flows are `*.e2e.ts` specs written with `@delacour/warden-e2e` (`bun add -d @delacour/warden-e2e`, same version as warden) and run by `bun test --preload @delacour/warden-e2e/preload` (or a `bunfig.toml` preload): `test("…", async ({ app, device, screen }) => { await expect(screen.getByTestId("x")).toBeVisible(); })`. `warden e2e` leases the devices, installs the build, sets `WARDEN_UDID` / `WARDEN_BUNDLE_ID` / `WARDEN_LAUNCH_ARGS` and friends, and judges each flow from the spec's `results.jsonl`; `spec: { bundleId, launchArgs, timeout, actionTimeout, assertionTimeout }` on the suite tunes it, `warmDrivers: false` (or `--no-warm`) skips the iOS helper pre-warm. A failed test leaves `failure.png`, `screen-at-failure.txt` and `trace.jsonl` under `<batchDir>/e2e/<worker>-<seq>/`. See the docs guide *Write e2e specs*.
+
+### Benchmarks
+
+`packages/e2e-bench` runs the same 8-test suite through warden, Maestro, Argent, agent-device, tester.army and Detox on one leased device and writes a Markdown + HTML report (suite and per-test timings, cold start, resources, residue).
+
+```bash
+bun run bench doctor && bun run bench run --platform ios --runs 3
+```
+
+See [packages/e2e-bench/README.md](packages/e2e-bench/README.md) for fairness rules and caveats, and [docs/bench/](docs/bench/) for published results.
 
 ### App builds
 

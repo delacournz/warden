@@ -24,7 +24,7 @@ preload = ["@delacour/warden-e2e/preload"]
 ```
 e2e/<flow>.e2e.ts        flow id = path under flowsDir minus .e2e.ts (e2e/auth/sign-in.e2e.ts -> auth/sign-in)
 e2e/helpers/ids.ts       export const ids = { ... } as const   (mirrors the app's testIDs)
-e2e/helpers/flows.ts     shared steps (launch, signedIn, tapUntil)
+e2e/helpers/flows.ts     shared steps (launch, signedIn, nextStep, openDeepLink)
 e2e/helpers/poll.ts      pollUntil
 ```
 
@@ -42,7 +42,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 - `test(title, [options], async ({ app, device, screen, platform }) => ...)`
 - `options`: `{ timeout, skip, only, platforms: ("ios"|"android")[], retry }`. `retry` is bun's retry; only the last attempt lands in `results.jsonl`.
 - `test.skip`, `test.only`, `test.todo(title)`, `test.skipIf(cond)(title, body)`.
-- `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none" })` applies to the file or the enclosing `describe`.
+- `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none", systemAlerts?: "accept" | "dismiss" | "off" })` applies to the file or the enclosing `describe`. `systemAlerts` (default `"off"`): reads, actions and `expect` that see an alert on top answer it (`device.alert(mode)`, 3 answers max per look) and look again. Answers the app's own alerts too.
 - `test.extend<Extra>({ name: async (base, use) => { await use(value) } })` returns a `test` with the extra fixture.
 - `describe(title, [{ serial }], body)`. `serial` is accepted but changes nothing (bun runs a file's tests in order).
 - `beforeEach/afterEach` receive the fixtures. `beforeAll/afterAll` receive `app`, `device`, `screen`, `platform` only.
@@ -55,7 +55,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 
 | Member | Does |
 |---|---|
-| `open({ url?, args?, env? })` | terminate, relaunch with `WARDEN_LAUNCH_ARGS` + `args`, then open `url` |
+| `open({ url?, args?, env?, wait?: "quiet" \| "none" })` | terminate, relaunch with `WARDEN_LAUNCH_ARGS` + `args`, then open `url`; `wait: "quiet"` then settles (frontmost + still, 250 ms quiet, 3 s max, never an error); default `"none"` |
 | `close()` | terminate |
 | `restart()` | relaunch with `WARDEN_LAUNCH_ARGS` |
 | `reinstall()` | uninstall + install from `WARDEN_APP_PATH` (throws without it) |
@@ -67,7 +67,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | Member | Does |
 |---|---|
 | `alert("accept" \| "dismiss" \| { button })` | answer the system alert on top; `false` when none; `ACTION_FAILED` for a missing named button |
-| `openLink(url, { accept? })` | open a URL from outside the app; presses "Open" on the iOS sheet (up to 3 times, 8 s) |
+| `openLink(url, { accept?, until?, waitMs? })` | open a URL from outside the app; presses "Open" on the iOS sheet (up to 3 times) and returns once the sheet is gone, or after ~1.4 s when none shows and the app is in front (later links with that scheme return as soon as the app is in front); `until: locator` returns when it is visible; `waitMs` (default 8000) caps the wait, no error |
 | `home()` / `back()` | home key / Android back (iOS throws) |
 | `orientation(set?)` | `"portrait" \| "portraitUpsideDown" \| "landscapeLeft" \| "landscapeRight"`; returns current |
 | `appearance(set?)` | `"light" \| "dark"`; returns current |
@@ -109,10 +109,11 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 ### `Locator`
 
 - **Scope:** `getBy*`, `locator()`, `filter({ hasText?, has? })`, `first()`, `last()`, `nth(i)`.
-- **Reads (no waiting):** `count() all() text() allTexts() value() isVisible() isHidden() isEnabled() isChecked() boundingBox()`.
+- **Reads (no waiting):** `count() all() text() allTexts() value() isVisible() isHidden() isEnabled() isChecked() boundingBox()`, and `read()` = `{ visible, text?, value?, checked? }` from one look (no match: `{ visible: false }`; `checked` only for switch/checkbox). Prefer it over several single reads.
+- **Snapshot reuse:** the runner keeps the last whole-screen snapshot (iOS 150 ms, Android 1 s) and reuses it for the first look of a read or `expect` when nothing was done since (tap, key, launch, settle drop it). Actions that aim (`tap`, `longPress`, `fill`, `type`, `clear`, `press`, `scrollTo`) and `boundingBox` never reuse: they always take a new snapshot, so `expect(x).toBeVisible()` then `x.tap()` is two snapshots (a snapshot from a screen still sliding in has the wrong coordinates). `fill` confirm reads and `device.snapshot()` are always real.
 - **Wait:** `waitFor({ state: "attached" | "detached" | "visible" | "hidden", timeout? })`. Default state is `visible`.
 - **Actions** wait for exactly one visible match. Several matches fail with `LOCATOR_AMBIGUOUS`.
-  - `tap({ position?, timeout? })`, `longPress({ durationMs? })`
+  - `tap({ position?, timeout?, until?, retries = 2, windowMs = 4000, pollMs = 250 })`, `longPress({ durationMs? })`. `until` (a locator that must be visible, or `async () => boolean`) makes the tap retrying: after each tap it polls for `windowMs`, re-taps when `until` did not hold. The last tap is not waited on (the next assertion reports what is missing). `retries`/`windowMs`/`pollMs` without `until` are `INVALID_ARGUMENT`. Replaces hand-written `tapUntil` helpers.
   - `fill(text)` backspaces, types, verifies on two reads, retries once. Secure fields are not verified.
   - `clear()`, `type(text)` (at the caret)
   - `press(key, { modifiers? })` sends a KEY (`Enter Backspace Tab Space Escape Delete Up Down Left Right`), it is not a tap. Use `tap()` to tap.
@@ -120,7 +121,7 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 
 ## Matchers
 
-`expect(locator)` polls every 100 ms. Any other value goes to bun's `expect`.
+`expect(locator)` polls every 100 ms for the first second, then every 250 ms. Any other value goes to bun's `expect`.
 
 `toBeVisible toBeHidden toHaveText(t, { exact? }) toContainText(t, { ignoreCase? }) toHaveValue(v) toBeChecked({ checked? }) toBeEnabled toBeDisabled toHaveCount(n)`. All take `{ timeout? }`.
 
@@ -164,37 +165,24 @@ test("add, complete and filter todos", async ({ device, screen }) => {
 
 ## Helper patterns (`apps/example/e2e/helpers/flows.ts`)
 
-The first press after a launch or navigation can be dropped, and a HID tap has no ack. So flows wait for the result and re-tap.
+The first press after a launch or navigation can be dropped, and a HID tap has no ack. So flows wait for the result and re-tap, with the built-in options instead of hand-written loops.
+
+Every flow file starts with `test.use(FLOW_OPTIONS)`, where `FLOW_OPTIONS = { launch: "none", systemAlerts: "dismiss" }`: the flow opens the app itself, and a system sheet that covers the app is dismissed wherever a read, tap or assertion meets one.
 
 ```ts
-export async function launch(device: Device, screen: Screen): Promise<void> {
-	await device.alert("dismiss");
+export async function launch(app: Pick<App, "open">, screen: Screen): Promise<void> {
+	await app.open({ wait: "quiet" });   // in front and still (settle), never an error
 	await expect(screen.getByTestId(ids.welcome.screen)).toBeVisible({ timeout: 30_000 });
-	await device.settle({ quietMs: 250, timeout: 3_000 });
 }
 
-export async function tapUntil(
-	target: Locator,
-	arrived: () => Promise<boolean>,
-	options: { windowMs?: number; pollMs?: number } = {}   // defaults 4000 / 250
-): Promise<void> {
-	await target.tap();
-	for (let attempt = 0; attempt < 2; attempt += 1) {      // up to 2 more taps
-		const deadline = Date.now() + (options.windowMs ?? 4_000);
-		while (Date.now() < deadline) {
-			if (await arrived()) return;
-			await new Promise((r) => setTimeout(r, options.pollMs ?? 250));
-		}
-		await target.tap();
-	}
-}
+await screen.getByTestId(ids.tabs.settings).tap({ until: screen.getByTestId(ids.settings.email) });   // 4 s a press, 2 re-sends
 ```
 
-- `nextStep(screen, title)`: `tapUntil` on the Next button until the step title shows, then `toHaveText`.
-- `expectTodosAfterSignIn`: loop `device.alert("dismiss")` + `isVisible()` for up to 15 s, then one final `toBeVisible({ timeout: 1 })` for the error.
-- `openDeepLink`: up to 3 `device.openLink(url)`, each waiting 6 s for the target screen.
+- `nextStep(screen, title)`: `tap({ until })` on the Next button, where `until` reads the title with `locator.read()` (`visible && text === title`), then `toHaveText`.
+- `expectTodosAfterSignIn(screen)`: `toBeVisible({ timeout: 15_000 })`; `systemAlerts` dismisses a sheet meanwhile.
+- `openDeepLink(device, screen, url, testId)`: up to 3 `device.openLink(url, { until, waitMs: 6_000 })`, checking the target screen after each.
 - `pollUntil(read, accept, 10_000)` in `helpers/poll.ts` polls a read until `accept` likes it.
-- Helpers take `Device` / `Screen` / `Locator` as parameters; import them as types from the package root.
+- Helpers take `App` / `Device` / `Screen` as parameters (`Pick` of what they use); import them as types from the package root.
 
 ## Accessibility rule
 

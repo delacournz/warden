@@ -67,6 +67,36 @@ describe("wait <selector>", () => {
 		expect(snapshotCalls(h)).toBe(11);
 	});
 
+	test("backs off to 250 ms after the first second", async () => {
+		const h = harness([snapshotOf(SPINNER)]);
+		expect(await h.run("wait", "id=continue", "--timeout", "3000", "--json")).toBe(1);
+		expect(doc(h.c).error.details.waitedMs).toBe(3000);
+		expect(snapshotCalls(h)).toBe(19);
+	});
+
+	test("an element that shows up after the first second is seen on a 250 ms tick", async () => {
+		const h = harness(after(12, SPINNER, DONE));
+		expect(await h.run("wait", "id=continue", "--json")).toBe(0);
+		expect(doc(h.c).result.waitedMs).toBe(1500);
+		expect(snapshotCalls(h)).toBe(13);
+	});
+
+	test("wait absent and wait text back off the same way", async () => {
+		const gone = harness(after(12, SPINNER, DONE));
+		expect(await gone.run("wait", "absent", "text=Loading", "--json")).toBe(0);
+		expect(doc(gone.c).result.waitedMs).toBe(1500);
+		const shown = harness(after(12, SPINNER, DONE));
+		expect(await shown.run("wait", "text", "Welcome back", "--json")).toBe(0);
+		expect(doc(shown.c).result.waitedMs).toBe(1500);
+	});
+
+	test("a deadline inside the slow phase still ends exactly on it", async () => {
+		const h = harness([snapshotOf(SPINNER)]);
+		await h.run("wait", "id=continue", "--timeout", "1100", "--json");
+		expect(doc(h.c).error.details.waitedMs).toBe(1100);
+		expect(snapshotCalls(h)).toBe(12);
+	});
+
 	test("the default timeout is 5000 ms", async () => {
 		const h = harness([snapshotOf(SPINNER)]);
 		expect(await h.run("wait", "id=continue", "--json")).toBe(1);

@@ -1,0 +1,3 @@
+steps:
+  - run: open-sign-in
+  - run: submit-ada

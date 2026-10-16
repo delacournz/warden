@@ -9,7 +9,7 @@ function attempt(controller = new AbortController()) {
 		signal: controller.signal,
 		dir: "/d",
 		short: "s",
-		trace: { path: "/d/trace.jsonl", write: (e) => events.push(e) },
+		trace: { path: "/d/trace.jsonl", write: (e) => events.push(e), flush: () => undefined },
 		depth: 0,
 		files: new Set(),
 		softFailures: [],
@@ -44,7 +44,7 @@ describe("runStep", () => {
 		expect(value).toBe(7);
 		expect(depths).toEqual([1]);
 		expect(ctx.depth).toBe(0);
-		expect(events.map((e) => [e.type, e.label])).toEqual([
+		expect(events.flatMap((e) => (e.type === "span" ? [] : [[e.type, e.label]]))).toEqual([
 			["step-start", "tap"],
 			["step-start", "snapshot"],
 			["step-end", "snapshot"],

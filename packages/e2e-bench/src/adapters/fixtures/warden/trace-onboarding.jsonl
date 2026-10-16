@@ -1,0 +1,7 @@
+{"type":"step-start","ts":1760600000100,"kind":"app","label":"open nz.co.delacour.warden.example"}
+{"type":"step-end","ts":1760600001100,"kind":"app","label":"open nz.co.delacour.warden.example","status":"passed","ms":1000}
+{"type":"step-start","ts":1760600001200,"kind":"locator","label":"tap welcome-next"}
+{"type":"step-end","ts":1760600001500,"kind":"locator","label":"tap welcome-next","status":"passed","ms":300}
+{"type":"note","ts":1760600001600,"kind":"note","label":"hello"}
+{"type":"step-end","ts":1760600002500,"kind":"expect","label":"toBeVisible sign-in-screen","status":"failed","ms":5000,"error":"nope"}
+{"type":"step-end","ts":

@@ -1,0 +1,17 @@
+Tasks: 512 total,   2 running, 510 sleeping,   0 stopped,   0 zombie
+  Mem:  3919952K total,  3788588K used,   131364K free,    10416K buffers
+ 800%cpu  60%user   0%nice  30%sys 710%idle   0%iow   0%irq   0%sirq   0%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 4321 u0_a123      10 -10  14G 250M 120M S  25.0   6.5   0:30.11 nz.co.delacour.warden.example
+ 4390 u0_a123      10 -10  12G  40M  20M S   1.0   1.0   0:00.50 nz.co.delacour.warden.example.test
+ 5000 shell        20   0  12G  80M  40M S  10.5   2.1   0:05.00 app_process / com.android.commands.uiautomator runtime
+ 5100 u0_a124      20   0  11G  60M  30M S   4.5   1.5   0:02.00 androidx.test.runner instrumentation
+ 6001 u0_a131      10 -10  13G 120M  60M S  12.0   3.1   0:20.00 dev.mobile.maestro
+ 6002 u0_a132      10 -10  12G  95M  50M S   6.0   2.4   0:08.00 dev.mobile.maestro.test
+ 6100 u0_a140      10 -10  12G  70M  40M S   8.5   1.8   0:04.00 com.callstack.agentdevice.snapshothelper
+ 6101 shell        20   0  11G  58M  30M S   1.5   1.4   0:01.00 app_process / com.callstack.agentdevice.snapshothelper/.SnapshotInstrumentation
+ 6200 shell        20   0  11G  50M  28M S   3.0   1.2   0:02.00 warden-uiad
+ 6300 u0_a150      10 -10  12G  64M  33M S   2.0   1.6   0:02.00 com.argent.androiddevtools
+ 1000 system       18  -2  15G 400M 200M S   9.0  10.0   1:00.00 system_server
+ 1100 u0_a60       18  -2  14G 310M 150M S   2.0   8.0   0:40.00 com.android.systemui
+ 1200 root         20   0  11G  30M  10M S   0.5   0.8   0:01.00 zygote64

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { el, snapshotOf } from "./driver.testing";
-import { settleByHash, snapshotHash } from "./settle";
+import { type SettleDetail, settleByHash, settleDetailOf, snapshotHash } from "./settle";
 
 /** Fake clock: `sleep` advances time, `now` reads it. */
 function clock() {
@@ -107,5 +107,34 @@ describe("snapshotHash", () => {
 		expect(
 			snapshotHash(snapshotOf([el("button", { id: "go", label: "Go", frame, enabled: false, hittable: true })]))
 		).toBe(hash);
+	});
+});
+
+describe("settleDetailOf", () => {
+	test("keeps the extra fields a driver reports next to quiet and waitedMs", () => {
+		const reply: SettleDetail = {
+			quiet: false,
+			waitedMs: 8000,
+			via: "stream",
+			reason: "frontmost_mismatch",
+			frontmostPid: 4242,
+		};
+		expect(settleDetailOf(reply)).toEqual(reply);
+	});
+
+	test("a plain outcome stays plain", () => {
+		expect(settleDetailOf({ quiet: true, waitedMs: 250 })).toEqual({ quiet: true, waitedMs: 250 });
+	});
+
+	test("fields of the wrong type or an unknown via are dropped, never passed on", () => {
+		const reply = { quiet: true, waitedMs: 1, via: "telepathy", reason: 7, frontmostPid: "12" };
+		expect(settleDetailOf(reply)).toEqual({ quiet: true, waitedMs: 1 });
+	});
+
+	test("via takes stream, snapshot and hash", () => {
+		for (const via of ["stream", "snapshot", "hash"]) {
+			const reply = { quiet: true, waitedMs: 1, via };
+			expect(settleDetailOf(reply)).toMatchObject({ via });
+		}
 	});
 });

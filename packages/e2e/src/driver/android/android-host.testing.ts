@@ -8,8 +8,11 @@ import type { AdbProcess, SpawnAdb } from "./adb-session";
 
 export type ShellReply = string | { stdout: string; exitCode?: number } | "crash";
 
-/** First rule whose `match` is a prefix of (or regex-matches) the command wins; later `unshift`s override. */
-export type ShellRule = { match: string | RegExp; reply: ShellReply | (() => ShellReply) };
+/**
+ * First rule whose `match` is a prefix of (or regex-matches) the command wins; later `unshift`s override.
+ * A function reply is given the command, so a rule can model state (a fake `settings` store).
+ */
+export type ShellRule = { match: string | RegExp; reply: ShellReply | ((command: string) => ShellReply) };
 
 export type HostReply = string | { stdout?: string; stderr?: string; exitCode?: number };
 export type HostRule = { match: string | RegExp; reply: HostReply | (() => HostReply) };
@@ -48,7 +51,7 @@ export function fakeAndroidHost(
 
 	function shellReply(cmd: string): { stdout: string; exitCode: number } | "crash" {
 		const rule = shellRules.find((r) => matches(r, cmd));
-		const raw = typeof rule?.reply === "function" ? rule.reply() : rule?.reply;
+		const raw = typeof rule?.reply === "function" ? rule.reply(cmd) : rule?.reply;
 		if (raw === "crash") return "crash";
 		if (raw === undefined) return { stdout: "", exitCode: 0 };
 		return typeof raw === "string" ? { stdout: raw, exitCode: 0 } : { stdout: raw.stdout, exitCode: raw.exitCode ?? 0 };

@@ -1,0 +1,10 @@
+{"type":"span","ts":1760599999950,"op":"driver.app.terminate","ms":100,"ok":true}
+{"type":"step-start","ts":1760600000050,"kind":"app","label":"app.open"}
+{"type":"span","ts":1760600000100,"op":"driver.app.launch","ms":800,"ok":true}
+{"type":"step-end","ts":1760600001000,"kind":"app","label":"app.open","status":"passed","ms":950}
+{"type":"span","ts":1760600001010,"op":"driver.settle","ms":380,"ok":true,"detail":{"via":"stream"}}
+{"type":"span","ts":1760600001000,"op":"device.settle","ms":400,"ok":true,"detail":{"quiet":true,"waitedMs":380,"via":"stream"}}
+{"type":"span","ts":1760600002000,"op":"read.isVisible","ms":100,"ok":true,"detail":{"locator":"getByTestId(\"welcome-screen\")"}}
+{"type":"step-start","ts":1760600002300,"kind":"locator","label":"tap welcome-next"}
+{"type":"step-end","ts":1760600002600,"kind":"locator","label":"tap welcome-next","status":"passed","ms":300}
+{"type":"span","ts":1760600009900,"op":"driver.snapshot","ms":300,"ok":false,"code":"E_TIMEOUT"}

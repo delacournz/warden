@@ -102,7 +102,6 @@ export default {
 			...AFFECTED,
 		},
 		"example-dev": {
-			mode: "single",
 			count: 2,
 			app: { variant: "dev" },
 			metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
