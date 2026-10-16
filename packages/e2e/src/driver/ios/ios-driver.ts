@@ -282,6 +282,7 @@ export function createIosDriver(
 		noteSpanDetail("rebindMs", reply.data.waitedMs);
 		if (reply.data.restarts !== undefined && reply.data.restarts > 0)
 			noteSpanDetail("rebindRestarts", reply.data.restarts);
+		if (reply.data.recycled === true) noteSpanDetail("rebindRecycled", true);
 		return reply.data.bound;
 	}
 

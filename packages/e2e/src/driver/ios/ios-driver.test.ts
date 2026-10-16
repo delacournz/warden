@@ -755,6 +755,20 @@ describe("settle", () => {
 		expect(helper.of("settle")[0]).not.toHaveProperty("bundleId");
 	});
 
+	test("a rebind that recycled the helper's guests says so on the launch span", async () => {
+		const { driver } = await open(
+			(request) =>
+				request.op === "rebind"
+					? { data: { bound: true, waitedMs: 1500, pid: 4242, restarts: 1, recycled: true } }
+					: { data: null },
+			{},
+			[["xcrun simctl launch", {}]]
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
+		expect(notes).toEqual({ rebind: "bound", rebindMs: 1500, rebindRestarts: 1, rebindRecycled: true });
+	});
+
 	test("an unbound rebind leaves the next settle naming the launched bundle", async () => {
 		const { driver, helper } = await open(
 			(request) => {

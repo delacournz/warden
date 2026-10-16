@@ -95,10 +95,20 @@ Root causes, in the order they cost time:
 
 After merging `feature/warden-perf` (7d845db): 3 reps, 3 of 32 tests failed (`perf12-merged*`): after sign-in the observation cache gave a tap a snapshot of the todos screen still sliding in, and the tap landed on the wrong element. Not the rebind: the cause is cacher's snapshot reuse, fixed in `5115432` (actions and `boundingBox` never reuse a snapshot). With that applied: 3 reps 100% pass, warm suite 64.73 s, settle median 268-294 ms, `via` 5 stream / 3 snapshot per rep, host load 17.8 (`perf12-fix`).
 
+PERF-1.2b, recycling the guests in `rebind` before they wedge (same sim, 3 reps each, host load 6-10, `perf12b-*`):
+
+| `WARDEN_SIMD_GUEST_MAX_AGE_S` | Warm suite | settle median | `via` per rep (stream / snapshot) | Launches that recycled |
+|---|---|---|---|---|
+| 0 (reactive reap only) | 63.00 s | 260-304 ms | 5/3, 5/3, 5/3 | 0 |
+| 18 | 61.02 s | 260-263 ms | 6/2, 7/1, 7/1 | 5 |
+| 12 (default) | 59.88 s, 60.65 s (two runs) | 257-267 ms | 8/0 in all 6 reps | 11 of 24 |
+
+A recycle costs +0.51 s inside `rebind` (1610 ms against 1097 ms), the first snapshot after it is unchanged (32 ms against 30 ms); a wedge costs a 1245 ms settle against 260 ms plus ~0.45 s on the next read and settle. 18 s is too late for ~8 s tests: a guest at 17 s old at launch wedges mid-test. 12 s is tuned to this suite's cadence; a suite with much longer or much shorter tests may want `WARDEN_SIMD_GUEST_MAX_AGE_S` set (guests wedge from ~21 s).
+
 Not done, and why:
 
 - Plan item "dead old pid -> restart the stream at once" (PERF-1.2.3) is not implemented: a restart takes 1.15-1.3 s to its first state, the stream follows a relaunch itself in 0.6-0.7 s from launch, so restarting early is slower and churns guests. The first restart grace went 500 -> 900 ms instead.
-- Targets not met yet: settle after launch is 262-272 ms median (<= 0.4 s) but 3 of 8 settles per rep still hit the wedge (1.2-1.4 s) because a guest wedges every ~24 s and a test takes ~8 s. Follow-ups: find the guest/idb cause, or recycle the guests before they wedge (~20 s of age, during `rebind`, saves ~1 s per wedge); `welcomeExpect` is dominated by the app's own render time once the first read is fast.
+- Targets not met after PERF-1.2 alone: settle after launch was 262-272 ms median (<= 0.4 s) but 3 of 8 settles per rep still hit the wedge (1.2-1.4 s) because a guest wedges every ~24 s and a test takes ~8 s. PERF-1.2b (above) removes them: 8/8 `via:"stream"` per rep. Follow-ups: find the guest/idb cause, or recycle the guests before they wedge (~20 s of age, during `rebind`, saves ~1 s per wedge); `welcomeExpect` is dominated by the app's own render time once the first read is fast.
 
 ## Phases
 
@@ -636,7 +646,7 @@ Waves:
 | typist (1.1) | Under host load (load avg 14–41), `smoke.ts` raw `typeText` into an uncleared field garbled text in 2 of 5 runs (`"lol, World 123!H"`). Not the fill path, not compared against the old build. Re-run smoke on an idle host before 6.2; if it reproduces, it's a pacing-under-load bug. | Open. |
 | droid-arch (3.3) | `warden e2e <suite> --platform android` refuses suites with `slim: true` (`platformError` in `commands/e2e.ts`, tested). Suggest: skip slim on Android with a note instead of refusing, so one suite config serves both platforms. | Suggestion. |
 | droid-arch (3.3) | `warden-uiad` only verified on API 37 (only image installed). Add an emulator matrix (API 30–36) in CI. p95 snapshot ~270 ms right after sign-in navigation under load. | Open. |
-| streamer (1.2) | AX guest wedges ~every 24 s (all quiescence queries `busy`), costing ~1.25 s in 3/8 tests per rep; cause inside the guest/idb unknown. Proactive recycle in `rebind` being tried. | In progress. |
+| streamer (1.2) | AX guest wedges ~every 24 s (all quiescence queries `busy`), costing ~1.25 s in 3/8 tests per rep; cause inside the guest/idb unknown. Done (PERF-1.2b): `rebind` recycles guests older than `WARDEN_SIMD_GUEST_MAX_AGE_S` (default 12 s; 18 s still wedged): 8/8 via stream every rep, 0 wedges in 24 launches, warm suite 60.65 s. Cause unknown; threshold could follow the launch gap. |
 | conductor (4.6) | `native+js` fingerprint keys are v2: every such project rebuilds once after upgrading. | Expected. |
 
 ## Decisions (user, 2026-10-16)

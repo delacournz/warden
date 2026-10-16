@@ -152,6 +152,7 @@ describe("data schemas", () => {
 			bound: false,
 			reason: "timeout",
 		});
+		expect(rebindDataSchema.parse({ bound: true, waitedMs: 1500, recycled: true })).toMatchObject({ recycled: true });
 		expect(rebindDataSchema.safeParse({ waitedMs: 5 }).success).toBe(false);
 		expect(rebindDataSchema.safeParse(null).success).toBe(false);
 	});
