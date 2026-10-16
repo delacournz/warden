@@ -293,7 +293,8 @@ export type SettleData = z.infer<typeof settleDataSchema>;
 
 /**
  * `alertButtons` params. No `backend` reads both readers (`ax` first, then `axbridge`); `ax` or `axbridge` reads only
- * that one: one tree read instead of two, and errors propagate (nothing else answered).
+ * that one: one tree read instead of two, errors propagate (nothing else answered), and an `axbridge` read that sees a
+ * modal without readable buttons answers `{ buttons: [] }` instead of `null`.
  */
 export type AlertButtonsParams = { backend?: "ax" | "axbridge" };
 

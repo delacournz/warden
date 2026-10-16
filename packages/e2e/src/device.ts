@@ -157,7 +157,8 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 		},
 
 		async alert(action) {
-			const info = await readAlert();
+			// the bridge also sees what the app itself shows (Keychain "Save Password?"), so it answers "none" alone
+			const info = await readAlert("axbridge");
 			if (info === null || info.buttons.length === 0) return false;
 			const { buttons } = info;
 			let target: Element | undefined;

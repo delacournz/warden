@@ -146,6 +146,46 @@ final class AlertBackendTests: XCTestCase {
     }
   }
 
+  // MARK: a modal without readable buttons
+
+  /// idb names a blocking modal but no container with a button is in the tree.
+  private func modalWithoutButtons() throws -> AccessibilityDocument {
+    let source = try plain
+    return AccessibilityDocument(
+      elements: source.elements,
+      modal: AccessibilityModalInfo(kind: .system, elementType: "Alert", label: "Open in “warden-example”?"),
+      truncated: false, screen: source.screen)
+  }
+
+  func testABridgeReadOfAModalWithoutButtonsAnswersAnAlertWithNone() async throws {
+    let readers = Readers([.axbridge: .success(try modalWithoutButtons())])
+    let alert = try await answer(AlertRequest(backend: .axbridge), readers)
+    XCTAssertEqual(alert["buttons"], .array([]))
+    XCTAssertEqual(alert["title"], .string("Open in “warden-example”?"))
+  }
+
+  func testTheDefaultReadStillAnswersNullForAModalWithoutButtons() async throws {
+    let readers = Readers([.ax: .success(try plain), .axbridge: .success(try modalWithoutButtons())])
+    let alert = try await answer(AlertRequest(), readers)
+    XCTAssertEqual(alert, .null)
+  }
+
+  func testAHostReadOfAModalWithoutButtonsIsNotReportedEither() async throws {
+    let readers = Readers([.ax: .success(try modalWithoutButtons())])
+    let alert = try await answer(AlertRequest(backend: .ax), readers)
+    XCTAssertEqual(alert, .null)
+  }
+
+  func testAModalWithButtonsWinsOverTheEmptyAnswer() async throws {
+    let readers = Readers([.axbridge: .success(try keychain)])
+    let alert = try await answer(AlertRequest(backend: .axbridge), readers)
+    XCTAssertEqual(buttons(alert), ["Not Now", "Save"])
+  }
+
+  func testModalWithoutButtonsNeedsAModal() throws {
+    XCTAssertNil(Session.modalWithoutButtons(document: try plain))
+  }
+
   // MARK: frontmost
 
   func testFrontmostRequestNeedsABundleId() throws {

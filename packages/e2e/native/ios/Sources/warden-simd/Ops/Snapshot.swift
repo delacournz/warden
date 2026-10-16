@@ -466,7 +466,8 @@ extension Session {
   /// Without a `backend` both readers are asked, `ax` first because it sees SpringBoard-owned UI (permission prompts),
   /// then `axbridge`, which also sees what an app shows itself (the Keychain sheet): a screen without an alert costs two
   /// tree reads. With a `backend` only that reader is read, one read for the same answer when that reader is the one
-  /// that sees what the caller is after; its failure is the op's failure (nothing else answered).
+  /// that sees what the caller is after; its failure is the op's failure (nothing else answered), and an `axbridge` read
+  /// that finds a modal but no readable button answers `{buttons: []}` so the caller can look again.
   func alertButtons(_ request: AlertRequest) async throws -> JSON {
     var options = AccessibilityRequestOptions(format: .complete, keys: wireKeys)
     options.filter = .all
@@ -487,11 +488,15 @@ extension Session {
     let backends: [AXBackend] = request.backend.map { [$0] } ?? [.ax, .axbridge]
     var lastError: (any Error)?
     var answered = false
+    var modalOnly: JSON?
     for backend in backends {
       do {
         guard let document = try await read(backend) else { continue }
         answered = true
         if let alert = renderAlert(document: document, backend: backend, screen: screen) { return alert }
+        if request.backend != nil, backend == .axbridge, modalOnly == nil {
+          modalOnly = modalWithoutButtons(document: document)
+        }
       } catch {
         lastError = error
       }
@@ -501,7 +506,14 @@ extension Session {
       if let lastError { throw lastError }
       if let backend = request.backend { throw WireError(.axUnavailable, "the \(backend.rawValue) reader is unavailable") }
     }
-    return .null
+    return modalOnly ?? .null
+  }
+
+  /// idb names a blocking modal (`document.modal`) but no container with a button was found in the tree: the sheet is
+  /// there and its buttons are not readable yet (still animating in, or not built).
+  static func modalWithoutButtons(document: AccessibilityDocument) -> JSON? {
+    guard let modal = document.modal else { return nil }
+    return .object(["buttons": .array([]), "title": .string(modal.label ?? modal.elementType)])
   }
 
   /// The `alertButtons` payload for one read, or nil when that read shows no alert.

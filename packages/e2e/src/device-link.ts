@@ -37,7 +37,7 @@ export function linkKey(url: string): string {
 export type LinkDeps = {
 	clock: Clock;
 	/** `readAlert`: with a backend, one reader; without, both */
-	readAlert(backend?: AlertBackend): Promise<AlertInfo | null>;
+	readAlert(backend?: AlertBackend, modalLooks?: number): Promise<AlertInfo | null>;
 	press(button: Element): Promise<void>;
 	/** is the app under test in front; undefined = cannot tell */
 	appInFront(): Promise<boolean | undefined>;
@@ -88,7 +88,7 @@ async function lookForSheet(
 	if (!watch.looking) return NOT_LOOKING;
 	if (remembered && clock.now() - started < QUIET_MS) return { sheetUp: false, confirmed: true, finished: false };
 	const cheap = clock.now() - watch.lastSheetAt < QUIET_MS;
-	const info = await deps.readAlert(cheap ? "ax" : undefined);
+	const info = await deps.readAlert(cheap ? "ax" : undefined, 0);
 	const open = info === null ? undefined : findButton(info.buttons, "Open");
 	if (open === undefined) {
 		// answered: nothing left to press once the sheet is gone

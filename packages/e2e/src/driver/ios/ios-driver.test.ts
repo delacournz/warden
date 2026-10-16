@@ -485,6 +485,15 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		expect(helper.of("alertButtons")[0]).not.toHaveProperty("backend");
 	});
 
+	test("alertOn: no alert is null; a modal without readable buttons is an alert with no buttons", async () => {
+		let reply: unknown = null;
+		const { driver } = await open((request) => (request.op === "alertButtons" ? { data: reply } : undefined));
+		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		expect(await unwrapped(driver.alertOn("axbridge"))).toBeNull();
+		reply = { title: "Open this page in “app”?", buttons: [] };
+		expect(await unwrapped(driver.alertOn("axbridge"))).toEqual({ title: "Open this page in “app”?", buttons: [] });
+	});
+
 	test("alertOn passes a helper failure on", async () => {
 		const { driver } = await open((request) =>
 			request.op === "alertButtons"

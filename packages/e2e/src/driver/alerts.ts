@@ -16,7 +16,7 @@ export type AlertBackend = "ax" | "axbridge";
 
 /**
  * `alert()` through ONE reader, so a screen without an alert costs one tree read where `Driver.alert()` reads both.
- * `null` = this reader shows none.
+ * `null` = this reader shows none. `{ buttons: [] }` = a modal is up whose buttons are not readable yet.
  */
 export type ReadsAlertOn = { alertOn(backend: AlertBackend): DriverResult<AlertInfo | null> };
 

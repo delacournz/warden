@@ -160,6 +160,8 @@ await device.openLink("myapp://todo/42", { until: screen.getByTestId("todo-detai
 
 `until` is for a screen the app is not already showing; if `waitMs` passes first, the next assertion reports the missing screen. Android has no sheet, so `openLink` returns at once unless `until` is given. `accept: false` skips the sheet.
 
+`alert()` asks the system for an alert once and returns `false` straight away when there is none. When a sheet is up but its buttons are not readable yet it looks again a few times, 200 ms apart.
+
 ## Imports and errors
 
 `@delacour/warden-e2e` exports `test`, `describe`, `beforeAll`, `beforeEach`, `afterEach`, `afterAll`, `expect`, `E2eError`, `WARDEN_E2E_VERSION` and the types `App`, `Device`, `Screen`, `Locator` and `TestFixtures`. Everything else is internal.

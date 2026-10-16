@@ -124,6 +124,68 @@ describe("device.alert", () => {
 		const error = await device.alert("accept").catch((e: unknown) => e);
 		expect((error as E2eError).code).toBe("DRIVER");
 	});
+
+	test("a driver with one alert() answers 'no alert' with one read and no sleeps", async () => {
+		const { device, driver, clock } = setup();
+		expect(await device.alert("dismiss")).toBe(false);
+		expect(driver.calls.map((c) => c.method)).toEqual(["alert"]);
+		expect(clock.time()).toBe(0);
+	});
+});
+
+describe("device.alert on a driver that reads one backend", () => {
+	function backends(screens: Snapshot[] | (() => Snapshot), extra: Partial<Parameters<typeof fakeDriver>[0]> = {}) {
+		const clock = fakeClock();
+		const driver = fakeDriver({ screens, alertBackends: ["ax", "axbridge"], ...extra });
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
+		return { driver, device, clock };
+	}
+
+	test("no modal: exactly one driver read, on the bridge, and no sleeps", async () => {
+		const { device, driver, clock } = backends([snapshotOf([])]);
+		expect(await device.alert("dismiss")).toBe(false);
+		expect(driver.calls).toEqual([{ method: "alertOn", backend: "axbridge" }]);
+		expect(clock.time()).toBe(0);
+	});
+
+	test("an alert is answered from the same single read", async () => {
+		const { device, driver, clock } = backends([withAlert("Not Now", "Save")]);
+		expect(await device.alert("dismiss")).toBe(true);
+		expect(driver.callsOf("alertOn")).toHaveLength(1);
+		expect(driver.callsOf("alert")).toHaveLength(0);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+		expect(clock.time()).toBe(0);
+	});
+
+	test("a modal whose buttons are not readable yet is looked at again, with sleeps", async () => {
+		let reads = 0;
+		const { device, driver, clock } = backends([withAlert("Not Now", "Save")], {
+			onCall: (c) => (c.method === "alertOn" && reads++ < 2 ? { data: { buttons: [] } } : undefined),
+		});
+		expect(await device.alert("dismiss")).toBe(true);
+		expect(driver.callsOf("alertOn")).toHaveLength(3);
+		expect(clock.time()).toBeGreaterThan(0);
+		expect(clock.time()).toBeLessThan(1000);
+	});
+
+	test("a modal that never shows buttons gives up after a few looks", async () => {
+		const { device, driver, clock } = backends([snapshotOf([])], {
+			onCall: (c) => (c.method === "alertOn" ? { data: { buttons: [] } } : undefined),
+		});
+		expect(await device.alert("accept")).toBe(false);
+		expect(driver.callsOf("alertOn").length).toBeLessThanOrEqual(5);
+		expect(driver.callsOf("tap")).toHaveLength(0);
+		expect(clock.time()).toBeLessThan(1500);
+	});
+
+	test("a failed one-backend read falls straight through to the two-reader read, without sleeping", async () => {
+		const { device, driver, clock } = backends([withAlert("Cancel", "OK")], {
+			onCall: (c) => (c.method === "alertOn" ? failWith("E_AX_UNAVAILABLE") : undefined),
+		});
+		expect(await device.alert("accept")).toBe(true);
+		expect(driver.calls.map((c) => c.method).slice(0, 2)).toEqual(["alertOn", "alert"]);
+		expect(clock.time()).toBe(0);
+	});
 });
 
 describe("device.openLink", () => {
