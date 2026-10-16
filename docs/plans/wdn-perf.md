@@ -61,7 +61,7 @@ Already fine, leave alone: sqlite store (WAL, busy_timeout, cached statements, s
 | iOS `openLink` without a sheet | 8.9 s | ≤ 1.5 s |
 | iOS prepare | 729 ms | ≤ 300 ms |
 | iOS host CPU avg / RSS avg | 9.4% / 116 MB | ≤ 5% / ≤ 110 MB |
-| Android warm suite | 407 s | ≤ 250 s after PERF-3.1; **≤ 110 s** after PERF-3.3 |
+| Android warm suite | 465 s, 91.7% pass (V2) | ≤ 250 s after PERF-3.1; **≤ 110 s, 100% pass** after PERF-3.3 (stretch: ≤ tester-army's 76 s) |
 | `warden version` cold | 70 ms / 97 MB | ≤ 30 ms / ≤ 50 MB |
 | Untraced time per rep | 35 s | ≤ 3 s |
 
@@ -71,6 +71,7 @@ Already fine, leave alone: sqlite store (WAL, busy_timeout, cached statements, s
 |---|---|---|---|
 | iOS | `v1-ios-r2` (3 reps, idle host) | `packages/e2e-bench/.bench/v1-ios-r2` | warden 101.9 s, agent-device 97.8 s |
 | Android | `smoke-android-r2` (1 rep) | `packages/e2e-bench/.bench/smoke-android-r2` | warden 407.4 s, agent-device 104.5 s |
+| Android | `v2-android-r2` (3 reps, `docs/bench/android-2026-10-16.md`) | `packages/e2e-bench/.bench/v2-android-r2` (e2e-bench worktree) | warden 465.0 s (91.7% pass, 8.3% flake), tester-army 76.4 s (100%), agent-device 46.2 s (83%), maestro 276.0 s |
 
 PERF-0.4 root-cause findings go here.
 
