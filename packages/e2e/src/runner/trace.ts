@@ -16,6 +16,19 @@ export const traceEventSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({ type: z.literal("screenshot"), ...base, path: z.string() }),
 	z.object({ type: z.literal("note"), ...base }),
+	z.object({
+		type: z.literal("span"),
+		/** epoch ms the call started; `ts + ms` is when it ended. Written when it ends, so file order is not `ts` order. */
+		ts: z.number(),
+		/** `<layer>.<call>`: `driver.snapshot`, `device.settle`, `read.isVisible` */
+		op: z.string(),
+		ms: z.number(),
+		ok: z.boolean(),
+		/** the error code of a failed call (`E_TIMEOUT`, `TIMEOUT`, …) */
+		code: z.string().optional(),
+		/** scalars the call left for its span: settle `via`/`reason`, adb time, the dump route */
+		detail: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+	}),
 ]);
 
 /** One line of `trace.jsonl`; `ts` is epoch ms, `kind` the step family (`app`, `locator`, `expect`, …). */
@@ -23,22 +36,51 @@ export type TraceEvent = z.infer<typeof traceEventSchema>;
 
 export type TraceWriter = {
 	readonly path: string;
+	/**
+	 * Appends `event`. A `span` is only buffered (a test makes hundreds of driver calls and one `appendFileSync`
+	 * each would show up in the timings it measures): the buffer is appended, in order, before the next other
+	 * event, by {@link TraceWriter.flush}, or when it holds {@link SPAN_BUFFER_MAX} spans.
+	 */
 	write(event: TraceEvent): void;
+	/** Appends the buffered spans; the runner calls it when an attempt ends. Spans written after it are lost. */
+	flush(): void;
 };
+
+/** Spans held in memory before they are appended without waiting for a step. */
+export const SPAN_BUFFER_MAX = 256;
 
 /** Append-only `trace.jsonl`; `mirror` also receives each event (the console reporter). */
 export function openTrace(path: string, mirror?: (event: TraceEvent) => void): TraceWriter {
 	let ready = false;
+	let pending: string[] = [];
+	const append = (lines: readonly string[]): void => {
+		if (!ready) {
+			mkdirSync(dirname(path), { recursive: true });
+			ready = true;
+		}
+		appendFileSync(path, lines.join(""));
+	};
+	const flush = (): void => {
+		if (pending.length === 0) return;
+		const lines = pending;
+		pending = [];
+		append(lines);
+	};
 	return {
 		path,
 		write(event) {
-			if (!ready) {
-				mkdirSync(dirname(path), { recursive: true });
-				ready = true;
+			const line = `${JSON.stringify(event)}\n`;
+			if (event.type === "span") {
+				pending.push(line);
+				if (pending.length >= SPAN_BUFFER_MAX) flush();
+			} else {
+				const lines = pending;
+				pending = [];
+				append([...lines, line]);
 			}
-			appendFileSync(path, `${JSON.stringify(event)}\n`);
 			mirror?.(event);
 		},
+		flush,
 	};
 }
 

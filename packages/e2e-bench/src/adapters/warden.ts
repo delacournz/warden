@@ -199,6 +199,7 @@ function toRep(
 			status: t.status,
 			durationMs: t.durationMs,
 			steps: t.steps,
+			...(t.untracedMs !== undefined ? { untracedMs: t.untracedMs } : {}),
 			...(t.error !== undefined ? { error: t.error } : {}),
 			...(t.artifacts.length > 0 ? { artifacts: t.artifacts } : {}),
 		};

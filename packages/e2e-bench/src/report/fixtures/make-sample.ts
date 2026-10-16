@@ -45,6 +45,8 @@ type Profile = {
 	prepareMs: number;
 	teardownMs: number;
 	withSteps: boolean;
+	/** share of each test's wall time its trace leaves unexplained; only warden reports one */
+	untracedShare?: number;
 };
 
 const PROFILES: readonly Profile[] = [
@@ -56,6 +58,7 @@ const PROFILES: readonly Profile[] = [
 		prepareMs: 2300,
 		teardownMs: 600,
 		withSteps: true,
+		untracedShare: 0.2,
 	},
 	{
 		framework: "maestro",
@@ -117,6 +120,7 @@ function buildRep(
 			status: "passed",
 			durationMs,
 			...(profile.withSteps ? { steps: stepsFor(stepLabels[id], durationMs, rand) } : {}),
+			...(profile.untracedShare === undefined ? {} : { untracedMs: round1(durationMs * profile.untracedShare) }),
 		};
 	});
 	const sum = tests.reduce((acc, t) => acc + (t.durationMs ?? 0), 0);

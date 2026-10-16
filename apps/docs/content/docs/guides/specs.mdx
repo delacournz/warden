@@ -166,7 +166,7 @@ When a test fails, the runner writes its evidence next to the results:
 <out>/<flow>/<test-title>-<hash>/
   failure.png            the device at the moment of failure
   screen-at-failure.txt  the full accessibility tree, with testIDs, labels and values
-  trace.jsonl            every step, with timings
+  trace.jsonl            every step and every device / driver / locator-read call (`span` lines), with timings
   console.jsonl          dev client: JS console
   network.jsonl          dev client: network requests
   screenshots/           device.screenshot() images

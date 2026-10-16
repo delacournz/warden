@@ -2,6 +2,7 @@ import type { DevtoolsFacet } from "../devtools/devtools.types";
 import type { Driver, DriverError, DriverResult, Snapshot } from "../driver/driver.types";
 import { DEFAULT_ASSERTION_TIMEOUT_MS } from "../env";
 import { E2eError } from "../errors";
+import type { SpanOptions, SpanRunner } from "../runner/span";
 import { indexSnapshot, type NodeIndex } from "./nodes";
 import { type Clock, type PollResult, type PollStep, poll, systemClock } from "./poll";
 import { locateByTestIdViaReact, type ReactMatch } from "./react-locator";
@@ -23,6 +24,8 @@ export type ScreenHost = {
 	signal?: AbortSignal;
 	/** records one reported step around an action */
 	step?: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
+	/** times a read (`read.isVisible`, …) as a trace-only `span`; absent = reads are not traced */
+	span?: SpanRunner;
 	/** polling time source; tests inject a fake */
 	clock?: Clock;
 	/**
@@ -69,6 +72,10 @@ export class Runtime {
 
 	step<T>(label: string, fn: () => Promise<T>): Promise<T> {
 		return this.host.step === undefined ? fn() : this.host.step(label, fn);
+	}
+
+	span<T>(op: string, fn: () => Promise<T>, options?: SpanOptions<T>): Promise<T> {
+		return this.host.span === undefined ? fn() : this.host.span(op, fn, options);
 	}
 
 	/** One snapshot of the device, indexed. A driver failure comes back as data so callers can retry the retryable. */

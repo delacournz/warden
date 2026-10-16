@@ -1,6 +1,7 @@
 import type { Exec } from "@delacour/warden-core/exec";
 import type { DriverError, DriverResult, Logger } from "../driver.types";
 import { driverErr } from "../errors";
+import { addSpanDetail, noteSpanDetail } from "../span-detail";
 import type { AdbSession } from "./adb-session";
 import { dumpFileCommand, dumpStdoutArgv, dumpTtyHostArgv, shellCommand } from "./android-argv";
 
@@ -76,7 +77,10 @@ export function createDumper(deps: DumpDeps): Dumper {
 	async function tryRoutes(order: readonly DumpRoute[]): Promise<{ xml: string; route: DumpRoute } | Failure> {
 		const failure: Failure = {};
 		for (const route of order) {
+			const fetchStarted = Date.now();
 			const result = await fetchRoute(route);
+			addSpanDetail("dumpMs", Date.now() - fetchStarted);
+			addSpanDetail("dumpRoutesTried", 1);
 			if ("error" in result) {
 				failure.error = result.error;
 				deps.log?.(`uiautomator dump via ${route} failed: ${result.error.code}`);
@@ -95,6 +99,7 @@ export function createDumper(deps: DumpDeps): Dumper {
 		async dump() {
 			const found = await tryRoutes(routeOrder(deps.sdk, known));
 			if ("xml" in found) {
+				noteSpanDetail("dumpRoute", found.route);
 				if (known !== found.route) deps.log?.(`uiautomator dump route: ${found.route}`);
 				if (known !== found.route) deps.onRoute?.(found.route);
 				known = found.route;

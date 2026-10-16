@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { openAdbSession } from "./adb-session";
 import { createDumper, type DumpRoute, routeOrder } from "./android-dump";
 import { fakeAndroidHost } from "./android-host.testing";
@@ -29,6 +30,23 @@ describe("route order", () => {
 	test("a remembered route goes first and the others keep their order", () => {
 		expect(routeOrder(34, "file")).toEqual(["file", "tty", "stdout"]);
 		expect(routeOrder(28, "tty")).toEqual(["tty", "stdout", "file"]);
+	});
+});
+
+describe("dump span detail", () => {
+	test("the route that worked and how many were tried are left for the snapshot span", async () => {
+		const { session, dumper } = setup({
+			shell: [{ match: "uiautomator dump /dev/stdout", reply: TRAILER }],
+			host: [{ match: TTY, reply: XML }],
+		});
+		const first: SpanDetail = {};
+		await collectSpanDetail(first, () => dumper.dump());
+		expect(first).toMatchObject({ dumpRoute: "tty", dumpRoutesTried: 2 });
+		expect(typeof first.dumpMs).toBe("number");
+		const second: SpanDetail = {};
+		await collectSpanDetail(second, () => dumper.dump());
+		expect(second).toMatchObject({ dumpRoute: "tty", dumpRoutesTried: 1 });
+		await session.close();
 	});
 });
 

@@ -120,6 +120,27 @@ describe("run", () => {
 		expect(res.success).toBe(true);
 	});
 
+	test("a test with a trace carries its steps and its untraced time into the canonical result", async () => {
+		const dir = "/out/onboarding/onboarding-steps-through-to-sign-in-a1b2c3";
+		const exec = fakeExec([{ cmd: "bun", result: { code: 1 } }]);
+		const deps = depsOf({
+			"/repo/apps/cli/package.json": '{"version":"0.1.0"}',
+			"/out/warden-out/results.jsonl": results,
+			[`${dir}/trace.jsonl`]: fixture("trace-onboarding.jsonl"),
+		});
+		const res = await createWardenAdapter(deps).run(ctxOf(exec));
+		if (!res.success) throw new Error("run failed");
+		const onboarding = res.data.tests.find((t) => t.id === "onboarding/steps-to-sign-in");
+		expect(onboarding?.steps?.map((s) => s.label)).toEqual([
+			"open nz.co.delacour.warden.example",
+			"tap welcome-next",
+			"toBeVisible sign-in-screen",
+		]);
+		expect(typeof onboarding?.untracedMs).toBe("number");
+		const withoutTrace = res.data.tests.find((t) => t.id === "sign-in/locked-account");
+		expect(withoutTrace).not.toHaveProperty("untracedMs");
+	});
+
 	test("results with an unknown test are a parity breach", async () => {
 		const stray = `${JSON.stringify({
 			file: "/x/stray.e2e.ts",
