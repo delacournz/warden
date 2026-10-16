@@ -112,7 +112,10 @@ export class Runtime {
 		return matches;
 	}
 
-	/** The interactive part of the tree as text, for failure messages. */
+	/**
+	 * The interactive part of the tree as text, for failure messages. It indexes the snapshot again and renders up to
+	 * `EXCERPT_LINES` lines, so call it only once an error is certain; keep the snapshot, not this text, while polling.
+	 */
 	excerpt(snapshot: Snapshot): string {
 		const rendered = renderSnapshot(snapshot, { interactiveOnly: true, refs: new Map(), maxLines: EXCERPT_LINES });
 		return [renderHeader({ snapshot, rendered, interactiveOnly: true }), ...rendered.lines].join("\n");

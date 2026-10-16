@@ -539,7 +539,7 @@ export class Locator {
 		budget: { remaining(): number }
 	): Promise<{ ok: true } | { ok: false; held: string; screen: string | undefined }> {
 		const span = Math.max(budget.remaining(), CONFIRM_FLOOR_MS);
-		let screen: string | undefined;
+		let lastSeen: Observed["snapshot"] | undefined;
 		const readValue = (found: NodeEntry): string => (text === "" ? fieldValue(found) : rawValue(found));
 		const outcome = await confirmFieldValue<never>({
 			text,
@@ -554,7 +554,7 @@ export class Locator {
 					return { ok: true, reading: { kind: "value", value: readValue(hit.entry) } };
 				const observation = await this.rt.tryObserve();
 				if (!observation.ok) return { ok: true, reading: { kind: "unreadable", note: "(unreadable)" } };
-				screen = this.rt.excerpt(observation.observed.snapshot);
+				lastSeen = observation.observed.snapshot;
 				const found = resolve(this.expr, observation.observed.index);
 				const [only] = found;
 				if (found.length !== 1 || only === undefined) {
@@ -564,17 +564,20 @@ export class Locator {
 			},
 		});
 		if (outcome.status === "confirmed") return { ok: true };
-		return { ok: false, held: outcome.status === "mismatch" ? outcome.held : "(unreadable)", screen };
+		const held = outcome.status === "mismatch" ? outcome.held : "(unreadable)";
+		return { ok: false, held, screen: lastSeen === undefined ? undefined : this.rt.excerpt(lastSeen) };
 	}
 }
 
-/** The strict one-match rule; the error carries the rendered screen. */
+/** The strict one-match rule; the error carries the rendered screen, which is only built when there is an error. */
 export function pickOne(
 	rt: Runtime,
 	expr: LocatorExpression,
 	entries: readonly NodeEntry[],
 	observed: Observed
 ): NodeEntry {
+	const [only] = entries;
+	if (only !== undefined && entries.length === 1) return only;
 	const result = exactlyOne(expr, entries, { screen: rt.excerpt(observed.snapshot) });
 	if (!result.success) throw result.error;
 	return result.data;

@@ -1,4 +1,4 @@
-import type { DriverError } from "../driver/driver.types";
+import type { DriverError, Snapshot } from "../driver/driver.types";
 import { E2eError } from "../errors";
 import { fieldValue } from "../screen/actions";
 import { type Locator, pickOne, textOf } from "../screen/locator";
@@ -281,7 +281,7 @@ export class LocatorAssertions {
 		const { negate } = this.context;
 		const hold = Math.min(NEGATION_GRACE_MS, timeoutMs);
 		let holdingSince: number | undefined;
-		type Last = { received: string; screen?: string };
+		type Last = { received: string; snapshot?: Snapshot };
 		const result = await rt.poll<true, Last>(async () => {
 			const observation = await rt.tryObserve();
 			if (!observation.ok) {
@@ -304,7 +304,7 @@ export class LocatorAssertions {
 				done: false,
 				state: {
 					received: judgement.kind === "missing" ? NOT_FOUND : judgement.received,
-					screen: rt.excerpt(observed.snapshot),
+					snapshot: observed.snapshot,
 				},
 			};
 		}, timeoutMs);
@@ -312,14 +312,16 @@ export class LocatorAssertions {
 		throw this.failure(spec, result.last);
 	}
 
-	private failure(spec: Spec, last: { received: string; screen?: string } | undefined): E2eError {
+	/** The screen is rendered here, from the last snapshot read, because only a failure needs the text. */
+	private failure(spec: Spec, last: { received: string; snapshot?: Snapshot } | undefined): E2eError {
 		const { negate } = this.context;
 		const lines = [
 			`expect(${this.locator})${negate ? ".not" : ""}.${spec.call}`,
 			`Expected: ${negate ? "not " : ""}${spec.expected}`,
 			`Received: ${last?.received ?? NOT_FOUND}`,
 		];
-		const message = last?.screen === undefined ? lines.join("\n") : `${lines.join("\n")}\n\n${last.screen}`;
-		return new E2eError("ASSERTION", message, last?.screen);
+		const screen = last?.snapshot === undefined ? undefined : this.locator.runtime.excerpt(last.snapshot);
+		const message = screen === undefined ? lines.join("\n") : `${lines.join("\n")}\n\n${screen}`;
+		return new E2eError("ASSERTION", message, screen);
 	}
 }
