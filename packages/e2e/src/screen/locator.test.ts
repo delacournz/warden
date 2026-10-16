@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { el, type FakeDriver, fakeDriver, snapshotOf } from "../driver/driver.testing";
 import { KEY_PACE_MS } from "../driver/typing";
 import { E2eError } from "../errors";
+import { CONFIRM_READS, FIELD_POLL_MS, STALE_RISK_READS } from "./field";
 import { createScreen } from "./screen";
 import { FIELD_FRAME, fieldFixture, staticDriver, testHost } from "./screen.testing";
 
@@ -249,7 +250,7 @@ describe("fill", () => {
 		expect(state.value).toBe("hello");
 		expect(typed(driver)).toBe("hello");
 		expect(driver.callsOf("tap")).toHaveLength(1);
-		expect(host.clock.sleeps.filter((ms) => ms === 100).length).toBeGreaterThanOrEqual(4);
+		expect(host.clock.sleeps.filter((ms) => ms === FIELD_POLL_MS).length).toBeGreaterThanOrEqual(4);
 	});
 
 	test("a dropped last character is retried once with a clear and a retype", async () => {
@@ -282,6 +283,81 @@ describe("fill", () => {
 		expect(driver.callsOf("tap")).toHaveLength(2);
 	});
 
+	test("a filled field is emptied with select-all and one Backspace, not one per character", async () => {
+		const { driver, state } = fieldFixture({ value: "ada@example.test", selectAll: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("grace@example.test");
+		expect(
+			driver.calls.map((call) => call.method).filter((method) => method === "selectAll" || method === "key")
+		).toEqual(["selectAll", "key"]);
+		expect(driver.callsOf("key")).toEqual([{ method: "key", key: "Backspace" }]);
+		expect(state.value).toBe("grace@example.test");
+	});
+
+	test("an empty field that shows its placeholder as the value sends no clearing keys", async () => {
+		const { driver, state } = fieldFixture({ placeholder: "ada@example.test", selectAll: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("grace@example.test");
+		expect(driver.callsOf("key")).toEqual([]);
+		expect(driver.callsOf("selectAll")).toEqual([]);
+		expect(state.value).toBe("grace@example.test");
+	});
+
+	test("iOS reports no placeholder, so such a field is cleared by select-all, never by a Backspace per placeholder character", async () => {
+		const { driver, state } = fieldFixture({ placeholder: "ada@example.com", placeholderMeta: false, selectAll: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("grace@example.com");
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+		expect(driver.callsOf("key")).toHaveLength(1);
+		expect(state.value).toBe("grace@example.com");
+	});
+
+	test("a secure field showing its placeholder is typed into with no clearing keys", async () => {
+		const { driver, state } = fieldFixture({ secure: true, placeholder: "At least 8 characters", selectAll: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("password1");
+		expect(driver.callsOf("key")).toEqual([]);
+		expect(driver.callsOf("selectAll")).toEqual([]);
+		expect(state.value).toBe("password1");
+	});
+
+	test("a field that refuses select-all is retried with counted Backspaces (one per character of what it now holds) and a retype", async () => {
+		const { driver, state } = fieldFixture({ value: "old", selectAllRefused: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("new");
+		expect(state.value).toBe("new");
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+		const keys = driver.callsOf("key");
+		expect(keys.every((call) => call.key === "Backspace")).toBe(true);
+		expect(keys).toHaveLength(1 + 6);
+		expect(typed(driver)).toBe("newnew");
+		expect(driver.callsOf("tap")).toHaveLength(2);
+	});
+
+	test("without select-all the counted Backspaces still empty the field", async () => {
+		const { driver, state } = fieldFixture({ value: "old" });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("new");
+		expect(driver.callsOf("selectAll")).toEqual([]);
+		expect(driver.callsOf("key")).toHaveLength(4);
+		expect(state.value).toBe("new");
+	});
+
+	test("typed text equal to the placeholder is confirmed on two reads, not four", async () => {
+		const { driver, state } = fieldFixture({ placeholder: "ada@example.test", selectAll: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("ada@example.test");
+		expect(state.value).toBe("ada@example.test");
+		expect(driver.callsOf("elementAtPoint")).toHaveLength(CONFIRM_READS);
+	});
+
+	test("a field that already held the wanted text still needs the longer run of reads", async () => {
+		const { driver } = fieldFixture({ value: "ada@example.test", selectAll: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("ada@example.test");
+		expect(driver.callsOf("elementAtPoint")).toHaveLength(STALE_RISK_READS);
+	});
+
 	test("a value still changing keeps the wait going past the usual window", async () => {
 		let value = "";
 		let shown = 0;
@@ -296,8 +372,8 @@ describe("fill", () => {
 			},
 		});
 		const { host, screen } = setup(driver, { actionTimeoutMs: 5000 });
-		await screen.getByTestId("field").fill("abcdefghijklmnop");
-		expect(typed(driver)).toBe("abcdefghijklmnop");
+		await screen.getByTestId("field").fill("abcdefghijklmnopqrstuvwxyz0123");
+		expect(typed(driver)).toBe("abcdefghijklmnopqrstuvwxyz0123");
 		expect(driver.callsOf("tap")).toHaveLength(1);
 		expect(host.clock.elapsed()).toBeGreaterThan(1400);
 	});
@@ -387,6 +463,24 @@ describe("type, clear and press", () => {
 		await screen.getByTestId("field").clear();
 		expect(state.value).toBe("");
 		expect(driver.callsOf("key")).toHaveLength(3);
+	});
+
+	test("clear selects all and presses one Backspace when the driver can", async () => {
+		const { driver, state } = fieldFixture({ value: "abcdef", selectAll: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").clear();
+		expect(state.value).toBe("");
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+		expect(driver.callsOf("key")).toHaveLength(1);
+	});
+
+	test("clear on a field that refuses select-all is run again with counted Backspaces", async () => {
+		const { driver, state } = fieldFixture({ value: "ab", selectAllRefused: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").clear();
+		expect(state.value).toBe("");
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+		expect(driver.callsOf("key")).toHaveLength(1 + 2);
 	});
 
 	test("clear that leaves text behind is run once more, then fails with what the field holds", async () => {

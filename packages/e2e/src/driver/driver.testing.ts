@@ -22,6 +22,7 @@ import type {
 	SnapshotBackend,
 } from "./driver.types";
 import { driverError } from "./errors";
+import type { SelectsAll } from "./typing";
 
 /**
  * Test doubles for `Driver`: `fakeDriver` (scripted screens, records every call) and the element-tree
@@ -164,6 +165,7 @@ export type DriverCall =
 	| { method: "pinch"; center: Point; scale: number; opts?: { durationMs?: number; radius?: number } }
 	| { method: "typeText"; text: string }
 	| { method: "key"; key: KeyName; modifiers?: readonly Modifier[] }
+	| { method: "selectAll" }
 	| { method: "pressButton"; button: HardwareButton }
 	| { method: "screenshot"; opts?: { path?: string; scale?: number } }
 	| { method: "orientation"; set?: Orientation }
@@ -192,23 +194,26 @@ export type FakeDriverOptions = {
 	platform?: Platform;
 	id?: string;
 	capabilities?: Partial<DriverCapabilities>;
+	/** offer the optional `SelectsAll` capability (calls are recorded as `selectAll`); a plain driver has none */
+	selectAll?: boolean;
 	/** inspect every call (after it is recorded); return an override to fail it or fake its result */
 	onCall?: (call: DriverCall) => FakeOverride | undefined;
 };
 
-export type FakeDriver = Driver & {
-	/** every call so far, in order */
-	readonly calls: DriverCall[];
-	/** the screen `snapshot()` currently returns */
-	readonly screen: Snapshot;
-	/** move to the next scripted screen (clamped to the last) */
-	advance(): void;
-	/** replace the current screen; with a function source this pins a fixed screen */
-	set(screen: Snapshot): void;
-	/** calls of one method, typed */
-	callsOf<M extends DriverMethod>(method: M): Extract<DriverCall, { method: M }>[];
-	closed: boolean;
-};
+export type FakeDriver = Driver &
+	Partial<SelectsAll> & {
+		/** every call so far, in order */
+		readonly calls: DriverCall[];
+		/** the screen `snapshot()` currently returns */
+		readonly screen: Snapshot;
+		/** move to the next scripted screen (clamped to the last) */
+		advance(): void;
+		/** replace the current screen; with a function source this pins a fixed screen */
+		set(screen: Snapshot): void;
+		/** calls of one method, typed */
+		callsOf<M extends DriverMethod>(method: M): Extract<DriverCall, { method: M }>[];
+		closed: boolean;
+	};
 
 const DEFAULT_CAPABILITIES: DriverCapabilities = {
 	pinch: true,
@@ -411,6 +416,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 			driver.closed = true;
 		},
 	};
+	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
 	return driver;
 }
 

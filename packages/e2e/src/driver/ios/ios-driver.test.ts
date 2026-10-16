@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
+import { canSelectAll } from "../typing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
@@ -498,6 +499,25 @@ describe("typeText", () => {
 		const result = await driver.typeText("a");
 		expect(!result.success && result.error.code).toBe("E_HID");
 		expect(helper.of("paste")).toHaveLength(0);
+	});
+});
+
+describe("selectAll", () => {
+	test("is one selectAll request, and the typing layer can find it", async () => {
+		const { driver, helper } = await open(() => ({ data: {} }));
+		expect(canSelectAll(driver)).toBe(true);
+		if (!canSelectAll(driver)) return;
+		await unwrapped(driver.selectAll());
+		expect(helper.requests.map((request) => request.op)).toEqual(["selectAll"]);
+	});
+
+	test("a helper that has no such op answers with its error, for the caller to fall back", async () => {
+		const { driver } = await open(() => ({
+			error: { code: "E_BAD_REQUEST", message: 'unknown input op "selectAll"' },
+		}));
+		if (!canSelectAll(driver)) throw new Error("expected selectAll");
+		const result = await driver.selectAll();
+		expect(!result.success && result.error.code).toBe("E_BAD_REQUEST");
 	});
 });
 

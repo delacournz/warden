@@ -21,7 +21,9 @@ import {
 	pmClearArgv,
 	pmPathArgv,
 	rotationArgvs,
+	SELECT_ALL_MIN_SDK,
 	screencapArgv,
+	selectAllArgv,
 	shellCommand,
 	shellQuote,
 	sleepArgv,
@@ -75,6 +77,11 @@ describe("input argv", () => {
 		expect(keyRepeatArgvs(67, 0)).toEqual([]);
 		const chunks = keyRepeatArgvs(67, 70);
 		expect(chunks.map((c) => c.length - 2)).toEqual([32, 32, 6]);
+	});
+
+	test("select all is Ctrl+A through keycombination, which needs API 33", () => {
+		expect(selectAllArgv()).toEqual(["input", "keycombination", "113", "29"]);
+		expect(SELECT_ALL_MIN_SDK).toBe(33);
 	});
 
 	test("hardware button and key name keycodes", () => {

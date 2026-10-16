@@ -14,12 +14,12 @@ import {
 } from "./actions";
 import type { Observed, Runtime } from "./context";
 import {
-	CONFIRM_READS,
+	type ClearMethod,
 	confirmFieldValue,
+	confirmReadsFor,
 	focusAndClear,
 	focusClearType,
 	hitTestField,
-	STALE_RISK_READS,
 } from "./field";
 import type { NodeEntry } from "./nodes";
 import type { PollStep } from "./poll";
@@ -387,9 +387,11 @@ export class Locator {
 	}
 
 	/**
-	 * Replaces the content of a text field: focus with the caret at the end, backspace what is there, type, then poll
-	 * until the field holds the text on consecutive reads (the accessibility value lags the keys). A mismatch is
-	 * retried once with a fresh clear and retype. Secure fields cannot be read back, so they are not verified.
+	 * Replaces the content of a text field: focus with the caret at the end, empty it (select all and one Backspace when
+	 * the driver can, nothing for a field that is empty or shows a placeholder), type, then poll until the field holds
+	 * the text on consecutive reads (the accessibility value lags the keys). A mismatch is retried once with one Backspace
+	 * per character and a retype (a field that refuses select-all). Secure fields cannot be read back, so they are not
+	 * verified.
 	 */
 	async fill(text: string, options: ActionOptions = {}): Promise<void> {
 		assertOptions("fill", options, ["timeout"]);
@@ -399,7 +401,10 @@ export class Locator {
 			let firstHeld: string | undefined;
 			for (let attempt = 1; ; attempt += 1) {
 				const point = focusPoint(target.entry.element.frame);
-				this.rt.drive("fill", await focusClearType(target.observed.driver, this.pause, point, target.entry, text));
+				this.rt.drive(
+					"fill",
+					await focusClearType(target.observed.driver, this.pause, point, target.entry, text, clearMethodFor(attempt))
+				);
 				if (target.entry.secure) return;
 				const outcome = await this.confirm(target, text, budget);
 				if (outcome.ok) return;
@@ -417,14 +422,14 @@ export class Locator {
 		});
 	}
 
-	/** Empties a text field with Backspace, then checks it is empty (one more pass when it is not). */
+	/** Empties a text field (select all and one Backspace when the driver can), then checks it is empty (one more pass of counted Backspaces when it is not). */
 	async clear(options: ActionOptions = {}): Promise<void> {
 		assertOptions("clear", options, ["timeout"]);
 		return this.act("clear", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
 			for (let attempt = 1; ; attempt += 1) {
-				await this.focusAndClear(target);
+				await this.focusAndClear(target, clearMethodFor(attempt));
 				if (target.entry.secure) return;
 				const outcome = await this.confirm(target, "", budget);
 				if (outcome.ok) return;
@@ -521,8 +526,11 @@ export class Locator {
 		this.rt.drive("focus", await observed.driver.tap(focusPoint(entry.element.frame)));
 	}
 
-	private async focusAndClear({ entry, observed }: Actionable): Promise<void> {
-		this.rt.drive("clear", await focusAndClear(observed.driver, this.pause, focusPoint(entry.element.frame), entry));
+	private async focusAndClear({ entry, observed }: Actionable, method: ClearMethod): Promise<void> {
+		this.rt.drive(
+			"clear",
+			await focusAndClear(observed.driver, this.pause, focusPoint(entry.element.frame), entry, method)
+		);
 	}
 
 	/** Sleeps on the runtime's clock (a fake one in tests), ending early when the attempt aborts. */
@@ -546,7 +554,7 @@ export class Locator {
 			now: this.rt.clock.now,
 			sleep: this.pause,
 			budgetMs: Math.min(VERIFY_MS, span),
-			reads: text !== "" && rawValue(entry) === text ? STALE_RISK_READS : CONFIRM_READS,
+			reads: confirmReadsFor(entry, text),
 			maxMs: span,
 			read: async () => {
 				const hit = await hitTestField(observed.driver, entry);
@@ -583,6 +591,11 @@ export function pickOne(
 /** Display text: the accessible name, else the text of everything inside. */
 export function textOf(entry: NodeEntry): string {
 	return normalizeText(entry.name ?? "") || entry.subtreeText;
+}
+
+/** The first attempt empties a field the quick way; a retry means that did not work, so it presses one Backspace per character. */
+function clearMethodFor(attempt: number): ClearMethod {
+	return attempt === 1 ? "auto" : "counted";
 }
 
 /** What the field shows, placeholder and all (used to compare against what was typed). */

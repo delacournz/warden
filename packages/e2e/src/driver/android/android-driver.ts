@@ -21,7 +21,7 @@ import type {
 } from "../driver.types";
 import { driverErr } from "../errors";
 import { DEFAULT_SETTLE_QUIET_MS, DEFAULT_SETTLE_TIMEOUT_MS, settleByHash, snapshotHash } from "../settle";
-import type { RepeatingKeys } from "../typing";
+import type { RepeatingKeys, SelectsAll } from "../typing";
 import { type AdbSession, openAdbSession, type SpawnAdb } from "./adb-session";
 import { detectAlert } from "./android-alert";
 import { createAppCommands } from "./android-app";
@@ -39,7 +39,9 @@ import {
 	MOTIONEVENT_MIN_SDK,
 	modifierKeycode,
 	rotationArgvs,
+	SELECT_ALL_MIN_SDK,
 	screencapArgv,
+	selectAllArgv,
 	shellCommand,
 	swipeArgv,
 	tapArgv,
@@ -206,7 +208,7 @@ function buildDriver(
 	clock: Clock,
 	execBinary: ExecBinary,
 	sdk: number | undefined
-): Driver & RepeatingKeys {
+): Driver & RepeatingKeys & Partial<SelectsAll> {
 	const { serial, adb, exec, log } = options;
 	const dumper = createDumper({
 		session,
@@ -310,6 +312,9 @@ function buildDriver(
 			INPUT_TEXT_BASE_MS + INPUT_TEXT_PIECE_MS * argvs.length
 		);
 	};
+
+	/** See `SelectsAll`: Ctrl+A, only on the Androids that have `input keycombination`. */
+	const selectAll: SelectsAll["selectAll"] = () => input(shellCommand(selectAllArgv()));
 
 	/**
 	 * Hold-then-move on sdk 26+ (`input motionevent` DOWN, interpolated MOVEs, UP, one shell line); older images
@@ -436,6 +441,7 @@ function buildDriver(
 		typeText,
 		key,
 		pressKeyRepeat,
+		...(sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK ? { selectAll } : {}),
 		pressButton,
 		screenshot,
 		orientation,

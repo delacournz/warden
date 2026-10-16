@@ -2,9 +2,10 @@
 /**
  * Hand-run smoke test of the iOS driver against a real, booted simulator (never part of `bun test`):
  *
- *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--out <dir>] [--kill-bridge] [--kill-helper]
+ *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--out <dir>] [--fills <n>] [--kill-bridge] [--kill-helper]
  *
- * open → health → launch → settle → snapshot → tap first button → fill a textfield (if present) →
+ * open → health → launch → settle → snapshot → tap first button → fill a textfield (if present; `--fills <n>` then
+ * fills it n more times through the spec `fill` clear path and counts the lost characters) →
  * swipe → screenshot → settle → terminate → close. Prints the duration of each step; exits 1 when a
  * step fails; ops the helper does not implement yet (`E_BAD_REQUEST`) are reported as skipped. Lease the simulator first (`warden claim ios`) and install the app (`warden app ensure`).
  */
@@ -15,6 +16,9 @@ import { bunExec } from "@delacour/warden-core/exec";
 import type { Driver, DriverResult, Element, Point, Snapshot } from "../../src/driver/driver.types";
 import { openIosDriver } from "../../src/driver/ios/ios-driver";
 import { ENV_NAMES } from "../../src/env";
+import { focusPoint } from "../../src/screen/actions";
+import { focusClearType } from "../../src/screen/field";
+import { indexSnapshot } from "../../src/screen/nodes";
 
 const DEFAULT_BUNDLE = "nz.co.delacour.warden.example";
 const TYPED = "Hello, World 123!";
@@ -116,6 +120,44 @@ async function readBack(
 	return { ...(value !== undefined ? { value } : {}), ms: Math.round(performance.now() - started) };
 }
 
+const FILL_TEXTS = ["ada@example.com", "grace@example.com", "password1"];
+
+/**
+ * `--fills <n>`: fills the field n times through the same clear-and-type path as the spec `fill` (`focusClearType`: select
+ * all and one Backspace on a driver that has it), reading each result back. Any read that is not exactly the text is a
+ * lost or extra character.
+ */
+async function fillLoop(driver: Driver, identifier: string | undefined, fills: number): Promise<void> {
+	let lost = 0;
+	let totalMs = 0;
+	for (let fill = 0; fill < fills; fill += 1) {
+		const text = FILL_TEXTS[fill % FILL_TEXTS.length] as string;
+		const snap = await driver.snapshot();
+		const entry = snap.success
+			? indexSnapshot(snap.data).entries.find((candidate) => candidate.element.identifier === identifier)
+			: undefined;
+		if (!entry) {
+			lost += 1;
+			process.stdout.write(`FAIL  fill #${fill + 1}: field ${identifier ?? "?"} not found\n`);
+			continue;
+		}
+		const started = performance.now();
+		const typed = await focusClearType(driver, (ms) => Bun.sleep(ms), focusPoint(entry.element.frame), entry, text);
+		const back = typed.success ? await readBack(driver, identifier, (value) => value === text) : undefined;
+		totalMs += Math.round(performance.now() - started);
+		if (back?.value !== text) {
+			lost += 1;
+			process.stdout.write(
+				`FAIL  fill #${fill + 1} ${JSON.stringify(text)} -> ${JSON.stringify(back?.value)} ${typed.success ? "" : typed.error.code}\n`
+			);
+		}
+	}
+	if (lost > 0) failures += 1;
+	process.stdout.write(
+		`${lost === 0 ? "ok   " : "FAIL "} ${fills} fills            ${Math.round(totalMs / Math.max(1, fills))} ms each incl. read back, ${lost} not exact\n`
+	);
+}
+
 async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 	const field = await reachTextfield(driver);
 	if (field) {
@@ -139,6 +181,8 @@ async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 		process.stdout.write(
 			`${pastedOk ? "ok   " : "FAIL "} read back (paste)  ${String(pasted.ms).padStart(5)} ms  ${JSON.stringify(pasted.value)}\n`
 		);
+		const fills = Number(arg("fills") ?? 0);
+		if (fills > 0) await fillLoop(driver, field.identifier, fills);
 	} else process.stdout.write("skip  fill                     no textfield reachable\n");
 
 	const { width, height } = snapshot.screen;

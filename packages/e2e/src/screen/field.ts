@@ -1,7 +1,7 @@
 import { ok } from "@delacour/warden-types/result";
 import type { Driver, DriverError, DriverResult, Point } from "../driver/driver.types";
-import { pressKeys, type Sleep, typeText } from "../driver/typing";
-import { clearKeyPresses } from "./actions";
+import { canSelectAll, pressKeys, type Sleep, typeText } from "../driver/typing";
+import { clearKeyPresses, fieldContent, fieldValue } from "./actions";
 import { entryOfElement, type NodeEntry } from "./nodes";
 
 /**
@@ -13,13 +13,23 @@ import { entryOfElement, type NodeEntry } from "./nodes";
  * text once), and the wait extends while the value is still changing.
  */
 
-export const FIELD_POLL_MS = 100;
+export const FIELD_POLL_MS = 50;
 /** While the value keeps changing, wait at least this long for its next change. */
 export const FIELD_PROGRESS_MS = 1000;
 /** Consecutive reads that must equal the wanted text. */
 export const CONFIRM_READS = 2;
 /** When the field already held the wanted text before the edit, a stale read can match: trust only a longer run. */
 export const STALE_RISK_READS = 4;
+
+/**
+ * Consecutive matching reads to trust for `text` typed into `entry` (the field as seen before the edit): the longer
+ * `STALE_RISK_READS` only when it already held that text. A placeholder shown as the value (one the element names, or a
+ * secure field's) is not text it held.
+ */
+export function confirmReadsFor(entry: NodeEntry | undefined, text: string): number {
+	if (entry === undefined || text === "") return CONFIRM_READS;
+	return fieldValue(entry) === text ? STALE_RISK_READS : CONFIRM_READS;
+}
 
 export type FieldReading =
 	| { kind: "value"; value: string }
@@ -89,18 +99,38 @@ export async function hitTestField(
 }
 
 /**
- * Taps `point` (the caret spot at the field's right end, `focusPoint`) and backspaces what `entry` shows; no `entry`
- * (a bare coordinate) means nothing to clear. The one clear routine behind the spec `fill`/`clear` and `warden ui fill`.
+ * How a field is emptied. `auto` selects everything and presses one Backspace when the driver can select all, else
+ * presses one Backspace per character; `counted` always presses one per character (the retry after select-all left
+ * text behind, e.g. a field that refuses Cmd+A).
+ */
+export type ClearMethod = "auto" | "counted";
+
+/**
+ * Taps `point` (the caret spot at the field's right end, `focusPoint`) and empties what `entry` shows; no `entry`
+ * (a bare coordinate) means nothing to clear. A field that holds nothing, or only a placeholder, gets no keys. The one
+ * clear routine behind the spec `fill`/`clear` and `warden ui fill`.
+ *
+ * Plain text is selected whole and deleted with one Backspace when the driver offers select-all (a driver that
+ * rejects it gets the counted presses). Secure fields are always backspaced by their dots: they cannot be read back,
+ * so a select-all that did nothing would go unnoticed.
  */
 export async function focusAndClear(
 	driver: Driver,
 	sleep: Sleep,
 	point: Point,
-	entry: NodeEntry | undefined
+	entry: NodeEntry | undefined,
+	method: ClearMethod = "auto"
 ): DriverResult<void> {
 	const focused = await driver.tap(point);
 	if (!focused.success) return focused;
-	return pressKeys(driver, sleep, "Backspace", entry ? clearKeyPresses(entry) : 0);
+	if (entry === undefined) return ok(undefined);
+	const content = fieldContent(entry);
+	if (content.kind === "empty") return ok(undefined);
+	if (content.kind === "text" && method === "auto" && canSelectAll(driver)) {
+		const selected = await driver.selectAll();
+		if (selected.success) return pressKeys(driver, sleep, "Backspace", 1);
+	}
+	return pressKeys(driver, sleep, "Backspace", clearKeyPresses(entry));
 }
 
 /** `focusAndClear`, then types `text` (nothing for the empty string). */
@@ -109,9 +139,10 @@ export async function focusClearType(
 	sleep: Sleep,
 	point: Point,
 	entry: NodeEntry | undefined,
-	text: string
+	text: string,
+	method: ClearMethod = "auto"
 ): DriverResult<void> {
-	const cleared = await focusAndClear(driver, sleep, point, entry);
+	const cleared = await focusAndClear(driver, sleep, point, entry, method);
 	if (!cleared.success) return cleared;
 	return text === "" ? ok(undefined) : typeText(driver, sleep, text);
 }

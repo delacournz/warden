@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Driver, DriverResult } from "../driver.types";
-import { canRepeatKeys } from "../typing";
+import { canRepeatKeys, canSelectAll } from "../typing";
 import { elementAt, openAndroidDriver } from "./android-driver";
 import { fakeAndroidHost, type HostRule, PNG_BYTES, type ShellRule } from "./android-host.testing";
 import { parseUiautomatorXml } from "./uiautomator";
@@ -374,6 +374,32 @@ describe("input", () => {
 		expect(host.shell.filter((c) => c.startsWith("input"))).toEqual([
 			`input keyevent ${Array(13).fill("67").join(" ")}`,
 		]);
+	});
+
+	test("selectAll is Ctrl+A through keycombination on Android 13+ (the typing layer finds it)", async () => {
+		const { driver, host } = await setup();
+		expect(canSelectAll(driver)).toBe(true);
+		if (!canSelectAll(driver)) return;
+		await value(driver.selectAll());
+		expect(host.shell.filter((c) => c.startsWith("input"))).toEqual(["input keycombination 113 29"]);
+	});
+
+	test("Android 12 and an unreadable sdk level have no selectAll, so the typing layer keeps its Backspaces", async () => {
+		const old = await setup({ shell: [{ match: "getprop sys.boot_completed", reply: probe(32) }] });
+		expect(canSelectAll(old.driver)).toBe(false);
+		expect(canRepeatKeys(old.driver)).toBe(true);
+		const unknown = await setup({ shell: [{ match: "getprop sys.boot_completed", reply: probe(undefined) }] });
+		expect(canSelectAll(unknown.driver)).toBe(false);
+		const edge = await setup({ shell: [{ match: "getprop sys.boot_completed", reply: probe(33) }] });
+		expect(canSelectAll(edge.driver)).toBe(true);
+	});
+
+	test("a failing select-all is returned for the caller to fall back", async () => {
+		const { driver } = await setup({
+			shell: [{ match: "input keycombination", reply: { stdout: "Error: Unknown command\n", exitCode: 255 } }],
+		});
+		if (!canSelectAll(driver)) throw new Error("expected selectAll");
+		expect((await driver.selectAll()).success).toBe(false);
 	});
 
 	test("modifier keys on an old Android are E_UNSUPPORTED", async () => {
