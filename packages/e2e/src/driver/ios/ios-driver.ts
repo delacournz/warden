@@ -20,6 +20,7 @@ import type {
 } from "../driver.types";
 import { driverError } from "../errors";
 import { settleByHash, snapshotHash } from "../settle";
+import type { SelectsAll } from "../typing";
 import { type SwappableClient, swappableClient } from "./ios-session";
 import { locateHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
@@ -130,7 +131,7 @@ export function createIosDriver(
 	swap: SwappableClient,
 	simctl: Simctl,
 	opts: { udid: string; now: () => number; sleep: (ms: number) => Promise<void>; log?: Logger }
-): Driver {
+): Driver & SelectsAll {
 	const { udid, now, sleep } = opts;
 	const { client } = swap;
 	let axFailures = 0;
@@ -327,7 +328,7 @@ export function createIosDriver(
 		return sendVoid("pressButton", { button: BUTTONS[button] });
 	}
 
-	const driver: Driver = {
+	const driver: Driver & SelectsAll = {
 		platform: "ios",
 		id: udid,
 		capabilities,
@@ -371,6 +372,7 @@ export function createIosDriver(
 			),
 		typeText,
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
+		selectAll: () => sendVoid("selectAll"),
 		pressButton,
 		screenshot,
 		orientation,

@@ -28,6 +28,17 @@ export function canRepeatKeys(driver: Driver): driver is Driver & RepeatingKeys 
 	return typeof (driver as Partial<RepeatingKeys>).pressKeyRepeat === "function";
 }
 
+/**
+ * Optional fast path next to the frozen `Driver`: select everything in the focused text field (iOS Cmd+A through
+ * `warden-simd`, Android Ctrl+A through `input keycombination` on API 33+), so one Backspace empties a field of any
+ * length instead of one per character. A field that refuses the shortcut is caught by the read-back after the fill.
+ */
+export type SelectsAll = { selectAll(): DriverResult<void> };
+
+export function canSelectAll(driver: Driver): driver is Driver & SelectsAll {
+	return typeof (driver as Partial<SelectsAll>).selectAll === "function";
+}
+
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function graphemesOf(text: string): string[] {

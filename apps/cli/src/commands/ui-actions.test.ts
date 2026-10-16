@@ -175,6 +175,70 @@ describe("fill", () => {
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
 
+	test("a driver with select-all empties the field with one Backspace instead of one per character", async () => {
+		let typed = "";
+		const h = harness([typingScreen("a@b.co")], {
+			selectAll: true,
+			onCall: (call, driver) => {
+				if (call.method === "typeText") {
+					typed += call.text;
+					driver.set(typingScreen(typed));
+				}
+				return undefined;
+			},
+		});
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		const methods: string[] = h.driver.calls
+			.map((call) => call.method)
+			.filter((m) => m !== "snapshot" && m !== "elementAtPoint");
+		expect(methods).toEqual(["tap", "selectAll", "key", "typeText", "close"]);
+		expect(h.driver.callsOf("key")).toEqual([{ method: "key", key: "Backspace" }]);
+		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true });
+	});
+
+	test("a field that shows its placeholder as the value is typed into with no clearing keys", async () => {
+		let typed = "";
+		const placeholderScreen = (value: string) =>
+			snapshotOf([
+				el("window", {
+					children: [el("textfield", { label: "Email", id: "email", value: value || "Email", placeholder: "Email" })],
+				}),
+			]);
+		const h = harness([placeholderScreen("")], {
+			selectAll: true,
+			onCall: (call, driver) => {
+				if (call.method === "typeText") {
+					typed += call.text;
+					driver.set(placeholderScreen(typed));
+				}
+				return undefined;
+			},
+		});
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(h.driver.callsOf("key")).toEqual([]);
+		expect(h.driver.callsOf("selectAll")).toEqual([]);
+		expect(doc(h.c).result).toMatchObject({ verified: true });
+		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(2);
+	});
+
+	test("the retry after a field did not take the text backspaces per character, not by select-all", async () => {
+		const h = harness([typingScreen("old")], { selectAll: true });
+		expect(await h.run("fill", "id=email", "new", "--json")).toBe(1);
+		const methods: string[] = h.driver.calls
+			.map((call) => call.method)
+			.filter((m) => m !== "snapshot" && m !== "elementAtPoint");
+		expect(methods).toEqual([
+			"tap",
+			"selectAll",
+			"key",
+			"typeText",
+			"tap",
+			...Array.from({ length: 4 }, () => "key"),
+			"typeText",
+			"close",
+		]);
+	});
+
 	test("a field that does not take the text: retried once, then failed with what it holds", async () => {
 		const h = harness([typingScreen("old")]);
 		expect(await h.run("fill", "id=email", "new", "--json")).toBe(1);

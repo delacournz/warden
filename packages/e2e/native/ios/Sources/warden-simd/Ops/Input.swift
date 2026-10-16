@@ -3,7 +3,7 @@ import FBControlCore
 import FBSimulatorControl
 import Foundation
 
-// HID input ops: tap, longPress, swipe, drag, pinch, pressButton, key, typeText, paste.
+// HID input ops: tap, longPress, swipe, drag, pinch, pressButton, key, typeText, paste, selectAll.
 //
 // Layout: `HIDPlan` builds idb `SimulatorHIDEvent`s from validated numbers (pure, unit-tested); `InputEngine` parses
 // request params, resolves units, and sends the events through a `HIDGate` so only one event stream is in flight at a
@@ -309,6 +309,8 @@ struct InputEngine: Sendable {
         repeatGapMs: try params.repeatGapMs())
     case "paste":
       return try await send(KeyboardMap.paste)
+    case "selectAll":
+      return try await send(KeyboardMap.selectAll(paceMs: try params.paceMs(), holdMs: try params.holdMs()))
     default:
       throw WireError(.badRequest, "unknown input op \"\(op)\"")
     }
@@ -399,7 +401,9 @@ final class NullLogger: ControlCoreLogger, @unchecked Sendable {
 }
 
 enum InputOps {
-  static let names = ["tap", "longPress", "swipe", "drag", "pinch", "pressButton", "key", "typeText", "paste"]
+  static let names = [
+    "tap", "longPress", "swipe", "drag", "pinch", "pressButton", "key", "typeText", "paste", "selectAll",
+  ]
 
   /// One gate per simulator for the process lifetime (a helper serves one UDID; tests may open several).
   private static let gates = GateRegistry()

@@ -108,12 +108,46 @@ function graphemes(text: string): number {
 	return count;
 }
 
+/** What a secure field shows for each character it holds: `•` (U+2022, iOS and Android) or `●` (U+25CF). */
+const SECURE_DOTS: ReadonlySet<string> = new Set(["\u2022", "\u25cf"]);
+
+/** The bullets in a secure field's value. Any other text it shows (iOS puts the placeholder there when empty) is not content. */
+function countDots(value: string): number {
+	let count = 0;
+	for (const part of segmenter.segment(value)) if (SECURE_DOTS.has(part.segment)) count += 1;
+	return count;
+}
+
+/** What one read says a field holds: nothing, text, or (secure fields) a number of hidden characters. */
+export type FieldContent = { kind: "empty" } | { kind: "text"; text: string } | { kind: "dots"; count: number };
+
+/**
+ * What `entry` holds, for deciding how to empty it. A placeholder the element names is `empty` (see `fieldValue`),
+ * and so is a secure field showing anything but dots. iOS reports `placeholder: null` for React Native inputs, so a
+ * plain field showing its placeholder cannot be told from one holding that text and reads as `text`.
+ */
+export function fieldContent(entry: NodeEntry): FieldContent {
+	if (entry.secure) {
+		const count = countDots(entry.element.value ?? "");
+		return count === 0 ? { kind: "empty" } : { kind: "dots", count };
+	}
+	const text = fieldValue(entry);
+	return text === "" ? { kind: "empty" } : { kind: "text", text };
+}
+
 /**
  * Backspaces that empty a field once the caret is at its end: one per character plus a spare. Secure fields are
- * counted by their dots. The driver contract has no select-all, so clearing is backspaces.
+ * counted by their dots. The fallback for a driver without select-all, and the retry when select-all did not empty
+ * the field.
  */
 export function clearKeyPresses(entry: NodeEntry): number {
-	const text = entry.secure ? (entry.element.value ?? "") : fieldValue(entry);
-	if (text === "") return 0;
-	return Math.min(graphemes(text) + 1, MAX_CLEAR_KEYS);
+	const content = fieldContent(entry);
+	switch (content.kind) {
+		case "empty":
+			return 0;
+		case "text":
+			return Math.min(graphemes(content.text) + 1, MAX_CLEAR_KEYS);
+		case "dots":
+			return Math.min(content.count + 1, MAX_CLEAR_KEYS);
+	}
 }

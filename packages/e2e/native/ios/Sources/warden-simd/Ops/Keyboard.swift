@@ -15,6 +15,7 @@ enum KeyboardMap {
   static let leftAlt: UInt32 = 0xE2
   static let leftCommand: UInt32 = 0xE3
 
+  static let letterA: UInt32 = 0x04
   static let letterV: UInt32 = 0x19
 
   /// Valid keyboard-page usages: `a` (0x04) through Right GUI (0xE7).
@@ -143,5 +144,11 @@ enum KeyboardMap {
   /// Cmd+V.
   static var paste: SimulatorHIDEvent {
     chord(usage: letterV, modifiers: [leftCommand])
+  }
+
+  /// Cmd+A: selects the whole text of the focused field, so one Backspace empties it. `paceMs` / `holdMs` as in
+  /// `chord`: the `selectAll` op passes the key defaults so the selection lands before the Backspace that follows.
+  static func selectAll(paceMs: Int = 0, holdMs: Int = 0) -> SimulatorHIDEvent {
+    chord(usage: letterA, modifiers: [leftCommand], paceMs: paceMs, holdMs: holdMs)
   }
 }

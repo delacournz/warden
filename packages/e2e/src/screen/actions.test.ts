@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	clearKeyPresses,
 	contentPath,
+	fieldContent,
 	fieldValue,
 	focusPoint,
 	isOnScreen,
@@ -129,6 +130,40 @@ describe("fieldValue and clearKeyPresses", () => {
 
 	test("capped", () => {
 		expect(clearKeyPresses(entryOf(el("textfield", { value: "x".repeat(2000) })))).toBe(300);
+	});
+
+	test("an iOS secure field shows its placeholder as the value: no dots, nothing to press", () => {
+		const placeholder = entryOf(el("securefield", { value: "At least 8 characters" }));
+		expect(clearKeyPresses(placeholder)).toBe(0);
+		expect(fieldContent(placeholder)).toEqual({ kind: "empty" });
+	});
+
+	test("secure fields count only bullets, both • and ●", () => {
+		expect(clearKeyPresses(entryOf(el("securefield", { value: "●●●" })))).toBe(4);
+		expect(clearKeyPresses(entryOf(el("securefield", { value: "•●•" })))).toBe(4);
+		expect(clearKeyPresses(entryOf(el("securefield", { value: "Pick one • or more" })))).toBe(2);
+	});
+
+	test("a placeholder that the element names is an empty field", () => {
+		const entry = entryOf(el("textfield", { value: "Email", placeholder: "Email" }));
+		expect(fieldContent(entry)).toEqual({ kind: "empty" });
+		expect(clearKeyPresses(entry)).toBe(0);
+	});
+});
+
+describe("fieldContent", () => {
+	test("text, dots or empty", () => {
+		expect(fieldContent(entryOf(el("textfield", { value: "me@x.co" })))).toEqual({ kind: "text", text: "me@x.co" });
+		expect(fieldContent(entryOf(el("textfield", { value: "" })))).toEqual({ kind: "empty" });
+		expect(fieldContent(entryOf(el("securefield", { value: "••••" })))).toEqual({ kind: "dots", count: 4 });
+		expect(fieldContent(entryOf(el("securefield")))).toEqual({ kind: "empty" });
+	});
+
+	test("a field the driver reports as plain text with a placeholder-looking value is text (iOS sends placeholder: null)", () => {
+		expect(fieldContent(entryOf(el("textfield", { value: "ada@example.com" })))).toEqual({
+			kind: "text",
+			text: "ada@example.com",
+		});
 	});
 });
 

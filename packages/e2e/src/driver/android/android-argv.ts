@@ -44,6 +44,8 @@ export function motionEventArgv(action: MotionAction, point: Point): string[] {
 
 /** Lowest sdk with `input motionevent` (Android 8.0). */
 export const MOTIONEVENT_MIN_SDK = 26;
+/** `input keycombination` (and so select-all by Ctrl+A) exists from Android 13. */
+export const SELECT_ALL_MIN_SDK = 33;
 export const DRAG_STEPS = 8;
 
 /** Fractional seconds for toybox `sleep` (`0.500`). */
@@ -305,6 +307,13 @@ export function uimodeSetArgv(dark: boolean): string[] {
 /** `input keycombination` (API 33+): modifiers first, the key last. */
 export function keycombinationArgv(keycodes: readonly number[]): string[] {
 	return ["input", "keycombination", ...keycodes.map(String)];
+}
+
+const KEYCODE_A = 29;
+
+/** Ctrl+A: select the whole text of the focused field (API 33+, see `SELECT_ALL_MIN_SDK`). */
+export function selectAllArgv(): string[] {
+	return keycombinationArgv([modifierKeycode("ctrl"), KEYCODE_A]);
 }
 
 export function modifierKeycode(modifier: "shift" | "cmd" | "alt" | "ctrl"): number {
