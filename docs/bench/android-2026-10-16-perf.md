@@ -10,7 +10,7 @@
 
 ## After WDN-PERF
 
-Same host, emulator image and unchanged suite (`packages/e2e-bench/suites/warden` is byte-identical to the baseline) as [`v2-android-r2`](android-2026-10-16.md), run on `feature/warden-perf` (plan: `docs/plans/wdn-perf.md`). The Android driver now reads the screen and sends input through `warden-uiad`, a resident UiAutomation server (PERF-3.3), instead of one `uiautomator dump` (~1.9 s) per read. The app is rebuilt from identical `apps/example` source (v2 fingerprint key, PERF-4.6); within this run every framework drove the same `.apk`.
+Same host, emulator image and unchanged suite (`packages/e2e-bench/suites/warden` is byte-identical to the baseline) as `v2-android-r2` (the first Android run, in git history), run on `feature/warden-perf` (plan: `docs/plans/wdn-perf.md`). The Android driver now reads the screen and sends input through `warden-uiad`, a resident UiAutomation server (PERF-3.3), instead of one `uiautomator dump` (~1.9 s) per read. The app is rebuilt from identical `apps/example` source (v2 fingerprint key, PERF-4.6); within this run every framework drove the same `.apk`.
 
 | | `v2-android-r2` | `perf-android-r3` | Delta |
 | --- | --- | --- | --- |
