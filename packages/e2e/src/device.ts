@@ -5,8 +5,9 @@ import type { AlertInfo, Driver, Element, Orientation, Point, Snapshot } from ".
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
-	type SettleOutcome,
+	type SettleDetail,
 	settleByHash,
+	settleDetailOf,
 	snapshotHash,
 } from "./driver/settle";
 import { settled, toE2eError, unwrap } from "./driver/unwrap";
@@ -58,8 +59,13 @@ export type Device = {
 	screenshot(name: string): Promise<string>;
 	/** The accessibility tree as text (`warden ui snapshot` format). */
 	snapshot(options?: SnapshotTextOptions): Promise<string>;
-	/** Waits for a quiet UI: the driver's own settle, else snapshot-hash polling. */
-	settle(options?: SettleOptions): Promise<SettleOutcome>;
+	/**
+	 * Waits for a quiet UI: the driver's own settle, else snapshot-hash polling. Resolves `{ quiet, waitedMs }` and,
+	 * when known, how it decided: `via` (`stream`: the app's run loop went idle; `snapshot`: the helper fell back to
+	 * comparing screens; `hash`: warden polled snapshot hashes, always on Android), a `reason` for a not-quiet end
+	 * (`frontmost_mismatch`: the launched app never came to the front) and the `frontmostPid` the helper saw.
+	 */
+	settle(options?: SettleOptions): Promise<SettleDetail>;
 	/**
 	 * The app's JS runtime over Metro (evaluate, React tree, console, network, reload); `undefined` without
 	 * `WARDEN_METRO_URL` (a release build). The first access starts attaching, so console capture begins there.
@@ -268,14 +274,15 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 			const quietMs = options.quietMs ?? DEFAULT_SETTLE_QUIET_MS;
 			const timeoutMs = options.timeout ?? DEFAULT_SETTLE_TIMEOUT_MS;
 			const native = await settled(() => driver.settle({ quietMs, timeoutMs }), "settle", signal());
-			if (native.success) return native.data;
+			if (native.success) return settleDetailOf(native.data);
 			if (native.error.code !== "E_UNSUPPORTED") throw toE2eError(native.error, "settle");
-			return settleByHash(async () => snapshotHash(await readSnapshot()), {
+			const polled = await settleByHash(async () => snapshotHash(await readSnapshot()), {
 				quietMs,
 				timeoutMs,
 				now: clock.now,
 				sleep: clock.sleep,
 			});
+			return { ...polled, via: "hash" };
 		},
 	};
 	return device;

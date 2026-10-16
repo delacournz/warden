@@ -79,6 +79,25 @@ describe("traceDevice", () => {
 		expect(settle?.detail).toMatchObject({ quiet: expect.any(Boolean), waitedMs: expect.any(Number) });
 	});
 
+	test("settle's span carries via, reason and frontmostPid when the driver reports them", async () => {
+		const events: TraceEvent[] = [];
+		const sink = { write: (event: TraceEvent) => void events.push(event) };
+		const span: SpanRunner = (op, fn, options) => runSpan(sink, op, fn, options);
+		const driver = fakeDriver({
+			screens: [snapshotOf([])],
+			onCall: (c) =>
+				c.method === "settle"
+					? { data: { quiet: false, waitedMs: 8000, via: "stream", reason: "frontmost_mismatch", frontmostPid: 7 } }
+					: undefined,
+		});
+		const device = traceDevice(createDevice({ session: { out: "/tmp/out", span }, driver, env }), span);
+		await device.settle();
+		expect(events[0]).toMatchObject({
+			op: "device.settle",
+			detail: { quiet: false, waitedMs: 8000, via: "stream", reason: "frontmost_mismatch", frontmostPid: 7 },
+		});
+	});
+
 	test("a call that throws is an ok:false span with the error code, and still throws", async () => {
 		const { device, spans } = setup("ios");
 		await expect(device.back()).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });

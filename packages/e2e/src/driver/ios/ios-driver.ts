@@ -19,13 +19,15 @@ import type {
 	Snapshot,
 } from "../driver.types";
 import { driverError } from "../errors";
-import { settleByHash, snapshotHash } from "../settle";
+import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
+import { noteSpanDetail } from "../span-detail";
 import type { SelectsAll } from "../typing";
 import { type SwappableClient, swappableClient } from "./ios-session";
 import { locateHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
 import { connectSimd, type SimdClient, spawnSimd } from "./simd-client";
+import type { SettleData } from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
 import { typeTextBudgetMs } from "./type-budget";
 
@@ -106,6 +108,22 @@ const okVoid = { success: true as const, data: undefined };
 
 function fail(error: DriverError) {
 	return { success: false as const, error };
+}
+
+/** The helper's whole settle verdict, for the caller and for the span timing the call; absent fields stay absent. */
+function nativeDetail(data: SettleData): SettleDetail {
+	const { quiet, waitedMs, via, reason, frontmostPid } = data;
+	const detail: SettleDetail = {
+		quiet,
+		waitedMs,
+		...(via === undefined ? {} : { via }),
+		...(reason === undefined ? {} : { reason }),
+		...(frontmostPid === undefined ? {} : { frontmostPid }),
+	};
+	if (via !== undefined) noteSpanDetail("via", via);
+	if (reason !== undefined) noteSpanDetail("reason", reason);
+	if (frontmostPid !== undefined) noteSpanDetail("frontmostPid", frontmostPid);
+	return detail;
 }
 
 /** Carries a `DriverError` out of a `settleByHash` poll callback. */
@@ -209,10 +227,7 @@ export function createIosDriver(
 		return sendVoid("paste");
 	}
 
-	async function hashSettle(o: {
-		quietMs: number;
-		timeoutMs: number;
-	}): DriverResult<{ quiet: boolean; waitedMs: number }> {
+	async function hashSettle(o: { quietMs: number; timeoutMs: number }): DriverResult<SettleDetail> {
 		try {
 			const outcome = await settleByHash(
 				async () => {
@@ -222,16 +237,15 @@ export function createIosDriver(
 				},
 				{ quietMs: o.quietMs, timeoutMs: o.timeoutMs, now, sleep }
 			);
-			return { success: true, data: outcome };
+			noteSpanDetail("via", "hash");
+			return { success: true, data: { ...outcome, via: "hash" } };
 		} catch (error) {
 			if (error instanceof DriverFailure) return fail(error.error);
 			throw error;
 		}
 	}
 
-	async function settle(
-		o: { quietMs?: number; timeoutMs?: number } = {}
-	): DriverResult<{ quiet: boolean; waitedMs: number }> {
+	async function settle(o: { quietMs?: number; timeoutMs?: number } = {}): DriverResult<SettleDetail> {
 		const quietMs = o.quietMs ?? DEFAULT_QUIET_MS;
 		const timeoutMs = o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS;
 		if (!settleUnsupported) {
@@ -245,11 +259,15 @@ export function createIosDriver(
 			if (native.success) {
 				// a mismatch means the app never came to the front: keep asking for it on the next settle
 				if (expected !== undefined && native.data.reason !== "frontmost_mismatch") launchedBundle = undefined;
-				return { success: true, data: { quiet: native.data.quiet, waitedMs: native.data.waitedMs } };
+				return { success: true, data: nativeDetail(native.data) };
 			}
 			// settle is best effort: a loaded machine answering after the padded timer means "not quiet", not a failure
 			if (native.error.code === "E_TIMEOUT") {
-				return { success: true, data: { quiet: false, waitedMs: timeoutMs + SETTLE_MARGIN_MS } };
+				noteSpanDetail("reason", "helper_timeout");
+				return {
+					success: true,
+					data: { quiet: false, waitedMs: timeoutMs + SETTLE_MARGIN_MS, reason: "helper_timeout" },
+				};
 			}
 			if (native.error.code !== "E_UNSUPPORTED") return native;
 			settleUnsupported = true;

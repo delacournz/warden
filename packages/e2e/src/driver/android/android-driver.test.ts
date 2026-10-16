@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Driver, DriverResult } from "../driver.types";
+import { settleDetailOf } from "../settle";
 import { canRepeatKeys, canSelectAll } from "../typing";
 import { elementAt, openAndroidDriver } from "./android-driver";
 import {
@@ -574,7 +575,7 @@ describe("settle and alert", () => {
 		const before = dumps(host);
 		const out = await value(driver.settle());
 		expect(dumps(host) - before).toBe(1);
-		expect(out).toEqual({ quiet: true, waitedMs: 1_900 });
+		expect(settleDetailOf(out)).toEqual({ quiet: true, waitedMs: 1_900, via: "snapshot" });
 	});
 
 	test("a dump that waited out uiautomator's 10 s idle limit saw a screen that never went quiet", async () => {
@@ -590,7 +591,7 @@ describe("settle and alert", () => {
 				},
 			],
 		});
-		expect(await value(driver.settle())).toEqual({ quiet: false, waitedMs: 10_400 });
+		expect(settleDetailOf(await value(driver.settle()))).toEqual({ quiet: false, waitedMs: 10_400, via: "snapshot" });
 	});
 
 	test("a settle whose dump fails is not quiet", async () => {
@@ -610,6 +611,7 @@ describe("settle and alert", () => {
 		expect(dumps(host) - before).toBeGreaterThan(2);
 		expect(out.quiet).toBe(true);
 		expect(out.waitedMs).toBeGreaterThanOrEqual(1_500);
+		expect(settleDetailOf(out).via).toBe("hash");
 	});
 
 	test("that comparison gives up when the UI keeps changing", async () => {

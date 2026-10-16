@@ -26,7 +26,13 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 		snapshot: (options) => span("device.snapshot", () => device.snapshot(options)),
 		settle: (options) =>
 			span("device.settle", () => device.settle(options), {
-				detail: ({ quiet, waitedMs }) => ({ quiet, waitedMs }),
+				detail: ({ quiet, waitedMs, via, reason, frontmostPid }) => ({
+					quiet,
+					waitedMs,
+					...(via === undefined ? {} : { via }),
+					...(reason === undefined ? {} : { reason }),
+					...(frontmostPid === undefined ? {} : { frontmostPid }),
+				}),
 			}),
 	};
 }

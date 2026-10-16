@@ -149,7 +149,7 @@ Reads never wait; they answer from the screen as it is now:
 | `hideKeyboard()` | dismiss the soft keyboard when it shows (iOS presses Enter, which may submit the field; Android presses back) |
 | `screenshot(name)` | saves `screenshots/NNN-name.png` in the test's artifact directory |
 | `snapshot({ interactiveOnly? })` | the accessibility tree as text, the text format `warden ui snapshot` prints |
-| `settle({ quietMs?, timeout? })` | waits for a quiet UI |
+| `settle({ quietMs?, timeout? })` | waits for a quiet UI; resolves `{ quiet, waitedMs, via?, reason?, frontmostPid? }`: `via` is `stream` (the app's run loop went idle), `snapshot` (the helper compared screens instead) or `hash` (warden polled snapshot hashes; on Android one dump that waited out the idle second reports `snapshot`); `reason` explains a not-quiet end (`frontmost_mismatch`: the launched app never came to the front) |
 | `devtools` | dev client only, `undefined` in a release build: `evaluate(expr)`, `reloadJs()`, `tree()`, `network`, `console.lines()` / `clear()` / `mark(label)`, `connect()` for the whole facet. The first access attaches |
 
 ## Imports and errors

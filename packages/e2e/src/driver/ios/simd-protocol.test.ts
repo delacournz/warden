@@ -128,6 +128,22 @@ describe("data schemas", () => {
 		expect(elementAtPointDataSchema.safeParse(null).success).toBe(true);
 		expect(settleDataSchema.safeParse({ quiet: true, waitedMs: 12 }).success).toBe(true);
 		expect(settleDataSchema.safeParse({ quiet: "yes" }).success).toBe(false);
+		expect(settleDataSchema.parse({ quiet: true, waitedMs: 5, via: "stream", frontmostPid: 9 })).toMatchObject({
+			via: "stream",
+			frontmostPid: 9,
+		});
+		expect(
+			settleDataSchema.parse({ quiet: false, waitedMs: 5, via: "snapshot", reason: "frontmost_mismatch" })
+		).toMatchObject({
+			via: "snapshot",
+			reason: "frontmost_mismatch",
+		});
+	});
+
+	test("a settle via this client does not know is read as no via, not as a protocol error", () => {
+		const parsed = settleDataSchema.safeParse({ quiet: true, waitedMs: 5, via: "a-future-mode" });
+		expect(parsed.success).toBe(true);
+		expect(parsed.success && parsed.data.via).toBeUndefined();
 		expect(
 			healthDataSchema.safeParse({
 				version: "1",

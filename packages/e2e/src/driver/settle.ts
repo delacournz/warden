@@ -12,6 +12,33 @@ export type SettleDeps = {
 
 export type SettleOutcome = { quiet: boolean; waitedMs: number };
 
+/** How a settle decided: the helper's quiescence `stream`, the helper's `snapshot` stability fallback, or client-side snapshot `hash` polling. */
+export type SettleVia = "stream" | "snapshot" | "hash";
+
+/**
+ * What a driver's `settle` may report beyond the frozen `{ quiet, waitedMs }` of `Driver["settle"]` (a driver
+ * returns this wider object; the contract in `driver.types.ts` is unchanged). iOS passes the helper's reply through:
+ * `via`, `reason` (`frontmost_mismatch` when the launched app never came to the front, `helper_timeout` when the
+ * helper answered after the client's padded timer) and `frontmostPid`. Android says `snapshot` when one `uiautomator dump`
+ * covered the whole quiet window and `hash` when it compared successive dumps; the iOS hash fallback says `hash`.
+ */
+export type SettleDetail = SettleOutcome & { via?: SettleVia; reason?: string; frontmostPid?: number };
+
+const isVia = (value: unknown): value is SettleVia => value === "stream" || value === "snapshot" || value === "hash";
+
+/** The extra fields of a settle reply, kept when they have the right type. `Driver["settle"]` is typed narrower than it answers. */
+export function settleDetailOf(outcome: SettleOutcome): SettleDetail {
+	const reply: Record<string, unknown> = { ...outcome };
+	const { via, reason, frontmostPid } = reply;
+	return {
+		quiet: outcome.quiet,
+		waitedMs: outcome.waitedMs,
+		...(isVia(via) ? { via } : {}),
+		...(typeof reason === "string" ? { reason } : {}),
+		...(typeof frontmostPid === "number" ? { frontmostPid } : {}),
+	};
+}
+
 /** A screen counts as settled once its hash stayed equal this long (`device.settle`, `warden ui --settle`). */
 export const DEFAULT_SETTLE_QUIET_MS = 250;
 /** How long a settle waits for quiet before it gives up. */

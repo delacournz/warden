@@ -5,7 +5,7 @@ import { el, failWith, fakeDriver, snapshotOf } from "./driver.testing";
 import type { Driver, KeyName } from "./driver.types";
 import { noteSpanDetail } from "./span-detail";
 import { traceDriver } from "./traced-driver";
-import { canRepeatKeys } from "./typing";
+import { canRepeatKeys, canSelectAll } from "./typing";
 
 function sink() {
 	const events: TraceEvent[] = [];
@@ -106,6 +106,26 @@ describe("traceDriver", () => {
 		if (canRepeatKeys(driver)) await driver.pressKeyRepeat("Backspace", 12);
 		expect(out.spans()[0]?.op).toBe("driver.pressKeyRepeat");
 		expect(canRepeatKeys(traceDriver(fakeDriver({ screens: [screen] }), { trace: () => out }))).toBe(false);
+	});
+
+	test("the typing capabilities (SelectsAll, RepeatingKeys) stay visible and are spans, and a plain driver offers neither", async () => {
+		const out = sink();
+		const withBoth = Object.assign(fakeDriver({ screens: [screen], selectAll: true }), {
+			pressKeyRepeat: async (_key: KeyName, _times: number): ReturnType<Driver["tap"]> => ({
+				success: true,
+				data: undefined,
+			}),
+		});
+		const driver = traceDriver(withBoth, { trace: () => out });
+		expect(canSelectAll(driver)).toBe(true);
+		expect(canRepeatKeys(driver)).toBe(true);
+		if (canSelectAll(driver)) await driver.selectAll();
+		if (canRepeatKeys(driver)) await driver.pressKeyRepeat("Backspace", 3);
+		expect(out.spans().map((s) => s.op)).toEqual(["driver.selectAll", "driver.pressKeyRepeat"]);
+		expect(withBoth.callsOf("selectAll")).toHaveLength(1);
+		const plain = traceDriver(fakeDriver({ screens: [screen] }), { trace: () => out });
+		expect(canSelectAll(plain)).toBe(false);
+		expect(canRepeatKeys(plain)).toBe(false);
 	});
 
 	test("a member that is not async is returned as is, never turned into a promise", () => {
