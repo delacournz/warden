@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync } from "node:fs";
-import { basename, delimiter, dirname, join, relative } from "node:path";
+import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { BenchAdapter, FrameworkId, RunContext } from "./adapters/adapter.types";
 import { DETOX_BEST_EFFORT } from "./adapters/detox";
@@ -503,7 +503,7 @@ export async function runBench(opts: BenchOptions, deps: BenchDeps): AsyncResult
 		const prepared = await prepareRun(opts, deps, claimed);
 		if (!prepared.success) return prepared;
 		const stamp = `${runStamp(deps.now())}-${opts.platform}`;
-		const runDir = opts.out ?? join(deps.repoRoot, ".bench", stamp);
+		const runDir = resolve(opts.out ?? join(deps.repoRoot, ".bench", stamp));
 		mkdirSync(join(runDir, "logs"), { recursive: true });
 		mkdirSync(join(runDir, "artifacts"), { recursive: true });
 		const benchLog = openPhaseLog(runDir, "bench");
