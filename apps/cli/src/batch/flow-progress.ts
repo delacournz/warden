@@ -6,7 +6,7 @@ export type FlowMark = "passed" | "failed";
 
 /**
  * A flow to look for: `path` is its spec file. `job` is the batch job that runs it when several
- * flows share one (`mode: "single"`: `shard-<k>`), so the grid lists a device's shard only.
+ * flows share one (`isolate: "device"`: `shard-<k>`), so the grid lists a device's shard only.
  */
 export type TrackedFlow = { id: string; path: string; job?: string };
 

@@ -599,8 +599,11 @@ async function startRecordings(deps: BatchDeps, dir: string, devices: Device[]):
 	return ok(recordings);
 }
 
-/** Per-job argv before `{job}` `{udid}` `{worker}` `{seq}` expansion (default: the batch command). */
-export type ArgvFor = (job: string) => string[];
+/**
+ * Per-job argv before `{job}` `{udid}` `{worker}` `{seq}` expansion (default: the batch command).
+ * Asked once per spawn, so a retry (`run.attempt` > 0) can run less than the first attempt did.
+ */
+export type ArgvFor = (job: string, run: JobEnvInput) => string[] | Promise<string[]>;
 
 type JobRunnerOptions = {
 	cmd: string[];
@@ -684,18 +687,20 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 		}
 	};
 	/** env, argv and log of one spawn: the pool env + the caller's per-job env (`hooks.jobEnv`) + this worker's identity */
-	const plan = (w: BatchWorker, id: string, seq: number, pass: number) => {
+	const plan = async (w: BatchWorker, id: string, seq: number, attempt: number, pass: number) => {
 		const job = baseJob(id);
+		const input: JobEnvInput = {
+			job,
+			worker: w.worker,
+			seq,
+			attempt,
+			udid: w.udid,
+			batchDir: o.batchDir,
+			metroUrl: o.vars.metroUrl,
+		};
 		const env: Record<string, string | undefined> = {
 			...o.env,
-			...o.hooks.jobEnv?.({
-				job,
-				worker: w.worker,
-				seq,
-				udid: w.udid,
-				batchDir: o.batchDir,
-				metroUrl: o.vars.metroUrl,
-			}),
+			...o.hooks.jobEnv?.(input),
 			...socketEnv(o.sockets.get(w.udid)),
 			WARDEN_UDID: w.udid,
 			...deviceNameEnv(o.live.find((d) => d.udid === w.udid)?.name),
@@ -714,11 +719,11 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			...o.vars,
 			...(leg !== undefined ? { leg } : {}),
 		};
-		const argv = expandArgv(o.hooks.argvFor ? o.hooks.argvFor(job) : o.cmd, vars);
+		const argv = expandArgv(o.hooks.argvFor ? await o.hooks.argvFor(job, input) : o.cmd, vars);
 		return { job, env, log, argv };
 	};
-	const spawnOnce = async (w: BatchWorker, id: string, seq: number, pass: number): Promise<number> => {
-		const { job, env, log, argv } = plan(w, id, seq, pass);
+	const spawnOnce = async (w: BatchWorker, id: string, seq: number, attempt: number, pass: number): Promise<number> => {
+		const { job, env, log, argv } = await plan(w, id, seq, attempt, pass);
 		o.logs.set(attemptKey({ worker: w.worker, seq }), log);
 		const out = env[ENV_NAMES.out];
 		if (out) o.resultFiles.set(attemptKey({ worker: w.worker, seq }), join(out, "results.jsonl"));
@@ -745,9 +750,9 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 		if (code !== 0 && !o.interrupted()) await shoot(w, seq, log);
 		return code;
 	};
-	return async (w: BatchWorker, job: string, seq: number): Promise<number> => {
+	return async (w: BatchWorker, job: string, seq: number, attempt = 0): Promise<number> => {
 		for (let pass = 0; pass < o.passes; pass++) {
-			const code = await spawnOnce(w, job, seq, pass);
+			const code = await spawnOnce(w, job, seq, attempt, pass);
 			if (code !== 0) return code;
 			if (o.interrupted()) return 130;
 		}
@@ -825,7 +830,10 @@ export type SessionHooks = {
 export type JobEnvInput = {
 	job: string;
 	worker: number;
+	/** this run's number on its worker (retries included) */
 	seq: number;
+	/** 0 for a job's first run, 1 for its first retry… */
+	attempt: number;
 	udid: string;
 	batchDir: string;
 	/** the run's Metro, when it has one */

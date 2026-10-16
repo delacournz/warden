@@ -1,6 +1,11 @@
 import { join, resolve } from "node:path";
 import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
-import type { E2eDeviceLeg, E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
+import {
+	type E2eDeviceLeg,
+	type E2eIsolation,
+	type E2eSuiteConfig,
+	suiteIsolation,
+} from "@delacour/warden-core/affected/affected.schema";
 import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
 import { readySpec } from "@delacour/warden-core/batch/preset";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
@@ -19,7 +24,8 @@ import type { WarmConnect } from "../batch/warm-drivers";
 import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { findBun, findPreload, runnerArgv, type SpecEnvOptions, shardFlows, specEnv } from "../e2e/bun-runner";
+import { findBun, findPreload, runnerArgv, type SpecEnvOptions, specEnv } from "../e2e/bun-runner";
+import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
 import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
 import { exitGate, type FlowVerdict, type RunShape, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
@@ -68,7 +74,9 @@ export type E2eReport = {
 	suite: string;
 	platform: Platform;
 	base?: string;
-	/** `single`: one spec process per device ran a shard of the flows, so a shard's flows share its process's verdict */
+	/** `device`: one spec process per device ran a shard of the flows; `flow`: one process per flow */
+	isolate: E2eIsolation;
+	/** only with `isolate: "device"`: the old name of it */
 	mode?: "single";
 	ok: boolean;
 	/** iOS: the run kept its devices' Simulator.app windows closed */
@@ -213,6 +221,17 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 /** `CI` is set to something other than empty / `0` / `false`. */
 const inCi = (env: Record<string, string | undefined>): boolean => !["", "0", "false", undefined].includes(env.CI);
 
+/**
+ * Whether a passed gate shuts the devices warden booted down before their leases are released:
+ * the suite's `shutdown`, else yes under CI (the runner is thrown away, free the RAM at once) and
+ * no locally (the next run reuses the booted sims instead of paying a 10-30 s boot; `warden gc`
+ * shuts them down once they have sat idle). `--no-shutdown` always wins.
+ */
+function shutsDownOnPass(ctx: CommandContext, suite: Suite, opts: E2eOpts): boolean {
+	if (!opts.shutdown) return false;
+	return (suite.config.shutdown ?? (inCi(ctx.env) ? "always" : "idle")) === "always";
+}
+
 /** `--headless` / `--no-headless` > the suite's (else top-level) `headless` > `WARDEN_HEADLESS`. */
 function suiteHeadless(ctx: CommandContext, suite: Suite, opts: E2eOpts, passed: ReadonlySet<string>): boolean {
 	return resolveHeadless({
@@ -240,9 +259,10 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 
 /**
  * `warden e2e [suite]`: the flows the change needs (see `warden affected`), run on leased devices
- * like `warden batch`, each `passes` times. Once the gate passes, the devices warden created (or
- * booted) are shut down before their leases are released; a failed run leaves them up. Exit 0 when every required flow passed (optional
- * failures are reported, not fatal), 1 otherwise, 130 when interrupted.
+ * like `warden batch`, each `passes` times. Once the gate passes under CI (or `shutdown: "always"`),
+ * the devices warden created (or booted) are shut down before their leases are released; locally
+ * they stay booted for the next run, and a failed run always leaves them up. Exit 0 when every
+ * required flow passed (optional failures are reported, not fatal), 1 otherwise, 130 when interrupted.
  */
 async function e2e(
 	ctx: CommandContext,
@@ -268,24 +288,37 @@ async function e2e(
 	if (flows.length === 0 || opts.dryRun) {
 		if (flows.length === 0) success(ctx, "warden e2e: no affected flows — nothing to run");
 		const notRun = flows.map((f): FlowVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
-		await publish(ctx, deps, opts, { ...base, ok: true, headless, flows: notRun });
+		await publish(ctx, deps, opts, {
+			...base,
+			isolate: suiteIsolation(suite.config),
+			ok: true,
+			headless,
+			flows: notRun,
+		});
 		return 0;
 	}
 	const run = await preparedRun(ctx, deps, suite, selection.platform, flows, { ...opts, headless }, passed);
 	if (!run.success) return fail(run.error);
-	const { args, shape, jobs, argvs, spec } = run.data;
-	const single = shape.shardOf !== undefined;
+	const { args, shape, plan: jobs, argvOf, spec } = run.data;
+	const runs = shardRuns(jobs, { argvOf, readFile: deps.readFile });
 	const session = await runSession(
 		ctx,
 		deps,
 		args,
-		jobs,
-		argvs.get(jobs[0] ?? "") ?? [],
-		sessionHooks(suite, flows, shape, spec, argvs, { shutdown: opts.shutdown, warm: warmHook(ctx, deps, suite, opts) })
+		jobs.jobs,
+		jobs.argvs.get(jobs.jobs[0] ?? "") ?? [],
+		sessionHooks(suite, flows, shape, spec, runs, {
+			shutdown: shutsDownOnPass(ctx, suite, opts),
+			warm: warmHook(ctx, deps, suite, opts),
+		})
 	);
-	const result = await verdicts(flows, session, shape, { readFile: deps.readFile, ci: inCi(ctx.env) });
+	const result = await verdicts(flows, session, shape, {
+		readFile: deps.readFile,
+		ci: inCi(ctx.env),
+		attempts: runs.attempts,
+	});
 	for (const warning of result.warnings) ctx.err(ctx.ui.color.yellow(`warden e2e: ${warning}`));
-	const report = buildReport(base, headless, single, session, result);
+	const report = buildReport(base, headless, shape.shardOf === undefined ? "flow" : "device", session, result);
 	await publish(ctx, deps, opts, report);
 	if (session.code === 130) return 130;
 	printVerdict(ctx, report);
@@ -296,13 +329,14 @@ async function e2e(
 function buildReport(
 	base: Pick<E2eReport, "suite" | "platform" | "base">,
 	headless: boolean,
-	single: boolean,
+	isolate: E2eIsolation,
 	session: SessionResult,
 	result: Verdicts
 ): E2eReport {
 	return {
 		...base,
-		...(single ? { mode: "single" as const } : {}),
+		isolate,
+		...(isolate === "device" ? { mode: "single" as const } : {}),
 		ok: result.ok,
 		headless,
 		...(session.batchDir ? { batchDir: session.batchDir } : {}),
@@ -335,13 +369,13 @@ function warmHook(ctx: CommandContext, deps: BatchDeps, suite: Suite, opts: E2eO
 	return suite.config.warmDrivers === false || opts.warm === false ? undefined : deps.warmConnect(ctx);
 }
 
-/** How the batch session runs the suite: per-device setup, spec argv + env per job, live flows (`single`) and the shutdown rule. */
+/** How the batch session runs the suite: per-device setup, spec argv + env per job, live flows (device isolation) and the shutdown rule. */
 function sessionHooks(
 	suite: Suite,
 	flows: readonly SelectedFlow[],
 	shape: RunShape,
 	spec: SpecPlan,
-	argvs: ReadonlyMap<string, string[]>,
+	runs: ShardRuns,
 	o: { shutdown: boolean; warm: WarmConnect | undefined }
 ): SessionHooks {
 	return {
@@ -350,19 +384,19 @@ function sessionHooks(
 		// batch skips it off iOS
 		warmDrivers: o.warm,
 		flows: trackedFlows(flows, shape),
-		// a passed gate frees the sims; a failed one leaves them up to inspect
+		// a passed gate frees the sims when asked to; a failed one always leaves them up to inspect
 		...(o.shutdown ? { shutdownIf: (summary) => exitGate(flows, summary, shape) } : {}),
-		argvFor: (job) => argvs.get(job) ?? [],
+		argvFor: (_job, run) => runs.argv(run),
 		jobEnv: (job) =>
 			specEnv({
 				...spec.env,
 				launchArgs: specLaunchArgs(spec.launch, job.metroUrl),
-				out: join(job.batchDir, "e2e", `${job.worker}-${job.seq}`),
+				out: attemptOut(job.batchDir, job.worker, job.seq),
 			}),
 	};
 }
 
-/** The flows whose `results.jsonl` tests are followed live: their spec files, and the shard job that runs them in `single` mode. */
+/** The flows whose `results.jsonl` tests are followed live: their spec files, and the shard job that runs them under device isolation. */
 function trackedFlows(flows: readonly SelectedFlow[], shape: RunShape): TrackedFlow[] {
 	return flows.map((f) => {
 		const job = shape.shardOf?.get(f.id);
@@ -401,14 +435,31 @@ async function runPlan(
 	if (!args.success) return args;
 	const legs = batchLegs(platform, picked.data ?? [], legOpts);
 	if (!legs.success) return legs;
-	const jobs = jobPlan(flows, config.mode === "single" ? shardCount(args.data, legs.data) : undefined, spec);
-	const planned = planOf({ ...args.data, jobs: { kind: "list", jobs: jobs.jobs } }, legs.data, config, metro.data);
+	const argvOf = (files: readonly string[]) =>
+		runnerArgv({ bun: spec.bun, preload: spec.preload, flowPaths: files, timeoutMs: spec.env.timeouts.timeoutMs });
+	const plan = jobPlan(
+		flows,
+		suiteIsolation(config) === "device" ? shardCount(args.data, legs.data) : undefined,
+		argvOf
+	);
+	const planned = planOf(
+		{ ...args.data, jobs: { kind: "list", jobs: plan.jobs } },
+		legs.data,
+		config,
+		metro.data,
+		biggestShard(plan)
+	);
 	return ok({
 		args: planned.args,
-		shape: { ...planned.shape, ...(jobs.shardOf ? { shardOf: jobs.shardOf } : {}) },
-		jobs: jobs.jobs,
-		argvs: jobs.argvs,
+		shape: { ...planned.shape, ...(plan.shardOf ? { shardOf: plan.shardOf } : {}) },
+		plan,
+		argvOf,
 	});
+}
+
+/** Flows in the biggest shard (1 when every flow is its own job). */
+function biggestShard(plan: JobPlan): number {
+	return Math.max(1, ...[...(plan.shards?.values() ?? [])].map((flows) => flows.length));
 }
 
 /** Devices the run asks for: the biggest leg's, or the plain claim's. */
@@ -416,37 +467,13 @@ function shardCount(args: BatchArgs, legs: readonly BatchLeg[]): number {
 	return Math.max(args.flags.request.count, ...legs.map((leg) => leg.flags.request.count));
 }
 
-/**
- * The batch jobs and the `bun test` argv of each: one per flow, or (`shards`) one `shard-<k>` per
- * device over its round-robin share of the flows.
- */
-function jobPlan(
-	flows: readonly SelectedFlow[],
-	shards: number | undefined,
-	spec: SpecPlan
-): { jobs: string[]; argvs: Map<string, string[]>; shardOf?: Map<string, string> } {
-	const argvOf = (files: readonly string[]) =>
-		runnerArgv({ bun: spec.bun, preload: spec.preload, flowPaths: files, timeoutMs: spec.env.timeouts.timeoutMs });
-	const argvs = new Map<string, string[]>();
-	if (shards === undefined) {
-		for (const flow of flows) argvs.set(flow.id, argvOf([flow.file]));
-		return { jobs: flows.map((f) => f.id), argvs };
-	}
-	const shardOf = new Map<string, string>();
-	shardFlows(flows, shards).forEach((share, k) => {
-		const job = `shard-${k}`;
-		argvs.set(job, argvOf(share.map((f) => f.file)));
-		for (const flow of share) shardOf.set(flow.id, job);
-	});
-	return { jobs: [...argvs.keys()], argvs, shardOf };
-}
-
 /** Everything `runSession` needs: the batch run, how its jobs map to flows, and each job's argv. */
 type RunPlan = {
 	args: BatchArgs;
 	shape: RunShape;
-	jobs: string[];
-	argvs: ReadonlyMap<string, string[]>;
+	plan: JobPlan;
+	/** the `bun test` argv over some spec files */
+	argvOf: (files: readonly string[]) => string[];
 };
 
 /** The spec runner, resolved before any device is leased: `bun`, the preload, the app and the spec env. */
@@ -514,16 +541,18 @@ function batchLegs(
 	return ok(legs);
 }
 
+/** `flowsPerJob` flows share one spec process, and the job timeout (`jobTimeoutMs`, `--job-timeout`) is per flow. */
 function planOf(
 	args: BatchArgs,
 	legs: BatchLeg[],
 	config: E2eSuiteConfig,
-	metro: MetroPlan | undefined
+	metro: MetroPlan | undefined,
+	flowsPerJob: number
 ): { args: BatchArgs; shape: RunShape } {
 	return {
 		args: {
 			...args,
-			jobTimeoutMs: args.jobTimeoutMs ?? config.jobTimeoutMs,
+			jobTimeoutMs: (args.jobTimeoutMs ?? config.jobTimeoutMs) * flowsPerJob,
 			...(legs.length > 0 ? { legs } : {}),
 			...(metro ? { metro } : {}),
 		},
@@ -557,7 +586,7 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--devices <legs>", "which e2e.<suite>.devices legs run: default | all | <profile,…>")
 				.option(
 					"--no-shutdown",
-					"keep the devices running after the gate passes (default: shut down the ones warden created)"
+					"keep the devices running after the gate passes (default: shut down the ones warden created under CI, leave them booted locally; suite shutdown)"
 				)
 				.option("--no-warm", "skip pre-warming the iOS socket helper per device (default: on; suite warmDrivers)")
 				.addHelpText(

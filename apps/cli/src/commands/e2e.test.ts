@@ -14,8 +14,11 @@ let dir: string;
 let write: (path: string, text: string) => void;
 let ctx: TestContext | undefined;
 
+/** the suites below were written for one spec process per flow; the device-isolation tests opt in */
+const FLOW_ISOLATION = { isolate: "flow" };
+
 beforeEach(async () => {
-	({ dir, write } = await makeSuiteRepo());
+	({ dir, write } = await makeSuiteRepo(FLOW_ISOLATION));
 });
 afterEach(() => {
 	ctx?.cleanup();
@@ -23,10 +26,16 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
-/** Swap the fixture for one whose suite has `overrides`. */
+/** Swap the fixture for one whose suite has `overrides` (one spec process per flow unless they say otherwise). */
 async function resuite(overrides: Record<string, unknown>, config: Record<string, unknown> = {}): Promise<void> {
 	rmSync(dir, { recursive: true, force: true });
-	({ dir, write } = await makeSuiteRepo(overrides, config));
+	({ dir, write } = await makeSuiteRepo({ ...FLOW_ISOLATION, ...overrides }, config));
+}
+
+/** Swap the fixture for a suite that says nothing about `isolate`, plus `overrides`. */
+async function resuiteDefault(overrides: Record<string, unknown> = {}): Promise<void> {
+	rmSync(dir, { recursive: true, force: true });
+	({ dir, write } = await makeSuiteRepo(overrides));
 }
 
 function setup(argv: string[], calls: string[][] = []): TestContext {
@@ -642,12 +651,12 @@ describe("warden e2e", () => {
 		});
 	});
 
-	describe("mode: single", () => {
+	describe("isolate: device", () => {
 		const flowFiles = () => ["chats", "settings"].map((id) => join(dir, `flows/${id}.e2e.ts`));
 		const shardOf = (job: Spawned | undefined) => job?.opts.env.WARDEN_JOB;
 
 		test("one bun test process per device over its round-robin shard of the flows", async () => {
-			await resuite({ mode: "single", count: 2 });
+			await resuite({ isolate: "device", count: 2 });
 			const c = setup(["--all"]);
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
@@ -659,7 +668,7 @@ describe("warden e2e", () => {
 			for (const j of jobs) expect(j.opts.env.WARDEN_FLOWS).toBeUndefined();
 			expect(c.db.listLeases()).toEqual([]);
 			const report = reportOf(h.files, c);
-			expect(report).toMatchObject({ ok: true, mode: "single" });
+			expect(report).toMatchObject({ ok: true, isolate: "device", mode: "single" });
 			expect(report.flows.map((f) => [f.id, f.verdict])).toEqual([
 				["chats", "passed"],
 				["settings", "passed"],
@@ -667,20 +676,20 @@ describe("warden e2e", () => {
 		});
 
 		test("one device runs every flow in one process; shards never outnumber flows", async () => {
-			await resuite({ mode: "single", count: 1 });
+			await resuite({ isolate: "device", count: 1 });
 			const one = harness();
 			expect(await createE2eCommand(one.deps).run(setup(["--all"]))).toBe(0);
 			expect(one.jobs().map((j) => j.cmd)).toEqual([bunTest(...flowFiles())]);
 			expect(one.jobs().map(shardOf)).toEqual(["shard-0"]);
 
-			await resuite({ mode: "single", count: 5 });
+			await resuite({ isolate: "device", count: 5 });
 			const many = harness();
 			expect(await createE2eCommand(many.deps).run(setup(["--all"]))).toBe(0);
 			expect(many.jobs()).toHaveLength(2);
 		});
 
 		test("a failing shard fails only its flows", async () => {
-			await resuite({ mode: "single", count: 2 });
+			await resuite({ isolate: "device", count: 2 });
 			const c = setup(["--all"]);
 			const h = harness({ exitCodes: { "shard-1": 1 } });
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
@@ -691,7 +700,7 @@ describe("warden e2e", () => {
 		});
 
 		test("live flow progress: the grid lists a device's shard and marks each flow as its results.jsonl reports it", async () => {
-			await resuite({ mode: "single" });
+			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
 			const h = harness({ manual: true, isTTY: true });
 			const running = createE2eCommand(h.deps).run(c);
@@ -710,7 +719,7 @@ describe("warden e2e", () => {
 		});
 
 		test("each device's row lists only its own shard", async () => {
-			await resuite({ mode: "single", count: 2 });
+			await resuite({ isolate: "device", count: 2 });
 			const c = setup(["--all"]);
 			const h = harness({ isTTY: true });
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
@@ -721,7 +730,7 @@ describe("warden e2e", () => {
 		});
 
 		test("the process's exit code decides when it wrote no results, with a warning", async () => {
-			await resuite({ mode: "single" });
+			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
 			const h = harness({ exitCodeFor: () => 1 });
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
@@ -730,7 +739,7 @@ describe("warden e2e", () => {
 		});
 
 		test("per-flow verdicts from results.jsonl: a failing test fails its flow only, the exit code blames the rest", async () => {
-			await resuite({ mode: "single" });
+			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
 			const h: Harness = harness({
 				exitCodeFor: (env) => {
@@ -854,7 +863,7 @@ describe("warden e2e", () => {
 		});
 
 		test("--no-tui: a line per finished test as results arrive, then a line per finished flow", async () => {
-			await resuite({ mode: "single" });
+			await resuite({ isolate: "device" });
 			const c = setup(["--all", "--no-tui"]);
 			const h = harness({ manual: true });
 			const running = createE2eCommand(h.deps).run(c);
@@ -1122,13 +1131,179 @@ describe("warden e2e", () => {
 			expect(h.warmed).toEqual([]);
 		});
 
-		test("single mode warms once per device, before its shard starts", async () => {
-			await resuite({ mode: "single" });
+		test("device isolation warms once per device, before its shard starts", async () => {
+			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			expect(h.warmed).toEqual(["U1"]);
 			expect(jobEnv(h)).toEqual(["/tmp/warden-simd-U1.sock"]);
+		});
+	});
+
+	describe("isolation", () => {
+		const jobNames = (h: Harness) => h.jobs().map((j) => j.opts.env.WARDEN_JOB);
+
+		test("a suite that says nothing runs one spec process per device", async () => {
+			await resuiteDefault({ count: 2 });
+			const c = setup(["--all"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(jobNames(h).sort()).toEqual(["shard-0", "shard-1"]);
+			expect(reportOf(h.files, c)).toMatchObject({ ok: true, isolate: "device", mode: "single" });
+		});
+
+		test("isolate: flow keeps one process per flow", async () => {
+			await resuiteDefault({ isolate: "flow", count: 2 });
+			const c = setup(["--all"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(jobNames(h).sort()).toEqual(["chats", "settings"]);
+			const report = reportOf(h.files, c);
+			expect(report.isolate).toBe("flow");
+			expect(report).not.toHaveProperty("mode");
+		});
+
+		test("the old mode: per-flow still means a process per flow", async () => {
+			await resuiteDefault({ mode: "per-flow", count: 2 });
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(setup(["--all"]))).toBe(0);
+			expect(jobNames(h).sort()).toEqual(["chats", "settings"]);
+		});
+
+		test("passes > 1 needs a process per flow, so the default falls back to it", async () => {
+			await resuiteDefault({ passes: 2 });
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
+			expect(jobNames(h)).toEqual(["chats", "chats"]);
+		});
+
+		test("flows run in id order in a device's one process", async () => {
+			await resuiteDefault({ count: 1 });
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(setup(["--all"]))).toBe(0);
+			expect(h.jobs().map((j) => j.cmd)).toEqual([
+				bunTest(join(dir, "flows/chats.e2e.ts"), join(dir, "flows/settings.e2e.ts")),
+			]);
+		});
+
+		test("jobTimeoutMs is per flow: a device's process gets it once for each flow it runs", async () => {
+			await resuiteDefault({ count: 1, jobTimeoutMs: 60_000 });
+			const device = harness();
+			expect(await createE2eCommand(device.deps).run(setup(["--all"]))).toBe(0);
+			expect(device.timers.map((t) => t.ms)).toContain(120_000);
+			expect(device.timers.map((t) => t.ms)).not.toContain(60_000);
+
+			await resuiteDefault({ isolate: "flow", count: 1, jobTimeoutMs: 60_000 });
+			const flow = harness();
+			expect(await createE2eCommand(flow.deps).run(setup(["--all"]))).toBe(0);
+			expect(flow.timers.map((t) => t.ms)).toContain(60_000);
+		});
+
+		test("--job-timeout is per flow too", async () => {
+			await resuiteDefault({ count: 1 });
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(setup(["--all", "--job-timeout", "30s"]))).toBe(0);
+			expect(h.timers.map((t) => t.ms)).toContain(60_000);
+		});
+
+		describe("retries", () => {
+			const bothRequired = {
+				flows: {
+					chats: { entries: ["src/app/(app)/chats.tsx"] },
+					settings: { entries: ["src/app/(app)/settings.tsx"] },
+				},
+			};
+			const attempt = (env: Record<string, string | undefined>) => Number(env.WARDEN_JOB_SEQ);
+			const chatsFile = () => join(dir, "flows/chats.e2e.ts");
+			const settingsFile = () => join(dir, "flows/settings.e2e.ts");
+
+			test("a device's retry reruns only the flows that failed", async () => {
+				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
+				const c = setup(["--all"]);
+				const h: Harness = harness({
+					exitCodeFor: (env) => {
+						const first = attempt(env) === 0;
+						h.files.set(
+							resultsPath(env),
+							first
+								? jsonl(spec("chats", "open"), spec("settings", "toggle", "failed"))
+								: jsonl(spec("settings", "toggle"))
+						);
+						return first ? 1 : 0;
+					},
+				});
+				expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+				expect(h.jobs().map((j) => j.cmd)).toEqual([bunTest(chatsFile(), settingsFile()), bunTest(settingsFile())]);
+				const report = reportOf(h.files, c);
+				expect(report.ok).toBe(true);
+				expect(report.flows.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
+					["chats", "passed", 1],
+					["settings", "passed", 2],
+				]);
+			});
+
+			test("after a crash the retry runs the flow it died in and the flows it never reached", async () => {
+				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
+				write("flows/profile.e2e.ts", "export {};\n");
+				const c = setup(["--all"]);
+				const profileFile = join(dir, "flows/profile.e2e.ts");
+				const h: Harness = harness({
+					exitCodeFor: (env) => {
+						const first = attempt(env) === 0;
+						h.files.set(
+							resultsPath(env),
+							first
+								? jsonl(spec("chats", "open"), spec("profile", "first test"))
+								: jsonl(spec("profile", "first test"), spec("settings", "toggle"))
+						);
+						return first ? 137 : 0;
+					},
+				});
+				expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+				expect(h.jobs().map((j) => j.cmd)).toEqual([
+					bunTest(chatsFile(), profileFile, settingsFile()),
+					bunTest(profileFile, settingsFile()),
+				]);
+				expect(reportOf(h.files, c).flows.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
+					["chats", "passed", 1],
+					["profile", "passed", 2],
+					["settings", "passed", 2],
+				]);
+			});
+
+			test("a flow that still fails after its retry fails the gate; the one that passed keeps its pass", async () => {
+				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
+				const c = setup(["--all"]);
+				const h: Harness = harness({
+					exitCodeFor: (env) => {
+						h.files.set(
+							resultsPath(env),
+							attempt(env) === 0
+								? jsonl(spec("chats", "open"), spec("settings", "toggle", "failed"))
+								: jsonl(spec("settings", "toggle", "failed"))
+						);
+						return 1;
+					},
+				});
+				expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+				expect(h.jobs()).toHaveLength(2);
+				expect(reportOf(h.files, c).flows.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
+					["chats", "passed", 1],
+					["settings", "failed", 2],
+				]);
+			});
+
+			test("a process per flow retries just that flow, as before", async () => {
+				await resuite({ isolate: "flow", count: 1, retry: 1 });
+				const h = harness({ exitCodes: { chats: 1 } });
+				expect(await createE2eCommand(h.deps).run(setup(["--all"]))).toBe(1);
+				expect(h.jobs().map((j) => [j.opts.env.WARDEN_JOB, j.cmd.at(-1)])).toEqual([
+					["chats", chatsFile()],
+					["chats", chatsFile()],
+					["settings", settingsFile()],
+				]);
+			});
 		});
 	});
 
@@ -1343,34 +1518,76 @@ describe("warden e2e", () => {
 	});
 
 	describe("device shutdown", () => {
-		/** setup() whose two sims warden created, so they're its to shut down */
-		function wardenSetup(argv: string[], calls: string[][]): TestContext {
+		/** setup() whose two sims warden created, so they're its to shut down; `CI` set as given (`undefined`: a local shell) */
+		function wardenSetup(argv: string[], calls: string[][], ci?: string): TestContext {
 			const c = setup(argv, calls);
+			c.env = { ...c.env, CI: ci };
 			for (const n of [1, 2])
 				c.db.recordDevice({ platform: "ios", id: `U${n}`, name: `warden-iphone-17-${n}`, profile: "iphone-17" }, 0);
 			return c;
 		}
 		const shutdowns = (calls: string[][]) => calls.filter((x) => x[2] === "shutdown").map((x) => x[3]);
 
-		test("gate passed → the leased devices warden created are shut down, then released", async () => {
+		test("under CI a passed gate shuts the devices warden created down, then releases them", async () => {
 			const calls: string[][] = [];
-			const c = wardenSetup(["--all", "--count", "2"], calls);
+			const c = wardenSetup(["--all", "--count", "2"], calls, "true");
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("gate failed → devices left running for inspection; leases still released", async () => {
+		test("locally a passed gate leaves the devices booted for the next run, and still releases them", async () => {
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--count", "2"], calls);
-			expect(await createE2eCommand(harness({ exitCodes: { chats: 1 } }).deps).run(c)).toBe(1);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("--no-shutdown keeps devices running after a pass", async () => {
+		test("CI set to 0, false or empty is a local shell", async () => {
+			for (const ci of ["0", "false", ""]) {
+				const calls: string[][] = [];
+				const c = wardenSetup(["--all", "--count", "2"], calls, ci);
+				expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+				expect(shutdowns(calls)).toEqual([]);
+			}
+		});
+
+		test("shutdown: always shuts down locally too", async () => {
+			await resuite({ shutdown: "always" });
 			const calls: string[][] = [];
-			const c = wardenSetup(["--all", "--no-shutdown"], calls);
+			const c = wardenSetup(["--all", "--count", "2"], calls);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
+		});
+
+		test("shutdown: idle keeps the devices booted under CI too", async () => {
+			await resuite({ shutdown: "idle" });
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--count", "2"], calls, "true");
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls)).toEqual([]);
+		});
+
+		test("gate failed → devices left running for inspection in every mode; leases still released", async () => {
+			for (const [shutdown, ci] of [
+				["always", "true"],
+				["always", undefined],
+				["idle", "true"],
+			] as const) {
+				await resuite({ shutdown });
+				const calls: string[][] = [];
+				const c = wardenSetup(["--all", "--count", "2"], calls, ci);
+				expect(await createE2eCommand(harness({ exitCodes: { chats: 1 } }).deps).run(c)).toBe(1);
+				expect(shutdowns(calls)).toEqual([]);
+				expect(c.db.listLeases()).toEqual([]);
+			}
+		});
+
+		test("--no-shutdown keeps devices running after a pass, whatever the suite or CI say", async () => {
+			await resuite({ shutdown: "always" });
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--no-shutdown"], calls, "true");
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
@@ -1379,6 +1596,7 @@ describe("warden e2e", () => {
 		test("a device that was already running and not warden's stays up", async () => {
 			const calls: string[][] = [];
 			const c = setup(["--all"], calls);
+			c.env = { ...c.env, CI: "true" };
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 		});

@@ -18,11 +18,11 @@ export type DeviceView = {
 	idle: boolean;
 	/** finished jobs, in order (a retried attempt only counts once it is final) */
 	results: FlowMark[];
-	/** `mode: "single"`: the flows this device ran, from the runner's report */
+	/** device isolation: the flows this device ran, from the runner's report */
 	ran?: Array<{ id: string; mark: FlowMark }>;
 };
 
-/** `mode: "single"`: the one runner of `worker`, running every flow, marked as its output reports them. */
+/** device isolation: the one runner of `worker`, running every flow, marked as its output reports them. */
 export type RunnerView = { worker: number; flows: Array<{ id: string; mark?: FlowMark }> };
 
 export type BatchView = {
