@@ -663,6 +663,14 @@ Android: `perf-android-r3` vs `v2-android-r2`, same host and unchanged suite, 3 
 
 Runs `perf-android-r1` / `-r2` never reached the tests: a fresh checkout's first Android build trips two pre-existing `app ensure` bugs (follow-ups below); r3 ran after deleting the stale APK.
 
+PERF-6.3 (idiomatic suite: `tap({until})`, `app.open({wait:"quiet"})`, `systemAlerts`, `locator.read()`), warden only, 3 reps, reported separately from the headline:
+
+| | headline (unchanged suite) | idiomatic | Delta |
+|---|---|---|---|
+| iOS warm median | 60.81 s | 58.53 s | −3.8% (`device.alert` calls 22 → 0, `read.isVisible` 51 → 4) |
+| Android warm median | 29.07 s | 25.26 s | −13.1% (−4% to −9% against the headline's clean rep) |
+| untraced per rep (iOS / Android) | 6.82 s / 7.67 s | 0.27 s / 0.11 s | waits now inside traced steps ✅ |
+
 ## Follow-ups (reported by agents)
 
 | From | Follow-up | Status |
@@ -679,7 +687,7 @@ Runs `perf-android-r1` / `-r2` never reached the tests: a fresh checkout's first
 | droid-arch (3.3) | `warden-uiad` only verified on API 37 (only image installed). Add an emulator matrix (API 30–36) in CI. p95 snapshot ~270 ms right after sign-in navigation under load. | Open. |
 | streamer (1.2) | AX guest wedges ~every 24 s (all quiescence queries `busy`), costing ~1.25 s in 3/8 tests per rep; cause inside the guest/idb unknown. Done (PERF-1.2b): `rebind` recycles guests older than `WARDEN_SIMD_GUEST_MAX_AGE_S` (default 12 s; 18 s still wedged): 8/8 via stream every rep, 0 wedges in 24 launches, warm suite 60.65 s. Cause unknown; threshold could follow the launch gap. |
 | lead (6.2) | Bench sampler has no per-process RSS split: add one, then attribute iOS host RSS 116 → 149 MB. Untraced 6.82 s/rep: find the unwrapped calls (largest in settings). | Open. |
-| lead (6.2) | Fresh checkout, first Android build: `expo run:android` prebuilds `android/`, which changes the native fingerprint mid-build, so `app ensure` refuses to cache ("fingerprint changed during the build"). Suggest: when the JS key is unchanged and the native dir did not exist before the build, re-key to the post-build fingerprint instead of refusing. | Open (pre-existing). |
+| lead (6.2) | Fresh checkout, first build (Android and iOS; cacher saw the iOS app hash move `dd2edd…` → `ebf4b0…`): `expo run:<platform>` prebuilds `android/` / `ios/`, which changes the native fingerprint mid-build, so `app ensure` refuses to cache ("fingerprint changed during the build"). Suggest: when the JS key is unchanged and the native dir did not exist before the build, re-key to the post-build fingerprint instead of refusing. | Open (pre-existing). |
 | lead (6.2) | `locateArtifact` (`packages/core/src/builds/local.ts`) only accepts outputs modified at or after the build start, so an up-to-date Gradle/xcodebuild run (nothing to rebuild after an uncached build) reports "no Release .apk was found". Together with the row above, a fresh checkout can't populate its Android cache without deleting the APK. Suggest: accept the newest candidate when the build succeeded and the post-build key equals the requested key. | Open (pre-existing). |
 | conductor (4.6) | `native+js` fingerprint keys are v2: every such project rebuilds once after upgrading. | Expected. |
 
