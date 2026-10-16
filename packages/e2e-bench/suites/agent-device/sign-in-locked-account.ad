@@ -8,9 +8,9 @@ press "id=\"welcome-get-started\""
 wait "id=\"sign-in-screen\"" 4000
 wait stable 500 5000
 press "id=\"sign-in-email\""
-fill "id=\"sign-in-email\"" "locked@example.com"
+type "locked@example.com"
 press "id=\"sign-in-password\""
-fill "id=\"sign-in-password\"" "password1"
+type "password1"
 press "id=\"sign-in-submit\""
 wait "id=\"sign-in-error\"" 4000
 wait "text=\"This account is locked. Try another email.\"" 4000

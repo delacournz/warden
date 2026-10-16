@@ -8,9 +8,9 @@ press "id=\"welcome-get-started\""
 wait "id=\"sign-in-screen\"" 4000
 wait stable 500 5000
 press "id=\"sign-in-email\""
-fill "id=\"sign-in-email\"" "ada@example.com"
+type "ada@example.com"
 press "id=\"sign-in-password\""
-fill "id=\"sign-in-password\"" "password1"
+type "password1"
 press "id=\"sign-in-submit\""
 wait "id=\"todos-screen\"" 15000
 press "id=\"todo-title-welcome\""

@@ -8,14 +8,16 @@ press "id=\"welcome-get-started\""
 wait "id=\"sign-in-screen\"" 4000
 wait stable 500 5000
 press "id=\"sign-in-email\""
-fill "id=\"sign-in-email\"" "not-an-email"
+type "not-an-email"
 press "id=\"sign-in-password\""
-fill "id=\"sign-in-password\"" "password1"
+type "password1"
 press "id=\"sign-in-submit\""
 wait "id=\"sign-in-email-error\" text=\"Enter a valid email address.\"" 4000
 press "id=\"sign-in-email\""
-fill "id=\"sign-in-email\"" "ada@example.com"
+fill "id=\"sign-in-email\"" ""
+type "ada@example.com"
 press "id=\"sign-in-password\""
-fill "id=\"sign-in-password\"" "short"
+fill "id=\"sign-in-password\"" ""
+type "short"
 press "id=\"sign-in-submit\""
 wait "id=\"sign-in-password-error\" text=\"Password must be at least 8 characters.\"" 4000
