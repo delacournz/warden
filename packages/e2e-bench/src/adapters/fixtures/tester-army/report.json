@@ -1,0 +1,1179 @@
+{
+	"schemaVersion": "report-1",
+	"run": {
+		"id": "01a142ee-358d-74ab-92df-7e820cfe8be6",
+		"runner": {
+			"name": "e2e",
+			"version": "0.20.0"
+		},
+		"status": "passed",
+		"summary": {
+			"discovered": 8,
+			"selected": 8,
+			"executed": 8,
+			"passed": 8,
+			"failed": 0,
+			"interrupted": 0,
+			"flaky": 0,
+			"skipped": 0
+		},
+		"results": [
+			{
+				"kind": "test",
+				"testId": "onboarding.e2e.ts::onboarding%20steps%20through%20to%20sign-in",
+				"titlePath": ["onboarding steps through to sign-in"],
+				"file": "onboarding.e2e.ts",
+				"status": "passed",
+				"attempts": [
+					{
+						"status": "passed",
+						"durationMs": 7553,
+						"steps": [
+							{
+								"kind": "app",
+								"api": "app.open",
+								"label": "",
+								"status": "passed",
+								"durationMs": 1089
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2061
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"welcome-screen\")",
+								"status": "passed",
+								"durationMs": 309
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 241
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 994
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 137
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 657
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 257
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-get-started\")",
+								"status": "passed",
+								"durationMs": 540
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"sign-in-screen\")",
+								"status": "passed",
+								"durationMs": 196
+							}
+						]
+					}
+				]
+			},
+			{
+				"kind": "test",
+				"testId": "settings.e2e.ts::settings%20shows%20the%20account%2C%20toggles%20switches%20and%20signs%20out",
+				"titlePath": ["settings shows the account, toggles switches and signs out"],
+				"file": "settings.e2e.ts",
+				"status": "passed",
+				"attempts": [
+					{
+						"status": "passed",
+						"durationMs": 21327,
+						"steps": [
+							{
+								"kind": "app",
+								"api": "app.open",
+								"label": "",
+								"status": "passed",
+								"durationMs": 1312
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2021
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"welcome-screen\")",
+								"status": "passed",
+								"durationMs": 163
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 866
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 284
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 635
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 256
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-get-started\")",
+								"status": "passed",
+								"durationMs": 565
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"sign-in-screen\")",
+								"status": "passed",
+								"durationMs": 258
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "passed",
+								"durationMs": 2464
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-password\")",
+								"status": "passed",
+								"durationMs": 3478
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"sign-in-submit\")",
+								"status": "passed",
+								"durationMs": 1162
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2256
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"tab-settings\")",
+								"status": "passed",
+								"durationMs": 595
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"settings-email\")",
+								"status": "passed",
+								"durationMs": 143
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeChecked",
+								"label": "getByTestId(\"settings-notifications\")",
+								"status": "passed",
+								"durationMs": 133
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"settings-notifications\")",
+								"status": "passed",
+								"durationMs": 554
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeChecked",
+								"label": "getByTestId(\"settings-notifications\")",
+								"status": "passed",
+								"durationMs": 196
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"settings-dark-mode\")",
+								"status": "passed",
+								"durationMs": 549
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeChecked",
+								"label": "getByTestId(\"settings-dark-mode\")",
+								"status": "passed",
+								"durationMs": 148
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"settings-dark-mode\")",
+								"status": "passed",
+								"durationMs": 553
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"settings-sign-out\")",
+								"status": "passed",
+								"durationMs": 543
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"welcome-screen\")",
+								"status": "passed",
+								"durationMs": 142
+							}
+						]
+					}
+				]
+			},
+			{
+				"kind": "test",
+				"testId": "sign-in.e2e.ts::invalid%20email%20and%20short%20password%20show%20field%20errors",
+				"titlePath": ["invalid email and short password show field errors"],
+				"file": "sign-in.e2e.ts",
+				"status": "passed",
+				"attempts": [
+					{
+						"status": "passed",
+						"durationMs": 22713,
+						"steps": [
+							{
+								"kind": "app",
+								"api": "app.open",
+								"label": "",
+								"status": "passed",
+								"durationMs": 1098
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2232
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"welcome-screen\")",
+								"status": "passed",
+								"durationMs": 139
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 782
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 151
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 678
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 130
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-get-started\")",
+								"status": "passed",
+								"durationMs": 533
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"sign-in-screen\")",
+								"status": "passed",
+								"durationMs": 253
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "passed",
+								"durationMs": 2355
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-password\")",
+								"status": "passed",
+								"durationMs": 3356
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"sign-in-submit\")",
+								"status": "passed",
+								"durationMs": 1223
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"sign-in-email-error\")",
+								"status": "passed",
+								"durationMs": 204
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "failed",
+								"durationMs": 4198
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveValue",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "passed",
+								"durationMs": 180
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-password\")",
+								"status": "passed",
+								"durationMs": 3153
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"sign-in-submit\")",
+								"status": "passed",
+								"durationMs": 1173
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"sign-in-password-error\")",
+								"status": "passed",
+								"durationMs": 153
+							}
+						]
+					}
+				]
+			},
+			{
+				"kind": "test",
+				"testId": "sign-in.e2e.ts::a%20locked%20account%20shows%20the%20form%20alert",
+				"titlePath": ["a locked account shows the form alert"],
+				"file": "sign-in.e2e.ts",
+				"status": "passed",
+				"attempts": [
+					{
+						"status": "passed",
+						"durationMs": 14451,
+						"steps": [
+							{
+								"kind": "app",
+								"api": "app.open",
+								"label": "",
+								"status": "passed",
+								"durationMs": 1118
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2257
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"welcome-screen\")",
+								"status": "passed",
+								"durationMs": 137
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 796
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 187
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 589
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 152
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-get-started\")",
+								"status": "passed",
+								"durationMs": 586
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"sign-in-screen\")",
+								"status": "passed",
+								"durationMs": 213
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "passed",
+								"durationMs": 2502
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-password\")",
+								"status": "passed",
+								"durationMs": 3393
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"sign-in-submit\")",
+								"status": "passed",
+								"durationMs": 1319
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"sign-in-error\")",
+								"status": "passed",
+								"durationMs": 166
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByText(\"This account is locked. Try another email.\")",
+								"status": "passed",
+								"durationMs": 192
+							}
+						]
+					}
+				]
+			},
+			{
+				"kind": "test",
+				"testId": "sign-in.e2e.ts::valid%20credentials%20land%20on%20todos",
+				"titlePath": ["valid credentials land on todos"],
+				"file": "sign-in.e2e.ts",
+				"status": "passed",
+				"attempts": [
+					{
+						"status": "passed",
+						"durationMs": 16780,
+						"steps": [
+							{
+								"kind": "app",
+								"api": "app.open",
+								"label": "",
+								"status": "passed",
+								"durationMs": 1179
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2245
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"welcome-screen\")",
+								"status": "passed",
+								"durationMs": 167
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 807
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 152
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 547
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 193
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-get-started\")",
+								"status": "passed",
+								"durationMs": 595
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"sign-in-screen\")",
+								"status": "passed",
+								"durationMs": 183
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "passed",
+								"durationMs": 2417
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-password\")",
+								"status": "passed",
+								"durationMs": 3472
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"sign-in-submit\")",
+								"status": "passed",
+								"durationMs": 1189
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2291
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todos-remaining\") >> getByText(\"1 left\").first()",
+								"status": "passed",
+								"durationMs": 137
+							}
+						]
+					}
+				]
+			},
+			{
+				"kind": "test",
+				"testId": "todo-detail.e2e.ts::open%20a%20todo%2C%20mark%20it%20done%2C%20then%20delete%20it",
+				"titlePath": ["open a todo, mark it done, then delete it"],
+				"file": "todo-detail.e2e.ts",
+				"status": "passed",
+				"attempts": [
+					{
+						"status": "passed",
+						"durationMs": 20265,
+						"steps": [
+							{
+								"kind": "app",
+								"api": "app.open",
+								"label": "",
+								"status": "passed",
+								"durationMs": 1138
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2027
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"welcome-screen\")",
+								"status": "passed",
+								"durationMs": 154
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 820
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 163
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 555
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 139
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-get-started\")",
+								"status": "passed",
+								"durationMs": 559
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"sign-in-screen\")",
+								"status": "passed",
+								"durationMs": 195
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "failed",
+								"durationMs": 3140
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveValue",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "passed",
+								"durationMs": 183
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-password\")",
+								"status": "passed",
+								"durationMs": 3371
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"sign-in-submit\")",
+								"status": "passed",
+								"durationMs": 1196
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2318
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"todo-title-welcome\")",
+								"status": "passed",
+								"durationMs": 622
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"todo-detail-title\")",
+								"status": "passed",
+								"durationMs": 166
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todo-detail-status\") >> getByText(\"Active\").first()",
+								"status": "passed",
+								"durationMs": 136
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"todo-detail-toggle\")",
+								"status": "passed",
+								"durationMs": 530
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todo-detail-status\") >> getByText(\"Done\").first()",
+								"status": "passed",
+								"durationMs": 176
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"todo-detail-delete\")",
+								"status": "passed",
+								"durationMs": 1043
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todos-screen\")",
+								"status": "passed",
+								"durationMs": 184
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveCount",
+								"label": "getByTestId(\"todo-row-welcome\")",
+								"status": "passed",
+								"durationMs": 161
+							}
+						]
+					}
+				]
+			},
+			{
+				"kind": "test",
+				"testId": "todo-detail.e2e.ts::deep%20link%20opens%20a%20todo%20by%20id",
+				"titlePath": ["deep link opens a todo by id"],
+				"file": "todo-detail.e2e.ts",
+				"status": "passed",
+				"attempts": [
+					{
+						"status": "passed",
+						"durationMs": 23199,
+						"steps": [
+							{
+								"kind": "app",
+								"api": "app.open",
+								"label": "",
+								"status": "passed",
+								"durationMs": 1216
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2279
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"welcome-screen\")",
+								"status": "passed",
+								"durationMs": 147
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 773
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 152
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 537
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 144
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-get-started\")",
+								"status": "passed",
+								"durationMs": 805
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"sign-in-screen\")",
+								"status": "passed",
+								"durationMs": 371
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "failed",
+								"durationMs": 3325
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveValue",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "passed",
+								"durationMs": 398
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-password\")",
+								"status": "passed",
+								"durationMs": 3382
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"sign-in-submit\")",
+								"status": "passed",
+								"durationMs": 1670
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2023
+							},
+							{
+								"kind": "resource",
+								"api": "device.openLink",
+								"label": "warden-example://todo/warden",
+								"status": "passed",
+								"durationMs": 1811
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "accept",
+								"status": "passed",
+								"durationMs": 1894
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"todo-detail-title\")",
+								"status": "passed",
+								"durationMs": 260
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todo-detail-status\") >> getByText(\"Done\").first()",
+								"status": "passed",
+								"durationMs": 156
+							}
+						]
+					}
+				]
+			},
+			{
+				"kind": "test",
+				"testId": "todos.e2e.ts::add%2C%20complete%20and%20filter%20todos",
+				"titlePath": ["add, complete and filter todos"],
+				"file": "todos.e2e.ts",
+				"status": "passed",
+				"attempts": [
+					{
+						"status": "passed",
+						"durationMs": 25721,
+						"steps": [
+							{
+								"kind": "app",
+								"api": "app.open",
+								"label": "",
+								"status": "passed",
+								"durationMs": 1100
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2021
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"welcome-screen\")",
+								"status": "passed",
+								"durationMs": 156
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 819
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 170
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-next\")",
+								"status": "passed",
+								"durationMs": 563
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"welcome-title\")",
+								"status": "passed",
+								"durationMs": 161
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"welcome-get-started\")",
+								"status": "passed",
+								"durationMs": 563
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"sign-in-screen\")",
+								"status": "passed",
+								"durationMs": 180
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "failed",
+								"durationMs": 3150
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveValue",
+								"label": "getByTestId(\"sign-in-email\")",
+								"status": "passed",
+								"durationMs": 186
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"sign-in-password\")",
+								"status": "passed",
+								"durationMs": 3648
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"sign-in-submit\")",
+								"status": "passed",
+								"durationMs": 1251
+							},
+							{
+								"kind": "resource",
+								"api": "device.alert",
+								"label": "dismiss",
+								"status": "failed",
+								"durationMs": 2293
+							},
+							{
+								"kind": "locator",
+								"api": "locator.fill",
+								"label": "getByTestId(\"todo-input\")",
+								"status": "passed",
+								"durationMs": 2157
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"todo-add\")",
+								"status": "passed",
+								"durationMs": 702
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toHaveText",
+								"label": "getByTestId(\"todo-title-todo-1\")",
+								"status": "passed",
+								"durationMs": 164
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todos-remaining\") >> getByText(\"2 left\").first()",
+								"status": "passed",
+								"durationMs": 156
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"todo-check-todo-1\")",
+								"status": "passed",
+								"durationMs": 730
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeChecked",
+								"label": "getByTestId(\"todo-check-todo-1\")",
+								"status": "passed",
+								"durationMs": 416
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todos-remaining\") >> getByText(\"1 left\").first()",
+								"status": "passed",
+								"durationMs": 198
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"todos-filter-active\")",
+								"status": "passed",
+								"durationMs": 765
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todo-row-welcome\")",
+								"status": "passed",
+								"durationMs": 198
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeHidden",
+								"label": "getByTestId(\"todo-row-todo-1\")",
+								"status": "passed",
+								"durationMs": 251
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"todo-check-welcome\")",
+								"status": "passed",
+								"durationMs": 803
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todos-empty\")",
+								"status": "passed",
+								"durationMs": 201
+							},
+							{
+								"kind": "locator",
+								"api": "locator.tap",
+								"label": "getByTestId(\"todos-filter-done\")",
+								"status": "passed",
+								"durationMs": 663
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todo-row-todo-1\")",
+								"status": "passed",
+								"durationMs": 172
+							},
+							{
+								"kind": "assertion",
+								"api": "expect.toBeVisible",
+								"label": "getByTestId(\"todos-remaining\") >> getByText(\"0 left\").first()",
+								"status": "passed",
+								"durationMs": 393
+							}
+						]
+					}
+				]
+			}
+		]
+	}
+}
