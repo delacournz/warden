@@ -36,7 +36,7 @@ The package is a small node shim plus one prebuilt binary per platform (`@delaco
 
 ```bash
 warden install            # binary + hooks for every detected agent; shows a diff, asks first
-warden install --claude   # force Claude Code only: skill + SessionEnd hook
+warden install --claude   # force Claude Code only: skill (via `skills add`) + rule + SessionEnd hook
 warden install --codex    # force Codex only: hooks in $CODEX_HOME/hooks.json
 ```
 
@@ -51,7 +51,7 @@ Every agent-config change shows a diff and asks first. `--yes` skips the prompt,
 warden doctor
 ```
 
-`doctor` checks warden's home, the db, device tools (`xcrun simctl`, `adb`, `emulator`), how warden was installed (and how to upgrade it), `PATH`, Claude/Codex hooks and skill, and stale leases.
+`doctor` checks warden's home, the db, device tools (`xcrun simctl`, `adb`, `emulator`), how warden was installed (and how to upgrade it), `PATH`, Claude/Codex hooks, skill and rule, and stale leases.
 
 </Step>
 </Steps>
@@ -76,12 +76,13 @@ For Claude Code, Codex, Cursor and others via the [`skills`](https://github.com/
 
 ```bash
 warden skill show | pbcopy                         # raw SKILL.md to paste by hand
+warden skill show --file references/ui.md          # print one file of the skill folder
 warden skill install                               # this binary's embedded copy, global
 warden skill install --from github                 # delacournz/warden, updatable via `skills update`
 warden skill install --project -a claude-code -y   # into the current project, one agent, no prompts
 ```
 
-The skill's source is `skills/warden/SKILL.md`, embedded in the binary. `npx` is used when `bunx` isn't available; `--dry-run` prints the command.
+The skill is a folder, `skills/warden/` (`SKILL.md` + `references/{ui,specs,suites,troubleshooting}.md`), embedded in the binary. `npx` is used when `bunx` isn't available; `--dry-run` prints the command.
 
 ## In GitHub Actions
 

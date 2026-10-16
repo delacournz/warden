@@ -181,9 +181,9 @@ Under `warden e2e` the environment is set for you. By hand, install the build on
 ```bash
 warden claim ios --json                                     # -> udid
 WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=com.example.app \
-  bun test e2e/todos.e2e.ts
+  bun test --preload @delacour/warden-e2e/preload e2e/todos.e2e.ts
 ```
 
 `WARDEN_UDID` switches the runner on: without it the preload does nothing. Add `WARDEN_PLATFORM=android` for an emulator, `WARDEN_METRO_URL` or `WARDEN_LAUNCH_ARGS` (a JSON array) for a dev client, and `WARDEN_E2E_DEBUG=1` to log every helper call with its duration. The full list is in [environment variables](/docs/reference/environment#set-for-spec-processes). Release the device with `warden release <leaseId>` when you are done.
 
-Add `preload = ["@delacour/warden-e2e/preload"]` under `[test]` in `bunfig.toml` to run specs with a plain `bun test` in the project; `warden e2e` passes the preload itself.
+Without `--preload`, `bun test` fails with `no driver factory configured`. To drop it, add `preload = ["@delacour/warden-e2e/preload"]` under `[test]` in `bunfig.toml`; `warden e2e` passes the preload itself.

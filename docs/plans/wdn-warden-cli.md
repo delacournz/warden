@@ -112,6 +112,8 @@ Goal: a fresh workspace/branch never waits for a native build that already exist
 - Global skill `~/.claude/skills/warden/SKILL.md`: when to claim, `warden run` for e2e scripts, never touch unleased booted sims. Update `~/.claude/rules/argent.md` device_selection_rule: "claim via warden before booting/choosing".
 - `warden install --claude` writes both (confirm prompt).
 
+_Superseded: the PreToolUse hook and argent rule were removed (WDN-E2E decision 6); the skill + `~/.claude/rules/warden.md` are installed by `warden install` (WDN-SKILL)._
+
 ## Verification
 - `bun run test` (turbo; core + cli) (incl. concurrent-claim race test); `bun run typecheck`; `bun run check`.
 - Manual: two terminals `warden run ios --count 1 -- sleep 60` → distinct udids; `warden ls` shows both owners; kill one with SIGKILL → `warden gc` reclaims after ttl.

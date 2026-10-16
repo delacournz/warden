@@ -336,6 +336,8 @@ Install warden to `~/.local/bin` plus hooks for detected agents. `--claude`, `--
 
 ### `warden skill show | install`
 
+`show [--file <name>]` prints SKILL.md, or one file of the skill folder such as `references/ui.md`. `warden install --claude` stages the embedded skill in `$WARDEN_HOME/skill/warden/` and installs it with the same `skills add` command.
+
 `install --from local|github`, `--project`, `-a/--agent <agent...>`, `--copy`, `-y`, `--dry-run`.
 
 ### `warden hook session-end`
@@ -344,7 +346,7 @@ The SessionEnd hook entrypoint: shuts down what the session booted and releases 
 
 ### `warden doctor`
 
-Check home, db, device tools, the iOS simulator helper, install method (and its upgrade command), `PATH`, Claude/Codex hooks + skill, and stale leases. `--fetch-helper` first downloads `warden-simd` for this version into `$WARDEN_HOME/simd/<version>/`. See [iOS driver helper](/docs/reference/e2e-driver).
+Check home, db, device tools, the iOS simulator helper, install method (and its upgrade command), `PATH`, Claude/Codex hooks + skill, rule, and stale leases. `--fetch-helper` first downloads `warden-simd` for this version into `$WARDEN_HOME/simd/<version>/`. See [iOS driver helper](/docs/reference/e2e-driver).
 
 ### `warden update`
 
