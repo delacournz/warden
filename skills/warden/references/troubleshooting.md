@@ -4,8 +4,8 @@
 
 | # | Symptom | Cause | Fix |
 |---|---|---|---|
-| 1 | First tap after launch or navigation ignored | View is in the AX tree before it takes touches | Settle, then re-tap: `warden ui press <t> --settle` then `wait`; in a spec `device.settle()` then tap again (example app: `tapUntil`) |
-| 2 | testIDs vanish 1-6 s after sign-in; keys go nowhere | iOS "Save Password?" sheet | App under the e2e flag: `autoComplete="off"` + `textContentType="oneTimeCode"`. Spec: `device.alert("dismiss")`. Never `defaults write` |
+| 1 | First tap after launch or navigation ignored | View is in the AX tree before it takes touches | Settle, then re-tap: `warden ui press <t> --settle` then `wait`; in a spec `tap({ until: <what the tap opens> })` re-sends it |
+| 2 | testIDs vanish 1-6 s after sign-in; keys go nowhere | iOS "Save Password?" sheet | App under the e2e flag: `autoComplete="off"` + `textContentType="oneTimeCode"`. Spec: `test.use({ systemAlerts: "dismiss" })` or `device.alert("dismiss")`. Never `defaults write` |
 | 3 | `--settle` not quiet, or `frontmost_mismatch` | Still animating, or a SpringBoard prompt is up | Warning only. After a relaunch allow 2-7 s. `warden ui alert get` |
 | 4 | Settle takes ~2.5 s | Two helpers on one simulator | `warden ui close --udid <udid>`, or kill the stale `warden-simd --udid <udid>` |
 | 5 | `reload_failed`, or reload hit other devices | `reload` fell back to Metro's broadcast `/reload` | `warden ui open <bundleId> --relaunch --udid <udid>`, then `warden ui logs start` |
@@ -14,7 +14,7 @@
 | 8 | "0 of 1 elements", or `ax` fallback after relaunch | Helper's stream is reopening | Wait ~2 s; else `warden ui close --udid <udid>` restarts the helper. `warden doctor` shows `degraded` |
 | 9 | Dropped characters | Key pacing too fast | Never lower `WARDEN_SIMD_PACE_MS` / `WARDEN_SIMD_HOLD_MS`. `fill` verifies and retries |
 | 10 | App back at Welcome mid-test | Native crash | Read `~/Library/Logs/DiagnosticReports/<app>-*.ips` |
-| 11 | Deep link ignored | Opened while the app was settling | `device.openLink(url)` again (example app: `openDeepLink`) |
+| 11 | Deep link ignored | Opened while the app was settling | `device.openLink(url, { until })` again (example app: `openDeepLink`) |
 | 12 | `E_AX_UNAVAILABLE` right after launch | Transient | Built-in 5x300 ms retry. `simctl launch` can take >30 s under load |
 | 13 | Exit 3 `engine_unavailable` | No `warden-simd` helper | `warden doctor --fetch-helper` (Intel Mac: no helper) |
 | 14 | Locator not found | View is not `accessible` | Fix the component (`accessible` + `testID`); inspect with `warden ui snapshot -i` and `warden ui tree` |
@@ -23,9 +23,11 @@
 | 17 | `open` did not restart the app | `open` attaches to a running app | `warden ui open <bundleId> --relaunch` |
 | 18 | Scroll went the wrong way | `scroll` = content direction, `swipe` = finger direction | Use the other verb |
 | 19 | Preload exits 2 with a version message | `warden` and `@delacour/warden-e2e` are lock-step | `bun add -d @delacour/warden-e2e@<warden version>` |
-| 20 | Android slow or unsupported | `uiautomator dump`; no args on launch | Deep link instead of `--metro`; ASCII text only |
+| 20 | Android slow or unsupported | `uiautomator dump` (the server is off or could not start); no args on launch | Deep link instead of `--metro`; ASCII text only without the server. Check `warden ui status` / `WARDEN_E2E_DEBUG=1` for `uiad:` lines; `WARDEN_ANDROID_UIAD=0` forces the dump |
 | 21 | Form submitted by `hideKeyboard` | iOS Enter | `device.settle()` or tap elsewhere |
 | 22 | `logs`/`network` show old output | No collector running | `warden ui logs start`, then act |
+| 23 | `E_AX_UNAVAILABLE`: "another UiAutomation client holds <serial> (pid N: ...)" | Android allows one UiAutomation connection per device and Maestro, an `am instrument` run or a `uiautomator` command has it. The dump would only die with `Killed`, so warden names the holder and does not touch it | Stop that process (the message gives its pid and command line) or release the device; warden kills only its own stale `warden-uiad` (`app_process … nz.co.delacour.warden.uiad.Main`). `input`-based taps and keys still work meanwhile |
+| 24 | A press right after `fill` on Android is lost | The app was still taking the typed text in | The driver already waits 80 ms of quiet after text and keys; in a spec `device.settle()` before the press |
 
 ## Code lookup
 

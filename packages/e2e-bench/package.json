@@ -10,7 +10,7 @@
 		"lint": "biome lint --write ./src ./suites",
 		"check": "biome check ./src ./suites",
 		"typecheck": "tsc --noEmit",
-		"test": "bun test src"
+		"test": "bun test src suites/warden/helpers"
 	},
 	"dependencies": {
 		"@delacour/warden-core": "workspace:*",

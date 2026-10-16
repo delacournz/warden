@@ -1,5 +1,6 @@
 import type { DriverResult, Logger } from "../driver.types";
 import { driverErr } from "../errors";
+import { addSpanDetail } from "../span-detail";
 
 /**
  * One long-lived `adb -s <serial> shell` per driver. Spawning `adb shell <cmd>` per call costs ~50-150 ms
@@ -186,6 +187,8 @@ export function openAdbSession(options: AdbSessionOptions): AdbSession {
 				onDeath(l);
 			}
 		});
+		addSpanDetail("adbMs", Date.now() - t0);
+		addSpanDetail("adbCalls", 1);
 		if (outcome.kind === "done") {
 			crashes = 0;
 			log?.(`adb[${serial}] ${cmd} -> ${outcome.result.exitCode} in ${Date.now() - t0}ms`);

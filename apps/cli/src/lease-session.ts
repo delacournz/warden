@@ -8,7 +8,6 @@ import { processAlive } from "@delacour/warden-core/liveness";
 import { claimPorts, parsePortSpec } from "@delacour/warden-core/ports";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { stopHelperAfter } from "./agent-ui/close";
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
 import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
 import type { CommandContext } from "./context";
@@ -208,8 +207,8 @@ export type LeaseArgs = {
 	app?: EnsureOptions;
 	/** the ports are leased (before the device claim, which can boot simulators for a while) */
 	onPorts?: (ports: RunPort[]) => void;
-	/** the devices + ports are held (before `--app` installs, which can take minutes) */
-	onLeased?: (outcome: ClaimOutcome) => void;
+	/** a leg's devices are held — once per leg (`leg` is its index in `legFlags`), before its `--app` install, which can take minutes */
+	onLeased?: (outcome: ClaimOutcome, leg: number) => void;
 	/** checked before each device claim and before the installs: true → everything is released, `interrupted` */
 	aborted?: () => boolean;
 };
@@ -217,28 +216,26 @@ export type LeaseArgs = {
 /** The error of a claim the caller gave up on (`aborted`) — nothing to add to it. */
 export const INTERRUPTED = "interrupted";
 
-/** `--app`: ensure the app on every claimed device in parallel (waits for all, then reports the first failure); exports `WARDEN_APP_PATH` / `WARDEN_APP_HASH` into `env`. */
-async function ensureSessionApp(
+/** One device's app, as `claimAll` reports it once every leg is in. */
+type InstalledApp = { deviceId: string; result: EnsureResult };
+
+/** `--app`: ensure the app on every device of one claim in parallel (waits for all, then reports the first failure). */
+async function installLegApp(
 	ctx: CommandContext,
 	ensure: RunEnsureApp,
 	owner: Owner,
-	outcome: ClaimOutcome,
-	opts: EnsureOptions,
-	env: Record<string, string | undefined>,
-	name: string
-): AsyncResult<void> {
-	const results = await Promise.all(
-		outcome.claimed.map((c) => ensure(ctx, owner, c.device.platform, c.device.id, opts))
-	);
-	for (const [i, c] of outcome.claimed.entries()) {
+	claim: ClaimOutcome,
+	opts: EnsureOptions
+): AsyncResult<InstalledApp[]> {
+	const results = await Promise.all(claim.claimed.map((c) => ensure(ctx, owner, c.device.platform, c.device.id, opts)));
+	const apps: InstalledApp[] = [];
+	for (const [i, c] of claim.claimed.entries()) {
 		const res = results[i];
 		if (!res) continue;
 		if (!res.success) return err(`app on ${c.device.id}: ${res.error}`);
-		ctx.err(`warden ${name}: app ${res.data.source} on ${c.device.id} [${res.data.hash}]`);
-		if (res.data.appPath) env.WARDEN_APP_PATH = res.data.appPath;
-		env.WARDEN_APP_HASH = res.data.hash;
+		apps.push({ deviceId: c.device.id, result: res.data });
 	}
-	return ok(undefined);
+	return ok(apps);
 }
 
 export type LeaseSession = {
@@ -317,32 +314,63 @@ function warmSessionApp(
 	return app;
 }
 
+/** One leg's outcome: its claim and, with `--app`, its install (undefined when the claim failed or there is no app). */
+type LegRun = { claim: Result<ClaimOutcome>; install?: Result<InstalledApp[]> | undefined };
+
+/** What a leg needs to install the app as soon as it is claimed. */
+type LegInstall = { ensure: RunEnsureApp; opts: EnsureOptions };
+
+const failure = (error: unknown): Result<never> => err(error instanceof Error ? error.message : String(error));
+
 /**
- * One claim per leg (else the one `flags` claim); a failed or aborted leg releases the earlier ones.
- * `aborted` is checked before each leg: a claim can boot simulators for a while, and the caller may
- * have lost its reason to continue (a Metro that failed, a signal) in the meantime.
+ * Claim one leg, then install the app on its devices without waiting for the other legs. Never
+ * throws and never releases: `claimAll` owns every lease once all legs have landed.
  */
-async function claimLegs(ctx: CommandContext, owner: Owner, args: LeaseArgs, pid: number): AsyncResult<ClaimOutcome[]> {
-	const claims: ClaimOutcome[] = [];
-	const releaseClaimed = () =>
-		releaseDevices(
-			ctx,
-			claims.flatMap((c) => c.claimed.map((d) => d.lease.id)),
-			{ touch: false }
-		);
-	for (const flags of args.legFlags ?? [args.flags]) {
-		if (args.aborted?.()) {
-			await releaseClaimed();
-			return err(INTERRUPTED);
-		}
-		const outcome = await claimWithFlags(ctx, owner, flags, pid);
-		if (!outcome.success) {
-			await releaseClaimed();
-			return outcome;
-		}
-		claims.push(outcome.data);
+async function runLeg(
+	ctx: CommandContext,
+	owner: Owner,
+	leg: number,
+	flags: ClaimFlags,
+	args: LeaseArgs,
+	pid: number,
+	install: LegInstall | undefined
+): Promise<LegRun> {
+	if (args.aborted?.()) return { claim: err(INTERRUPTED) };
+	let claim: Result<ClaimOutcome>;
+	try {
+		claim = await claimWithFlags(ctx, owner, flags, pid);
+	} catch (error) {
+		return { claim: failure(error) };
 	}
-	return ok(claims);
+	if (!claim.success) return { claim };
+	args.onLeased?.(claim.data, leg);
+	if (!install) return { claim };
+	if (args.aborted?.()) return { claim, install: err(INTERRUPTED) };
+	try {
+		return { claim, install: await installLegApp(ctx, install.ensure, owner, claim.data, install.opts) };
+	} catch (error) {
+		return { claim, install: failure(error) };
+	}
+}
+
+/**
+ * One claim per leg (else the one `flags` claim), all at once: allocation is serialised by the
+ * store's `BEGIN IMMEDIATE`, so legs cannot pick the same device, and a boot of one no longer waits
+ * for the boot of the other. Each leg installs the app the moment it is claimed. `aborted` is
+ * checked before a leg claims and before its install: a claim can boot simulators for a while, and
+ * the caller may have lost its reason to continue (a Metro that failed, a signal) in the meantime.
+ * Every leg is waited for, so a failure never leaves a still-booting claim holding a lease.
+ */
+async function runLegs(
+	ctx: CommandContext,
+	owner: Owner,
+	args: LeaseArgs,
+	pid: number,
+	install: LegInstall | undefined
+): Promise<LegRun[]> {
+	return Promise.all(
+		(args.legFlags ?? [args.flags]).map((flags, leg) => runLeg(ctx, owner, leg, flags, args, pid, install))
+	);
 }
 
 /**
@@ -368,38 +396,46 @@ export async function claimAll(
 		await releasePorts();
 		return err(INTERRUPTED);
 	}
-	const claims = await claimLegs(ctx, owner, args, deps.pid);
-	if (!claims.success) {
+	const ensure = args.app ? (deps.ensureApp ?? sessionApp?.ensure ?? sessionEnsureApp().ensure) : undefined;
+	const runs = await runLegs(ctx, owner, args, deps.pid, ensure && args.app ? { ensure, opts: args.app } : undefined);
+	const claims = runs.flatMap((r) => (r.claim.success ? [r.claim.data] : []));
+	const claimFailed = runs.find((r) => !r.claim.success)?.claim;
+	if (claimFailed && !claimFailed.success) {
+		// a leg that was leased may already have a helper (the early warm-up): like any release, it stays resident
+		await releaseDevices(
+			ctx,
+			claims.flatMap((c) => c.claimed.map((d) => d.lease.id)),
+			{ touch: false }
+		);
 		await releasePorts();
-		return claims;
+		return claimFailed;
 	}
 	const outcome: ClaimOutcome = {
-		claimed: claims.data.flatMap((c) => c.claimed),
-		reclaimed: claims.data.flatMap((c) => c.reclaimed),
+		claimed: claims.flatMap((c) => c.claimed),
+		reclaimed: claims.flatMap((c) => c.reclaimed),
 	};
 	const leaseIds = [...outcome.claimed.map((c) => c.lease.id), ...portLeaseIds];
+	// a release leaves each iOS device's `warden-simd` resident: the next run on the device reuses it (no spawn, no
+	// handshake) and its idle timeout reaps it otherwise; `--shutdown` / a device shutdown / a new lease owner stop it
 	const release = async () => {
-		await releaseDevices(ctx, leaseIds, { after: stopHelperAfter(ctx) });
+		await releaseDevices(ctx, leaseIds);
 	};
-	args.onLeased?.(outcome);
 	const env = childEnv(ctx.env, outcome, ports.data);
 	setHeadlessEnv(
 		env,
 		(args.legFlags ?? [args.flags]).some((f) => f.headless === true)
 	);
-	if (args.app) {
-		if (args.aborted?.()) {
-			await release();
-			return err(INTERRUPTED);
-		}
-		const ensure = deps.ensureApp ?? sessionApp?.ensure ?? sessionEnsureApp().ensure;
-		const app = await ensureSessionApp(ctx, ensure, owner, outcome, args.app, env, name);
-		if (!app.success) {
-			await release();
-			return app;
-		}
+	const installFailed = runs.find((r) => r.install && !r.install.success)?.install;
+	if (installFailed && !installFailed.success) {
+		await release();
+		return installFailed;
 	}
-	return ok({ outcome, claims: claims.data, ports: ports.data, env, release, leaseIds });
+	for (const app of runs.flatMap((r) => (r.install?.success ? r.install.data : []))) {
+		ctx.err(`warden ${name}: app ${app.result.source} on ${app.deviceId} [${app.result.hash}]`);
+		if (app.result.appPath) env.WARDEN_APP_PATH = app.result.appPath;
+		env.WARDEN_APP_HASH = app.result.hash;
+	}
+	return ok({ outcome, claims, ports: ports.data, env, release, leaseIds });
 }
 
 /** `leased <name>, …` — the claim spinner's line. */

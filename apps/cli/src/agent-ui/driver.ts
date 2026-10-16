@@ -1,16 +1,11 @@
-import { androidTools } from "@delacour/warden-core/providers/android";
-import { openAndroidDriver } from "@delacour/warden-e2e/driver/android/android-driver";
-import type { DumpRoute } from "@delacour/warden-e2e/driver/android/android-dump";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { BenchDeps } from "./bench";
 import type { UiDevice } from "./device";
 import type { DevtoolsDeps } from "./devtools-cli";
-import { connectHelper } from "./helper";
 import { type UiError, uiError } from "./output";
 import type { RecordSink } from "./record";
-import { readDumpRoute, writeDumpRoute } from "./state";
 import type { VideoDeps } from "./video";
 
 /** Everything `warden ui` subcommands reach the outside world through; tests inject a `fakeDriver` and a fake clock. */
@@ -46,27 +41,9 @@ export function driverUiError(error: DriverError): UiError {
 	return uiError("failed", message, { details: { driver: error.code } });
 }
 
-/**
- * The real driver for a device. iOS: the device's `warden-simd` daemon (`connectHelper` spawns it on first
- * use, closing the driver only disconnects). Android: an adb-backed driver owned by this command (closed with it); the uiautomator dump route that worked
- * is remembered per device (`android-dump-route`) because every `warden ui` call is a fresh process.
- */
-export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<Result<Driver, UiError>> {
-	if (device.platform === "ios") return connectHelper(ctx, device.udid);
-	const remembered = readDumpRoute(ctx, device.udid);
-	return fromDriver(
-		await openAndroidDriver({
-			serial: device.udid,
-			adb: androidTools(ctx.env).adb,
-			exec: ctx.exec,
-			...(remembered ? { dumpRoute: remembered } : {}),
-			onDumpRoute: (route: DumpRoute) => writeDumpRoute(ctx, device.udid, route),
-		})
-	);
-}
-
+/** The real deps. The driver module (engines, zod) is imported when a subcommand first opens a device. */
 export const defaultUiDeps: UiDeps = {
-	driver: uiDriver,
+	driver: async (ctx, device) => (await import("./ui-driver")).uiDriver(ctx, device),
 	sleep: (ms) => Bun.sleep(ms),
 };
 

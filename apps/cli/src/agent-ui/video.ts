@@ -6,8 +6,9 @@ import { ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDeps } from "./driver";
 import { uiError } from "./output";
+import { uiDir } from "./paths";
 import { runUi, type UiOptionValues } from "./run";
-import { readState, uiDir, writeState } from "./state";
+import { readState, writeState } from "./state";
 
 /** `video stop` waits this long for the recorder to finish the file before it SIGKILLs it. */
 export const VIDEO_STOP_WAIT_MS = 5000;

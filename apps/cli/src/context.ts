@@ -1,4 +1,5 @@
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
+import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-core/git-facts";
 import { openStore, type Store } from "@delacour/warden-core/store";
 import { terminalUi, type Ui } from "./ui";
 
@@ -14,6 +15,8 @@ export type CommandContext = {
 	/** lazily opened, shared store */
 	store: () => Store;
 	exec: Exec;
+	/** this command's memo of the git facts (toplevel, common dir, branch): every reader in one command shares it */
+	git: GitFactsCache;
 	readStdin: () => Promise<string>;
 	/** colours, spinners, prompts */
 	ui: Ui;
@@ -33,6 +36,7 @@ export function defaultContext(argv: string[]): CommandContext {
 			return store;
 		},
 		exec: bunExec,
+		git: createGitFactsCache(),
 		readStdin: () => Bun.stdin.text(),
 		ui: terminalUi(process.env),
 	};

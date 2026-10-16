@@ -2,9 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { el, fakeDriver as scriptedDriver, snapshotOf } from "./driver/driver.testing";
 import type { Driver, DriverResult } from "./driver/driver.types";
+import { canObserve } from "./driver/observation-cache";
 import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
+import type { AttemptContext } from "./runner/fixtures.types";
+import type { TraceEvent, TraceWriter } from "./runner/trace";
 import { createSession, devtoolsTarget, getSession, resetSession, setDefaultDriverFactory } from "./session";
 
 const dirs: string[] = [];
@@ -70,9 +74,10 @@ describe("Session", () => {
 		const session = createSession({ env, driverFactory: f.open, exitHook: false });
 		const [a, b] = await Promise.all([session.driver(), session.driver()]);
 		const c = await session.driver();
-		expect(a).toBe(f.fake.driver);
+		expect(a.id).toBe(f.fake.driver.id);
 		expect(b).toBe(a);
 		expect(c).toBe(a);
+		expect(session.peekDriver()).toBe(a);
 		expect(f.calls).toEqual([env]);
 	});
 
@@ -93,7 +98,7 @@ describe("Session", () => {
 		const error = await session.driver().catch((e: unknown) => e);
 		expect(error).toBeInstanceOf(E2eError);
 		expect(error).toMatchObject({ code: "DRIVER", message: "E_NOT_BOOTED: boot it" });
-		expect(await session.driver()).toBe(fake.driver);
+		expect((await session.driver()).id).toBe(fake.driver.id);
 	});
 
 	test("a throwing factory is also a DRIVER error", async () => {
@@ -154,6 +159,109 @@ describe("Session", () => {
 		setDefaultDriverFactory(undefined);
 		const session = createSession({ env: envIn(tmp()), exitHook: false });
 		await expect(session.driver()).rejects.toMatchObject({ code: "DRIVER" });
+	});
+});
+
+function recordingAttempt(): { attempt: AttemptContext; events: TraceEvent[]; flushes: () => number } {
+	const events: TraceEvent[] = [];
+	let flushed = 0;
+	const trace: TraceWriter = {
+		path: "/dev/null",
+		write: (event) => void events.push(event),
+		flush: () => {
+			flushed += 1;
+		},
+	};
+	const attempt: AttemptContext = {
+		signal: new AbortController().signal,
+		dir: "/dev/null",
+		short: "spec",
+		trace,
+		depth: 0,
+		files: new Set(),
+		softFailures: [],
+	};
+	return { attempt, events, flushes: () => flushed };
+}
+
+const spansOf = (events: readonly TraceEvent[]) => events.flatMap((e) => (e.type === "span" ? [e] : []));
+
+describe("Session spans", () => {
+	const open = () =>
+		createSession({
+			env: envIn(tmp()),
+			exitHook: false,
+			driverFactory: async () => ({
+				success: true,
+				data: scriptedDriver({ screens: [snapshotOf([el("button", { id: "go" })])] }),
+			}),
+		});
+
+	test("driver calls inside an attempt are driver.* spans in that attempt's trace", async () => {
+		const session = open();
+		const first = recordingAttempt();
+		const second = recordingAttempt();
+		const driver = await session.driver();
+		session.enterAttempt(first.attempt);
+		await driver.snapshot();
+		await driver.tap({ x: 1, y: 1 });
+		session.leaveAttempt();
+		session.enterAttempt(second.attempt);
+		await driver.snapshot();
+		expect(spansOf(first.events).map((s) => s.op)).toEqual(["driver.snapshot", "driver.tap"]);
+		expect(spansOf(second.events).map((s) => s.op)).toEqual(["driver.snapshot"]);
+	});
+
+	test("the driver offers the observation cache: a read it serves from memory writes no snapshot span, an input ends it", async () => {
+		const session = open();
+		const { attempt, events } = recordingAttempt();
+		const driver = await session.driver();
+		expect(canObserve(driver)).toBe(true);
+		if (!canObserve(driver)) return;
+		session.enterAttempt(attempt);
+		await driver.observe({ reuse: true });
+		await driver.observe({ reuse: true });
+		await driver.tap({ x: 1, y: 1 });
+		await driver.observe({ reuse: true });
+		expect(spansOf(events).map((s) => s.op)).toEqual(["driver.snapshot", "driver.tap", "driver.snapshot"]);
+	});
+
+	test("driver calls outside an attempt write nothing and still work", async () => {
+		const session = open();
+		const driver = await session.driver();
+		expect((await driver.snapshot()).success).toBe(true);
+	});
+
+	test("peekDriver returns the traced driver too (failure capture goes through it)", async () => {
+		const session = open();
+		const { attempt, events } = recordingAttempt();
+		await session.driver();
+		session.enterAttempt(attempt);
+		await session.peekDriver()?.snapshot();
+		expect(spansOf(events)).toHaveLength(1);
+	});
+
+	test("session.span times a call into the running attempt's trace", async () => {
+		const session = open();
+		const { attempt, events } = recordingAttempt();
+		session.enterAttempt(attempt);
+		const value = await session.span("device.settle", async () => "done", { detail: () => ({ via: "stream" }) });
+		expect(value).toBe("done");
+		expect(spansOf(events)[0]).toMatchObject({ op: "device.settle", ok: true, detail: { via: "stream" } });
+	});
+
+	test("session.span outside an attempt just runs the call", async () => {
+		const session = open();
+		expect(await session.span("device.home", async () => 7)).toBe(7);
+	});
+
+	test("a span's driver calls nest inside it: both are written, the inner one first", async () => {
+		const session = open();
+		const { attempt, events } = recordingAttempt();
+		const driver = await session.driver();
+		session.enterAttempt(attempt);
+		await session.span("device.snapshot", async () => driver.snapshot());
+		expect(spansOf(events).map((s) => s.op)).toEqual(["driver.snapshot", "device.snapshot"]);
 	});
 });
 

@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { E2eEnv } from "../env";
 import { setDefaultDriverFactory } from "../session";
 import { fakeAndroidHost } from "./android/android-host.testing";
+import { memoryAndroidState } from "./android/android-state";
 import { fakeExec } from "./ios/exec.testing";
 import { fakeSimd } from "./ios/simd.testing";
-import { defaultDriverFactory, openDriver } from "./open";
+import { androidOptions, defaultDriverFactory, openDriver } from "./open";
 
 const env = (platform: "ios" | "android", extra: Partial<E2eEnv> = {}): E2eEnv => ({
 	udid: "UDID-1",
@@ -69,13 +73,66 @@ describe("openDriver", () => {
 		});
 		const result = await openDriver(env("android"), {
 			exec: host.exec,
-			android: { adb: "/sdk/platform-tools/adb", spawn: host.spawn, execBinary: host.execBinary },
+			android: {
+				adb: "/sdk/platform-tools/adb",
+				spawn: host.spawn,
+				execBinary: host.execBinary,
+				state: memoryAndroidState(),
+			},
 		});
 		expect(result.success).toBe(true);
 		if (!result.success) return;
 		expect(result.data.platform).toBe("android");
 		expect(host.spawns()).toBe(1);
 		await result.data.close();
+	});
+
+	test("android deep links target the app under test (env.bundleId)", async () => {
+		const host = fakeAndroidHost({
+			shell: [
+				{ match: "getprop sys.boot_completed", reply: "1\n" },
+				{ match: "wm size", reply: "Physical size: 1080x2400\n" },
+				{ match: "wm density", reply: "Physical density: 420\n" },
+			],
+		});
+		const result = await openDriver(env("android"), {
+			exec: host.exec,
+			android: { adb: "adb", spawn: host.spawn, execBinary: host.execBinary, state: memoryAndroidState() },
+		});
+		if (!result.success) throw new Error(result.error.message);
+		await result.data.app.openUrl("myapp://x");
+		expect(host.shell).toContain("am start -a android.intent.action.VIEW -d myapp://x -p nz.co.x");
+		await result.data.close();
+	});
+
+	test("android keeps its per-serial state under <wardenHome>/android", async () => {
+		const home = mkdtempSync(join(tmpdir(), "wdn-open-home-"));
+		const host = fakeAndroidHost({
+			shell: [
+				{ match: "getprop sys.boot_completed", reply: "1\n34\n" },
+				{ match: "wm size", reply: "Physical size: 1080x2400\n" },
+				{ match: "wm density", reply: "Physical density: 420\n" },
+				{ match: "uiautomator dump /dev/stdout", reply: "UI hierchary dumped to: /dev/stdout\n" },
+			],
+			host: [
+				{
+					match: /exec-out uiautomator dump \/dev\/tty$/,
+					reply: '<?xml version="1.0"?><hierarchy rotation="0"><node class="x" bounds="[0,0][1,1]" /></hierarchy>',
+				},
+			],
+		});
+		const result = await openDriver(env("android"), {
+			exec: host.exec,
+			wardenHome: home,
+			android: { adb: "adb", spawn: host.spawn, execBinary: host.execBinary },
+		});
+		if (!result.success) throw new Error(result.error.message);
+		await result.data.snapshot();
+		await result.data.close();
+		expect(JSON.parse(readFileSync(join(home, "android", "UDID-1.json"), "utf8"))).toEqual({
+			sdk: 34,
+			dumpRoute: "tty",
+		});
 	});
 
 	test("a missing helper is E_HELPER_MISSING", async () => {
@@ -95,4 +152,49 @@ test("defaultDriverFactory has the session's DriverFactory shape", async () => {
 	const result = await defaultDriverFactory({ ...env("ios"), simd: "/nowhere/warden-simd" });
 	expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
 	setDefaultDriverFactory(undefined);
+});
+
+describe("androidOptions and the resident server", () => {
+	const withEnv = async (value: string | undefined, run: () => void | Promise<void>): Promise<void> => {
+		const previous = process.env.WARDEN_ANDROID_UIAD;
+		if (value === undefined) delete process.env.WARDEN_ANDROID_UIAD;
+		else process.env.WARDEN_ANDROID_UIAD = value;
+		try {
+			await run();
+		} finally {
+			if (previous === undefined) delete process.env.WARDEN_ANDROID_UIAD;
+			else process.env.WARDEN_ANDROID_UIAD = previous;
+		}
+	};
+
+	test("is on for a real device", async () => {
+		await withEnv(undefined, () => {
+			expect(androidOptions(env("android"), { android: { state: memoryAndroidState() } }, false).uiad).toBe(true);
+		});
+	});
+
+	test("WARDEN_ANDROID_UIAD=0 keeps the dump and input", async () => {
+		await withEnv("0", () => {
+			expect(androidOptions(env("android"), { android: { state: memoryAndroidState() } }, false).uiad).toBeUndefined();
+		});
+	});
+
+	test("an injected shell is a test: the server, which spawns its own adb, stays off", async () => {
+		await withEnv(undefined, () => {
+			const host = fakeAndroidHost();
+			const options = androidOptions(
+				env("android"),
+				{ android: { spawn: host.spawn, state: memoryAndroidState() } },
+				false
+			);
+			expect(options.uiad).toBeUndefined();
+		});
+	});
+
+	test("a caller's own choice wins", async () => {
+		await withEnv(undefined, () => {
+			const options = androidOptions(env("android"), { android: { uiad: false, state: memoryAndroidState() } }, false);
+			expect(options.uiad).toBe(false);
+		});
+	});
 });

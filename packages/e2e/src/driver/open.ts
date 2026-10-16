@@ -1,8 +1,11 @@
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { wardenHome } from "@delacour/warden-core/store";
 import type { E2eEnv } from "../env";
 import type { DriverFactory } from "../session";
 import { type AndroidDriverOptions, openAndroidDriver } from "./android/android-driver";
+import { androidStateDir, createAndroidStateStore } from "./android/android-state";
+import { uiadFromEnv } from "./android/uiad-backend";
 import type { Driver, DriverResult } from "./driver.types";
 import { type OpenIosDriverOptions, openIosDriver } from "./ios/ios-driver";
 
@@ -22,7 +25,33 @@ const stderrLog = (line: string): void => {
 	process.stderr.write(`${line}\n`);
 };
 
-/** Open the `Driver` for the device in `env`, by platform. */
+/**
+ * The Android opener's options: the env's serial and app package, the `state` store under `<wardenHome>/android`
+ * (a caller's own `android.state` wins) that remembers the dump route that worked and the animation scales to put
+ * back, the resident `warden-uiad` server (unless `WARDEN_ANDROID_UIAD=0`, a caller's own `android.uiad`, or an injected
+ * shell `spawn`, which is a test that must never reach a real `adb`), and the injected seams.
+ */
+export function androidOptions(env: E2eEnv, deps: OpenDriverDeps, debug: boolean): AndroidDriverOptions {
+	const android: NonNullable<OpenDriverDeps["android"]> = deps.android ?? {};
+	const log = deps.log ?? (debug ? stderrLog : undefined);
+	return {
+		...android,
+		serial: env.udid,
+		adb: android.adb ?? androidTools(process.env).adb,
+		exec: deps.exec ?? bunExec,
+		appPackage: android.appPackage ?? env.bundleId,
+		...(android.uiad === undefined && android.spawn === undefined ? { uiad: uiadFromEnv(process.env) } : {}),
+		state:
+			android.state ??
+			createAndroidStateStore({
+				dir: androidStateDir(deps.wardenHome ?? wardenHome(process.env)),
+				...(log ? { log } : {}),
+			}),
+		...(log ? { log } : {}),
+	};
+}
+
+/** Open the `Driver` for the device in `env`, by platform. Android deep links go to `env.bundleId` only. */
 export async function openDriver(env: E2eEnv, deps: OpenDriverDeps = {}): DriverResult<Driver> {
 	const debug = deps.debug ?? process.env[DEBUG_ENV] === "1";
 	switch (env.platform) {
@@ -35,17 +64,8 @@ export async function openDriver(env: E2eEnv, deps: OpenDriverDeps = {}): Driver
 				debug,
 				...(deps.log ? {} : debug ? { log: stderrLog } : {}),
 			});
-		case "android": {
-			const android: NonNullable<OpenDriverDeps["android"]> = deps.android ?? {};
-			const log = deps.log ?? (debug ? stderrLog : undefined);
-			return openAndroidDriver({
-				...android,
-				serial: env.udid,
-				adb: android.adb ?? androidTools(process.env).adb,
-				exec: deps.exec ?? bunExec,
-				...(log ? { log } : {}),
-			});
-		}
+		case "android":
+			return openAndroidDriver(androidOptions(env, deps, debug));
 	}
 }
 

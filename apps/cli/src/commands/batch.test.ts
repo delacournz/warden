@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { JSON_CONFIG_FILE } from "@delacour/warden-core/builds/config";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-core/exec";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { createBatchCommand } from "./batch";
+import { createBatchCommand, defaultBatchDeps } from "./batch";
 import { harness } from "./batch.testing";
 
 let ctx: TestContext | undefined;
@@ -53,7 +53,11 @@ function releaseExec(base: Exec, root: string, native: string, calls: string[]):
 	let installed = true;
 	return async (cmd, opts) => {
 		const line = cmd.join(" ");
-		const canned: Record<string, string> = { "sh -c fp ios": native, "git ls-files": "src/a.ts\0" };
+		const canned: Record<string, string> = {
+			"sh -c fp ios": native,
+			"git ls-files -z -m": "",
+			"git ls-files": "? src/a.ts\0",
+		};
 		const hit = Object.keys(canned).find((prefix) => line.startsWith(prefix));
 		if (hit) return done(canned[hit]);
 		if (line === "sh -c build-release") {
@@ -398,6 +402,58 @@ describe("warden batch", () => {
 		expect(c.stderr.join("\n")).toContain("▶ a");
 	});
 
+	test("TTY grid: redrawn at once on every event and on a 1 s tick, not ten times a second", async () => {
+		let clock = 1_000_000;
+		const c = setup(["ios", "--jobs", "a", "--", "x"]);
+		c.now = () => clock;
+		const h = harness({ isTTY: true, manual: true });
+		const running = createBatchCommand(h.deps).run(c);
+		await waitFor(() => h.jobs().length > 0);
+		expect(h.tickers.filter((t) => t.ms < 1_000)).toEqual([]);
+		const frames = h.tickers.filter((t) => t.ms === 1_000);
+		expect(frames).toHaveLength(1);
+		const draws = () => h.terminal.length;
+		const afterStart = draws();
+		expect(h.terminal.join("")).toContain("warden batch");
+
+		frames[0]?.fn();
+		expect(draws()).toBe(afterStart);
+
+		clock += 1_000;
+		frames[0]?.fn();
+		expect(draws()).toBe(afterStart + 1);
+		expect(h.terminal.at(-1)).toContain("1s");
+
+		clock += 400;
+		frames[0]?.fn();
+		expect(draws()).toBe(afterStart + 1);
+
+		h.jobs()[0]?.finish(0);
+		expect(await running).toBe(0);
+		expect(draws()).toBeGreaterThan(afterStart + 1);
+		expect(frames[0]?.stopped).toBe(true);
+	});
+
+	test("a grandchild that keeps the job's pipes open does not hold up the job's exit", async () => {
+		const c = setup(["ios", "--jobs", "a", "--", "x"]);
+		const log = join(c.cwd, "job.log");
+		const pidFile = join(c.cwd, "grandchild.pid");
+		const proc = defaultBatchDeps.spawn(["sh", "-c", `sleep 30 & echo $! > ${pidFile}; echo hello`], {
+			env: { PATH: c.env.PATH ?? process.env.PATH },
+			log,
+			cwd: c.cwd,
+		});
+		const started = performance.now();
+		try {
+			expect(await proc.exited).toBe(0);
+			expect(performance.now() - started).toBeLessThan(1_500);
+			expect(readFileSync(log, "utf8")).toMatch(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\] hello\n$/);
+		} finally {
+			const pid = Number(readFileSync(pidFile, "utf8").trim());
+			if (pid > 0) process.kill(pid);
+		}
+	});
+
 	test("--json: batch.json shape on stdout only", async () => {
 		const c = setup(["ios", "--jobs", "a", "--json", "--", "x"]);
 		const h = harness();
@@ -431,7 +487,7 @@ describe("warden batch", () => {
 		}
 		const darwin = process.platform === "darwin";
 
-		test("--headless: windows closed at claim and again before the first job; WARDEN_HEADLESS=1; batch.json headless", async () => {
+		test("--headless: windows closed at the claim, not looked for again when it booted nothing; WARDEN_HEADLESS=1; batch.json headless", async () => {
 			const c = setup(["ios", "--count", "2", "--headless", "--jobs", "a", "--serve", "srv", "--", "x"]);
 			const h = harness();
 			windowsExec(c, h.events);
@@ -439,10 +495,23 @@ describe("warden batch", () => {
 			expect(h.serve()?.opts.env.WARDEN_HEADLESS).toBe("1");
 			expect(h.jobs()[0]?.opts.env.WARDEN_HEADLESS).toBe("1");
 			const closes = h.events.filter((e) => e === "close").length;
-			expect(closes).toBe(darwin ? 2 : 0);
+			expect(closes).toBe(darwin ? 1 : 0);
 			if (darwin) expect(h.events.lastIndexOf("close")).toBeLessThan(h.events.indexOf("job:a"));
 			const batchDir = join(c.env.WARDEN_HOME ?? "", "batches", "b1");
 			expect(JSON.parse(h.files.get(join(batchDir, "batch.json")) ?? "{}").headless).toBe(true);
+		});
+
+		test("--headless: a sim the claim booted can show its window late, so windows are closed again before the first job", async () => {
+			ctx = testContext(["ios", "--headless", "--jobs", "a", "--", "x"], {
+				exec: fakeSimctl([wardenSim(1, "Shutdown"), wardenSim(2, "Shutdown")]),
+			});
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			const c = ctx;
+			const h = harness();
+			windowsExec(c, h.events);
+			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+			expect(h.events.filter((e) => e === "close").length).toBe(darwin ? 2 : 0);
+			if (darwin) expect(h.events.lastIndexOf("close")).toBeLessThan(h.events.indexOf("job:a"));
 		});
 
 		test("not headless: no window closed, batch.json headless false, WARDEN_HEADLESS unset", async () => {
@@ -820,6 +889,38 @@ describe("warden batch", () => {
 			writeConfig(broken.cwd, { batches: { p: { platform: "ios" } } });
 			expect(await createBatchCommand(harness().deps).run(broken)).toBe(1);
 			expect(broken.stderr.join("\n")).toContain(`invalid ${JSON_CONFIG_FILE}: batches.p.cmd`);
+		});
+
+		test("the preset walk stops at the git toplevel of the command's git cache, one lookup, no bare rev-parse", async () => {
+			const c = setup(["p", "--jobs", "a", "--", "x"]);
+			const sub = join(c.cwd, "sub");
+			mkdirSync(sub, { recursive: true });
+			writeConfig(c.cwd, { batches: { p: { platform: "ios", cmd: ["x"] } } });
+			const base = c.exec;
+			const git: string[] = [];
+			c.exec = async (cmd, opts) => {
+				if (cmd[0] === "git") git.push(cmd.slice(1).join(" "));
+				return base(cmd, opts);
+			};
+			c.cwd = sub;
+			c.git.store(sub, { toplevel: sub, commonDir: join(sub, ".git"), branch: "main" });
+			expect(await createBatchCommand(harness().deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain('unknown platform or preset "p"');
+			expect(git.filter((line) => line.startsWith("rev-parse"))).toEqual([]);
+		});
+
+		test("a cold cache asks git once, for the facts", async () => {
+			const c = setup(["nope", "--jobs", "a", "--", "x"]);
+			const base = c.exec;
+			const git: string[] = [];
+			c.exec = async (cmd, opts) => {
+				if (cmd[0] === "git") git.push(cmd.slice(1).join(" "));
+				return base(cmd, opts);
+			};
+			await createBatchCommand(harness().deps).run(c);
+			expect(git.filter((line) => line.startsWith("rev-parse"))).toEqual([
+				"rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD",
+			]);
 		});
 
 		test("fewer jobs than count → the claim is clamped to the job count", async () => {

@@ -40,6 +40,8 @@ export type Harness = {
 
 export type HarnessOptions = {
 	onCall?: (call: DriverCall, driver: FakeDriver) => FakeOverride | undefined;
+	/** the fake driver offers select-all (like the iOS driver) */
+	selectAll?: boolean;
 	video?: UiDeps["video"];
 };
 
@@ -56,6 +58,7 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 	const steps: RecordStep[] = [];
 	const driver: FakeDriver = fakeDriver({
 		screens,
+		...(options.selectAll ? { selectAll: true } : {}),
 		onCall: (call) => options.onCall?.(call, driver),
 	});
 	const deps: UiDeps = {

@@ -1,11 +1,11 @@
 import type { Suite } from "@delacour/warden-core/affected/affected";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import { bundleIdFor } from "@delacour/warden-core/builds/config";
-import { projectContext } from "@delacour/warden-core/builds/ensure";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { devClientLaunchArgs } from "../metro";
+import { projectContextFor } from "../project-context";
 
 /** What decides how a spec's app is launched, known before any device is leased. */
 export type LaunchPlan = {
@@ -23,9 +23,7 @@ export async function specBundleId(ctx: CommandContext, suite: Suite, platform: 
 	const explicit = suite.config.spec?.bundleId;
 	if (explicit !== undefined) return ok(explicit);
 	const { variant } = appSwitches(suite.config.app);
-	const project = await projectContext({
-		exec: ctx.exec,
-		env: ctx.env,
+	const project = await projectContextFor(ctx, {
 		start: suite.projectRoot ?? suite.cwd,
 		...(variant !== undefined ? { variant, variantOptional: true } : {}),
 	});

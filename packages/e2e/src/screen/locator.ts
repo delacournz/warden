@@ -14,12 +14,12 @@ import {
 } from "./actions";
 import type { Observed, Runtime } from "./context";
 import {
-	CONFIRM_READS,
+	type ClearMethod,
 	confirmFieldValue,
+	confirmReadsFor,
 	focusAndClear,
 	focusClearType,
 	hitTestField,
-	STALE_RISK_READS,
 } from "./field";
 import type { NodeEntry } from "./nodes";
 import type { PollStep } from "./poll";
@@ -39,7 +39,37 @@ import type { QueryRole } from "./roles";
 import { normalizeText, type TextMatch } from "./text";
 
 export type ActionOptions = { timeout?: number };
-export type TapOptions = ActionOptions & { position?: Point };
+
+/** What `locator.read()` saw in one look: no match is just `{ visible: false }`. */
+export type LocatorReading = {
+	visible: boolean;
+	/** what `text()` returns; absent when nothing matched */
+	text?: string;
+	/** what `value()` returns; absent when nothing matched */
+	value?: string;
+	/** only for a node that can be checked (a switch, a checkbox) */
+	checked?: boolean;
+};
+
+/** What shows a tap landed: a locator that becomes visible, or a check that resolves true. */
+export type TapUntil = Locator | (() => Promise<boolean>);
+
+export type TapOptions = ActionOptions & {
+	position?: Point;
+	/**
+	 * Tap again when this does not show up. A locator counts once it is visible; a function once it resolves true (its
+	 * reads share one snapshot per check). After the tap and after each re-tap the wait is `windowMs`, except that the
+	 * last re-tap is not waited on: like a hand-rolled tap-and-check helper, `tap` returns and the next assertion says
+	 * whether it landed.
+	 */
+	until?: TapUntil;
+	/** extra taps when `until` has not shown within `windowMs` of the previous tap. Default 2. Needs `until`. */
+	retries?: number;
+	/** how long each tap gets to show `until`. Default 4000 ms. Needs `until`. */
+	windowMs?: number;
+	/** gap between checks of `until`. Default 250 ms. Needs `until`. */
+	pollMs?: number;
+};
 export type LongPressOptions = ActionOptions & { durationMs?: number };
 export type PressOptions = ActionOptions & { modifiers?: readonly Modifier[] };
 export type LocatorSwipeOptions = ActionOptions & { direction: SwipeDirection; momentum?: Momentum };
@@ -199,8 +229,8 @@ export class Locator {
 	}
 
 	/** One look at the screen: every current match and the snapshot they came from. Never waits. */
-	async look(): Promise<{ entries: NodeEntry[]; observed: Observed }> {
-		const observed = await this.rt.observe();
+	async look(options: { reuse?: boolean } = {}): Promise<{ entries: NodeEntry[]; observed: Observed }> {
+		const observed = await this.rt.observe(options);
 		return { entries: resolve(this.expr, observed.index), observed };
 	}
 
@@ -226,8 +256,13 @@ export class Locator {
 		return pickOne(this.rt, this.expr, entries, observed);
 	}
 
-	async count(): Promise<number> {
-		return (await this.matches()).entries.length;
+	/** One read as a trace-only `read.<name>` span naming this locator; reads that call another read are not wrapped twice. */
+	private traced<T>(name: string, run: () => Promise<T>): Promise<T> {
+		return this.rt.span(`read.${name}`, run, { detail: () => ({ locator: this.toString() }) });
+	}
+
+	count(): Promise<number> {
+		return this.traced("count", async () => (await this.matches()).entries.length);
 	}
 
 	async all(): Promise<Locator[]> {
@@ -235,20 +270,46 @@ export class Locator {
 		return Array.from({ length: count }, (_, index) => this.nth(index));
 	}
 
-	async text(): Promise<string> {
-		return textOf((await this.single()).entry);
+	text(): Promise<string> {
+		return this.traced("text", async () => textOf((await this.single()).entry));
 	}
 
-	async allTexts(): Promise<string[]> {
-		return (await this.matches()).entries.map(textOf);
+	allTexts(): Promise<string[]> {
+		return this.traced("allTexts", async () => (await this.matches()).entries.map(textOf));
 	}
 
-	async value(): Promise<string> {
-		return fieldValue((await this.single()).entry);
+	value(): Promise<string> {
+		return this.traced("value", async () => fieldValue((await this.single()).entry));
 	}
 
-	async isVisible(): Promise<boolean> {
-		const { entries, observed } = await this.matches();
+	isVisible(): Promise<boolean> {
+		return this.traced("isVisible", async () => this.visibleIn((await this.matches()).observed));
+	}
+
+	/**
+	 * Visibility, text, value and checked state from ONE look at the screen: where `isVisible()` then `text()` read the
+	 * screen for each (sharing a snapshot only when nothing was pressed in between and it is still young), this is one
+	 * read by construction. No match is `{ visible: false }` and never waits; several matches fail like `text()`.
+	 * `text` is what `text()` returns, `value` what `value()` returns, `checked` is there only for a node that can be
+	 * checked (a switch, a checkbox).
+	 */
+	read(): Promise<LocatorReading> {
+		return this.traced("read", async () => {
+			const { entries, observed } = await this.matches();
+			if (entries.length === 0) return { visible: false };
+			const entry = this.exactlyOne(entries, observed);
+			return {
+				visible: entry.visible,
+				text: textOf(entry),
+				value: fieldValue(entry),
+				...(entry.states.checked === undefined ? {} : { checked: entry.states.checked }),
+			};
+		});
+	}
+
+	/** Whether this locator's one match is visible in `observed`; no match is not visible, several matches throw. */
+	visibleIn(observed: Observed): boolean {
+		const entries = resolve(this.expr, observed.index);
 		if (entries.length === 0) return false;
 		return this.exactlyOne(entries, observed).visible;
 	}
@@ -257,25 +318,32 @@ export class Locator {
 		return !(await this.isVisible());
 	}
 
-	async isEnabled(): Promise<boolean> {
-		return !(await this.single()).entry.states.disabled;
+	isEnabled(): Promise<boolean> {
+		return this.traced("isEnabled", async () => !(await this.single()).entry.states.disabled);
 	}
 
-	async isChecked(): Promise<boolean> {
-		return (await this.single()).entry.states.checked === true;
+	isChecked(): Promise<boolean> {
+		return this.traced("isChecked", async () => (await this.single()).entry.states.checked === true);
 	}
 
-	async boundingBox(): Promise<Rect> {
-		const { entries, observed } = await this.matches();
-		if (entries.length === 0) {
-			const [only, ...others] = await this.reactCandidates(observed);
-			if (only !== undefined && others.length === 0) return { ...only.frame };
-		}
-		return { ...this.exactlyOne(entries, observed).element.frame };
+	/** Always a new snapshot: a frame is for aiming at, and one from a screen that was still moving is wrong. */
+	boundingBox(): Promise<Rect> {
+		return this.traced("boundingBox", async () => {
+			const { entries, observed } = await this.look({ reuse: false });
+			if (entries.length === 0) {
+				const [only, ...others] = await this.reactCandidates(observed);
+				if (only !== undefined && others.length === 0) return { ...only.frame };
+			}
+			return { ...this.exactlyOne(entries, observed).element.frame };
+		});
 	}
 
 	/** Polls until the locator is `visible` (default), `hidden`, `attached` or `detached`; else `TIMEOUT`. */
-	async waitFor(options: WaitForOptions = {}): Promise<void> {
+	waitFor(options: WaitForOptions = {}): Promise<void> {
+		return this.traced("waitFor", () => this.waitForState(options));
+	}
+
+	private async waitForState(options: WaitForOptions): Promise<void> {
 		assertOptions("waitFor", options, ["state", "timeout"]);
 		const state = options.state ?? "visible";
 		if (!WAIT_STATES.includes(state)) {
@@ -285,8 +353,8 @@ export class Locator {
 			);
 		}
 		const timeoutMs = options.timeout ?? this.rt.actionTimeout();
-		const result = await this.rt.poll<true, Observed["snapshot"] | undefined>(async () => {
-			const observation = await this.rt.tryObserve();
+		const result = await this.rt.poll<true, Observed["snapshot"] | undefined>(async (attempt) => {
+			const observation = await this.rt.tryObserve({ reuse: attempt === 1 });
 			if (!observation.ok) {
 				if (!observation.error.retryable) throw new E2eError("DRIVER", `snapshot failed: ${observation.error.message}`);
 				return { done: false, state: undefined };
@@ -303,13 +371,15 @@ export class Locator {
 
 	// ---- actions: wait for actionability, then act once ----
 
-	private act<T>(verb: string, run: () => Promise<T>): Promise<T> {
-		return this.rt.step(`${verb} ${this}`, run);
+	private act<T>(verb: string, run: () => Promise<T>, suffix = ""): Promise<T> {
+		return this.rt.step(`${verb} ${this}${suffix}`, run);
 	}
 
 	/**
 	 * Waits for exactly one visible (and, per `spec`, enabled, on-screen) match. Several matches fail at once.
 	 * With `allowReact` a component that only the React tree knows (a plain `getByTestId`) counts as a match.
+	 * Every look is a new snapshot, never the one a read or an `expect` kept: the action goes to where the element is
+	 * now, and a snapshot taken while the screen was still sliding in has it somewhere else.
 	 */
 	private actionable(spec: ActionSpec, timeoutMs: number): Promise<Actionable>;
 	private actionable(spec: ActionSpec, timeoutMs: number, allowReact: boolean): Promise<Actionable | ReactActionable>;
@@ -319,7 +389,7 @@ export class Locator {
 		allowReact = false
 	): Promise<Actionable | ReactActionable> {
 		const result = await this.rt.poll<Actionable | ReactActionable, Seen>(async () => {
-			const observation = await this.rt.tryObserve();
+			const observation = await this.rt.tryObserve({ reuse: false });
 			if (!observation.ok) {
 				if (!observation.error.retryable) {
 					throw new E2eError("DRIVER", `snapshot failed: ${observation.error.code}: ${observation.error.message}`);
@@ -359,19 +429,67 @@ export class Locator {
 		);
 	}
 
+	/**
+	 * Taps the one visible, enabled match. With `until` it is also the retrying tap: the press on a tab bar or a list row
+	 * right after a navigation is sometimes dropped with nothing on screen to tell, so it checks that `until` shows
+	 * within `windowMs` and presses again, up to `retries` more times.
+	 */
 	async tap(options: TapOptions = {}): Promise<void> {
-		assertOptions("tap", options, ["position", "timeout"]);
-		return this.act("tap", async () => {
-			const withPosition = options.position !== undefined;
-			const found = await this.actionable(
-				{ enabled: !withPosition, tapPointOnScreen: !withPosition },
-				options.timeout ?? this.rt.actionTimeout(),
-				true
-			);
-			const point =
-				"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
-			this.rt.drive("tap", await found.observed.driver.tap(point));
-		});
+		assertOptions("tap", options, ["position", "timeout", "until", "retries", "windowMs", "pollMs"]);
+		const retry = retryPlan(options);
+		const suffix = retry === undefined ? "" : ` until ${describeUntil(retry.until)}`;
+		return this.act(
+			"tap",
+			async () => {
+				await this.tapOnce(options);
+				if (retry === undefined) return;
+				for (let resent = 0; resent < retry.retries; resent += 1) {
+					if (await this.arrivedWithin(retry)) return;
+					await this.tapOnce(options);
+				}
+			},
+			suffix
+		);
+	}
+
+	private async tapOnce(options: TapOptions): Promise<void> {
+		const withPosition = options.position !== undefined;
+		const found = await this.actionable(
+			{ enabled: !withPosition, tapPointOnScreen: !withPosition },
+			options.timeout ?? this.rt.actionTimeout(),
+			true
+		);
+		const point =
+			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
+		this.rt.drive("tap", await found.observed.driver.tap(point));
+	}
+
+	/**
+	 * Polls `plan.until` for `plan.windowMs`, one look at the screen per check. A locator is checked on the snapshot of
+	 * the poll itself. A function is called with the kept snapshot forgotten (after the first check), so its own reads
+	 * take one new snapshot between them rather than the previous check's.
+	 */
+	private async arrivedWithin(plan: RetryPlan): Promise<boolean> {
+		const { until } = plan;
+		const result = await this.rt.poll<true, undefined>(
+			async (attempt) => {
+				if (typeof until === "function") {
+					if (attempt > 1) await this.rt.forgetObservation();
+					return (await until()) ? { done: true, value: true } : { done: false, state: undefined };
+				}
+				const observation = await until.runtime.tryObserve({ reuse: attempt === 1 });
+				if (!observation.ok) {
+					if (!observation.error.retryable) {
+						throw new E2eError("DRIVER", `snapshot failed: ${observation.error.code}: ${observation.error.message}`);
+					}
+					return { done: false, state: undefined };
+				}
+				return until.visibleIn(observation.observed) ? { done: true, value: true } : { done: false, state: undefined };
+			},
+			plan.windowMs,
+			{ intervalMs: plan.pollMs }
+		);
+		return result.status === "done";
 	}
 
 	async longPress(options: LongPressOptions = {}): Promise<void> {
@@ -387,9 +505,11 @@ export class Locator {
 	}
 
 	/**
-	 * Replaces the content of a text field: focus with the caret at the end, backspace what is there, type, then poll
-	 * until the field holds the text on consecutive reads (the accessibility value lags the keys). A mismatch is
-	 * retried once with a fresh clear and retype. Secure fields cannot be read back, so they are not verified.
+	 * Replaces the content of a text field: focus with the caret at the end, empty it (select all and type over the selection when
+	 * the driver can, nothing for a field that is empty or shows a placeholder), type, then poll until the field holds
+	 * the text on consecutive reads (the accessibility value lags the keys). A mismatch is retried once with one Backspace
+	 * per character and a retype (a field that refuses select-all). Secure fields cannot be read back, so they are not
+	 * verified.
 	 */
 	async fill(text: string, options: ActionOptions = {}): Promise<void> {
 		assertOptions("fill", options, ["timeout"]);
@@ -399,7 +519,10 @@ export class Locator {
 			let firstHeld: string | undefined;
 			for (let attempt = 1; ; attempt += 1) {
 				const point = focusPoint(target.entry.element.frame);
-				this.rt.drive("fill", await focusClearType(target.observed.driver, this.pause, point, target.entry, text));
+				this.rt.drive(
+					"fill",
+					await focusClearType(target.observed.driver, this.pause, point, target.entry, text, clearMethodFor(attempt))
+				);
 				if (target.entry.secure) return;
 				const outcome = await this.confirm(target, text, budget);
 				if (outcome.ok) return;
@@ -417,14 +540,14 @@ export class Locator {
 		});
 	}
 
-	/** Empties a text field with Backspace, then checks it is empty (one more pass when it is not). */
+	/** Empties a text field (select all and one Backspace when the driver can), then checks it is empty (one more pass of counted Backspaces when it is not). */
 	async clear(options: ActionOptions = {}): Promise<void> {
 		assertOptions("clear", options, ["timeout"]);
 		return this.act("clear", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
 			for (let attempt = 1; ; attempt += 1) {
-				await this.focusAndClear(target);
+				await this.focusAndClear(target, clearMethodFor(attempt));
 				if (target.entry.secure) return;
 				const outcome = await this.confirm(target, "", budget);
 				if (outcome.ok) return;
@@ -521,8 +644,11 @@ export class Locator {
 		this.rt.drive("focus", await observed.driver.tap(focusPoint(entry.element.frame)));
 	}
 
-	private async focusAndClear({ entry, observed }: Actionable): Promise<void> {
-		this.rt.drive("clear", await focusAndClear(observed.driver, this.pause, focusPoint(entry.element.frame), entry));
+	private async focusAndClear({ entry, observed }: Actionable, method: ClearMethod): Promise<void> {
+		this.rt.drive(
+			"clear",
+			await focusAndClear(observed.driver, this.pause, focusPoint(entry.element.frame), entry, method)
+		);
 	}
 
 	/** Sleeps on the runtime's clock (a fake one in tests), ending early when the attempt aborts. */
@@ -539,22 +665,22 @@ export class Locator {
 		budget: { remaining(): number }
 	): Promise<{ ok: true } | { ok: false; held: string; screen: string | undefined }> {
 		const span = Math.max(budget.remaining(), CONFIRM_FLOOR_MS);
-		let screen: string | undefined;
+		let lastSeen: Observed["snapshot"] | undefined;
 		const readValue = (found: NodeEntry): string => (text === "" ? fieldValue(found) : rawValue(found));
 		const outcome = await confirmFieldValue<never>({
 			text,
 			now: this.rt.clock.now,
 			sleep: this.pause,
 			budgetMs: Math.min(VERIFY_MS, span),
-			reads: text !== "" && rawValue(entry) === text ? STALE_RISK_READS : CONFIRM_READS,
+			reads: confirmReadsFor(entry, text),
 			maxMs: span,
 			read: async () => {
 				const hit = await hitTestField(observed.driver, entry);
 				if (hit.ok && hit.entry !== undefined)
 					return { ok: true, reading: { kind: "value", value: readValue(hit.entry) } };
-				const observation = await this.rt.tryObserve();
+				const observation = await this.rt.tryObserve({ reuse: false, alerts: false });
 				if (!observation.ok) return { ok: true, reading: { kind: "unreadable", note: "(unreadable)" } };
-				screen = this.rt.excerpt(observation.observed.snapshot);
+				lastSeen = observation.observed.snapshot;
 				const found = resolve(this.expr, observation.observed.index);
 				const [only] = found;
 				if (found.length !== 1 || only === undefined) {
@@ -564,17 +690,20 @@ export class Locator {
 			},
 		});
 		if (outcome.status === "confirmed") return { ok: true };
-		return { ok: false, held: outcome.status === "mismatch" ? outcome.held : "(unreadable)", screen };
+		const held = outcome.status === "mismatch" ? outcome.held : "(unreadable)";
+		return { ok: false, held, screen: lastSeen === undefined ? undefined : this.rt.excerpt(lastSeen) };
 	}
 }
 
-/** The strict one-match rule; the error carries the rendered screen. */
+/** The strict one-match rule; the error carries the rendered screen, which is only built when there is an error. */
 export function pickOne(
 	rt: Runtime,
 	expr: LocatorExpression,
 	entries: readonly NodeEntry[],
 	observed: Observed
 ): NodeEntry {
+	const [only] = entries;
+	if (only !== undefined && entries.length === 1) return only;
 	const result = exactlyOne(expr, entries, { screen: rt.excerpt(observed.snapshot) });
 	if (!result.success) throw result.error;
 	return result.data;
@@ -583,6 +712,62 @@ export function pickOne(
 /** Display text: the accessible name, else the text of everything inside. */
 export function textOf(entry: NodeEntry): string {
 	return normalizeText(entry.name ?? "") || entry.subtreeText;
+}
+
+/** A tap with `until` is sent again this many times, each given this long to show its result, checked this often. */
+const TAP_RETRIES = 2;
+const TAP_WINDOW_MS = 4000;
+const TAP_CHECK_MS = 250;
+
+type RetryPlan = { until: TapUntil; retries: number; windowMs: number; pollMs: number };
+
+function wholeNumber(name: string, value: number, atLeast: number): void {
+	if (!Number.isInteger(value) || value < atLeast) {
+		throw new E2eError(
+			"INVALID_ARGUMENT",
+			`tap ${name} must be an integer of at least ${atLeast}, got ${String(value)}`
+		);
+	}
+}
+
+/** The retry settings of a `tap`, validated; undefined for a plain tap. `retries`, `windowMs` and `pollMs` mean nothing without `until`. */
+function retryPlan(options: TapOptions): RetryPlan | undefined {
+	const { until, retries, windowMs, pollMs } = options;
+	if (until === undefined) {
+		const orphan = (["retries", "windowMs", "pollMs"] as const).filter((key) => options[key] !== undefined);
+		if (orphan.length > 0) {
+			throw new E2eError(
+				"INVALID_ARGUMENT",
+				`tap ${orphan.map((key) => `"${key}"`).join(", ")} only apply with "until"`
+			);
+		}
+		return undefined;
+	}
+	if (typeof until !== "function" && !isLocator(until)) {
+		throw new E2eError(
+			"INVALID_ARGUMENT",
+			'tap "until" must be a locator made by screen, or a function returning a promise of a boolean'
+		);
+	}
+	const plan: RetryPlan = {
+		until,
+		retries: retries ?? TAP_RETRIES,
+		windowMs: windowMs ?? TAP_WINDOW_MS,
+		pollMs: pollMs ?? TAP_CHECK_MS,
+	};
+	wholeNumber("retries", plan.retries, 0);
+	wholeNumber("windowMs", plan.windowMs, 1);
+	wholeNumber("pollMs", plan.pollMs, 1);
+	return plan;
+}
+
+function describeUntil(until: TapUntil): string {
+	return typeof until === "function" ? "check" : String(until);
+}
+
+/** The first attempt empties a field the quick way; a retry means that did not work, so it presses one Backspace per character. */
+function clearMethodFor(attempt: number): ClearMethod {
+	return attempt === 1 ? "auto" : "counted";
 }
 
 /** What the field shows, placeholder and all (used to compare against what was typed). */

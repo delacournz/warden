@@ -4,12 +4,13 @@ import FBSimulatorAX
 import FBSimulatorControl
 import Foundation
 
-/// `snapshot`, `elementAtPoint`, `alertButtons`: the AX read ops (plan WDN-E2E, `warden-simd` protocol v1).
+/// `snapshot`, `elementAtPoint`, `alertButtons`, `frontmost`: the read ops (plan WDN-E2E, `warden-simd` protocol v1).
 enum SnapshotOps {
   static let ops: [String: Dispatcher<Session>.OpHandler] = [
     "snapshot": { session, params in try await session.snapshot(SnapshotRequest(params)) },
     "elementAtPoint": { session, params in try await session.elementAtPoint(PointRequest(params, session: session)) },
-    "alertButtons": { session, _ in try await session.alertButtons() },
+    "alertButtons": { session, params in try await session.alertButtons(AlertRequest(params)) },
+    "frontmost": { session, params in try await session.frontmost(FrontmostRequest(params)) },
   ]
 }
 
@@ -161,25 +162,36 @@ extension Session {
     return false
   }
 
-  /// Runs `read`; when the app did not respond, runs `recover` (a fresh quiescence stream, see
+  /// The pid of the process that did not respond, when the error names one.
+  static func notRespondingPid(_ error: any Error) -> pid_t? {
+    if let error = error as? AXBridgeError, case let .applicationNotResponding(pid) = error { return pid }
+    if let error = error as? UIAutomationError, case let .applicationNotResponding(_, pid, _) = error { return pid }
+    return nil
+  }
+
+  /// Runs `read`; when the app did not respond, runs `recover` with the pid that did not (a stream bound to it, see
   /// `QuiescenceMonitor.recover`) and reads once more. Any other failure, and a second failure, propagate.
+  ///
+  /// This is the safety net: `rebind` (called when the client relaunches its app) binds the stream before the first
+  /// read, so a read only gets here for an app that was started some other way.
   static func readRecovering<Value>(
-    read: () async throws -> Value, recover: () async -> Void, log: (String) -> Void
+    read: () async throws -> Value, recover: (pid_t?) async -> Void, log: (String) -> Void
   ) async throws -> Value {
     do {
       return try await read()
     } catch {
       guard isNotResponding(error) else { throw error }
       log("axbridge: \(WireError.from(error).message); opening a quiescence stream and reading again")
-      await recover()
+      await recover(notRespondingPid(error))
       return try await read()
     }
   }
 
-  /// Gives the guest a stream bound to the current frontmost process. A no-op without a bridge.
-  func recoverBridge() async {
+  /// Gives the guest a stream bound to `pid` (the process that did not respond), or to the current frontmost process
+  /// without one. A no-op without a bridge.
+  func recoverBridge(pid: pid_t? = nil) async {
     guard let monitor = try? quiescenceMonitor() else { return }
-    await monitor.recover(timeoutMs: 4000)
+    await monitor.recover(pid: pid, timeoutMs: 4000)
   }
 
   /// Runs `body` on the requested reader (default: the session's `--ax`, i.e. `axbridge`). With no explicit
@@ -202,7 +214,7 @@ extension Session {
       do {
         let value = try await Session.readRecovering(
           read: { try await body(reader) },
-          recover: { await self.recoverBridge() },
+          recover: { pid in await self.recoverBridge(pid: pid) },
           log: { OpLog.shared.log(.warn, $0, op: op) })
         bridgeHealth.recordSuccess()
         return AXOutcome(value: value, backend: .axbridge, fallback: nil)
@@ -445,29 +457,74 @@ extension Session {
 
 // MARK: - alertButtons
 
+/// `alertButtons{backend?}`. No `backend`: both readers, `ax` first. `ax` / `axbridge`: only that reader.
+struct AlertRequest: Sendable, Equatable {
+  var backend: AXBackend?
+
+  init(_ params: JSON) throws {
+    backend = try parseBackend(params["backend"])
+  }
+
+  init(backend: AXBackend? = nil) {
+    self.backend = backend
+  }
+}
+
 extension Session {
   /// The system alert / sheet on top: its buttons (full elements, with `tapPoint`), plus `title` / `message` from its
-  /// static texts. `ax` is tried first because it sees SpringBoard-owned UI (permission prompts); then `axbridge`.
-  /// `null` when nothing modal is up.
-  func alertButtons() async throws -> JSON {
+  /// static texts. `null` when nothing modal is up.
+  ///
+  /// Without a `backend` both readers are asked, `ax` first because it sees SpringBoard-owned UI (permission prompts),
+  /// then `axbridge`, which also sees what an app shows itself (the Keychain sheet): a screen without an alert costs two
+  /// tree reads. With a `backend` only that reader is read, one read for the same answer when that reader is the one
+  /// that sees what the caller is after; its failure is the op's failure (nothing else answered), and an `axbridge` read
+  /// that finds a modal but no readable button answers `{buttons: []}` so the caller can look again.
+  func alertButtons(_ request: AlertRequest) async throws -> JSON {
     var options = AccessibilityRequestOptions(format: .complete, keys: wireKeys)
     options.filter = .all
     let readOptions = options
+    let screen = self.screen
+    return try await Session.answerAlert(request, screen: screen) { backend in
+      guard let reader = backend == .ax ? self.axHostReader : self.axBridgeReader else { return nil }
+      return try await reader.describe(.frontmost, options: readOptions).document
+    }
+  }
+
+  /// The decision behind `alertButtons`, over a reader function (`nil` = that reader does not exist) so a scripted
+  /// sequence can test it.
+  static func answerAlert(
+    _ request: AlertRequest, screen: (width: Double, height: Double, scale: Double),
+    read: (AXBackend) async throws -> AccessibilityDocument?
+  ) async throws -> JSON {
+    let backends: [AXBackend] = request.backend.map { [$0] } ?? [.ax, .axbridge]
     var lastError: (any Error)?
     var answered = false
-    for backend in [AXBackend.ax, .axbridge] {
-      guard let reader = backend == .ax ? axHostReader : axBridgeReader else { continue }
+    var modalOnly: JSON?
+    for backend in backends {
       do {
-        let document = try await reader.describe(.frontmost, options: readOptions).document
+        guard let document = try await read(backend) else { continue }
         answered = true
-        if let alert = Session.renderAlert(document: document, backend: backend, screen: screen) { return alert }
+        if let alert = renderAlert(document: document, backend: backend, screen: screen) { return alert }
+        if request.backend != nil, backend == .axbridge, modalOnly == nil {
+          modalOnly = modalWithoutButtons(document: document)
+        }
       } catch {
         lastError = error
       }
     }
     // Only a total failure is an error; one reader answering "no alert" is an answer.
-    if !answered, let lastError { throw lastError }
-    return .null
+    if !answered {
+      if let lastError { throw lastError }
+      if let backend = request.backend { throw WireError(.axUnavailable, "the \(backend.rawValue) reader is unavailable") }
+    }
+    return modalOnly ?? .null
+  }
+
+  /// idb names a blocking modal (`document.modal`) but no container with a button was found in the tree: the sheet is
+  /// there and its buttons are not readable yet (still animating in, or not built).
+  static func modalWithoutButtons(document: AccessibilityDocument) -> JSON? {
+    guard let modal = document.modal else { return nil }
+    return .object(["buttons": .array([]), "title": .string(modal.label ?? modal.elementType)])
   }
 
   /// The `alertButtons` payload for one read, or nil when that read shows no alert.
@@ -494,5 +551,85 @@ extension Session {
     if let title = texts.first ?? alert.label { fields["title"] = .string(title) }
     if texts.count > 1 { fields["message"] = .string(texts[1]) }
     return .object(fields)
+  }
+}
+
+// MARK: - frontmost
+
+/// `frontmost{bundleId}`.
+struct FrontmostRequest: Sendable, Equatable {
+  var bundleId: String
+
+  init(_ params: JSON) throws {
+    guard let id = params["bundleId"]?.stringValue, !id.isEmpty else {
+      throw WireError(.badRequest, "frontmost needs a non-empty \"bundleId\"")
+    }
+    bundleId = id
+  }
+}
+
+extension Session {
+  /// Whether `bundleId`'s process is the one the quiescence stream reports as frontmost: the helper's own state, no tree
+  /// read and no waiting (what `settle{bundleId}` decides, without its wait, its quiet judgement or its stream restarts).
+  /// The launchd lookup that turns the bundle id into a pid costs ~150 ms, so the pid is remembered per bundle (by this op and by `settle{bundleId}`): while
+  /// the stream's frontmost pid is that remembered pid and the process still exists, the answer is a comparison. Any
+  /// other state (first call, a relaunch, another app in front) looks the pid up again. A stream that has reported
+  /// nothing yet answers `frontmost: false`: the stream is opened here when it is not open, so the next call knows.
+  /// Needs the bridge, like `settle`.
+  func frontmost(_ request: FrontmostRequest) async throws -> JSON {
+    guard axDefault == "axbridge", axBridgeReader != nil else {
+      throw WireError(.unsupported, "frontmost needs the axbridge backend (ax: \(axDefault), bridge: \(bridge.name))")
+    }
+    let monitor = try quiescenceMonitor()
+    await monitor.start()
+    let front = await monitor.currentFrontmostPid()
+    if let front,
+      Session.cachedPidIsFrontmost(
+        cached: bundlePids.pid(for: request.bundleId), frontmost: front, isAlive: Session.processExists)
+    {
+      return Session.frontmostReply(target: front, frontmost: front)
+    }
+    let target = await resolveBundlePid(request.bundleId)
+    return Session.frontmostReply(target: target, frontmost: await monitor.currentFrontmostPid())
+  }
+
+  /// The pid of the running process of `bundleId` (one launchd lookup, ~150 ms), nil when it is not running. Remembered
+  /// per bundle for `frontmost`, so the lookup `settle{bundleId}` already paid is not paid again by the next probe.
+  func resolveBundlePid(_ bundleId: String) async -> pid_t? {
+    let pid: pid_t? = try? await simulator.application.processID(forBundleID: bundleId)
+    bundlePids.remember(pid, for: bundleId)
+    return pid
+  }
+
+  /// The remembered pid of the bundle is the frontmost one and that process still runs. A stream stuck on the pid of an
+  /// app that was relaunched reports a dead pid, which must not count as the new process being in front.
+  static func cachedPidIsFrontmost(cached: pid_t?, frontmost: pid_t?, isAlive: (pid_t) -> Bool) -> Bool {
+    guard let cached, let frontmost, cached == frontmost else { return false }
+    return isAlive(frontmost)
+  }
+
+  /// Simulator processes are host processes: signal 0 only checks that the pid exists.
+  static func processExists(_ pid: pid_t) -> Bool {
+    kill(pid, 0) == 0 || errno == EPERM
+  }
+
+  static func frontmostReply(target: pid_t?, frontmost: pid_t?) -> JSON {
+    var reply: [String: JSON] = ["frontmost": .bool(target != nil && target == frontmost)]
+    if let target { reply["pid"] = .int(Int(target)) }
+    if let frontmost { reply["frontmostPid"] = .int(Int(frontmost)) }
+    return .object(reply)
+  }
+}
+
+/// The pid each bundle id last resolved to (see `Session.frontmost`).
+final class BundlePidMemory: @unchecked Sendable {
+  private let lock = NSLock()
+  private var pids: [String: pid_t] = [:]
+
+  func pid(for bundleId: String) -> pid_t? { lock.withLock { pids[bundleId] } }
+
+  /// `nil` forgets the bundle.
+  func remember(_ pid: pid_t?, for bundleId: String) {
+    lock.withLock { pids[bundleId] = pid }
   }
 }

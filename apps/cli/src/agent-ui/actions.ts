@@ -9,11 +9,11 @@ import {
 	visibleRect,
 } from "@delacour/warden-e2e/screen/actions";
 import {
-	CONFIRM_READS,
+	type ClearMethod,
 	confirmFieldValue,
+	confirmReadsFor,
 	focusClearType,
 	hitTestField,
-	STALE_RISK_READS,
 } from "@delacour/warden-e2e/screen/field";
 import { entryOfElement, indexSnapshot, type NodeEntry } from "@delacour/warden-e2e/screen/nodes";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -163,7 +163,7 @@ async function readBack(
 		now: ctx.now,
 		sleep: deps.sleep,
 		...limits,
-		reads: text !== "" && fieldValue(wanted) === text ? STALE_RISK_READS : CONFIRM_READS,
+		reads: confirmReadsFor(wanted, text),
 		read: async () => {
 			const read = await readField(driver, wanted);
 			if (!read.success) return { ok: false, error: read.error };
@@ -201,7 +201,10 @@ type FillPlan = {
 	maxMs: number;
 };
 
-/** Focus, empty and type; with `verify` read the field back and retry once. Resolves to what `fill` reports as `verified`. */
+/**
+ * Focus, empty and type; with `verify` read the field back and retry once, backspacing one key per character that
+ * time (the first attempt selects all where the driver can). Resolves to what `fill` reports as `verified`.
+ */
 async function typeAndConfirm(
 	ctx: CommandContext,
 	deps: UiDeps,
@@ -212,7 +215,8 @@ async function typeAndConfirm(
 	const { entry, text } = plan;
 	const readable = plan.verify && !plan.secure && entry !== undefined;
 	for (let attempt = 1; attempt <= (readable ? 2 : 1); attempt += 1) {
-		const typed = fromDriver(await focusClearType(driver, deps.sleep, caretPoint(resolved), entry, text));
+		const method: ClearMethod = attempt === 1 ? "auto" : "counted";
+		const typed = fromDriver(await focusClearType(driver, deps.sleep, caretPoint(resolved), entry, text, method));
 		if (!typed.success) return typed;
 		if (!readable) break;
 		const back = await readBack(ctx, deps, driver, entry, text, { budgetMs: plan.budgetMs, maxMs: plan.maxMs });

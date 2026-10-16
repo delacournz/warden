@@ -80,7 +80,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `appearance` | `[light\|dark]` | no arg reads it |
 | `screenshot` | `[path]` | default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
 | `video` | `start [path]` / `stop` | 3 min device limit |
-| `wait` | `<sel>` / `absent <sel>` / `text "..."` / `stable [ms=250]` | polls 100 ms up to `--timeout` |
+| `wait` | `<sel>` / `absent <sel>` / `text "..."` / `stable [ms=250]` | polls 100 ms for 1 s, then 250 ms, up to `--timeout` |
 | `is` | `<sel> visible\|hittable\|enabled\|checked\|selected\|focused` | exit 0 true, 1 false (JSON still `ok:true`) |
 | `get` | `<sel> text\|value\|label\|id\|role\|frame\|count` | `frame` = `x y w h`; `count` 0 is success |
 | `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets; stops the device's helper: unshared device only |
@@ -159,9 +159,9 @@ Secrets: `fill --secure` text is never stored. Set `WARDEN_UI_SECRET_<NAME>` whi
 
 ## Android differences
 
-- Snapshots are `uiautomator dump`: 0.8-2.4 s. The first call probes three dump routes; an empty dump is retried 3 times, 400 ms apart, then `E_AX_UNAVAILABLE` (exit 3).
+- Snapshots come from `warden-uiad`, a small UiAutomation server warden starts on the emulator with each command (about 0.1 s, then 10-40 ms per snapshot, taps and typing in tens of ms, non-ASCII text works). Without it (`WARDEN_ANDROID_UIAD=0`, Android < 8, a device it cannot run on) snapshots are `uiautomator dump`: 0.8-2.4 s, the first call probes three dump routes. An empty tree is retried 3 times, 400 ms apart, then `E_AX_UNAVAILABLE` (exit 3). Only one UiAutomation client can be on a device: when Maestro, an `am instrument` run or a `uiautomator` command holds it, snapshot and settle fail naming it (see troubleshooting 23).
 - `id=` is the resource-id / testID without package prefix; `hittable` is derived.
-- No pinch, no clipboard, no non-ASCII text (`E_UNSUPPORTED`, `E_UNSUPPORTED_TEXT`), no `--metro`/`--args` on `open <bundleId>`.
+- No pinch, no clipboard, no `--metro`/`--args` on `open <bundleId>`; non-ASCII text needs the server (`E_UNSUPPORTED_TEXT` without it).
 - `status` showing `helper not started` is normal (no helper process).
 - `back`, `home`, `rotate`, `appearance`, `video` work.
 

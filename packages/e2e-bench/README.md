@@ -65,6 +65,15 @@ These are printed in every report:
 - Warm medians exclude rep 1 (cold)
 - Machine-readable reporters only
 - Host otherwise idle; load average recorded
+- Android `sim` counts the app and every framework's on-device helpers, matched case-insensitively
+- Host processes are tracked by pid and start time, so a reused pid is never counted
+- Android animation scales are reset to the device's original values before every framework and restored at the end
+
+Resource sampling, in detail:
+
+- **Android `sim`** is `adb shell top -n 1` every 2 s, filtered by name (`src/harness/sampler.ts`, `ANDROID_TARGET`): the app under test and its `.test` apk, `uiautomator`, instrumentation runners (`instrumentation`, which also catches agent-device's `SnapshotInstrumentation`), `dev.mobile.maestro*`, `com.callstack.agentdevice*`, `com.argent.*` and `warden-uiad`. It is case-insensitive, because helper class names differ in case. A helper that renames its `app_process` (as `warden-uiad` does) shows up under the new name in `top`; add its name there when a framework gains a resident helper with a name this list does not cover. Before this the pattern was case-sensitive and only knew warden's helpers, so Maestro's and agent-device's drivers were missing from their `sim` column and warden looked heavier than it was (first Android run, `v2-android-r2`: warden 384 MB average against 236 to 268 MB for agent-device and Maestro).
+- **Host** processes are the framework's process tree plus every pid the bench spawned. The bench keeps every spawned pid for the whole session, and the OS reuses pids, so each pid is stamped with its `ps lstart` the first time the sampler sees it and only counts while that start time matches. A spawned child that had already exited before the sampler first looked is never trusted again. Android's `top` rows are matched by name on every read, so no pid is carried over there.
+- **Animation scales.** Warden's Android driver sets `window_animation_scale`, `transition_animation_scale` and `animator_duration_scale` to 0 for its run. Left alone, every framework measured after warden would run on a device with animations off. At bench start the harness records the three values (`adb shell settings get global …`; unset is recorded as unset), `isolate` resets them before every framework's prepare, and the run restores them when it ends. Warden's driver restoring them itself is a separate fix; the harness reset stays as defence in depth. A device that a previous warden run already left at 0 is recorded as 0: reset it by hand (`adb shell settings put global window_animation_scale 1.0`, same for the other two) before a bench run.
 
 The build comes from `warden app ensure` (Release, `EXPO_PUBLIC_E2E=1`) and runs once before any framework. App state is in memory, so every launch starts signed out on the welcome screen. Between frameworks the harness stops the previous one's daemons, stops the `warden-simd` helper before a non-warden framework (a second accessibility client on one sim degrades its settle from ~260 ms to ~2.5 s), and uninstalls driver apps before a cold rep.
 
@@ -74,11 +83,11 @@ Each framework expresses the same retries in its own idiom. Gaps that remain are
 
 | Framework | Selector | Retry and conditionals | Assertion gaps | Other |
 |---|---|---|---|---|
-| warden | `screen.getByTestId` | shared `tapUntil` / `openDeepLink` helpers | none | reference suite, copied from `apps/example/e2e` minus devtools |
+| warden | `screen.getByTestId` | built-in options: `tap({ until })` (4 s a press, two re-sends), `openDeepLink` (3 links, 6 s each), `test.use({ systemAlerts: "dismiss" })`, `app.open({ wait: "quiet" })` | none | copied from `apps/example/e2e` minus devtools. The hand-rolled `tapUntil` version it replaced is what the published headline numbers (`docs/bench/*-perf.md`) ran; the idiomatic run is reported beside them |
 | maestro | `id:` | `retry:` blocks rerun the tap and the wait together (`common/tap-until.yaml`, `next-step.yaml`) | checkbox state read via accessibility text `checkbox, checked` | JVM driver; step durations include Maestro's own polling, compare per-test totals |
 | argent | `{ id }` | `when:` guards instead of loops (`fragments/next-*.yaml`), nested to cap retaps at 2 | checkbox checked state is not readable; the remaining-count assertion covers the effect | `flow run` uses its own server (`argent server start/stop`) |
 | agent-device | `id="..."` | `.ad` scripts have no retry or conditional: plain `wait` / `press` | none | needs `prepare ios-runner` and a daemon; cold cost is measured |
-| tester-army | `screen.getByTestId` | same `tapUntil` helpers as warden | none | `AGENT_DEVICE_STATE_DIR` is private (`BENCH_TESTER_ARMY_STATE_DIR`) so it never shares a daemon with agent-device; needs Node 24 on `PATH` |
+| tester-army | `screen.getByTestId` | its own copy of the hand-rolled `tapUntil` helpers warden used before PERF-6.3 | none | `AGENT_DEVICE_STATE_DIR` is private (`BENCH_TESTER_ARMY_STATE_DIR`) so it never shares a daemon with agent-device; needs Node 24 on `PATH` |
 | detox | `by.id` | `tapUntil` port in `helpers/flows.js` | none | best effort: Detox 20.51 supports RN up to 0.84, the app is 0.86. Any attach or sync failure is reported as `unsupported`. System alerts are avoided by pre-granted permissions, not dismissed. Android needs an instrumented build, so it is `unsupported` unless `BENCH_DETOX_ANDROID=1` |
 
 A native test name that does not map to a canonical id is a parity breach: that framework is `failed` in phase `run`.

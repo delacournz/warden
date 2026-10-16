@@ -1,5 +1,6 @@
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
+import { type GitFactsCache, readGitFacts } from "../git-facts";
 import type { PidAlive } from "../liveness";
 import type { Store } from "../store";
 import type { Owner, Platform } from "../types";
@@ -9,9 +10,10 @@ import { bundleIdFor, type EasSettings, loadProject, type Project } from "./conf
 import { type Download, resolveFromEas } from "./eas";
 import {
 	appMatchesArtifact,
+	type FileSize,
 	installApp,
-	isAppInstalled,
 	nodeResetFs,
+	probeApp,
 	type ResetFs,
 	resetAppData,
 	resetSimKeychain,
@@ -38,12 +40,14 @@ export type ProjectContextInput = {
 	variant?: string;
 	/** a missing variant falls back to the project's own settings */
 	variantOptional?: boolean;
+	/** per-command memo of the git facts (default: a short-lived shared one) */
+	git?: GitFactsCache;
 };
 
 /** Load the project for `start` (bounded by its git toplevel) and compute its project key. */
 export async function projectContext(input: ProjectContextInput): AsyncResult<ProjectContext> {
-	const top = await input.exec(["git", "rev-parse", "--show-toplevel"], { cwd: input.start });
-	const stopAt = top.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : undefined;
+	const facts = await readGitFacts(input.exec, input.start, input.git);
+	const stopAt = facts?.toplevel;
 	const project = loadProject({
 		start: input.start,
 		env: input.env,
@@ -54,7 +58,7 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 		...(input.variantOptional ? { variantOptional: true } : {}),
 	});
 	if (!project.success) return project;
-	const key = await readProjectKey(input.exec, project.data.root);
+	const key = await readProjectKey(input.exec, project.data.root, input.git);
 	if (!key.success) return key;
 	return ok({ project: project.data, projectKey: key.data });
 }
@@ -87,9 +91,13 @@ export type EnsureInput = ProjectContext & {
 	resetKeychain?: boolean;
 	/** filesystem for `installMode: "clean"`'s data wipe (default node:fs) */
 	resetFs?: ResetFs;
+	/** file sizes for the installed-app identity check (default node:fs) */
+	fileSize?: FileSize;
 	download?: Download;
 	easPollMs?: number;
 	lockPollMs?: number;
+	/** per-command memo of the git facts, shared with `projectContext` (default: a short-lived shared one) */
+	git?: GitFactsCache;
 };
 
 /**
@@ -197,6 +205,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 				now: input.now,
 				log: input.log,
 				...(project.compilerCache === false ? { compilerCache: false } : {}),
+				...(input.git ? { git: input.git } : {}),
 			});
 			if (!built.success) return built;
 			const stored = await cache(built.data, "build", false);
@@ -209,11 +218,12 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		const bundleId = bundleIdFor(project, platform);
 		if (!bundleId.success) return bundleId;
 		const target = { platform, deviceId };
-		const deps = { exec: input.exec, env };
+		const deps = { exec: input.exec, env, ...(input.fileSize ? { fileSize: input.fileSize } : {}) };
 		steps.device = {
 			installedHash: () => getInstall(store, platform, deviceId, bundleId.data)?.hash,
-			confirm: () => isAppInstalled(deps, target, bundleId.data),
-			matches: (cachedPath) => appMatchesArtifact(deps, target, bundleId.data, cachedPath),
+			confirm: () => probeApp(deps, target, bundleId.data),
+			matches: (cachedPath, installed) =>
+				appMatchesArtifact(deps, target, bundleId.data, cachedPath, installed.container),
 			uninstall: async () => {
 				input.log(`uninstalling ${bundleId.data} from ${deviceId} (${input.installMode ?? "reinstall"})`);
 				const gone = await uninstallApp(deps, target, bundleId.data);

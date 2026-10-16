@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
-import type { AsyncResult } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { BenchAdapter } from "../adapters/adapter.types";
 import type { Platform } from "../results/schema";
-import type { Exec } from "./exec";
+import { type Exec, runOk } from "./exec";
 import { killMatching, listDriverApps, type Owner } from "./residue";
 
 /** Every framework's long-lived helpers; killed (only when owned by this bench) so one never inherits another's daemons. */
@@ -37,6 +37,8 @@ export type IsolateInput = {
 	sleep?: (ms: number) => Promise<void>;
 	/** max `sys.boot_completed` polls after an Android reboot (1 s apart) */
 	bootPolls?: number;
+	/** the device's original animation scales by serial (tests inject their own; default is process-wide) */
+	animationBaselines?: AnimationBaselines;
 };
 
 export type IsolateOutcome = { killed: string[]; uninstalled: string[]; rebooted: boolean };
@@ -117,6 +119,122 @@ async function rebootAndroid(input: IsolateInput): Promise<string | undefined> {
 	return "android did not finish booting";
 }
 
+/**
+ * Android's three global animation scales. Warden's driver sets all of them to 0 for the run, so every
+ * framework measured after it would otherwise run on a device with animations off.
+ */
+export const ANIMATION_SETTINGS = [
+	"window_animation_scale",
+	"transition_animation_scale",
+	"animator_duration_scale",
+] as const;
+
+export type AnimationSetting = (typeof ANIMATION_SETTINGS)[number];
+
+/** Each scale as `settings get` printed it; `undefined` when the key is unset (`null`). */
+export type AnimationScales = Readonly<Record<AnimationSetting, string | undefined>>;
+
+/** The device's original scales by serial, recorded once per bench. */
+export type AnimationBaselines = Map<string, AnimationScales>;
+
+const processBaselines: AnimationBaselines = new Map();
+
+/** A plain non-negative number: the only thing ever written back to a device shell. */
+const SCALE_VALUE = /^\d+(\.\d+)?$/;
+
+async function readScale(exec: Exec, serial: string, key: AnimationSetting): AsyncResult<string | undefined> {
+	const r = await runOk(exec, "adb", ["-s", serial, "shell", "settings", "get", "global", key], { timeoutMs: 10_000 });
+	if (!r.success) return r;
+	const text = r.data.stdout.trim();
+	if (text === "null") return ok(undefined);
+	return SCALE_VALUE.test(text) ? ok(text) : err(`${key}: unexpected value '${text}'`);
+}
+
+/** The device's current animation scales (`adb shell settings get global …`). */
+export async function readAnimationScales(exec: Exec, serial: string): AsyncResult<AnimationScales> {
+	const windowScale = await readScale(exec, serial, "window_animation_scale");
+	if (!windowScale.success) return windowScale;
+	const transition = await readScale(exec, serial, "transition_animation_scale");
+	if (!transition.success) return transition;
+	const animator = await readScale(exec, serial, "animator_duration_scale");
+	if (!animator.success) return animator;
+	return ok({
+		window_animation_scale: windowScale.data,
+		transition_animation_scale: transition.data,
+		animator_duration_scale: animator.data,
+	});
+}
+
+/** Remembers the device's animation scales the first time it is asked; later calls return that first reading. */
+export async function recordAnimationScales(
+	exec: Exec,
+	serial: string,
+	baselines: AnimationBaselines = processBaselines
+): AsyncResult<AnimationScales> {
+	const known = baselines.get(serial);
+	if (known !== undefined) return ok(known);
+	const read = await readAnimationScales(exec, serial);
+	if (read.success) baselines.set(serial, read.data);
+	return read;
+}
+
+/**
+ * Puts back every animation scale that differs from the recorded original (`settings put`, or
+ * `settings delete` for a key that was unset) and returns what changed as `key was -> original`.
+ * Nothing recorded for the serial means nothing to restore. Tries every setting before reporting a failure.
+ */
+export async function restoreAnimationScales(
+	exec: Exec,
+	serial: string,
+	baselines: AnimationBaselines = processBaselines
+): AsyncResult<string[]> {
+	const original = baselines.get(serial);
+	if (original === undefined) return ok([]);
+	const current = await readAnimationScales(exec, serial);
+	if (!current.success) return current;
+	const changed: string[] = [];
+	const failures: string[] = [];
+	for (const key of ANIMATION_SETTINGS) {
+		const was = current.data[key];
+		const want = original[key];
+		if (was === want) continue;
+		const verb = want === undefined ? ["delete", "global", key] : ["put", "global", key, want];
+		const r = await runOk(exec, "adb", ["-s", serial, "shell", "settings", ...verb], { timeoutMs: 10_000 });
+		if (r.success) changed.push(`${key} ${was ?? "unset"} -> ${want ?? "unset"}`);
+		else failures.push(r.error);
+	}
+	return failures.length === 0 ? ok(changed) : err(failures.join("; "));
+}
+
+const showScales = (scales: AnimationScales): string =>
+	ANIMATION_SETTINGS.map((key) => `${key}=${scales[key] ?? "unset"}`).join(" ");
+
+/**
+ * Android: the first call records the device's animation scales (nothing of this bench has run yet), every
+ * later call resets them to that reading, so a framework never inherits the previous one's zeroed
+ * animations. A problem is logged, not fatal: it must not turn into a failed framework.
+ */
+async function resetAnimationScales(input: IsolateInput): Promise<void> {
+	if (input.platform !== "android") return;
+	const { exec, udid, log } = input;
+	const baselines = input.animationBaselines ?? processBaselines;
+	if (!baselines.has(udid)) {
+		const recorded = await recordAnimationScales(exec, udid, baselines);
+		log(
+			recorded.success
+				? `recorded animation scales ${showScales(recorded.data)}`
+				: `animation scales: ${recorded.error}`
+		);
+		return;
+	}
+	const restored = await restoreAnimationScales(exec, udid, baselines);
+	if (!restored.success) {
+		log(`animation scales: ${restored.error}`);
+		return;
+	}
+	for (const line of restored.data) log(`restored animation scale ${line}`);
+}
+
 /** Terminates the app under test so the next framework launches it fresh. */
 async function stopApp(input: IsolateInput): Promise<void> {
 	const { exec, platform, udid, bundleId } = input;
@@ -126,7 +244,8 @@ async function stopApp(input: IsolateInput): Promise<void> {
 
 /**
  * Resets the device between frameworks: kill every known helper, stop servers through their CLIs,
- * optionally uninstall the next framework's driver apps (cold) and reboot, then stop the app.
+ * optionally uninstall the next framework's driver apps (cold) and reboot, reset Android's animation
+ * scales to what the device had at bench start, then stop the app.
  */
 export async function isolate(input: IsolateInput): AsyncResult<IsolateOutcome> {
 	const patterns = [...(input.previous?.residuePatterns.processes ?? []), ...KNOWN_PROCESS_PATTERNS];
@@ -142,6 +261,7 @@ export async function isolate(input: IsolateInput): AsyncResult<IsolateOutcome> 
 		if (error !== undefined) return { success: false, error };
 		rebooted = true;
 	}
+	await resetAnimationScales(input);
 	await stopApp(input);
 	return { success: true, data: { killed, uninstalled, rebooted } };
 }

@@ -4,14 +4,13 @@ import { join } from "node:path";
 import { openStore } from "@delacour/warden-core/store";
 import type { Owner } from "@delacour/warden-core/types";
 import { gcCommand } from "../commands/gc";
+import { hookCommand } from "../commands/hook";
 import { releaseCommand } from "../commands/release";
 import { createUiCommand } from "../commands/ui";
-import { handleSessionEnd } from "../hooks/claude-pretool";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
-import { stopHelperAfter } from "./close";
 import { defaultUiDeps } from "./driver";
-import { defaultHelperDeps, ensureHelper, type HelperDeps, helperStatus, stopHelper } from "./helper";
+import { defaultHelperDeps, ensureHelper, type HelperDeps, helperStatus, ownerKey, stopHelper } from "./helper";
 import { readState } from "./state";
 
 /**
@@ -61,6 +60,7 @@ function fakeDeps(scriptPath: string): HelperDeps {
 			const out = defaultHelperDeps.spawnDetached({
 				cmd: [process.execPath, FAKE, "--script", scriptPath, ...spec.cmd.slice(1)],
 				logPath: spec.logPath,
+				signalMs: spec.signalMs,
 			});
 			pids.push(out.pid);
 			return out;
@@ -159,9 +159,9 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		expect(existsSync(socketPath)).toBe(false);
 	});
 
-	test("`warden release` stops the device's helper", async () => {
+	test("`warden release` leaves the helper resident: same pid, socket still answering, status running", async () => {
 		const c = setup();
-		const { socketPath } = await startHelper(c);
+		const { socketPath, info } = await startHelper(c);
 		const lease = c.db.insertLease(
 			{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner: me, ttlMs: 3_600_000 },
 			c.now()
@@ -169,12 +169,30 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		c.argv = [lease.id];
 		expect(await releaseCommand.run(c)).toBe(0);
 		expect(c.db.listLeases()).toHaveLength(0);
+		expect(existsSync(socketPath)).toBe(true);
+		expect(helperStatus(c, UDID)).toMatchObject({ running: true, pid: info.pid });
+		expect(readState(c, UDID).helper).toMatchObject({ pid: info.pid });
+	});
+
+	test("`warden release --shutdown` stops the helper and forgets it", async () => {
+		const c = setup();
+		const { socketPath } = await startHelper(c);
+		const lease = c.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner: me, ttlMs: 3_600_000 },
+			c.now()
+		);
+		c.argv = ["--shutdown", lease.id];
+		expect(await releaseCommand.run(c)).toBe(0);
+		expect(c.db.listLeases()).toHaveLength(0);
 		expect(existsSync(socketPath)).toBe(false);
 		expect(readState(c, UDID).helper).toBeUndefined();
 	});
 
-	test("SessionEnd stops the helper of every device the session held", async () => {
+	test("SessionEnd releases the session's leases but leaves the device's helper resident", async () => {
 		const c = setup();
+		c.env = { ...c.env, WARDEN_BACKGROUND: "0" };
+		c.readStdin = async () => JSON.stringify({ session_id: "s1", reason: "other" });
+		c.argv = ["session-end"];
 		const { socketPath } = await startHelper(c);
 		c.db.insertLease(
 			{
@@ -184,20 +202,99 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 			},
 			c.now()
 		);
-		const res = await handleSessionEnd(
-			{ session_id: "s1", reason: "other" },
-			{
-				store: () => c.db,
-				now: c.now,
-				pidAlive: () => true,
-				shutdown: async () => ({ shutdown: [], notes: [] }),
-				endInBackground: () => false,
-				stopHelper: stopHelperAfter(c),
-			}
-		);
-		expect(res.exitCode).toBe(0);
+		expect(await hookCommand.run(c)).toBe(0);
 		expect(c.db.listLeases()).toHaveLength(0);
-		expect(existsSync(socketPath)).toBe(false);
+		expect(existsSync(socketPath)).toBe(true);
+	});
+
+	test("the next run on the device reuses the resident helper: same pid, nothing spawned", async () => {
+		const c = setup();
+		const first = await startHelper(c);
+		const connects = { spawnedAgain: 0 };
+		const deps: HelperDeps = {
+			...first.deps,
+			spawnDetached: (spec) => {
+				connects.spawnedAgain += 1;
+				return first.deps.spawnDetached(spec);
+			},
+		};
+		const again = await ensureHelper(c, UDID, {
+			socketPath: first.socketPath,
+			helperPath: "/fake/warden-simd",
+			keepClient: true,
+			deps,
+		});
+		expect(again).toMatchObject({ success: true, data: { spawned: false } });
+		expect(connects.spawnedAgain).toBe(0);
+		if (again.success) await again.data.client?.close();
+		expect(helperStatus(c, UDID).pid).toBe(first.info.pid ?? null);
+	});
+
+	test("the lease passing to another owner replaces the resident helper (a new pid, the old one gone)", async () => {
+		const c = setup();
+		const a: Owner = { kind: "agent", sessionId: "A", cwd: "/w" };
+		const b: Owner = { kind: "agent", sessionId: "B", cwd: "/w" };
+		const lease = c.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner: a, ttlMs: 3_600_000 },
+			c.now()
+		);
+		const first = await startHelper(c);
+		expect(readState(c, UDID).helper?.owner).toBe(ownerKey(a));
+		c.db.deleteLeases([lease.id]);
+		c.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner: b, ttlMs: 3_600_000 },
+			c.now()
+		);
+		const second = await ensureHelper(c, UDID, {
+			socketPath: first.socketPath,
+			helperPath: "/fake/warden-simd",
+			deps: first.deps,
+		});
+		expect(second).toMatchObject({ success: true, data: { spawned: true } });
+		expect(second.success && second.data.pid).not.toBe(first.info.pid);
+		expect(() => process.kill(first.info.pid ?? 0, 0)).toThrow();
+		expect(readState(c, UDID).helper?.owner).toBe(ownerKey(b));
+	});
+
+	/** `ensureHelper` against a fake helper that announces itself as `announce`; counts connects made after the spawn. */
+	async function startAnnouncing(announce: "ready" | "legacy" | "none") {
+		const c = setup();
+		const socketPath = join(dir, "simd", `${UDID}.sock`);
+		const seen = { connectsAfterSpawn: 0, spawned: false };
+		const base = fakeDeps(script({ announce }));
+		const deps: HelperDeps = {
+			...base,
+			connect: (path) => {
+				if (seen.spawned) seen.connectsAfterSpawn += 1;
+				return base.connect(path);
+			},
+			spawnDetached: (spec) => {
+				seen.spawned = true;
+				return base.spawnDetached(spec);
+			},
+		};
+		const began = Date.now();
+		const res = await ensureHelper(c, UDID, { socketPath, helperPath: "/fake/warden-simd", deps });
+		return { c, res, seen, ms: Date.now() - began };
+	}
+
+	test("a helper that prints its ready line is connected to once, right after the spawn", async () => {
+		const { c, res, seen } = await startAnnouncing("ready");
+		expect(res).toMatchObject({ success: true, data: { spawned: true } });
+		expect(seen.connectsAfterSpawn).toBe(1);
+		expect(readState(c, UDID).helper?.pid).toBeGreaterThan(0);
+	});
+
+	test("an older helper that only logs `listening on …` is just as fast", async () => {
+		const { res, seen } = await startAnnouncing("legacy");
+		expect(res).toMatchObject({ success: true, data: { spawned: true } });
+		expect(seen.connectsAfterSpawn).toBe(1);
+	});
+
+	test("a helper that prints nothing still starts: the socket poll takes over after the signal wait", async () => {
+		const { res, ms } = await startAnnouncing("none");
+		expect(res).toMatchObject({ success: true, data: { spawned: true } });
+		expect(ms).toBeLessThan(4000);
 	});
 
 	test("gc removes the socket of a helper whose recorded pid is dead", async () => {

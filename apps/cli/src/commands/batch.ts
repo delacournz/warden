@@ -4,20 +4,24 @@ import type { Command as Commander, OptionValues } from "@commander-js/extra-typ
 import { expandArgv, expandText, jobSlug, parseJobLines, parseJobList } from "@delacour/warden-core/batch/expand";
 import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delacour/warden-core/batch/preset";
 import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "@delacour/warden-core/batch/schedule";
+import type { ClaimOutcome } from "@delacour/warden-core/claim";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
+import { readGitFacts } from "@delacour/warden-core/git-facts";
 import { resolveHeadless } from "@delacour/warden-core/headless";
 import { isPortFree } from "@delacour/warden-core/ports";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
-import { readResults } from "@delacour/warden-e2e/runner/results";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
-import { type FlowMark, flowOf, resultsMarks, type TrackedFlow, testLine } from "../batch/flow-progress";
+import { type EarlyWarm, startEarlyWarm } from "../batch/early-warm";
+import { flowPoller } from "../batch/flow-poller";
+import type { FlowMark, TrackedFlow } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
+import { type ReadFrom, readFileFrom } from "../batch/results-tail";
 import { type RunnerReport, resultsReport } from "../batch/runner-report";
 import { captureScreenshot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
@@ -36,8 +40,9 @@ import {
 	render,
 	withRunners,
 } from "../batch/tui";
-import { type WarmConnect, type WarmHelper, warmDrivers } from "../batch/warm-drivers";
+import type { WarmConnect, WarmHelper } from "../batch/warm-drivers";
 import {
+	bootedByClaim,
 	type ClaimFlags,
 	type ClaimFlagValues,
 	parseClaimFlags,
@@ -76,6 +81,7 @@ import {
 	type MetroOwner,
 	metroOwner,
 	prewarmMetro,
+	resolveExpoBin,
 	startMetro,
 } from "../metro";
 import { emit, note, reportError, warn } from "../output";
@@ -125,6 +131,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	/** write a file, creating its parent dirs */
 	writeFile: (path: string, data: string) => Promise<void>;
 	readFile: (path: string) => Promise<string>;
+	/** a file from a byte offset on: how the flow poller reads only what a `results.jsonl` gained */
+	readFrom: ReadFrom;
 	mkdir: (dir: string) => Promise<void>;
 	newId: () => string;
 	terminal: Terminal;
@@ -212,9 +220,8 @@ const SERVE_KILL_GRACE_MS = 15_000;
 /** SIGTERM → SIGKILL for a timed-out job. */
 const JOB_KILL_GRACE_MS = 5_000;
 const READY_POLL_MS = 500;
-const FRAME_MS = 100;
-/** how often the jobs' `results.jsonl` are read for finished tests */
-const FLOW_POLL_MS = 1_000;
+/** the grid is redrawn this often, and at once on every event: what changes between events is the clocks, which show whole seconds */
+const FRAME_MS = 1_000;
 
 const absolute = (cwd: string, path: string) => (isAbsolute(path) ? path : resolve(cwd, path));
 
@@ -530,7 +537,7 @@ async function runGrid(
 	}
 }
 
-/** Hand every job's finished `results.jsonl` to the display as one report; missing files and stale results are skipped. */
+/** Hand every job's finished `results.jsonl` to the display as one report (the last attempt of a flow wins); missing files and stale results are skipped. */
 async function readRunnerReport(
 	deps: BatchDeps,
 	resultFiles: ResultFiles,
@@ -539,7 +546,7 @@ async function readRunnerReport(
 	screen: Display
 ): Promise<void> {
 	const texts = await Promise.all([...resultFiles.values()].map((path) => deps.readFile(path).catch(() => "")));
-	const report = resultsReport(texts.join("\n"), flows, since);
+	const report = resultsReport(texts, flows, since);
 	if (report) screen.report(report);
 }
 
@@ -577,50 +584,6 @@ function announceDevices(ctx: CommandContext, view: BatchView): void {
 		if (d.ran && d.ran.length > 0) ctx.err(`${d.name}: ${d.ran.map((f) => `${tick(f.mark)} ${f.id}`).join("  ")}`);
 }
 
-/**
- * Read the `results.jsonl` of every job started so far: hand the flows it reports finished to the
- * display (a job's flows count as passed once it has ended) and each new test as one line.
- * `poll` reads once (also called after the run, so the last results land); `stop` ends the timer.
- */
-function flowPoller(
-	deps: BatchDeps,
-	flows: readonly TrackedFlow[],
-	resultFiles: ResultFiles,
-	ended: ReadonlySet<string>,
-	screen: Display
-): { poll: () => Promise<void>; stop: () => void } {
-	let busy = false;
-	const printed = new Map<string, number>();
-	const settled = new Set<string>();
-	const pollOne = async (key: string, path: string) => {
-		const text = await deps.readFile(path).catch(() => "");
-		const final = ended.has(key);
-		screen.flows(Number(key.split(":")[0]), resultsMarks(text, flows, { final }));
-		const results = readResults(text);
-		const fresh = results.slice(printed.get(key) ?? 0);
-		printed.set(key, results.length);
-		const lines = fresh.flatMap((result) => {
-			const flow = flowOf(result, flows);
-			return flow ? [testLine(flow.id, result)] : [];
-		});
-		if (lines.length > 0) screen.tests(lines);
-		if (final) settled.add(key);
-	};
-	const poll = async () => {
-		if (busy) return;
-		busy = true;
-		try {
-			for (const [key, path] of resultFiles) if (!settled.has(key)) await pollOne(key, path);
-		} finally {
-			busy = false;
-		}
-	};
-	const stop = deps.every(FLOW_POLL_MS, () => {
-		void poll();
-	});
-	return { poll, stop };
-}
-
 /** Start one recording per device (in parallel); failures stop the ones that started. */
 async function startRecordings(deps: BatchDeps, dir: string, devices: Device[]): AsyncResult<Recording[]> {
 	const started = await Promise.allSettled(devices.map((d) => deps.record(d.udid, join(dir, videoName(d.worker)))));
@@ -637,8 +600,11 @@ async function startRecordings(deps: BatchDeps, dir: string, devices: Device[]):
 	return ok(recordings);
 }
 
-/** Per-job argv before `{job}` `{udid}` `{worker}` `{seq}` expansion (default: the batch command). */
-export type ArgvFor = (job: string) => string[];
+/**
+ * Per-job argv before `{job}` `{udid}` `{worker}` `{seq}` expansion (default: the batch command).
+ * Asked once per spawn, so a retry (`run.attempt` > 0) can run less than the first attempt did.
+ */
+export type ArgvFor = (job: string, run: JobEnvInput) => string[] | Promise<string[]>;
 
 type JobRunnerOptions = {
 	cmd: string[];
@@ -722,18 +688,20 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 		}
 	};
 	/** env, argv and log of one spawn: the pool env + the caller's per-job env (`hooks.jobEnv`) + this worker's identity */
-	const plan = (w: BatchWorker, id: string, seq: number, pass: number) => {
+	const plan = async (w: BatchWorker, id: string, seq: number, attempt: number, pass: number) => {
 		const job = baseJob(id);
+		const input: JobEnvInput = {
+			job,
+			worker: w.worker,
+			seq,
+			attempt,
+			udid: w.udid,
+			batchDir: o.batchDir,
+			metroUrl: o.vars.metroUrl,
+		};
 		const env: Record<string, string | undefined> = {
 			...o.env,
-			...o.hooks.jobEnv?.({
-				job,
-				worker: w.worker,
-				seq,
-				udid: w.udid,
-				batchDir: o.batchDir,
-				metroUrl: o.vars.metroUrl,
-			}),
+			...o.hooks.jobEnv?.(input),
 			...socketEnv(o.sockets.get(w.udid)),
 			WARDEN_UDID: w.udid,
 			...deviceNameEnv(o.live.find((d) => d.udid === w.udid)?.name),
@@ -752,11 +720,11 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			...o.vars,
 			...(leg !== undefined ? { leg } : {}),
 		};
-		const argv = expandArgv(o.hooks.argvFor ? o.hooks.argvFor(job) : o.cmd, vars);
+		const argv = expandArgv(o.hooks.argvFor ? await o.hooks.argvFor(job, input) : o.cmd, vars);
 		return { job, env, log, argv };
 	};
-	const spawnOnce = async (w: BatchWorker, id: string, seq: number, pass: number): Promise<number> => {
-		const { job, env, log, argv } = plan(w, id, seq, pass);
+	const spawnOnce = async (w: BatchWorker, id: string, seq: number, attempt: number, pass: number): Promise<number> => {
+		const { job, env, log, argv } = await plan(w, id, seq, attempt, pass);
 		o.logs.set(attemptKey({ worker: w.worker, seq }), log);
 		const out = env[ENV_NAMES.out];
 		if (out) o.resultFiles.set(attemptKey({ worker: w.worker, seq }), join(out, "results.jsonl"));
@@ -783,9 +751,9 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 		if (code !== 0 && !o.interrupted()) await shoot(w, seq, log);
 		return code;
 	};
-	return async (w: BatchWorker, job: string, seq: number): Promise<number> => {
+	return async (w: BatchWorker, job: string, seq: number, attempt = 0): Promise<number> => {
 		for (let pass = 0; pass < o.passes; pass++) {
-			const code = await spawnOnce(w, job, seq, pass);
+			const code = await spawnOnce(w, job, seq, attempt, pass);
 			if (code !== 0) return code;
 			if (o.interrupted()) return 130;
 		}
@@ -851,9 +819,10 @@ export type SessionHooks = {
 	/** env added to one job's spawn (over the pool env, under the worker's own `WARDEN_UDID` / `WARDEN_WORKER` / `WARDEN_JOB…`) */
 	jobEnv?: (job: JobEnvInput) => Record<string, string>;
 	/**
-	 * iOS: connect each device's socket helper and take one snapshot, in parallel after setup and
-	 * the window hide, before the first job; that device's jobs get `WARDEN_SIMD_SOCKET`. Undefined =
-	 * no warm-up. A failed warm-up only warns.
+	 * iOS: connect each device's socket helper and take one snapshot, in parallel, the moment the
+	 * device is leased (alongside the app install, Metro and `setup`); that device's jobs get
+	 * `WARDEN_SIMD_SOCKET` once the run is ready for them. Undefined = no warm-up. A failed warm-up
+	 * only warns.
 	 */
 	warmDrivers?: WarmConnect | undefined;
 };
@@ -862,7 +831,10 @@ export type SessionHooks = {
 export type JobEnvInput = {
 	job: string;
 	worker: number;
+	/** this run's number on its worker (retries included) */
 	seq: number;
+	/** 0 for a job's first run, 1 for its first retry… */
+	attempt: number;
 	udid: string;
 	batchDir: string;
 	/** the run's Metro, when it has one */
@@ -1028,6 +1000,7 @@ function launchRunMetro(
 				now: ctx.now,
 				sleep: deps.sleep,
 				spawn: (cmd, env, cwd) => deps.spawn(cmd, { env, log: o.log, cwd, group: true, metro: true }),
+				expoBin: (root) => resolveExpoBin(root, deps.which),
 			},
 			{
 				projectRoot: plan.projectRoot,
@@ -1154,37 +1127,37 @@ type Services = {
 	serve?: ProcHandle | undefined;
 	metro?: Metro | undefined;
 	recordings: Recording[];
-	/** the warm socket helpers (`hooks.warmDrivers`) */
+	/** the warm socket helpers (`hooks.warmDrivers`) of the devices that run jobs */
 	helpers?: WarmHelper[];
+	/** the early warm-up while it has not been settled: `teardown` stops it */
+	warm?: EarlyWarm | undefined;
 };
 
 /**
- * `hooks.warmDrivers` on iOS: warm every live device's helper (failures warn); returns the
- * sockets by udid and keeps the helpers in `services` so `teardown` stops them.
+ * Collect the early warm-up (`hooks.warmDrivers`, started as each device was leased): its warnings
+ * are printed now, the helpers of devices that dropped out in setup are stopped, and the others go
+ * to `services` for `teardown`; fills `sockets` by udid for the devices that run jobs.
  */
-async function warmStep(
+async function settleWarm(
 	ctx: CommandContext,
-	deps: BatchDeps,
 	r: RunContext,
 	live: readonly Device[],
+	warm: EarlyWarm,
 	services: Services,
 	sockets: Map<string, string>
 ): Promise<void> {
-	const connect = r.hooks.warmDrivers;
-	if (!connect || r.platform !== "ios" || live.length === 0) return;
-	const { devices, helpers } = await warmDrivers(
-		{
-			devices: live,
-			logDir: r.logDir,
-			now: ctx.now,
-			after: deps.after,
-			writeFile: deps.writeFile,
-			signal: r.signal,
-		},
-		{ connect, warn: (line) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`)) }
+	services.warm = undefined;
+	const done = await warm.settled();
+	for (const line of done.warnings) ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
+	const running = new Set(live.map((d) => d.udid));
+	const dropped = new Set(
+		done.devices.flatMap((d) => (d.socketPath !== undefined && !running.has(d.udid) ? [d.socketPath] : []))
 	);
-	services.helpers = helpers;
-	for (const d of devices) if (d.socketPath !== undefined) sockets.set(d.udid, d.socketPath);
+	await Promise.all(done.helpers.filter((h) => dropped.has(h.socketPath)).map((h) => h.close().catch(() => {})));
+	services.helpers = done.helpers.filter((h) => !dropped.has(h.socketPath));
+	for (const d of done.devices) {
+		if (d.socketPath !== undefined && running.has(d.udid)) sockets.set(d.udid, d.socketPath);
+	}
 }
 
 /** Metro (started during the claim) → serve → recordings; resolves the job env + placeholder values once they are up. */
@@ -1335,6 +1308,24 @@ function runEnv(session: LeaseSession, args: BatchArgs, batchDir: string): Recor
 	};
 }
 
+/**
+ * Headless iOS: close any simulator window that attached after the claim hid them. A simulator the
+ * claim booted can show its window late; one that was already running had its window (or none)
+ * settled when the claim hid it, so when the claim booted nothing there is nothing new to look for.
+ */
+async function hideLateWindows(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	session: LeaseSession,
+	live: readonly Device[]
+): Promise<void> {
+	if (r.platform !== "ios" || !args.flags.headless || bootedByClaim(session.outcome).length === 0) return;
+	const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
+	await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
+}
+
 /** What `runSession` sets up before the claim and `supervise` carries on with. */
 type RunSetup = {
 	batchId: string;
@@ -1344,6 +1335,8 @@ type RunSetup = {
 	controller: AbortController;
 	/** the run's Metro, launched on the port lease (undefined: no `metro` plan, or no port) */
 	metro: MetroLaunch | undefined;
+	/** the iOS driver warm-up, started per leg as its devices were leased (undefined: no `warmDrivers` hook, or not iOS) */
+	warm: EarlyWarm | undefined;
 };
 
 /** Everything after the claim: Metro → serve → recordings → setup → jobs → stop serve / recordings / Metro → batch.json → release. */
@@ -1380,18 +1373,25 @@ async function supervise(
 		controller.abort();
 		for (const job of r.running) job.kill(signal);
 	});
-	const services: Services = { recordings: [] };
+	const services: Services = { recordings: [], warm: run.warm };
 	const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
 		reportError(ctx, r.name, message);
 		return { code: r.interrupted() ? 130 : 1, ...extra };
 	};
 	/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
 	const teardown = async () => {
-		const { serve, metro, recordings, helpers = [] } = services;
+		const { serve, metro, recordings, warm } = services;
+		const helpers = [...(services.helpers ?? [])];
 		services.serve = undefined;
 		services.metro = undefined;
 		services.recordings = [];
 		services.helpers = [];
+		services.warm = undefined;
+		if (warm) {
+			// a run that ended before it collected the warm-up: stop waiting for it and close what came up
+			warm.abort();
+			helpers.push(...(await warm.settled()).helpers);
+		}
 		if (serve) await stopServe(deps, serve);
 		await Promise.all(recordings.map((rec) => rec.stop()));
 		await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
@@ -1408,13 +1408,14 @@ async function supervise(
 			const failedLogs = (setups ?? []).filter((d) => !d.ok).map((d) => d.log);
 			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
 		}
-		if (args.metro && services.metro) await openOnDevices(ctx, r.name, r.platform, args.metro, services.metro, live);
-		// a window can attach after the claim (boot lag, Simulator.app opened since): close it before the first job
-		if (r.platform === "ios" && args.flags.headless) {
-			const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
-			await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
-		}
-		await warmStep(ctx, deps, r, live, services, sockets);
+		// independent of each other: the dev client's first launch loads the bundle while a late window closes
+		const metroPlan = args.metro;
+		const metroUp = services.metro;
+		await Promise.all([
+			metroPlan && metroUp ? openOnDevices(ctx, r.name, r.platform, metroPlan, metroUp, live) : undefined,
+			hideLateWindows(ctx, deps, args, r, session, live),
+		]);
+		if (run.warm) await settleWarm(ctx, r, live, run.warm, services, sockets);
 		const queues = poolQueues(ctx, deps, args, r, prepared, {
 			jobs,
 			cmd,
@@ -1480,8 +1481,7 @@ async function resolveTarget(
 		const platform = await resolvePlatform(ctx, target);
 		return platform.success ? ok({ platform: platform.data }) : platform;
 	}
-	const top = await ctx.exec(["git", "rev-parse", "--show-toplevel"], { cwd: ctx.cwd });
-	const stopAt = top.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : undefined;
+	const stopAt = (await readGitFacts(ctx.exec, ctx.cwd, ctx.git))?.toplevel;
 	const found = findBatchPreset({ start: ctx.cwd, name: target, ...(stopAt ? { stopAt } : {}) });
 	if (!found.success) return found;
 	const { preset, names } = found.data;
@@ -1586,6 +1586,14 @@ async function batch(
 	return (await runSession(ctx, deps, args.data, jobs.data, cmd)).code;
 }
 
+/** A warm-up the run never collected (the claim failed, a signal): stop waiting for it and close what came up. */
+async function closeWarm(warm: EarlyWarm | undefined): Promise<void> {
+	if (!warm) return;
+	warm.abort();
+	const { helpers } = await warm.settled();
+	await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
+}
+
 /**
  * Claim (at most one device per job, under a spinner) → supervise → release. With a `metro` plan the
  * run's Metro is launched the moment its port is leased, so it starts and prewarms while the devices
@@ -1616,6 +1624,19 @@ export async function runSession(
 	const interrupted = () => controller.signal.aborted;
 	let launch: MetroLaunch | undefined;
 	let claimDone = false;
+	// each leg's devices are warmed the moment they are leased, so it overlaps the install and Metro
+	const warm =
+		hooks.warmDrivers && platform === "ios"
+			? startEarlyWarm({
+					connect: hooks.warmDrivers,
+					legCounts: (lease.legs?.map((leg) => leg.flags) ?? [lease.flags]).map((flags) => flags.request.count),
+					logDir,
+					now: ctx.now,
+					after: deps.after,
+					writeFile: deps.writeFile,
+					signal: controller.signal,
+				})
+			: undefined;
 	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
 		deps.onSignal(signal, () => {
 			controller.abort();
@@ -1624,7 +1645,14 @@ export async function runSession(
 	);
 	const claimed = await withSpinner(ctx, `claiming ${wanted} ${platform} device(s)…`, async (sctx, spinner) => {
 		const legFlags = lease.legs?.map((leg) => leg.flags);
-		const onLeased = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
+		const progress = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
+		const onLeased =
+			progress || warm
+				? (outcome: ClaimOutcome, leg: number) => {
+						progress?.(outcome);
+						warm?.leased(outcome, leg);
+					}
+				: undefined;
 		const plan = lease.metro;
 		const onPorts = plan
 			? (ports: RunPort[]) => {
@@ -1661,6 +1689,7 @@ export async function runSession(
 	// before supervise re-subscribes (holdLeases), so the two never share a handler slot
 	for (const off of offSignals) off();
 	if (!claimed.success || interrupted()) {
+		await closeWarm(warm);
 		if (claimed.success) await claimed.data.release();
 		await launch?.stop();
 		const metro = launch ? await launch.pending : undefined;
@@ -1684,6 +1713,7 @@ export async function runSession(
 			logDir,
 			controller,
 			metro: launch,
+			warm,
 		}
 	);
 }
@@ -1745,6 +1775,8 @@ export function createBatchCommand(deps: BatchDeps): Command {
 
 /** how long an exited job's output may still be draining into its log */
 const LOG_DRAIN_MS = 2000;
+/** an exited job's pipes that stay silent this long are held open by a grandchild: stop waiting on them */
+const LOG_QUIET_MS = 250;
 
 export const defaultBatchDeps: BatchDeps = {
 	pid: process.pid,
@@ -1760,11 +1792,12 @@ export const defaultBatchDeps: BatchDeps = {
 				stderr: "pipe",
 				detached: opts.group === true,
 			});
-			const drained = Promise.all([log.pump(proc.stdout), log.pump(proc.stderr)]);
+			void log.pump(proc.stdout);
+			void log.pump(proc.stderr);
 			return {
-				// a grandchild still holding the pipes can't hold up the exit past LOG_DRAIN_MS
+				// a grandchild still holding the pipes can't hold up the exit: silent for LOG_QUIET_MS, or LOG_DRAIN_MS at most
 				exited: proc.exited.then(async (code) => {
-					await Promise.race([drained, Bun.sleep(LOG_DRAIN_MS)]);
+					await log.drained({ quietMs: LOG_QUIET_MS, maxMs: LOG_DRAIN_MS });
 					log.close();
 					return exitCodeOf(proc, code);
 				}),
@@ -1792,6 +1825,7 @@ export const defaultBatchDeps: BatchDeps = {
 		await writeFile(path, data);
 	},
 	readFile: (path) => readFile(path, "utf8"),
+	readFrom: readFileFrom,
 	mkdir: async (dir) => {
 		await mkdir(dir, { recursive: true });
 	},

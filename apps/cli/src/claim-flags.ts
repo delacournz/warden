@@ -1,7 +1,7 @@
 import { availableParallelism } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { defaultMax, profileSlug } from "@delacour/warden-core/allocate";
-import { type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
+import { type ClaimedDevice, type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
@@ -9,6 +9,7 @@ import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-co
 import { listAvds } from "@delacour/warden-core/providers/android";
 import type { DeviceRequest, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
 import { autoArrangeSimWindows, type HideDeps, hideSimWindows } from "./sim-windows";
@@ -113,7 +114,7 @@ export function parseClaimFlags(
 /** Owner for this invocation: `--session`/hook id → CI → session env → the invoking shell (ppid). */
 export function resolveOwner(ctx: CommandContext, sessionId?: string): Owner {
 	const ownerCtx: OwnerContext = { env: ctx.env, pid: process.pid, ppid: process.ppid, cwd: ctx.cwd };
-	const git = readGitInfo(ctx.cwd);
+	const git = readGitInfo(ctx.cwd, { cache: ctx.git });
 	if (git) ownerCtx.git = git;
 	if (sessionId) ownerCtx.sessionId = sessionId;
 	return detectOwner(ownerCtx);
@@ -137,9 +138,22 @@ export function resolveAutoProfile(avds: readonly string[]): Result<string> {
 		: err("no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
 }
 
-/** `hideSimWindows` deps from a command context: problems are yellow `warden: …` lines. */
+/** `hideSimWindows` deps from a command context: problems are yellow `warden: …` lines; a device the close shut down loses its resident helper. */
 export function headlessDeps(ctx: CommandContext): HideDeps {
-	return { exec: ctx.exec, warn: (line) => ctx.err(ctx.ui.color.yellow(`warden: ${line}`)) };
+	return {
+		exec: ctx.exec,
+		warn: (line) => ctx.err(ctx.ui.color.yellow(`warden: ${line}`)),
+		onShutDown: stopHelperAfter(ctx),
+	};
+}
+
+/**
+ * The claimed devices this claim had to boot or create: the only ones whose Simulator.app window can
+ * still be on its way. A device that was already running (`reuse`, not booted by the claim) keeps
+ * the window — or the lack of one, when it booted headless — it had.
+ */
+export function bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDevice[] {
+	return outcome.claimed.filter((c) => c.action !== "reuse" || c.lease.bootedByOwner === true);
 }
 
 /** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them). */
@@ -175,7 +189,7 @@ export async function claimWithFlags(
 		else
 			await autoArrangeSimWindows(
 				ctx,
-				sims.map((s) => s.name)
+				bootedByClaim(outcome.data).map((c) => c.device.name)
 			);
 	}
 	return outcome;

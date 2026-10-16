@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type ClaimInput, claimDevices, PENDING_PREFIX } from "./claim";
+import type { Exec, ExecResult } from "./exec";
+import { createIosProvider } from "./providers/ios";
+import { simctlDevicesJson } from "./providers/ios.fixture";
 import type { DeviceProvider } from "./providers/provider.types";
 import { openStore, type Store } from "./store";
 import type { DeviceRequest, InventoryDevice, Owner } from "./types";
@@ -362,5 +365,102 @@ describe("claim health probe", () => {
 		const result = await claimDevices(input(provider));
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("1");
 		expect(store.listDevices()).toEqual([]);
+	});
+});
+
+describe("claim warm path", () => {
+	function withWarm(provider: FakeProvider, ok_: boolean): FakeProvider {
+		provider.probe = async (id) => {
+			provider.calls.push(`probe ${id}`);
+			return ok(undefined);
+		};
+		provider.verifyWarm = async (id) => {
+			provider.calls.push(`warm ${id}`);
+			return ok_ ? ok(undefined) : err(`${id}: SpringBoard is not running`);
+		};
+		return provider;
+	}
+
+	test("an already-booted device passes the cheap check: no waitReady, no full probe", async () => {
+		const provider = withWarm(fakeProvider([sim("1", { state: "booted" })]), true);
+		const result = await claimDevices(input(provider));
+		expect(result.success && result.data.claimed[0]?.action).toBe("reuse");
+		expect(result.success && result.data.claimed[0]?.device.state).toBe("booted");
+		expect(provider.calls).toEqual(["warm 1"]);
+		expect(store.listLeases()[0]?.bootedByOwner).toBeUndefined();
+	});
+
+	test("a failed cheap check falls back to waitReady + the full probe", async () => {
+		const provider = withWarm(fakeProvider([sim("1", { state: "booted" })]), false);
+		const result = await claimDevices(input(provider));
+		expect(result.success).toBe(true);
+		expect(provider.calls).toEqual(["warm 1", "ready 1", "probe 1"]);
+	});
+
+	test("a device this claim boots still waits and probes in full", async () => {
+		const provider = withWarm(fakeProvider([sim("1")]), true);
+		const result = await claimDevices(input(provider));
+		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
+		expect(provider.calls).toEqual(["boot 1", "ready 1", "probe 1"]);
+	});
+
+	test("a new device waits and probes in full", async () => {
+		const provider = withWarm(fakeProvider([]), true);
+		const result = await claimDevices(input(provider));
+		expect(result.success && result.data.claimed[0]?.action).toBe("create");
+		expect(provider.calls).toEqual(["create warden-iphone-17-1 iphone-17 -", "boot NEW1", "ready NEW1", "probe NEW1"]);
+	});
+});
+
+describe("claim spawn counts (iOS provider)", () => {
+	const LAUNCHCTL_LIST = "PID\tStatus\tLabel\n412\t0\tUIKitApplication:com.apple.springboard[ab][rb-legacy]";
+
+	/** A fake simctl with one warden sim in `state`; every spawn is recorded. */
+	function world(state: "Booted" | "Shutdown", springboard = true) {
+		const spawns: string[] = [];
+		const exec: Exec = async (cmd): Promise<ExecResult> => {
+			const joined = cmd.join(" ");
+			spawns.push(joined);
+			const ok_ = (stdout = ""): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
+			if (joined === "xcrun simctl list devices available -j") {
+				return ok_(simctlDevicesJson({ "iOS-26-5": [{ udid: "U1", name: "warden-iphone-17-1", state }] }));
+			}
+			if (joined === "xcrun simctl spawn U1 launchctl list") {
+				return ok_(springboard ? LAUNCHCTL_LIST : "PID\tStatus\tLabel");
+			}
+			return ok_();
+		};
+		const provider = createIosProvider({ exec, store, env: {}, now: () => NOW, owner });
+		return { spawns, provider };
+	}
+
+	test("a warm claim of an already-booted sim is two spawns: simctl list and launchctl list", async () => {
+		const { spawns, provider } = world("Booted");
+		const result = await claimDevices(input(provider));
+		expect(result.success && result.data.claimed[0]?.action).toBe("reuse");
+		expect(spawns).toEqual(["xcrun simctl list devices available -j", "xcrun simctl spawn U1 launchctl list"]);
+	});
+
+	test("a sim this claim boots keeps bootstatus and the full probe", async () => {
+		const { spawns, provider } = world("Shutdown");
+		const result = await claimDevices(input(provider));
+		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
+		expect(spawns).toEqual([
+			"xcrun simctl list devices available -j",
+			"xcrun simctl boot U1",
+			"xcrun simctl bootstatus U1 -b",
+			"xcrun simctl spawn U1 launchctl print system",
+			"xcrun simctl spawn U1 launchctl list",
+		]);
+	});
+
+	test("a booted sim whose SpringBoard is not up yet still gets bootstatus before the full probe", async () => {
+		const { spawns, provider } = world("Booted", false);
+		await claimDevices(input(provider));
+		expect(spawns.slice(0, 3)).toEqual([
+			"xcrun simctl list devices available -j",
+			"xcrun simctl spawn U1 launchctl list",
+			"xcrun simctl bootstatus U1 -b",
+		]);
 	});
 });

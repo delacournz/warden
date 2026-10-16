@@ -183,6 +183,22 @@ describe("requests", () => {
 		expect(await client.request("elementAtPoint", { x: 1, y: 1 })).toEqual({ success: true, data: null });
 	});
 
+	test("a settle reply keeps its via, reason and frontmostPid through the client", async () => {
+		const { client } = await started({
+			ops: {
+				settle: {
+					data: { quiet: false, waitedMs: 8003, via: "stream", reason: "frontmost_mismatch", frontmostPid: 321 },
+				},
+			},
+		});
+		expect(
+			await client.request("settle", { quietMs: 250, settleTimeoutMs: 8000, bundleId: "com.example.app" })
+		).toEqual({
+			success: true,
+			data: { quiet: false, waitedMs: 8003, via: "stream", reason: "frontmost_mismatch", frontmostPid: 321 },
+		});
+	});
+
 	test("garbage lines from the helper are ignored", async () => {
 		const { client, lines } = await started({ startup: ["not json", '{"event":"nope"}'], ops: { ok: { data: 1 } } });
 		expect(await client.request("ok")).toEqual({ success: true, data: 1 });

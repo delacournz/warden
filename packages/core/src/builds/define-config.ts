@@ -411,16 +411,33 @@ export interface WardenE2eSuite {
 	/** How the specs run: the app under test, its launch arguments and the timeouts. */
 	spec?: WardenE2eSpec | undefined;
 	/**
-	 * `"per-flow"`: one `bun test` process per flow, one worker per device. `"single"`: one process per
-	 * device runs its share of the flows (sharded round-robin by flow id), so the specs of a device run
-	 * serially in one process and the devices run in parallel.
+	 * `"device"`: one `bun test` process per device runs its share of the flows (sharded round-robin by
+	 * flow id), so a device's specs run in order in one process and the devices run in parallel.
+	 * `"flow"`: one process per flow, one worker per device: slower (each process pays bun's start,
+	 * the preload and a driver connect), but a flow can never see what the one before left behind and
+	 * the devices share the flows dynamically. With `passes` above 1 the default is `"flow"`.
 	 *
-	 * @default "per-flow"
+	 * @default "device"
+	 */
+	isolate?: "device" | "flow" | undefined;
+	/**
+	 * The old spelling of `isolate`: `"single"` is `"device"`, `"per-flow"` is `"flow"`.
+	 *
+	 * @deprecated use `isolate`
 	 */
 	mode?: "per-flow" | "single" | undefined;
 	/**
-	 * A spec process still going after this many milliseconds is killed (screenshot first) and counts
-	 * as failed.
+	 * What happens to the devices warden booted when the gate passes. `"always"`: shut them down.
+	 * `"idle"`: leave them booted, so the next run skips the 10-30 s boot, and let `warden gc` shut
+	 * them down once they have sat idle. A failed run always leaves them up. `--no-shutdown` wins.
+	 *
+	 * @default "idle" locally, "always" when the `CI` environment variable is set
+	 */
+	shutdown?: "always" | "idle" | undefined;
+	/**
+	 * Per flow: a spec process still going after this many milliseconds for each flow it runs (one
+	 * flow, or a device's share of them with `isolate: "device"`) is killed (screenshot first) and
+	 * counts as failed.
 	 *
 	 * @default 600000 (10 min)
 	 */

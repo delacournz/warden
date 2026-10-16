@@ -1,13 +1,20 @@
 import { createApp } from "./app";
-import { createDevice } from "./device";
+import { createDevice, type Device } from "./device";
 import type { DevtoolsFacet } from "./devtools/devtools.types";
 import type { BaseFixtures, FixtureContext } from "./runner/fixtures.types";
 import type { ScreenHost } from "./screen/context";
 import { createScreen } from "./screen/screen";
+import { traceDevice } from "./traced-device";
 
-/** What `screen` needs from one attempt: the live driver, its timeouts and deadline, and reported steps. */
-export function screenHostFor(ctx: FixtureContext): ScreenHost {
+/**
+ * What `screen` needs from one attempt: the live driver, its timeouts and deadline, and reported steps. With
+ * `systemAlerts` set (`test.use`) and a `device` to press with, reads and waits answer the alerts they see.
+ */
+export function screenHostFor(ctx: FixtureContext, device?: Pick<Device, "alert">): ScreenHost {
 	const { session } = ctx;
+	const alerts = ctx.systemAlerts;
+	const answerSystemAlert =
+		device === undefined || alerts === undefined || alerts === "off" ? undefined : () => device.alert(alerts);
 	// the facet is attached on the first tree read; without a Metro URL (release build) there is nothing to read
 	const reactTree: Pick<DevtoolsFacet, "tree"> | undefined =
 		session.env.metroUrl === undefined
@@ -26,17 +33,24 @@ export function screenHostFor(ctx: FixtureContext): ScreenHost {
 			return session.signal;
 		},
 		step: (label, fn) => session.step("locator", label, fn),
+		span: (op, fn, options) => session.span(op, fn, options),
+		...(answerSystemAlert === undefined ? {} : { answerSystemAlert }),
 	};
 }
 
-/** The `app` / `device` / `screen` / `platform` every test gets, over the session's driver. */
+/**
+ * The `app` / `device` / `screen` / `platform` every test gets, over the session's driver. `device` calls and
+ * locator reads are trace-only spans (`device.*`, `read.*`); the driver's own calls are `driver.*` spans (the session
+ * traces its driver).
+ */
 export async function defaultFixtureFactory(ctx: FixtureContext): Promise<BaseFixtures> {
 	const { session } = ctx;
 	const driver = await session.driver();
+	const device = traceDevice(createDevice({ session, driver, env: session.env }), session.span);
 	return {
 		app: createApp({ session, driver, env: session.env }),
-		device: createDevice({ session, driver, env: session.env }),
-		screen: createScreen(screenHostFor(ctx)),
+		device,
+		screen: createScreen(screenHostFor(ctx, device)),
 		platform: session.env.platform,
 	};
 }

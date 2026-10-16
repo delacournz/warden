@@ -261,6 +261,70 @@ describe("runBench", () => {
 		expect(outcome.data.run.frameworks[0]).toMatchObject({ status: "ok", version: "unknown" });
 	});
 
+	describe("android animation scales", () => {
+		const KEYS = ["window_animation_scale", "transition_animation_scale", "animator_duration_scale"];
+
+		/** `adb shell settings get|put|delete global <key>` over an in-memory settings table. */
+		function settingsRules(settings: Map<string, string>): FakeRule[] {
+			const on = (verb: string) => (a: readonly string[]) => a[3] === "settings" && a[4] === verb;
+			return [
+				{ cmd: "adb", match: on("get"), result: (a) => ({ stdout: `${settings.get(a[6] ?? "") ?? "null"}\n` }) },
+				{
+					cmd: "adb",
+					match: on("put"),
+					result: (a) => {
+						settings.set(a[6] ?? "", a[7] ?? "");
+						return {};
+					},
+				},
+				{
+					cmd: "adb",
+					match: on("delete"),
+					result: (a) => {
+						settings.delete(a[6] ?? "");
+						return {};
+					},
+				},
+			];
+		}
+
+		function android(settings: Map<string, string>, adapters: BenchAdapter[]) {
+			const t = setup(adapters, { platform: "android", runs: 1 });
+			t.deps.exec = fakeExec([...settingsRules(settings), ...rules()], { which: ["caffeinate"] });
+			return t;
+		}
+
+		const zeroing = (calls: Calls, settings: Map<string, string>): BenchAdapter =>
+			adapter("warden", calls, {
+				async run() {
+					for (const key of KEYS) settings.set(key, "0");
+					return ok(rep(1));
+				},
+			});
+
+		test("a framework that zeroes them does not leak that into the next framework", async () => {
+			const settings = new Map(KEYS.map((key) => [key, "1.0"]));
+			const seen: (string | undefined)[] = [];
+			const observer = adapter("maestro", [], {
+				async run() {
+					seen.push(settings.get("window_animation_scale"));
+					return ok(rep(1));
+				},
+			});
+			const t = android(settings, [zeroing([], settings), observer]);
+			const outcome = await runBench(t.opts, t.deps);
+			expect(outcome.success).toBe(true);
+			expect(seen).toEqual(["1.0"]);
+		});
+
+		test("the device is left as it was found, even when the last framework zeroed them", async () => {
+			const settings = new Map(KEYS.map((key) => [key, "1.0"]));
+			const t = android(settings, [zeroing([], settings)]);
+			await runBench(t.opts, t.deps);
+			expect(KEYS.map((key) => settings.get(key))).toEqual(["1.0", "1.0", "1.0"]);
+		});
+	});
+
 	test("the lease is released exactly once, and caffeinate is killed", async () => {
 		const calls: Calls = [];
 		const t = setup([adapter("warden", calls)]);

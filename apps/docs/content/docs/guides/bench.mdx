@@ -87,16 +87,19 @@ artifacts/<fw>/rep-<n>/   native reporter output and resource samples
 - Warm medians exclude rep 1.
 - Machine-readable reporters only.
 - Host otherwise idle, with the load average recorded.
+- Android `sim` counts the app and every framework's on-device helpers, matched case-insensitively.
+- Host processes are tracked by pid and start time, so a reused pid is never counted.
+- Android animation scales are reset to the device's original values before every framework and restored at the end.
 
 ## Caveats per framework
 
 | Framework | Gap |
 |---|---|
-| warden | Reference suite. Shares the `tapUntil` and deep-link helpers with the example app. |
+| warden | Copied from the example app, retries written with warden's own options: `tap({ until })`, a deep-link retry, `systemAlerts: "dismiss"`. The hand-rolled helpers it replaced ran the published headline numbers; the idiomatic run is reported beside them. |
 | Maestro | Retries are `retry:` blocks that rerun the tap and the wait together. Checkbox state is read from the accessibility text. Step durations include Maestro's own polling. |
 | Argent | Retries are nested `when:` guards capped at two retaps. The checked state of a checkbox is not readable, so the remaining-count assertion covers the effect. |
 | agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`. Needs a runner prepare step and a daemon. |
-| tester.army | Uses the same helpers as warden. Runs with a private agent-device state dir and Node 24 on `PATH`. |
+| tester.army | Has its own copy of the hand-rolled helpers warden used before. Runs with a private agent-device state dir and Node 24 on `PATH`. |
 | Detox | Best effort: Detox 20.51 supports React Native up to 0.84 and the app is on 0.86. Failures to attach are reported as `unsupported`. Permissions are pre-granted instead of dismissing system alerts. Android needs an instrumented build. |
 
 ## Add a framework

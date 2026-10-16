@@ -164,12 +164,13 @@ final class SettleFrontmostTests: XCTestCase {
     gate.resolved(pid: nil, now: 0)
     gate.resolved(pid: app, now: 3)
     XCTAssertFalse(gate.shouldRestart(frontmostPid: springboard, now: 3), "pid just appeared: give the stream a chance to follow")
-    XCTAssertFalse(gate.shouldRestart(frontmostPid: springboard, now: 3.4))
-    XCTAssertTrue(gate.shouldRestart(frontmostPid: springboard, now: 3.5))
-    gate.restarted(now: 3.5)
-    XCTAssertFalse(gate.shouldRestart(frontmostPid: springboard, now: 3.6), "a fresh stream needs time to bind")
-    XCTAssertFalse(gate.shouldRestart(frontmostPid: springboard, now: 4.9))
-    XCTAssertTrue(gate.shouldRestart(frontmostPid: springboard, now: 5.0), "still latched: try again")
+    XCTAssertFalse(gate.shouldRestart(frontmostPid: springboard, now: 3.4), "a healthy stream follows in 0.25-0.4 s")
+    XCTAssertFalse(gate.shouldRestart(frontmostPid: springboard, now: 3.8))
+    XCTAssertTrue(gate.shouldRestart(frontmostPid: springboard, now: 3.95))
+    gate.restarted(now: 3.95)
+    XCTAssertFalse(gate.shouldRestart(frontmostPid: springboard, now: 4.0), "a fresh stream needs time to bind")
+    XCTAssertFalse(gate.shouldRestart(frontmostPid: springboard, now: 5.4))
+    XCTAssertTrue(gate.shouldRestart(frontmostPid: springboard, now: 5.5), "still latched: try again")
   }
 
   func testGateStopsRestartingOnceTheStreamFollows() {
@@ -178,7 +179,7 @@ final class SettleFrontmostTests: XCTestCase {
     XCTAssertFalse(gate.shouldRestart(frontmostPid: app, now: 10))
     gate.resolved(pid: 300, now: 11)
     XCTAssertFalse(gate.shouldRestart(frontmostPid: app, now: 11.2), "a newer relaunch restarts the grace")
-    XCTAssertTrue(gate.shouldRestart(frontmostPid: app, now: 11.5))
+    XCTAssertTrue(gate.shouldRestart(frontmostPid: app, now: 11.95))
   }
 
   // MARK: waitQuiet
@@ -373,7 +374,9 @@ final class SettleFrontmostTests: XCTestCase {
     let monitor = QuiescenceMonitor(reader: reader)
     let script = PidScript([app])
     let wait = Task {
-      try await monitor.waitQuiet(quietMs: 0, timeoutMs: 600, bundleId: "a.b", resolvePid: script.resolver)
+      try await monitor.waitQuiet(
+        quietMs: 0, timeoutMs: 1200, bundleId: "a.b", resolvePid: script.resolver,
+        gateTiming: FrontmostGate.Timing(resolveEveryMs: 150, firstRestartGraceMs: 300, repeatRestartMs: 1500))
     }
     await reader.waitOpened()
     reader.emit(.state(.quiet, pid: springboard))

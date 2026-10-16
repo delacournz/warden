@@ -7,6 +7,7 @@ import {
 	type OkFrameworkResult,
 	type Residue,
 } from "../results/schema";
+import { median } from "../results/stats";
 
 type FrameworkKey = FrameworkResult["framework"];
 
@@ -114,4 +115,54 @@ export function perTestMatrix(run: BenchRun, manifest: Manifest): PerTestMatrix 
 		return { id, title: manifest.tests[id]?.title ?? id, cells };
 	});
 	return { frameworks, rows };
+}
+
+/** What a framework's own trace cannot explain of its test time (warden: `trace.jsonl` steps and spans). */
+export type UntracedRow = {
+	framework: FrameworkKey;
+	/** median over the warm reps of the untraced time summed over the tests that report it */
+	perRepMs: number;
+	/** that over the same tests' summed duration */
+	share: number;
+	/** the test with the most untraced time (median over the reps that ran it) */
+	worst?: { id: CanonicalId; ms: number };
+};
+
+type Measured = { id: CanonicalId; untracedMs?: number; durationMs?: number };
+
+const total = (tests: readonly Measured[], key: "untracedMs" | "durationMs"): number =>
+	tests.reduce((acc, t) => acc + (t[key] ?? 0), 0);
+
+/** The test with the most untraced time, each test's time taken as its median over the reps that ran it. */
+function worstTest(reps: readonly (readonly Measured[])[]): UntracedRow["worst"] {
+	const perTest = new Map<CanonicalId, number[]>();
+	for (const tests of reps) {
+		for (const t of tests) perTest.set(t.id, [...(perTest.get(t.id) ?? []), t.untracedMs ?? 0]);
+	}
+	let worst: UntracedRow["worst"];
+	for (const [id, values] of perTest) {
+		const ms = median(values);
+		if (worst === undefined || ms > worst.ms) worst = { id, ms };
+	}
+	return worst;
+}
+
+function untracedRow(f: OkFrameworkResult): UntracedRow | undefined {
+	const warm = f.reps.filter((rep) => !rep.cold);
+	const reps = (warm.length > 0 ? warm : f.reps).map((rep) => rep.tests.filter((t) => t.untracedMs !== undefined));
+	if (reps.every((tests) => tests.length === 0)) return undefined;
+	const perRepMs = median(reps.map((tests) => total(tests, "untracedMs")));
+	const wallMs = median(reps.map((tests) => total(tests, "durationMs")));
+	const worst = worstTest(reps);
+	return {
+		framework: f.framework,
+		perRepMs,
+		share: wallMs > 0 ? perRepMs / wallMs : Number.NaN,
+		...(worst === undefined ? {} : { worst }),
+	};
+}
+
+/** One row per framework with `untracedMs` on any test; warm reps only, unless the run has no warm rep. */
+export function untracedRows(run: BenchRun): UntracedRow[] {
+	return run.frameworks.filter(isOk).flatMap((f) => untracedRow(f) ?? []);
 }

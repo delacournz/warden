@@ -3,7 +3,8 @@ import type { AlertInfo, Element } from "../driver.types";
 /**
  * System alerts on Android are ordinary windows in the dump. `AlertDialog` uses `android:id/button1|2|3`
  * (positive / negative / neutral), the runtime-permission dialog (permissioncontroller) its own
- * `permission_*_button` ids. The identifier is the resource id without its `pkg:id/` prefix.
+ * `permission_*_button` ids, and the system "isn't responding" dialog `aerr_close` / `aerr_wait` (read off a real
+ * ANR dialog, `anr.fixture.ts`). The identifier is the resource id without its `pkg:id/` prefix.
  */
 
 const ALERT_BUTTON_IDS: ReadonlySet<string> = new Set([
@@ -16,6 +17,8 @@ const ALERT_BUTTON_IDS: ReadonlySet<string> = new Set([
 	"permission_deny_button",
 	"permission_deny_and_dont_ask_again_button",
 	"permission_no_upgrade_button",
+	"aerr_close",
+	"aerr_wait",
 ]);
 
 function textOf(element: Element | undefined): string | undefined {

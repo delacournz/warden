@@ -1,7 +1,7 @@
 import { ok } from "@delacour/warden-types/result";
 import type { Driver, DriverError, DriverResult, Point } from "../driver/driver.types";
-import { pressKeys, type Sleep, typeText } from "../driver/typing";
-import { clearKeyPresses } from "./actions";
+import { canSelectAll, pressKeys, type Sleep, typeText } from "../driver/typing";
+import { clearKeyPresses, fieldContent, fieldValue } from "./actions";
 import { entryOfElement, type NodeEntry } from "./nodes";
 
 /**
@@ -13,13 +13,23 @@ import { entryOfElement, type NodeEntry } from "./nodes";
  * text once), and the wait extends while the value is still changing.
  */
 
-export const FIELD_POLL_MS = 100;
+export const FIELD_POLL_MS = 50;
 /** While the value keeps changing, wait at least this long for its next change. */
 export const FIELD_PROGRESS_MS = 1000;
 /** Consecutive reads that must equal the wanted text. */
 export const CONFIRM_READS = 2;
 /** When the field already held the wanted text before the edit, a stale read can match: trust only a longer run. */
 export const STALE_RISK_READS = 4;
+
+/**
+ * Consecutive matching reads to trust for `text` typed into `entry` (the field as seen before the edit): the longer
+ * `STALE_RISK_READS` only when it already held that text. A placeholder shown as the value (one the element names, or a
+ * secure field's) is not text it held.
+ */
+export function confirmReadsFor(entry: NodeEntry | undefined, text: string): number {
+	if (entry === undefined || text === "") return CONFIRM_READS;
+	return fieldValue(entry) === text ? STALE_RISK_READS : CONFIRM_READS;
+}
 
 export type FieldReading =
 	| { kind: "value"; value: string }
@@ -89,29 +99,77 @@ export async function hitTestField(
 }
 
 /**
- * Taps `point` (the caret spot at the field's right end, `focusPoint`) and backspaces what `entry` shows; no `entry`
- * (a bare coordinate) means nothing to clear. The one clear routine behind the spec `fill`/`clear` and `warden ui fill`.
+ * How a field is emptied. `auto` selects everything and presses one Backspace when the driver can select all, else
+ * presses one Backspace per character; `counted` always presses one per character (the retry after select-all left
+ * text behind, e.g. a field that refuses Cmd+A).
+ */
+export type ClearMethod = "auto" | "counted";
+
+/** What `focusAndSelect` left behind: `selection` = the text is selected and the next key replaces it; `none` = already empty or already backspaced away. */
+type Prepared = { pending: "selection" } | { pending: "none" };
+
+/**
+ * Taps `point` (the caret spot at the field's right end, `focusPoint`) and gets `entry` ready for new text; no `entry`
+ * (a bare coordinate) means nothing to clear. A field that holds nothing, or only a placeholder, gets no keys.
+ *
+ * Plain text is selected whole when the driver offers select-all and the method is `auto`: the caller then types over
+ * the selection (or presses one Backspace to delete it) and the whole text goes without one key per character. A
+ * driver that rejects select-all gets the counted presses. Secure fields are always backspaced by their dots: they
+ * cannot be read back, so a select-all that did nothing would go unnoticed.
+ */
+async function focusAndSelect(
+	driver: Driver,
+	sleep: Sleep,
+	point: Point,
+	entry: NodeEntry | undefined,
+	method: ClearMethod
+): DriverResult<Prepared> {
+	const focused = await driver.tap(point);
+	if (!focused.success) return focused;
+	if (entry === undefined) return ok({ pending: "none" });
+	const content = fieldContent(entry);
+	if (content.kind === "empty") return ok({ pending: "none" });
+	if (content.kind === "text" && method === "auto" && canSelectAll(driver)) {
+		const selected = await driver.selectAll();
+		if (selected.success) return ok({ pending: "selection" });
+	}
+	const pressed = await pressKeys(driver, sleep, "Backspace", clearKeyPresses(entry));
+	return pressed.success ? ok({ pending: "none" }) : pressed;
+}
+
+/**
+ * Taps `point` and empties what `entry` shows: select-all and one Backspace when the driver offers it, else one
+ * Backspace per character (see `focusAndSelect`). The clear routine behind the spec `clear` and `warden ui clear`.
  */
 export async function focusAndClear(
 	driver: Driver,
 	sleep: Sleep,
 	point: Point,
-	entry: NodeEntry | undefined
+	entry: NodeEntry | undefined,
+	method: ClearMethod = "auto"
 ): DriverResult<void> {
-	const focused = await driver.tap(point);
-	if (!focused.success) return focused;
-	return pressKeys(driver, sleep, "Backspace", entry ? clearKeyPresses(entry) : 0);
+	const prepared = await focusAndSelect(driver, sleep, point, entry, method);
+	if (!prepared.success) return prepared;
+	return prepared.data.pending === "selection" ? pressKeys(driver, sleep, "Backspace", 1) : ok(undefined);
 }
 
-/** `focusAndClear`, then types `text` (nothing for the empty string). */
+/**
+ * Empties the field as `focusAndClear` does, then types `text` (nothing for the empty string). A selected text is not
+ * deleted first: the first typed character replaces the whole selection, which saves a Backspace. If the select-all
+ * did not take, the old text stays and the typed text lands after it; the confirm read sees that and the retry uses the
+ * counted method.
+ */
 export async function focusClearType(
 	driver: Driver,
 	sleep: Sleep,
 	point: Point,
 	entry: NodeEntry | undefined,
-	text: string
+	text: string,
+	method: ClearMethod = "auto"
 ): DriverResult<void> {
-	const cleared = await focusAndClear(driver, sleep, point, entry);
-	if (!cleared.success) return cleared;
-	return text === "" ? ok(undefined) : typeText(driver, sleep, text);
+	const prepared = await focusAndSelect(driver, sleep, point, entry, method);
+	if (!prepared.success) return prepared;
+	if (text === "")
+		return prepared.data.pending === "selection" ? pressKeys(driver, sleep, "Backspace", 1) : ok(undefined);
+	return typeText(driver, sleep, text);
 }

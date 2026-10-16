@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { err, ok } from "@delacour/warden-types/result";
 import type { InstallMode } from "./app-option.schema";
-import { type EasStepOutcome, type ResolveSource, type ResolveSteps, resolveApp } from "./resolve";
+import { type EasStepOutcome, type InstalledApp, type ResolveSource, type ResolveSteps, resolveApp } from "./resolve";
 
 type World = {
 	installedHash?: string;
@@ -68,13 +68,13 @@ function steps(world: World) {
 			installedHash: () => world.installedHash,
 			confirm: async () => {
 				calls.push("confirm");
-				return ok(world.onDevice ?? false);
+				return ok(world.onDevice ? { present: true, container: "/dev/App.app" } : { present: false });
 			},
 			...(world.matches === undefined
 				? {}
 				: {
-						matches: async (path: string) => {
-							calls.push(`matches ${path}`);
+						matches: async (path: string, installed: InstalledApp) => {
+							calls.push(`matches ${path} in ${installed.container}`);
 							return ok(world.matches === true);
 						},
 					}),
@@ -116,13 +116,13 @@ const rows: Row[] = [
 		world: { installedHash: "H", onDevice: true, cache: "/c/A.app", matches: true },
 		source: "installed",
 		appPath: "/c/A.app",
-		calls: ["confirm", "cached", "matches /c/A.app", "cached"],
+		calls: ["confirm", "cached", "matches /c/A.app in /dev/App.app", "cached"],
 	},
 	{
 		name: "1 installed but differs from the cached build → reinstall",
 		world: { installedHash: "H", onDevice: true, cache: "/c/A.app", matches: false },
 		source: "cache",
-		calls: ["confirm", "cached", "matches /c/A.app", "cached", "install /c/A.app"],
+		calls: ["confirm", "cached", "matches /c/A.app in /dev/App.app", "cached", "install /c/A.app"],
 	},
 	{
 		name: "1 installed, cache pruned → nothing to compare, trust the record",

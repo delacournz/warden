@@ -1,0 +1,1946 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`help output warden --help 1`] = `
+"Usage: warden [options] [command]
+
+machine-wide device + port leasing for agents and users
+
+Options:
+  -h, --help                    display help for command
+
+Lease:
+  claim [platform]              lease iOS sims / Android emulators (reuse, boot
+                                or create), booted and ready
+  release [leaseIds...]         release leases (optionally shut down devices
+                                warden created)
+  ls                            list leases (resource, state, owner,
+                                repo/worktree, age, heartbeat)
+  check                         exit 0 if a device is free or yours, 2 if
+                                another owner holds it
+  heartbeat [leaseIds...]       refresh lease heartbeats so they don't go stale
+  gc                            reclaim stale leases; shut down idle warden
+                                devices (never deletes)
+  port                          lease TCP ports from a range (bind-probed, never
+                                handed out twice)
+
+Run:
+  run [platform] [cmd...]       claim devices, run a command with WARDEN_UDIDS
+                                set, release on exit
+  dev [platform] [expoArgs...]  install the cached dev build for this
+                                fingerprint, start Metro, open the dev client
+                                (replaces expo run:*)
+  batch [platform] [cmd...]     claim N devices, fan a job queue out over them
+                                (one worker per device), release at the end
+  affected [suite]              list the e2e flows a change needs (git diff vs
+                                base → import graph → flows)
+  e2e [suite]                   run the e2e flows a change needs on leased
+                                devices; exit 1 if a required flow fails
+
+Devices:
+  devices|list [platform]       list every simulator / emulator (booted or not,
+                                plus Android AVDs) with warden ownership +
+                                leases
+  sim                           per-simulator tweaks: slim | unquarantine
+  sims                          simulator + runtime disk audit (default), prune
+                                idle warden sims, delete (multi-select)
+  arrange                       tile warden simulator windows in name order
+                                (macOS; also runs after iOS claims)
+  clone <source>                duplicate a shut-down iOS simulator into
+                                warden's pool (fast: no first boot)
+  golden                        golden iOS images new sims are cloned from (fast
+                                boots): ensure | ls | prune
+
+Builds:
+  app                           fingerprint an Expo app and install the matching
+                                build (installed → cache → EAS → local build)
+  builds                        list, prune (LRU) and import cached native app
+                                builds
+
+Commands:
+  ui                            drive a leased simulator / emulator (agents):
+                                status, snapshot, find, open, press, fill,
+                                scroll, …
+
+Setup:
+  hook                          Claude Code / Codex hook: on session end shut
+                                down what the session booted + release its
+                                leases
+  install                       install warden to ~/.local/bin + hooks for
+                                detected agents (Claude Code: skill, rule, hook;
+                                Codex: hook)
+  skill                         the warden agent skill: show (copy/paste) |
+                                install (bunx/npx skills add)
+  doctor                        check warden's setup: home, db, device tools,
+                                simulator helper, install method, PATH,
+                                Claude/Codex hooks + skill, stale leases
+  update                        update warden: rebuild from source (dev/local
+                                builds) or install the latest release
+  version                       print warden's version and build channel (dev /
+                                local / release)
+  help [command]                display help for command"
+`;
+
+exports[`help output warden claim --help (and nested subcommands) 1`] = `
+"$ warden claim --help
+Usage: warden claim [options] [platform]
+
+lease iOS sims / Android emulators (reuse, boot or create), booted and ready
+
+Arguments:
+  platform             ios | android (asked for when omitted in a terminal)
+
+Options:
+  --profile <slug>     device profile, e.g. iphone-17 / pixel-10 (android
+                       default: first AVD)
+  --runtime <runtime>  runtime: latest, iOS-26-5, 26.5 …
+  --count <n>          how many devices (default: "1")
+  --max <n>            max warden devices of this profile (default: cores/4, cap
+                       4)
+  --wait <duration>    wait this long for a free device, e.g. 10m
+  --ttl <duration>     lease TTL without heartbeat (default 30m; bare \`claim\` by
+                       an agent: 5m)
+  --label <label>      label shown in \`warden ls\`
+  --adopt              allow allocating foreign (non-warden) devices
+  --headless           iOS: close the claimed sims' Simulator.app windows (no
+                       window, even with Simulator open)
+  --no-headless        show the windows even when config / WARDEN_HEADLESS say
+                       headless
+  --json               machine-readable output
+  -h, --help           display help for command"
+`;
+
+exports[`help output warden release --help (and nested subcommands) 1`] = `
+"$ warden release --help
+Usage: warden release [options] [leaseIds...]
+
+release leases (optionally shut down devices warden created)
+
+Arguments:
+  leaseIds          lease ids to release
+
+Options:
+  --udid <udid...>  select leases of these device udids / serials (repeatable)
+  --mine            select every lease held by this owner
+  --label <label>   with --mine: only leases whose label equals this
+  --session <id>    select every lease held by this agent session
+  --shutdown        also shut down devices warden created (or the lease owner
+                    booted)
+  --bad [reason]    also quarantine the released devices (warden devices only)
+                    so claims skip them
+  --json            machine-readable output
+  -h, --help        display help for command"
+`;
+
+exports[`help output warden run --help (and nested subcommands) 1`] = `
+"$ warden run --help
+Usage: warden run [options] [platform] [cmd...]
+
+claim devices, run a command with WARDEN_UDIDS set, release on exit
+
+Arguments:
+  platform               ios | android (asked for when omitted in a terminal)
+  cmd                    the command to run, after --
+
+Options:
+  --profile <slug>       device profile, e.g. iphone-17 / pixel-10 (android
+                         default: first AVD)
+  --runtime <runtime>    runtime: latest, iOS-26-5, 26.5 …
+  --count <n>            how many devices (default: "1")
+  --max <n>              max warden devices of this profile (default: cores/4,
+                         cap 4)
+  --wait <duration>      wait this long for a free device, e.g. 10m
+  --ttl <duration>       lease TTL without heartbeat (default 30m; bare \`claim\`
+                         by an agent: 5m)
+  --label <label>        label shown in \`warden ls\`
+  --adopt                allow allocating foreign (non-warden) devices
+  --headless             iOS: close the claimed sims' Simulator.app windows (no
+                         window, even with Simulator open)
+  --no-headless          show the windows even when config / WARDEN_HEADLESS say
+                         headless
+  --json                 machine-readable output
+  --port <from:span>     lease a port from FROM..FROM+SPAN for the child
+                         (WARDEN_PORT_<i>); repeatable (default: [])
+  --app                  install the project's app (fingerprint → cache → EAS →
+                         build) on each device first
+  --install-mode <mode>  --app: clean = fresh app data each run without
+                         reinstalling an unchanged build; reinstall = uninstall
+                         + install each run (default: install only when the
+                         build differs) (choices: "clean", "reinstall")
+  --reset-keychain       --install-mode: also reset the iOS simulator's keychain
+                         (not cleared by uninstall either)
+  --project <dir>        --app: project directory (default: cwd)
+  --bundle-id <id>       --app: override the bundle id / package
+  --variant <name>       --app: install this projects[].variants build (dev,
+                         e2e…)
+  --no-eas               --app: don't download EAS builds
+  --no-build             --app: don't build locally on a cache miss
+  -h, --help             display help for command
+
+Example:
+  warden run ios --count 2 --port 8091:20 -- bun e2e"
+`;
+
+exports[`help output warden dev --help (and nested subcommands) 1`] = `
+"$ warden dev --help
+Usage: warden dev [options] [platform] [expoArgs...]
+
+install the cached dev build for this fingerprint, start Metro, open the dev
+client (replaces expo run:*)
+
+Arguments:
+  platform                    ios | android (asked for when omitted in a
+                              terminal)
+  expoArgs                    extra \`expo start\` args, after --
+
+Options:
+  --profile <slug>            device profile, e.g. iphone-17 / pixel-10 (android
+                              default: first AVD)
+  --runtime <runtime>         runtime: latest, iOS-26-5, 26.5 …
+  --count <n>                 how many devices (default: "1")
+  --max <n>                   max warden devices of this profile (default:
+                              cores/4, cap 4)
+  --wait <duration>           wait this long for a free device, e.g. 10m
+  --ttl <duration>            lease TTL without heartbeat (default 30m; bare
+                              \`claim\` by an agent: 5m)
+  --label <label>             label shown in \`warden ls\`
+  --adopt                     allow allocating foreign (non-warden) devices
+  --headless                  iOS: close the claimed sims' Simulator.app windows
+                              (no window, even with Simulator open)
+  --no-headless               show the windows even when config /
+                              WARDEN_HEADLESS say headless
+  --json                      machine-readable output
+  --udid <udid>               use this device instead of claiming one
+  --lease <id>                use the device of this lease
+  --port <from:span>          Metro port range to lease from (default:
+                              "8081:100")
+  --project <dir>             project directory (default: cwd)
+  --bundle-id <id>            override the bundle id / package
+  --variant <name>            projects[].variants build (default: dev when the
+                              project has one)
+  --scheme <scheme>           dev-client URL scheme (default: exp+<slug>)
+  --ready-timeout <duration>  wait this long for Metro (default: "2m")
+  --no-eas                    don't download EAS builds
+  --no-build                  don't build locally on a cache miss
+  --install-mode <mode>       clean = fresh app data each run without
+                              reinstalling an unchanged build; reinstall =
+                              uninstall + install each run (default: install
+                              only when the build differs) (choices: "clean",
+                              "reinstall")
+  --reset-keychain            --install-mode: also reset the iOS simulator's
+                              keychain
+  --no-open                   don't open the dev client (Metro + the leases
+                              only)
+  -h, --help                  display help for command
+
+Example:
+  warden dev ios -- --clear"
+`;
+
+exports[`help output warden batch --help (and nested subcommands) 1`] = `
+"$ warden batch --help
+Usage: warden batch [options] [platform] [cmd...]
+
+claim N devices, fan a job queue out over them (one worker per device), release
+at the end
+
+Arguments:
+  platform                    ios | android (asked for when omitted in a
+                              terminal), or a warden.config.ts batches preset
+  cmd                         per-job command after --; {job} {udid} {worker}
+                              {seq} are substituted
+
+Options:
+  --profile <slug>            device profile, e.g. iphone-17 / pixel-10 (android
+                              default: first AVD)
+  --runtime <runtime>         runtime: latest, iOS-26-5, 26.5 …
+  --count <n>                 how many devices (default: "1")
+  --max <n>                   max warden devices of this profile (default:
+                              cores/4, cap 4)
+  --wait <duration>           wait this long for a free device, e.g. 10m
+  --ttl <duration>            lease TTL without heartbeat (default 30m; bare
+                              \`claim\` by an agent: 5m)
+  --label <label>             label shown in \`warden ls\`
+  --adopt                     allow allocating foreign (non-warden) devices
+  --headless                  iOS: close the claimed sims' Simulator.app windows
+                              (no window, even with Simulator open)
+  --no-headless               show the windows even when config /
+                              WARDEN_HEADLESS say headless
+  --json                      machine-readable output
+  --port <from:span>          lease a port from FROM..FROM+SPAN for the child
+                              (WARDEN_PORT_<i>); repeatable (default: [])
+  --app                       install the project's app (fingerprint → cache →
+                              EAS → build) on each device first
+  --install-mode <mode>       --app: clean = fresh app data each run without
+                              reinstalling an unchanged build; reinstall =
+                              uninstall + install each run (default: install
+                              only when the build differs) (choices: "clean",
+                              "reinstall")
+  --reset-keychain            --install-mode: also reset the iOS simulator's
+                              keychain (not cleared by uninstall either)
+  --project <dir>             --app: project directory (default: cwd)
+  --bundle-id <id>            --app: override the bundle id / package
+  --variant <name>            --app: install this projects[].variants build
+                              (dev, e2e…)
+  --no-eas                    --app: don't download EAS builds
+  --no-build                  --app: don't build locally on a cache miss
+  --retry <n>                 re-run a failed job up to N times on the same
+                              device (default: "0")
+  --passes <n>                a job passes after N consecutive green runs on its
+                              device (default: "1")
+  --serve <sh-cmd>            start this (sh -c, own process group) before the
+                              jobs; killed at the end; {port} = the first leased
+                              port
+  --serve-ready <probe>       wait for http://…, tcp:PORT or file:PATH before
+                              starting jobs (tcp:{port} works)
+  --serve-timeout <duration>  --serve-ready: give up after this long (default:
+                              "10m")
+  --job-timeout <duration>    kill a job still running after this long (it
+                              counts as failed)
+  --record <dir>              iOS: record every simulator + the TUI into DIR
+                              (batch.json, tui.cast, dev-<i>.mp4)
+  --logs <dir>                per-job logs (default: <record dir>/logs or
+                              $WARDEN_HOME/batches/<id>/logs)
+  --no-tui                    plain log lines instead of the live grid
+  --jobs <list>               comma-separated jobs
+  --jobs-from <file>          one job per line from a file, or - for stdin
+  -h, --help                  display help for command
+
+Examples:
+  warden batch ios --count 3 --jobs a,b,c,d -- bun e2e --flow {job} --device {udid}
+  warden batch e2e --count 2    # batches.e2e from warden.config.ts, --count overridden"
+`;
+
+exports[`help output warden affected --help (and nested subcommands) 1`] = `
+"$ warden affected --help
+Usage: warden affected [options] [suite]
+
+list the e2e flows a change needs (git diff vs base → import graph → flows)
+
+Arguments:
+  suite                  e2e.<suite> in warden.config.ts (optional with one
+                         suite)
+
+Options:
+  --base <ref>           compare against merge-base with this ref (default: the
+                         suite's base, main)
+  --platform <platform>  ios | android (default: the suite's platform, else
+                         both)
+  --files <list>         comma-separated changed files (relative to cwd) instead
+                         of git
+  --required-only        only flows with required: true
+  --explain              show why each flow was selected
+  --strict               exit 3 when a changed file reaches no flow
+  --json                 machine-readable output
+  -h, --help             display help for command
+
+Examples:
+  warden affected mobile --base origin/main --explain
+  warden batch ios --jobs-from - -- <runner> {job} < <(warden affected mobile --platform ios)"
+`;
+
+exports[`help output warden e2e --help (and nested subcommands) 1`] = `
+"$ warden e2e --help
+Usage: warden e2e [options] [suite]
+
+run the e2e flows a change needs on leased devices; exit 1 if a required flow
+fails
+
+Arguments:
+  suite                       e2e.<suite> in warden.config.ts (optional with one
+                              suite)
+
+Options:
+  --profile <slug>            device profile, e.g. iphone-17 / pixel-10 (android
+                              default: first AVD)
+  --runtime <runtime>         runtime: latest, iOS-26-5, 26.5 …
+  --count <n>                 how many devices (default: "1")
+  --max <n>                   max warden devices of this profile (default:
+                              cores/4, cap 4)
+  --wait <duration>           wait this long for a free device, e.g. 10m
+  --ttl <duration>            lease TTL without heartbeat (default 30m; bare
+                              \`claim\` by an agent: 5m)
+  --label <label>             label shown in \`warden ls\`
+  --adopt                     allow allocating foreign (non-warden) devices
+  --headless                  iOS: close the claimed sims' Simulator.app windows
+                              (no window, even with Simulator open)
+  --no-headless               show the windows even when config /
+                              WARDEN_HEADLESS say headless
+  --json                      machine-readable output
+  --port <from:span>          lease a port from FROM..FROM+SPAN for the child
+                              (WARDEN_PORT_<i>); repeatable (default: [])
+  --app                       install the project's app (fingerprint → cache →
+                              EAS → build) on each device first
+  --install-mode <mode>       --app: clean = fresh app data each run without
+                              reinstalling an unchanged build; reinstall =
+                              uninstall + install each run (default: install
+                              only when the build differs) (choices: "clean",
+                              "reinstall")
+  --reset-keychain            --install-mode: also reset the iOS simulator's
+                              keychain (not cleared by uninstall either)
+  --project <dir>             --app: project directory (default: cwd)
+  --bundle-id <id>            --app: override the bundle id / package
+  --variant <name>            --app: install this projects[].variants build
+                              (dev, e2e…)
+  --no-eas                    --app: don't download EAS builds
+  --no-build                  --app: don't build locally on a cache miss
+  --retry <n>                 re-run a failed job up to N times on the same
+                              device (default: "0")
+  --passes <n>                a job passes after N consecutive green runs on its
+                              device (default: "1")
+  --serve <sh-cmd>            start this (sh -c, own process group) before the
+                              jobs; killed at the end; {port} = the first leased
+                              port
+  --serve-ready <probe>       wait for http://…, tcp:PORT or file:PATH before
+                              starting jobs (tcp:{port} works)
+  --serve-timeout <duration>  --serve-ready: give up after this long (default:
+                              "10m")
+  --job-timeout <duration>    kill a job still running after this long (it
+                              counts as failed)
+  --record <dir>              iOS: record every simulator + the TUI into DIR
+                              (batch.json, tui.cast, dev-<i>.mp4)
+  --logs <dir>                per-job logs (default: <record dir>/logs or
+                              $WARDEN_HOME/batches/<id>/logs)
+  --no-tui                    plain log lines instead of the live grid
+  --base <ref>                compare against merge-base with this ref (default:
+                              the suite's base)
+  --platform <platform>       ios | android (default: the suite's platform)
+  --files <list>              comma-separated changed files (relative to cwd)
+                              instead of git
+  --all                       run every flow of the suite (after include /
+                              exclude), skipping the git diff
+  --flows <list>              run exactly these flow ids / globs
+                              (comma-separated), skipping the git diff
+  --required-only             only run flows with required: true
+  --explain                   print why each flow was selected before running
+  --dry-run                   select and explain, run nothing
+  --report <file>             also write e2e-report.json here
+  --devices <legs>            which e2e.<suite>.devices legs run: default | all
+                              | <profile,…>
+  --no-shutdown               keep the devices running after the gate passes
+                              (default: shut down the ones warden created under
+                              CI, leave them booted locally; suite shutdown)
+  --no-warm                   skip pre-warming the iOS socket helper per device
+                              (default: on; suite warmDrivers)
+  -h, --help                  display help for command
+
+Examples:
+  warden e2e mobile --base origin/main --count 2
+  warden e2e --dry-run --files src/modules/chat/api.ts"
+`;
+
+exports[`help output warden ls --help (and nested subcommands) 1`] = `
+"$ warden ls --help
+Usage: warden ls [options]
+
+list leases (resource, state, owner, repo/worktree, age, heartbeat)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden devices --help (and nested subcommands) 1`] = `
+"$ warden devices --help
+Usage: warden devices|list [options] [platform]
+
+list every simulator / emulator (booted or not, plus Android AVDs) with warden
+ownership + leases
+
+Arguments:
+  platform    ios | android (default: both)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden sim --help (and nested subcommands) 1`] = `
+"$ warden sim --help
+Usage: warden sim [options] [command]
+
+per-simulator tweaks: slim | unquarantine
+
+Options:
+  -h, --help         display help for command
+
+Commands:
+  slim [udid]        switch off the iOS simulator daemons UI flows never need
+                     (Siri, Health, News, Mail…) to save RAM/CPU
+  unquarantine <id>  clear the quarantine on a device (set by \`release --bad\` or
+                     a failed claim health probe)
+  help [command]     display help for command
+
+$ warden sim slim --help
+Usage: warden sim slim [options] [udid]
+
+switch off the iOS simulator daemons UI flows never need (Siri, Health, News,
+Mail…) to save RAM/CPU
+
+Arguments:
+  udid        simulator udid (booted, not leased by another session)
+
+Options:
+  --booted    every booted simulator
+  --dry-run   list the jobs, change nothing
+  --restore   re-enable them (fully effective on the next boot)
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden sim unquarantine --help
+Usage: warden sim unquarantine [options] <id>
+
+clear the quarantine on a device (set by \`release --bad\` or a failed claim
+health probe)
+
+Arguments:
+  id          simulator udid / emulator serial
+
+Options:
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden sims --help (and nested subcommands) 1`] = `
+"$ warden sims --help
+Usage: warden sims [options] [command]
+
+simulator + runtime disk audit (default), prune idle warden sims, delete
+(multi-select)
+
+Options:
+  -h, --help            display help for command
+
+Commands:
+  audit                 every sim + downloaded runtime: size, owner, lease, last
+                        use, verdict (the default; read-only)
+  prune                 delete warden sims the audit marks deletable (never
+                        foreign sims or goldens)
+  delete|rm [udids...]  pick simulators to delete from a menu (suggestions
+                        pre-ticked) or pass udids, confirm, delete
+  help [command]        display help for command
+
+$ warden sims audit --help
+Usage: warden sims audit [options]
+
+every sim + downloaded runtime: size, owner, lease, last use, verdict (the
+default; read-only)
+
+Options:
+  --idle <duration>   warden sims unused this long are deletable (default 7d)
+  --stale <duration>  foreign sims not booted this long are suggested (default
+                      30d)
+  --max-size <size>   disk budget for all sims, e.g. 40G — LRU warden sims over
+                      it are deletable
+  --owner <owner>     warden | golden | foreign | all (default all)
+  --json              machine-readable output
+  -h, --help          display help for command
+
+$ warden sims prune --help
+Usage: warden sims prune [options]
+
+delete warden sims the audit marks deletable (never foreign sims or goldens)
+
+Options:
+  --idle <duration>  warden sims unused this long are deletable (default 7d)
+  --max-size <size>  also delete least-recently-used warden sims until all sims
+                     fit, e.g. 40G
+  --dry-run          only show what would be deleted
+  --yes              don't ask before deleting
+  --json             machine-readable output
+  -h, --help         display help for command
+
+$ warden sims delete --help
+Usage: warden sims delete|rm [options] [udids...]
+
+pick simulators to delete from a menu (suggestions pre-ticked) or pass udids,
+confirm, delete
+
+Arguments:
+  udids               delete these instead of showing the menu
+
+Options:
+  --suggested         delete every suggested sim instead of showing the menu
+  --stale <duration>  foreign sims not booted this long are suggested (default
+                      30d)
+  --idle <duration>   warden sims unused this long are deletable (default 7d)
+  -y, --yes           don't ask before deleting
+  --dry-run           only show what would be deleted
+  --json              machine-readable output
+  -h, --help          display help for command"
+`;
+
+exports[`help output warden arrange --help (and nested subcommands) 1`] = `
+"$ warden arrange --help
+Usage: warden arrange [options]
+
+tile warden simulator windows in name order (macOS; also runs after iOS claims)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden clone --help (and nested subcommands) 1`] = `
+"$ warden clone --help
+Usage: warden clone [options] <source>
+
+duplicate a shut-down iOS simulator into warden's pool (fast: no first boot)
+
+Arguments:
+  source         udid or name of the shut-down simulator to duplicate
+
+Options:
+  --name <name>  the clone's name (default: next free warden-<profile>-N)
+  --json         machine-readable output
+  -h, --help     display help for command"
+`;
+
+exports[`help output warden golden --help (and nested subcommands) 1`] = `
+"$ warden golden --help
+Usage: warden golden [options] [command]
+
+golden iOS images new sims are cloned from (fast boots): ensure | ls | prune
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  ensure          build (once) or reuse the golden image
+  ls              list golden images
+  prune           delete stale goldens (--all: every golden)
+  help [command]  display help for command
+
+$ warden golden ensure --help
+Usage: warden golden ensure [options]
+
+build (once) or reuse the golden image
+
+Options:
+  --profile <slug>     device profile (default: iphone-17)
+  --runtime <runtime>  runtime: latest, iOS-26-5, 26.5 …
+  --json               machine-readable output
+  -h, --help           display help for command
+
+$ warden golden ls --help
+Usage: warden golden ls [options]
+
+list golden images
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden golden prune --help
+Usage: warden golden prune [options]
+
+delete stale goldens (--all: every golden)
+
+Options:
+  --all       delete every golden image, not just stale ones
+  -y, --yes   don't ask before --all deletes
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden check --help (and nested subcommands) 1`] = `
+"$ warden check --help
+Usage: warden check [options]
+
+exit 0 if a device is free or yours, 2 if another owner holds it
+
+Options:
+  --udid <udid>   device udid / serial to check
+  --session <id>  check against this agent session instead of the caller
+  --json          machine-readable output
+  -h, --help      display help for command"
+`;
+
+exports[`help output warden heartbeat --help (and nested subcommands) 1`] = `
+"$ warden heartbeat --help
+Usage: warden heartbeat [options] [leaseIds...]
+
+refresh lease heartbeats so they don't go stale
+
+Arguments:
+  leaseIds          lease ids to refresh
+
+Options:
+  --udid <udid...>  select leases of these device udids / serials (repeatable)
+  --mine            select every lease held by this owner
+  --label <label>   with --mine: only leases whose label equals this
+  --session <id>    select every lease held by this agent session
+  --json            machine-readable output
+  -h, --help        display help for command"
+`;
+
+exports[`help output warden gc --help (and nested subcommands) 1`] = `
+"$ warden gc --help
+Usage: warden gc [options]
+
+reclaim stale leases; shut down idle warden devices (never deletes)
+
+Options:
+  --idle <duration>  shut down unleased warden devices idle this long (default:
+                     20m)
+  --quiet            print nothing (background auto-gc)
+  --json             machine-readable output
+  -h, --help         display help for command"
+`;
+
+exports[`help output warden port --help (and nested subcommands) 1`] = `
+"$ warden port --help
+Usage: warden port [options] [command]
+
+lease TCP ports from a range (bind-probed, never handed out twice)
+
+Options:
+  -h, --help          display help for command
+
+Commands:
+  claim               lease free port(s) from FROM..FROM+SPAN; prints one port
+                      per line
+  release [ports...]  release port leases: <port…> | --lease <id…> | --mine (own
+                      leases only unless --force)
+  ls                  list port leases
+  help [command]      display help for command
+
+$ warden port claim --help
+Usage: warden port claim [options]
+
+lease free port(s) from FROM..FROM+SPAN; prints one port per line
+
+Options:
+  --from <port>     first port of the range (default 8091)
+  --span <n>        range size (default 20)
+  --count <n>       how many ports (default 1)
+  --ttl <duration>  lease TTL without heartbeat (default 30m)
+  --label <label>   label shown in \`warden port ls\`
+  --json            machine-readable output
+  -h, --help        display help for command
+
+$ warden port release --help
+Usage: warden port release [options] [ports...]
+
+release port leases: <port…> | --lease <id…> | --mine (own leases only unless
+--force)
+
+Arguments:
+  ports            ports to release
+
+Options:
+  --lease <id...>  release these lease ids
+  --mine           release all of your port leases
+  --force          release leases held by someone else
+  --json           machine-readable output
+  -h, --help       display help for command
+
+$ warden port ls --help
+Usage: warden port ls [options]
+
+list port leases
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden app --help (and nested subcommands) 1`] = `
+"$ warden app --help
+Usage: warden app [options] [command]
+
+fingerprint an Expo app and install the matching build (installed → cache → EAS
+→ local build)
+
+Options:
+  -h, --help              display help for command
+
+Commands:
+  ensure [platform]       install the build matching the project's fingerprint
+                          on a device (installed → cache → EAS → build)
+  fingerprint [platform]  print the project's native fingerprint (both platforms
+                          by default)
+  help [command]          display help for command
+
+$ warden app ensure --help
+Usage: warden app ensure [options] [platform]
+
+install the build matching the project's fingerprint on a device (installed →
+cache → EAS → build)
+
+Arguments:
+  platform               ios | android (asked for when omitted in a terminal)
+
+Options:
+  --project <dir>        project directory (default: cwd)
+  --lease <id>           device of this lease
+  --udid <udid>          this device
+  --no-install           only resolve the build into the cache
+  --no-eas               don't download EAS builds
+  --no-build             don't build locally on a cache miss
+  --install-mode <mode>  clean = fresh app data each run without reinstalling an
+                         unchanged build; reinstall = uninstall + install each
+                         run (default: install only when the build differs)
+                         (choices: "clean", "reinstall")
+  --reset-keychain       --install-mode: also reset the iOS simulator's keychain
+  --bundle-id <id>       override the bundle id / package
+  --variant <name>       use this projects[].variants build (dev, e2e…)
+  --json                 machine-readable output
+  -h, --help             display help for command
+
+$ warden app fingerprint --help
+Usage: warden app fingerprint [options] [platform]
+
+print the project's native fingerprint (both platforms by default)
+
+Arguments:
+  platform          ios | android
+
+Options:
+  --project <dir>   project directory (default: cwd)
+  --bundle-id <id>  override the bundle id / package
+  --variant <name>  fingerprint this projects[].variants build
+  --json            machine-readable output
+  -h, --help        display help for command"
+`;
+
+exports[`help output warden ui --help (and nested subcommands) 1`] = `
+"$ warden ui --help
+Usage: warden ui [options] [command]
+
+drive a leased simulator / emulator (agents): status, snapshot, find, open,
+press, fill, scroll, …
+
+Options:
+  -h, --help                   display help for command
+
+Commands:
+  status                       device, lease, helper and recording state
+  close                        stop this device's helper (the lease stays);
+                               --app also quits the app, --release frees the
+                               lease
+  snapshot                     the screen as @eN lines (bumps the generation)
+  find <selector...>           elements matching a selector, with @eN refs
+                               (bumps the generation)
+  open <target>                launch an app (bundle id) or open a URL; --metro
+                               starts the dev client on that Metro
+  press <target...>            tap an element or point; an @eN older than 30 s
+                               is re-verified first
+  tap <target...>              tap an element or point; an @eN older than 30 s
+                               is re-verified first
+  longpress <target...>        press and hold an element or point (default 800
+                               ms)
+  fill <args...>               replace a text field's content, then read it back
+                               (use -- before text starting with -)
+  type <text>                  type into whatever has focus
+  key <name>                   press a key: Enter Backspace Tab Space Escape
+                               Delete Up Down Left Right
+  swipe <args...>              raw swipe: the way the finger moves (swipe up
+                               reveals what is below), or x1 y1 x2 y2
+  scroll <direction> [amount]  scroll content: scroll down reveals what is
+                               below; --until swipes until a selector is on
+                               screen
+  alert <action>               answer the system alert / sheet on top, or read
+                               it
+  home                         press the home button
+  back                         press back (Android only)
+  rotate [orientation]         set the orientation (none = read it)
+  appearance [mode]            set light or dark mode (none = read it)
+  screenshot [path]            save a PNG of the screen (default:
+                               $WARDEN_HOME/ui/<udid>/shots/NNN.png)
+  video <action> [path]        record the screen: video start [path] | video
+                               stop
+  wait <args...>               poll (100 ms, --timeout) until an element is
+                               visible; also: absent <sel> | text <…> | stable
+                               [ms]
+  is <args...>                 exit 0 when the element is in that state, 1 when
+                               not
+  get <args...>                print one property of an element (count = how
+                               many match)
+  bench                        time snapshot, press, settle, tree and driver
+                               open on this device against the speed targets
+  record                       record warden ui actions as a replayable flow:
+                               start <name> | stop | status
+  replay <file>                re-run a recorded flow; a screen that no longer
+                               matches is a replay_divergence (exit 1)
+  export <file>                write a recorded flow as an e2e spec for
+                               @delacour/warden-e2e
+  eval <expression>            run JavaScript in the app (Hermes) and print the
+                               value
+  tree                         the app's React components (testID, label, text,
+                               screen) with rects
+  logs [args...]               app console: logs [n] | start | stop | mark
+                               <label> | clear
+  network [n]                  the app's fetch calls recorded by \`logs start\`
+  reload                       reload the app's JavaScript
+  help [command]               display help for command
+
+$ warden ui status --help
+Usage: warden ui status [options]
+
+device, lease, helper and recording state
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui close --help
+Usage: warden ui close [options]
+
+stop this device's helper (the lease stays); --app also quits the app, --release
+frees the lease
+
+Options:
+  --app [bundleId]       terminate the app first (default: the one \`open\`
+                         launched)
+  --release              release the lease too (stops the helper)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui snapshot --help
+Usage: warden ui snapshot [options]
+
+the screen as @eN lines (bumps the generation)
+
+Options:
+  -i, --interactive      only interactive elements and anything with a testID
+  --all                  no line cap
+  --settle [ms]          wait for a quiet screen (default budget 3000 ms), then
+                         print a +/-/= diff
+  --depth <n>            only the first n levels of the tree
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui find --help
+Usage: warden ui find [options] <selector...>
+
+elements matching a selector, with @eN refs (bumps the generation)
+
+Arguments:
+  selector               id=… label=… text=… role=… value=… editable=… nth=…
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui open --help
+Usage: warden ui open [options] <target>
+
+launch an app (bundle id) or open a URL; --metro starts the dev client on that
+Metro
+
+Arguments:
+  target                 bundle id or URL
+
+Options:
+  --relaunch             terminate a running app first
+  --metro <url>          Metro URL: launch with --initialUrl and remember it
+  --args <args...>       extra launch arguments
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui press --help
+Usage: warden ui press [options] <target...>
+
+tap an element or point; an @eN older than 30 s is re-verified first
+
+Arguments:
+  target                 @eN | selector | x y
+
+Options:
+  --verify               re-check an @eN against a fresh snapshot before tapping
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui tap --help
+Usage: warden ui tap [options] <target...>
+
+tap an element or point; an @eN older than 30 s is re-verified first
+
+Arguments:
+  target                 @eN | selector | x y
+
+Options:
+  --verify               re-check an @eN against a fresh snapshot before tapping
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui longpress --help
+Usage: warden ui longpress [options] <target...>
+
+press and hold an element or point (default 800 ms)
+
+Arguments:
+  target                 @eN | selector | x y, then optionally the duration in
+                         ms
+
+Options:
+  --verify               re-check an @eN against a fresh snapshot first
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui fill --help
+Usage: warden ui fill [options] <args...>
+
+replace a text field's content, then read it back (use -- before text starting
+with -)
+
+Arguments:
+  args                   <target> <text>: the last word is the text
+
+Options:
+  --secure               password field: skip the read-back, never echo or
+                         record the text
+  --no-verify            skip the read-back
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui type --help
+Usage: warden ui type [options] <text>
+
+type into whatever has focus
+
+Arguments:
+  text                   text to type
+
+Options:
+  --submit               then press Enter
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui key --help
+Usage: warden ui key [options] <name>
+
+press a key: Enter Backspace Tab Space Escape Delete Up Down Left Right
+
+Arguments:
+  name                   key name
+
+Options:
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui swipe --help
+Usage: warden ui swipe [options] <args...>
+
+raw swipe: the way the finger moves (swipe up reveals what is below), or x1 y1
+x2 y2
+
+Arguments:
+  args                   up | down | left | right | x1 y1 x2 y2
+
+Options:
+  --from <target>        swipe inside this element instead of the whole screen
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui scroll --help
+Usage: warden ui scroll [options] <direction> [amount]
+
+scroll content: scroll down reveals what is below; --until swipes until a
+selector is on screen
+
+Arguments:
+  direction              up | down | left | right
+  amount                 share of the region one swipe travels, 0-1 (default
+                         0.5)
+
+Options:
+  --until <selector>     keep scrolling until this selector is on screen
+  --in <target>          scroll inside this element (@eN or selector)
+  --max <n>              give up after n swipes with --until (default 10)
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui alert --help
+Usage: warden ui alert [options] <action>
+
+answer the system alert / sheet on top, or read it
+
+Arguments:
+  action                 accept | dismiss | get
+
+Options:
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui home --help
+Usage: warden ui home [options]
+
+press the home button
+
+Options:
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui back --help
+Usage: warden ui back [options]
+
+press back (Android only)
+
+Options:
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui rotate --help
+Usage: warden ui rotate [options] [orientation]
+
+set the orientation (none = read it)
+
+Arguments:
+  orientation            portrait | portrait-upside-down | landscape-left |
+                         landscape-right
+
+Options:
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui appearance --help
+Usage: warden ui appearance [options] [mode]
+
+set light or dark mode (none = read it)
+
+Arguments:
+  mode                   light | dark
+
+Options:
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui screenshot --help
+Usage: warden ui screenshot [options] [path]
+
+save a PNG of the screen (default: $WARDEN_HOME/ui/<udid>/shots/NNN.png)
+
+Arguments:
+  path                   output file
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui video --help
+Usage: warden ui video [options] <action> [path]
+
+record the screen: video start [path] | video stop
+
+Arguments:
+  action                 start | stop
+  path                   output file for start
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui wait --help
+Usage: warden ui wait [options] <args...>
+
+poll (100 ms, --timeout) until an element is visible; also: absent <sel> | text
+<…> | stable [ms]
+
+Arguments:
+  args                   <selector> | absent <selector> | text <text> | stable
+                         [ms]
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui is --help
+Usage: warden ui is [options] <args...>
+
+exit 0 when the element is in that state, 1 when not
+
+Arguments:
+  args                   <selector>
+                         visible|hittable|enabled|checked|selected|focused
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui get --help
+Usage: warden ui get [options] <args...>
+
+print one property of an element (count = how many match)
+
+Arguments:
+  args                   <selector> text|value|label|id|role|frame|count
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui bench --help
+Usage: warden ui bench [options]
+
+time snapshot, press, settle, tree and driver open on this device against the
+speed targets
+
+Options:
+  --runs <n>             samples per metric (default 20; cold start, settle and
+                         open are capped at 3-5)
+  --metro <url>          Metro URL for the tree metric
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui record --help
+Usage: warden ui record [options] [command]
+
+record warden ui actions as a replayable flow: start <name> | stop | status
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  start <name>    start recording to .warden-ui/<name>.flow.json
+  stop            stop recording and print the step count
+  status          is a recording running, and how long is it
+  help [command]  display help for command
+
+$ warden ui record start --help
+Usage: warden ui record start [options] <name>
+
+start recording to .warden-ui/<name>.flow.json
+
+Arguments:
+  name                   flow name
+
+Options:
+  --out <file>           write the flow here instead
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui record stop --help
+Usage: warden ui record stop [options]
+
+stop recording and print the step count
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui record status --help
+Usage: warden ui record status [options]
+
+is a recording running, and how long is it
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui replay --help
+Usage: warden ui replay [options] <file>
+
+re-run a recorded flow; a screen that no longer matches is a replay_divergence
+(exit 1)
+
+Arguments:
+  file                   a .flow.json
+
+Options:
+  --from <i>             start at this step index
+  --update-snapshots     rewrite the file with the positions and screen hashes
+                         seen now
+  --settle [ms]          settle after every step, not only the recorded ones
+                         (default budget 3000 ms)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui export --help
+Usage: warden ui export [options] <file>
+
+write a recorded flow as an e2e spec for @delacour/warden-e2e
+
+Arguments:
+  file          a .flow.json
+
+Options:
+  --to <path>   spec file to write, e.g. e2e/sign-in.e2e.ts
+  --ids <path>  ids module to merge test ids into (export const ids = { … })
+  --force       overwrite an existing spec
+  --json        machine-readable output: one JSON document on stdout
+  -h, --help    display help for command
+
+$ warden ui eval --help
+Usage: warden ui eval [options] <expression>
+
+run JavaScript in the app (Hermes) and print the value
+
+Arguments:
+  expression             JavaScript expression
+
+Options:
+  --await                await a returned promise
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
+                         this owner's leased ports)
+  -h, --help             display help for command
+
+$ warden ui tree --help
+Usage: warden ui tree [options]
+
+the app's React components (testID, label, text, screen) with rects
+
+Options:
+  --all                  include inactive screens and unmeasured components
+  --max <n>              at most n components
+  --screen <name>        only this screen's subtree (react-navigation /
+                         expo-router route name)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
+                         this owner's leased ports)
+  -h, --help             display help for command
+
+$ warden ui logs --help
+Usage: warden ui logs [options] [args...]
+
+app console: logs [n] | start | stop | mark <label> | clear
+
+Arguments:
+  args                   n, or start | stop | mark <label> | clear
+
+Options:
+  --bodies               with start: also record request and response bodies
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
+                         this owner's leased ports)
+  -h, --help             display help for command
+
+$ warden ui network --help
+Usage: warden ui network [options] [n]
+
+the app's fetch calls recorded by \`logs start\`
+
+Arguments:
+  n                      entries to show (default 50)
+
+Options:
+  --include <parts>      headers,body
+  --id <id>              one entry in full
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui reload --help
+Usage: warden ui reload [options]
+
+reload the app's JavaScript
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
+                         this owner's leased ports)
+  -h, --help             display help for command"
+`;
+
+exports[`help output warden ui-collect --help (and nested subcommands) 1`] = `
+"$ warden ui-collect --help
+Usage: warden ui-collect [options]
+
+background console + network collector for \`warden ui logs start\` (internal)
+
+Options:
+  --metro <url>
+  --out <dir>
+  --idle-ms <n>
+  --device-name <name>
+  --logical-device-id <id>
+  --app-id <id>
+  --include-bodies
+  -h, --help                display help for command"
+`;
+
+exports[`help output warden builds --help (and nested subcommands) 1`] = `
+"$ warden builds --help
+Usage: warden builds [options] [command]
+
+list, prune (LRU) and import cached native app builds
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  ls              list cached builds (the default)
+  prune           remove least-recently-used builds until the cache fits
+                  --max-size (build-locked ones stay)
+  import <path>   copy a local .app / .apk into the cache under a fingerprint
+                  hash
+  help [command]  display help for command
+
+$ warden builds ls --help
+Usage: warden builds ls [options]
+
+list cached builds (the default)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden builds prune --help
+Usage: warden builds prune [options]
+
+remove least-recently-used builds until the cache fits --max-size (build-locked
+ones stay)
+
+Options:
+  --max-size <size>  cache size limit, e.g. 20G (default 20G)
+  --dry-run          only show what would be removed
+  --yes              don't ask before removing
+  --json             machine-readable output
+  -h, --help         display help for command
+
+$ warden builds import --help
+Usage: warden builds import [options] <path>
+
+copy a local .app / .apk into the cache under a fingerprint hash
+
+Arguments:
+  path                   path.app | path.apk
+
+Options:
+  --hash <hash>          fingerprint hash to file it under
+  --platform <platform>  ios | android (default: from the extension)
+  --project <dir>        project directory (default: cwd)
+  --profile <profile>    build profile (default: the project's EAS profile, else
+                         local)
+  --bundle-id <id>       override the bundle id / package
+  --json                 machine-readable output
+  -h, --help             display help for command"
+`;
+
+exports[`help output warden hook --help (and nested subcommands) 1`] = `
+"$ warden hook --help
+Usage: warden hook [options] [command]
+
+Claude Code / Codex hook: on session end shut down what the session booted +
+release its leases
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  session-end     SessionEnd: shut down what the session booted + release its
+                  leases (reads hook JSON on stdin)
+  help [command]  display help for command
+
+$ warden hook session-end --help
+Usage: warden hook session-end [options]
+
+SessionEnd: shut down what the session booted + release its leases (reads hook
+JSON on stdin)
+
+Options:
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden install --help (and nested subcommands) 1`] = `
+"$ warden install --help
+Usage: warden install [options]
+
+install warden to ~/.local/bin + hooks for detected agents (Claude Code: skill,
+rule, hook; Codex: hook)
+
+Options:
+  --claude    install for Claude Code (default: every detected agent)
+  --codex     install for Codex (default: every detected agent)
+  -y, --yes   apply agent-config changes without asking
+  --dry-run   show what would change (diffs), write nothing
+  --shim      running from source: link ~/.local/bin/warden to this checkout
+  --json      machine-readable output (diffs go to stderr)
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden skill --help (and nested subcommands) 1`] = `
+"$ warden skill --help
+Usage: warden skill [options] [command]
+
+the warden agent skill: show (copy/paste) | install (bunx/npx skills add)
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  show            print SKILL.md to copy/paste (e.g. \`warden skill show |
+                  pbcopy\`)
+  install         install via \`bunx skills add\` (npx fallback)
+  help [command]  display help for command
+
+$ warden skill show --help
+Usage: warden skill show [options]
+
+print SKILL.md to copy/paste (e.g. \`warden skill show | pbcopy\`)
+
+Options:
+  --file <path>  print one embedded file (references/ui.md, rules/warden.md, …)
+  --json         machine-readable output
+  -h, --help     display help for command
+
+$ warden skill install --help
+Usage: warden skill install [options]
+
+install via \`bunx skills add\` (npx fallback)
+
+Options:
+  --from <source>         local = this binary's embedded copy; github = the
+                          release repo (updatable) (choices: "local", "github",
+                          default: "local")
+  --project               install into the current project (default: global, -g)
+  -a, --agent <agent...>  target agent(s), repeatable (default: the skills CLI
+                          asks)
+  --copy                  copy files instead of symlinking
+  -y, --yes               skip the skills CLI's confirmations
+  --dry-run               print the skills command, run nothing
+  --json                  machine-readable output (with --dry-run: the command
+                          as JSON)
+  -h, --help              display help for command"
+`;
+
+exports[`help output warden doctor --help (and nested subcommands) 1`] = `
+"$ warden doctor --help
+Usage: warden doctor [options]
+
+check warden's setup: home, db, device tools, simulator helper, install method,
+PATH, Claude/Codex hooks + skill, stale leases
+
+Options:
+  --fetch-helper  download warden-simd for this version into
+                  $WARDEN_HOME/simd/<version>/ first
+  --json          machine-readable output
+  -h, --help      display help for command"
+`;
+
+exports[`help output warden update --help (and nested subcommands) 1`] = `
+"$ warden update --help
+Usage: warden update [options]
+
+update warden: rebuild from source (dev/local builds) or install the latest
+release
+
+Options:
+  --check      only report whether an update is available
+  --release    install the latest GitHub release (also switches a dev/local
+               build to it)
+  --force      reinstall even when up to date
+  --to <path>  install the binary here instead
+  --json       machine-readable output
+  -h, --help   display help for command"
+`;
+
+exports[`help output warden version --help (and nested subcommands) 1`] = `
+"$ warden version --help
+Usage: warden version [options]
+
+print warden's version and build channel (dev / local / release)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output unknown command suggests the closest registered one 1`] = `
+"error: unknown command 'claime'
+(Did you mean claim?)
+(add --help for usage)"
+`;
+
+exports[`help output warden __affected-graph --help (and nested subcommands) 1`] = `
+"$ warden __affected-graph --help
+Usage: warden __affected-graph [options] <request>
+
+walk the import graph for \`warden affected\` and print it as JSON (internal)
+
+Arguments:
+  request     the graph request, as JSON
+
+Options:
+  -h, --help  display help for command"
+`;

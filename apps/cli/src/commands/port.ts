@@ -24,7 +24,7 @@ const DEFAULT_FROM = 8091;
 /** The caller: agent session (WARDEN_SESSION_ID / CLAUDE_* env), CI, or the invoking shell. */
 function callerOwner(ctx: CommandContext): Owner {
 	const input: OwnerContext = { env: ctx.env, pid: process.pid, ppid: process.ppid, cwd: ctx.cwd };
-	const git = readGitInfo(ctx.cwd);
+	const git = readGitInfo(ctx.cwd, { cache: ctx.git });
 	if (git) input.git = git;
 	return detectOwner(input);
 }

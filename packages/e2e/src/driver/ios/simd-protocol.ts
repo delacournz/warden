@@ -282,14 +282,42 @@ export const screenshotDataSchema = z.looseObject({
 });
 export type ScreenshotData = z.infer<typeof screenshotDataSchema>;
 
-/** `reason: "frontmost_mismatch"`: `bundleId` was asked for and never became the frontmost app before the deadline. */
+/**
+ * `via`: `stream` (the guest reported run-loop idle) or `snapshot` (the stream was stuck: two identical reads); a
+ * value this client does not know reads as absent. `reason: "frontmost_mismatch"`: `bundleId` was asked for and never
+ * became the frontmost app before the deadline, and `frontmostPid` is what was frontmost instead.
+ */
 export const settleDataSchema = z.looseObject({
 	quiet: z.boolean(),
 	waitedMs: z.number(),
+	via: z.enum(["stream", "snapshot"]).optional().catch(undefined),
 	reason: z.string().optional(),
 	frontmostPid: z.number().optional(),
 });
 export type SettleData = z.infer<typeof settleDataSchema>;
+
+/**
+ * `rebind` params: the helper (not the launch) waits until the quiescence stream reports on `bundleId`'s own process.
+ * `bound: false` is an answer, not an error: `reason` is `no_process` (the app never appeared), `timeout` (the stream
+ * stayed on another process) or `cancelled`. `restarts` is how many times the helper had to restart the stream.
+ */
+export const rebindDataSchema = z.looseObject({
+	bound: z.boolean(),
+	waitedMs: z.number(),
+	pid: z.number().optional(),
+	restarts: z.number().optional(),
+	/** the helper ended its AX guests first because they were old enough to be about to wedge */
+	recycled: z.boolean().optional(),
+	reason: z.string().optional(),
+});
+export type RebindData = z.infer<typeof rebindDataSchema>;
+
+/**
+ * `alertButtons` params. No `backend` reads both readers (`ax` first, then `axbridge`); `ax` or `axbridge` reads only
+ * that one: one tree read instead of two, errors propagate (nothing else answered), and an `axbridge` read that sees a
+ * modal without readable buttons answers `{ buttons: [] }` instead of `null`.
+ */
+export type AlertButtonsParams = { backend?: "ax" | "axbridge" };
 
 /** `alertButtons`: the system alert / sheet on top, `null` when there is none. */
 export const alertButtonsDataSchema = z
@@ -300,6 +328,18 @@ export const alertButtonsDataSchema = z
 	})
 	.nullable();
 export type AlertButtonsData = z.infer<typeof alertButtonsDataSchema>;
+
+/**
+ * `frontmost{bundleId}`: whether that app's process is the one the quiescence stream reports as frontmost. A read of the
+ * helper's state (one launchd lookup), no tree read and no waiting. `pid` is the bundle's process (absent when it is not
+ * running), `frontmostPid` the stream's (absent while no stream has reported).
+ */
+export const frontmostDataSchema = z.looseObject({
+	frontmost: z.boolean(),
+	pid: z.number().optional(),
+	frontmostPid: z.number().optional(),
+});
+export type FrontmostData = z.infer<typeof frontmostDataSchema>;
 
 /**
  * `orientation`: a real read may also say `faceUp` / `faceDown` / `unknown` (flat device); `source` tells
@@ -326,7 +366,9 @@ export const opSchemas = {
 	elementAtPoint: elementAtPointDataSchema,
 	screenshot: screenshotDataSchema,
 	settle: settleDataSchema,
+	rebind: rebindDataSchema,
 	alertButtons: alertButtonsDataSchema,
+	frontmost: frontmostDataSchema,
 	orientation: orientationDataSchema,
 } as const;
 
@@ -336,7 +378,9 @@ export type OpDataMap = {
 	elementAtPoint: WireElement | null;
 	screenshot: ScreenshotData;
 	settle: SettleData;
+	rebind: RebindData;
 	alertButtons: AlertButtonsData;
+	frontmost: FrontmostData;
 	orientation: OrientationData;
 };
 

@@ -81,17 +81,17 @@ describe("parseWardenConfig", () => {
 		expect(bad({ slim: true, platform: "ios", setup: "echo {udid}" }).success).toBe(true);
 	});
 
-	test("e2e suite run settings: metro, mode, jobTimeoutMs and device legs, with defaults", () => {
+	test("e2e suite run settings: metro, isolate, jobTimeoutMs and device legs, with defaults", () => {
 		const suite = { flowsDir: "flows" };
 		const parse = (extra: Record<string, unknown>) => parseWardenConfig({ e2e: { s: { ...suite, ...extra } } });
 		const plain = parse({});
 		if (!plain.success) throw new Error(plain.error);
-		expect(plain.data.e2e?.s?.mode).toBe("per-flow");
+		expect(plain.data.e2e?.s?.isolate).toBeUndefined();
 		expect(plain.data.e2e?.s?.jobTimeoutMs).toBe(600_000);
 		expect(plain.data.e2e?.s?.metro).toBeUndefined();
 
 		const full = parse({
-			mode: "single",
+			isolate: "flow",
 			jobTimeoutMs: 120_000,
 			metro: { launchArgs: ["-Flag", "YES"], env: { E2E: "1" } },
 			devices: [
@@ -121,7 +121,7 @@ describe("parseWardenConfig", () => {
 		expect(errorOf({ devices: [{ profile: "a" }], count: 2 })).toContain("devices replaces profile / count");
 		expect(errorOf({ devices: [{ profile: "a" }, { profile: "a" }] })).toContain('duplicate profile "a"');
 		expect(errorOf({ devices: [{ profile: "a", default: false }] })).toContain("at least one device leg");
-		expect(errorOf({ mode: "single", passes: 2 })).toContain("passes");
+		expect(errorOf({ isolate: "device", passes: 2 })).toContain("passes");
 		expect(errorOf({ metro: { port: "nope" } })).toContain("port");
 		expect(errorOf({ jobTimeoutMs: 10 })).not.toBe("");
 	});

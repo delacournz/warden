@@ -30,10 +30,13 @@ export type NodeEntry = {
 	secure: boolean;
 	/** not hidden, non-empty frame, intersecting the screen */
 	visible: boolean;
-	/** normalised label/text/value of this node and its descendants, echoes removed, in document order */
-	fragments: string[];
-	/** `fragments` joined with a space */
-	subtreeText: string;
+	/**
+	 * Normalised label/text/value of this node and its descendants, echoes removed, in document order. Worked out on the
+	 * first read (and kept), because indexing every node's subtree costs nodes x depth and most reads never ask.
+	 */
+	readonly fragments: readonly string[];
+	/** `fragments` joined with a space; also worked out on first read */
+	readonly subtreeText: string;
 };
 
 export type NodeIndex = {
@@ -93,7 +96,20 @@ function ownFragments(name: string | undefined, element: Element, value: string 
 	return [...seen];
 }
 
-/** Flattens a snapshot into document-order entries with parent/child links and derived state. */
+/** What an entry's subtree says: its own texts that no descendant repeats, then the descendants' (memoised on each). */
+function subtreeFragments(entry: NodeEntry): string[] {
+	const below = entry.children.flatMap((child) => child.fragments);
+	const belowText = below.join(" ");
+	const own = ownFragments(entry.name, entry.element, entry.value).filter(
+		(text) => text !== belowText && !below.includes(text)
+	);
+	return [...own, ...below];
+}
+
+/**
+ * Flattens a snapshot into document-order entries with parent/child links and derived state. Subtree text is not built
+ * here: `fragments` and `subtreeText` compute on first read.
+ */
 export function indexSnapshot(snapshot: Snapshot): NodeIndex {
 	const entries: NodeEntry[] = [];
 	const byId = new Map<string, NodeEntry>();
@@ -106,6 +122,8 @@ export function indexSnapshot(snapshot: Snapshot): NodeIndex {
 		const value = secure ? undefined : nonEmpty(rawValue);
 		const name = nonEmpty(element.label) ?? nonEmpty(element.text);
 		const hidden = element.hidden === true || parent?.states.hidden === true;
+		let fragments: readonly string[] | undefined;
+		let subtreeText: string | undefined;
 		const entry: NodeEntry = {
 			position: entries.length,
 			element,
@@ -125,18 +143,18 @@ export function indexSnapshot(snapshot: Snapshot): NodeIndex {
 			},
 			secure,
 			visible: !hidden && intersectsScreen(element.frame, snapshot.screen),
-			fragments: [],
-			subtreeText: "",
+			get fragments(): readonly string[] {
+				fragments ??= subtreeFragments(entry);
+				return fragments;
+			},
+			get subtreeText(): string {
+				subtreeText ??= entry.fragments.join(" ");
+				return subtreeText;
+			},
 		};
 		entries.push(entry);
 		byId.set(element.id, entry);
 		for (const child of element.children) entry.children.push(build(child, depth + 1, entry));
-
-		const below = entry.children.flatMap((child) => child.fragments);
-		const belowText = below.join(" ");
-		const own = ownFragments(name, element, value).filter((text) => text !== belowText && !below.includes(text));
-		entry.fragments = [...own, ...below];
-		entry.subtreeText = entry.fragments.join(" ");
 		return entry;
 	};
 

@@ -75,6 +75,8 @@ final class Session: @unchecked Sendable {
   let quiescence = QuiescenceHolder()
   /// The last `axbridge` read failure that was not repaired, for `health`.
   let bridgeHealth = BridgeHealth()
+  /// The pid each bundle id last resolved to, for `frontmost`.
+  let bundlePids = BundlePidMemory()
   let orientationMemory = OrientationMemory()
 
   init(

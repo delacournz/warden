@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "../exec";
-import { appMatchesArtifact, installApp, isAppInstalled, type ResetFs, resetAppData, uninstallApp } from "./install";
+import {
+	appMatchesArtifact,
+	type FileSize,
+	installApp,
+	isAppInstalled,
+	probeApp,
+	type ResetFs,
+	resetAppData,
+	uninstallApp,
+} from "./install";
 
 function exec(handlers: Record<string, Partial<ExecResult>>, calls: string[] = []): Exec {
 	return async (cmd) => {
@@ -33,6 +42,22 @@ describe("isAppInstalled", () => {
 		const calls: string[] = [];
 		await isAppInstalled({ exec: exec({}, calls), env: { ANDROID_HOME: "/sdk" } }, android, "com.x");
 		expect(calls[0]).toBe("/sdk/platform-tools/adb -s emulator-5554 shell pm path com.x");
+	});
+});
+
+describe("probeApp", () => {
+	test("iOS: present with the container path the probe printed", async () => {
+		const yes = exec({ "xcrun simctl get_app_container U1 com.x": { stdout: "/dev/App.app\n" } });
+		expect(await probeApp({ exec: yes, env }, ios, "com.x")).toEqual({
+			success: true,
+			data: { present: true, container: "/dev/App.app" },
+		});
+		expect(await probeApp({ exec: exec({}), env }, ios, "com.x")).toEqual({ success: true, data: { present: false } });
+	});
+
+	test("Android: present, no container", async () => {
+		const yes = exec({ "adb -s emulator-5554 shell pm path com.x": { stdout: "package:/data/app/base.apk\n" } });
+		expect(await probeApp({ exec: yes, env }, android, "com.x")).toEqual({ success: true, data: { present: true } });
 	});
 });
 
@@ -123,23 +148,29 @@ describe("appMatchesArtifact", () => {
 	const world = (
 		installed: { version: string; exe: string; js?: string },
 		cached = { version: "7", exe: "100", js: "9" }
-	) =>
-		exec({
-			"xcrun simctl get_app_container U1 com.x": { stdout: "/dev/App.app\n" },
-			"plutil -convert json -o - /dev/App.app/Info.plist": { stdout: plist(installed.version) },
-			"plutil -convert json -o - /cache/App.app/Info.plist": { stdout: plist(cached.version) },
-			"stat -f %z /dev/App.app/App": { stdout: `${installed.exe}\n` },
-			"stat -f %z /cache/App.app/App": { stdout: `${cached.exe}\n` },
-			...(installed.js ? { "stat -f %z /dev/App.app/main.jsbundle": { stdout: `${installed.js}\n` } } : {}),
-			"stat -f %z /cache/App.app/main.jsbundle": { stdout: `${cached.js}\n` },
-		});
+	) => {
+		const calls: string[] = [];
+		const sizes: Record<string, number> = {
+			"/dev/App.app/App": Number(installed.exe),
+			"/cache/App.app/App": Number(cached.exe),
+			"/cache/App.app/main.jsbundle": Number(cached.js),
+			...(installed.js ? { "/dev/App.app/main.jsbundle": Number(installed.js) } : {}),
+		};
+		const fileSize: FileSize = async (path) => sizes[path];
+		const e = exec(
+			{
+				"xcrun simctl get_app_container U1 com.x": { stdout: "/dev/App.app\n" },
+				"plutil -convert json -o - /dev/App.app/Info.plist": { stdout: plist(installed.version) },
+				"plutil -convert json -o - /cache/App.app/Info.plist": { stdout: plist(cached.version) },
+			},
+			calls
+		);
+		return { deps: { exec: e, env, fileSize }, calls };
+	};
 
 	test("same version, binary and JS bundle → match", async () => {
-		const e = world({ version: "7", exe: "100", js: "9" });
-		expect(await appMatchesArtifact({ exec: e, env }, ios, "com.x", "/cache/App.app")).toEqual({
-			success: true,
-			data: true,
-		});
+		const { deps } = world({ version: "7", exe: "100", js: "9" });
+		expect(await appMatchesArtifact(deps, ios, "com.x", "/cache/App.app")).toEqual({ success: true, data: true });
 	});
 
 	test("different CFBundleVersion, binary size or JS bundle → no match", async () => {
@@ -149,9 +180,32 @@ describe("appMatchesArtifact", () => {
 			{ version: "7", exe: "100", js: "10" },
 			{ version: "7", exe: "100" },
 		]) {
-			const res = await appMatchesArtifact({ exec: world(installed), env }, ios, "com.x", "/cache/App.app");
-			expect(res).toEqual({ success: true, data: false });
+			const { deps } = world(installed);
+			expect(await appMatchesArtifact(deps, ios, "com.x", "/cache/App.app")).toEqual({ success: true, data: false });
 		}
+	});
+
+	test("a container path from the earlier probe is reused: no second get_app_container", async () => {
+		const { deps, calls } = world({ version: "7", exe: "100", js: "9" });
+		const res = await appMatchesArtifact(deps, ios, "com.x", "/cache/App.app", "/dev/App.app");
+		expect(res).toEqual({ success: true, data: true });
+		expect(calls.some((c) => c.includes("get_app_container"))).toBe(false);
+	});
+
+	test("the whole already-installed check is three spawns: one probe, two plutil, no stat", async () => {
+		const { deps, calls } = world({ version: "7", exe: "100", js: "9" });
+		const probed = await probeApp(deps, ios, "com.x");
+		if (!probed.success || !probed.data.container) throw new Error("probe failed");
+		await appMatchesArtifact(deps, ios, "com.x", "/cache/App.app", probed.data.container);
+		expect(calls).toHaveLength(3);
+		expect(calls.filter((c) => c.startsWith("plutil"))).toHaveLength(2);
+		expect(calls.some((c) => c.startsWith("stat"))).toBe(false);
+	});
+
+	test("file sizes are read in-process, not with `stat`", async () => {
+		const { deps, calls } = world({ version: "7", exe: "100", js: "9" });
+		await appMatchesArtifact(deps, ios, "com.x", "/cache/App.app");
+		expect(calls.some((c) => c.startsWith("stat"))).toBe(false);
 	});
 
 	test("app missing or unreadable → no match; Android is not checked", async () => {
@@ -163,6 +217,17 @@ describe("appMatchesArtifact", () => {
 			success: true,
 			data: true,
 		});
+	});
+
+	test("the default file size reads the real filesystem", async () => {
+		const missing = await appMatchesArtifact(
+			{ exec: exec({ plutil: { stdout: plist("1") } }), env },
+			ios,
+			"com.x",
+			"/nonexistent-warden/App.app",
+			"/nonexistent-warden/Other.app"
+		);
+		expect(missing).toEqual({ success: true, data: false });
 	});
 });
 
