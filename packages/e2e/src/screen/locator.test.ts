@@ -283,14 +283,14 @@ describe("fill", () => {
 		expect(driver.callsOf("tap")).toHaveLength(2);
 	});
 
-	test("a filled field is emptied with select-all and one Backspace, not one per character", async () => {
+	test("a filled field is replaced by typing over a select-all: no Backspace at all", async () => {
 		const { driver, state } = fieldFixture({ value: "ada@example.test", selectAll: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("grace@example.test");
 		expect(
 			driver.calls.map((call) => call.method).filter((method) => method === "selectAll" || method === "key")
-		).toEqual(["selectAll", "key"]);
-		expect(driver.callsOf("key")).toEqual([{ method: "key", key: "Backspace" }]);
+		).toEqual(["selectAll"]);
+		expect(driver.callsOf("key")).toEqual([]);
 		expect(state.value).toBe("grace@example.test");
 	});
 
@@ -303,12 +303,12 @@ describe("fill", () => {
 		expect(state.value).toBe("grace@example.test");
 	});
 
-	test("iOS reports no placeholder, so such a field is cleared by select-all, never by a Backspace per placeholder character", async () => {
+	test("iOS reports no placeholder, so such a field is typed over a select-all, never backspaced per placeholder character", async () => {
 		const { driver, state } = fieldFixture({ placeholder: "ada@example.com", placeholderMeta: false, selectAll: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("grace@example.com");
 		expect(driver.callsOf("selectAll")).toHaveLength(1);
-		expect(driver.callsOf("key")).toHaveLength(1);
+		expect(driver.callsOf("key")).toEqual([]);
 		expect(state.value).toBe("grace@example.com");
 	});
 
@@ -329,8 +329,41 @@ describe("fill", () => {
 		expect(driver.callsOf("selectAll")).toHaveLength(1);
 		const keys = driver.callsOf("key");
 		expect(keys.every((call) => call.key === "Backspace")).toBe(true);
-		expect(keys).toHaveLength(1 + 6);
+		expect(keys).toHaveLength("oldnew".length + 1);
 		expect(typed(driver)).toBe("newnew");
+		expect(driver.callsOf("tap")).toHaveLength(2);
+	});
+
+	test("a typeText lost after the select-all leaves the field empty and the retry types it again without clearing keys", async () => {
+		const { driver, state } = fieldFixture({ value: "old", selectAll: true, dropTypes: 1 });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("new");
+		expect(state.value).toBe("new");
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+		expect(driver.callsOf("key")).toEqual([]);
+		expect(driver.callsOf("typeText")).toHaveLength(2);
+		expect(driver.callsOf("tap")).toHaveLength(2);
+	});
+
+	test("a select-all that selected only part of the text is caught by the confirm and retried with counted Backspaces", async () => {
+		let value = "old";
+		const driver = fakeDriver({
+			screens: () =>
+				snapshotOf([
+					el("textfield", { id: "field", label: "Email", value, frame: { x: 24, y: 200, width: 300, height: 44 } }),
+				]),
+			selectAll: true,
+			onCall: (call) => {
+				if (call.method === "typeText") value += call.text;
+				else if (call.method === "key" && call.key === "Backspace") value = value.slice(0, -1);
+				return undefined;
+			},
+		});
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("new");
+		expect(value).toBe("new");
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+		expect(driver.callsOf("key").length).toBeGreaterThanOrEqual(6);
 		expect(driver.callsOf("tap")).toHaveLength(2);
 	});
 
