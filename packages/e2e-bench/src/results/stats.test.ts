@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { RepResult, TestResult } from "./schema";
+import { CANONICAL_IDS, type RepResult, type TestResult } from "./schema";
 import { dist, flakeRate, frameworkStats, median, passRate, percentile, ratio, withRatios } from "./stats";
 
 const t = (id: TestResult["id"], ms: number, status: TestResult["status"] = "passed"): TestResult => ({
@@ -89,30 +89,45 @@ describe("frameworkStats", () => {
 	});
 });
 
+/** A rep where every canonical test ran: the first takes `first` ms, the rest `rest` ms. */
+const fullRep = (
+	wallMs: number,
+	first: number,
+	rest = 2000,
+	firstStatus: TestResult["status"] = "passed"
+): RepResult => ({
+	...rep(1, false, wallMs, first),
+	tests: CANONICAL_IDS.map((id, i) => t(id, i === 0 ? first : rest, i === 0 ? firstStatus : "passed")),
+});
+
 describe("withRatios", () => {
 	test("fastest gets 1, others their multiple", () => {
-		const a = {
-			name: "a",
-			stats: frameworkStats({ reps: [rep(1, false, 10_000, 1000)], prepareMs: 0, teardownMs: 0 }),
-		};
-		const b = {
-			name: "b",
-			stats: frameworkStats({ reps: [rep(1, false, 20_000, 1500)], prepareMs: 0, teardownMs: 0 }),
-		};
+		const a = { name: "a", stats: frameworkStats({ reps: [fullRep(10_000, 1000)], prepareMs: 0, teardownMs: 0 }) };
+		const b = { name: "b", stats: frameworkStats({ reps: [fullRep(20_000, 1500)], prepareMs: 0, teardownMs: 0 }) };
 		const [ra, rb] = withRatios([a, b]);
 		expect(ra?.stats.ratioToFastestSuite).toBe(1);
 		expect(rb?.stats.ratioToFastestSuite).toBe(2);
 		expect(rb?.stats.perTest["onboarding/steps-to-sign-in"].ratioToFastest).toBe(1.5);
-		expect(ra?.stats.perTest["todos/add-complete-filter"].ratioToFastest).toBeUndefined();
+		expect(ra?.stats.perTest["todos/add-complete-filter"].ratioToFastest).toBe(1);
+	});
+
+	test("a framework missing a test never sets the suite pace", () => {
+		const partial = {
+			name: "p",
+			stats: frameworkStats({ reps: [rep(1, false, 5000, 500)], prepareMs: 0, teardownMs: 0 }),
+		};
+		const full = { name: "f", stats: frameworkStats({ reps: [fullRep(20_000, 1500)], prepareMs: 0, teardownMs: 0 }) };
+		const [rp, rf] = withRatios([partial, full]);
+		expect(rf?.stats.ratioToFastestSuite).toBe(1);
+		expect(rp?.stats.ratioToFastestSuite).toBe(0.25);
 	});
 
 	test("a framework that failed a test never sets the pace", () => {
-		const broken: RepResult = { ...rep(1, false, 5000, 500), tests: [t("onboarding/steps-to-sign-in", 500, "failed")] };
-		const a = { name: "a", stats: frameworkStats({ reps: [broken], prepareMs: 0, teardownMs: 0 }) };
-		const b = {
-			name: "b",
-			stats: frameworkStats({ reps: [rep(1, false, 20_000, 1500)], prepareMs: 0, teardownMs: 0 }),
+		const a = {
+			name: "a",
+			stats: frameworkStats({ reps: [fullRep(5000, 500, 2000, "failed")], prepareMs: 0, teardownMs: 0 }),
 		};
+		const b = { name: "b", stats: frameworkStats({ reps: [fullRep(20_000, 1500)], prepareMs: 0, teardownMs: 0 }) };
 		const [ra, rb] = withRatios([a, b]);
 		expect(rb?.stats.ratioToFastestSuite).toBe(1);
 		expect(ra?.stats.ratioToFastestSuite).toBe(0.25);
