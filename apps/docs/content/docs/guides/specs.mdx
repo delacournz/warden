@@ -142,7 +142,7 @@ Reads never wait; they answer from the screen as it is now:
 | Call | |
 |---|---|
 | `alert("accept" \| "dismiss" \| { button })` | answers the system alert on top; resolves `false` when there is none |
-| `openLink(url, { accept? })` | opens a URL from outside the app; on iOS answers the "Open in …?" sheet |
+| `openLink(url, { accept?, until?, waitMs? })` | opens a URL from outside the app; on iOS answers the "Open in …?" sheet and returns once the link is handled (below) |
 | `home()`, `back()` | home button; Android back key (`INVALID_ARGUMENT` on iOS) |
 | `orientation(set?)`, `appearance(set?)` | read or set the orientation and the light/dark appearance |
 | `clipboard()`, `setClipboard(text)` | the device pasteboard (iOS only; Android throws `E_UNSUPPORTED`) |
@@ -151,6 +151,14 @@ Reads never wait; they answer from the screen as it is now:
 | `snapshot({ interactiveOnly? })` | the accessibility tree as text, the text format `warden ui snapshot` prints |
 | `settle({ quietMs?, timeout? })` | waits for a quiet UI |
 | `devtools` | dev client only, `undefined` in a release build: `evaluate(expr)`, `reloadJs()`, `tree()`, `network`, `console.lines()` / `clear()` / `mark(label)`, `connect()` for the whole facet. The first access attaches |
+
+`openLink` does not wait out a fixed window. It reads the system alert every 100 ms for the first second and every 250 ms after, presses "Open" (again if the sheet stays up, three times at most) and returns once the sheet is gone. With no sheet it returns after about 1.2 s, as soon as the app is in front: a link that shows no sheet costs about 1.3 s, and later links with the same scheme in the same run return as soon as the app is in front, without reading alerts. While another app (SpringBoard, Safari) is in front it keeps looking for the sheet until `waitMs` (default 8000, the longest wait), then returns without an error. `until` takes a locator and returns as soon as it is visible and no sheet is up, which is the fastest way to wait for the screen the link leads to:
+
+```ts
+await device.openLink("myapp://todo/42", { until: screen.getByTestId("todo-detail") });
+```
+
+`until` is for a screen the app is not already showing; if `waitMs` passes first, the next assertion reports the missing screen. Android has no sheet, so `openLink` returns at once unless `until` is given. `accept: false` skips the sheet.
 
 ## Imports and errors
 

@@ -8,6 +8,8 @@ import type { Platform, Snapshot } from "./driver/driver.types";
 import type { E2eEnv } from "./env";
 import type { E2eError } from "./errors";
 import type { Clock, FixtureSession } from "./fixture-session";
+import { createScreen } from "./screen/screen";
+import { testHost } from "./screen/screen.testing";
 
 const env: E2eEnv = {
 	udid: "UDID",
@@ -187,6 +189,268 @@ describe("device.openLink", () => {
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		await device.openLink("myapp://x");
 		expect(driver.callsOf("tap")).toHaveLength(0);
+	});
+});
+
+describe("device.openLink without a sheet", () => {
+	const APP = env.bundleId;
+	const SPRINGBOARD = "com.apple.springboard";
+
+	/** an iOS device whose app is in front from `frontAt`, and whose "Open in …?" sheet (if any) shows from `sheetAt` until a tap */
+	function link(
+		opts: { frontAt?: number; sheetAt?: number; session?: FixtureSession; clock?: ReturnType<typeof fakeClock> } = {}
+	) {
+		const clock = opts.clock ?? fakeClock();
+		const { frontAt = 0, sheetAt = Number.POSITIVE_INFINITY } = opts;
+		const driver: FakeDriver = fakeDriver({
+			screens: () =>
+				clock.time() >= sheetAt && driver.callsOf("tap").length === 0 ? withAlert("Cancel", "Open") : snapshotOf([]),
+			alertBackends: ["ax", "axbridge"],
+			frontmost: () => (clock.time() >= frontAt ? APP : SPRINGBOARD),
+		});
+		const device = createDevice({ session: opts.session ?? { out: "/tmp/out" }, driver, env, clock });
+		return { driver, device, clock };
+	}
+
+	const reads = (driver: FakeDriver) => driver.callsOf("alert").length + driver.callsOf("alertOn").length;
+
+	test("returns within 1.5 s of fake time once the app is in front and no sheet showed", async () => {
+		const { driver, device, clock } = link();
+		await device.openLink("myapp://x");
+		expect(clock.time()).toBeGreaterThanOrEqual(1200);
+		expect(clock.time()).toBeLessThanOrEqual(1500);
+		expect(driver.callsOf("tap")).toHaveLength(0);
+	});
+
+	test("polls the cheap host reader first, then confirms with the two-reader read before returning", async () => {
+		const { driver, device } = link();
+		await device.openLink("myapp://x");
+		const methods = driver.calls.map((c) => c.method).filter((m) => m === "alertOn" || m === "alert");
+		expect(methods[0]).toBe("alertOn");
+		expect(driver.callsOf("alertOn").every((c) => c.backend === "ax")).toBe(true);
+		expect(methods[methods.length - 1]).toBe("alert");
+	});
+
+	test("polls every 100 ms for the first second, then every 250 ms", async () => {
+		const { driver, device, clock } = link({ frontAt: 3000 });
+		const times: number[] = [];
+		const base = driver.alertOn;
+		if (base === undefined) throw new Error("fake lacks alertOn");
+		driver.alertOn = async (backend) => {
+			times.push(clock.time());
+			return base(backend);
+		};
+		const baseFull = driver.alert.bind(driver);
+		driver.alert = async () => {
+			times.push(clock.time());
+			return baseFull();
+		};
+		await device.openLink("myapp://x");
+		expect(times.slice(0, 11)).toEqual([0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]);
+		expect(times.slice(11, 14)).toEqual([1250, 1500, 1750]);
+	});
+
+	test("waits for the full window while another app is in front (SpringBoard, Safari)", async () => {
+		const { driver, device, clock } = link({ frontAt: 20_000 });
+		await device.openLink("myapp://x");
+		expect(clock.time()).toBeGreaterThanOrEqual(8000);
+		expect(clock.time()).toBeLessThan(8500);
+		expect(driver.callsOf("tap")).toHaveLength(0);
+	});
+
+	test("a sheet that shows at 3 s is still accepted while another app is in front", async () => {
+		const { driver, device, clock } = link({ frontAt: 20_000, sheetAt: 3000 });
+		await device.openLink("myapp://x");
+		expect(driver.callsOf("tap")).toHaveLength(1);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+		expect(clock.time()).toBeGreaterThanOrEqual(3000);
+		expect(clock.time()).toBeLessThan(4000);
+	});
+
+	test("a sheet that shows at 0.5 s is accepted by the cheap reader and the link returns once it is gone", async () => {
+		const { driver, device, clock } = link({ sheetAt: 500 });
+		await device.openLink("myapp://x");
+		expect(driver.callsOf("tap")).toHaveLength(1);
+		expect(clock.time()).toBeLessThan(1000);
+	});
+
+	test("a driver that cannot say what is in front keeps the old full wait", async () => {
+		const clock = fakeClock();
+		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
+		await device.openLink("myapp://x");
+		expect(clock.time()).toBeGreaterThanOrEqual(8000);
+	});
+
+	test("an unknown bundle id keeps the old full wait", async () => {
+		const clock = fakeClock();
+		const driver = fakeDriver({ screens: [snapshotOf([])], frontmost: () => APP });
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env: { ...env, bundleId: "" }, clock });
+		await device.openLink("myapp://x");
+		expect(clock.time()).toBeGreaterThanOrEqual(8000);
+	});
+
+	test("a failing frontmost probe is 'unknown', not an error", async () => {
+		const clock = fakeClock();
+		const driver = fakeDriver({
+			screens: [snapshotOf([])],
+			frontmost: () => APP,
+			onCall: (c) => (c.method === "isFrontmost" ? failWith("E_UNSUPPORTED") : undefined),
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
+		await device.openLink("myapp://x");
+		expect(clock.time()).toBeGreaterThanOrEqual(8000);
+	});
+
+	test("a scheme that opened without a sheet skips alert polling for the rest of the session", async () => {
+		const session: FixtureSession = { out: "/tmp/out" };
+		const clock = fakeClock();
+		const first = link({ session, clock });
+		await first.device.openLink("myapp://x");
+		expect(reads(first.driver)).toBeGreaterThan(0);
+
+		const before = clock.time();
+		const second = link({ session, clock });
+		await second.device.openLink("myapp://y/z");
+		expect(reads(second.driver)).toBe(0);
+		expect(clock.time() - before).toBeLessThan(100);
+	});
+
+	test("the memo is per scheme and per session", async () => {
+		const session: FixtureSession = { out: "/tmp/out" };
+		const clock = fakeClock();
+		await link({ session, clock }).device.openLink("myapp://x");
+
+		const otherScheme = link({ session, clock });
+		await otherScheme.device.openLink("other://x");
+		expect(reads(otherScheme.driver)).toBeGreaterThan(0);
+
+		const otherSession = link({ session: { out: "/tmp/out" }, clock });
+		await otherSession.device.openLink("myapp://x");
+		expect(reads(otherSession.driver)).toBeGreaterThan(0);
+	});
+
+	test("a memoised scheme reads alerts again when the app is not in front after the quiet window", async () => {
+		const session: FixtureSession = { out: "/tmp/out" };
+		const clock = fakeClock();
+		await link({ session, clock }).device.openLink("myapp://x");
+		const start = clock.time();
+		const again = link({ session, clock, frontAt: start + 3000, sheetAt: start + 2000 });
+		await again.device.openLink("myapp://x");
+		expect(again.driver.callsOf("tap")).toHaveLength(1);
+	});
+
+	test("a link that showed a sheet is not memoised", async () => {
+		const session: FixtureSession = { out: "/tmp/out" };
+		const clock = fakeClock();
+		await link({ session, clock, sheetAt: 0 }).device.openLink("myapp://x");
+		const next = link({ session, clock });
+		await next.device.openLink("myapp://x");
+		expect(reads(next.driver)).toBeGreaterThan(0);
+	});
+
+	test("accept:false skips the alert polling and the wait", async () => {
+		const { driver, device, clock } = link({ sheetAt: 0 });
+		await device.openLink("myapp://x", { accept: false });
+		expect(reads(driver)).toBe(0);
+		expect(clock.time()).toBe(0);
+	});
+
+	test("waitMs shortens the window", async () => {
+		const { device, clock } = link({ frontAt: 20_000 });
+		await device.openLink("myapp://x", { waitMs: 500 });
+		expect(clock.time()).toBeGreaterThanOrEqual(500);
+		expect(clock.time()).toBeLessThan(800);
+	});
+
+	test("waitMs must be a non-negative number", async () => {
+		const { device, driver } = link();
+		const error = await device.openLink("myapp://x", { waitMs: -1 }).catch((e: unknown) => e);
+		expect((error as E2eError).code).toBe("INVALID_ARGUMENT");
+		expect(driver.callsOf("app.openUrl")).toHaveLength(0);
+	});
+});
+
+describe("device.openLink until", () => {
+	/** the target screen shows from `at`; `sheetAt` shows an "Open in …?" sheet over it until a tap */
+	function target(opts: { at: number; sheetAt?: number; platform?: Platform }) {
+		const clock = fakeClock();
+		const platform = opts.platform ?? "ios";
+		const { sheetAt = Number.POSITIVE_INFINITY } = opts;
+		const driver: FakeDriver = fakeDriver({
+			platform,
+			screens: () => {
+				const specs: ElementSpec[] = [];
+				if (clock.time() >= opts.at) specs.push(el("text", { id: "target", label: "Target" }));
+				if (clock.time() >= sheetAt && driver.callsOf("tap").length === 0) specs.push(alertOf("Cancel", "Open"));
+				return snapshotOf(specs, { platform });
+			},
+			alertBackends: ["ax", "axbridge"],
+			frontmost: () => env.bundleId,
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env: { ...env, platform }, clock });
+		const screen = createScreen(testHost(driver));
+		return { driver, device, clock, locator: screen.getByTestId("target") };
+	}
+
+	test("returns as soon as the locator is visible, long before the no-sheet window ends", async () => {
+		const { device, clock, locator } = target({ at: 400 });
+		await device.openLink("myapp://x", { until: locator });
+		expect(clock.time()).toBeGreaterThanOrEqual(400);
+		expect(clock.time()).toBeLessThan(1000);
+	});
+
+	test("does not return while a sheet is still up, even when the locator is already visible", async () => {
+		const { driver, device, locator } = target({ at: 0, sheetAt: 0 });
+		await device.openLink("myapp://x", { until: locator });
+		expect(driver.callsOf("tap")).toHaveLength(1);
+	});
+
+	test("keeps waiting for the locator after the no-sheet window, up to waitMs, without throwing", async () => {
+		const { device, clock, locator } = target({ at: 60_000 });
+		await device.openLink("myapp://x", { until: locator, waitMs: 3000 });
+		expect(clock.time()).toBeGreaterThanOrEqual(3000);
+		expect(clock.time()).toBeLessThan(3300);
+	});
+
+	test("waits for a locator that shows after the sheet is answered", async () => {
+		const { driver, device, clock, locator } = target({ at: 2000, sheetAt: 300 });
+		await device.openLink("myapp://x", { until: locator });
+		expect(driver.callsOf("tap")).toHaveLength(1);
+		expect(clock.time()).toBeGreaterThanOrEqual(2000);
+		expect(clock.time()).toBeLessThan(2500);
+	});
+
+	test("works on Android, where there is no sheet to poll for", async () => {
+		const { driver, device, clock, locator } = target({ at: 500, platform: "android" });
+		await device.openLink("myapp://x", { until: locator });
+		expect(driver.callsOf("alert")).toHaveLength(0);
+		expect(driver.callsOf("alertOn")).toHaveLength(0);
+		expect(clock.time()).toBeGreaterThanOrEqual(500);
+		expect(clock.time()).toBeLessThan(900);
+	});
+
+	test("accept:false with until reads no alerts and still waits for the locator", async () => {
+		const { driver, device, clock, locator } = target({ at: 700 });
+		await device.openLink("myapp://x", { until: locator, accept: false });
+		expect(driver.callsOf("alert")).toHaveLength(0);
+		expect(driver.callsOf("alertOn")).toHaveLength(0);
+		expect(clock.time()).toBeGreaterThanOrEqual(700);
+		expect(clock.time()).toBeLessThan(1000);
+	});
+
+	test("a locator that throws (several matches) counts as not visible yet", async () => {
+		const clock = fakeClock();
+		const driver: FakeDriver = fakeDriver({
+			screens: [snapshotOf([el("text", { id: "dup", label: "A" }), el("text", { id: "dup", label: "B" })])],
+			alertBackends: ["ax", "axbridge"],
+			frontmost: () => env.bundleId,
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
+		const locator = createScreen(testHost(driver)).getByTestId("dup");
+		await expect(locator.isVisible()).rejects.toBeDefined();
+		await device.openLink("myapp://x", { until: locator, waitMs: 500 });
+		expect(clock.time()).toBeGreaterThanOrEqual(500);
 	});
 });
 

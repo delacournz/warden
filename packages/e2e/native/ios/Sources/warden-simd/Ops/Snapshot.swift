@@ -4,12 +4,13 @@ import FBSimulatorAX
 import FBSimulatorControl
 import Foundation
 
-/// `snapshot`, `elementAtPoint`, `alertButtons`: the AX read ops (plan WDN-E2E, `warden-simd` protocol v1).
+/// `snapshot`, `elementAtPoint`, `alertButtons`, `frontmost`: the read ops (plan WDN-E2E, `warden-simd` protocol v1).
 enum SnapshotOps {
   static let ops: [String: Dispatcher<Session>.OpHandler] = [
     "snapshot": { session, params in try await session.snapshot(SnapshotRequest(params)) },
     "elementAtPoint": { session, params in try await session.elementAtPoint(PointRequest(params, session: session)) },
-    "alertButtons": { session, _ in try await session.alertButtons() },
+    "alertButtons": { session, params in try await session.alertButtons(AlertRequest(params)) },
+    "frontmost": { session, params in try await session.frontmost(FrontmostRequest(params)) },
   ]
 }
 
@@ -445,28 +446,61 @@ extension Session {
 
 // MARK: - alertButtons
 
+/// `alertButtons{backend?}`. No `backend`: both readers, `ax` first. `ax` / `axbridge`: only that reader.
+struct AlertRequest: Sendable, Equatable {
+  var backend: AXBackend?
+
+  init(_ params: JSON) throws {
+    backend = try parseBackend(params["backend"])
+  }
+
+  init(backend: AXBackend? = nil) {
+    self.backend = backend
+  }
+}
+
 extension Session {
   /// The system alert / sheet on top: its buttons (full elements, with `tapPoint`), plus `title` / `message` from its
-  /// static texts. `ax` is tried first because it sees SpringBoard-owned UI (permission prompts); then `axbridge`.
-  /// `null` when nothing modal is up.
-  func alertButtons() async throws -> JSON {
+  /// static texts. `null` when nothing modal is up.
+  ///
+  /// Without a `backend` both readers are asked, `ax` first because it sees SpringBoard-owned UI (permission prompts),
+  /// then `axbridge`, which also sees what an app shows itself (the Keychain sheet): a screen without an alert costs two
+  /// tree reads. With a `backend` only that reader is read, one read for the same answer when that reader is the one
+  /// that sees what the caller is after; its failure is the op's failure (nothing else answered).
+  func alertButtons(_ request: AlertRequest) async throws -> JSON {
     var options = AccessibilityRequestOptions(format: .complete, keys: wireKeys)
     options.filter = .all
     let readOptions = options
+    let screen = self.screen
+    return try await Session.answerAlert(request, screen: screen) { backend in
+      guard let reader = backend == .ax ? self.axHostReader : self.axBridgeReader else { return nil }
+      return try await reader.describe(.frontmost, options: readOptions).document
+    }
+  }
+
+  /// The decision behind `alertButtons`, over a reader function (`nil` = that reader does not exist) so a scripted
+  /// sequence can test it.
+  static func answerAlert(
+    _ request: AlertRequest, screen: (width: Double, height: Double, scale: Double),
+    read: (AXBackend) async throws -> AccessibilityDocument?
+  ) async throws -> JSON {
+    let backends: [AXBackend] = request.backend.map { [$0] } ?? [.ax, .axbridge]
     var lastError: (any Error)?
     var answered = false
-    for backend in [AXBackend.ax, .axbridge] {
-      guard let reader = backend == .ax ? axHostReader : axBridgeReader else { continue }
+    for backend in backends {
       do {
-        let document = try await reader.describe(.frontmost, options: readOptions).document
+        guard let document = try await read(backend) else { continue }
         answered = true
-        if let alert = Session.renderAlert(document: document, backend: backend, screen: screen) { return alert }
+        if let alert = renderAlert(document: document, backend: backend, screen: screen) { return alert }
       } catch {
         lastError = error
       }
     }
     // Only a total failure is an error; one reader answering "no alert" is an answer.
-    if !answered, let lastError { throw lastError }
+    if !answered {
+      if let lastError { throw lastError }
+      if let backend = request.backend { throw WireError(.axUnavailable, "the \(backend.rawValue) reader is unavailable") }
+    }
     return .null
   }
 
@@ -494,5 +528,43 @@ extension Session {
     if let title = texts.first ?? alert.label { fields["title"] = .string(title) }
     if texts.count > 1 { fields["message"] = .string(texts[1]) }
     return .object(fields)
+  }
+}
+
+// MARK: - frontmost
+
+/// `frontmost{bundleId}`.
+struct FrontmostRequest: Sendable, Equatable {
+  var bundleId: String
+
+  init(_ params: JSON) throws {
+    guard let id = params["bundleId"]?.stringValue, !id.isEmpty else {
+      throw WireError(.badRequest, "frontmost needs a non-empty \"bundleId\"")
+    }
+    bundleId = id
+  }
+}
+
+extension Session {
+  /// Whether `bundleId`'s process is the one the quiescence stream reports as frontmost: the helper's own state plus one
+  /// launchd lookup, no tree read and no waiting (what `settle{bundleId}` decides, without its wait, its quiet judgement
+  /// or its stream restarts). A stream that has reported nothing yet answers `frontmost: false`: the stream is opened here
+  /// when it is not open, so the next call knows. Needs the bridge, like `settle`.
+  func frontmost(_ request: FrontmostRequest) async throws -> JSON {
+    guard axDefault == "axbridge", axBridgeReader != nil else {
+      throw WireError(.unsupported, "frontmost needs the axbridge backend (ax: \(axDefault), bridge: \(bridge.name))")
+    }
+    let monitor = try quiescenceMonitor()
+    await monitor.start()
+    let target: pid_t? = try? await simulator.application.processID(forBundleID: request.bundleId)
+    let front = await monitor.currentFrontmostPid()
+    return Session.frontmostReply(target: target, frontmost: front)
+  }
+
+  static func frontmostReply(target: pid_t?, frontmost: pid_t?) -> JSON {
+    var reply: [String: JSON] = ["frontmost": .bool(target != nil && target == frontmost)]
+    if let target { reply["pid"] = .int(Int(target)) }
+    if let frontmost { reply["frontmostPid"] = .int(Int(frontmost)) }
+    return .object(reply)
   }
 }

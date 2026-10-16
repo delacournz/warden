@@ -349,6 +349,9 @@ actor QuiescenceMonitor {
     (state, since, lastError, frontmostPid)
   }
 
+  /// The process the stream last reported on (the frontmost application); nil while no stream has reported.
+  func currentFrontmostPid() -> pid_t? { frontmostPid }
+
   /// Closes the current stream and opens a fresh one; the next events describe the app from scratch.
   func restart() {
     Self.trace("stream restart")

@@ -67,7 +67,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | Member | Does |
 |---|---|
 | `alert("accept" \| "dismiss" \| { button })` | answer the system alert on top; `false` when none; `ACTION_FAILED` for a missing named button |
-| `openLink(url, { accept? })` | open a URL from outside the app; presses "Open" on the iOS sheet (up to 3 times, 8 s) |
+| `openLink(url, { accept?, until?, waitMs? })` | open a URL from outside the app; presses "Open" on the iOS sheet (up to 3 times) and returns once the sheet is gone, or after ~1.3 s when none shows and the app is in front (later links with that scheme return as soon as the app is in front); `until: locator` returns when it is visible; `waitMs` (default 8000) caps the wait, no error |
 | `home()` / `back()` | home key / Android back (iOS throws) |
 | `orientation(set?)` | `"portrait" \| "portraitUpsideDown" \| "landscapeLeft" \| "landscapeRight"`; returns current |
 | `appearance(set?)` | `"light" \| "dark"`; returns current |

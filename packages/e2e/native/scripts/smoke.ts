@@ -12,7 +12,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec } from "@delacour/warden-core/exec";
-import type { Driver, DriverResult, Element, Point, Snapshot } from "../../src/driver/driver.types";
+import { canProbeFrontmost, canReadAlertOn } from "../../src/driver/alerts";
+import type { AlertInfo, Driver, DriverResult, Element, Point, Snapshot } from "../../src/driver/driver.types";
 import { openIosDriver } from "../../src/driver/ios/ios-driver";
 import { ENV_NAMES } from "../../src/env";
 
@@ -147,6 +148,32 @@ async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 	);
 }
 
+/**
+ * `alert` through both readers against one reader at a time, and the frontmost probe (PERF-1.3 / 1.4): on a quiet app
+ * screen each one-reader read should cost about half of the two-reader `alert()`, and the app that was just launched is
+ * in front while a system app is not.
+ */
+async function systemAlertChecks(driver: Driver): Promise<void> {
+	const describe = (alert: AlertInfo | null) => (alert === null ? "none" : `${alert.buttons.length} buttons`);
+	await step("alert (both)", () => driver.alert(), describe);
+	if (canReadAlertOn(driver)) {
+		await step("alert (bridge only)", () => driver.alertOn("axbridge"), describe);
+		await step("alert (host only)", () => driver.alertOn("ax"), describe);
+	}
+	if (canProbeFrontmost(driver)) {
+		await step(
+			"frontmost (app)",
+			() => driver.isFrontmost(bundle),
+			(front) => `frontmost=${front}`
+		);
+		await step(
+			"frontmost (settings)",
+			() => driver.isFrontmost("com.apple.Preferences"),
+			(front) => `frontmost=${front}`
+		);
+	}
+}
+
 /** Without a snapshot (helper lacks the AX ops) there are no elements to aim at, so exercise raw HID at the screen centre. */
 async function blind(driver: Driver, screen: { width: number; height: number }): Promise<void> {
 	const middle = { x: screen.width / 2, y: screen.height / 2 };
@@ -241,6 +268,7 @@ await step(
 	() => driver.settle({ timeoutMs: 10_000 }),
 	(s) => `quiet=${s.quiet} waited=${s.waitedMs} ms`
 );
+await systemAlertChecks(driver);
 const snapshot = await step(
 	"snapshot",
 	() => driver.snapshot(),
