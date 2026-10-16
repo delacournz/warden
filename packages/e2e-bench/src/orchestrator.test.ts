@@ -172,6 +172,7 @@ describe("runBench", () => {
 		]);
 		expect(first.stats.ratioToFastestSuite).toBeDefined();
 		expect(existsSync(join(t.opts.out ?? "", "report.md"))).toBe(true);
+		expect(existsSync(join(t.opts.out ?? "", "summary.json"))).toBe(true);
 		expect(existsSync(join(t.opts.out ?? "", "logs", "bench.log"))).toBe(true);
 	});
 

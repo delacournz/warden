@@ -22,6 +22,7 @@ export type Command =
 	| { command: "list" }
 	| { command: "report"; runDir: string }
 	| { command: "compare"; dirA: string; dirB: string }
+	| { command: "summary"; runDir: string; out?: string }
 	| { command: "help" };
 
 export const HELP = `bench: benchmark six mobile e2e frameworks on the example app's parity suite
@@ -32,6 +33,7 @@ Usage:
   bench list                frameworks, platforms and the 8 canonical test ids
   bench report <runDir>     re-render report.md / report.html from bench-results.json
   bench compare <A> <B>     markdown diff of two run dirs
+  bench summary <runDir> [--out file]  slim summary.json for the docs comparison page
 
 Run options:
   --platform ios|android    default ios
@@ -123,6 +125,7 @@ const BOOL_SETTERS: Record<string, (flags: Flags) => void> = {
 	},
 };
 
+const SUMMARY_FLAGS = ["--out"];
 const RUN_FLAGS = [...Object.keys(VALUE_SETTERS), ...Object.keys(BOOL_SETTERS)];
 
 type Parsed = { flags: Flags; positionals: string[] };
@@ -203,6 +206,14 @@ function build(name: string, flags: Flags, positionals: readonly string[]): Comm
 					dirB: positionals[1] ?? "",
 				}
 			);
+		case "summary":
+			return (
+				expectPositionals("summary", positionals, 1, "<runDir>") ?? {
+					command: "summary",
+					runDir: positionals[0] ?? "",
+					...(flags.out !== undefined ? { out: flags.out } : {}),
+				}
+			);
 		default:
 			return `unknown command ${name}`;
 	}
@@ -212,6 +223,9 @@ function build(name: string, flags: Flags, positionals: readonly string[]): Comm
 export function parseArgs(argv: readonly string[]): Command | string {
 	const [name, ...rest] = argv;
 	if (name === undefined || name === "help" || name === "--help" || name === "-h") return { command: "help" };
-	const parsed = parseFlags(rest, name === "run" ? RUN_FLAGS : name === "doctor" ? ["--platform"] : []);
+	const parsed = parseFlags(
+		rest,
+		name === "run" ? RUN_FLAGS : name === "doctor" ? ["--platform"] : name === "summary" ? SUMMARY_FLAGS : []
+	);
 	return typeof parsed === "string" ? parsed : build(name, parsed.flags, parsed.positionals);
 }

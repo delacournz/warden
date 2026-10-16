@@ -1,0 +1,77 @@
+---
+title: Framework comparison
+description: The same 8-test suite on one build and one device in warden, Maestro, Argent, agent-device, tester.army and Detox. Suite time, per-test medians, cold start, resources and footprint.
+icon: ChartBar
+---
+
+{/* Data: content/docs/bench/data/<platform>-<date>.json. Regenerate with
+    bun run bench summary packages/e2e-bench/.bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json */}
+
+Every framework runs the same 8 parity tests against the same `.app` on the same leased device, one after the other, with no LLM involved. See [Benchmark e2e frameworks](/docs/guides/bench) to run it yourself.
+
+<BenchProvider>
+
+<BenchHero />
+
+## Suite time
+
+Warm suite wall time, measured by the harness around the whole suite process. Warm numbers leave out the first, cold run.
+
+<BenchSuite />
+
+## Per test
+
+Warm median per canonical test. Compare these before the step numbers.
+
+<BenchMatrix />
+
+## Step latency
+
+<BenchSteps />
+
+## Cold start, prepare, teardown
+
+Cold-start cost is the first run minus the warm median, plus the time spent in prepare: what installing a runner app or starting a daemon costs, not steady-state speed. Overhead is suite wall time minus the sum of test durations.
+
+<BenchStartup />
+
+## Resources
+
+<BenchResources />
+
+## Residue and footprint
+
+Residue is what is left on the machine after teardown. Footprint is how much suite source you maintain and how large the runner binaries are.
+
+<BenchFootprint />
+
+## Versions and run details
+
+<BenchRun />
+
+</BenchProvider>
+
+## Fairness rules
+
+- Same `.app` for every framework, with its sha256 recorded.
+- Zero LLM calls.
+- Same assertions per canonical test id.
+- Same retry helpers: dropped first tap, dropped deep link, system alerts.
+- Fresh app launch per test, `retries=0`.
+- Frameworks run sequentially, with daemons stopped between them.
+- `caffeinate -dims` held for the run, host otherwise idle, load average recorded.
+- Warm medians exclude rep 1.
+- A framework with any failing test never sets the pace, so it is never the fastest.
+
+## Caveats per framework
+
+| Framework | Gap |
+|---|---|
+| warden | Reference suite. Shares the `tapUntil` and deep-link helpers with the example app. |
+| Maestro | Retries are `retry:` blocks that rerun the tap and the wait together. Checkbox state is read from the accessibility text. Step durations include Maestro's own polling. |
+| Argent | Retries are nested `when:` guards capped at two retaps. A checkbox's checked state is not readable, so the remaining-count assertion covers the effect. |
+| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`. Needs a runner prepare step and a daemon. |
+| tester.army | Uses the same helpers as warden. Runs with a private agent-device state dir and Node 24 on `PATH`. |
+| Detox | Best effort. Detox 20.51 supports React Native up to 0.84 and the app is on 0.86. Needs `applesimutils` on iOS and an instrumented build on Android. |
+
+Each run is a snapshot on one machine with few warm repetitions: read the ratios as a guide, not a verdict. The full Markdown report for each run is in `docs/bench/` in the repo.

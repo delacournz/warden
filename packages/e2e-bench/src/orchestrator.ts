@@ -14,6 +14,7 @@ import { diffResidue, type Owner, ownerFilter, snapshotResidue } from "./harness
 import { startSampler, type Tick } from "./harness/sampler";
 import { ms as fmtMs, pct as fmtPct, ratio as fmtRatio } from "./report/format";
 import { renderMarkdown } from "./report/markdown";
+import { benchSummary } from "./report/summary";
 import { summaryRows } from "./report/tables";
 import { footprintOf } from "./results/footprint";
 import type { Manifest } from "./results/manifest";
@@ -363,9 +364,10 @@ export function finalizeFrameworks(frameworks: readonly FrameworkResult[]): Fram
 	return frameworks.map((f) => (isOk(f) ? (ratioed.get(f.framework) ?? f) : f));
 }
 
-/** Writes report.md (and report.html when a renderer is injected) next to bench-results.json. */
+/** Writes report.md, summary.json (the docs page data) and report.html (when a renderer is injected) next to bench-results.json. */
 export function writeReports(runDir: string, run: BenchRun, deps: Pick<BenchDeps, "manifest" | "renderHtml">): void {
 	writeFileAtomic(join(runDir, "report.md"), renderMarkdown(run, deps.manifest));
+	writeFileAtomic(join(runDir, "summary.json"), `${JSON.stringify(benchSummary(run, deps.manifest), null, "\t")}\n`);
 	if (deps.renderHtml !== undefined) writeFileAtomic(join(runDir, "report.html"), deps.renderHtml(run, deps.manifest));
 }
 

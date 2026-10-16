@@ -117,7 +117,13 @@ artifacts/<fw>/rep-<n>/   native reporter output and resource samples
 
 ## Results
 
-> Placeholder. The orchestrator fills in these links after the iOS and Android runs (WDN-BENCH-V1, V2). The comparison page (WDN-BENCH-V4) shows the numbers.
+The [framework comparison](/docs/bench/comparison) page charts the published runs: warm suite time, per-test medians, step latency, cold start, resources, residue and footprint. The full Markdown reports live in `docs/bench/` in the repo.
 
-- iOS: `docs/bench/ios-<date>.md` (pending)
-- Android: `docs/bench/android-<date>.md` (pending)
+To publish a run, write its slim summary into the docs site and commit the report next to it:
+
+```bash
+bun run bench summary packages/e2e-bench/.bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json
+cp packages/e2e-bench/.bench/<run>/report.md docs/bench/<platform>-<date>.md
+```
+
+The comparison page picks up every `*.json` in `apps/docs/content/docs/bench/data/`, with a platform and date selector when there is more than one. `bench run` also writes `summary.json` next to `report.md`.

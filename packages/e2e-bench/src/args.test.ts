@@ -82,6 +82,10 @@ describe("other commands", () => {
 		expect(parseArgs(["list"])).toEqual({ command: "list" });
 		expect(parseArgs(["report", "d"])).toEqual({ command: "report", runDir: "d" });
 		expect(parseArgs(["report"])).toBe("report needs <runDir>");
+		expect(parseArgs(["summary", "d"])).toEqual({ command: "summary", runDir: "d" });
+		expect(parseArgs(["summary", "d", "--out", "f.json"])).toEqual({ command: "summary", runDir: "d", out: "f.json" });
+		expect(parseArgs(["summary"])).toBe("summary needs <runDir>");
+		expect(parseArgs(["summary", "d", "--platform", "ios"])).toBe("unknown argument --platform");
 		expect(parseArgs(["compare", "a", "b"])).toEqual({ command: "compare", dirA: "a", dirB: "b" });
 		expect(parseArgs(["compare", "a"])).toBe("compare needs <dirA> <dirB>");
 	});

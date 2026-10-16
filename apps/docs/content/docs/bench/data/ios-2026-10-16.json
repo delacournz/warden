@@ -1,0 +1,649 @@
+{
+	"summaryVersion": 1,
+	"runId": "v1-ios",
+	"date": "2026-10-16",
+	"startedAt": "2026-10-16T05:34:43.250Z",
+	"platform": "ios",
+	"host": {
+		"model": "Mac16,7",
+		"cpu": "Apple M4 Pro",
+		"cores": 14,
+		"memBytes": 51539607552,
+		"macos": "26.6.2",
+		"bun": "1.3.14",
+		"warden": "0.1.0",
+		"loadAvgAtStart": 7.19
+	},
+	"device": {
+		"name": "warden-iphone-17-8",
+		"runtime": "iOS 26.5"
+	},
+	"app": {
+		"bundleId": "nz.co.delacour.warden.example",
+		"hash": "ae9a977ea2ed",
+		"sha256": "300ad685dfb4",
+		"bytes": 101206645
+	},
+	"options": {
+		"runs": 3,
+		"retries": 0,
+		"caffeinated": true
+	},
+	"frameworks": [
+		{
+			"framework": "warden",
+			"status": "ok",
+			"version": "bun 1.3.14 + warden-e2e",
+			"suite": {
+				"n": 2,
+				"median": 104057,
+				"p95": 104307,
+				"min": 103806,
+				"max": 104307,
+				"cvPct": 0.2
+			},
+			"ratio": 1,
+			"fastest": true,
+			"failing": false,
+			"coldRep1Ms": 99409,
+			"coldStartMs": -3743,
+			"prepareMs": 905,
+			"teardownMs": 103,
+			"overheadMs": 61,
+			"passRate": 1,
+			"flakeRate": 0,
+			"stepLatency": {
+				"n": 258,
+				"median": 92,
+				"p95": 2919,
+				"min": 29,
+				"max": 2983,
+				"cvPct": 174.6
+			},
+			"resources": {
+				"host": {
+					"cpuAvgPct": 9.2,
+					"cpuPeakPct": 56.2,
+					"rssAvgBytes": 156966020,
+					"rssPeakBytes": 183238656
+				},
+				"sim": {
+					"cpuAvgPct": 66.2,
+					"cpuPeakPct": 238.4,
+					"rssAvgBytes": 15187677430,
+					"rssPeakBytes": 15321972736
+				}
+			},
+			"residue": {
+				"processes": 0,
+				"driverApps": 0,
+				"paths": 1
+			},
+			"footprint": {
+				"loc": 309,
+				"sourceBytes": 14877,
+				"depsBytes": 0,
+				"binaryBytes": 6365184
+			}
+		},
+		{
+			"framework": "maestro",
+			"status": "ok",
+			"version": "maestro 2.8.0",
+			"suite": {
+				"n": 2,
+				"median": 202160,
+				"p95": 202607,
+				"min": 201712,
+				"max": 202607,
+				"cvPct": 0.2
+			},
+			"ratio": 1.94,
+			"fastest": false,
+			"failing": false,
+			"coldRep1Ms": 200515,
+			"coldStartMs": -1645,
+			"prepareMs": 0,
+			"teardownMs": 55,
+			"overheadMs": 19406,
+			"passRate": 1,
+			"flakeRate": 0,
+			"stepLatency": {
+				"n": 356,
+				"median": 1058,
+				"p95": 3027,
+				"min": 97,
+				"max": 3087,
+				"cvPct": 84.6
+			},
+			"resources": {
+				"host": {
+					"cpuAvgPct": 15.8,
+					"cpuPeakPct": 271.3,
+					"rssAvgBytes": 1023661751,
+					"rssPeakBytes": 1611759616
+				},
+				"sim": {
+					"cpuAvgPct": 75.2,
+					"cpuPeakPct": 524.6,
+					"rssAvgBytes": 15260011776,
+					"rssPeakBytes": 15623389184
+				}
+			},
+			"residue": {
+				"processes": 1,
+				"driverApps": 1,
+				"paths": 1
+			},
+			"footprint": {
+				"loc": 272,
+				"sourceBytes": 6613,
+				"depsBytes": 0,
+				"binaryBytes": 554332160
+			}
+		},
+		{
+			"framework": "argent",
+			"status": "ok",
+			"version": "0.27.0",
+			"suite": {
+				"n": 2,
+				"median": 129128,
+				"p95": 129309,
+				"min": 128948,
+				"max": 129309,
+				"cvPct": 0.1
+			},
+			"ratio": 1.24,
+			"fastest": false,
+			"failing": false,
+			"coldRep1Ms": 129347,
+			"coldStartMs": 294,
+			"prepareMs": 76,
+			"teardownMs": 57,
+			"overheadMs": 126,
+			"passRate": 1,
+			"flakeRate": 0,
+			"stepLatency": {
+				"n": 596,
+				"median": 316,
+				"p95": 1796,
+				"min": 0,
+				"max": 2720,
+				"cvPct": 140.1
+			},
+			"resources": {
+				"host": {
+					"cpuAvgPct": 1.5,
+					"cpuPeakPct": 19.6,
+					"rssAvgBytes": 195067713,
+					"rssPeakBytes": 198279168
+				},
+				"sim": {
+					"cpuAvgPct": 35.9,
+					"cpuPeakPct": 214.9,
+					"rssAvgBytes": 15264275812,
+					"rssPeakBytes": 15330590720
+				}
+			},
+			"residue": {
+				"processes": 0,
+				"driverApps": 0,
+				"paths": 0
+			},
+			"footprint": {
+				"loc": 158,
+				"sourceBytes": 6924,
+				"depsBytes": 0,
+				"binaryBytes": 79065088
+			}
+		},
+		{
+			"framework": "agent-device",
+			"status": "ok",
+			"version": "agent-device 0.21.25",
+			"suite": {
+				"n": 2,
+				"median": 100740,
+				"p95": 100858,
+				"min": 100622,
+				"max": 100858,
+				"cvPct": 0.1
+			},
+			"ratio": 0.97,
+			"fastest": false,
+			"failing": true,
+			"coldRep1Ms": 89798,
+			"coldStartMs": 3199,
+			"prepareMs": 14140,
+			"teardownMs": 115,
+			"overheadMs": 721,
+			"passRate": 0.5,
+			"flakeRate": 0.5,
+			"stepLatency": {
+				"n": 230,
+				"median": 537,
+				"p95": 3177,
+				"min": 82,
+				"max": 12049,
+				"cvPct": 152.9
+			},
+			"resources": {
+				"host": {
+					"cpuAvgPct": 12,
+					"cpuPeakPct": 150.7,
+					"rssAvgBytes": 625237007,
+					"rssPeakBytes": 685621248
+				},
+				"sim": {
+					"cpuAvgPct": 83.2,
+					"cpuPeakPct": 363.6,
+					"rssAvgBytes": 15555686703,
+					"rssPeakBytes": 15700197376
+				}
+			},
+			"residue": {
+				"processes": 0,
+				"driverApps": 1,
+				"paths": 1
+			},
+			"footprint": {
+				"loc": 156,
+				"sourceBytes": 5822,
+				"depsBytes": 0,
+				"binaryBytes": 6479872
+			}
+		},
+		{
+			"framework": "tester-army",
+			"status": "ok",
+			"version": "e2e 0.20.0",
+			"suite": {
+				"n": 2,
+				"median": 137556,
+				"p95": 138049,
+				"min": 137063,
+				"max": 138049,
+				"cvPct": 0.4
+			},
+			"ratio": 1.32,
+			"fastest": false,
+			"failing": false,
+			"coldRep1Ms": 151144,
+			"coldStartMs": 13588,
+			"prepareMs": 0,
+			"teardownMs": 482,
+			"overheadMs": 2919,
+			"passRate": 1,
+			"flakeRate": 0,
+			"stepLatency": {
+				"n": 296,
+				"median": 508,
+				"p95": 3176,
+				"min": 86,
+				"max": 3978,
+				"cvPct": 113.3
+			},
+			"resources": {
+				"host": {
+					"cpuAvgPct": 8.9,
+					"cpuPeakPct": 99.9,
+					"rssAvgBytes": 708748987,
+					"rssPeakBytes": 946733056
+				},
+				"sim": {
+					"cpuAvgPct": 74.2,
+					"cpuPeakPct": 282.6,
+					"rssAvgBytes": 15558841153,
+					"rssPeakBytes": 15680192512
+				}
+			},
+			"residue": {
+				"processes": 0,
+				"driverApps": 1,
+				"paths": 1
+			},
+			"footprint": {
+				"loc": 307,
+				"sourceBytes": 14104,
+				"depsBytes": 0,
+				"binaryBytes": 0
+			}
+		},
+		{
+			"framework": "detox",
+			"status": "unsupported",
+			"reason": "applesimutils is not installed (Detox needs it for iOS simulators) (brew tap wix/brew && brew install applesimutils)"
+		}
+	],
+	"tests": [
+		{
+			"id": "onboarding/steps-to-sign-in",
+			"title": "onboarding steps through to sign-in",
+			"cells": {
+				"warden": {
+					"medianMs": 4758,
+					"ratio": 1,
+					"passRate": 1,
+					"fastest": true,
+					"failing": false
+				},
+				"maestro": {
+					"medianMs": 7137,
+					"ratio": 1.5,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"argent": {
+					"medianMs": 8012,
+					"ratio": 1.68,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"agent-device": {
+					"medianMs": 15038,
+					"ratio": 3.16,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"tester-army": {
+					"medianMs": 6291,
+					"ratio": 1.32,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				}
+			}
+		},
+		{
+			"id": "sign-in/field-errors",
+			"title": "invalid email and short password show field errors",
+			"cells": {
+				"warden": {
+					"medianMs": 14623,
+					"ratio": 1,
+					"passRate": 1,
+					"fastest": true,
+					"failing": false
+				},
+				"maestro": {
+					"medianMs": 32145,
+					"ratio": 2.2,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"argent": {
+					"medianMs": 17595,
+					"ratio": 1.2,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"agent-device": {
+					"medianMs": 17180,
+					"ratio": 1.17,
+					"passRate": 0,
+					"fastest": false,
+					"failing": true
+				},
+				"tester-army": {
+					"medianMs": 21248,
+					"ratio": 1.45,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				}
+			}
+		},
+		{
+			"id": "sign-in/locked-account",
+			"title": "a locked account shows the form alert",
+			"cells": {
+				"warden": {
+					"medianMs": 11035,
+					"ratio": 1,
+					"passRate": 1,
+					"fastest": true,
+					"failing": false
+				},
+				"maestro": {
+					"medianMs": 20058,
+					"ratio": 1.82,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"argent": {
+					"medianMs": 13799,
+					"ratio": 1.25,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"agent-device": {
+					"medianMs": 12507,
+					"ratio": 1.13,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"tester-army": {
+					"medianMs": 13084,
+					"ratio": 1.19,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				}
+			}
+		},
+		{
+			"id": "sign-in/valid-credentials",
+			"title": "valid credentials land on todos",
+			"cells": {
+				"warden": {
+					"medianMs": 11443,
+					"ratio": 1,
+					"passRate": 1,
+					"fastest": true,
+					"failing": false
+				},
+				"maestro": {
+					"medianMs": 20381,
+					"ratio": 1.78,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"argent": {
+					"medianMs": 14757,
+					"ratio": 1.29,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"agent-device": {
+					"medianMs": 12886,
+					"ratio": 1.13,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"tester-army": {
+					"medianMs": 15381,
+					"ratio": 1.34,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				}
+			}
+		},
+		{
+			"id": "todos/add-complete-filter",
+			"title": "add, complete and filter todos",
+			"cells": {
+				"warden": {
+					"medianMs": 16469,
+					"ratio": 1,
+					"passRate": 1,
+					"fastest": true,
+					"failing": false
+				},
+				"maestro": {
+					"medianMs": 30101,
+					"ratio": 1.83,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"argent": {
+					"medianMs": 20275,
+					"ratio": 1.23,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"agent-device": {
+					"medianMs": 8738,
+					"ratio": 0.53,
+					"passRate": 0,
+					"fastest": false,
+					"failing": true
+				},
+				"tester-army": {
+					"medianMs": 22122,
+					"ratio": 1.34,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				}
+			}
+		},
+		{
+			"id": "todo-detail/open-toggle-delete",
+			"title": "open a todo, mark it done, then delete it",
+			"cells": {
+				"warden": {
+					"medianMs": 12930,
+					"ratio": 1,
+					"passRate": 1,
+					"fastest": true,
+					"failing": false
+				},
+				"maestro": {
+					"medianMs": 24953,
+					"ratio": 1.93,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"argent": {
+					"medianMs": 18667,
+					"ratio": 1.44,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"agent-device": {
+					"medianMs": 8924,
+					"ratio": 0.69,
+					"passRate": 0,
+					"fastest": false,
+					"failing": true
+				},
+				"tester-army": {
+					"medianMs": 18886,
+					"ratio": 1.46,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				}
+			}
+		},
+		{
+			"id": "todo-detail/deep-link",
+			"title": "deep link opens a todo by id",
+			"cells": {
+				"warden": {
+					"medianMs": 19632,
+					"ratio": 1.15,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"maestro": {
+					"medianMs": 21566,
+					"ratio": 1.26,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"argent": {
+					"medianMs": 17135,
+					"ratio": 1,
+					"passRate": 1,
+					"fastest": true,
+					"failing": false
+				},
+				"agent-device": {
+					"medianMs": 8764,
+					"ratio": 0.51,
+					"passRate": 0,
+					"fastest": false,
+					"failing": true
+				},
+				"tester-army": {
+					"medianMs": 18865,
+					"ratio": 1.1,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				}
+			}
+		},
+		{
+			"id": "settings/account-switches-sign-out",
+			"title": "settings shows the account, toggles switches and signs out",
+			"cells": {
+				"warden": {
+					"medianMs": 13107,
+					"ratio": 1,
+					"passRate": 1,
+					"fastest": true,
+					"failing": false
+				},
+				"maestro": {
+					"medianMs": 26415,
+					"ratio": 2.02,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"argent": {
+					"medianMs": 18764,
+					"ratio": 1.43,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"agent-device": {
+					"medianMs": 15985,
+					"ratio": 1.22,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"tester-army": {
+					"medianMs": 18763,
+					"ratio": 1.43,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				}
+			}
+		}
+	]
+}

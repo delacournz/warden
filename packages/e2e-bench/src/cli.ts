@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { BenchAdapter, RunContext } from "./adapters/adapter.types";
 import { ADAPTERS } from "./adapters/registry";
 import { type Command, HELP, parseArgs } from "./args";
@@ -8,9 +8,10 @@ import { realExec } from "./harness/exec";
 import { type BenchDeps, runBench, writeReports } from "./orchestrator";
 import { compareRuns, renderCompareMarkdown } from "./report/compare";
 import { renderHtml } from "./report/html";
+import { benchSummary } from "./report/summary";
 import { loadManifest } from "./results/manifest";
 import { CANONICAL_IDS, type Platform } from "./results/schema";
-import { readBenchResults } from "./results/write";
+import { readBenchResults, writeFileAtomic } from "./results/write";
 
 const PACKAGE_ROOT = join(import.meta.dir, "..");
 const REPO_ROOT = join(PACKAGE_ROOT, "../..");
@@ -91,6 +92,19 @@ function report(runDir: string): number {
 	return 0;
 }
 
+/** Writes the slim docs summary of a run dir to `--out` (default `<runDir>/summary.json`). */
+function summary(runDir: string, out: string | undefined): number {
+	const run = readBenchResults(runDir);
+	if (!run.success) {
+		console.error(run.error);
+		return 1;
+	}
+	const path = resolve(out ?? join(runDir, "summary.json"));
+	writeFileAtomic(path, `${JSON.stringify(benchSummary(run.data, loadManifest(PACKAGE_ROOT)), null, "\t")}\n`);
+	console.log(`wrote ${path}`);
+	return 0;
+}
+
 function compare(dirA: string, dirB: string): number {
 	const a = readBenchResults(dirA);
 	const b = readBenchResults(dirB);
@@ -160,6 +174,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 			return report(cmd.runDir);
 		case "compare":
 			return compare(cmd.dirA, cmd.dirB);
+		case "summary":
+			return summary(cmd.runDir, cmd.out);
 	}
 }
 
