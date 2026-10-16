@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakePage, startFakeMetro } from "@delacour/warden-e2e/devtools/devtools.testing";
-import { runProgram } from "../command";
+import { runLazyProgram } from "../command";
 import { type TestContext, testContext } from "../testing";
 import { COMMANDS } from "./registry";
 import { createUiCollectCommand } from "./ui-collect";
@@ -61,7 +61,7 @@ describe("warden ui-collect", () => {
 	test("it is registered but hidden from --help", async () => {
 		ctx = testContext([]);
 		expect(COMMANDS.map((c) => c.name)).toContain("ui-collect");
-		await runProgram(COMMANDS, ["--help"], ctx);
+		await runLazyProgram(COMMANDS, ["--help"], ctx);
 		const help = ctx.stdout.join("\n");
 		expect(help).toContain("ui ");
 		expect(help).not.toContain("ui-collect");
