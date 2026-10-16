@@ -6,11 +6,20 @@ import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Screen } from "@/components/ui/screen";
 import { Text } from "@/components/ui/text";
+import { IS_E2E } from "@/modules/e2e/is-e2e";
 import { useSession } from "@/modules/session/contexts/session.context";
 import { type CredentialsCheck, validateCredentials } from "@/modules/session/utils/credentials";
 
 /** How long the fake sign-in request takes, so the button's loading state is observable. */
 const SIGN_IN_DELAY_MS = 400;
+
+/**
+ * e2e builds opt both fields out of iOS credential AutoFill: otherwise iOS offers to save the password in a
+ * "Save Password?" sheet that appears seconds after sign-in (the system sheet is hosted by SafariViewService,
+ * cold-launched, so how late it shows varies with load) and swallows the keystrokes of whatever the flow does
+ * next: on `example-dev` the dev client reloaded its JS in the middle of that typing.
+ */
+const NO_AUTOFILL = IS_E2E ? ({ autoComplete: "off", textContentType: "oneTimeCode" } as const) : {};
 
 type FailedCheck = Extract<CredentialsCheck, { ok: false }>;
 
@@ -64,6 +73,7 @@ export default function SignIn() {
 					<Input
 						autoCapitalize="none"
 						autoComplete="email"
+						{...NO_AUTOFILL}
 						inputMode="email"
 						onChangeText={setEmail}
 						placeholder="ada@example.com"
@@ -75,6 +85,7 @@ export default function SignIn() {
 				<Field isInvalid={error?.field === "password"}>
 					<Field.Label>Password</Field.Label>
 					<Input
+						{...NO_AUTOFILL}
 						onChangeText={setPassword}
 						onSubmitEditing={submit}
 						placeholder="At least 8 characters"
