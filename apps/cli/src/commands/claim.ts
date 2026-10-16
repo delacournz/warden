@@ -23,13 +23,21 @@ type ClaimOpts = ClaimFlagValues & { json?: true };
 
 /**
  * A plain claim must not hand out a device an e2e/batch run left slimmed: re-enable its disabled
- * jobs and clear the record. Wrapper claims (`e2e`, `batch`, `run`) don't come through here — they
- * slim after claiming anyway. `enable` only takes effect on the device's next boot; jobs already
+ * jobs and clear the record. Only devices the store records as slimmed (`slimmedAt`) are touched —
+ * `slim` and the wrapper claims (`e2e`, `batch`, `run`) set it — so a claim of a never-slimmed device
+ * costs no `launchctl` spawn at all. `enable` only takes effect on the device's next boot; jobs already
  * booted out stay down until then (said so on stderr).
  */
 async function restoreSlimmed(ctx: CommandContext, claimed: ClaimedDevice[]): Promise<void> {
+	const slimmed = new Set(
+		ctx
+			.store()
+			.listDevices("ios")
+			.filter((record) => record.slimmedAt !== undefined)
+			.map((record) => record.id)
+	);
 	for (const { device } of claimed) {
-		if (device.platform !== "ios") continue;
+		if (device.platform !== "ios" || !slimmed.has(device.id)) continue;
 		const res = await slimSimulator(ctx.exec, device.id, { restore: true });
 		if (!res.success) continue;
 		ctx.store().setSlimmed("ios", device.id, undefined);

@@ -1,10 +1,27 @@
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import { androidTools } from "../providers/android";
 import type { Platform } from "../types";
+import type { InstalledApp } from "./resolve";
 
-export type InstallerDeps = { exec: Exec; env: Record<string, string | undefined> };
+/** Byte size of a file; undefined when it cannot be read. Injected so identity checks need no `stat` spawns. */
+export type FileSize = (path: string) => Promise<number | undefined>;
+
+export const nodeFileSize: FileSize = async (path) => {
+	try {
+		return (await stat(path)).size;
+	} catch {
+		return undefined;
+	}
+};
+
+export type InstallerDeps = {
+	exec: Exec;
+	env: Record<string, string | undefined>;
+	/** default: `node:fs` */
+	fileSize?: FileSize;
+};
 
 /** A device to install onto: iOS simulator udid / Android emulator serial. */
 export type InstallTarget = { platform: Platform; deviceId: string };
@@ -25,15 +42,32 @@ export function probeArgv(target: InstallTarget, bundleId: string, env: Installe
 		: [androidTools(env).adb, "-s", target.deviceId, "shell", "pm", "path", bundleId];
 }
 
-/** Is `bundleId` installed on the device? (simctl exits non-zero / `pm path` prints nothing when not.) */
+/**
+ * Is `bundleId` on the device, and (iOS) where is its container? One `simctl get_app_container` /
+ * `pm path` — hand the container to `appMatchesArtifact` instead of asking again. simctl exits
+ * non-zero / `pm path` prints nothing when the app is not there.
+ */
+export async function probeApp(
+	deps: InstallerDeps,
+	target: InstallTarget,
+	bundleId: string
+): AsyncResult<InstalledApp> {
+	const res = await deps.exec(probeArgv(target, bundleId, deps.env));
+	if (target.platform === "ios") {
+		const container = res.stdout.trim();
+		return ok(res.exitCode === 0 && container !== "" ? { present: true, container } : { present: false });
+	}
+	return ok({ present: res.exitCode === 0 && res.stdout.includes("package:") });
+}
+
+/** Is `bundleId` installed on the device? */
 export async function isAppInstalled(
 	deps: InstallerDeps,
 	target: InstallTarget,
 	bundleId: string
 ): AsyncResult<boolean> {
-	const res = await deps.exec(probeArgv(target, bundleId, deps.env));
-	if (target.platform === "ios") return ok(res.exitCode === 0 && res.stdout.trim() !== "");
-	return ok(res.exitCode === 0 && res.stdout.includes("package:"));
+	const probed = await probeApp(deps, target, bundleId);
+	return probed.success ? ok(probed.data.present) : probed;
 }
 
 /** Run `cmd`, stdout trimmed; undefined when it fails. */
@@ -46,7 +80,7 @@ async function out(deps: InstallerDeps, cmd: string[]): Promise<string | undefin
  * What distinguishes one build of an `.app` from another, cheaply: `CFBundleVersion` plus the byte
  * size of the main executable and of the embedded `main.jsbundle` (Release). Size is used instead
  * of mtime because `simctl install` re-copies the bundle, so the installed mtime need not match the
- * cached one. undefined when the bundle can't be read.
+ * cached one. One `plutil` spawn; the sizes are read in-process. undefined when the bundle can't be read.
  */
 export async function appIdentity(deps: InstallerDeps, appDir: string): Promise<string | undefined> {
 	const plist = await out(deps, ["plutil", "-convert", "json", "-o", "-", `${appDir}/Info.plist`]);
@@ -58,28 +92,30 @@ export async function appIdentity(deps: InstallerDeps, appDir: string): Promise<
 		return undefined;
 	}
 	if (typeof info.CFBundleExecutable !== "string") return undefined;
-	const exe = await out(deps, ["stat", "-f", "%z", `${appDir}/${info.CFBundleExecutable}`]);
+	const size = deps.fileSize ?? nodeFileSize;
+	const [exe, js] = await Promise.all([size(`${appDir}/${info.CFBundleExecutable}`), size(`${appDir}/main.jsbundle`)]);
 	if (exe === undefined) return undefined;
-	const js = await out(deps, ["stat", "-f", "%z", `${appDir}/main.jsbundle`]);
-	return [String(info.CFBundleVersion ?? ""), exe, js ?? "-"].join("|");
+	return [String(info.CFBundleVersion ?? ""), String(exe), js === undefined ? "-" : String(js)].join("|");
 }
 
 /**
  * Is the app on the device the cached `artifactPath` build? iOS: compare `appIdentity` of the
- * installed container (`simctl get_app_container`) with the cached `.app`. Anything unreadable
- * counts as a mismatch (reinstall is the safe side). Android: not checked (always true) — warden's
- * install record is trusted there.
+ * installed container with the cached `.app`; pass `installedDir` (the container `probeApp` already
+ * found) to skip a second `simctl get_app_container`. Anything unreadable counts as a mismatch
+ * (reinstall is the safe side). Android: not checked (always true) — warden's install record is
+ * trusted there.
  */
 export async function appMatchesArtifact(
 	deps: InstallerDeps,
 	target: InstallTarget,
 	bundleId: string,
-	artifactPath: string
+	artifactPath: string,
+	installedDir?: string
 ): AsyncResult<boolean> {
 	if (target.platform !== "ios") return ok(true);
-	const installedDir = await out(deps, probeArgv(target, bundleId, deps.env));
-	if (!installedDir) return ok(false);
-	const [installed, cached] = await Promise.all([appIdentity(deps, installedDir), appIdentity(deps, artifactPath)]);
+	const installedAt = installedDir ?? (await out(deps, probeArgv(target, bundleId, deps.env)));
+	if (!installedAt) return ok(false);
+	const [installed, cached] = await Promise.all([appIdentity(deps, installedAt), appIdentity(deps, artifactPath)]);
 	return ok(installed !== undefined && installed === cached);
 }
 
