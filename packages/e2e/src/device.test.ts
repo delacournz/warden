@@ -252,6 +252,34 @@ describe("device.settle", () => {
 		expect(driver.callsOf("settle")[0]?.opts).toEqual({ quietMs: 100, timeoutMs: 900 });
 	});
 
+	test("returns the detail the driver reported: via, reason, frontmostPid", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([])],
+			onCall: (c) =>
+				c.method === "settle"
+					? { data: { quiet: false, waitedMs: 8000, via: "stream", reason: "frontmost_mismatch", frontmostPid: 99 } }
+					: undefined,
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env });
+		expect(await device.settle()).toEqual({
+			quiet: false,
+			waitedMs: 8000,
+			via: "stream",
+			reason: "frontmost_mismatch",
+			frontmostPid: 99,
+		});
+	});
+
+	test("the hash-polling fallback says via hash", async () => {
+		const clock = fakeClock();
+		const driver = fakeDriver({
+			screens: [snapshotOf([el("text", { label: "a" })])],
+			onCall: (c) => (c.method === "settle" ? failWith("E_UNSUPPORTED") : undefined),
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
+		expect(await device.settle({ quietMs: 200, timeout: 2000 })).toMatchObject({ quiet: true, via: "hash" });
+	});
+
 	test("falls back to snapshot-hash polling on E_UNSUPPORTED", async () => {
 		const clock = fakeClock();
 		const driver = fakeDriver({

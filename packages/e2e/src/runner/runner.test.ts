@@ -155,7 +155,7 @@ describe("deadline", () => {
 		expect(run.log).toEqual(["next depth=0 aborted=false"]);
 
 		const dir = step.artifacts?.dir ?? "";
-		const trace = readTrace(readFileSync(join(dir, "trace.jsonl"), "utf8"));
+		const trace = readTrace(readFileSync(join(dir, "trace.jsonl"), "utf8")).filter((e) => e.type !== "span");
 		expect(trace.map((e) => [e.type, e.label])).toEqual([
 			["step-start", "app.open"],
 			["step-end", "app.open"],
@@ -233,6 +233,14 @@ describe("default fixtures", () => {
 		expect(tapped.status).toBe("passed");
 		const trace = readTrace(readFileSync(join(tapped.artifacts?.dir ?? "", "trace.jsonl"), "utf8"));
 		expect(trace.some((e) => e.type === "step-end" && e.kind === "locator" && /tap/.test(e.label))).toBe(true);
+		// trace.jsonl also holds the driver calls, device calls and locator reads as spans, flushed when the attempt ended
+		const spans = trace.flatMap((e) => (e.type === "span" ? [e] : []));
+		const ops = spans.map((s) => s.op);
+		expect(ops).toContain("driver.snapshot");
+		expect(ops).toContain("driver.tap");
+		expect(ops).toContain("read.isVisible");
+		expect(ops).toContain("device.snapshot");
+		expect(spans.every((s) => s.ok && s.ms >= 0 && s.ts > 0)).toBe(true);
 
 		const missing = byTitle(run, "a locator that matches nothing fails with LOCATOR_NOT_FOUND and the screen excerpt");
 		expect(missing).toMatchObject({ status: "failed", error: { code: "LOCATOR_NOT_FOUND" } });

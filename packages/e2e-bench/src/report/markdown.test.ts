@@ -33,6 +33,16 @@ describe("renderMarkdown", () => {
 		expect(md).toContain("failed in phase `run`. parity breach");
 		expect(md).toContain("**detox:** unsupported.");
 	});
+	test("untraced time: a section for frameworks whose trace reports it, none otherwise", () => {
+		expect(md).toContain("## Untraced time");
+		expect(md).toMatch(/\| warden \| [\d.]+ s \| [\d.]+% \| todo-detail\/open-toggle-delete/);
+		const bare = structuredClone(run);
+		for (const f of bare.frameworks) {
+			if (f.status !== "ok") continue;
+			for (const rep of f.reps) for (const t of rep.tests) delete t.untracedMs;
+		}
+		expect(renderMarkdown(bare, manifest)).not.toContain("Untraced");
+	});
 	test("NaN renders as a dash and the output is pure", () => {
 		const nan = structuredClone(run);
 		const first = nan.frameworks[0];

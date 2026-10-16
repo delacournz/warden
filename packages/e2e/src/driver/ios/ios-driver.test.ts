@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
+import { settleDetailOf } from "../settle";
+import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { canSelectAll } from "../typing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
@@ -535,7 +537,42 @@ describe("settle", () => {
 		const { driver } = await open((request) =>
 			request.op === "settle" ? { error: { code: "E_TIMEOUT", message: "slow" } } : undefined
 		);
-		expect(await unwrapped(driver.settle({ timeoutMs: 1000 }))).toEqual({ quiet: false, waitedMs: 3000 });
+		expect(settleDetailOf(await unwrapped(driver.settle({ timeoutMs: 1000 })))).toEqual({
+			quiet: false,
+			waitedMs: 3000,
+			reason: "helper_timeout",
+		});
+	});
+
+	test("the helper's via, reason and frontmostPid are kept, not dropped", async () => {
+		const { driver } = await open((request) =>
+			request.op === "settle"
+				? { data: { quiet: false, waitedMs: 8010, via: "stream", reason: "frontmost_mismatch", frontmostPid: 4242 } }
+				: undefined
+		);
+		expect(settleDetailOf(await unwrapped(driver.settle({ timeoutMs: 8000 })))).toEqual({
+			quiet: false,
+			waitedMs: 8010,
+			via: "stream",
+			reason: "frontmost_mismatch",
+			frontmostPid: 4242,
+		});
+	});
+
+	test("a snapshot-stability settle says so", async () => {
+		const { driver } = await open((request) =>
+			request.op === "settle" ? { data: { quiet: true, waitedMs: 2330, via: "snapshot" } } : undefined
+		);
+		expect(settleDetailOf(await unwrapped(driver.settle()))).toEqual({ quiet: true, waitedMs: 2330, via: "snapshot" });
+	});
+
+	test("the call's span gets the same verdict as detail", async () => {
+		const { driver } = await open((request) =>
+			request.op === "settle" ? { data: { quiet: true, waitedMs: 260, via: "stream", frontmostPid: 77 } } : undefined
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => driver.settle());
+		expect(notes).toEqual({ via: "stream", frontmostPid: 77 });
 	});
 
 	test("the first settle after app.launch names the launched bundle, later ones do not", async () => {
@@ -606,8 +643,11 @@ describe("settle", () => {
 				},
 			}
 		);
-		const first = await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+		const notes: SpanDetail = {};
+		const first = await collectSpanDetail(notes, () => unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 })));
 		expect(first.quiet).toBe(true);
+		expect(first).toMatchObject({ via: "hash" });
+		expect(notes.via).toBe("hash");
 		expect(helper.of("settle")).toHaveLength(1);
 		const snapshotsAfterFirst = helper.of("snapshot").length;
 		expect(snapshotsAfterFirst).toBeGreaterThanOrEqual(3);

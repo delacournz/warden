@@ -48,6 +48,12 @@ export const testResultSchema = z.object({
 	/** the framework's own measurement, as reported (undefined when `missing`) */
 	durationMs: z.number().optional(),
 	steps: z.array(stepResultSchema).optional(),
+	/**
+	 * Test wall time that no step and no span of the framework's own trace covers (warden's `trace.jsonl`: runner
+	 * overhead, hooks, sleeps and any call nobody wrapped). Added after v1 shipped as an optional field: older
+	 * results parse unchanged, so `SCHEMA_VERSION` stays 1.
+	 */
+	untracedMs: z.number().optional(),
 	error: z.string().optional(),
 	artifacts: z.array(artifactSchema).optional(),
 });

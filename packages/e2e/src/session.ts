@@ -10,10 +10,12 @@ import { resolve } from "node:path";
 import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools/devtools.types";
 import { openDevtoolsFacet } from "./devtools/facet";
 import type { Driver, DriverResult } from "./driver/driver.types";
+import { traceDriver } from "./driver/traced-driver";
 import { type E2eEnv, readEnv } from "./env";
 import { E2eError } from "./errors";
 import type { AttemptContext, FixtureFactory } from "./runner/fixtures.types";
 import { openResults, type ResultsWriter } from "./runner/results";
+import { runSpan, type SpanRunner } from "./runner/span";
 import { runStep } from "./runner/step";
 import type { TraceWriter } from "./runner/trace";
 
@@ -57,7 +59,10 @@ export type Session = {
 	/** the running attempt's artifacts dir and `trace.jsonl` (read at call time by the `app`/`device` fixtures) */
 	readonly attemptDir: string | undefined;
 	readonly trace: TraceWriter | undefined;
-	/** opened on first call, then shared; a failed open is thrown as `E2eError{code:"DRIVER"}` and retried next call */
+	/**
+	 * opened on first call, then shared; a failed open is thrown as `E2eError{code:"DRIVER"}` and retried next call.
+	 * Every call on it is a `driver.*` span in the running attempt's `trace.jsonl`.
+	 */
 	driver(): Promise<Driver>;
 	/** the driver if it is already open; never opens one (failure capture must not start a device) */
 	peekDriver(): Driver | undefined;
@@ -70,6 +75,8 @@ export type Session = {
 	peekDevtools(): DevtoolsFacet | undefined;
 	/** one reported step (`▸`/`▪` lines, `trace.jsonl`) that gives up when the attempt deadline aborts */
 	step<T>(kind: string, label: string, fn: () => Promise<T>): Promise<T>;
+	/** times one call as a `span` in the running attempt's `trace.jsonl` (no console line); just runs it outside an attempt */
+	span: SpanRunner;
 	enterAttempt(attempt: AttemptContext): void;
 	leaveAttempt(): void;
 	/** idempotent; closes the driver only if it was opened */
@@ -188,8 +195,8 @@ export function createSession(opts: SessionOptions = {}): Session {
 						const { code, message } = result.error;
 						throw new E2eError("DRIVER", `${code}: ${message}`);
 					}
-					current = result.data;
-					return result.data;
+					current = traceDriver(result.data, { trace: () => attempt?.trace });
+					return current;
 				},
 				(cause: unknown) => {
 					opened = undefined;
@@ -226,6 +233,9 @@ export function createSession(opts: SessionOptions = {}): Session {
 		},
 		step(kind, label, fn) {
 			return runStep(attempt, kind, label, fn);
+		},
+		span(op, fn, options) {
+			return runSpan(attempt?.trace, op, fn, options);
 		},
 		enterAttempt(next) {
 			attempt = next;

@@ -10,6 +10,8 @@ export type WardenNative = {
 	durationMs: number;
 	error?: string;
 	steps: StepResult[];
+	/** test wall time no step and no span of its `trace.jsonl` covers; undefined without a readable trace */
+	untracedMs?: number;
 	artifacts: NonNullable<TestResult["artifacts"]>;
 };
 
@@ -26,6 +28,43 @@ export function stepsFromTrace(events: readonly TraceEvent[]): StepResult[] {
 			steps.push({ kind: event.kind, label: event.label, ms: event.ms, status: event.status });
 	}
 	return steps;
+}
+
+type Interval = readonly [start: number, end: number];
+
+/** The time a trace event accounts for: a finished step ended at `ts` and took `ms`, a span started at `ts` and took `ms`. */
+function intervalOf(event: TraceEvent): Interval | undefined {
+	if (event.type === "step-end") return [event.ts - event.ms, event.ts];
+	if (event.type === "span") return [event.ts, event.ts + event.ms];
+	return undefined;
+}
+
+/**
+ * Test wall time that no step and no span covers: `durationMs` minus the length of the union of every `step-end`
+ * and `span` interval clipped to the test (`startedAt` .. `startedAt + durationMs`). Nested steps and spans (a
+ * `device.settle` around a `driver.settle`) count once. What is left is time the trace cannot explain: runner
+ * overhead, hooks, sleeps and any call nobody wrapped.
+ */
+export function untracedMsOf(events: readonly TraceEvent[], test: { startedAt: number; durationMs: number }): number {
+	const from = test.startedAt;
+	const to = test.startedAt + test.durationMs;
+	const clipped: Interval[] = [];
+	for (const event of events) {
+		const interval = intervalOf(event);
+		if (interval === undefined) continue;
+		const start = Math.max(from, interval[0]);
+		const end = Math.min(to, interval[1]);
+		if (end > start) clipped.push([start, end]);
+	}
+	clipped.sort((a, b) => a[0] - b[0]);
+	let covered = 0;
+	let runEnd = from;
+	for (const [start, end] of clipped) {
+		if (end <= runEnd) continue;
+		covered += end - Math.max(start, runEnd);
+		runEnd = end;
+	}
+	return Math.max(0, test.durationMs - covered);
 }
 
 function artifactKind(file: string): NonNullable<TestResult["artifacts"]>[number]["kind"] | undefined {
@@ -50,8 +89,9 @@ function artifactsOf(result: WardenTestResult, relativeTo: string): WardenNative
 }
 
 /**
- * `results.jsonl` text → native tests. Steps come from each attempt's `trace.jsonl`, fetched through
- * `readText` (undefined when the file is missing). Truncated or invalid lines are skipped by `readResults`.
+ * `results.jsonl` text → native tests. Steps (`step-end` events only: spans are not steps) and `untracedMs` come
+ * from each attempt's `trace.jsonl`, fetched through `readText` (undefined when the file is missing). Truncated or
+ * invalid lines are skipped by `readResults`.
  */
 export function parseWardenResults(
 	text: string,
@@ -60,12 +100,14 @@ export function parseWardenResults(
 ): WardenNative[] {
 	return readResults(text).map((result) => {
 		const traceText = result.artifacts !== undefined ? readText(`${result.artifacts.dir}/trace.jsonl`) : undefined;
+		const events = traceText !== undefined ? readTrace(traceText) : undefined;
 		return {
 			nativeName: nativeNameOf(result.file, result.title),
 			status: result.status,
 			durationMs: result.durationMs,
 			...(result.error !== undefined ? { error: result.error.message } : {}),
-			steps: traceText !== undefined ? stepsFromTrace(readTrace(traceText)) : [],
+			steps: events !== undefined ? stepsFromTrace(events) : [],
+			...(events !== undefined ? { untracedMs: untracedMsOf(events, result) } : {}),
 			artifacts: artifactsOf(result, relativeTo),
 		};
 	});

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { type AdbSession, openAdbSession, type SpawnAdb, spawnAdb } from "./adb-session";
 
 const FAKE_ADB = join(import.meta.dir, "../../../native/scripts/fake-adb.ts");
@@ -23,6 +24,25 @@ async function data<T>(
 	if (!result.success) throw new Error(`unexpected error ${result.error.code}`);
 	return result.data;
 }
+
+describe("adb session span detail", () => {
+	test("commands run inside a span add their count and time to its detail", async () => {
+		const s = open();
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, async () => {
+			await s.run("echo one");
+			await s.run("echo two");
+		});
+		expect(notes.adbCalls).toBe(2);
+		expect(typeof notes.adbMs).toBe("number");
+		expect(notes.adbMs).toBeGreaterThanOrEqual(0);
+	});
+
+	test("outside a span nothing is recorded and nothing breaks", async () => {
+		const s = open();
+		expect(await data(s.run("echo hi"))).toEqual({ stdout: "hi\n", exitCode: 0 });
+	});
+});
 
 describe("adb session", () => {
 	test("runs a command and returns stdout + exit code", async () => {

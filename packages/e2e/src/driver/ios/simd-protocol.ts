@@ -282,10 +282,15 @@ export const screenshotDataSchema = z.looseObject({
 });
 export type ScreenshotData = z.infer<typeof screenshotDataSchema>;
 
-/** `reason: "frontmost_mismatch"`: `bundleId` was asked for and never became the frontmost app before the deadline. */
+/**
+ * `via`: `stream` (the guest reported run-loop idle) or `snapshot` (the stream was stuck: two identical reads); a
+ * value this client does not know reads as absent. `reason: "frontmost_mismatch"`: `bundleId` was asked for and never
+ * became the frontmost app before the deadline, and `frontmostPid` is what was frontmost instead.
+ */
 export const settleDataSchema = z.looseObject({
 	quiet: z.boolean(),
 	waitedMs: z.number(),
+	via: z.enum(["stream", "snapshot"]).optional().catch(undefined),
 	reason: z.string().optional(),
 	frontmostPid: z.number().optional(),
 });

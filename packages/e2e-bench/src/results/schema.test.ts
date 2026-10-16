@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { benchRunSchema, CANONICAL_IDS, parseBenchRun } from "./schema";
+import { benchRunSchema, CANONICAL_IDS, parseBenchRun, testResultSchema } from "./schema";
 
 describe("bench-results schema", () => {
 	test("8 canonical ids", () => {
@@ -32,5 +32,18 @@ describe("bench-results schema", () => {
 			frameworks: [{ framework: "detox", status: "unsupported", reason: "RN 0.86" }],
 		};
 		expect(benchRunSchema.safeParse(run).success).toBe(true);
+	});
+});
+
+describe("test result", () => {
+	const base = { id: "onboarding/steps-to-sign-in", nativeName: "n", status: "passed", durationMs: 9000 };
+
+	test("untracedMs is optional, so results written before it existed still parse", () => {
+		expect(testResultSchema.safeParse(base).success).toBe(true);
+		expect(testResultSchema.parse({ ...base, untracedMs: 1234 }).untracedMs).toBe(1234);
+	});
+
+	test("untracedMs must be a number", () => {
+		expect(testResultSchema.safeParse({ ...base, untracedMs: "lots" }).success).toBe(false);
 	});
 });

@@ -56,6 +56,14 @@
 | warden | 98 | 939 ms | 1.98 s | 2.23 s |
 | maestro | 98 | 1.46 s | 2.97 s | 3.56 s |
 
+## Untraced time
+
+| Framework | Untraced / rep | Share of test time | Largest (test) |
+| --- | --- | --- | --- |
+| warden | 10.32 s | 20% | todo-detail/open-toggle-delete (1.86 s) |
+
+Test wall time that no step and no span of the framework's own trace covers (warden: `trace.jsonl`; nested steps and spans count once). Runner overhead, hooks, sleeps and calls nobody wrapped end up here.
+
 ## Resources
 
 | Framework | Scope | CPU avg | CPU peak | RSS avg | RSS peak |

@@ -21,6 +21,14 @@ Published as `@delacour/warden-e2e` (manifest from `apps/cli/src/npm/manifests.t
 - Declarations come from the TypeScript compiler API (`apps/cli/src/npm/declarations.ts`): `types/**` holds what the two entries reach, workspace imports rewritten to relative paths; `index.d.ts` / `preload.d.ts` re-export it. A type the public API exposes must be reachable from the entries. Consumers need `moduleResolution: bundler` (Bun's default) and `@types/bun`.
 - A new third-party runtime import must be added to `E2E_EXTERNALS` and this package's `dependencies` (the bundle test fails on any bare import other than `zod`).
 
+## Tracing (`runner/trace.ts`, `runner/span.ts`)
+`trace.jsonl` holds `step-start` / `step-end` (what the console prints) and trace-only `span` lines `{type:"span", ts, op, ms, ok, code?, detail?}`: `ts` is when the call **started** (epoch ms), a span is written when it ends (so file order is not `ts` order), `ok:false` carries the error `code`.
+- `op` names the layer: `driver.<call>` (every `Driver` call, incl. `driver.app.<call>` and optional capabilities; `driver/traced-driver.ts`, a `Proxy` that `session.driver()` returns), `device.<call>` (`traced-device.ts`, wired in `fixtures.ts`), `read.<call>` (`Locator` reads, detail `{locator}`).
+- Code deep in a call leaves scalars for its span with `noteSpanDetail` / `addSpanDetail` (`driver/span-detail.ts`, an `AsyncLocalStorage`; a no-op outside a span): adb time/count (`adbMs`, `adbCalls`), the dump route (`dumpRoute`, `dumpRoutesTried`, `dumpMs`), settle `via`/`reason`. `session.span(op, fn, { detail?, verdict? })` is the same thing for any other call; it just runs `fn` outside an attempt.
+- `Driver["settle"]` stays `{quiet, waitedMs}` (frozen contract); drivers answer the wider `SettleDetail` of `driver/settle.ts` (`via`: `stream | snapshot | hash`, `reason`, `frontmostPid`; iOS passes the helper's reply through; Android says `snapshot` when one dump covered `quietMs` and `hash` when it compared dumps, and so does the iOS hash fallback (`hash`); a late helper answer is `reason: "helper_timeout"`), `settleDetailOf` reads it back off the narrow type, and `device.settle()` returns it. Both settle spans carry it as `detail`.
+- Spans are buffered (`SPAN_BUFFER_MAX`) and appended before the next step event or by `TraceWriter.flush()` when the attempt ends; no `appendFileSync` per RPC. Arguments are never recorded (`typeText` carries passwords).
+- The bench's `untracedMs` per test (`packages/e2e-bench/src/adapters/parse/warden-results.ts`) is the test wall time that no step and no span covers; anything that shows up there is a call nobody wrapped.
+
 ## Rules
 - Never run real `simctl` / `adb` / `warden-simd` in `bun test` — inject `Exec`, use `driver.testing.ts` / `native/scripts/fake-simd.ts`. Smoke scripts live in `native/scripts` and are run by hand.
 - `Result` / `AsyncResult` from `@delacour/warden-types/result`; `DriverResult<T>` = `AsyncResult<T, DriverError>`.

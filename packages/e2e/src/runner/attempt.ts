@@ -217,6 +217,7 @@ export async function runAttempt<F extends object>(session: Session, spec: Attem
 	const cleanupErrors = await runCleanup(session, spec, ctx, state.bag, teardowns);
 	if (!controller.signal.aborted) controller.abort(new E2eError("SESSION", "attempt finished"));
 	session.leaveAttempt();
+	trace.flush();
 
 	if (!failed && cleanupErrors.length > 0) {
 		failed = true;

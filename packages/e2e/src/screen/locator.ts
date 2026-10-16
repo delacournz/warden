@@ -226,8 +226,13 @@ export class Locator {
 		return pickOne(this.rt, this.expr, entries, observed);
 	}
 
-	async count(): Promise<number> {
-		return (await this.matches()).entries.length;
+	/** One read as a trace-only `read.<name>` span naming this locator; reads that call another read are not wrapped twice. */
+	private read<T>(name: string, run: () => Promise<T>): Promise<T> {
+		return this.rt.span(`read.${name}`, run, { detail: () => ({ locator: this.toString() }) });
+	}
+
+	count(): Promise<number> {
+		return this.read("count", async () => (await this.matches()).entries.length);
 	}
 
 	async all(): Promise<Locator[]> {
@@ -235,47 +240,55 @@ export class Locator {
 		return Array.from({ length: count }, (_, index) => this.nth(index));
 	}
 
-	async text(): Promise<string> {
-		return textOf((await this.single()).entry);
+	text(): Promise<string> {
+		return this.read("text", async () => textOf((await this.single()).entry));
 	}
 
-	async allTexts(): Promise<string[]> {
-		return (await this.matches()).entries.map(textOf);
+	allTexts(): Promise<string[]> {
+		return this.read("allTexts", async () => (await this.matches()).entries.map(textOf));
 	}
 
-	async value(): Promise<string> {
-		return fieldValue((await this.single()).entry);
+	value(): Promise<string> {
+		return this.read("value", async () => fieldValue((await this.single()).entry));
 	}
 
-	async isVisible(): Promise<boolean> {
-		const { entries, observed } = await this.matches();
-		if (entries.length === 0) return false;
-		return this.exactlyOne(entries, observed).visible;
+	isVisible(): Promise<boolean> {
+		return this.read("isVisible", async () => {
+			const { entries, observed } = await this.matches();
+			if (entries.length === 0) return false;
+			return this.exactlyOne(entries, observed).visible;
+		});
 	}
 
 	async isHidden(): Promise<boolean> {
 		return !(await this.isVisible());
 	}
 
-	async isEnabled(): Promise<boolean> {
-		return !(await this.single()).entry.states.disabled;
+	isEnabled(): Promise<boolean> {
+		return this.read("isEnabled", async () => !(await this.single()).entry.states.disabled);
 	}
 
-	async isChecked(): Promise<boolean> {
-		return (await this.single()).entry.states.checked === true;
+	isChecked(): Promise<boolean> {
+		return this.read("isChecked", async () => (await this.single()).entry.states.checked === true);
 	}
 
-	async boundingBox(): Promise<Rect> {
-		const { entries, observed } = await this.matches();
-		if (entries.length === 0) {
-			const [only, ...others] = await this.reactCandidates(observed);
-			if (only !== undefined && others.length === 0) return { ...only.frame };
-		}
-		return { ...this.exactlyOne(entries, observed).element.frame };
+	boundingBox(): Promise<Rect> {
+		return this.read("boundingBox", async () => {
+			const { entries, observed } = await this.matches();
+			if (entries.length === 0) {
+				const [only, ...others] = await this.reactCandidates(observed);
+				if (only !== undefined && others.length === 0) return { ...only.frame };
+			}
+			return { ...this.exactlyOne(entries, observed).element.frame };
+		});
 	}
 
 	/** Polls until the locator is `visible` (default), `hidden`, `attached` or `detached`; else `TIMEOUT`. */
-	async waitFor(options: WaitForOptions = {}): Promise<void> {
+	waitFor(options: WaitForOptions = {}): Promise<void> {
+		return this.read("waitFor", () => this.waitForState(options));
+	}
+
+	private async waitForState(options: WaitForOptions): Promise<void> {
 		assertOptions("waitFor", options, ["state", "timeout"]);
 		const state = options.state ?? "visible";
 		if (!WAIT_STATES.includes(state)) {

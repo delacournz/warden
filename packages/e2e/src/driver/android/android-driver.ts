@@ -20,7 +20,14 @@ import type {
 	Snapshot,
 } from "../driver.types";
 import { driverErr } from "../errors";
-import { DEFAULT_SETTLE_QUIET_MS, DEFAULT_SETTLE_TIMEOUT_MS, settleByHash, snapshotHash } from "../settle";
+import {
+	DEFAULT_SETTLE_QUIET_MS,
+	DEFAULT_SETTLE_TIMEOUT_MS,
+	type SettleDetail,
+	settleByHash,
+	snapshotHash,
+} from "../settle";
+import { noteSpanDetail } from "../span-detail";
 import type { RepeatingKeys, SelectsAll } from "../typing";
 import { type AdbSession, openAdbSession, type SpawnAdb } from "./adb-session";
 import { detectAlert } from "./android-alert";
@@ -413,13 +420,17 @@ function buildDriver(
 	 * two or more dumps compared by hash (3.8 s). A longer `quietMs` still compares successive dumps. A failed dump,
 	 * or one that took so long it gave up waiting for idle, is not quiet. `timeoutMs` bounds only that comparison.
 	 */
-	const settle: Driver["settle"] = async (opts) => {
+	const settle = async (opts?: { quietMs?: number; timeoutMs?: number }): DriverResult<SettleDetail> => {
 		const quietMs = opts?.quietMs ?? DEFAULT_SETTLE_QUIET_MS;
 		if (quietMs <= DUMP_IDLE_MS) {
 			const start = clock.now();
 			const taken = await takeSnapshot();
 			const waitedMs = clock.now() - start;
-			return { success: true, data: { quiet: taken.success && waitedMs < DUMP_IDLE_TIMEOUT_MS, waitedMs } };
+			noteSpanDetail("via", "snapshot");
+			return {
+				success: true,
+				data: { quiet: taken.success && waitedMs < DUMP_IDLE_TIMEOUT_MS, waitedMs, via: "snapshot" },
+			};
 		}
 		const poll = async (): Promise<string> => {
 			const taken = await takeSnapshot();
@@ -433,7 +444,8 @@ function buildDriver(
 			now: clock.now,
 			sleep: clock.sleep,
 		});
-		return { success: true, data: outcome };
+		noteSpanDetail("via", "hash");
+		return { success: true, data: { ...outcome, via: "hash" } };
 	};
 
 	const alert: Driver["alert"] = async (): DriverResult<AlertInfo | null> => {
