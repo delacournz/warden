@@ -5,8 +5,39 @@ enum SettleOps {
   static let ops: [String: Dispatcher<Session>.OpHandler] = [
     "settle": { session, params in
       try await session.settle(SettleRequest(params))
-    }
+    },
+    "rebind": { session, params in
+      try await session.rebind(RebindRequest(params))
+    },
   ]
+}
+
+/// `rebind{bundleId, rebindTimeoutMs=4000}`: waits until the quiescence stream reports on that bundle's process.
+///
+/// The guest only attaches to a process once a stream has bound to it, and an `axbridge` read of a process nobody has
+/// bound answers "did not respond" (a failed read, then a stream restart, ~1.3 s). A client that has just relaunched
+/// its app calls this first, so its first read already finds the app bound. Like `settle` it spends its own budget
+/// (`rebindTimeoutMs`, else the padded envelope `timeoutMs`) and answers `bound:false` at the deadline, not an error.
+struct RebindRequest: Equatable {
+  static let defaultTimeoutMs = 4000
+
+  var bundleId: String
+  var timeoutMs: Int
+
+  init(_ params: JSON) throws {
+    guard let id = params["bundleId"]?.stringValue, !id.isEmpty else {
+      throw WireError(.badRequest, "\"bundleId\" must be a non-empty string")
+    }
+    bundleId = id
+    func nonNegative(_ key: String) throws -> Int? {
+      guard let raw = params[key], raw != .null else { return nil }
+      guard let value = raw.intValue, value >= 0 else {
+        throw WireError(.badRequest, "\"\(key)\" must be a non-negative integer")
+      }
+      return value
+    }
+    timeoutMs = try nonNegative("rebindTimeoutMs") ?? nonNegative("timeoutMs") ?? Self.defaultTimeoutMs
+  }
 }
 
 /// `settle{quietMs=250, timeoutMs=3000, bundleId?}`.
@@ -74,9 +105,14 @@ enum SettleDecision: Equatable {
 /// guest's link to it, is not answering at all. A real busy app answers at least one signal now and then, so a single
 /// busy signal never counts. Stuck guests were observed on contended simulators; a fresh guest or a stream restart
 /// is the remedy, the snapshot-stability fallback the last resort.
+///
+/// A stream that is stuck right after a relaunch has not recovered on a restart in any measured run (the guest stays
+/// at `busy(runLoopIdle, animationsInactive)` for every app until the helper's own guest is replaced), so the
+/// fallback is the safety net that matters: it answers from two identical reads ~0.7 s + 0.25 s in, instead of the
+/// 2 s + 0.25 s it used to wait before trusting them.
 struct SettleJudge: Equatable {
-  var restartAfterMs = 1000
-  var fallbackAfterMs = 2000
+  var restartAfterMs = 400
+  var fallbackAfterMs = 700
 
   func decide(isQuiet: Bool, stuckForMs: Int?, restarted: Bool) -> SettleDecision {
     if isQuiet { return .quiet }
@@ -126,14 +162,28 @@ struct FrameStability: Equatable {
 /// launchd (slow, so re-asked at most every `resolveEveryMs` and only while the two disagree); the frontmost pid
 /// comes from the quiescence stream. Pure: the resolver and the clock are fed in.
 struct FrontmostGate: Equatable {
-  static let resolveEveryMs = 150
+  /// The gate's clock rules, injectable so a test can line them up without waiting seconds.
+  ///
+  /// - `resolveEveryMs`: how often launchd is asked for the bundle's pid while the stream disagrees.
+  /// - `firstRestartGraceMs`: how long a stream gets to follow a new pid before it counts as latched on the old
+  ///   process. Measured on a device: a healthy stream reports the relaunched app 0.25-0.4 s after its pid exists
+  ///   and a first state about 0.3 s later, while a restarted one needs ~0.2 s to open plus ~1.2 s to attach to an
+  ///   app that is still starting, so restarting early is slower than waiting; 900 ms leaves room for a loaded host.
+  /// - `repeatRestartMs`: the back-off between restarts of a stream that is still latched.
+  struct Timing: Equatable, Sendable {
+    var resolveEveryMs = 150
+    var firstRestartGraceMs = 900
+    var repeatRestartMs = 1500
+  }
 
   let bundleId: String
+  let timing: Timing
   private(set) var targetPid: pid_t?
   private var lastResolveAt: Double?
 
-  init(bundleId: String) {
+  init(bundleId: String, timing: Timing = Timing()) {
     self.bundleId = bundleId
+    self.timing = timing
   }
 
   func matches(frontmostPid: pid_t?) -> Bool {
@@ -144,7 +194,7 @@ struct FrontmostGate: Equatable {
   func shouldResolve(frontmostPid: pid_t?, now: Double) -> Bool {
     if matches(frontmostPid: frontmostPid) { return false }
     guard let lastResolveAt else { return true }
-    return (now - lastResolveAt) * 1000 >= Double(Self.resolveEveryMs)
+    return (now - lastResolveAt) * 1000 >= Double(timing.resolveEveryMs)
   }
 
   /// `pid` is nil while the application is not running (a launch still in flight).
@@ -156,21 +206,18 @@ struct FrontmostGate: Equatable {
 
   /// The stream is latched on a stale process when the bundle has a pid and the stream still reports another one.
   /// It is restarted only then, never while the bundle has no pid yet (a stream opened mid-launch binds to the
-  /// previous frontmost app, which is exactly the latch being repaired): `firstRestartGraceMs` after the new pid
-  /// appeared (a healthy stream follows within that), then every `repeatRestartMs` while it is still latched
-  /// (a fresh stream takes ~0.6 s to bind).
-  static let firstRestartGraceMs = 500
-  static let repeatRestartMs = 1500
-
+  /// previous frontmost app, which is exactly the latch being repaired): `timing.firstRestartGraceMs` after the new
+  /// pid appeared (a healthy stream follows within that), then every `timing.repeatRestartMs` while it is still
+  /// latched (a fresh stream takes ~0.6 s to bind).
   private var pidSince: Double?
   private var lastRestartAt: Double?
 
   func shouldRestart(frontmostPid: pid_t?, now: Double) -> Bool {
     guard targetPid != nil, let pidSince, !matches(frontmostPid: frontmostPid) else { return false }
     guard let lastRestartAt, lastRestartAt >= pidSince else {
-      return (now - pidSince) * 1000 >= Double(Self.firstRestartGraceMs)
+      return (now - pidSince) * 1000 >= Double(timing.firstRestartGraceMs)
     }
-    return (now - lastRestartAt) * 1000 >= Double(Self.repeatRestartMs)
+    return (now - lastRestartAt) * 1000 >= Double(timing.repeatRestartMs)
   }
 
   mutating func restarted(now: Double) {
@@ -353,27 +400,109 @@ actor QuiescenceMonitor {
   func currentFrontmostPid() -> pid_t? { frontmostPid }
 
   /// Closes the current stream and opens a fresh one; the next events describe the app from scratch.
-  func restart() {
+  ///
+  /// The old stream's task is awaited before the new one is requested, so there are never two streams (each owns a
+  /// guest process, and two on one simulator leave each other stuck). The old task may still be inside its open call
+  /// (cancelling it does not abort the open), so this can take as long as that open does. Concurrent restarts leave
+  /// exactly one replacement: whoever finds a stream already running after its wait has nothing left to do.
+  func restart() async {
     Self.trace("stream restart")
-    task?.cancel()
+    let old = task
     task = nil
+    old?.cancel()
+    state = nil
+    frontmostPid = nil
+    markOpening()
+    await old?.value
+    guard task == nil else { return }
     state = nil
     frontmostPid = nil
     markOpening()
     start()
   }
 
-  /// Opens a fresh stream and waits until it has reported on the frontmost app (or `timeoutMs` passes).
+  /// How long `recover` lets a stream follow the process on its own before it restarts the stream (see
+  /// `FrontmostGate.Timing.firstRestartGraceMs`).
+  static let recoverFollowMs = 900
+
+  /// Gets the guest bound to an app it cannot read yet, and waits until the stream has reported on it (or
+  /// `timeoutMs` passes).
   ///
-  /// This is what makes the bridge able to read an app that was relaunched while no stream was open: the guest
+  /// This is what makes the bridge able to read an app that was relaunched while no stream was bound to it: the guest
   /// only attaches to a new process once a stream has bound to it, so every read of that process times out with
-  /// "did not respond" until then (`settle` repairs it for the same reason).
-  func recover(timeoutMs: Int) async {
-    restart()
-    let deadline = Self.clock() + Double(timeoutMs) / 1000
+  /// "did not respond" until then (`settle` repairs it for the same reason). With the process `pid` that failed, a
+  /// stream that reports on it within `recoverFollowMs` is left alone (it follows a relaunch by itself, in less time
+  /// than a restarted one needs to attach); otherwise, and without a pid, the stream is restarted.
+  func recover(pid: pid_t? = nil, timeoutMs: Int) async {
+    start()
+    let begun = Self.clock()
+    let deadline = begun + Double(timeoutMs) / 1000
+    if let pid {
+      let follow = min(deadline, begun + Double(Self.recoverFollowMs) / 1000)
+      while !Task.isCancelled, Self.clock() < follow {
+        lastUsed = Self.clock()
+        if frontmostPid == pid, state != nil { return }
+        try? await Task.sleep(for: .milliseconds(15))
+      }
+    }
+    await restart()
     while state == nil, Self.clock() < deadline, !Task.isCancelled {
       try? await Task.sleep(for: .milliseconds(25))
     }
+  }
+
+  struct BindOutcome: Equatable {
+    let bound: Bool
+    /// The stream's frontmost process when the call ended (the bundle's own process when `bound`).
+    var pid: pid_t? = nil
+    /// How many times the stream was restarted to get there (0 when it followed the app by itself).
+    var restarts = 0
+    /// Why `bound` is false: `no_process` (the bundle never had a process) or `timeout` (it had one, the stream never
+    /// reported on it).
+    var reason: String? = nil
+  }
+
+  /// Waits until the stream has reported a state for `bundleId`'s process: the app is bound, so a read of it works.
+  ///
+  /// The stream follows a relaunch by itself (`targetChanged`, then a state) a few hundred ms after the process
+  /// appears, so it is only restarted when it still reports another process after the gate's grace (a latched
+  /// stream). Everything the decision looks at is read after any await: the pid lookup is a launchd round trip.
+  func bind(
+    bundleId: String, timeoutMs: Int, resolvePid: PidResolver, gateTiming: FrontmostGate.Timing = FrontmostGate.Timing()
+  ) async -> BindOutcome {
+    start()
+    let deadline = Self.clock() + Double(timeoutMs) / 1000
+    var gate = FrontmostGate(bundleId: bundleId, timing: gateTiming)
+    var restarts = 0
+    Self.trace("bind begin bundleId=\(bundleId) timeoutMs=\(timeoutMs) state=\(String(describing: state))")
+    while !Task.isCancelled {
+      lastUsed = Self.clock()
+      var (current, _, _, pid) = snapshot()
+      if gate.shouldResolve(frontmostPid: pid, now: Self.clock()) {
+        gate.resolved(pid: await resolvePid(bundleId), now: Self.clock())
+        Self.trace("bind resolved \(bundleId) -> \(String(describing: gate.targetPid))")
+        (current, _, _, pid) = snapshot()
+      }
+      let now = Self.clock()
+      if gate.matches(frontmostPid: pid), current != nil {
+        Self.trace("bind bound pid=\(String(describing: pid)) restarts=\(restarts)")
+        return BindOutcome(bound: true, pid: pid, restarts: restarts)
+      }
+      if now >= deadline {
+        Self.trace("bind deadline pid=\(String(describing: pid)) target=\(String(describing: gate.targetPid))")
+        return BindOutcome(
+          bound: false, pid: pid, restarts: restarts, reason: gate.targetPid == nil ? "no_process" : "timeout")
+      }
+      if !isStillOpening(now: now), gate.shouldRestart(frontmostPid: pid, now: now) {
+        Self.trace("bind frontmost \(String(describing: pid)) is stale (target \(String(describing: gate.targetPid))), restarting the stream")
+        gate.restarted(now: now)
+        restarts += 1
+        await restart()
+        continue
+      }
+      try? await Task.sleep(for: .milliseconds(15))
+    }
+    return BindOutcome(bound: false, pid: frontmostPid, restarts: restarts, reason: "cancelled")
   }
 
   /// One cheap tree read (the settle fallback's frame): the frontmost document encoded with sorted keys.
@@ -407,7 +536,7 @@ actor QuiescenceMonitor {
   /// reports another process after `judge.restartAfterMs` is restarted once (it may have latched the old app).
   func waitQuiet(
     quietMs: Int, timeoutMs: Int, judge: SettleJudge = SettleJudge(), bundleId: String? = nil,
-    resolvePid: PidResolver? = nil
+    resolvePid: PidResolver? = nil, gateTiming: FrontmostGate.Timing = FrontmostGate.Timing()
   ) async throws -> Outcome {
     start()
     let begun = Self.clock()
@@ -419,16 +548,21 @@ actor QuiescenceMonitor {
     var restarted = false
     var stability = FrameStability()
     var lastRead = 0.0
-    var gate = bundleId.map { FrontmostGate(bundleId: $0) }
+    var gate = bundleId.map { FrontmostGate(bundleId: $0, timing: gateTiming) }
     while true {
-      let (state, since, _, pid) = snapshot()
-      let now = Self.clock()
+      var (state, since, _, pid) = snapshot()
+      var now = Self.clock()
       lastUsed = now
       if var current = gate, let resolvePid {
         if current.shouldResolve(frontmostPid: pid, now: now) {
           current.resolved(pid: await resolvePid(current.bundleId), now: Self.clock())
           gate = current
           Self.trace("settle resolved \(current.bundleId) -> \(String(describing: current.targetPid)) frontmost=\(String(describing: pid))")
+          // the lookup is a launchd round trip: the stream may have followed the app while it was in flight, and
+          // every decision below must see what it says now (a restart decided on the old pid threw away a stream that
+          // had already bound to the app)
+          (state, since, _, pid) = snapshot()
+          now = Self.clock()
         }
         if !current.matches(frontmostPid: pid) {
           if now >= deadline {
@@ -440,7 +574,7 @@ actor QuiescenceMonitor {
             Self.trace("settle frontmost \(String(describing: pid)) is stale (target \(String(describing: current.targetPid))), restarting the stream")
             current.restarted(now: now)
             gate = current
-            restart()
+            await restart()
           }
           try await Task.sleep(for: .milliseconds(15))
           continue
@@ -459,7 +593,7 @@ actor QuiescenceMonitor {
           current.restarted(now: now)
           gate = current
         }
-        restart()
+        await restart()
       case .fallback:
         if now - lastRead >= 0.1, let frame = try? await readFrame() {
           lastRead = Self.clock()
@@ -482,8 +616,115 @@ actor QuiescenceMonitor {
 }
 
 /// Lazily creates the session's monitor on first use.
+/// When a quiescence stream that reports every process busy should cost the simulator's AX guests.
+///
+/// Observed live: after some number of app relaunches the helper's long-lived guest (the one started with the helper)
+/// answers every quiescence query with `busy(runLoopIdle, animationsInactive)`, for SpringBoard and every app, through
+/// any number of stream restarts and a replaced reader, until that guest process is killed. Reads (`snapshot`) are
+/// unaffected, so `settle` falls back to comparing snapshots (`via: "snapshot"`) and every later settle waits out the
+/// stuck-stream window first.
+///
+/// A fallback is only evidence of a wedged guest when this guest generation has already shown it can report quiet;
+/// otherwise the app is just busy (a spinner) and fresh guests would fall back the same way. The interval keeps a
+/// screen that really never settles from killing guests back to back.
+struct WedgePolicy: Equatable, Sendable {
+  var minIntervalSeconds = 5.0
+
+  func shouldReap(streamQuiets: Int, lastReapedAt: Double?, now: Double) -> Bool {
+    guard streamQuiets > 0 else { return false }
+    guard let lastReapedAt else { return true }
+    return now - lastReapedAt >= minIntervalSeconds
+  }
+}
+
+/// What `WedgePolicy` needs to know, per helper: quiet verdicts the stream gave since the guests were last reaped.
+final class WedgeWatch: @unchecked Sendable {
+  private let lock = NSLock()
+  private var streamQuiets = 0
+  private var lastReapedAt: Double?
+  private var reapCount = 0
+
+  /// A settle the stream answered quiet: the current guests can report quiescence.
+  func noteStreamQuiet() { lock.withLock { streamQuiets += 1 } }
+
+  func wantsReap(policy: WedgePolicy = WedgePolicy(), now: Double = ProcessInfo.processInfo.systemUptime) -> Bool {
+    lock.withLock { policy.shouldReap(streamQuiets: streamQuiets, lastReapedAt: lastReapedAt, now: now) }
+  }
+
+  func didReap(now: Double = ProcessInfo.processInfo.systemUptime) {
+    lock.withLock {
+      streamQuiets = 0
+      lastReapedAt = now
+      reapCount += 1
+    }
+  }
+
+  var reaps: Int { lock.withLock { reapCount } }
+}
+
+/// One process as `ps` lists it.
+struct ProcessEntry: Equatable, Sendable {
+  let pid: pid_t
+  let ppid: pid_t
+  let command: String
+}
+
+/// Finds and ends the in-guest AX bridge processes (`SimulatorFrameworkBridge-iOS serve`) of one simulator: they are
+/// the children of its `launchd_sim`, whose command line names the device directory. idb respawns an ended guest on
+/// the next read and the quiescence stream reopens on one, so ending every guest of the simulator is how a wedged one
+/// is cleared (it cannot be told apart from its stream's guest by its command line).
+struct GuestReaper: Sendable {
+  var list: @Sendable () -> [ProcessEntry]
+  var end: @Sendable (pid_t) -> Void
+
+  static let guestMarker = "SimulatorFrameworkBridge-iOS serve"
+
+  /// The guests that belong to simulator `udid` among `processes`; empty when the simulator's `launchd_sim` is not
+  /// there (never matches another simulator's guests, whose parent is another `launchd_sim`).
+  static func guests(of udid: String, in processes: [ProcessEntry]) -> [pid_t] {
+    let launchd = processes.filter { $0.command.contains("launchd_sim") && $0.command.contains("/Devices/\(udid)/") }
+    let parents = Set(launchd.map(\.pid))
+    guard !parents.isEmpty else { return [] }
+    return processes.filter { parents.contains($0.ppid) && $0.command.contains(guestMarker) }.map(\.pid)
+  }
+
+  /// Ends the guests of `udid`; returns the pids it signalled.
+  @discardableResult
+  func reap(udid: String) -> [pid_t] {
+    let pids = Self.guests(of: udid, in: list())
+    for pid in pids { end(pid) }
+    return pids
+  }
+
+  /// Parses `ps -axo pid=,ppid=,command=` output.
+  static func parse(_ output: String) -> [ProcessEntry] {
+    output.split(separator: "\n").compactMap { line in
+      let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+      guard parts.count == 3, let pid = pid_t(parts[0]), let ppid = pid_t(parts[1]) else { return nil }
+      return ProcessEntry(pid: pid, ppid: ppid, command: parts[2].trimmingCharacters(in: .whitespaces))
+    }
+  }
+
+  static let system = GuestReaper(
+    list: {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/ps")
+      process.arguments = ["-axo", "pid=,ppid=,command="]
+      let pipe = Pipe()
+      process.standardOutput = pipe
+      process.standardError = FileHandle.nullDevice
+      guard (try? process.run()) != nil else { return [] }
+      let data = pipe.fileHandleForReading.readDataToEndOfFile()
+      process.waitUntilExit()
+      return parse(String(decoding: data, as: UTF8.self))
+    },
+    end: { pid in _ = Darwin.kill(pid, SIGTERM) })
+}
+
+/// Lazily creates the session's monitor on first use.
 final class QuiescenceHolder: @unchecked Sendable {
   private let lock = NSLock()
+  let wedge = WedgeWatch()
   private var monitor: QuiescenceMonitor?
 
   func get(_ make: () throws -> any UIAutomation) rethrows -> QuiescenceMonitor {
@@ -499,6 +740,9 @@ final class QuiescenceHolder: @unchecked Sendable {
     let current = lock.withLock { monitor }
     await current?.stop()
   }
+
+  /// The monitor if one was created; replacing a guest does not create one.
+  var existing: QuiescenceMonitor? { lock.withLock { monitor } }
 }
 
 extension Session {
@@ -531,13 +775,53 @@ extension Session {
     let outcome = try await quiescenceMonitor().waitQuiet(
       quietMs: request.quietMs, timeoutMs: request.timeoutMs, bundleId: request.bundleId,
       resolvePid: { bundleId in try? await simulator.application.processID(forBundleID: bundleId) })
-    let elapsed = (ContinuousClock.now - started).components
-    let waitedMs = Int(elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000)
-    var reply: [String: JSON] = [
-      "quiet": .bool(outcome.quiet), "waitedMs": .int(waitedMs), "via": .string(outcome.via),
-    ]
+    let waitedMs = Session.elapsedMs(since: started)
+    if outcome.quiet, outcome.via == "stream" { quiescence.wedge.noteStreamQuiet() }
+    if outcome.via == "snapshot" { await reapWedgedGuests() }
+    var reply: [String: JSON] = ["quiet": .bool(outcome.quiet), "waitedMs": .int(waitedMs), "via": .string(outcome.via)]
     if let reason = outcome.reason { reply["reason"] = .string(reason) }
     if let pid = outcome.frontmostPid { reply["frontmostPid"] = .int(Int(pid)) }
     return .object(reply)
+  }
+
+  /// Ends the simulator's AX guests when a settle fell back to snapshots on guests that used to report quiet (see
+  /// `WedgePolicy`) and reopens the stream, which starts a fresh guest. Reads in flight fail and are retried by the
+  /// caller's recovery; this runs after the settle's own verdict, so its wait is not charged to it.
+  func reapWedgedGuests(reaper: GuestReaper = .system) async {
+    let wedge = quiescence.wedge
+    guard wedge.wantsReap(), let monitor = quiescence.existing else { return }
+    let reaped = reaper.reap(udid: udid)
+    guard !reaped.isEmpty else { return }
+    wedge.didReap()
+    OpLog.shared.log(
+      .info, "quiescence stuck on every process; ended \(reaped.count) AX guest(s) (reap \(wedge.reaps))", op: "settle")
+    try? await Task.sleep(for: .milliseconds(150))
+    await monitor.restart()
+  }
+
+  /// `rebind{bundleId, rebindTimeoutMs}`: waits until the quiescence stream has reported on the bundle's process, so
+  /// the first read of a relaunched app finds it bound (see `RebindRequest`). `{bound, waitedMs, restarts, pid?,
+  /// reason?}`; `bound:false` at the deadline is an answer, not an error. Only the axbridge backend has a stream.
+  func rebind(_ request: RebindRequest) async throws -> JSON {
+    guard axDefault == "axbridge", axBridgeReader != nil else {
+      throw WireError(.unsupported, "rebind needs the axbridge backend (ax: \(axDefault), bridge: \(bridge.name))")
+    }
+    let started = ContinuousClock.now
+    let simulator = self.simulator
+    let outcome = try await quiescenceMonitor().bind(
+      bundleId: request.bundleId, timeoutMs: request.timeoutMs,
+      resolvePid: { bundleId in try? await simulator.application.processID(forBundleID: bundleId) })
+    var reply: [String: JSON] = [
+      "bound": .bool(outcome.bound), "waitedMs": .int(Session.elapsedMs(since: started)),
+      "restarts": .int(outcome.restarts),
+    ]
+    if let pid = outcome.pid { reply["pid"] = .int(Int(pid)) }
+    if let reason = outcome.reason { reply["reason"] = .string(reason) }
+    return .object(reply)
+  }
+
+  static func elapsedMs(since started: ContinuousClock.Instant) -> Int {
+    let elapsed = (ContinuousClock.now - started).components
+    return Int(elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000)
   }
 }

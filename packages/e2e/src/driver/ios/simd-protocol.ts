@@ -297,6 +297,20 @@ export const settleDataSchema = z.looseObject({
 export type SettleData = z.infer<typeof settleDataSchema>;
 
 /**
+ * `rebind` params: the helper (not the launch) waits until the quiescence stream reports on `bundleId`'s own process.
+ * `bound: false` is an answer, not an error: `reason` is `no_process` (the app never appeared), `timeout` (the stream
+ * stayed on another process) or `cancelled`. `restarts` is how many times the helper had to restart the stream.
+ */
+export const rebindDataSchema = z.looseObject({
+	bound: z.boolean(),
+	waitedMs: z.number(),
+	pid: z.number().optional(),
+	restarts: z.number().optional(),
+	reason: z.string().optional(),
+});
+export type RebindData = z.infer<typeof rebindDataSchema>;
+
+/**
  * `alertButtons` params. No `backend` reads both readers (`ax` first, then `axbridge`); `ax` or `axbridge` reads only
  * that one: one tree read instead of two, errors propagate (nothing else answered), and an `axbridge` read that sees a
  * modal without readable buttons answers `{ buttons: [] }` instead of `null`.
@@ -350,6 +364,7 @@ export const opSchemas = {
 	elementAtPoint: elementAtPointDataSchema,
 	screenshot: screenshotDataSchema,
 	settle: settleDataSchema,
+	rebind: rebindDataSchema,
 	alertButtons: alertButtonsDataSchema,
 	frontmost: frontmostDataSchema,
 	orientation: orientationDataSchema,
@@ -361,6 +376,7 @@ export type OpDataMap = {
 	elementAtPoint: WireElement | null;
 	screenshot: ScreenshotData;
 	settle: SettleData;
+	rebind: RebindData;
 	alertButtons: AlertButtonsData;
 	frontmost: FrontmostData;
 	orientation: OrientationData;

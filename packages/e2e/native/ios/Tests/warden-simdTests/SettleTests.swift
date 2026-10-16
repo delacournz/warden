@@ -30,11 +30,18 @@ final class SettleTests: XCTestCase {
   }
 
   func testSilentStuckStreamRestartsOnceThenFallsBack() {
-    let timeline = replay(state: both, until: 2.5)
+    let timeline = replay(state: both, until: 1.5)
     let restarts = timeline.filter { $0.decision == .restartStream }
-    XCTAssertEqual(restarts.map(\.ms), [1000])
-    XCTAssertEqual(timeline.first { $0.decision == .fallback }?.ms, 2000)
-    XCTAssertTrue(timeline.prefix { $0.ms < 1000 }.allSatisfy { $0.decision == .wait })
+    XCTAssertEqual(restarts.map(\.ms), [400])
+    XCTAssertEqual(timeline.first { $0.decision == .fallback }?.ms, 700)
+    XCTAssertTrue(timeline.prefix { $0.ms < 400 }.allSatisfy { $0.decision == .wait })
+  }
+
+  /// A guest that never answers must not cost the caller seconds: the fallback decides well inside a second, so
+  /// with the 250 ms of identical reads it needs the settle answers in about a second, not 2.3.
+  func testTheFallbackStartsWellInsideASecond() {
+    XCTAssertLessThanOrEqual(SettleJudge().fallbackAfterMs, 700)
+    XCTAssertLessThan(SettleJudge().restartAfterMs, SettleJudge().fallbackAfterMs, "the restart would never run")
   }
 
   func testQuietStreamNeverRestartsOrFallsBack() {

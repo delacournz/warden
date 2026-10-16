@@ -11,9 +11,10 @@ struct Dispatcher<Context: Sendable>: Sendable {
   /// The op that ends the session; the server stops reading after answering it.
   static var shutdownOp: String { "shutdown" }
 
-  /// Ops that spend their own wait budget (`settle` answers `quiet:false` at its deadline), so the envelope
-  /// `timeoutMs` must not turn that into `E_TIMEOUT`. The client's own timer still bounds them.
-  static var selfTimedOps: Set<String> { ["settle"] }
+  /// Ops that spend their own wait budget (`settle` answers `quiet:false` at its deadline, `rebind` answers
+  /// `bound:false`), so the envelope `timeoutMs` must not turn that into `E_TIMEOUT`. The client's own timer still
+  /// bounds them.
+  static var selfTimedOps: Set<String> { ["settle", "rebind"] }
 
   var handlers: [String: OpHandler]
 
