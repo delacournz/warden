@@ -53,6 +53,15 @@ describe("polling", () => {
 		expect(host.clock.sleeps).toEqual([100, 100, 100]);
 	});
 
+	test("backs off to 250 ms once the first second has passed", async () => {
+		const { host, screen, that } = setup(appearing(15));
+		await that(screen.getByTestId("x")).toBeVisible();
+		expect(host.clock.sleeps).toEqual([
+			...Array.from({ length: 10 }, () => 100),
+			...Array.from({ length: 5 }, () => 250),
+		]);
+	});
+
 	test("never holding fails with ASSERTION at the assertion timeout", async () => {
 		const { host, screen, that } = setup(appearing(1_000_000));
 		const error = await failure(that(screen.getByTestId("x")).toBeVisible());
@@ -210,6 +219,18 @@ describe("negation", () => {
 		const { host, screen } = setup(driver);
 		await new LocatorAssertions(screen.getByTestId("x"), { negate: true }).toBeVisible();
 		expect(host.clock.elapsed()).toBe(1400);
+	});
+
+	test("a hold that starts after the first second ends exactly one grace window after its last break", async () => {
+		let reads = 0;
+		const shown = (read: number): boolean => read < 12 || read === 14;
+		const driver = fakeDriver({
+			screens: () => (shown(reads++) ? snapshotOf([el("button", { id: "x" })]) : snapshotOf([])),
+		});
+		const { host, screen } = setup(driver);
+		await new LocatorAssertions(screen.getByTestId("x"), { negate: true }).toBeVisible();
+		expect(host.clock.elapsed()).toBe(2250 + 1000);
+		expect(host.clock.sleeps.slice(-4)).toEqual([250, 250, 250, 250]);
 	});
 
 	test("a short timeout is held for in full", async () => {

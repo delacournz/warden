@@ -120,7 +120,7 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 
 ## Matchers
 
-`expect(locator)` polls every 100 ms. Any other value goes to bun's `expect`.
+`expect(locator)` polls every 100 ms for the first second, then every 250 ms. Any other value goes to bun's `expect`.
 
 `toBeVisible toBeHidden toHaveText(t, { exact? }) toContainText(t, { ignoreCase? }) toHaveValue(v) toBeChecked({ checked? }) toBeEnabled toBeDisabled toHaveCount(n)`. All take `{ timeout? }`.
 

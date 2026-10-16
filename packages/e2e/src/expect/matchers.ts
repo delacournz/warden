@@ -1,4 +1,4 @@
-import type { DriverError } from "../driver/driver.types";
+import type { DriverError, Snapshot } from "../driver/driver.types";
 import { E2eError } from "../errors";
 import { fieldValue } from "../screen/actions";
 import { type Locator, pickOne, textOf } from "../screen/locator";
@@ -6,7 +6,14 @@ import type { NodeEntry } from "../screen/nodes";
 import { resolve } from "../screen/query";
 import { matchesText, normalizeText, type TextMatch } from "../screen/text";
 
-/** A negated matcher passes only after its condition held this long without a break (or the whole timeout, if shorter). */
+/**
+ * A negated matcher passes only after its condition held this long without a break (or the whole timeout, if shorter).
+ *
+ * It is not cut short when the screen settles. A snapshot carries no quiescence flag, so knowing the screen is quiet
+ * takes a `driver.settle()` call per assertion: an extra round trip on iOS and a second `uiautomator dump` (~1.9 s,
+ * longer than the window it would save) on Android. The wait costs no device reads beyond the polls the matcher makes
+ * anyway, so it stays a plain hold.
+ */
 export const NEGATION_GRACE_MS = 1000;
 
 export type AssertionOptions = { timeout?: number };
@@ -84,8 +91,9 @@ function containsText(value: string, expected: TextMatch, ignoreCase: boolean): 
 }
 
 /**
- * The locator matchers of `expect(locator)`. Each one polls every 100 ms until its condition holds or the assertion
- * timeout passes, then fails with `ASSERTION`. `.not` inverts the condition (and must see it hold for a grace window).
+ * The locator matchers of `expect(locator)`. Each one polls (100 ms apart for the first second, then 250 ms) until its
+ * condition holds or the assertion timeout passes, then fails with `ASSERTION`. `.not` inverts the condition (and must
+ * see it hold for a grace window; the polls land exactly on its end).
  * Except `toHaveCount`, a matcher needs exactly one match: none keeps polling, several fail at once.
  */
 export class LocatorAssertions {
@@ -281,7 +289,7 @@ export class LocatorAssertions {
 		const { negate } = this.context;
 		const hold = Math.min(NEGATION_GRACE_MS, timeoutMs);
 		let holdingSince: number | undefined;
-		type Last = { received: string; screen?: string };
+		type Last = { received: string; snapshot?: Snapshot };
 		const result = await rt.poll<true, Last>(async () => {
 			const observation = await rt.tryObserve();
 			if (!observation.ok) {
@@ -304,22 +312,25 @@ export class LocatorAssertions {
 				done: false,
 				state: {
 					received: judgement.kind === "missing" ? NOT_FOUND : judgement.received,
-					screen: rt.excerpt(observed.snapshot),
+					snapshot: observed.snapshot,
 				},
+				...(holdingSince === undefined ? {} : { maxWaitMs: holdingSince + hold - now }),
 			};
 		}, timeoutMs);
 		if (result.status === "done") return;
 		throw this.failure(spec, result.last);
 	}
 
-	private failure(spec: Spec, last: { received: string; screen?: string } | undefined): E2eError {
+	/** The screen is rendered here, from the last snapshot read, because only a failure needs the text. */
+	private failure(spec: Spec, last: { received: string; snapshot?: Snapshot } | undefined): E2eError {
 		const { negate } = this.context;
 		const lines = [
 			`expect(${this.locator})${negate ? ".not" : ""}.${spec.call}`,
 			`Expected: ${negate ? "not " : ""}${spec.expected}`,
 			`Received: ${last?.received ?? NOT_FOUND}`,
 		];
-		const message = last?.screen === undefined ? lines.join("\n") : `${lines.join("\n")}\n\n${last.screen}`;
-		return new E2eError("ASSERTION", message, last?.screen);
+		const screen = last?.snapshot === undefined ? undefined : this.locator.runtime.excerpt(last.snapshot);
+		const message = screen === undefined ? lines.join("\n") : `${lines.join("\n")}\n\n${screen}`;
+		return new E2eError("ASSERTION", message, screen);
 	}
 }

@@ -115,7 +115,7 @@ Reads never wait; they answer from the screen as it is now:
 
 ## expect: the nine matchers
 
-`expect(locator)` polls every 100 ms until the check holds or `assertionTimeout` (default 5 s) runs out. Pass `{ timeout }` to override one check.
+`expect(locator)` polls every 100 ms for the first second, then every 250 ms, until the check holds or `assertionTimeout` (default 5 s) runs out. Pass `{ timeout }` to override one check.
 
 | Matcher | Holds when |
 |---|---|

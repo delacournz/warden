@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { poll, systemClock } from "./poll";
+import { DEFAULT_POLL_SCHEDULE, poll, systemClock } from "./poll";
 import { fakeClock } from "./poll.testing";
 
 describe("poll", () => {
@@ -21,6 +21,94 @@ describe("poll", () => {
 		);
 		expect(result).toEqual({ status: "done", value: "ok", attempts: 3 });
 		expect(clock.sleeps).toEqual([100, 100]);
+	});
+
+	test("backs off after the first second: 100 ms apart for 1 s, then 250 ms", async () => {
+		const clock = fakeClock();
+		const result = await poll(async (attempt) => ({ done: false, state: attempt }), { timeoutMs: 3000, ...clock });
+		expect(result).toEqual({ status: "timeout", last: 19, attempts: 19 });
+		expect(clock.sleeps).toEqual([...Array.from({ length: 10 }, () => 100), ...Array.from({ length: 8 }, () => 250)]);
+		expect(clock.elapsed()).toBe(3000);
+	});
+
+	test("the default schedule is what the plan says", () => {
+		expect(DEFAULT_POLL_SCHEDULE).toEqual({ fastMs: 100, fastForMs: 1000, slowMs: 250 });
+	});
+
+	test("a 10 s wait makes about half the attempts a fixed 100 ms poll would", async () => {
+		const clock = fakeClock();
+		const result = await poll(async () => ({ done: false, state: undefined }), { timeoutMs: 10_000, ...clock });
+		expect(result.attempts).toBe(1 + 10 + 36);
+		const fixed = await poll(async () => ({ done: false, state: undefined }), {
+			timeoutMs: 10_000,
+			intervalMs: 100,
+			...fakeClock(),
+		});
+		expect(fixed.attempts).toBe(101);
+	});
+
+	test("the last attempt lands on the deadline, never past it, whatever the phase", async () => {
+		for (const timeoutMs of [50, 950, 1000, 1100, 1200, 1250, 1300, 2999, 3001]) {
+			const clock = fakeClock();
+			const seen: number[] = [];
+			const result = await poll(
+				async () => {
+					seen.push(clock.elapsed());
+					return { done: false, state: undefined };
+				},
+				{ timeoutMs, ...clock }
+			);
+			expect(result.status).toBe("timeout");
+			expect(seen.at(-1)).toBe(timeoutMs);
+			expect(clock.elapsed()).toBe(timeoutMs);
+		}
+	});
+
+	test("the phase follows the clock, not the attempt count: slow steps reach the slow gap sooner", async () => {
+		const clock = fakeClock();
+		await poll(
+			async () => {
+				clock.advance(400);
+				return { done: false, state: undefined };
+			},
+			{ timeoutMs: 3000, ...clock }
+		);
+		expect(clock.sleeps.slice(0, 4)).toEqual([100, 100, 250, 250]);
+	});
+
+	test("an explicit intervalMs is a fixed gap with no back-off", async () => {
+		const clock = fakeClock();
+		await poll(async () => ({ done: false, state: undefined }), { timeoutMs: 2500, intervalMs: 100, ...clock });
+		expect(new Set(clock.sleeps)).toEqual(new Set([100]));
+		expect(clock.sleeps.length).toBe(25);
+	});
+
+	test("a schedule option replaces the default one", async () => {
+		const clock = fakeClock();
+		await poll(async () => ({ done: false, state: undefined }), {
+			timeoutMs: 1000,
+			schedule: { fastMs: 50, fastForMs: 200, slowMs: 400 },
+			...clock,
+		});
+		expect(clock.sleeps).toEqual([50, 50, 50, 50, 400, 400]);
+	});
+
+	test("a step can ask to be polled again sooner than the schedule says", async () => {
+		const clock = fakeClock();
+		await poll(async (attempt) => ({ done: false, state: undefined, ...(attempt === 12 ? { maxWaitMs: 40 } : {}) }), {
+			timeoutMs: 1600,
+			...clock,
+		});
+		expect(clock.sleeps.slice(9, 13)).toEqual([100, 250, 40, 250]);
+	});
+
+	test("an overdue hint polls again at once", async () => {
+		const clock = fakeClock();
+		await poll(async (attempt) => ({ done: false, state: undefined, ...(attempt === 1 ? { maxWaitMs: -5 } : {}) }), {
+			timeoutMs: 300,
+			...clock,
+		});
+		expect(clock.sleeps).toEqual([0, 100, 100, 100]);
 	});
 
 	test("times out with the last state and never overshoots the deadline", async () => {
