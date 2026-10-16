@@ -73,7 +73,7 @@ Flows are `bun test` specs driven by `@delacour/warden-e2e`; `warden e2e` leases
   - project `example`: a Release build keyed on native + JS;
   - variant `dev`: the Debug dev client, keyed on native only;
   - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the flow → screen `entries` that `warden affected` uses;
-  - suite `example-dev`: the same flows on the dev client. warden starts and verifies its own Metro (`metro`, which also sets `--initialUrl` and turns the Expo dev menu off), and one spec process per device runs its share of the flows (`mode: "single"`);
+  - suite `example-dev`: the same flows on the dev client. warden starts and verifies its own Metro (`metro`, which also sets `--initialUrl` and turns the Expo dev menu off), and one spec process per device runs its share of the flows (the default `isolate: "device"`);
   - both suites set `spec.bundleId`, the app the specs drive (`app.open()` launches it with `WARDEN_LAUNCH_ARGS`).
 
 ```bash

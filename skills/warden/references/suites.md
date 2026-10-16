@@ -35,8 +35,8 @@ Suite settings are defaults. A flag passed on the command line wins.
 
 **Preflight (fails before any claim):** bun >= 1.3 on PATH (or `WARDEN_BUN`), and `@delacour/warden-e2e` in the project. **What runs:** `bun test --preload @delacour/warden-e2e/preload --timeout <spec timeout + 30s> <files>`.
 
-- `mode: per-flow`: one process per flow, one worker per device.
-- `mode: single`: one `shard-<k>` process per device, flows spread round-robin by sorted id.
+- `isolate: device` (default): one `shard-<k>` process per device, flows spread round-robin by sorted id. A crash fails the flow it hit and the ones it never reached; a retry reruns only the flows that did not pass.
+- `isolate: flow`: one process per flow, one worker per device (the default with `passes > 1`). `mode: single` / `per-flow` is the old spelling.
 
 ## `warden affected [suite]`
 
@@ -94,9 +94,9 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | Key | Default | Meaning |
 |---|---|---|
 | `spec` | `{}` | `{ bundleId, launchArgs, timeout = "2m", actionTimeout = "30s", assertionTimeout = "5s" }`. `bundleId` defaults to the project's |
-| `mode` | `per-flow` | `per-flow` or `single` |
-| `jobTimeoutMs` | `600000` | a process past this is killed and counts as failed |
-| `passes` | `1` | consecutive green runs needed per flow. `single` with `passes > 1` is an error |
+| `isolate` | `device` | `device` or `flow` (`flow` when `passes > 1`) |
+| `jobTimeoutMs` | `600000` | per flow: a process past this for each flow it runs is killed and counts as failed |
+| `passes` | `1` | consecutive green runs needed per flow. `isolate: device` with `passes > 1` is an error |
 | `retry` | `0` | re-run a failed job on the same device |
 
 Removed: `runner` (use `spec`), `warmRunners` (use `warmDrivers`).
@@ -138,7 +138,6 @@ e2e: {
 		...AFFECTED,
 	},
 	"example-dev": {
-		mode: "single",
 		count: 2,
 		app: { variant: "dev" },
 		metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
