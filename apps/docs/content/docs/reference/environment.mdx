@@ -14,6 +14,7 @@ icon: Variable
 | `CI`, `GITHUB_RUN_ID` | detected as a CI owner |
 | `WARDEN_GOLDEN=0` | don't clone new sims from golden images |
 | `WARDEN_ARRANGE=0` | don't tile Simulator.app windows after iOS claims |
+| `WARDEN_HEADLESS=1` | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/guides/headless)); `warden dev` ignores it |
 | `WARDEN_AUTO_GC=0` | turn off background auto-gc |
 | `WARDEN_BACKGROUND=0` | turn off every detached worker (auto-gc, SessionEnd shutdown) |
 | `WARDEN_RELEASE_REPO` | GitHub repo `warden update` downloads releases from (default `delacournz/warden`) |
@@ -31,3 +32,4 @@ icon: Variable
 | `WARDEN_PORTS` | every leased port |
 | `WARDEN_PORT_<i>` | the i-th `--port` lease |
 | `WARDEN_APP_PATH`, `WARDEN_APP_HASH` | with `--app`: installed build + fingerprint |
+| `WARDEN_HEADLESS` | `1` when the run is headless (also for `batch` / `e2e` serve, setup and jobs, and `dev`'s Metro); removed otherwise |

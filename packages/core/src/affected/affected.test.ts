@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec } from "../exec";
-import { computeAffected } from "./affected";
+import { computeAffected, findSuite } from "./affected";
 import { DEFAULT_E2E_RUNNER } from "./affected.defaults";
 import { makeSuiteRepo } from "./fixture.testing";
 
@@ -40,6 +40,20 @@ describe("computeAffected", () => {
 		const res = await computeAffected({ exec: bunExec, cwd: dir, suite: "web" });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain('no e2e suite "web"');
+	});
+
+	test("suite.headless: the suite's own, else the top-level default", async () => {
+		const top = await makeSuiteRepo({}, { headless: true });
+		const own = await makeSuiteRepo({ headless: false }, { headless: true });
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b, c] = await Promise.all([top, own, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.headless).toBe(true);
+			expect(b?.success && b.data.headless).toBe(false);
+			expect(c?.success && c.data.headless).toBeUndefined();
+		} finally {
+			for (const r of [top, own, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
 	});
 });
 
@@ -87,6 +101,17 @@ describe("computeAffected without e2e suites (an Expo app with an e2e/ dir)", ()
 		const res = await computeAffected({ exec: bunExec, cwd: app });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.suite.config.app).toEqual({ variant: "dev" });
+	});
+
+	test("the top-level headless applies to the default suite", async () => {
+		mkdirSync(join(app, "e2e"));
+		writeFileSync(
+			join(app, "warden.config.json"),
+			JSON.stringify({ headless: true, projects: [{ name: "fresh", bundleId: { ios: "x.y" } }] })
+		);
+		const res = await computeAffected({ exec: bunExec, cwd: app });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.suite).toMatchObject({ implicit: true, headless: true });
 	});
 
 	test("no e2e/ dir → an error pointing at warden init", async () => {

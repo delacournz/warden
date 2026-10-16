@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
 import { projectContext } from "@delacour/warden-core/builds/ensure";
 import { DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "@delacour/warden-core/config.defaults";
@@ -14,6 +15,7 @@ import { type ClaimFlagValues, parseClaimFlags, parsePlatform, resolveOwner, wit
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { missingPackages } from "../expo-app";
+import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import {
 	childEnv,
 	claimAll,
@@ -24,6 +26,7 @@ import {
 	type LeaseSessionDeps,
 	processOnSignal,
 	type RunEnsureApp,
+	setHeadlessEnv,
 	splitCommand,
 } from "../lease-session";
 import {
@@ -35,7 +38,7 @@ import {
 	metroUrl,
 	startMetro,
 } from "../metro";
-import { emit } from "../output";
+import { emit, heading, note, reportError, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 
@@ -70,6 +73,8 @@ type DevOpts = ClaimFlagValues & {
 	readyTimeout: string;
 	eas: boolean;
 	build: boolean;
+	installMode?: InstallMode;
+	resetKeychain?: true;
 	clean?: true;
 	/** `--json`: one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready */
 	json?: true;
@@ -145,7 +150,8 @@ async function openSession(
 	const held = heldDevice(ctx, owner, platform, opts);
 	if (!held.success) return held;
 	if (held.data === undefined) {
-		const flags = parseClaimFlags(platform, opts);
+		// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
+		const flags = parseClaimFlags(platform, { ...opts, headless: opts.headless === true });
 		if (!flags.success) return flags;
 		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
 		const session = await claimAll(ctx, deps, owner, { flags: flags.data, ports: [opts.port], app }, "dev");
@@ -178,6 +184,7 @@ async function openSession(
 	const env = childEnv(ctx.env, { claimed: [], reclaimed: [] }, ports.data);
 	env.WARDEN_UDIDS = deviceId;
 	env.WARDEN_UDID_0 = deviceId;
+	setHeadlessEnv(env, opts.headless === true);
 	return ok({ deviceId, port, env, leaseIds, release });
 }
 
@@ -234,23 +241,24 @@ function preflight(project: Project, platform: Platform): Result<void> {
 }
 
 /** What `warden dev` asks `ensureApp` for: a missing `dev` variant falls back, an explicit `--variant` must exist. */
-function ensureOptions(start: string, variant: string, opts: DevOpts): EnsureOptions {
-	return {
+function ensureOptions(start: string, variant: string, opts: DevOpts): Result<EnsureOptions> {
+	const install = parseInstallFlags(opts);
+	if (!install.success) return install;
+	return ok({
 		project: start,
 		eas: opts.eas,
 		build: opts.build,
 		variant,
 		...(opts.variant === undefined ? { variantOptional: true } : {}),
 		...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
-		...(opts.clean ? { clean: true } : {}),
-	};
+		...install.data,
+	});
 }
 
 type Running = { session: Session; platform: Platform; project: Project; scheme: string; timeoutMs: number };
 
 /** Metro on the leased port (verified to serve this project), the dev client opened on it; resolves with Metro's exit code. */
 async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Running): Promise<number> {
-	const { color } = ctx.ui;
 	const { deviceId, port, env, leaseIds, release } = r.session;
 	const json = opts.json === true;
 	const aborted = { now: false };
@@ -280,21 +288,20 @@ async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Ru
 			}
 		);
 		if (!metro.success) {
-			ctx.err(color.red(`warden dev: ${metro.error}`));
+			reportError(ctx, "dev", metro.error);
 			return 1;
 		}
 		if (opts.open) {
 			const opened = await openDevClient(ctx, r.platform, deviceId, r.project, r.scheme, port);
-			ctx.err(
-				opened.success
-					? color.dim(`warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`)
-					: color.yellow(
-							`warden dev: couldn't open the dev client (${opened.error}) — open ${devClientUrl(r.scheme, port)} yourself`
-						)
-			);
+			if (opened.success) note(ctx, `warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`);
+			else
+				warn(
+					ctx,
+					`warden dev: couldn't open the dev client (${opened.error}) — open ${devClientUrl(r.scheme, port)} yourself`
+				);
 		}
 		if (json) emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds }, "");
-		else ctx.err(color.dim(`warden dev: holding ${deviceId} + :${port} until Metro exits (WARDEN_UDID=${deviceId})`));
+		else note(ctx, `warden dev: holding ${deviceId} + :${port} until Metro exits (WARDEN_UDID=${deviceId})`);
 		return await metro.data.proc.exited;
 	} finally {
 		stop();
@@ -314,9 +321,8 @@ async function dev(
 	platformArg: string | undefined,
 	opts: DevOpts
 ): Promise<number> {
-	const { color } = ctx.ui;
 	const fail = (message: string) => {
-		ctx.err(color.red(`warden dev: ${message}`));
+		reportError(ctx, "dev", message);
 		return 1;
 	};
 	const platform = parsePlatform(platformArg ?? "ios");
@@ -342,9 +348,11 @@ async function dev(
 	const scheme = await devScheme(ctx, project.data.project, opts.scheme);
 	if (!scheme.success) return fail(scheme.error);
 	const app = ensureOptions(start.data, variant, opts);
+	if (!app.success) return fail(app.error);
 
+	if (!opts.json) heading(ctx, "dev", `${platform.data} · ${project.data.project.name}`);
 	const session = await withSpinner(ctx, `preparing the ${platform.data} dev build…`, async (sctx, spinner) => {
-		const result = await openSession(sctx, deps, owner, platform.data, opts, app);
+		const result = await openSession(sctx, deps, owner, platform.data, opts, app.data);
 		if (result.success) spinner.succeed(`${platform.data} dev build on ${result.data.deviceId}`);
 		else spinner.fail(`${platform.data} dev build not ready`);
 		return result;
@@ -363,6 +371,7 @@ async function dev(
 export function createDevCommand(deps: DevDeps): Command {
 	return defineCommand({
 		name: "dev",
+		group: "Run",
 		summary:
 			"install the cached dev build for this fingerprint, start Metro, open the dev client (replaces expo run:*)",
 		register: (cmd, ctx, done) => {
@@ -381,7 +390,9 @@ export function createDevCommand(deps: DevDeps): Command {
 				.option("--ready-timeout <duration>", "wait this long for Metro", DEV_READY_TIMEOUT)
 				.option("--no-eas", "don't download EAS builds")
 				.option("--no-build", "don't build locally on a cache miss")
-				.option("--clean", "uninstall the app first")
+				.addOption(installModeOption())
+				.option("--reset-keychain", "--install-mode: also reset the iOS simulator's keychain")
+				.addOption(legacyCleanOption())
 				.option("--no-open", "don't open the dev client (Metro + the leases only)")
 				.addHelpText("after", "\nExamples:\n  warden dev\n  warden dev android -- --clear")
 				.action(async (platform, _expoArgs, opts) => done(await dev(ctx, deps, platform, opts)));

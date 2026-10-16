@@ -3,10 +3,20 @@ import type { Exec } from "../exec";
 import type { PidAlive } from "../liveness";
 import type { Store } from "../store";
 import type { Owner, Platform } from "../types";
+import type { InstallMode } from "./app-option.schema";
 import { type BuildSource, cachedBuild, findLegacyArtifact, getInstall, recordInstall, storeArtifact } from "./cache";
 import { bundleIdFor, type EasSettings, loadProject, type Project } from "./config";
 import { type Download, resolveFromEas } from "./eas";
-import { appMatchesArtifact, installApp, isAppInstalled, uninstallApp } from "./install";
+import {
+	appMatchesArtifact,
+	installApp,
+	isAppInstalled,
+	nodeResetFs,
+	type ResetFs,
+	resetAppData,
+	resetSimKeychain,
+	uninstallApp,
+} from "./install";
 import { runLocalBuild } from "./local";
 import { buildLockKey, withBuildLock } from "./lock";
 import { readProjectKey } from "./project-key";
@@ -71,8 +81,12 @@ export type EnsureInput = ProjectContext & {
 	eas: boolean;
 	/** false = `--no-build` */
 	build: boolean;
-	/** `--clean`: uninstall before installing, even when the device already has this hash */
-	clean?: boolean;
+	/** `--install-mode`: reset the installed app first (`clean`: fresh data, `reinstall`: uninstall + install) */
+	installMode?: InstallMode;
+	/** `--reset-keychain`: also reset the iOS sim keychain (needs `installMode`) */
+	resetKeychain?: boolean;
+	/** filesystem for `installMode: "clean"`'s data wipe (default node:fs) */
+	resetFs?: ResetFs;
 	download?: Download;
 	easPollMs?: number;
 	lockPollMs?: number;
@@ -144,7 +158,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 
 	const steps: ResolveSteps = {
 		hash,
-		...(input.clean ? { clean: true } : {}),
+		...(input.installMode !== undefined ? { installMode: input.installMode } : {}),
 		log: input.log,
 		cached: () => cachedBuild(store, projectKey, platform, hash, input.now())?.path,
 		legacy: async () => {
@@ -200,9 +214,15 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 			installedHash: () => getInstall(store, platform, deviceId, bundleId.data)?.hash,
 			confirm: () => isAppInstalled(deps, target, bundleId.data),
 			matches: (cachedPath) => appMatchesArtifact(deps, target, bundleId.data, cachedPath),
-			uninstall: () => {
-				input.log(`uninstalling ${bundleId.data} from ${deviceId} (clean install)`);
-				return uninstallApp(deps, target, bundleId.data);
+			uninstall: async () => {
+				input.log(`uninstalling ${bundleId.data} from ${deviceId} (${input.installMode ?? "reinstall"})`);
+				const gone = await uninstallApp(deps, target, bundleId.data);
+				return gone.success && input.resetKeychain ? resetSimKeychain(deps, target) : gone;
+			},
+			reset: () => {
+				input.log(`resetting ${bundleId.data} data on ${deviceId} (clean)`);
+				const fs = input.resetFs ?? nodeResetFs;
+				return resetAppData({ ...deps, fs }, target, bundleId.data, { keychain: input.resetKeychain === true });
 			},
 			install: async (appPath) => {
 				input.log(`installing ${appPath} on ${deviceId}`);

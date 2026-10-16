@@ -1,6 +1,6 @@
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit } from "../output";
+import { emit, reportError } from "../output";
 import { arrangeSimWindows } from "../sim-windows";
 
 /** Tile open Simulator.app windows of warden sims in name order. */
@@ -8,7 +8,7 @@ async function arrange(ctx: CommandContext, json: boolean): Promise<number> {
 	const { color } = ctx.ui;
 	const result = await arrangeSimWindows(ctx.exec);
 	if (!result.success) {
-		ctx.err(color.red(`warden arrange: ${result.error}`));
+		reportError(ctx, "arrange", result.error);
 		return 1;
 	}
 	const { arranged } = result.data;
@@ -20,6 +20,7 @@ async function arrange(ctx: CommandContext, json: boolean): Promise<number> {
 
 export const arrangeCommand = defineCommand({
 	name: "arrange",
+	group: "Devices",
 	summary: "tile warden simulator windows in name order (macOS; also runs after iOS claims)",
 	register: (cmd, ctx, done) => {
 		cmd

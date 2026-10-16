@@ -146,7 +146,7 @@ export const e2eSuiteSchema = z
 		retry: z.number().int().min(0).default(0),
 		count: z.number().int().min(1).optional(),
 		profile: z.string().min(1).optional(),
-		/** install the project's app on each device first (`warden batch --app`); `{ clean: true }` = `--clean` */
+		/** install the project's app on each device first (`warden batch --app`); `{ installMode }` = `--install-mode` */
 		app: appOptionSchema.optional(),
 		/** ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every runner */
 		ports: z.array(portSpec).optional(),
@@ -161,6 +161,10 @@ export const e2eSuiteSchema = z
 		setup: z.string().min(1).optional(),
 		/** iOS: switch off the simulator daemons flows never need on each device, before `setup` */
 		slim: z.boolean().optional(),
+		/** iOS: start every device's agent-device runner in parallel before the flows (default on; `false` = off) */
+		warmRunners: z.boolean().optional(),
+		/** keep Simulator.app windows closed for this suite's run; `--headless` / `--no-headless` win */
+		headless: z.boolean().optional(),
 		/** default `required` for flows that don't set it */
 		required: z.boolean().default(true),
 		flows: z.record(z.string().min(1), e2eFlowSchema).default({}),

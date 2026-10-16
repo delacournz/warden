@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { claimCommand } from "./claim";
@@ -116,6 +117,44 @@ describe("warden claim → arrange", () => {
 		c.env = env;
 		expect(await claimCommand.run(c)).toBe(0);
 		expect(calls.some((cmd) => cmd[0] === "osascript")).toBe(process.platform === "darwin");
+	});
+
+	const windowOf = (name: string) =>
+		JSON.stringify({
+			screen: { x: 0, y: 25, width: 1000, height: 1000 },
+			windows: [{ title: `${name} – iOS 26.5`, width: 400, height: 800 }],
+		});
+	const headlessSetup = (argv: string[], env: Record<string, string> = {}) => {
+		const calls: string[][] = [];
+		const c = setup(
+			argv,
+			fakeSimctl([wardenSim(2, "Booted")], calls, [
+				["osascript", { stdout: windowOf("warden-iphone-17-2") }],
+				["xcrun simctl list devices -j", { stdout: simctlDevicesJson({ "iOS-26-5": [wardenSim(2, "Booted")] }) }],
+			])
+		);
+		const { WARDEN_ARRANGE: _, ...rest } = c.env;
+		c.env = { ...rest, ...env };
+		const scripts = () => calls.filter((cmd) => cmd[0] === "osascript").map((cmd) => cmd[4] ?? "");
+		return { c, scripts };
+	};
+	const darwin = process.platform === "darwin";
+
+	test("--headless closes the claimed sim's window instead of tiling", async () => {
+		const { c, scripts } = headlessSetup(["ios", "--headless"]);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(scripts().some((s) => s.includes("AXCloseButton"))).toBe(darwin);
+		expect(scripts().some((s) => s.includes("AXRaise"))).toBe(false);
+	});
+
+	test("WARDEN_HEADLESS=1 is the fallback; --no-headless beats it", async () => {
+		const env = headlessSetup(["ios"], { WARDEN_HEADLESS: "1" });
+		expect(await claimCommand.run(env.c)).toBe(0);
+		expect(env.scripts().some((s) => s.includes("AXCloseButton"))).toBe(darwin);
+		env.c.cleanup();
+		const off = headlessSetup(["ios", "--no-headless"], { WARDEN_HEADLESS: "1" });
+		expect(await claimCommand.run(off.c)).toBe(0);
+		expect(off.scripts().some((s) => s.includes("AXCloseButton"))).toBe(false);
 	});
 
 	test("a device left slimmed is restored on a plain claim, and the record cleared", async () => {

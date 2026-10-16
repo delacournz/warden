@@ -129,6 +129,8 @@ export const wardenConfigSchema = z
 		batches: z.record(z.string().min(1), batchPresetSchema).optional(),
 		/** named `warden affected` / `warden e2e` suites */
 		e2e: z.record(z.string().min(1), e2eSuiteSchema).optional(),
+		/** default for every `e2e` suite and `batches` preset that doesn't set `headless` */
+		headless: z.boolean().optional(),
 	})
 	.strict()
 	.superRefine((config, issue) => {

@@ -6,7 +6,7 @@ import { parseAllSims, type SimctlSim } from "@delacour/warden-core/sims/list";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit } from "../output";
+import { emit, heading, reportError } from "../output";
 import { withSpinner } from "../spinner-context";
 
 const DEVICE_TYPE_PREFIX = "com.apple.CoreSimulator.SimDeviceType.";
@@ -57,6 +57,7 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 	const profile = profileOf(source.data) ?? profileSlug(source.data.name);
 	const name = opts.name ?? nextPoolName(sims.data, profile);
 	const cloneCmd = ["xcrun", "simctl", "clone", source.data.udid, name];
+	if (!opts.json) heading(ctx, "clone", `${source.data.name} → ${name}`);
 	const cloned = await withSpinner(ctx, `cloning ${source.data.name} → ${name}…`, async (_, spinner) => {
 		const result = await ctx.exec(cloneCmd);
 		if (result.exitCode === 0) spinner.succeed(`cloned ${name}`);
@@ -78,12 +79,13 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 }
 
 function fail(ctx: CommandContext, error: string): number {
-	ctx.err(ctx.ui.color.red(`warden clone: ${error}`));
+	reportError(ctx, "clone", error);
 	return 1;
 }
 
 export const cloneCommand = defineCommand({
 	name: "clone",
+	group: "Devices",
 	summary: "duplicate a shut-down iOS simulator into warden's pool (fast: no first boot)",
 	register: (cmd, ctx, done) => {
 		cmd

@@ -1,6 +1,7 @@
 import type { ClaimedDevice } from "@delacour/warden-core/claim";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration } from "@delacour/warden-core/duration";
+import { resolveHeadless } from "@delacour/warden-core/headless";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { maybeAutoGc } from "../autogc";
 import {
@@ -15,7 +16,7 @@ import {
 } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, formatTable } from "../output";
+import { emit, heading, reportError, table, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type ClaimOpts = ClaimFlagValues & { json?: true };
@@ -33,10 +34,9 @@ async function restoreSlimmed(ctx: CommandContext, claimed: ClaimedDevice[]): Pr
 		if (!res.success) continue;
 		ctx.store().setSlimmed("ios", device.id, undefined);
 		if (res.data.length > 0) {
-			ctx.err(
-				ctx.ui.color.yellow(
-					`warden claim: ${device.name} was slimmed — re-enabled ${res.data.length} slimmed job(s); fully effective after its next reboot`
-				)
+			warn(
+				ctx,
+				`warden claim: ${device.name} was slimmed — re-enabled ${res.data.length} slimmed job(s); fully effective after its next reboot`
 			);
 		}
 	}
@@ -47,18 +47,25 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	const { color } = ctx.ui;
 	const platform = await resolvePlatform(ctx, platformArg);
 	if (!platform.success) {
-		ctx.err(color.red(`warden claim: ${platform.error}`));
+		reportError(ctx, "claim", platform.error);
 		return 1;
 	}
 	const owner = resolveOwner(ctx);
 	const shortLived = owner.kind === "agent" && opts.ttl === undefined;
-	const flags = parseClaimFlags(platform.data, opts, undefined, shortLived ? BARE_CLAIM_AGENT_TTL_MS : DEFAULT_TTL_MS);
+	const headless = resolveHeadless({ flag: opts.headless, env: ctx.env });
+	const flags = parseClaimFlags(
+		platform.data,
+		{ ...opts, headless },
+		undefined,
+		shortLived ? BARE_CLAIM_AGENT_TTL_MS : DEFAULT_TTL_MS
+	);
 	if (!flags.success) {
-		ctx.err(color.red(`warden claim: ${flags.error}`));
+		reportError(ctx, "claim", flags.error);
 		return 1;
 	}
 	maybeAutoGc(ctx);
 	const { count, profile } = flags.data.request;
+	if (!opts.json) heading(ctx, "claim", `${platform.data} · ${profile} ×${count}`);
 	const outcome = await withSpinner(
 		ctx,
 		`claiming ${count} ${profile} ${platform.data} device(s)…`,
@@ -70,14 +77,13 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		}
 	);
 	if (!outcome.success) {
-		ctx.err(color.red(`warden claim: ${outcome.error}`));
+		reportError(ctx, "claim", outcome.error);
 		return 1;
 	}
 	if (shortLived) {
-		ctx.err(
-			color.yellow(
-				`lease expires in ${formatDuration(flags.data.ttlMs)}; hold it with: warden dev … / warden run … / warden heartbeat`
-			)
+		warn(
+			ctx,
+			`lease expires in ${formatDuration(flags.data.ttlMs)}; hold it with: warden dev … / warden run … / warden heartbeat`
 		);
 	}
 	await restoreSlimmed(ctx, outcome.data.claimed);
@@ -86,10 +92,10 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		ctx,
 		opts.json === true,
 		{ leases, udids: leases.map((l) => l.udid), reclaimed: outcome.data.reclaimed },
-		formatTable(
+		table(
+			ctx,
 			["LEASE", "UDID", "NAME", "ACTION"],
-			leases.map((l) => [l.leaseId, color.bold(l.udid), l.name, color.dim(l.action)]),
-			color
+			leases.map((l) => [l.leaseId, color.bold(l.udid), l.name, color.dim(l.action)])
 		)
 	);
 	return 0;
@@ -97,6 +103,7 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 
 export const claimCommand = defineCommand({
 	name: "claim",
+	group: "Lease",
 	summary: "lease iOS sims / Android emulators (reuse, boot or create), booted and ready",
 	register: (cmd, ctx, done) => {
 		withClaimOptions(cmd.argument("[platform]", "ios | android (asked for when omitted in a terminal)")).action(

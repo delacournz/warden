@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { CONFIG_FILE, findWardenConfig, loadProject } from "../builds/config";
+import { CONFIG_FILE, findWardenConfig, loadProject, type ParsedWardenConfig } from "../builds/config";
 import type { Exec } from "../exec";
 import type { Platform } from "../types";
 import { DEFAULT_E2E_COUNT, DEFAULT_E2E_RUNNER, DEFAULT_FLOWS_DIR } from "./affected.defaults";
@@ -22,6 +22,8 @@ export type Suite = {
 	projectRoot?: string;
 	/** the default suite of an app that configures none: every flow runs, no git diff */
 	implicit?: true;
+	/** the suite's `headless`, else the top-level one (undefined: neither sets it) */
+	headless?: boolean;
 };
 
 export type AffectedInput = {
@@ -55,7 +57,7 @@ export type Affected = {
  * The suite of an Expo app that configures none: every flow under `e2e/`, one tester.army runner for
  * the pool, against the dev client (the `dev` variant when the project has one) on a Metro warden owns.
  */
-function defaultSuite(cwd: string, stopAt: string | undefined): Result<Suite> {
+function defaultSuite(cwd: string, stopAt: string | undefined, headless: boolean | undefined): Result<Suite> {
 	const project = loadProject({
 		start: cwd,
 		env: {},
@@ -78,7 +80,15 @@ function defaultSuite(cwd: string, stopAt: string | undefined): Result<Suite> {
 		app: variant === undefined ? true : { variant },
 		metro: {},
 	});
-	return ok({ name, config, configDir: root, cwd: root, projectRoot: root, implicit: true });
+	return ok({
+		name,
+		config,
+		configDir: root,
+		cwd: root,
+		projectRoot: root,
+		implicit: true,
+		...(headless !== undefined ? { headless } : {}),
+	});
 }
 
 /** The git toplevel of `cwd` (undefined outside a repo). */
@@ -97,7 +107,7 @@ export async function findSuite(exec: Exec, cwd: string, name?: string): AsyncRe
 	if (!found.success) return found;
 	const suites = found.data?.config.e2e ?? {};
 	const names = Object.keys(suites);
-	if (names.length === 0 && name === undefined) return defaultSuite(cwd, stopAt);
+	if (names.length === 0 && name === undefined) return defaultSuite(cwd, stopAt, found.data?.config.headless);
 	if (!found.data) return err(`no ${CONFIG_FILE} found from ${cwd}`);
 	const pick = name ?? (names.length === 1 ? names[0] : undefined);
 	if (pick === undefined)
@@ -106,10 +116,22 @@ export async function findSuite(exec: Exec, cwd: string, name?: string): AsyncRe
 		);
 	const config = suites[pick];
 	if (!config) return err(`no e2e suite "${pick}" in ${CONFIG_FILE} (${names.join(", ") || "none"})`);
-	const { dir } = found.data;
-	const project = found.data.config.projects?.find((p) => p.name === config.project);
+	return ok(toSuite(pick, config, found.data.dir, found.data.config));
+}
+
+/** The suite with its project root resolved and the top-level `headless` as its default. */
+function toSuite(name: string, config: E2eSuiteConfig, dir: string, top: ParsedWardenConfig): Suite {
+	const project = top.projects?.find((p) => p.name === config.project);
 	const projectRoot = project ? resolve(dir, project.root) : undefined;
-	return ok({ name: pick, config, configDir: dir, cwd: projectRoot ?? dir, ...(projectRoot ? { projectRoot } : {}) });
+	const headless = config.headless ?? top.headless;
+	return {
+		name,
+		config,
+		configDir: dir,
+		cwd: projectRoot ?? dir,
+		...(projectRoot ? { projectRoot } : {}),
+		...(headless !== undefined ? { headless } : {}),
+	};
 }
 
 /** Repo-root-relative changes → relative to the config dir; files outside it are dropped. */

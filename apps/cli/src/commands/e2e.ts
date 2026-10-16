@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
 import type { E2eDeviceLeg, E2eSuiteConfig } from "@delacour/warden-core/affected/affected.schema";
 import type { SelectedFlow, Selection } from "@delacour/warden-core/affected/select";
@@ -8,14 +8,16 @@ import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import { bundleIdFor } from "@delacour/warden-core/builds/config";
 import { projectContext } from "@delacour/warden-core/builds/ensure";
 import { parseDuration } from "@delacour/warden-core/duration";
+import { resolveHeadless } from "@delacour/warden-core/headless";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import type { TrackedFlow } from "../batch/flow-progress";
 import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
 import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
-import { emit } from "../output";
+import { emit, reportError, success, warn } from "../output";
 import { type AffectedOpts, explain, runAffected, selectedFlows } from "./affected";
 import {
 	attemptKey,
@@ -27,6 +29,7 @@ import {
 	type MetroPlan,
 	parseBatchArgs,
 	runSession,
+	type SessionHooks,
 	type SessionResult,
 	withBatchOptions,
 } from "./batch";
@@ -75,6 +78,8 @@ export type E2eReport = {
 	/** `single`: one runner process per leg ran every flow, so its flows share that process's verdict */
 	mode?: "single";
 	ok: boolean;
+	/** iOS: the run kept its devices' Simulator.app windows closed */
+	headless: boolean;
 	batchDir?: string;
 	flows: FlowVerdict[];
 	/** per-device setup outcomes, when the suite has a `setup` */
@@ -94,7 +99,8 @@ function suiteOpts({ config: suite, cwd, projectRoot }: Suite, opts: E2eOpts, pa
 		...(suite.serveReady !== undefined ? { serveReady: readySpec(suite.serveReady, cwd) } : {}),
 		...(suite.serveTimeout !== undefined ? { serveTimeout: suite.serveTimeout } : {}),
 		...(app.app ? { app: true as const, ...(projectRoot ? { project: projectRoot } : {}) } : {}),
-		...(app.clean ? { clean: true as const } : {}),
+		...(app.installMode !== undefined ? { installMode: app.installMode } : {}),
+		...(app.resetKeychain ? { resetKeychain: true as const } : {}),
 		...(app.variant !== undefined ? { variant: app.variant } : {}),
 	};
 	const cli = Object.fromEntries(Object.entries(opts).filter(([key]) => passed.has(key)));
@@ -263,7 +269,17 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	}
 	const passed = report.flows.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.flows.length} flow(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
-	ctx.err((report.ok ? color.green : color.red)(line));
+	if (report.ok) success(ctx, line);
+	else reportError(ctx, "e2e", line.replace(/^warden e2e: /, ""));
+}
+
+/** `--headless` / `--no-headless` > the suite's (else top-level) `headless` > `WARDEN_HEADLESS`. */
+function suiteHeadless(ctx: CommandContext, suite: Suite, opts: E2eOpts, passed: ReadonlySet<string>): boolean {
+	return resolveHeadless({
+		flag: passed.has("headless") ? opts.headless : undefined,
+		config: suite.headless,
+		env: ctx.env,
+	});
 }
 
 type Plan = { affected: Affected; selection: Selection; flows: SelectedFlow[] };
@@ -275,7 +291,7 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 	if (!affected.success) return affected;
 	const selection = onePlatform(affected.data);
 	if (!selection.success) return selection;
-	for (const w of [...affected.data.warnings, ...selection.data.warnings]) ctx.err(color.yellow(`warden e2e: ${w}`));
+	for (const w of [...affected.data.warnings, ...selection.data.warnings]) warn(ctx, `warden e2e: ${w}`);
 	if (opts.explain || opts.dryRun) ctx.err(explain(affected.data, opts.requiredOnly === true, color));
 	const flows = selectedFlows(selection.data, opts.requiredOnly === true);
 	if (opts.flows !== undefined && flows.length === 0) return err("--flows matched no flow");
@@ -296,48 +312,47 @@ async function e2e(
 	passed: ReadonlySet<string>
 ): Promise<number> {
 	const fail = (message: string) => {
-		ctx.err(ctx.ui.color.red(`warden e2e: ${message}`));
+		reportError(ctx, "e2e", message);
 		return 1;
 	};
 	const planned = await plan(ctx, suiteName, opts);
 	if (!planned.success) return fail(planned.error);
 	const { affected, selection, flows } = planned.data;
 	const { suite } = affected;
+	const headless = suiteHeadless(ctx, suite, opts, passed);
 	const base = {
 		suite: suite.name,
 		platform: selection.platform,
 		...(affected.base !== undefined ? { base: affected.base } : {}),
 	};
 	if (flows.length === 0 || opts.dryRun) {
-		if (flows.length === 0) ctx.err(ctx.ui.color.green("warden e2e: no affected flows — nothing to run"));
+		if (flows.length === 0) success(ctx, "warden e2e: no affected flows — nothing to run");
 		const notRun = flows.map((f): FlowVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
-		await publish(ctx, deps, opts, { ...base, ok: true, flows: notRun });
+		await publish(ctx, deps, opts, { ...base, ok: true, headless, flows: notRun });
 		return 0;
 	}
 	const unsupported = platformError(suite.config, selection.platform);
 	if (unsupported) return fail(unsupported);
-	const run = await runPlan(ctx, suite, selection.platform, flows, opts, passed);
+	const run = await runPlan(ctx, suite, selection.platform, flows, { ...opts, headless }, passed);
 	if (!run.success) return fail(run.error);
 	const { args, shape } = run.data;
 	const byId = new Map(flows.map((f) => [f.id, f]));
 	const { runner } = suite.config;
 	const single = shape.singleJob !== undefined;
-	const session = await runSession(ctx, deps, args, single ? [suite.name] : [...byId.keys()], runner, {
-		name: "e2e",
-		setup: deviceSetup(suite.config),
-		// a passed gate frees the sims; a failed one leaves them up to inspect
-		...(opts.shutdown ? { shutdownIf: (summary) => verdicts(flows, { code: 0, summary }, shape).ok } : {}),
-		argvFor: (job) => {
-			if (single) return singleRunnerArgv(runner, flows);
-			const flow = byId.get(job);
-			return flow ? runnerArgv(runner, flow) : runner;
-		},
-	});
+	const session = await runSession(
+		ctx,
+		deps,
+		args,
+		single ? [suite.name] : [...byId.keys()],
+		runner,
+		sessionHooks(suite, flows, shape, opts.shutdown)
+	);
 	const result = verdicts(flows, session, shape);
 	const report: E2eReport = {
 		...base,
 		...(single ? { mode: "single" as const } : {}),
 		ok: result.ok,
+		headless,
 		...(session.batchDir ? { batchDir: session.batchDir } : {}),
 		flows: result.flows,
 		...(session.setups ? { setup: session.setups } : {}),
@@ -346,6 +361,32 @@ async function e2e(
 	if (session.code === 130) return 130;
 	printVerdict(ctx, report);
 	return result.ok ? 0 : 1;
+}
+
+/** How the batch session runs the suite: per-device setup, runner argv per job, live flows (`single`) and the shutdown rule. */
+function sessionHooks(suite: Suite, flows: readonly SelectedFlow[], shape: RunShape, shutdown: boolean): SessionHooks {
+	const { runner } = suite.config;
+	const single = shape.singleJob !== undefined;
+	const byId = new Map(flows.map((f) => [f.id, f]));
+	return {
+		name: "e2e",
+		setup: deviceSetup(suite.config),
+		// on unless the suite opts out; batch skips it off iOS or without an agent-device bin
+		warmRunners: suite.config.warmRunners !== false,
+		...(single ? { flows: trackedFlows(suite, flows) } : {}),
+		// a passed gate frees the sims; a failed one leaves them up to inspect
+		...(shutdown ? { shutdownIf: (summary) => verdicts(flows, { code: 0, summary }, shape).ok } : {}),
+		argvFor: (job) => {
+			if (single) return singleRunnerArgv(runner, flows);
+			const flow = byId.get(job);
+			return flow ? runnerArgv(runner, flow) : runner;
+		},
+	};
+}
+
+/** `mode: "single"`: the flows as the runner prints them (relative to the suite cwd), for live progress. */
+function trackedFlows(suite: Suite, flows: readonly SelectedFlow[]): TrackedFlow[] {
+	return flows.map((f) => ({ id: f.id, path: relative(suite.cwd, f.file) }));
 }
 
 /** `mode: "single"`: the flows reach the one runner process through its env too. */
@@ -431,6 +472,7 @@ function planOf(
 export function createE2eCommand(deps: BatchDeps): Command {
 	return defineCommand({
 		name: "e2e",
+		group: "Run",
 		summary: "run the e2e flows a change needs on leased devices; exit 1 if a required flow fails",
 		register: (cmd, ctx, done) => {
 			withBatchOptions(

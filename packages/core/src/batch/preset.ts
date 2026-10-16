@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import { ok, type Result } from "@delacour/warden-types/result";
-import { appSwitches } from "../builds/app-option.schema";
+import { appSwitches, type InstallMode } from "../builds/app-option.schema";
 import { findWardenConfig } from "../builds/config";
 import type { Platform } from "../types";
 import type { BatchPresetConfig } from "./preset.schema";
@@ -30,8 +30,10 @@ export type BatchPreset = {
 	wait?: string;
 	ports?: string[];
 	app?: boolean;
-	/** `app: { clean: true }`: uninstall before installing */
-	clean?: boolean;
+	/** `app: { installMode }`: reset the installed app (`clean`: fresh data, `reinstall`: uninstall + install) */
+	installMode?: InstallMode;
+	/** `app: { installMode, resetKeychain: true }`: also reset the iOS sim keychain */
+	resetKeychain?: true;
 	/** `app: { variant }`: install that project variant's build */
 	variant?: string;
 	retry?: number;
@@ -44,6 +46,8 @@ export type BatchPreset = {
 	jobs?: BatchJobsSource;
 	record?: string;
 	logs?: string;
+	/** the preset's `headless`, else the top-level one (undefined: neither sets it) */
+	headless?: boolean;
 	cmd: string[];
 };
 
@@ -62,8 +66,15 @@ export function readySpec(value: string, cwd: string): string {
 	return value.startsWith("file:") ? `file:${absolute(cwd, value.slice("file:".length))}` : value;
 }
 
-function resolvePreset(name: string, preset: BatchPresetConfig, cwd: string, projectRoot?: string): BatchPreset {
+function resolvePreset(
+	name: string,
+	preset: BatchPresetConfig,
+	cwd: string,
+	projectRoot?: string,
+	defaultHeadless?: boolean
+): BatchPreset {
 	const {
+		headless: ownHeadless,
 		project: _project,
 		jobs: _jobs,
 		jobsFrom: _jobsFrom,
@@ -74,21 +85,24 @@ function resolvePreset(name: string, preset: BatchPresetConfig, cwd: string, pro
 		label,
 		...rest
 	} = preset;
-	const { app, clean, variant } = appSwitches(appOption);
+	const { app, installMode, resetKeychain, variant } = appSwitches(appOption);
 	const jobs = jobsSource(preset, cwd);
+	const headless = ownHeadless ?? defaultHeadless;
 	return {
 		...rest,
 		name,
 		cwd,
 		label: label ?? name,
 		...(appOption !== undefined ? { app } : {}),
-		...(clean ? { clean } : {}),
+		...(installMode !== undefined ? { installMode } : {}),
+		...(resetKeychain ? { resetKeychain } : {}),
 		...(variant !== undefined ? { variant } : {}),
 		...(projectRoot !== undefined ? { projectRoot } : {}),
 		...(serveReady !== undefined ? { serveReady: readySpec(serveReady, cwd) } : {}),
 		...(record !== undefined ? { record: absolute(cwd, record) } : {}),
 		...(logs !== undefined ? { logs: absolute(cwd, logs) } : {}),
 		...(jobs ? { jobs } : {}),
+		...(headless !== undefined ? { headless } : {}),
 	};
 }
 
@@ -115,5 +129,8 @@ export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: 
 	if (!preset) return ok({ names });
 	const project = config.projects?.find((p) => p.name === preset.project);
 	const projectRoot = project ? resolve(dir, project.root) : undefined;
-	return ok({ names, preset: resolvePreset(input.name, preset, projectRoot ?? dir, projectRoot) });
+	return ok({
+		names,
+		preset: resolvePreset(input.name, preset, projectRoot ?? dir, projectRoot, config.headless),
+	});
 }
