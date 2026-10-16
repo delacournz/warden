@@ -1,6 +1,5 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Command as Commander } from "@commander-js/extra-typings";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { sameOwner } from "@delacour/warden-core/types";
 import type {
@@ -18,15 +17,14 @@ import { selfCommand } from "../autogc";
 import type { CommandContext } from "../context";
 import { metroOwner } from "../metro";
 import type { UiDevice } from "./device";
+import { DEFAULT_TAIL } from "./devtools-register";
 import type { UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
 import { uiDir } from "./paths";
-import { runUi, type UiOptionValues, type UiRunEnv, withUiOptions } from "./run";
+import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { positiveInt } from "./snapshot-command";
 import { readState, writeState } from "./state";
 
-/** Default number of lines `logs` / `network` show. */
-const DEFAULT_TAIL = 50;
 const START_HINT = "start the dev client with `warden ui open <bundle> --metro <url>`";
 const COLLECT_HINT = "run `warden ui logs start` first";
 
@@ -169,7 +167,7 @@ function renderValue(value: unknown): string {
 type EvalOptionValues = DevtoolsOptionValues & { await?: true };
 
 /** `warden ui eval <expr> [--await]`: run JavaScript in the app and print the value. */
-function uiEval(ctx: CommandContext, deps: UiDeps, expression: string, opts: EvalOptionValues): Promise<number> {
+export function uiEval(ctx: CommandContext, deps: UiDeps, expression: string, opts: EvalOptionValues): Promise<number> {
 	return runUi(ctx, deps, "eval", opts, (device, env) =>
 		withFacet(ctx, devtoolsDeps(deps), device, env, opts, async (facet) => {
 			const evaluated = await facet.evaluate(expression, { await: opts.await === true, timeoutMs: env.timeoutMs });
@@ -204,7 +202,7 @@ async function pixelRatioFor(device: UiDevice, env: UiRunEnv): Promise<number> {
 }
 
 /** `warden ui tree [--all] [--max n] [--screen name]`: the app's React components with rects. */
-function uiTree(ctx: CommandContext, deps: UiDeps, opts: TreeOptionValues): Promise<number> {
+export function uiTree(ctx: CommandContext, deps: UiDeps, opts: TreeOptionValues): Promise<number> {
 	return runUi(ctx, deps, "tree", opts, async (device, env) => {
 		const max = opts.max === undefined ? ok(undefined) : positiveInt("--max", opts.max);
 		if (!max.success) return max;
@@ -230,7 +228,7 @@ function uiTree(ctx: CommandContext, deps: UiDeps, opts: TreeOptionValues): Prom
 }
 
 /** `warden ui reload`: reload the app's JS (Fast Refresh does not need it; this restarts the bundle). */
-function uiReload(ctx: CommandContext, deps: UiDeps, opts: DevtoolsOptionValues): Promise<number> {
+export function uiReload(ctx: CommandContext, deps: UiDeps, opts: DevtoolsOptionValues): Promise<number> {
 	return runUi(ctx, deps, "reload", opts, (device, env) =>
 		withFacet(ctx, devtoolsDeps(deps), device, env, opts, async (facet) => {
 			const reloaded = await facet.reloadJs();
@@ -333,7 +331,7 @@ function stopCollector(ctx: CommandContext, deps: UiDeps, device: UiDevice) {
  * (`warden ui-collect`) that appends the app's console and network to `$WARDEN_HOME/ui/<udid>/{console,network}.jsonl`;
  * the other forms read or edit those files, so they work after the collector has ended too.
  */
-function uiLogs(ctx: CommandContext, deps: UiDeps, words: string[], opts: LogsOptionValues): Promise<number> {
+export function uiLogs(ctx: CommandContext, deps: UiDeps, words: string[], opts: LogsOptionValues): Promise<number> {
 	return runUi(ctx, deps, "logs", opts, async (device) => {
 		const [action, ...rest] = words;
 		const file = join(uiDir(ctx, device.udid), CONSOLE_FILE);
@@ -408,7 +406,7 @@ function networkDetail(entry: NetworkEntry, include: ReadonlySet<string>): strin
 }
 
 /** `warden ui network [n] [--include headers,body] [--id <id>]`: what the collector recorded of the app's `fetch` calls. */
-function uiNetwork(
+export function uiNetwork(
 	ctx: CommandContext,
 	deps: UiDeps,
 	countArg: string | undefined,
@@ -449,63 +447,4 @@ function uiNetwork(
 			text: entries.map((entry) => networkDetail(entry, include)).join("\n"),
 		});
 	});
-}
-
-const withMetro = <
-	Args extends unknown[],
-	Opts extends Record<string, unknown>,
-	Globals extends Record<string, unknown>,
->(
-	cmd: Commander<Args, Opts, Globals>
-) => cmd.option("--metro <url>", "Metro URL (default: WARDEN_METRO_URL, state.json, then this owner's leased ports)");
-
-/**
- * The devtools subcommands of `warden ui`: eval, tree, logs, network, reload. One call from `commands/ui.ts`.
- * `deps.devtools` replaces the real Metro / collector side effects in tests.
- */
-export function registerDevtoolsCommands(
-	cmd: Commander,
-	ctx: CommandContext,
-	done: (code: number) => void,
-	deps: UiDeps
-): void {
-	withMetro(
-		withUiOptions(
-			cmd
-				.command("eval")
-				.description("run JavaScript in the app (Hermes) and print the value")
-				.argument("<expression>", "JavaScript expression")
-				.option("--await", "await a returned promise")
-		)
-	).action(async (expression, opts) => done(await uiEval(ctx, deps, expression, opts)));
-	withMetro(
-		withUiOptions(
-			cmd
-				.command("tree")
-				.description("the app's React components (testID, label, text, screen) with rects")
-				.option("--all", "include inactive screens and unmeasured components")
-				.option("--max <n>", "at most n components")
-				.option("--screen <name>", "only this screen's subtree (react-navigation / expo-router route name)")
-		)
-	).action(async (opts) => done(await uiTree(ctx, deps, opts)));
-	withMetro(
-		withUiOptions(
-			cmd
-				.command("logs")
-				.description("app console: logs [n] | start | stop | mark <label> | clear")
-				.argument("[args...]", "n, or start | stop | mark <label> | clear")
-				.option("--bodies", "with start: also record request and response bodies")
-		)
-	).action(async (words, opts) => done(await uiLogs(ctx, deps, words, opts)));
-	withUiOptions(
-		cmd
-			.command("network")
-			.description("the app's fetch calls recorded by `logs start`")
-			.argument("[n]", `entries to show (default ${DEFAULT_TAIL})`)
-			.option("--include <parts>", "headers,body")
-			.option("--id <id>", "one entry in full")
-	).action(async (n, opts) => done(await uiNetwork(ctx, deps, n, opts)));
-	withMetro(withUiOptions(cmd.command("reload").description("reload the app's JavaScript"))).action(async (opts) =>
-		done(await uiReload(ctx, deps, opts))
-	);
 }

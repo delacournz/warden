@@ -1,10 +1,8 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
-import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import type { Result } from "@delacour/warden-types/result";
 import type { E2eEnv } from "../../env";
-import { ENV_NAMES } from "../../env";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
 import type {
 	AlertInfo,
@@ -24,7 +22,7 @@ import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import type { SelectsAll } from "../typing";
 import { type SwappableClient, swappableClient } from "./ios-session";
-import { locateHelper } from "./locate-helper";
+import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
 import { connectSimd, type SimdClient, spawnSimd } from "./simd-client";
@@ -466,21 +464,6 @@ async function trySocket(o: OpenIosDriverOptions, log: Logger): Promise<SimdClie
 	if (viaSocket.success) return viaSocket.data;
 	log(`[ios] ${viaSocket.error.message}; spawning a helper on stdio instead`);
 	return undefined;
-}
-
-/** The helper binary: the explicit `helperPath`, else `locateHelper` over the env / install locations. */
-export function resolveHelper(o: OpenIosDriverOptions): Result<string, DriverError> {
-	if (o.helperPath !== undefined) return { success: true, data: o.helperPath };
-	const located = locateHelper({
-		env: { [ENV_NAMES.simd]: o.env?.simd, [ENV_NAMES.helperDir]: o.env?.helperDir },
-		execPath: o.execPath ?? process.execPath,
-		importDir: o.importDir ?? import.meta.dir,
-		wardenHome: o.wardenHome ?? resolveWardenHome(),
-		exists: o.exists ?? existsSync,
-		realpath: o.realpath ?? realpathSync,
-		...(o.version ? { version: o.version } : {}),
-	});
-	return located.success ? { success: true, data: located.data.path } : located;
 }
 
 async function connect(o: OpenIosDriverOptions, log: Logger): Promise<Result<SimdClient, DriverError>> {

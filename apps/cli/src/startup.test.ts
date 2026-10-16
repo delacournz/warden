@@ -130,6 +130,85 @@ describe("cold start: gc and release", () => {
 	});
 });
 
+/** What opening a device loads: the iOS and Android drivers and the helper socket client. */
+const DRIVERS = [
+	"/packages/e2e/src/driver/ios/ios-driver.ts",
+	"/packages/e2e/src/driver/ios/simd-client.ts",
+	"/packages/e2e/src/driver/android/",
+];
+const loaded = (files: string[], needles: string[]) => needles.filter((needle) => has(files, needle));
+
+describe("cold start: batch and e2e", () => {
+	test("`warden batch` and `warden e2e` register without loading a device driver or the helper lifecycle", async () => {
+		for (const args of [
+			["batch", "--help"],
+			["e2e", "--help"],
+		]) {
+			const files = await loadedBy(args);
+			expect(loaded(files, [...DRIVERS, "/agent-ui/helper.ts"])).toEqual([]);
+		}
+	});
+});
+
+describe("cold start: warden ui", () => {
+	/** Implementation modules of the other subcommands: a call loads its own and none of these. */
+	const OTHERS = [
+		"/agent-ui/flows-command.ts",
+		"/agent-ui/devtools-cli.ts",
+		"/agent-ui/bench.ts",
+		"/agent-ui/video.ts",
+		"/agent-ui/controls.ts",
+		"/agent-ui/ui-driver.ts",
+	];
+	const without = (needles: string[], skip: string) => needles.filter((needle) => needle !== skip);
+
+	test("`ui --help` and `ui <sub> --help` load registration only: no implementation, no e2e package, no zod", async () => {
+		for (const args of [
+			["ui", "--help"],
+			["ui", "snapshot", "--help"],
+			["ui", "record", "start", "--help"],
+		]) {
+			const files = await loadedBy(args);
+			expect(loaded(files, [...OTHERS, "/packages/e2e/", "/node_modules/zod/", "/agent-ui/helper.ts"])).toEqual([]);
+			expect(loaded(files, ["/agent-ui/actions.ts", "/agent-ui/snapshot-command.ts", "/agent-ui/run.ts"])).toEqual([]);
+		}
+	});
+
+	test("`ui snapshot` without a lease loads its own module, not the other subcommands or any driver", async () => {
+		const files = await loadedBy(["ui", "snapshot", "--json"]);
+		expect(has(files, "/agent-ui/snapshot-command.ts")).toBe(true);
+		expect(loaded(files, [...OTHERS, ...DRIVERS, "/agent-ui/actions.ts", "/agent-ui/query.ts"])).toEqual([]);
+	});
+
+	test("`ui press` without a lease loads its own module and no driver", async () => {
+		const files = await loadedBy(["ui", "press", "@e1", "--json"]);
+		expect(has(files, "/agent-ui/actions.ts")).toBe(true);
+		expect(loaded(files, [...OTHERS, ...DRIVERS, "/agent-ui/query.ts"])).toEqual([]);
+	});
+
+	test("`ui status` and `ui close` read the helper record without loading a driver", async () => {
+		for (const [sub, own] of [
+			["status", "/agent-ui/status.ts"],
+			["close", "/agent-ui/close.ts"],
+		] as const) {
+			const files = await loadedBy(["ui", sub, "--json"]);
+			expect(has(files, own)).toBe(true);
+			expect(loaded(files, [...OTHERS, ...DRIVERS, "/agent-ui/actions.ts", "/agent-ui/snapshot-command.ts"])).toEqual(
+				[]
+			);
+		}
+	});
+
+	test("the flow and devtools subcommands load their own module, each without the other", async () => {
+		const record = await loadedBy(["ui", "record", "status", "--json"]);
+		expect(has(record, "/agent-ui/flows-command.ts")).toBe(true);
+		expect(loaded(record, [...DRIVERS, "/agent-ui/devtools-cli.ts"])).toEqual([]);
+		const logs = await loadedBy(["ui", "logs", "--json"]);
+		expect(has(logs, "/agent-ui/devtools-cli.ts")).toBe(true);
+		expect(loaded(logs, [...without(OTHERS, "/agent-ui/devtools-cli.ts"), ...DRIVERS])).toEqual([]);
+	});
+});
+
 describe("terminal ui", () => {
 	/** Imports `ui.ts` in a child process and reports which of ora / clack are loaded after each step. */
 	async function uiSteps(): Promise<Record<string, { ora: boolean; clack: boolean }>> {
