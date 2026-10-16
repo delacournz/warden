@@ -56,6 +56,7 @@ import {
 	exitCodeOf,
 	type ForwardedSignal,
 	holdLeases,
+	INTERRUPTED,
 	intervalEvery,
 	type LeaseArgs,
 	type LeaseSession,
@@ -64,6 +65,7 @@ import {
 	leasedText,
 	parseAppFlags,
 	processOnSignal,
+	type RunPort,
 	splitCommand,
 	withLeaseOptions,
 } from "../lease-session";
@@ -964,22 +966,63 @@ function poolEnv(
 	return { ...env, ...pool.env, ...(pool.leg !== undefined ? { WARDEN_LEG: pool.leg } : {}) };
 }
 
-/** Start the run's Metro on its leased port (verified to serve this project) and prewarm the bundle. */
-async function startRunMetro(
+/** The run's Metro, started the moment its port was leased; what the claim phase and `startServices` share. */
+type MetroLaunch = {
+	port: number;
+	platform: Platform;
+	log: string;
+	/** `bundling` once the server answered; `up` once the bundle is warm; `failed` once anything went wrong */
+	state: "starting" | "bundling" | "up" | "failed";
+	/** never rejects */
+	pending: Promise<Result<Metro>>;
+	/** set once the server answered (before the prewarm): what `stop` kills even when the bundle failed */
+	started: Metro | undefined;
+	/** give up waiting (a failed claim, a signal), settle, kill whatever is running */
+	stop: () => Promise<void>;
+	/** `✔ Metro on :port serves root`, printed once wherever it is first observed */
+	announce: (log: (line: string) => void) => void;
+};
+
+/**
+ * Start the run's Metro on its leased port and prewarm the bundle without waiting for either: the
+ * device claim (sims booting) and the app installs go on meanwhile, `awaitRunMetro` collects the
+ * result. The server is called ready only once the port is verified to serve this project root.
+ */
+function launchRunMetro(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	plan: MetroPlan,
 	o: {
-		port: number | undefined;
+		port: number;
 		env: Record<string, string | undefined>;
 		log: string;
 		platform: Platform;
 		interrupted: () => boolean;
-		started: (metro: Metro) => void;
 	}
-): AsyncResult<Metro> {
-	if (o.port === undefined) return err("metro: no port leased for it");
-	const metro = await withSpinner(ctx, `starting Metro on :${o.port}…`, async (_sctx, spinner) => {
+): MetroLaunch {
+	let cancelled = false;
+	let announced = false;
+	const launch: MetroLaunch = {
+		port: o.port,
+		platform: o.platform,
+		log: o.log,
+		state: "starting",
+		started: undefined,
+		pending: Promise.resolve(err("Metro not started")),
+		stop: async () => {
+			cancelled = true;
+			await launch.pending;
+			const metro = launch.started;
+			launch.started = undefined;
+			await metro?.stop();
+		},
+		announce: (log) => {
+			if (announced) return;
+			announced = true;
+			log(`${ctx.ui.color.green("✔")} Metro on :${o.port} serves ${plan.projectRoot}`);
+		},
+	};
+	const run = async (): AsyncResult<Metro> => {
 		const started = await startMetro(
 			{
 				probe: deps.metroProbe,
@@ -989,30 +1032,49 @@ async function startRunMetro(
 			},
 			{
 				projectRoot: plan.projectRoot,
-				port: o.port ?? 0,
+				port: o.port,
 				// CI: no interactive prompts (a busy port fails instead of asking) and no file watching
 				env: { ...o.env, ...plan.env, CI: "1" },
 				readyTimeoutMs: plan.readyTimeoutMs,
-				aborted: o.interrupted,
+				aborted: () => cancelled || o.interrupted(),
 			}
 		);
-		if (!started.success) {
-			spinner.fail("Metro not ready");
-			return started;
-		}
-		o.started(started.data);
+		if (!started.success) return started;
+		launch.started = started.data;
 		if (plan.prewarm) {
-			spinner.update(`Metro on :${o.port}: building the ${o.platform} bundle…`);
+			launch.state = "bundling";
 			const warmed = await deps.prewarm(started.data.url, o.platform);
-			if (!warmed.success) {
-				spinner.fail("Metro could not build the bundle");
-				return warmed;
-			}
+			if (!warmed.success) return warmed;
 		}
-		spinner.succeed(`Metro on :${o.port} serves ${plan.projectRoot}`);
 		return started;
-	});
-	return metro.success ? metro : err(`${metro.error} (log: ${o.log})`);
+	};
+	launch.pending = run()
+		.catch((error: unknown) => err(error instanceof Error ? error.message : String(error)))
+		.then((result) => {
+			launch.state = result.success ? "up" : "failed";
+			return result;
+		});
+	return launch;
+}
+
+/**
+ * The early-started Metro's outcome: a spinner only while it is still starting (it usually is up
+ * before the app installs finish); failures carry the log path.
+ */
+async function awaitRunMetro(ctx: CommandContext, launch: MetroLaunch): AsyncResult<Metro> {
+	const settled = launch.state === "up" || launch.state === "failed";
+	const metro = settled
+		? await launch.pending
+		: await withSpinner(ctx, `starting Metro on :${launch.port}…`, async (_sctx, spinner) => {
+				if (launch.state === "bundling")
+					spinner.update(`Metro on :${launch.port}: building the ${launch.platform} bundle…`);
+				const result = await launch.pending;
+				if (!result.success) spinner.fail("Metro not ready");
+				return result;
+			});
+	if (!metro.success) return err(`${metro.error} (log: ${launch.log})`);
+	launch.announce(ctx.err);
+	return metro;
 }
 
 /**
@@ -1126,27 +1188,22 @@ async function warmStep(
 	for (const d of devices) if (d.socketPath !== undefined) sockets.set(d.udid, d.socketPath);
 }
 
-/** Metro → serve → recordings; resolves the job env + placeholder values once they are up. */
+/** Metro (started during the claim) → serve → recordings; resolves the job env + placeholder values once they are up. */
 async function startServices(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	args: BatchArgs,
 	r: RunContext,
 	baseEnv: Record<string, string | undefined>,
-	services: Services
+	services: Services,
+	metro: MetroLaunch | undefined
 ): AsyncResult<{ env: Record<string, string | undefined>; vars: RunVars }> {
 	if (args.metro) {
-		const started = await startRunMetro(ctx, deps, args.metro, {
-			port: r.port,
-			env: baseEnv,
-			log: join(r.batchDir, "metro.log"),
-			platform: r.platform,
-			interrupted: r.interrupted,
-			started: (metro) => {
-				services.metro = metro;
-			},
-		});
-		if (!started.success) return started;
+		if (!metro) return err("metro: no port leased for it");
+		const up = await awaitRunMetro(ctx, metro);
+		// before the early return: a Metro whose bundle failed is still running, and teardown must kill it
+		services.metro = metro.started;
+		if (!up.success) return up;
 	}
 	const metroUrl = services.metro?.url;
 	const vars: RunVars = {
@@ -1279,6 +1336,17 @@ function runEnv(session: LeaseSession, args: BatchArgs, batchDir: string): Recor
 	};
 }
 
+/** What `runSession` sets up before the claim and `supervise` carries on with. */
+type RunSetup = {
+	batchId: string;
+	batchDir: string;
+	logDir: string;
+	/** aborted by SIGINT / SIGTERM, from the claim on */
+	controller: AbortController;
+	/** the run's Metro, launched on the port lease (undefined: no `metro` plan, or no port) */
+	metro: MetroLaunch | undefined;
+};
+
 /** Everything after the claim: Metro → serve → recordings → setup → jobs → stop serve / recordings / Metro → batch.json → release. */
 async function supervise(
 	ctx: CommandContext,
@@ -1287,12 +1355,10 @@ async function supervise(
 	jobs: string[],
 	cmd: string[],
 	session: LeaseSession,
-	hooks: SessionHooks & { name: string }
+	hooks: SessionHooks & { name: string },
+	run: RunSetup
 ): Promise<SessionResult> {
-	const batchId = deps.newId();
-	const batchDir = args.record ?? join(wardenHome(ctx.env), "batches", batchId);
-	const logDir = args.logs ?? join(batchDir, "logs");
-	const controller = new AbortController();
+	const { batchId, batchDir, logDir, controller } = run;
 	const pools = buildPools(session, args);
 	const r: RunContext = {
 		name: hooks.name,
@@ -1334,7 +1400,7 @@ async function supervise(
 	};
 	try {
 		await deps.mkdir(logDir);
-		const up = await startServices(ctx, deps, args, r, runEnv(session, args, batchDir), services);
+		const up = await startServices(ctx, deps, args, r, runEnv(session, args, batchDir), services, run.metro);
 		if (!up.success) return fail(up.error, { batchDir });
 		const { env, vars } = up.data;
 		const { prepared, setups } = await preparePools(ctx, deps, args, r, env);
@@ -1372,8 +1438,8 @@ async function supervise(
 		screen.end();
 		await teardown();
 		const { devices } = r;
-		const run: BatchRun = { batchId, batchDir, logDir, cmd, devices, total, startedAt, endedAt, summary, screenshots };
-		await report(ctx, deps, args, screen.cast ? { ...run, cast: screen.cast } : run);
+		const done: BatchRun = { batchId, batchDir, logDir, cmd, devices, total, startedAt, endedAt, summary, screenshots };
+		await report(ctx, deps, args, screen.cast ? { ...done, cast: screen.cast } : done);
 		if (!r.interrupted()) await shutdownDevices(ctx, hooks, session, summary);
 		return {
 			code: exitFor(r.interrupted(), summary.ok),
@@ -1522,7 +1588,12 @@ async function batch(
 	return (await runSession(ctx, deps, args.data, jobs.data, cmd)).code;
 }
 
-/** Claim (at most one device per job, under a spinner) → supervise → release. */
+/**
+ * Claim (at most one device per job, under a spinner) → supervise → release. With a `metro` plan the
+ * run's Metro is launched the moment its port is leased, so it starts and prewarms while the devices
+ * boot and the app installs; until `supervise` holds the leases, SIGINT / SIGTERM abort the claim and
+ * stop that Metro (a detached process, which the terminal's Ctrl-C would otherwise leave on the port).
+ */
 export async function runSession(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -1541,21 +1612,83 @@ export async function runSession(
 	const wanted = (lease.legs?.map((leg) => leg.flags) ?? [lease.flags])
 		.map((flags) => `${flags.request.count} ${flags.request.profile}`)
 		.join(" + ");
+	const batchId = deps.newId();
+	const batchDir = lease.record ?? join(wardenHome(ctx.env), "batches", batchId);
+	const logDir = lease.logs ?? join(batchDir, "logs");
+	const controller = new AbortController();
+	const interrupted = () => controller.signal.aborted;
+	let launch: MetroLaunch | undefined;
+	let claimDone = false;
+	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
+		deps.onSignal(signal, () => {
+			controller.abort();
+			void launch?.stop();
+		})
+	);
 	const claimed = await withSpinner(ctx, `claiming ${wanted} ${platform} device(s)…`, async (sctx, spinner) => {
 		const legFlags = lease.legs?.map((leg) => leg.flags);
 		const onLeased = leasedProgress(spinner, color, lease.app !== undefined);
-		const args = { ...lease, ...(legFlags ? { legFlags } : {}), ...(onLeased ? { onLeased } : {}) };
+		const plan = lease.metro;
+		const onPorts = plan
+			? (ports: RunPort[]) => {
+					const port = ports[0]?.port;
+					if (port === undefined) return;
+					launch = launchRunMetro(sctx, deps, plan, {
+						port,
+						platform,
+						log: join(batchDir, "metro.log"),
+						env: { ...ctx.env, ...lease.env, WARDEN_BATCH_DIR: batchDir, WARDEN_PORT: String(port) },
+						interrupted,
+					});
+					// up before the claim is done: say so above the claim spinner (the overlap is the point)
+					void launch.pending.then((result) => {
+						if (result.success && !claimDone) launch?.announce(sctx.err);
+					});
+				}
+			: undefined;
+		const aborted = () => interrupted() || launch?.state === "failed";
+		const args = {
+			...lease,
+			...(legFlags ? { legFlags } : {}),
+			...(onLeased ? { onLeased } : {}),
+			...(onPorts ? { onPorts } : {}),
+			aborted,
+		};
 		const result = await claimAll(sctx, deps, owner, args, name);
+		claimDone = true;
 		if (!result.success) spinner.fail(lease.app ? "claim / app install failed" : "claim failed");
 		else if (lease.app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
 		else spinner.succeed(leasedText(result.data.outcome));
 		return result;
 	});
-	if (!claimed.success) {
-		ctx.err(color.red(`warden ${name}: ${claimed.error}`));
-		return { code: 1 };
+	// before supervise re-subscribes (holdLeases), so the two never share a handler slot
+	for (const off of offSignals) off();
+	if (!claimed.success || interrupted()) {
+		if (claimed.success) await claimed.data.release();
+		await launch?.stop();
+		const metro = launch ? await launch.pending : undefined;
+		const claimError = claimed.success || claimed.error === INTERRUPTED ? undefined : claimed.error;
+		const metroError = launch && metro && !metro.success ? `${metro.error} (log: ${launch.log})` : undefined;
+		const reason = claimError ?? (interrupted() ? INTERRUPTED : (metroError ?? INTERRUPTED));
+		ctx.err(color.red(`warden ${name}: ${reason}`));
+		return { code: interrupted() ? 130 : 1 };
 	}
-	return supervise(ctx, deps, lease, jobs, cmd, claimed.data, { ...hooks, name });
+	return supervise(
+		ctx,
+		deps,
+		lease,
+		jobs,
+		cmd,
+		claimed.data,
+		{ ...hooks, name },
+		{
+			batchId,
+			batchDir,
+			logDir,
+			controller,
+			metro: launch,
+		}
+	);
 }
 
 /** Queue options shared by `warden batch` and `warden e2e`. */

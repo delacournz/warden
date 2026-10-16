@@ -206,9 +206,16 @@ export type LeaseArgs = {
 	legFlags?: readonly ClaimFlags[];
 	ports: string[];
 	app?: EnsureOptions;
+	/** the ports are leased (before the device claim, which can boot simulators for a while) */
+	onPorts?: (ports: RunPort[]) => void;
 	/** the devices + ports are held (before `--app` installs, which can take minutes) */
 	onLeased?: (outcome: ClaimOutcome) => void;
+	/** checked before each device claim and before the installs: true → everything is released, `interrupted` */
+	aborted?: () => boolean;
 };
+
+/** The error of a claim the caller gave up on (`aborted`) — nothing to add to it. */
+export const INTERRUPTED = "interrupted";
 
 /** `--app`: ensure the app on every claimed device in parallel (waits for all, then reports the first failure); exports `WARDEN_APP_PATH` / `WARDEN_APP_HASH` into `env`. */
 async function ensureSessionApp(
@@ -261,17 +268,27 @@ function sessionEnsureApp(): RunEnsureApp {
 	};
 }
 
-/** One claim per leg (else the one `flags` claim); a failed leg releases the earlier ones. */
+/**
+ * One claim per leg (else the one `flags` claim); a failed or aborted leg releases the earlier ones.
+ * `aborted` is checked before each leg: a claim can boot simulators for a while, and the caller may
+ * have lost its reason to continue (a Metro that failed, a signal) in the meantime.
+ */
 async function claimLegs(ctx: CommandContext, owner: Owner, args: LeaseArgs, pid: number): AsyncResult<ClaimOutcome[]> {
 	const claims: ClaimOutcome[] = [];
+	const releaseClaimed = () =>
+		releaseDevices(
+			ctx,
+			claims.flatMap((c) => c.claimed.map((d) => d.lease.id)),
+			{ touch: false }
+		);
 	for (const flags of args.legFlags ?? [args.flags]) {
+		if (args.aborted?.()) {
+			await releaseClaimed();
+			return err(INTERRUPTED);
+		}
 		const outcome = await claimWithFlags(ctx, owner, flags, pid);
 		if (!outcome.success) {
-			await releaseDevices(
-				ctx,
-				claims.flatMap((c) => c.claimed.map((d) => d.lease.id)),
-				{ touch: false }
-			);
+			await releaseClaimed();
 			return outcome;
 		}
 		claims.push(outcome.data);
@@ -280,8 +297,9 @@ async function claimLegs(ctx: CommandContext, owner: Owner, args: LeaseArgs, pid
 }
 
 /**
- * Claim devices + ports and (with `--app`) ensure the app; on any failure nothing stays leased.
- * Port leases carry `--label` too (default `warden <name>`).
+ * Lease the ports, claim the devices and (with `--app`) ensure the app; on any failure nothing stays
+ * leased. The ports come first (a bind probe, cheap) so `onPorts` can start the run's Metro while the
+ * devices boot and the app installs. Port leases carry `--label` too (default `warden <name>`).
  */
 export async function claimAll(
 	ctx: CommandContext,
@@ -290,20 +308,26 @@ export async function claimAll(
 	args: LeaseArgs,
 	name = "run"
 ): AsyncResult<LeaseSession> {
+	const label = args.flags.label ?? `warden ${name}`;
+	const ports = await claimRunPorts(ctx, owner, args.ports, deps.pid, deps.isPortFree, label);
+	if (!ports.success) return ports;
+	const portLeaseIds = ports.data.map((p) => p.leaseId);
+	const releasePorts = () => releaseDevices(ctx, portLeaseIds, { touch: false });
+	args.onPorts?.(ports.data);
+	if (args.aborted?.()) {
+		await releasePorts();
+		return err(INTERRUPTED);
+	}
 	const claims = await claimLegs(ctx, owner, args, deps.pid);
-	if (!claims.success) return claims;
+	if (!claims.success) {
+		await releasePorts();
+		return claims;
+	}
 	const outcome: ClaimOutcome = {
 		claimed: claims.data.flatMap((c) => c.claimed),
 		reclaimed: claims.data.flatMap((c) => c.reclaimed),
 	};
-	const deviceLeaseIds = outcome.claimed.map((c) => c.lease.id);
-	const label = args.flags.label ?? `warden ${name}`;
-	const ports = await claimRunPorts(ctx, owner, args.ports, deps.pid, deps.isPortFree, label);
-	if (!ports.success) {
-		await releaseDevices(ctx, deviceLeaseIds, { touch: false });
-		return ports;
-	}
-	const leaseIds = [...deviceLeaseIds, ...ports.data.map((p) => p.leaseId)];
+	const leaseIds = [...outcome.claimed.map((c) => c.lease.id), ...portLeaseIds];
 	const release = async () => {
 		await releaseDevices(ctx, leaseIds, { after: stopHelperAfter(ctx) });
 	};
@@ -314,6 +338,10 @@ export async function claimAll(
 		(args.legFlags ?? [args.flags]).some((f) => f.headless === true)
 	);
 	if (args.app) {
+		if (args.aborted?.()) {
+			await release();
+			return err(INTERRUPTED);
+		}
 		const ensure = deps.ensureApp ?? sessionEnsureApp();
 		const app = await ensureSessionApp(ctx, ensure, owner, outcome, args.app, env, name);
 		if (!app.success) {

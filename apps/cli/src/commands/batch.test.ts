@@ -556,6 +556,14 @@ describe("warden batch", () => {
 		}
 	});
 
+	test("a failed device claim leaves no port lease (ports are leased first so Metro can start early)", async () => {
+		const c = setup(["ios", "--count", "3", "--max", "2", "--jobs", "a,b,c", "--port", "8091:1", "--", "x"]);
+		const h = harness();
+		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		expect(h.jobs()).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
 	test("{port} is the first leased port in the job argv, --serve and --serve-ready; --job-timeout is validated", async () => {
 		const c = setup([
 			"ios",

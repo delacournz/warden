@@ -6,7 +6,7 @@ import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { jsonl, result } from "../batch/results.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { scriptedUi, type TestContext, testContext } from "../testing";
 import { type Harness, harness, type Spawned } from "./batch.testing";
 import { createE2eCommand, type E2eReport } from "./e2e";
 
@@ -311,6 +311,124 @@ describe("warden e2e", () => {
 			expect(h.jobs()).toEqual([]);
 			expect(c.stderr.join("\n")).toContain("SyntaxError");
 			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
+		});
+
+		const installed = {
+			success: true,
+			data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true },
+		} as const;
+
+		test("Metro starts and prewarms while the app is still installing; stopped last", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			const install = Promise.withResolvers<void>();
+			let ensures = 0;
+			h.deps.ensureApp = async () => {
+				ensures++;
+				await install.promise;
+				return installed;
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.prewarmed.length === 1);
+			expect(ensures).toBe(1);
+			expect(h.metro()).toBeDefined();
+			expect(h.jobs()).toEqual([]);
+			install.resolve();
+			expect(await run).toBe(0);
+			expect(h.events.indexOf("metro:start")).toBeLessThan(h.events.findIndex((e) => e.startsWith("job:")));
+			expect(h.events.at(-1)).toBe("metro:SIGTERM");
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("the install fails → the early Metro is stopped, no flow runs, nothing stays leased", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			h.deps.ensureApp = async () => ({ success: false, error: "no build" });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+			expect(c.stderr.join("\n")).toContain("no build");
+		});
+
+		test("the device claim fails → the early Metro is stopped and the port lease released", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			// no warden sim exists and none may be created: the device claim fails after the port lease
+			const sim = fakeSimctl([]);
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			ctx = testContext(["--files", "src/chat/lazy.tsx", "--max", "0"], { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			ctx.cwd = dir;
+			const c = ctx;
+			const h = harness();
+			h.deps.ensureApp = async () => installed;
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("Metro turns out foreign while the app installs → exit 1 naming the other checkout, no flow", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			const probe = Promise.withResolvers<void>();
+			h.deps.metroProbe = async () => {
+				await probe.promise;
+				return { kind: "foreign", root: "/other/worktree/app" };
+			};
+			let ensures = 0;
+			h.deps.ensureApp = async () => {
+				ensures++;
+				probe.resolve();
+				await Bun.sleep(5);
+				return installed;
+			};
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(ensures).toBe(1);
+			expect(h.jobs()).toEqual([]);
+			expect(c.stderr.join("\n")).toContain("port 8081 is served by /other/worktree/app, not this worktree");
+			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("SIGINT during the install → exit 130, the early Metro is stopped, nothing stays leased", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			const install = Promise.withResolvers<void>();
+			h.deps.ensureApp = async () => {
+				await install.promise;
+				return installed;
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.signals.has("SIGINT") && h.prewarmed.length === 1);
+			h.signals.get("SIGINT")?.();
+			install.resolve();
+			expect(await run).toBe(130);
+			expect(h.metro()?.kills).toContain("SIGTERM");
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("Metro's readiness is announced once, under the claim spinner when it is up before the app", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const ui = scriptedUi();
+			c.ui = ui;
+			const h = harness();
+			h.deps.ensureApp = async () => {
+				await waitFor(() => h.prewarmed.length === 1);
+				await Bun.sleep(5);
+				return installed;
+			};
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const announced = ui.events.filter((e) => /Metro on :8081 serves/.test(e));
+			expect(announced).toHaveLength(1);
+			expect(ui.events.indexOf(announced[0] ?? "")).toBeLessThan(ui.events.indexOf("ok: app ready on 1 device(s)"));
+			expect(ui.events.filter((e) => e.startsWith("spin: starting Metro"))).toEqual([]);
 		});
 	});
 
