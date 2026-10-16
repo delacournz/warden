@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
+import { createGitFactsCache } from "../git-facts";
 import { openStore, type Store } from "../store";
 import { fakeApp, testProject } from "./builds.testing";
 import { getBuild, getInstall, recordInstall, storeArtifact } from "./cache";
@@ -385,7 +386,9 @@ describe("projectContext", () => {
 		);
 		const exec: Exec = async (cmd) => {
 			const joined = cmd.join(" ");
-			if (joined === "git rev-parse --show-toplevel") return { exitCode: 0, stdout: `${repo}\n`, stderr: "" };
+			if (joined === "git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD") {
+				return { exitCode: 0, stdout: `${repo}\n${repo}/.git\nrefs/heads/main\n`, stderr: "" };
+			}
 			if (joined === "git config --get remote.origin.url")
 				return { exitCode: 0, stdout: "git@github.com:o/r.git", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "" };
@@ -404,5 +407,31 @@ describe("projectContext", () => {
 			variantOptional: true,
 		});
 		expect(optional.success).toBe(true);
+	});
+
+	test("project + key cost two git spawns (one rev-parse, the remote), shared through the git cache", async () => {
+		const repo = join(realpathSync(dir), "repo2");
+		mkdirSync(join(repo, "apps", "a"), { recursive: true });
+		writeFileSync(
+			join(repo, JSON_CONFIG_FILE),
+			JSON.stringify({ projects: [{ name: "a", root: ".", bundleId: { ios: "com.a" } }] })
+		);
+		const spawns: string[] = [];
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			spawns.push(joined);
+			if (joined === "git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD") {
+				return { exitCode: 0, stdout: `${repo}\n${repo}/.git\nrefs/heads/main\n`, stderr: "" };
+			}
+			if (joined === "git config --get remote.origin.url")
+				return { exitCode: 0, stdout: "git@github.com:o/r.git", stderr: "" };
+			return { exitCode: 1, stdout: "", stderr: "" };
+		};
+		const res = await projectContext({ exec, env, start: repo, git: createGitFactsCache() });
+		expect(res.success).toBe(true);
+		expect(spawns).toEqual([
+			"git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD",
+			"git config --get remote.origin.url",
+		]);
 	});
 });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec } from "../exec";
+import { createGitFactsCache, readGitFacts } from "../git-facts";
 import { normaliseRemote, projectKey, readProjectKey, safeKey } from "./project-key";
 
 describe("normaliseRemote", () => {
@@ -66,35 +67,78 @@ describe("safeKey", () => {
 });
 
 describe("readProjectKey", () => {
+	const COMBINED = "git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD";
+
 	test("reads toplevel + origin via exec", async () => {
 		const calls: string[] = [];
 		const exec: Exec = async (cmd, opts) => {
 			calls.push(`${opts?.cwd} ${cmd.join(" ")}`);
 			const joined = cmd.join(" ");
-			if (joined === "git rev-parse --show-toplevel") return { exitCode: 0, stdout: "/w/wt\n", stderr: "" };
-			if (joined === "git rev-parse --git-common-dir") return { exitCode: 0, stdout: "/w/main/.git\n", stderr: "" };
+			if (joined === COMBINED) return { exitCode: 0, stdout: "/w/wt\n/w/main/.git\nrefs/heads/x\n", stderr: "" };
 			if (joined === "git config --get remote.origin.url")
 				return { exitCode: 0, stdout: "git@github.com:o/r.git\n", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "" };
 		};
-		expect(await readProjectKey(exec, "/w/wt/app")).toEqual({ success: true, data: "github.com/o/r:app" });
-		expect(calls[0]).toBe("/w/wt/app git rev-parse --show-toplevel");
+		expect(await readProjectKey(exec, "/w/wt/app", createGitFactsCache())).toEqual({
+			success: true,
+			data: "github.com/o/r:app",
+		});
+		expect(calls[0]).toBe(`/w/wt/app ${COMBINED}`);
+	});
+
+	test("a project key costs two spawns: one rev-parse and the remote", async () => {
+		const calls: string[] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push(cmd.join(" "));
+			if (cmd.join(" ") === COMBINED) return { exitCode: 0, stdout: "/w\n/w/.git\nrefs/heads/main\n", stderr: "" };
+			return { exitCode: 0, stdout: "https://github.com/o/r\n", stderr: "" };
+		};
+		await readProjectKey(exec, "/w", createGitFactsCache());
+		expect(calls).toEqual([COMBINED, "git config --get remote.origin.url"]);
+	});
+
+	test("the checkout facts are reused from the cache: only the remote is spawned again", async () => {
+		const calls: string[] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push(cmd.join(" "));
+			if (cmd.join(" ") === COMBINED) return { exitCode: 0, stdout: "/w\n/w/.git\nrefs/heads/main\n", stderr: "" };
+			return { exitCode: 0, stdout: "https://github.com/o/r\n", stderr: "" };
+		};
+		const cache = createGitFactsCache();
+		await readGitFacts(exec, "/w", cache);
+		await readProjectKey(exec, "/w", cache);
+		expect(calls.filter((c) => c === COMBINED)).toHaveLength(1);
+		expect(calls).toHaveLength(2);
 	});
 
 	test("falls back to the first remote, then to the path", async () => {
 		const exec: Exec = async (cmd) => {
 			const joined = cmd.join(" ");
-			if (joined === "git rev-parse --show-toplevel") return { exitCode: 0, stdout: "/w", stderr: "" };
+			if (joined === COMBINED) return { exitCode: 0, stdout: "/w\n/w/.git\nrefs/heads/main\n", stderr: "" };
 			if (joined === "git remote") return { exitCode: 0, stdout: "upstream\n", stderr: "" };
 			if (joined === "git config --get remote.upstream.url")
 				return { exitCode: 0, stdout: "https://github.com/o/r", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "" };
 		};
-		expect(await readProjectKey(exec, "/w")).toEqual({ success: true, data: "github.com/o/r:." });
+		expect(await readProjectKey(exec, "/w", createGitFactsCache())).toEqual({
+			success: true,
+			data: "github.com/o/r:.",
+		});
 		const none: Exec = async () => ({ exitCode: 128, stdout: "", stderr: "not a git repo" });
-		expect(await readProjectKey(none, "/nonexistent-warden-test/x")).toEqual({
+		expect(await readProjectKey(none, "/nonexistent-warden-test/x", createGitFactsCache())).toEqual({
 			success: true,
 			data: "path:/nonexistent-warden-test/x",
+		});
+	});
+
+	test("no remote at all keys by the shared git dir", async () => {
+		const exec: Exec = async (cmd) =>
+			cmd.join(" ") === COMBINED
+				? { exitCode: 0, stdout: "/w/wt\n/w/main/.git\nHEAD\n", stderr: "" }
+				: { exitCode: 1, stdout: "", stderr: "" };
+		expect(await readProjectKey(exec, "/w/wt", createGitFactsCache())).toEqual({
+			success: true,
+			data: "git:/w/main/.git:.",
 		});
 	});
 });

@@ -2,6 +2,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { CONFIG_FILE, findWardenConfig, type ParsedWardenConfig } from "../builds/config";
 import type { Exec } from "../exec";
+import { type GitFactsCache, readGitFacts } from "../git-facts";
 import type { Platform } from "../types";
 import type { E2eSuiteConfig } from "./affected.schema";
 import { type ImportCache, openImportCache } from "./cache";
@@ -50,9 +51,8 @@ export type Affected = {
 };
 
 /** `e2e.<name>` from the nearest warden config (walking up to the git root). */
-export async function findSuite(exec: Exec, cwd: string, name?: string): AsyncResult<Suite> {
-	const top = await exec(["git", "rev-parse", "--show-toplevel"], { cwd });
-	const stopAt = top.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : undefined;
+export async function findSuite(exec: Exec, cwd: string, name?: string, git?: GitFactsCache): AsyncResult<Suite> {
+	const stopAt = (await readGitFacts(exec, cwd, git))?.toplevel;
 	const found = findWardenConfig(cwd, stopAt);
 	if (!found.success) return found;
 	if (!found.data) return err(`no ${CONFIG_FILE} found from ${cwd}`);

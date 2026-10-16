@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { bunExec } from "../exec";
+import { bunExec, type Exec } from "../exec";
+import { createGitFactsCache } from "../git-facts";
 import { computeAffected, findSuite } from "./affected";
 import { makeSuiteRepo } from "./fixture.testing";
 
@@ -52,5 +53,19 @@ describe("computeAffected", () => {
 		} finally {
 			for (const r of [top, own, none]) rmSync(r.dir, { recursive: true, force: true });
 		}
+	});
+
+	test("findSuite asks git once per cwd, however often it is called", async () => {
+		const spawns: string[] = [];
+		const counting: Exec = (cmd, opts) => {
+			spawns.push(cmd.join(" "));
+			return bunExec(cmd, opts);
+		};
+		const git = createGitFactsCache();
+		for (let i = 0; i < 3; i++) {
+			const res = await findSuite(counting, dir, undefined, git);
+			expect(res.success).toBe(true);
+		}
+		expect(spawns).toEqual(["git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD"]);
 	});
 });

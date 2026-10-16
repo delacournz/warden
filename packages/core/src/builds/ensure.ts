@@ -1,5 +1,6 @@
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
+import { type GitFactsCache, readGitFacts } from "../git-facts";
 import type { PidAlive } from "../liveness";
 import type { Store } from "../store";
 import type { Owner, Platform } from "../types";
@@ -38,12 +39,14 @@ export type ProjectContextInput = {
 	variant?: string;
 	/** a missing variant falls back to the project's own settings */
 	variantOptional?: boolean;
+	/** per-command memo of the git facts (default: a short-lived shared one) */
+	git?: GitFactsCache;
 };
 
 /** Load the project for `start` (bounded by its git toplevel) and compute its project key. */
 export async function projectContext(input: ProjectContextInput): AsyncResult<ProjectContext> {
-	const top = await input.exec(["git", "rev-parse", "--show-toplevel"], { cwd: input.start });
-	const stopAt = top.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : undefined;
+	const facts = await readGitFacts(input.exec, input.start, input.git);
+	const stopAt = facts?.toplevel;
 	const project = loadProject({
 		start: input.start,
 		env: input.env,
@@ -54,7 +57,7 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 		...(input.variantOptional ? { variantOptional: true } : {}),
 	});
 	if (!project.success) return project;
-	const key = await readProjectKey(input.exec, project.data.root);
+	const key = await readProjectKey(input.exec, project.data.root, input.git);
 	if (!key.success) return key;
 	return ok({ project: project.data, projectKey: key.data });
 }
