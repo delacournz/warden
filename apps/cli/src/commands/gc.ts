@@ -1,10 +1,12 @@
+import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
+import { formatSize, GC_PRUNE_GRACE_MS, isAlias, parseSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
 import type { DeviceRecord } from "@delacour/warden-core/store";
 import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-core/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { mapBounded } from "../bounded";
@@ -109,7 +111,40 @@ function parseIdle(raw: string | undefined): Result<number> {
 	return raw === undefined ? ok(DEFAULT_IDLE_MS) : parseDuration(raw);
 }
 
-type GcOpts = { idle?: string; quiet?: true; json?: true };
+/** The build cache cap: `--max-cache-size`, else `WARDEN_MAX_CACHE_SIZE`, else `DEFAULT_MAX_CACHE_SIZE` (20G). */
+function parseCacheCap(ctx: CommandContext, flag: string | undefined): Result<number> {
+	const env = ctx.env.WARDEN_MAX_CACHE_SIZE;
+	const parsed = parseSize(flag ?? env ?? DEFAULT_MAX_CACHE_SIZE);
+	if (parsed.success) return parsed;
+	return err(`${flag !== undefined ? "--max-cache-size" : "WARDEN_MAX_CACHE_SIZE"}: ${parsed.error}`);
+}
+
+/**
+ * LRU-prune the build cache down to `maxBytes` (17-11). Builds whose build lock is held or that were used
+ * in the last 30 min (a cache hit being installed takes no lock) stay. Returns gc's notes about it.
+ */
+function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[] {
+	try {
+		const plan = pruneBuilds({
+			store: ctx.store(),
+			env: ctx.env,
+			maxBytes,
+			now,
+			pidAlive: processAlive,
+			graceMs: GC_PRUNE_GRACE_MS,
+		});
+		const removed = plan.remove.filter((b) => !isAlias(b));
+		if (removed.length === 0) return [];
+		const freed = removed.reduce((sum, b) => sum + b.size, 0);
+		return [
+			`pruned ${plural(removed.length, "cached build")} (${formatSize(freed)}; cache ${formatSize(plan.total)} → ${formatSize(plan.after)}, max ${formatSize(maxBytes)})`,
+		];
+	} catch (e) {
+		return [`build cache prune failed: ${e instanceof Error ? e.message : String(e)}`];
+	}
+}
+
+type GcOpts = { idle?: string; maxCacheSize?: string; quiet?: true; json?: true };
 
 /** Everything a pass reports. */
 type GcOutcome = PlatformOutcome & { reclaimed: string[] };
@@ -119,7 +154,7 @@ type GcOutcome = PlatformOutcome & { reclaimed: string[] };
  * reclaimed, and their devices shut down when the shutdown policy allows (warden-created, or booted
  * by that owner) — unless the lease went stale under 10 min ago or an app is running on the device,
  * which then stays up with its idle clock restarted. Then shut down warden-created devices (store `devices` table) that are
- * booted, unleased and idle longer than `--idle` (both platforms at once, a few devices at a time). Foreign devices are never touched; nothing is
+ * booted, unleased and idle longer than `--idle` (both platforms at once, a few devices at a time), and LRU-prune the build cache to its cap. Foreign devices are never touched; no device is
  * ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
  * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note.
  */
@@ -128,6 +163,11 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const idle = parseIdle(opts.idle);
 	if (!idle.success) {
 		reportError(ctx, "gc", idle.error);
+		return 1;
+	}
+	const cacheCap = parseCacheCap(ctx, opts.maxCacheSize);
+	if (!cacheCap.success) {
+		reportError(ctx, "gc", cacheCap.error);
 		return 1;
 	}
 	const store = ctx.store();
@@ -190,6 +230,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const { reclaimed, shutdown, forgotten, notes } = opts.quiet
 		? await shutDownIdle(ctx)
 		: await withSpinner(ctx, "shutting down idle devices…", shutDownIdle);
+	notes.push(...pruneCache(ctx, cacheCap.data, now));
 	store.setMeta("last_gc_at", String(now));
 	if (opts.quiet) return 0;
 	const text = [
@@ -215,6 +256,10 @@ export const gcCommand = defineCommand({
 			.option(
 				"--idle <duration>",
 				`shut down unleased warden devices idle this long (default: ${formatDuration(DEFAULT_IDLE_MS)})`
+			)
+			.option(
+				"--max-cache-size <size>",
+				`prune least-recently-used cached builds down to this size, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE or ${DEFAULT_MAX_CACHE_SIZE}; builds used in the last 30 min stay)`
 			)
 			.option("--quiet", "print nothing (background auto-gc)")
 			.option("--json", "machine-readable output")

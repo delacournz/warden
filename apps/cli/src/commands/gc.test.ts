@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
 import type { Exec } from "@delacour/warden-core/exec";
 import type { Owner } from "@delacour/warden-core/types";
 import { fakeSimctl, wardenSim } from "../simctl.testing";
@@ -168,6 +171,79 @@ describe("warden gc", () => {
 		expect(c.stdout).toEqual([]);
 		expect(ui.events).toEqual([]);
 		expect(c.db.getMeta("last_gc_at")).toBe(String(NOW));
+	});
+});
+
+describe("warden gc: build cache prune (17-11)", () => {
+	const MIN = 60_000;
+	/** a cached `.app` of `bytes` bytes, last used at `usedAt` */
+	async function seed(c: TestContext, hash: string, bytes: number, usedAt: number): Promise<string> {
+		const app = join(c.cwd, "src", hash, "App.app");
+		mkdirSync(app, { recursive: true });
+		writeFileSync(join(app, "App"), "x".repeat(bytes));
+		const res = await storeArtifact({
+			store: c.db,
+			env: c.env,
+			projectKey: "k",
+			platform: "ios",
+			profile: "local",
+			hash,
+			artifact: app,
+			source: "build",
+			now: usedAt,
+		});
+		if (!res.success) throw new Error(res.error);
+		return res.data.path;
+	}
+
+	test("prunes the least-recently-used builds down to --max-cache-size and reports them", async () => {
+		const c = setup(["--json", "--max-cache-size", "250"], []);
+		const old = await seed(c, "old", 100, 1);
+		await seed(c, "mid", 100, 2);
+		await seed(c, "new", 100, 3);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(
+			listBuilds(c.db)
+				.map((b) => b.hash)
+				.sort()
+		).toEqual(["mid", "new"]);
+		expect(existsSync(old)).toBe(false);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.notes.join("\n")).toContain("pruned 1 cached build");
+	});
+
+	test("WARDEN_MAX_CACHE_SIZE sets the cap; a build used in the last 30 min is kept even over it", async () => {
+		const c = setup(["--json"], []);
+		c.env.WARDEN_MAX_CACHE_SIZE = "0";
+		await seed(c, "old", 100, NOW - 31 * MIN);
+		await seed(c, "hot", 100, NOW - 29 * MIN);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db).map((b) => b.hash)).toEqual(["hot"]);
+	});
+
+	test("under the default 20 GB cap nothing is pruned and nothing is reported", async () => {
+		const c = setup(["--json"], []);
+		await seed(c, "a", 100, 1);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db)).toHaveLength(1);
+		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).not.toContain("pruned");
+	});
+
+	test("--quiet (auto-gc) prunes too", async () => {
+		const c = setup(["--quiet", "--max-cache-size", "0"], []);
+		await seed(c, "a", 100, 1);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db)).toEqual([]);
+	});
+
+	test("a bad cap → exit 1, nothing pruned", async () => {
+		const c = setup(["--max-cache-size", "lots"], []);
+		await seed(c, "a", 100, 1);
+		expect(await gcCommand.run(c)).toBe(1);
+		expect(listBuilds(c.db)).toHaveLength(1);
+		c.argv = [];
+		c.env.WARDEN_MAX_CACHE_SIZE = "huge";
+		expect(await gcCommand.run(c)).toBe(1);
 	});
 });
 

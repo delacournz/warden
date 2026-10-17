@@ -70,6 +70,18 @@ export const MIGRATIONS: readonly string[] = [
 	ALTER TABLE devices ADD COLUMN quarantine_reason TEXT;
 	ALTER TABLE devices ADD COLUMN slimmed_at INTEGER;`,
 	`ALTER TABLE leases ADD COLUMN heartbeat_ms INTEGER;`,
+	`CREATE TABLE fingerprints (
+		root TEXT NOT NULL,
+		platform TEXT NOT NULL,
+		variant TEXT NOT NULL,
+		command TEXT NOT NULL,
+		signature TEXT NOT NULL,
+		native TEXT NOT NULL,
+		computed_at INTEGER NOT NULL,
+		PRIMARY KEY (root, platform, variant, command)
+	);`,
+	`ALTER TABLE installs ADD COLUMN container TEXT;
+	ALTER TABLE installs ADD COLUMN exe_stamp TEXT;`,
 ];
 
 export function ownerKey(owner: Owner): string {

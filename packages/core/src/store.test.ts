@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getInstall, recordInstall } from "./builds/cache";
 import { MIGRATIONS, openStore, type Store, wardenHome } from "./store";
 import type { Owner } from "./types";
 
@@ -274,6 +275,55 @@ describe("lease heartbeat period migration", () => {
 		expect(migrated.getLease("l_old")).toMatchObject({ id: "l_old", pid: 7 });
 		expect(migrated.getLease("l_old")?.heartbeatMs).toBeUndefined();
 		expect(migrated.reclaimStale(59_000, () => false)).toEqual([]);
+		migrated.close();
+	});
+});
+
+describe("fingerprints memo migration (17-5)", () => {
+	test("a database from before the fingerprints table upgrades and gets an empty one", () => {
+		const old = join(dir, "old-fp.db");
+		const db = new Database(old, { create: true });
+		for (const sql of MIGRATIONS.slice(0, 5)) db.exec(sql);
+		db.exec("PRAGMA user_version = 5");
+		db.close();
+		const migrated = openStore(old);
+		const columns = migrated.db
+			.query<{ name: string }, []>("PRAGMA table_info(fingerprints)")
+			.all()
+			.map((c) => c.name);
+		expect(columns).toEqual(["root", "platform", "variant", "command", "signature", "native", "computed_at"]);
+		migrated.close();
+	});
+});
+
+describe("installs identity migration (17-7)", () => {
+	test("an install recorded before the container columns existed reads back without them", () => {
+		const old = join(dir, "old-installs.db");
+		const db = new Database(old, { create: true });
+		for (const sql of MIGRATIONS.slice(0, 6)) db.exec(sql);
+		db.exec("PRAGMA user_version = 6");
+		db.exec("INSERT INTO installs VALUES ('ios', 'U1', 'com.x', 'H', 1)");
+		db.close();
+		const migrated = openStore(old);
+		expect(getInstall(migrated, "ios", "U1", "com.x")).toEqual({
+			platform: "ios",
+			deviceId: "U1",
+			bundleId: "com.x",
+			hash: "H",
+			installedAt: 1,
+		});
+		recordInstall(migrated, {
+			platform: "ios",
+			deviceId: "U1",
+			bundleId: "com.x",
+			hash: "H2",
+			installedAt: 2,
+			container: "/c/App.app",
+			exeStamp: "1:2",
+		});
+		expect(getInstall(migrated, "ios", "U1", "com.x")).toMatchObject({ container: "/c/App.app", exeStamp: "1:2" });
+		recordInstall(migrated, { platform: "ios", deviceId: "U1", bundleId: "com.x", hash: "H3", installedAt: 3 });
+		expect(getInstall(migrated, "ios", "U1", "com.x")?.container).toBeUndefined();
 		migrated.close();
 	});
 });

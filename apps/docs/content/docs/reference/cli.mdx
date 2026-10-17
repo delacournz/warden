@@ -246,7 +246,7 @@ Refresh heartbeats so leases don't go stale. Same selectors as `release`.
 
 ### `warden gc`
 
-Reclaim stale leases and shut down unleased warden devices idle for `--idle` (default `20m`). Never deletes — use `warden sims prune` to free disk. `--quiet` prints nothing (used by background auto-gc).
+Reclaim stale leases and shut down unleased warden devices idle for `--idle` (default `20m`). Never deletes devices — use `warden sims prune` to free sim disk. Then prunes the build cache, least-recently-used first, down to `--max-cache-size` (else `WARDEN_MAX_CACHE_SIZE`, default `20G`); builds used in the last 30 min and builds being fetched or built stay, and the notes list what was pruned. `--quiet` prints nothing (used by background auto-gc).
 
 ## Ports
 

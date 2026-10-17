@@ -1,11 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Exec } from "../exec";
+import { openStore, type Store } from "../store";
 import { testProject } from "./builds.testing";
 import {
 	computeCacheKey,
 	computeFingerprint,
 	findFingerprintBin,
 	fingerprintArgv,
+	getFingerprintMemo,
 	parseFingerprintOutput,
 	releaseKey,
 } from "./fingerprint";
@@ -163,5 +168,193 @@ describe("computeCacheKey", () => {
 		expect(res.data.native).toBe(HASH);
 		expect(res.data.key).not.toBe(HASH);
 		expect(res.data.key).toBe(releaseKey(HASH));
+	});
+});
+
+describe("computeCacheKey fingerprint memo (17-5)", () => {
+	let dir: string;
+	let root: string;
+	let top: string;
+	let store: Store;
+	let status: string;
+	let head: string;
+	let spawns: number;
+
+	const exec: Exec = async (cmd) => {
+		if (cmd[0] === "git" && cmd[1] === "rev-parse") return { exitCode: 0, stdout: `${top}\n${head}\n`, stderr: "" };
+		if (cmd[0] === "git" && cmd[1] === "status") return { exitCode: 0, stdout: status, stderr: "" };
+		if (cmd[0] === "git") return { exitCode: 0, stdout: "", stderr: "" };
+		spawns++;
+		return { exitCode: 0, stdout: `{"hash":"${HASH}${spawns}"}`, stderr: "" };
+	};
+	const project = () => testProject({ root });
+	const key = (p = project()) => computeCacheKey(exec, p, "ios", undefined, { store, now: 1 });
+	/** set `path`'s mtime to `s` seconds (deterministic, no same-millisecond flakes) */
+	const touch = (path: string, s: number) => utimesSync(path, s, s);
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "warden-fp-memo-"));
+		root = join(dir, "repo");
+		top = root;
+		mkdirSync(join(root, "node_modules"), { recursive: true });
+		writeFileSync(join(root, "app.json"), '{"expo":{}}');
+		writeFileSync(join(root, "bun.lock"), "lock-v1");
+		writeFileSync(join(root, "node_modules", ".bun-tag"), "");
+		for (const f of ["app.json", "bun.lock", "node_modules/.bun-tag", "node_modules"]) touch(join(root, f), 1000);
+		store = openStore(join(dir, "warden.db"));
+		status = "";
+		head = "aaaa";
+		spawns = 0;
+	});
+	afterEach(() => {
+		store.close();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	test("a second call with an unchanged signature spawns no fingerprint", async () => {
+		const a = await key();
+		const b = await key();
+		expect(spawns).toBe(1);
+		expect(b).toEqual(a);
+		expect(a).toEqual({ success: true, data: { key: `${HASH}1`, native: `${HASH}1` } });
+		expect(getFingerprintMemo(store, project(), "ios")?.native).toBe(`${HASH}1`);
+	});
+
+	test("the Release salt and the JS half still apply to a memoised native hash", async () => {
+		await key();
+		const res = await key(testProject({ root, buildConfiguration: "Release" }));
+		expect(spawns).toBe(1);
+		expect(res).toEqual({ success: true, data: { key: releaseKey(`${HASH}1`), native: `${HASH}1` } });
+	});
+
+	test("without a memo (the post-build recompute in runLocalBuild) it always spawns", async () => {
+		await key();
+		await computeCacheKey(exec, project(), "ios");
+		expect(spawns).toBe(2);
+	});
+
+	test("a new HEAD recomputes", async () => {
+		await key();
+		head = "bbbb";
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("an added untracked file recomputes", async () => {
+		await key();
+		writeFileSync(join(root, "new.ts"), "x");
+		status = "?? new.ts\0";
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("editing an already-dirty file again recomputes (same status line, new mtime)", async () => {
+		writeFileSync(join(root, "plugin.js"), "a");
+		touch(join(root, "plugin.js"), 1000);
+		status = " M plugin.js\0";
+		await key();
+		touch(join(root, "plugin.js"), 2000);
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("touching the lockfile recomputes", async () => {
+		await key();
+		touch(join(root, "bun.lock"), 2000);
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("a lockfile in a parent dir up to the git toplevel (hoisted monorepo) is part of the signature", async () => {
+		top = dir;
+		writeFileSync(join(dir, "bun.lock"), "root-lock");
+		touch(join(dir, "bun.lock"), 1000);
+		await key();
+		touch(join(dir, "bun.lock"), 2000);
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("a reinstall (node_modules marker) recomputes", async () => {
+		await key();
+		touch(join(root, "node_modules", ".bun-tag"), 2000);
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("editing app.json recomputes", async () => {
+		await key();
+		writeFileSync(join(root, "app.json"), '{"expo":{"name":"b"}}');
+		touch(join(root, "app.json"), 1000);
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("creating ios/ (git-ignored under CNG) recomputes, and so does a change inside it", async () => {
+		await key();
+		mkdirSync(join(root, "ios", "App"), { recursive: true });
+		writeFileSync(join(root, "ios", "App", "AppDelegate.swift"), "a");
+		await key();
+		expect(spawns).toBe(2);
+		await key();
+		expect(spawns).toBe(2);
+		touch(join(root, "ios", "App", "AppDelegate.swift"), 5000);
+		await key();
+		expect(spawns).toBe(3);
+	});
+
+	test("ios/Pods and android/build churn does not recompute (the fingerprint ignores them too)", async () => {
+		mkdirSync(join(root, "ios", "Pods"), { recursive: true });
+		mkdirSync(join(root, "android", "build"), { recursive: true });
+		await key();
+		writeFileSync(join(root, "ios", "Pods", "x"), "x");
+		writeFileSync(join(root, "android", "build", "y"), "y");
+		touch(join(root, "ios", "Pods"), 9000);
+		touch(join(root, "android", "build"), 9000);
+		await key();
+		expect(spawns).toBe(1);
+	});
+
+	test("a project fingerprint.command is never memoised", async () => {
+		const p = testProject({ root, fingerprintCommand: "fp {platform}" });
+		await key(p);
+		await key(p);
+		expect(spawns).toBe(2);
+	});
+
+	test("an app config that reads process.env is never memoised", async () => {
+		writeFileSync(join(root, "app.config.ts"), "export default { name: process.env.APP_NAME };");
+		await key();
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("outside a git checkout it fingerprints every time", async () => {
+		const noGit: Exec = async (cmd) => {
+			if (cmd[0] === "git") return { exitCode: 128, stdout: "", stderr: "not a git repository" };
+			spawns++;
+			return { exitCode: 0, stdout: `{"hash":"${HASH}"}`, stderr: "" };
+		};
+		await computeCacheKey(noGit, project(), "ios", undefined, { store, now: 1 });
+		await computeCacheKey(noGit, project(), "ios", undefined, { store, now: 1 });
+		expect(spawns).toBe(2);
+	});
+
+	test("another platform or variant is its own memo row", async () => {
+		await key();
+		await computeCacheKey(exec, project(), "android", undefined, { store, now: 1 });
+		await key(testProject({ root, variant: "staging" }));
+		expect(spawns).toBe(3);
+	});
+
+	test("a tree that changed while the fingerprint ran is not memoised", async () => {
+		const racing: Exec = async (cmd) => {
+			if (cmd[0] !== "git") {
+				touch(join(root, "bun.lock"), 7000 + spawns);
+			}
+			return exec(cmd);
+		};
+		await computeCacheKey(racing, project(), "ios", undefined, { store, now: 1 });
+		expect(getFingerprintMemo(store, project(), "ios")).toBeUndefined();
 	});
 });

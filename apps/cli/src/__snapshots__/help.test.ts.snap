@@ -679,11 +679,14 @@ Usage: warden gc [options]
 reclaim stale leases; shut down idle warden devices (never deletes)
 
 Options:
-  --idle <duration>  shut down unleased warden devices idle this long (default:
-                     20m)
-  --quiet            print nothing (background auto-gc)
-  --json             machine-readable output
-  -h, --help         display help for command"
+  --idle <duration>        shut down unleased warden devices idle this long
+                           (default: 20m)
+  --max-cache-size <size>  prune least-recently-used cached builds down to this
+                           size, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE or
+                           20G; builds used in the last 30 min stay)
+  --quiet                  print nothing (background auto-gc)
+  --json                   machine-readable output
+  -h, --help               display help for command"
 `;
 
 exports[`help output warden port --help (and nested subcommands) 1`] = `
