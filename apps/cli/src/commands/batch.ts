@@ -54,7 +54,7 @@ import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { helperDir } from "../e2e/bun-runner";
-import { warmConnect } from "../e2e/warm-connect";
+import { residentSocket, warmConnect } from "../e2e/warm-connect";
 import {
 	type AppFlagValues,
 	claimAll,
@@ -144,6 +144,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	prewarm: (url: string, platform: Platform) => AsyncResult<{ bundled: boolean }>;
 	/** how `hooks.warmDrivers` reaches one device's socket helper (default: `e2e/warm-connect`) */
 	warmConnect: (ctx: CommandContext) => WarmConnect;
+	/** a device's running resident helper socket, for `hooks.residentSocket` when there is no warm-up (default: `e2e/warm-connect`) */
+	residentSocket?: (ctx: CommandContext) => (udid: string) => Promise<string | undefined>;
 	/** `Bun.which`: where a command is on PATH */
 	which: (cmd: string) => string | null | undefined;
 	/** `Bun.resolveSync`: the file a package specifier resolves to from `from` (throws when it does not) */
@@ -825,6 +827,11 @@ export type SessionHooks = {
 	 * only warns.
 	 */
 	warmDrivers?: WarmConnect | undefined;
+	/**
+	 * iOS without a warm-up: the socket of a helper already running for a device (undefined: none). That
+	 * device's jobs get it as `WARDEN_SIMD_SOCKET`, so they do not each spawn a second helper beside it.
+	 */
+	residentSocket?: ((udid: string) => Promise<string | undefined>) | undefined;
 };
 
 /** What `hooks.jobEnv` knows about the spawn it is building. */
@@ -1160,6 +1167,20 @@ async function settleWarm(
 	}
 }
 
+/** No warm-up: the devices that run jobs and already have a running helper get its socket (never throws). */
+async function residentSockets(
+	live: readonly Device[],
+	resident: (udid: string) => Promise<string | undefined>,
+	sockets: Map<string, string>
+): Promise<void> {
+	await Promise.all(
+		live.map(async (d) => {
+			const socket = await resident(d.udid).catch(() => undefined);
+			if (socket !== undefined) sockets.set(d.udid, socket);
+		})
+	);
+}
+
 /** Metro (started during the claim) → serve → recordings; resolves the job env + placeholder values once they are up. */
 async function startServices(
 	ctx: CommandContext,
@@ -1416,6 +1437,7 @@ async function supervise(
 			hideLateWindows(ctx, deps, args, r, session, live),
 		]);
 		if (run.warm) await settleWarm(ctx, r, live, run.warm, services, sockets);
+		else if (hooks.residentSocket && r.platform === "ios") await residentSockets(live, hooks.residentSocket, sockets);
 		const queues = poolQueues(ctx, deps, args, r, prepared, {
 			jobs,
 			cmd,
@@ -1848,6 +1870,7 @@ export const defaultBatchDeps: BatchDeps = {
 	metroProbe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	prewarm: prewarmMetro,
 	warmConnect,
+	residentSocket,
 	which: (cmd) => Bun.which(cmd),
 	resolveModule: (specifier, from) => Bun.resolveSync(specifier, from),
 	helperDir: () => helperDir(Bun.main, process.execPath),

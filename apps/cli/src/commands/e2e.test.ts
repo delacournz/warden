@@ -1112,7 +1112,10 @@ describe("warden e2e", () => {
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			expect(c.stderr.join("\n")).toContain("snapshot failed: AX denied");
 			expect(jobEnv(h)).toEqual([undefined]);
-			expect(h.warmClosed).toEqual(["U1"]);
+			// stopped, not only disconnected: no resident helper beside the jobs' own (20-1)
+			expect(h.warmStopped).toEqual(["U1"]);
+			expect(h.events.indexOf("warm-stop:U1")).toBeLessThan(h.events.findIndex((e) => e.startsWith("job:")));
+			expect(h.warmClosed).toEqual([]);
 		});
 
 		test("suite warmDrivers: false skips it", async () => {
@@ -1129,6 +1132,50 @@ describe("warden e2e", () => {
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			expect(h.warmed).toEqual([]);
+		});
+
+		test("--no-warm with a helper still running for the device: its jobs get that socket (20-1)", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx", "--no-warm"]);
+			const h = harness();
+			const asked: string[] = [];
+			h.deps.residentSocket = () => async (udid) => {
+				asked.push(udid);
+				return `/home/simd/${udid}.sock`;
+			};
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.warmed).toEqual([]);
+			expect(asked).toEqual(["U1"]);
+			expect(jobEnv(h)).toEqual(["/home/simd/U1.sock"]);
+		});
+
+		test("--no-warm with no helper running: no socket", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx", "--no-warm"]);
+			const h = harness();
+			h.deps.residentSocket = () => async () => undefined;
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(jobEnv(h)).toEqual([undefined]);
+		});
+
+		test("suite warmDrivers: false also uses a running helper's socket", async () => {
+			await resuite({ warmDrivers: false });
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			h.deps.residentSocket = () => async (udid) => `/home/simd/${udid}.sock`;
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(jobEnv(h)).toEqual(["/home/simd/U1.sock"]);
+		});
+
+		test("with the warm-up on, a running helper is not looked up separately", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ warm: "snapshot-fail" });
+			const asked: string[] = [];
+			h.deps.residentSocket = () => async (udid) => {
+				asked.push(udid);
+				return `/home/simd/${udid}.sock`;
+			};
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(asked).toEqual([]);
+			expect(jobEnv(h)).toEqual([undefined]);
 		});
 
 		test("device isolation warms once per device, before its shard starts", async () => {
