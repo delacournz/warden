@@ -19,6 +19,10 @@ const BUSY = driverError("E_AX_UNAVAILABLE", "another UiAutomation client holds 
 	detail: { reason: "uiautomation_busy" },
 });
 
+const CONNECT_FAILED = driverError("E_AX_UNAVAILABLE", "cannot connect UiAutomation", {
+	detail: { reason: "connect_failed" },
+});
+
 function fakeClock() {
 	let t = 1_000;
 	return {
@@ -181,13 +185,38 @@ describe("start failures", () => {
 		expect(scripts.starts()).toBe(1);
 	});
 
-	test("so is a UiAutomation that cannot be connected from this shell", async () => {
-		const scripts = scripted(
-			driverError("E_AX_UNAVAILABLE", "cannot connect UiAutomation", { detail: { reason: "connect_failed" } })
-		);
+	test("one UiAutomation connect failure is one failed start: not written down, and the next call tries again", async () => {
+		const scripts = scripted(CONNECT_FAILED, "ok");
 		const { backend, unsupported } = backendWith(scripts.launch);
 		expect(await backend.server()).toBeUndefined();
+		expect(unsupported).toEqual([]);
+		expect(backend.wanted()).toBe(true);
+		expect(await backend.server()).toBeDefined();
+		expect(scripts.starts()).toBe(2);
+		expect(unsupported).toEqual([]);
+	});
+
+	test("a UiAutomation that cannot be connected on two starts in a row is remembered for this build", async () => {
+		const scripts = scripted(CONNECT_FAILED);
+		const { backend, unsupported } = backendWith(scripts.launch);
+		expect(await backend.server()).toBeUndefined();
+		expect(unsupported).toEqual([]);
+		expect(await backend.server()).toBeUndefined();
 		expect(unsupported).toEqual([uiadBuildId()]);
+		expect(backend.wanted()).toBe(false);
+		expect(await backend.server()).toBeUndefined();
+		expect(scripts.starts()).toBe(2);
+	});
+
+	test("connect failures with another failure between them are not two in a row: nothing is written down", async () => {
+		const scripts = scripted(CONNECT_FAILED, "ok", CONNECT_FAILED, "ok");
+		const { backend, unsupported } = backendWith(scripts.launch);
+		expect(await backend.server()).toBeUndefined();
+		expect(await backend.server()).toBeDefined();
+		await backend.failed(driverError("E_HELPER_CRASHED", "gone"));
+		expect(await backend.server()).toBeUndefined();
+		expect(await backend.server()).toBeDefined();
+		expect(unsupported).toEqual([]);
 	});
 
 	test("a build recorded as unsupported is not started at all; another build is", async () => {

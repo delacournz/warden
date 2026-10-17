@@ -120,6 +120,50 @@ describe("app.open wait", () => {
 	});
 });
 
+describe("app.open on Android", () => {
+	const androidEnv: Partial<E2eEnv> = { platform: "android", launchArgs: ["--initialUrl", "x"] };
+	/** the Android driver refuses any launch args or env, as `android-app.ts` does */
+	const androidDriver = () =>
+		fakeDriver({
+			platform: "android",
+			screens: [snapshotOf([])],
+			onCall: (call) =>
+				call.method === "app.launch" && (call.opts?.args?.length ?? 0) > 0 ? failWith("E_UNSUPPORTED") : undefined,
+		});
+
+	test("drops WARDEN_LAUNCH_ARGS (Metro's --initialUrl) and launches with no args, logging it once", async () => {
+		const driver = androidDriver();
+		const lines: string[] = [];
+		const app = createApp({
+			session: { out: "/tmp/out" },
+			driver,
+			env: { ...baseEnv, ...androidEnv },
+			log: (line) => lines.push(line),
+		});
+		await app.open();
+		await app.restart();
+		expect(driver.callsOf("app.launch").map((call) => call.opts)).toEqual([
+			{ args: [], relaunch: true },
+			{ args: [], relaunch: true },
+		]);
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).toContain("--initialUrl");
+	});
+
+	test("explicit args still fail loudly", async () => {
+		const driver = androidDriver();
+		const app = createApp({
+			session: { out: "/tmp/out" },
+			driver,
+			env: { ...baseEnv, ...androidEnv },
+			log: () => {},
+		});
+		const error = await app.open({ args: ["--flag"] }).catch((e: unknown) => e);
+		expect(error).toBeInstanceOf(E2eError);
+		expect(driver.callsOf("app.launch")[0]?.opts?.args).toEqual(["--flag"]);
+	});
+});
+
 describe("app.open on a running app", () => {
 	test.each(["ios", "android"] as const)("%s: asks the driver to terminate the running instance", async (platform) => {
 		const { driver, app } = setup({ platform, launchArgs: [] });
