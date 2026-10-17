@@ -15,6 +15,7 @@ A brand-new simulator's first boot takes 1–10 min, and about 80% of that is th
 So when `warden claim ios` needs a **new** pool device, it clones it (`simctl clone`) from a **golden image**: a sim warden booted once, waited on until its data migration finished (`DMLastMigrationResults`, since `bootstatus -b` can return early) and its CPU settled, then shut down.
 
 - The golden is built on first use and keyed by Xcode build + runtime + runtime build + device type + recipe. An Xcode or runtime upgrade simply builds a new one.
+- The golden also has the e2e driver's accessibility switch (`AutomationEnabled`) written in it, so a fresh clone's first driver open skips that in-sim `defaults write`. This is recipe 2: after upgrading to it, every machine rebuilds its golden once (a few minutes) on its next claim. The recipe-1 golden of that profile is deleted at the same time; run `warden golden ensure` to pay the rebuild ahead of time.
 - Clones are APFS copy-on-write (~30 MB each).
 - If cloning fails, warden falls back to `simctl create`. `WARDEN_GOLDEN=0` turns cloning off.
 - A pool device that already exists is always reused first; a second boot takes ~6.5 s.

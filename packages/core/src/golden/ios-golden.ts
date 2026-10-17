@@ -3,12 +3,13 @@
  * goldens runs under one machine-wide warden lease (`golden:ios`), so a build, clone or prune in one
  * process never races another — a clone never sees a half-built or deleted golden.
  */
-import { join } from "node:path";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { dirname, join } from "node:path";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { withBuildLock } from "../builds/lock";
 import { type Exec, execError } from "../exec";
 import type { PidAlive } from "../liveness";
-import { lookupCreateTarget } from "../providers/ios";
+import { execWithin, realTimer, type Timer } from "../providers/health";
+import { IOS_TIMEOUTS, lookupCreateTarget, timedOutError } from "../providers/ios";
 import { parseAllSims, type SimctlSim } from "../sims/list";
 import type { Store } from "../store";
 import type { Owner } from "../types";
@@ -49,6 +50,13 @@ export const DEFAULT_GOLDEN_TIMING: GoldenTiming = {
 	lockWaitMs: 40 * 60_000,
 };
 
+/** Waiters on the golden lock retry this often: clones hold it for seconds, not the builds' minutes (16-6). */
+export const GOLDEN_LOCK_POLL_MS = 200;
+/** `xcode-select` / `plutil` / `xcodebuild -version` reads of the Xcode build (16-11). */
+const XCODE_READ_TIMEOUT_MS = 30_000;
+/** The in-sim `defaults write` of the golden recipe. */
+const DEFAULTS_WRITE_TIMEOUT_MS = 30_000;
+
 export type GoldenDeps = {
 	exec: Exec;
 	store: Store;
@@ -63,19 +71,26 @@ export type GoldenDeps = {
 	/** a claim is waiting on this build: say how to prewarm it (off for `warden golden ensure`, which is the prewarm) */
 	prewarmHint?: boolean;
 	timing?: Partial<GoldenTiming>;
+	/** bounds every simctl / Xcode call (default: real timers) */
+	timer?: (ms: number) => Timer;
 };
 
 export type GoldenTarget = GoldenInputs & { profile: string };
 export type EnsuredGolden = { udid: string; name: string; built: boolean };
 export type ClonedDevice = { udid: string; name: string; golden: string; runtimeId: string };
 
-async function run(exec: Exec, cmd: string[], timeoutMs?: number): AsyncResult<string> {
-	const result = await exec(cmd, timeoutMs !== undefined ? { timeoutMs } : undefined);
+/** Run `cmd`; with `timeoutMs`, a call still running then is an error (and the process is killed). */
+async function run(deps: GoldenDeps, cmd: string[], timeoutMs?: number): AsyncResult<string> {
+	const result =
+		timeoutMs === undefined
+			? await deps.exec(cmd)
+			: await execWithin({ exec: deps.exec, timer: deps.timer ?? realTimer }, cmd, timeoutMs);
+	if (result === undefined) return err(timedOutError(cmd, timeoutMs ?? 0));
 	return result.exitCode === 0 ? ok(result.stdout) : err(execError(cmd, result));
 }
 
 const simctl = (deps: GoldenDeps, args: string[], timeoutMs?: number) =>
-	run(deps.exec, ["xcrun", "simctl", ...args], timeoutMs);
+	run(deps, ["xcrun", "simctl", ...args], timeoutMs);
 
 function timing(deps: GoldenDeps): GoldenTiming {
 	return { ...DEFAULT_GOLDEN_TIMING, ...deps.timing };
@@ -83,13 +98,55 @@ function timing(deps: GoldenDeps): GoldenTiming {
 
 const log = (deps: GoldenDeps, line: string) => deps.log?.(`golden: ${line}`);
 
-/** Xcode build + the device type / runtime `simctl create` would use for this profile. */
-export async function readGoldenTarget(deps: GoldenDeps, profile: string, runtime?: string): AsyncResult<GoldenTarget> {
-	const target = await lookupCreateTarget(deps.exec, profile, runtime);
+/**
+ * The selected Xcode's build: `ProductBuildVersion` of `$(xcode-select -p)/../version.plist` (two
+ * ~10 ms spawns), else `xcodebuild -version` (0.4–1 s). Both name the same build (`17F113`).
+ */
+async function readXcodeBuild(deps: GoldenDeps): AsyncResult<string> {
+	const developer = await run(deps, ["xcode-select", "-p"], XCODE_READ_TIMEOUT_MS);
+	if (developer.success && developer.data.trim()) {
+		const plist = join(dirname(developer.data.trim()), "version.plist");
+		const build = await run(
+			deps,
+			["plutil", "-extract", "ProductBuildVersion", "raw", "-o", "-", plist],
+			XCODE_READ_TIMEOUT_MS
+		);
+		if (build.success && /^\S+$/.test(build.data.trim())) return ok(build.data.trim());
+	}
+	const xcode = await run(deps, ["xcodebuild", "-version"], XCODE_READ_TIMEOUT_MS);
+	return xcode.success ? parseXcodeBuild(xcode.data) : xcode;
+}
+
+/** Per exec (so per process in the CLI, per fake host in tests): profile + runtime → the target read in flight or done. */
+const targetMemo = new WeakMap<Exec, Map<string, Promise<Result<GoldenTarget>>>>();
+
+/**
+ * Xcode build + the device type / runtime `simctl create` would use for this profile. Memoised per
+ * process (16-6): every clone of one claim would read the same thing. A failed read is not kept.
+ */
+export function readGoldenTarget(deps: GoldenDeps, profile: string, runtime?: string): AsyncResult<GoldenTarget> {
+	let memo = targetMemo.get(deps.exec);
+	if (!memo) {
+		memo = new Map();
+		targetMemo.set(deps.exec, memo);
+	}
+	const key = `${profile}\0${runtime ?? ""}`;
+	const known = memo.get(key);
+	if (known) return known;
+	const read = readTarget(deps, profile, runtime);
+	memo.set(key, read);
+	void read.then((result) => {
+		if (!result.success) memo.delete(key);
+	});
+	return read;
+}
+
+async function readTarget(deps: GoldenDeps, profile: string, runtime?: string): AsyncResult<GoldenTarget> {
+	const [target, xcodeBuild] = await Promise.all([
+		lookupCreateTarget(deps.exec, profile, runtime, deps.timer),
+		readXcodeBuild(deps),
+	]);
 	if (!target.success) return target;
-	const xcode = await run(deps.exec, ["xcodebuild", "-version"]);
-	if (!xcode.success) return xcode;
-	const xcodeBuild = parseXcodeBuild(xcode.data);
 	if (!xcodeBuild.success) return xcodeBuild;
 	return ok({
 		profile,
@@ -101,7 +158,7 @@ export async function readGoldenTarget(deps: GoldenDeps, profile: string, runtim
 }
 
 async function allSims(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
-	const out = await simctl(deps, ["list", "devices", "-j"]);
+	const out = await simctl(deps, ["list", "devices", "-j"], IOS_TIMEOUTS.listMs);
 	return out.success ? parseAllSims(out.data) : out;
 }
 
@@ -112,7 +169,7 @@ async function readMigration(deps: GoldenDeps, udid: string): Promise<string> {
 		udid,
 		"data/Library/Preferences/com.apple.migration.plist"
 	);
-	const out = await run(deps.exec, ["plutil", "-convert", "json", "-o", "-", plist]);
+	const out = await run(deps, ["plutil", "-convert", "json", "-o", "-", plist]);
 	return out.success ? out.data : "";
 }
 
@@ -130,7 +187,7 @@ async function waitMigrated(deps: GoldenDeps, udid: string, runtimeBuild: string
 
 /** Summed %CPU of every process under this simulator's `launchd_sim`; undefined when not running. */
 async function simCpu(deps: GoldenDeps, udid: string): Promise<number | undefined> {
-	const list = await run(deps.exec, ["launchctl", "list"]);
+	const list = await run(deps, ["launchctl", "list"]);
 	if (!list.success) return undefined;
 	const row = list.data
 		.split("\n")
@@ -138,7 +195,7 @@ async function simCpu(deps: GoldenDeps, udid: string): Promise<number | undefine
 		.find((cols) => cols[2] === `com.apple.CoreSimulator.SimDevice.${udid}`);
 	const pid = Number(row?.[0]);
 	if (!Number.isInteger(pid) || pid <= 0) return undefined;
-	const ps = await run(deps.exec, ["ps", "-axo", "ppid=,pcpu="]);
+	const ps = await run(deps, ["ps", "-axo", "ppid=,pcpu="]);
 	if (!ps.success) return undefined;
 	let cpu = 0;
 	for (const line of ps.data.split("\n")) {
@@ -167,19 +224,29 @@ async function waitSettled(deps: GoldenDeps, udid: string): AsyncResult<void> {
 	return ok(undefined);
 }
 
+/** Shutdown, delete and rename: quick CoreSimulator calls, bounded like a shutdown. */
+const MUTATE_TIMEOUT_MS = IOS_TIMEOUTS.shutdownMs;
+
 async function discard(deps: GoldenDeps, udid: string): Promise<void> {
-	await simctl(deps, ["shutdown", udid]);
-	await simctl(deps, ["delete", udid]);
+	await simctl(deps, ["shutdown", udid], MUTATE_TIMEOUT_MS);
+	await simctl(deps, ["delete", udid], MUTATE_TIMEOUT_MS);
 }
+
+/**
+ * Recipe 2 (16-7): the driver's `AutomationEnabled` preference lives under `data/`, which `simctl clone`
+ * copies, so writing it once here saves every fresh clone the in-sim `defaults write` on its first open.
+ */
+const AUTOMATION_ENABLED = ["defaults", "write", "com.apple.Accessibility", "AutomationEnabled", "-bool", "true"];
 
 async function buildSteps(deps: GoldenDeps, target: GoldenTarget, udid: string): AsyncResult<void> {
 	const t = timing(deps);
 	const steps: Array<() => AsyncResult<unknown>> = [
-		() => simctl(deps, ["boot", udid]),
+		() => simctl(deps, ["boot", udid], IOS_TIMEOUTS.bootMs),
 		() => simctl(deps, ["bootstatus", udid, "-b"], t.bootTimeoutMs),
 		() => waitMigrated(deps, udid, target.runtimeBuild),
+		() => simctl(deps, ["spawn", udid, ...AUTOMATION_ENABLED], DEFAULTS_WRITE_TIMEOUT_MS),
 		() => waitSettled(deps, udid),
-		() => simctl(deps, ["shutdown", udid]),
+		() => simctl(deps, ["shutdown", udid], IOS_TIMEOUTS.shutdownMs),
 	];
 	for (const step of steps) {
 		const result = await step();
@@ -205,7 +272,11 @@ async function buildGolden(deps: GoldenDeps, target: GoldenTarget, key: string):
 		deps,
 		`building ${name} (${target.deviceType.split(".").pop()}, ${target.runtimeId.split(".").pop()}) — one-time first boot, a few minutes`
 	);
-	const created = await simctl(deps, ["create", wipName(target.profile, key), target.deviceType, target.runtimeId]);
+	const created = await simctl(
+		deps,
+		["create", wipName(target.profile, key), target.deviceType, target.runtimeId],
+		IOS_TIMEOUTS.createMs
+	);
 	if (!created.success) return created;
 	const udid = created.data.trim();
 	const built = await buildSteps(deps, target, udid);
@@ -213,7 +284,7 @@ async function buildGolden(deps: GoldenDeps, target: GoldenTarget, key: string):
 		await discard(deps, udid);
 		return built;
 	}
-	const renamed = await simctl(deps, ["rename", udid, name]);
+	const renamed = await simctl(deps, ["rename", udid, name], MUTATE_TIMEOUT_MS);
 	if (!renamed.success) {
 		await discard(deps, udid);
 		return renamed;
@@ -225,8 +296,8 @@ async function buildGolden(deps: GoldenDeps, target: GoldenTarget, key: string):
 async function deleteSims(deps: GoldenDeps, sims: SimctlSim[]): AsyncResult<SimctlSim[]> {
 	for (const sim of sims) {
 		log(deps, `deleting ${sim.name} (${sim.udid})`);
-		await simctl(deps, ["shutdown", sim.udid]);
-		const deleted = await simctl(deps, ["delete", sim.udid]);
+		await simctl(deps, ["shutdown", sim.udid], MUTATE_TIMEOUT_MS);
+		const deleted = await simctl(deps, ["delete", sim.udid], MUTATE_TIMEOUT_MS);
 		if (!deleted.success) return deleted;
 	}
 	return ok(sims);
@@ -241,7 +312,7 @@ async function ensureLocked(deps: GoldenDeps, target: GoldenTarget): AsyncResult
 	const pruned = await deleteSims(deps, plan.stale);
 	if (!pruned.success) return pruned;
 	if (plan.kind === "create") return buildGolden(deps, target, key);
-	if (plan.sim.state !== "Shutdown") await simctl(deps, ["shutdown", plan.sim.udid]);
+	if (plan.sim.state !== "Shutdown") await simctl(deps, ["shutdown", plan.sim.udid], MUTATE_TIMEOUT_MS);
 	if (!migrationDone(await readMigration(deps, plan.sim.udid), target.runtimeBuild)) {
 		log(deps, `${plan.sim.name} never finished its data migration — rebuilding`);
 		await discard(deps, plan.sim.udid);
@@ -251,7 +322,12 @@ async function ensureLocked(deps: GoldenDeps, target: GoldenTarget): AsyncResult
 }
 
 function lockDeps(deps: GoldenDeps) {
-	return { ...deps, waitMs: timing(deps).lockWaitMs, log: (line: string) => log(deps, line) };
+	return {
+		...deps,
+		waitMs: timing(deps).lockWaitMs,
+		pollMs: GOLDEN_LOCK_POLL_MS,
+		log: (line: string) => log(deps, line),
+	};
 }
 
 /** The golden for this Xcode + runtime + device type, built on first use (minutes, once). */
@@ -273,7 +349,7 @@ export async function cloneFromGolden(
 	return withBuildLock(lockDeps(deps), GOLDEN_LOCK_KEY, async () => {
 		const golden = await ensureLocked(deps, target.data);
 		if (!golden.success) return golden;
-		const cloned = await simctl(deps, ["clone", golden.data.udid, name]);
+		const cloned = await simctl(deps, ["clone", golden.data.udid, name], IOS_TIMEOUTS.cloneMs);
 		if (!cloned.success) return cloned;
 		const udid = cloned.data.trim();
 		if (!udid) return err(`simctl clone ${golden.data.name} ${name}: no udid returned`);

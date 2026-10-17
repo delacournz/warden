@@ -1,10 +1,10 @@
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { profileSlug } from "../allocate";
-import { type Exec, execError } from "../exec";
+import { type Exec, type ExecResult, execError } from "../exec";
 import { isGoldenName } from "../golden/golden";
 import type { DeviceState, InventoryDevice } from "../types";
-import { probeIosHealth, probeIosWarm, realTimer } from "./health";
-import type { DeviceProvider, ProviderDeps } from "./provider.types";
+import { execWithin, probeIosHealth, probeIosWarm, realTimer, type TimedExec, type Timer } from "./health";
+import type { BootReady, DeviceProvider, ProviderDeps } from "./provider.types";
 
 const RUNTIME_PREFIX = "com.apple.CoreSimulator.SimRuntime.";
 const DEVICE_TYPE_PREFIX = "com.apple.CoreSimulator.SimDeviceType.";
@@ -224,16 +224,50 @@ export function resolveCreateTarget(
 	return ok({ type, runtime: supported });
 }
 
-async function simctl(exec: Exec, args: string[], timeoutMs?: number): AsyncResult<string> {
+/**
+ * Default timeouts for simctl calls that CoreSimulator can wedge (16-11): far above normal times, so
+ * they only end a hang — a claim, or a clone holding the golden lock, never waits forever.
+ */
+export const IOS_TIMEOUTS = {
+	listMs: 30_000,
+	createMs: 120_000,
+	cloneMs: 120_000,
+	bootMs: 120_000,
+	shutdownMs: 60_000,
+} as const;
+
+/** `exec` bounded by `timer` (real timers by default). */
+export function timedExec(exec: Exec, timer?: (ms: number) => Timer): TimedExec {
+	return { exec, timer: timer ?? realTimer };
+}
+
+export function timedOutError(cmd: readonly string[], timeoutMs: number): string {
+	return `\`${cmd.join(" ")}\` did not finish within ${Math.round(timeoutMs / 1000)}s`;
+}
+
+/** Run `cmd`; with `timeoutMs`, a call still running then is an error (and the process is killed). */
+async function runCmd(runner: TimedExec, cmd: string[], timeoutMs?: number): Promise<ExecResult | string> {
+	if (timeoutMs === undefined) return runner.exec(cmd);
+	return (await execWithin(runner, cmd, timeoutMs)) ?? timedOutError(cmd, timeoutMs);
+}
+
+async function simctl(runner: TimedExec, args: string[], timeoutMs?: number): AsyncResult<string> {
 	const cmd = ["xcrun", "simctl", ...args];
-	const result = await exec(cmd, timeoutMs !== undefined ? { timeoutMs } : undefined);
+	const result = await runCmd(runner, cmd, timeoutMs);
+	if (typeof result === "string") return err(result);
 	return result.exitCode === 0 ? ok(result.stdout) : err(execError(cmd, result));
 }
 
 /** simctl reports "Unable to <verb> device in current state: <State>" when already there. */
-async function idempotent(exec: Exec, args: string[], alreadyState: string): AsyncResult<void> {
+async function idempotent(
+	runner: TimedExec,
+	args: string[],
+	alreadyState: string,
+	timeoutMs?: number
+): AsyncResult<void> {
 	const cmd = ["xcrun", "simctl", ...args];
-	const result = await exec(cmd);
+	const result = await runCmd(runner, cmd, timeoutMs);
+	if (typeof result === "string") return err(result);
 	if (result.exitCode === 0) return ok(undefined);
 	if (`${result.stderr}\n${result.stdout}`.includes(`current state: ${alreadyState}`)) return ok(undefined);
 	return err(execError(cmd, result));
@@ -244,25 +278,33 @@ async function idempotent(exec: Exec, args: string[], alreadyState: string): Asy
  * touch it. `shutdown: false` for an unavailable sim — its runtime is gone, so it can't be running.
  */
 export async function deleteSim(exec: Exec, udid: string, opts: { shutdown?: boolean } = {}): AsyncResult<void> {
+	const runner = timedExec(exec);
 	if (opts.shutdown !== false) {
-		const down = await idempotent(exec, ["shutdown", udid], "Shutdown");
+		const down = await idempotent(runner, ["shutdown", udid], "Shutdown");
 		if (!down.success) return down;
 	}
-	const deleted = await simctl(exec, ["delete", udid]);
+	const deleted = await simctl(runner, ["delete", udid]);
 	return deleted.success ? ok(undefined) : deleted;
 }
 
-/** `simctl list devicetypes/runtimes` → the device type + runtime `simctl create` should use for this profile. */
+/**
+ * `simctl list devicetypes/runtimes` (asked at the same time, each bounded by `IOS_TIMEOUTS.listMs`)
+ * → the device type + runtime `simctl create` should use for this profile.
+ */
 export async function lookupCreateTarget(
 	exec: Exec,
 	profile: string,
-	runtime: string | undefined
+	runtime: string | undefined,
+	timer?: (ms: number) => Timer
 ): AsyncResult<{ type: SimDeviceType; runtime: SimRuntime }> {
-	const typesOut = await simctl(exec, ["list", "devicetypes", "-j"]);
+	const runner = timedExec(exec, timer);
+	const [typesOut, runtimesOut] = await Promise.all([
+		simctl(runner, ["list", "devicetypes", "-j"], IOS_TIMEOUTS.listMs),
+		simctl(runner, ["list", "runtimes", "-j"], IOS_TIMEOUTS.listMs),
+	]);
 	if (!typesOut.success) return typesOut;
 	const types = parseSimctlDeviceTypes(typesOut.data);
 	if (!types.success) return types;
-	const runtimesOut = await simctl(exec, ["list", "runtimes", "-j"]);
 	if (!runtimesOut.success) return runtimesOut;
 	const runtimes = parseSimctlRuntimes(runtimesOut.data);
 	if (!runtimes.success) return runtimes;
@@ -288,9 +330,13 @@ const SHUTTING_DOWN_POLL_MS = 500;
 const SHUTTING_DOWN_WAIT_MS = 30_000;
 
 /** `simctl boot`, waiting out a shutdown in progress (simctl refuses to boot a `Shutting Down` sim). */
-async function bootAfterShutdown(exec: Exec, id: string, sleep: (ms: number) => Promise<void>): AsyncResult<void> {
+async function bootAfterShutdown(
+	runner: TimedExec,
+	id: string,
+	sleep: (ms: number) => Promise<void>
+): AsyncResult<void> {
 	for (let waited = 0; ; waited += SHUTTING_DOWN_POLL_MS) {
-		const booted = await idempotent(exec, ["boot", id], "Booted");
+		const booted = await idempotent(runner, ["boot", id], "Booted", IOS_TIMEOUTS.bootMs);
 		if (booted.success || !booted.error.includes("current state: Shutting Down")) return booted;
 		if (waited >= SHUTTING_DOWN_WAIT_MS) return booted;
 		await sleep(SHUTTING_DOWN_POLL_MS);
@@ -300,6 +346,12 @@ async function bootAfterShutdown(exec: Exec, id: string, sleep: (ms: number) => 
 /** iOS simulators on `xcrun simctl` (default CoreSimulator set). Boots headless — never opens Simulator.app. */
 export function createIosProvider(deps: ProviderDeps, options: IosProviderOptions = {}): DeviceProvider {
 	const { exec } = deps;
+	const runner = timedExec(exec, deps.timer);
+	const sleep = options.sleep ?? Bun.sleep;
+	const waitReady = async (id: string, timeoutMs: number): AsyncResult<void> => {
+		const out = await simctl(runner, ["bootstatus", id, "-b"], timeoutMs);
+		return out.success ? ok(undefined) : err(`${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${out.error}`);
+	};
 	const record = (id: string, name: string, profile: string, runtime: string): InventoryDevice => {
 		deps.store.recordDevice({ platform: "ios", id, name, profile, runtime }, deps.now());
 		return { platform: "ios", id, name, state: "shutdown", wardenCreated: true, profile, runtime };
@@ -308,7 +360,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		platform: "ios",
 
 		async inventory() {
-			const out = await simctl(exec, ["list", "devices", "available", "-j"]);
+			const out = await simctl(runner, ["list", "devices", "available", "-j"], IOS_TIMEOUTS.listMs);
 			return out.success ? parseSimctlDevices(out.data) : out;
 		},
 
@@ -318,26 +370,48 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 				if (cloned.success) return ok(record(cloned.data.udid, name, profile, cloned.data.runtime));
 				deps.log?.(`clone failed (${cloned.error}) — creating ${name} fresh (slow first boot)`);
 			}
-			const target = await lookupCreateTarget(exec, profile, runtime);
+			const target = await lookupCreateTarget(exec, profile, runtime, deps.timer);
 			if (!target.success) return target;
-			const created = await simctl(exec, ["create", name, target.data.type.identifier, target.data.runtime.identifier]);
+			const created = await simctl(
+				runner,
+				["create", name, target.data.type.identifier, target.data.runtime.identifier],
+				IOS_TIMEOUTS.createMs
+			);
 			if (!created.success) return created;
 			const id = created.data.trim();
 			if (!id) return err(`simctl create ${name}: no udid returned`);
 			return ok(record(id, name, profile, shortRuntime(target.data.runtime.identifier)));
 		},
 
-		boot: (id) => bootAfterShutdown(exec, id, options.sleep ?? Bun.sleep),
+		boot: (id) => bootAfterShutdown(runner, id, sleep),
 
-		async waitReady(id, timeoutMs) {
-			const out = await simctl(exec, ["bootstatus", id, "-b"], timeoutMs);
-			return out.success ? ok(undefined) : err(`${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${out.error}`);
+		waitReady,
+
+		/**
+		 * `bootstatus -b` boots a shut-down sim itself, so a separate `simctl boot` is one CoreSimulator
+		 * round trip too many (16-15). When bootstatus answers with an error (not a timeout) — e.g. a sim
+		 * still `Shutting Down` — fall back to `boot` (which waits that out) and wait again.
+		 */
+		async bootReady(id, timeoutMs): Promise<BootReady> {
+			const cmd = ["xcrun", "simctl", "bootstatus", id, "-b"];
+			const status = await runCmd(runner, cmd, timeoutMs);
+			if (typeof status !== "string" && status.exitCode === 0) return { kind: "ready" };
+			if (typeof status === "string") {
+				return { kind: "not-ready", error: `${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${status}` };
+			}
+			const booted = await bootAfterShutdown(runner, id, sleep);
+			if (!booted.success) return { kind: "boot-failed", error: booted.error };
+			const ready = await waitReady(id, timeoutMs);
+			return ready.success ? { kind: "ready" } : { kind: "not-ready", error: ready.error };
 		},
 
-		shutdown: (id) => idempotent(exec, ["shutdown", id], "Shutdown"),
+		shutdown: (id) => idempotent(runner, ["shutdown", id], "Shutdown", IOS_TIMEOUTS.shutdownMs),
 
-		probe: (id) => probeIosHealth({ exec, timer: deps.timer ?? realTimer }, id),
+		probe: (id) => probeIosHealth(runner, id),
 
-		verifyWarm: (id) => probeIosWarm({ exec, timer: deps.timer ?? realTimer }, id),
+		verifyWarm: (id) => probeIosWarm(runner, id),
+
+		/** After a `bootstatus` that saw the boot finish, launchd is up: SpringBoard running is all that is left to prove. */
+		probeBooted: (id) => probeIosWarm(runner, id),
 	};
 }

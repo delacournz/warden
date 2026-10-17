@@ -25,7 +25,20 @@ export interface DeviceProvider {
 	 * Absent = always take the full path.
 	 */
 	verifyWarm?(id: string): AsyncResult<void>;
+	/**
+	 * Boot a shut-down device and wait until it is ready in one step, where the platform can do both at
+	 * once (iOS: `bootstatus -b` boots it). Absent = `boot`, then `waitReady`.
+	 */
+	bootReady?(id: string, timeoutMs: number): Promise<BootReady>;
+	/** Probe for a device `bootReady` just booted and saw ready. Absent = `probe`. */
+	probeBooted?(id: string): AsyncResult<void>;
 }
+
+/** `bootReady`: a boot failure is an error; a device that booted but never got ready is unhealthy. */
+export type BootReady =
+	| { kind: "ready" }
+	| { kind: "boot-failed"; error: string }
+	| { kind: "not-ready"; error: string };
 
 export type ProviderDeps = {
 	exec: Exec;

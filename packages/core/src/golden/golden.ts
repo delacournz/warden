@@ -9,8 +9,11 @@
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { SimctlSim } from "../sims/list";
 
-/** Bump when what building a golden does to the device changes, so existing goldens go stale. */
-export const GOLDEN_RECIPE = 1;
+/**
+ * Bump when what building a golden does to the device changes, so existing goldens go stale.
+ * 2: `AutomationEnabled` written in the golden (16-7).
+ */
+export const GOLDEN_RECIPE = 2;
 export const GOLDEN_PREFIX = "warden-golden";
 
 export type GoldenInputs = { xcodeBuild: string; runtimeId: string; runtimeBuild: string; deviceType: string };

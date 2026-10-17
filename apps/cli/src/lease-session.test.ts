@@ -84,7 +84,10 @@ describe("claimAll with device legs", () => {
 	const agent: Owner = { kind: "agent", sessionId: "me", cwd: "/" };
 	const installed = { appPath: "/c/A.app", hash: "H", source: "cache" as const, installed: true };
 
-	/** `boot` of a gated udid waits for `open(udid)`; every boot start is logged in `events`, in start order. */
+	/**
+	 * The boot step of a gated udid (`bootstatus -b`, which boots a shut-down sim, or its `boot` fallback)
+	 * waits for `open(udid)`; every boot start is logged once in `events`, in start order.
+	 */
 	function legSetup(
 		sims: Array<ReturnType<typeof sim>>,
 		o: { gated?: string[]; bootFails?: string[]; events?: string[] } = {}
@@ -93,9 +96,9 @@ describe("claimAll with device legs", () => {
 		const gates = new Map((o.gated ?? []).map((udid) => [udid, Promise.withResolvers<void>()]));
 		const base = fakeSimctl(sims);
 		const exec: Exec = async (cmd, opts) => {
-			if (cmd[0] === "xcrun" && cmd[2] === "boot") {
+			if (cmd[0] === "xcrun" && (cmd[2] === "boot" || cmd[2] === "bootstatus")) {
 				const udid = cmd[3] ?? "";
-				events.push(`boot:${udid}`);
+				if (!events.includes(`boot:${udid}`)) events.push(`boot:${udid}`);
 				await gates.get(udid)?.promise;
 				if (o.bootFails?.includes(udid)) return { exitCode: 1, stdout: "", stderr: "boot failed" };
 			}

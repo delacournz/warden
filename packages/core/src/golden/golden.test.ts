@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { SimctlSim } from "../sims/list";
 import {
 	GOLDEN_PREFIX,
+	GOLDEN_RECIPE,
 	goldenKey,
 	goldenName,
 	isGoldenName,
@@ -27,7 +28,7 @@ describe("goldenKey", () => {
 		expect(goldenKey({ ...inputs, xcodeBuild: "17G1" })).not.toBe(key);
 		expect(goldenKey({ ...inputs, runtimeBuild: "23F1" })).not.toBe(key);
 		expect(goldenKey({ ...inputs, deviceType: "x" })).not.toBe(key);
-		expect(goldenKey(inputs, 2)).not.toBe(key);
+		expect(goldenKey(inputs, GOLDEN_RECIPE + 1)).not.toBe(key);
 	});
 });
 
