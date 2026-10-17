@@ -113,6 +113,14 @@ export const wardenConfigSchema = z
 		e2e: z.record(z.string().min(1), e2eSuiteSchema).optional(),
 		/** default for every `e2e` suite and `batches` preset that doesn't set `headless` */
 		headless: z.boolean().optional(),
+		/** Android emulator settings */
+		android: z
+			.object({
+				/** false = claims cold-boot the AVD instead of warden's quick-boot snapshot (`WARDEN_ANDROID_SNAPSHOT` overrides) */
+				snapshot: z.boolean().optional(),
+			})
+			.strict()
+			.optional(),
 	})
 	.strict()
 	.superRefine((config, issue) => {

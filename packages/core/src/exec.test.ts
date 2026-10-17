@@ -18,6 +18,16 @@ describe("bunExec", () => {
 		expect(res.exitCode).toBe(127);
 		expect(res.stderr).toContain("/no/such/warden/dir");
 	});
+
+	test("an aborted signal kills the command", async () => {
+		const abort = new AbortController();
+		const started = Date.now();
+		const pending = bunExec(["sleep", "30"], { signal: abort.signal });
+		setTimeout(() => abort.abort(), 50);
+		const res = await pending;
+		expect(res.exitCode).not.toBe(0);
+		expect(Date.now() - started).toBeLessThan(5_000);
+	});
 });
 
 describe("execError", () => {

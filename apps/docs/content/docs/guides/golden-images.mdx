@@ -29,6 +29,10 @@ warden golden ls
 warden golden prune                        # delete stale goldens; --all deletes every one
 ```
 
+## Android: warden's quick-boot snapshot
+
+Claimed emulators launch `-read-only -snapshot warden-<key>` from a quick-boot snapshot warden owns, instead of whatever `default_boot` your last Android Studio run left (or a full cold boot). The first claim of an AVD builds it: when no instance of that AVD is running, warden cold-boots it writable and headless (`-no-snapshot-load -no-snapshot-save`, so your `default_boot` is left alone), waits for `sys.boot_completed` plus a short settle, runs `adb emu avd snapshot save warden-<key>` and kills it; while that AVD is running the build is skipped and the claim cold-boots. The key covers the system image revision and build fingerprint, the emulator version, the AVD's `hw.*` settings and a recipe number, so an emulator or image update builds a new snapshot and `warden golden prune --platform android` (or the next build) deletes the stale one. A launch from the snapshot that fails is retried once as a cold boot. It needs `ANDROID_HOME` (or `ANDROID_SDK_ROOT`); each snapshot costs about the AVD's RAM in disk. Turn it off with `android: { snapshot: false }` in `warden.config.ts` or `WARDEN_ANDROID_SNAPSHOT=0` (`=1` overrides the config). Claimed emulators also run `-no-audio -no-metrics`; `WARDEN_EMULATOR_AUDIO=1` keeps audio. `warden golden ensure|ls|prune --platform android` builds, lists and prunes the snapshots.
+
 ## Cloning your own sim
 
 `warden clone <udid|name> [--name x]` duplicates any **shut-down** sim — e.g. one you've set up by hand — into warden's pool. warden refuses a booted source rather than shutting it down.

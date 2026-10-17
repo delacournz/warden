@@ -607,6 +607,18 @@ export interface WardenConfig {
 	 * those that don't set `headless`). `warden dev` ignores it. `WARDEN_HEADLESS=1` is the fallback below it.
 	 */
 	headless?: boolean | undefined;
+	/** Android emulator settings. */
+	android?: WardenAndroidSettings | undefined;
+}
+
+/** Android emulator settings (`android`). */
+export interface WardenAndroidSettings {
+	/**
+	 * Launch claimed emulators from warden's own quick-boot snapshot of the AVD (built once per AVD from a
+	 * cold boot) instead of the AVD's `default_boot` or a cold boot. Default true; `WARDEN_ANDROID_SNAPSHOT=0`
+	 * / `=1` override it.
+	 */
+	snapshot?: boolean | undefined;
 }
 
 /** What a config function receives. */

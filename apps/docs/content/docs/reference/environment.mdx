@@ -13,6 +13,8 @@ icon: Variable
 | `CLAUDE_CODE_SESSION_ID` | Claude Code session, detected as the owner |
 | `CI`, `GITHUB_RUN_ID` | detected as a CI owner |
 | `WARDEN_GOLDEN=0` | don't clone new sims from golden images |
+| `WARDEN_ANDROID_SNAPSHOT=0` | Android: cold-boot claimed emulators instead of launching them from warden's quick-boot snapshot of the AVD; `=1` turns it on over a config `android.snapshot: false` ([Golden images](/docs/guides/golden-images#android-wardens-quick-boot-snapshot)) |
+| `WARDEN_EMULATOR_AUDIO=1` | Android: keep the emulator's audio (claimed emulators run `-no-audio` otherwise) |
 | `WARDEN_ARRANGE=0` | don't tile Simulator.app windows after iOS claims |
 | `WARDEN_HEADLESS=1` | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/guides/headless)); `warden dev` ignores it |
 | `WARDEN_AUTO_GC=0` | turn off background auto-gc |

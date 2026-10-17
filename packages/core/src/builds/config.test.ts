@@ -48,6 +48,15 @@ describe("parseWardenConfig", () => {
 		}
 	});
 
+	test("android.snapshot is an optional boolean (16-3)", () => {
+		const projects = [{ name: "app", bundleId: { android: "com.x.app" } }];
+		const off = parseWardenConfig({ projects, android: { snapshot: false } });
+		expect(off.success && off.data.android).toEqual({ snapshot: false });
+		expect(parseWardenConfig({ projects }).success && parseWardenConfig({ projects })).toBeTruthy();
+		expect(parseWardenConfig({ projects, android: { snapshot: "no" } }).success).toBe(false);
+		expect(parseWardenConfig({ projects, android: { nope: true } }).success).toBe(false);
+	});
+
 	test("e2e suites alone are a valid config, with defaults", () => {
 		const res = parseWardenConfig({
 			e2e: { mobile: { flowsDir: "flows", flows: { a: { entries: ["x.tsx"] } } } },

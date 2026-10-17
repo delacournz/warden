@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { androidSnapshotKey, readSnapshotInputs, snapshotName } from "@delacour/warden-core/golden/android-golden";
 import { fakeHost } from "@delacour/warden-core/golden/golden.testing";
+import { androidGoldenDeps, androidSnapshotHook } from "./golden-deps";
 import { providerFor } from "./providers";
 import { type TestContext, testContext } from "./testing";
 
@@ -27,5 +31,58 @@ describe("providerFor ios", () => {
 		const created = await providerFor("ios", ctx, owner).create("warden-iphone-17-1", "iphone-17");
 		expect(created.success && created.data.id).toMatch(/^NEW-/);
 		expect(host.calls.some((c) => c[2] === "clone")).toBe(false);
+	});
+});
+
+describe("android snapshot hook (16-3)", () => {
+	const SYSDIR = "system-images/android-36/google_apis/arm64-v8a";
+
+	/** A fake SDK + AVD whose current snapshot already exists, so the hook needs no emulator. */
+	function fakeSdk(c: TestContext): void {
+		const sdk = join(c.cwd, "sdk");
+		const avd = join(c.cwd, "avd", "Pixel_10.avd");
+		mkdirSync(join(sdk, "emulator"), { recursive: true });
+		mkdirSync(join(sdk, SYSDIR), { recursive: true });
+		mkdirSync(avd, { recursive: true });
+		writeFileSync(join(sdk, "emulator", "source.properties"), "Pkg.Revision=35.4.9\n");
+		writeFileSync(join(sdk, SYSDIR, "source.properties"), "Pkg.Revision=5\n");
+		writeFileSync(join(avd, "config.ini"), `hw.ramSize=4096\nimage.sysdir.1=${SYSDIR}/\n`);
+		c.env = { ...c.env, ANDROID_HOME: sdk, ANDROID_AVD_HOME: join(c.cwd, "avd") };
+	}
+
+	test("on by default: names warden's current snapshot of the AVD", async () => {
+		ctx = testContext([]);
+		fakeSdk(ctx);
+		const deps = androidGoldenDeps(ctx, owner);
+		const read = await readSnapshotInputs(deps, "Pixel_10");
+		if (!read.success || read.data === undefined) throw new Error("no snapshot inputs");
+		const name = snapshotName(androidSnapshotKey(read.data.inputs));
+		mkdirSync(join(read.data.dir, "snapshots", name), { recursive: true });
+		writeFileSync(join(read.data.dir, "snapshots", name, "snapshot.pb"), "pb");
+		expect(await androidSnapshotHook(ctx, owner)("Pixel_10")).toEqual({ success: true, data: name });
+	});
+
+	test("WARDEN_ANDROID_SNAPSHOT=0 → none, nothing run", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], {
+			exec: async (cmd) => {
+				calls.push([...cmd]);
+				return { exitCode: 0, stdout: "", stderr: "" };
+			},
+		});
+		fakeSdk(ctx);
+		ctx.env = { ...ctx.env, WARDEN_ANDROID_SNAPSHOT: "0" };
+		expect(await androidSnapshotHook(ctx, owner)("Pixel_10")).toEqual({ success: true, data: undefined });
+		expect(calls).toHaveLength(0);
+	});
+
+	test("android.snapshot: false in warden.config.json → none", async () => {
+		ctx = testContext([]);
+		fakeSdk(ctx);
+		writeFileSync(
+			join(ctx.cwd, "warden.config.json"),
+			JSON.stringify({ projects: [{ name: "app", bundleId: { android: "com.x" } }], android: { snapshot: false } })
+		);
+		expect(await androidSnapshotHook(ctx, owner)("Pixel_10")).toEqual({ success: true, data: undefined });
 	});
 });
