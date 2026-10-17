@@ -179,6 +179,7 @@ export function createIosDriver(
 
 	const capabilities: DriverCapabilities = {
 		pinch: true,
+		maxPointers: 0,
 		unicodeText: true,
 		nativeSettle,
 		alerts: true,
@@ -445,6 +446,8 @@ export function createIosDriver(
 				params({ center, scale, durationMs: o?.durationMs, radius: o?.radius }),
 				gestureTimeout(o?.durationMs, 300)
 			),
+		rotate: async () => fail(driverError("E_UNSUPPORTED", "rotate is not supported by this warden-simd")),
+		gesture: async () => fail(driverError("E_UNSUPPORTED", "gesture is not supported by this warden-simd")),
 		typeText,
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		selectAll: () => sendVoid("selectAll"),

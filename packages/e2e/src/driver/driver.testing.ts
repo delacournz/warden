@@ -8,6 +8,7 @@ import type {
 	DriverError,
 	DriverResult,
 	Element,
+	GestureOptions,
 	HardwareButton,
 	HealthInfo,
 	KeyName,
@@ -21,8 +22,11 @@ import type {
 	ScreenInfo,
 	Snapshot,
 	SnapshotBackend,
+	TouchPath,
+	TwoFingerOptions,
 } from "./driver.types";
 import { driverError } from "./errors";
+import { planGesture } from "./gesture-geometry";
 import type { SelectsAll } from "./typing";
 
 /**
@@ -163,7 +167,9 @@ export type DriverCall =
 			to: Point;
 			opts?: { pressMs?: number; durationMs?: number; releaseMs?: number };
 	  }
-	| { method: "pinch"; center: Point; scale: number; opts?: { durationMs?: number; radius?: number } }
+	| { method: "pinch"; center: Point; scale: number; opts?: TwoFingerOptions }
+	| { method: "rotate"; center: Point; degrees: number; opts?: TwoFingerOptions }
+	| { method: "gesture"; paths: readonly TouchPath[]; opts?: GestureOptions }
 	| { method: "typeText"; text: string }
 	| { method: "key"; key: KeyName; modifiers?: readonly Modifier[] }
 	| { method: "selectAll" }
@@ -228,6 +234,7 @@ export type FakeDriver = Driver &
 
 const DEFAULT_CAPABILITIES: DriverCapabilities = {
 	pinch: true,
+	maxPointers: 2,
 	unicodeText: false,
 	nativeSettle: false,
 	alerts: true,
@@ -382,6 +389,18 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		},
 		async pinch(center, scale, opts) {
 			return run({ method: "pinch", center, scale, ...(opts && { opts }) }, () => undefined);
+		},
+		async rotate(center, degrees, opts) {
+			return run({ method: "rotate", center, degrees, ...(opts && { opts }) }, () => undefined);
+		},
+		async gesture(paths, opts) {
+			const call: DriverCall = { method: "gesture", paths, ...(opts && { opts }) };
+			const plan = planGesture(paths, opts, driver.capabilities.maxPointers);
+			if (!plan.success) {
+				calls.push(call);
+				return plan;
+			}
+			return run(call, () => undefined);
 		},
 		async typeText(text) {
 			return run({ method: "typeText", text }, () => undefined);

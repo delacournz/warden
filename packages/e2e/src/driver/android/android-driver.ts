@@ -131,6 +131,7 @@ export type AndroidDriverOptions = {
 /** What the dump-and-`input` driver reports; with the server on, `unicodeText` and `nativeSettle` are true. */
 const CAPABILITIES: DriverCapabilities = {
 	pinch: false,
+	maxPointers: 0,
 	unicodeText: false,
 	nativeSettle: false,
 	alerts: true,
@@ -571,6 +572,8 @@ function buildDriver(
 			(await uiad?.swipe(from, to, opts?.durationMs)) ?? input(shellCommand(swipeArgv(from, to, opts?.durationMs))),
 		drag,
 		pinch: unsupported("pinch"),
+		rotate: unsupported("rotate"),
+		gesture: unsupported("gesture"),
 		typeText,
 		key,
 		pressKeyRepeat,

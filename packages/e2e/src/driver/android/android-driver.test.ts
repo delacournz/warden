@@ -166,6 +166,7 @@ describe("open", () => {
 		const { driver } = await setup();
 		expect(driver.capabilities).toEqual({
 			pinch: false,
+			maxPointers: 0,
 			unicodeText: false,
 			nativeSettle: false,
 			alerts: true,
