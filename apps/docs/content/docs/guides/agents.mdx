@@ -22,7 +22,7 @@ icon: Bot
 
 **Shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself, are shut down; one that was already running (your own Simulator.app) is released but left on.
 
-On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim with its next `warden claim`.
+On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim with its next `warden claim`. Leases a still-running `warden e2e` / `batch` / `run` / `dev` holds (live pid, fresh heartbeat) are kept too; that run releases them when it ends. A run whose leases are released under it (`warden release`, a SessionEnd) stops with "leases were released by another process".
 
 </Accordion>
 <Accordion title="Sessions that die without SessionEnd">

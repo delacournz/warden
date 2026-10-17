@@ -67,6 +67,25 @@ describe("leases", () => {
 		expect(store.listLeases().map((l) => l.id)).toEqual([live.id]);
 	});
 
+	test("heartbeat with a period marks the leases supervised; a plain heartbeat keeps the period", () => {
+		const lease = store.insertLease({ resource: { kind: "port", port: 1 }, owner, ttlMs: 60_000, pid: 7 }, 0);
+		expect(store.getLease(lease.id)?.heartbeatMs).toBeUndefined();
+		expect(store.heartbeat([lease.id], 10, 30_000)).toBe(1);
+		expect(store.getLease(lease.id)).toMatchObject({ heartbeatAt: 10, heartbeatMs: 30_000 });
+		expect(store.heartbeat([lease.id], 20)).toBe(1);
+		expect(store.getLease(lease.id)).toMatchObject({ heartbeatAt: 20, heartbeatMs: 30_000 });
+	});
+
+	test("reclaimStale takes a supervised lease three periods after its pid died, a pid-less one at the TTL", () => {
+		const supervised = store.insertLease({ resource: { kind: "port", port: 1 }, owner, ttlMs: 30 * 60_000, pid: 7 }, 0);
+		const pidless = store.insertLease({ resource: { kind: "port", port: 2 }, owner, ttlMs: 30 * 60_000 }, 0);
+		store.heartbeat([supervised.id, pidless.id], 1_000, 30_000);
+		expect(store.reclaimStale(1_000 + 90_000, () => false)).toEqual([]);
+		expect(store.reclaimStale(1_000 + 90_001, () => true)).toEqual([]);
+		expect(store.reclaimStale(1_000 + 90_001, () => false)).toEqual([supervised.id]);
+		expect(store.listLeases().map((l) => l.id)).toEqual([pidless.id]);
+	});
+
 	test("transaction rolls back on throw", () => {
 		expect(() =>
 			store.transaction(() => {
@@ -141,6 +160,57 @@ describe("concurrency", () => {
 	});
 });
 
+describe("reclaim versus heartbeat", () => {
+	const script = join(import.meta.dir, "heartbeat.race-fixture.ts");
+	const holder = (dbPath: string, id: string, args: { periodMs: number; everyMs: number; beats: number }) =>
+		Bun.spawn(["bun", script, dbPath, id, `${args.periodMs}`, `${args.everyMs}`, `${args.beats}`], {
+			stdout: "pipe",
+			stderr: "inherit",
+		});
+	const beats = async (proc: ReturnType<typeof holder>) =>
+		(await new Response(proc.stdout).text()).trim().split("\n").map(Number);
+
+	test("a dead-pid supervised lease is never reclaimed while another process keeps heartbeating it", async () => {
+		const dbPath = join(dir, "hb-race.db");
+		const local = openStore(dbPath);
+		const lease = local.insertLease({ resource: { kind: "port", port: 1 }, owner, ttlMs: 60_000, pid: 7 }, Date.now());
+		const proc = holder(dbPath, lease.id, { periodMs: 100, everyMs: 10, beats: 30 });
+		const reclaimed: string[] = [];
+		let exited = false;
+		void proc.exited.then(() => {
+			exited = true;
+		});
+		while (!exited) {
+			reclaimed.push(...local.reclaimStale(Date.now(), () => false));
+			await Bun.sleep(5);
+		}
+		expect(await proc.exited).toBe(0);
+		expect(reclaimed).toEqual([]);
+		expect(new Set(await beats(proc))).toEqual(new Set([1]));
+		const last = local.getLease(lease.id);
+		expect(last?.heartbeatMs).toBe(100);
+		const at = last?.heartbeatAt ?? 0;
+		expect(local.reclaimStale(at + 300, () => false)).toEqual([]);
+		expect(local.reclaimStale(at + 301, () => false)).toEqual([lease.id]);
+		local.close();
+	});
+
+	test("once reclaimed, the holder's next heartbeat updates nothing and does not bring the lease back", async () => {
+		const dbPath = join(dir, "hb-lost.db");
+		const local = openStore(dbPath);
+		const lease = local.insertLease({ resource: { kind: "port", port: 1 }, owner, ttlMs: 60_000, pid: 7 }, Date.now());
+		const proc = holder(dbPath, lease.id, { periodMs: 100, everyMs: 10, beats: 2_000 });
+		while (local.getLease(lease.id)?.heartbeatMs === undefined) await Bun.sleep(5);
+		expect(local.reclaimStale(Date.now() + 60_001, () => false)).toEqual([lease.id]);
+		expect(await proc.exited).toBe(0);
+		const counts = await beats(proc);
+		expect(counts.at(-1)).toBe(0);
+		expect(counts.slice(0, -1).every((n) => n === 1)).toBe(true);
+		expect(local.getLease(lease.id)).toBeUndefined();
+		local.close();
+	});
+});
+
 describe("device quarantine + slim state", () => {
 	const dev = { platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" } as const;
 
@@ -180,6 +250,30 @@ describe("device quarantine + slim state", () => {
 		expect(migrated.listDevices()[0]).toMatchObject({ id: "U9" });
 		migrated.quarantineDevice(dev, "x", 2);
 		expect(migrated.listDevices().find((d) => d.id === "U1")?.quarantinedAt).toBe(2);
+		migrated.close();
+	});
+});
+
+describe("lease heartbeat period migration", () => {
+	test("a database from before heartbeat_ms upgrades; old leases keep a NULL period (TTL rule)", () => {
+		const old = join(dir, "old-leases.db");
+		const db = new Database(old, { create: true });
+		for (const sql of MIGRATIONS.slice(0, 4)) db.exec(sql);
+		db.exec("PRAGMA user_version = 4");
+		db.exec(
+			`INSERT INTO leases (id, resource_key, resource, owner_key, owner, label, acquired_at, heartbeat_at, ttl_ms, pid)
+			 VALUES ('l_old', 'port:1', '{"kind":"port","port":1}', 'agent:s1', '{"kind":"agent","sessionId":"s1","cwd":"/tmp"}', NULL, 0, 0, 60000, 7)`
+		);
+		db.close();
+		const migrated = openStore(old);
+		const column = migrated.db
+			.query<{ name: string; notnull: number }, []>("PRAGMA table_info(leases)")
+			.all()
+			.find((c) => c.name === "heartbeat_ms");
+		expect(column).toEqual(expect.objectContaining({ name: "heartbeat_ms", notnull: 0 }));
+		expect(migrated.getLease("l_old")).toMatchObject({ id: "l_old", pid: 7 });
+		expect(migrated.getLease("l_old")?.heartbeatMs).toBeUndefined();
+		expect(migrated.reclaimStale(59_000, () => false)).toEqual([]);
 		migrated.close();
 	});
 });
