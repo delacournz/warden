@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { bunExec } from "../exec";
-import { makeFixtureRepo } from "./fixture.testing";
-import { createImportGraph, reachable } from "./graph";
+import { graphOf, makeFixtureRepo } from "./fixture.testing";
+import { reachable, TYPESCRIPT_MISSING } from "./graph";
 import { importsOfDoc, parseGraphDoc } from "./graph-snapshot";
 import { buildGraphDoc } from "./graph-worker";
 
@@ -18,8 +18,10 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 describe("buildGraphDoc", () => {
 	test("the table of everything reachable from the entries answers like the graph it was walked with", async () => {
 		const entries = [join(dir, "src/app/(app)/chats.tsx"), join(dir, "src/app/(app)/settings.tsx")];
-		const doc = await buildGraphDoc({ platform: "ios", repoRoot: dir, entries });
-		const graph = await createImportGraph({ platform: "ios", repoRoot: dir });
+		const built = await buildGraphDoc({ platform: "ios", repoRoot: dir, entries });
+		if (!built.success) throw new Error(built.error);
+		const doc = built.data;
+		const graph = await graphOf({ platform: "ios", repoRoot: dir });
 		const want = reachable(entries, graph.imports);
 		expect(doc.files.slice().sort()).toEqual([...want.keys()].sort());
 		const imports = importsOfDoc(doc);
@@ -37,6 +39,14 @@ describe("buildGraphDoc", () => {
 		});
 		const cached = JSON.parse(readFileSync(importCachePath, "utf8")) as { files: Record<string, unknown> };
 		expect(Object.keys(cached.files)).toContain(join(dir, "src/chat/list.tsx"));
+	});
+});
+
+describe("buildGraphDoc without a usable compiler (cli-size-R5)", () => {
+	test("is an error Result, not a throw", async () => {
+		const res = await buildGraphDoc({ platform: "ios", repoRoot: dir, entries: [] }, () => undefined);
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toStartWith(TYPESCRIPT_MISSING);
 	});
 });
 
@@ -70,10 +80,10 @@ describe("the compiler stays out of this process", () => {
 		expect(modules.filter(evaluatedAtLoad)).toEqual([]);
 	});
 
-	test("graph.ts loads it on the first graph, with a dynamic import", () => {
-		const imports = new Bun.Transpiler({ loader: "ts" }).scanImports(
-			readFileSync(join(import.meta.dir, "graph.ts"), "utf8")
-		);
-		expect(imports.filter((i) => i.path === "typescript").map((i) => i.kind)).toEqual(["dynamic-import"]);
+	test("graph.ts loads it on the first graph from a resolved path, so no bundle follows a `typescript` import", () => {
+		const source = readFileSync(join(import.meta.dir, "graph.ts"), "utf8");
+		const imports = new Bun.Transpiler({ loader: "ts" }).scanImports(source);
+		expect(imports.filter((i) => i.path === "typescript").map((i) => i.kind)).toEqual([]);
+		expect(source).toContain("await import(path)");
 	});
 });

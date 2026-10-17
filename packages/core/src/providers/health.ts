@@ -16,22 +16,42 @@ export function realTimer(ms: number): Timer {
 	return { promise, cancel: () => clearTimeout(handle) };
 }
 
-export type HealthDeps = {
+/** An exec plus the timer that bounds it. */
+export type TimedExec = {
 	exec: Exec;
 	/** the timeout timer — tests resolve it immediately instead of waiting */
 	timer: (ms: number) => Timer;
-	timeoutMs?: number;
 };
+
+export type HealthDeps = TimedExec & { timeoutMs?: number };
+
+/** What a probe error says when the sim gave no answer in time (as opposed to a wrong answer). */
+export const PROBE_NO_ANSWER = "did not answer within";
+
+/** The probe failed because the sim did not answer in time, not because SpringBoard is down or launchctl failed. */
+export function isProbeTimeout(error: string): boolean {
+	return error.includes(PROBE_NO_ANSWER);
+}
+
+/** Exit codes of a process killed for running past its timeout: 124 (`timeout(1)`), 143 (SIGTERM, Bun's `timeout`). */
+const KILLED_EXIT_CODES = new Set([124, 143]);
 
 const spawn = (udid: string, ...args: string[]) => ["xcrun", "simctl", "spawn", udid, ...args];
 
-/** Run `cmd`, giving up (undefined) after `timeoutMs`. The exec gets the same timeout so a real process is killed. */
-async function once(deps: HealthDeps, cmd: string[], timeoutMs: number): Promise<ExecResult | undefined> {
+/**
+ * Run `cmd`, giving up (undefined) after `timeoutMs`. The exec gets the same timeout so a real process
+ * is killed; the timer race bounds an exec that never returns at all.
+ */
+export async function execWithin(
+	deps: TimedExec,
+	cmd: readonly string[],
+	timeoutMs: number
+): Promise<ExecResult | undefined> {
 	const timer = deps.timer(timeoutMs);
 	try {
 		const res = await Promise.race([deps.exec(cmd, { timeoutMs }), timer.promise.then((): undefined => undefined)]);
-		// a killed exec reports 124: the same "no answer" as our own timer firing first
-		return res?.exitCode === 124 ? undefined : res;
+		// a killed exec is the same "no answer" as our own timer firing first
+		return res !== undefined && KILLED_EXIT_CODES.has(res.exitCode) ? undefined : res;
 	} finally {
 		timer.cancel();
 	}
@@ -40,7 +60,7 @@ async function once(deps: HealthDeps, cmd: string[], timeoutMs: number): Promise
 /** `once`, and when it times out, one more try with `PROBE_RETRY_FACTOR` times as long. */
 async function withTimeout(deps: HealthDeps, cmd: string[]): Promise<ExecResult | undefined> {
 	const timeoutMs = deps.timeoutMs ?? PROBE_TIMEOUT_MS;
-	return (await once(deps, cmd, timeoutMs)) ?? (await once(deps, cmd, timeoutMs * PROBE_RETRY_FACTOR));
+	return (await execWithin(deps, cmd, timeoutMs)) ?? (await execWithin(deps, cmd, timeoutMs * PROBE_RETRY_FACTOR));
 }
 
 /** `launchctl list` rows are `PID\tStatus\tLabel`; SpringBoard is a job with a numeric pid. */
@@ -63,9 +83,9 @@ export async function probeIosHealth(deps: HealthDeps, udid: string): AsyncResul
 		withTimeout(deps, spawn(udid, "launchctl", "print", "system")),
 		withTimeout(deps, spawn(udid, "launchctl", "list")),
 	]);
-	if (print === undefined) return err(`${udid}: launchctl print system did not answer within ${seconds}s`);
+	if (print === undefined) return err(`${udid}: launchctl print system ${PROBE_NO_ANSWER} ${seconds}s`);
 	if (print.exitCode !== 0) return err(`${udid}: launchctl print system exited ${print.exitCode}`);
-	if (list === undefined) return err(`${udid}: launchctl list did not answer within ${seconds}s`);
+	if (list === undefined) return err(`${udid}: launchctl list ${PROBE_NO_ANSWER} ${seconds}s`);
 	if (list.exitCode !== 0 || !springboardRunning(list.stdout)) return err(`${udid}: SpringBoard is not running`);
 	return ok(undefined);
 }
@@ -79,7 +99,7 @@ export async function probeIosHealth(deps: HealthDeps, udid: string): AsyncResul
 export async function probeIosWarm(deps: HealthDeps, udid: string): AsyncResult<void> {
 	const seconds = ((deps.timeoutMs ?? PROBE_TIMEOUT_MS) * PROBE_RETRY_FACTOR) / 1000;
 	const list = await withTimeout(deps, spawn(udid, "launchctl", "list"));
-	if (list === undefined) return err(`${udid}: launchctl list did not answer within ${seconds}s`);
+	if (list === undefined) return err(`${udid}: launchctl list ${PROBE_NO_ANSWER} ${seconds}s`);
 	if (list.exitCode !== 0 || !springboardRunning(list.stdout)) return err(`${udid}: SpringBoard is not running`);
 	return ok(undefined);
 }

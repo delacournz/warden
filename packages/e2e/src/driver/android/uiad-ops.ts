@@ -41,6 +41,8 @@ export type UiadOps = {
 	key(keyCode: number, times?: number): Maybe<void>;
 	selectAll(): Maybe<void>;
 	typeText(text: string): Maybe<void>;
+	/** replace the whole text of the focused input (`ACTION_SET_TEXT`); `undefined` = refused or no server */
+	setText(text: string): Maybe<void>;
 	stop(): Promise<void>;
 };
 
@@ -215,6 +217,7 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 			),
 		selectAll: () => call("selectAll", async (server) => mapVoid(await server.request("selectAll")), true),
 		typeText: (text) => edit("typeText", (server) => server.typeText(text)),
+		setText: (text) => edit("setText", (server) => server.request("setText", { text })),
 		stop: () => backend.stop(),
 	};
 }

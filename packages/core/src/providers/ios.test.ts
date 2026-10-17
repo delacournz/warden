@@ -378,6 +378,179 @@ describe("createIosProvider", () => {
 	});
 });
 
+describe("createIosProvider timeouts (16-11)", () => {
+	const okAll: Exec = async (cmd) => ({
+		exitCode: 0,
+		stdout: cmd.includes("devicetypes")
+			? SIMCTL_DEVICETYPES_JSON
+			: cmd.includes("runtimes")
+				? SIMCTL_RUNTIMES_JSON
+				: cmd.includes("devices")
+					? SIMCTL_DEVICES_JSON
+					: "NEW\n",
+		stderr: "",
+	});
+
+	test("every simctl call carries a default timeout: list 30 s, create/boot 120 s, shutdown 60 s", async () => {
+		const timeouts = new Map<string, number | undefined>();
+		const exec: Exec = (cmd, opts) => {
+			timeouts.set(cmd.slice(2, 4).join(" "), opts?.timeoutMs);
+			return okAll(cmd, opts);
+		};
+		const p = provider(exec);
+		await p.inventory();
+		await p.create("warden-iphone-17-3", "iphone-17");
+		await p.boot("U1");
+		await p.shutdown("U1");
+		expect(Object.fromEntries(timeouts)).toEqual({
+			"list devices": 30_000,
+			"list devicetypes": 30_000,
+			"list runtimes": 30_000,
+			"create warden-iphone-17-3": 120_000,
+			"boot U1": 120_000,
+			"shutdown U1": 60_000,
+		});
+	});
+
+	test("a simctl that never returns is an error once its timeout fires, not a hung claim", async () => {
+		const hung: Exec = () => new Promise<ExecResult>(() => {});
+		const fired: number[] = [];
+		const p = createIosProvider(
+			{
+				exec: hung,
+				store,
+				env: {},
+				now: () => 42,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+				timer: (ms) => {
+					fired.push(ms);
+					return { promise: Promise.resolve(), cancel: () => {} };
+				},
+			},
+			{ sleep: async () => {} }
+		);
+		expect(await p.boot("U1")).toEqual({
+			success: false,
+			error: "`xcrun simctl boot U1` did not finish within 120s",
+		});
+		const listed = await p.inventory();
+		expect(listed.success).toBe(false);
+		const down = await p.shutdown("U1");
+		expect(!down.success && down.error).toContain("did not finish within 60s");
+		const created = await p.create("warden-iphone-17-3", "iphone-17");
+		expect(!created.success && created.error).toContain("did not finish within 30s");
+		expect(fired).toEqual([120_000, 30_000, 60_000, 30_000, 30_000]);
+	});
+});
+
+describe("createIosProvider bootReady (16-15)", () => {
+	function bootProvider(exec: Exec) {
+		return createIosProvider(
+			{ exec, store, env: {}, now: () => 42, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{ sleep: async () => {} }
+		);
+	}
+	const run = (p: DeviceProvider, id: string) => {
+		if (!p.bootReady) throw new Error("ios provider has bootReady");
+		return p.bootReady(id, 300_000);
+	};
+
+	test("a shut-down sim: bootstatus -b alone boots it and waits (no separate simctl boot)", async () => {
+		const calls: Call[] = [];
+		const p = bootProvider(fake([["xcrun simctl bootstatus U1 -b", {}]], calls));
+		expect(await run(p, "U1")).toEqual({ kind: "ready" });
+		expect(calls).toEqual([{ cmd: ["xcrun", "simctl", "bootstatus", "U1", "-b"], timeoutMs: 300_000 }]);
+	});
+
+	test("bootstatus refuses the state (Shutting Down) → simctl boot waits it out, then bootstatus again", async () => {
+		const calls: Call[] = [];
+		let statuses = 0;
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: [...cmd], ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}) });
+			if (cmd[2] === "bootstatus" && ++statuses === 1) {
+				return { exitCode: 149, stdout: "", stderr: "Unable to boot device in current state: Shutting Down" };
+			}
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		expect(await run(bootProvider(exec), "U1")).toEqual({ kind: "ready" });
+		expect(calls.map((c) => c.cmd[2])).toEqual(["bootstatus", "boot", "bootstatus"]);
+	});
+
+	test("a device simctl cannot boot is a boot failure, not an unready device", async () => {
+		const p = bootProvider(
+			fake([
+				["xcrun simctl bootstatus", { exitCode: 1, stderr: "Invalid device: U1" }],
+				["xcrun simctl boot", { exitCode: 1, stderr: "Invalid device: U1" }],
+			])
+		);
+		const result = await run(p, "U1");
+		expect(result.kind).toBe("boot-failed");
+		if (result.kind === "boot-failed") expect(result.error).toContain("Invalid device");
+	});
+
+	test("bootstatus timing out is not ready, with no extra boot", async () => {
+		const calls: Call[] = [];
+		const p = bootProvider(fake([["xcrun simctl bootstatus", { exitCode: 143 }]], calls));
+		const result = await run(p, "U1");
+		expect(result.kind).toBe("not-ready");
+		expect(calls.map((c) => c.cmd[2])).toEqual(["bootstatus"]);
+	});
+
+	test("the fallback's second bootstatus gets only what is left of the budget (ios-claim-path-R5)", async () => {
+		const calls: Call[] = [];
+		let clock = 0;
+		let statuses = 0;
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: [...cmd], ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}) });
+			if (cmd[2] === "bootstatus" && ++statuses === 1) {
+				clock += 290_000; // bootstatus gives up late, close to the whole budget
+				return { exitCode: 149, stdout: "", stderr: "Unable to boot device in current state: Shutting Down" };
+			}
+			if (cmd[2] === "boot") clock += 4_000;
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const p = createIosProvider(
+			{ exec, store, env: {}, now: () => clock, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{ sleep: async () => {} }
+		);
+		expect(await run(p, "U1")).toEqual({ kind: "ready" });
+		const second = calls.filter((c) => c.cmd[2] === "bootstatus")[1];
+		expect(second?.timeoutMs).toBe(6_000);
+	});
+
+	test("no budget left after the fallback boot: not ready, no second wait (ios-claim-path-R5)", async () => {
+		const calls: Call[] = [];
+		let clock = 0;
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: [...cmd], ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}) });
+			if (cmd[2] === "bootstatus") {
+				clock += 300_000;
+				return { exitCode: 149, stdout: "", stderr: "Unable to boot device in current state: Shutting Down" };
+			}
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const p = createIosProvider(
+			{ exec, store, env: {}, now: () => clock, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{ sleep: async () => {} }
+		);
+		const result = await run(p, "U1");
+		expect(result.kind).toBe("not-ready");
+		expect(calls.map((c) => c.cmd[2])).toEqual(["bootstatus", "boot"]);
+	});
+
+	test("probeBooted is the one-spawn warm probe", async () => {
+		const calls: Call[] = [];
+		const p = bootProvider(
+			fake(
+				[["xcrun simctl spawn U1 launchctl list", { stdout: "412\t0\tUIKitApplication:com.apple.springboard[x]" }]],
+				calls
+			)
+		);
+		expect(await p.probeBooted?.("U1")).toEqual({ success: true, data: undefined });
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual(["xcrun simctl spawn U1 launchctl list"]);
+	});
+});
+
 describe("deleteSim", () => {
 	test("shuts the sim down (already-shutdown is fine) then deletes it", async () => {
 		const calls: Call[] = [];

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadManifest } from "../results/manifest";
 import { benchRunSchema } from "../results/schema";
-import { buildSampleRun } from "./fixtures/make-sample";
+import { buildSampleRun, withRepCpu } from "./fixtures/make-sample";
 import { goldenText } from "./golden";
 import { renderMarkdown } from "./markdown";
 
@@ -49,5 +49,29 @@ describe("renderMarkdown", () => {
 		if (first?.status === "ok") first.stats.overheadMs = Number.NaN;
 		expect(renderMarkdown(nan, manifest)).not.toContain("NaN");
 		expect(renderMarkdown(run, manifest)).toBe(md);
+	});
+});
+
+describe("renderMarkdown resources (19-6, 19-7)", () => {
+	const cpu = renderMarkdown(
+		withRepCpu(run, (_f, rep) => rep),
+		manifest
+	);
+	test("CPU-seconds per rep is the first resource column, the series are labelled whole-framework", () => {
+		expect(cpu).toContain(
+			"| Framework | Scope | CPU-s / rep | CPU-s (whole) | CPU avg | CPU peak | RSS avg | RSS peak |"
+		);
+		expect(cpu).toMatch(/\| warden \| host \| 2\.50 s \| 8\.00 s \| [\d.]+% \|/);
+		expect(cpu).toContain("whole-framework");
+	});
+	test("a host split by process group", () => {
+		expect(cpu).toContain("| Framework | Group | CPU-s (whole) | RSS avg | RSS peak |");
+		expect(cpu).toContain("| warden | bun-test | 6.00 s | 100.0 MB | 120.0 MB |");
+		expect(cpu).toContain("| warden | warden-simd | 2.00 s | 30.0 MB | 31.0 MB |");
+	});
+	test("runs without CPU time keep the old table (the golden)", () => {
+		const md = renderMarkdown(run, manifest);
+		expect(md).not.toContain("CPU-s");
+		expect(md).not.toContain("| Group |");
 	});
 });

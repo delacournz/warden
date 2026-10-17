@@ -112,6 +112,18 @@ describe("warden builds", () => {
 		expect(await buildsCommand.run(c)).toBe(1);
 	});
 
+	test("prune without --max-size reads WARDEN_MAX_CACHE_SIZE, like gc; a bad value → exit 1 naming it (R6)", async () => {
+		const c = setup(["prune", "--json"]);
+		c.env.WARDEN_MAX_CACHE_SIZE = "1";
+		await seed(c, "a", 1);
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).maxBytes).toBe(1);
+		expect(listBuilds(c.db)).toEqual([]);
+		c.env.WARDEN_MAX_CACHE_SIZE = "huge";
+		expect(await buildsCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("WARDEN_MAX_CACHE_SIZE");
+	});
+
 	test("no subcommand → ls", async () => {
 		const c = setup([]);
 		expect(await buildsCommand.run(c)).toBe(0);

@@ -47,8 +47,9 @@ Devices:
                                 (macOS; also runs after iOS claims)
   clone <source>                duplicate a shut-down iOS simulator into
                                 warden's pool (fast: no first boot)
-  golden                        golden iOS images new sims are cloned from (fast
-                                boots): ensure | ls | prune
+  golden                        golden iOS images / Android snapshots new
+                                devices start from (fast boots): ensure | ls |
+                                prune
 
 Builds:
   app                           fingerprint an Expo app and install the matching
@@ -598,7 +599,8 @@ exports[`help output warden golden --help (and nested subcommands) 1`] = `
 "$ warden golden --help
 Usage: warden golden [options] [command]
 
-golden iOS images new sims are cloned from (fast boots): ensure | ls | prune
+golden iOS images / Android snapshots new devices start from (fast boots):
+ensure | ls | prune
 
 Options:
   -h, --help      display help for command
@@ -615,10 +617,11 @@ Usage: warden golden ensure [options]
 build (once) or reuse the golden image
 
 Options:
-  --profile <slug>     device profile (default: iphone-17)
-  --runtime <runtime>  runtime: latest, iOS-26-5, 26.5 …
-  --json               machine-readable output
-  -h, --help           display help for command
+  --platform <platform>  ios (default) or android
+  --profile <slug>       device profile (default: iphone-17; android: first AVD)
+  --runtime <runtime>    runtime: latest, iOS-26-5, 26.5 …
+  --json                 machine-readable output
+  -h, --help             display help for command
 
 $ warden golden ls --help
 Usage: warden golden ls [options]
@@ -626,8 +629,9 @@ Usage: warden golden ls [options]
 list golden images
 
 Options:
-  --json      machine-readable output
-  -h, --help  display help for command
+  --platform <platform>  ios (default) or android
+  --json                 machine-readable output
+  -h, --help             display help for command
 
 $ warden golden prune --help
 Usage: warden golden prune [options]
@@ -635,10 +639,11 @@ Usage: warden golden prune [options]
 delete stale goldens (--all: every golden)
 
 Options:
-  --all       delete every golden image, not just stale ones
-  -y, --yes   don't ask before --all deletes
-  --json      machine-readable output
-  -h, --help  display help for command"
+  --platform <platform>  ios (default) or android
+  --all                  delete every golden image, not just stale ones
+  -y, --yes              don't ask before --all deletes
+  --json                 machine-readable output
+  -h, --help             display help for command"
 `;
 
 exports[`help output warden check --help (and nested subcommands) 1`] = `
@@ -679,11 +684,14 @@ Usage: warden gc [options]
 reclaim stale leases; shut down idle warden devices (never deletes)
 
 Options:
-  --idle <duration>  shut down unleased warden devices idle this long (default:
-                     20m)
-  --quiet            print nothing (background auto-gc)
-  --json             machine-readable output
-  -h, --help         display help for command"
+  --idle <duration>        shut down unleased warden devices idle this long
+                           (default: 20m)
+  --max-cache-size <size>  prune least-recently-used cached builds down to this
+                           size, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE or
+                           20G; builds used in the last 30 min stay)
+  --quiet                  print nothing (background auto-gc)
+  --json                   machine-readable output
+  -h, --help               display help for command"
 `;
 
 exports[`help output warden port --help (and nested subcommands) 1`] = `
@@ -1838,7 +1846,8 @@ remove least-recently-used builds until the cache fits --max-size (build-locked
 ones stay)
 
 Options:
-  --max-size <size>  cache size limit, e.g. 20G (default 20G)
+  --max-size <size>  cache size limit, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE
+                     or 20G; gc's --max-cache-size)
   --dry-run          only show what would be removed
   --yes              don't ask before removing
   --json             machine-readable output

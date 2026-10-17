@@ -2,7 +2,13 @@ import { existsSync } from "node:fs";
 
 export type ExecResult = { exitCode: number; stdout: string; stderr: string };
 
-export type ExecOptions = { cwd?: string; env?: Record<string, string | undefined>; timeoutMs?: number };
+export type ExecOptions = {
+	cwd?: string;
+	env?: Record<string, string | undefined>;
+	timeoutMs?: number;
+	/** aborting kills the command (SIGTERM), like a timeout */
+	signal?: AbortSignal;
+};
 
 /** Injectable process runner — providers take this so tests can fake `simctl`/`adb`. */
 export type Exec = (cmd: readonly string[], opts?: ExecOptions) => Promise<ExecResult>;
@@ -23,6 +29,7 @@ export const bunExec: Exec = async (cmd, opts = {}) => {
 			stderr: "pipe",
 			stdin: "ignore",
 			timeout: opts.timeoutMs,
+			...(opts.signal !== undefined ? { signal: opts.signal } : {}),
 		});
 		const [stdout, stderr, exitCode] = await Promise.all([
 			new Response(proc.stdout).text(),

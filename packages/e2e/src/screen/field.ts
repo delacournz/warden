@@ -1,6 +1,6 @@
 import { ok } from "@delacour/warden-types/result";
 import type { Driver, DriverError, DriverResult, Point } from "../driver/driver.types";
-import { canSelectAll, pressKeys, type Sleep, typeText } from "../driver/typing";
+import { canSelectAll, canSetText, pressKeys, type Sleep, typeText } from "../driver/typing";
 import { clearKeyPresses, fieldContent, fieldValue } from "./actions";
 import { entryOfElement, type NodeEntry } from "./nodes";
 
@@ -101,9 +101,22 @@ export async function hitTestField(
 /**
  * How a field is emptied. `auto` selects everything and presses one Backspace when the driver can select all, else
  * presses one Backspace per character; `counted` always presses one per character (the retry after select-all left
- * text behind, e.g. a field that refuses Cmd+A).
+ * text behind, e.g. a field that refuses Cmd+A). `setText` is `auto`, except that `focusClearType` replaces a plain
+ * filled field in one `setText` call where the driver has it (Android `warden-uiad`): opt-in, see `SETTEXT_ENV`.
  */
-export type ClearMethod = "auto" | "counted";
+export type ClearMethod = "auto" | "counted" | "setText";
+
+/**
+ * `WARDEN_ANDROID_SETTEXT=1` makes `auto` behave as `setText` in `focusClearType`. Off by default: the server's
+ * `setText` writes to the node its accessibility cache says has focus, which can still be the field filled before
+ * (it does not re-read focus the way typing and select-all do), so a quick fill of a second field could overwrite the first.
+ */
+export const SETTEXT_ENV = "WARDEN_ANDROID_SETTEXT";
+
+/** Whether `env` opts `auto` fills into `setText` (`SETTEXT_ENV`). */
+export function setTextOptedIn(env: Readonly<Record<string, string | undefined>>): boolean {
+	return env[SETTEXT_ENV] === "1";
+}
 
 /** What `focusAndSelect` left behind: `selection` = the text is selected and the next key replaces it; `none` = already empty or already backspaced away. */
 type Prepared = { pending: "selection" } | { pending: "none" };
@@ -126,10 +139,20 @@ async function focusAndSelect(
 ): DriverResult<Prepared> {
 	const focused = await driver.tap(point);
 	if (!focused.success) return focused;
+	return prepareFocused(driver, sleep, entry, method);
+}
+
+/** `focusAndSelect` after its tap: the field has focus; select its text, or backspace it away. */
+async function prepareFocused(
+	driver: Driver,
+	sleep: Sleep,
+	entry: NodeEntry | undefined,
+	method: ClearMethod
+): DriverResult<Prepared> {
 	if (entry === undefined) return ok({ pending: "none" });
 	const content = fieldContent(entry);
 	if (content.kind === "empty") return ok({ pending: "none" });
-	if (content.kind === "text" && method === "auto" && canSelectAll(driver)) {
+	if (content.kind === "text" && method !== "counted" && canSelectAll(driver)) {
 		const selected = await driver.selectAll();
 		if (selected.success) return ok({ pending: "selection" });
 	}
@@ -158,6 +181,12 @@ export async function focusAndClear(
  * deleted first: the first typed character replaces the whole selection, which saves a Backspace. If the select-all
  * did not take, the old text stays and the typed text lands after it; the confirm read sees that and the retry uses the
  * counted method.
+ *
+ * With the `setText` method (or `auto` under `WARDEN_ANDROID_SETTEXT=1`, read from `env`), on a driver with `setText`
+ * (Android `warden-uiad`) a plain field that holds text is replaced in one call after the focus tap, instead of
+ * select-all then typing; the read-back after a `fill` checks it took, and the counted retry types. An empty field gains
+ * nothing from it, and a secure one cannot be read back, so both are typed as before. A `setText` that fails falls back
+ * to select-all and typing, without a second tap.
  */
 export async function focusClearType(
 	driver: Driver,
@@ -165,9 +194,27 @@ export async function focusClearType(
 	point: Point,
 	entry: NodeEntry | undefined,
 	text: string,
-	method: ClearMethod = "auto"
+	method: ClearMethod = "auto",
+	env: Readonly<Record<string, string | undefined>> = process.env
 ): DriverResult<void> {
-	const prepared = await focusAndSelect(driver, sleep, point, entry, method);
+	const wantsSetText = method === "setText" || (method === "auto" && setTextOptedIn(env));
+	if (wantsSetText && entry !== undefined && fieldContent(entry).kind === "text" && canSetText(driver)) {
+		const focused = await driver.tap(point);
+		if (!focused.success) return focused;
+		const replaced = await driver.setText(text);
+		if (replaced.success) return replaced;
+		return typeOver(driver, sleep, await prepareFocused(driver, sleep, entry, method), text);
+	}
+	return typeOver(driver, sleep, await focusAndSelect(driver, sleep, point, entry, method), text);
+}
+
+/** Types `text` over what `prepared` left: a selection is replaced by it, or deleted by one Backspace for empty text. */
+async function typeOver(
+	driver: Driver,
+	sleep: Sleep,
+	prepared: Awaited<DriverResult<Prepared>>,
+	text: string
+): DriverResult<void> {
 	if (!prepared.success) return prepared;
 	if (text === "")
 		return prepared.data.pending === "selection" ? pressKeys(driver, sleep, "Backspace", 1) : ok(undefined);

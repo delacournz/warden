@@ -70,6 +70,18 @@ export const MIGRATIONS: readonly string[] = [
 	ALTER TABLE devices ADD COLUMN quarantine_reason TEXT;
 	ALTER TABLE devices ADD COLUMN slimmed_at INTEGER;`,
 	`ALTER TABLE leases ADD COLUMN heartbeat_ms INTEGER;`,
+	`CREATE TABLE fingerprints (
+		root TEXT NOT NULL,
+		platform TEXT NOT NULL,
+		variant TEXT NOT NULL,
+		command TEXT NOT NULL,
+		signature TEXT NOT NULL,
+		native TEXT NOT NULL,
+		computed_at INTEGER NOT NULL,
+		PRIMARY KEY (root, platform, variant, command)
+	);`,
+	`ALTER TABLE installs ADD COLUMN container TEXT;
+	ALTER TABLE installs ADD COLUMN exe_stamp TEXT;`,
 ];
 
 export function ownerKey(owner: Owner): string {
@@ -227,6 +239,11 @@ export class Store {
 	/** Record that this lease's owner booted its device (claim boot/create, hook saw it shut down). */
 	markBootedByOwner(id: string): void {
 		this.db.query("UPDATE leases SET booted_by_owner = 1 WHERE id = ?").run(id);
+	}
+
+	/** Record the process a lease now lives with (an emulator launched after its port was leased). */
+	setLeasePid(id: string, pid: number): void {
+		this.db.query("UPDATE leases SET pid = ? WHERE id = ?").run(pid, id);
 	}
 
 	getMeta(key: string): string | undefined {

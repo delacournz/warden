@@ -1,3 +1,5 @@
+import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
+import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
@@ -13,6 +15,7 @@ import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
+import { androidSnapshotPass } from "../golden-deps";
 import { emit, heading, plural, reportError } from "../output";
 import { providerFor } from "../providers";
 import { hasForegroundApp } from "../running-apps";
@@ -109,7 +112,32 @@ function parseIdle(raw: string | undefined): Result<number> {
 	return raw === undefined ? ok(DEFAULT_IDLE_MS) : parseDuration(raw);
 }
 
-type GcOpts = { idle?: string; quiet?: true; json?: true };
+/**
+ * LRU-prune the build cache down to `maxBytes` (17-11). Builds whose build lock is held or that were used
+ * in the last 30 min (a cache hit being installed takes no lock) stay. Returns gc's notes about it.
+ */
+function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[] {
+	try {
+		const plan = pruneBuilds({
+			store: ctx.store(),
+			env: ctx.env,
+			maxBytes,
+			now,
+			pidAlive: processAlive,
+			graceMs: GC_PRUNE_GRACE_MS,
+		});
+		const removed = plan.remove.filter((b) => !isAlias(b));
+		if (removed.length === 0) return [];
+		const freed = removed.reduce((sum, b) => sum + b.size, 0);
+		return [
+			`pruned ${plural(removed.length, "cached build")} (${formatSize(freed)}; cache ${formatSize(plan.total)} → ${formatSize(plan.after)}, max ${formatSize(maxBytes)})`,
+		];
+	} catch (e) {
+		return [`build cache prune failed: ${e instanceof Error ? e.message : String(e)}`];
+	}
+}
+
+type GcOpts = { idle?: string; maxCacheSize?: string; quiet?: true; json?: true };
 
 /** Everything a pass reports. */
 type GcOutcome = PlatformOutcome & { reclaimed: string[] };
@@ -119,15 +147,24 @@ type GcOutcome = PlatformOutcome & { reclaimed: string[] };
  * reclaimed, and their devices shut down when the shutdown policy allows (warden-created, or booted
  * by that owner) — unless the lease went stale under 10 min ago or an app is running on the device,
  * which then stays up with its idle clock restarted. Then shut down warden-created devices (store `devices` table) that are
- * booted, unleased and idle longer than `--idle` (both platforms at once, a few devices at a time). Foreign devices are never touched; nothing is
+ * booted, unleased and idle longer than `--idle` (both platforms at once, a few devices at a time), and LRU-prune the build cache to its cap. Foreign devices are never touched; no device is
  * ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
- * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note.
+ * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note. Then one
+ * AVD a claim cold-booted for want of a quick-boot snapshot gets it built, if no emulator of it runs
+ * (never under `CI`).
  */
 async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const { color } = ctx.ui;
 	const idle = parseIdle(opts.idle);
 	if (!idle.success) {
 		reportError(ctx, "gc", idle.error);
+		return 1;
+	}
+	// a bad --max-cache-size is the caller's typo: fail. A bad WARDEN_MAX_CACHE_SIZE must not stop lease
+	// reclaim or device shutdown (auto-gc would fail silently every pass): it skips the prune, with a note.
+	const cap = cacheCap(opts.maxCacheSize, ctx.env);
+	if (!cap.bytes.success && cap.source === "flag") {
+		reportError(ctx, "gc", `--max-cache-size: ${cap.bytes.error}`);
 		return 1;
 	}
 	const store = ctx.store();
@@ -170,6 +207,8 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		}
 		const plan: GcPlan = { now, idleMs: idle.data, leased };
 		const platforms = await Promise.all(PLATFORMS.map((platform) => gcPlatform(sctx, platform, owner, plan)));
+		// after the idle shutdowns, which may have freed the AVD: one pending Android snapshot build
+		const snapshotNotes = await androidSnapshotPass(sctx, owner);
 		return {
 			reclaimed,
 			shutdown: [
@@ -181,7 +220,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 				...platforms.flatMap((p) => p.shutdown),
 			],
 			forgotten: platforms.flatMap((p) => p.forgotten),
-			notes: [...orphaned.notes, ...platforms.flatMap((p) => p.notes)],
+			notes: [...orphaned.notes, ...platforms.flatMap((p) => p.notes), ...snapshotNotes],
 		};
 	};
 	if (!opts.quiet && !opts.json)
@@ -190,6 +229,11 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const { reclaimed, shutdown, forgotten, notes } = opts.quiet
 		? await shutDownIdle(ctx)
 		: await withSpinner(ctx, "shutting down idle devices…", shutDownIdle);
+	notes.push(
+		...(cap.bytes.success
+			? pruneCache(ctx, cap.bytes.data, now)
+			: [`WARDEN_MAX_CACHE_SIZE: ${cap.bytes.error}; build cache prune skipped`])
+	);
 	store.setMeta("last_gc_at", String(now));
 	if (opts.quiet) return 0;
 	const text = [
@@ -215,6 +259,10 @@ export const gcCommand = defineCommand({
 			.option(
 				"--idle <duration>",
 				`shut down unleased warden devices idle this long (default: ${formatDuration(DEFAULT_IDLE_MS)})`
+			)
+			.option(
+				"--max-cache-size <size>",
+				`prune least-recently-used cached builds down to this size, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE or ${DEFAULT_MAX_CACHE_SIZE}; builds used in the last 30 min stay)`
 			)
 			.option("--quiet", "print nothing (background auto-gc)")
 			.option("--json", "machine-readable output")

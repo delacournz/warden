@@ -25,6 +25,11 @@ export type ExecResult = {
 	timedOut: boolean;
 	/** the exec never started (missing binary, spawn error) */
 	spawnError?: string;
+	/**
+	 * CPU time (user + system, seconds) of the child at exit, from its rusage, which includes the
+	 * descendants it waited for; absent when the runtime has none (a fake, a spawn error)
+	 */
+	cpuSec?: number;
 };
 
 /** A long-running child (a daemon or server) the harness started and must stop. */
@@ -121,6 +126,14 @@ function mergedEnv(env: ExecOptions["env"]): Record<string, string> {
 	return out;
 }
 
+/** A finished child's CPU time in seconds (Bun reports microseconds, as a bigint at runtime despite its types). */
+function exitCpuSec(proc: {
+	resourceUsage(): { cpuTime: { total: number | bigint } } | undefined;
+}): number | undefined {
+	const total = proc.resourceUsage()?.cpuTime.total;
+	return total === undefined ? undefined : Number(total) / 1e6;
+}
+
 /** The real `Exec` over `Bun.spawn`. */
 export const realExec: Exec = {
 	async run(cmd, args, options = {}) {
@@ -179,7 +192,15 @@ export const realExec: Exec = {
 		if (timer !== undefined) clearTimeout(timer);
 		if (killer !== undefined) clearTimeout(killer);
 		liveGroups.delete(pid);
-		return { code, stdout, stderr, durationMs: performance.now() - started, timedOut };
+		const cpuSec = exitCpuSec(proc);
+		return {
+			code,
+			stdout,
+			stderr,
+			durationMs: performance.now() - started,
+			timedOut,
+			...(cpuSec !== undefined ? { cpuSec } : {}),
+		};
 	},
 	start(cmd, args, options = {}) {
 		const proc = Bun.spawn([cmd, ...args], {

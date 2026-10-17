@@ -19,7 +19,7 @@ export type FlowPollerDeps = {
 };
 
 /** What the poller knows of one job attempt's results file. */
-type Followed = { tail: ResultsTail; tracker: FlowTracker; finalSent: boolean };
+type Followed = { path: string; tail: ResultsTail; tracker: FlowTracker; finalSent: boolean };
 
 /**
  * Follow the `results.jsonl` of every job started so far (`resultFiles` fills as jobs start; a key
@@ -45,8 +45,10 @@ export function flowPoller(
 	const settled = new Set<string>();
 	const follow = (key: string, path: string): Followed => {
 		const known = followed.get(key);
-		if (known) return known;
+		// a later pass of the attempt writes its own file (`…-p<k>`): follow that one from its start
+		if (known?.path === path) return known;
 		const entry: Followed = {
+			path,
 			tail: createResultsTail(path, deps.readFrom, deps.parse),
 			tracker: flowTracker(flows),
 			finalSent: false,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "../exec";
-import { probeIosHealth, probeIosWarm, springboardRunning } from "./health";
+import { execWithin, isProbeTimeout, probeIosHealth, probeIosWarm, springboardRunning } from "./health";
 
 const LIST = "PID\tStatus\tLabel\n412\t0\tUIKitApplication:com.apple.springboard[abcd][rb-legacy]\n-\t0\tcom.apple.foo";
 const never = () => new Promise<ExecResult>(() => {});
@@ -115,5 +115,38 @@ describe("probeIosWarm", () => {
 		expect(failing.success).toBe(false);
 		const hung = await probeIosWarm({ exec: exec({ "launchctl list": never }), timer: instant }, "U1");
 		expect(hung).toEqual({ success: false, error: "U1: launchctl list did not answer within 15s" });
+	});
+});
+
+describe("execWithin / isProbeTimeout (16-10, 16-11)", () => {
+	test("an exec that never returns gives undefined once the timer fires; the exec is told the timeout too", async () => {
+		const seen: Array<number | undefined> = [];
+		const hung: Exec = (_cmd, opts) => {
+			seen.push(opts?.timeoutMs);
+			return never();
+		};
+		expect(
+			await execWithin({ exec: hung, timer: instant }, ["xcrun", "simctl", "boot", "U1"], 120_000)
+		).toBeUndefined();
+		expect(seen).toEqual([120_000]);
+	});
+
+	test("a process killed by Bun's timeout (SIGTERM, 143) or timeout(1) (124) is no answer, not a failure", async () => {
+		for (const exitCode of [124, 143]) {
+			const killed = exec({ "launchctl list": done("", exitCode) });
+			expect(await execWithin({ exec: killed, timer: forever }, ["launchctl", "list"], 10)).toBeUndefined();
+		}
+		const failed = exec({ "launchctl list": done("", 1) });
+		expect((await execWithin({ exec: failed, timer: forever }, ["launchctl", "list"], 10))?.exitCode).toBe(1);
+	});
+
+	test("a hung probe is a timeout; SpringBoard down is not", async () => {
+		const hung = await probeIosHealth({ exec: exec({ "print system": never }), timer: instant }, "U1");
+		expect(!hung.success && isProbeTimeout(hung.error)).toBe(true);
+		const down = await probeIosWarm(
+			{ exec: exec({ "launchctl list": done("PID\tStatus\tLabel") }), timer: forever },
+			"U1"
+		);
+		expect(!down.success && isProbeTimeout(down.error)).toBe(false);
 	});
 });

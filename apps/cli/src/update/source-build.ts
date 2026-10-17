@@ -16,7 +16,8 @@ export const STRAY_SOURCE_MAP = "cli.js.map";
  * 10 MB bundle (typescript included) on every start, bytecode skips that. `--sourcemap=linked` is what keeps stack
  * traces and uncaught-error excerpts readable (otherwise a minified one-line bundle is printed); the map is embedded
  * in the binary and `STRAY_SOURCE_MAP` is left beside it. Constraints: bytecode is CommonJS, so no top-level `await`
- * in anything bundled (`cli.ts` uses `.then`).
+ * in anything bundled (`cli.ts` uses `.then`). `--external typescript`: the compiler is 28 MB of the bundle (a quarter
+ * of the binary) for `warden affected`'s graph walk only, which loads the analysed project's own (`resolveTypescript`).
  */
 export function compileArgs(opts: { entry: string; outfile: string; info: EmbeddedBuild; target?: string }): string[] {
 	return [
@@ -26,6 +27,8 @@ export function compileArgs(opts: { entry: string; outfile: string; info: Embedd
 		"--minify",
 		"--bytecode",
 		"--sourcemap=linked",
+		"--external",
+		"typescript",
 		opts.entry,
 		"--outfile",
 		opts.outfile,

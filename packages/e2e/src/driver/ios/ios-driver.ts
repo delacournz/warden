@@ -200,6 +200,7 @@ export function createIosDriver(
 		nativeSettle,
 		alerts: true,
 		reachability: true,
+		cheapHitTest: true,
 	};
 
 	/**

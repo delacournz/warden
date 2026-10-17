@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "@delacour/warden-core/store";
@@ -10,6 +10,7 @@ import {
 	readDumpRoute,
 	readLastSnapshot,
 	readState,
+	updateState,
 	writeDumpRoute,
 	writeLastSnapshot,
 	writeState,
@@ -76,6 +77,64 @@ describe("ui state", () => {
 		expect([...taken].sort((a, b) => a - b)).toEqual(Array.from({ length: 100 }, (_, n) => n + 1));
 		expect(readLastSnapshot(ctx, "U1")?.generation).toBe(100);
 		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(101);
+	});
+
+	test("four processes each setting a different record through updateState on one WARDEN_HOME keep all four (14-6)", async () => {
+		const ctx = setup();
+		const worker = join(import.meta.dir, "state.worker.testing.ts");
+		const fields = ["helper", "video", "collector", "recording"];
+		const workers = fields.map((field) =>
+			Bun.spawn([process.execPath, worker, home ?? "", "U1", "40", field], { stdout: "pipe", stderr: "inherit" })
+		);
+		for (const child of workers) expect(await child.exited).toBe(0);
+		const state = readState(ctx, "U1");
+		expect(state.helper).toEqual({ pid: 40, socket: "/s" });
+		expect(state.video).toEqual({ pid: 40, path: "/v.mp4", startedAt: 40 });
+		expect(state.collector).toEqual({ pid: 40, startedAt: 40 });
+		expect(state.recording).toEqual({ file: "/f.flow.json", name: "f", startedAt: 40 });
+	});
+
+	test("updateState re-reads under the store's transaction, writes what the update returns, and returns it", () => {
+		const first = setup();
+		const second = connect(home ?? "");
+		writeState(first, "U1", { generation: 0, updatedAt: 0, app: "com.acme" });
+		let inTransaction = false;
+		const store = first.store();
+		const transaction = store.transaction.bind(store);
+		store.transaction = <T>(fn: () => T): T =>
+			transaction(() => {
+				inTransaction = true;
+				try {
+					return fn();
+				} finally {
+					inTransaction = false;
+				}
+			});
+		// another process wrote between our read and our update: its record survives
+		const stale = readState(first, "U1");
+		updateState(second, "U1", (state) => ({ ...state, collector: { pid: 9, startedAt: 1 } }));
+		const written = updateState(first, "U1", (state) => {
+			expect(inTransaction).toBe(true);
+			return { ...state, video: { pid: 8, path: "/v", startedAt: 2 } };
+		});
+		expect(stale.collector).toBeUndefined();
+		expect(written).toEqual({
+			generation: 0,
+			updatedAt: 42,
+			app: "com.acme",
+			collector: { pid: 9, startedAt: 1 },
+			video: { pid: 8, path: "/v", startedAt: 2 },
+		});
+		expect(readState(first, "U1")).toEqual(written);
+	});
+
+	test("updateState writes nothing when the update returns the state it was given; it works without a store", () => {
+		const ctx = setup();
+		updateState(ctx, "U1", (state) => state);
+		expect(existsSync(join(uiDir(ctx, "U1"), "state.json"))).toBe(false);
+		const plain = { env: ctx.env, now: ctx.now };
+		updateState(plain, "U1", (state) => ({ ...state, app: "com.acme" }));
+		expect(readState(ctx, "U1").app).toBe("com.acme");
 	});
 
 	test("concurrent connections in one process also stay in step", () => {

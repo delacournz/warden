@@ -28,6 +28,8 @@ export type SummaryRow = {
 	flakeRate?: number;
 	residue?: { processes: number; driverApps: number; paths: number };
 	footprint?: { loc: number; depsBytes: number };
+	/** host CPU-seconds per rep (median over warm reps of each timed run's window); undefined for older results */
+	cpuSecondsPerRep?: number;
 	/** true for the framework whose suite ratio is exactly 1 (fastest among fully passing frameworks) */
 	fastest: boolean;
 	/** true when some test did not pass in every rep, so its timing is not comparable */
@@ -44,8 +46,27 @@ export function residueCounts(residue: Residue): { processes: number; driverApps
 	return { processes: residue.processes.length, driverApps: residue.driverApps.length, paths: residue.paths.length };
 }
 
+/** False when the framework has no warm rep (`--runs 1`): `cpuSecondsPerRep` then falls back to all reps. */
+export function hasWarmRep(f: OkFrameworkResult): boolean {
+	return f.reps.some((r) => !r.cold);
+}
+
+/**
+ * The headline CPU figure: host CPU-seconds of the timed `run` (`RepResult.resources`), median over the warm
+ * reps (all reps when none is warm). Undefined when no rep has a CPU time (results from before 19-6, or a
+ * sampler whose ps had no usable `time` column); a rep without one is skipped, never counted as 0.
+ */
+export function cpuSecondsPerRep(f: OkFrameworkResult): number | undefined {
+	const warm = f.reps.filter((r) => !r.cold);
+	const values = (warm.length > 0 ? warm : f.reps).flatMap((r) =>
+		r.resources?.cpuSeconds !== undefined ? [r.resources.cpuSeconds] : []
+	);
+	return values.length > 0 ? median(values) : undefined;
+}
+
 function okRow(f: OkFrameworkResult): SummaryRow {
 	const s = f.stats;
+	const cpu = cpuSecondsPerRep(f);
 	return {
 		framework: f.framework,
 		status: "ok",
@@ -62,6 +83,7 @@ function okRow(f: OkFrameworkResult): SummaryRow {
 		flakeRate: s.flakeRate,
 		residue: residueCounts(f.residue),
 		footprint: { loc: f.footprint.testSourceLoc, depsBytes: f.footprint.depsBytes },
+		...(cpu !== undefined ? { cpuSecondsPerRep: cpu } : {}),
 		fastest: f.stats.ratioToFastestSuite === 1,
 		failing: f.stats.passRate < 1,
 	};
