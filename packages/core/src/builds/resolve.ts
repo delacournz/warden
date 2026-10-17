@@ -49,6 +49,12 @@ export type ResolveSteps = {
 	legacy: () => AsyncResult<string | undefined>;
 	/** serialise the fetch/build of `hash` across processes */
 	lock: <T>(fn: () => AsyncResult<T>) => AsyncResult<T>;
+	/**
+	 * Same-process single flight: concurrent `resolveApp`s with this key (one per device of a session)
+	 * share the first one's locked fetch/build and its result, success or error; only other processes
+	 * wait on the build lock. Absent: every call takes the lock itself.
+	 */
+	flightKey?: string;
 	/** EAS: download into the cache, or miss */
 	eas?: () => AsyncResult<EasStepOutcome>;
 	/** local build into the cache; path */
@@ -89,7 +95,27 @@ async function locate(steps: ResolveSteps): AsyncResult<Found> {
 		steps.log(`imported legacy build ${legacy.data}`);
 		return ok({ path: legacy.data, source: "cache" });
 	}
-	return steps.lock(() => fetchOrBuild(steps));
+	return fetchOrBuildOnce(steps);
+}
+
+/** In-flight locked fetch/builds of this process, by `ResolveSteps.flightKey`. */
+const inFlight = new Map<string, AsyncResult<Found>>();
+
+function fetchOrBuildOnce(steps: ResolveSteps): AsyncResult<Found> {
+	const key = steps.flightKey;
+	if (key === undefined) return steps.lock(() => fetchOrBuild(steps));
+	const running = inFlight.get(key);
+	if (running) {
+		steps.log("this fetch/build is already running for another device — waiting for it");
+		return running;
+	}
+	const started = steps.lock(() => fetchOrBuild(steps));
+	inFlight.set(key, started);
+	const done = () => {
+		inFlight.delete(key);
+	};
+	started.then(done, done);
+	return started;
 }
 
 async function alreadyInstalled(steps: ResolveSteps, device: DeviceSteps): Promise<Result<boolean>> {

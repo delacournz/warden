@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Exec } from "../exec";
+import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
 import { fakeApp, testProject } from "./builds.testing";
 import { releaseKey } from "./fingerprint";
+import { combineKey, jsInputsHash } from "./js-inputs";
 import { artifactCandidates, locateArtifact, runLocalBuild } from "./local";
 
 let dir: string;
@@ -19,6 +20,33 @@ const SIM = join("Build", "Products", "Debug-iphonesimulator");
 function age(path: string, secondsAgo: number): void {
 	const t = Date.now() / 1000 - secondsAgo;
 	utimesSync(path, t, t);
+}
+
+/**
+ * Fake `plutil -extract <key> raw -o - <file>`: the test plists are JSON objects; a missing key or
+ * file fails like the real tool (exit 1).
+ */
+function fakePlutil(cmd: readonly string[]): ExecResult | undefined {
+	if (cmd[0] !== "plutil" || cmd[1] !== "-extract") return undefined;
+	try {
+		const value = (JSON.parse(readFileSync(cmd[6] ?? "", "utf8")) as Record<string, unknown>)[cmd[2] ?? ""];
+		if (typeof value === "string") return { exitCode: 0, stdout: `${value}\n`, stderr: "" };
+	} catch {}
+	return { exitCode: 1, stdout: "", stderr: "No value at that key path or invalid key path" };
+}
+
+/** Give a fake `.app` its bundle id. */
+function bundled(app: string, id = "com.x.app"): string {
+	writeFileSync(join(app, "Info.plist"), JSON.stringify({ CFBundleIdentifier: id }));
+	return app;
+}
+
+/** A DerivedData project dir whose `info.plist` records the workspace it builds. */
+function derivedProject(dd: string, name: string, workspace: string): string {
+	const project = join(dd, name);
+	mkdirSync(project, { recursive: true });
+	writeFileSync(join(project, "info.plist"), JSON.stringify({ WorkspacePath: workspace }));
+	return project;
 }
 
 describe("locateArtifact", () => {
@@ -70,13 +98,18 @@ describe("runLocalBuild", () => {
 	test("a Release build is found in Release-iphonesimulator", async () => {
 		const root = join(dir, "app");
 		const dd = join(dir, "Library", "Developer", "Xcode", "DerivedData");
-		const out = join(dd, "App-xyz", "Build", "Products", "Release-iphonesimulator");
+		const out = join(
+			derivedProject(dd, "App-xyz", join(root, "ios", "App.xcworkspace")),
+			"Build",
+			"Products",
+			"Release-iphonesimulator"
+		);
 		const exec: Exec = async (cmd) => {
 			if (cmd[2] === "xcode-release") {
-				fakeApp(out, "App.app");
+				bundled(fakeApp(out, "App.app"));
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
-			return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
+			return fakePlutil(cmd) ?? { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
 		};
 		const project = testProject({
 			root,
@@ -93,7 +126,7 @@ describe("runLocalBuild", () => {
 			now: () => Date.now(),
 			log: () => {},
 		});
-		expect(res).toEqual({ success: true, data: join(out, "App.app") });
+		expect(res).toEqual({ success: true, data: { artifact: join(out, "App.app") } });
 	});
 
 	function setup(fingerprints: string[]) {
@@ -122,12 +155,13 @@ describe("runLocalBuild", () => {
 	test("builds, locates, verifies the fingerprint", async () => {
 		const s = setup(["h1"]);
 		const res = await runLocalBuild({ ...base, exec: s.exec, project: s.project, platform: "android", hash: "h1" });
-		expect(res).toEqual({ success: true, data: join(s.out, "app-debug.apk") });
-		expect(s.calls[0]).toBe(`${s.root} sh -c gradle-build`);
+		expect(res).toEqual({ success: true, data: { artifact: join(s.out, "app-debug.apk") } });
+		expect(s.calls).toContain(`${s.root} sh -c gradle-build`);
 	});
 
-	test("fingerprint changed during build → error", async () => {
+	test("fingerprint changed during build, native dir already there → error (a real native edit)", async () => {
 		const s = setup(["h2"]);
+		mkdirSync(join(s.root, "android"), { recursive: true });
 		const res = await runLocalBuild({ ...base, exec: s.exec, project: s.project, platform: "android", hash: "h1" });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("fingerprint changed");
@@ -145,6 +179,8 @@ describe("runLocalBuild compiler cache env", () => {
 	function iosSetup() {
 		const root = join(dir, "app");
 		const out = join(root, "ios", "build", SIM);
+		// an already prebuilt project: no mid-build `git status` snapshot, only the git facts' spawns
+		mkdirSync(join(root, "ios"), { recursive: true });
 		const envs: Array<Record<string, string | undefined> | undefined> = [];
 		const gitCalls: string[] = [];
 		const exec: Exec = async (cmd, opts) => {
@@ -251,5 +287,291 @@ describe("runLocalBuild compiler cache env", () => {
 			compilerCache: false,
 		});
 		expect(s.envs[0]).toEqual({ EXPO_NO_TELEMETRY: "1" });
+	});
+});
+
+describe("runLocalBuild: a fresh checkout's prebuild moves the fingerprint (17-1)", () => {
+	const apkDir = (root: string) => join(root, "android", "app", "build", "outputs", "apk", "debug");
+
+	/** Android host: the build creates `android/` (expo prebuild), `fp` prints `fingerprints` in turn, git status is `status()`. */
+	function host(fingerprints: string[], status: () => string | undefined = () => "") {
+		const root = join(dir, "app");
+		const calls: string[] = [];
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (cmd[2] === "gradle-build") {
+				mkdirSync(apkDir(root), { recursive: true });
+				writeFileSync(join(apkDir(root), "app-debug.apk"), "apk");
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (cmd[2] === "fp") return { exitCode: 0, stdout: `{"hash":"${fingerprints.shift()}"}`, stderr: "" };
+			if (joined.startsWith("git status --porcelain")) {
+				const out = status();
+				return out === undefined
+					? { exitCode: 128, stdout: "", stderr: "fatal" }
+					: { exitCode: 0, stdout: out, stderr: "" };
+			}
+			return { exitCode: 127, stdout: "", stderr: joined };
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "x", android: "gradle-build" } });
+		return { root, calls, exec, project };
+	}
+	const base = { env: { HOME: "/nope" }, now: () => Date.now(), log: () => {} };
+
+	test("the build created android/ and the tree is otherwise unchanged → ok, with the post-build key", async () => {
+		const s = host(["h2"]);
+		const res = await runLocalBuild({ ...base, exec: s.exec, project: s.project, platform: "android", hash: "h1" });
+		expect(res).toEqual({ success: true, data: { artifact: join(apkDir(s.root), "app-debug.apk"), postKey: "h2" } });
+		const status = s.calls.filter((c) => c.startsWith("git status"));
+		expect(status).toHaveLength(2);
+		expect(status[0]).toContain(":(exclude)android");
+	});
+
+	test("a source edit during the build (git status moved) → error", async () => {
+		const states = ["", " M src/a.ts\n"];
+		const s = host(["h2"], () => states.shift());
+		const res = await runLocalBuild({ ...base, exec: s.exec, project: s.project, platform: "android", hash: "h1" });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("fingerprint changed");
+	});
+
+	test("not a git checkout (no status to compare) → error", async () => {
+		const s = host(["h2"], () => undefined);
+		const res = await runLocalBuild({ ...base, exec: s.exec, project: s.project, platform: "android", hash: "h1" });
+		expect(res.success).toBe(false);
+	});
+
+	describe("JS-aware project", () => {
+		const blob = (c: string) => c.repeat(40);
+		/** `git ls-files` sees `src/a.ts` at `blobs()` (index first, then modified). */
+		function jsHost(fingerprints: string[], blobs: string[]) {
+			const s = host(fingerprints);
+			const exec: Exec = async (cmd, opts) => {
+				const joined = cmd.join(" ");
+				if (joined.startsWith("git ls-files -z -v -s")) {
+					s.calls.push(joined);
+					return { exitCode: 0, stdout: `H 100644 ${blobs.shift()} 0\tsrc/a.ts\0`, stderr: "" };
+				}
+				if (joined.startsWith("git ls-files -z -m")) return { exitCode: 0, stdout: "", stderr: "" };
+				return s.exec(cmd, opts);
+			};
+			return { ...s, exec, project: { ...s.project, jsInputs: ["src/**"] } };
+		}
+		const jsOf = async (id: string) => {
+			const exec: Exec = async (cmd) =>
+				cmd.includes("-s")
+					? { exitCode: 0, stdout: `H 100644 ${id} 0\tsrc/a.ts\0`, stderr: "" }
+					: { exitCode: 0, stdout: "", stderr: "" };
+			const js = await jsInputsHash({ exec, root: "/r", jsInputs: ["src/**"] });
+			if (!js.success) throw new Error(js.error);
+			return js.data;
+		};
+
+		test("JS half unchanged → ok with the post-build key, no git status needed", async () => {
+			const js = await jsOf(blob("a"));
+			const s = jsHost(["n2"], [blob("a")]);
+			const res = await runLocalBuild({
+				...base,
+				exec: s.exec,
+				project: s.project,
+				platform: "android",
+				hash: combineKey("n1", js),
+				native: "n1",
+			});
+			expect(res).toEqual({
+				success: true,
+				data: { artifact: join(apkDir(s.root), "app-debug.apk"), postKey: combineKey("n2", js) },
+			});
+			expect(s.calls.some((c) => c.startsWith("git status"))).toBe(false);
+		});
+
+		test("JS half changed during the build → error", async () => {
+			const js = await jsOf(blob("a"));
+			const s = jsHost(["n2"], [blob("b")]);
+			const res = await runLocalBuild({
+				...base,
+				exec: s.exec,
+				project: s.project,
+				platform: "android",
+				hash: combineKey("n1", js),
+				native: "n1",
+			});
+			expect(res.success).toBe(false);
+			if (!res.success) expect(res.error).toContain("fingerprint changed");
+		});
+	});
+});
+
+describe("runLocalBuild: an up-to-date build leaves an old artifact (17-2)", () => {
+	const RELEASE = join("android", "app", "build", "outputs", "apk");
+
+	/** Release Android host whose build touches nothing (Gradle up to date) unless `during` says otherwise. */
+	function host(fingerprint: string, during: (root: string) => void = () => {}) {
+		const root = join(dir, "app");
+		const outputs = join(root, RELEASE);
+		mkdirSync(join(outputs, "release"), { recursive: true });
+		const apk = join(outputs, "release", "app-release.apk");
+		writeFileSync(apk, "apk");
+		age(apk, 3600);
+		const logs: string[] = [];
+		const exec: Exec = async (cmd) => {
+			if (cmd[2] === "gradle-build") {
+				during(root);
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (cmd[2] === "fp") return { exitCode: 0, stdout: `{"hash":"${fingerprint}"}`, stderr: "" };
+			return { exitCode: 127, stdout: "", stderr: cmd.join(" ") };
+		};
+		const project = testProject({
+			root,
+			fingerprintCommand: "fp",
+			buildConfiguration: "Release",
+			build: { ios: "x", android: "gradle-build" },
+		});
+		const deps = {
+			exec,
+			project,
+			platform: "android" as const,
+			hash: releaseKey("h1"),
+			env: { HOME: "/nope" },
+			now: () => Date.now(),
+			log: (line: string) => logs.push(line),
+		};
+		return { root, outputs, apk, logs, deps };
+	}
+
+	test("old APK, build exit 0, fingerprint unchanged → the existing APK, logged", async () => {
+		const s = host("h1");
+		const res = await runLocalBuild(s.deps);
+		expect(res).toEqual({ success: true, data: { artifact: s.apk } });
+		expect(s.logs.some((l) => l.startsWith(`using up-to-date artifact ${s.apk} (mtime `))).toBe(true);
+	});
+
+	test("a newer androidTest/release APK is never picked", async () => {
+		const s = host("h1", (root) => {
+			const test = join(root, RELEASE, "androidTest", "release");
+			mkdirSync(test, { recursive: true });
+			writeFileSync(join(test, "app-release-androidTest.apk"), "test apk");
+		});
+		const res = await runLocalBuild(s.deps);
+		expect(res).toEqual({ success: true, data: { artifact: s.apk } });
+	});
+
+	test("fingerprint differs (native dir already there) → still an error", async () => {
+		const s = host("h2");
+		const res = await runLocalBuild(s.deps);
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("fingerprint changed");
+	});
+
+	test("iOS: an old .app is used only when its bundle id is the project's", async () => {
+		const root = join(dir, "app");
+		const products = join(root, "ios", "build", SIM);
+		const app = bundled(fakeApp(products, "App.app"));
+		age(app, 3600);
+		const exec: Exec = async (cmd) =>
+			fakePlutil(cmd) ??
+			(cmd[2] === "fp"
+				? { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" }
+				: { exitCode: 0, stdout: "", stderr: "" });
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "noop", android: "x" } });
+		const deps = {
+			exec,
+			project,
+			platform: "ios" as const,
+			hash: "h1",
+			env: { HOME: dir },
+			now: () => Date.now(),
+			log: () => {},
+		};
+		expect(await runLocalBuild({ ...deps, compilerCache: false })).toEqual({ success: true, data: { artifact: app } });
+		bundled(app, "com.other.app");
+		const other = await runLocalBuild({ ...deps, compilerCache: false });
+		expect(other.success).toBe(false);
+	});
+});
+
+describe("runLocalBuild: iOS artifacts from other projects (17-3)", () => {
+	const PRODUCTS = join("Build", "Products", "Debug-iphonesimulator");
+
+	function host(build: (root: string, dd: string) => void) {
+		const root = join(dir, "app");
+		const dd = join(dir, "Library", "Developer", "Xcode", "DerivedData");
+		mkdirSync(join(root, "ios", "example.xcworkspace"), { recursive: true });
+		const calls: string[] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push(cmd.join(" "));
+			if (cmd[2] === "xb") {
+				build(root, dd);
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			return (
+				fakePlutil(cmd) ??
+				(cmd[2] === "fp"
+					? { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" }
+					: { exitCode: 127, stdout: "", stderr: "" })
+			);
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "xb", android: "x" } });
+		const deps = {
+			exec,
+			project,
+			platform: "ios" as const,
+			hash: "h1",
+			env: { HOME: dir },
+			now: () => Date.now(),
+			log: () => {},
+			compilerCache: false,
+		};
+		return { root, dd, calls, deps };
+	}
+	const future = (path: string) => {
+		const t = Date.now() / 1000 + 30;
+		utimesSync(path, t, t);
+	};
+
+	test("a newer .app of another root's DerivedData project is ignored", async () => {
+		let mine = "";
+		const s = host((root, dd) => {
+			mine = bundled(
+				fakeApp(join(derivedProject(dd, "example-aaa", join(root, "ios", "example.xcworkspace")), PRODUCTS))
+			);
+			future(
+				bundled(fakeApp(join(derivedProject(dd, "example-bbb", "/elsewhere/app/ios/example.xcworkspace"), PRODUCTS)))
+			);
+		});
+		expect(await runLocalBuild(s.deps)).toEqual({ success: true, data: { artifact: mine } });
+	});
+
+	test("DerivedData dirs of another workspace name are not probed", async () => {
+		const s = host((root, dd) => {
+			bundled(fakeApp(join(derivedProject(dd, "example-aaa", join(root, "ios", "example.xcworkspace")), PRODUCTS)));
+			bundled(fakeApp(join(derivedProject(dd, "Other-ccc", join(root, "ios", "example.xcworkspace")), PRODUCTS)));
+		});
+		await runLocalBuild(s.deps);
+		const probed = s.calls.filter((c) => c.includes("WorkspacePath"));
+		expect(probed).toHaveLength(1);
+		expect(probed[0]).toContain("example-aaa");
+	});
+
+	test("<root>/ios/build wins over a fresh DerivedData product", async () => {
+		let local = "";
+		const s = host((root, dd) => {
+			future(
+				bundled(fakeApp(join(derivedProject(dd, "example-aaa", join(root, "ios", "example.xcworkspace")), PRODUCTS)))
+			);
+			local = bundled(fakeApp(join(root, "ios", "build", PRODUCTS)));
+		});
+		expect(await runLocalBuild(s.deps)).toEqual({ success: true, data: { artifact: local } });
+	});
+
+	test("a .app with another bundle id (a UI test runner) is skipped", async () => {
+		let app = "";
+		const s = host((root) => {
+			app = bundled(fakeApp(join(root, "ios", "build", PRODUCTS), "App.app"));
+			future(bundled(fakeApp(join(root, "ios", "build", PRODUCTS), "AppUITests-Runner.app"), "com.x.app.xctrunner"));
+		});
+		expect(await runLocalBuild(s.deps)).toEqual({ success: true, data: { artifact: app } });
 	});
 });
