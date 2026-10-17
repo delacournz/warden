@@ -99,9 +99,20 @@ function workerCommand(opts: LoadGraphOptions): string[] | undefined {
 	return bun !== undefined && existsSync(worker) ? [bun, worker] : undefined;
 }
 
-/** The reason a walker printed for `TYPESCRIPT_UNUSABLE_EXIT`: its last line, without the subcommand's `warden __affected-graph:` prefix. */
+/**
+ * The reason a walker printed for `TYPESCRIPT_UNUSABLE_EXIT`: its last non-empty stderr line, colour codes stripped (the
+ * worker inherits `FORCE_COLOR`), without the subcommand's `warden __affected-graph:` prefix. A generic message naming
+ * the exit code when stderr says nothing.
+ */
 function workerError(stderr: string): string {
-	const line = stderr.trim().split("\n").at(-1) ?? "";
+	const line = Bun.stripANSI(stderr)
+		.split("\n")
+		.map((l) => l.trim())
+		.filter((l) => l !== "")
+		.at(-1);
+	if (line === undefined) {
+		return `the import graph worker found no usable typescript (exit ${TYPESCRIPT_UNUSABLE_EXIT}, no message)`;
+	}
 	const prefix = `${GRAPH_WORKER_SUBCOMMAND}: `;
 	const at = line.indexOf(prefix);
 	return at === -1 ? line : line.slice(at + prefix.length);

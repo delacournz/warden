@@ -21,6 +21,10 @@ import { matchesText, normalizeText, type TextMatch } from "../screen/text";
  * `sinceInputMs`; no input yet counts as none). A quiet app is not a settled one right after a tap: a submit waiting on
  * the network is idle until the reply comes, so `submit.tap()` then `expect(error).not.toBeVisible()` keeps the full
  * hold, which sees an error that comes within it. Without the cache the time of the last input is unknown: plain hold.
+ * Input is every driver call that is not a read, the matcher's own native settle included (so a second `.not` right
+ * after one that ended early holds the full time). Devtools calls (`device.devtools.evaluate`, `reloadJs`) go to Metro,
+ * not the driver, so they do not count: a `.not` right after one may end early. Tap, `wait` or assert something
+ * positive first.
  */
 export const NEGATION_GRACE_MS = 1000;
 /** The quiet window a negated matcher asks the driver for before it ends its hold early. */

@@ -145,6 +145,27 @@ describe("loadImportGraph", () => {
 		expect(res).toEqual({ success: false, error: "typescript 4.6 at /x is too old" });
 	});
 
+	test("a worker error is its last non-empty stderr line with colour codes stripped (cli-size-S2)", async () => {
+		const colored = await loadResult({
+			exec: async (cmd, o) =>
+				cmd[0] === "git"
+					? bunExec(cmd, o)
+					: done(
+							"",
+							TYPESCRIPT_UNUSABLE_EXIT,
+							`\x1b[31m✖ warden ${GRAPH_WORKER_SUBCOMMAND}: no typescript\x1b[39m\n\n`
+						),
+		});
+		expect(colored).toEqual({ success: false, error: "no typescript" });
+		const empty = await loadResult({
+			exec: async (cmd, o) => (cmd[0] === "git" ? bunExec(cmd, o) : done("", TYPESCRIPT_UNUSABLE_EXIT, "")),
+		});
+		expect(empty).toEqual({
+			success: false,
+			error: `the import graph worker found no usable typescript (exit ${TYPESCRIPT_UNUSABLE_EXIT}, no message)`,
+		});
+	});
+
 	test("a worker that cannot start (exit 127) falls back silently", async () => {
 		const loaded = await load({ exec: async (cmd) => (cmd[0] === "git" ? done("", 128) : done("", 127)) });
 		expect(loaded.via).toBe("in-process");
