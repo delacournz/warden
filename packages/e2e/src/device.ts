@@ -2,8 +2,10 @@ import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
 	ACCEPT_BUTTONS,
-	ANDROID_ALLOW_IDS,
-	ANDROID_DENY_IDS,
+	ANDROID_NEGATIVE_ID,
+	ANDROID_PERMISSION_ALLOW_IDS,
+	ANDROID_PERMISSION_DENY_IDS,
+	ANDROID_POSITIVE_ID,
 	centre,
 	DISMISS_BUTTONS,
 	findButton,
@@ -129,7 +131,7 @@ function nextShotNumber(dir: string, issued: ReadonlyMap<string, number>): numbe
 	return highest + 1;
 }
 
-/** The first of `buttons` whose id is in `ids` (`ANDROID_ALLOW_IDS`, `ANDROID_DENY_IDS`), in that list's order. */
+/** The first of `buttons` whose id is in `ids`, in that list's order. */
 function androidButton(buttons: readonly Element[], ids: readonly string[]): Element | undefined {
 	for (const id of ids) {
 		const found = buttons.find((button) => button.identifier === id);
@@ -138,18 +140,29 @@ function androidButton(buttons: readonly Element[], ids: readonly string[]): Ele
 	return undefined;
 }
 
-/** The button `device.alert(action)` presses; undefined = none to press. Android `accept`/`dismiss` go by button id first. */
+/** The button `device.alert(action)` presses; undefined = none to press. Android `accept`/`dismiss` go by the permission
+ * prompt's ids, then the names, then `AlertDialog`'s `button1`/`button2` (React Native fills those by position). */
 function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): Element | undefined {
 	const { buttons } = info;
 	if (action === "accept") {
-		const byId = platform === "android" ? androidButton(buttons, ANDROID_ALLOW_IDS) : undefined;
-		return byId ?? firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
+		if (platform !== "android") return firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
+		return (
+			androidButton(buttons, ANDROID_PERMISSION_ALLOW_IDS) ??
+			firstOf(buttons, ACCEPT_BUTTONS) ??
+			androidButton(buttons, [ANDROID_POSITIVE_ID]) ??
+			buttons[buttons.length - 1]
+		);
 	}
 	// Cancel on "Open in …?" only throws away a link the test opened: open it
 	if (action === "dismiss" && isOpenInSheet(info)) return findButton(buttons, "Open");
 	if (action === "dismiss") {
-		const byId = platform === "android" ? androidButton(buttons, ANDROID_DENY_IDS) : undefined;
-		return byId ?? firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
+		if (platform !== "android") return firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
+		return (
+			androidButton(buttons, ANDROID_PERMISSION_DENY_IDS) ??
+			firstOf(buttons, DISMISS_BUTTONS) ??
+			androidButton(buttons, [ANDROID_NEGATIVE_ID]) ??
+			buttons[0]
+		);
 	}
 	const target = findButton(buttons, action.button);
 	if (target === undefined) {

@@ -3,7 +3,8 @@ import type { Element, Point } from "./driver/driver.types";
 /**
  * Button names `device.alert("accept")` / `("dismiss")` look for, in order. The Android permission prompt's own
  * labels ("While using the app", "Only this time", "Don't allow") are here too; on Android `accept` and `dismiss` go
- * by the button id first (`ANDROID_ALLOW_IDS`, `ANDROID_DENY_IDS`), which also holds in other locales. "Don't allow" is matched by
+ * by the permission prompt's button ids first (`ANDROID_PERMISSION_ALLOW_IDS`, `ANDROID_PERMISSION_DENY_IDS`), which also
+ * holds in other locales, then by these names, then by `AlertDialog`'s `button1` / `button2`. "Don't allow" is matched by
  * "Don't Allow" (names compare ignoring case).
  */
 export const ACCEPT_BUTTONS = [
@@ -52,24 +53,38 @@ export function centre(element: Element): Point {
 }
 
 /**
- * The buttons that say yes, in the order `device.alert("accept")` tries them: the permission prompt's allow buttons,
- * the most lasting grant first (API 30+ camera, mic and location prompts show "While using the app", "Only this time"
- * and "Don't allow", deny last, so the last button is the wrong guess), then `AlertDialog`'s positive `button1`.
+ * The permission prompt's allow buttons, in the order `device.alert("accept")` tries them, the most lasting grant
+ * first (API 30+ camera, mic and location prompts show "While using the app", "Only this time" and "Don't allow",
+ * deny last, so the last button is the wrong guess). Going by id holds in other locales.
  */
-export const ANDROID_ALLOW_IDS: readonly string[] = [
+export const ANDROID_PERMISSION_ALLOW_IDS: readonly string[] = [
 	"permission_allow_button",
 	"permission_allow_foreground_only_button",
 	"permission_allow_one_time_button",
-	"button1",
+];
+
+/** The permission prompt's deny buttons: the plain one before "don't ask again", which a later prompt could not undo. */
+export const ANDROID_PERMISSION_DENY_IDS: readonly string[] = [
+	"permission_deny_button",
+	"permission_deny_and_dont_ask_again_button",
 ];
 
 /**
- * The buttons that say no, in the order `device.alert("dismiss")` tries them on Android: the permission prompt's
- * deny (the plain one before "don't ask again", which a later prompt could not undo), then `AlertDialog`'s negative
- * `button2`. Going by id holds in other locales, where the names in `DISMISS_BUTTONS` do not match.
+ * `AlertDialog`'s positive (`button1`) and negative (`button2`) ids. Only a fallback after the names: React Native's
+ * `Alert.alert` fills them by position, not by style (positive = last button, negative = second to last), so
+ * `[OK, Cancel]` puts OK on `button2` and `[Cancel, Delete, Keep]` puts Delete there.
  */
-export const ANDROID_DENY_IDS: readonly string[] = [
-	"permission_deny_button",
-	"permission_deny_and_dont_ask_again_button",
-	"button2",
-];
+export const ANDROID_POSITIVE_ID = "button1";
+export const ANDROID_NEGATIVE_ID = "button2";
+
+/**
+ * Every id `device.alert("accept")` goes by on Android: the permission allow ids (before the names), then
+ * `AlertDialog`'s positive `button1` (after the names).
+ */
+export const ANDROID_ALLOW_IDS: readonly string[] = [...ANDROID_PERMISSION_ALLOW_IDS, ANDROID_POSITIVE_ID];
+
+/**
+ * Every id `device.alert("dismiss")` goes by on Android: the permission deny ids (before the names), then
+ * `AlertDialog`'s negative `button2` (after the names).
+ */
+export const ANDROID_DENY_IDS: readonly string[] = [...ANDROID_PERMISSION_DENY_IDS, ANDROID_NEGATIVE_ID];

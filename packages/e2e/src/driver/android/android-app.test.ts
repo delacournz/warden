@@ -3,7 +3,7 @@ import { driverErr } from "../errors";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { type AdbSession, openAdbSession } from "./adb-session";
 import { createAppCommands, parseLauncherComponent, parseStartWait } from "./android-app";
-import { fakeAndroidHost } from "./android-host.testing";
+import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
 
 const RESOLVED = "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\ncom.x/.MainActivity\n";
 const STARTED =
@@ -101,7 +101,12 @@ describe("app commands", () => {
 	});
 
 	test("an `am start -W` that outlives its budget (a held first frame) counts as started: no monkey, launchState timeout", async () => {
-		const { host, session } = setup({ shell: [{ match: "cmd package resolve-activity", reply: RESOLVED }] });
+		const { host, session } = setup({
+			shell: [
+				{ match: "cmd package resolve-activity", reply: RESOLVED },
+				{ match: "pidof com.x", reply: "4242\n" },
+			],
+		});
 		const run: AdbSession["run"] = (cmd, opts) =>
 			cmd.startsWith(START)
 				? Promise.resolve(driverErr("E_TIMEOUT", `\`${cmd}\` did not finish within ${opts?.timeoutMs}ms on s1`))
@@ -114,6 +119,60 @@ describe("app commands", () => {
 		// the component stays known: the next launch does not resolve it again
 		await timing.launch("com.x");
 		expect(host.shell.filter((c) => c.startsWith("cmd package"))).toHaveLength(1);
+		await session.close();
+	});
+
+	/** the real session over the fake shell, with `am start -W` and the probe after it given 20 ms */
+	function timingOut(shell: ShellRule[]) {
+		const host = fakeAndroidHost({
+			shell: [
+				{ match: "cmd package resolve-activity", reply: RESOLVED },
+				{ match: START, reply: "hang" },
+				...(shell ?? []),
+			],
+		});
+		const session = openAdbSession({ adb: "adb", serial: "s1", spawn: host.spawn });
+		const app = createAppCommands({
+			session,
+			exec: host.exec,
+			adb: "adb",
+			serial: "s1",
+			startWaitTimeoutMs: 20,
+			startProbeTimeoutMs: 20,
+		});
+		return { host, session, app };
+	}
+
+	test("a timed-out `am start -W` kills the shell; the app's process is checked on a fresh one and the next command works", async () => {
+		const { host, session, app } = timingOut([
+			{ match: "pidof com.x", reply: "4242\n" },
+			{ match: "echo next", reply: "next\n" },
+		]);
+		expect(host.spawns()).toBe(0);
+		const notes: SpanDetail = {};
+		expect((await collectSpanDetail(notes, () => app.launch("com.x"))).success).toBe(true);
+		expect(notes).toMatchObject({ launch: "am-start", launchState: "timeout" });
+		// the shell that held the wait was killed; the probe ran on a second one
+		expect(host.spawns()).toBe(2);
+		expect(host.shell.at(-1)).toBe("pidof com.x");
+		const next = await session.run("echo next");
+		expect(next.success && next.data.stdout).toBe("next\n");
+		expect(host.spawns()).toBe(2);
+		await session.close();
+	});
+
+	test("a timed-out `am start -W` whose app has no process is the timeout, not a start", async () => {
+		const { host, session, app } = timingOut([{ match: "pidof com.x", reply: { stdout: "", exitCode: 1 } }]);
+		const res = await app.launch("com.x");
+		expect(!res.success && res.error.code).toBe("E_TIMEOUT");
+		expect(host.shell.some((c) => c.startsWith("monkey"))).toBe(false);
+		await session.close();
+	});
+
+	test("a timed-out `am start -W` on a shell that no longer answers (a stalled device) is the timeout, not a start", async () => {
+		const { session, app } = timingOut([{ match: "pidof com.x", reply: "hang" }]);
+		const res = await app.launch("com.x");
+		expect(!res.success && res.error.code).toBe("E_TIMEOUT");
 		await session.close();
 	});
 

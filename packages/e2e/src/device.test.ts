@@ -229,6 +229,33 @@ describe("device.alert on Android permission prompts", () => {
 		expect(dialog.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
 	});
 
+	test("React Native alerts fill buttons by position: dismiss presses Cancel by name before AlertDialog's button2", async () => {
+		// Alert.alert([Cancel, Delete, Keep]): neutral button3 = Cancel, negative button2 = Delete, positive button1 = Keep
+		const three = setup({
+			platform: "android",
+			screens: [permissionPrompt(pc("button3", "Cancel"), pc("button2", "Delete"), pc("button1", "Keep"))],
+		});
+		await three.device.alert("dismiss");
+		expect(three.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+		// Alert.alert([OK, Cancel]): negative button2 = OK, positive button1 = Cancel
+		const two = setup({
+			platform: "android",
+			screens: [permissionPrompt(pc("button2", "OK"), pc("button1", "Cancel"))],
+		});
+		await two.device.alert("dismiss");
+		expect(two.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
+	test("React Native alerts: accept presses OK by name before AlertDialog's button1", async () => {
+		// Alert.alert([OK, Cancel]): negative button2 = OK, positive button1 = Cancel
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [permissionPrompt(pc("button2", "OK"), pc("button1", "Cancel"))],
+		});
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
 	test("the Android labels are accept words by name as well", async () => {
 		const { device, driver } = setup({ screens: [withAlert("Don't allow", "Only this time")] });
 		await device.alert("accept");

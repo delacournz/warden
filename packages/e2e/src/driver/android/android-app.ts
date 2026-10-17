@@ -26,6 +26,10 @@ export type AppDeps = {
 	log?: Logger;
 	/** the app under test: `openUrl` is addressed to it (`am start -p`) so no other handler or chooser can take the link */
 	appPackage?: string;
+	/** how long `am start -W` may wait for the first frame (default `START_WAIT_TIMEOUT_MS`); tests shorten it */
+	startWaitTimeoutMs?: number;
+	/** how long the `pidof` after a timed-out start may take (default `START_PROBE_TIMEOUT_MS`); tests shorten it */
+	startProbeTimeoutMs?: number;
 };
 
 const ok = { success: true as const, data: undefined };
@@ -34,6 +38,9 @@ const NO_ACTIVITY = /No activities found|monkey aborted|Error type 3|does not ex
 
 /** `am start -W` can block for a cold start of a debug build; a dump-sized budget is too short. */
 const START_WAIT_TIMEOUT_MS = 30_000;
+
+/** The check after a timed-out `am start -W`: one `pidof` on the restarted shell, which a live device answers at once. */
+const START_PROBE_TIMEOUT_MS = 5_000;
 
 const COMPONENT = /^[A-Za-z0-9_.]+\/[A-Za-z0-9_.$]+$/;
 
@@ -92,15 +99,25 @@ export function createAppCommands(deps: AppDeps): AppCommands {
 		return component;
 	};
 
+	/** Whether `pidof` on the (restarted) shell shows the app's process; false when the shell does not answer either. */
+	const hasProcess = async (bundleId: string): Promise<boolean> => {
+		const probe = await session.run(shellCommand(pidofArgv(bundleId)), {
+			timeoutMs: deps.startProbeTimeoutMs ?? START_PROBE_TIMEOUT_MS,
+		});
+		return probe.success && probe.data.exitCode === 0 && /\d/.test(probe.data.stdout);
+	};
+
 	/** `am start -W` on the resolved launcher: true when it started (detail noted), false to fall back to `monkey`. */
 	const startWaiting = async (bundleId: string, relaunch: boolean): DriverResult<boolean> => {
 		const component = await launcherOf(bundleId);
 		if (component === undefined) return { success: true, data: false };
 		const res = await session.run(shellCommand(startComponentArgv(component, { stop: relaunch })), {
-			timeoutMs: START_WAIT_TIMEOUT_MS,
+			timeoutMs: deps.startWaitTimeoutMs ?? START_WAIT_TIMEOUT_MS,
 		});
-		// the start was sent; only the wait for the first frame (held by a keep-on-screen splash, a first bundle) ran out
+		// the start was sent and only the wait for the first frame (held by a keep-on-screen splash, a first bundle) ran
+		// out, or the device stopped answering: the session restarted its shell, so the app's process tells them apart
 		if (!res.success && res.error.code === "E_TIMEOUT") {
+			if (!(await hasProcess(bundleId))) return res;
 			noteStarted({ launchState: "timeout" });
 			return { success: true, data: true };
 		}
