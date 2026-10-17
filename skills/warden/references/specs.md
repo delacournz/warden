@@ -55,7 +55,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 
 | Member | Does |
 |---|---|
-| `open({ url?, args?, env?, wait?: "quiet" \| "none" })` | terminate, relaunch with `WARDEN_LAUNCH_ARGS` + `args`, then open `url`; `wait: "quiet"` then settles (frontmost + still, 250 ms quiet, 3 s max, never an error); default `"none"` |
+| `open({ url?, args?, env?, wait?: "quiet" \| "none" \| { until, timeout? } })` | terminate, relaunch with `WARDEN_LAUNCH_ARGS` + `args`, then open `url`; `wait: "quiet"` then polls (100 ms, 3 s max) until the screen has a visible control or testID (not the launch screen) and settles (250 ms quiet, 3 s max), never an error; `wait: { until: locator }` waits for the locator to be visible (`TIMEOUT` after `timeout`, default the assertion timeout) and settles once; default `"none"` |
 | `close()` | terminate |
 | `restart()` | relaunch with `WARDEN_LAUNCH_ARGS` |
 | `reinstall()` | uninstall + install from `WARDEN_APP_PATH` (throws without it) |
@@ -171,8 +171,10 @@ Every flow file starts with `test.use(FLOW_OPTIONS)`, where `FLOW_OPTIONS = { la
 
 ```ts
 export async function launch(app: Pick<App, "open">, screen: Screen): Promise<void> {
-	await app.open({ wait: "quiet" });   // in front and still (settle), never an error
+	await app.open({ wait: "quiet" });   // first content, then still (settle), never an error
 	await expect(screen.getByTestId(ids.welcome.screen)).toBeVisible({ timeout: 30_000 });
+	// or in one call, settling on the welcome screen itself:
+	// await app.open({ wait: { until: screen.getByTestId(ids.welcome.screen), timeout: 30_000 } });
 }
 
 await screen.getByTestId(ids.tabs.settings).tap({ until: screen.getByTestId(ids.settings.email) });   // 4 s a press, 2 re-sends

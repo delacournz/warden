@@ -22,6 +22,7 @@ import {
 	pidofArgv,
 	pmClearArgv,
 	pmPathArgv,
+	resolveLauncherArgv,
 	rotationArgvs,
 	SELECT_ALL_MIN_SDK,
 	screencapArgv,
@@ -29,6 +30,7 @@ import {
 	shellCommand,
 	shellQuote,
 	sleepArgv,
+	startComponentArgv,
 	startUrlArgv,
 	swipeArgv,
 	tapArgv,
@@ -195,6 +197,36 @@ describe("app argv", () => {
 		expect(monkeyLaunchArgv("com.x")).toEqual(["monkey", "-p", "com.x", "-c", "android.intent.category.LAUNCHER", "1"]);
 		expect(forceStopArgv("com.x")).toEqual(["am", "force-stop", "com.x"]);
 		expect(pmClearArgv("com.x")).toEqual(["pm", "clear", "com.x"]);
+	});
+
+	test("launcher resolution and the waiting component start", () => {
+		expect(resolveLauncherArgv("com.x")).toEqual([
+			"cmd",
+			"package",
+			"resolve-activity",
+			"--brief",
+			"-c",
+			"android.intent.category.LAUNCHER",
+			"com.x",
+		]);
+		expect(startComponentArgv("com.x/.MainActivity", { stop: true })).toEqual([
+			"am",
+			"start",
+			"-W",
+			"-S",
+			"-n",
+			"com.x/.MainActivity",
+		]);
+		expect(startComponentArgv("com.x/.MainActivity", { stop: false })).toEqual([
+			"am",
+			"start",
+			"-W",
+			"-n",
+			"com.x/.MainActivity",
+		]);
+		expect(shellCommand(startComponentArgv("com.x/com.x.Main$Alias", { stop: true }))).toBe(
+			"am start -W -S -n 'com.x/com.x.Main$Alias'"
+		);
 	});
 
 	test("animations off covers all three scales", () => {

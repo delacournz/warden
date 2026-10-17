@@ -13,7 +13,8 @@ import {
 	whileLinkInFlight,
 } from "./device-link";
 import { canProbeFrontmost } from "./driver/alerts";
-import type { AlertInfo, Driver, Element, Orientation, Snapshot } from "./driver/driver.types";
+import { ANDROID_ALLOW_IDS } from "./driver/android/android-alert";
+import type { AlertInfo, Driver, Element, Orientation, Platform, Snapshot } from "./driver/driver.types";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
@@ -120,10 +121,22 @@ function nextShotNumber(dir: string, issued: ReadonlyMap<string, number>): numbe
 	return highest + 1;
 }
 
-/** The button `device.alert(action)` presses; undefined = none to press. */
-function alertTarget(info: AlertInfo, action: AlertAction): Element | undefined {
+/** The first of `buttons` whose id is in `ANDROID_ALLOW_IDS`, in that list's order. */
+function androidAllowButton(buttons: readonly Element[]): Element | undefined {
+	for (const id of ANDROID_ALLOW_IDS) {
+		const found = buttons.find((button) => button.identifier === id);
+		if (found !== undefined) return found;
+	}
+	return undefined;
+}
+
+/** The button `device.alert(action)` presses; undefined = none to press. Android `accept` goes by button id first. */
+function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): Element | undefined {
 	const { buttons } = info;
-	if (action === "accept") return firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
+	if (action === "accept") {
+		const byId = platform === "android" ? androidAllowButton(buttons) : undefined;
+		return byId ?? firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
+	}
 	// Cancel on "Open in …?" only throws away a link the test opened: open it
 	if (action === "dismiss" && isOpenInSheet(info)) return findButton(buttons, "Open");
 	if (action === "dismiss") return firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
@@ -191,7 +204,7 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 			if (info === null || info.buttons.length === 0) return false;
 			// openLink is answering this sheet itself and must see it to know the link has one
 			if (isOpenInSheet(info) && typeof action === "string" && linkInFlight(session)) return false;
-			const target = alertTarget(info, action);
+			const target = alertTarget(info, action, driver.platform);
 			if (target === undefined) return false;
 			await pressAlertButton(target, "press alert button");
 			return true;

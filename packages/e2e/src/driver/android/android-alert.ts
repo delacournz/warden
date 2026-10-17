@@ -21,6 +21,18 @@ const ALERT_BUTTON_IDS: ReadonlySet<string> = new Set([
 	"aerr_wait",
 ]);
 
+/**
+ * The buttons that say yes, in the order `device.alert("accept")` tries them: the permission prompt's allow buttons,
+ * the most lasting grant first (API 30+ camera, mic and location prompts show "While using the app", "Only this time"
+ * and "Don't allow", deny last, so the last button is the wrong guess), then `AlertDialog`'s positive `button1`.
+ */
+export const ANDROID_ALLOW_IDS: readonly string[] = [
+	"permission_allow_button",
+	"permission_allow_foreground_only_button",
+	"permission_allow_one_time_button",
+	"button1",
+];
+
 function textOf(element: Element | undefined): string | undefined {
 	return element?.text || element?.label || undefined;
 }

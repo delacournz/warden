@@ -191,6 +191,19 @@ export function monkeyLaunchArgv(packageName: string): string[] {
 	return ["monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1"];
 }
 
+/** The launcher activity of a package; `--brief` prints the component (`pkg/.Activity`) on its last line. */
+export function resolveLauncherArgv(packageName: string): string[] {
+	return ["cmd", "package", "resolve-activity", "--brief", "-c", "android.intent.category.LAUNCHER", packageName];
+}
+
+/**
+ * Start a known component and wait (`-W`) until its first frame is drawn; `stop` (`-S`) force-stops the app first, so
+ * a relaunch is one round trip. Prints `Status`, `LaunchState` and `TotalTime`.
+ */
+export function startComponentArgv(component: string, options: { stop: boolean }): string[] {
+	return ["am", "start", "-W", ...(options.stop ? ["-S"] : []), "-n", component];
+}
+
 export function forceStopArgv(packageName: string): string[] {
 	return ["am", "force-stop", packageName];
 }

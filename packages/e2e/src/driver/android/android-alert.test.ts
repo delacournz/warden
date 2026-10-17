@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { detectAlert } from "./android-alert";
+import { ANDROID_ALLOW_IDS, detectAlert } from "./android-alert";
 import { REAL_ANR_DUMP, REAL_ANR_SCREEN } from "./anr.fixture";
 import { parseUiautomatorXml } from "./uiautomator";
 import { SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN } from "./uiautomator.fixture";
@@ -61,6 +61,43 @@ describe("detectAlert", () => {
 		expect(alert?.buttons.map((b) => [b.identifier, b.text, b.hittable])).toEqual([
 			["aerr_close", "Close app", true],
 			["aerr_wait", "Wait", true],
+		]);
+	});
+
+	test("the three-button location dialog (API 30+): every button, deny last", () => {
+		const pc = "com.google.android.permissioncontroller:id/";
+		const xml = wrap(
+			node("android.widget.TextView", `${pc}permission_message`, "Allow Demo to access this device's location?") +
+				node(
+					"android.widget.Button",
+					`${pc}permission_allow_foreground_only_button`,
+					"While using the app",
+					"[0,0][10,10]",
+					true
+				) +
+				node(
+					"android.widget.Button",
+					`${pc}permission_allow_one_time_button`,
+					"Only this time",
+					"[0,10][10,20]",
+					true
+				) +
+				node("android.widget.Button", `${pc}permission_deny_button`, "Don't allow", "[0,20][10,30]", true)
+		);
+		const alert = detectAlert(parseUiautomatorXml(xml, SCREEN).flat);
+		expect(alert?.buttons.map((b) => b.identifier)).toEqual([
+			"permission_allow_foreground_only_button",
+			"permission_allow_one_time_button",
+			"permission_deny_button",
+		]);
+	});
+
+	test("ANDROID_ALLOW_IDS: the allow buttons, most permanent grant first, then AlertDialog's positive button", () => {
+		expect(ANDROID_ALLOW_IDS).toEqual([
+			"permission_allow_button",
+			"permission_allow_foreground_only_button",
+			"permission_allow_one_time_button",
+			"button1",
 		]);
 	});
 

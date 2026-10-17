@@ -134,6 +134,93 @@ describe("device.alert", () => {
 	});
 });
 
+describe("device.alert on Android permission prompts", () => {
+	const pc = (id: string, label: string): ElementSpec => el("button", { id, text: label });
+	/** the permissioncontroller dialog as the fake reads it: an alert holding the buttons in layout order */
+	const permissionPrompt = (...buttons: ElementSpec[]): Snapshot =>
+		snapshotOf([el("alert", { label: "Allow Demo to access this device's location?", children: buttons })], {
+			platform: "android",
+		});
+	const locationPrompt = (labels: [string, string, string]): Snapshot =>
+		permissionPrompt(
+			pc("permission_allow_foreground_only_button", labels[0]),
+			pc("permission_allow_one_time_button", labels[1]),
+			pc("permission_deny_button", labels[2])
+		);
+
+	test('accept on the three-button prompt presses "While using the app", not the last button ("Don\'t allow")', async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [locationPrompt(["While using the app", "Only this time", "Don't allow"])],
+		});
+		expect(await device.alert("accept")).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test("accept goes by the button id, so a translated prompt is granted too", async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [locationPrompt(["Bei Nutzung der App", "Nur dieses Mal", "Nicht zulassen"])],
+		});
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test("the ids are tried in ANDROID_ALLOW_IDS order, not layout order", async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [
+				permissionPrompt(
+					pc("permission_allow_one_time_button", "Only this time"),
+					pc("permission_allow_foreground_only_button", "While using the app"),
+					pc("permission_deny_button", "Don't allow")
+				),
+			],
+		});
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
+	test("AlertDialog: accept presses the positive button1 whatever it says", async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [permissionPrompt(pc("button1", "Löschen"), pc("button2", "Abbrechen"))],
+		});
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test('dismiss on the three-button prompt presses "Don\'t allow"', async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [locationPrompt(["While using the app", "Only this time", "Don't allow"])],
+		});
+		expect(await device.alert("dismiss")).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(3));
+	});
+
+	test("the Android labels are accept words by name as well", async () => {
+		const { device, driver } = setup({ screens: [withAlert("Don't allow", "Only this time")] });
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+		const second = setup({ screens: [withAlert("While using the app", "Don't allow")] });
+		await second.device.alert("accept");
+		expect(second.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test("on iOS a button1 identifier means nothing: names decide", async () => {
+		const { device, driver } = setup({
+			screens: [
+				snapshotOf([
+					el("alert", { label: "T", children: [el("button", { id: "button1", label: "Cancel" }), button("Keep")] }),
+				]),
+			],
+		});
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+});
+
 describe("device.alert on a driver that reads one backend", () => {
 	function backends(screens: Snapshot[] | (() => Snapshot), extra: Partial<Parameters<typeof fakeDriver>[0]> = {}) {
 		const clock = fakeClock();
