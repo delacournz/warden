@@ -285,6 +285,82 @@ describe("fill", () => {
 	});
 });
 
+describe("fill on a driver with setText (Android warden-uiad)", () => {
+	/** a filled email field; `setText` and `typeText` both leave the field showing what they were given */
+	function setTextHarness(optIn: boolean) {
+		let typed = "";
+		const h = harness([typingScreen("a@b.co")], {
+			selectAll: true,
+			setText: true,
+			onCall: (call, driver) => {
+				if (call.method === "setText") driver.set(typingScreen(call.text));
+				if (call.method === "typeText") {
+					typed += call.text;
+					driver.set(typingScreen(typed));
+				}
+				return undefined;
+			},
+		});
+		if (optIn) h.c.env = { ...h.c.env, WARDEN_ANDROID_SETTEXT: "1" };
+		return h;
+	}
+	const inputs = (h: ReturnType<typeof setTextHarness>): string[] =>
+		h.driver.calls.map((call) => call.method).filter((m) => m !== "snapshot" && m !== "elementAtPoint");
+
+	test("without the opt-in the field is selected and typed over, never set", async () => {
+		const h = setTextHarness(false);
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "selectAll", "typeText", "close"]);
+		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true });
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1: one setText after the focus tap, then the read-back confirms it", async () => {
+		const h = setTextHarness(true);
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "setText", "close"]);
+		expect(h.driver.callsOf("setText").map((call) => call.text)).toEqual(["new@x.co"]);
+		expect(h.driver.callsOf("elementAtPoint").length).toBeGreaterThan(0);
+		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1 with a setText that did not take: the counted retry types", async () => {
+		const h = setTextHarness(true);
+		h.driver.setText = async (text) => {
+			h.driver.calls.push({ method: "setText", text });
+			return { success: true, data: undefined };
+		};
+		expect(await h.run("fill", "id=email", "new", "--json")).toBe(0);
+		expect(h.driver.callsOf("setText")).toHaveLength(1);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new"]);
+		expect(doc(h.c).result).toMatchObject({ verified: true });
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1 --no-verify: set without a read-back", async () => {
+		const h = setTextHarness(true);
+		expect(await h.run("fill", "id=email", "x", "--no-verify", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "setText", "close"]);
+		expect(h.driver.callsOf("elementAtPoint")).toEqual([]);
+		expect(doc(h.c).result.verified).toBeUndefined();
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1 --secure: set, unconfirmed, the text neither echoed nor recorded", async () => {
+		const h = setTextHarness(true);
+		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--json")).toBe(0);
+		expect(h.driver.callsOf("setText").map((call) => call.text)).toEqual(["hunter2hunter2"]);
+		expect(h.driver.callsOf("elementAtPoint")).toEqual([]);
+		expect(doc(h.c).result).toMatchObject({ verified: "unconfirmed", secure: true, characters: 14 });
+		expect(h.c.stdout.join("\n")).not.toContain("hunter2");
+		expect(h.steps[0]?.args).toEqual({ secure: true });
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1 with an x y target: nothing known to clear, so it is typed into", async () => {
+		const h = setTextHarness(true);
+		expect(await h.run("fill", "50", "60", "abc", "--json")).toBe(0);
+		expect(h.driver.callsOf("setText")).toEqual([]);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["abc"]);
+	});
+});
+
 describe("type / key", () => {
 	test("type --submit types then presses Enter", async () => {
 		const h = harness([snapshotOf(LOGIN)]);

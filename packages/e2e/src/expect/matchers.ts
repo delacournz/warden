@@ -1,4 +1,5 @@
 import type { Driver, DriverError, Snapshot } from "../driver/driver.types";
+import { canObserve } from "../driver/observation-cache";
 import { E2eError } from "../errors";
 import { fieldValue } from "../screen/actions";
 import { type Locator, pickOne, textOf } from "../screen/locator";
@@ -15,6 +16,11 @@ import { matchesText, normalizeText, type TextMatch } from "../screen/text";
  * that is quiet but about to change by itself (a toast after a timer) can therefore pass before that change, where the
  * full hold would have seen it. Without native settle the hold stays plain: there, knowing the screen is quiet means
  * polled snapshots or a `uiautomator dump` (~1.9 s), longer than the window it would save.
+ *
+ * The settle is asked only when no input came within the last `NEGATION_GRACE_MS` (the observation cache's
+ * `sinceInputMs`; no input yet counts as none). A quiet app is not a settled one right after a tap: a submit waiting on
+ * the network is idle until the reply comes, so `submit.tap()` then `expect(error).not.toBeVisible()` keeps the full
+ * hold, which sees an error that comes within it. Without the cache the time of the last input is unknown: plain hold.
  */
 export const NEGATION_GRACE_MS = 1000;
 /** The quiet window a negated matcher asks the driver for before it ends its hold early. */
@@ -339,7 +345,8 @@ type HoldVerdict = "pass" | { wakeMs: number | undefined };
 /**
  * The hold of a matcher's condition. A positive matcher passes on the first poll that holds. A negated one passes once
  * the condition held `holdMs` without a break, or, on a driver with native settle, on the first poll that still holds
- * after the one settle it asks for (at the first poll that held) reported quiet.
+ * after the one settle it asks for (at the first poll that held, with no input in the last `NEGATION_GRACE_MS`)
+ * reported quiet.
  */
 function conditionHold(
 	negate: boolean,
@@ -363,13 +370,20 @@ function conditionHold(
 			}
 			since ??= now();
 			if (!negate || quiet || now() - since >= holdMs) return "pass";
-			if (!asked && driver.capabilities.nativeSettle) {
+			if (!asked && driver.capabilities.nativeSettle && noRecentInput(driver)) {
 				asked = true;
 				quiet = await settledQuiet(driver, since + holdMs - now());
 			}
 			return { wakeMs: quiet ? 0 : since + holdMs - now() };
 		},
 	};
+}
+
+/** Whether the observation cache in front of `driver` says no input came within the last `NEGATION_GRACE_MS`. */
+function noRecentInput(driver: Driver): boolean {
+	const previous = canObserve(driver) ? driver.previous?.() : undefined;
+	if (previous === undefined) return false;
+	return previous.sinceInputMs === undefined || previous.sinceInputMs >= NEGATION_GRACE_MS;
 }
 
 /** Whether `driver` says the screen went quiet within `timeoutMs`; a failure or a deadline is "cannot tell". */

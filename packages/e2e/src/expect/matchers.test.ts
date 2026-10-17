@@ -281,7 +281,7 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 
 	test("passes after one settle that reports quiet and one fresh poll, not the whole hold", async () => {
 		const driver = quietDriver();
-		const { host, screen } = setup(driver);
+		const { host, screen } = setup(driver, { cache: true });
 		await negated(screen).toBeVisible();
 		expect(driver.callsOf("settle")).toEqual([{ method: "settle", opts: { quietMs: 250, timeoutMs: 1000 } }]);
 		expect(driver.callsOf("snapshot")).toHaveLength(2);
@@ -290,7 +290,7 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 
 	test("a settle that is not quiet leaves the full hold, and is not asked again", async () => {
 		const driver = quietDriver(() => ({ data: { quiet: false, waitedMs: 0 } }));
-		const { host, screen } = setup(driver);
+		const { host, screen } = setup(driver, { cache: true });
 		await negated(screen).toBeVisible();
 		expect(host.clock.elapsed()).toBe(1000);
 		expect(driver.callsOf("settle")).toHaveLength(1);
@@ -298,7 +298,7 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 
 	test("a settle that fails leaves the full hold", async () => {
 		const driver = quietDriver(() => failWith("E_TIMEOUT"));
-		const { host, screen } = setup(driver);
+		const { host, screen } = setup(driver, { cache: true });
 		await negated(screen).toBeVisible();
 		expect(host.clock.elapsed()).toBe(1000);
 	});
@@ -308,7 +308,7 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 		const driver = quietDriver(undefined, () =>
 			reads++ === 1 ? snapshotOf([el("button", { id: "x" })]) : snapshotOf([])
 		);
-		const { host, screen } = setup(driver);
+		const { host, screen } = setup(driver, { cache: true });
 		await negated(screen).toBeVisible();
 		expect(driver.callsOf("settle")).toHaveLength(1);
 		expect(host.clock.elapsed()).toBe(1100);
@@ -316,14 +316,14 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 
 	test("the settle is bounded by the hold: a short timeout gives it only that", async () => {
 		const driver = quietDriver();
-		const { screen } = setup(driver);
+		const { screen } = setup(driver, { cache: true });
 		await negated(screen).toBeVisible({ timeout: 300 });
 		expect(driver.callsOf("settle")[0]?.opts).toEqual({ quietMs: 250, timeoutMs: 300 });
 	});
 
 	test("a driver without native settle is never asked: it would be polled snapshots or a dump", async () => {
 		const driver = fakeDriver({ screens: [snapshotOf([])] });
-		const { host, screen } = setup(driver);
+		const { host, screen } = setup(driver, { cache: true });
 		await negated(screen).toBeVisible();
 		expect(driver.callsOf("settle")).toHaveLength(0);
 		expect(host.clock.elapsed()).toBe(1000);
@@ -331,9 +331,36 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 
 	test("a positive matcher never settles", async () => {
 		const driver = quietDriver(undefined, () => snapshotOf([el("button", { id: "x" })]));
-		const { screen, that } = setup(driver);
+		const { screen, that } = setup(driver, { cache: true });
 		await that(screen.getByTestId("x")).toBeVisible();
 		expect(driver.callsOf("settle")).toHaveLength(0);
+	});
+	test("right after an input it keeps the full hold: a reply still in flight (a fetch) leaves the app quiet", async () => {
+		const driver = quietDriver();
+		const { host, screen } = setup(driver, { cache: true });
+		await screen.tapAt({ x: 1, y: 1 });
+		await negated(screen).toBeVisible();
+		expect(driver.callsOf("settle")).toHaveLength(0);
+		expect(host.clock.elapsed()).toBe(1000);
+	});
+
+	test("an input at least the grace window old allows the early end", async () => {
+		const driver = quietDriver();
+		const { host, screen } = setup(driver, { cache: true });
+		await screen.tapAt({ x: 1, y: 1 });
+		host.clock.advance(1000);
+		const started = host.clock.elapsed();
+		await negated(screen).toBeVisible();
+		expect(driver.callsOf("settle")).toHaveLength(1);
+		expect(host.clock.elapsed() - started).toBe(0);
+	});
+
+	test("without the observation cache it cannot tell when the last input was, so the hold stays plain", async () => {
+		const driver = quietDriver();
+		const { host, screen } = setup(driver);
+		await negated(screen).toBeVisible();
+		expect(driver.callsOf("settle")).toHaveLength(0);
+		expect(host.clock.elapsed()).toBe(1000);
 	});
 });
 

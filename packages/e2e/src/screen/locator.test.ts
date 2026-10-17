@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { el, type FakeDriver, fakeDriver, snapshotOf } from "../driver/driver.testing";
 import { KEY_PACE_MS } from "../driver/typing";
 import { E2eError } from "../errors";
-import { CONFIRM_READS, FIELD_POLL_MS, STALE_RISK_READS } from "./field";
+import { CONFIRM_READS, FIELD_POLL_MS, SETTEXT_ENV, STALE_RISK_READS } from "./field";
 import { createScreen } from "./screen";
 import { FIELD_FRAME, fieldFixture, staticDriver, testHost } from "./screen.testing";
 
@@ -294,24 +294,33 @@ describe("fill", () => {
 		expect(state.value).toBe("grace@example.test");
 	});
 
-	test("on a driver with setText a filled field is replaced in one call and still read back", async () => {
+	test("on a driver with setText a filled field is still selected and typed over without the opt-in", async () => {
 		const { driver, state } = fieldFixture({ value: "ada@example.test", selectAll: true, setText: true });
 		const { screen } = setup(driver);
-		await screen.getByTestId("field").fill("grace@example.test");
+		await withoutSetTextOptIn(() => screen.getByTestId("field").fill("grace@example.test"));
+		expect(driver.callsOf("setText")).toEqual([]);
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+		expect(state.value).toBe("grace@example.test");
+	});
+
+	test("under WARDEN_ANDROID_SETTEXT=1 a filled field is replaced in one call and still read back", async () => {
+		const { driver, state } = fieldFixture({ value: "ada@example.test", selectAll: true, setText: true });
+		const { screen } = setup(driver);
+		await withSetTextOptIn(() => screen.getByTestId("field").fill("grace@example.test"));
 		expect(driver.callsOf("setText").map((call) => call.text)).toEqual(["grace@example.test"]);
 		expect(driver.callsOf("selectAll")).toEqual([]);
 		expect(driver.callsOf("typeText")).toEqual([]);
 		expect(state.value).toBe("grace@example.test");
 	});
 
-	test("a setText that did not take is caught by the read-back and retyped the counted way", async () => {
+	test("under the opt-in, a setText that did not take is caught by the read-back and retyped the counted way", async () => {
 		const { driver, state } = fieldFixture({ value: "ada", setText: true });
 		driver.setText = async (text) => {
 			driver.calls.push({ method: "setText", text });
 			return { success: true, data: undefined };
 		};
 		const { screen } = setup(driver);
-		await screen.getByTestId("field").fill("grace");
+		await withSetTextOptIn(() => screen.getByTestId("field").fill("grace"));
 		expect(driver.callsOf("setText")).toHaveLength(1);
 		expect(driver.callsOf("typeText").map((call) => call.text)).toEqual(["grace"]);
 		expect(state.value).toBe("grace");
@@ -771,3 +780,19 @@ describe("refinement and scoping", () => {
 		);
 	});
 });
+
+/** Runs `fn` with `WARDEN_ANDROID_SETTEXT` set to `value` (or unset), then puts the old value back. */
+async function withSetTextEnv(value: string | undefined, fn: () => Promise<unknown>): Promise<void> {
+	const before = process.env[SETTEXT_ENV];
+	if (value === undefined) delete process.env[SETTEXT_ENV];
+	else process.env[SETTEXT_ENV] = value;
+	try {
+		await fn();
+	} finally {
+		if (before === undefined) delete process.env[SETTEXT_ENV];
+		else process.env[SETTEXT_ENV] = before;
+	}
+}
+
+const withSetTextOptIn = (fn: () => Promise<unknown>) => withSetTextEnv("1", fn);
+const withoutSetTextOptIn = (fn: () => Promise<unknown>) => withSetTextEnv(undefined, fn);

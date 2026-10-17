@@ -151,7 +151,7 @@ describe("assert-then-tap with a cheap hit-test", () => {
 		expect(count(driver, "snapshot")).toBe(2);
 	});
 
-	test("a tap with until keeps aiming from the kept snapshot and still sees the press land", async () => {
+	test("a tap with until takes a fresh look (its first press is compared with that screen) and sees the press land", async () => {
 		let pressed = false;
 		const driver = fakeDriver({
 			screens: () => snapshotOf(pressed ? [el("text", { id: "done", label: "Done" })] : [nextButton()]),
@@ -165,6 +165,30 @@ describe("assert-then-tap with a cheap hit-test", () => {
 		await visible(screen);
 		await screen.getByTestId("next").tap({ until: screen.getByTestId("done") });
 		expect(count(driver, "tap")).toBe(1);
+		expect(count(driver, "elementAtPoint")).toBe(0);
+	});
+
+	test("with system alerts answered (test.use({ systemAlerts })) the tap takes a fresh look: an alert may have come up since", async () => {
+		const { driver, host, screen } = setup();
+		host.answerSystemAlert = async () => false;
+		await visible(screen);
+		await screen.getByTestId("next").tap();
+		expect(count(driver, "elementAtPoint")).toBe(0);
+		expect(count(driver, "snapshot")).toBe(2);
+	});
+
+	test("the hit-test age follows the observation cache's age for the platform", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([nextButton()], { platform: "android" })],
+			platform: "android",
+			capabilities: { cheapHitTest: true },
+		});
+		const host = testHost(driver, { cache: true });
+		const screen = createScreen(host);
+		await visible(screen);
+		host.clock.advance(500);
+		await screen.getByTestId("next").tap();
 		expect(count(driver, "elementAtPoint")).toBe(1);
+		expect(count(driver, "snapshot")).toBe(1);
 	});
 });

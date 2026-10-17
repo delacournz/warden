@@ -45,6 +45,8 @@ export type HarnessOptions = {
 	onCall?: (call: DriverCall, driver: FakeDriver) => FakeOverride | undefined;
 	/** the fake driver offers select-all (like the iOS driver) */
 	selectAll?: boolean;
+	/** the fake driver offers `setText` (like the Android driver with `warden-uiad`) */
+	setText?: boolean;
 	video?: UiDeps["video"];
 	/** the device lease's holder pid + label (a running `warden e2e` / `batch` / `run` sets both) */
 	lease?: { pid?: number; label?: string };
@@ -66,6 +68,7 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 	const driver: FakeDriver = fakeDriver({
 		screens,
 		...(options.selectAll ? { selectAll: true } : {}),
+		...(options.setText ? { setText: true } : {}),
 		onCall: (call) => options.onCall?.(call, driver),
 	});
 	const opens = { count: 0 };

@@ -1,5 +1,5 @@
 import type { Driver, Element, KeyName, Modifier, Point, Rect, Snapshot } from "../driver/driver.types";
-import { canDetectAlerts, canObserve } from "../driver/observation-cache";
+import { canDetectAlerts, canObserve, OBSERVATION_MAX_AGE_MS } from "../driver/observation-cache";
 import { snapshotHash } from "../driver/settle";
 import { typeText } from "../driver/typing";
 import { E2eError } from "../errors";
@@ -382,8 +382,9 @@ export class Locator {
 	/**
 	 * Waits for exactly one visible (and, per `spec`, enabled, on-screen) match. Several matches fail at once.
 	 * With `allowReact` a component that only the React tree knows (a plain `getByTestId`) counts as a match.
-	 * Every look is a new snapshot, never the one a read or an `expect` kept: the action goes to where the element is
-	 * now, and a snapshot taken while the screen was still sliding in has it somewhere else.
+	 * Every look here is a new snapshot, never the one a read or an `expect` kept: the action goes to where the element
+	 * is now, and a snapshot taken while the screen was still sliding in has it somewhere else. (A plain `tap` on a
+	 * driver with a cheap hit-test first tries `aimFromKept`, which checks the kept snapshot with a hit-test instead.)
 	 * A fresh snapshot can also be of a screen still moving, so a match is taken only once its frame held still across
 	 * two looks with no input between them (Playwright's "stable"): the look a read or an `expect` kept, when there is
 	 * one, costs nothing; with none, a look less than `STABLE_INPUT_GAP_MS` after an input is checked by one more. An
@@ -466,17 +467,26 @@ export class Locator {
 
 	/**
 	 * Where a hit-test is cheap (`capabilities.cheapHitTest`, iOS), the tap after an assertion need not take a second
-	 * snapshot: when the observation cache holds one younger than `HIT_TEST_MAX_AGE_MS` with no input since, its one
+	 * snapshot: when the observation cache holds one it would still reuse (younger than `OBSERVATION_MAX_AGE_MS` for the
+	 * platform) with no input since, its one
 	 * actionable match is hit-tested at the tap point, and the match is taken as is when the hit is that element (same
 	 * role, identifier, label, enabled state and frame to 1 pt). That hit is also the second look of the stable-frame
 	 * rule: the element is where the snapshot had it. Anything else (no such snapshot, an alert on it, several or no
 	 * matches, a blocked match, a hit on a child or a neighbour, a failed hit-test) is undefined: `actionable` looks again.
+	 * Never with system alerts answered (`answerSystemAlert`, `test.use({ systemAlerts })`): an alert that came up after
+	 * the kept snapshot sits outside the app, where the app-scoped hit-test may not see it, and the fresh look answers it.
 	 */
 	private async aimFromKept(spec: ActionSpec, position: Point | undefined): Promise<Actionable | undefined> {
 		const driver = await this.rt.host.driver();
 		if (driver.capabilities.cheapHitTest !== true || !canObserve(driver)) return undefined;
+		if (this.rt.host.answerSystemAlert !== undefined) return undefined;
 		const kept = driver.peek?.();
-		if (kept === undefined || kept.ageMs >= HIT_TEST_MAX_AGE_MS || showsAlert(driver, kept.snapshot)) return undefined;
+		if (
+			kept === undefined ||
+			kept.ageMs >= OBSERVATION_MAX_AGE_MS[driver.platform] ||
+			showsAlert(driver, kept.snapshot)
+		)
+			return undefined;
 		const observation = await this.rt.tryObserve({ reuse: true, alerts: false });
 		if (!observation.ok || observation.observed.snapshot !== kept.snapshot) return undefined;
 		const { observed } = observation;
@@ -513,12 +523,16 @@ export class Locator {
 		);
 	}
 
-	/** One press; resolves to the snapshot it aimed from (the screen just before the press). */
+	/**
+	 * One press; resolves to the snapshot it aimed from (the screen just before the press). A plain tap may aim from the
+	 * kept snapshot (`aimFromKept`); a tap with `until` takes a fresh look, since the screen it aimed from is what the
+	 * checks compare against to tell the press landed, and an older one could differ only because it was older.
+	 */
 	private async tapOnce(options: TapOptions): Promise<Snapshot> {
 		const withPosition = options.position !== undefined;
 		const spec = { enabled: !withPosition, tapPointOnScreen: !withPosition };
 		const found =
-			(await this.aimFromKept(spec, options.position)) ??
+			(options.until === undefined ? await this.aimFromKept(spec, options.position) : undefined) ??
 			(await this.actionable(spec, options.timeout ?? this.rt.actionTimeout(), true));
 		const point =
 			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
@@ -803,9 +817,6 @@ export function textOf(entry: NodeEntry): string {
 const STABLE_INPUT_GAP_MS = 300;
 /** At most this many extra looks wait for a frame to hold still; then the latest one is used. */
 const MAX_STABILITY_LOOKS = 2;
-
-/** A tap may aim from a kept snapshot this young, checked by a hit-test (`aimFromKept`). */
-const HIT_TEST_MAX_AGE_MS = 150;
 
 /** Whether a hit-test answer is the element a snapshot had: same role, ids, enabled state and frame (to 1 pt). */
 function sameElement(hit: Element, seen: Element): boolean {
