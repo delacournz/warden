@@ -195,6 +195,14 @@ Answers from the interview, in the order they were given. Each row says what cha
 | 1 | 9.1 Android quick-boot snapshot (16-3) | **On by default** | Differs from the report's assumed opt-in. When 16-3 lands, warden owns a per-AVD snapshot keyed by system image and launches from it unless the user opts out (a config key and `WARDEN_*` env override, both additive). The on-device timing check in section 7 still gates the change. |
 | 1 | 9.2 Warm pool (16-13, 16-9) | Fix the race (16-1) and SessionEnd (20-2) only; propose `warden warm` | No change to the 20 min idle window; `warden warm` is written up as a proposal, not built. |
 | 1 | 9.6 and plan Q5: contract changes | **Additive only** | No `Driver` v2, no wire or CLI removals. Additive wire fields (01-1 `pid`, 06-2 quiet stamp, 02-3 read timings) are allowed; the 15 non-additive findings in Appendix A stay proposals. |
+| 2 | 9.18 Follow-up implementation | **Multi-agent wave now**, about 10 opus agents at medium effort | Wave 1 runs as one agent per cluster, each in its own git worktree with TDD; the orchestrator reviews, merges and runs the suites. Device-only items get fake-driver tests plus a device checklist. |
+| 2 | 9.3 `/clear` semantics (20-2) | (a) abort on a zero-row heartbeat **and** (b) `/clear` keeps leases whose pid is alive | Both halves of the 20-2 fix land; (b) changes what `/clear` releases. |
+| 2 | 9.4 CNG build under the pre-prebuild key (17-1) | **Yes**: requested key plus an alias row for the post-build key | Accept the key move only when the native dir did not exist before the build and the JS half is unchanged. |
+| 2 | 9.8 `warden ui` on a device a running `warden e2e` leased (04-6, 05-2, 20-6) | **Refuse** with a clear message unless `--force` | The CLI names the other owner and pid; `--force` keeps today's behaviour for debugging. |
+| 3 | Branch for the implementation | **New branch off `main`**, one new draft PR | `claude/wdn-perf-wave1`; PR #31 stays docs-only. One commit per cluster so a cluster can be reverted alone. |
+| 3 | Flake-class Wave 2 items in this wave | **Yes**: 06-1, 07-3, 09-2 as one extra agent | Tap stability check, no re-press after a visible reaction, and the `openLink` sheet fix join Wave 1. |
+| 3 | 9.11 Helper replacement on owner change (14-5) | **Only on binary or env change** | ppid churn keeps the running helper; the key is the helper binary and `WARDEN_SIMD_*` env. |
+| 3 | 9.14 Dead pid with a fresh heartbeat (18-5) | **Dead pid wins for supervised leases** | Leases with a known local pid are reclaimable once the pid is dead; the heartbeat decides only for leases without a pid. |
 
 ## 10. Method and limits
 
