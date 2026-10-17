@@ -57,7 +57,8 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 | `/sign-in` | `Field` + `Input` validation. `locked@example.com` gives a form `Alert` | `sign-in-*` |
 | `/(tabs)/todos` | add, toggle, filter (`Tabs`), empty state, remaining `Badge` | `todo-*`, `todos-*` |
 | `/todo/[id]` | detail `Card`, toggle and delete. Deep link `warden-example://todo/<id>` | `todo-detail-*` |
-| `/(tabs)/settings` | `Avatar`, `Switch`es (dark mode via `Uniwind.setTheme`), sign out | `settings-*` |
+| `/(tabs)/settings` | `Avatar`, `Switch`es (dark mode via `Uniwind.setTheme`), gesture playground row, sign out | `settings-*` |
+| `/gestures` | pinch / two-finger rotate + pan canvas, one-finger trace pad, readouts committed on gesture end, Reset. Deep link `warden-example://gestures`. Rotation is degrees, clockwise positive | `gestures-*` |
 
 ### e2e
 

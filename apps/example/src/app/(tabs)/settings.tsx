@@ -8,7 +8,7 @@ import { Icon } from "@/components/ui/icon";
 import { ListGroup } from "@/components/ui/list-group";
 import { Screen } from "@/components/ui/screen";
 import { Switch } from "@/components/ui/switch";
-import { IconBell, IconMoon } from "@/lib/icons/central";
+import { IconBell, IconHand5Finger, IconMoon } from "@/lib/icons/central";
 import { useSession } from "@/modules/session/contexts/session.context";
 
 /** Profile card, notification + dark-mode switches, and sign out (back to welcome). */
@@ -68,6 +68,17 @@ export default function Settings() {
 								testID="settings-dark-mode"
 							/>
 						</ListGroup.ItemSuffix>
+					</ListGroup.Item>
+				</ListGroup>
+				<ListGroup>
+					<ListGroup.Item onPress={() => router.push("/gestures")} testID="settings-gestures">
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconHand5Finger} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Gesture playground</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
 					</ListGroup.Item>
 				</ListGroup>
 			</Screen.ScrollArea>
