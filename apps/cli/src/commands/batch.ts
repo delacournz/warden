@@ -509,9 +509,13 @@ function display(
 		},
 		rows: (rows) => {
 			const added = initialView(rows, 0, 0).devices;
+			const { runners } = view.current;
+			// a sharded grid tracks flows per runner: the late pool's workers need theirs (R1)
+			const fresh = [...new Set(added.map((d) => d.worker))].filter((w) => !runners?.some((r) => r.worker === w));
 			view.current = {
 				...view.current,
 				devices: [...view.current.devices, ...added].sort((a, b) => a.worker - b.worker),
+				...(runners ? { runners: [...runners, ...fresh.map((worker) => ({ worker, flows: [] }))] } : {}),
 			};
 			frame(false);
 		},
@@ -568,6 +572,10 @@ async function runGrid(
 		await poller?.poll();
 		if (flows) await readRunnerReport(deps, o.resultFiles, flows, o.startedAt, screen);
 		return { summary, screen };
+	} catch (error) {
+		// the grid owns the terminal: give it back before the error is reported (R4)
+		screen.end();
+		throw error;
 	} finally {
 		poller?.stop();
 	}
@@ -1376,13 +1384,18 @@ async function preparePool(
 		closed: Set<WarmHelper>;
 	}
 ): Promise<PreparedPool> {
-	const setupEnv = poolEnv(o.env, pool, pool.devices);
+	// a device the claim's headless hide could not boot again is dropped before its setup (R5)
+	const lost = new Map((session.lost ?? []).map((udid) => [udid, "did not come back after the headless hide"]));
+	const devices = pool.devices.filter((d) => !lost.has(d.udid));
+	for (const d of pool.devices)
+		if (lost.has(d.udid)) reportError(ctx, r.name, `${d.udid} ${lost.get(d.udid)}, dropped`);
+	const setupEnv = poolEnv(o.env, pool, devices);
 	const setup = await prepareDevices(
 		ctx,
 		deps,
 		r.name,
 		r.hooks.setup,
-		pool.devices,
+		devices,
 		setupEnv,
 		args.cwd,
 		r.logDir,
@@ -1394,7 +1407,7 @@ async function preparePool(
 		hideLateWindows(ctx, deps, args, r, session, setup.live),
 	]);
 	for (const u of unreachable) reportError(ctx, r.name, `${u.udid} cannot reach Metro, dropped: ${u.error}`);
-	const failed = new Map(unreachable.map((u) => [u.udid, u.error]));
+	const failed = new Map([...lost, ...unreachable.map((u): [string, string] => [u.udid, u.error])]);
 	const live = setup.live.filter((d) => !failed.has(d.udid));
 	if (o.warm)
 		await closeDropped(
@@ -1423,7 +1436,15 @@ function startPools(
 	session: LeaseSession,
 	prepare: Parameters<typeof preparePool>[6]
 ): { preparing: Promise<PreparedPool>[]; ready: PreparedPool[] } {
-	const preparing = r.pools.map((pool) => preparePool(ctx, deps, args, r, session, pool, prepare));
+	// a pool whose preparation throws fails on its own (no device left, an error each): the others run on (R4)
+	const preparing = r.pools.map((pool) =>
+		preparePool(ctx, deps, args, r, session, pool, prepare).catch((error: unknown): PreparedPool => {
+			const message = error instanceof Error ? error.message : String(error);
+			reportError(ctx, r.name, `${pool.devices.map((d) => d.udid).join(", ")}: setup failed, dropped: ${message}`);
+			const setups = pool.devices.map((d) => ({ worker: d.worker, udid: d.udid, ok: false, error: message }));
+			return { pool, live: [], setups };
+		})
+	);
 	const ready: PreparedPool[] = [];
 	for (const p of preparing)
 		void p.then(
@@ -1914,6 +1935,12 @@ export async function runSession(
 		hooks.setup?.slim && platform === "ios"
 			? startEarlySlim<ClaimedDevice>({ slim: recordedSlim(ctx, deps), skip: (c) => alreadySlimmed(ctx, c) })
 			: undefined;
+	// the early warm-up closed and the early slim done, once (before a failed claim releases the devices)
+	let quiet: Promise<void> | undefined;
+	const quiesce = () => {
+		quiet ??= closeWarm(warm).then(() => slim?.settled());
+		return quiet;
+	};
 	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
 		deps.onSignal(signal, () => {
 			controller.abort();
@@ -1957,6 +1984,10 @@ export async function runSession(
 			...(onLeased ? { onLeased } : {}),
 			...(onPorts ? { onPorts } : {}),
 			aborted,
+			// a device the headless hide could not boot again is dropped, as one that cannot reach Metro is (12-7, R5)
+			dropLost: true,
+			// a failed leg releases the others at once: their early slim and warm-up end first (R3)
+			...(warm || slim ? { beforeRelease: quiesce } : {}),
 		};
 		const result = await claimAll(sctx, deps, owner, args, name);
 		claimDone = true;
@@ -1970,8 +2001,7 @@ export async function runSession(
 	// before supervise re-subscribes (holdLeases), so the two never share a handler slot
 	for (const off of offSignals) off();
 	if (!claimed.success || interrupted()) {
-		await closeWarm(warm);
-		await slim?.settled();
+		await quiesce();
 		if (claimed.success) await claimed.data.release();
 		await launch?.stop();
 		const metro = launch ? await launch.pending : undefined;

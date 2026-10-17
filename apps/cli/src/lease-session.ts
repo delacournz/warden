@@ -213,6 +213,16 @@ export type LeaseArgs = {
 	onLeased?: (outcome: ClaimOutcome, leg: number) => void;
 	/** checked before each device claim and before the installs: true → everything is released, `interrupted` */
 	aborted?: () => boolean;
+	/**
+	 * awaited before a failed claim / install releases devices that were leased: work `onLeased` started
+	 * on them (an early slim, a warm-up) must be done first, or it would touch a device another owner holds
+	 */
+	beforeRelease?: () => Promise<void>;
+	/**
+	 * a device the headless hide shut down and could not boot again is reported in `LeaseSession.lost`
+	 * (still leased) instead of failing the claim, as long as some device is left (`warden batch` / `e2e`)
+	 */
+	dropLost?: boolean;
 };
 
 /** The error of a claim the caller gave up on (`aborted`) — nothing to add to it. */
@@ -231,11 +241,12 @@ async function installLegApp(
 	owner: Owner,
 	claim: ClaimOutcome,
 	opts: EnsureOptions,
-	ready: (udid: string) => Promise<void> = async () => {}
+	ready: (udid: string) => Promise<boolean> = async () => true
 ): AsyncResult<InstalledApp[]> {
 	const results = await Promise.all(
 		claim.claimed.map(async (c) => {
-			await ready(c.device.id);
+			// a device the hide could not boot again is not installed on (batch-pipeline R5)
+			if (!(await ready(c.device.id))) return undefined;
 			return ensure(ctx, owner, c.device.platform, c.device.id, opts);
 		})
 	);
@@ -257,6 +268,8 @@ export type LeaseSession = {
 	ports: RunPort[];
 	env: Record<string, string | undefined>;
 	leaseIds: string[];
+	/** `dropLost`: devices the headless hide could not boot again; still leased, the caller drops them */
+	lost?: string[];
 	/** delete every lease and mark the devices used now */
 	release: () => Promise<void>;
 };
@@ -325,8 +338,11 @@ function warmSessionApp(
 	return app;
 }
 
-/** One leg's outcome: its claim and, with `--app`, its install (undefined when the claim failed or there is no app). */
-type LegRun = { claim: Result<ClaimOutcome>; install?: Result<InstalledApp[]> | undefined };
+/**
+ * One leg's outcome: its claim and, with `--app`, its install (undefined when the claim failed or there
+ * is no app); `lost`: devices the headless hide could not boot again (`dropLost`).
+ */
+type LegRun = { claim: Result<ClaimOutcome>; install?: Result<InstalledApp[]> | undefined; lost?: string[] };
 
 /** What a leg needs to install the app as soon as it is claimed. */
 type LegInstall = { ensure: RunEnsureApp; opts: EnsureOptions };
@@ -337,15 +353,15 @@ const failure = (error: unknown): Result<never> => err(error instanceof Error ? 
  * A headless iOS claim's hide, overlapped with the leg's work (16-8): the devices the window close did
  * not shut down are leased (`leased`) and installed at once; a device the close shut down waits for
  * `settled` (its reboot), and so does `leased` then. `settled` is always awaited (it puts Simulator's
- * close setting back); `failed` lists the devices that did not come back (`leased` is then not called).
+ * close setting back); `failed` lists the devices that did not come back (`leased` is then not called,
+ * and their `ready` resolves false).
  */
 export async function overlapHide<T>(
 	hide: HideStart | undefined,
-	o: { leased: () => void; install: (ready: (udid: string) => Promise<void>) => Promise<T> }
+	o: { leased: () => void; install: (ready: (udid: string) => Promise<boolean>) => Promise<T> }
 ): Promise<{ result: T; failed: string[] }> {
 	const down = new Set((hide ? await hide.down : []).map((s) => s.udid));
-	const failed = hide ? hide.settled.then((outcome) => outcome.failed ?? []) : Promise.resolve([]);
-	const back = failed.then(() => {});
+	const failed: Promise<string[]> = hide ? hide.settled.then((outcome) => outcome.failed ?? []) : Promise.resolve([]);
 	if (down.size === 0) o.leased();
 	const leased =
 		down.size === 0
@@ -353,7 +369,9 @@ export async function overlapHide<T>(
 			: failed.then((lost) => {
 					if (lost.length === 0) o.leased();
 				});
-	const result = await o.install((udid) => (down.has(udid) ? back : Promise.resolve()));
+	const result = await o.install((udid) =>
+		down.has(udid) ? failed.then((lost) => !lost.includes(udid)) : Promise.resolve(true)
+	);
 	await leased;
 	return { result, failed: await failed };
 }
@@ -396,9 +414,24 @@ async function runLeg(
 		},
 	});
 	// a device the hide shut down and could not boot again is unhealthy: the run does not go on with it
-	if (failed.length > 0)
-		return { claim, install: err(`${failed.join(", ")} did not come back after the headless hide`) };
+	if (failed.length > 0 && args.dropLost)
+		return result === undefined ? { claim, lost: failed } : { claim, install: result, lost: failed };
+	if (failed.length > 0) return { claim, install: err(lostText(failed)) };
 	return result === undefined ? { claim } : { claim, install: result };
+}
+
+const lostText = (lost: readonly string[]) => `${lost.join(", ")} did not come back after the headless hide`;
+
+/** Why the claimed legs cannot run: the first failed install, else every device lost to the hide. */
+function legsFailure(
+	runs: readonly LegRun[],
+	outcome: ClaimOutcome,
+	lost: readonly string[]
+): Result<never> | undefined {
+	const installFailed = runs.find((r) => r.install && !r.install.success)?.install;
+	if (installFailed && !installFailed.success) return installFailed;
+	if (lost.length > 0 && outcome.claimed.every((c) => lost.includes(c.device.id))) return err(lostText(lost));
+	return undefined;
 }
 
 /**
@@ -450,6 +483,7 @@ export async function claimAll(
 	const claimFailed = runs.find((r) => !r.claim.success)?.claim;
 	if (claimFailed && !claimFailed.success) {
 		// a leg that was leased may already have a helper (the early warm-up): like any release, it stays resident
+		await args.beforeRelease?.();
 		await releaseDevices(
 			ctx,
 			claims.flatMap((c) => c.claimed.map((d) => d.lease.id)),
@@ -463,6 +497,7 @@ export async function claimAll(
 		reclaimed: claims.flatMap((c) => c.reclaimed),
 	};
 	const leaseIds = [...outcome.claimed.map((c) => c.lease.id), ...portLeaseIds];
+	const lost = runs.flatMap((r) => r.lost ?? []);
 	// a release leaves each iOS device's `warden-simd` resident: the next run on the device reuses it (no spawn, no
 	// handshake) and its idle timeout reaps it otherwise; `--shutdown` / a device shutdown / a new lease owner stop it
 	const release = async () => {
@@ -473,17 +508,18 @@ export async function claimAll(
 		env,
 		(args.legFlags ?? [args.flags]).some((f) => f.headless === true)
 	);
-	const installFailed = runs.find((r) => r.install && !r.install.success)?.install;
-	if (installFailed && !installFailed.success) {
+	const failed = legsFailure(runs, outcome, lost);
+	if (failed) {
+		await args.beforeRelease?.();
 		await release();
-		return installFailed;
+		return failed;
 	}
 	for (const app of runs.flatMap((r) => (r.install?.success ? r.install.data : []))) {
 		ctx.err(`warden ${name}: app ${app.result.source} on ${app.deviceId} [${app.result.hash}]`);
 		if (app.result.appPath) env.WARDEN_APP_PATH = app.result.appPath;
 		env.WARDEN_APP_HASH = app.result.hash;
 	}
-	return ok({ outcome, claims, ports: ports.data, env, release, leaseIds });
+	return ok({ outcome, claims, ports: ports.data, env, release, leaseIds, ...(lost.length > 0 ? { lost } : {}) });
 }
 
 /** `leased <name>, …` — the claim spinner's line. */

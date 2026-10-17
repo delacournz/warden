@@ -1169,11 +1169,11 @@ describe("warden e2e", () => {
 			});
 		});
 
-		const twoLegs = () => {
+		const twoLegs = (...extra: string[]) => {
 			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
 			const sim = fakeSimctl(sims);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
-			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
+			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all", ...extra], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			return ctx;
@@ -1228,6 +1228,115 @@ describe("warden e2e", () => {
 					.map((j) => j.opts.env.WARDEN_UDID)
 					.sort()
 			).toEqual(["P1", "U1"]);
+		});
+
+		test("legs: one leg's install fails while the other is slimming → nothing is released until the slim is done (batch-pipeline R3)", async () => {
+			await resuite({ devices: legs, slim: true, app: { installMode: "clean" } });
+			const c = twoLegs();
+			const h = harness();
+			const slow = Promise.withResolvers<void>();
+			const slim = h.deps.slim;
+			let slimming = false;
+			h.deps.slim = async (udid) => {
+				if (udid !== "U1") return slim(udid);
+				slimming = true;
+				await slow.promise;
+				return slim(udid);
+			};
+			let failed = false;
+			h.deps.ensureApp = async (_ctx, _owner, _platform, deviceId) => {
+				if (deviceId !== "P1")
+					return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+				failed = true;
+				return { success: false, error: "no build" };
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => slimming && failed);
+			await Bun.sleep(20);
+			// U1 is still being slimmed: its lease must outlive that, or another agent could lease it meanwhile
+			expect(c.db.listLeases().map((l) => (l.resource.kind === "device" ? l.resource.id : "port"))).toContain("U1");
+			slow.resolve();
+			expect(await run).toBe(1);
+			expect(c.db.listLeases()).toEqual([]);
+			expect(h.jobs()).toEqual([]);
+		});
+
+		test("legs: a pool whose preparation throws fails only itself; the other pool's job runs on to its end (batch-pipeline R4)", async () => {
+			const projects = { projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] };
+			await resuite({ devices: legs, slim: true, project: "app", metro: {} }, projects);
+			const sim = fakeSimctl([wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }]);
+			const exec: Exec = async (cmd, opts) => {
+				if (cmd[0] === "git") return bunExec(cmd, opts);
+				if (cmd[0] === "xcrun" && cmd[2] === "launch" && cmd.includes("P1")) throw new Error("launch blew up");
+				return sim(cmd, opts);
+			};
+			const c = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
+			ctx = c;
+			c.env = { ...c.env, ...OWNER_ENV };
+			c.cwd = dir;
+			const h = harness({ manual: true });
+			const slow = Promise.withResolvers<void>();
+			const slim = h.deps.slim;
+			h.deps.slim = async (udid) => {
+				if (udid === "P1") await slow.promise;
+				return slim(udid);
+			};
+			let settled = false;
+			const run = createE2eCommand(h.deps)
+				.run(c)
+				.finally(() => {
+					settled = true;
+				});
+			await waitFor(() => h.jobs().length === 1);
+			slow.resolve();
+			await Bun.sleep(20);
+			// U1's job is still running: the run waits for it, and its device stays leased under it
+			expect(settled).toBe(false);
+			expect(h.jobs()[0]?.kills).toEqual([]);
+			expect(c.db.listLeases().some((l) => l.resource.kind === "device" && l.resource.id === "U1")).toBe(true);
+			h.jobs()[0]?.finish(0);
+			expect(await run).toBe(1);
+			expect(h.jobs()).toHaveLength(1);
+			expect(c.stderr.join("\n")).toContain("launch blew up");
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		/** Two legs, isolate device, P1's leg late (still slimming when the grid starts); every shard passes chats. */
+		const lateLeg = async (argv: string[], isTTY: boolean) => {
+			await resuite({ devices: legs, slim: true, isolate: "device" });
+			const c = twoLegs(...argv);
+			const h: Harness = harness({
+				isTTY,
+				exitCodeFor: (env) => {
+					if (env.WARDEN_E2E_OUT) h.files.set(resultsPath(env), jsonl(spec("chats", "opens")));
+					return 0;
+				},
+			});
+			const slow = Promise.withResolvers<void>();
+			const slim = h.deps.slim;
+			h.deps.slim = async (udid) => {
+				if (udid === "P1") await slow.promise;
+				return slim(udid);
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.jobs().length === 1);
+			slow.resolve();
+			expect(await run).toBe(0);
+			return { c, h };
+		};
+
+		test("legs, isolate device: a late leg's flows show in the --no-tui lines (batch-pipeline R1)", async () => {
+			const { c } = await lateLeg(["--no-tui"], false);
+			const text = c.stderr.join("\n");
+			expect(text).toContain("warden-iphone-17-1 ✓ chats");
+			expect(text).toContain("warden-ipad-1 ✓ chats");
+		});
+
+		test("legs, isolate device: a late leg's flows count in the grid header's totals (batch-pipeline R1)", async () => {
+			const { h } = await lateLeg([], true);
+			const screen = Bun.stripANSI(h.terminal.join(""));
+			expect(screen).toContain("  2/2  ");
+			expect(screen).not.toContain("  1/1  ");
 		});
 
 		test("a headless run hides the simulator windows first", async () => {

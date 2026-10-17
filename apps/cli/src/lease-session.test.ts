@@ -220,6 +220,24 @@ describe("claimAll with device legs", () => {
 		expect(s.ctx.db.listLeases()).toEqual([]);
 	});
 
+	test("a failed leg releases the other legs' devices only after beforeRelease is done (batch-pipeline R3)", async () => {
+		const s = legSetup([sim("U1", "warden-iphone-17-1", "Booted"), sim("P1", "warden-ipad-1", "Shutdown")], {
+			bootFails: ["P1"],
+		});
+		const quiet = Promise.withResolvers<void>();
+		let asked = false;
+		const beforeRelease = () => {
+			asked = true;
+			return quiet.promise;
+		};
+		const running = claimAll(s.ctx, deps(), agent, args({ beforeRelease }), "e2e");
+		await waitFor(() => asked);
+		expect(s.ctx.db.listLeases()).toHaveLength(1);
+		quiet.resolve();
+		expect((await running).success).toBe(false);
+		expect(s.ctx.db.listLeases()).toEqual([]);
+	});
+
 	test("an install failing on one leg releases every leg's devices and the ports", async () => {
 		const s = legSetup([sim("U1", "warden-iphone-17-1", "Booted"), sim("P1", "warden-ipad-1", "Booted")]);
 		const session = await claimAll(
@@ -399,6 +417,24 @@ describe("overlapHide (16-8)", () => {
 		settle({ closed: ["U1", "U2"], rebooted: [], failed: ["U2"] });
 		expect(await done).toEqual({ result: "ok", failed: ["U2"] });
 		expect(events).toEqual([]);
+	});
+
+	test("a device that did not come back is not installed on: its ready says it is down (batch-pipeline R5)", async () => {
+		const { start, settle } = hideOf(["U2"]);
+		const up: Array<[string, boolean]> = [];
+		const done = overlapHide(start, {
+			leased: () => {},
+			install: async (ready) => {
+				for (const udid of ["U1", "U2"]) up.push([udid, await ready(udid)]);
+				return "ok";
+			},
+		});
+		settle({ closed: ["U1", "U2"], rebooted: [], failed: ["U2"] });
+		expect(await done).toEqual({ result: "ok", failed: ["U2"] });
+		expect(up).toEqual([
+			["U1", true],
+			["U2", false],
+		]);
 	});
 
 	test("no hide (not headless): leased and installed straight away", async () => {
