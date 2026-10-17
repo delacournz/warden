@@ -9,7 +9,15 @@ import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
 import type { AttemptContext } from "./runner/fixtures.types";
 import type { TraceEvent, TraceWriter } from "./runner/trace";
-import { createSession, devtoolsTarget, getSession, resetSession, setDefaultDriverFactory } from "./session";
+import {
+	type AttemptBinding,
+	attemptSession,
+	createSession,
+	devtoolsTarget,
+	getSession,
+	resetSession,
+	setDefaultDriverFactory,
+} from "./session";
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -262,6 +270,53 @@ describe("Session spans", () => {
 		session.enterAttempt(attempt);
 		await session.span("device.snapshot", async () => driver.snapshot());
 		expect(spansOf(events).map((s) => s.op)).toEqual(["driver.snapshot", "device.snapshot"]);
+	});
+});
+
+describe("attempt slot", () => {
+	test("leaveAttempt(ctx) and enterAttempt(next, replacing) never touch another attempt's slot", () => {
+		const session = createSession({ env: envIn(tmp()), exitHook: false });
+		const old = recordingAttempt().attempt;
+		const next = recordingAttempt().attempt;
+		session.enterAttempt(next);
+		session.enterAttempt({ ...old, depth: 0 }, old);
+		session.leaveAttempt(old);
+		expect(session.attempt).toBe(next);
+		const cleanup = { ...next, depth: 0 };
+		session.enterAttempt(cleanup, next);
+		expect(session.attempt).toBe(cleanup);
+		session.leaveAttempt(cleanup);
+		expect(session.attempt).toBeUndefined();
+		session.enterAttempt(next);
+		session.leaveAttempt();
+		expect(session.attempt).toBeUndefined();
+	});
+
+	test("attemptSession follows its own binding, not the running attempt", async () => {
+		const session = createSession({ env: envIn(tmp()), exitHook: false });
+		const own = recordingAttempt();
+		const other = recordingAttempt();
+		let binding: AttemptBinding = { context: own.attempt, finished: false };
+		const bound = attemptSession(session, () => binding);
+		session.enterAttempt(other.attempt);
+		await bound.step("locator", "tap", async () => undefined);
+		await bound.span("device.home", async () => undefined);
+		expect(bound.signal).toBe(own.attempt.signal);
+		expect(bound.attempt).toBe(own.attempt);
+		expect(own.events.map((e) => e.type)).toEqual(["step-start", "step-end", "span"]);
+		expect(other.events).toEqual([]);
+
+		binding = {
+			context: { ...own.attempt, signal: AbortSignal.abort(new E2eError("SESSION", "attempt finished")) },
+			finished: true,
+		};
+		await expect(bound.step("locator", "tap", async () => undefined)).rejects.toMatchObject({ code: "SESSION" });
+		expect(bound.signal.aborted).toBe(true);
+		expect(bound.attempt).toBeUndefined();
+		expect(bound.trace).toBeUndefined();
+		expect(await bound.span("device.home", async () => 1)).toBe(1);
+		expect(own.events).toHaveLength(3);
+		expect(other.events).toEqual([]);
 	});
 });
 

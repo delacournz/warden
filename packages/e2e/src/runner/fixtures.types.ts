@@ -27,6 +27,10 @@ export const SYSTEM_ALERTS: readonly SystemAlerts[] = ["accept", "dismiss", "off
 
 /** What a fixture factory gets for one attempt (or, for `beforeAll`/`afterAll`, the idle session). */
 export type FixtureContext = {
+	/**
+	 * Inside an attempt, a view of the session bound to that attempt (`attemptSession`): its `signal`, `step`, `span`
+	 * and `trace` stay that attempt's, so a fixture never acts in a later test.
+	 */
 	session: Session;
 	/** aborts at the attempt deadline; every driver call and poll must honour it */
 	signal: AbortSignal;
