@@ -18,6 +18,10 @@ export function withUiOptions<Args extends unknown[], Opts extends OptionValues,
 		.option("--platform <platform>", "platform for --claim with no device named: ios (default) | android")
 		.option("--profile <slug>", "device profile for --claim with no device named")
 		.option("--runtime <runtime>", "runtime for --claim with no device named")
+		.option(
+			"--force",
+			"drive the device even while a live warden process (e2e, batch, run, dev) holds your lease on it"
+		)
 		.option("--timeout <ms>", `deadline in milliseconds (default ${DEFAULT_UI_TIMEOUT_MS})`)
 		.option("--no-record", "don't append this step to a running flow recording")
 		.option("--json", "machine-readable output: one JSON document on stdout");

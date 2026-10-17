@@ -33,6 +33,33 @@ export function sheetlessFor(session: object): Set<string> {
 	return known;
 }
 
+/** Per session: how many `openLink` waits are running (the device owns the "Open in …?" sheet meanwhile). */
+const linksInFlight = new WeakMap<object, number>();
+
+/**
+ * Whether `openLink` is waiting on a link in `session`. Reads that answer system alerts (`test.use({ systemAlerts })`)
+ * leave alerts alone meanwhile: a read that cancelled (or pressed) the sheet first would lose the link, or hide the
+ * sheet from `openLink`, which then remembers the scheme as having none.
+ */
+export function linkInFlight(session: object): boolean {
+	return (linksInFlight.get(session) ?? 0) > 0;
+}
+
+/** Runs `fn` with a link in flight in `session` (see {@link linkInFlight}). */
+export async function whileLinkInFlight<T>(session: object, fn: () => Promise<T>): Promise<T> {
+	linksInFlight.set(session, (linksInFlight.get(session) ?? 0) + 1);
+	try {
+		return await fn();
+	} finally {
+		linksInFlight.set(session, (linksInFlight.get(session) ?? 1) - 1);
+	}
+}
+
+/** iOS's "Open in “App”?" sheet, which only a link the test opened raises. */
+export function isOpenInSheet(info: Pick<AlertInfo, "title">): boolean {
+	return info.title !== undefined && /^open in\b/i.test(info.title.trim());
+}
+
 /** `myapp` for `myapp://x/y`; `https://example.com` for web links, which are handled per host. */
 export function linkKey(url: string): string {
 	const trimmed = url.trim();

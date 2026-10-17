@@ -15,7 +15,11 @@ import { listTargets, type SelectedTarget, selectTarget } from "./inspector";
 export const WARDEN_BINDING = "__warden_cb";
 
 const RECONNECT_BACKOFF_MS = 200;
-const RECONNECT_ATTEMPTS = 10;
+/** attempts at the base backoff before it starts growing (the old fixed budget: about 2 s) */
+const FAST_RECONNECT_ATTEMPTS = 10;
+const MAX_RECONNECT_BACKOFF_MS = 1_000;
+/** "no target yet" is normal while the app relaunches (4.5-6.4 s for a Release build, more for a dev client) */
+const RECONNECT_BUDGET_MS = 30_000;
 const RELOAD_WAIT_MS = 5_000;
 const HANDSHAKE_OPTIONAL_TIMEOUT_MS = 3_000;
 
@@ -38,10 +42,16 @@ export type ConnectDevtoolsOptions = {
 	sleep?: Sleep;
 	/** per-request and connect timeout (default 10 s) */
 	timeoutMs?: number;
-	/** pause between reconnect attempts (default 200 ms) */
+	/** first pause between reconnect attempts (default 200 ms; grows to `maxReconnectBackoffMs` after 10 attempts) */
 	reconnectBackoffMs?: number;
-	/** reconnect attempts before giving up (default 10) */
+	/** longest pause between reconnect attempts (default 1 s) */
+	maxReconnectBackoffMs?: number;
+	/** reconnect attempts before giving up (default: no cap, `reconnectBudgetMs` decides) */
 	maxReconnectAttempts?: number;
+	/** how long one reconnect keeps trying before it emits `lost` (default 30 s) */
+	reconnectBudgetMs?: number;
+	/** injectable for tests; defaults to `Date.now` (with the time slept, measures `reconnectBudgetMs`) */
+	now?: () => number;
 	/** Called for every CDP event from the moment each socket opens, handshake included (so replays are seen). */
 	taps?: readonly CdpTap[];
 	/** how long `reloadJs` waits for the app to start tearing its JS context down (default 5 s) */
@@ -115,8 +125,16 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 	}
 	const sleep = o.sleep ?? timerSleep;
 	const log = o.log ?? (() => undefined);
+	const now = o.now ?? Date.now;
 	const backoffMs = o.reconnectBackoffMs ?? RECONNECT_BACKOFF_MS;
-	const maxAttempts = o.maxReconnectAttempts ?? RECONNECT_ATTEMPTS;
+	const maxBackoffMs = Math.max(backoffMs, o.maxReconnectBackoffMs ?? MAX_RECONNECT_BACKOFF_MS);
+	const maxAttempts = o.maxReconnectAttempts ?? Number.POSITIVE_INFINITY;
+	const budgetMs = o.reconnectBudgetMs ?? RECONNECT_BUDGET_MS;
+	/** pause after failed attempt `n` (1-based): the base for the first 10, then doubling up to the cap */
+	const backoffAfter = (attempt: number): number =>
+		attempt <= FAST_RECONNECT_ATTEMPTS
+			? backoffMs
+			: Math.min(maxBackoffMs, backoffMs * 2 ** (attempt - FAST_RECONNECT_ATTEMPTS));
 
 	let pinnedLogicalId = o.device.logicalDeviceId;
 	let state: State = { kind: "closed" };
@@ -191,6 +209,11 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 		const done = (async (): Promise<DevtoolsResult<Attached>> => {
 			previous.cdp.close();
 			let last: DevtoolsError = { code: "devtools_unavailable", message: "reconnect failed" };
+			// the budget runs out on the clock or on the time slept, whichever is first (an injected sleep may not
+			// move the clock)
+			const startedAt = now();
+			let slept = 0;
+			const leftMs = (): number => budgetMs - Math.max(now() - startedAt, slept);
 			for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 				if (phase() === "closed") return devtoolsErr("cdp_closed", "devtools session is closed");
 				const result = await establish();
@@ -205,8 +228,13 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 					return result;
 				}
 				last = result.error;
-				log(`devtools: reconnect attempt ${attempt}/${maxAttempts} failed: ${last.message}`);
-				if (attempt < maxAttempts) await sleep(backoffMs);
+				const left = leftMs();
+				const cap = Number.isFinite(maxAttempts) ? `/${maxAttempts}` : "";
+				log(`devtools: reconnect attempt ${attempt}${cap} failed: ${last.message}`);
+				if (attempt >= maxAttempts || left <= 0) break;
+				const pause = Math.min(backoffAfter(attempt), left);
+				slept += pause;
+				await sleep(pause);
 			}
 			if (phase() !== "closed") {
 				state = { kind: "lost", error: last };
@@ -220,11 +248,36 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 		return done;
 	}
 
-	/** the live socket, waiting out a reconnect */
+	/**
+	 * Leaves `lost`: one fresh attach attempt, shared by every caller that arrives while it runs. A failure stays
+	 * `lost` (with the new error) without emitting `lost` again; a success emits `reconnected`.
+	 */
+	function revive(): Promise<DevtoolsResult<Attached>> {
+		log("devtools: lost, trying to attach again");
+		const done = (async (): Promise<DevtoolsResult<Attached>> => {
+			const result = await establish();
+			if (phase() === "closed") {
+				if (result.success) result.data.cdp.close();
+				return devtoolsErr("cdp_closed", "devtools session is closed");
+			}
+			if (!result.success) {
+				state = { kind: "lost", error: result.error };
+				return result;
+			}
+			attach(result.data);
+			log(`devtools: reconnected to ${result.data.target.id}`);
+			for (const handler of [...eventHandlers.reconnected]) handler(result.data.target);
+			return result;
+		})();
+		state = { kind: "reconnecting", done };
+		return done;
+	}
+
+	/** the live socket, waiting out a reconnect; a `lost` session tries to attach again */
 	async function current(): Promise<DevtoolsResult<Attached>> {
 		if (state.kind === "up") return ok(state.attached);
 		if (state.kind === "reconnecting") return state.done;
-		if (state.kind === "lost") return { success: false, error: state.error };
+		if (state.kind === "lost") return revive();
 		return devtoolsErr("cdp_closed", "devtools session is closed");
 	}
 

@@ -35,6 +35,8 @@ export type Harness = {
 	warmed: string[];
 	/** every warm helper stopped: the udid */
 	warmClosed: string[];
+	/** every warm helper whose process was stopped (`WarmHelper.stop`, a failed warm-up): the udid */
+	warmStopped: string[];
 };
 
 /**
@@ -82,6 +84,7 @@ export function harness(
 		slimmed: [],
 		warmed: [],
 		warmClosed: [],
+		warmStopped: [],
 		timers: [],
 		tickers: [],
 		metroProbes: [],
@@ -192,6 +195,10 @@ export function harness(
 						close: async () => {
 							h.warmClosed.push(udid);
 							h.events.push(`warm-close:${udid}`);
+						},
+						stop: async () => {
+							h.warmStopped.push(udid);
+							h.events.push(`warm-stop:${udid}`);
 						},
 					},
 				};

@@ -92,6 +92,10 @@ export type AndroidProviderOptions = {
 	earlyExitMs?: number;
 };
 
+/** How often, and how long, `boot` looks for a just-launched warden emulator in `adb devices`. */
+const REGISTER_POLL_MS = 250;
+const REGISTER_TIMEOUT_MS = 15_000;
+
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 function logTail(logPath: string): string {
@@ -273,10 +277,19 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		},
 
 		async boot(id) {
-			const emulators = await listEmulators(deps);
-			if (!emulators.success) return emulators;
-			if (emulators.data.some((e) => e.serial === id)) return ok(undefined);
-			return err(`${id} is not running — android devices are created, not booted`);
+			// A warden emulator `create` just launched may not have reached the adb server yet: poll for it.
+			const launched = deps.store.listDevices("android").some((d) => d.id === id);
+			const polls = launched ? Math.ceil(REGISTER_TIMEOUT_MS / REGISTER_POLL_MS) : 0;
+			for (let i = 0; ; i++) {
+				const emulators = await listEmulators(deps);
+				if (!emulators.success) return emulators;
+				if (emulators.data.some((e) => e.serial === id)) return ok(undefined);
+				if (i >= polls) break;
+				await sleep(REGISTER_POLL_MS);
+			}
+			return launched
+				? err(`${id} did not register with adb within ${REGISTER_TIMEOUT_MS / 1000}s of its launch`)
+				: err(`${id} is not running — android devices are created, not booted`);
 		},
 
 		async waitReady(id, timeoutMs) {

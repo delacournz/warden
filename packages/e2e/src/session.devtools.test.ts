@@ -87,6 +87,40 @@ describe("Session devtools", () => {
 		expect(second.success).toBe(true);
 	});
 
+	test("a facet that emitted lost is dropped: peek forgets it and the next call opens a fresh one", async () => {
+		const first = stubFacet();
+		const second = stubFacet();
+		const lostHandlers: ((error: { code: "devtools_unavailable"; message: string }) => void)[] = [];
+		const lostable = {
+			...first.facet,
+			on: ((event: string, handler: (error: { code: "devtools_unavailable"; message: string }) => void) => {
+				if (event === "lost") lostHandlers.push(handler);
+				return () => undefined;
+			}) as typeof first.facet.on,
+		};
+		const opened = [lostable, second.facet];
+		const session = createSession({
+			env: envIn({ metroUrl: "http://127.0.0.1:8081" }),
+			exitHook: false,
+			devtools: async () => {
+				const next = opened.shift();
+				return next === undefined ? devtoolsErr("devtools_unavailable", "no more") : ok(next);
+			},
+		});
+		const a = await session.devtools();
+		expect(a.success && a.data).toBe(lostable);
+		expect(lostHandlers).toHaveLength(1);
+		for (const handler of lostHandlers) handler({ code: "devtools_unavailable", message: "gone" });
+		expect(session.peekDevtools()).toBeUndefined();
+		expect(first.closes()).toBe(1);
+		const b = await session.devtools();
+		expect(b.success && b.data).toBe(second.facet);
+		expect(session.peekDevtools()).toBe(second.facet);
+		await session.close();
+		expect(second.closes()).toBe(1);
+		expect(first.closes()).toBe(1);
+	});
+
 	test("close() closes an opened facet once", async () => {
 		const stub = stubFacet();
 		const session = createSession({

@@ -256,3 +256,76 @@ describe("warden gc: parallel shutdown", () => {
 		expect(out.notes.join("\n")).toContain("shutdown U13 failed");
 	});
 });
+
+describe("warden gc: a device claimed while the pass runs (16-1, 12-2)", () => {
+	const U1 = { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
+
+	/** one idle booted warden sim; `during` runs when gc lists devices, i.e. after gc read its leases */
+	function racing(during: (c: TestContext) => void, calls: string[][] = []): TestContext {
+		const base = fakeSimctl([wardenSim(1, "Booted"), wardenSim(5, "Booted")], calls);
+		const c = testContext(["--json"], {
+			now: () => NOW,
+			exec: async (cmd, opts) => {
+				if (cmd.join(" ").startsWith("xcrun simctl list devices")) during(c);
+				return base(cmd, opts);
+			},
+		});
+		ctx = c;
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
+		c.db.recordDevice({ platform: "ios", id: "U5", name: "warden-iphone-17-5" }, 0);
+		return c;
+	}
+
+	const shutdowns = (calls: string[][]) => calls.filter((x) => x[2] === "shutdown").map((x) => x[3]);
+
+	test("a device leased after gc read its leases is not shut down", async () => {
+		const calls: string[][] = [];
+		const c = racing((t) => {
+			if (!t.db.findLeaseByResource(U1)) t.db.insertLease({ resource: U1, owner: agent, ttlMs: 60_000 }, NOW);
+		}, calls);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(shutdowns(calls)).toEqual(["U5"]);
+		expect(JSON.parse(c.stdout.join("\n")).shutdown.map((d: { id: string }) => d.id)).toEqual(["U5"]);
+		expect(c.db.findLeaseByResource(U1)?.owner).toEqual(agent);
+	});
+
+	test("a device used again (last_used_at moved) since the plan is not shut down", async () => {
+		const calls: string[][] = [];
+		const c = racing((t) => t.db.touchDevice("ios", "U1", NOW), calls);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(shutdowns(calls)).toEqual(["U5"]);
+	});
+
+	test("gc holds a gc-shutdown lease on the device while shutting it down, and drops it after", async () => {
+		const held: Array<string | undefined> = [];
+		const base = fakeSimctl([wardenSim(1, "Booted")]);
+		const c = testContext(["--json"], {
+			now: () => NOW,
+			exec: async (cmd, opts) => {
+				if (cmd[2] === "shutdown") held.push(c.db.findLeaseByResource(U1)?.label);
+				return base(cmd, opts);
+			},
+		});
+		ctx = c;
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(held).toEqual(["gc-shutdown"]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("the gc-shutdown lease is dropped when the shutdown fails too", async () => {
+		const c = testContext(["--json"], {
+			now: () => NOW,
+			exec: fakeSimctl(
+				[wardenSim(1, "Booted")],
+				[],
+				[["xcrun simctl shutdown U1", { exitCode: 1, stderr: "Unable to shutdown device" }]]
+			),
+		});
+		ctx = c;
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).toContain("shutdown U1 failed");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+});

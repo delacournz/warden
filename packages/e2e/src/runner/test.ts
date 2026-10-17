@@ -2,11 +2,10 @@ import { afterAll as bunAfterAll, beforeAll as bunBeforeAll, describe as bunDesc
 import type { Platform } from "../driver/driver.types";
 import { E2eError } from "../errors";
 import { getSession } from "../session";
-import { buildBaseFixtures, type FixtureEntry, type FixtureSetup, runAttempt } from "./attempt";
+import { buildBaseFixtures, type FixtureEntry, type FixtureSetup, runAttempt, runnerTiming } from "./attempt";
 import { callerFile } from "./callsite";
 import { type BaseFixtures, SYSTEM_ALERTS } from "./fixtures.types";
 import {
-	BUN_TIMEOUT_MARGIN_MS,
 	createScope,
 	currentScope,
 	type Hook,
@@ -58,6 +57,13 @@ export type TestApi<F extends object> = TestCallable<F> & {
 
 type Mode = "run" | "skip" | "only";
 
+/** Scopes (and their ancestors) that already hold a registered test: bun fixed those tests' timeouts then. */
+const registered = new WeakSet<Scope>();
+
+function markRegistered(scope: Scope): void {
+	for (let s: Scope | undefined = scope; s !== undefined; s = s.parent) registered.add(s);
+}
+
 function registerTest<F extends object>(
 	fixtures: readonly FixtureEntry[],
 	mode: Mode,
@@ -84,6 +90,8 @@ function registerTest<F extends object>(
 	const only = mode === "only" || options.only === true;
 	if (only) markOnly();
 
+	markRegistered(scope);
+	const bunTimeoutMs = use.timeoutMs + runnerTiming().bunMarginMs;
 	let attempts = 0;
 	const run = async (): Promise<void> => {
 		attempts += 1;
@@ -96,9 +104,10 @@ function registerTest<F extends object>(
 			...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
 			only,
 			final: attempts > retry,
+			bunTimeoutMs,
 		});
 	};
-	const bunOptions = { timeout: use.timeoutMs + BUN_TIMEOUT_MARGIN_MS, retry };
+	const bunOptions = { timeout: bunTimeoutMs, retry };
 
 	if (mode === "skip" || options.skip === true || wrongPlatform) bunTest.skip(title, run, bunOptions);
 	else if (only) bunTest.only(title, run, bunOptions);
@@ -146,6 +155,12 @@ function makeTest<F extends object>(fixtures: readonly FixtureEntry[]): TestApi<
 				);
 			}
 			const scope = currentScope();
+			if (options.timeout !== undefined && registered.has(scope)) {
+				process.stderr.write(
+					`warden: test.use({ timeout: ${options.timeout} }) comes after a test in the same scope; bun fixed that ` +
+						"test's own timeout when it was registered, so put test.use above the tests it is for\n"
+				);
+			}
 			scope.use = { ...scope.use, ...options };
 		},
 		extend<Extra extends object>(defs: FixtureDefs<F, Extra>): TestApi<F & Extra> {

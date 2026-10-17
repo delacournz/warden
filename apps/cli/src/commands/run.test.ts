@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
+import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { type ChildHandle, splitCommand, splitOperands } from "../lease-session";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
@@ -343,5 +344,21 @@ describe("warden run", () => {
 		const h = harness();
 		expect(await createRunCommand(h.deps).run(c)).toBe(1);
 		expect(c.db.listLeases()).toEqual([]);
+	});
+});
+
+describe("warden run auto-gc (16-1)", () => {
+	test("auto-gc is considered only after the claim has leased its devices", async () => {
+		const order = autoGcOrder(fakeSimctl([wardenSim(1, "Booted")]), () => c.db);
+		ctx = testContext(["ios", "--", "bun", "test"], { exec: order.exec });
+		const c = ctx;
+		c.env = allowAutoGc({ ...c.env, ...OWNER_ENV });
+		const h = harness();
+		const running = createRunCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0);
+		expect(order.gcBeforeClaim()).toBe(false);
+		expect(autoGcConsidered(c.db)).toBe(true);
+		h.finish(0);
+		expect(await running).toBe(0);
 	});
 });

@@ -226,3 +226,54 @@ describe("verdicts over device shards", () => {
 		expect(out.ok).toBe(false);
 	});
 });
+
+describe("verdicts: the failure screenshot", () => {
+	const shot = (dir: string, files = ["failure.png", "screen-at-failure.txt", "trace.jsonl"]) => ({
+		artifacts: { dir, files },
+	});
+
+	test("a failed test whose attempt dir holds failure.png points the flow at it (no batch shot)", async () => {
+		const s = session([
+			{
+				exitCode: 1,
+				results: [spec("a", "t"), { ...spec("b", "t", "failed"), ...shot("/art/b-1") }, spec("c", "t")],
+			},
+		]);
+		const out = await verdicts([A, B, C], s.session, shape, io(s.files));
+		const byId = Object.fromEntries(out.flows.map((f) => [f.id, f]));
+		expect(byId.b?.verdict).toBe("failed");
+		expect(byId.b?.screenshot).toBe("/art/b-1/failure.png");
+		expect(byId.a).not.toHaveProperty("screenshot");
+		expect(byId.c).not.toHaveProperty("screenshot");
+	});
+
+	test("the runner's shot wins over a batch shot of the same attempt (taken after the whole shard ran)", async () => {
+		const s = session([{ exitCode: 1, results: [{ ...spec("a", "t", "failed"), ...shot("/art/a-1") }] }]);
+		const withBatch = { ...s.session, screenshots: new Map([["0:0", "/logs/0-0-shard-0.png"]]) };
+		const out = await verdicts([A], withBatch, ONE_SHARD, io(s.files));
+		expect(out.flows[0]?.screenshot).toBe("/art/a-1/failure.png");
+	});
+
+	test("a failed test without failure.png, or an attempt with no results, keeps the batch shot", async () => {
+		const noPng = session([
+			{ exitCode: 1, results: [{ ...spec("a", "t", "failed"), ...shot("/art/a-1", ["trace.jsonl"]) }] },
+		]);
+		const crashed = session([{ exitCode: 137 }]);
+		for (const s of [noPng, crashed]) {
+			const withBatch = { ...s.session, screenshots: new Map([["0:0", "/logs/0-0-shard-0.png"]]) };
+			const out = await verdicts([A], withBatch, ONE_SHARD, io(s.files));
+			expect(out.flows[0]?.screenshot).toBe("/logs/0-0-shard-0.png");
+		}
+	});
+
+	test("after a retry the latest failed attempt's runner shot is the one reported", async () => {
+		const s = session([
+			{ exitCode: 1, results: [{ ...spec("a", "t", "failed"), ...shot("/art/a-1") }] },
+			{ exitCode: 1, results: [{ ...spec("a", "t", "failed"), ...shot("/art/a-2") }] },
+		]);
+		const out = await verdicts([A], s.session, ONE_SHARD, io(s.files));
+		expect(out.flows[0]).toMatchObject({ attempts: 2, screenshot: "/art/a-2/failure.png" });
+	});
+});
+
+const ONE_SHARD: RunShape = { legs: [undefined], shardOf: new Map([["a", "shard-0"]]) };

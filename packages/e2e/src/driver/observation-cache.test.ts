@@ -121,6 +121,43 @@ describe("observe", () => {
 	});
 });
 
+describe("previous", () => {
+	test("is the kept snapshot of this generation, whatever its age, and never answers a read", async () => {
+		const { raw, driver, clock } = setup();
+		const first = unwrap(await driver.observe(FRESH));
+		clock.advance(OBSERVATION_MAX_AGE_MS.ios * 10);
+		expect(driver.previous?.().snapshot).toBe(first);
+		await driver.observe(REUSE);
+		expect(raw.callsOf("snapshot")).toHaveLength(2);
+	});
+
+	test("an input ends the generation: nothing is previous, and the generation number moves", async () => {
+		const { driver } = setup();
+		await driver.observe(FRESH);
+		const before = driver.previous?.();
+		await driver.tap({ x: 1, y: 1 });
+		const after = driver.previous?.();
+		expect(after?.snapshot).toBeUndefined();
+		expect(after?.generation).not.toBe(before?.generation);
+	});
+
+	test("says how long ago the last input ended; nothing before the first input", async () => {
+		const { driver, clock } = setup();
+		expect(driver.previous?.().sinceInputMs).toBeUndefined();
+		await driver.tap({ x: 1, y: 1 });
+		clock.advance(120);
+		expect(driver.previous?.().sinceInputMs).toBe(120);
+	});
+
+	test("invalidateObservations forgets the snapshot but is not an input", async () => {
+		const { driver } = setup();
+		await driver.observe(FRESH);
+		driver.invalidateObservations();
+		expect(driver.previous?.().snapshot).toBeUndefined();
+		expect(driver.previous?.().sinceInputMs).toBeUndefined();
+	});
+});
+
 describe("input generation", () => {
 	type Act = [string, (driver: Driver & Observes) => Promise<unknown>];
 	const ACTS: Act[] = [

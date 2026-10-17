@@ -2,7 +2,8 @@ import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
-import type { Owner, Platform } from "@delacour/warden-core/types";
+import type { DeviceRecord } from "@delacour/warden-core/store";
+import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
@@ -22,6 +23,10 @@ const PLATFORMS: readonly Platform[] = ["ios", "android"];
 /** how many idle devices one platform shuts down at once */
 const SHUTDOWN_CONCURRENCY = 4;
 
+/** label + TTL of the lease gc holds on a device while it shuts it down (a dead gc's lease goes stale after this) */
+const GC_SHUTDOWN_LABEL = "gc-shutdown";
+const GC_SHUTDOWN_TTL_MS = 2 * 60_000;
+
 type ShutDevice = { platform: Platform; id: string; name: string };
 
 /** What a pass reads: when it is, how idle is idle, and which devices someone holds. */
@@ -29,6 +34,25 @@ type GcPlan = { now: number; idleMs: number; leased: ReadonlySet<string> };
 
 /** What one platform's pass did. */
 type PlatformOutcome = { shutdown: ShutDevice[]; forgotten: ShutDevice[]; notes: string[] };
+
+/**
+ * Re-check one planned shutdown under the store lock, right before it happens: a claim may have
+ * leased the device (or used it) since the pass read its leases. Still unleased and unused → take a
+ * short `gc-shutdown` lease so a concurrent claim sees the device as held for the shutdown's length.
+ */
+function holdForShutdown(ctx: CommandContext, owner: Owner, record: DeviceRecord): Lease | undefined {
+	const store = ctx.store();
+	const resource: DeviceResource = { kind: "device", platform: record.platform, id: record.id, name: record.name };
+	return store.transaction(() => {
+		if (store.findLeaseByResource(resource)) return undefined;
+		const current = store.listDevices(record.platform).find((d) => d.id === record.id);
+		if (current?.lastUsedAt !== record.lastUsedAt) return undefined;
+		return store.insertLease(
+			{ resource, owner, ttlMs: GC_SHUTDOWN_TTL_MS, label: GC_SHUTDOWN_LABEL, pid: process.pid },
+			ctx.now()
+		);
+	});
+}
 
 /**
  * Shut down this platform's booted, unleased, idle warden-created devices, several at a time. Only
@@ -63,12 +87,19 @@ async function gcPlatform(
 		(r) => booted.has(r.id) && !plan.leased.has(`${platform}:${r.id}`) && plan.now - r.lastUsedAt >= plan.idleMs
 	);
 	const results = await mapBounded(idle, SHUTDOWN_CONCURRENCY, async (record) => {
-		const result = await provider.shutdown(record.id);
-		if (result.success) await stopHelperAfter(ctx)(record.id);
-		return { record, result };
+		const hold = holdForShutdown(ctx, owner, record);
+		if (!hold) return { record, result: undefined };
+		try {
+			const result = await provider.shutdown(record.id);
+			if (result.success) await stopHelperAfter(ctx)(record.id);
+			return { record, result };
+		} finally {
+			ctx.store().deleteLeases([hold.id]);
+		}
 	});
 	for (const { record, result } of results) {
-		if (result.success) outcome.shutdown.push({ platform, id: record.id, name: record.name });
+		if (result === undefined) outcome.notes.push(`${record.name}: in use again, left running`);
+		else if (result.success) outcome.shutdown.push({ platform, id: record.id, name: record.name });
 		else outcome.notes.push(`shutdown ${record.id} failed: ${result.error}`);
 	}
 	return outcome;

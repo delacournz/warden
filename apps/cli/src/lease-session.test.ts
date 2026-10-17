@@ -1,9 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
 import type { Exec } from "@delacour/warden-core/exec";
 import type { Owner } from "@delacour/warden-core/types";
 import { type ClaimFlags, parseClaimFlags } from "./claim-flags";
 import type { EnsureOptions, PreparedApp } from "./commands/app";
-import { claimAll, INTERRUPTED, type LeaseArgs, type RunEnsureApp, sessionEnsureApp } from "./lease-session";
+import {
+	claimAll,
+	type ForwardedSignal,
+	holdLeases,
+	INTERRUPTED,
+	LEASES_LOST,
+	type LeaseArgs,
+	type RunEnsureApp,
+	sessionEnsureApp,
+} from "./lease-session";
 import { fakeSimctl } from "./simctl.testing";
 import { type TestContext, testContext } from "./testing";
 
@@ -263,5 +273,68 @@ describe("claimAll with device legs", () => {
 		if (!session.success) throw new Error(session.error);
 		expect(session.data.claims).toHaveLength(1);
 		expect(session.data.env.WARDEN_APP_HASH).toBe("H");
+	});
+});
+
+describe("holdLeases", () => {
+	/** A context holding port leases `ports` (as `warden run` leaves them): `every` ticks on demand, aborts are recorded. */
+	function hold(ports: number[]) {
+		const c = testContext([]);
+		ctx = c;
+		const ids = ports.map(
+			(port) => c.db.insertLease({ resource: { kind: "port", port }, owner, ttlMs: 60_000, pid: 4242 }, 0).id
+		);
+		const ticks: Array<() => void> = [];
+		const intervals: number[] = [];
+		const aborts: ForwardedSignal[] = [];
+		const stop = holdLeases(
+			c,
+			{
+				every: (ms, fn) => {
+					intervals.push(ms);
+					ticks.push(fn);
+					return () => {};
+				},
+				onSignal: () => () => {},
+			},
+			ids,
+			(signal) => aborts.push(signal)
+		);
+		const tick = () => {
+			for (const fn of ticks) fn();
+		};
+		return { c, ids, tick, aborts, stop, intervals };
+	}
+
+	test("leases released by another process between ticks abort the run once, naming the cause", () => {
+		const h = hold([9001, 9002]);
+		h.tick();
+		expect(h.aborts).toEqual([]);
+		h.c.db.deleteLeases([h.ids[1] ?? ""]);
+		h.tick();
+		h.tick();
+		expect(h.aborts).toEqual(["SIGTERM"]);
+		expect(h.c.stderr.filter((l) => l.includes(LEASES_LOST))).toHaveLength(1);
+		expect(LEASES_LOST).toContain("leases were released by another process: warden release or SessionEnd");
+		h.stop();
+	});
+
+	test("leases intact: every tick heartbeats, nothing aborts", () => {
+		const h = hold([9001]);
+		h.tick();
+		h.tick();
+		expect(h.aborts).toEqual([]);
+		expect(h.c.db.getLease(h.ids[0] ?? "")?.heartbeatAt).toBe(1_000_000);
+		h.stop();
+	});
+
+	test("heartbeats at once and marks the leases supervised with the heartbeat period", () => {
+		const h = hold([9001]);
+		expect(h.intervals).toEqual([HEARTBEAT_INTERVAL_MS]);
+		expect(h.c.db.getLease(h.ids[0] ?? "")).toMatchObject({
+			heartbeatAt: 1_000_000,
+			heartbeatMs: HEARTBEAT_INTERVAL_MS,
+		});
+		h.stop();
 	});
 });

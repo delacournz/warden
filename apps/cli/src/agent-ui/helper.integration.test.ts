@@ -10,7 +10,15 @@ import { createUiCommand } from "../commands/ui";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { defaultUiDeps } from "./driver";
-import { defaultHelperDeps, ensureHelper, type HelperDeps, helperStatus, ownerKey, stopHelper } from "./helper";
+import {
+	defaultHelperDeps,
+	ensureHelper,
+	type HelperDeps,
+	helperStatus,
+	ownerKey,
+	simdEnvKey,
+	stopHelper,
+} from "./helper";
 import { readState } from "./state";
 
 /**
@@ -230,10 +238,10 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		expect(helperStatus(c, UDID).pid).toBe(first.info.pid ?? null);
 	});
 
-	test("the lease passing to another owner replaces the resident helper (a new pid, the old one gone)", async () => {
+	test("the lease passing to another owner keeps the resident helper; a changed WARDEN_SIMD_* env replaces it", async () => {
 		const c = setup();
-		const a: Owner = { kind: "agent", sessionId: "A", cwd: "/w" };
-		const b: Owner = { kind: "agent", sessionId: "B", cwd: "/w" };
+		const a: Owner = { kind: "user", pid: 1, cwd: "/w" };
+		const b: Owner = { kind: "user", pid: 2, cwd: "/w" };
 		const lease = c.db.insertLease(
 			{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner: a, ttlMs: 3_600_000 },
 			c.now()
@@ -245,6 +253,15 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 			{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner: b, ttlMs: 3_600_000 },
 			c.now()
 		);
+		const kept = await ensureHelper(c, UDID, {
+			socketPath: first.socketPath,
+			helperPath: "/fake/warden-simd",
+			deps: first.deps,
+		});
+		expect(kept).toMatchObject({ success: true, data: { spawned: false } });
+		expect(helperStatus(c, UDID).pid).toBe(first.info.pid ?? null);
+
+		c.env = { ...c.env, WARDEN_SIMD_PACE_MS: "40" };
 		const second = await ensureHelper(c, UDID, {
 			socketPath: first.socketPath,
 			helperPath: "/fake/warden-simd",
@@ -253,8 +270,26 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		expect(second).toMatchObject({ success: true, data: { spawned: true } });
 		expect(second.success && second.data.pid).not.toBe(first.info.pid);
 		expect(() => process.kill(first.info.pid ?? 0, 0)).toThrow();
-		expect(readState(c, UDID).helper?.owner).toBe(ownerKey(b));
+		expect(readState(c, UDID).helper?.env).toBe(simdEnvKey(c.env));
 	});
+
+	test("a resident helper slow to send `ready` (busy) is waited for, not replaced: same pid, nothing spawned", async () => {
+		const c = setup();
+		// the 2nd and 3rd connections' ready comes 3 s late, past the client's 2 s handshake timeout; later ones are prompt
+		const first = await startHelper(c, { readyDelay: { ms: 3000, connections: [2, 3] } });
+		const spawns = { count: 0 };
+		const deps: HelperDeps = {
+			...first.deps,
+			spawnDetached: (spec) => {
+				spawns.count += 1;
+				return first.deps.spawnDetached(spec);
+			},
+		};
+		const again = await ensureHelper(c, UDID, { socketPath: first.socketPath, helperPath: "/fake/warden-simd", deps });
+		expect(again).toMatchObject({ success: true, data: { spawned: false } });
+		expect(spawns.count).toBe(0);
+		expect(helperStatus(c, UDID)).toMatchObject({ running: true, pid: first.info.pid });
+	}, 10_000);
 
 	/** `ensureHelper` against a fake helper that announces itself as `announce`; counts connects made after the spawn. */
 	async function startAnnouncing(announce: "ready" | "legacy" | "none") {

@@ -6,7 +6,7 @@ import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
 import { openStore, type Store } from "../store";
 import { fakeApp, testProject } from "./builds.testing";
-import { getBuild, getInstall, recordInstall, storeArtifact } from "./cache";
+import { cachedBuild, getBuild, getInstall, recordInstall, storeArtifact } from "./cache";
 import { JSON_CONFIG_FILE } from "./config";
 import { type EnsureInput, ensureApp, projectContext } from "./ensure";
 
@@ -24,6 +24,9 @@ afterEach(() => {
 	store.close();
 	rmSync(dir, { recursive: true, force: true });
 });
+
+/** `plutil -extract CFBundleIdentifier raw` of a built `.app`: the project's bundle id */
+const BUNDLE_ID: ExecResult = { exitCode: 0, stdout: "com.x.app\n", stderr: "" };
 
 /** every file is 7 bytes: installed and cached builds look the same */
 const fileSize = async (): Promise<number> => 7;
@@ -257,6 +260,7 @@ describe("ensureApp", () => {
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
 			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};
 		const project = testProject({
@@ -289,9 +293,11 @@ describe("ensureApp", () => {
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
 			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};
 		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		mkdirSync(join(root, "ios"), { recursive: true }); // prebuilt: no mid-build `git status` snapshot
 		const git = createGitFactsCache();
 		git.store(root, { toplevel: root, commonDir: join(root, ".git"), branch: "main" });
 		const res = await ensureApp(
@@ -392,6 +398,7 @@ describe("ensureApp", () => {
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
 			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};
 		const project = testProject({
@@ -476,5 +483,108 @@ describe("projectContext", () => {
 			"git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD",
 			"git config --get remote.origin.url",
 		]);
+	});
+});
+
+describe("ensureApp: one build per session", () => {
+	const root = () => join(dir, "app");
+	const products = () => join(root(), "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+
+	/** iOS host: `make-ios` builds (or fails), `fp` prints `fingerprint`; installs and probes succeed on any sim. */
+	function host(opts: { fingerprint: string; fail?: boolean }) {
+		const calls: string[] = [];
+		const ok = (stdout = ""): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
+		const handlers: Array<[string, () => ExecResult]> = [
+			["sh -c fp", () => ok(`{"hash":"${opts.fingerprint}"}`)],
+			["git status --porcelain", () => ok()],
+			["plutil -extract CFBundleIdentifier", () => BUNDLE_ID],
+			["plutil -convert json", () => ok(JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }))],
+			["xcrun simctl install", () => ok()],
+			["xcrun simctl get_app_container", () => ok("/data/App.app\n")],
+		];
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined === "sh -c make-ios") {
+				if (opts.fail) return { exitCode: 65, stdout: "", stderr: "BUILD FAILED" };
+				fakeApp(products(), "Built.app");
+				return ok();
+			}
+			const hit = handlers.find(([prefix]) => joined.startsWith(prefix));
+			return hit ? hit[1]() : { exitCode: 127, stdout: "", stderr: joined };
+		};
+		const project = testProject({ root: root(), fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		return { calls, exec, project };
+	}
+	const builds = (calls: string[]) => calls.filter((c) => c === "sh -c make-ios").length;
+
+	test("a fresh checkout's prebuild re-key: cached under the requested key, aliased under the post-build key (17-1)", async () => {
+		const s = host({ fingerprint: "H2" });
+		const over = { project: s.project, build: true, now: () => Date.now(), fileSize };
+		const first = await ensureApp(input(s.exec, { ...over, deviceId: "U1" }));
+		if (!first.success) throw new Error(first.error);
+		expect(first.data).toMatchObject({ hash: "H", source: "build", installed: true });
+		const requested = cachedBuild(store, KEY, "ios", "H", Date.now());
+		const alias = cachedBuild(store, KEY, "ios", "H2", Date.now());
+		expect(requested?.path).toBe(first.data.appPath);
+		expect(alias?.path).toBe(first.data.appPath);
+		expect(alias?.size).toBe(0);
+		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe("H2");
+
+		// device 2 of the same session (pre-build key): the cache, no second build
+		const second = await ensureApp(input(s.exec, { ...over, deviceId: "U2" }));
+		expect(second.success && second.data.source).toBe("cache");
+		expect(builds(s.calls)).toBe(1);
+
+		// the next run in this worktree computes the post-build key: both devices are already there
+		for (const deviceId of ["U1", "U2"]) {
+			const again = await ensureApp(input(s.exec, { ...over, hash: "H2", deviceId }));
+			expect(again.success && again.data.source).toBe("installed");
+		}
+		expect(builds(s.calls)).toBe(1);
+	});
+
+	test("the alias never replaces a real build of the post-build key", async () => {
+		const real = await seedCache("H2");
+		const s = host({ fingerprint: "H2" });
+		const res = await ensureApp(
+			input(s.exec, { project: s.project, build: true, deviceId: undefined, now: () => Date.now() })
+		);
+		expect(res.success).toBe(true);
+		expect(getBuild(store, KEY, "ios", "H2")?.path).toBe(real);
+	});
+
+	test("two devices on a failing cache miss: one build, two errors, no lock poll (17-4)", async () => {
+		const s = host({ fingerprint: "H", fail: true });
+		let sleeps = 0;
+		const over = { project: s.project, build: true, sleep: async () => void sleeps++ };
+		const [a, b] = await Promise.all([
+			ensureApp(input(s.exec, { ...over, deviceId: "U1" })),
+			ensureApp(input(s.exec, { ...over, deviceId: "U2" })),
+		]);
+		expect(a.success).toBe(false);
+		expect(b.success).toBe(false);
+		if (!a.success && !b.success) expect(b.error).toBe(a.error);
+		expect(builds(s.calls)).toBe(1);
+		expect(sleeps).toBe(0);
+	});
+
+	test("two devices on a successful cache miss: one build, both installed, no lock poll (17-4)", async () => {
+		const s = host({ fingerprint: "H" });
+		let sleeps = 0;
+		const sleep = async (ms: number) => {
+			sleeps++;
+			await Bun.sleep(Math.min(ms, 5));
+		};
+		const over = { project: s.project, build: true, now: () => Date.now(), sleep };
+		const [a, b] = await Promise.all([
+			ensureApp(input(s.exec, { ...over, deviceId: "U1" })),
+			ensureApp(input(s.exec, { ...over, deviceId: "U2" })),
+		]);
+		expect(a.success && a.data.installed).toBe(true);
+		expect(b.success && b.data.installed).toBe(true);
+		expect(builds(s.calls)).toBe(1);
+		expect(sleeps).toBe(0);
+		expect(s.calls.filter((c) => c.startsWith("xcrun simctl install"))).toHaveLength(2);
 	});
 });

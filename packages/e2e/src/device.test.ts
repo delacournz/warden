@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDevice } from "./device";
+import { sheetlessFor } from "./device-link";
 import { type ElementSpec, el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "./driver/driver.testing";
 import type { Platform, Snapshot } from "./driver/driver.types";
 import type { E2eEnv } from "./env";
@@ -570,6 +571,76 @@ describe("device.openLink until", () => {
 		await expect(locator.isVisible()).rejects.toBeDefined();
 		await device.openLink("myapp://x", { until: locator, waitMs: 500 });
 		expect(clock.time()).toBeGreaterThanOrEqual(500);
+	});
+});
+
+describe('the "Open in …?" sheet under systemAlerts', () => {
+	const OPEN_IN = "Open in “Example”?";
+	const openInSheet = () => el("alert", { label: OPEN_IN, children: [button("Cancel"), button("Open")] });
+
+	/**
+	 * An iOS app in front whose "Open in …?" sheet comes up right after the first alert read of `openLink` (that read
+	 * sees nothing) and stays until a button is pressed; Open shows the target screen. The screen's reads answer system
+	 * alerts with `device.alert("dismiss")`, as `test.use({ systemAlerts: "dismiss" })` does.
+	 */
+	function lateSheet() {
+		const clock = fakeClock();
+		let sheet: "none" | "up" | "opened" | "cancelled" = "none";
+		let alertReads = 0;
+		const pressed = (point: { y: number }): void => {
+			if (sheet === "up") sheet = point.y === rowCentre(2).y ? "opened" : "cancelled";
+		};
+		// the first read sees nothing; the sheet is up by the next snapshot
+		const firstRead = (): { data: null } | undefined => {
+			alertReads += 1;
+			if (alertReads > 1 || sheet !== "none") return undefined;
+			sheet = "up";
+			return { data: null };
+		};
+		const driver: FakeDriver = fakeDriver({
+			screens: () => {
+				if (sheet === "up") return snapshotOf([openInSheet()], { modal: { pid: 7 } });
+				return snapshotOf(sheet === "opened" ? [el("text", { id: "target", label: "Target" })] : []);
+			},
+			onCall: (call) => {
+				if (call.method === "tap") pressed(call.point);
+				if (call.method === "alertOn" || call.method === "alert") return firstRead();
+				return undefined;
+			},
+			alertBackends: ["ax", "axbridge"],
+			frontmost: () => env.bundleId,
+		});
+		const session: FixtureSession = { out: "/tmp/out" };
+		const device = createDevice({ session, driver, env, clock });
+		const host = testHost(driver);
+		host.answerSystemAlert = () => device.alert("dismiss");
+		const screen = createScreen(host);
+		return { driver, device, session, screen, sheetState: () => sheet };
+	}
+
+	test("openLink({ until }): the until read leaves the sheet to openLink, which presses Open, and the scheme is not memoised", async () => {
+		const { device, session, screen, sheetState } = lateSheet();
+		await device.openLink("myapp://x", { until: screen.getByTestId("target") });
+		expect(sheetState()).toBe("opened");
+		expect(sheetlessFor(session).has("myapp")).toBe(false);
+	});
+
+	test('dismiss never presses Cancel on an "Open in …?" sheet: it opens the link the test asked for', async () => {
+		const { driver, device } = setup({ screens: [snapshotOf([openInSheet()])] });
+		expect(await device.alert("dismiss")).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
+	test("an explicit Cancel is still pressed", async () => {
+		const { driver, device } = setup({ screens: [snapshotOf([openInSheet()])] });
+		expect(await device.alert({ button: "Cancel" })).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test("dismiss still presses Cancel on other alerts", async () => {
+		const { driver, device } = setup({ screens: [withAlert("Cancel", "Open")] });
+		expect(await device.alert("dismiss")).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
 	});
 });
 

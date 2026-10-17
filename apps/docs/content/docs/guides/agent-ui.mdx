@@ -190,6 +190,7 @@ What differs from iOS:
 | `--claim` | take a device when none is leased (`--platform ios\|android`, `--profile`, `--runtime` choose it), or take over a stale lease |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--no-record` | do not append this step to a running recording |
+| `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`, `dev`) holds your lease on it. Without it every subcommand but `status` exits 2 (`device_busy`) naming the owner, pid and label |
 | `--json` | the envelope above |
 
 `status` prints the device, your lease on it, the helper and the recording. `close` stops this device's helper; `--app [bundleId]` also quits the app (default: the one `open` launched) and `--release` frees the lease.

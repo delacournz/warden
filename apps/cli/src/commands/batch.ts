@@ -23,7 +23,7 @@ import type { FlowMark, TrackedFlow } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
 import { type ReadFrom, readFileFrom } from "../batch/results-tail";
 import { type RunnerReport, resultsReport } from "../batch/runner-report";
-import { captureScreenshot } from "../batch/screenshot";
+import { captureScreenshot, runnerFailureShot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
 import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
 import { openStampedLog } from "../batch/stamped-log";
@@ -54,7 +54,7 @@ import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { helperDir } from "../e2e/bun-runner";
-import { warmConnect } from "../e2e/warm-connect";
+import { residentSocket, warmConnect } from "../e2e/warm-connect";
 import {
 	type AppFlagValues,
 	claimAll,
@@ -144,6 +144,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	prewarm: (url: string, platform: Platform) => AsyncResult<{ bundled: boolean }>;
 	/** how `hooks.warmDrivers` reaches one device's socket helper (default: `e2e/warm-connect`) */
 	warmConnect: (ctx: CommandContext) => WarmConnect;
+	/** a device's running resident helper socket, for `hooks.residentSocket` when there is no warm-up (default: `e2e/warm-connect`) */
+	residentSocket?: (ctx: CommandContext) => (udid: string) => Promise<string | undefined>;
 	/** `Bun.which`: where a command is on PATH */
 	which: (cmd: string) => string | null | undefined;
 	/** `Bun.resolveSync`: the file a package specifier resolves to from `from` (throws when it does not) */
@@ -687,6 +689,19 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			// best effort
 		}
 	};
+	/**
+	 * Whether the attempt's spec runner already shot the device at its failed test (`failure.png` in
+	 * `results.jsonl`): then a batch shot, taken after the whole process ran on, is skipped. Never throws.
+	 */
+	const runnerShot = async (out: string | undefined): Promise<boolean> => {
+		if (!out) return false;
+		try {
+			const { readResults } = await import("@delacour/warden-e2e/runner/results");
+			return runnerFailureShot(readResults(await deps.readFile(join(out, "results.jsonl")))) !== undefined;
+		} catch {
+			return false;
+		}
+	};
 	/** env, argv and log of one spawn: the pool env + the caller's per-job env (`hooks.jobEnv`) + this worker's identity */
 	const plan = async (w: BatchWorker, id: string, seq: number, attempt: number, pass: number) => {
 		const job = baseJob(id);
@@ -748,7 +763,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			o.running.delete(proc);
 		}
 		if (timer.expired()) return TIMEOUT_EXIT;
-		if (code !== 0 && !o.interrupted()) await shoot(w, seq, log);
+		if (code !== 0 && !o.interrupted() && !(await runnerShot(out))) await shoot(w, seq, log);
 		return code;
 	};
 	return async (w: BatchWorker, job: string, seq: number, attempt = 0): Promise<number> => {
@@ -825,6 +840,11 @@ export type SessionHooks = {
 	 * only warns.
 	 */
 	warmDrivers?: WarmConnect | undefined;
+	/**
+	 * iOS without a warm-up: the socket of a helper already running for a device (undefined: none). That
+	 * device's jobs get it as `WARDEN_SIMD_SOCKET`, so they do not each spawn a second helper beside it.
+	 */
+	residentSocket?: ((udid: string) => Promise<string | undefined>) | undefined;
 };
 
 /** What `hooks.jobEnv` knows about the spawn it is building. */
@@ -1160,6 +1180,20 @@ async function settleWarm(
 	}
 }
 
+/** No warm-up: the devices that run jobs and already have a running helper get its socket (never throws). */
+async function residentSockets(
+	live: readonly Device[],
+	resident: (udid: string) => Promise<string | undefined>,
+	sockets: Map<string, string>
+): Promise<void> {
+	await Promise.all(
+		live.map(async (d) => {
+			const socket = await resident(d.udid).catch(() => undefined);
+			if (socket !== undefined) sockets.set(d.udid, socket);
+		})
+	);
+}
+
 /** Metro (started during the claim) → serve → recordings; resolves the job env + placeholder values once they are up. */
 async function startServices(
 	ctx: CommandContext,
@@ -1416,6 +1450,7 @@ async function supervise(
 			hideLateWindows(ctx, deps, args, r, session, live),
 		]);
 		if (run.warm) await settleWarm(ctx, r, live, run.warm, services, sockets);
+		else if (hooks.residentSocket && r.platform === "ios") await residentSockets(live, hooks.residentSocket, sockets);
 		const queues = poolQueues(ctx, deps, args, r, prepared, {
 			jobs,
 			cmd,
@@ -1612,7 +1647,6 @@ export async function runSession(
 	const lease = clampToJobs(args, jobs.length);
 	if (lease !== args) note(ctx, `warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`);
 	const owner = resolveOwner(ctx);
-	maybeAutoGc(ctx);
 	const { platform } = lease.flags.request;
 	const wanted = (lease.legs?.map((leg) => leg.flags) ?? [lease.flags])
 		.map((flags) => `${flags.request.count} ${flags.request.profile}`)
@@ -1681,6 +1715,8 @@ export async function runSession(
 		};
 		const result = await claimAll(sctx, deps, owner, args, name);
 		claimDone = true;
+		// after claimAll: the run's own leases keep the background gc off its devices (12-2, 16-1)
+		maybeAutoGc(ctx);
 		if (!result.success) spinner.fail(lease.app ? "claim / app install failed" : "claim failed");
 		else if (lease.app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
 		else spinner.succeed(leasedText(result.data.outcome));
@@ -1848,6 +1884,7 @@ export const defaultBatchDeps: BatchDeps = {
 	metroProbe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	prewarm: prewarmMetro,
 	warmConnect,
+	residentSocket,
 	which: (cmd) => Bun.which(cmd),
 	resolveModule: (specifier, from) => Bun.resolveSync(specifier, from),
 	helperDir: () => helperDir(Bun.main, process.execPath),

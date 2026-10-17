@@ -1140,14 +1140,20 @@ describe("helper crash (real fake-simd process)", () => {
 			JSON.stringify({ dieAfter: { requests: 2, once: true, exitCode: 9 }, ops: { tap: { data: null } } })
 		);
 		try {
+			let spawned = 0;
 			const { driver } = await open(() => undefined, {
-				spawn: (cmd) => bunSpawn([process.execPath, FAKE, "--script", script, ...cmd.slice(1)]),
+				spawn: (cmd) => {
+					spawned += 1;
+					return bunSpawn([process.execPath, FAKE, "--script", script, ...cmd.slice(1)]);
+				},
 			});
 			expect((await driver.tap({ x: 1, y: 1 })).success).toBe(true);
 			const crashed = await driver.tap({ x: 1, y: 1 });
 			expect(!crashed.success && crashed.error).toMatchObject({ code: "E_HELPER_CRASHED", retryable: true });
 			expect((await driver.tap({ x: 1, y: 1 })).success).toBe(true);
 			expect((await driver.tap({ x: 1, y: 1 })).success).toBe(true);
+			// one replacement: the dead helper is not respawned only to be asked to shut down
+			expect(spawned).toBe(2);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -1182,5 +1188,266 @@ describe("latency log (WARDEN_E2E_DEBUG)", () => {
 		await driver.tap({ x: 1, y: 2 });
 		expect(logs.some((line) => line.startsWith("[ios] op "))).toBe(false);
 		expect(logs.some((line) => line.startsWith("[ios] exec "))).toBe(false);
+	});
+});
+
+const DAEMON_READY = `${JSON.stringify({
+	event: "ready",
+	protocol: 1,
+	version: "daemon",
+	udid: UDID,
+	hid: { transport: "indigo" },
+	ax: { default: "axbridge", bridge: "available" },
+	screen: SCREEN,
+})}\n`;
+
+const HEALTH = {
+	version: "daemon",
+	protocol: 1,
+	udid: UDID,
+	hid: { transport: "indigo" },
+	ax: { default: "axbridge", bridge: "available" },
+	screen: SCREEN,
+};
+
+type Daemon = { seen: string[]; drop: () => void; stop: () => void };
+
+/** A socket `warden-simd` daemon that answers every op ok (`snapshot` with `snapshotData`); `drop` ends every connection and stops listening. */
+function socketDaemon(socketPath: string): Daemon {
+	const seen: string[] = [];
+	const conns = new Set<{ end: () => void }>();
+	const server = Bun.listen<{ buffer: string }>({
+		unix: socketPath,
+		socket: {
+			open(socket) {
+				socket.data = { buffer: "" };
+				conns.add(socket);
+				socket.write(DAEMON_READY);
+			},
+			close(socket) {
+				conns.delete(socket);
+			},
+			data(socket, chunk) {
+				socket.data.buffer += new TextDecoder().decode(chunk);
+				const lines = socket.data.buffer.split("\n");
+				socket.data.buffer = lines.pop() ?? "";
+				for (const line of lines) {
+					const request = JSON.parse(line) as { id: string; op: string };
+					seen.push(request.op);
+					const data = request.op === "snapshot" ? snapshotData : null;
+					socket.write(`${JSON.stringify({ id: request.id, ok: true, data })}\n`);
+				}
+			},
+		},
+	});
+	let stopped = false;
+	const stop = () => {
+		if (stopped) return;
+		stopped = true;
+		server.stop(true);
+	};
+	return {
+		seen,
+		drop: () => {
+			for (const conn of conns) conn.end();
+			stop();
+		},
+		stop,
+	};
+}
+
+describe("lost socket daemon (03-1)", () => {
+	const withDir = async (run: (socketPath: string) => Promise<void>) => {
+		const dir = mkdtempSync(join(tmpdir(), "ios-driver-lost-"));
+		try {
+			await run(join(dir, "simd.sock"));
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	};
+
+	test("the daemon ends its connections mid-run: the next snapshot reconnects once (stdio fallback) and succeeds", async () => {
+		await withDir(async (socketPath) => {
+			const daemon = socketDaemon(socketPath);
+			try {
+				const { driver, helper, logs } = await open(
+					(request) => (request.op === "snapshot" ? { data: snapshotData } : undefined),
+					{ env: { simdSocket: socketPath }, sleep: async () => {} }
+				);
+				expect((await driver.snapshot()).success).toBe(true);
+				expect(helper.spawns).toHaveLength(0);
+				daemon.drop();
+				await Bun.sleep(20);
+				const recovered = await unwrapped(driver.snapshot());
+				expect(recovered.flat.length).toBeGreaterThan(0);
+				// no `shutdown` to the dead connection, one stdio spawn, the snapshot asked once on it
+				expect(daemon.seen).toEqual(["snapshot"]);
+				expect(helper.spawns).toHaveLength(1);
+				expect(helper.of("snapshot")).toHaveLength(1);
+				expect(logs.some((line) => line.includes("E_HELPER_CRASHED") && line.includes("reconnecting"))).toBe(true);
+				// later calls stay on the new helper
+				expect((await driver.snapshot()).success).toBe(true);
+				expect(helper.spawns).toHaveLength(1);
+			} finally {
+				daemon.stop();
+			}
+		});
+	});
+
+	test("a read in flight when the connection drops is asked again once, on a reconnect to the live daemon", async () => {
+		await withDir(async (socketPath) => {
+			let healthAsked = 0;
+			const server = Bun.listen<{ buffer: string }>({
+				unix: socketPath,
+				socket: {
+					open(socket) {
+						socket.data = { buffer: "" };
+						socket.write(DAEMON_READY);
+					},
+					data(socket, chunk) {
+						socket.data.buffer += new TextDecoder().decode(chunk);
+						const lines = socket.data.buffer.split("\n");
+						socket.data.buffer = lines.pop() ?? "";
+						for (const request of lines.map((line) => JSON.parse(line) as { id: string; op: string })) {
+							healthAsked += 1;
+							// the first `health` loses its connection before the answer
+							if (healthAsked === 1) socket.end();
+							else socket.write(`${JSON.stringify({ id: request.id, ok: true, data: HEALTH })}\n`);
+						}
+					},
+				},
+			});
+			try {
+				const { driver, helper } = await open(() => ({ data: HEALTH }), {
+					env: { simdSocket: socketPath },
+					sleep: async () => {},
+				});
+				expect((await driver.health()).success).toBe(true);
+				// the daemon still listens: the reconnect is to the socket, not a stdio spawn
+				expect(helper.spawns).toHaveLength(0);
+				expect(healthAsked).toBe(2);
+			} finally {
+				server.stop(true);
+			}
+		});
+	});
+
+	test("an input op that hit the drop returns its error unchanged (it may have landed); the next one works", async () => {
+		await withDir(async (socketPath) => {
+			const daemon = socketDaemon(socketPath);
+			try {
+				const { driver, helper } = await open(() => ({ data: null }), {
+					env: { simdSocket: socketPath },
+					sleep: async () => {},
+				});
+				daemon.drop();
+				await Bun.sleep(20);
+				const tapped = await driver.tap({ x: 1, y: 1 });
+				expect(!tapped.success && tapped.error.code).toBe("E_HELPER_CRASHED");
+				expect(helper.of("tap")).toHaveLength(0);
+				expect(helper.spawns).toHaveLength(1);
+				expect((await driver.tap({ x: 1, y: 1 })).success).toBe(true);
+				expect(helper.of("tap")).toHaveLength(1);
+			} finally {
+				daemon.stop();
+			}
+		});
+	});
+
+	test("a reconnect that fails is not tried again: later calls fail at once, not retryable", async () => {
+		await withDir(async (socketPath) => {
+			const daemon = socketDaemon(socketPath);
+			try {
+				let spawns = 0;
+				const { driver } = await open(() => ({ data: null }), {
+					env: { simdSocket: socketPath },
+					sleep: async () => {},
+					spawn: () => {
+						spawns += 1;
+						throw new Error("no helper here");
+					},
+				});
+				daemon.drop();
+				await Bun.sleep(20);
+				const first = await driver.snapshot();
+				// not retryable any more: a locator fails at once instead of polling a dead client for its timeout
+				expect(!first.success && first.error).toMatchObject({ code: "E_HELPER_CRASHED", retryable: false });
+				expect(!first.success && first.error.message).toContain("could not replace it");
+				expect(spawns).toBe(1);
+				const second = await driver.tap({ x: 1, y: 1 });
+				expect(!second.success && second.error).toMatchObject({ code: "E_HELPER_CRASHED", retryable: false });
+				expect(spawns).toBe(1);
+			} finally {
+				daemon.stop();
+			}
+		});
+	});
+
+	test("concurrent reads that hit the drop share one reconnect", async () => {
+		await withDir(async (socketPath) => {
+			const daemon = socketDaemon(socketPath);
+			try {
+				const { driver, helper } = await open(
+					(request) => (request.op === "snapshot" ? { data: snapshotData } : undefined),
+					{ env: { simdSocket: socketPath }, sleep: async () => {} }
+				);
+				daemon.drop();
+				await Bun.sleep(20);
+				const results = await Promise.all([driver.snapshot(), driver.snapshot(), driver.snapshot()]);
+				expect(results.every((r) => r.success)).toBe(true);
+				expect(helper.spawns).toHaveLength(1);
+			} finally {
+				daemon.stop();
+			}
+		});
+	});
+});
+
+describe("socket that does not answer (20-1)", () => {
+	test("retries the socket once after 500 ms before spawning on stdio, and says so loudly", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "ios-driver-retry-"));
+		const socketPath = join(dir, "simd.sock");
+		let daemon: Daemon | undefined;
+		const sleeps: number[] = [];
+		try {
+			const { driver, helper, logs } = await open(
+				(request) => (request.op === "snapshot" ? { data: snapshotData } : undefined),
+				{
+					env: { simdSocket: socketPath },
+					sleep: async (ms) => {
+						sleeps.push(ms);
+						daemon ??= socketDaemon(socketPath);
+					},
+				}
+			);
+			expect(sleeps).toEqual([500]);
+			expect(helper.spawns).toHaveLength(0);
+			expect((await driver.snapshot()).success).toBe(true);
+			expect(daemon?.seen).toEqual(["snapshot"]);
+			expect(logs.some((line) => line.includes("retrying once in 500 ms"))).toBe(true);
+		} finally {
+			daemon?.stop();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("a socket still silent after the retry: one stdio spawn, logged as a warning", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "ios-driver-retry-"));
+		const sleeps: number[] = [];
+		try {
+			const { helper, logs } = await open(() => ({ data: null }), {
+				env: { simdSocket: join(dir, "simd.sock") },
+				sleep: async (ms) => {
+					sleeps.push(ms);
+				},
+			});
+			expect(sleeps).toEqual([500]);
+			expect(helper.spawns).toHaveLength(1);
+			expect(logs.some((line) => line.startsWith("[ios] WARNING") && line.includes("spawning a helper on stdio"))).toBe(
+				true
+			);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

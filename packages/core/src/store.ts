@@ -69,6 +69,7 @@ export const MIGRATIONS: readonly string[] = [
 	`ALTER TABLE devices ADD COLUMN quarantined_at INTEGER;
 	ALTER TABLE devices ADD COLUMN quarantine_reason TEXT;
 	ALTER TABLE devices ADD COLUMN slimmed_at INTEGER;`,
+	`ALTER TABLE leases ADD COLUMN heartbeat_ms INTEGER;`,
 ];
 
 export function ownerKey(owner: Owner): string {
@@ -117,6 +118,7 @@ type LeaseRow = {
 	ttl_ms: number;
 	pid: number | null;
 	booted_by_owner: number | null;
+	heartbeat_ms: number | null;
 };
 
 type DeviceRow = {
@@ -144,6 +146,7 @@ function toLease(row: LeaseRow): Lease {
 	if (row.label !== null) lease.label = row.label;
 	if (row.pid !== null) lease.pid = row.pid;
 	if (row.booted_by_owner) lease.bootedByOwner = true;
+	if (row.heartbeat_ms !== null) lease.heartbeatMs = row.heartbeat_ms;
 	return lease;
 }
 
@@ -269,13 +272,20 @@ export class Store {
 		return this.transaction(() => ids.reduce((n, id) => n + stmt.run(id).changes, 0));
 	}
 
-	heartbeat(ids: readonly string[], now: number): number {
+	/**
+	 * Stamp `heartbeat_at = now` on `ids`; returns how many leases were updated (fewer than `ids` = some
+	 * were released). `periodMs` (the holder's heartbeat interval) marks them supervised: with a pid,
+	 * a dead pid makes them stale after `LOST_HEARTBEATS` periods instead of the TTL.
+	 */
+	heartbeat(ids: readonly string[], now: number, periodMs?: number): number {
 		if (ids.length === 0) return 0;
-		const stmt = this.db.query("UPDATE leases SET heartbeat_at = ? WHERE id = ?");
-		return this.transaction(() => ids.reduce((n, id) => n + stmt.run(now, id).changes, 0));
+		const stmt = this.db.query(
+			"UPDATE leases SET heartbeat_at = ?, heartbeat_ms = COALESCE(?, heartbeat_ms) WHERE id = ?"
+		);
+		return this.transaction(() => ids.reduce((n, id) => n + stmt.run(now, periodMs ?? null, id).changes, 0));
 	}
 
-	/** Delete leases whose pid is dead AND heartbeat expired. Returns reclaimed ids. */
+	/** Delete leases that are not alive (`isLeaseAlive`: pid dead AND heartbeat expired). Returns reclaimed ids. */
 	reclaimStale(now: number, pidAlive: PidAlive): string[] {
 		return this.transaction(() => {
 			const stale = this.listLeases()

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ok } from "@delacour/warden-types/result";
+import { whileLinkInFlight } from "./device-link";
 import { devtoolsErr } from "./devtools/devtools.types";
 import { stubFacet } from "./devtools/facet.testing";
 import type { E2eEnv } from "./env";
@@ -117,5 +118,20 @@ describe("screenHostFor systemAlerts", () => {
 		});
 		expect(await host.answerSystemAlert?.()).toBe(true);
 		expect(asked).toEqual([mode]);
+	});
+
+	test("answers nothing while openLink is waiting on a link: the device owns the sheet then", async () => {
+		const ctx = ctxFor("dismiss");
+		const asked: unknown[] = [];
+		const host = screenHostFor(ctx, {
+			alert: async (action) => {
+				asked.push(action);
+				return true;
+			},
+		});
+		const answered = await whileLinkInFlight(ctx.session, async () => host.answerSystemAlert?.());
+		expect(answered).toBe(false);
+		expect(asked).toEqual([]);
+		expect(await host.answerSystemAlert?.()).toBe(true);
 	});
 });

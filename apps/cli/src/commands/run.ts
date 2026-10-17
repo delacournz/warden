@@ -100,7 +100,6 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	if (!args.success) return fail(args.error);
 	const { cmd } = target.data;
 	const owner = resolveOwner(ctx);
-	maybeAutoGc(ctx);
 	const { count, profile } = args.data.flags.request;
 	if (!args.data.json) heading(ctx, "run", `${platform.data} · ${profile} ×${count} · ${cmd.join(" ")}`);
 	const claimed = await withSpinner(
@@ -116,6 +115,8 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 			return result;
 		}
 	);
+	// after the claim: its own leases keep the background gc off the devices it just took (16-1)
+	maybeAutoGc(ctx);
 	if (!claimed.success) return fail(claimed.error);
 	const { outcome, ports, env, release, leaseIds } = claimed.data;
 	const summary = { leases: claimedJson(outcome), ports, cmd };

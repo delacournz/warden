@@ -2,6 +2,7 @@ import type { SelectedFlow } from "@delacour/warden-core/affected/select";
 import type { BatchSummary, JobResult } from "@delacour/warden-core/batch/schedule";
 import { readResults, type TestResult, type TestStatus } from "@delacour/warden-e2e/runner/results";
 import { failing, flowOf, realPath } from "../batch/flow-progress";
+import { runnerFailureShot } from "../batch/screenshot";
 import { attemptKey, legJob, type SessionResult } from "../commands/batch";
 
 /** One test of a flow, as `e2e-report.json` carries it. */
@@ -28,7 +29,10 @@ export type FlowVerdict = SelectedFlow & {
 	device?: { udid: string; name: string };
 	/** the spec process output of that attempt */
 	log?: string;
-	/** the device as the flow's last failed attempt left it (png), when one could be captured */
+	/**
+	 * The device at the flow's last failure (png), when one could be captured: the spec runner's
+	 * `failure.png` of the failed test when it took one, else the device as the attempt left it.
+	 */
 	screenshot?: string;
 };
 
@@ -58,12 +62,19 @@ export type Verdicts = {
 	only: string[];
 };
 
-/** device / log / screenshot of a flow's failed attempts (the last one's device and log; the latest screenshot there is). */
-function lastFailure(session: SessionResult, failed: readonly JobResult[]): Partial<FlowVerdict> {
+/**
+ * device / log / screenshot of a flow's failed attempts (the last one's device and log; the latest
+ * screenshot there is, per attempt the runner's own `failure.png` of this flow before the batch shot).
+ */
+function lastFailure(
+	session: SessionResult,
+	failed: readonly JobResult[],
+	runnerShots: ReadonlyMap<JobResult, string> = new Map()
+): Partial<FlowVerdict> {
 	const last = failed.at(-1);
 	if (!last) return {};
 	const screenshot = failed
-		.map((r) => session.screenshots?.get(attemptKey(r)))
+		.map((r) => runnerShots.get(r) ?? session.screenshots?.get(attemptKey(r)))
 		.reverse()
 		.find((path) => path !== undefined);
 	const log = session.logs?.get(attemptKey(last));
@@ -98,7 +109,13 @@ function resultsLoader(io: VerdictIO) {
 	};
 }
 
-export type Judged = { verdict: "passed" | "failed"; tests?: TestVerdict[]; fellBack: boolean };
+export type Judged = {
+	verdict: "passed" | "failed";
+	tests?: TestVerdict[];
+	fellBack: boolean;
+	/** the runner's `failure.png` of this flow's failed test in the attempt */
+	shot?: string;
+};
 
 /**
  * Each flow's verdict from one attempt of its job (a spec process over `jobFlows`: one flow, or a
@@ -135,7 +152,13 @@ export function judgeJob(
 		const mine = byFlow.get(flow.id) ?? [];
 		const failed =
 			mine.some(failing) || (exitCode !== 0 && (mine.length === 0 || (stoppedEarly ? flow.id === lastFlow : !blamed)));
-		judged.set(flow.id, { verdict: failed ? "failed" : "passed", tests: mine.map(testVerdict), fellBack: false });
+		const shot = failed ? runnerFailureShot(mine) : undefined;
+		judged.set(flow.id, {
+			verdict: failed ? "failed" : "passed",
+			tests: mine.map(testVerdict),
+			fellBack: false,
+			...(shot !== undefined ? { shot } : {}),
+		});
 	}
 	return judged;
 }
@@ -172,6 +195,20 @@ function judgeAttempt(run: Run, job: string, attempt: JobResult): Promise<Map<st
 	return judged;
 }
 
+/** The attempts that failed `flow` (a non-zero exit it did not pass), with the runner's own failure shot of each. */
+async function failedAttempts(run: Run, job: string, flow: SelectedFlow, ran: readonly JobResult[]) {
+	const failedRuns: JobResult[] = [];
+	const runnerShots = new Map<JobResult, string>();
+	for (const r of ran) {
+		if (r.exitCode === 0) continue;
+		const mine = (await judgeAttempt(run, job, r)).get(flow.id);
+		if (mine?.verdict === "passed") continue;
+		failedRuns.push(r);
+		if (mine?.shot !== undefined) runnerShots.set(r, mine.shot);
+	}
+	return { failedRuns, runnerShots };
+}
+
 /** One flow on one leg: the attempts of its job that ran it, then the verdict of the last of them. */
 async function flowVerdict(run: Run, flow: SelectedFlow, leg: string | undefined): Promise<FlowVerdict> {
 	const { session, shape } = run;
@@ -183,15 +220,12 @@ async function flowVerdict(run: Run, flow: SelectedFlow, leg: string | undefined
 	const base = { ...flow, ...(leg !== undefined ? { leg } : {}), attempts: ran.length };
 	if (!last) return { ...base, verdict: "not-run" };
 	const judged = (await judgeAttempt(run, job, last)).get(flow.id);
-	const failedRuns: JobResult[] = [];
-	for (const r of ran) {
-		if (r.exitCode !== 0 && (await judgeAttempt(run, job, r)).get(flow.id)?.verdict !== "passed") failedRuns.push(r);
-	}
+	const { failedRuns, runnerShots } = await failedAttempts(run, job, flow, ran);
 	return {
 		...base,
 		verdict: judged?.verdict ?? "failed",
 		...(judged?.tests && !judged.fellBack ? { tests: judged.tests } : {}),
-		...lastFailure(session, failedRuns),
+		...lastFailure(session, failedRuns, runnerShots),
 	};
 }
 
