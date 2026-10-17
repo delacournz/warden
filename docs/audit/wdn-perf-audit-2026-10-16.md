@@ -203,6 +203,10 @@ Answers from the interview, in the order they were given. Each row says what cha
 | 3 | Flake-class Wave 2 items in this wave | **Yes**: 06-1, 07-3, 09-2 as one extra agent | Tap stability check, no re-press after a visible reaction, and the `openLink` sheet fix join Wave 1. |
 | 3 | 9.11 Helper replacement on owner change (14-5) | **Only on binary or env change** | ppid churn keeps the running helper; the key is the helper binary and `WARDEN_SIMD_*` env. |
 | 3 | 9.14 Dead pid with a fresh heartbeat (18-5) | **Dead pid wins for supervised leases** | Leases with a known local pid are reclaimable once the pid is dead; the heartbeat decides only for leases without a pid. |
+| 4 | 9.12 `typescript` out of the binary (15-1) | **Yes**: resolve `typescript` from the analysed project, clear error when absent | Wave 3 item; the binary loses about 28 MB and `affected` needs the project's own `typescript`. |
+| 4 | 9.13 Build cache pruning (17-11) | **From `warden gc`** with a size cap (default 20 GB) | Never prunes during a run; auto-gc already schedules gc. |
+| 4 | 9.16 CI emulator matrix and iOS smoke | **Propose, do not add yet** | The plan doc lists API 30–36 and one macOS smoke as a costed follow-up. |
+| 4 | 9.17 Report placement | **Do not merge PR #31**; keep it as a PR and Artifact reference | `docs/audit/` stays on the audit branch only; Wave 1 cites findings by id and links the PR. |
 
 ## 10. Method and limits
 
