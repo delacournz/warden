@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { Exec } from "../exec";
+import { dirname, join } from "node:path";
+import { bunExec, type Exec } from "../exec";
 import { openStore, type Store } from "../store";
 import { testProject } from "./builds.testing";
 import {
@@ -185,10 +185,14 @@ describe("computeCacheKey fingerprint memo (17-5)", () => {
 	let status: string;
 	let head: string;
 	let spawns: number;
+	let submodules: string;
+	let gitCalls: string[][];
 
 	const exec: Exec = async (cmd) => {
+		if (cmd[0] === "git") gitCalls.push([...cmd]);
 		if (cmd[0] === "git" && cmd[1] === "rev-parse") return { exitCode: 0, stdout: `${top}\n${head}\n`, stderr: "" };
-		if (cmd[0] === "git" && cmd[1] === "status") return { exitCode: 0, stdout: status, stderr: "" };
+		if (cmd[0] === "git" && cmd.includes("submodule")) return { exitCode: 0, stdout: submodules, stderr: "" };
+		if (cmd[0] === "git" && cmd.includes("status")) return { exitCode: 0, stdout: status, stderr: "" };
 		if (cmd[0] === "git") return { exitCode: 0, stdout: "", stderr: "" };
 		spawns++;
 		return { exitCode: 0, stdout: `{"hash":"${HASH}${spawns}"}`, stderr: "" };
@@ -211,6 +215,8 @@ describe("computeCacheKey fingerprint memo (17-5)", () => {
 		status = "";
 		head = "aaaa";
 		spawns = 0;
+		submodules = "";
+		gitCalls = [];
 	});
 	afterEach(() => {
 		store.close();
@@ -353,6 +359,161 @@ describe("computeCacheKey fingerprint memo (17-5)", () => {
 		expect(spawns).toBe(3);
 	});
 
+	test("git status runs read-only: --no-optional-locks, never taking .git/index.lock (R2)", async () => {
+		await key();
+		expect(gitCalls).toContainEqual([
+			"git",
+			"--no-optional-locks",
+			"status",
+			"--porcelain=v1",
+			"-z",
+			"--untracked-files=all",
+			"--ignore-submodules=none",
+		]);
+		expect(gitCalls.every((c) => c[1] === "rev-parse" || c[1] === "--no-optional-locks")).toBe(true);
+	});
+
+	test("editing or adding a git-ignored .env* in the root recomputes (@expo/env loads it) (R1)", async () => {
+		writeFileSync(join(root, ".env"), "A=1");
+		touch(join(root, ".env"), 1000);
+		await key();
+		writeFileSync(join(root, ".env"), "A=2");
+		touch(join(root, ".env"), 2000);
+		await key();
+		expect(spawns).toBe(2);
+		writeFileSync(join(root, ".env.local"), "B=1");
+		await key();
+		expect(spawns).toBe(3);
+	});
+
+	test("a git-ignored icon or a googleServicesFile outside the repo named by app.json recomputes on edit (R1)", async () => {
+		mkdirSync(join(root, "assets"));
+		writeFileSync(join(root, "assets", "icon.png"), "a");
+		writeFileSync(join(dir, "google-services.json"), "{}");
+		writeFileSync(
+			join(root, "app.json"),
+			JSON.stringify({
+				expo: { icon: "./assets/icon.png", android: { googleServicesFile: join(dir, "google-services.json") } },
+			})
+		);
+		touch(join(root, "app.json"), 1000);
+		await key();
+		await key();
+		expect(spawns).toBe(1);
+		touch(join(root, "assets", "icon.png"), 3000);
+		await key();
+		expect(spawns).toBe(2);
+		writeFileSync(join(dir, "google-services.json"), '{"x":1}');
+		await key();
+		expect(spawns).toBe(3);
+	});
+
+	test("expo-splash-screen and expo-font plugin files are statted too; a font dir is never memoised (R1)", async () => {
+		writeFileSync(join(root, "splash.png"), "a");
+		writeFileSync(
+			join(root, "app.json"),
+			JSON.stringify({ expo: { plugins: [["expo-splash-screen", { image: "splash.png" }]] } })
+		);
+		await key();
+		touch(join(root, "splash.png"), 4000);
+		await key();
+		expect(spawns).toBe(2);
+		mkdirSync(join(root, "fonts"));
+		writeFileSync(
+			join(root, "app.json"),
+			JSON.stringify({ expo: { plugins: [["expo-font", { fonts: ["./fonts"] }]] } })
+		);
+		await key();
+		await key();
+		expect(spawns).toBe(4);
+	});
+
+	test("a fingerprint.config.* (extraSources) is never memoised (R1)", async () => {
+		writeFileSync(join(root, "fingerprint.config.js"), "module.exports = { extraSources: [] };");
+		await key();
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("an app.json with a local config plugin (./…) is never memoised (R1)", async () => {
+		writeFileSync(join(root, "app.json"), JSON.stringify({ expo: { plugins: [["./plugins/withThing", {}]] } }));
+		await key();
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("a script app config: a named file is statted; a local import or a computed path is never memoised (R1)", async () => {
+		writeFileSync(join(root, "icon.png"), "a");
+		writeFileSync(join(root, "app.config.ts"), 'export default { name: "x", icon: "./icon.png", platforms: ["ios"] };');
+		await key();
+		await key();
+		expect(spawns).toBe(1);
+		touch(join(root, "icon.png"), 4000);
+		await key();
+		expect(spawns).toBe(2);
+		writeFileSync(join(root, "app.config.ts"), 'import base from "./app.base";\nexport default base;');
+		await key();
+		await key();
+		expect(spawns).toBe(4);
+		writeFileSync(join(root, "app.config.ts"), `export default { icon: \`./assets/$\{"icon"}.png\` };`);
+		await key();
+		await key();
+		expect(spawns).toBe(6);
+	});
+
+	test("a dirty submodule is never memoised: edits inside it keep its status line (R3)", async () => {
+		mkdirSync(join(root, "vendor", "lib"), { recursive: true });
+		writeFileSync(join(root, "vendor", "lib", "a.c"), "a");
+		status = " M vendor/lib\0";
+		await key();
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("with .gitmodules, a submodule moving to another commit recomputes (R3)", async () => {
+		writeFileSync(join(root, ".gitmodules"), '[submodule "lib"]\n\tpath = lib\n');
+		submodules = " 1111111111111111111111111111111111111111 lib (heads/main)\n";
+		await key();
+		await key();
+		expect(spawns).toBe(1);
+		submodules = " 2222222222222222222222222222222222222222 lib (heads/main)\n";
+		await key();
+		expect(spawns).toBe(2);
+		expect(gitCalls).toContainEqual(["git", "--no-optional-locks", "submodule", "status", "--recursive"]);
+	});
+
+	test("ignores are anchored like the fingerprint's: android/app/src/…/build/ and ios/App.xcodeproj/xcuserdata count (R7)", async () => {
+		const kt = join(root, "android", "app", "src", "main", "java", "com", "acme", "build", "BuildInfo.kt");
+		mkdirSync(dirname(kt), { recursive: true });
+		writeFileSync(kt, "a");
+		mkdirSync(join(root, "ios", "App.xcodeproj", "xcuserdata"), { recursive: true });
+		await key();
+		touch(kt, 6000);
+		await key();
+		expect(spawns).toBe(2);
+		writeFileSync(join(root, "ios", "App.xcodeproj", "xcuserdata", "x.plist"), "x");
+		await key();
+		expect(spawns).toBe(3);
+		mkdirSync(join(root, "ios", "App.xcworkspace", "xcuserdata"), { recursive: true });
+		await key();
+		writeFileSync(join(root, "ios", "App.xcworkspace", "xcuserdata", "y.plist"), "y");
+		await key();
+		expect(spawns).toBe(4);
+	});
+
+	test("a same-size restore with the mtime preserved still recomputes (ctime) (R7)", async () => {
+		const swift = join(root, "ios", "AppDelegate.swift");
+		mkdirSync(join(root, "ios"));
+		writeFileSync(swift, "aaaa");
+		touch(swift, 1000);
+		await key();
+		await Bun.sleep(5);
+		writeFileSync(swift, "bbbb");
+		touch(swift, 1000);
+		await key();
+		expect(spawns).toBe(2);
+	});
+
 	test("a tree that changed while the fingerprint ran is not memoised", async () => {
 		const racing: Exec = async (cmd) => {
 			if (cmd[0] !== "git") {
@@ -362,5 +523,96 @@ describe("computeCacheKey fingerprint memo (17-5)", () => {
 		};
 		await computeCacheKey(racing, project(), "ios", undefined, { store, now: 1 });
 		expect(getFingerprintMemo(store, project(), "ios")).toBeUndefined();
+	});
+});
+
+describe("computeCacheKey fingerprint memo on a real git checkout (R9)", () => {
+	let dir: string;
+	let root: string;
+	let store: Store;
+	let spawns: number;
+
+	const gitEnv = {
+		...process.env,
+		GIT_AUTHOR_NAME: "t",
+		GIT_AUTHOR_EMAIL: "t@t",
+		GIT_COMMITTER_NAME: "t",
+		GIT_COMMITTER_EMAIL: "t@t",
+		GIT_CONFIG_NOSYSTEM: "1",
+	};
+	const git = (cwd: string, ...args: string[]) => {
+		const res = Bun.spawnSync(["git", "-c", "commit.gpgsign=false", "-c", "protocol.file.allow=always", ...args], {
+			cwd,
+			env: gitEnv,
+		});
+		if (res.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${res.stderr.toString()}`);
+	};
+	/** real git, fake fingerprint */
+	const exec: Exec = async (cmd, opts) => {
+		if (cmd[0] === "git") return bunExec(cmd, opts);
+		spawns++;
+		return { exitCode: 0, stdout: `{"hash":"${HASH}${spawns}"}`, stderr: "" };
+	};
+	const key = () => computeCacheKey(exec, testProject({ root }), "ios", undefined, { store, now: 1 });
+	const write = (path: string, text: string) => writeFileSync(join(root, path), text);
+
+	beforeEach(() => {
+		dir = realpathSync(mkdtempSync(join(tmpdir(), "warden-fp-git-")));
+		root = join(dir, "repo");
+		mkdirSync(root);
+		git(root, "init", "-q", "-b", "main");
+		write("app.json", '{"expo":{}}');
+		write("index.ts", "export {};");
+		git(root, "add", ".");
+		git(root, "commit", "-q", "-m", "init");
+		store = openStore(join(dir, "warden.db"));
+		spawns = 0;
+	});
+	afterEach(() => {
+		store.close();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	test("commit → hit; rename → miss; editing the renamed file twice → a miss each time", async () => {
+		await key();
+		await key();
+		expect(spawns).toBe(1);
+		git(root, "mv", "index.ts", "main.ts");
+		await key();
+		expect(spawns).toBe(2);
+		await key();
+		expect(spawns).toBe(2);
+		write("main.ts", "export const a = 1;");
+		await key();
+		expect(spawns).toBe(3);
+		write("main.ts", "export const a = 22;");
+		await key();
+		expect(spawns).toBe(4);
+		git(root, "commit", "-q", "-am", "edit");
+		await key();
+		await key();
+		expect(spawns).toBe(5);
+	});
+
+	test("a submodule: clean → hit; a new commit or an edit inside it → never memoised", async () => {
+		const lib = join(dir, "lib");
+		mkdirSync(lib);
+		git(lib, "init", "-q", "-b", "main");
+		writeFileSync(join(lib, "a.c"), "a");
+		git(lib, "add", ".");
+		git(lib, "commit", "-q", "-m", "lib");
+		git(root, "submodule", "add", "-q", lib, "lib");
+		git(root, "commit", "-q", "-m", "sub");
+		await key();
+		await key();
+		expect(spawns).toBe(1);
+		writeFileSync(join(root, "lib", "a.c"), "b");
+		await key();
+		await key();
+		expect(spawns).toBe(3);
+		git(join(root, "lib"), "commit", "-q", "-am", "edit");
+		await key();
+		await key();
+		expect(spawns).toBe(5);
 	});
 });

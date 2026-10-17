@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ok } from "@delacour/warden-types/result";
 import { openStore, type Store } from "../store";
 import { fakeApp } from "./builds.testing";
 import { aliasBuild, type BuildRecord, listBuilds, storeArtifact } from "./cache";
 import { buildLockKey, buildResource } from "./lock";
-import { formatSize, parseSize, planPrune, pruneBuilds } from "./prune";
+import { cacheCap, formatSize, parseSize, planPrune, pruneBuilds } from "./prune";
 
 const GB = 1024 ** 3;
 
@@ -169,5 +170,16 @@ describe("pruneBuilds", () => {
 		const plan = pruneBuilds({ store, env, maxBytes: 0, now: 100, pidAlive: () => false, graceMs: 50 });
 		expect(plan.remove.map((b) => b.hash)).toEqual(["a", "a-post"]);
 		expect(listBuilds(store).map((b) => b.hash)).toEqual(["b"]);
+	});
+});
+
+describe("cacheCap (fingerprint-memo-R6)", () => {
+	test("the flag, else WARDEN_MAX_CACHE_SIZE, else 20G, with the source of an invalid value", () => {
+		expect(cacheCap("1G", { WARDEN_MAX_CACHE_SIZE: "2G" })).toEqual({ source: "flag", bytes: ok(1024 ** 3) });
+		expect(cacheCap(undefined, { WARDEN_MAX_CACHE_SIZE: "2G" })).toEqual({ source: "env", bytes: ok(2 * 1024 ** 3) });
+		expect(cacheCap(undefined, {})).toEqual({ source: "default", bytes: ok(20 * 1024 ** 3) });
+		const bad = cacheCap(undefined, { WARDEN_MAX_CACHE_SIZE: "huge" });
+		expect(bad.source).toBe("env");
+		expect(bad.bytes.success).toBe(false);
 	});
 });

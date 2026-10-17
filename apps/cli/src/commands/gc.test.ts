@@ -236,14 +236,24 @@ describe("warden gc: build cache prune (17-11)", () => {
 		expect(listBuilds(c.db)).toEqual([]);
 	});
 
-	test("a bad cap → exit 1, nothing pruned", async () => {
+	test("a bad --max-cache-size → exit 1, nothing pruned", async () => {
 		const c = setup(["--max-cache-size", "lots"], []);
 		await seed(c, "a", 100, 1);
 		expect(await gcCommand.run(c)).toBe(1);
 		expect(listBuilds(c.db)).toHaveLength(1);
-		c.argv = [];
-		c.env.WARDEN_MAX_CACHE_SIZE = "huge";
-		expect(await gcCommand.run(c)).toBe(1);
+	});
+
+	test("a bad WARDEN_MAX_CACHE_SIZE skips only the prune, with a note: leases and idle devices are still handled (R5)", async () => {
+		const c = setup(["--json"], []);
+		c.env.WARDEN_MAX_CACHE_SIZE = "20GBs";
+		await seed(c, "a", 100, 1);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db)).toHaveLength(1);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.reclaimed).toHaveLength(1);
+		expect(out.notes.join("\n")).toContain("WARDEN_MAX_CACHE_SIZE");
+		expect(out.notes.join("\n")).toContain("build cache prune skipped");
+		expect(out.shutdown).toEqual([{ platform: "ios", id: "U1", name: "warden-iphone-17-1" }]);
 	});
 });
 

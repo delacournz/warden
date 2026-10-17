@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import { findNodeBin } from "../node-bin";
@@ -122,43 +122,57 @@ const INSTALL_MARKERS = [
 	"node_modules/.modules.yaml",
 	"node_modules/.yarn-state.yml",
 ];
-const APP_CONFIG =
-	/^(app\.json|app\.config\.[cm]?[jt]s|app\.config\.json|fingerprint\.config\.[cm]?[jt]s|\.fingerprintignore)$/;
+const APP_CONFIG = /^(app\.json|app\.config\.[cm]?[jt]s|app\.config\.json|\.fingerprintignore)$/;
+/** a `fingerprint.config.*` can add `extraSources` (any file or dir, inside the repo or not): never memoised */
+const FINGERPRINT_CONFIG = /^fingerprint\.config\.[cm]?[jt]s$/;
+/** `.env*` files `@expo/env` loads before the config is evaluated (often git-ignored) */
+const ENV_FILE = /^\.env/;
 /** a config that reads the environment can fingerprint differently with nothing on disk changed */
 const READS_ENV = /\bprocess\.env\b|\bimport\.meta\.env\b|\bBun\.env\b/;
-/** build output / per-machine state inside `ios/` and `android/` that `@expo/fingerprint` ignores by default */
-const NATIVE_SKIP = new Set([
-	"Pods",
-	"build",
-	".cxx",
-	".gradle",
-	"xcuserdata",
-	".swiftpm",
-	".DS_Store",
-	".xcode.env.local",
-]);
+/** a script config that computes paths: what it reads cannot be listed from its text */
+const COMPUTES_PATHS =
+	/\$\{|\b__dirname\b|\b__filename\b|\bimport\.meta\.(dirname|url|filename)\b|\bresolve\(|\bjoin\(/;
+/** the string literals of a script config */
+const STRING_LITERAL = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`([^`]*)`/g;
 
-/** `size:mtime` of `path`, `-` when absent. */
+/**
+ * `@expo/fingerprint`'s default ignores under `ios/` and `android/` (its `DEFAULT_IGNORE_PATHS`), as
+ * paths relative to that dir. Anchored: `android/app/src/.../build/` is hashed by the fingerprint, so it
+ * is part of the signature too. Only the patterns that skip a whole dir (`…/**\/*`) or one file are here;
+ * `project.xcworkspace` is not, since its contents are still hashed.
+ */
+function nativeIgnored(native: string, rel: string, name: string): boolean {
+	if (name === ".DS_Store" || name === ".swiftpm") return true;
+	if (native === "ios")
+		return (
+			rel === "Pods" || rel === "build" || rel === ".xcode.env.local" || /^[^/]+\.xcworkspace\/xcuserdata$/.test(rel)
+		);
+	return ["build", ".cxx", ".gradle", "app/build", "app/.cxx", "app/.gradle", "gradlew.bat"].includes(rel);
+}
+
+/** `size:mtime:ctime` of `path`, `-` when absent (ctime moves on a restore that preserves size and mtime). */
 function statSig(path: string): string {
 	const st = lstatSync(path, { throwIfNoEntry: false });
-	return st ? `${st.size}:${st.mtimeMs}` : "-";
+	return st ? `${st.size}:${st.mtimeMs}:${st.ctimeMs}` : "-";
 }
 
 /**
  * `ios/` / `android/` (git-ignored under CNG, so `git status` cannot see them): existence, then every
- * entry's path, size and mtime (any edit, add, delete or older-mtime restore changes it), hashed.
+ * entry's path, size, mtime and ctime (any edit, add, delete or older-mtime restore changes it), hashed.
  */
 function nativeDirSig(dir: string): string {
 	const top = lstatSync(dir, { throwIfNoEntry: false });
 	if (!top?.isDirectory()) return "-";
-	const hash = createHash("sha256").update(`${top.ino}:${top.mtimeMs}`);
+	const native = basename(dir);
+	const hash = createHash("sha256").update(`${top.ino}:${top.mtimeMs}:${top.ctimeMs}`);
 	const walk = (at: string) => {
 		for (const name of readdirSync(at).sort()) {
-			if (NATIVE_SKIP.has(name)) continue;
 			const path = join(at, name);
+			const rel = relative(dir, path);
+			if (nativeIgnored(native, rel, name)) continue;
 			const st = lstatSync(path, { throwIfNoEntry: false });
 			if (!st) continue;
-			hash.update(`\n${relative(dir, path)} ${st.size}:${st.mtimeMs}`);
+			hash.update(`\n${rel} ${st.size}:${st.mtimeMs}:${st.ctimeMs}`);
 			if (st.isDirectory()) walk(path);
 		}
 	};
@@ -179,16 +193,34 @@ function statusPaths(raw: string): string[] {
 }
 
 /**
+ * The `git status` argv of the signature. `--no-optional-locks`: a status refresh must never take
+ * `.git/index.lock` from under a concurrent `git add` / `commit` (the signature is read-only).
+ * `--ignore-submodules=none`: a dirty submodule shows even when `.gitmodules` says `ignore = dirty`.
+ */
+export const SIGNATURE_STATUS_ARGV = [
+	"git",
+	"--no-optional-locks",
+	"status",
+	"--porcelain=v1",
+	"-z",
+	"--untracked-files=all",
+	"--ignore-submodules=none",
+] as const;
+
+/**
  * A cheap signature of everything `@expo/fingerprint` reads (17-5): HEAD, the dirty set with each dirty
- * path's size+mtime (editing an already-modified file keeps its status line), lockfiles and install
- * markers from the project root up to the git toplevel, the app config files, and `ios/` / `android/`.
- * undefined = do not memoise (not a git checkout, or an app config that reads the environment).
+ * path's size+mtime (editing an already-modified file keeps its status line), the submodules' commits,
+ * lockfiles and install markers from the project root up to the git toplevel, the app config files, the
+ * `.env*` files, the files the config names (icons, splash, fonts, `googleServicesFile`), and `ios/` /
+ * `android/`. undefined = do not memoise: not a git checkout, a dirty submodule or nested repo (its
+ * contents are invisible to the parent's status), a `fingerprint.config.*`, or an app config whose
+ * inputs cannot be listed (reads the environment, a local plugin or import, a computed path).
  */
 export async function treeSignature(exec: Exec, root: string): Promise<string | undefined> {
 	const opts = { cwd: root, timeoutMs: PROBE_TIMEOUT_MS };
 	const [rev, status] = await Promise.all([
 		exec(["git", "rev-parse", "--show-toplevel", "HEAD"], opts),
-		exec(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], opts),
+		exec(SIGNATURE_STATUS_ARGV, opts),
 	]);
 	if (rev.exitCode !== 0 || status.exitCode !== 0) return undefined;
 	const [toplevel, head] = rev.stdout.trim().split("\n");
@@ -196,20 +228,147 @@ export async function treeSignature(exec: Exec, root: string): Promise<string | 
 	const configs = appConfigs(root);
 	if (configs === undefined) return undefined;
 	const parts: string[] = [`head ${head}`, `status ${createHash("sha256").update(status.stdout).digest("hex")}`];
-	for (const path of statusPaths(status.stdout)) parts.push(`dirty ${path} ${statSig(join(toplevel, path))}`);
+	for (const path of statusPaths(status.stdout)) {
+		// a submodule (or nested repo) with changes: edits inside it keep its status line and its dir's stat
+		if (lstatSync(join(toplevel, path), { throwIfNoEntry: false })?.isDirectory()) return undefined;
+		parts.push(`dirty ${path} ${statSig(join(toplevel, path))}`);
+	}
+	if (existsSync(join(toplevel, ".gitmodules"))) {
+		const subs = await exec(["git", "--no-optional-locks", "submodule", "status", "--recursive"], {
+			...opts,
+			cwd: toplevel,
+		});
+		if (subs.exitCode !== 0) return undefined;
+		parts.push(`submodules ${createHash("sha256").update(subs.stdout).digest("hex")}`);
+	}
 	parts.push(...installSigs(root, toplevel));
-	for (const name of configs) parts.push(`config ${name} ${statSig(join(root, name))}`);
+	for (const name of configs.files) parts.push(`config ${name} ${statSig(join(root, name))}`);
+	for (const path of configs.external) parts.push(`external ${path} ${statSig(path)}`);
 	for (const name of ["ios", "android"]) parts.push(`native ${name} ${nativeDirSig(join(root, name))}`);
 	return createHash("sha256").update(parts.join("\n")).digest("hex");
 }
 
-/** The app config files in `root`, sorted; undefined when a script one reads the environment. */
-function appConfigs(root: string): string[] | undefined {
-	const configs = readdirSync(root)
-		.filter((n) => APP_CONFIG.test(n))
-		.sort();
-	const scripts = configs.filter((n) => !n.endsWith(".json") && n !== ".fingerprintignore");
-	return scripts.some((n) => READS_ENV.test(readFileSync(join(root, n), "utf8"))) ? undefined : configs;
+type AppConfigs = {
+	/** config and `.env*` files in the root, sorted */ files: string[] /** absolute paths the config names */;
+	external: string[];
+};
+
+/** `obj.a.b…`, undefined when any step is not an object */
+function at(value: unknown, ...keys: string[]): unknown {
+	let cur = value;
+	for (const k of keys) {
+		if (typeof cur !== "object" || cur === null || Array.isArray(cur)) return undefined;
+		cur = (cur as Record<string, unknown>)[k];
+	}
+	return cur;
+}
+
+const strings = (...values: unknown[]): string[] =>
+	values.flatMap((v) => (typeof v === "string" ? [v] : Array.isArray(v) ? strings(...v) : []));
+
+const isLocalModule = (name: string) => name.startsWith("./") || name.startsWith("../") || name.startsWith("/");
+
+/** Each config plugin's props by name; undefined when one is a local plugin (`./…`, which may read anything). */
+function pluginProps(exp: unknown): Record<string, unknown> | undefined {
+	const plugins = at(exp, "plugins");
+	const props: Record<string, unknown> = {};
+	for (const entry of Array.isArray(plugins) ? plugins : []) {
+		const name: unknown = typeof entry === "string" ? entry : Array.isArray(entry) ? entry[0] : undefined;
+		if (typeof name !== "string") continue;
+		if (isLocalModule(name)) return undefined;
+		if (Array.isArray(entry)) props[name] = entry[1];
+	}
+	return props;
+}
+
+/** `expo-font`'s `android.fonts` entries given as `{ fontDefinitions: [{ path }] }` */
+function androidFontDefinitions(font: unknown): string[] {
+	const fonts = at(font, "android", "fonts");
+	if (!Array.isArray(fonts)) return [];
+	return fonts.flatMap((f) => {
+		const defs = at(f, "fontDefinitions");
+		return Array.isArray(defs) ? strings(...defs.map((d) => at(d, "path"))) : [];
+	});
+}
+
+/**
+ * The files `@expo/fingerprint` hashes as `expoConfigExternalFile` for an `app.json` (icons, adaptive
+ * icon, `expo-splash-screen` / `expo-font` plugin props, `googleServicesFile`; both platforms), resolved
+ * against `root`. undefined = not memoisable: unparsable, or a local config plugin.
+ */
+function appJsonExternals(root: string, text: string): string[] | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		return undefined;
+	}
+	const exp = at(parsed, "expo") ?? parsed;
+	const props = pluginProps(exp);
+	if (props === undefined) return undefined;
+	const splash = props["expo-splash-screen"];
+	const font = props["expo-font"];
+	const densities = ["image", "mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"];
+	const files = strings(
+		at(exp, "icon"),
+		at(exp, "android", "icon"),
+		at(exp, "ios", "icon"),
+		at(exp, "ios", "icon", "light"),
+		at(exp, "ios", "icon", "dark"),
+		at(exp, "ios", "icon", "tinted"),
+		at(exp, "android", "adaptiveIcon", "foregroundImage"),
+		at(exp, "android", "adaptiveIcon", "backgroundImage"),
+		at(exp, "android", "googleServicesFile"),
+		at(exp, "ios", "googleServicesFile"),
+		at(splash, "image"),
+		at(splash, "dark", "image"),
+		...densities.flatMap((d) => [at(splash, "android", d), at(splash, "android", "dark", d)]),
+		...["image", "tabletImage"].flatMap((k) => [at(splash, "ios", k), at(splash, "ios", "dark", k)]),
+		at(font, "fonts"),
+		at(font, "ios", "fonts"),
+		at(font, "android", "fonts"),
+		androidFontDefinitions(font)
+	);
+	return files.map((f) => resolve(root, f));
+}
+
+/**
+ * What a script config (`app.config.ts`…) reads, from its string literals: each one naming a file
+ * (`./assets/icon.png`, `assets/icon.png`, an absolute path) is statted. undefined = not memoisable:
+ * it reads the environment, computes a path, or names a `./…` module or dir (a local plugin, an import).
+ */
+function scriptExternals(root: string, text: string): string[] | undefined {
+	if (READS_ENV.test(text) || COMPUTES_PATHS.test(text)) return undefined;
+	const files: string[] = [];
+	for (const m of text.matchAll(STRING_LITERAL)) {
+		const lit = m[1] ?? m[2] ?? m[3] ?? "";
+		if (lit === "") continue;
+		const path = resolve(root, lit);
+		const st = lstatSync(path, { throwIfNoEntry: false });
+		if (st?.isFile()) files.push(path);
+		else if (isLocalModule(lit)) return undefined;
+		else if (st?.isDirectory() && lit !== "ios" && lit !== "android") return undefined;
+	}
+	return files;
+}
+
+/** The app config and `.env*` files in `root` plus the files the config names; undefined = do not memoise. */
+function appConfigs(root: string): AppConfigs | undefined {
+	const names = readdirSync(root).sort();
+	if (names.some((n) => FINGERPRINT_CONFIG.test(n))) return undefined;
+	const files = names.filter((n) => APP_CONFIG.test(n) || ENV_FILE.test(n));
+	const external: string[] = [];
+	for (const name of names.filter((n) => APP_CONFIG.test(n) && n !== ".fingerprintignore")) {
+		const text = readFileSync(join(root, name), "utf8");
+		const found = name.endsWith(".json") ? appJsonExternals(root, text) : scriptExternals(root, text);
+		if (found === undefined) return undefined;
+		for (const path of found) {
+			// a dir (a fonts folder): edits inside it do not move its stat
+			if (lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) return undefined;
+			external.push(path);
+		}
+	}
+	return { files, external: [...new Set(external)].sort() };
 }
 
 /** Lockfiles and install markers in `root` and each parent up to the git `toplevel` (hoisted monorepos). */

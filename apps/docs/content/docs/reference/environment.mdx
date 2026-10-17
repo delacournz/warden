@@ -18,6 +18,7 @@ icon: Variable
 | `WARDEN_ARRANGE=0` | don't tile Simulator.app windows after iOS claims |
 | `WARDEN_HEADLESS=1` | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/guides/headless)); `warden dev` ignores it |
 | `WARDEN_AUTO_GC=0` | turn off background auto-gc |
+| `WARDEN_MAX_CACHE_SIZE` | build cache cap (e.g. `50G`, default `20G`) for `warden gc` (`--max-cache-size`), `warden builds prune` (`--max-size`) and auto-gc, which runs when the cache is over it |
 | `WARDEN_ANDROID_UIAD=0` | Android: don't use the resident UiAutomation server (`warden-uiad`); snapshots, settle and input go through `uiautomator dump` and `input` ([Android driver](/docs/reference/e2e-driver#android-driver)) |
 | `WARDEN_BACKGROUND=0` | turn off every detached worker (auto-gc, SessionEnd shutdown) |
 | `WARDEN_RELEASE_REPO` | GitHub repo `warden update` downloads releases from (default `delacournz/warden`) |

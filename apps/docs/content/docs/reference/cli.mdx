@@ -248,7 +248,7 @@ Refresh heartbeats so leases don't go stale. Same selectors as `release`.
 
 ### `warden gc`
 
-Reclaim stale leases and shut down unleased warden devices idle for `--idle` (default `20m`). Never deletes devices — use `warden sims prune` to free sim disk. Then prunes the build cache, least-recently-used first, down to `--max-cache-size` (else `WARDEN_MAX_CACHE_SIZE`, default `20G`); builds used in the last 30 min and builds being fetched or built stay, and the notes list what was pruned. `--quiet` prints nothing (used by background auto-gc).
+Reclaim stale leases and shut down unleased warden devices idle for `--idle` (default `20m`). Never deletes devices — use `warden sims prune` to free sim disk. Then prunes the build cache, least-recently-used first, down to `--max-cache-size` (else `WARDEN_MAX_CACHE_SIZE`, default `20G`; the same cap as `warden builds prune --max-size`); builds used in the last 30 min and builds being fetched or built stay, and the notes list what was pruned. A bad `WARDEN_MAX_CACHE_SIZE` only skips the prune, with a note; a bad `--max-cache-size` exits 1. Background auto-gc also runs when the cache is over that cap. `--quiet` prints nothing (used by background auto-gc).
 
 ## Ports
 
@@ -280,7 +280,7 @@ Then the dev client is opened on the device: iOS relaunches the app with `--init
 
 ### `warden builds ls | prune | import`
 
-- `prune [--max-size 20G] [--dry-run] [--yes]` — remove least-recently-used builds until the cache fits; build-locked ones stay.
+- `prune [--max-size 20G] [--dry-run] [--yes]` — remove least-recently-used builds until the cache fits; build-locked ones stay. `--max-size` defaults to `WARDEN_MAX_CACHE_SIZE`, else `20G` (the cap `warden gc --max-cache-size` uses).
 - `import <path.app|path.apk> --hash <h> [--platform] [--project] [--profile] [--bundle-id]` — copy a local build into the cache.
 
 ## Drive a device

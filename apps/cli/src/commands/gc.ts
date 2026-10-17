@@ -1,12 +1,12 @@
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
-import { formatSize, GC_PRUNE_GRACE_MS, isAlias, parseSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
+import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
 import type { DeviceRecord } from "@delacour/warden-core/store";
 import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-core/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { ok, type Result } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { mapBounded } from "../bounded";
@@ -111,14 +111,6 @@ function parseIdle(raw: string | undefined): Result<number> {
 	return raw === undefined ? ok(DEFAULT_IDLE_MS) : parseDuration(raw);
 }
 
-/** The build cache cap: `--max-cache-size`, else `WARDEN_MAX_CACHE_SIZE`, else `DEFAULT_MAX_CACHE_SIZE` (20G). */
-function parseCacheCap(ctx: CommandContext, flag: string | undefined): Result<number> {
-	const env = ctx.env.WARDEN_MAX_CACHE_SIZE;
-	const parsed = parseSize(flag ?? env ?? DEFAULT_MAX_CACHE_SIZE);
-	if (parsed.success) return parsed;
-	return err(`${flag !== undefined ? "--max-cache-size" : "WARDEN_MAX_CACHE_SIZE"}: ${parsed.error}`);
-}
-
 /**
  * LRU-prune the build cache down to `maxBytes` (17-11). Builds whose build lock is held or that were used
  * in the last 30 min (a cache hit being installed takes no lock) stay. Returns gc's notes about it.
@@ -165,9 +157,11 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		reportError(ctx, "gc", idle.error);
 		return 1;
 	}
-	const cacheCap = parseCacheCap(ctx, opts.maxCacheSize);
-	if (!cacheCap.success) {
-		reportError(ctx, "gc", cacheCap.error);
+	// a bad --max-cache-size is the caller's typo: fail. A bad WARDEN_MAX_CACHE_SIZE must not stop lease
+	// reclaim or device shutdown (auto-gc would fail silently every pass): it skips the prune, with a note.
+	const cap = cacheCap(opts.maxCacheSize, ctx.env);
+	if (!cap.bytes.success && cap.source === "flag") {
+		reportError(ctx, "gc", `--max-cache-size: ${cap.bytes.error}`);
 		return 1;
 	}
 	const store = ctx.store();
@@ -230,7 +224,11 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const { reclaimed, shutdown, forgotten, notes } = opts.quiet
 		? await shutDownIdle(ctx)
 		: await withSpinner(ctx, "shutting down idle devices…", shutDownIdle);
-	notes.push(...pruneCache(ctx, cacheCap.data, now));
+	notes.push(
+		...(cap.bytes.success
+			? pruneCache(ctx, cap.bytes.data, now)
+			: [`WARDEN_MAX_CACHE_SIZE: ${cap.bytes.error}; build cache prune skipped`])
+	);
 	store.setMeta("last_gc_at", String(now));
 	if (opts.quiet) return 0;
 	const text = [

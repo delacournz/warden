@@ -2,6 +2,7 @@ import { basename, dirname } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { PidAlive } from "../liveness";
 import type { Store } from "../store";
+import { DEFAULT_MAX_CACHE_SIZE } from "./builds.defaults";
 import { type BuildRecord, listBuilds, removeBuild } from "./cache";
 import { buildLockKey, liveBuildLocks } from "./lock";
 
@@ -20,6 +21,29 @@ export function formatSize(bytes: number): string {
 		.map((u) => [u, UNITS[u] ?? 1] as const)
 		.find(([, s]) => bytes >= s) ?? ["", 1];
 	return unit === "" ? `${bytes}B` : `${(bytes / scale).toFixed(1)}${unit}`;
+}
+
+/** Where a cache cap came from: the command's flag, `WARDEN_MAX_CACHE_SIZE`, or `DEFAULT_MAX_CACHE_SIZE`. */
+export type CacheCapSource = "flag" | "env" | "default";
+
+/**
+ * The build cache cap `warden gc`, `warden builds prune` and auto-gc share: `flag`, else
+ * `WARDEN_MAX_CACHE_SIZE`, else `DEFAULT_MAX_CACHE_SIZE` (20G). `source` says which one an invalid value
+ * came from, so a caller can treat a typo in the environment differently from one on its command line.
+ */
+export function cacheCap(
+	flag: string | undefined,
+	env: Record<string, string | undefined>
+): { source: CacheCapSource; bytes: Result<number> } {
+	if (flag !== undefined) return { source: "flag", bytes: parseSize(flag) };
+	const fromEnv = env.WARDEN_MAX_CACHE_SIZE;
+	if (fromEnv !== undefined) return { source: "env", bytes: parseSize(fromEnv) };
+	return { source: "default", bytes: parseSize(DEFAULT_MAX_CACHE_SIZE) };
+}
+
+/** Total bytes of the cached builds, summed like `planPrune` does (one aggregate query, no fs walk). */
+export function cacheTotal(store: Store): number {
+	return store.db.query<{ total: number }, []>("SELECT COALESCE(SUM(size), 0) AS total FROM builds").get()?.total ?? 0;
 }
 
 export type PrunePlan = { remove: BuildRecord[]; keep: BuildRecord[]; total: number; after: number };

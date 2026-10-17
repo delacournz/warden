@@ -1846,7 +1846,8 @@ remove least-recently-used builds until the cache fits --max-size (build-locked
 ones stay)
 
 Options:
-  --max-size <size>  cache size limit, e.g. 20G (default 20G)
+  --max-size <size>  cache size limit, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE
+                     or 20G; gc's --max-cache-size)
   --dry-run          only show what would be removed
   --yes              don't ask before removing
   --json             machine-readable output
