@@ -1,6 +1,14 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { ACCEPT_BUTTONS, centre, DISMISS_BUTTONS, findButton, firstOf, nameOf } from "./alert-buttons";
+import {
+	ACCEPT_BUTTONS,
+	ANDROID_ALLOW_IDS,
+	centre,
+	DISMISS_BUTTONS,
+	findButton,
+	firstOf,
+	nameOf,
+} from "./alert-buttons";
 import { createAlertReader } from "./alert-reader";
 import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
 import {
@@ -13,7 +21,6 @@ import {
 	whileLinkInFlight,
 } from "./device-link";
 import { canProbeFrontmost } from "./driver/alerts";
-import { ANDROID_ALLOW_IDS } from "./driver/android/android-alert";
 import type { AlertInfo, Driver, Element, Orientation, Platform, Snapshot } from "./driver/driver.types";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
