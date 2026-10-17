@@ -390,9 +390,11 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		/**
 		 * `bootstatus -b` boots a shut-down sim itself, so a separate `simctl boot` is one CoreSimulator
 		 * round trip too many (16-15). When bootstatus answers with an error (not a timeout) — e.g. a sim
-		 * still `Shutting Down` — fall back to `boot` (which waits that out) and wait again.
+		 * still `Shutting Down` — fall back to `boot` (which waits that out) and wait again, with only what
+		 * is left of `timeoutMs`, so the whole call stays within one ready budget.
 		 */
 		async bootReady(id, timeoutMs): Promise<BootReady> {
+			const started = deps.now();
 			const cmd = ["xcrun", "simctl", "bootstatus", id, "-b"];
 			const status = await runCmd(runner, cmd, timeoutMs);
 			if (typeof status !== "string" && status.exitCode === 0) return { kind: "ready" };
@@ -401,7 +403,14 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			}
 			const booted = await bootAfterShutdown(runner, id, sleep);
 			if (!booted.success) return { kind: "boot-failed", error: booted.error };
-			const ready = await waitReady(id, timeoutMs);
+			const left = timeoutMs - (deps.now() - started);
+			if (left <= 0) {
+				return {
+					kind: "not-ready",
+					error: `${id} not ready within ${Math.round(timeoutMs / 1000)}s: booted, no time left`,
+				};
+			}
+			const ready = await waitReady(id, left);
 			return ready.success ? { kind: "ready" } : { kind: "not-ready", error: ready.error };
 		},
 

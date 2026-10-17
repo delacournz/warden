@@ -33,10 +33,18 @@ describe("goldenKey", () => {
 });
 
 describe("names", () => {
-	test("golden + wip names carry profile and key", () => {
-		expect(goldenName("iphone-17", "abc123def0")).toBe("warden-golden-iphone-17-abc123def0");
-		expect(wipName("iphone-17", "abc123def0")).toBe("warden-golden-iphone-17-abc123def0-wip");
+	test("golden + wip names carry profile, key and (from recipe 2) the recipe", () => {
+		expect(goldenName("iphone-17", "abc123def0")).toBe(`warden-golden-iphone-17-abc123def0-r${GOLDEN_RECIPE}`);
+		expect(wipName("iphone-17", "abc123def0")).toBe(`warden-golden-iphone-17-abc123def0-r${GOLDEN_RECIPE}-wip`);
+		expect(goldenName("iphone-17", "abc123def0", 1)).toBe("warden-golden-iphone-17-abc123def0");
 		expect(GOLDEN_PREFIX).toBe("warden-golden");
+	});
+
+	test("a recipe-1 warden's stale pattern never matches a recipe-2+ golden (ios-claim-path-R4)", () => {
+		const recipe1Pattern = /^warden-golden-iphone-17-[0-9a-f]{10}(-wip)?$/;
+		expect(recipe1Pattern.test(goldenName("iphone-17", "abc123def0"))).toBe(false);
+		expect(recipe1Pattern.test(wipName("iphone-17", "abc123def0"))).toBe(false);
+		expect(isGoldenName(goldenName("iphone-17", "abc123def0"))).toBe(true);
 	});
 
 	test("isGoldenName", () => {
@@ -85,6 +93,18 @@ describe("planGolden", () => {
 	test("profile prefix doesn't bleed (iphone-17 vs iphone-17-pro)", () => {
 		const pro = sim({ udid: "P", name: goldenName("iphone-17-pro", "2222222222") });
 		expect(planGolden([pro], "iphone-17", key)).toEqual({ kind: "create", stale: [] });
+	});
+
+	test("never stale: a golden of a newer recipe, or an older-recipe golden passed in keep (ios-claim-path-R4)", () => {
+		const good = sim({ udid: "G", name });
+		const newer = sim({ udid: "N", name: goldenName("iphone-17", "3333333333", GOLDEN_RECIPE + 1) });
+		const newerWip = sim({ udid: "NW", name: wipName("iphone-17", "3333333333", GOLDEN_RECIPE + 1) });
+		const legacy = sim({ udid: "L", name: goldenName("iphone-17", "4444444444", 1) });
+		const legacyDup = sim({ udid: "L2", name: goldenName("iphone-17", "4444444444", 1) });
+		const legacyOther = sim({ udid: "LO", name: goldenName("iphone-17", "5555555555", 1) });
+		const plan = planGolden([good, newer, newerWip, legacy, legacyDup, legacyOther], "iphone-17", key, [legacy.name]);
+		expect(plan).toEqual({ kind: "reuse", sim: good, stale: [legacyDup, legacyOther] });
+		expect(planGolden([good, legacy], "iphone-17", key).stale).toEqual([legacy]);
 	});
 });
 

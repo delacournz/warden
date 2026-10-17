@@ -20,6 +20,7 @@ import {
 	goldenName,
 	isSettled,
 	migrationDone,
+	olderRecipeNames,
 	parseXcodeBuild,
 	planGolden,
 	wipName,
@@ -308,7 +309,8 @@ async function ensureLocked(deps: GoldenDeps, target: GoldenTarget): AsyncResult
 	const key = goldenKey(target);
 	const sims = await allSims(deps);
 	if (!sims.success) return sims;
-	const plan = planGolden(sims.data, target.profile, key);
+	// an older warden version on this machine may still clone its recipe's golden of this target: keep it
+	const plan = planGolden(sims.data, target.profile, key, olderRecipeNames(target.profile, target));
 	const pruned = await deleteSims(deps, plan.stale);
 	if (!pruned.success) return pruned;
 	if (plan.kind === "create") return buildGolden(deps, target, key);
@@ -357,9 +359,9 @@ export async function cloneFromGolden(
 	});
 }
 
-/** `warden-golden-<profile>-<key>[-wip]` → profile. */
+/** `warden-golden-<profile>-<key>[-r<recipe>][-wip]` → profile. */
 function goldenProfile(name: string): string | undefined {
-	return new RegExp(`^${GOLDEN_PREFIX}-(.+)-[0-9a-f]{10}(-wip)?$`).exec(name)?.[1];
+	return new RegExp(`^${GOLDEN_PREFIX}-(.+)-[0-9a-f]{10}(-r\\d+)?(-wip)?$`).exec(name)?.[1];
 }
 
 /** Every golden on the machine (all runtimes, including unavailable). */
@@ -368,7 +370,10 @@ export async function listGoldens(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
 	return sims.success ? ok(sims.data.filter((s) => goldenProfile(s.name) !== undefined)) : sims;
 }
 
-/** Delete stale goldens (not current for their profile's latest runtime), or every golden with `all`. */
+/**
+ * Delete stale goldens (not current for their profile's latest runtime, older recipes included), or
+ * every golden with `all`. A newer recipe's golden (another warden version's) is kept without `all`.
+ */
 export async function pruneGoldens(deps: GoldenDeps, opts: { all: boolean }): AsyncResult<SimctlSim[]> {
 	return withBuildLock(lockDeps(deps), GOLDEN_LOCK_KEY, async () => {
 		const goldens = await listGoldens(deps);

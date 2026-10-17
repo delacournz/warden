@@ -496,6 +496,48 @@ describe("createIosProvider bootReady (16-15)", () => {
 		expect(calls.map((c) => c.cmd[2])).toEqual(["bootstatus"]);
 	});
 
+	test("the fallback's second bootstatus gets only what is left of the budget (ios-claim-path-R5)", async () => {
+		const calls: Call[] = [];
+		let clock = 0;
+		let statuses = 0;
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: [...cmd], ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}) });
+			if (cmd[2] === "bootstatus" && ++statuses === 1) {
+				clock += 290_000; // bootstatus gives up late, close to the whole budget
+				return { exitCode: 149, stdout: "", stderr: "Unable to boot device in current state: Shutting Down" };
+			}
+			if (cmd[2] === "boot") clock += 4_000;
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const p = createIosProvider(
+			{ exec, store, env: {}, now: () => clock, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{ sleep: async () => {} }
+		);
+		expect(await run(p, "U1")).toEqual({ kind: "ready" });
+		const second = calls.filter((c) => c.cmd[2] === "bootstatus")[1];
+		expect(second?.timeoutMs).toBe(6_000);
+	});
+
+	test("no budget left after the fallback boot: not ready, no second wait (ios-claim-path-R5)", async () => {
+		const calls: Call[] = [];
+		let clock = 0;
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: [...cmd], ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}) });
+			if (cmd[2] === "bootstatus") {
+				clock += 300_000;
+				return { exitCode: 149, stdout: "", stderr: "Unable to boot device in current state: Shutting Down" };
+			}
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const p = createIosProvider(
+			{ exec, store, env: {}, now: () => clock, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{ sleep: async () => {} }
+		);
+		const result = await run(p, "U1");
+		expect(result.kind).toBe("not-ready");
+		expect(calls.map((c) => c.cmd[2])).toEqual(["bootstatus", "boot"]);
+	});
+
 	test("probeBooted is the one-spawn warm probe", async () => {
 		const calls: Call[] = [];
 		const p = bootProvider(

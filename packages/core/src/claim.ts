@@ -115,9 +115,10 @@ function reserve(
 	const now = input.now();
 	reclaimed.push(...store.reclaimStale(now, input.pidAlive));
 	const leases = store.listLeases();
+	const withPending = withPendingDevices(rawInventory, leases, request.platform);
 	const inventory = markWardenDevices(
-		withPendingDevices(rawInventory, leases, request.platform),
-		liftExpiredQuarantines(input, store.listDevices(request.platform), now)
+		withPending,
+		liftExpiredQuarantines(input, withPending, store.listDevices(request.platform), now)
 	);
 	const plan = allocate({ inventory, leases, request, now, pidAlive: input.pidAlive, skip });
 	if (plan.kind === "wait") {
@@ -163,10 +164,27 @@ function claimQuarantineExpired(record: DeviceRecord, now: number): boolean {
 	);
 }
 
-/** Clear claim quarantines older than `QUARANTINE_TTL_MS` (caller holds the store lock); the records as they now are. */
-function liftExpiredQuarantines(input: ClaimInput, records: DeviceRecord[], now: number): DeviceRecord[] {
+/**
+ * Clear claim quarantines older than `QUARANTINE_TTL_MS` on pool devices of the requested profile
+ * (caller holds the store lock); the records as they now are. Only as many as the pool has room for
+ * under `max`: a quarantined device's slot went to a replacement, so lifting every expired one would
+ * grow the pool past `max`. The rest stay quarantined until a slot frees up.
+ */
+function liftExpiredQuarantines(
+	input: ClaimInput,
+	inventory: InventoryDevice[],
+	records: DeviceRecord[],
+	now: number
+): DeviceRecord[] {
+	const { request } = input;
+	const pool = markWardenDevices(inventory, records).filter(
+		(d) => d.platform === request.platform && d.wardenCreated && d.golden !== true && d.profile === request.profile
+	);
+	const inPool = new Set(pool.map((d) => d.id));
+	let room = request.max - pool.filter((d) => d.quarantined !== true).length;
 	return records.map((record) => {
-		if (!claimQuarantineExpired(record, now)) return record;
+		if (!inPool.has(record.id) || !claimQuarantineExpired(record, now) || room <= 0) return record;
+		room--;
 		input.store.unquarantineDevice(record.id);
 		input.log?.(`${record.name} (${record.id}): quarantine expired after 24h — offering it again`);
 		const { quarantinedAt: _at, quarantineReason: _reason, ...lifted } = record;
@@ -185,11 +203,20 @@ type Realised = {
  * A device that failed this claim. `skipOnly`: its probe timed out twice on an overloaded host — a
  * busy host, not a hung sim — so it is left out of this claim but not quarantined or shut down.
  */
-type UnhealthyDevice = { device: InventoryDevice; reason: string; skipOnly?: true };
+type UnhealthyDevice = {
+	device: InventoryDevice;
+	reason: string;
+	skipOnly?: true;
+	/** the load reading behind `skipOnly` */
+	load?: HostLoad;
+	/** `skipOnly` on a device this claim booted: shut it down again rather than leave it booted unleased */
+	bootedByClaim?: true;
+};
 
-function isOverloaded(input: ClaimInput): boolean {
-	const { load1, cores } = (input.load ?? hostLoad)();
-	return load1 >= cores;
+/** The load reading when the host is overloaded (1-min load ≥ cores), else undefined. */
+function overload(input: ClaimInput): HostLoad | undefined {
+	const load = (input.load ?? hostLoad)();
+	return load.load1 >= load.cores ? load : undefined;
 }
 
 /**
@@ -205,12 +232,13 @@ async function probeHealth(
 	if (!probe) return undefined;
 	const first = await probe(device.id);
 	if (first.success) return undefined;
-	if (!isProbeTimeout(first.error) || !isOverloaded(input)) return { device, reason: first.error };
+	const load = isProbeTimeout(first.error) ? overload(input) : undefined;
+	if (!load) return { device, reason: first.error };
 	await (input.sleep ?? Bun.sleep)(OVERLOAD_REPROBE_MS);
 	const second = await probe(device.id);
 	if (second.success) return undefined;
 	if (!isProbeTimeout(second.error)) return { device, reason: second.error };
-	return { device, reason: `${second.error} (host overloaded)`, skipOnly: true };
+	return { device, reason: `${second.error} (host overloaded)`, skipOnly: true, load };
 }
 
 /** Boot (+ wait ready, with `bootReady`) a device this claim must boot: how far it got, or the claim's verdict on it. */
@@ -280,7 +308,11 @@ async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 		lease = { ...lease, bootedByOwner: true };
 		readyBoot = booted.booted === "ready";
 	}
-	return readyBoot ? probeBooted(input, item, device, lease) : checkReady(input, item, device, lease);
+	const realised = readyBoot
+		? await probeBooted(input, item, device, lease)
+		: await checkReady(input, item, device, lease);
+	if (!realised.unhealthy?.skipOnly || lease.bootedByOwner !== true) return realised;
+	return { ...realised, unhealthy: { ...realised.unhealthy, bootedByClaim: true } };
 }
 
 /** A device `bootReady` saw finish booting: only the provider's post-boot probe is left. */
@@ -319,15 +351,27 @@ function waitMessage(request: DeviceRequest, poolSize: number): string {
 	return `all ${poolSize} warden-${request.profile} devices leased; max ${request.max} — use --wait or --max`;
 }
 
-type HealthLog = { skip: Set<string>; reasons: string[] };
+/**
+ * `skip`: devices left out for the rest of this claim. `skipOnce`: `skipOnly` devices (slow on an
+ * overloaded host), left out of the next round only, so a pool of one is asked again rather than
+ * starved. `overload`: the last overloaded reading, while every failure so far was `skipOnly`.
+ */
+type HealthLog = { skip: Set<string>; skipOnce: Set<string>; reasons: string[]; overload?: HostLoad | undefined };
+
+function overloadMessage(load: HostLoad, reasons: string[]): string {
+	return `host overloaded (load ${load.load1.toFixed(1)} ≥ ${load.cores} cores); retry later — ${reasons.join("; ")}`;
+}
 
 /** Remember devices that failed their probe; the error to give up with once retries are spent. */
-function noteUnhealthy(log: HealthLog, bad: { device: InventoryDevice; reason: string }[]): string | undefined {
+function noteUnhealthy(log: HealthLog, bad: UnhealthyDevice[]): string | undefined {
 	for (const b of bad) {
-		log.skip.add(b.device.id);
+		const onlySkips = log.reasons.length === 0 || log.overload !== undefined;
+		(b.skipOnly ? log.skipOnce : log.skip).add(b.device.id);
 		log.reasons.push(b.reason);
+		log.overload = b.skipOnly && onlySkips ? b.load : undefined;
 	}
 	if (log.reasons.length <= MAX_HEALTH_RETRIES) return undefined;
+	if (log.overload) return overloadMessage(log.overload, log.reasons);
 	return `${log.reasons.length} device(s) failed the health probe, giving up: ${log.reasons.join("; ")}`;
 }
 
@@ -358,14 +402,15 @@ async function completeRound(
 export async function claimDevices(input: ClaimInput): AsyncResult<ClaimOutcome> {
 	const deadline = input.now() + input.waitMs;
 	const reclaimed: string[] = [];
-	const health: HealthLog = { skip: new Set(), reasons: [] };
+	const health: HealthLog = { skip: new Set(), skipOnce: new Set(), reasons: [] };
 	let conflicts = 0;
 
 	for (;;) {
 		const inventory = await input.provider.inventory();
 		if (!inventory.success) return inventory;
 
-		const reservation = tryReserve(input, inventory.data, reclaimed, health.skip);
+		const skip = new Set([...health.skip, ...health.skipOnce]);
+		const reservation = tryReserve(input, inventory.data, reclaimed, skip);
 		if (reservation.kind === "conflict" && conflicts++ < MAX_CONFLICT_RETRIES) continue;
 		if (reservation.kind === "conflict" || reservation.kind === "error") return err(reservation.error);
 		const done = await settle(input, reservation, { deadline, reclaimed, health });
@@ -381,9 +426,15 @@ async function settle(
 	reservation: Extract<Attempt, { kind: "assign" | "wait" }>,
 	round: Round
 ): Promise<Result<ClaimOutcome> | undefined> {
-	if (reservation.kind === "assign") return completeRound(input, reservation.items, round.reclaimed, round.health);
+	const { health } = round;
+	const skippedOnce = health.skipOnce.size > 0;
+	health.skipOnce.clear();
+	if (reservation.kind === "assign") return completeRound(input, reservation.items, round.reclaimed, health);
 	const remaining = round.deadline - input.now();
-	if (remaining <= 0) return err(waitMessage(input.request, reservation.poolSize));
+	if (remaining <= 0) {
+		if (skippedOnce && health.overload) return err(overloadMessage(health.overload, health.reasons));
+		return err(waitMessage(input.request, reservation.poolSize));
+	}
 	await pause(input, remaining);
 	return undefined;
 }
@@ -409,9 +460,11 @@ function tryReserve(
  * skipped (read-only: never recorded, never shut down), and so are slow answers on an overloaded host.
  */
 async function quarantineUnhealthy(input: ClaimInput, bad: UnhealthyDevice[]): Promise<void> {
-	for (const { device, reason, skipOnly } of bad) {
+	for (const { device, reason, skipOnly, bootedByClaim } of bad) {
 		if (skipOnly) {
 			input.log?.(`${device.name} (${device.id}) failed its health probe (${reason}) — skipping it this time`);
+			// this claim booted it: don't leave it booted with no lease, adding to the load
+			if (bootedByClaim) await input.provider.shutdown(device.id);
 			continue;
 		}
 		if (!device.wardenCreated) {

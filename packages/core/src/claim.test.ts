@@ -667,3 +667,124 @@ describe("claim quarantine expiry (16-10)", () => {
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantineReason).toBe("flaky keyboard");
 	});
 });
+
+describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
+	const TIMEOUT = (id: string) => `${id}: launchctl list did not answer within 15s`;
+	const overloaded = () => ({ load1: 30, cores: 8 });
+
+	function poolOfOne(answers: string[]): FakeProvider {
+		const device = sim("1", { wardenCreated: true, profile: "iphone-17" });
+		store.recordDevice({ platform: "ios", id: "1", name: device.name, profile: "iphone-17" }, NOW);
+		const provider = fakeProvider([device]);
+		provider.bootReady = async (id) => {
+			provider.calls.push(`bootReady ${id}`);
+			return { kind: "ready" };
+		};
+		provider.probeBooted = async (id) => {
+			provider.calls.push(`probe ${id}`);
+			const next = answers.shift();
+			return next === undefined || next === "ok" ? ok(undefined) : err(next);
+		};
+		return provider;
+	}
+
+	test("no wait: a specific host-overloaded error, not 'all leased'; nothing leased or quarantined", async () => {
+		const provider = poolOfOne([TIMEOUT("1"), TIMEOUT("1")]);
+		const result = await claimDevices(input(provider, { request: request({ max: 1 }), load: overloaded }));
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error).toContain("host overloaded (load 30.0 ≥ 8 cores); retry later");
+		expect(result.error).not.toContain("leased");
+		expect(store.listLeases()).toEqual([]);
+		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBeUndefined();
+	});
+
+	test("a device this claim booted and then skipped is shut down again (not quarantined)", async () => {
+		const provider = poolOfOne([TIMEOUT("1"), TIMEOUT("1")]);
+		await claimDevices(input(provider, { request: request({ max: 1 }), load: overloaded }));
+		expect(provider.calls).toContain("shutdown 1");
+		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBeUndefined();
+	});
+
+	test("a reused device that was already booted is still left alone when skipped", async () => {
+		const provider = poolOfOne([TIMEOUT("1"), TIMEOUT("1")]);
+		provider.devices[0] = { ...(provider.devices[0] as InventoryDevice), state: "booted" };
+		provider.probe = provider.probeBooted;
+		await claimDevices(input(provider, { request: request({ max: 1 }), load: overloaded }));
+		expect(provider.calls).not.toContain("shutdown 1");
+	});
+
+	test("with --wait the skipped device is offered again on the next round and claimed once it answers", async () => {
+		const provider = poolOfOne([TIMEOUT("1"), TIMEOUT("1"), "ok"]);
+		let t = NOW;
+		const result = await claimDevices(
+			input(provider, {
+				request: request({ max: 1 }),
+				load: overloaded,
+				waitMs: 60_000,
+				now: () => t,
+				sleep: async (ms) => {
+					t += ms;
+				},
+			})
+		);
+		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["1"]);
+		expect(provider.calls.filter((c) => c === "probe 1")).toHaveLength(3);
+	});
+
+	test("with --wait on a host that stays overloaded: bounded, ends with the host-overloaded error", async () => {
+		const provider = poolOfOne(Array.from({ length: 20 }, () => TIMEOUT("1")));
+		let t = NOW;
+		const result = await claimDevices(
+			input(provider, {
+				request: request({ max: 1 }),
+				load: overloaded,
+				waitMs: 600_000,
+				now: () => t,
+				sleep: async (ms) => {
+					t += ms;
+				},
+			})
+		);
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error).toContain("host overloaded");
+		expect(store.listLeases()).toEqual([]);
+	});
+});
+
+describe("claim quarantine expiry respects max (ios-claim-path-R3)", () => {
+	function quarantined(id: string, at: number) {
+		store.recordDevice({ platform: "ios", id, name: `warden-iphone-17-${id}`, profile: "iphone-17" }, at);
+		store.quarantineDevice(
+			{ platform: "ios", id, name: `warden-iphone-17-${id}`, profile: "iphone-17" },
+			`claim: ${id}: hung`,
+			at
+		);
+	}
+	function replacement(id: string): InventoryDevice {
+		store.recordDevice({ platform: "ios", id, name: `warden-iphone-17-${id}`, profile: "iphone-17" }, NOW);
+		return sim(id, { profile: "iphone-17" });
+	}
+
+	test("max=1 with a replacement: the expired quarantine stays, the pool stays at max", async () => {
+		quarantined("1", NOW - QUARANTINE_TTL_MS);
+		const provider = fakeProvider([sim("1", { profile: "iphone-17" }), replacement("2")]);
+		const result = await claimDevices(input(provider, { request: request({ max: 1 }) }));
+		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
+		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBe(NOW - QUARANTINE_TTL_MS);
+	});
+
+	test("lifts only as many expired quarantines as the pool has room for", async () => {
+		quarantined("1", NOW - QUARANTINE_TTL_MS);
+		quarantined("3", NOW - QUARANTINE_TTL_MS);
+		const provider = fakeProvider([
+			sim("1", { profile: "iphone-17" }),
+			replacement("2"),
+			sim("3", { profile: "iphone-17" }),
+		]);
+		await claimDevices(input(provider, { request: request({ max: 2 }) }));
+		const stillQuarantined = store.listDevices().filter((d) => d.quarantinedAt !== undefined);
+		expect(stillQuarantined).toHaveLength(1);
+	});
+});

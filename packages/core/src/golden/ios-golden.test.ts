@@ -173,15 +173,49 @@ describe("golden recipe 2: AutomationEnabled baked in (16-7)", () => {
 		expect(write).toBeLessThan(at((c) => c[2] === "shutdown"));
 	});
 
-	test("the recipe is part of the key, so recipe-1 goldens go stale and are rebuilt once", async () => {
+	test("the recipe is part of the key: a recipe-2 golden is built next to the recipe-1 one, which a claim keeps (ios-claim-path-R4)", async () => {
 		expect(GOLDEN_RECIPE).toBe(2);
 		const inputs = { xcodeBuild: "17F113", runtimeId: RUNTIME_ID, runtimeBuild: RUNTIME_BUILD, deviceType: IPHONE_17 };
 		expect(goldenKey(inputs, 1)).not.toBe(KEY);
-		const old = goldenName("iphone-17", goldenKey(inputs, 1));
+		const old = goldenName("iphone-17", goldenKey(inputs, 1), 1);
 		const host = fakeHost({ sims: [{ udid: "OLD", name: old, state: "Shutdown" }], migrationPolls: 0 });
 		const result = await ensureGolden(deps(host), "iphone-17");
 		expect(result.success && result.data).toMatchObject({ name: GOLDEN, built: true });
-		expect(host.sims.some((s) => s.udid === "OLD")).toBe(false);
+		// an older warden (recipe 1) on this machine keeps its golden instead of rebuilding it on every claim
+		expect(host.sims.some((s) => s.udid === "OLD")).toBe(true);
+		const again = await ensureGolden(deps(host), "iphone-17");
+		expect(again.success && again.data).toMatchObject({ name: GOLDEN, built: false });
+		expect(host.sims.some((s) => s.udid === "OLD")).toBe(true);
+	});
+
+	test("a newer warden's golden (higher recipe) is never deleted by this one (ios-claim-path-R4)", async () => {
+		const inputs = { xcodeBuild: "17F113", runtimeId: RUNTIME_ID, runtimeBuild: RUNTIME_BUILD, deviceType: IPHONE_17 };
+		const next = GOLDEN_RECIPE + 1;
+		const newer = goldenName("iphone-17", goldenKey(inputs, next), next);
+		const host = fakeHost({
+			sims: [
+				{ udid: "G", name: GOLDEN, state: "Shutdown" },
+				{ udid: "NEW", name: newer, state: "Shutdown" },
+			],
+			migrationPolls: 0,
+		});
+		expect((await ensureGolden(deps(host), "iphone-17")).success).toBe(true);
+		expect((await pruneGoldens(deps(host), { all: false })).success).toBe(true);
+		expect(host.sims.some((s) => s.udid === "NEW")).toBe(true);
+	});
+
+	test("warden golden prune deletes the older recipe's golden", async () => {
+		const inputs = { xcodeBuild: "17F113", runtimeId: RUNTIME_ID, runtimeBuild: RUNTIME_BUILD, deviceType: IPHONE_17 };
+		const old = goldenName("iphone-17", goldenKey(inputs, 1), 1);
+		const host = fakeHost({
+			sims: [
+				{ udid: "G", name: GOLDEN, state: "Shutdown" },
+				{ udid: "OLD", name: old, state: "Shutdown" },
+			],
+			migrationPolls: 0,
+		});
+		const pruned = await pruneGoldens(deps(host), { all: false });
+		expect(pruned.success && pruned.data.map((s) => s.udid)).toEqual(["OLD"]);
 	});
 });
 
