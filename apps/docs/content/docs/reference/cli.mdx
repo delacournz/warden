@@ -124,7 +124,7 @@ List the flows of `e2e.<suite>` (optional with one suite) that the changes since
 | `--strict` | exit 3 when a changed file reaches no flow |
 | `--json` | selections, reasons, skipped and unreached files |
 
-See [Affected e2e](/docs/guides/affected-e2e).
+Following `entries` through the import graph needs TypeScript 5.0 or later: the compiled binary uses the project's own, the nearest `node_modules/typescript` from the config's directory upward (Yarn Plug'n'Play is not supported); without one the run exits 1 naming that path. See [Affected e2e](/docs/guides/affected-e2e).
 
 ### `warden e2e [suite]`
 

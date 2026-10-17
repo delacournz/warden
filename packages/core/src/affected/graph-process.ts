@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import type { Platform } from "../types";
 import type { E2eSuiteConfig } from "./affected.schema";
 import { openImportCache } from "./cache";
-import { createImportGraph, type ImportGraph, routerLayouts } from "./graph";
+import { createImportGraph, type ImportGraph, routerLayouts, TYPESCRIPT_UNUSABLE_EXIT } from "./graph";
 import {
 	type GraphDoc,
 	type GraphRequest,
@@ -78,14 +79,15 @@ const fromTable = (doc: GraphDoc, via: "snapshot" | "process"): LoadedGraph => (
 });
 
 /** The walk done here, lazily (loads the TypeScript compiler into this process on the first import asked for). */
-async function walkHere(opts: LoadGraphOptions, warning?: string): Promise<LoadedGraph> {
+async function walkHere(opts: LoadGraphOptions, warning?: string): AsyncResult<LoadedGraph> {
 	const graph = await createImportGraph({
 		platform: opts.platform,
 		repoRoot: opts.repoRoot,
 		...(opts.fallbackTsconfig !== undefined ? { fallbackTsconfig: opts.fallbackTsconfig } : {}),
 		...(opts.importCachePath !== undefined ? { cache: openImportCache(opts.importCachePath) } : {}),
 	});
-	return { graph, via: "in-process", ...(warning !== undefined ? { warning } : {}) };
+	if (!graph.success) return graph;
+	return ok({ graph: graph.data, via: "in-process", ...(warning !== undefined ? { warning } : {}) });
 }
 
 /** The argv prefix that runs the walker: the compiled binary itself, else `bun` + the script, else none. */
@@ -97,17 +99,29 @@ function workerCommand(opts: LoadGraphOptions): string[] | undefined {
 	return bun !== undefined && existsSync(worker) ? [bun, worker] : undefined;
 }
 
-/** Run the walker (a script under `bun`, or the compiled binary's subcommand): its table, or why there is none (`warning` unset: it could not even start). */
+/** The reason a walker printed for `TYPESCRIPT_UNUSABLE_EXIT`: its last line, without the subcommand's `warden __affected-graph:` prefix. */
+function workerError(stderr: string): string {
+	const line = stderr.trim().split("\n").at(-1) ?? "";
+	const prefix = `${GRAPH_WORKER_SUBCOMMAND}: `;
+	const at = line.indexOf(prefix);
+	return at === -1 ? line : line.slice(at + prefix.length);
+}
+
+/**
+ * Run the walker (a script under `bun`, or the compiled binary's subcommand): its table, or why there is none
+ * (`warning` unset: it could not even start), or an error when it found no usable compiler (the walk here would too).
+ */
 async function runWorker(
 	opts: LoadGraphOptions,
 	cmd: string[]
-): Promise<{ doc: GraphDoc; warning?: undefined } | { doc?: undefined; warning?: string }> {
+): AsyncResult<{ doc: GraphDoc; warning?: undefined } | { doc?: undefined; warning?: string }> {
 	const res = await opts.exec(cmd, { cwd: opts.repoRoot, timeoutMs: WORKER_TIMEOUT_MS });
+	if (res.exitCode === TYPESCRIPT_UNUSABLE_EXIT) return err(workerError(res.stderr));
 	const doc = res.exitCode === 0 ? parseGraphDoc(res.stdout) : undefined;
-	if (doc) return { doc };
-	if (res.exitCode === CANNOT_RUN) return {};
+	if (doc) return ok({ doc });
+	if (res.exitCode === CANNOT_RUN) return ok({});
 	const why = res.exitCode === 0 ? "printed no import graph" : execError(cmd.slice(0, 2), res);
-	return { warning: `import graph worker failed (${why}); built the graph in-process` };
+	return ok({ warning: `import graph worker failed (${why}); built the graph in-process` });
 }
 
 /**
@@ -116,9 +130,10 @@ async function runWorker(
  * 2. else a process runs the walker and prints the table, which is then snapshotted: `bun graph-worker.ts` from
  *    source, `<warden> __affected-graph` from a compiled binary;
  * 3. else (no bun or no script on disk, or the walker failed) the walk is done here, lazily, as before.
- * A graph from 1 or 2 knows the imports of the files reachable from `entries` and nothing else.
+ * A graph from 1 or 2 knows the imports of the files reachable from `entries` and nothing else. An error when there is
+ * no usable TypeScript compiler (the walker's `TYPESCRIPT_UNUSABLE_EXIT`, or the walk here).
  */
-export async function loadImportGraph(opts: LoadGraphOptions): Promise<LoadedGraph> {
+export async function loadImportGraph(opts: LoadGraphOptions): AsyncResult<LoadedGraph> {
 	const worker = workerCommand(opts);
 	if (worker === undefined) return walkHere(opts);
 
@@ -133,10 +148,12 @@ export async function loadImportGraph(opts: LoadGraphOptions): Promise<LoadedGra
 	const key =
 		cacheDir === undefined ? undefined : await snapshotKey(opts.exec, request, cacheDir).catch(() => undefined);
 	const known = key === undefined || cacheDir === undefined ? undefined : readSnapshot(cacheDir, key);
-	if (known) return fromTable(known, "snapshot");
+	if (known) return ok(fromTable(known, "snapshot"));
 
-	const built = await runWorker(opts, [...worker, JSON.stringify(request)]);
+	const run = await runWorker(opts, [...worker, JSON.stringify(request)]);
+	if (!run.success) return run;
+	const built = run.data;
 	if (!built.doc) return walkHere(opts, built.warning);
 	if (key !== undefined && cacheDir !== undefined) writeSnapshot(cacheDir, key, built.doc);
-	return fromTable(built.doc, "process");
+	return ok(fromTable(built.doc, "process"));
 }

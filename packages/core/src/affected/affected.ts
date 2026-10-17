@@ -7,7 +7,7 @@ import type { Platform } from "../types";
 import type { E2eSuiteConfig } from "./affected.schema";
 import { scanFlows } from "./flows";
 import { type ChangedFile, changedFiles } from "./git";
-import { resolveTypescript, TYPESCRIPT_MISSING } from "./graph";
+import { resolveTypescript, typescriptMissing, typescriptVersionProblem } from "./graph";
 import { graphEntries, type LoadedGraph, loadImportGraph } from "./graph-process";
 import { type SelectInput, type Selection, selectFlows } from "./select";
 
@@ -116,13 +116,15 @@ function platformsOf(input: AffectedInput, suite: Suite): Platform[] {
 	return suite.config.platform ? [suite.config.platform] : ["ios", "android"];
 }
 
-/** The graph of one platform: a snapshot or a worker process when it can be, so the TypeScript compiler stays out of this process. */
-function importGraphFor(
+/** The graph of one platform (undefined: not `needed`): a snapshot or a worker process when it can be, so the TypeScript compiler stays out of this process. */
+async function importGraphFor(
+	needed: boolean,
 	input: AffectedInput,
 	{ config, configDir }: Suite,
 	platform: Platform,
 	importCachePath: string | undefined
-): Promise<LoadedGraph> {
+): AsyncResult<LoadedGraph | undefined> {
+	if (!needed) return ok(undefined);
 	return loadImportGraph({
 		exec: input.exec,
 		platform,
@@ -136,7 +138,7 @@ function importGraphFor(
 
 /**
  * Whether a run walks imports (some flow has entries and something changed); an error when it must but the project
- * at `configDir` has no TypeScript compiler for the walk (`resolveTypescript`).
+ * at `configDir` has no TypeScript compiler for the walk (`resolveTypescript`), or its package.json says it is too old.
  */
 function graphNeeded(
 	input: AffectedInput,
@@ -144,7 +146,10 @@ function graphNeeded(
 	changes: readonly ChangedFile[]
 ): Result<boolean> {
 	if (!(Object.values(config.flows).some((f) => f.entries.length > 0) && changes.length > 0)) return ok(false);
-	return (input.typescript ?? resolveTypescript)(configDir) === undefined ? err(TYPESCRIPT_MISSING) : ok(true);
+	const path = (input.typescript ?? resolveTypescript)(configDir);
+	if (path === undefined) return err(typescriptMissing(configDir));
+	const problem = typescriptVersionProblem(path);
+	return problem === undefined ? ok(true) : err(problem);
 }
 
 /** false when `files` / `only` replace the git diff (so there is no base to report). */
@@ -167,7 +172,9 @@ export async function computeAffected(input: AffectedInput): AsyncResult<Affecte
 	const selections: Selection[] = [];
 	const warnings = [...scan.warnings];
 	for (const platform of platformsOf(input, suite.data)) {
-		const loaded = needsGraph ? await importGraphFor(input, suite.data, platform, importCachePath) : undefined;
+		const graph = await importGraphFor(needsGraph, input, suite.data, platform, importCachePath);
+		if (!graph.success) return graph;
+		const loaded = graph.data;
 		if (loaded?.warning !== undefined) warnings.push(loaded.warning);
 		selections.push(
 			selectFlows({

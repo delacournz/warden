@@ -90,10 +90,20 @@ describe("computeAffected", () => {
 	test("a diff run in a project without typescript: a clear error naming the fix", async () => {
 		write("src/settings/form.tsx", "export const changed = 1;\n");
 		const res = await computeAffected({ exec: bunExec, cwd: join(dir, "src"), typescript: () => undefined });
-		expect(res).toEqual({
-			success: false,
-			error: "warden affected needs typescript in the analysed project: add it as a devDependency",
-		});
+		expect(res.success).toBe(false);
+		if (res.success) return;
+		expect(res.error).toStartWith("needs typescript in the analysed project: add it as a devDependency");
+		expect(res.error).toContain(`node_modules/typescript from ${dir}`);
+	});
+
+	test("a diff run whose typescript is older than 5.0: the version and path, before any walk (cli-size-R1)", async () => {
+		write("src/settings/form.tsx", "export const changed = 1;\n");
+		write("node_modules/typescript/package.json", JSON.stringify({ name: "typescript", version: "4.9.5" }));
+		write("node_modules/typescript/index.js", "module.exports = {};\n");
+		const entry = join(dir, "node_modules/typescript/index.js");
+		const res = await computeAffected({ exec: bunExec, cwd: join(dir, "src"), typescript: () => entry });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain(`typescript 4.9.5 at ${entry}`);
 	});
 
 	test("no typescript is fine when no graph is needed (--only)", async () => {

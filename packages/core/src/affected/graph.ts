@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type ts from "typescript";
 import type { Platform } from "../types";
 import { type ImportCache, openImportCache } from "./cache";
@@ -15,6 +16,8 @@ export type GraphOptions = {
 	/** used for files with no tsconfig.json between them and `repoRoot` */
 	fallbackTsconfig?: string;
 	cache?: ImportCache;
+	/** where the compiler is, undefined: none. Default: `resolveTypescript` */
+	typescript?: (repoRoot: string) => string | undefined;
 };
 
 /** Resolved imports of one file: absolute paths inside the repo. */
@@ -22,8 +25,64 @@ export type ImportGraph = { imports: (file: string) => string[]; save: () => voi
 
 type TsConfig = { options: ts.CompilerOptions; cache: ts.ModuleResolutionCache };
 
-/** What `warden affected` says when it cannot find a TypeScript compiler for the project it analyses. */
-export const TYPESCRIPT_MISSING = "warden affected needs typescript in the analysed project: add it as a devDependency";
+/** What `warden affected` says (after its own prefix) when it cannot find a TypeScript compiler for the project it analyses. */
+export const TYPESCRIPT_MISSING = "needs typescript in the analysed project: add it as a devDependency";
+
+/** `TYPESCRIPT_MISSING` with where it looked (Yarn PnP has no node_modules, so it never resolves there). */
+export function typescriptMissing(repoRoot: string): string {
+	return `${TYPESCRIPT_MISSING} (looked for node_modules/typescript from ${resolve(repoRoot)} upward; Yarn PnP is not supported)`;
+}
+
+/**
+ * The graph walker's exit code (`__affected-graph`, `graph-worker.ts`) when there is no usable compiler, the reason on
+ * stderr: the caller reports it instead of redoing the walk in its own process, which would fail the same way.
+ */
+export const TYPESCRIPT_UNUSABLE_EXIT = 4;
+
+/** The oldest compiler the walk can use: `moduleSuffixes` (RN platform files) is 4.7, `ModuleResolutionKind.Bundler` is 5.0. */
+const MIN_TYPESCRIPT_MAJOR = 5;
+
+/** The compiler API the walk calls. */
+const TS_API = [
+	"preProcessFile",
+	"resolveModuleName",
+	"getParsedCommandLineOfConfigFile",
+	"createModuleResolutionCache",
+] as const;
+
+const tooOld = (version: string, path: string): string | undefined => {
+	const major = Number.parseInt(version, 10);
+	return Number.isFinite(major) && major < MIN_TYPESCRIPT_MAJOR
+		? `typescript ${version} at ${path} is too old: warden affected needs ${MIN_TYPESCRIPT_MAJOR}.0 or later`
+		: undefined;
+};
+
+/**
+ * Why the compiler at `entry` cannot be used, judged by its package.json `version` alone (no import: the CLI process
+ * does not load the compiler just to check it). undefined: fine, or no version to read.
+ */
+export function typescriptVersionProblem(entry: string): string | undefined {
+	for (let dir = dirname(entry); dirname(dir) !== dir; dir = dirname(dir)) {
+		let pkg: { name?: unknown; version?: unknown };
+		try {
+			pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+		} catch {
+			continue;
+		}
+		if (pkg.name !== "typescript") continue;
+		return typeof pkg.version === "string" ? tooOld(pkg.version, entry) : undefined;
+	}
+	return undefined;
+}
+
+/** Why the module loaded from `path` is not a compiler the walk can use, undefined: it is. */
+function unusableTypescript(mod: Record<string, unknown>, path: string): string | undefined {
+	const version = typeof mod.versionMajorMinor === "string" ? mod.versionMajorMinor : "of unknown version";
+	const missing = TS_API.filter((name) => typeof mod[name] !== "function");
+	if (missing.length > 0)
+		return `typescript ${version} at ${path} is not a TypeScript compiler (no ${missing.join(", ")})`;
+	return tooOld(version, path);
+}
 
 /** The typescript beside warden's own source (source mode); none in a compiled binary, which leaves it out. */
 function besideWarden(): string | undefined {
@@ -49,34 +108,42 @@ function typescriptIn(dir: string): string | undefined {
 }
 
 /**
- * The TypeScript compiler a graph walk loads: the analysed project's own (the nearest `node_modules/typescript` from
- * `repoRoot` upward), else `fallback` (default: the one beside warden's source), else undefined. The compiled binary
- * is built with `--external typescript` (the 28 MB it would otherwise carry for this one walk), so there only the
- * project's resolves. The lookup reads node_modules itself: a Bun-compiled binary resolves no packages from disk
- * (`createRequire(...).resolve` and `Bun.resolveSync` both fail there), but it does import an absolute path.
+ * The TypeScript compiler a graph walk loads: warden's own (`own`, default: the one beside warden's source, pinned by
+ * warden's lockfile) when it resolves, else the analysed project's (the nearest `node_modules/typescript` from
+ * `repoRoot` upward), else undefined. The compiled binary is built with `--external typescript` (the 28 MB it would
+ * otherwise carry for this one walk), so there only the project's resolves. The lookup reads node_modules itself: a
+ * Bun-compiled binary resolves no packages from disk (`createRequire(...).resolve` and `Bun.resolveSync` both fail
+ * there), but it does import an absolute path.
  */
-export function resolveTypescript(
-	repoRoot: string,
-	fallback: () => string | undefined = besideWarden
-): string | undefined {
+export function resolveTypescript(repoRoot: string, own: () => string | undefined = besideWarden): string | undefined {
+	const mine = own();
+	if (mine !== undefined) return mine;
 	for (let dir = resolve(repoRoot); ; dir = dirname(dir)) {
 		const entry = typescriptIn(dir);
 		if (entry !== undefined) return entry;
-		if (dirname(dir) === dir) return fallback();
+		if (dirname(dir) === dir) return undefined;
 	}
 }
 
-const tsModules = new Map<string, typeof ts>();
+const tsModules = new Map<string, Result<typeof ts>>();
 
-/** TypeScript is big: loaded on the first graph, not at CLI start. Throws `TYPESCRIPT_MISSING` when none resolves. */
-async function loadTs(repoRoot: string): Promise<typeof ts> {
-	const path = resolveTypescript(repoRoot);
-	if (path === undefined) throw new Error(TYPESCRIPT_MISSING);
+/** TypeScript is big: loaded on the first graph, not at CLI start. An error when none resolves or it is not usable. */
+async function loadTs(repoRoot: string, lookup: (repoRoot: string) => string | undefined): AsyncResult<typeof ts> {
+	const path = lookup(repoRoot);
+	if (path === undefined) return err(typescriptMissing(repoRoot));
 	const known = tsModules.get(path);
 	if (known) return known;
-	const mod: { default: typeof ts } = await import(path);
-	tsModules.set(path, mod.default);
-	return mod.default;
+	let loaded: Result<typeof ts>;
+	try {
+		const mod: { default?: unknown } = await import(path);
+		const api = (mod.default ?? mod) as Record<string, unknown>;
+		const problem = unusableTypescript(api, path);
+		loaded = problem === undefined ? ok(api as unknown as typeof ts) : err(problem);
+	} catch (error) {
+		loaded = err(`typescript at ${path} failed to load: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	tsModules.set(path, loaded);
+	return loaded;
 }
 
 const within = (dir: string, file: string) => {
@@ -179,8 +246,10 @@ export function platformSuffixes(platform: Platform): string[] {
  * nearest tsconfig (`paths`, `baseUrl`, `extends`, `customConditions`), workspace symlinks
  * followed to their real path, and React Native platform files via `moduleSuffixes`.
  */
-export async function createImportGraph(opts: GraphOptions): Promise<ImportGraph> {
-	const ts = await loadTs(opts.repoRoot);
+export async function createImportGraph(opts: GraphOptions): AsyncResult<ImportGraph> {
+	const loaded = await loadTs(opts.repoRoot, opts.typescript ?? resolveTypescript);
+	if (!loaded.success) return loaded;
+	const ts = loaded.data;
 	const repoRoot = real(opts.repoRoot);
 	const cache = opts.cache ?? openImportCache();
 	const suffixes = platformSuffixes(opts.platform);
@@ -260,7 +329,7 @@ export async function createImportGraph(opts: GraphOptions): Promise<ImportGraph
 		return list;
 	};
 
-	return { imports, save: () => cache.save() };
+	return ok({ imports, save: () => cache.save() });
 }
 
 /**
