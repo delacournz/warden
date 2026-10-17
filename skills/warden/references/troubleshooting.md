@@ -21,7 +21,7 @@
 | 15 | Tests run stale JS on a Release build | Native-only fingerprint | Use `native+js` with `jsInputs` in the build config |
 | 16 | Lease vanished | A bare agent claim lasts 5 min, no auto-refresh | Run through a wrapper or `warden heartbeat`; `warden ui --claim` takes over a stale lease |
 | 17 | `open` did not restart the app | `open` attaches to a running app | `warden ui open <bundleId> --relaunch` |
-| 18 | Scroll went the wrong way | `scroll` = content direction, `swipe` = finger direction | Use the other verb |
+| 18 | Scroll went the wrong way | `scroll` = content direction, `gesture swipe` = finger direction | Use the other verb |
 | 19 | Preload exits 2 with a version message | `warden` and `@delacour/warden-e2e` are lock-step | `bun add -d @delacour/warden-e2e@<warden version>` |
 | 20 | Android slow or unsupported | `uiautomator dump` (the server is off or could not start); no args on launch | Deep link instead of `--metro`; ASCII text only without the server. Check `warden ui status` / `WARDEN_E2E_DEBUG=1` for `uiad:` lines; `WARDEN_ANDROID_UIAD=0` forces the dump |
 | 21 | Form submitted by `hideKeyboard` | iOS Enter | `device.settle()` or tap elsewhere |

@@ -101,6 +101,10 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `tapAt({ x, y })` | tap a point |
 | `swipe({ direction, momentum? })` or `swipe({ from, to, durationMs? })` | `direction` up/down/left/right, `momentum` `"none" \| "slow" \| "fast"` |
 | `scrollUntilVisible(locator, { direction = "down", momentum?, maxSwipes = 10, timeout? })` | scroll the screen |
+| `screen.gesture.pinch({ scale, center?, radius?, durationMs? })` | 2 fingers; default centre = screen centre; scale > 1 zooms in |
+| `screen.gesture.rotate({ degrees, center?, radius?, durationMs? })` | 2 fingers; positive = clockwise |
+| `screen.gesture.path({ paths, durationMs? })` | 1-2 finger paths (`Point[][]`), down and lift together |
+| `screen.gesture.swipe(...)` | same as `swipe(...)` |
 
 Roles: button link textbox searchbox checkbox radio switch slider image heading text tab tablist menu menuitem list listitem row alert dialog navigation group other.
 
@@ -118,6 +122,7 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
   - `clear()`, `type(text)` (at the caret)
   - `press(key, { modifiers? })` sends a KEY (`Enter Backspace Tab Space Escape Delete Up Down Left Right`), it is not a tap. Use `tap()` to tap.
   - `swipe({ direction, momentum? })`, `scrollTo()`
+  - `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` (positive = clockwise). An unsupported gesture throws `INVALID_ARGUMENT` (more than `maxPointers` fingers, e.g. Android without `warden-uiad`): skip with `test({ platforms: ["ios"] })`.
 
 ## Matchers
 
@@ -222,6 +227,7 @@ These do not exist. Do not write them.
 
 - `app.launch`, `app.openLink`, `app.reload` (use `app.open`, `device.openLink`, `device.devtools.reloadJs()`)
 - `device.rotate` (use `device.orientation`)
+- `screen.rotate` / `screen.pinch` (use `screen.gesture.rotate` / `screen.gesture.pinch`; orientation is `device.orientation`)
 - `toBeHittable`
 - locator `scroll` / `scrollUntil` (use `locator.scrollTo()` or `screen.scrollUntilVisible()`)
 - `agent.*`
