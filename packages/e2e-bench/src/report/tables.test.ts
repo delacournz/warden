@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { loadManifest } from "../results/manifest";
 import { median } from "../results/stats";
-import { buildSampleRun } from "./fixtures/make-sample";
-import { perTestMatrix, summaryRows, untracedRows } from "./tables";
+import { buildSampleRun, withRepCpu } from "./fixtures/make-sample";
+import { cpuSecondsPerRep, perTestMatrix, summaryRows, untracedRows } from "./tables";
 
 const manifest = loadManifest(join(import.meta.dir, "../.."));
 const run = buildSampleRun();
@@ -108,5 +108,18 @@ describe("untracedRows", () => {
 			for (const rep of f.reps) for (const t of rep.tests) delete t.untracedMs;
 		}
 		expect(untracedRows(bare)).toEqual([]);
+	});
+});
+
+describe("CPU-seconds per rep (19-6)", () => {
+	test("median host CPU-seconds over the warm reps, the summary row's headline", () => {
+		const cpu = withRepCpu(run, (_f, rep) => [0, 9, 4, 6][rep] ?? 0);
+		const warden = cpu.frameworks.find((f) => f.framework === "warden");
+		if (warden?.status !== "ok") throw new Error("expected ok");
+		expect(cpuSecondsPerRep(warden)).toBe(5);
+		expect(summaryRows(cpu).find((r) => r.framework === "warden")?.cpuSecondsPerRep).toBe(5);
+	});
+	test("absent without per-rep resources (older results)", () => {
+		expect(summaryRows(run).every((r) => r.cpuSecondsPerRep === undefined)).toBe(true);
 	});
 });

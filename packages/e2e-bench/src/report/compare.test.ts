@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { loadManifest } from "../results/manifest";
 import type { BenchRun, FrameworkResult } from "../results/schema";
 import { compareRuns, delta, renderCompareMarkdown } from "./compare";
-import { buildSampleRun } from "./fixtures/make-sample";
+import { buildSampleRun, withRepCpu } from "./fixtures/make-sample";
 import { goldenText } from "./golden";
 
 const manifest = loadManifest(join(import.meta.dir, "../.."));
@@ -58,5 +58,20 @@ describe("renderCompareMarkdown", () => {
 		const same = renderCompareMarkdown(compareRuns(a, a), manifest);
 		expect(same).toContain("| 0 ms | 0.0% |");
 		expect(same).toContain("## Status changes\n\nNone.");
+	});
+});
+
+describe("compare CPU-seconds per rep (19-6)", () => {
+	test("a delta per framework both runs measured, and a section only then", () => {
+		const ca = withRepCpu(a, () => 4);
+		const cb = withRepCpu(a, () => 3);
+		const result = compareRuns(ca, cb);
+		const warden = result.frameworks.find((f) => f.framework === "warden");
+		expect(warden?.cpuSecondsPerRep).toEqual({ a: 4, b: 3, delta: -1, deltaPct: -25 });
+		const md = renderCompareMarkdown(result, manifest);
+		expect(md).toContain("## Host CPU-seconds per rep (warm)");
+		expect(md).toContain("| warden | 4.00 s | 3.00 s | -1.00 s | -25.0% |");
+		expect(compareRuns(a, a).frameworks.every((f) => f.cpuSecondsPerRep === undefined)).toBe(true);
+		expect(renderCompareMarkdown(compareRuns(a, a), manifest)).not.toContain("CPU-seconds");
 	});
 });

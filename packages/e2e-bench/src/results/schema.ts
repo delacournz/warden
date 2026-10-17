@@ -59,20 +59,6 @@ export const testResultSchema = z.object({
 });
 export type TestResult = z.infer<typeof testResultSchema>;
 
-export const repResultSchema = z.object({
-	/** 1-based */
-	index: z.number().int().positive(),
-	cold: z.boolean(),
-	/** harness-measured wall time of the whole suite process (`Bun.nanoseconds()`) */
-	wallMs: z.number(),
-	wallSource: z.literal("harness"),
-	startedAt: z.string(),
-	tests: z.array(testResultSchema),
-	/** `artifacts/<framework>/rep-<n>`, relative to the run's out dir */
-	rawArtifactDir: z.string(),
-});
-export type RepResult = z.infer<typeof repResultSchema>;
-
 export const distSchema = z.object({
 	n: z.number().int().nonnegative(),
 	median: z.number(),
@@ -84,14 +70,73 @@ export const distSchema = z.object({
 });
 export type Dist = z.infer<typeof distSchema>;
 
+/**
+ * Who a host process is, for the per-process split (K2): `bun-test` the spec process, `warden-simd` the
+ * resident iOS helper, `warden-cli` a `warden` command the bench spawned, `adb` / `emulator` the Android
+ * tools, `other` everything else (another framework's runner, xcrun, java, …).
+ */
+export const HOST_GROUPS = ["bun-test", "warden-simd", "warden-cli", "adb", "emulator", "other"] as const;
+export const hostGroupSchema = z.enum(HOST_GROUPS);
+export type HostGroup = z.infer<typeof hostGroupSchema>;
+
+/** One host group's share of a `Series` window. */
+export const groupSeriesSchema = z.object({
+	cpuSeconds: z.number(),
+	/** averaged over every tick of the window, 0 where the group had no process */
+	rssAvgBytes: z.number(),
+	rssPeakBytes: z.number(),
+});
+export type GroupSeries = z.infer<typeof groupSeriesSchema>;
+
 export const seriesSchema = z.object({
+	/** mean of the per-tick sums of `ps %cpu` (a decaying average on macOS, not a rate: kept for comparison with old runs) */
 	cpuAvgPct: z.number(),
 	cpuPeakPct: z.number(),
 	rssAvgBytes: z.number(),
 	rssPeakBytes: z.number(),
 	samples: z.number().int().nonnegative(),
+	/**
+	 * CPU time used in the window: the per-pid difference of cumulative `ps time` between ticks (10 ms
+	 * resolution on macOS). Added after v1 as optional fields (absent in older results, and for the Android
+	 * sim, whose `top` reading has no cumulative time), so `SCHEMA_VERSION` stays 1.
+	 */
+	cpuSeconds: z.number().optional(),
+	/** `cpuSeconds` over the sampled wall time of the window, in percent of one core */
+	cpuRatePct: z.number().optional(),
+	/** host only: the window split by `HostGroup` */
+	byGroup: z.partialRecord(hostGroupSchema, groupSeriesSchema).optional(),
 });
 export type Series = z.infer<typeof seriesSchema>;
+
+/**
+ * Resources of one rep's timed `run` only (no prepare, teardown, terminate or ANR check), on the sampler's
+ * clock (ms since the framework's sampler started). `cpuSeconds` / `rssPeakBytes` are the host's: the
+ * headline "host CPU-seconds per rep".
+ */
+export const repResourcesSchema = z.object({
+	window: z.object({ startMs: z.number(), endMs: z.number() }),
+	host: seriesSchema,
+	sim: seriesSchema,
+	cpuSeconds: z.number(),
+	rssPeakBytes: z.number(),
+});
+export type RepResources = z.infer<typeof repResourcesSchema>;
+
+export const repResultSchema = z.object({
+	/** 1-based */
+	index: z.number().int().positive(),
+	cold: z.boolean(),
+	/** harness-measured wall time of the whole suite process (`Bun.nanoseconds()`) */
+	wallMs: z.number(),
+	wallSource: z.literal("harness"),
+	startedAt: z.string(),
+	tests: z.array(testResultSchema),
+	/** `artifacts/<framework>/rep-<n>`, relative to the run's out dir */
+	rawArtifactDir: z.string(),
+	/** the timed run's own resources (optional: added after v1) */
+	resources: repResourcesSchema.optional(),
+});
+export type RepResult = z.infer<typeof repResultSchema>;
 
 export const perTestStatsSchema = distSchema.extend({
 	/** this framework's median over the fastest framework's median for the same test (1 = fastest) */

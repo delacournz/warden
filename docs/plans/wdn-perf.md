@@ -378,7 +378,7 @@ Not done, and why:
 - `apps/cli/src/batch.ts:585-622` (`flowPoller`): track a byte offset per `results.jsonl` and parse new lines once. Today it does a full re-read, 2 parses and a zod `safeParse` per line every second, which is quadratic.
 - `batch.ts:215` (`FRAME_MS 100`): render at 1 Hz plus on events.
 - `batch/stamped-log.ts`: children stamp their own lines (`WARDEN_LOG_STAMP=1` in the spec env); the parent pipes bytes straight through. Review `LOG_DRAIN_MS 2000`.
-- Accept: bench host CPU avg ≤ 5% for a `warden e2e example` run (sampler from `packages/e2e-bench/src/harness/sampler.ts` reused via a small script).
+- Accept: bench host CPU avg ≤ 5% for a `warden e2e example` run (sampler from `packages/e2e-bench/src/harness/sampler.ts` reused via a small script). Since the 2026-10-16 audit (19-5, 19-6) judge it on host **CPU-seconds per rep** (`RepResult.resources.cpuSeconds`, timed run only, warm median), not on the `ps %cpu` average, which moves with suite length.
 
 **PERF-5.2 · `WDN-PERF 5 - ⚡️ perf: TypeScript graph out of the parent`**
 - `packages/core/src/affected/graph.ts:28-31` (`loadTs`, 91 ms / 92 MB held for the whole run in diff mode).

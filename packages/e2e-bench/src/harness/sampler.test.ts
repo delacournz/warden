@@ -5,14 +5,21 @@ import { fakeExec } from "./exec";
 import { ownerFilter } from "./residue";
 import {
 	androidTotals,
+	type CpuReadings,
+	cpuDeltas,
+	groupOfArgv,
+	hostGroupOf,
 	isAndroidTarget,
 	liveRoots,
 	type PidStamps,
+	type PsRow,
 	parseAdbTop,
+	parseCpuTime,
 	parsePs,
 	startSampler,
 	summarize,
 	type Tick,
+	windowSummary,
 } from "./sampler";
 
 const fx = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
@@ -281,7 +288,7 @@ describe("startSampler", () => {
 		await fire();
 		await sampler.stop();
 		expect(order).toEqual(["roots", "ps"]);
-		expect(exec.calls[0]?.args).toEqual(["-axo", "pid,ppid,rss,%cpu,lstart,command"]);
+		expect(exec.calls[0]?.args).toEqual(["-axo", "pid,ppid,rss,%cpu,time,lstart,command"]);
 	});
 
 	test("a reused root pid stops counting: the new process and its children are not host load", async () => {
@@ -314,5 +321,247 @@ describe("startSampler", () => {
 		expect(sunk[0]?.hostCpuPct).toBe(10 + 20.5 + 5 + 1);
 		expect(sunk[1]?.hostCpuPct).toBe(1);
 		expect(sunk[1]?.hostRssBytes).toBe(20480 * 1024);
+	});
+});
+
+/** `ps -axo pid,ppid,rss,%cpu,time,lstart,command` as macOS prints it (`time` is `M:SS.ss`). */
+function psTimed(rows: readonly { pid: number; ppid: number; rssKb: number; time: string; cmd: string }[]): string {
+	return [
+		"  PID  PPID    RSS  %CPU      TIME STARTED                      COMMAND",
+		...rows.map(
+			(r) => `  ${r.pid}  ${r.ppid} ${r.rssKb}   5.0 ${r.time.padStart(9)} Fri Oct 16 12:07:30 2026     ${r.cmd}`
+		),
+	].join("\n");
+}
+
+describe("cumulative CPU time (19-5)", () => {
+	test("parseCpuTime reads macOS M:SS.ss and procps [DD-]HH:MM:SS", () => {
+		expect(parseCpuTime("0:01.50")).toBeCloseTo(1.5, 6);
+		expect(parseCpuTime("12:34.56")).toBeCloseTo(754.56, 6);
+		expect(parseCpuTime("01:02:03")).toBe(3723);
+		expect(parseCpuTime("1-00:00:01")).toBe(86_401);
+		expect(parseCpuTime("Fri")).toBeUndefined();
+		expect(parseCpuTime("")).toBeUndefined();
+	});
+
+	test("parsePs reads the time column next to lstart and keeps the command whole", () => {
+		const rows = parsePs(psTimed([{ pid: 100, ppid: 1, rssKb: 2048, time: "1:02.25", cmd: "bun test --preload x" }]));
+		expect(rows).toEqual([
+			{
+				pid: 100,
+				ppid: 1,
+				rssKb: 2048,
+				cpuPct: 5,
+				cpuTimeSec: 62.25,
+				startedAt: "Fri Oct 16 12:07:30 2026",
+				command: "bun test --preload x",
+			},
+		]);
+	});
+
+	const row = (pid: number, cpuTimeSec: number, startedAt = "Fri Oct 16 12:07:30 2026"): PsRow => ({
+		pid,
+		ppid: 1,
+		rssKb: 1,
+		cpuPct: 0,
+		cpuTimeSec,
+		startedAt,
+		command: "x",
+	});
+
+	test("the first snapshot is the baseline: nothing a process used before the sampler started is charged", () => {
+		const prev: CpuReadings = new Map();
+		const first = cpuDeltas([row(100, 30), row(101, 2)], prev, true);
+		expect([...first.values()]).toEqual([0, 0]);
+		const second = cpuDeltas([row(100, 30.5), row(101, 2.25)], prev, false);
+		expect(second.get(100)).toBeCloseTo(0.5, 6);
+		expect(second.get(101)).toBeCloseTo(0.25, 6);
+	});
+
+	test("a process born after the last snapshot is charged all its CPU time; a dead one drops out", () => {
+		const prev: CpuReadings = new Map();
+		cpuDeltas([row(100, 1)], prev, true);
+		const d = cpuDeltas([row(200, 0.4)], prev, false);
+		expect(d.get(200)).toBeCloseTo(0.4, 6);
+		expect(d.has(100)).toBe(false);
+		expect(prev.has(100)).toBe(false);
+	});
+
+	test("a reused pid (new start time) or a smaller reading is a new process, never a negative delta", () => {
+		const prev: CpuReadings = new Map();
+		cpuDeltas([row(100, 5), row(101, 5)], prev, true);
+		const d = cpuDeltas(
+			[row(100, 0.3, "Fri Oct 16 12:09:00 2026"), { ...row(101, 0.2), startedAt: undefined }],
+			prev,
+			false
+		);
+		expect(d.get(100)).toBeCloseTo(0.3, 6);
+		expect(d.get(101)).toBeCloseTo(0.2, 6);
+	});
+
+	test("startSampler charges per-tick CPU-seconds from time deltas, for the host and the iOS sim", async () => {
+		const snapshots = [
+			psTimed([
+				{ pid: 100, ppid: 1, rssKb: 1000, time: "0:10.00", cmd: "/opt/bun test --preload p" },
+				{ pid: 200, ppid: 1, rssKb: 500, time: "1:00.00", cmd: "/x/launchd_sim /Devices/AAAA-BBBB/x" },
+			]),
+			psTimed([
+				{ pid: 100, ppid: 1, rssKb: 1000, time: "0:10.40", cmd: "/opt/bun test --preload p" },
+				{ pid: 101, ppid: 100, rssKb: 100, time: "0:00.10", cmd: "/usr/bin/xcrun simctl io" },
+				{ pid: 200, ppid: 1, rssKb: 500, time: "1:00.25", cmd: "/x/launchd_sim /Devices/AAAA-BBBB/x" },
+			]),
+		];
+		let call = 0;
+		const exec = fakeExec([{ cmd: "ps", result: () => ({ stdout: snapshots[call++] ?? "" }) }]);
+		let fire: () => Promise<void> = async () => undefined;
+		let clock = 0;
+		const sunk: Tick[] = [];
+		const sampler = startSampler({
+			exec,
+			rootPids: () => [100],
+			processPatterns: [],
+			owned: () => [],
+			simUdid: "AAAA-BBBB",
+			platform: "ios",
+			sink: (t) => sunk.push(t),
+			setIntervalFn: (fn) => {
+				fire = fn;
+				return () => undefined;
+			},
+			now: () => clock,
+		});
+		await fire();
+		clock = 500;
+		await fire();
+		const { host, sim, ticks } = await sampler.stop();
+		expect(ticks).toHaveLength(2);
+		expect(sunk[0]?.hostCpuSec).toBe(0);
+		expect(sunk[1]?.hostCpuSec).toBeCloseTo(0.5, 6);
+		expect(sunk[1]?.simCpuSec).toBeCloseTo(0.25, 6);
+		expect(host.cpuSeconds).toBeCloseTo(0.5, 6);
+		expect(host.cpuRatePct).toBeCloseTo(100, 6);
+		expect(sim.cpuSeconds).toBeCloseTo(0.25, 6);
+		expect(sampler.elapsed()).toBe(500);
+	});
+});
+
+describe("host groups (19-7, 13-4)", () => {
+	test("groupOfArgv names the process by its argv[0] basename and first argument", () => {
+		expect(groupOfArgv("/Users/x/.bun/bin/bun", "test")).toBe("bun-test");
+		expect(groupOfArgv("/Users/x/.bun/bin/bun", "/repo/apps/cli/src/cli.ts")).toBe("warden-cli");
+		expect(groupOfArgv("/usr/local/bin/warden", "ui")).toBe("warden-cli");
+		expect(groupOfArgv("/Users/x/bin/warden-simd", "--udid")).toBe("warden-simd");
+		expect(groupOfArgv("/opt/sdk/platform-tools/adb", "-s")).toBe("adb");
+		expect(groupOfArgv("/opt/sdk/emulator/emulator", "-avd")).toBe("emulator");
+		expect(groupOfArgv("/opt/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64", "-x")).toBe("emulator");
+		expect(groupOfArgv("/usr/bin/bun", "run")).toBeUndefined();
+		expect(groupOfArgv("/opt/homebrew/bin/java", "-jar")).toBeUndefined();
+	});
+
+	test("hostGroupOf: own argv first, else the label of the nearest bench-spawned ancestor, else other", () => {
+		const rows = parsePs(
+			psTimed([
+				{ pid: 100, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/opt/bun /repo/apps/cli/src/cli.ts ui snapshot" },
+				{ pid: 101, ppid: 100, rssKb: 1, time: "0:00.00", cmd: "/usr/bin/xcrun simctl spawn" },
+				{ pid: 102, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/Users/x/bin/warden-simd --udid A" },
+				{ pid: 300, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/opt/homebrew/bin/java -jar maestro.jar" },
+				{ pid: 301, ppid: 300, rssKb: 1, time: "0:00.00", cmd: "/opt/sdk/platform-tools/adb -s e shell" },
+			])
+		);
+		const byPid = new Map(rows.map((r) => [r.pid, r]));
+		const labels = new Map([[100, "warden-cli" as const]]);
+		const group = (pid: number) => {
+			const r = byPid.get(pid);
+			return r === undefined ? undefined : hostGroupOf(r, byPid, labels);
+		};
+		expect(group(100)).toBe("warden-cli");
+		expect(group(101)).toBe("warden-cli");
+		expect(group(102)).toBe("warden-simd");
+		expect(group(300)).toBe("other");
+		expect(group(301)).toBe("adb");
+	});
+
+	test("ticks carry the host split by group and the Series sums it per group", async () => {
+		const snapshots = [
+			psTimed([
+				{ pid: 100, ppid: 1, rssKb: 1000, time: "0:01.00", cmd: "/opt/bun test --preload p" },
+				{ pid: 102, ppid: 1, rssKb: 400, time: "0:05.00", cmd: "/Users/x/bin/warden-simd --udid A" },
+				{ pid: 110, ppid: 1, rssKb: 300, time: "0:00.50", cmd: "/opt/bun /repo/apps/cli/src/cli.ts ui close" },
+			]),
+			psTimed([
+				{ pid: 100, ppid: 1, rssKb: 2000, time: "0:01.30", cmd: "/opt/bun test --preload p" },
+				{ pid: 102, ppid: 1, rssKb: 400, time: "0:05.10", cmd: "/Users/x/bin/warden-simd --udid A" },
+			]),
+		];
+		let call = 0;
+		const exec = fakeExec([{ cmd: "ps", result: () => ({ stdout: snapshots[call++] ?? "" }) }]);
+		let fire: () => Promise<void> = async () => undefined;
+		let clock = 0;
+		const sampler = startSampler({
+			exec,
+			rootPids: () => [100, 110],
+			rootLabels: () => new Map([[110, "warden-cli" as const]]),
+			processPatterns: [/warden-simd/],
+			owned: (rows) => rows,
+			platform: "ios",
+			sink: () => undefined,
+			setIntervalFn: (fn) => {
+				fire = fn;
+				return () => undefined;
+			},
+			now: () => clock,
+		});
+		await fire();
+		clock = 1000;
+		await fire();
+		const { host, ticks } = await sampler.stop();
+		expect(ticks[0]?.hostByGroup).toEqual({
+			"bun-test": { cpuSec: 0, rssBytes: 1000 * 1024 },
+			"warden-simd": { cpuSec: 0, rssBytes: 400 * 1024 },
+			"warden-cli": { cpuSec: 0, rssBytes: 300 * 1024 },
+		});
+		expect(host.byGroup?.["bun-test"]?.cpuSeconds).toBeCloseTo(0.3, 6);
+		expect(host.byGroup?.["bun-test"]).toMatchObject({ rssAvgBytes: 1500 * 1024, rssPeakBytes: 2000 * 1024 });
+		expect(host.byGroup?.["warden-simd"]?.cpuSeconds).toBeCloseTo(0.1, 6);
+		expect(host.byGroup?.["warden-cli"]).toEqual({ cpuSeconds: 0, rssAvgBytes: 150 * 1024, rssPeakBytes: 300 * 1024 });
+		const groupRss = Object.values(host.byGroup ?? {}).reduce((a, g) => a + g.rssAvgBytes, 0);
+		expect(groupRss).toBe(host.rssAvgBytes);
+	});
+});
+
+describe("windowSummary (19-6)", () => {
+	const tick = (t: number, hostCpuSec: number, hostRssBytes = 100): Tick => ({
+		t,
+		hostCpuPct: 50,
+		hostRssBytes,
+		simCpuPct: 0,
+		simRssBytes: 0,
+		hostCpuSec,
+		simCpuSec: 0,
+	});
+
+	test("charges only the part of each tick interval inside the window", () => {
+		// ticks every 500 ms, 0.5 CPU-s each (one busy core); the run is 250..1250 ms
+		const ticks = [tick(0, 0), tick(500, 0.5), tick(1000, 0.5), tick(1500, 0.5, 900)];
+		const w = windowSummary(ticks, 250, 1250);
+		expect(w.window).toEqual({ startMs: 250, endMs: 1250 });
+		expect(w.cpuSeconds).toBeCloseTo(1, 6);
+		expect(w.host.cpuRatePct).toBeCloseTo(100, 6);
+		expect(w.host.samples).toBe(2);
+		expect(w.rssPeakBytes).toBe(100);
+	});
+
+	test("a whole-framework summary is unchanged by the window, and an idle tail lowers the rate, not the seconds", () => {
+		const busy = [tick(0, 0), tick(500, 0.5), tick(1000, 0.5)];
+		const idleTail = [...busy, tick(1500, 0), tick(2000, 0)];
+		expect(summarize(busy).host.cpuSeconds).toBeCloseTo(1, 6);
+		expect(summarize(idleTail).host.cpuSeconds).toBeCloseTo(1, 6);
+		expect(summarize(idleTail).host.cpuRatePct).toBeCloseTo(50, 6);
+		expect(windowSummary(idleTail, 0, 1000).cpuSeconds).toBeCloseTo(1, 6);
+	});
+
+	test("ticks without CPU time (older ndjson) leave cpuSeconds out", () => {
+		const legacy: Tick = { t: 0, hostCpuPct: 1, hostRssBytes: 1, simCpuPct: 0, simRssBytes: 0 };
+		expect(summarize([legacy, { ...legacy, t: 500 }]).host.cpuSeconds).toBeUndefined();
 	});
 });

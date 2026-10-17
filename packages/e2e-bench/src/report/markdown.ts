@@ -1,7 +1,20 @@
 import type { Manifest } from "../results/manifest";
-import type { BenchRun, FrameworkResult, OkFrameworkResult, Series } from "../results/schema";
-import { bytes, DASH, ms, pct, ratio, signedMs } from "./format";
-import { type PerTestMatrix, perTestMatrix, type SummaryRow, summaryRows, untracedRows } from "./tables";
+import {
+	type BenchRun,
+	type FrameworkResult,
+	HOST_GROUPS,
+	type OkFrameworkResult,
+	type Series,
+} from "../results/schema";
+import { bytes, cpuSeconds, DASH, ms, pct, ratio, signedMs } from "./format";
+import {
+	cpuSecondsPerRep,
+	type PerTestMatrix,
+	perTestMatrix,
+	type SummaryRow,
+	summaryRows,
+	untracedRows,
+} from "./tables";
 
 /** The fairness rules, as recorded in every report header (see docs/plans/wdn-bench.md). */
 export const FAIRNESS_RULES: readonly string[] = [
@@ -157,22 +170,64 @@ const seriesCols = (s: Series): string[] => [
 	bytes(s.rssPeakBytes),
 ];
 
-function resourcesSection(run: BenchRun): string[] {
-	const headers = ["Framework", "Scope", "CPU avg", "CPU peak", "RSS avg", "RSS peak"];
-	const rows = run.frameworks.filter(isOk).flatMap((f) => [
-		[f.framework, "host", ...seriesCols(f.resources.host)],
-		[f.framework, "sim", ...seriesCols(f.resources.sim)],
-	]);
+const RESOURCES_NOTE =
+	"Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim` = every process of the " +
+	"simulator's `launchd_sim` tree, or on Android the app under test plus every framework's on-device helpers " +
+	"from `top` (every 2 s). RSS is a per-process sum, so shared framework " +
+	"pages are counted once per process: compare the numbers across frameworks, not against physical memory.";
+
+const CPU_NOTE =
+	"`CPU-s / rep` (the CPU headline) is the CPU time of the timed run only, median over the warm reps, from " +
+	"per-process deltas of `ps time`; the other columns are whole-framework (prepare, every rep, the per-rep " +
+	"housekeeping and teardown), so their averages move with suite length. `CPU avg` / `CPU peak` are `ps %cpu`, a " +
+	"decaying average on macOS, kept for comparison with older runs. Android `sim` has no CPU-seconds (`top` only).";
+
+/** The host split by process group (whole-framework), for runs that recorded it. */
+function groupSection(oks: readonly OkFrameworkResult[]): string[] {
+	const rows = oks.flatMap((f) =>
+		HOST_GROUPS.flatMap((g) => {
+			const s = f.resources.host.byGroup?.[g];
+			return s === undefined
+				? []
+				: [[f.framework, g, cpuSeconds(s.cpuSeconds), bytes(s.rssAvgBytes), bytes(s.rssPeakBytes)]];
+		})
+	);
+	if (rows.length === 0) return [];
 	return [
-		"## Resources",
 		"",
-		...table(headers, rows),
+		"### Host by process group",
 		"",
-		"Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim` = every process of the " +
-			"simulator's `launchd_sim` tree, or on Android the app under test plus every framework's on-device helpers " +
-			"from `top` (every 2 s). RSS is a per-process sum, so shared framework " +
-			"pages are counted once per process: compare the numbers across frameworks, not against physical memory.",
+		...table(["Framework", "Group", "CPU-s (whole)", "RSS avg", "RSS peak"], rows),
+		"",
+		"`bun-test` the spec process, `warden-simd` the resident iOS helper, `warden-cli` the `warden` commands the " +
+			"bench spawned, `adb` / `emulator` the Android tools, `other` the rest (another framework's runner, " +
+			"`xcrun`, java). Each group's RSS average counts 0 for ticks without a process, so the groups add up to the host.",
 	];
+}
+
+function resourcesSection(run: BenchRun): string[] {
+	const oks = run.frameworks.filter(isOk);
+	const withCpu = oks.some((f) => cpuSecondsPerRep(f) !== undefined || f.resources.host.cpuSeconds !== undefined);
+	if (!withCpu) {
+		const headers = ["Framework", "Scope", "CPU avg", "CPU peak", "RSS avg", "RSS peak"];
+		const rows = oks.flatMap((f) => [
+			[f.framework, "host", ...seriesCols(f.resources.host)],
+			[f.framework, "sim", ...seriesCols(f.resources.sim)],
+		]);
+		return ["## Resources", "", ...table(headers, rows), "", RESOURCES_NOTE];
+	}
+	const headers = ["Framework", "Scope", "CPU-s / rep", "CPU-s (whole)", "CPU avg", "CPU peak", "RSS avg", "RSS peak"];
+	const rows = oks.flatMap((f) => [
+		[
+			f.framework,
+			"host",
+			cpuSeconds(cpuSecondsPerRep(f)),
+			cpuSeconds(f.resources.host.cpuSeconds),
+			...seriesCols(f.resources.host),
+		],
+		[f.framework, "sim", DASH, cpuSeconds(f.resources.sim.cpuSeconds), ...seriesCols(f.resources.sim)],
+	]);
+	return ["## Resources", "", ...table(headers, rows), "", RESOURCES_NOTE, "", CPU_NOTE, ...groupSection(oks)];
 }
 
 function residueSection(run: BenchRun): string[] {

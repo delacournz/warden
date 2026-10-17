@@ -1,8 +1,12 @@
 import type { Manifest } from "../results/manifest";
 import { type BenchRun, CANONICAL_IDS, type CanonicalId, type FrameworkResult } from "../results/schema";
-import { DASH, ms, signedMs, signedPct } from "./format";
+import { cpuSeconds, DASH, ms, signedCpuSeconds, signedMs, signedPct } from "./format";
+import { cpuSecondsPerRep } from "./tables";
 
 type FrameworkKey = FrameworkResult["framework"];
+
+/** A before/after pair of host CPU-seconds per rep. */
+export type CpuDelta = { a: number; b: number; delta: number; deltaPct: number };
 
 /** A before/after pair of one duration (ms) with the change from `a` to `b`. */
 export type Delta = { aMs: number; bMs: number; deltaMs: number; deltaPct: number };
@@ -15,6 +19,8 @@ export type FrameworkCompare = {
 	bStatus: FrameworkResult["status"];
 	/** only when both runs have the framework `ok` with a finite warm suite median */
 	suite?: Delta;
+	/** host CPU-seconds per rep, only when both runs recorded per-rep resources */
+	cpuSecondsPerRep?: CpuDelta;
 	tests: TestDelta[];
 };
 
@@ -44,7 +50,15 @@ function compareOne(a: FrameworkResult, b: FrameworkResult): FrameworkCompare {
 		const d = delta(a.stats.perTest[id]?.median ?? Number.NaN, b.stats.perTest[id]?.median ?? Number.NaN);
 		return d ? [{ id, delta: d }] : [];
 	});
-	return { ...base, ...(suite ? { suite } : {}), tests };
+	const ca = cpuSecondsPerRep(a);
+	const cb = cpuSecondsPerRep(b);
+	const cpu = ca !== undefined && cb !== undefined ? delta(ca, cb) : undefined;
+	return {
+		...base,
+		...(suite ? { suite } : {}),
+		...(cpu ? { cpuSecondsPerRep: { a: cpu.aMs, b: cpu.bMs, delta: cpu.deltaMs, deltaPct: cpu.deltaPct } } : {}),
+		tests,
+	};
 }
 
 /** Diffs two runs: per framework present in both (suite and per-test), status changes, and one-sided frameworks. */
@@ -86,6 +100,21 @@ function suiteSection(result: CompareResult): string[] {
 	];
 }
 
+function cpuSection(result: CompareResult): string[] {
+	const measured = result.frameworks.flatMap((f) => (f.cpuSecondsPerRep ? [{ f, c: f.cpuSecondsPerRep }] : []));
+	if (measured.length === 0) return [];
+	return [
+		"",
+		"## Host CPU-seconds per rep (warm)",
+		"",
+		row(["Framework", "A", "B", "Delta", "Delta %"]),
+		row(["---", "---", "---", "---", "---"]),
+		...measured.map(({ f, c }) =>
+			row([f.framework, cpuSeconds(c.a), cpuSeconds(c.b), signedCpuSeconds(c.delta), signedPct(c.deltaPct)])
+		),
+	];
+}
+
 function testSection(result: CompareResult, manifest: Manifest): string[] {
 	const out: string[] = [];
 	for (const f of result.frameworks.filter((x) => x.tests.length > 0)) {
@@ -114,6 +143,7 @@ export function renderCompareMarkdown(result: CompareResult, manifest: Manifest)
 		`- **B:** \`${result.b.id}\` (${result.b.startedAt.slice(0, 10)})`,
 		"",
 		...suiteSection(result),
+		...cpuSection(result),
 		...testSection(result, manifest),
 		...listSection(
 			"Status changes",
