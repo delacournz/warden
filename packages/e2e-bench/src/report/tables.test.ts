@@ -122,4 +122,17 @@ describe("CPU-seconds per rep (19-6)", () => {
 	test("absent without per-rep resources (older results)", () => {
 		expect(summaryRows(run).every((r) => r.cpuSecondsPerRep === undefined)).toBe(true);
 	});
+	test("reps whose resources have no CPU time are skipped, and none at all is absent, not 0 (bench-fidelity-R1)", () => {
+		const cpu = withRepCpu(run, (_f, rep) => [0, 9, 4, 6][rep] ?? 0);
+		const warden = cpu.frameworks.find((f) => f.framework === "warden");
+		if (warden?.status !== "ok") throw new Error("expected ok");
+		const drop = (r: (typeof warden.reps)[number]) => {
+			if (r.resources !== undefined) delete r.resources.cpuSeconds;
+		};
+		const third = warden.reps.find((r) => r.index === 3);
+		if (third !== undefined) drop(third);
+		expect(cpuSecondsPerRep(warden)).toBe(4);
+		for (const r of warden.reps) drop(r);
+		expect(cpuSecondsPerRep(warden)).toBeUndefined();
+	});
 });

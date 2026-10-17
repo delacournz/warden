@@ -177,10 +177,15 @@ const RESOURCES_NOTE =
 	"pages are counted once per process: compare the numbers across frameworks, not against physical memory.";
 
 const CPU_NOTE =
-	"`CPU-s / rep` (the CPU headline) is the CPU time of the timed run only, median over the warm reps, from " +
+	"`CPU-s / rep` (the CPU headline) is the CPU time of the timed run only, median over the warm reps (over " +
+	"every rep, cold included, when a framework has no warm rep, as with `--runs 1`), from " +
 	"per-process deltas of `ps time`; the other columns are whole-framework (prepare, every rep, the per-rep " +
 	"housekeeping and teardown), so their averages move with suite length. `CPU avg` / `CPU peak` are `ps %cpu`, a " +
-	"decaying average on macOS, kept for comparison with older runs. Android `sim` has no CPU-seconds (`top` only).";
+	"decaying average on macOS, kept for comparison with older runs. Android `sim` has no CPU-seconds (`top` only). " +
+	"CPU-seconds undercount: CPU a process uses after the last 500 ms tick, and processes living between ticks, " +
+	"are only recovered for children the bench ran itself (their rusage at exit); daemons and processes a framework " +
+	"spawns and never waits for are not, so frameworks that fan out to many short-lived tools read low. procps " +
+	"(Linux) `ps time` has 1 s resolution.";
 
 /** The host split by process group (whole-framework), for runs that recorded it. */
 function groupSection(oks: readonly OkFrameworkResult[]): string[] {

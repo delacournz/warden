@@ -12,7 +12,14 @@ import { hostInfo } from "./harness/host";
 import { isolate, recordAnimationScales, restoreAnimationScales } from "./harness/isolation";
 import { openPhaseLog, timed } from "./harness/phases";
 import { diffResidue, type Owner, ownerFilter, snapshotResidue } from "./harness/residue";
-import { groupOfArgv, type SamplerOptions, startSampler, type Tick, windowSummary } from "./harness/sampler";
+import {
+	type ExitCharge,
+	groupOfArgv,
+	type SamplerOptions,
+	startSampler,
+	type Tick,
+	windowSummary,
+} from "./harness/sampler";
 import { cpuSeconds as fmtCpu, ms as fmtMs, pct as fmtPct, ratio as fmtRatio } from "./report/format";
 import { renderMarkdown } from "./report/markdown";
 import { benchSummary } from "./report/summary";
@@ -87,6 +94,8 @@ type Session = {
 	pids: Set<number>;
 	/** the host group each spawned pid was started as (`trackingExec`) */
 	labels: Map<number, HostGroup>;
+	/** where `trackingExec` reports a `run` child's CPU time at exit: the running sampler, if any */
+	exitHook: { current?: (pid: number, cpuSec: number) => void };
 	env: Record<string, string | undefined>;
 	log: (line: string) => void;
 };
@@ -105,14 +114,32 @@ export function runStamp(date: Date): string {
  * Wraps `base` so every spawned child's pid lands in `pids` (the sampler's root pids) and, when given,
  * `labels` records what it was spawned as (`groupOfArgv` of the command and its first argument, else
  * `other`), so the sampler can attribute a child whose own argv does not say (an `xcrun` under `warden`).
+ * `onExit` gets each `run` child's CPU time at exit (`ExecResult.cpuSec`), for the sampler's exit charge.
  */
-export function trackingExec(base: Exec, pids: Set<number>, labels?: Map<number, HostGroup>): Exec {
+export function trackingExec(
+	base: Exec,
+	pids: Set<number>,
+	labels?: Map<number, HostGroup>,
+	onExit?: (pid: number, cpuSec: number) => void
+): Exec {
 	const register = (cmd: string, args: readonly string[]) => (pid: number) => {
 		pids.add(pid);
 		labels?.set(pid, groupOfArgv(cmd, args[0]) ?? "other");
 	};
 	return {
-		run: (cmd, args, options) => base.run(cmd, args, { ...options, onSpawn: chain(options, register(cmd, args)) }),
+		run: async (cmd, args, options) => {
+			let spawned: number | undefined;
+			const own = register(cmd, args);
+			const result = await base.run(cmd, args, {
+				...options,
+				onSpawn: chain(options, (pid) => {
+					spawned = pid;
+					own(pid);
+				}),
+			});
+			if (spawned !== undefined && result.cpuSec !== undefined) onExit?.(spawned, result.cpuSec);
+			return result;
+		},
 		start: (cmd, args, options): Child => {
 			const own = register(cmd, args);
 			const child = base.start(cmd, args, { ...options, onSpawn: chain(options, own) });
@@ -354,7 +381,13 @@ async function measure(fc: FrameworkCtx, version: string): Promise<FrameworkResu
 		platform: s.opts.platform,
 		...(s.deps.samplerIntervalMs !== undefined ? { intervalMs: s.deps.samplerIntervalMs } : {}),
 		sink: (tick: Tick) => appendTick(tickFile.path, tick),
+		log: (line: string) => s.log(`${adapter.id}: ${line}`),
 	});
+	// exit CPU only for children spawned while this sampler runs (an older child's rusage predates it)
+	const spawnedBefore = new Set(s.pids);
+	s.exitHook.current = (pid, cpuSec) => {
+		if (!spawnedBefore.has(pid)) sampler.exited(pid, cpuSec);
+	};
 	const st: PhaseState = {
 		reps: [],
 		prepareMs: 0,
@@ -369,8 +402,9 @@ async function measure(fc: FrameworkCtx, version: string): Promise<FrameworkResu
 	} catch (e) {
 		outcome = { kind: "failed", phase: "run", error: e instanceof Error ? e.message : String(e) };
 	}
-	const { ticks, ...resources } = await sampler.stop();
-	st.reps = withRepResources(st.reps, st.windows, ticks);
+	s.exitHook.current = undefined;
+	const { ticks, exits, ...resources } = await sampler.stop();
+	st.reps = withRepResources(st.reps, st.windows, ticks, exits);
 	const problem = toResult(outcome, adapter.id, version, st.reps);
 	if (problem !== undefined) return problem;
 	const residue = await diffResidue({ ...probe, owner, before });
@@ -392,11 +426,12 @@ async function measure(fc: FrameworkCtx, version: string): Promise<FrameworkResu
 function withRepResources(
 	reps: readonly RepResult[],
 	windows: ReadonlyMap<number, { startMs: number; endMs: number }>,
-	ticks: readonly Tick[]
+	ticks: readonly Tick[],
+	exits: readonly ExitCharge[]
 ): RepResult[] {
 	return reps.map((r) => {
 		const w = windows.get(r.index);
-		return w === undefined ? r : { ...r, resources: windowSummary(ticks, w.startMs, w.endMs) };
+		return w === undefined ? r : { ...r, resources: windowSummary(ticks, w.startMs, w.endMs, exits) };
 	});
 }
 
@@ -422,8 +457,12 @@ export function writeReports(runDir: string, run: BenchRun, deps: Pick<BenchDeps
 
 /** A short console table of the summary rows. */
 export function summaryLines(run: BenchRun): string[] {
-	const header = ["framework", "status", "version", "median", "ratio", "pass", "flake", "cold start", "cpu-s/rep"];
-	const rows = summaryRows(run).map((r) => [
+	const summary = summaryRows(run);
+	// the CPU-seconds column only when some framework has one (else the pre-19-6 layout)
+	const withCpu = summary.some((r) => r.cpuSecondsPerRep !== undefined);
+	const header = ["framework", "status", "version", "median", "ratio", "pass", "flake", "cold start"];
+	if (withCpu) header.push("cpu-s/rep");
+	const rows = summary.map((r) => [
 		r.framework,
 		r.status,
 		r.version ?? "-",
@@ -432,7 +471,7 @@ export function summaryLines(run: BenchRun): string[] {
 		fmtPct(r.passRate),
 		fmtPct(r.flakeRate),
 		fmtMs(r.coldStartMs),
-		fmtCpu(r.cpuSecondsPerRep),
+		...(withCpu ? [fmtCpu(r.cpuSecondsPerRep)] : []),
 	]);
 	const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
 	const line = (cols: readonly string[]) =>
@@ -606,15 +645,17 @@ export async function runBench(opts: BenchOptions, deps: BenchDeps): AsyncResult
 		writeBenchResults(runDir, run);
 		const pids = new Set<number>();
 		const labels = new Map<number, HostGroup>();
+		const exitHook: Session["exitHook"] = {};
 		const session: Session = {
 			opts,
 			deps,
 			runDir,
 			device: prepared.data.device,
 			app: prepared.data.app,
-			exec: trackingExec(deps.exec, pids, labels),
+			exec: trackingExec(deps.exec, pids, labels, (pid, cpuSec) => exitHook.current?.(pid, cpuSec)),
 			pids,
 			labels,
+			exitHook,
 			env: envFor(opts, deps.env),
 			log,
 		};

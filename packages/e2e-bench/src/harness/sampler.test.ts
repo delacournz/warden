@@ -565,3 +565,205 @@ describe("windowSummary (19-6)", () => {
 		expect(summarize([legacy, { ...legacy, t: 500 }]).host.cpuSeconds).toBeUndefined();
 	});
 });
+
+describe("review fixes (bench-fidelity R1-R3, R8)", () => {
+	const drive = (stdouts: readonly string[], extra: { logs?: string[] } = {}) => {
+		let call = 0;
+		const exec = fakeExec([{ cmd: "ps", result: () => ({ stdout: stdouts[call++] ?? "" }) }]);
+		let fire: () => Promise<void> = async () => undefined;
+		let clock = 0;
+		const sampler = startSampler({
+			exec,
+			rootPids: () => [100],
+			processPatterns: [],
+			owned: () => [],
+			platform: "ios",
+			sink: () => undefined,
+			...(extra.logs !== undefined ? { log: (line: string) => extra.logs?.push(line) } : {}),
+			setIntervalFn: (fn) => {
+				fire = fn;
+				return () => undefined;
+			},
+			now: () => clock,
+		});
+		return {
+			exec,
+			sampler,
+			async tickAt(t: number) {
+				clock = t;
+				await fire();
+			},
+		};
+	};
+
+	test("R1: a window over untimed ticks has no cpuSeconds (not 0)", () => {
+		const legacy: Tick = { t: 0, hostCpuPct: 1, hostRssBytes: 1, simCpuPct: 0, simRssBytes: 0 };
+		const w = windowSummary([legacy, { ...legacy, t: 500 }], 0, 500);
+		expect(w.cpuSeconds).toBeUndefined();
+		expect("cpuSeconds" in w).toBe(false);
+		expect(w.rssPeakBytes).toBe(1);
+	});
+
+	test("R2: with a time + lstart header, a row whose time does not parse keeps its command and start time", () => {
+		const odd = [
+			"  PID  PPID    RSS  %CPU      TIME STARTED                      COMMAND",
+			"  100     1   2048   5.0   0:01,50 Fri Oct 16 12:07:30 2026     /opt/bun test --preload p",
+		].join("\n");
+		expect(parsePs(odd)).toEqual([
+			{
+				pid: 100,
+				ppid: 1,
+				rssKb: 2048,
+				cpuPct: 5,
+				startedAt: "Fri Oct 16 12:07:30 2026",
+				command: "/opt/bun test --preload p",
+			},
+		]);
+	});
+
+	test("R2: the sampler logs once when ps succeeded but no row had a CPU time", async () => {
+		const odd = [
+			"  PID  PPID    RSS  %CPU      TIME STARTED                      COMMAND",
+			"  100     1   2048   5.0   0:01,50 Fri Oct 16 12:07:30 2026     /opt/bun test --preload p",
+		].join("\n");
+		const logs: string[] = [];
+		const d = drive([odd, odd, odd], { logs });
+		await d.tickAt(0);
+		await d.tickAt(500);
+		await d.tickAt(1000);
+		const { host } = await d.sampler.stop();
+		expect(host.cpuSeconds).toBeUndefined();
+		expect(logs).toHaveLength(1);
+		expect(logs[0]).toContain("no row had a CPU time");
+	});
+
+	test("R3: a grandchild of warden-simd under bun test is warden-simd, not bun-test", () => {
+		const rows = parsePs(
+			psTimed([
+				{ pid: 100, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/opt/bun test --preload p" },
+				{ pid: 101, ppid: 100, rssKb: 1, time: "0:00.00", cmd: "/Users/x/bin/warden-simd --udid A" },
+				{ pid: 102, ppid: 101, rssKb: 1, time: "0:00.00", cmd: "/usr/bin/xcrun simctl io A screenshot" },
+				{ pid: 103, ppid: 102, rssKb: 1, time: "0:00.00", cmd: "/usr/bin/simctl io A screenshot" },
+				{ pid: 104, ppid: 100, rssKb: 1, time: "0:00.00", cmd: "/usr/bin/xcrun simctl launch A" },
+			])
+		);
+		const byPid = new Map(rows.map((r) => [r.pid, r]));
+		const labels = new Map([[100, "bun-test" as const]]);
+		const group = (pid: number) => {
+			const r = byPid.get(pid);
+			return r === undefined ? undefined : hostGroupOf(r, byPid, labels);
+		};
+		expect(group(102)).toBe("warden-simd");
+		expect(group(103)).toBe("warden-simd");
+		expect(group(104)).toBe("bun-test");
+	});
+
+	test("R8: ps runs with TZ=UTC (and the C locale) so lstart does not move with DST or the user's locale", async () => {
+		const d = drive([psTimed([{ pid: 100, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/opt/bun test" }])]);
+		await d.tickAt(0);
+		await d.sampler.stop();
+		const ps = d.exec.calls.find((c) => c.cmd === "ps");
+		expect(ps?.options?.env).toMatchObject({ TZ: "UTC", LC_ALL: "C" });
+	});
+});
+
+describe("exit CPU of bench-spawned roots (bench-fidelity-R4)", () => {
+	const setup = (snapshots: readonly ((exitNow: () => void) => string)[]) => {
+		let call = 0;
+		let onPs: () => void = () => undefined;
+		const exec = fakeExec([
+			{
+				cmd: "ps",
+				result: () => ({ stdout: snapshots[call++]?.(() => onPs()) ?? "" }),
+			},
+		]);
+		let fire: () => Promise<void> = async () => undefined;
+		let clock = 0;
+		const roots: number[] = [];
+		const sampler = startSampler({
+			exec,
+			rootPids: () => [...roots],
+			rootLabels: () => new Map([[100, "bun-test" as const]]),
+			processPatterns: [],
+			owned: () => [],
+			platform: "ios",
+			sink: () => undefined,
+			setIntervalFn: (fn) => {
+				fire = fn;
+				return () => undefined;
+			},
+			now: () => clock,
+		});
+		return {
+			sampler,
+			roots,
+			setClock: (t: number) => {
+				clock = t;
+			},
+			duringPs: (fn: () => void) => {
+				onPs = fn;
+			},
+			async tickAt(t: number) {
+				clock = t;
+				await fire();
+			},
+		};
+	};
+	const bunTest = (time: string) => ({ pid: 100, ppid: 1, rssKb: 1, time, cmd: "/opt/bun test --preload p" });
+	const child = (time: string) => ({ pid: 101, ppid: 100, rssKb: 1, time, cmd: "/usr/bin/xcrun simctl io" });
+
+	test("a root's CPU at exit beyond what ps last saw of its tree is charged at the exit time", async () => {
+		const d = setup([() => psTimed([]), () => psTimed([bunTest("0:00.40"), child("0:00.10")]), () => psTimed([])]);
+		await d.tickAt(0);
+		d.roots.push(100);
+		await d.tickAt(500);
+		d.setClock(700);
+		d.sampler.exited(100, 1.2);
+		await d.tickAt(1000);
+		const { host, ticks, exits } = await d.sampler.stop();
+		expect(exits).toEqual([{ t: 700, cpuSec: expect.closeTo(0.7, 6), group: "bun-test" }]);
+		// 0.5 seen by the ticks (a process born since the baseline) + 0.7 at exit = the root's rusage
+		expect(host.cpuSeconds).toBeCloseTo(1.2, 6);
+		expect(host.byGroup?.["bun-test"]?.cpuSeconds).toBeCloseTo(1.2, 6);
+		expect(windowSummary(ticks, 600, 800, exits).cpuSeconds).toBeCloseTo(0.7, 6);
+		expect(windowSummary(ticks, 800, 1000, exits).cpuSeconds).toBeCloseTo(0, 6);
+	});
+
+	test("a root no tick saw is charged its whole CPU time", async () => {
+		const launchd = { pid: 1, ppid: 0, rssKb: 1, time: "1:00.00", cmd: "/sbin/launchd" };
+		const d = setup([() => psTimed([launchd]), () => psTimed([launchd])]);
+		await d.tickAt(0);
+		d.roots.push(100);
+		d.setClock(200);
+		d.sampler.exited(100, 0.3);
+		await d.tickAt(500);
+		const { host, exits } = await d.sampler.stop();
+		expect(exits).toEqual([{ t: 200, cpuSec: 0.3, group: "bun-test" }]);
+		expect(host.cpuSeconds).toBeCloseTo(0.3, 6);
+	});
+
+	test("an exit reported while a tick's ps is in flight is settled after that tick (no double charge)", async () => {
+		const d = setup([
+			() => psTimed([bunTest("0:00.20")]),
+			(exitNow) => {
+				exitNow();
+				return psTimed([bunTest("0:00.50")]);
+			},
+		]);
+		d.roots.push(100);
+		await d.tickAt(0);
+		d.duringPs(() => d.sampler.exited(100, 0.9));
+		await d.tickAt(500);
+		const { host, exits } = await d.sampler.stop();
+		expect(exits).toHaveLength(1);
+		expect(exits[0]?.cpuSec).toBeCloseTo(0.4, 6);
+		// 0.3 tick delta + 0.4 at exit = 0.9 - 0.2 (the baseline reading)
+		expect(host.cpuSeconds).toBeCloseTo(0.7, 6);
+	});
+
+	test("untimed ticks take no exit charge (no CPU-seconds at all)", () => {
+		const legacy: Tick = { t: 0, hostCpuPct: 1, hostRssBytes: 1, simCpuPct: 0, simRssBytes: 0 };
+		const w = windowSummary([legacy, { ...legacy, t: 500 }], 0, 500, [{ t: 100, cpuSec: 1, group: "other" }]);
+		expect(w.cpuSeconds).toBeUndefined();
+	});
+});

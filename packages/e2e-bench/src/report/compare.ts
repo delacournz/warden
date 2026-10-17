@@ -1,12 +1,15 @@
 import type { Manifest } from "../results/manifest";
 import { type BenchRun, CANONICAL_IDS, type CanonicalId, type FrameworkResult } from "../results/schema";
 import { cpuSeconds, DASH, ms, signedCpuSeconds, signedMs, signedPct } from "./format";
-import { cpuSecondsPerRep } from "./tables";
+import { cpuSecondsPerRep, hasWarmRep } from "./tables";
 
 type FrameworkKey = FrameworkResult["framework"];
 
-/** A before/after pair of host CPU-seconds per rep. */
-export type CpuDelta = { a: number; b: number; delta: number; deltaPct: number };
+/**
+ * A before/after pair of host CPU-seconds per rep (warm median). `allReps` when either run had no warm rep
+ * (`--runs 1`), so that side's figure is the median over all its reps, cold included.
+ */
+export type CpuDelta = { a: number; b: number; delta: number; deltaPct: number; allReps?: true };
 
 /** A before/after pair of one duration (ms) with the change from `a` to `b`. */
 export type Delta = { aMs: number; bMs: number; deltaMs: number; deltaPct: number };
@@ -53,10 +56,21 @@ function compareOne(a: FrameworkResult, b: FrameworkResult): FrameworkCompare {
 	const ca = cpuSecondsPerRep(a);
 	const cb = cpuSecondsPerRep(b);
 	const cpu = ca !== undefined && cb !== undefined ? delta(ca, cb) : undefined;
+	const allReps = !hasWarmRep(a) || !hasWarmRep(b);
 	return {
 		...base,
 		...(suite ? { suite } : {}),
-		...(cpu ? { cpuSecondsPerRep: { a: cpu.aMs, b: cpu.bMs, delta: cpu.deltaMs, deltaPct: cpu.deltaPct } } : {}),
+		...(cpu
+			? {
+					cpuSecondsPerRep: {
+						a: cpu.aMs,
+						b: cpu.bMs,
+						delta: cpu.deltaMs,
+						deltaPct: cpu.deltaPct,
+						...(allReps ? { allReps: true as const } : {}),
+					},
+				}
+			: {}),
 		tests,
 	};
 }
@@ -110,8 +124,20 @@ function cpuSection(result: CompareResult): string[] {
 		row(["Framework", "A", "B", "Delta", "Delta %"]),
 		row(["---", "---", "---", "---", "---"]),
 		...measured.map(({ f, c }) =>
-			row([f.framework, cpuSeconds(c.a), cpuSeconds(c.b), signedCpuSeconds(c.delta), signedPct(c.deltaPct)])
+			row([
+				c.allReps ? `${f.framework} (all reps)` : f.framework,
+				cpuSeconds(c.a),
+				cpuSeconds(c.b),
+				signedCpuSeconds(c.delta),
+				signedPct(c.deltaPct),
+			])
 		),
+		...(measured.some(({ c }) => c.allReps)
+			? [
+					"",
+					"`(all reps)`: a run had no warm rep (`--runs 1`), so its figure is the median over every rep, cold included.",
+				]
+			: []),
 	];
 }
 

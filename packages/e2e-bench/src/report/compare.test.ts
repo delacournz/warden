@@ -74,4 +74,29 @@ describe("compare CPU-seconds per rep (19-6)", () => {
 		expect(compareRuns(a, a).frameworks.every((f) => f.cpuSecondsPerRep === undefined)).toBe(true);
 		expect(renderCompareMarkdown(compareRuns(a, a), manifest)).not.toContain("CPU-seconds");
 	});
+
+	test("a run without warm reps (--runs 1) is labelled all reps, not passed off as warm (bench-fidelity-R6)", () => {
+		const coldOnly = (run: BenchRun): BenchRun => {
+			const out = structuredClone(run);
+			for (const f of out.frameworks) if (f.status === "ok") f.reps = f.reps.filter((r) => r.cold);
+			return out;
+		};
+		const result = compareRuns(
+			coldOnly(withRepCpu(a, () => 4)),
+			withRepCpu(a, () => 3)
+		);
+		const warden = result.frameworks.find((f) => f.framework === "warden");
+		expect(warden?.cpuSecondsPerRep).toEqual({ a: 4, b: 3, delta: -1, deltaPct: -25, allReps: true });
+		const md = renderCompareMarkdown(result, manifest);
+		expect(md).toContain("| warden (all reps) | 4.00 s | 3.00 s | -1.00 s | -25.0% |");
+		expect(md).toContain("no warm rep");
+		const warm = renderCompareMarkdown(
+			compareRuns(
+				withRepCpu(a, () => 4),
+				withRepCpu(a, () => 3)
+			),
+			manifest
+		);
+		expect(warm).not.toContain("(all reps)");
+	});
 });

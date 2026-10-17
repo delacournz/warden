@@ -111,13 +111,14 @@ export type Series = z.infer<typeof seriesSchema>;
 /**
  * Resources of one rep's timed `run` only (no prepare, teardown, terminate or ANR check), on the sampler's
  * clock (ms since the framework's sampler started). `cpuSeconds` / `rssPeakBytes` are the host's: the
- * headline "host CPU-seconds per rep".
+ * headline "host CPU-seconds per rep". `cpuSeconds` is absent when the sampler had no CPU time (ps
+ * without a usable `time` column), so such a run is not reported as 0 CPU-s.
  */
 export const repResourcesSchema = z.object({
 	window: z.object({ startMs: z.number(), endMs: z.number() }),
 	host: seriesSchema,
 	sim: seriesSchema,
-	cpuSeconds: z.number(),
+	cpuSeconds: z.number().optional(),
 	rssPeakBytes: z.number(),
 });
 export type RepResources = z.infer<typeof repResourcesSchema>;

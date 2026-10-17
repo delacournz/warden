@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok } from "@delacour/warden-types/result";
 import { type BenchAdapter, type FrameworkId, failed, type RunContext, unsupported } from "./adapters/adapter.types";
-import { type FakeRule, fakeExec } from "./harness/exec";
-import type { SamplerOptions, Tick } from "./harness/sampler";
+import { type Exec, type FakeRule, fakeExec } from "./harness/exec";
+import type { ExitCharge, SamplerOptions, Tick } from "./harness/sampler";
 import {
 	type BenchDeps,
 	type BenchOptions,
@@ -434,7 +434,11 @@ describe("runBench", () => {
 
 describe("per-rep resources (19-6)", () => {
 	/** A sampler whose clock is a counter the test advances; ticks are canned. */
-	function fakeSampler(ticks: Tick[], seen: { options?: SamplerOptions; marks: number[] }) {
+	function fakeSampler(
+		ticks: Tick[],
+		seen: { options?: SamplerOptions; marks: number[]; exited?: [number, number][] },
+		exits: ExitCharge[] = []
+	) {
 		let clock = 0;
 		return {
 			advance: (ms: number) => {
@@ -447,7 +451,11 @@ describe("per-rep resources (19-6)", () => {
 						seen.marks.push(clock);
 						return clock;
 					},
+					exited: (pid: number, cpuSec: number) => {
+						seen.exited?.push([pid, cpuSec]);
+					},
 					stop: async () => ({
+						exits,
 						host: { cpuAvgPct: 0, cpuPeakPct: 0, rssAvgBytes: 0, rssPeakBytes: 0, samples: ticks.length },
 						sim: { cpuAvgPct: 0, cpuPeakPct: 0, rssAvgBytes: 0, rssPeakBytes: 0, samples: ticks.length },
 						ticks,
@@ -506,6 +514,45 @@ describe("per-rep resources (19-6)", () => {
 		expect(f.resources.host.samples).toBe(13);
 		expect(seen.options?.rootLabels).toBeFunction();
 	});
+
+	test("a run child's CPU at exit reaches the sampler, and its charge lands in that rep's window (bench-fidelity-R4)", async () => {
+		const calls: Calls = [];
+		const ticks = Array.from({ length: 13 }, (_, i) => tick(i * 500, i === 0 ? 0 : 1));
+		const seen: { options?: SamplerOptions; marks: number[]; exited: [number, number][] } = { marks: [], exited: [] };
+		const sampler = fakeSampler(ticks, seen, [{ t: 2000, cpuSec: 0.25, group: "bun-test" }]);
+		const runner = adapter("warden", calls, {
+			async prepare() {
+				sampler.advance(1000);
+				return ok(undefined);
+			},
+			async run(ctx) {
+				sampler.advance(1000);
+				await ctx.exec.run("fake-runner", ["test"]);
+				return ok(rep(1));
+			},
+		});
+		const t = setup([runner]);
+		const base = t.deps.exec.run;
+		t.deps.exec = {
+			...t.deps.exec,
+			run: async (cmd, args, options) => {
+				if (cmd === "xcrun" && args.includes("terminate") && seen.options !== undefined) sampler.advance(500);
+				if (cmd !== "fake-runner") return base(cmd, args, options);
+				options?.onSpawn?.(7000 + seen.exited.length);
+				return { code: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false, cpuSec: 0.5 };
+			},
+		};
+		const outcome = await runBench(t.opts, { ...t.deps, startSampler: sampler.start });
+		if (!outcome.success) throw new Error(outcome.error);
+		const f = outcome.data.run.frameworks[0];
+		if (f?.status !== "ok") throw new Error("expected ok");
+		expect(seen.exited).toEqual([
+			[7000, 0.5],
+			[7001, 0.5],
+			[7002, 0.5],
+		]);
+		expect(f.reps.map((r) => r.resources?.cpuSeconds)).toEqual([2.25, 2, 2]);
+	});
 });
 
 describe("helpers", () => {
@@ -538,6 +585,20 @@ describe("helpers", () => {
 		expect(labels.get(4242)).toBe("bun-test");
 	});
 
+	test("trackingExec hands each run's CPU time at exit to onExit with its pid (bench-fidelity-R4)", async () => {
+		const base: Exec = {
+			...fakeExec(),
+			run: async (_cmd, _args, options) => {
+				options?.onSpawn?.(4242);
+				return { code: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false, cpuSec: 0.75 };
+			},
+		};
+		const exits: [number, number][] = [];
+		const exec = trackingExec(base, new Set(), new Map(), (pid, cpuSec) => exits.push([pid, cpuSec]));
+		await exec.run("/opt/bun", ["test"]);
+		expect(exits).toEqual([[4242, 0.75]]);
+	});
+
 	test("trackingExec records pids from run (onSpawn) and start", async () => {
 		const pids = new Set<number>();
 		const base = fakeExec([{ cmd: "x", result: {} }]);
@@ -560,8 +621,27 @@ describe("helpers", () => {
 		if (!outcome.success) throw new Error(outcome.error);
 		const lines = summaryLines(outcome.data.run);
 		expect(lines[0]).toStartWith("framework");
-		expect(lines[0]).toContain("cpu-s/rep");
+		expect(lines[0]).not.toContain("cpu-s/rep");
 		expect(lines).toHaveLength(2);
+		const f = outcome.data.run.frameworks[0];
+		if (f?.status !== "ok") throw new Error("expected ok");
+		// no ps here: no CPU time, so the reps carry none and the console keeps the legacy columns (bench-fidelity-R1)
+		expect(f.reps.every((r) => r.resources === undefined || r.resources.cpuSeconds === undefined)).toBe(true);
+		const timed = structuredClone(outcome.data.run);
+		const tf = timed.frameworks[0];
+		if (tf?.status !== "ok") throw new Error("expected ok");
+		tf.reps = tf.reps.map((r) => ({
+			...r,
+			resources: {
+				window: { startMs: 0, endMs: 1 },
+				host: tf.resources.host,
+				sim: tf.resources.sim,
+				cpuSeconds: 1.5,
+				rssPeakBytes: 0,
+			},
+		}));
+		expect(summaryLines(timed)[0]).toContain("cpu-s/rep");
+		expect(summaryLines(timed)[1]).toContain("1.50 s");
 		expect(t.logs.join("\n")).toContain("warden");
 	});
 });
