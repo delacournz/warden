@@ -2,7 +2,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { ClaimedDevice } from "@delacour/warden-core/claim";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import type { InventoryDevice, Lease } from "@delacour/warden-core/types";
-import { bootedByClaim, leasePidFor, parseClaimFlags, resolveAutoProfile, resolveOwner } from "./claim-flags";
+import {
+	bootedByClaim,
+	claimWithFlags,
+	headlessDeps,
+	leasePidFor,
+	parseClaimFlags,
+	resolveAutoProfile,
+	resolveOwner,
+} from "./claim-flags";
+import type { HideStart } from "./sim-windows";
+import { fakeSimctl, OWNER_ENV, wardenSim } from "./simctl.testing";
 import { type TestContext, testContext } from "./testing";
 
 let ctx: TestContext | undefined;
@@ -134,5 +144,50 @@ describe("bootedByClaim", () => {
 	test("a reused device the claim had to boot (it was shut down) counts: the lease says who booted it", () => {
 		const outcome = { claimed: [claimed("a", "reuse", { bootedByOwner: true })] };
 		expect(bootedByClaim(outcome).map((c) => c.device.name)).toEqual(["a"]);
+	});
+});
+
+describe("headless hide wiring", () => {
+	let hctx: TestContext | undefined;
+	afterEach(() => hctx?.cleanup());
+	const make = () => {
+		hctx = testContext([], { exec: fakeSimctl([wardenSim(1, "Booted")]) });
+		hctx.env = { ...hctx.env, ...OWNER_ENV };
+		return hctx;
+	};
+
+	test("headlessDeps arbitrates Simulator's close setting through the shared store, as this process", () => {
+		const c = make();
+		const lock = headlessDeps(c).detachLock;
+		expect(lock?.store).toBe(c.db);
+		expect(lock?.pid).toBe(process.pid);
+		expect(lock?.pidAlive(process.pid)).toBe(true);
+	});
+
+	test("onHide: a headless iOS claim hands the two-step hide to the caller instead of awaiting its reboots", async () => {
+		const c = make();
+		const flags = parseClaimFlags("ios", { headless: true }, 16);
+		if (!flags.success) throw new Error(flags.error);
+		const starts: HideStart[] = [];
+		const outcome = await claimWithFlags(c, resolveOwner(c), flags.data, undefined, {
+			onHide: (start) => starts.push(start),
+		});
+		expect(outcome.success).toBe(true);
+		expect(starts).toHaveLength(1);
+		expect(await starts[0]?.down).toEqual([]);
+		expect(await starts[0]?.settled).toMatchObject({ rebooted: [] });
+	});
+
+	test("onHide is not called for a claim that tiles instead", async () => {
+		const c = make();
+		const flags = parseClaimFlags("ios", {}, 16);
+		if (!flags.success) throw new Error(flags.error);
+		let called = false;
+		await claimWithFlags(c, resolveOwner(c), flags.data, undefined, {
+			onHide: () => {
+				called = true;
+			},
+		});
+		expect(called).toBe(false);
 	});
 });

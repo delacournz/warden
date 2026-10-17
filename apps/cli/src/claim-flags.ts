@@ -12,7 +12,14 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
-import { autoArrangeSimWindows, type HideDeps, hideSimWindows } from "./sim-windows";
+import {
+	autoArrangeSimWindows,
+	type DetachLock,
+	type HideDeps,
+	type HideStart,
+	hideSimWindows,
+	startHideSimWindows,
+} from "./sim-windows";
 
 /** Claim options shared by `claim` and `run` (typed by commander's extra-typings). */
 export function withClaimOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
@@ -138,14 +145,29 @@ export function resolveAutoProfile(avds: readonly string[]): Result<string> {
 		: err("no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
 }
 
+/** Simulator's close setting, shared with every other warden process through the context's store. */
+export function detachLockFor(ctx: CommandContext): DetachLock {
+	return { store: ctx.store(), pid: process.pid, pidAlive: processAlive };
+}
+
 /** `hideSimWindows` deps from a command context: problems are yellow `warden: …` lines; a device the close shut down loses its resident helper. */
 export function headlessDeps(ctx: CommandContext): HideDeps {
 	return {
 		exec: ctx.exec,
 		warn: (line) => ctx.err(ctx.ui.color.yellow(`warden: ${line}`)),
 		onShutDown: stopHelperAfter(ctx),
+		detachLock: detachLockFor(ctx),
 	};
 }
+
+export type ClaimHideOptions = {
+	/**
+	 * Headless iOS: return once the windows are closed and hand the rest of the hide here, instead of
+	 * awaiting it. The caller must not use a device in `start.down` before `start.settled` (it is being
+	 * booted again), and awaits `settled` before it ends (that puts Simulator's close setting back).
+	 */
+	onHide?: (start: HideStart) => void;
+};
 
 /**
  * The claimed devices this claim had to boot or create: the only ones whose Simulator.app window can
@@ -156,12 +178,13 @@ export function bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDe
 	return outcome.claimed.filter((c) => c.action !== "reuse" || c.lease.bootedByOwner === true);
 }
 
-/** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them). */
+/** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */
 export async function claimWithFlags(
 	ctx: CommandContext,
 	owner: Owner,
 	flags: ClaimFlags,
-	pid: number | undefined
+	pid: number | undefined,
+	options: ClaimHideOptions = {}
 ): AsyncResult<ClaimOutcome> {
 	let request = flags.request;
 	if (request.platform === "android" && request.profile === "auto") {
@@ -183,16 +206,25 @@ export async function claimWithFlags(
 		waitMs: flags.waitMs,
 		log: (line) => ctx.err(`warden: ${line}`),
 	});
-	if (outcome.success && request.platform === "ios") {
-		const sims = outcome.data.claimed.map((c) => ({ udid: c.device.id, name: c.device.name }));
-		if (flags.headless) await hideSimWindows(headlessDeps(ctx), sims);
-		else
-			await autoArrangeSimWindows(
-				ctx,
-				bootedByClaim(outcome.data).map((c) => c.device.name)
-			);
-	}
+	if (outcome.success && request.platform === "ios") await settleIosWindows(ctx, outcome.data, flags, options);
 	return outcome;
+}
+
+/** After an iOS claim: headless closes the sims' windows (handing the rest to `onHide` when given); otherwise tile them. */
+async function settleIosWindows(
+	ctx: CommandContext,
+	outcome: ClaimOutcome,
+	flags: ClaimFlags,
+	options: ClaimHideOptions
+): Promise<void> {
+	const sims = outcome.claimed.map((c) => ({ udid: c.device.id, name: c.device.name }));
+	if (flags.headless && options.onHide) options.onHide(await startHideSimWindows(headlessDeps(ctx), sims));
+	else if (flags.headless) await hideSimWindows(headlessDeps(ctx), sims);
+	else
+		await autoArrangeSimWindows(
+			ctx,
+			bootedByClaim(outcome).map((c) => c.device.name)
+		);
 }
 
 /** JSON shape of claimed devices, shared by `claim` and `run`. */
