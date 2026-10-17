@@ -207,6 +207,10 @@ Answers from the interview, in the order they were given. Each row says what cha
 | 4 | 9.13 Build cache pruning (17-11) | **From `warden gc`** with a size cap (default 20 GB) | Never prunes during a run; auto-gc already schedules gc. |
 | 4 | 9.16 CI emulator matrix and iOS smoke | **Propose, do not add yet** | The plan doc lists API 30–36 and one macOS smoke as a costed follow-up. |
 | 4 | 9.17 Report placement | **Do not merge PR #31**; keep it as a PR and Artifact reference | `docs/audit/` stays on the audit branch only; Wave 1 cites findings by id and links the PR. |
+| 5 | 9.7 Daemon death mid-run (03-1) | **Not noticed** | Stays a defensive fix at P2; the `smoke.ts --kill-helper` device check is optional. |
+| 5 | 9.15 Bench lease owner (19-2) | **User shell** | The bench's leases are user-owned; heartbeat and a `bench` label are the follow-up (not in Wave 1). |
+| 5 | After Wave 1 | **Start Wave 2 as another agent wave right away** | The device-safe parts of Wave 2 run as a second wave on `claude/wdn-perf-wave2` once Wave 1 is merged and green. |
+| 5 | Wave 1 PR state | **Stay draft until the device checklist ran** | The PR description carries the checklist; the user converts it after the on-device run. |
 
 ## 10. Method and limits
 
