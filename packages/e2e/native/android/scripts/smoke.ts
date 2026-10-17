@@ -579,6 +579,35 @@ for (let i = 0; i < 3; i++) {
 		const asyncTaps: number[] = [];
 		for (let k = 0; k < 5; k++) asyncTaps.push((await server.request("tap", { x: 5, y: 5, sync: false })).rttMs);
 		console.log(`tap rtt (sync:false): ${stats(asyncTaps)}`);
+
+		const finger = (cx: number, cy: number, dx: number, dy: number, n: number) =>
+			Array.from({ length: n }, (_, i) => ({ x: cx + (dx * i) / (n - 1), y: cy + (dy * i) / (n - 1) }));
+		const pinch = await server.request(
+			"gesture",
+			{ paths: [finger(440, 1200, -120, 0, 25), finger(640, 1200, 120, 0, 25)], frameMs: 16, holdMs: 0, releaseMs: 50 },
+			10_000
+		);
+		check("gesture: two-finger pinch", pinch.ok, JSON.stringify(pinch.ok ? pinch.data : pinch.error));
+		if (pinch.ok)
+			console.log(
+				`gesture maxLagMs=${String(pinch.data.maxLagMs)} via=${String(pinch.data.via)} rtt ${Math.round(pinch.rttMs)} ms`
+			);
+		const arc = (sign: number) =>
+			Array.from({ length: 31 }, (_, i) => {
+				const a = (sign * Math.PI * i) / 60;
+				return { x: 540 + sign * 200 * Math.cos(a), y: 1200 + sign * 200 * Math.sin(a) };
+			});
+		const rotate = await server.request("gesture", { paths: [arc(-1), arc(1)], frameMs: 16, releaseMs: 50 }, 10_000);
+		check("gesture: two-finger rotate (90 degrees)", rotate.ok, JSON.stringify(rotate.ok ? rotate.data : rotate.error));
+		if (rotate.ok) console.log(`gesture maxLagMs=${String(rotate.data.maxLagMs)}`);
+		const one = await server.request(
+			"gesture",
+			{ paths: [finger(540, 1500, 0, -400, 20)], frameMs: 16, holdMs: 20 },
+			10_000
+		);
+		check("gesture: one-finger path", one.ok, JSON.stringify(one.ok ? one.data : one.error));
+		const invalid = await server.request("gesture", { paths: [] });
+		check("gesture: no paths is E_BAD_REQUEST", !invalid.ok && invalid.error.code === "E_BAD_REQUEST");
 		for (const quietMs of [100, 150]) {
 			const quick = await server.request("settle", { quietMs, timeoutMs: 3000 });
 			console.log(

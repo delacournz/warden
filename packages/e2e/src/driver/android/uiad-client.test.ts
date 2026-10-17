@@ -14,7 +14,7 @@ describe("startUiad", () => {
 		const started = await start(fake);
 		if (!started.success) throw new Error(started.error.message);
 		expect(fake.commands).toEqual([CMD]);
-		expect(started.data.health).toMatchObject({ version: "0.2.0", protocol: 1, sdk: 37 });
+		expect(started.data.health).toMatchObject({ version: "0.3.0", protocol: 1, sdk: 37 });
 		expect(started.data.alive()).toBe(true);
 		await started.data.close();
 	});
