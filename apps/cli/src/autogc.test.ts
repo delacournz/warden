@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
 import { storeArtifact } from "@delacour/warden-core/builds/cache";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
+import { markAndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { Owner } from "@delacour/warden-core/types";
 import { AUTO_GC_INTERVAL_MS, maybeAutoGc, niceCommand } from "./autogc";
 import { type TestContext, testContext } from "./testing";
@@ -131,6 +132,20 @@ describe("maybeAutoGc", () => {
 		ctx.env = { ...ctx.env, WARDEN_MAX_CACHE_SIZE: "tiny" };
 		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		expect(spawned).toEqual([]);
+	});
+
+	test("an AVD a claim cold-booted for want of a snapshot is work, except under CI (R2)", () => {
+		const clock = 5 * AUTO_GC_INTERVAL_MS;
+		ctx = testContext([], { now: () => clock });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", CI: "1" };
+		markAndroidSnapshotPending(ctx.db, "Pixel_10");
+		const spawned: string[][] = [];
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		expect(spawned).toEqual([]);
+		ctx.db.deleteMeta("auto_gc_checked_at");
+		ctx.env = { ...ctx.env, CI: undefined };
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
 	});
 
 	test("WARDEN_AUTO_GC=0 and WARDEN_BACKGROUND=0 disable it, without even checking", () => {

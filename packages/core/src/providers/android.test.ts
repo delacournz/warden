@@ -17,6 +17,7 @@ import {
 	parseAvdList,
 	pickConsolePort,
 	type SpawnDetached,
+	snapshotLoadFailed,
 } from "./android";
 import { ADB_DEVICES_EMPTY, ADB_DEVICES_MIXED, EMU_AVD_NAME_PIXEL_10, EMULATOR_LIST_AVDS } from "./android.fixtures";
 import type { ProviderDeps } from "./provider.types";
@@ -386,6 +387,42 @@ describe("create", () => {
 		}
 	});
 
+	test("an emulator that rejects -no-audio/-no-metrics is relaunched once without them (R6)", async () => {
+		const { exec } = fakeExec(baseHandlers(ADB_DEVICES_EMPTY));
+		const spawned: Array<readonly string[]> = [];
+		const spawn: SpawnDetached = async (cmd) => {
+			spawned.push(cmd);
+			return cmd.includes("-no-metrics")
+				? err(
+						"`emulator -avd Pixel_10 …` exited 1: emulator: ERROR: Invalid command-line parameter: -no-metrics. | Hint: use '@foo' to launch a virtual device named 'foo'. (log: x)"
+					)
+				: ok({ pid: 4242 });
+		};
+		const logs: string[] = [];
+		const provider = createAndroidProvider(
+			{ ...deps(exec), log: (line) => logs.push(line) },
+			{ spawnDetached: spawn, snapshot: async () => ok("warden-0123456789") }
+		);
+		expect((await provider.create("w", "pixel-10")).success).toBe(true);
+		expect(spawned).toHaveLength(2);
+		expect(spawned[1]).toContain("-snapshot");
+		expect(spawned[1]).not.toContain("-no-metrics");
+		expect(spawned[1]).not.toContain("-no-audio");
+		expect(logs.join("\n")).toContain("without them");
+	});
+
+	test("any other early exit is not retried without the flags (R6)", async () => {
+		const { exec } = fakeExec(baseHandlers(ADB_DEVICES_EMPTY));
+		const spawned: Array<readonly string[]> = [];
+		const spawn: SpawnDetached = async (cmd) => {
+			spawned.push(cmd);
+			return err("emulator exited 1: FATAL | another emulator instance is running");
+		};
+		const result = await createAndroidProvider(deps(exec), { spawnDetached: spawn }).create("w", "pixel-10");
+		expect(result.success).toBe(false);
+		expect(spawned).toHaveLength(1);
+	});
+
 	test("records runtime when given", async () => {
 		const { exec } = fakeExec(baseHandlers(ADB_DEVICES_EMPTY));
 		const { spawn } = spawnRecorder();
@@ -434,6 +471,30 @@ describe("create", () => {
 		const result = await createAndroidProvider(deps(exec), { spawnDetached: spawn }).create("w", "pixel-10");
 		expect(result.success).toBe(false);
 		expect(spawned).toHaveLength(0);
+	});
+});
+
+describe("snapshotLoadFailed (R5, R9)", () => {
+	const LOADED = [
+		"INFO    | Android emulator version 35.4.9.0 (build_id 13025442) (CL:N/A)",
+		"INFO    | Loading snapshot 'warden-0123456789'...",
+		"INFO    | Successfully loaded snapshot 'warden-0123456789' using 812 ms",
+		"INFO    | Boot completed in 2104 ms",
+		"WARNING | cannot add library vulkan-1: failed",
+	].join("\n");
+
+	test("a log of a successful load is not a failure", () => {
+		expect(snapshotLoadFailed(LOADED)).toBe(false);
+	});
+
+	test("the emulator's load failures are", () => {
+		for (const line of [
+			"WARNING | Failed to load snapshot 'warden-0123456789'",
+			"WARNING | Device 'cache' does not have the requested snapshot 'warden-0123456789'",
+			"ERROR   | Snapshot 'warden-0123456789' could not be loaded: incompatible",
+			"qemu-system-aarch64: Could not open snapshot 'warden-0123456789'",
+		])
+			expect(snapshotLoadFailed(`${LOADED}\n${line}\nINFO    | Cold boot: requested by the user`)).toBe(true);
 	});
 });
 

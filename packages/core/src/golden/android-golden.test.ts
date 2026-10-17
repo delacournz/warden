@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { claimDevices } from "../claim";
 import type { Exec, ExecResult } from "../exec";
-import { BOOT_WAIT_SCRIPT, createAndroidProvider, type SpawnDetached } from "../providers/android";
+import { BOOT_WAIT_SCRIPT, createAndroidProvider, GOLDEN_PORT_LABEL, type SpawnDetached } from "../providers/android";
 import { openStore, type Store } from "../store";
 import type { Owner } from "../types";
 import {
@@ -13,14 +13,20 @@ import {
 	type AndroidSnapshotInputs,
 	androidSnapshotEnabled,
 	androidSnapshotKey,
+	avdHome,
+	buildPendingAndroidSnapshot,
 	ensureAndroidSnapshot,
+	explicitAndroidSnapshot,
+	invalidateAndroidSnapshot,
 	listAndroidSnapshots,
 	parseEmulatorVersion,
 	parseProperties,
 	pruneAndroidSnapshots,
 	readSnapshotInputs,
+	snapshotForClaim,
 	snapshotName,
 } from "./android-golden";
+import { markAndroidSnapshotPending, pendingAndroidSnapshots } from "./android-snapshot-pending";
 
 const owner: Owner = { kind: "agent", sessionId: "s1", cwd: "/tmp" };
 const SYSDIR = "system-images/android-36/google_apis/arm64-v8a/";
@@ -75,15 +81,29 @@ const env = () => ({ ANDROID_HOME: sdk, ANDROID_AVD_HOME: avdHomeDir, WARDEN_HOM
 
 type Instance = { avd: string; pid: number; writable: boolean };
 
+type HostOptions = {
+	avds?: string[];
+	snapshotLaunchFails?: boolean;
+	/** `emu kill` answers OK but the process stays (only SIGKILL ends it) */
+	killIgnored?: boolean;
+	/** the writable build instance never reaches boot_completed */
+	buildNeverBoots?: boolean;
+	/** the writable build instance dies right after its launch */
+	buildDies?: boolean;
+	/** also ignore SIGKILL */
+	unkillable?: boolean;
+};
+
 /**
  * Stateful fake adb + emulator: a spawned emulator is listed by `adb devices` at once, boots at once,
  * `emu avd snapshot save` writes the snapshot dir (like the real console, into the AVD's `snapshots/`),
  * `emu kill` ends the process.
  */
-function fakeAndroidHost(opts: { avds?: string[]; snapshotLaunchFails?: boolean } = {}) {
+function fakeAndroidHost(opts: HostOptions = {}) {
 	const running = new Map<string, Instance>();
 	const spawned: Array<readonly string[]> = [];
 	const calls: string[] = [];
+	const kills: Array<[number, string]> = [];
 	let nextPid = 100;
 	const avds = opts.avds ?? ["Pixel_10"];
 
@@ -102,23 +122,31 @@ function fakeAndroidHost(opts: { avds?: string[]; snapshotLaunchFails?: boolean 
 		return deviceCommand(serial, instance, match?.[2] ?? "") ?? fail(`unexpected command: ${key}`);
 	};
 
+	function save(instance: Instance, name: string): ExecResult {
+		if (!instance.writable) return out("KO: snapshot save is not allowed for read-only instances\r\n");
+		const snap = join(avdHomeDir, `${instance.avd}.avd`, "snapshots", name);
+		mkdirSync(snap, { recursive: true });
+		writeFileSync(join(snap, "snapshot.pb"), "pb");
+		return out("OK\r\n");
+	}
+
+	function kill(serial: string): ExecResult {
+		if (!opts.killIgnored) running.delete(serial);
+		return out("OK: killing emulator, bye bye\r\n");
+	}
+
 	function deviceCommand(serial: string, instance: Instance, rest: string): ExecResult | undefined {
-		if (rest === "emu avd name") return out(`${instance.avd}\r\nOK\r\n`);
-		if (rest === `wait-for-device shell ${BOOT_WAIT_SCRIPT}`) return out("");
-		if (rest === "shell getprop ro.build.version.sdk") return out("36\n");
-		const save = /^emu avd snapshot save (\S+)$/.exec(rest)?.[1];
-		if (save !== undefined) {
-			if (!instance.writable) return out("KO: snapshot save is not allowed for read-only instances\r\n");
-			const snap = join(avdHomeDir, `${instance.avd}.avd`, "snapshots", save);
-			mkdirSync(snap, { recursive: true });
-			writeFileSync(join(snap, "snapshot.pb"), "pb");
-			return out("OK\r\n");
-		}
-		if (rest === "emu kill") {
-			running.delete(serial);
-			return out("OK: killing emulator, bye bye\r\n");
-		}
-		return undefined;
+		const hangs = instance.writable && opts.buildNeverBoots === true;
+		const fixed: Record<string, () => ExecResult> = {
+			"emu avd name": () => out(`${instance.avd}\r\nOK\r\n`),
+			[`wait-for-device shell ${BOOT_WAIT_SCRIPT}`]: () => (hangs ? fail("error: closed") : out("")),
+			"wait-for-device": () => out(""),
+			"shell getprop sys.boot_completed": () => out(hangs ? "\n" : "1\n"),
+			"shell getprop ro.build.version.sdk": () => out("36\n"),
+			"emu kill": () => kill(serial),
+		};
+		const name = /^emu avd snapshot save (\S+)$/.exec(rest)?.[1];
+		return name !== undefined ? save(instance, name) : fixed[rest]?.();
 	}
 
 	const spawnDetached: SpawnDetached = async (cmd) => {
@@ -127,17 +155,34 @@ function fakeAndroidHost(opts: { avds?: string[]; snapshotLaunchFails?: boolean 
 		const avd = cmd[cmd.indexOf("-avd") + 1] ?? "";
 		const port = cmd[cmd.indexOf("-port") + 1] ?? "";
 		const pid = nextPid++;
-		running.set(`emulator-${port}`, { avd, pid, writable: !cmd.includes("-read-only") });
+		const writable = !cmd.includes("-read-only");
+		if (!(writable && opts.buildDies)) running.set(`emulator-${port}`, { avd, pid, writable });
 		return ok({ pid });
 	};
 
 	const pidAlive = (pid: number) => [...running.values()].some((i) => i.pid === pid);
-	return { exec, spawnDetached, pidAlive, running, spawned, calls };
+	const sigkill = (pid: number, signal: "SIGKILL") => {
+		kills.push([pid, signal]);
+		if (opts.unkillable) return;
+		for (const [serial, i] of running) if (i.pid === pid) running.delete(serial);
+	};
+	return { exec, spawnDetached, pidAlive, kill: sigkill, running, spawned, calls, kills, opts };
 }
 
 type Host = ReturnType<typeof fakeAndroidHost>;
 
-function goldenDeps(host: Host, logs: string[] = []): AndroidGoldenDeps {
+/** A clock that only moves when something sleeps. */
+function fakeClock(start = 1_000) {
+	let t = start;
+	return {
+		now: () => t,
+		sleep: async (ms: number) => {
+			t += ms;
+		},
+	};
+}
+
+function goldenDeps(host: Host, logs: string[] = [], over: Partial<AndroidGoldenDeps> = {}): AndroidGoldenDeps {
 	return {
 		exec: host.exec,
 		store,
@@ -149,10 +194,13 @@ function goldenDeps(host: Host, logs: string[] = []): AndroidGoldenDeps {
 		sleep: async () => {},
 		log: (line) => logs.push(line),
 		spawnDetached: host.spawnDetached,
+		kill: host.kill,
+		...over,
 	};
 }
 
-function provider(host: Host, logs: string[] = []) {
+/** The provider as the CLI wires it: claims only look the snapshot up (`snapshotForClaim`), never build it. */
+function provider(host: Host, logs: string[] = [], hook?: (avd: string) => AsyncResult<string | undefined>) {
 	const golden = goldenDeps(host, logs);
 	return createAndroidProvider(
 		{ exec: host.exec, store, env: env(), now: () => 1_000, owner, log: (line) => logs.push(line) },
@@ -160,10 +208,8 @@ function provider(host: Host, logs: string[] = []) {
 			spawnDetached: host.spawnDetached,
 			pidAlive: host.pidAlive,
 			sleep: async () => {},
-			snapshot: async (avd) => {
-				const ensured = await ensureAndroidSnapshot(golden, avd);
-				return ensured.success ? ok(ensured.data?.name) : ensured;
-			},
+			snapshot: hook ?? ((avd) => snapshotForClaim(golden, avd)),
+			snapshotFailed: (avd, name) => invalidateAndroidSnapshot(golden, avd, name),
 		}
 	);
 }
@@ -195,6 +241,7 @@ describe("snapshot key", () => {
 		expect(androidSnapshotKey({ ...INPUTS, emulatorVersion: "36.1.0" })).not.toBe(key);
 		expect(androidSnapshotKey({ ...INPUTS, hardware: ["hw.ramSize=2048"] })).not.toBe(key);
 		expect(androidSnapshotKey(INPUTS, 2)).not.toBe(key);
+		expect(androidSnapshotKey({ ...INPUTS, flags: ["-no-metrics"] })).not.toBe(key);
 	});
 
 	test("read from the SDK and AVD files: image revision, fingerprint, emulator version, hw.* lines", async () => {
@@ -206,16 +253,35 @@ describe("snapshot key", () => {
 					imageRevision: "5",
 					fingerprint: "google/sdk_gphone64_arm64/emu64a:16/BP22/1:userdebug/dev-keys",
 					emulatorVersion: "35.4.9",
-					hardware: ["hw.cpu.ncore=4", "hw.ramSize=4096", "hw.lcd.density=420", `image.sysdir.1=${SYSDIR}`],
+					hardware: [
+						"hw.cpu.ncore=4",
+						"hw.ramSize=4096",
+						"hw.lcd.density=420",
+						`image.sysdir.1=${SYSDIR}`,
+						"disk.dataPartition.size=6G",
+					],
+					flags: ["-no-audio", "-no-metrics"],
 				},
 			})
 		);
 	});
 
-	test("no SDK root → no snapshot (not an error)", async () => {
-		const deps = { ...goldenDeps(fakeAndroidHost()), env: { ANDROID_AVD_HOME: avdHomeDir, WARDEN_HOME: dir } };
+	test("no SDK root → no snapshot (not an error), said once per process (R8)", async () => {
+		const logs: string[] = [];
+		const deps = { ...goldenDeps(fakeAndroidHost(), logs), env: { ANDROID_AVD_HOME: avdHomeDir, WARDEN_HOME: dir } };
 		expect(await readSnapshotInputs(deps, "Pixel_10")).toEqual(ok(undefined));
 		expect(await ensureAndroidSnapshot(deps, "Pixel_10")).toEqual(ok(undefined));
+		expect(await snapshotForClaim(deps, "Pixel_10")).toEqual(ok(undefined));
+		expect(logs.filter((l) => l.includes("ANDROID_HOME"))).toHaveLength(1);
+	});
+
+	test("AVD home follows the emulator's precedence (R8)", () => {
+		expect(avdHome({ ANDROID_AVD_HOME: "/a", ANDROID_EMULATOR_HOME: "/e", HOME: "/h" })).toBe("/a");
+		expect(avdHome({ ANDROID_EMULATOR_HOME: "/e", ANDROID_SDK_HOME: "/s", HOME: "/h" })).toBe("/e/avd");
+		expect(avdHome({ ANDROID_USER_HOME: "/u", ANDROID_SDK_HOME: "/s", HOME: "/h" })).toBe("/u/avd");
+		expect(avdHome({ ANDROID_SDK_HOME: "/s", HOME: "/h" })).toBe("/s/.android/avd");
+		expect(avdHome({ HOME: "/h" })).toBe("/h/.android/avd");
+		expect(avdHome({})).not.toContain("~");
 	});
 
 	test("parsers", () => {
@@ -239,12 +305,26 @@ describe("opt-out", () => {
 		expect(androidSnapshotEnabled({ WARDEN_ANDROID_SNAPSHOT: "1" }, false)).toBe(true);
 		expect(androidSnapshotEnabled({ WARDEN_ANDROID_SNAPSHOT: "0" }, true)).toBe(false);
 	});
+
+	test("only 0/1/true/false/on/off/yes/no count as explicit; anything else warns and defers to the config (R7)", () => {
+		const warned: string[] = [];
+		const warn = (v: string) => warned.push(v);
+		expect(explicitAndroidSnapshot({ WARDEN_ANDROID_SNAPSHOT: "off" }, warn)).toBe(false);
+		expect(explicitAndroidSnapshot({ WARDEN_ANDROID_SNAPSHOT: " YES " }, warn)).toBe(true);
+		expect(explicitAndroidSnapshot({ WARDEN_ANDROID_SNAPSHOT: "" }, warn)).toBeUndefined();
+		expect(explicitAndroidSnapshot({}, warn)).toBeUndefined();
+		expect(warned).toEqual([]);
+		expect(explicitAndroidSnapshot({ WARDEN_ANDROID_SNAPSHOT: "nah" }, warn)).toBeUndefined();
+		expect(warned).toEqual(["nah"]);
+		expect(androidSnapshotEnabled({ WARDEN_ANDROID_SNAPSHOT: "off" }, true)).toBe(false);
+		expect(androidSnapshotEnabled({ WARDEN_ANDROID_SNAPSHOT: "nah" }, false)).toBe(false);
+	});
 });
 
-async function claim(host: Host, logs: string[] = []) {
+async function claim(host: Host, logs: string[] = [], hook?: (avd: string) => AsyncResult<string | undefined>) {
 	return claimDevices({
 		store,
-		provider: provider(host, logs),
+		provider: provider(host, logs, hook),
 		owner,
 		request: { platform: "android", profile: "pixel-10", count: 1, max: 4 },
 		ttlMs: 60_000,
@@ -255,43 +335,75 @@ async function claim(host: Host, logs: string[] = []) {
 	});
 }
 
-describe("claims launch from warden's snapshot", () => {
-	test("the first claim builds the snapshot from a writable cold boot, then launches from it", async () => {
+/** Build what the first claim found missing, as `warden gc` does once the AVD is idle. */
+async function gcBuild(host: Host, logs: string[] = [], over: Partial<AndroidGoldenDeps> = {}) {
+	return buildPendingAndroidSnapshot(goldenDeps(host, logs, over));
+}
+
+describe("claims launch from warden's snapshot; the build runs outside any claim (R2)", () => {
+	test("a claim with no snapshot cold-boots read-only at once, logs one line, and leaves the build to gc", async () => {
 		const host = fakeAndroidHost();
 		const logs: string[] = [];
 		const result = await claim(host, logs);
 		expect(result.success && result.data.claimed.map((c) => c.action)).toEqual(["create"]);
+		expect(host.spawned).toHaveLength(1);
+		expect(host.spawned[0]).toContain("-read-only");
+		expect(host.spawned[0]).not.toContain("-snapshot");
+		expect(host.calls.some((c) => c.includes("snapshot save"))).toBe(false);
+		expect(logs.filter((l) => l.includes("no quick-boot snapshot"))).toHaveLength(1);
+		expect(store.listLeases().some((l) => l.resource.kind === "build")).toBe(false);
+		expect(pendingAndroidSnapshots(store, 1_000)).toEqual(["Pixel_10"]);
+	});
+
+	test("gc builds it once the AVD is idle; the next claim launches from it with no build", async () => {
+		const host = fakeAndroidHost();
+		expect((await claim(host)).success).toBe(true);
+		// the claim's emulator still runs: gc leaves the AVD alone
+		expect(await gcBuild(host)).toEqual(ok({ busy: ["Pixel_10"] }));
+		expect(host.spawned).toHaveLength(1);
+		host.running.clear();
+		const pass = await gcBuild(host);
 		const name = snapshotName(await currentKey(host));
-		expect(host.spawned).toHaveLength(2);
-		const [build, launch] = host.spawned;
+		expect(pass.success && pass.data.built?.name).toBe(name);
+		const build = host.spawned[1];
 		expect(build).not.toContain("-read-only");
 		expect(build).toEqual(
 			expect.arrayContaining(["-no-snapshot-load", "-no-snapshot-save", "-no-audio", "-no-window"])
 		);
-		expect(launch).toEqual(expect.arrayContaining(["-read-only", "-snapshot", name, "-no-snapshot-save"]));
-		expect(host.calls.some((c) => c.endsWith(`emu avd snapshot save ${name}`))).toBe(true);
 		expect(existsSync(join(avdHomeDir, "Pixel_10.avd", "snapshots", name, "snapshot.pb"))).toBe(true);
-		// the build instance is gone and its port lease released; the claim's emulator keeps its own
-		expect([...host.running.values()].map((i) => i.writable)).toEqual([false]);
-		expect(store.listLeases().filter((l) => l.label?.startsWith("emulator golden"))).toHaveLength(0);
+		// only the first claim's own leases are left: no build lock, no golden port lease
+		expect(store.listLeases().filter((l) => l.label?.startsWith(GOLDEN_PORT_LABEL))).toHaveLength(0);
 		expect(store.listLeases().some((l) => l.resource.kind === "build")).toBe(false);
-		expect(logs.join("\n")).toContain("building");
+		expect(pendingAndroidSnapshots(store, 1_000)).toEqual([]);
+		const saves = host.calls.filter((c) => c.includes("snapshot save")).length;
+		expect((await claim(host)).success).toBe(true);
+		expect(host.spawned.at(-1)).toEqual(expect.arrayContaining(["-read-only", "-snapshot", name, "-no-snapshot-save"]));
+		expect(host.calls.filter((c) => c.includes("snapshot save")).length).toBe(saves);
 	});
 
-	test("the second claim launches from it directly: no build", async () => {
-		const host = fakeAndroidHost();
-		expect((await claim(host)).success).toBe(true);
-		const spawnedBefore = host.spawned.length;
-		const saves = () => host.calls.filter((c) => c.includes("snapshot save")).length;
-		const savesBefore = saves();
-		expect((await claim(host)).success).toBe(true);
-		expect(host.spawned.length).toBe(spawnedBefore + 1);
-		expect(host.spawned.at(-1)).toContain("-snapshot");
-		expect(saves()).toBe(savesBefore);
+	test("gc builds at most one AVD per pass", async () => {
+		const host = fakeAndroidHost({ avds: ["Pixel_10", "Pixel_9"] });
+		writeAvd("Pixel_9");
+		markAndroidSnapshotPending(store, "Pixel_10");
+		markAndroidSnapshotPending(store, "Pixel_9");
+		const pass = await gcBuild(host);
+		expect(pass.success && pass.data.built?.avd).toBe("Pixel_10");
+		expect(host.spawned).toHaveLength(1);
+		expect(pendingAndroidSnapshots(store, 1_000)).toEqual(["Pixel_9"]);
+	});
+
+	test("a failed gc build is not retried for a while", async () => {
+		const host = fakeAndroidHost({ buildDies: true });
+		markAndroidSnapshotPending(store, "Pixel_10");
+		const pass = await gcBuild(host);
+		expect(pass.success && pass.data.failed?.avd).toBe("Pixel_10");
+		expect(pendingAndroidSnapshots(store, 1_000)).toEqual([]);
+		expect(pendingAndroidSnapshots(store, 1_000 + 7 * 60 * 60_000)).toEqual(["Pixel_10"]);
 	});
 
 	test("a launch from the snapshot that fails falls back to a cold boot, logged", async () => {
 		const host = fakeAndroidHost({ snapshotLaunchFails: true });
+		expect((await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10")).success).toBe(true);
 		const logs: string[] = [];
 		const result = await claim(host, logs);
 		expect(result.success).toBe(true);
@@ -299,6 +411,17 @@ describe("claims launch from warden's snapshot", () => {
 		expect(last).toContain("-read-only");
 		expect(last).not.toContain("-snapshot");
 		expect(logs.join("\n")).toContain("retrying with a cold boot");
+	});
+
+	test("the hook erroring: the claim cold-boots with today's argv (R9)", async () => {
+		const host = fakeAndroidHost();
+		const logs: string[] = [];
+		const result = await claim(host, logs, async () => err("config.ini unreadable"));
+		expect(result.success).toBe(true);
+		expect(host.spawned).toHaveLength(1);
+		expect(host.spawned[0]).toContain("-read-only");
+		expect(host.spawned[0]).not.toContain("-snapshot");
+		expect(logs.join("\n")).toContain("config.ini unreadable");
 	});
 
 	test("opted out (no snapshot hook): never builds", async () => {
@@ -313,7 +436,7 @@ describe("claims launch from warden's snapshot", () => {
 		expect(host.calls.some((c) => c.includes("snapshot save"))).toBe(false);
 	});
 
-	test("a busy AVD (an instance already running) is skipped: no writable build, cold boot", async () => {
+	test("a busy AVD (an instance already running) is skipped: no writable build", async () => {
 		const host = fakeAndroidHost();
 		host.running.set("emulator-5580", { avd: "Pixel_10", pid: 99, writable: false });
 		const logs: string[] = [];
@@ -340,6 +463,173 @@ describe("claims launch from warden's snapshot", () => {
 		if (!ensured.success) expect(ensured.error).toContain("not enough disk space");
 		expect(host.running.size).toBe(0);
 		expect(store.listLeases()).toHaveLength(0);
+	});
+});
+
+describe("build failure paths and concurrency (R3, R9)", () => {
+	test("a second process waiting on the lock takes the fast path once the holder is done", async () => {
+		const host = fakeAndroidHost();
+		const key = await currentKey(host);
+		const held = store.insertLease(
+			{ resource: { kind: "build", key: "golden:android:Pixel_10" }, owner, ttlMs: 60_000, pid: 4242, label: "build" },
+			1_000
+		);
+		const logs: string[] = [];
+		let polls = 0;
+		const ensured = await ensureAndroidSnapshot(
+			goldenDeps(host, logs, {
+				sleep: async () => {
+					if (++polls > 1) return;
+					// the holder finishes its build
+					const snap = join(avdHomeDir, "Pixel_10.avd", "snapshots", snapshotName(key));
+					mkdirSync(snap, { recursive: true });
+					writeFileSync(join(snap, "snapshot.pb"), "pb");
+					store.deleteLeases([held.id]);
+				},
+			}),
+			"Pixel_10"
+		);
+		expect(ensured).toEqual(ok({ avd: "Pixel_10", name: snapshotName(key), key, built: false }));
+		expect(polls).toBe(1);
+		expect(host.spawned).toHaveLength(0);
+		expect(logs.join("\n")).toContain("waiting");
+		expect(store.listLeases()).toHaveLength(0);
+	});
+
+	test("the build instance dying while booting: err, lock and port lease released", async () => {
+		const host = fakeAndroidHost({ buildDies: true });
+		const ensured = await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10");
+		expect(ensured.success).toBe(false);
+		expect(store.listLeases()).toHaveLength(0);
+		expect(existsSync(join(avdHomeDir, "Pixel_10.avd", "snapshots"))).toBe(false);
+	});
+
+	test("the build instance never booting: times out, is killed, lock and port lease released", async () => {
+		const host = fakeAndroidHost({ buildNeverBoots: true });
+		const clock = fakeClock();
+		const ensured = await ensureAndroidSnapshot(
+			goldenDeps(host, [], { ...clock, timing: { bootTimeoutMs: 5_000 } }),
+			"Pixel_10"
+		);
+		expect(ensured.success).toBe(false);
+		if (!ensured.success) expect(ensured.error).toContain("timed out");
+		expect(host.running.size).toBe(0);
+		expect(store.listLeases()).toHaveLength(0);
+	});
+
+	test("emu kill not ending the build instance: SIGKILL after the exit timeout", async () => {
+		const host = fakeAndroidHost({ killIgnored: true });
+		const clock = fakeClock();
+		const logs: string[] = [];
+		const ensured = await ensureAndroidSnapshot(
+			goldenDeps(host, logs, { ...clock, timing: { exitTimeoutMs: 2_000 } }),
+			"Pixel_10"
+		);
+		expect(ensured.success && ensured.data?.built).toBe(true);
+		expect(host.kills).toEqual([[100, "SIGKILL"]]);
+		expect(host.running.size).toBe(0);
+		expect(store.listLeases()).toHaveLength(0);
+	});
+
+	test("an instance that survives SIGKILL keeps its pid-backed port lease, and the next build reaps it", async () => {
+		const host = fakeAndroidHost({ killIgnored: true, unkillable: true });
+		const clock = fakeClock();
+		const deps = goldenDeps(host, [], { ...clock, timing: { exitTimeoutMs: 2_000 } });
+		const ensured = await ensureAndroidSnapshot(deps, "Pixel_10");
+		expect(ensured.success).toBe(false);
+		const leftover = store.listLeases();
+		expect(leftover.map((l) => [l.label, l.pid])).toEqual([[`${GOLDEN_PORT_LABEL}Pixel_10`, 100]]);
+		// the instance finally goes; a later build cleans up and builds
+		host.running.clear();
+		host.opts.killIgnored = false;
+		host.opts.unkillable = false;
+		const again = await ensureAndroidSnapshot(goldenDeps(host, [], clock), "Pixel_10");
+		expect(again.success && again.data?.built).toBe(true);
+		expect(store.listLeases()).toHaveLength(0);
+	});
+
+	test("an orphaned build emulator (its warden died) is killed before the AVD counts as busy", async () => {
+		const host = fakeAndroidHost();
+		host.running.set("emulator-5580", { avd: "Pixel_10", pid: 77, writable: true });
+		store.insertLease(
+			{ resource: { kind: "port", port: 5580 }, owner, ttlMs: 60_000, pid: 77, label: `${GOLDEN_PORT_LABEL}Pixel_10` },
+			1_000
+		);
+		const logs: string[] = [];
+		const ensured = await ensureAndroidSnapshot(goldenDeps(host, logs), "Pixel_10");
+		expect(ensured.success && ensured.data?.built).toBe(true);
+		expect(host.calls).toContain(`${ADB()} -s emulator-5580 emu kill`);
+		expect(logs.join("\n")).toContain("leftover");
+		expect(store.listLeases()).toHaveLength(0);
+	});
+
+	test("the build records its emulator pid on the golden port lease, and inventory marks it golden mid-build", async () => {
+		const host = fakeAndroidHost();
+		const seen: Array<{ pid?: number; golden?: boolean }> = [];
+		const inventory = createAndroidProvider({ exec: host.exec, store, env: env(), now: () => 1_000, owner });
+		let looked = false;
+		const ensured = await ensureAndroidSnapshot(
+			goldenDeps(host, [], {
+				sleep: async () => {
+					if (looked) return;
+					looked = true;
+					const lease = store.listLeases().find((l) => l.label?.startsWith(GOLDEN_PORT_LABEL));
+					const listed = await inventory.inventory();
+					seen.push({ pid: lease?.pid, golden: listed.success ? listed.data[0]?.golden : undefined });
+				},
+			}),
+			"Pixel_10"
+		);
+		expect(ensured.success && ensured.data?.built).toBe(true);
+		expect(seen).toEqual([{ pid: 100, golden: true }]);
+	});
+});
+
+describe("a snapshot that does not load (R5)", () => {
+	test("the claim that saw it fail deletes it under the lock and marks the AVD for a rebuild", async () => {
+		const host = fakeAndroidHost();
+		const built = await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10");
+		if (!built.success || built.data === undefined) throw new Error("no build");
+		const p = provider(host);
+		const created = await p.create("w", "pixel-10");
+		if (!created.success) throw new Error(created.error);
+		writeFileSync(
+			join(dir, "logs", `${created.data.id}.log`),
+			`INFO    | Loading snapshot '${built.data.name}'...\nWARNING | Failed to load snapshot '${built.data.name}'\n`,
+			{ flag: "a" }
+		);
+		expect((await p.waitReady(created.data.id, 10_000)).success).toBe(true);
+		expect(existsSync(join(avdHomeDir, "Pixel_10.avd", "snapshots", built.data.name))).toBe(false);
+		expect(pendingAndroidSnapshots(store, 1_000)).toEqual(["Pixel_10"]);
+		expect(store.listLeases().some((l) => l.resource.kind === "build")).toBe(false);
+	});
+
+	test("a failure line an earlier run left in the same log is not this launch's", async () => {
+		const host = fakeAndroidHost();
+		const built = await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10");
+		if (!built.success || built.data === undefined) throw new Error("no build");
+		mkdirSync(join(dir, "logs"), { recursive: true });
+		writeFileSync(join(dir, "logs", "emulator-5554.log"), `WARNING | Failed to load snapshot '${built.data.name}'\n`);
+		const p = provider(host);
+		const created = await p.create("w", "pixel-10");
+		if (!created.success) throw new Error(created.error);
+		expect(created.data.id).toBe("emulator-5554");
+		expect((await p.waitReady(created.data.id, 10_000)).success).toBe(true);
+		expect(existsSync(join(avdHomeDir, "Pixel_10.avd", "snapshots", built.data.name))).toBe(true);
+	});
+
+	test("the key covers the launch flags and the non-hw config that shapes the guest", async () => {
+		const host = fakeAndroidHost();
+		const base = await currentKey(host);
+		const audio = await readSnapshotInputs(
+			{ ...goldenDeps(host), env: { ...env(), WARDEN_EMULATOR_AUDIO: "1" } },
+			"Pixel_10"
+		);
+		expect(audio.success && audio.data && androidSnapshotKey(audio.data.inputs)).not.toBe(base);
+		writeAvd("Pixel_10", CONFIG_INI.replace("disk.dataPartition.size=6G", "disk.dataPartition.size=8G"));
+		expect(await currentKey(host)).not.toBe(base);
+		writeAvd("Pixel_10", `${CONFIG_INI}fastboot.forceColdBoot=yes\navd.ini.displayname=Pixel 10\n`);
+		expect(await currentKey(host)).toBe(base);
 	});
 });
 

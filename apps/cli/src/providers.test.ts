@@ -2,8 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { androidSnapshotKey, readSnapshotInputs, snapshotName } from "@delacour/warden-core/golden/android-golden";
+import {
+	markAndroidSnapshotPending,
+	pendingAndroidSnapshots,
+} from "@delacour/warden-core/golden/android-snapshot-pending";
 import { fakeHost } from "@delacour/warden-core/golden/golden.testing";
-import { androidGoldenDeps, androidSnapshotHook } from "./golden-deps";
+import { ok } from "@delacour/warden-types/result";
+import { androidGoldenDeps, androidSnapshotHook, androidSnapshotPass } from "./golden-deps";
 import { providerFor } from "./providers";
 import { type TestContext, testContext } from "./testing";
 
@@ -76,6 +81,35 @@ describe("android snapshot hook (16-3)", () => {
 		expect(calls).toHaveLength(0);
 	});
 
+	test("no snapshot yet → none: the claim cold-boots, says so once, and nothing is built (R2)", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], {
+			exec: async (cmd) => {
+				calls.push([...cmd]);
+				return { exitCode: 1, stdout: "", stderr: "" };
+			},
+		});
+		fakeSdk(ctx);
+		expect(await androidSnapshotHook(ctx, owner)("Pixel_10")).toEqual({ success: true, data: undefined });
+		expect(calls).toHaveLength(0);
+		expect(ctx.stderr.filter((l) => l.includes("no quick-boot snapshot of Pixel_10"))).toHaveLength(1);
+		expect(pendingAndroidSnapshots(ctx.db, ctx.now())).toEqual(["Pixel_10"]);
+		expect(ctx.db.listLeases()).toHaveLength(0);
+	});
+
+	test("an unrecognised WARDEN_ANDROID_SNAPSHOT warns and leaves the config's false in force (R7)", async () => {
+		ctx = testContext([]);
+		fakeSdk(ctx);
+		ctx.env = { ...ctx.env, WARDEN_ANDROID_SNAPSHOT: "nah" };
+		writeFileSync(
+			join(ctx.cwd, "warden.config.json"),
+			JSON.stringify({ projects: [{ name: "app", bundleId: { android: "com.x" } }], android: { snapshot: false } })
+		);
+		expect(await androidSnapshotHook(ctx, owner)("Pixel_10")).toEqual({ success: true, data: undefined });
+		expect(ctx.stderr.join("\n")).toContain("WARDEN_ANDROID_SNAPSHOT=nah");
+		expect(pendingAndroidSnapshots(ctx.db, ctx.now())).toEqual([]);
+	});
+
 	test("android.snapshot: false in warden.config.json → none", async () => {
 		ctx = testContext([]);
 		fakeSdk(ctx);
@@ -84,5 +118,45 @@ describe("android snapshot hook (16-3)", () => {
 			JSON.stringify({ projects: [{ name: "app", bundleId: { android: "com.x" } }], android: { snapshot: false } })
 		);
 		expect(await androidSnapshotHook(ctx, owner)("Pixel_10")).toEqual({ success: true, data: undefined });
+	});
+});
+
+describe("gc's android snapshot step (R2)", () => {
+	const built = { avd: "Pixel_10", name: "warden-0123456789", key: "0123456789", built: true };
+
+	test("builds one pending AVD and reports it", async () => {
+		ctx = testContext([]);
+		markAndroidSnapshotPending(ctx.db, "Pixel_10");
+		let builds = 0;
+		const notes = await androidSnapshotPass(ctx, owner, async () => {
+			builds++;
+			return ok({ built, busy: [] });
+		});
+		expect(builds).toBe(1);
+		expect(notes).toEqual(["built android snapshot warden-0123456789 of Pixel_10"]);
+	});
+
+	test("nothing pending, or CI set: no build", async () => {
+		ctx = testContext([]);
+		const build = async () => {
+			throw new Error("must not build");
+		};
+		expect(await androidSnapshotPass(ctx, owner, build)).toEqual([]);
+		markAndroidSnapshotPending(ctx.db, "Pixel_10");
+		ctx.env = { ...ctx.env, CI: "true" };
+		expect(await androidSnapshotPass(ctx, owner, build)).toEqual([]);
+		expect(pendingAndroidSnapshots(ctx.db, ctx.now())).toEqual(["Pixel_10"]);
+	});
+
+	test("snapshots off: the pending list is dropped, no build", async () => {
+		ctx = testContext([]);
+		markAndroidSnapshotPending(ctx.db, "Pixel_10");
+		ctx.env = { ...ctx.env, WARDEN_ANDROID_SNAPSHOT: "0" };
+		expect(
+			await androidSnapshotPass(ctx, owner, async () => {
+				throw new Error("must not build");
+			})
+		).toEqual([]);
+		expect(pendingAndroidSnapshots(ctx.db, ctx.now())).toEqual([]);
 	});
 });

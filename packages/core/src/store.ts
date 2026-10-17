@@ -241,6 +241,11 @@ export class Store {
 		this.db.query("UPDATE leases SET booted_by_owner = 1 WHERE id = ?").run(id);
 	}
 
+	/** Record the process a lease now lives with (an emulator launched after its port was leased). */
+	setLeasePid(id: string, pid: number): void {
+		this.db.query("UPDATE leases SET pid = ? WHERE id = ?").run(pid, id);
+	}
+
 	getMeta(key: string): string | undefined {
 		return this.db.query<{ value: string }, [string]>("SELECT value FROM meta WHERE key = ?").get(key)?.value;
 	}

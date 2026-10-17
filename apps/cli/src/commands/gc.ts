@@ -15,6 +15,7 @@ import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
+import { androidSnapshotPass } from "../golden-deps";
 import { emit, heading, plural, reportError } from "../output";
 import { providerFor } from "../providers";
 import { hasForegroundApp } from "../running-apps";
@@ -148,7 +149,9 @@ type GcOutcome = PlatformOutcome & { reclaimed: string[] };
  * which then stays up with its idle clock restarted. Then shut down warden-created devices (store `devices` table) that are
  * booted, unleased and idle longer than `--idle` (both platforms at once, a few devices at a time), and LRU-prune the build cache to its cap. Foreign devices are never touched; no device is
  * ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
- * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note.
+ * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note. Then one
+ * AVD a claim cold-booted for want of a quick-boot snapshot gets it built, if no emulator of it runs
+ * (never under `CI`).
  */
 async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const { color } = ctx.ui;
@@ -204,6 +207,8 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		}
 		const plan: GcPlan = { now, idleMs: idle.data, leased };
 		const platforms = await Promise.all(PLATFORMS.map((platform) => gcPlatform(sctx, platform, owner, plan)));
+		// after the idle shutdowns, which may have freed the AVD: one pending Android snapshot build
+		const snapshotNotes = await androidSnapshotPass(sctx, owner);
 		return {
 			reclaimed,
 			shutdown: [
@@ -215,7 +220,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 				...platforms.flatMap((p) => p.shutdown),
 			],
 			forgotten: platforms.flatMap((p) => p.forgotten),
-			notes: [...orphaned.notes, ...platforms.flatMap((p) => p.notes)],
+			notes: [...orphaned.notes, ...platforms.flatMap((p) => p.notes), ...snapshotNotes],
 		};
 	};
 	if (!opts.quiet && !opts.json)

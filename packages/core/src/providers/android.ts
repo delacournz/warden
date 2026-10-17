@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { profileSlug } from "../allocate";
@@ -119,11 +119,13 @@ export type AndroidProviderOptions = {
 	/** is the launched emulator process still alive (default: `kill -0`) */
 	pidAlive?: PidAlive;
 	/**
-	 * Name of a warden quick-boot snapshot of `avd` to launch from (see `golden/android-golden.ts`), built
-	 * first when missing; `ok(undefined)` = none (off, busy AVD, no SDK). A failure only logs: the
-	 * emulator then cold-boots as before.
+	 * Name of a warden quick-boot snapshot of `avd` to launch from (see `golden/android-golden.ts`), when
+	 * one exists: a claim never builds one. `ok(undefined)` = none (off, not built yet, no SDK). A failure
+	 * only logs: the emulator then cold-boots as before.
 	 */
 	snapshot?: (avd: string) => AsyncResult<string | undefined>;
+	/** The emulator logged that `snapshot` of `avd` did not load (it cold-booted instead): drop it so it is rebuilt. */
+	snapshotFailed?: (avd: string, snapshot: string) => AsyncResult<unknown>;
 };
 
 /** How often, and how long, `boot` looks for a just-launched warden emulator in `adb devices`. */
@@ -141,11 +143,20 @@ const PROP_READ_TIMEOUT_MS = 5_000;
 /** `create` reuses the `adb devices` listing of an `inventory` this recent. */
 const LISTING_REUSE_MS = 5_000;
 
-function readLog(logPath: string): string {
+function readLog(logPath: string, from = 0): string {
 	try {
-		return readFileSync(logPath, "utf8");
+		return readFileSync(logPath).subarray(from).toString("utf8");
 	} catch {
 		return "";
+	}
+}
+
+/** Bytes already in a log the next launch appends to: what it writes starts there. */
+function logSize(logPath: string): number {
+	try {
+		return statSync(logPath).size;
+	} catch {
+		return 0;
 	}
 }
 
@@ -191,13 +202,20 @@ export function headlessEmulatorFlags(env: Record<string, string | undefined>): 
 	return [...(env.WARDEN_EMULATOR_AUDIO === "1" ? [] : ["-no-audio"]), "-no-metrics"];
 }
 
+/** An early exit whose message says the emulator does not know one of its options (an older emulator). */
+export function rejectedOption(error: string): boolean {
+	return /unknown option|unrecognized option|invalid command-line (parameter|option)/i.test(error);
+}
+
 /** A claim's emulator: headless, `-read-only` (one AVD backs many), from `snapshot` when given, never saving on exit. */
 export function claimEmulatorArgv(
 	tools: AndroidTools,
 	env: Record<string, string | undefined>,
 	avd: string,
 	port: number,
-	snapshot?: string
+	snapshot?: string,
+	/** `false` leaves out `headlessEmulatorFlags` (an emulator that rejected them) */
+	headless = true
 ): string[] {
 	return [
 		tools.emulator,
@@ -210,7 +228,7 @@ export function claimEmulatorArgv(
 		...(snapshot !== undefined ? ["-snapshot", snapshot] : []),
 		"-no-snapshot-save",
 		"-no-boot-anim",
-		...headlessEmulatorFlags(env),
+		...(headless ? headlessEmulatorFlags(env) : []),
 	];
 }
 
@@ -341,9 +359,12 @@ export function leaseConsolePort(
 /** Label prefix of the console-port lease a snapshot build's writable emulator runs on. */
 export const GOLDEN_PORT_LABEL = "emulator golden ";
 
-/** A snapshot load the emulator gave up on (it then cold-boots by itself). */
+/**
+ * A snapshot load the emulator gave up on (it then cold-boots by itself). The wording is the emulator's
+ * and unverified on a device; a successful load logs `Successfully loaded snapshot …`, which does not match.
+ */
 export function snapshotLoadFailed(log: string): boolean {
-	return /(fail|error|cannot|could not|unable)[^\n]*snapshot|snapshot[^\n]*(fail|not found|does not exist|invalid|error)/i.test(
+	return /(fail|error|cannot|could not|unable|does not have)[^\n]*snapshot|snapshot[^\n]*(fail|not found|does not exist|could not|invalid|error)/i.test(
 		log
 	);
 }
@@ -369,7 +390,10 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 	const pidAlive = options.pidAlive ?? processAlive;
 	const spawnDetached = options.spawnDetached ?? createSpawnDetached(options.earlyExitMs);
 	/** emulators this provider launched: the boot wait watches their pid */
-	const launches = new Map<string, { pid: number; logPath: string; snapshot?: string }>();
+	const launches = new Map<
+		string,
+		{ pid: number; logPath: string; logOffset: number; avd: string; snapshot?: string }
+	>();
 	/** the last inventory's `adb devices`, reused by a `create` right after it */
 	let lastListing: { at: number; emulators: AdbEmulator[] } | undefined;
 
@@ -436,8 +460,9 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		avd: string,
 		port: number,
 		serial: string,
-		snapshot: string | undefined
-	): AsyncResult<{ pid: number; logPath: string }> {
+		snapshot: string | undefined,
+		headless: boolean
+	): AsyncResult<{ pid: number; logPath: string; logOffset: number }> {
 		const logDir = join(wardenHome(deps.env), "logs");
 		try {
 			mkdirSync(logDir, { recursive: true });
@@ -445,8 +470,10 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			return err(error);
 		}
 		const logPath = join(logDir, `${serial}.log`);
-		const spawned = await spawnDetached(claimEmulatorArgv(tools, deps.env, avd, port, snapshot), logPath);
-		return spawned.success ? ok({ pid: spawned.data.pid, logPath }) : spawned;
+		const logOffset = logSize(logPath);
+		const argv = claimEmulatorArgv(tools, deps.env, avd, port, snapshot, headless);
+		const spawned = await spawnDetached(argv, logPath);
+		return spawned.success ? ok({ pid: spawned.data.pid, logPath, logOffset }) : spawned;
 	}
 
 	/** `adb devices` for a create: the last inventory's when it is recent (the claim's own), else a fresh one. */
@@ -455,18 +482,31 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		return listEmulators(deps);
 	}
 
-	/** Launch from `snapshot`; if that launch fails, once more with today's cold-boot argv. */
+	/**
+	 * Launch from `snapshot`; if that launch fails, once more with today's cold-boot argv. An emulator that
+	 * rejects the headless flags (too old for `-no-metrics`) is relaunched once without them.
+	 */
 	async function launchOrColdBoot(
 		avd: string,
 		port: number,
 		serial: string,
 		snapshot: string | undefined
-	): AsyncResult<{ pid: number; logPath: string; snapshot?: string }> {
-		const launched = await launch(avd, port, serial, snapshot);
+	): AsyncResult<{ pid: number; logPath: string; logOffset: number; snapshot?: string }> {
+		let headless = true;
+		const attempt = async (from: string | undefined) => {
+			const first = await launch(avd, port, serial, from, headless);
+			if (first.success || !headless || !rejectedOption(first.error)) return first;
+			headless = false;
+			deps.log?.(
+				`${serial}: the emulator rejected ${headlessEmulatorFlags(deps.env).join(" ")} — relaunching without them`
+			);
+			return launch(avd, port, serial, from, false);
+		};
+		const launched = await attempt(snapshot);
 		if (launched.success) return snapshot !== undefined ? ok({ ...launched.data, snapshot }) : launched;
 		if (snapshot === undefined) return launched;
 		deps.log?.(`${serial}: launch from snapshot ${snapshot} failed (${launched.error}) — retrying with a cold boot`);
-		return launch(avd, port, serial, undefined);
+		return attempt(undefined);
 	}
 
 	return {
@@ -506,7 +546,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 				deps.store.deleteLeases([lease.id]);
 				return launched;
 			}
-			launches.set(serial, launched.data);
+			launches.set(serial, { ...launched.data, avd: avd.data });
 
 			const recordedRuntime = runtime !== undefined && runtime !== "latest" ? runtime : undefined;
 			deps.store.recordDevice({ platform: "android", id: serial, name, profile, runtime: recordedRuntime }, deps.now());
@@ -541,10 +581,11 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		async waitReady(id, timeoutMs) {
 			const launched = launches.get(id);
 			const ready = await waitBootCompleted({ ...deps, sleep, pidAlive, pollIntervalMs }, id, timeoutMs, launched);
-			if (ready.success && launched?.snapshot !== undefined && snapshotLoadFailed(readLog(launched.logPath))) {
-				deps.log?.(
-					`${id}: snapshot ${launched.snapshot} did not load, the emulator cold-booted (log: ${launched.logPath})`
-				);
+			const snapshot = launched?.snapshot;
+			if (ready.success && launched && snapshot && snapshotLoadFailed(readLog(launched.logPath, launched.logOffset))) {
+				deps.log?.(`${id}: snapshot ${snapshot} did not load, the emulator cold-booted (log: ${launched.logPath})`);
+				const dropped = await options.snapshotFailed?.(launched.avd, snapshot);
+				if (dropped && !dropped.success) deps.log?.(`${id}: snapshot ${snapshot} kept: ${dropped.error}`);
 			}
 			return ready;
 		},

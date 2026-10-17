@@ -4,13 +4,14 @@ import { createIosProvider, shortRuntime } from "@delacour/warden-core/providers
 import type { DeviceProvider, ProviderDeps } from "@delacour/warden-core/providers/provider.types";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import type { CommandContext } from "./context";
-import { androidSnapshotHook, goldenDeps, goldenEnabled, type Sleep } from "./golden-deps";
+import { androidSnapshotFailedHook, androidSnapshotHook, goldenDeps, goldenEnabled, type Sleep } from "./golden-deps";
 
 /**
  * Device provider for `platform`. iOS pool devices are cloned from a golden image (a first-booted,
  * settled sim) unless `WARDEN_GOLDEN=0`; a failed clone falls back to `simctl create`. Android emulators
- * launch from warden's quick-boot snapshot of the AVD unless `WARDEN_ANDROID_SNAPSHOT=0` /
- * `android.snapshot: false`; a failed launch from it falls back to a cold boot.
+ * launch from warden's quick-boot snapshot of the AVD when one exists, unless `WARDEN_ANDROID_SNAPSHOT=0` /
+ * `android.snapshot: false`; a failed launch from it falls back to a cold boot. Claims never build it
+ * (`warden gc` / `warden golden ensure --platform android` do).
  */
 export function providerFor(
 	platform: Platform,
@@ -27,7 +28,10 @@ export function providerFor(
 		log: (line) => ctx.err(`warden: ${line}`),
 	};
 	if (platform === "android")
-		return createAndroidProvider(deps, { snapshot: androidSnapshotHook(ctx, owner, opts.sleep) });
+		return createAndroidProvider(deps, {
+			snapshot: androidSnapshotHook(ctx, owner, opts.sleep),
+			snapshotFailed: androidSnapshotFailedHook(ctx, owner, opts.sleep),
+		});
 	if (!goldenEnabled(ctx.env)) return createIosProvider(deps);
 	const golden = { ...goldenDeps(ctx, owner, opts.sleep), prewarmHint: true };
 	return createIosProvider(deps, {
