@@ -1,5 +1,15 @@
 import type { Driver, Point, Rect, ScreenInfo } from "@delacour/warden-e2e/driver/driver.types";
-import { screenRect, visibleRect } from "@delacour/warden-e2e/screen/actions";
+import {
+	MAX_ROTATE_DEGREES,
+	PATH_MS,
+	PINCH_MS,
+	pinchRadius,
+	ROTATE_MS,
+	rotateRadius,
+	SCALE_RANGE,
+	screenRect,
+	visibleRect,
+} from "@delacour/warden-e2e/screen/actions";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import {
@@ -19,15 +29,6 @@ import type { RecordTarget } from "./record";
 import { runUi } from "./run";
 import { positiveInt } from "./snapshot-command";
 
-// TODO(GES-merge): use @delacour/warden-e2e/screen/actions
-export const PINCH_MS = 500;
-// TODO(GES-merge): use @delacour/warden-e2e/screen/actions
-export const ROTATE_MS = 500;
-// TODO(GES-merge): use @delacour/warden-e2e/screen/actions
-export const PATH_MS = 600;
-
-const SCALE_RANGE = { min: 0.1, max: 10 } as const;
-const MAX_DEGREES = 720;
 const MAX_PATHS = 2;
 
 export type PinchOptionValues = ActionOptionValues & { duration?: string; radius?: string; verify?: true };
@@ -60,14 +61,17 @@ export function splitAmount(
 	if (!NUMBER.test(last)) return amountUsage(`the ${kind} must be a number, got "${last}"`, kind);
 	const amount = Number(last);
 	if (kind === "scale") {
-		if (!Number.isFinite(amount) || amount < SCALE_RANGE.min || amount > SCALE_RANGE.max || amount === 1) {
+		if (!Number.isFinite(amount) || amount < SCALE_RANGE[0] || amount > SCALE_RANGE[1] || amount === 1) {
 			return amountUsage(
-				`the scale must be between ${SCALE_RANGE.min} and ${SCALE_RANGE.max} and not 1, got "${last}"`,
+				`the scale must be between ${SCALE_RANGE[0]} and ${SCALE_RANGE[1]} and not 1, got "${last}"`,
 				kind
 			);
 		}
-	} else if (!Number.isFinite(amount) || amount === 0 || Math.abs(amount) > MAX_DEGREES) {
-		return amountUsage(`the degrees must be non-zero and at most ${MAX_DEGREES} either way, got "${last}"`, kind);
+	} else if (!Number.isFinite(amount) || amount === 0 || Math.abs(amount) > MAX_ROTATE_DEGREES) {
+		return amountUsage(
+			`the degrees must be non-zero and at most ${MAX_ROTATE_DEGREES} either way, got "${last}"`,
+			kind
+		);
 	}
 	const target = words.slice(0, -1);
 	if (target.length > 0 && target.every((word) => NUMBER.test(word)) && target.length !== 2) {
@@ -144,19 +148,6 @@ export async function gestureRegion(
 		center: { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 },
 		target: where,
 	});
-}
-
-// TODO(GES-merge): use @delacour/warden-e2e/screen/actions
-function pinchRadius(rect: Rect, scale: number, screen: ScreenInfo): number {
-	const minSide = Math.min(screen.width, screen.height);
-	const fit = ((Math.min(rect.width, rect.height) / 2) * 0.8) / Math.max(1, scale);
-	return Math.max(fit, (0.04 * minSide) / Math.min(1, scale));
-}
-
-// TODO(GES-merge): use @delacour/warden-e2e/screen/actions
-function rotateRadius(rect: Rect, screen: ScreenInfo): number {
-	const minSide = Math.min(screen.width, screen.height);
-	return Math.min(Math.max(Math.min(rect.width, rect.height) * 0.3, 0.04 * minSide), 0.3 * minSide);
 }
 
 /** Fail (exit 1, `details.driver: E_UNSUPPORTED`) when the driver cannot do `verb`: no two-finger support, or fewer pointers than fingers. */
