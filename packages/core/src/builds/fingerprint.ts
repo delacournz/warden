@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
@@ -132,6 +132,8 @@ const READS_ENV = /\bprocess\.env\b|\bimport\.meta\.env\b|\bBun\.env\b/;
 /** a script config that computes paths: what it reads cannot be listed from its text */
 const COMPUTES_PATHS =
 	/\$\{|\b__dirname\b|\b__filename\b|\bimport\.meta\.(dirname|url|filename)\b|\bresolve\(|\bjoin\(/;
+/** a module a script config can load (a local plugin, a `require` / `import`): its text may read anything */
+const CODE_FILE = /\.[cm]?[jt]sx?$/;
 /** the string literals of a script config */
 const STRING_LITERAL = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`([^`]*)`/g;
 
@@ -150,10 +152,25 @@ function nativeIgnored(native: string, rel: string, name: string): boolean {
 	return ["build", ".cxx", ".gradle", "app/build", "app/.cxx", "app/.gradle", "gradlew.bat"].includes(rel);
 }
 
-/** `size:mtime:ctime` of `path`, `-` when absent (ctime moves on a restore that preserves size and mtime). */
+/**
+ * `size:mtime:ctime` of `path`, `-` when absent (ctime moves on a restore that preserves size and mtime).
+ * A symlink also gets its realpath and the target's stat (the fingerprint hashes the target, and editing
+ * it moves neither the link nor `git status`); a dangling one reads its link text and `-`.
+ */
 function statSig(path: string): string {
 	const st = lstatSync(path, { throwIfNoEntry: false });
-	return st ? `${st.size}:${st.mtimeMs}:${st.ctimeMs}` : "-";
+	if (!st) return "-";
+	const own = `${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+	if (!st.isSymbolicLink()) return own;
+	const target = statSync(path, { throwIfNoEntry: false });
+	if (!target) return `${own} -> ${readlinkSync(path)} -`;
+	return `${own} -> ${realpathSync(path)} ${target.size}:${target.mtimeMs}:${target.ctimeMs}`;
+}
+
+/** `path`'s stat through a symlink (lstat first, so a plain file costs one call); undefined when absent or dangling */
+function statThrough(path: string) {
+	const st = lstatSync(path, { throwIfNoEntry: false });
+	return st?.isSymbolicLink() ? statSync(path, { throwIfNoEntry: false }) : st;
 }
 
 /**
@@ -212,9 +229,12 @@ export const SIGNATURE_STATUS_ARGV = [
  * path's size+mtime (editing an already-modified file keeps its status line), the submodules' commits,
  * lockfiles and install markers from the project root up to the git toplevel, the app config files, the
  * `.env*` files, the files the config names (icons, splash, fonts, `googleServicesFile`), and `ios/` /
- * `android/`. undefined = do not memoise: not a git checkout, a dirty submodule or nested repo (its
- * contents are invisible to the parent's status), a `fingerprint.config.*`, or an app config whose
- * inputs cannot be listed (reads the environment, a local plugin or import, a computed path).
+ * `android/` (symlinked config, `.env*` and named files are statted through the link too). undefined = do
+ * not memoise: not a git checkout, a dirty submodule or nested repo (its contents are invisible to the
+ * parent's status), a `fingerprint.config.*`, an app config whose inputs cannot be listed (reads the
+ * environment, a local plugin or import, a computed path), or a `.fingerprintignore` with a `!` negation
+ * (the native-dir walk hard-codes the fingerprint's default ignores, so a re-included path would be
+ * skipped; extra ignores alone keep the memo, the signature then only over-includes).
  */
 export async function treeSignature(exec: Exec, root: string): Promise<string | undefined> {
 	const opts = { cwd: root, timeoutMs: PROBE_TIMEOUT_MS };
@@ -335,7 +355,8 @@ function appJsonExternals(root: string, text: string): string[] | undefined {
 /**
  * What a script config (`app.config.ts`…) reads, from its string literals: each one naming a file
  * (`./assets/icon.png`, `assets/icon.png`, an absolute path) is statted. undefined = not memoisable:
- * it reads the environment, computes a path, or names a `./…` module or dir (a local plugin, an import).
+ * it reads the environment, computes a path, or names a `./…` module (a local plugin, an import: a path that
+ * does not exist as a file, or a code file `.js`/`.ts`/…) or dir. Literals are classified through symlinks.
  */
 function scriptExternals(root: string, text: string): string[] | undefined {
 	if (READS_ENV.test(text) || COMPUTES_PATHS.test(text)) return undefined;
@@ -343,19 +364,34 @@ function scriptExternals(root: string, text: string): string[] | undefined {
 	for (const m of text.matchAll(STRING_LITERAL)) {
 		const lit = m[1] ?? m[2] ?? m[3] ?? "";
 		if (lit === "") continue;
-		const path = resolve(root, lit);
-		const st = lstatSync(path, { throwIfNoEntry: false });
-		if (st?.isFile()) files.push(path);
-		else if (isLocalModule(lit)) return undefined;
-		else if (st?.isDirectory() && lit !== "ios" && lit !== "android") return undefined;
+		const found = scriptLiteral(root, lit);
+		if (found === "opaque") return undefined;
+		if (found !== undefined) files.push(found);
 	}
 	return files;
 }
+
+/** One script-config literal: the file it names, `opaque` when it is a module or dir, undefined when neither. */
+function scriptLiteral(root: string, lit: string): string | "opaque" | undefined {
+	const path = resolve(root, lit);
+	const st = statThrough(path);
+	if (st?.isFile()) {
+		// a local plugin or module (`./plugins/withFoo.js`, `require("./base.config.js")`): evaluated by the config
+		return isLocalModule(lit) && CODE_FILE.test(path) ? "opaque" : path;
+	}
+	if (isLocalModule(lit)) return "opaque";
+	return st?.isDirectory() && lit !== "ios" && lit !== "android" ? "opaque" : undefined;
+}
+
+/** a `.fingerprintignore` line `!…` re-includes a path the fingerprint ignores by default */
+const hasNegation = (text: string) => text.split("\n").some((line) => line.trim().startsWith("!"));
 
 /** The app config and `.env*` files in `root` plus the files the config names; undefined = do not memoise. */
 function appConfigs(root: string): AppConfigs | undefined {
 	const names = readdirSync(root).sort();
 	if (names.some((n) => FINGERPRINT_CONFIG.test(n))) return undefined;
+	if (names.includes(".fingerprintignore") && hasNegation(readFileSync(join(root, ".fingerprintignore"), "utf8")))
+		return undefined;
 	const files = names.filter((n) => APP_CONFIG.test(n) || ENV_FILE.test(n));
 	const external: string[] = [];
 	for (const name of names.filter((n) => APP_CONFIG.test(n) && n !== ".fingerprintignore")) {
@@ -364,7 +400,7 @@ function appConfigs(root: string): AppConfigs | undefined {
 		if (found === undefined) return undefined;
 		for (const path of found) {
 			// a dir (a fonts folder): edits inside it do not move its stat
-			if (lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) return undefined;
+			if (statThrough(path)?.isDirectory()) return undefined;
 			external.push(path);
 		}
 	}

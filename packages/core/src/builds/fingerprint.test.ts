@@ -476,6 +476,108 @@ describe("computeCacheKey fingerprint memo (17-5)", () => {
 		expect(spawns).toBe(6);
 	});
 
+	test("a script app config naming a local plugin or module by its file path is never memoised (fix2-S1)", async () => {
+		mkdirSync(join(root, "plugins"));
+		writeFileSync(join(root, "plugins", "withFoo.js"), "module.exports = (c) => ({ ...c, slug: process.env.V });");
+		writeFileSync(join(root, "app.config.ts"), 'export default { name: "x", plugins: ["./plugins/withFoo.js"] };');
+		await key();
+		await key();
+		expect(spawns).toBe(2);
+		writeFileSync(join(root, "base.config.js"), "module.exports = { name: process.env.NAME };");
+		writeFileSync(join(root, "app.config.js"), 'const base = require("./base.config.js");\nmodule.exports = base;');
+		rmSync(join(root, "app.config.ts"));
+		await key();
+		await key();
+		expect(spawns).toBe(4);
+	});
+
+	test("a script app config naming local data files (an icon, google-services.json) is still memoised (fix2-S1)", async () => {
+		mkdirSync(join(root, "assets"));
+		writeFileSync(join(root, "assets", "icon.png"), "a");
+		writeFileSync(join(root, "google-services.json"), "{}");
+		writeFileSync(
+			join(root, "app.config.ts"),
+			'export default { icon: "./assets/icon.png", android: { googleServicesFile: "./google-services.json" } };'
+		);
+		await key();
+		await key();
+		expect(spawns).toBe(1);
+		touch(join(root, "google-services.json"), 4000);
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("a symlinked googleServicesFile whose target is edited, or that is re-pointed, recomputes (fix2-S2)", async () => {
+		const secrets = join(dir, "secrets");
+		mkdirSync(secrets);
+		writeFileSync(join(secrets, "gs.json"), '{"a":1}');
+		writeFileSync(join(secrets, "gs2.json"), '{"a":1}');
+		touch(join(secrets, "gs.json"), 1000);
+		touch(join(secrets, "gs2.json"), 1000);
+		symlinkSync(join(secrets, "gs.json"), join(root, "google-services.json"));
+		writeFileSync(
+			join(root, "app.json"),
+			JSON.stringify({ expo: { android: { googleServicesFile: "./google-services.json" } } })
+		);
+		await key();
+		await key();
+		expect(spawns).toBe(1);
+		writeFileSync(join(secrets, "gs.json"), '{"a":2}');
+		touch(join(secrets, "gs.json"), 1000);
+		await key();
+		expect(spawns).toBe(2);
+		// same-length target path, same target stat: only the realpath tells them apart
+		const link = join(root, "google-services.json");
+		rmSync(link);
+		symlinkSync(join(secrets, "gs2.json"), link);
+		await key();
+		expect(spawns).toBe(3);
+	});
+
+	test("a symlinked .env whose target is edited recomputes (fix2-S2)", async () => {
+		const secrets = join(dir, "secrets");
+		mkdirSync(secrets);
+		writeFileSync(join(secrets, "env"), "A=1");
+		touch(join(secrets, "env"), 1000);
+		symlinkSync(join(secrets, "env"), join(root, ".env"));
+		await key();
+		await key();
+		expect(spawns).toBe(1);
+		writeFileSync(join(secrets, "env"), "A=2");
+		touch(join(secrets, "env"), 1000);
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("a script config's bare-name symlinked file is statted through the link (fix2-S2)", async () => {
+		const secrets = join(dir, "secrets");
+		mkdirSync(secrets);
+		writeFileSync(join(secrets, "gs.json"), "{}");
+		touch(join(secrets, "gs.json"), 1000);
+		symlinkSync(join(secrets, "gs.json"), join(root, "google-services.json"));
+		writeFileSync(
+			join(root, "app.config.ts"),
+			'export default { android: { googleServicesFile: "google-services.json" } };'
+		);
+		await key();
+		await key();
+		expect(spawns).toBe(1);
+		touch(join(secrets, "gs.json"), 4000);
+		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("a .fingerprintignore with a negation is never memoised; one with only extra ignores is (fix2-S3)", async () => {
+		writeFileSync(join(root, ".fingerprintignore"), "docs/**/*\n");
+		await key();
+		await key();
+		expect(spawns).toBe(1);
+		writeFileSync(join(root, ".fingerprintignore"), "docs/**/*\n!**/ios/Pods/Local Podspecs/**\n");
+		await key();
+		await key();
+		expect(spawns).toBe(3);
+	});
+
 	test("a dirty submodule is never memoised: edits inside it keep its status line (R3)", async () => {
 		mkdirSync(join(root, "vendor", "lib"), { recursive: true });
 		writeFileSync(join(root, "vendor", "lib", "a.c"), "a");
