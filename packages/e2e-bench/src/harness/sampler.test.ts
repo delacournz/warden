@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { HostGroup } from "../results/schema";
 import { fakeExec } from "./exec";
 import { ownerFilter } from "./residue";
 import {
@@ -287,7 +288,7 @@ describe("startSampler", () => {
 		});
 		await fire();
 		await sampler.stop();
-		expect(order).toEqual(["roots", "ps"]);
+		expect(order.slice(0, 2)).toEqual(["roots", "ps"]);
 		expect(exec.calls[0]?.args).toEqual(["-axo", "pid,ppid,rss,%cpu,time,lstart,command"]);
 	});
 
@@ -668,7 +669,10 @@ describe("review fixes (bench-fidelity R1-R3, R8)", () => {
 });
 
 describe("exit CPU of bench-spawned roots (bench-fidelity-R4)", () => {
-	const setup = (snapshots: readonly ((exitNow: () => void) => string)[]) => {
+	const setup = (
+		snapshots: readonly ((exitNow: () => void) => string)[],
+		matching: { patterns: RegExp[]; labels?: ReadonlyMap<number, HostGroup> } = { patterns: [] }
+	) => {
 		let call = 0;
 		let onPs: () => void = () => undefined;
 		const exec = fakeExec([
@@ -683,9 +687,9 @@ describe("exit CPU of bench-spawned roots (bench-fidelity-R4)", () => {
 		const sampler = startSampler({
 			exec,
 			rootPids: () => [...roots],
-			rootLabels: () => new Map([[100, "bun-test" as const]]),
-			processPatterns: [],
-			owned: () => [],
+			rootLabels: () => matching.labels ?? new Map([[100, "bun-test" as const]]),
+			processPatterns: matching.patterns,
+			owned: (rows) => (matching.patterns.length > 0 ? [...rows] : []),
 			platform: "ios",
 			sink: () => undefined,
 			setIntervalFn: (fn) => {
@@ -759,6 +763,42 @@ describe("exit CPU of bench-spawned roots (bench-fidelity-R4)", () => {
 		expect(exits[0]?.cpuSec).toBeCloseTo(0.4, 6);
 		// 0.3 tick delta + 0.4 at exit = 0.9 - 0.2 (the baseline reading)
 		expect(host.cpuSeconds).toBeCloseTo(0.7, 6);
+	});
+
+	test("S1: an exit charge is grouped by the root's argv as the ticks do, not by its spawn label", async () => {
+		const warden = { pid: 100, ppid: 1, rssKb: 1, time: "0:00.10", cmd: "/usr/local/bin/warden run x" };
+		const d = setup([() => psTimed([]), () => psTimed([warden])], {
+			patterns: [],
+			labels: new Map([[100, "other" as const]]),
+		});
+		await d.tickAt(0);
+		d.roots.push(100);
+		await d.tickAt(500);
+		d.setClock(600);
+		d.sampler.exited(100, 0.5);
+		const { exits } = await d.sampler.stop();
+		expect(exits).toEqual([{ t: 600, cpuSec: expect.closeTo(0.4, 6), group: "warden-cli" }]);
+	});
+
+	test("S4: a root registered while ps ran, seen by one tick and gone, is not charged twice", async () => {
+		const d = setup(
+			[
+				() => psTimed([]),
+				(registerNow) => {
+					registerNow();
+					return psTimed([bunTest("0:00.40")]);
+				},
+			],
+			{ patterns: [/bun test/] }
+		);
+		await d.tickAt(0);
+		d.duringPs(() => d.roots.push(100));
+		await d.tickAt(500);
+		d.setClock(700);
+		d.sampler.exited(100, 0.5);
+		const { host, exits } = await d.sampler.stop();
+		expect(exits[0]?.cpuSec).toBeCloseTo(0.1, 6);
+		expect(host.cpuSeconds).toBeCloseTo(0.5, 6);
 	});
 
 	test("untimed ticks take no exit charge (no CPU-seconds at all)", () => {

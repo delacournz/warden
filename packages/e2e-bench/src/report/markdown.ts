@@ -184,8 +184,9 @@ const CPU_NOTE =
 	"decaying average on macOS, kept for comparison with older runs. Android `sim` has no CPU-seconds (`top` only). " +
 	"CPU-seconds undercount: CPU a process uses after the last 500 ms tick, and processes living between ticks, " +
 	"are only recovered for children the bench ran itself (their rusage at exit); daemons and processes a framework " +
-	"spawns and never waits for are not, so frameworks that fan out to many short-lived tools read low. procps " +
-	"(Linux) `ps time` has 1 s resolution.";
+	"spawns and never waits for are not, so frameworks that fan out to many short-lived tools read low. An exit " +
+	"charge is booked to its root's group, so in the per-group split the unseen CPU of a descendant of another " +
+	"group (a `bun test` under a `warden` root) shows under the root. procps (Linux) `ps time` has 1 s resolution.";
 
 /** The host split by process group (whole-framework), for runs that recorded it. */
 function groupSection(oks: readonly OkFrameworkResult[]): string[] {

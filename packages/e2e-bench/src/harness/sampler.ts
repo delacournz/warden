@@ -389,7 +389,9 @@ type Point = { t: number; cpu: number; rss: number; cpuSec?: number; groups?: Pa
 /**
  * CPU a bench-spawned root's tree used that no tick saw, charged when the root exits: its rusage at exit
  * (`ExecResult.cpuSec`, which includes the descendants it waited for) minus the last `ps time` reading of
- * every process the ticks saw in its tree. `t` is the sampler clock at the exit, `group` the root's label.
+ * every process the ticks saw in its tree. `t` is the sampler clock at the exit, `group` the root's group as the
+ * ticks gave it (`hostGroupOf` on its row, else its spawn label). The whole charge is booked there, even when
+ * descendants of another group (a `bun test` under a `warden` CLI root) used some of it.
  */
 export type ExitCharge = { t: number; cpuSec: number; group: HostGroup };
 
@@ -564,7 +566,8 @@ function toTick(t: number, h: ReturnType<typeof total>, sim: SimReading, timed: 
  * Samples host and simulator CPU / RSS every `intervalMs` from one `ps` call per tick (Android adds
  * `adb top` every 2 s, reusing the last reading in between). CPU seconds come from per-pid deltas of the
  * cumulative `time` column (`cpuDeltas`); host rows are split by `HostGroup`. Root pids are read before
- * `ps`, so every registered pid is already running in that snapshot, and are checked against their start
+ * `ps`, so every registered pid is already running in that snapshot (one registered while ps ran counts
+ * only if that snapshot has it), and are checked against their start
  * time (`liveRoots`). Android's `top` rows are matched by name on every read, so no pid is carried over and
  * none can be reused. `elapsed()` is the sampler clock ticks are stamped with; `stop()` waits for an
  * in-flight tick and also returns the ticks and exit charges (for per-rep windows). `exited(pid, cpuSec)`
@@ -586,6 +589,7 @@ export function startSampler(options: SamplerOptions): {
 	const ticks: Tick[] = [];
 	const trees: TreeReadings = new Map();
 	const exits: ExitCharge[] = [];
+	const rootGroups = new Map<number, HostGroup>();
 	const start = now();
 	let count = 0;
 	let lastAdb: SimReading = { cpuPct: 0, rssBytes: 0 };
@@ -622,11 +626,18 @@ export function startSampler(options: SamplerOptions): {
 		const deltas = cpuDeltas(rows, readings, ticks.length === 0);
 		const timed = rows.some((r) => r.cpuTimeSec !== undefined);
 		if (!timed) noteUntimed(rows);
-		const live = liveRoots(registered, rows, stamps);
+		const byPid = new Map(rows.map((r) => [r.pid, r]));
+		// a root registered while ps ran and already in its snapshot counts now (its tree is recorded below), so
+		// an exit charge never repeats CPU a tick charged; one not in the snapshot waits for the next tick
+		const late = options.rootPids().filter((pid) => !registered.includes(pid) && byPid.has(pid));
+		const live = liveRoots([...registered, ...late], rows, stamps);
 		recordTrees(rows, live, trees);
 		const host = hostPids(rows, live, options.processPatterns, options.owned(rows));
-		const byPid = new Map(rows.map((r) => [r.pid, r]));
 		const labels = options.rootLabels?.() ?? new Map<number, HostGroup>();
+		for (const pid of live) {
+			const row = byPid.get(pid);
+			if (row !== undefined) rootGroups.set(pid, hostGroupOf(row, byPid, labels));
+		}
 		const h = total(rows, host, deltas, (r) => hostGroupOf(r, byPid, labels));
 		const out = toTick(t, h, await readSim(rows, host, deltas, index), timed);
 		ticks.push(out);
@@ -641,8 +652,10 @@ export function startSampler(options: SamplerOptions): {
 	const settleExit = (pid: number, cpuSec: number, t: number): void => {
 		const seen = [...(trees.get(pid)?.values() ?? [])].reduce((a, v) => a + v, 0);
 		trees.delete(pid);
+		const group = rootGroups.get(pid) ?? options.rootLabels?.().get(pid) ?? "other";
+		rootGroups.delete(pid);
 		const unseen = cpuSec - seen;
-		if (unseen > 0) exits.push({ t, cpuSec: unseen, group: options.rootLabels?.().get(pid) ?? "other" });
+		if (unseen > 0) exits.push({ t, cpuSec: unseen, group });
 	};
 
 	return {

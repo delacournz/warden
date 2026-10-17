@@ -46,16 +46,16 @@ export function residueCounts(residue: Residue): { processes: number; driverApps
 	return { processes: residue.processes.length, driverApps: residue.driverApps.length, paths: residue.paths.length };
 }
 
-/**
- * The headline CPU figure: host CPU-seconds of the timed `run` (`RepResult.resources`), median over the warm
- * reps (all reps when none is warm). Undefined when no rep has a CPU time (results from before 19-6, or a
- * sampler whose ps had no usable `time` column); a rep without one is skipped, never counted as 0.
- */
 /** False when the framework has no warm rep (`--runs 1`): `cpuSecondsPerRep` then falls back to all reps. */
 export function hasWarmRep(f: OkFrameworkResult): boolean {
 	return f.reps.some((r) => !r.cold);
 }
 
+/**
+ * The headline CPU figure: host CPU-seconds of the timed `run` (`RepResult.resources`), median over the warm
+ * reps (all reps when none is warm). Undefined when no rep has a CPU time (results from before 19-6, or a
+ * sampler whose ps had no usable `time` column); a rep without one is skipped, never counted as 0.
+ */
 export function cpuSecondsPerRep(f: OkFrameworkResult): number | undefined {
 	const warm = f.reps.filter((r) => !r.cold);
 	const values = (warm.length > 0 ? warm : f.reps).flatMap((r) =>
