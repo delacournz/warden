@@ -3,7 +3,6 @@ import type { Exec } from "@delacour/warden-core/exec";
 import { findNodeBin } from "@delacour/warden-core/node-bin";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { z } from "zod";
 
 /**
  * One owned Metro per run, shared by `warden dev` and `warden e2e`: spawn `expo start` on a leased
@@ -247,7 +246,15 @@ export function launchMetro(deps: MetroDeps, o: MetroOptions): MetroLaunchHandle
 	return handle;
 }
 
-const manifestSchema = z.object({ launchAsset: z.object({ url: z.string().min(1) }) });
+/** The manifest's `launchAsset.url` (non-empty), else undefined. Hand-written: no zod on `dev`'s start path (15-2). */
+function launchAssetUrl(manifest: unknown): string | undefined {
+	const asset =
+		typeof manifest === "object" && manifest !== null && !Array.isArray(manifest) && "launchAsset" in manifest
+			? manifest.launchAsset
+			: undefined;
+	if (typeof asset !== "object" || asset === null || Array.isArray(asset) || !("url" in asset)) return undefined;
+	return typeof asset.url === "string" && asset.url.length > 0 ? asset.url : undefined;
+}
 
 /**
  * Build the `platform` bundle once before any device asks for it (the first request is the slow
@@ -261,9 +268,9 @@ export async function prewarmMetro(url: string, platform: Platform): AsyncResult
 			headers: { "expo-platform": platform, accept: "application/expo+json,application/json" },
 			signal: AbortSignal.timeout(PREWARM_TIMEOUT_MS),
 		});
-		const manifest = manifestSchema.safeParse(await res.json());
-		if (!res.ok || !manifest.success) return ok({ bundled: false });
-		bundleUrl = manifest.data.launchAsset.url;
+		const assetUrl = launchAssetUrl(await res.json());
+		if (!res.ok || assetUrl === undefined) return ok({ bundled: false });
+		bundleUrl = assetUrl;
 	} catch {
 		return ok({ bundled: false });
 	}

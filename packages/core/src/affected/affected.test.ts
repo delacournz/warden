@@ -87,6 +87,20 @@ describe("computeAffected", () => {
 		expect(res.data.selections[0]?.selected.map((f) => f.id)).toEqual(["chats"]);
 	});
 
+	test("a diff run in a project without typescript: a clear error naming the fix", async () => {
+		write("src/settings/form.tsx", "export const changed = 1;\n");
+		const res = await computeAffected({ exec: bunExec, cwd: join(dir, "src"), typescript: () => undefined });
+		expect(res).toEqual({
+			success: false,
+			error: "warden affected needs typescript in the analysed project: add it as a devDependency",
+		});
+	});
+
+	test("no typescript is fine when no graph is needed (--only)", async () => {
+		const res = await computeAffected({ exec: bunExec, cwd: dir, only: { mode: "all" }, typescript: () => undefined });
+		expect(res.success).toBe(true);
+	});
+
 	test("unknown suite", async () => {
 		const res = await computeAffected({ exec: bunExec, cwd: dir, suite: "web" });
 		expect(res.success).toBe(false);

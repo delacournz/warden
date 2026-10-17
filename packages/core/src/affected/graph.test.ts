@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { openImportCache } from "./cache";
 import { makeFixtureRepo } from "./fixture.testing";
-import { chainTo, createImportGraph, reachable, routerLayouts } from "./graph";
+import { chainTo, createImportGraph, reachable, resolveTypescript, routerLayouts } from "./graph";
 
 let dir: string;
 const rel = (files: Iterable<string>) => [...files].map((f) => relative(dir, f)).sort();
@@ -74,5 +75,57 @@ describe("routerLayouts", () => {
 			"src/app/_layout.tsx",
 		]);
 		expect(routerLayouts(join(dir, "src/chat/list.tsx"), root, "ios")).toEqual([]);
+	});
+});
+
+describe("resolveTypescript", () => {
+	const none = () => undefined;
+
+	test("the analysed project's own typescript first (node resolution from its root, upward)", () => {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "warden-ts-")));
+		try {
+			mkdirSync(join(root, "node_modules", "typescript", "lib"), { recursive: true });
+			writeFileSync(
+				join(root, "node_modules", "typescript", "package.json"),
+				JSON.stringify({ name: "typescript", main: "./lib/typescript.js" })
+			);
+			writeFileSync(join(root, "node_modules", "typescript", "lib", "typescript.js"), "module.exports = {};\n");
+			mkdirSync(join(root, "apps", "mobile"), { recursive: true });
+			const expected = join(root, "node_modules", "typescript", "lib", "typescript.js");
+			expect(resolveTypescript(root, none)).toBe(expected);
+			expect(resolveTypescript(join(root, "apps", "mobile"), none)).toBe(expected);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	test("a package without `main` resolves to its index.js; a dangling directory is not a compiler", () => {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "warden-ts-")));
+		try {
+			mkdirSync(join(root, "node_modules", "typescript"), { recursive: true });
+			expect(resolveTypescript(root, none)).toBeUndefined();
+			writeFileSync(join(root, "node_modules", "typescript", "package.json"), "{}");
+			writeFileSync(join(root, "node_modules", "typescript", "index.js"), "module.exports = {};\n");
+			expect(resolveTypescript(root, none)).toBe(join(root, "node_modules", "typescript", "index.js"));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	test("a compiled binary resolves no packages itself: the lookup reads node_modules, not the runtime resolver", () => {
+		const source = readFileSync(join(import.meta.dir, "graph.ts"), "utf8");
+		const lookup = source.slice(source.indexOf("export function resolveTypescript"));
+		expect(lookup.slice(0, lookup.indexOf("\n}\n"))).not.toMatch(/createRequire|resolveSync|require\.resolve/);
+	});
+
+	test("a project without typescript falls back to the one beside warden (source mode)", () => {
+		expect(resolveTypescript(dir, () => "/warden/node_modules/typescript/lib/typescript.js")).toBe(
+			"/warden/node_modules/typescript/lib/typescript.js"
+		);
+		expect(resolveTypescript(dir)).toEndWith(join("typescript", "lib", "typescript.js"));
+	});
+
+	test("neither: undefined (a compiled binary leaves typescript out)", () => {
+		expect(resolveTypescript(dir, none)).toBeUndefined();
 	});
 });

@@ -37,6 +37,12 @@ describe("parseFingerprintOutput", () => {
 		expect(parseFingerprintOutput("error: boom").success).toBe(false);
 		expect(parseFingerprintOutput('{"nohash":1}').success).toBe(false);
 	});
+
+	test("JSON that is not `{ hash: <non-empty string> }` is no hash", () => {
+		for (const text of ['{"hash":""}', '{"hash":5}', '[{"hash":"0123abcd"}]', "null", '"0123abcd"'])
+			expect(parseFingerprintOutput(text).success).toBe(false);
+		expect(parseFingerprintOutput('{"hash":"0123abcd","extra":1}')).toEqual({ success: true, data: "0123abcd" });
+	});
 });
 
 describe("fingerprintArgv", () => {

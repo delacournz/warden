@@ -22,12 +22,61 @@ export type ImportGraph = { imports: (file: string) => string[]; save: () => voi
 
 type TsConfig = { options: ts.CompilerOptions; cache: ts.ModuleResolutionCache };
 
-let tsModule: typeof ts | undefined;
+/** What `warden affected` says when it cannot find a TypeScript compiler for the project it analyses. */
+export const TYPESCRIPT_MISSING = "warden affected needs typescript in the analysed project: add it as a devDependency";
 
-/** TypeScript is big: loaded on the first graph, not at CLI start. */
-async function loadTs(): Promise<typeof ts> {
-	tsModule ??= (await import("typescript")).default;
-	return tsModule;
+/** The typescript beside warden's own source (source mode); none in a compiled binary, which leaves it out. */
+function besideWarden(): string | undefined {
+	try {
+		return Bun.resolveSync("typescript", import.meta.dir);
+	} catch {
+		return undefined;
+	}
+}
+
+/** `<dir>/node_modules/typescript`'s entry file (its `main`, else `index.js`), when that file exists. */
+function typescriptIn(dir: string): string | undefined {
+	const pkgDir = join(dir, "node_modules", "typescript");
+	let main = "index.js";
+	try {
+		const pkg: { main?: unknown } = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
+		if (typeof pkg.main === "string") main = pkg.main;
+	} catch {
+		return undefined;
+	}
+	const entry = resolve(pkgDir, main);
+	return existsSync(entry) ? entry : undefined;
+}
+
+/**
+ * The TypeScript compiler a graph walk loads: the analysed project's own (the nearest `node_modules/typescript` from
+ * `repoRoot` upward), else `fallback` (default: the one beside warden's source), else undefined. The compiled binary
+ * is built with `--external typescript` (the 28 MB it would otherwise carry for this one walk), so there only the
+ * project's resolves. The lookup reads node_modules itself: a Bun-compiled binary resolves no packages from disk
+ * (`createRequire(...).resolve` and `Bun.resolveSync` both fail there), but it does import an absolute path.
+ */
+export function resolveTypescript(
+	repoRoot: string,
+	fallback: () => string | undefined = besideWarden
+): string | undefined {
+	for (let dir = resolve(repoRoot); ; dir = dirname(dir)) {
+		const entry = typescriptIn(dir);
+		if (entry !== undefined) return entry;
+		if (dirname(dir) === dir) return fallback();
+	}
+}
+
+const tsModules = new Map<string, typeof ts>();
+
+/** TypeScript is big: loaded on the first graph, not at CLI start. Throws `TYPESCRIPT_MISSING` when none resolves. */
+async function loadTs(repoRoot: string): Promise<typeof ts> {
+	const path = resolveTypescript(repoRoot);
+	if (path === undefined) throw new Error(TYPESCRIPT_MISSING);
+	const known = tsModules.get(path);
+	if (known) return known;
+	const mod: { default: typeof ts } = await import(path);
+	tsModules.set(path, mod.default);
+	return mod.default;
 }
 
 const within = (dir: string, file: string) => {
@@ -131,7 +180,7 @@ export function platformSuffixes(platform: Platform): string[] {
  * followed to their real path, and React Native platform files via `moduleSuffixes`.
  */
 export async function createImportGraph(opts: GraphOptions): Promise<ImportGraph> {
-	const ts = await loadTs();
+	const ts = await loadTs(opts.repoRoot);
 	const repoRoot = real(opts.repoRoot);
 	const cache = opts.cache ?? openImportCache();
 	const suffixes = platformSuffixes(opts.platform);

@@ -21,6 +21,10 @@ describe("compileArgs", () => {
 		expect(cmd).toContain("--sourcemap=linked");
 	});
 
+	test("leaves typescript out (28 MB, only `warden affected` uses it, resolved from the analysed project)", () => {
+		expect(cmd[cmd.indexOf("--external") + 1]).toBe("typescript");
+	});
+
 	test("embeds the build info under DEFINE_KEY", () => {
 		const at = cmd.indexOf("--define");
 		expect(at).toBeGreaterThan(-1);

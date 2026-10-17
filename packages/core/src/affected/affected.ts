@@ -1,5 +1,5 @@
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { CONFIG_FILE, findWardenConfig, type ParsedWardenConfig } from "../builds/config";
 import type { Exec } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
@@ -7,6 +7,7 @@ import type { Platform } from "../types";
 import type { E2eSuiteConfig } from "./affected.schema";
 import { scanFlows } from "./flows";
 import { type ChangedFile, changedFiles } from "./git";
+import { resolveTypescript, TYPESCRIPT_MISSING } from "./graph";
 import { graphEntries, type LoadedGraph, loadImportGraph } from "./graph-process";
 import { type SelectInput, type Selection, selectFlows } from "./select";
 
@@ -35,6 +36,8 @@ export type AffectedInput = {
 	files?: readonly string[];
 	/** no diff at all: every flow, or exactly the named ones (see `SelectInput.only`) */
 	only?: SelectInput["only"];
+	/** where the analysed project's TypeScript compiler is, undefined: none. Default: `resolveTypescript` */
+	typescript?: (repoRoot: string) => string | undefined;
 	/** persist parsed imports under this dir (one file per config dir), e.g. `$WARDEN_HOME/affected` */
 	cacheDir?: string;
 	/** per-command memo of the git facts (default: a short-lived shared one) */
@@ -131,6 +134,19 @@ function importGraphFor(
 	});
 }
 
+/**
+ * Whether a run walks imports (some flow has entries and something changed); an error when it must but the project
+ * at `configDir` has no TypeScript compiler for the walk (`resolveTypescript`).
+ */
+function graphNeeded(
+	input: AffectedInput,
+	{ config, configDir }: Suite,
+	changes: readonly ChangedFile[]
+): Result<boolean> {
+	if (!(Object.values(config.flows).some((f) => f.entries.length > 0) && changes.length > 0)) return ok(false);
+	return (input.typescript ?? resolveTypescript)(configDir) === undefined ? err(TYPESCRIPT_MISSING) : ok(true);
+}
+
 /** false when `files` / `only` replace the git diff (so there is no base to report). */
 const usesGit = (input: AffectedInput): boolean => !input.files && !input.only;
 
@@ -143,7 +159,9 @@ export async function computeAffected(input: AffectedInput): AsyncResult<Affecte
 	const changes = await loadChanges(input, suite.data, base);
 	if (!changes.success) return changes;
 	const scan = scanFlows(join(configDir, config.flowsDir));
-	const needsGraph = Object.values(config.flows).some((f) => f.entries.length > 0) && changes.data.length > 0;
+	const graphNeed = graphNeeded(input, suite.data, changes.data);
+	if (!graphNeed.success) return graphNeed;
+	const needsGraph = graphNeed.data;
 	const importCachePath =
 		input.cacheDir === undefined ? undefined : join(input.cacheDir, `${Bun.hash(configDir).toString(36)}.json`);
 	const selections: Selection[] = [];

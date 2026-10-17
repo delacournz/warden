@@ -92,18 +92,15 @@ describe("cold start: the commands agents call most", () => {
 		{ args: ["devices", "--help"], forbid: FORBID },
 		{ args: ["check", "--help"], forbid: FORBID },
 		{ args: ["port", "ls", "--json"], forbid: FORBID },
+		// run, dev and app parse a config only once called with a project (15-2): zod loads at the parse, not at start
+		{ args: ["run", "--help"], forbid: FORBID },
+		{ args: ["dev", "--help"], forbid: FORBID },
+		{ args: ["app", "--help"], forbid: FORBID },
 	];
 
 	for (const { args, forbid } of CASES) {
 		test(`\`warden ${args.join(" ")}\` loads none of zod, ora, clack, the e2e package or typescript`, async () => {
 			expect(loaded(await loadedBy(args), forbid)).toEqual([]);
-		});
-	}
-
-	// run, dev and app still load zod on --help today; finding 15-2 moves it off their startup path.
-	for (const command of ["run", "dev", "app"]) {
-		test.todo(`\`warden ${command} --help\` loads no zod (15-2)`, async () => {
-			expect(loaded(await loadedBy([command, "--help"]), FORBID)).toEqual([]);
 		});
 	}
 });

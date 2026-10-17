@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { z } from "zod";
 import { type Exec, execError } from "../exec";
 import { findNodeBin } from "../node-bin";
 import type { Store } from "../store";
@@ -11,13 +10,14 @@ import { FINGERPRINT_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
 import type { Project } from "./config";
 import { combineKey, jsInputsHash, type ReadFile } from "./js-inputs";
 
-const hashJson = z.object({ hash: z.string().min(1) });
 const BARE_HASH = /^[0-9a-f]{8,}$/i;
 
+/** `{ hash }` with a non-empty string hash; a hand-written check, so zod stays off the `run` / `app` start path (15-2). */
 function jsonHash(text: string): string | undefined {
 	try {
-		const parsed = hashJson.safeParse(JSON.parse(text));
-		return parsed.success ? parsed.data.hash : undefined;
+		const parsed: unknown = JSON.parse(text);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || !("hash" in parsed)) return undefined;
+		return typeof parsed.hash === "string" && parsed.hash.length > 0 ? parsed.hash : undefined;
 	} catch {
 		return undefined;
 	}

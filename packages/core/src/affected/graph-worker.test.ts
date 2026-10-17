@@ -70,10 +70,10 @@ describe("the compiler stays out of this process", () => {
 		expect(modules.filter(evaluatedAtLoad)).toEqual([]);
 	});
 
-	test("graph.ts loads it on the first graph, with a dynamic import", () => {
-		const imports = new Bun.Transpiler({ loader: "ts" }).scanImports(
-			readFileSync(join(import.meta.dir, "graph.ts"), "utf8")
-		);
-		expect(imports.filter((i) => i.path === "typescript").map((i) => i.kind)).toEqual(["dynamic-import"]);
+	test("graph.ts loads it on the first graph from a resolved path, so no bundle follows a `typescript` import", () => {
+		const source = readFileSync(join(import.meta.dir, "graph.ts"), "utf8");
+		const imports = new Bun.Transpiler({ loader: "ts" }).scanImports(source);
+		expect(imports.filter((i) => i.path === "typescript").map((i) => i.kind)).toEqual([]);
+		expect(source).toContain("await import(path)");
 	});
 });
