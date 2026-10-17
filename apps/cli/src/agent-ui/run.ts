@@ -43,7 +43,12 @@ export async function runUi(
 	try {
 		const timeout = parseTimeout(opts.timeout);
 		if (!timeout.success) return reportError(ctx, report, timeout.error);
-		const device = await resolveUiDevice(ctx, opts);
+		// `status` opens no driver: it reports a busy device instead of refusing
+		const exclusive = opts.force !== true && command !== "status";
+		const device = await resolveUiDevice(ctx, opts, {
+			exclusive,
+			...(deps.pidAlive ? { pidAlive: deps.pidAlive } : {}),
+		});
 		if (!device.success) return reportError(ctx, report, device.error);
 		const info = { udid: device.data.udid, platform: device.data.platform, name: device.data.name };
 		let opened: Promise<Result<Driver, UiError>> | undefined;

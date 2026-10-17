@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Owner } from "@delacour/warden-core/types";
+import { snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import { blockMessage } from "../device-lease";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { uiCommand } from "./ui";
+import { cleanupHarnesses, doc, UDID as HARNESS_UDID, harness, LOGIN } from "./ui.testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -202,4 +204,65 @@ describe("warden ui status", () => {
 		expect(await uiCommand.run(c)).toBe(1);
 		expect(json(c)).toMatchObject({ ok: false, error: { code: "failed", message: "db gone" } });
 	});
+});
+
+describe("warden ui on a device a live warden process holds (refuse unless --force)", () => {
+	afterEach(cleanupHarnesses);
+	const RUN = { pid: 4242, label: "warden e2e" };
+	const busy = `device sim (${HARNESS_UDID}) is in use by agent me (pid 4242, warden e2e); re-run with --force to drive it anyway`;
+
+	test("live run pid on the caller's own lease: exit 2 naming owner, pid and label; no driver opened", async () => {
+		const h = harness(() => snap(), { lease: RUN, pidAlive: (pid) => pid === 4242 });
+		expect(await h.run("snapshot")).toBe(2);
+		expect(h.c.stderr.join("\n")).toContain(busy);
+		expect(h.opens.count).toBe(0);
+		expect(h.driver.calls).toEqual([]);
+	});
+
+	test("--json: one failure document with code device_busy", async () => {
+		const h = harness(() => snap(), { lease: RUN, pidAlive: () => true });
+		expect(await h.run("press", "id=sign-in-submit", "--json")).toBe(2);
+		expect(doc(h.c)).toEqual({ ok: false, command: "press", error: { code: "device_busy", message: busy } });
+		expect(h.opens.count).toBe(0);
+	});
+
+	test("every driving subcommand refuses (screenshot, type, open, close)", async () => {
+		for (const argv of [["screenshot"], ["type", "hi"], ["open", "com.x.y"], ["close"]]) {
+			const h = harness(() => snap(), { lease: RUN, pidAlive: () => true });
+			expect(await h.run(...argv)).toBe(2);
+			expect(h.opens.count).toBe(0);
+		}
+	});
+
+	test("status still reports (it opens no driver)", async () => {
+		const h = harness(() => snap(), { lease: RUN, pidAlive: () => true });
+		expect(await h.run("status")).toBe(0);
+	});
+
+	test("dead run pid: proceeds", async () => {
+		const h = harness(() => snap(), { lease: RUN, pidAlive: () => false });
+		expect(await h.run("snapshot")).toBe(0);
+		expect(h.opens.count).toBe(1);
+	});
+
+	test("same owner, no holder pid (a plain claim): proceeds", async () => {
+		const h = harness(() => snap(), { pidAlive: () => true });
+		expect(await h.run("snapshot")).toBe(0);
+		expect(h.opens.count).toBe(1);
+	});
+
+	test("--force: proceeds as before", async () => {
+		const h = harness(() => snap(), { lease: RUN, pidAlive: () => true });
+		expect(await h.run("snapshot", "--force")).toBe(0);
+		expect(h.opens.count).toBe(1);
+	});
+
+	test("--force does not bypass another owner's live lease", async () => {
+		const c = setup(["snapshot", "--udid", UDID, "--force"]);
+		lease(c, UDID, other);
+		expect(await uiCommand.run(c)).toBe(2);
+		expect(c.stderr.join("\n")).toContain(blockMessage(UDID, "ios", other));
+	});
+
+	const snap = () => snapshotOf(LOGIN);
 });
