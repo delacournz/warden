@@ -28,6 +28,7 @@
 | 22 | `logs`/`network` show old output | No collector running | `warden ui logs start`, then act |
 | 23 | `E_AX_UNAVAILABLE`: "another UiAutomation client holds <serial> (pid N: ...)" | Android allows one UiAutomation connection per device and Maestro, an `am instrument` run or a `uiautomator` command has it. The dump would only die with `Killed`, so warden names the holder and does not touch it | Stop that process (the message gives its pid and command line) or release the device; warden kills only its own stale `warden-uiad` (`app_process … nz.co.delacour.warden.uiad.Main`). `input`-based taps and keys still work meanwhile |
 | 24 | A press right after `fill` on Android is lost | The app was still taking the typed text in | The driver already waits 80 ms of quiet after text and keys; in a spec `device.settle()` before the press |
+| 25 | `gesture pinch`/`rotate`/`path` fails `E_UNSUPPORTED`, `reason: helper_outdated` (iOS) | `warden-simd` predates the gesture op | `warden ui close --udid <udid>`, or rebuild: `bun run --cwd packages/e2e native:build` |
 
 ## Code lookup
 

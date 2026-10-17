@@ -101,9 +101,9 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `tapAt({ x, y })` | tap a point |
 | `swipe({ direction, momentum? })` or `swipe({ from, to, durationMs? })` | `direction` up/down/left/right, `momentum` `"none" \| "slow" \| "fast"` |
 | `scrollUntilVisible(locator, { direction = "down", momentum?, maxSwipes = 10, timeout? })` | scroll the screen |
-| `screen.gesture.pinch({ scale, center?, radius?, durationMs? })` | 2 fingers; default centre = screen centre; scale > 1 zooms in |
-| `screen.gesture.rotate({ degrees, center?, radius?, durationMs? })` | 2 fingers; positive = clockwise |
-| `screen.gesture.path({ paths, durationMs? })` | 1-2 finger paths (`Point[][]`), down and lift together |
+| `screen.gesture.pinch({ scale, center?, radius?, durationMs? })` | 2 fingers; default centre = screen centre; scale > 1 zooms in; 0.1-10, not 1; 500 ms |
+| `screen.gesture.rotate({ degrees, center?, radius?, durationMs? })` | 2 fingers; positive = clockwise; not 0, max 720; 500 ms |
+| `screen.gesture.path({ paths, durationMs? })` | 1-2 finger paths (`Point[][]`), down and lift together; 600 ms |
 | `screen.gesture.swipe(...)` | same as `swipe(...)` |
 
 Roles: button link textbox searchbox checkbox radio switch slider image heading text tab tablist menu menuitem list listitem row alert dialog navigation group other.
@@ -122,7 +122,7 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
   - `clear()`, `type(text)` (at the caret)
   - `press(key, { modifiers? })` sends a KEY (`Enter Backspace Tab Space Escape Delete Up Down Left Right`), it is not a tap. Use `tap()` to tap.
   - `swipe({ direction, momentum? })`, `scrollTo()`
-  - `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` (positive = clockwise). An unsupported gesture throws `INVALID_ARGUMENT` (more than `maxPointers` fingers, e.g. Android without `warden-uiad`): skip with `test({ platforms: ["ios"] })`.
+  - `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` (positive = clockwise). Out-of-range `scale`/`degrees` and unsupported gestures throw `INVALID_ARGUMENT` (no `capabilities.pinch`, or more than `maxPointers` fingers; Android without `warden-uiad`: no pinch/rotate, 1-finger paths only): skip with `test({ platforms: ["ios"] })`.
 
 ## Matchers
 

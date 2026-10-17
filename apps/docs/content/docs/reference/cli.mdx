@@ -312,8 +312,8 @@ Exit codes: 0 ok · 1 failed or usage · 2 lease · 3 engine unavailable (`engin
 | `screen rotate [orientation]` · `screen appearance [light\|dark]` | the device's orientation (`portrait`, `portrait-upside-down`, `landscape-left`, `landscape-right`) and light / dark mode; no argument reads the current value |
 | `screen screenshot [path]` · `screen video start [path]\|stop` | default under `$WARDEN_HOME/ui/<udid>/` |
 | `gesture swipe <dir\|x1 y1 x2 y2>` · `gesture longpress <target> [ms]` | `swipe --from <target>`; `longpress`: `--verify`, `--settle [ms]` |
-| `gesture pinch [target] <scale>` · `gesture rotate [target] <degrees>` | two fingers around the target or the screen centre; `--duration <ms>` (default 500), `--radius <px>`, `--verify`, `--settle [ms]`; `scale` above 1 zooms in, positive `degrees` is clockwise (negative works) |
-| `gesture path --path 'x,y x,y …' [--path …]` | 1-2 fingers that go down and lift together; `--duration <ms>`, `--settle [ms]`; coordinates in points (iOS) or px (Android). Two fingers on Android need `warden-uiad` |
+| `gesture pinch [target] <scale>` · `gesture rotate [target] <degrees>` | two fingers around the target or the screen centre; `--duration <ms>` (default 500), `--radius <px>`, `--verify`, `--settle [ms]`; `scale` above 1 zooms in (0.1 to 10, not 1), positive `degrees` is clockwise (negative works; not 0, at most 720) |
+| `gesture path --path 'x,y x,y …' [--path …]` | 1-2 fingers (each path at least 2 points) that go down and lift together; `--duration <ms>` (default 600), `--settle [ms]`; coordinates in points (iOS) or px (Android). Two fingers on Android need `warden-uiad` |
 
 The old top-level `rotate`, `appearance`, `screenshot`, `video`, `swipe` and `longpress` are removed (unknown command, no aliases).
 | `eval <expr>` · `tree` · `logs` · `network` · `reload` | dev client only (`--metro <url>`): `eval --await`; `tree --all --max <n> --screen <name>`; `logs [n]\|start [--bodies]\|stop\|mark <label>\|clear`; `network [n] --include headers,body --id <id>` |

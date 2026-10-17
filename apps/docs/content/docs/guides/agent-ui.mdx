@@ -86,9 +86,9 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 | `scroll <up\|down\|left\|right> [amount]` | scroll the content that way (`down` reveals what is below). `amount` is the share of the region one swipe travels (0-1, default 0.5). `--in <target>` scrolls inside an element; `--until <selector>` swipes until the selector is on screen (at most `--max` swipes, default 10) and prints its fresh ref |
 | `gesture swipe <up\|down\|left\|right \| x1 y1 x2 y2> [--from <target>]` | a raw finger swipe: `gesture swipe up` moves the finger up, which reveals what is below. `--from` swipes inside an element |
 | `gesture longpress <target> [ms]` | press and hold (default 800 ms). `--verify` re-checks an `@eN` first |
-| `gesture pinch [target] <scale>` | two fingers around an element, a point or the screen centre; `scale` above 1 zooms in, below 1 zooms out. `--duration` (default 500 ms), `--radius` |
-| `gesture rotate [target] <degrees>` | two fingers turn around the target or the screen centre; positive is clockwise, negative works: `gesture rotate @e3 -45`. `--duration`, `--radius` |
-| `gesture path --path 'x,y x,y …' [--path …] [--duration]` | trace 1-2 finger paths; the fingers go down and lift together. Coordinates are points on iOS and px on Android, the same as `x y` targets |
+| `gesture pinch [target] <scale>` | two fingers around an element, a point or the screen centre; `scale` above 1 zooms in, below 1 zooms out; 0.1 to 10, not 1. `--duration` (default 500 ms), `--radius` (finger distance from the centre, a positive number) |
+| `gesture rotate [target] <degrees>` | two fingers turn around the target or the screen centre; positive is clockwise, negative works: `gesture rotate @e3 -45`; not 0, at most 720 either way. `--duration` (default 500 ms), `--radius` |
+| `gesture path --path 'x,y x,y …' [--path …] [--duration]` | trace 1-2 finger paths (each at least 2 points, on the screen; points split on spaces or `;`); the fingers go down and lift together. `--duration` defaults to 600 ms. Coordinates are points on iOS and px on Android, the same as `x y` targets |
 | `alert accept\|dismiss\|get` | answer the system alert or sheet on top, or read its title, message and buttons. With no alert showing, `get` succeeds with an empty `buttons` list (`--json`: `present: false`) and `accept` / `dismiss` fail with `no_alert` |
 | `home` · `back` | the home button; back is Android only |
 | `screen rotate [orientation]` | `portrait`, `portrait-upside-down`, `landscape-left`, `landscape-right`; without an argument it reads the current one |
@@ -98,7 +98,7 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 
 `screen …` acts on the device's screen: orientation, appearance, screenshots, video. `gesture …` is touch. The same verb can name either job: `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers around an element. This replaced the old top-level `rotate`, `appearance`, `screenshot`, `video`, `swipe` and `longpress`, which are removed (no aliases; they fail as unknown commands).
 
-`pinch` and `rotate` take the amount last. The target before it is optional: an `@eN` ref, a selector, `x y`, or nothing for the screen centre. `pinch`, `rotate` and `path` accept `--settle`; `pinch` and `rotate` also `--verify`. Both platforms cap a gesture at 2 fingers, which go down and lift together (the iOS simulator's HID event carries one phase for both contacts).
+`pinch` and `rotate` take the amount last. The target before it is optional: an `@eN` ref, a selector, `x y`, or nothing for the screen centre. `pinch`, `rotate` and `path` accept `--settle`; `pinch` and `rotate` also `--verify`. A scale or degrees out of range, a lone coordinate, or a bad `--path` is a `usage` error (exit 1) with the syntax as the hint; a device that cannot do the gesture fails `failed` with `details.driver: E_UNSUPPORTED` (exit 1), and nothing is sent. Both platforms cap a gesture at 2 fingers, which go down and lift together (the iOS simulator's HID event carries one phase for both contacts).
 
 ## Waiting and asserting
 
@@ -194,7 +194,7 @@ What differs from iOS:
 - `back`, `home`, `screen rotate` and `screen appearance` (`cmd uimode`) work; `alert` reads `AlertDialog` and runtime-permission buttons.
 - **One UiAutomation client per device.** Android allows a single connection. When Maestro, an `am instrument` run or a `uiautomator` command holds it, `snapshot` and `settle` fail with `E_AX_UNAVAILABLE` (exit 3) naming it (`another UiAutomation client holds emulator-5554 (pid 3120: …); warden will not touch it`); taps, keys and text still work through `input`. warden kills only a `warden-uiad` left behind by a crashed command.
 - **`screen video`** uses `screenrecord`, which stops itself after 3 minutes.
-- **Multi-finger gestures need `warden-uiad`.** `gesture pinch`, `gesture rotate` and 2-finger `gesture path` run through it (default on Android 8+/API 26+). With `WARDEN_ANDROID_UIAD=0` they fail with `failed` and `details.driver: E_UNSUPPORTED`; a 1-finger `gesture path` falls back to `input motionevent`. Limits on both platforms: at most 2 fingers, going down and lifting together.
+- **Multi-finger gestures need `warden-uiad`.** `gesture pinch`, `gesture rotate` and 2-finger `gesture path` run through it (default on Android 8+/API 26+). With `WARDEN_ANDROID_UIAD=0` they fail with `failed` and `details.driver: E_UNSUPPORTED`; a 1-finger `gesture path` falls back to `input motionevent` (API 26+). Limits on both platforms: at most 2 fingers, going down and lifting together.
 - **Not supported:** the clipboard (`E_UNSUPPORTED`, exit 1), text that is not printable ASCII (`E_UNSUPPORTED_TEXT`), and `open <bundleId>` with `--metro` or `--args` (fails; use `open <url>` with the dev client's deep link instead).
 
 ## Options on every subcommand

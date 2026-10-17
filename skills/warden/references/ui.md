@@ -80,11 +80,11 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `screen video` | `start [path]` / `stop` | 3 min device limit |
 | `gesture swipe` | `up\|down\|left\|right \| x1 y1 x2 y2 [--from <target>] [--settle]` | finger direction: `gesture swipe up` reveals what is below |
 | `gesture longpress` | `<target> [ms]` | default 800 ms; `--verify`, `--settle` |
-| `gesture pinch` | `[target] <scale> [--duration 500] [--radius px] [--verify] [--settle]` | 2 fingers; scale > 1 zooms in; no target = screen centre |
-| `gesture rotate` | `[target] <degrees> [--duration 500] [--radius px] [--verify] [--settle]` | 2 fingers; positive = clockwise, `-45` works (`gesture rotate @e3 -45`) |
-| `gesture path` | `--path 'x,y x,y ...' [--path ...] [--duration ms] [--settle]` | 1-2 fingers, down and lift together; points in pt (iOS) / px (Android) |
+| `gesture pinch` | `[target] <scale> [--duration 500] [--radius px] [--verify] [--settle]` | 2 fingers; scale > 1 zooms in, 0.1-10 and not 1; no target = screen centre |
+| `gesture rotate` | `[target] <degrees> [--duration 500] [--radius px] [--verify] [--settle]` | 2 fingers; positive = clockwise, `-45` works (`gesture rotate @e3 -45`); not 0, max 720 |
+| `gesture path` | `--path 'x,y x,y ...' [--path ...] [--duration ms] [--settle]` | 1-2 fingers, each >= 2 points, default 600 ms, down and lift together; points in pt (iOS) / px (Android) |
 
-`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Flows are format v2 (`kind: screen|gesture` + `type`); v1 files migrate on read.
+`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1). Flows are format v2 (`kind: screen|gesture` + `type`); v1 files migrate on read.
 | `wait` | `<sel>` / `absent <sel>` / `text "..."` / `stable [ms=250]` | polls 100 ms for 1 s, then 250 ms, up to `--timeout` |
 | `is` | `<sel> visible\|hittable\|enabled\|checked\|selected\|focused` | exit 0 true, 1 false (JSON still `ok:true`) |
 | `get` | `<sel> text\|value\|label\|id\|role\|frame\|count` | `frame` = `x y w h`; `count` 0 is success |
