@@ -52,6 +52,23 @@ describe("changedFiles", () => {
 		expect(byPath["src/fresh.ts"]?.status).toBe("added");
 	});
 
+	test("a config dir two levels below the root: untracked files there are repo-root-relative like the diff", async () => {
+		await git("checkout", "-q", "main");
+		write("apps/x/src/a.ts", "a");
+		await git("add", ".");
+		await git("commit", "-qm", "app");
+		await git("checkout", "-q", "feature");
+		await git("merge", "-q", "main");
+		write("apps/x/src/a.ts", "a2");
+		write("apps/x/src/new.ts", "new");
+		const res = await changedFiles(bunExec, join(dir, "apps", "x"), "main");
+		if (!res.success) throw new Error(res.error);
+		const byPath = Object.fromEntries(res.data.files.map((f) => [f.path, f]));
+		expect(byPath["apps/x/src/a.ts"]?.status).toBe("modified");
+		expect(byPath["apps/x/src/new.ts"]).toEqual({ path: "apps/x/src/new.ts", status: "added" });
+		expect(byPath["src/new.ts"]).toBeUndefined();
+	});
+
 	test("unknown base → error naming the ref", async () => {
 		const res = await changedFiles(bunExec, dir, "nope");
 		expect(res.success).toBe(false);

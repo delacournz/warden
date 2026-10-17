@@ -29,16 +29,24 @@ export function parsePortSpec(spec: string): Result<PortRange> {
 	return checkRange(Number(match[1]), match[2] === undefined ? DEFAULT_PORT_SPAN : Number(match[2]));
 }
 
-type ProbeOutcome = "free" | "busy" | "unsupported";
+export type ProbeOutcome = "free" | "busy" | "unsupported";
+
+/**
+ * A failed probe bind → outcome. In use / forbidden is busy anywhere; a missing address or family is
+ * unsupported; any other error on the IPv6 wildcard is unsupported too (Bun reports a code-less
+ * "Failed to listen at ::" on hosts without IPv6), while on an IPv4 host it stays busy.
+ */
+export function classifyBindError(error: { code?: string }, host: string): Exclude<ProbeOutcome, "free"> {
+	if (error.code === "EADDRINUSE" || error.code === "EACCES") return "busy";
+	if (error.code === "EADDRNOTAVAIL" || error.code === "EAFNOSUPPORT") return "unsupported";
+	return host === "::" ? "unsupported" : "busy";
+}
 
 function probe(port: number, host: string): Promise<ProbeOutcome> {
 	return new Promise((done) => {
 		const server = createServer();
 		server.unref();
-		server.once("error", (error: NodeJS.ErrnoException) => {
-			const unsupported = error.code === "EADDRNOTAVAIL" || error.code === "EAFNOSUPPORT";
-			done(unsupported ? "unsupported" : "busy");
-		});
+		server.once("error", (error: NodeJS.ErrnoException) => done(classifyBindError(error, host)));
 		server.listen({ port, host, exclusive: true }, () => server.close(() => done("free")));
 	});
 }

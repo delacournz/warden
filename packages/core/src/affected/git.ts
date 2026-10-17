@@ -56,7 +56,7 @@ export async function changedFiles(
 	const mb = mergeBase.data.trim();
 	const diff = await run(["diff", "--name-status", "-M", "-z", mb, "--"]);
 	if (!diff.success) return diff;
-	const untracked = await run(["ls-files", "--others", "--exclude-standard", "-z"]);
+	const untracked = await run(["ls-files", "--others", "--exclude-standard", "--full-name", "-z"]);
 	if (!untracked.success) return untracked;
 	const files = parseNameStatus(diff.data);
 	const seen = new Set(files.map((f) => f.path));

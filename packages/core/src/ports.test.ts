@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
 	type ClaimPortsDeps,
 	claimPorts,
+	classifyBindError,
 	DEFAULT_PORT_SPAN,
 	isPortFree,
 	listPortLeases,
@@ -190,6 +191,30 @@ describe("releasePorts / listPortLeases", () => {
 		expect(res.released).toEqual([mine]);
 		expect(res.denied).toEqual([theirs]);
 		expect(ports(listPortLeases(store))).toEqual([8092]);
+	});
+});
+
+describe("classifyBindError", () => {
+	test("in use or forbidden is busy on any host", () => {
+		for (const host of ["127.0.0.1", "0.0.0.0", "::"]) {
+			expect(classifyBindError({ code: "EADDRINUSE" }, host)).toBe("busy");
+			expect(classifyBindError({ code: "EACCES" }, host)).toBe("busy");
+		}
+	});
+
+	test("no such address family / address is unsupported", () => {
+		expect(classifyBindError({ code: "EADDRNOTAVAIL" }, "::")).toBe("unsupported");
+		expect(classifyBindError({ code: "EAFNOSUPPORT" }, "::")).toBe("unsupported");
+	});
+
+	test("a code-less error on the IPv6 wildcard (no IPv6 on the host) is unsupported, not busy", () => {
+		expect(classifyBindError({}, "::")).toBe("unsupported");
+		expect(classifyBindError({ code: "EINVAL" }, "::")).toBe("unsupported");
+	});
+
+	test("a code-less error on an IPv4 host stays busy", () => {
+		expect(classifyBindError({}, "127.0.0.1")).toBe("busy");
+		expect(classifyBindError({}, "0.0.0.0")).toBe("busy");
 	});
 });
 

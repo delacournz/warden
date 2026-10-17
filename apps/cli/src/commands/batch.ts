@@ -23,7 +23,7 @@ import type { FlowMark, TrackedFlow } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
 import { type ReadFrom, readFileFrom } from "../batch/results-tail";
 import { type RunnerReport, resultsReport } from "../batch/runner-report";
-import { captureScreenshot } from "../batch/screenshot";
+import { captureScreenshot, runnerFailureShot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
 import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
 import { openStampedLog } from "../batch/stamped-log";
@@ -689,6 +689,19 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			// best effort
 		}
 	};
+	/**
+	 * Whether the attempt's spec runner already shot the device at its failed test (`failure.png` in
+	 * `results.jsonl`): then a batch shot, taken after the whole process ran on, is skipped. Never throws.
+	 */
+	const runnerShot = async (out: string | undefined): Promise<boolean> => {
+		if (!out) return false;
+		try {
+			const { readResults } = await import("@delacour/warden-e2e/runner/results");
+			return runnerFailureShot(readResults(await deps.readFile(join(out, "results.jsonl")))) !== undefined;
+		} catch {
+			return false;
+		}
+	};
 	/** env, argv and log of one spawn: the pool env + the caller's per-job env (`hooks.jobEnv`) + this worker's identity */
 	const plan = async (w: BatchWorker, id: string, seq: number, attempt: number, pass: number) => {
 		const job = baseJob(id);
@@ -750,7 +763,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			o.running.delete(proc);
 		}
 		if (timer.expired()) return TIMEOUT_EXIT;
-		if (code !== 0 && !o.interrupted()) await shoot(w, seq, log);
+		if (code !== 0 && !o.interrupted() && !(await runnerShot(out))) await shoot(w, seq, log);
 		return code;
 	};
 	return async (w: BatchWorker, job: string, seq: number, attempt = 0): Promise<number> => {

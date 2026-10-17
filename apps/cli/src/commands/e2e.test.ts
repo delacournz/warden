@@ -766,6 +766,43 @@ describe("warden e2e", () => {
 			});
 			expect(c.stderr.join("\n")).toContain("settings failed (optional)");
 		});
+
+		test("a failed test with the runner's failure.png: no batch screenshot, the report points at the runner's", async () => {
+			await resuite({ isolate: "device" });
+			const c = setup(["--all"]);
+			const h: Harness = harness({
+				exitCodeFor: (env) => {
+					h.files.set(
+						resultsPath(env),
+						jsonl(
+							spec("chats", "open", "passed"),
+							spec("settings", "toggle", "failed", {
+								artifacts: { dir: "/art/settings-1", files: ["failure.png", "screen-at-failure.txt"] },
+							})
+						)
+					);
+					return 1;
+				},
+			});
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.shots).toEqual([]);
+			const report = reportOf(h.files, c);
+			expect(report.flows.find((f) => f.id === "settings")?.screenshot).toBe("/art/settings-1/failure.png");
+			expect(report.flows.find((f) => f.id === "chats")).not.toHaveProperty("screenshot");
+		});
+
+		test("a failed test without failure.png still gets the batch screenshot", async () => {
+			await resuite({ isolate: "device" });
+			const c = setup(["--all"]);
+			const h: Harness = harness({
+				exitCodeFor: (env) => {
+					h.files.set(resultsPath(env), jsonl(spec("chats", "open", "passed"), spec("settings", "toggle", "failed")));
+					return 1;
+				},
+			});
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.shots).toHaveLength(1);
+		});
 	});
 
 	describe("results.jsonl", () => {
