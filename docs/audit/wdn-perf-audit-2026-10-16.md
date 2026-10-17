@@ -185,6 +185,17 @@ Each has the default the report assumes when it recommends.
 17. **Report placement**: `docs/audit/` committed in PR #31 with the raw files, or scratch only? Default: as committed.
 18. **Follow-up implementation** as another multi-agent wave overnight, and with which agent count and model? Default: wait for the answer.
 
+### Decisions recorded
+
+Answers from the interview, in the order they were given. Each row says what changes in the plan above.
+
+| Round | Question | Answer | Effect on the plan |
+|---|---|---|---|
+| 1 | 9.5 Which track first | Wave 1: correctness and flake fixes | Wave 1 (section 6) is the first implementation batch; Wave 2 wall-time items follow. |
+| 1 | 9.1 Android quick-boot snapshot (16-3) | **On by default** | Differs from the report's assumed opt-in. When 16-3 lands, warden owns a per-AVD snapshot keyed by system image and launches from it unless the user opts out (a config key and `WARDEN_*` env override, both additive). The on-device timing check in section 7 still gates the change. |
+| 1 | 9.2 Warm pool (16-13, 16-9) | Fix the race (16-1) and SessionEnd (20-2) only; propose `warden warm` | No change to the 20 min idle window; `warden warm` is written up as a proposal, not built. |
+| 1 | 9.6 and plan Q5: contract changes | **Additive only** | No `Driver` v2, no wire or CLI removals. Additive wire fields (01-1 `pid`, 06-2 quiet stamp, 02-3 read timings) are allowed; the 15 non-additive findings in Appendix A stay proposals. |
+
 ## 10. Method and limits
 
 - 21 agents (opus or sonnet, medium effort), one goal and one disjoint file set each; the brief, assignments and rubric are in `docs/audit/BRIEF.md` and `ASSIGN-*.md`. One agent (08) was respawned after its progress could not be observed; both runs finished minutes apart and the second kept the first's file, so there is one version. One agent (15) wrote a 4.6 MB build artifact into `apps/cli/src` during a size measurement and removed it on request; nothing outside `docs/audit/` changed.
