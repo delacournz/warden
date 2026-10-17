@@ -228,3 +228,76 @@ describe("host without optional members", () => {
 		expect(error.code).toBe("LOCATOR_NOT_FOUND");
 	});
 });
+
+describe("gesture", () => {
+	const p = [
+		{ x: 1, y: 2 },
+		{ x: 3, y: 4 },
+	];
+
+	test("pinch defaults to the screen centre and the computed radius", async () => {
+		const { driver, host, screen } = make();
+		await screen.gesture.pinch({ scale: 2 });
+		expect(driver.callsOf("pinch")).toEqual([
+			{ method: "pinch", center: { x: 195, y: 422 }, scale: 2, opts: { durationMs: 500, radius: 78 } },
+		]);
+		expect(host.steps).toEqual(["pinch ×2"]);
+	});
+
+	test("pinch honours center, radius and durationMs", async () => {
+		const { driver, screen } = make();
+		await screen.gesture.pinch({ scale: 0.5, center: { x: 50, y: 60 }, radius: 80, durationMs: 800 });
+		expect(driver.callsOf("pinch")[0]).toMatchObject({
+			center: { x: 50, y: 60 },
+			opts: { durationMs: 800, radius: 80 },
+		});
+	});
+
+	test("rotate defaults to the screen centre", async () => {
+		const { driver, host, screen } = make();
+		await screen.gesture.rotate({ degrees: 45 });
+		expect(driver.callsOf("rotate")[0]).toMatchObject({ center: { x: 195, y: 422 }, degrees: 45 });
+		expect(host.steps).toEqual(["rotate 45°"]);
+	});
+
+	test("bad scale and degrees are INVALID_ARGUMENT", async () => {
+		const { screen } = make();
+		expect((await failure(screen.gesture.pinch({ scale: 1 }))).code).toBe("INVALID_ARGUMENT");
+		expect((await failure(screen.gesture.rotate({ degrees: Number.NaN }))).code).toBe("INVALID_ARGUMENT");
+	});
+
+	test("path sends the paths with the default duration and no observation", async () => {
+		const { driver, host, screen } = make();
+		await screen.gesture.path({ paths: [p, p] });
+		expect(driver.callsOf("gesture")).toEqual([
+			{ method: "gesture", paths: [{ points: p }, { points: p }], opts: { durationMs: 600 } },
+		]);
+		expect(driver.callsOf("snapshot")).toEqual([]);
+		expect(host.steps).toEqual(["gesture path (2 fingers)"]);
+	});
+
+	test("path rejects 0 paths, 3 paths, an empty path and non-finite points", async () => {
+		const { driver, screen } = make();
+		expect((await failure(screen.gesture.path({ paths: [] }))).code).toBe("INVALID_ARGUMENT");
+		expect((await failure(screen.gesture.path({ paths: [p, p, p] }))).code).toBe("INVALID_ARGUMENT");
+		expect((await failure(screen.gesture.path({ paths: [[]] }))).code).toBe("INVALID_ARGUMENT");
+		expect((await failure(screen.gesture.path({ paths: [[{ x: Number.NaN, y: 1 }]] }))).code).toBe("INVALID_ARGUMENT");
+		expect(driver.callsOf("gesture")).toEqual([]);
+	});
+
+	test("two paths on a one-finger driver is INVALID_ARGUMENT, one path is fine", async () => {
+		const driver = fakeDriver({ screens: [snapshotOf([])], capabilities: { maxPointers: 1 } });
+		const { screen } = make(driver);
+		expect((await failure(screen.gesture.path({ paths: [p, p] }))).code).toBe("INVALID_ARGUMENT");
+		await screen.gesture.path({ paths: [p] });
+		expect(driver.callsOf("gesture")).toHaveLength(1);
+	});
+
+	test("gesture.swipe is swipe", async () => {
+		const first = make();
+		const second = make();
+		await first.screen.swipe({ direction: "down" });
+		await second.screen.gesture.swipe({ direction: "down" });
+		expect(second.driver.callsOf("swipe")).toEqual(first.driver.callsOf("swipe"));
+	});
+});
