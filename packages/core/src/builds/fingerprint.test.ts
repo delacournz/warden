@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { bunExec, type Exec } from "../exec";
@@ -284,6 +284,21 @@ describe("computeCacheKey fingerprint memo (17-5)", () => {
 		await key();
 		touch(join(dir, "bun.lock"), 2000);
 		await key();
+		expect(spawns).toBe(2);
+	});
+
+	test("a toplevel reported through a symlinked path (macOS tmpdir: /var → /private/var) still bounds the walk", async () => {
+		// git prints the toplevel resolved, the caller's root may not be, or the other way round (a fake git, a
+		// `core.realpath`-less tool): the parent lockfile must be in the signature either way
+		const link = join(dir, "link");
+		symlinkSync(dir, link);
+		top = link;
+		const viaLink = join(link, "repo");
+		writeFileSync(join(dir, "bun.lock"), "root-lock");
+		touch(join(dir, "bun.lock"), 1000);
+		await key(testProject({ root: viaLink }));
+		touch(join(dir, "bun.lock"), 2000);
+		await key(testProject({ root: viaLink }));
 		expect(spawns).toBe(2);
 	});
 

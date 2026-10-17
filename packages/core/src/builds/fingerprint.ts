@@ -374,13 +374,15 @@ function appConfigs(root: string): AppConfigs | undefined {
 /** Lockfiles and install markers in `root` and each parent up to the git `toplevel` (hoisted monorepos). */
 function installSigs(root: string, toplevel: string): string[] {
 	const sigs: string[] = [];
-	// git prints the toplevel resolved; walk the resolved root so a symlinked path still reaches it
+	// both resolved: git prints the toplevel resolved and the root may come through a symlink (or the other way
+	// round, e.g. macOS's /var → /private/var tmpdir), and the walk must reach the toplevel either way
 	const start = realpathSync(root);
+	const top = realpathSync(toplevel);
 	for (let dir = start; ; dir = dirname(dir)) {
 		for (const name of [...LOCKFILES, ...INSTALL_MARKERS]) {
 			sigs.push(`${relative(start, dir) || "."}/${name} ${statSig(join(dir, name))}`);
 		}
-		if (dir === toplevel || relative(toplevel, dir).startsWith("..") || dirname(dir) === dir) return sigs;
+		if (dir === top || relative(top, dir).startsWith("..") || dirname(dir) === dir) return sigs;
 	}
 }
 

@@ -73,7 +73,7 @@ Each merged cluster was read by an adversarial reviewer (one per cluster) that t
 
 ### Verification after the fix round
 
-On this Linux container with the fake drivers: `bun run typecheck` 9/9; `bun run check` clean with the warning counts unchanged; `packages/core` 849 pass; `packages/e2e` 1923 pass; `packages/e2e-bench` 398 pass; `apps/cli` 1504 pass and 1 fail (`warden doctor > everything installed → all ok`, which needs the macOS sim helper and fails on the base branch too).
+On this Linux container with the fake drivers: `bun run typecheck` 9/9; `bun run check` clean with the warning counts unchanged; `packages/core` 850 pass; `packages/e2e` 1923 pass; `packages/e2e-bench` 398 pass; `apps/cli` 1504 pass and 1 fail (`warden doctor > everything installed → all ok`, which needs the macOS sim helper and fails on the base branch too).
 
 ## Device checklist
 
