@@ -7,7 +7,7 @@ import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { createBatchCommand, defaultBatchDeps, openOnDevices } from "./batch";
+import { createBatchCommand, defaultBatchDeps, openOnDevices, startRecordings } from "./batch";
 import { harness } from "./batch.testing";
 
 let ctx: TestContext | undefined;
@@ -1127,5 +1127,20 @@ describe("openOnDevices", () => {
 		const unreachable = await openOnDevices(ctx, "e2e", "ios", { ...plan, bundleId: "com.x" }, metro, [{ udid: "U1" }]);
 		expect(unreachable).toEqual([]);
 		expect(ctx.stderr.join("\n")).toContain("simctl launch");
+	});
+});
+
+describe("startRecordings", () => {
+	test("a device the headless hide lost gets no recorder and no video entry (batch-pipeline-S2)", async () => {
+		const h = harness();
+		const devices = [0, 1, 2].map((worker): { worker: number; udid: string; name: string; video?: string } => ({
+			worker,
+			udid: `U${worker}`,
+			name: `sim-${worker}`,
+		}));
+		const out = await startRecordings(h.deps, "/rec", devices, ["U1"]);
+		expect(out.success).toBe(true);
+		expect(h.events).toEqual(["record:U0:/rec/dev-0.mp4", "record:U2:/rec/dev-2.mp4"]);
+		expect(devices.map((d) => d.video)).toEqual(["dev-0.mp4", undefined, "dev-2.mp4"]);
 	});
 });

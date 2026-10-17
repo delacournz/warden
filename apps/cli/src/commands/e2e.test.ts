@@ -1301,27 +1301,29 @@ describe("warden e2e", () => {
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		/** Two legs, isolate device, P1's leg late (still slimming when the grid starts); every shard passes chats. */
-		const lateLeg = async (argv: string[], isTTY: boolean) => {
+		/** Two legs, isolate device, `late`'s leg late (still slimming when the grid starts); every shard passes chats, except `failing`'s. */
+		const lateLeg = async (argv: string[], isTTY: boolean, late = "P1", failing?: string) => {
 			await resuite({ devices: legs, slim: true, isolate: "device" });
 			const c = twoLegs(...argv);
 			const h: Harness = harness({
 				isTTY,
 				exitCodeFor: (env) => {
-					if (env.WARDEN_E2E_OUT) h.files.set(resultsPath(env), jsonl(spec("chats", "opens")));
+					const status = env.WARDEN_UDID === failing ? "failed" : "passed";
+					if (env.WARDEN_E2E_OUT) h.files.set(resultsPath(env), jsonl(spec("chats", "opens", status)));
 					return 0;
 				},
 			});
 			const slow = Promise.withResolvers<void>();
 			const slim = h.deps.slim;
 			h.deps.slim = async (udid) => {
-				if (udid === "P1") await slow.promise;
+				if (udid === late) await slow.promise;
 				return slim(udid);
 			};
+			if (failing) c.ui.color.level = 1;
 			const run = createE2eCommand(h.deps).run(c);
 			await waitFor(() => h.jobs().length === 1);
 			slow.resolve();
-			expect(await run).toBe(0);
+			expect(await run).toBe(failing ? 1 : 0);
 			return { c, h };
 		};
 
@@ -1337,6 +1339,13 @@ describe("warden e2e", () => {
 			const screen = Bun.stripANSI(h.terminal.join(""));
 			expect(screen).toContain("  2/2  ");
 			expect(screen).not.toContain("  1/1  ");
+		});
+
+		test("legs, isolate device: leg 0 late and failing → the header's cells stay in worker order (batch-pipeline-S3)", async () => {
+			const { h } = await lateLeg([], true, "U1", "U1");
+			const header = Bun.stripANSI(h.terminal.join("").split("\r").at(-1)?.split("\n")[0] ?? "");
+			// worker 0 (U1, the late leg) failed: its cell leads the bar
+			expect(header).toContain("×█");
 		});
 
 		test("a headless run hides the simulator windows first", async () => {

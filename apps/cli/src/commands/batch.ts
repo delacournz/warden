@@ -515,7 +515,13 @@ function display(
 			view.current = {
 				...view.current,
 				devices: [...view.current.devices, ...added].sort((a, b) => a.worker - b.worker),
-				...(runners ? { runners: [...runners, ...fresh.map((worker) => ({ worker, flows: [] }))] } : {}),
+				...(runners
+					? {
+							runners: [...runners, ...fresh.map((worker) => ({ worker, flows: [] }))].sort(
+								(a, b) => a.worker - b.worker
+							),
+						}
+					: {}),
 			};
 			frame(false);
 		},
@@ -628,8 +634,17 @@ function announceDevices(ctx: CommandContext, view: BatchView): void {
 		if (d.ran && d.ran.length > 0) ctx.err(`${d.name}: ${d.ran.map((f) => `${tick(f.mark)} ${f.id}`).join("  ")}`);
 }
 
-/** Start one recording per device (in parallel); failures stop the ones that started. */
-async function startRecordings(deps: BatchDeps, dir: string, devices: Device[]): AsyncResult<Recording[]> {
+/**
+ * Start one recording per device (in parallel); failures stop the ones that started. A `lost` device
+ * (shut down by the headless hide and not booted again) gets none: there is nothing to record (S2).
+ */
+export async function startRecordings(
+	deps: BatchDeps,
+	dir: string,
+	all: Device[],
+	lost: readonly string[] = []
+): AsyncResult<Recording[]> {
+	const devices = all.filter((d) => !lost.includes(d.udid));
 	const started = await Promise.allSettled(devices.map((d) => deps.record(d.udid, join(dir, videoName(d.worker)))));
 	const recordings = started.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
 	const failed = started.find((s) => s.status === "rejected");
@@ -1243,6 +1258,8 @@ type RunContext = {
 	port: number | undefined;
 	pools: Pool[];
 	devices: Device[];
+	/** devices the headless hide could not boot again (`LeaseSession.lost`): kept in the pools, never recorded */
+	lost: readonly string[];
 	hooks: SessionHooks & { name: string };
 	running: Set<ProcHandle>;
 	interrupted: () => boolean;
@@ -1339,7 +1356,7 @@ async function startServices(
 		if (!up.success) return up;
 	}
 	if (args.record) {
-		const started = await startRecordings(deps, args.record, r.devices);
+		const started = await startRecordings(deps, args.record, r.devices, r.lost);
 		if (!started.success) return started;
 		services.recordings = started.data;
 	}
@@ -1622,6 +1639,7 @@ async function supervise(
 		port: session.ports[0]?.port,
 		pools,
 		devices: pools.flatMap((p) => p.devices),
+		lost: session.lost ?? [],
 		hooks,
 		running: new Set<ProcHandle>(),
 		interrupted: () => controller.signal.aborted,
