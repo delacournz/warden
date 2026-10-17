@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { devClientLaunchArgv, type MetroProc } from "../metro";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
@@ -408,5 +409,22 @@ describe("warden dev", () => {
 		expect(c.stderr.join("\n")).toContain(`--project nope: no such directory ${join(c.cwd, "nope")} (cwd ${c.cwd})`);
 		expect(calls).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
+	});
+});
+
+describe("warden dev auto-gc (16-1)", () => {
+	test("auto-gc is considered only after the device has been claimed", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const order = autoGcOrder(c.exec, () => c.db);
+		c.exec = order.exec;
+		c.env = allowAutoGc(c.env);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		expect(order.gcBeforeClaim()).toBe(false);
+		expect(autoGcConsidered(c.db)).toBe(true);
+		h.finish(0);
+		expect(await running).toBe(0);
 	});
 });

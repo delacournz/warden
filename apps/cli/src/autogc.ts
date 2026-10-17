@@ -5,7 +5,8 @@ import type { CommandContext } from "./context";
 
 /** Background `warden gc` is considered at most this often, machine-wide. */
 export const AUTO_GC_INTERVAL_MS = 10 * 60_000;
-const META_KEY = "auto_gc_checked_at";
+/** store meta key holding when auto-gc was last considered (the throttle) */
+export const AUTO_GC_META_KEY = "auto_gc_checked_at";
 /** The background pass yields to the run that started it. */
 const NICENESS = "10";
 
@@ -54,9 +55,9 @@ export function maybeAutoGc(
 	const store = ctx.store();
 	const now = ctx.now();
 	const due = store.transaction(() => {
-		const last = Number(store.getMeta(META_KEY) ?? 0);
+		const last = Number(store.getMeta(AUTO_GC_META_KEY) ?? 0);
 		if (now - last < AUTO_GC_INTERVAL_MS) return false;
-		store.setMeta(META_KEY, String(now));
+		store.setMeta(AUTO_GC_META_KEY, String(now));
 		return true;
 	});
 	if (!due) return;

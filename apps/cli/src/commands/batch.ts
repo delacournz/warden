@@ -1634,7 +1634,6 @@ export async function runSession(
 	const lease = clampToJobs(args, jobs.length);
 	if (lease !== args) note(ctx, `warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`);
 	const owner = resolveOwner(ctx);
-	maybeAutoGc(ctx);
 	const { platform } = lease.flags.request;
 	const wanted = (lease.legs?.map((leg) => leg.flags) ?? [lease.flags])
 		.map((flags) => `${flags.request.count} ${flags.request.profile}`)
@@ -1703,6 +1702,8 @@ export async function runSession(
 		};
 		const result = await claimAll(sctx, deps, owner, args, name);
 		claimDone = true;
+		// after claimAll: the run's own leases keep the background gc off its devices (12-2, 16-1)
+		maybeAutoGc(ctx);
 		if (!result.success) spinner.fail(lease.app ? "claim / app install failed" : "claim failed");
 		else if (lease.app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
 		else spinner.succeed(leasedText(result.data.outcome));

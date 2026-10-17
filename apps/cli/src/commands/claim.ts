@@ -71,7 +71,6 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		reportError(ctx, "claim", flags.error);
 		return 1;
 	}
-	maybeAutoGc(ctx);
 	const { count, profile } = flags.data.request;
 	if (!opts.json) heading(ctx, "claim", `${platform.data} · ${profile} ×${count}`);
 	const outcome = await withSpinner(
@@ -84,6 +83,8 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 			return result;
 		}
 	);
+	// after the claim: its own leases keep the background gc off the devices it just took (16-1)
+	maybeAutoGc(ctx);
 	if (!outcome.success) {
 		reportError(ctx, "claim", outcome.error);
 		return 1;
