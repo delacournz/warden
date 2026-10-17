@@ -1,5 +1,6 @@
 import { type Exec, execError } from "@delacour/warden-core/exec";
 import { probeIosWarm, realTimer, type Timer } from "@delacour/warden-core/providers/health";
+import { IOS_TIMEOUTS } from "@delacour/warden-core/providers/ios";
 import { parseAllSims } from "@delacour/warden-core/sims/list";
 import type { Store } from "@delacour/warden-core/store";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
@@ -262,16 +263,18 @@ export const DETACH_PREF_META = "headless.detach_pref";
 const DETACH_WAIT_POLLS = 200;
 const DETACH_POLL_MS = 50;
 /**
- * Longer than any hide holds the setting (close, shutdown polls, `bootstatus -b`, probe, close again).
- * An older holder is gone even if its pid is alive again (reused), an older `setting`/`restoring` is
- * not waited on, and an older crash's `before` is not written back.
+ * Longer than any step between two heartbeats of a hide holding the setting (`beatStep`: after the
+ * close, each shutdown poll, `simctl boot`, `bootstatus -b` + probe, each reboot), each of them bounded.
+ * A holder silent for longer is gone even if its pid is alive again (reused), an older
+ * `setting`/`restoring` is not waited on, and an older crash's `before` is not written back.
  */
 const DETACH_ROW_TTL_MS = BOOT_TIMEOUT_MS + 120_000;
 
 /**
  * `setting`: `by` is reading the user's value and switching it on; `set`: on, with `before` the
  * user's value; `restoring`: the last holder `by` is putting `before` back. `holders` are the hides
- * relying on it being on. `at`: when the phase began; a holder's `at`: when it joined (epoch ms).
+ * relying on it being on. `at`: when the phase began (or `by`'s last heartbeat); a holder's `at`: its
+ * last heartbeat, or when it joined (epoch ms).
  */
 type DetachHolder = { token: string; pid: number; at?: number };
 type DetachRow = {
@@ -391,6 +394,21 @@ function leaveStep(lock: DetachLock, token: string): DetachPref | undefined {
 	});
 }
 
+/** A holding hide is still at it: re-stamp its holder `at` (and the row's, when it is `by`). */
+function beatStep(lock: DetachLock, token: string): void {
+	lock.store.transaction(() => {
+		const row = parseDetachRow(lock.store.getMeta(DETACH_PREF_META));
+		if (!row?.holders.some((h) => h.token === token)) return;
+		const at = lockNow(lock);
+		const holders = row.holders.map((h) => (h.token === token ? { ...h, at } : h));
+		const next = row.by === token ? { ...row, at, holders } : { ...row, holders };
+		lock.store.setMeta(DETACH_PREF_META, JSON.stringify(next));
+	});
+}
+
+/** A held setting: `release` puts it back (when last out), `beat` tells other processes this hide still relies on it. */
+type DetachHold = { release: () => Promise<void>; beat: () => void };
+
 function finishRestore(lock: DetachLock, token: string): void {
 	lock.store.transaction(() => {
 		const row = parseDetachRow(lock.store.getMeta(DETACH_PREF_META));
@@ -413,12 +431,12 @@ async function switchOn(deps: HideDeps, lock: DetachLock, token: string, inherit
  * reference count (meta row `DETACH_PREF_META`, arbitrated by `store.transaction`): the first holder
  * reads and writes, later ones join, the last one out restores.
  */
-async function holdDetachPref(deps: HideDeps): Promise<() => Promise<void>> {
+async function holdDetachPref(deps: HideDeps): Promise<DetachHold> {
 	const lock = deps.detachLock;
 	if (!lock) {
 		const before = await readDetachPref(deps.exec);
 		if (before !== "on") await deps.exec(["defaults", "write", ...DETACH_PREF, "-bool", "true"]);
-		return () => restoreDetachPref(deps, before);
+		return { release: () => restoreDetachPref(deps, before), beat: () => {} };
 	}
 	const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
 	const token = `${lock.pid}:${crypto.randomUUID()}`;
@@ -437,11 +455,14 @@ async function holdDetachPref(deps: HideDeps): Promise<() => Promise<void>> {
 		}
 		await sleep(DETACH_POLL_MS);
 	}
-	return async () => {
-		const before = leaveStep(lock, token);
-		if (before === undefined) return;
-		await restoreDetachPref(deps, before);
-		finishRestore(lock, token);
+	return {
+		release: async () => {
+			const before = leaveStep(lock, token);
+			if (before === undefined) return;
+			await restoreDetachPref(deps, before);
+			finishRestore(lock, token);
+		},
+		beat: () => beatStep(lock, token),
 	};
 }
 
@@ -492,7 +513,7 @@ export async function startHideSimWindows(deps: HideDeps, sims: readonly LeasedS
 	if ((deps.os ?? process.platform) !== "darwin" || sims.length === 0) return idle;
 	const titles = await leasedTitles(deps, sims);
 	if (!titles || titles.length === 0) return idle;
-	const release = await holdDetachPref(deps);
+	const { release, beat } = await holdDetachPref(deps);
 	let closedOk = false;
 	try {
 		closedOk = await closeTitles(deps, titles);
@@ -500,14 +521,16 @@ export async function startHideSimWindows(deps: HideDeps, sims: readonly LeasedS
 		if (!closedOk) await release();
 	}
 	if (!closedOk) return idle;
+	beat();
 	const closed = titles.map(deviceName);
 	const down = shutDownByClose(
 		deps,
-		sims.filter((s) => closed.includes(s.name))
+		sims.filter((s) => closed.includes(s.name)),
+		beat
 	);
 	const settled = (async (): Promise<HideOutcome> => {
 		try {
-			const { rebooted, failed } = await rebootAll(deps, await down);
+			const { rebooted, failed } = await rebootAll(deps, await down, beat);
 			if (rebooted.length > 0) {
 				const again = await leasedTitles(
 					deps,
@@ -525,7 +548,7 @@ export async function startHideSimWindows(deps: HideDeps, sims: readonly LeasedS
 
 /** `simctl list` states by udid; undefined after a warned error. */
 async function simStates(deps: HideDeps): Promise<Map<string, string> | undefined> {
-	const list = await deps.exec(["xcrun", "simctl", "list", "devices", "-j"]);
+	const list = await deps.exec(["xcrun", "simctl", "list", "devices", "-j"], { timeoutMs: IOS_TIMEOUTS.listMs });
 	const all = list.exitCode === 0 ? parseAllSims(list.stdout) : undefined;
 	if (all?.success) return new Map(all.data.map((d) => [d.udid, d.state]));
 	deps.warn(`headless: couldn't check device states after closing windows: ${all ? all.error : list.stderr.trim()}`);
@@ -533,14 +556,16 @@ async function simStates(deps: HideDeps): Promise<Map<string, string> | undefine
 }
 
 /** Which of `sims` are no longer `Booted` after their window closed, once they finished shutting down. */
-async function shutDownByClose(deps: HideDeps, sims: readonly LeasedSim[]): Promise<LeasedSim[]> {
+async function shutDownByClose(deps: HideDeps, sims: readonly LeasedSim[], beat: () => void): Promise<LeasedSim[]> {
 	const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
 	await sleep(CLOSE_SETTLE_MS);
 	let states = await simStates(deps);
+	beat();
 	// `simctl boot` refuses a device that is still shutting down
 	for (let i = 0; states && i < SHUTDOWN_POLLS && sims.some((s) => states?.get(s.udid) === "Shutting Down"); i++) {
 		await sleep(SHUTDOWN_POLL_MS);
 		states = await simStates(deps);
+		beat();
 	}
 	if (!states) return [];
 	return sims.filter((s) => states?.get(s.udid) !== "Booted");
@@ -550,11 +575,12 @@ async function shutDownByClose(deps: HideDeps, sims: readonly LeasedSim[]): Prom
 const ALREADY_BOOTED = /current state: Booted/;
 
 /** Boot one shut-down device again (headless) and probe it; false after a warned `bootstatus` or probe failure. */
-async function rebootOne(deps: HideDeps, sim: LeasedSim): Promise<boolean> {
+async function rebootOne(deps: HideDeps, sim: LeasedSim, beat: () => void): Promise<boolean> {
 	deps.warn(`headless: closing ${sim.name}'s window shut it down — booting it again without a window`);
 	await deps.onShutDown?.(sim.udid);
 	const bootArgv = ["xcrun", "simctl", "boot", sim.udid];
-	const boot = await deps.exec(bootArgv);
+	const boot = await deps.exec(bootArgv, { timeoutMs: IOS_TIMEOUTS.bootMs });
+	beat();
 	// not fatal: `bootstatus -b` boots the device itself (one still `Shutting Down`, a transient refusal)
 	if (boot.exitCode !== 0 && !ALREADY_BOOTED.test(boot.stderr)) {
 		deps.warn(`headless: ${sim.name}: ${execError(bootArgv, boot)} — waiting for bootstatus to boot it`);
@@ -576,9 +602,16 @@ async function rebootOne(deps: HideDeps, sim: LeasedSim): Promise<boolean> {
 /** Boot `down` again in parallel; names that came back healthy, and those that did not. */
 async function rebootAll(
 	deps: HideDeps,
-	down: readonly LeasedSim[]
+	down: readonly LeasedSim[],
+	beat: () => void
 ): Promise<{ rebooted: string[]; failed: string[] }> {
-	const results = await Promise.all(down.map(async (sim) => ({ name: sim.name, ok: await rebootOne(deps, sim) })));
+	const results = await Promise.all(
+		down.map(async (sim) => {
+			const ok = await rebootOne(deps, sim, beat);
+			beat();
+			return { name: sim.name, ok };
+		})
+	);
 	return {
 		rebooted: results.filter((r) => r.ok).map((r) => r.name),
 		failed: results.filter((r) => !r.ok).map((r) => r.name),

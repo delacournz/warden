@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
+import { IOS_TIMEOUTS } from "@delacour/warden-core/providers/ios";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { openStore } from "@delacour/warden-core/store";
 import {
@@ -902,6 +903,91 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 			expect(writes(f.calls)).toEqual(["read", "write", "delete"]);
 			expect(store.getMeta(DETACH_PREF_META)).toBeUndefined();
 			store.close();
+		});
+	});
+
+	describe("heartbeat (a live hold longer than the TTL)", () => {
+		const T = 1_800_000_000_000;
+		const sec = 1000;
+		const titleA = ["warden-iphone-17-1 – iOS 26.5"];
+		const titleB = ["warden-iphone-17-2 – iOS 26.5"];
+
+		/** A's close shuts U1 down; `boot` / `bootstatus` move the shared clock and may run hide B meanwhile. */
+		const longHold = (
+			clock: { now: number },
+			step: { bootSec: number; statusSec: number },
+			duringStatus: () => Promise<void>
+		) => {
+			const pref: PrefBox = { value: undefined, atClose: [] };
+			const a = fakeSimulator(one, titleA, { U1: "Shutdown" }, undefined, {
+				pref,
+				boot: async () => {
+					clock.now += step.bootSec * sec;
+					return done();
+				},
+				bootstatus: async () => {
+					clock.now += step.statusSec * sec;
+					await duringStatus();
+					return done();
+				},
+			});
+			return { pref, a };
+		};
+
+		test("a holder that heartbeats is still live past the TTL: a hide joining then leaves the restore to it", async () => {
+			setup();
+			const storeA = openStore(dbPath());
+			const storeB = openStore(dbPath());
+			const clock = { now: T };
+			const lock = (store: typeof storeA) => ({ store, pid: process.pid, pidAlive: alive, now: () => clock.now });
+			let b: ReturnType<typeof fakeSimulator> | undefined;
+			// A joined at T; by B's arrival 400 s have passed, more than the 300 s TTL
+			const { pref, a } = longHold(clock, { bootSec: 200, statusSec: 200 }, async () => {
+				b = fakeSimulator(two, titleB, {}, undefined, { pref });
+				await hideSimWindows({ ...b.deps, sleep: tick, detachLock: lock(storeB) }, two);
+			});
+			const out = await hideSimWindows({ ...a.deps, sleep: tick, detachLock: lock(storeA) }, one);
+			expect(out.rebooted).toEqual(["warden-iphone-17-1"]);
+			// B joined A's hold: it never read or wrote the setting, and A, last out, put the user's unset back
+			expect(b && writes(b.calls)).toEqual([]);
+			expect(writes(a.calls)).toEqual(["read", "write", "delete"]);
+			// A's close, B's close, A's close of the window reattached after its reboot: all with the setting on
+			expect(pref.atClose).toEqual(["1", "1", "1"]);
+			expect(pref.value).toBeUndefined();
+			expect(storeA.getMeta(DETACH_PREF_META)).toBeUndefined();
+			storeA.close();
+			storeB.close();
+		});
+
+		test("a holder that stops heartbeating for longer than the TTL is dropped even though its pid is alive", async () => {
+			setup();
+			const storeA = openStore(dbPath());
+			const storeB = openStore(dbPath());
+			const clock = { now: T };
+			const lock = (store: typeof storeA) => ({ store, pid: process.pid, pidAlive: alive, now: () => clock.now });
+			let b: ReturnType<typeof fakeSimulator> | undefined;
+			// one step (bootstatus) silent for 400 s
+			const { a } = longHold(clock, { bootSec: 0, statusSec: 400 }, async () => {
+				b = fakeSimulator(two, titleB, {}, undefined, { pref: { value: "1", atClose: [] } });
+				await hideSimWindows({ ...b.deps, sleep: tick, detachLock: lock(storeB) }, two);
+			});
+			await hideSimWindows({ ...a.deps, sleep: tick, detachLock: lock(storeA) }, one);
+			// B took the row over (it read the setting itself): A no longer counted
+			expect(b && writes(b.calls)).toEqual(["read"]);
+			storeA.close();
+			storeB.close();
+		});
+
+		test("`simctl boot` and `simctl list` are bounded, so no step between heartbeats is unbounded", async () => {
+			const f = fakeSimulator(one, titleA, { U1: "Shutdown" }, undefined);
+			const timeouts = new Map<string, number | undefined>();
+			const exec: Exec = (cmd, opts) => {
+				if (cmd[0] === "xcrun") timeouts.set(cmd.slice(0, 3).join(" "), opts?.timeoutMs);
+				return f.deps.exec(cmd, opts);
+			};
+			await hideSimWindows({ ...f.deps, exec }, one);
+			expect(timeouts.get("xcrun simctl boot")).toBe(IOS_TIMEOUTS.bootMs);
+			expect(timeouts.get("xcrun simctl list")).toBe(IOS_TIMEOUTS.listMs);
 		});
 	});
 });
