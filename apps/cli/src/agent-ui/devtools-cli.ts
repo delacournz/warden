@@ -21,10 +21,10 @@ import { DEFAULT_TAIL } from "./devtools-register";
 import type { UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
 import { uiDir } from "./paths";
-import { mayBeRecorded, type ProcessCommand, processCommand, safeToSignal } from "./process-identity";
+import { mayBeRecorded, type ProcessCommand, processCommand, recordedIdentity } from "./process-identity";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { positiveInt } from "./snapshot-command";
-import { readState, updateState } from "./state";
+import { readState, type UiState, updateState } from "./state";
 
 const START_HINT = "start the dev client with `warden ui open <bundle> --metro <url>`";
 const COLLECT_HINT = "run `warden ui logs start` first";
@@ -82,8 +82,16 @@ export const defaultDevtoolsDeps: DevtoolsDeps = {
 	},
 };
 
-/** What the collector's command line carries (`ui-collect --out <device dir>`): tells it from a reused pid. */
-const collectorMarks = (ctx: CommandContext, udid: string): string[] => ["ui-collect", `--out ${uiDir(ctx, udid)}`];
+type CollectorRecord = NonNullable<UiState["collector"]>;
+
+/**
+ * What the collector's command line carries (`ui-collect --out <device dir>`): tells it from a reused pid. The dir is
+ * the one recorded at start (a record from an older warden has none: today's spelling of it).
+ */
+const collectorMarks = (ctx: CommandContext, udid: string, record: CollectorRecord): string[] => [
+	"ui-collect",
+	`--out ${record.out ?? uiDir(ctx, udid)}`,
+];
 
 type MetroOption = { metro?: string };
 type DevtoolsOptionValues = UiOptionValues & MetroOption;
@@ -285,7 +293,10 @@ async function startCollector(
 ): Promise<Result<{ device: ReturnType<typeof infoOf>; result: unknown; text: string; warnings?: string[] }, UiError>> {
 	const d = devtoolsDeps(deps);
 	const state = readState(ctx, device.udid);
-	if (state.collector && mayBeRecorded(d.collector, state.collector.pid, collectorMarks(ctx, device.udid))) {
+	if (
+		state.collector &&
+		mayBeRecorded(d.collector, state.collector.pid, collectorMarks(ctx, device.udid, state.collector))
+	) {
 		return ok({
 			device: infoOf(device),
 			result: { action: "logs", state: "collecting", pid: state.collector.pid, already: true },
@@ -308,7 +319,7 @@ async function startCollector(
 		...(opts.bodies === true ? ["--include-bodies"] : []),
 	];
 	const { pid } = d.collector.spawnDetached({ cmd, logPath: join(out, COLLECTOR_LOG) });
-	updateState(ctx, device.udid, (current) => ({ ...current, collector: { pid, startedAt: ctx.now() } }));
+	updateState(ctx, device.udid, (current) => ({ ...current, collector: { pid, startedAt: ctx.now(), out } }));
 	return ok({
 		device: infoOf(device),
 		result: { action: "logs", state: "collecting", pid, metroUrl: metro.data, out },
@@ -323,8 +334,17 @@ function stopCollector(ctx: CommandContext, deps: UiDeps, device: UiDevice) {
 	if (!running) {
 		return { success: false as const, error: uiError("usage", "not collecting", { hint: COLLECT_HINT }) };
 	}
-	if (safeToSignal(d.collector, running.pid, collectorMarks(ctx, device.udid)))
-		d.collector.kill(running.pid, "SIGTERM");
+	const identity = recordedIdentity(d.collector, running.pid, collectorMarks(ctx, device.udid, running));
+	if (identity === "unknown") {
+		// alive but its command line unreadable: it may still be the collector, so it is neither signalled nor forgotten
+		return ok({
+			device: infoOf(device),
+			result: { action: "logs", state: "collecting", pid: running.pid },
+			text: `collector (pid ${running.pid}) left running`,
+			warnings: [`could not stop the collector (pid ${running.pid}): its command line could not be read`],
+		});
+	}
+	if (identity === "match") d.collector.kill(running.pid, "SIGTERM");
 	updateState(ctx, device.udid, (current) => {
 		if (current.collector?.pid !== running.pid) return current;
 		const { collector: _stopped, ...rest } = current;

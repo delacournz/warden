@@ -31,8 +31,8 @@ export type UiState = {
 	/** the flow being recorded (`warden ui record start`) */
 	recording?: { file: string; name: string; startedAt: number };
 	helper?: HelperRecord;
-	/** the running `logs start` collector (`warden ui-collect`): host pid and start time */
-	collector?: { pid: number; startedAt: number };
+	/** the running `logs start` collector (`warden ui-collect`): host pid, start time and (newer warden) its `--out` dir */
+	collector?: { pid: number; startedAt: number; out?: string };
 	/** the running `video start` recorder: host pid, output file, and (Android) the file on the device */
 	video?: { pid: number; path: string; remote?: string; startedAt: number };
 	updatedAt: number;
@@ -113,7 +113,7 @@ const stateSchema = z.object({
 			lease: z.string().optional(),
 		})
 		.optional(),
-	collector: z.object({ pid: z.number(), startedAt: z.number() }).optional(),
+	collector: z.object({ pid: z.number(), startedAt: z.number(), out: z.string().optional() }).optional(),
 	video: z
 		.object({ pid: z.number(), path: z.string(), remote: z.string().optional(), startedAt: z.number() })
 		.optional(),

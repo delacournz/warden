@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mayBeRecorded, processCommand, safeToSignal } from "./process-identity";
+import { mayBeRecorded, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
 
 const alive = () => true;
 const dead = () => false;
@@ -19,6 +19,24 @@ describe("processCommand", () => {
 			await child.exited;
 		}
 		expect(processCommand(child.pid)).toBeUndefined();
+	});
+
+	test("does not depend on PATH: a caller with no `ps` on its PATH still reads command lines", () => {
+		const script = `import { processCommand } from ${JSON.stringify(`${import.meta.dir}/process-identity.ts`)}; console.log(processCommand(process.pid) ?? "undefined");`;
+		const run = Bun.spawnSync([process.execPath, "-e", script], { env: { PATH: "/nonexistent" }, stdout: "pipe" });
+		expect(run.stdout.toString().trim()).not.toBe("undefined");
+		expect(run.stdout.toString()).toContain(process.execPath);
+	});
+});
+
+describe("recordedIdentity", () => {
+	const marks = ["--udid U1"];
+	test("gone, match, mismatch or unknown; without a command reader a live pid matches", () => {
+		expect(recordedIdentity({ pidAlive: dead, command: () => "x --udid U1" }, 7, marks)).toBe("gone");
+		expect(recordedIdentity({ pidAlive: alive, command: () => "x --udid U1" }, 7, marks)).toBe("match");
+		expect(recordedIdentity({ pidAlive: alive, command: () => "vim" }, 7, marks)).toBe("mismatch");
+		expect(recordedIdentity({ pidAlive: alive, command: () => undefined }, 7, marks)).toBe("unknown");
+		expect(recordedIdentity({ pidAlive: alive }, 7, marks)).toBe("match");
 	});
 });
 

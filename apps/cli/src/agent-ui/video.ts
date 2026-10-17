@@ -7,7 +7,7 @@ import type { CommandContext } from "../context";
 import type { UiDeps } from "./driver";
 import { uiError } from "./output";
 import { uiDir } from "./paths";
-import { mayBeRecorded, type ProcessCommand, processCommand, safeToSignal } from "./process-identity";
+import { mayBeRecorded, type ProcessCommand, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
 import { runUi, type UiOptionValues } from "./run";
 import { readState, type UiState, updateState } from "./state";
 
@@ -121,7 +121,17 @@ export function uiVideo(
 			}
 			const warnings: string[] = [];
 			const marks = recorderMarks(device.udid, running);
-			const ours = safeToSignal(video, running.pid, marks);
+			const identity = recordedIdentity(video, running.pid, marks);
+			const ours = identity === "match";
+			if (running.remote === undefined && identity === "unknown") {
+				// alive but its command line unreadable: it may still be the recorder, so it is neither signalled nor forgotten
+				return ok({
+					device: info,
+					result: { action: "video", state: "recording", path: running.path, pid: running.pid },
+					text: `recorder (pid ${running.pid}) left running`,
+					warnings: [`could not stop the recorder (pid ${running.pid}): its command line could not be read`],
+				});
+			}
 			if (running.remote !== undefined) {
 				await ctx.exec([adb, "-s", device.udid, "shell", "pkill", "-2", "screenrecord"]);
 				if (ours) video.kill(running.pid, "SIGINT");

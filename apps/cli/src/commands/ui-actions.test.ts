@@ -684,6 +684,19 @@ describe("video", () => {
 		expect(readState(h.c, UDID).video).toBeUndefined();
 	});
 
+	test("a live recorder whose command line cannot be read is not signalled and stays recorded, with a warning", async () => {
+		const fake = fakeVideo();
+		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
+		await h.run("video", "start");
+		const recorded = readState(h.c, UDID).video;
+		fake.video.command = () => undefined;
+		expect(await h.run("video", "stop", "--json")).toBe(0);
+		expect(fake.signals).toEqual([]);
+		expect(doc(h.c).result).toMatchObject({ action: "video", state: "recording", pid: 4242 });
+		expect(doc(h.c).warnings?.[0]).toContain("could not stop the recorder (pid 4242)");
+		expect(readState(h.c, UDID).video).toEqual(recorded);
+	});
+
 	test("the recorder is signalled while its command line is still this device's recordVideo into the file", async () => {
 		const fake = fakeVideo();
 		const h = harness([snapshotOf(LOGIN)], { video: fake.video });

@@ -90,6 +90,8 @@ Claim devices and fan a job queue out over them, one worker per device; the comm
 
 With `--headless` (or the preset's `headless`), the leased sims' windows are closed at claim and again before the first job, serve and jobs get `WARDEN_HEADLESS=1`, and `batch.json` has `"headless": true`. `--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed.
 
+Each `batch.json` job entry (one per attempt) may carry `logDrainMs`: how long warden waited, after the job exited, for its log pipes to drain, summed over its `--passes` runs.
+
 If the first operand is the name of a preset in [`warden.config.ts`](/docs/reference/configuration#batches) `batches` (found by walking up from the cwd to the git root), that preset supplies the platform and defaults:
 
 - Flags you actually pass override the preset; commander defaults (`--count 1`, `--retry 0`, `--serve-timeout 10m`…) do not.

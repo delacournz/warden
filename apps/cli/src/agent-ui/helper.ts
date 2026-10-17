@@ -24,7 +24,7 @@ import { driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
 import { simdDir } from "./paths";
-import { mayBeRecorded, type ProcessCommand, processCommand, safeToSignal } from "./process-identity";
+import { mayBeRecorded, type ProcessCommand, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
 import { type HelperRecord, readState, updateState } from "./state";
 
 /**
@@ -507,8 +507,9 @@ async function onAnswer(a: Attempt, client: SimdClient): Promise<Step> {
 	a.held = true;
 	a.replaced = true;
 	const pid = readState(a.host, a.udid).helper?.pid;
-	await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
-	a.stopped = pid;
+	const stop = await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
+	// a helper that could not be stopped is still the recorded one: `spawnHelper` refuses to start beside it
+	if (stop.warning === undefined) a.stopped = pid;
 	return RETRY;
 }
 
@@ -530,8 +531,8 @@ async function onBusy(a: Attempt, pid: number): Promise<Step> {
 	if (a.deps.now() - a.started < SPAWN_WAIT_MS) return WAIT;
 	if (!a.held && !claimSpawnRow(a.host, a.udid, a.deps)) return WAIT;
 	a.held = true;
-	await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
-	a.stopped = pid;
+	const stop = await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
+	if (stop.warning === undefined) a.stopped = pid;
 	return spawn(a);
 }
 
@@ -554,8 +555,8 @@ async function onSilence(a: Attempt): Promise<Step> {
 	// a recorded helper whose pid is alive but that refuses (or has no socket file) is stopped before another starts
 	const recorded = liveRecordedPid(a);
 	if (recorded !== undefined && recorded !== a.stopped) {
-		await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
-		a.stopped = recorded;
+		const stop = await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
+		if (stop.warning === undefined) a.stopped = recorded;
 	}
 	return spawn(a);
 }
@@ -600,7 +601,8 @@ async function attempt(a: Attempt): Promise<Step> {
  * start late beside whatever the caller falls back to.
  */
 function abandonSpawn(a: Attempt, spawned: SpawnResult): void {
-	if (safeToSignal(a.deps, spawned.pid, helperMarks(a.udid, a.socketPath))) a.deps.kill(spawned.pid, "SIGTERM");
+	// the child this process just spawned: liveness alone says it is still ours
+	if (a.deps.pidAlive(spawned.pid)) a.deps.kill(spawned.pid, "SIGTERM");
 	unlinkQuietly(a.socketPath);
 	forgetHelper(a.host, a.udid, spawned.pid);
 }
@@ -675,7 +677,8 @@ export async function connectHelper(
 	return { success: false, error: driverUiError(driver.error) };
 }
 
-export type StopOutcome = { stopped: boolean; how: "none" | "shutdown" | "sigterm" };
+/** `warning`: the helper may still be running but could not be stopped (its command line could not be read). */
+export type StopOutcome = { stopped: boolean; how: "none" | "shutdown" | "sigterm"; warning?: string };
 
 async function waitUntil(done: () => boolean, ms: number, deps: HelperDeps): Promise<boolean> {
 	const until = deps.now() + ms;
@@ -763,6 +766,14 @@ async function stopRecorded(
 	let how: StopOutcome["how"] = "shutdown";
 	if (!(await waitUntil(gone, SHUTDOWN_WAIT_MS - (attached?.success ? SHUTDOWN_REQUEST_MS : 0), deps))) {
 		how = "sigterm";
+		// alive but its command line unreadable: it may still be the helper, so it is neither signalled nor forgotten
+		if (record !== undefined && recordedIdentity(deps, record.pid, marks) === "unknown") {
+			return {
+				stopped: false,
+				how: "none",
+				warning: `could not stop warden-simd (pid ${record.pid}): its command line could not be read, so it was left running`,
+			};
+		}
 		if (record !== undefined && safeToSignal(deps, record.pid, marks)) deps.kill(record.pid, "SIGTERM");
 		await waitUntil(gone, KILL_WAIT_MS, deps);
 	}

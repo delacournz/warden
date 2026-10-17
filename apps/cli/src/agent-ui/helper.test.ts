@@ -354,6 +354,21 @@ describe("ensureHelper: silence vs a busy helper (14-2)", () => {
 		expect(readState(c, UDID).helper?.pid).toBe(4242);
 	});
 
+	test("a busy helper whose command line cannot be read is not stopped, and no second helper is spawned beside it", async () => {
+		const { s, socketPath, host, deps, c } = busyResident(() => true);
+		const res = await ensureHelper(host, UDID, {
+			socketPath,
+			helperPath: "/h/w",
+			deps: { ...deps, command: () => undefined },
+		});
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error.message).toContain("not starting a second one");
+		expect(s.spawns).toEqual([]);
+		expect(s.kills).toEqual([]);
+		expect(existsSync(socketPath)).toBe(true);
+		expect(readState(c, UDID).helper?.pid).toBe(777);
+	});
+
 	test("refused while the recorded pid is alive (no socket file): the record is dropped before spawning, never two records", async () => {
 		const { s, socketPath, host, c } = setup();
 		s.alive.add(777);
@@ -817,10 +832,23 @@ describe("pid identity before a signal (14-4)", () => {
 		expect(s.kills).toEqual([[4242, "SIGTERM"]]);
 	});
 
-	test("a command line that cannot be read is not signalled either", async () => {
-		const { c, s, deps } = recorded(() => undefined, { up: true });
-		expect((await stopHelper(c, UDID, { deps })).stopped).toBe(true);
+	test("a command line that cannot be read is not signalled, and the helper is kept: record, socket, a warning", async () => {
+		const { c, s, socketPath, deps } = recorded(() => undefined, { up: true });
+		const out = await stopHelper(c, UDID, { deps });
+		expect(out.stopped).toBe(false);
+		expect(out.warning).toContain("could not stop warden-simd (pid 4242)");
 		expect(s.kills).toEqual([]);
+		expect(existsSync(socketPath)).toBe(true);
+		expect(readState(c, UDID).helper).toEqual({ pid: 4242, socket: socketPath });
+	});
+
+	test("ensureHelper giving up on its own child signals it on liveness alone, even when its command line cannot be read", async () => {
+		const { s, socketPath, host, c } = setup();
+		s.listenAfterMs.value = undefined;
+		const deps: HelperDeps = { ...s.deps, command: () => undefined };
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res.success).toBe(false);
+		expect(s.kills).toEqual([[4242, "SIGTERM"]]);
 		expect(readState(c, UDID).helper).toBeUndefined();
 	});
 
