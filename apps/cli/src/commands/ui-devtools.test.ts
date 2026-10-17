@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fakePage, startFakeMetro } from "@delacour/warden-e2e/devtools/devtools.testing";
 import type { ConsoleLine, NetworkEntry } from "@delacour/warden-e2e/devtools/devtools.types";
@@ -390,6 +390,7 @@ describe("warden ui logs", () => {
 		const home = h.c.env.WARDEN_HOME ?? "";
 		const alias = `${home}-alias`;
 		symlinkSync(home, alias);
+		cleanup.push(() => rmSync(alias, { force: true }));
 		h.c.env.WARDEN_HOME = alias;
 		expect(await h.run("logs", "start", "--metro", h.fake.url, "--json")).toBe(0);
 		expect(result(h.json()).already).toBe(true);

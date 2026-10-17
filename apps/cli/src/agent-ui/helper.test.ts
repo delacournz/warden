@@ -842,6 +842,23 @@ describe("pid identity before a signal (14-4)", () => {
 		expect(readState(c, UDID).helper).toEqual({ pid: 4242, socket: socketPath });
 	});
 
+	test("no socket file, the recorded pid alive and unreadable: kept with a warning, and ensureHelper spawns no second one (S1)", async () => {
+		const { s, socketPath, host, c } = setup();
+		s.alive.add(777);
+		writeState(c, UDID, { generation: 0, updatedAt: 0, helper: { pid: 777, socket: socketPath } });
+		const deps: HelperDeps = { ...s.deps, command: () => undefined };
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error.message).toContain("not starting a second one");
+		expect(s.spawns).toEqual([]);
+		expect(s.kills).toEqual([]);
+		expect(readState(c, UDID).helper).toEqual({ pid: 777, socket: socketPath });
+		const out = await stopHelper(c, UDID, { deps });
+		expect(out).toMatchObject({ stopped: false, how: "none" });
+		expect(out.warning).toContain("could not stop warden-simd (pid 777)");
+		expect(readState(c, UDID).helper).toEqual({ pid: 777, socket: socketPath });
+	});
+
 	test("ensureHelper giving up on its own child signals it on liveness alone, even when its command line cannot be read", async () => {
 		const { s, socketPath, host, c } = setup();
 		s.listenAfterMs.value = undefined;

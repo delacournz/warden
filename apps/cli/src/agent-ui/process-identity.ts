@@ -14,24 +14,36 @@ const PS_PATHS = ["/bin/ps", "/usr/bin/ps"] as const;
  * `ps -ww -o command= -p <pid>`: the full, untruncated command line of `pid`, run by absolute path. Without a usable
  * `ps`, Linux's `/proc/<pid>/cmdline` (NUL-separated argv) is read instead.
  */
-export const processCommand: ProcessCommand = (pid) => {
-	for (const ps of PS_PATHS) {
-		if (!existsSync(ps)) continue;
-		try {
-			const run = Bun.spawnSync([ps, "-ww", "-o", "command=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
-			const text = run.exitCode === 0 ? run.stdout.toString().trim() : "";
-			return text === "" ? undefined : text;
-		} catch {
-			// try the next way
+export const processCommand: ProcessCommand = (pid) => processCommandVia(PS_PATHS)(pid);
+
+/** `processCommand` over the given `ps` paths; a `ps` that fails or prints nothing falls through to the next way. */
+export function processCommandVia(psPaths: readonly string[]): ProcessCommand {
+	return (pid) => {
+		for (const ps of psPaths) {
+			if (!existsSync(ps)) continue;
+			try {
+				const run = Bun.spawnSync([ps, "-ww", "-o", "command=", "-p", String(pid)], {
+					stdout: "pipe",
+					stderr: "ignore",
+				});
+				const text = run.exitCode === 0 ? run.stdout.toString().trim() : "";
+				if (text !== "") return text;
+			} catch {
+				// try the next way
+			}
 		}
-	}
+		return procCommand(pid);
+	};
+}
+
+function procCommand(pid: number): string | undefined {
 	try {
 		const text = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").join(" ").trim();
 		return text === "" ? undefined : text;
 	} catch {
 		return undefined;
 	}
-};
+}
 
 type Identity = "match" | "mismatch" | "unknown";
 

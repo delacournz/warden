@@ -748,6 +748,15 @@ async function stopRecorded(
 	const found = fileIdentity(socketPath);
 	// a recorded pid now running another program (reused) is not the helper: never waited on, never signalled
 	const marks = helperMarks(udid, record?.socket ?? socketPath);
+	// alive but its command line unreadable: it may still be the helper, so it is neither signalled nor forgotten,
+	// whether or not its socket file is there (no socket file must not read as "already gone")
+	if (record !== undefined && recordedIdentity(deps, record.pid, marks) === "unknown") {
+		return {
+			stopped: false,
+			how: "none",
+			warning: `could not stop warden-simd (pid ${record.pid}): its command line could not be read, so it was left running`,
+		};
+	}
 	const ours = record !== undefined && mayBeRecorded(deps, record.pid, marks);
 	const running = found !== undefined || ours;
 	if (!running) {
@@ -766,14 +775,6 @@ async function stopRecorded(
 	let how: StopOutcome["how"] = "shutdown";
 	if (!(await waitUntil(gone, SHUTDOWN_WAIT_MS - (attached?.success ? SHUTDOWN_REQUEST_MS : 0), deps))) {
 		how = "sigterm";
-		// alive but its command line unreadable: it may still be the helper, so it is neither signalled nor forgotten
-		if (record !== undefined && recordedIdentity(deps, record.pid, marks) === "unknown") {
-			return {
-				stopped: false,
-				how: "none",
-				warning: `could not stop warden-simd (pid ${record.pid}): its command line could not be read, so it was left running`,
-			};
-		}
 		if (record !== undefined && safeToSignal(deps, record.pid, marks)) deps.kill(record.pid, "SIGTERM");
 		await waitUntil(gone, KILL_WAIT_MS, deps);
 	}

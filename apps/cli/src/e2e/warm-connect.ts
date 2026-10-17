@@ -39,7 +39,8 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
 			stop: async () => {
 				await driver.data.close();
 				const { stopHelper } = await import("../agent-ui/helper");
-				await stopHelper(ctx, udid, { socketPath });
+				const { warning } = await stopHelper(ctx, udid, { socketPath });
+				if (warning !== undefined) ctx.err(`warden: ${warning}`);
 			},
 		});
 	};

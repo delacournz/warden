@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mayBeRecorded, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
+import { existsSync } from "node:fs";
+import { mayBeRecorded, processCommand, processCommandVia, recordedIdentity, safeToSignal } from "./process-identity";
 
 const alive = () => true;
 const dead = () => false;
@@ -20,6 +21,19 @@ describe("processCommand", () => {
 		}
 		expect(processCommand(child.pid)).toBeUndefined();
 	});
+
+	test.skipIf(!existsSync("/proc/self/cmdline"))(
+		"a `ps` that exits non-zero falls through to /proc/<pid>/cmdline instead of reading as unknown (S2)",
+		async () => {
+			const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+			try {
+				expect(processCommandVia(["/bin/false"])(child.pid)).toContain("sleep 30");
+			} finally {
+				child.kill("SIGKILL");
+				await child.exited;
+			}
+		}
+	);
 
 	test("does not depend on PATH: a caller with no `ps` on its PATH still reads command lines", () => {
 		const script = `import { processCommand } from ${JSON.stringify(`${import.meta.dir}/process-identity.ts`)}; console.log(processCommand(process.pid) ?? "undefined");`;
