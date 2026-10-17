@@ -86,7 +86,7 @@ export function stepsFromRecord(step: RecordStep, grounded: Grounded, env: Env, 
 		case "press":
 		case "tap":
 			return target ? [{ kind: "press", ...base, target }] : [];
-		case "longpress": {
+		case "gesture-longpress": {
 			const durationMs = num(args, "ms");
 			return target
 				? [{ kind: "longpress", ...base, target, ...(durationMs !== undefined ? { durationMs } : {}) }]
@@ -106,7 +106,7 @@ export function stepsFromRecord(step: RecordStep, grounded: Grounded, env: Env, 
 			const key = str(args, "key");
 			return key === undefined ? [] : keyStep(base, key);
 		}
-		case "swipe": {
+		case "gesture-swipe": {
 			const from = parsePoint(str(args, "from"));
 			const to = parsePoint(str(args, "to"));
 			return from && to ? [{ kind: "swipe", ...base, gesture: { by: "path", from, to } }] : [];
@@ -153,17 +153,17 @@ function deviceSteps(step: RecordStep, base: Base, grounded: Grounded): NewStep[
 		case "home":
 		case "back":
 			return [{ kind: step.action, ...base }];
-		case "rotate": {
+		case "screen-rotate": {
 			const orientation = str(args, "orientation");
 			const known = ["portrait", "portraitUpsideDown", "landscapeLeft", "landscapeRight"] as const;
 			const found = known.find((candidate) => candidate === orientation);
 			return found ? [{ kind: "rotate", ...base, orientation: found }] : [];
 		}
-		case "appearance": {
+		case "screen-appearance": {
 			const mode = str(args, "mode");
 			return mode === "light" || mode === "dark" ? [{ kind: "appearance", ...base, mode }] : [];
 		}
-		case "screenshot":
+		case "screen-screenshot":
 			return [{ kind: "screenshot", ...base }];
 		case "wait": {
 			const state = str(args, "state");

@@ -158,6 +158,7 @@ describe("cold start: warden ui", () => {
 		"/agent-ui/bench.ts",
 		"/agent-ui/video.ts",
 		"/agent-ui/controls.ts",
+		"/agent-ui/gestures.ts",
 		"/agent-ui/ui-driver.ts",
 	];
 	const without = (needles: string[], skip: string) => needles.filter((needle) => needle !== skip);
@@ -184,6 +185,12 @@ describe("cold start: warden ui", () => {
 		const files = await loadedBy(["ui", "press", "@e1", "--json"]);
 		expect(has(files, "/agent-ui/actions.ts")).toBe(true);
 		expect(loaded(files, [...OTHERS, ...DRIVERS, "/agent-ui/query.ts"])).toEqual([]);
+	});
+
+	test("`ui gesture pinch` without a lease loads gestures.ts and no driver", async () => {
+		const files = await loadedBy(["ui", "gesture", "pinch", "@e1", "2", "--json"]);
+		expect(has(files, "/agent-ui/gestures.ts")).toBe(true);
+		expect(loaded(files, [...without(OTHERS, "/agent-ui/gestures.ts"), ...DRIVERS, "/agent-ui/query.ts"])).toEqual([]);
 	});
 
 	test("`ui status` and `ui close` read the helper record without loading a driver", async () => {
