@@ -1,3 +1,4 @@
+import { androidSnapshotLoaded } from "@delacour/warden-core/golden/android-snapshot-pending";
 import { cloneFromGolden } from "@delacour/warden-core/golden/ios-golden";
 import { createAndroidProvider } from "@delacour/warden-core/providers/android";
 import { createIosProvider, shortRuntime } from "@delacour/warden-core/providers/ios";
@@ -31,6 +32,7 @@ export function providerFor(
 		return createAndroidProvider(deps, {
 			snapshot: androidSnapshotHook(ctx, owner, opts.sleep),
 			snapshotFailed: androidSnapshotFailedHook(ctx, owner, opts.sleep),
+			snapshotLoaded: (avd) => androidSnapshotLoaded(ctx.store(), avd),
 		});
 	if (!goldenEnabled(ctx.env)) return createIosProvider(deps);
 	const golden = { ...goldenDeps(ctx, owner, opts.sleep), prewarmHint: true };

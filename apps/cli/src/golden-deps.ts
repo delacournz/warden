@@ -1,3 +1,4 @@
+import { profileSlug } from "@delacour/warden-core/allocate";
 import {
 	type AndroidGoldenDeps,
 	buildPendingAndroidSnapshot,
@@ -7,8 +8,10 @@ import {
 	snapshotForClaim,
 } from "@delacour/warden-core/golden/android-golden";
 import {
-	androidSnapshotsDue,
+	androidSnapshotsGivenUp,
 	clearAndroidSnapshotPending,
+	onCi,
+	pendingAndroidSnapshots,
 } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { GoldenDeps } from "@delacour/warden-core/golden/ios-golden";
 import { processAlive } from "@delacour/warden-core/liveness";
@@ -93,21 +96,29 @@ export function androidSnapshotFailedHook(
 
 /**
  * `warden gc`'s Android snapshot step: build the snapshot of one pending AVD with no running instance.
- * Never under `CI`; snapshots off → the pending list is dropped. Returns gc's notes.
+ * Never under `CI`; snapshots off → the pending list is dropped. An AVD whose snapshot keeps failing to
+ * load is no longer built here, and gc's notes say so. Returns gc's notes.
  */
 export async function androidSnapshotPass(
 	ctx: CommandContext,
 	owner: Owner,
 	build: (deps: AndroidGoldenDeps) => AsyncResult<SnapshotPass> = buildPendingAndroidSnapshot
 ): Promise<string[]> {
-	if (!androidSnapshotsDue(ctx.store(), ctx.env, ctx.now())) return [];
+	if (onCi(ctx.env)) return [];
+	const givenUp = androidSnapshotsGivenUp(ctx.store());
+	const due = pendingAndroidSnapshots(ctx.store(), ctx.now()).length > 0;
+	if (!due && givenUp.length === 0) return [];
 	if (!(await androidSnapshotOn(ctx))) {
 		clearAndroidSnapshotPending(ctx.store());
 		return [];
 	}
+	const notes = givenUp.map(
+		(avd) =>
+			`android snapshot of ${avd} does not load on this host: gc no longer rebuilds it (warden golden ensure --platform android --profile ${profileSlug(avd)} does)`
+	);
+	if (!due) return notes;
 	const pass: Result<SnapshotPass> = await build(androidGoldenDeps(ctx, owner));
-	if (!pass.success) return [`android snapshot: ${pass.error}`];
-	const notes: string[] = [];
+	if (!pass.success) return [...notes, `android snapshot: ${pass.error}`];
 	if (pass.data.built) notes.push(`built android snapshot ${pass.data.built.name} of ${pass.data.built.avd}`);
 	if (pass.data.failed) notes.push(`android snapshot of ${pass.data.failed.avd} failed: ${pass.data.failed.error}`);
 	if (pass.data.busy.length > 0)

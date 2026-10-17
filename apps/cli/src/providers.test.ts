@@ -3,8 +3,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { androidSnapshotKey, readSnapshotInputs, snapshotName } from "@delacour/warden-core/golden/android-golden";
 import {
+	markAndroidSnapshotBusy,
 	markAndroidSnapshotPending,
 	pendingAndroidSnapshots,
+	recordAndroidSnapshotLoadFailure,
 } from "@delacour/warden-core/golden/android-snapshot-pending";
 import { fakeHost } from "@delacour/warden-core/golden/golden.testing";
 import { ok } from "@delacour/warden-types/result";
@@ -146,6 +148,29 @@ describe("gc's android snapshot step (R2)", () => {
 		ctx.env = { ...ctx.env, CI: "true" };
 		expect(await androidSnapshotPass(ctx, owner, build)).toEqual([]);
 		expect(pendingAndroidSnapshots(ctx.db, ctx.now())).toEqual(["Pixel_10"]);
+	});
+
+	test("an AVD a pass found busy is still tried by gc's own pass (S5)", async () => {
+		ctx = testContext([]);
+		markAndroidSnapshotPending(ctx.db, "Pixel_10");
+		markAndroidSnapshotBusy(ctx.db, "Pixel_10", ctx.now());
+		let builds = 0;
+		await androidSnapshotPass(ctx, owner, async () => {
+			builds++;
+			return ok({ busy: ["Pixel_10"] });
+		});
+		expect(builds).toBe(1);
+	});
+
+	test("an AVD whose snapshot failed to load three times is not built; the note says how to build it (S2)", async () => {
+		ctx = testContext([]);
+		for (let i = 0; i < 3; i++) recordAndroidSnapshotLoadFailure(ctx.db, "Pixel_10", ctx.now());
+		const notes = await androidSnapshotPass(ctx, owner, async () => {
+			throw new Error("must not build");
+		});
+		expect(notes).toEqual([
+			"android snapshot of Pixel_10 does not load on this host: gc no longer rebuilds it (warden golden ensure --platform android --profile pixel-10 does)",
+		]);
 	});
 
 	test("snapshots off: the pending list is dropped, no build", async () => {

@@ -126,6 +126,8 @@ export type AndroidProviderOptions = {
 	snapshot?: (avd: string) => AsyncResult<string | undefined>;
 	/** The emulator logged that `snapshot` of `avd` did not load (it cold-booted instead): drop it so it is rebuilt. */
 	snapshotFailed?: (avd: string, snapshot: string) => AsyncResult<unknown>;
+	/** The emulator launched from `snapshot` of `avd` and reached ready with no load failure logged. */
+	snapshotLoaded?: (avd: string, snapshot: string) => void;
 };
 
 /** How often, and how long, `boot` looks for a just-launched warden emulator in `adb devices`. */
@@ -582,10 +584,12 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			const launched = launches.get(id);
 			const ready = await waitBootCompleted({ ...deps, sleep, pidAlive, pollIntervalMs }, id, timeoutMs, launched);
 			const snapshot = launched?.snapshot;
-			if (ready.success && launched && snapshot && snapshotLoadFailed(readLog(launched.logPath, launched.logOffset))) {
-				deps.log?.(`${id}: snapshot ${snapshot} did not load, the emulator cold-booted (log: ${launched.logPath})`);
-				const dropped = await options.snapshotFailed?.(launched.avd, snapshot);
-				if (dropped && !dropped.success) deps.log?.(`${id}: snapshot ${snapshot} kept: ${dropped.error}`);
+			if (ready.success && launched && snapshot) {
+				if (snapshotLoadFailed(readLog(launched.logPath, launched.logOffset))) {
+					deps.log?.(`${id}: snapshot ${snapshot} did not load, the emulator cold-booted (log: ${launched.logPath})`);
+					const dropped = await options.snapshotFailed?.(launched.avd, snapshot);
+					if (dropped && !dropped.success) deps.log?.(`${id}: snapshot ${snapshot} kept: ${dropped.error}`);
+				} else options.snapshotLoaded?.(launched.avd, snapshot);
 			}
 			return ready;
 		},

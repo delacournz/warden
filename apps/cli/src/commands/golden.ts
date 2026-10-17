@@ -44,7 +44,9 @@ async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts
 	const avd = await avdFor(ctx, profile);
 	if (!avd.success) return fail(ctx, avd.error);
 	const snapshot = await withSpinner(ctx, `ensuring quick-boot snapshot of ${avd.data}…`, async (sctx, spinner) => {
-		const result = await ensureAndroidSnapshot(androidGoldenDeps(sctx, resolveOwner(ctx), sleep), avd.data);
+		const result = await ensureAndroidSnapshot(androidGoldenDeps(sctx, resolveOwner(ctx), sleep), avd.data, {
+			explicit: true,
+		});
 		if (result.success && result.data)
 			spinner.succeed(`snapshot ${result.data.name} ${result.data.built ? "built" : "reused"}`);
 		else spinner.fail("snapshot failed");

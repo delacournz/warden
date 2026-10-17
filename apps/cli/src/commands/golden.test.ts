@@ -3,6 +3,10 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
 import { androidSnapshotKey, readSnapshotInputs, snapshotName } from "@delacour/warden-core/golden/android-golden";
+import {
+	androidSnapshotsGivenUp,
+	recordAndroidSnapshotLoadFailure,
+} from "@delacour/warden-core/golden/android-snapshot-pending";
 import { goldenKey, goldenName } from "@delacour/warden-core/golden/golden";
 import { fakeHost, IPHONE_17, RUNTIME_BUILD, RUNTIME_ID } from "@delacour/warden-core/golden/golden.testing";
 import { androidGoldenDeps } from "../golden-deps";
@@ -176,6 +180,15 @@ describe("warden golden --platform android (16-3)", () => {
 		plant(c, name);
 		expect(await createGoldenCommand(instant).run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ avd: "Pixel_10", name, built: false });
+	});
+
+	test("ensure forgets the AVD's load failures, so gc builds it again (S2)", async () => {
+		const c = androidSetup(["ensure", "--platform", "android", "--json"]);
+		for (let i = 0; i < 3; i++) recordAndroidSnapshotLoadFailure(c.db, "Pixel_10", c.now());
+		plant(c, await current(c));
+		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(androidSnapshotsGivenUp(c.db)).toEqual([]);
+		expect(recordAndroidSnapshotLoadFailure(c.db, "Pixel_10", c.now()).loadFailures).toBe(1);
 	});
 
 	test("ls lists warden snapshots with whether they are current", async () => {

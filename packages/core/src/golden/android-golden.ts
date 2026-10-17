@@ -38,10 +38,15 @@ import {
 import { type Store, wardenHome } from "../store";
 import type { Owner } from "../types";
 import {
+	ANDROID_SNAPSHOT_MAX_LOAD_FAILURES,
+	ANDROID_SNAPSHOT_RETRY_MS,
 	clearAndroidSnapshotPending,
+	markAndroidSnapshotBusy,
 	markAndroidSnapshotFailed,
 	markAndroidSnapshotPending,
 	pendingAndroidSnapshots,
+	recordAndroidSnapshotLoadFailure,
+	resetAndroidSnapshotLoadFailures,
 } from "./android-snapshot-pending";
 
 /** Bump when what building a snapshot does to the device changes, so existing snapshots go stale. */
@@ -384,7 +389,6 @@ async function saveFromInstance(
 	return err(`snapshot ${target.name} of ${target.avd} was not written (${snapshotDir(target.dir, target.name)})`);
 }
 
-/** Caller holds the AVD's golden lock and has checked it is not running. */
 /** Launch the build instance; an emulator that rejects the headless flags gets one more try without them. */
 async function launchBuild(
 	deps: AndroidGoldenDeps,
@@ -399,6 +403,7 @@ async function launchBuild(
 	return spawn(buildArgv(deps, avd, port, false), logPath);
 }
 
+/** Caller holds the AVD's golden lock and has checked it is not running. */
 async function buildSnapshot(deps: AndroidGoldenDeps, avd: string, dir: string, key: string): AsyncResult<void> {
 	const name = snapshotName(key);
 	const started = deps.now();
@@ -434,36 +439,52 @@ async function buildSnapshot(deps: AndroidGoldenDeps, avd: string, dir: string, 
 	}
 }
 
+/** `pid`'s command line names `-avd <avd>` and `-port <port>`: it is that build emulator, not a reused pid. */
+async function isBuildEmulator(deps: AndroidGoldenDeps, pid: number, avd: string, port: number): Promise<boolean> {
+	const out = await deps.exec(["ps", "-o", "command=", "-p", String(pid)], { timeoutMs: EMU_CONSOLE_TIMEOUT_MS });
+	if (out.exitCode !== 0) return false;
+	const argv = out.stdout.trim().split(/\s+/);
+	const flag = (name: string, value: string) => argv.some((arg, i) => arg === name && argv[i + 1] === value);
+	return flag("-avd", avd) && flag("-port", String(port));
+}
+
 /**
  * Build emulators an earlier warden left running (it died, or could not stop one): any golden-port lease
- * of `avd` seen while holding the AVD's lock is one, since its builder no longer holds the lock. Its
- * instance is stopped (`emu kill`, then SIGKILL of the recorded pid) and its lease dropped; returns the
- * serials stopped.
+ * of `avd` seen while holding the AVD's lock is one, since its builder no longer holds the lock. Only a
+ * lease whose pid is alive and is that emulator (its command line names the AVD and the port) is acted
+ * on: its instance is stopped (`emu kill`, then SIGKILL of the pid) and the lease dropped, or, when adb
+ * does not name the instance (wedged, booting, offline), the lease is kept and the AVD counts as busy.
+ * A dead, missing or reused pid only drops the lease: whatever runs on that port now is not warden's.
  */
 async function reapLeftoverBuilds(
 	deps: AndroidGoldenDeps,
 	avd: string,
 	instances: AdbEmulator[]
-): AsyncResult<Set<string>> {
+): AsyncResult<{ stopped: Set<string>; held: string[] }> {
 	const stopped = new Set<string>();
+	const held: string[] = [];
 	const leftovers = deps.store
 		.listLeases()
 		.filter((l) => l.resource.kind === "port" && l.label === `${GOLDEN_PORT_LABEL}${avd}`);
 	for (const lease of leftovers) {
 		if (lease.resource.kind !== "port") continue;
 		const serial = `emulator-${lease.resource.port}`;
-		if (instances.some((e) => e.serial === serial)) {
+		const pid = lease.pid;
+		const ours =
+			pid !== undefined && deps.pidAlive(pid) && (await isBuildEmulator(deps, pid, avd, lease.resource.port));
+		if (ours && !instances.some((e) => e.serial === serial)) {
+			held.push(serial);
+			continue;
+		}
+		if (ours) {
 			log(deps, `stopping the leftover build emulator ${serial} of ${avd}`);
-			const done =
-				lease.pid !== undefined
-					? await stopEmulator(deps, serial, lease.pid)
-					: await emuConsole(deps, serial, ["kill"], EMU_CONSOLE_TIMEOUT_MS);
+			const done = await stopEmulator(deps, serial, pid);
 			if (!done.success) return done;
 			stopped.add(serial);
 		}
 		deps.store.deleteLeases([lease.id]);
 	}
-	return ok(stopped);
+	return ok({ stopped, held });
 }
 
 async function ensureLocked(
@@ -479,9 +500,12 @@ async function ensureLocked(
 	const reaped = await reapLeftoverBuilds(deps, avd, instances.data);
 	if (!reaped.success) return reaped;
 	// conservative: any instance of the AVD, warden's own read-only ones included, keeps the writable build off
-	const busy = instances.data.filter((e) => !reaped.data.has(e.serial));
+	const busy = [
+		...instances.data.filter((e) => !reaped.data.stopped.has(e.serial)).map((e) => e.serial),
+		...reaped.data.held,
+	];
 	if (busy.length > 0) {
-		log(deps, `${avd} is running (${busy.map((e) => e.serial).join(", ")}): no snapshot built now`);
+		log(deps, `${avd} is running (${busy.join(", ")}): no snapshot built now`);
 		return ok(undefined);
 	}
 	for (const stale of wardenSnapshots(dir).filter((s) => s !== name)) {
@@ -528,12 +552,15 @@ export async function snapshotForClaim(deps: AndroidGoldenDeps, avd: string): As
 /**
  * Warden's snapshot of `avd`, built when missing (one writable cold boot, under the AVD's golden lock).
  * `undefined` = none for now: no SDK root, or the AVD is running so a writable build can't start.
- * Only `warden golden ensure` and `warden gc` call this, never a claim.
+ * Only `warden golden ensure` (`explicit`: also forgets the AVD's load failures, so gc builds it again)
+ * and `warden gc` call this, never a claim.
  */
 export async function ensureAndroidSnapshot(
 	deps: AndroidGoldenDeps,
-	avd: string
+	avd: string,
+	opts: { explicit?: boolean } = {}
 ): AsyncResult<EnsuredSnapshot | undefined> {
+	if (opts.explicit) resetAndroidSnapshotLoadFailures(deps.store, avd);
 	const current = await currentAndroidSnapshot(deps, avd);
 	if (!current.success || current.data === undefined) return current.success ? ok(undefined) : current;
 	const { dir, key, name, present } = current.data;
@@ -558,24 +585,35 @@ export async function buildPendingAndroidSnapshot(deps: AndroidGoldenDeps): Asyn
 	for (const avd of pendingAndroidSnapshots(deps.store, deps.now())) {
 		const ensured = await ensureAndroidSnapshot(deps, avd);
 		if (!ensured.success) return ok({ failed: { avd, error: ensured.error }, busy });
-		if (ensured.data === undefined) busy.push(avd);
-		else if (ensured.data.built) return ok({ built: ensured.data, busy });
+		if (ensured.data === undefined) {
+			busy.push(avd);
+			markAndroidSnapshotBusy(deps.store, avd, deps.now());
+		} else if (ensured.data.built) return ok({ built: ensured.data, busy });
 	}
 	return ok({ busy });
 }
 
 /**
  * A claim saw `name` of `avd` fail to load: delete it under the AVD's lock (not waiting for a build that
- * holds it) and mark the AVD pending, so the next build replaces it.
+ * holds it) and mark the AVD pending, so the next build replaces it. A second failure within
+ * `ANDROID_SNAPSHOT_RETRY_MS` waits out the retry time; after `ANDROID_SNAPSHOT_MAX_LOAD_FAILURES` gc no
+ * longer rebuilds it (`warden golden ensure --platform android` does).
  */
 export async function invalidateAndroidSnapshot(deps: AndroidGoldenDeps, avd: string, name: string): AsyncResult<void> {
 	if (!isWardenSnapshot(name)) return err(`${name} is not a warden snapshot`);
 	return withBuildLock({ ...lockDeps(deps), waitMs: 0 }, androidGoldenLockKey(avd), async () => {
 		const deleted = deleteSnapshot(deps, avd, avdDir(deps.env, avd), name);
 		if (deleted.success) {
-			// a fresh entry: due at the next gc pass, whatever an earlier build's failure said
-			clearAndroidSnapshotPending(deps.store, avd);
-			markAndroidSnapshotPending(deps.store, avd);
+			const { loadFailures, deferred } = recordAndroidSnapshotLoadFailure(deps.store, avd, deps.now());
+			const ensure = `warden golden ensure --platform android --profile ${profileSlug(avd)}`;
+			if (loadFailures >= ANDROID_SNAPSHOT_MAX_LOAD_FAILURES) {
+				log(deps, `${name} of ${avd} failed to load ${loadFailures} times: gc no longer rebuilds it (${ensure} does)`);
+			} else if (deferred) {
+				log(
+					deps,
+					`${name} of ${avd} does not load on this host (failed again): next rebuild in ${ANDROID_SNAPSHOT_RETRY_MS / 3_600_000}h`
+				);
+			}
 		}
 		return deleted;
 	});
