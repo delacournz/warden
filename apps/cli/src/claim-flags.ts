@@ -167,6 +167,8 @@ export type ClaimHideOptions = {
 	 * booted again), and awaits `settled` before it ends (that puts Simulator's close setting back).
 	 */
 	onHide?: (start: HideStart) => void;
+	/** the platform the hide runs on (tests); defaults to `process.platform` */
+	os?: NodeJS.Platform;
 };
 
 /**
@@ -218,8 +220,9 @@ async function settleIosWindows(
 	options: ClaimHideOptions
 ): Promise<void> {
 	const sims = outcome.claimed.map((c) => ({ udid: c.device.id, name: c.device.name }));
-	if (flags.headless && options.onHide) options.onHide(await startHideSimWindows(headlessDeps(ctx), sims));
-	else if (flags.headless) await hideSimWindows(headlessDeps(ctx), sims);
+	const deps = options.os === undefined ? headlessDeps(ctx) : { ...headlessDeps(ctx), os: options.os };
+	if (flags.headless && options.onHide) options.onHide(await startHideSimWindows(deps, sims));
+	else if (flags.headless) await hideSimWindows(deps, sims);
 	else
 		await autoArrangeSimWindows(
 			ctx,

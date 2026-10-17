@@ -209,9 +209,11 @@ export type DetachLock = {
 	/** this process: a holder whose pid is gone is dropped */
 	pid: number;
 	pidAlive: (pid: number) => boolean;
+	/** the clock for the row's timestamps (`DETACH_ROW_TTL_MS`); defaults to `Date.now` */
+	now?: () => number;
 };
 
-/** `failed`: devices the close shut down whose boot, `bootstatus` or warm probe failed (only set when there are any). */
+/** `failed`: devices the close shut down whose `bootstatus -b` or warm probe failed (only set when there are any). */
 export type HideOutcome = { closed: string[]; rebooted: string[]; failed?: string[] };
 
 /**
@@ -259,17 +261,25 @@ export const DETACH_PREF_META = "headless.detach_pref";
 /** how long a hide waits for another process to finish writing or restoring the setting */
 const DETACH_WAIT_POLLS = 200;
 const DETACH_POLL_MS = 50;
+/**
+ * Longer than any hide holds the setting (close, shutdown polls, `bootstatus -b`, probe, close again).
+ * An older holder is gone even if its pid is alive again (reused), an older `setting`/`restoring` is
+ * not waited on, and an older crash's `before` is not written back.
+ */
+const DETACH_ROW_TTL_MS = BOOT_TIMEOUT_MS + 120_000;
 
 /**
  * `setting`: `by` is reading the user's value and switching it on; `set`: on, with `before` the
  * user's value; `restoring`: the last holder `by` is putting `before` back. `holders` are the hides
- * relying on it being on.
+ * relying on it being on. `at`: when the phase began; a holder's `at`: when it joined (epoch ms).
  */
+type DetachHolder = { token: string; pid: number; at?: number };
 type DetachRow = {
 	phase: "setting" | "set" | "restoring";
 	before?: DetachPref;
 	by: string;
-	holders: Array<{ token: string; pid: number }>;
+	at?: number;
+	holders: DetachHolder[];
 };
 
 function parseDetachRow(raw: string | undefined): DetachRow | undefined {
@@ -279,12 +289,15 @@ function parseDetachRow(raw: string | undefined): DetachRow | undefined {
 		if (!isRecord(data) || !Array.isArray(data.holders) || typeof data.by !== "string") return undefined;
 		const phase = data.phase;
 		if (phase !== "setting" && phase !== "set" && phase !== "restoring") return undefined;
-		const holders = data.holders.flatMap((h: unknown) =>
-			isRecord(h) && typeof h.token === "string" && isNum(h.pid) ? [{ token: h.token, pid: h.pid }] : []
+		const holders = data.holders.flatMap((h: unknown): DetachHolder[] =>
+			isRecord(h) && typeof h.token === "string" && isNum(h.pid)
+				? [isNum(h.at) ? { token: h.token, pid: h.pid, at: h.at } : { token: h.token, pid: h.pid }]
+				: []
 		);
 		const before = data.before;
 		const row: DetachRow = { phase, by: data.by, holders };
 		if (before === "unset" || before === "on" || before === "off") row.before = before;
+		if (isNum(data.at)) row.at = data.at;
 		return row;
 	} catch {
 		return undefined;
@@ -297,19 +310,29 @@ function tokenPid(token: string): number | undefined {
 	return Number.isInteger(pid) && pid > 0 ? pid : undefined;
 }
 
+const lockNow = (lock: DetachLock) => (lock.now ?? Date.now)();
+
+/** Was `at` (a row's or holder's timestamp; missing = unknown) within `DETACH_ROW_TTL_MS`? */
+function recent(lock: DetachLock, at: number | undefined): boolean {
+	return at !== undefined && lockNow(lock) - at <= DETACH_ROW_TTL_MS;
+}
+
+/** A holder still relying on the setting: its process is alive and it joined recently enough. */
+const holderLive = (lock: DetachLock, h: DetachHolder) => lock.pidAlive(h.pid) && recent(lock, h.at);
+
 type Acquired = { kind: "first"; inherited?: DetachPref } | { kind: "joined" } | { kind: "wait"; joined: boolean };
 
 /**
  * One step of joining the setting's holders, under `BEGIN IMMEDIATE`. Holders (and a `by`) whose
- * process is gone are dropped; a dead holder's recorded `before` is kept, so the user's value is still
- * put back after a crash.
+ * process is gone, or that are older than `DETACH_ROW_TTL_MS`, are dropped; a recent dead holder's
+ * recorded `before` is offered as `inherited`, so the user's value is still put back after a crash.
  */
 function joinStep(lock: DetachLock, token: string, joined: boolean): Acquired {
 	return lock.store.transaction((): Acquired => {
 		const row = parseDetachRow(lock.store.getMeta(DETACH_PREF_META));
 		const save = (next: DetachRow) => lock.store.setMeta(DETACH_PREF_META, JSON.stringify(next));
-		const me = { token, pid: lock.pid };
-		const live = (row?.holders ?? []).filter((h) => h.token !== token && lock.pidAlive(h.pid));
+		const me = { token, pid: lock.pid, at: lockNow(lock) };
+		const live = (row?.holders ?? []).filter((h) => h.token !== token && holderLive(lock, h));
 		const step = row && joinLive(lock, row, live.length > 0);
 		if (row && step) {
 			const holds = step.kind === "joined" || (step.kind === "wait" && step.joined);
@@ -317,15 +340,22 @@ function joinStep(lock: DetachLock, token: string, joined: boolean): Acquired {
 			return step;
 		}
 		// nobody (alive) relies on it: this hide switches it on, inheriting a dead holder's `before`
-		save({ phase: "setting", by: token, holders: [...live, me] });
-		return row?.before !== undefined ? { kind: "first", inherited: row.before } : { kind: "first" };
+		save({ phase: "setting", by: token, at: me.at, holders: [...live, me] });
+		const inherited = row && inheritable(lock, row);
+		return inherited !== undefined ? { kind: "first", inherited } : { kind: "first" };
 	});
+}
+
+/** A taken-over row's `before`, unless the row was last touched longer ago than `DETACH_ROW_TTL_MS`. */
+function inheritable(lock: DetachLock, row: DetachRow): DetachPref | undefined {
+	const touched = Math.max(row.at ?? 0, ...row.holders.map((h) => h.at ?? 0));
+	return recent(lock, touched) ? row.before : undefined;
 }
 
 /** What a hide does with a row someone alive is behind; undefined: nobody is, take it over. */
 function joinLive(lock: DetachLock, row: DetachRow, othersHold: boolean): Acquired | undefined {
 	const byPid = tokenPid(row.by);
-	const byAlive = byPid !== undefined && lock.pidAlive(byPid);
+	const byAlive = byPid !== undefined && lock.pidAlive(byPid) && recent(lock, row.at);
 	if (row.phase === "restoring" && byAlive) return { kind: "wait", joined: false };
 	if (row.phase === "setting" && byAlive) return { kind: "wait", joined: true };
 	if (row.phase === "set" && othersHold) return { kind: "joined" };
@@ -336,8 +366,9 @@ function joinLive(lock: DetachLock, row: DetachRow, othersHold: boolean): Acquir
 function markSet(lock: DetachLock, token: string, before: DetachPref): void {
 	lock.store.transaction(() => {
 		const row = parseDetachRow(lock.store.getMeta(DETACH_PREF_META));
-		const holders = row?.holders ?? [{ token, pid: lock.pid }];
-		lock.store.setMeta(DETACH_PREF_META, JSON.stringify({ phase: "set", before, by: token, holders }));
+		const at = lockNow(lock);
+		const holders = row?.holders ?? [{ token, pid: lock.pid, at }];
+		lock.store.setMeta(DETACH_PREF_META, JSON.stringify({ phase: "set", before, by: token, at, holders }));
 	});
 }
 
@@ -347,12 +378,15 @@ function leaveStep(lock: DetachLock, token: string): DetachPref | undefined {
 		const row = parseDetachRow(lock.store.getMeta(DETACH_PREF_META));
 		// not a holder (gave up waiting before it could join): nothing of this hide's to restore
 		if (!row?.holders.some((h) => h.token === token)) return undefined;
-		const rest = row.holders.filter((h) => h.token !== token && lock.pidAlive(h.pid));
+		const rest = row.holders.filter((h) => h.token !== token && holderLive(lock, h));
 		if (rest.length > 0) {
 			lock.store.setMeta(DETACH_PREF_META, JSON.stringify({ ...row, holders: rest }));
 			return undefined;
 		}
-		lock.store.setMeta(DETACH_PREF_META, JSON.stringify({ ...row, phase: "restoring", by: token, holders: [] }));
+		lock.store.setMeta(
+			DETACH_PREF_META,
+			JSON.stringify({ ...row, phase: "restoring", by: token, at: lockNow(lock), holders: [] })
+		);
 		return row.before ?? "unset";
 	});
 }
@@ -362,6 +396,15 @@ function finishRestore(lock: DetachLock, token: string): void {
 		const row = parseDetachRow(lock.store.getMeta(DETACH_PREF_META));
 		if (row?.phase === "restoring" && row.by === token) lock.store.deleteMeta(DETACH_PREF_META);
 	});
+}
+
+/** The first holder: read the user's value, switch it on, and record what to put back. */
+async function switchOn(deps: HideDeps, lock: DetachLock, token: string, inherited: DetachPref | undefined) {
+	const read = await readDetachPref(deps.exec);
+	// a dead holder's value only explains an `on` it left behind; anything else is the user's own
+	const before = inherited !== undefined && read === "on" ? inherited : read;
+	if (read !== "on") await deps.exec(["defaults", "write", ...DETACH_PREF, "-bool", "true"]);
+	markSet(lock, token, before);
 }
 
 /**
@@ -383,10 +426,7 @@ async function holdDetachPref(deps: HideDeps): Promise<() => Promise<void>> {
 	for (let i = 0; ; i++) {
 		const step = joinStep(lock, token, joined);
 		if (step.kind === "first") {
-			const read = await readDetachPref(deps.exec);
-			const before = step.inherited ?? read;
-			if (read !== "on") await deps.exec(["defaults", "write", ...DETACH_PREF, "-bool", "true"]);
-			markSet(lock, token, before);
+			await switchOn(deps, lock, token, step.inherited);
 			break;
 		}
 		if (step.kind === "joined") break;
@@ -509,15 +549,15 @@ async function shutDownByClose(deps: HideDeps, sims: readonly LeasedSim[]): Prom
 /** `simctl boot` of a device that is already up exits non-zero with this; it is not a failure. */
 const ALREADY_BOOTED = /current state: Booted/;
 
-/** Boot one shut-down device again (headless) and probe it; false after a warned failure. */
+/** Boot one shut-down device again (headless) and probe it; false after a warned `bootstatus` or probe failure. */
 async function rebootOne(deps: HideDeps, sim: LeasedSim): Promise<boolean> {
 	deps.warn(`headless: closing ${sim.name}'s window shut it down — booting it again without a window`);
 	await deps.onShutDown?.(sim.udid);
 	const bootArgv = ["xcrun", "simctl", "boot", sim.udid];
 	const boot = await deps.exec(bootArgv);
+	// not fatal: `bootstatus -b` boots the device itself (one still `Shutting Down`, a transient refusal)
 	if (boot.exitCode !== 0 && !ALREADY_BOOTED.test(boot.stderr)) {
-		deps.warn(`headless: ${sim.name}: ${execError(bootArgv, boot)}`);
-		return false;
+		deps.warn(`headless: ${sim.name}: ${execError(bootArgv, boot)} — waiting for bootstatus to boot it`);
 	}
 	const statusArgv = ["xcrun", "simctl", "bootstatus", sim.udid, "-b"];
 	const ready = await deps.exec(statusArgv, { timeoutMs: BOOT_TIMEOUT_MS });

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ClaimedDevice } from "@delacour/warden-core/claim";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
+import type { Exec } from "@delacour/warden-core/exec";
+import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { InventoryDevice, Lease } from "@delacour/warden-core/types";
 import {
 	bootedByClaim,
@@ -147,6 +149,31 @@ describe("bootedByClaim", () => {
 	});
 });
 
+/**
+ * macOS with Simulator.app showing warden-iphone-17-1's window, `DetachOnWindowClose` unset; the rest
+ * is `simctl`. The `simctl list` after the close waits for `gate`. Records `defaults`/`osascript` calls.
+ */
+function macSimulator(simctl: Exec, calls: string[][], gate: Promise<void>): Exec {
+	const ok = (stdout = "", exitCode = 0) => ({ exitCode, stdout, stderr: "" });
+	const window = { title: "warden-iphone-17-1 – iOS 26.5", width: 456, height: 972 };
+	const screen = { x: 0, y: 33, width: 1728, height: 1021 };
+	const osascript = (script: string) =>
+		ok(script.includes("NSScreen") ? JSON.stringify({ screen, windows: [window] }) : "");
+	const defaults = (verb: string | undefined) => (verb === "read" ? ok("", 1) : ok());
+	return async (cmd, opts) => {
+		if (cmd[0] === "pgrep") return ok();
+		if (cmd[0] === "defaults" || cmd[0] === "osascript") calls.push([...cmd]);
+		if (cmd[0] === "osascript") return osascript(cmd[4] ?? "");
+		if (cmd[0] === "defaults") return defaults(cmd[1]);
+		if (cmd.join(" ") === "xcrun simctl list devices -j") {
+			// the device states after the close: held until the test has seen the claim return
+			await gate;
+			return ok(simctlDevicesJson({ "iOS-26-5": [wardenSim(1, "Booted")] }));
+		}
+		return simctl(cmd, opts);
+	};
+}
+
 describe("headless hide wiring", () => {
 	let hctx: TestContext | undefined;
 	afterEach(() => hctx?.cleanup());
@@ -176,6 +203,39 @@ describe("headless hide wiring", () => {
 		expect(starts).toHaveLength(1);
 		expect(await starts[0]?.down).toEqual([]);
 		expect(await starts[0]?.settled).toMatchObject({ rebooted: [] });
+	});
+
+	test("onHide on macOS: the claim returns once the windows are closed, before the hide settles", async () => {
+		const calls: string[][] = [];
+		const simctl = fakeSimctl([wardenSim(1, "Booted")], calls);
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const exec = macSimulator(simctl, calls, gate);
+		hctx = testContext([], { exec });
+		hctx.env = { ...hctx.env, ...OWNER_ENV };
+		const flags = parseClaimFlags("ios", { headless: true }, 16);
+		if (!flags.success) throw new Error(flags.error);
+		const starts: HideStart[] = [];
+		const outcome = await claimWithFlags(hctx, resolveOwner(hctx), flags.data, undefined, {
+			onHide: (start) => starts.push(start),
+			os: "darwin",
+		});
+		expect(outcome.success).toBe(true);
+		expect(starts[0]?.closed).toEqual(["warden-iphone-17-1"]);
+		let settled = false;
+		starts[0]?.settled.then(() => {
+			settled = true;
+		});
+		await Bun.sleep(1);
+		expect(settled).toBe(false);
+		// the close setting is still held: it is put back only once the hide settles
+		const defaults = () => calls.filter((c) => c[0] === "defaults").map((c) => c[1]);
+		expect(defaults()).toEqual(["read", "write"]);
+		release();
+		expect(await starts[0]?.settled).toEqual({ closed: ["warden-iphone-17-1"], rebooted: [] });
+		expect(defaults()).toEqual(["read", "write", "delete"]);
 	});
 
 	test("onHide is not called for a claim that tiles instead", async () => {

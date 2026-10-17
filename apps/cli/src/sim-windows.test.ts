@@ -220,6 +220,8 @@ type FakeOptions = {
 	pref?: PrefBox;
 	/** how long a window close takes */
 	closeMs?: number;
+	/** the close script fails (osascript exit 1) */
+	closeFails?: boolean;
 	onCall?: (cmd: readonly string[]) => void;
 	/** false: `launchctl list` shows no SpringBoard (the post-reboot probe fails) */
 	springboard?: boolean;
@@ -261,6 +263,7 @@ function fakeSimulator(
 	const osascript = async (script: string) => {
 		if (!script.includes("AXCloseButton")) return done(script.includes("NSScreen") ? windows() : "");
 		if (opts.closeMs !== undefined) await Bun.sleep(opts.closeMs);
+		if (opts.closeFails) return done("", 1, "close-boom");
 		// the moment the window actually closes: Simulator.app reads the setting now
 		pref.atClose.push(pref.value);
 		return done();
@@ -481,15 +484,28 @@ describe("hideSimWindows: reboots", () => {
 		expect(probe?.slice(4)).toEqual(["launchctl", "list"]);
 	});
 
-	test("a failed `simctl boot` surfaces as a warning; that device is not waited for, not rebooted, and reported failed", async () => {
+	test("a failed `simctl boot` is warned about, and `bootstatus -b` still boots the device", async () => {
 		const f = fakeSimulator(leased, both, { U1: "Shutdown", U2: "Shutdown" }, undefined, {
 			boot: async (udid) => (udid === "U2" ? done("", 1, "Unable to boot: boom-boot") : done()),
 		});
 		const out = await hideSimWindows(f.deps, leased);
+		expect(out.rebooted.sort()).toEqual(["warden-iphone-17-1", "warden-iphone-17-2"]);
+		expect(out.failed).toBeUndefined();
+		expect(f.warnings.join("\n")).toContain("boom-boot");
+		expect(f.calls.some((c) => c[2] === "bootstatus" && c[3] === "U2" && c[4] === "-b")).toBe(true);
+	});
+
+	test("a failed `simctl boot` whose `bootstatus -b` fails too is reported failed", async () => {
+		const f = fakeSimulator(leased, both, { U1: "Shutdown", U2: "Shutdown" }, undefined, {
+			boot: async (udid) => (udid === "U2" ? done("", 1, "Unable to boot: boom-boot") : done()),
+			bootstatus: async (udid) => (udid === "U2" ? done("", 1, "boom-status") : done()),
+		});
+		const out = await hideSimWindows(f.deps, leased);
 		expect(out.rebooted).toEqual(["warden-iphone-17-1"]);
 		expect(out.failed).toEqual(["warden-iphone-17-2"]);
-		expect(f.warnings.join("\n")).toContain("boom-boot");
-		expect(f.calls.some((c) => c[2] === "bootstatus" && c[3] === "U2")).toBe(false);
+		const warned = f.warnings.join("\n");
+		expect(warned).toContain("boom-boot");
+		expect(warned).toContain("boom-status");
 	});
 
 	test("`simctl boot` saying the device is already Booted is not a failure", async () => {
@@ -615,7 +631,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 		const store = openStore(dbPath());
 		store.setMeta(
 			DETACH_PREF_META,
-			JSON.stringify({ phase: "restoring", before: "unset", by: `${process.pid}:other`, holders: [] })
+			JSON.stringify({ phase: "restoring", before: "unset", by: `${process.pid}:other`, at: Date.now(), holders: [] })
 		);
 		const pref: PrefBox = { value: "1", atClose: [] };
 		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
@@ -643,7 +659,13 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 		// a crashed hide left `on` written over the user's `off`
 		store.setMeta(
 			DETACH_PREF_META,
-			JSON.stringify({ phase: "set", before: "off", by: "dead", holders: [{ token: "dead", pid: 999_999 }] })
+			JSON.stringify({
+				phase: "set",
+				before: "off",
+				by: "dead",
+				at: Date.now(),
+				holders: [{ token: "dead", pid: 999_999, at: Date.now() }],
+			})
 		);
 		const pref: PrefBox = { value: "1", atClose: [] };
 		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
@@ -655,5 +677,231 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 		expect(pref.value).toBe("0");
 		expect(store.getMeta(DETACH_PREF_META)).toBeUndefined();
 		store.close();
+	});
+
+	const other = `${process.pid}:other`;
+	const otherHolder = { token: other, pid: process.pid, at: Date.now() };
+	const alive = () => true;
+	const row = (store: { getMeta: (key: string) => string | undefined }) =>
+		JSON.parse(store.getMeta(DETACH_PREF_META) ?? "null");
+	const writes = (calls: string[][]) => calls.filter((c) => c[0] === "defaults").map((c) => c[1]);
+
+	test("a hide arriving while another process is switching the setting on joins, waits for `set`, and leaves the restore to it", async () => {
+		setup();
+		const store = openStore(dbPath());
+		store.setMeta(
+			DETACH_PREF_META,
+			JSON.stringify({ phase: "setting", by: other, at: Date.now(), holders: [otherHolder] })
+		);
+		const pref: PrefBox = { value: undefined, atClose: [] };
+		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
+		let waits = 0;
+		// only the 50 ms polls for the setting (the close settle sleeps too)
+		const sleep = async (ms: number) => {
+			if (ms !== 50) return;
+			waits++;
+			if (waits !== 1) return;
+			// this hide already joined the holders while waiting
+			expect(row(store).holders.map((h: { token: string }) => h.token)).toHaveLength(2);
+			// the other process finishes switching it on (markSet keeps the holders)
+			pref.value = "1";
+			store.setMeta(DETACH_PREF_META, JSON.stringify({ ...row(store), phase: "set", before: "off" }));
+		};
+		await hideSimWindows({ ...f.deps, sleep, detachLock: { store, pid: process.pid, pidAlive: alive } }, one);
+		expect(waits).toBe(1);
+		expect(pref.atClose).toEqual(["1"]);
+		// joined, so never read nor wrote; the other process is still a holder, so nothing restored
+		expect(writes(f.calls)).toEqual([]);
+		expect(pref.value).toBe("1");
+		expect(row(store)).toMatchObject({ phase: "set", before: "off", by: other, holders: [otherHolder] });
+		store.close();
+	});
+
+	test("taking over from a restorer that died writes its recorded value back", async () => {
+		setup();
+		const store = openStore(dbPath());
+		store.setMeta(
+			DETACH_PREF_META,
+			JSON.stringify({ phase: "restoring", before: "off", by: "999999:dead", at: Date.now(), holders: [] })
+		);
+		// it died before putting `off` back
+		const pref: PrefBox = { value: "1", atClose: [] };
+		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
+		await hideSimWindows(
+			{ ...f.deps, sleep: tick, detachLock: { store, pid: process.pid, pidAlive: (pid) => pid === process.pid } },
+			one
+		);
+		expect(pref.atClose).toEqual(["1"]);
+		expect(writes(f.calls)).toEqual(["read", "write"]);
+		expect(pref.value).toBe("0");
+		expect(store.getMeta(DETACH_PREF_META)).toBeUndefined();
+		store.close();
+	});
+
+	test("gives up after 200 polls behind a stuck `setting` (joined): warns, closes anyway, then leaves without restoring", async () => {
+		setup();
+		const store = openStore(dbPath());
+		store.setMeta(
+			DETACH_PREF_META,
+			JSON.stringify({ phase: "setting", by: other, at: Date.now(), holders: [otherHolder] })
+		);
+		const pref: PrefBox = { value: undefined, atClose: [] };
+		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
+		let waits = 0;
+		const sleep = async (ms: number) => {
+			if (ms === 50) waits++;
+		};
+		const out = await hideSimWindows(
+			{ ...f.deps, sleep, detachLock: { store, pid: process.pid, pidAlive: alive } },
+			one
+		);
+		expect(waits).toBe(200);
+		expect(out.closed).toEqual(["warden-iphone-17-1"]);
+		expect(f.warnings.join("\n")).toContain("closing anyway");
+		expect(writes(f.calls)).toEqual([]);
+		// it joined while waiting and left again: only the stuck process remains
+		expect(row(store)).toMatchObject({ phase: "setting", by: other, holders: [otherHolder] });
+		store.close();
+	});
+
+	test("gives up after 200 polls behind a stuck `restoring` (not joined): warns, closes anyway, leaves the row alone", async () => {
+		setup();
+		const store = openStore(dbPath());
+		const stuck = { phase: "restoring", before: "unset", by: other, at: Date.now(), holders: [] };
+		store.setMeta(DETACH_PREF_META, JSON.stringify(stuck));
+		const pref: PrefBox = { value: "1", atClose: [] };
+		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
+		let waits = 0;
+		const sleep = async (ms: number) => {
+			if (ms === 50) waits++;
+		};
+		const out = await hideSimWindows(
+			{ ...f.deps, sleep, detachLock: { store, pid: process.pid, pidAlive: alive } },
+			one
+		);
+		expect(waits).toBe(200);
+		expect(out.closed).toEqual(["warden-iphone-17-1"]);
+		expect(f.warnings.join("\n")).toContain("closing anyway");
+		expect(writes(f.calls)).toEqual([]);
+		expect(row(store)).toEqual(stuck);
+		store.close();
+	});
+
+	test("a close that fails after the setting was taken still puts it back and clears the row", async () => {
+		setup();
+		const store = openStore(dbPath());
+		const pref: PrefBox = { value: undefined, atClose: [] };
+		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref, closeFails: true });
+		const out = await hideSimWindows(
+			{ ...f.deps, sleep: tick, detachLock: { store, pid: process.pid, pidAlive: alive } },
+			one
+		);
+		expect(out).toEqual({ closed: [], rebooted: [] });
+		expect(f.warnings.join("\n")).toContain("close-boom");
+		expect(writes(f.calls)).toEqual(["read", "write", "delete"]);
+		expect(pref.value).toBeUndefined();
+		expect(store.getMeta(DETACH_PREF_META)).toBeUndefined();
+		store.close();
+	});
+
+	describe("stale rows (a crash long ago, a reused pid)", () => {
+		const T = 1_800_000_000_000;
+		const hour = 3_600_000;
+		const lockAt = (store: ReturnType<typeof openStore>, pidAlive: (pid: number) => boolean) => ({
+			store,
+			pid: process.pid,
+			pidAlive,
+			now: () => T,
+		});
+
+		test("a crashed hide's `before` from long ago is not written back over the user's later `true`", async () => {
+			setup();
+			const store = openStore(dbPath());
+			const old = T - hour;
+			store.setMeta(
+				DETACH_PREF_META,
+				JSON.stringify({
+					phase: "set",
+					before: "off",
+					by: "999999:dead",
+					at: old,
+					holders: [{ token: "999999:dead", pid: 999_999, at: old }],
+				})
+			);
+			const pref: PrefBox = { value: "1", atClose: [] };
+			const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
+			await hideSimWindows({ ...f.deps, sleep: tick, detachLock: lockAt(store, (pid) => pid === process.pid) }, one);
+			expect(writes(f.calls)).toEqual(["read"]);
+			expect(pref.value).toBe("1");
+			expect(store.getMeta(DETACH_PREF_META)).toBeUndefined();
+			store.close();
+		});
+
+		test("a dead holder's `before` is inherited only while the setting still reads on", async () => {
+			setup();
+			const store = openStore(dbPath());
+			store.setMeta(
+				DETACH_PREF_META,
+				JSON.stringify({
+					phase: "set",
+					before: "off",
+					by: "999999:dead",
+					at: T,
+					holders: [{ token: "999999:dead", pid: 999_999, at: T }],
+				})
+			);
+			// the user deleted it since the crash
+			const pref: PrefBox = { value: undefined, atClose: [] };
+			const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
+			await hideSimWindows({ ...f.deps, sleep: tick, detachLock: lockAt(store, (pid) => pid === process.pid) }, one);
+			expect(writes(f.calls)).toEqual(["read", "write", "delete"]);
+			expect(pref.value).toBeUndefined();
+			store.close();
+		});
+
+		test("a holder older than any hide can last is dropped even if its pid is alive again (reused)", async () => {
+			setup();
+			const store = openStore(dbPath());
+			const old = T - hour;
+			store.setMeta(
+				DETACH_PREF_META,
+				JSON.stringify({
+					phase: "set",
+					before: "unset",
+					by: "4242:x",
+					at: old,
+					holders: [{ token: "4242:x", pid: 4242, at: old }],
+				})
+			);
+			const pref: PrefBox = { value: undefined, atClose: [] };
+			const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
+			await hideSimWindows({ ...f.deps, sleep: tick, detachLock: lockAt(store, alive) }, one);
+			expect(pref.atClose).toEqual(["1"]);
+			expect(writes(f.calls)).toEqual(["read", "write", "delete"]);
+			expect(store.getMeta(DETACH_PREF_META)).toBeUndefined();
+			store.close();
+		});
+
+		test("a `setting` row older than any hide can last is taken over at once, not waited on", async () => {
+			setup();
+			const store = openStore(dbPath());
+			const old = T - hour;
+			store.setMeta(
+				DETACH_PREF_META,
+				JSON.stringify({ phase: "setting", by: "4242:x", at: old, holders: [{ token: "4242:x", pid: 4242, at: old }] })
+			);
+			const pref: PrefBox = { value: undefined, atClose: [] };
+			const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
+			let waits = 0;
+			const sleep = async (ms: number) => {
+				if (ms === 50) waits++;
+			};
+			await hideSimWindows({ ...f.deps, sleep, detachLock: lockAt(store, alive) }, one);
+			expect(waits).toBe(0);
+			expect(f.warnings).toEqual([]);
+			expect(writes(f.calls)).toEqual(["read", "write", "delete"]);
+			expect(store.getMeta(DETACH_PREF_META)).toBeUndefined();
+			store.close();
+		});
 	});
 });
