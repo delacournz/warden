@@ -138,6 +138,18 @@ So when `warden claim ios` needs a **new** pool device, it `simctl clone`s it fr
 - `warden release <id> --bad [reason]` quarantines the released warden device by hand. `warden devices` shows `quarantined` / `slim`. `warden sim unquarantine <udid|serial>` clears it.
 - `warden app ensure` re-installs when the app on the device no longer matches the cached build (iOS: `CFBundleVersion`, executable size and `main.jsbundle` size).
 
+### A new Expo app: `warden init`, `warden dev`, `warden e2e`
+
+```bash
+warden init --bundle-id com.example.app   # bundle id → app.json, warden.config.ts, e2e/smoke.e2e.ts
+warden dev                                # lease a sim, build / reuse the dev client, own Metro port, open the app
+warden e2e --count 3                      # the e2e/ flows on the dev client, spread over 3 leased sims
+```
+
+- `warden dev [platform]` defaults to iOS. Every run leases its own Metro port (`8081:100`), so agents in different worktrees iterate side by side. Before leasing anything it checks for the bundle id and `expo-dev-client` and prints the fix.
+- The default local iOS build prepares a fresh checkout itself: `expo prebuild` when `ios/Podfile` is missing, `pod install` when the Pods are missing or out of sync, then `expo run:ios`. A configured `build.ios` is run as written.
+- With no `e2e` suite in the config, `warden e2e` runs every `*.e2e.ts` spec under `e2e/` with `@delacour/warden-e2e` (one `bun test` process per device) over 2 simulators, on the dev client and a Metro warden starts. `warden init` writes that suite out so you can edit it. It names the packages to install (`expo-dev-client`, `@delacour/warden-e2e@<warden version>`) and installs nothing.
+
 ### e2e scripts: `warden run`
 
 ```bash

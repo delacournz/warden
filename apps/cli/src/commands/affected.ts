@@ -85,10 +85,16 @@ function describeReason(reason: Reason, color: ChalkInstance): string[] {
 	}
 }
 
+/** What the selection was made from. */
+function selectionSource(affected: Affected): string {
+	if (affected.suite.implicit) return "default suite";
+	return affected.base === undefined ? "--files" : `base ${affected.base}`;
+}
+
 /** `--explain`: per platform, every selected flow with why, then what was skipped / unreached. */
 export function explain(affected: Affected, requiredOnly: boolean, color: ChalkInstance): string {
 	const lines: string[] = [];
-	const source = affected.base === undefined ? "--files" : `base ${affected.base}`;
+	const source = selectionSource(affected);
 	for (const selection of affected.selections) {
 		const flows = selectedFlows(selection, requiredOnly);
 		const total = selection.selected.length + selection.skipped.length;

@@ -31,7 +31,8 @@ Open the reference file for details before acting; this file only routes.
 | Need | Command |
 |---|---|
 | one sim / emulator | `warden claim ios --json` · `warden claim android --json` (`--headless`, `--label x`, `--ttl 30m`) |
-| run the app in this worktree (replaces `expo run:ios`) | `warden dev ios --json` → first stdout line `{ udid, port, metroUrl, leaseIds }`; owns Metro on a leased port, refuses another checkout's Metro, opens the dev client; Ctrl-C releases |
+| set a new Expo app up for warden | `warden init --bundle-id <id>` → bundle id into `app.json`, `warden.config.ts`, `e2e/smoke.e2e.ts`; names packages to install (`expo-dev-client`, `@delacour/warden-e2e`), installs nothing |
+| run the app in this worktree (replaces `expo run:ios`) | `warden dev ios --json` (platform defaults to ios) → first stdout line `{ udid, port, metroUrl, leaseIds }`; checks bundle id + `expo-dev-client` first; owns Metro on a leased port, refuses another checkout's Metro, opens the dev client; Ctrl-C releases |
 | dev build on a device | `warden app ensure ios --udid <udid> --json [--variant dev\|e2e]` |
 | the flows a change needs | `warden affected [suite] --base main --explain [--strict] [--json]` |
 | run them on leased devices | `warden e2e [suite] [--base main\|--all\|--flows a,b] [--count N] [--dry-run] [--devices all] [--no-shutdown] [--no-warm] [--headless] [--report f]` |

@@ -1,10 +1,12 @@
+import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
-import { CONFIG_FILE, findWardenConfig, type ParsedWardenConfig } from "../builds/config";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { CONFIG_FILE, findWardenConfig, loadProject, type ParsedWardenConfig } from "../builds/config";
 import type { Exec } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
 import type { Platform } from "../types";
-import type { E2eSuiteConfig } from "./affected.schema";
+import { DEFAULT_E2E_COUNT, DEFAULT_FLOWS_DIR, DEV_MENU_OFF_ARGS } from "./affected.defaults";
+import { type E2eSuiteConfig, e2eSuiteSchema } from "./affected.schema";
 import { scanFlows } from "./flows";
 import { type ChangedFile, changedFiles } from "./git";
 import { graphEntries, type LoadedGraph, loadImportGraph } from "./graph-process";
@@ -18,6 +20,8 @@ export type Suite = {
 	cwd: string;
 	/** root of `project` (what `app` installs) */
 	projectRoot?: string;
+	/** the default suite of an app that configures none: every flow runs, no git diff */
+	implicit?: true;
 	/** the suite's `headless`, else the top-level one (undefined: neither sets it) */
 	headless?: boolean;
 };
@@ -51,14 +55,56 @@ export type Affected = {
 	warnings: string[];
 };
 
-/** `e2e.<name>` from the nearest warden config (walking up to the git root). */
+/**
+ * The suite of an Expo app that configures none: every `*.e2e.ts` flow under `e2e/`, one
+ * `@delacour/warden-e2e` spec process per device, against the dev client (the `dev` variant when the
+ * project has one) on a Metro warden owns.
+ */
+function defaultSuite(cwd: string, stopAt: string | undefined, headless: boolean | undefined): Result<Suite> {
+	const project = loadProject({
+		start: cwd,
+		env: {},
+		variant: "dev",
+		variantOptional: true,
+		...(stopAt ? { stopAt } : {}),
+	});
+	if (!project.success) return project;
+	const { name, root, variant } = project.data;
+	if (!existsSync(join(root, DEFAULT_FLOWS_DIR)))
+		return err(
+			`no e2e suites in ${CONFIG_FILE} and no ${DEFAULT_FLOWS_DIR}/ flows in ${root} — run \`warden init\` to scaffold them`
+		);
+	const config = e2eSuiteSchema.parse({
+		flowsDir: DEFAULT_FLOWS_DIR,
+		isolate: "device",
+		platform: "ios",
+		count: DEFAULT_E2E_COUNT,
+		app: variant === undefined ? true : { variant },
+		metro: { launchArgs: DEV_MENU_OFF_ARGS },
+	});
+	return ok({
+		name,
+		config,
+		configDir: root,
+		cwd: root,
+		projectRoot: root,
+		implicit: true,
+		...(headless !== undefined ? { headless } : {}),
+	});
+}
+
+/**
+ * `e2e.<name>` from the nearest warden config (walking up to the git root); with no suite configured
+ * and none named, the default suite of the Expo app around `cwd`.
+ */
 export async function findSuite(exec: Exec, cwd: string, name?: string, git?: GitFactsCache): AsyncResult<Suite> {
 	const stopAt = (await readGitFacts(exec, cwd, git))?.toplevel;
 	const found = findWardenConfig(cwd, stopAt);
 	if (!found.success) return found;
-	if (!found.data) return err(`no ${CONFIG_FILE} found from ${cwd}`);
-	const suites = found.data.config.e2e ?? {};
+	const suites = found.data?.config.e2e ?? {};
 	const names = Object.keys(suites);
+	if (names.length === 0 && name === undefined) return defaultSuite(cwd, stopAt, found.data?.config.headless);
+	if (!found.data) return err(`no ${CONFIG_FILE} found from ${cwd}`);
 	const pick = name ?? (names.length === 1 ? names[0] : undefined);
 	if (pick === undefined)
 		return err(
@@ -135,9 +181,12 @@ function importGraphFor(
 const usesGit = (input: AffectedInput): boolean => !input.files && !input.only;
 
 /** Changed files → the flows each platform must run (with reasons), per `e2e.<suite>`. */
-export async function computeAffected(input: AffectedInput): AsyncResult<Affected> {
-	const suite = await findSuite(input.exec, input.cwd, input.suite, input.git);
+export async function computeAffected(given: AffectedInput): AsyncResult<Affected> {
+	const suite = await findSuite(given.exec, given.cwd, given.suite, given.git);
 	if (!suite.success) return suite;
+	// a suite nobody mapped has nothing to diff against: every flow runs
+	const everything = suite.data.implicit && !given.files && !given.only;
+	const input: AffectedInput = everything ? { ...given, only: { mode: "all" } } : given;
 	const { config, configDir } = suite.data;
 	const base = input.base ?? config.base;
 	const changes = await loadChanges(input, suite.data, base);
