@@ -4,7 +4,7 @@ import type { Command as Commander, OptionValues } from "@commander-js/extra-typ
 import { expandArgv, expandText, jobSlug, parseJobLines, parseJobList } from "@delacour/warden-core/batch/expand";
 import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delacour/warden-core/batch/preset";
 import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "@delacour/warden-core/batch/schedule";
-import type { ClaimOutcome } from "@delacour/warden-core/claim";
+import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-core/claim";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
 import { readGitFacts } from "@delacour/warden-core/git-facts";
@@ -15,6 +15,7 @@ import { wardenHome } from "@delacour/warden-core/store";
 import type { Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
 import { type EarlyWarm, startEarlyWarm } from "../batch/early-warm";
@@ -25,7 +26,7 @@ import { type ReadFrom, readFileFrom } from "../batch/results-tail";
 import { type RunnerReport, resultsReport } from "../batch/runner-report";
 import { captureScreenshot, runnerFailureShot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
-import { type DeviceSetup, type DeviceSetupSpec, setupDevices } from "../batch/setup";
+import { type DeviceSetup, type DeviceSetupSpec, type EarlySlim, setupDevices, startEarlySlim } from "../batch/setup";
 import { openStampedLog } from "../batch/stamped-log";
 import {
 	addRunnerFlows,
@@ -45,6 +46,7 @@ import {
 	bootedByClaim,
 	type ClaimFlags,
 	type ClaimFlagValues,
+	detachLockFor,
 	parseClaimFlags,
 	resolveOwner,
 	resolvePlatform,
@@ -75,13 +77,13 @@ import {
 	withLeaseOptions,
 } from "../lease-session";
 import {
-	adbReverseArgv,
 	devClientLaunchArgv,
 	type Metro,
 	type MetroOwner,
 	metroOwner,
 	prewarmMetro,
 	resolveExpoBin,
+	reverseMetroPort,
 	startMetro,
 } from "../metro";
 import { emit, note, reportError, warn } from "../output";
@@ -145,8 +147,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	after: (ms: number, fn: () => void) => () => void;
 	/** who serves the run's Metro port, relative to the project root */
 	metroProbe: (port: number, projectRoot: string) => Promise<MetroOwner>;
-	/** build the bundle once before the first job */
-	prewarm: (url: string, platform: Platform) => AsyncResult<{ bundled: boolean }>;
+	/** build the bundle once before the first job; `signal` (Ctrl-C, a failed claim, `stop`) ends it at once */
+	prewarm: (url: string, platform: Platform, signal?: AbortSignal) => AsyncResult<{ bundled: boolean }>;
 	/** how `hooks.warmDrivers` reaches one device's socket helper (default: `e2e/warm-connect`) */
 	warmConnect: (ctx: CommandContext) => WarmConnect;
 	/** a device's running resident helper socket, for `hooks.residentSocket` when there is no warm-up (default: `e2e/warm-connect`) */
@@ -440,6 +442,8 @@ type Display = {
 	/** the spec runner's report: the flows each device ran */
 	report: (report: RunnerReport) => void;
 	end: () => void;
+	/** a pool that became ready after the grid started: its devices' rows (12-3) */
+	rows: (rows: ReadonlyArray<{ worker: number; udid: string; name: string }>) => void;
 	cast?: Cast;
 };
 
@@ -448,13 +452,15 @@ function display(
 	deps: BatchDeps,
 	args: BatchArgs,
 	view: { current: BatchView },
-	flows: readonly TrackedFlow[] | undefined
+	flows: readonly TrackedFlow[] | undefined,
+	/** what the cast is sized for: the grid once every pool is in it (default: the first frame) */
+	sized: BatchView = view.current
 ): Display {
 	const { terminal } = deps;
 	const live = args.tui && terminal.isTTY;
 	const width = live ? terminal.columns : 100;
 	// the grid (header, device rows, flow lines) + the cursor row its trailing newline leaves
-	const height = render(view.current, { width, color: false }).split("\n").length + 1;
+	const height = render(sized, { width, color: false }).split("\n").length + 1;
 	const cast = args.record ? createCast({ width, height, startedAt: ctx.now() }) : undefined;
 	const sinks: Array<{ screen: LiveScreen; color: boolean; last?: string }> = [];
 	if (live) sinks.push({ screen: liveScreen(terminal.write), color: ctx.ui.color.level > 0 });
@@ -501,6 +507,14 @@ function display(
 			stopFrames();
 			frame(true);
 		},
+		rows: (rows) => {
+			const added = initialView(rows, 0, 0).devices;
+			view.current = {
+				...view.current,
+				devices: [...view.current.devices, ...added].sort((a, b) => a.worker - b.worker),
+			};
+			frame(false);
+		},
 	};
 }
 
@@ -511,33 +525,43 @@ function shardFlowIds(flows: readonly TrackedFlow[] | undefined, job: string): s
 		.map((f) => f.id);
 }
 
-/** Run every pool's queue behind the grid; a run with `flows` also ticks them off live from the jobs' `results.jsonl`. */
+/**
+ * Run every pool's queue behind the grid, each as soon as its pool is ready; `ready` are the queues
+ * ready when the grid starts (its first rows), the others add their rows as they come. A run with
+ * `flows` also ticks them off live from the jobs' `results.jsonl`.
+ */
 async function runGrid(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	args: BatchArgs,
 	r: RunContext,
-	queues: readonly Queue[],
+	pending: readonly Promise<Queue>[],
 	o: {
+		ready: readonly Queue[];
 		total: number;
 		startedAt: number;
 		resultFiles: ResultFiles;
 		flows: readonly TrackedFlow[] | undefined;
 	}
 ): Promise<{ summary: BatchSummary; screen: Display }> {
-	const rows = queues.flatMap((q) => q.rows);
+	const rows = o.ready.flatMap((q) => q.rows).sort((a, b) => a.worker - b.worker);
 	const { flows } = o;
-	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, flows) }, flows);
+	const sized = startView(r.devices, o.total, o.startedAt, flows);
+	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, flows) }, flows, sized);
 	const ended = new Set<string>();
 	const poller = flows ? flowPoller(deps, flows, o.resultFiles, ended, screen) : undefined;
+	const shown = new Set(o.ready);
 	try {
-		const summary = await runPools(queues, {
+		const summary = await runPools(pending, {
 			retry: args.retry,
 			now: ctx.now,
 			signal: r.signal,
 			onEvent: (e) => {
 				if (e.type === "job-end") ended.add(attemptKey(e));
 				screen.event(e);
+			},
+			onQueue: (queue) => {
+				if (!shown.has(queue) && queue.rows.length > 0) screen.rows(queue.rows);
 			},
 		});
 		poller?.stop();
@@ -643,10 +667,10 @@ type JobRunnerOptions = {
 	logs: Map<string, string>;
 	/** filled with each attempt's `results.jsonl` (`attemptKey`), for jobs whose env sets `WARDEN_E2E_OUT` */
 	resultFiles: Map<string, string>;
+	/** a device's helper socket for its jobs, asked by each spawn: the first one waits for that device's own warm-up (12-3) */
+	socketFor: (udid: string) => Promise<string | undefined>;
 	/** filled with how long each attempt's log drained after its exit (`attemptKey`, summed over passes) */
 	drains?: Map<string, number>;
-	/** each warm device's helper socket (udid → path), filled by the warm step before the first job */
-	sockets: ReadonlyMap<string, string>;
 	running: Set<ProcHandle>;
 	interrupted: () => boolean;
 };
@@ -728,6 +752,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			worker: w.worker,
 			seq,
 			attempt,
+			pass,
 			udid: w.udid,
 			batchDir: o.batchDir,
 			metroUrl: o.vars.metroUrl,
@@ -735,7 +760,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 		const env: Record<string, string | undefined> = {
 			...o.env,
 			...o.hooks.jobEnv?.(input),
-			...socketEnv(o.sockets.get(w.udid)),
+			...socketEnv(await o.socketFor(w.udid)),
 			WARDEN_UDID: w.udid,
 			...deviceNameEnv(o.live.find((d) => d.udid === w.udid)?.name),
 			WARDEN_WORKER: String(w.worker),
@@ -758,6 +783,8 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 	};
 	const spawnOnce = async (w: BatchWorker, id: string, seq: number, attempt: number, pass: number): Promise<number> => {
 		const { job, env, log, argv } = await plan(w, id, seq, attempt, pass);
+		// a spawn that waited for its device's warm-up through a SIGINT does not start
+		if (o.interrupted()) return 130;
 		o.logs.set(attemptKey({ worker: w.worker, seq }), log);
 		const out = env[ENV_NAMES.out];
 		if (out) o.resultFiles.set(attemptKey({ worker: w.worker, seq }), join(out, "results.jsonl"));
@@ -885,6 +912,8 @@ export type JobEnvInput = {
 	seq: number;
 	/** 0 for a job's first run, 1 for its first retry… */
 	attempt: number;
+	/** with `passes` > 1: 0 for the attempt's first spawn, 1 for its second green run… (`WARDEN_PASS`) */
+	pass?: number;
 	udid: string;
 	batchDir: string;
 	/** the run's Metro, when it has one */
@@ -920,7 +949,8 @@ async function prepareDevices(
 	env: Record<string, string | undefined>,
 	cwd: string,
 	logDir: string,
-	running: Set<ProcHandle>
+	running: Set<ProcHandle>,
+	slim: (udid: string) => AsyncResult<string[]>
 ): Promise<{ live: Device[]; setups?: DeviceSetup[] }> {
 	if (!spec) return { live: devices };
 	const setups = await setupDevices({
@@ -930,12 +960,7 @@ async function prepareDevices(
 		cwd,
 		logDir,
 		spawn: (argv, o) => deps.spawn(argv, o),
-		// recorded, so a later plain `warden claim` knows to restore the device
-		slim: async (udid) => {
-			const res = await deps.slim(udid);
-			if (res.success) ctx.store().setSlimmed("ios", udid, ctx.now());
-			return res;
-		},
+		slim,
 		track: (proc) => {
 			const handle = proc as ProcHandle;
 			running.add(handle);
@@ -947,6 +972,27 @@ async function prepareDevices(
 		if (!d.ok) reportError(ctx, name, `setup failed on ${d.udid} (exit ${d.exitCode}) — log: ${d.log}`);
 	}
 	return { live: devices.filter((d) => setups.find((s) => s.worker === d.worker)?.ok), setups };
+}
+
+/** `deps.slim`, recorded so a later plain `warden claim` knows to restore the device. */
+const recordedSlim =
+	(ctx: CommandContext, deps: BatchDeps) =>
+	async (udid: string): AsyncResult<string[]> => {
+		const res = await deps.slim(udid);
+		if (res.success) ctx.store().setSlimmed("ios", udid, ctx.now());
+		return res;
+	};
+
+/**
+ * A device the store records as slimmed and this claim did not boot keeps its daemons off (the disable
+ * persists across its reboots), so its slim is not even probed (12-4). One the claim booted is.
+ */
+function alreadySlimmed(ctx: CommandContext, claimed: ClaimedDevice): boolean {
+	if (bootedByClaim({ claimed: [claimed] }).length > 0) return false;
+	return ctx
+		.store()
+		.listDevices("ios")
+		.some((d) => d.id === claimed.device.id && d.slimmedAt !== undefined);
 }
 
 /** 130 when the run was interrupted, else 0 for a clean pass and 1 for any failure. */
@@ -1019,9 +1065,13 @@ function launchRunMetro(
 		log: string;
 		platform: Platform;
 		interrupted: () => boolean;
+		/** the run's SIGINT / SIGTERM: ends the prewarm at once */
+		signal?: AbortSignal;
 	}
 ): MetroLaunch {
 	let cancelled = false;
+	const controller = new AbortController();
+	const prewarmSignal = o.signal ? AbortSignal.any([controller.signal, o.signal]) : controller.signal;
 	let announced = false;
 	const launch: MetroLaunch = {
 		port: o.port,
@@ -1032,7 +1082,9 @@ function launchRunMetro(
 		pending: Promise.resolve(err("Metro not started")),
 		stop: async () => {
 			cancelled = true;
-			await launch.pending;
+			// the prewarm ends at once (12-5); a server already up is killed without waiting for it
+			controller.abort();
+			if (launch.started === undefined) await launch.pending;
 			const metro = launch.started;
 			launch.started = undefined;
 			await metro?.stop();
@@ -1065,7 +1117,7 @@ function launchRunMetro(
 		launch.started = started.data;
 		if (plan.prewarm) {
 			launch.state = "bundling";
-			const warmed = await deps.prewarm(started.data.url, o.platform);
+			const warmed = await deps.prewarm(started.data.url, o.platform, prewarmSignal);
 			if (!warmed.success) return warmed;
 		}
 		return started;
@@ -1099,43 +1151,60 @@ async function awaitRunMetro(ctx: CommandContext, launch: MetroLaunch): AsyncRes
 	return metro;
 }
 
+/** warden's own dev-client launch gets the spec driver's launch bound (`LAUNCH_MS`): a hung `simctl launch` cannot hold the run (12-6) */
+const OPEN_LAUNCH_MS = 30_000;
+
 /**
  * Point every device at the run's Metro before its first job: Android gets the port reversed; iOS
- * relaunches the app with `--initialUrl` when its bundle id is known. Failures only warn — the
- * runner opens the app itself.
+ * relaunches the app with `--initialUrl` when its bundle id is known, for at most `OPEN_LAUNCH_MS`.
+ * A failed iOS launch only warns — the runner opens the app itself. An Android device whose port
+ * cannot be reversed (after one retry) cannot reach Metro at all: it is returned, to be dropped (12-7).
  */
-async function openOnDevices(
+export async function openOnDevices(
 	ctx: CommandContext,
 	name: string,
 	platform: Platform,
 	plan: MetroPlan,
-	metro: Metro,
-	devices: readonly Device[]
-): Promise<void> {
-	const argvFor = (udid: string): string[] | undefined => {
-		if (platform === "android") return adbReverseArgv(udid, metro.port);
-		return plan.bundleId === undefined
-			? undefined
-			: devClientLaunchArgv(udid, plan.bundleId, metro.url, plan.launchArgs);
-	};
-	await Promise.all(
-		devices.map(async (d) => {
-			const argv = argvFor(d.udid);
-			if (!argv) return;
-			const res = await ctx.exec(argv);
+	metro: Pick<Metro, "port" | "url">,
+	devices: ReadonlyArray<{ udid: string }>
+): Promise<Array<{ udid: string; error: string }>> {
+	const unreachable = await Promise.all(
+		devices.map(async (d): Promise<{ udid: string; error: string } | undefined> => {
+			if (platform === "android") {
+				const reversed = await reverseMetroPort(ctx.exec, d.udid, metro.port);
+				return reversed.success ? undefined : { udid: d.udid, error: reversed.error };
+			}
+			if (plan.bundleId === undefined) return undefined;
+			const argv = devClientLaunchArgv(d.udid, plan.bundleId, metro.url, plan.launchArgs);
+			const res = await ctx.exec(argv, { timeoutMs: OPEN_LAUNCH_MS });
 			if (res.exitCode !== 0) warn(ctx, `warden ${name}: ${execError(argv, res)}`);
+			return undefined;
 		})
 	);
+	return unreachable.flatMap((u) => (u ? [u] : []));
 }
 
-/** One scheduler per pool, run concurrently; their events feed one grid and their summaries merge. */
+/**
+ * One scheduler per pool, each started the moment its own pool is ready (12-3); their events feed one
+ * grid and their summaries merge. `onQueue` sees each queue as its pool becomes ready.
+ */
 async function runPools(
-	pools: readonly Queue[],
-	o: { retry: number; now: () => number; signal: AbortSignal; onEvent: (e: BatchEvent) => void }
+	pending: readonly Promise<Queue>[],
+	o: {
+		retry: number;
+		now: () => number;
+		signal: AbortSignal;
+		onEvent: (e: BatchEvent) => void;
+		onQueue: (queue: Queue) => void;
+	}
 ): Promise<BatchSummary> {
+	const pools: Queue[] = [];
 	const summaries = await Promise.all(
-		pools.map((pool) =>
-			runBatch({
+		pending.map(async (queued) => {
+			const pool = await queued;
+			pools.push(pool);
+			o.onQueue(pool);
+			return runBatch({
 				workers: pool.workers,
 				jobs: pool.jobs,
 				retry: o.retry,
@@ -1146,8 +1215,8 @@ async function runPools(
 					if (e.type !== "done") o.onEvent(e);
 				},
 				run: pool.run,
-			})
-		)
+			});
+		})
 	);
 	const stopped = summaries.some((s) => s.stopped);
 	// a pool with no device left ran nothing: that is not a pass
@@ -1177,49 +1246,59 @@ type Services = {
 	serve?: ProcHandle | undefined;
 	metro?: Metro | undefined;
 	recordings: Recording[];
-	/** the warm socket helpers (`hooks.warmDrivers`) of the devices that run jobs */
-	helpers?: WarmHelper[];
-	/** the early warm-up while it has not been settled: `teardown` stops it */
+	/** the early warm-up (`hooks.warmDrivers`): `teardown` stops it and closes its helpers */
 	warm?: EarlyWarm | undefined;
+	/** warm helpers closed already (a device dropped before its jobs): `teardown` skips them */
+	closed: Set<WarmHelper>;
 };
 
 /**
- * Collect the early warm-up (`hooks.warmDrivers`, started as each device was leased): its warnings
- * are printed now, the helpers of devices that dropped out in setup are stopped, and the others go
- * to `services` for `teardown`; fills `sockets` by udid for the devices that run jobs.
+ * Each device's socket for its jobs, asked by every spawn and looked up once (12-3): with the early
+ * warm-up, that device's own warm-up (its warning printed then, through `say`); without one, the
+ * socket of a helper already running for it (iOS). Never rejects.
  */
-async function settleWarm(
+function deviceSockets(
 	ctx: CommandContext,
 	r: RunContext,
-	live: readonly Device[],
-	warm: EarlyWarm,
-	services: Services,
-	sockets: Map<string, string>
-): Promise<void> {
-	services.warm = undefined;
-	const done = await warm.settled();
-	for (const line of done.warnings) ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
-	const running = new Set(live.map((d) => d.udid));
-	const dropped = new Set(
-		done.devices.flatMap((d) => (d.socketPath !== undefined && !running.has(d.udid) ? [d.socketPath] : []))
-	);
-	await Promise.all(done.helpers.filter((h) => dropped.has(h.socketPath)).map((h) => h.close().catch(() => {})));
-	services.helpers = done.helpers.filter((h) => !dropped.has(h.socketPath));
-	for (const d of done.devices) {
-		if (d.socketPath !== undefined && running.has(d.udid)) sockets.set(d.udid, d.socketPath);
-	}
+	warm: EarlyWarm | undefined,
+	resident: ((udid: string) => Promise<string | undefined>) | undefined,
+	say: (line: string) => void
+): (udid: string) => Promise<string | undefined> {
+	const memo = new Map<string, Promise<string | undefined>>();
+	const lookup = async (udid: string): Promise<string | undefined> => {
+		if (warm) {
+			const done = await warm.device(udid);
+			if (done.warning !== undefined) say(ctx.ui.color.yellow(`warden ${r.name}: ${done.warning}`));
+			return done.socketPath;
+		}
+		if (resident && r.platform === "ios") return resident(udid).catch(() => undefined);
+		return undefined;
+	};
+	return (udid) => {
+		const known = memo.get(udid);
+		if (known) return known;
+		const looked = lookup(udid);
+		memo.set(udid, looked);
+		return looked;
+	};
 }
 
-/** No warm-up: the devices that run jobs and already have a running helper get its socket (never throws). */
-async function residentSockets(
-	live: readonly Device[],
-	resident: (udid: string) => Promise<string | undefined>,
-	sockets: Map<string, string>
-): Promise<void> {
+/**
+ * The warm helpers of devices dropped before their jobs are closed: now when the warm-up is done, else
+ * as it lands (`teardown` closes any still open). Never waits for a warm-up still under way.
+ */
+async function closeDropped(warm: EarlyWarm, dropped: readonly Device[], closed: Set<WarmHelper>): Promise<void> {
+	const close = async (helper: WarmHelper | undefined) => {
+		if (!helper || closed.has(helper)) return;
+		closed.add(helper);
+		await helper.close().catch(() => {});
+	};
 	await Promise.all(
-		live.map(async (d) => {
-			const socket = await resident(d.udid).catch(() => undefined);
-			if (socket !== undefined) sockets.set(d.udid, socket);
+		dropped.map((d) => {
+			const now = warm.peek(d.udid);
+			if (now) return close(now.helper);
+			void warm.device(d.udid).then((later) => close(later.helper));
+			return undefined;
 		})
 	);
 }
@@ -1277,45 +1356,135 @@ async function startServe(
 
 type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
 
-/** Per-device setup of every pool, concurrently; `setups` is undefined when the run has no setup. */
-async function preparePools(
+/**
+ * One pool from its claim to its first job, on its own devices only (12-3): setup (slim, then the
+ * command), then Metro's open beside the late-window hide. A device whose setup fails, or that cannot
+ * reach Metro (Android, 12-7), is dropped, and its warm helper closed.
+ */
+async function preparePool(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	args: BatchArgs,
 	r: RunContext,
-	env: Record<string, string | undefined>
-): Promise<{ prepared: PreparedPool[]; setups: DeviceSetup[] | undefined }> {
-	const prepared = await Promise.all(
-		r.pools.map(async (pool): Promise<PreparedPool> => {
-			const setupEnv = poolEnv(env, pool, pool.devices);
-			const { setup } = r.hooks;
-			const done = await prepareDevices(
-				ctx,
-				deps,
-				r.name,
-				setup,
-				pool.devices,
-				setupEnv,
-				args.cwd,
-				r.logDir,
-				r.running
-			);
-			return { pool, ...done };
-		})
+	session: LeaseSession,
+	pool: Pool,
+	o: {
+		env: Record<string, string | undefined>;
+		metro: { plan: MetroPlan; up: Metro } | undefined;
+		slim: (udid: string) => AsyncResult<string[]>;
+		warm: EarlyWarm | undefined;
+		closed: Set<WarmHelper>;
+	}
+): Promise<PreparedPool> {
+	const setupEnv = poolEnv(o.env, pool, pool.devices);
+	const setup = await prepareDevices(
+		ctx,
+		deps,
+		r.name,
+		r.hooks.setup,
+		pool.devices,
+		setupEnv,
+		args.cwd,
+		r.logDir,
+		r.running,
+		o.slim
 	);
-	return { prepared, setups: r.hooks.setup ? prepared.flatMap((p) => p.setups ?? []) : undefined };
+	const [unreachable] = await Promise.all([
+		o.metro ? openOnDevices(ctx, r.name, r.platform, o.metro.plan, o.metro.up, setup.live) : [],
+		hideLateWindows(ctx, deps, args, r, session, setup.live),
+	]);
+	for (const u of unreachable) reportError(ctx, r.name, `${u.udid} cannot reach Metro, dropped: ${u.error}`);
+	const failed = new Map(unreachable.map((u) => [u.udid, u.error]));
+	const live = setup.live.filter((d) => !failed.has(d.udid));
+	if (o.warm)
+		await closeDropped(
+			o.warm,
+			pool.devices.filter((d) => !live.includes(d)),
+			o.closed
+		);
+	const outcomes = (setup.setups ?? []).map((d) => {
+		const error = failed.get(d.udid);
+		return error === undefined ? d : { ...d, ok: false, error };
+	});
+	for (const d of pool.devices) {
+		const error = failed.get(d.udid);
+		if (error !== undefined && !outcomes.some((o) => o.udid === d.udid))
+			outcomes.push({ worker: d.worker, udid: d.udid, ok: false, error });
+	}
+	return { pool, live, ...(setup.setups || outcomes.length > 0 ? { setups: outcomes } : {}) };
+}
+
+/** Start every pool's preparation at once; `ready` fills with each pool as it becomes ready. */
+function startPools(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	session: LeaseSession,
+	prepare: Parameters<typeof preparePool>[6]
+): { preparing: Promise<PreparedPool>[]; ready: PreparedPool[] } {
+	const preparing = r.pools.map((pool) => preparePool(ctx, deps, args, r, session, pool, prepare));
+	const ready: PreparedPool[] = [];
+	for (const p of preparing)
+		void p.then(
+			(prepared) => ready.push(prepared),
+			() => {}
+		);
+	return { preparing, ready };
+}
+
+/** A prepared pool's queue, built once however often it is asked for. */
+function queueMaker(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	o: Parameters<typeof poolQueue>[5]
+): (prepared: PreparedPool) => Queue {
+	const queueOf = new Map<PreparedPool, Queue>();
+	return (prepared) => {
+		const known = queueOf.get(prepared);
+		if (known) return known;
+		const queue = poolQueue(ctx, deps, args, r, prepared, o);
+		queueOf.set(prepared, queue);
+		return queue;
+	};
+}
+
+/** Every pool's device outcomes: undefined when the run had no setup and dropped no device. */
+function setupsOf(r: RunContext, prepared: readonly PreparedPool[]): DeviceSetup[] | undefined {
+	const all = prepared.flatMap((p) => p.setups ?? []);
+	return r.hooks.setup || all.length > 0 ? all : undefined;
+}
+
+/** Resolves true once any pool has a device left to run jobs, false once every pool is done without one. */
+function firstLive(pending: readonly Promise<PreparedPool>[]): Promise<boolean> {
+	return new Promise((resolve) => {
+		let left = pending.length;
+		if (left === 0) resolve(false);
+		for (const p of pending) {
+			p.then(
+				(prepared) => {
+					if (prepared.live.length > 0) resolve(true);
+				},
+				() => {}
+			).finally(() => {
+				if (--left === 0) resolve(false);
+			});
+		}
+	});
 }
 
 /** `rows`: the grid's rows (every live device). */
 type Queue = { workers: Device[]; rows: Device[]; jobs: string[]; run: ReturnType<typeof jobRunner> };
 
-/** One job queue per pool: its workers (one per device) and its job runner. */
-function poolQueues(
+/** A pool's job queue: its workers (one per device that survived setup) and its job runner. */
+function poolQueue(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	args: BatchArgs,
 	r: RunContext,
-	prepared: readonly PreparedPool[],
+	p: PreparedPool,
 	o: {
 		jobs: string[];
 		cmd: string[];
@@ -1324,16 +1493,16 @@ function poolQueues(
 		screenshots: Map<string, string>;
 		logs: Map<string, string>;
 		resultFiles: Map<string, string>;
+		socketFor: (udid: string) => Promise<string | undefined>;
 		drains?: Map<string, number>;
-		sockets: ReadonlyMap<string, string>;
 	}
-): Queue[] {
+): Queue {
 	const qualified = r.pools.length > 1;
 	const onTimeout = (job: string, w: BatchWorker) => {
 		const after = formatDuration(args.jobTimeoutMs ?? 0);
 		reportError(ctx, r.name, `${job} still running on ${w.udid} after ${after} — killing it`);
 	};
-	return prepared.map((p) => ({
+	return {
 		workers: p.live,
 		rows: p.live,
 		jobs: o.jobs.map((job) => legJob(job, qualified ? p.pool.leg : undefined)),
@@ -1354,13 +1523,13 @@ function poolQueues(
 			screenshots: o.screenshots,
 			logs: o.logs,
 			resultFiles: o.resultFiles,
+			socketFor: o.socketFor,
 			...(o.drains ? { drains: o.drains } : {}),
-			sockets: o.sockets,
 			running: r.running,
 			interrupted: r.interrupted,
 			hooks: r.hooks,
 		}),
-	}));
+	};
 }
 
 /** The run env before Metro is up: lease env + preset / suite env + `WARDEN_BATCH_DIR` / `WARDEN_PORT`. */
@@ -1389,7 +1558,11 @@ async function hideLateWindows(
 ): Promise<void> {
 	if (r.platform !== "ios" || !args.flags.headless || bootedByClaim(session.outcome).length === 0) return;
 	const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
-	await hideSimWindows({ exec: ctx.exec, sleep: deps.sleep, warn }, live);
+	// arbitrated with every other warden hide (16-8); a device the close shut down loses its resident helper
+	await hideSimWindows(
+		{ exec: ctx.exec, sleep: deps.sleep, warn, detachLock: detachLockFor(ctx), onShutDown: stopHelperAfter(ctx) },
+		live
+	);
 }
 
 /** What `runSession` sets up before the claim and `supervise` carries on with. */
@@ -1403,6 +1576,8 @@ type RunSetup = {
 	metro: MetroLaunch | undefined;
 	/** the iOS driver warm-up, started per leg as its devices were leased (undefined: no `warmDrivers` hook, or not iOS) */
 	warm: EarlyWarm | undefined;
+	/** the iOS slim, started per device as it was leased (undefined: the suite does not slim) */
+	slim: EarlySlim<ClaimedDevice> | undefined;
 };
 
 /** Everything after the claim: Metro → serve → recordings → setup → jobs → stop serve / recordings / Metro → batch.json → release. */
@@ -1435,12 +1610,20 @@ async function supervise(
 	const logs = new Map<string, string>();
 	const resultFiles = new Map<string, string>();
 	const drains = new Map<string, number>();
-	const sockets = new Map<string, string>();
 	const stopHold = holdLeases(ctx, deps, session.leaseIds, (signal) => {
 		controller.abort();
 		for (const job of r.running) job.kill(signal);
 	});
-	const services: Services = { recordings: [], warm: run.warm };
+	const services: Services = { recordings: [], warm: run.warm, closed: new Set() };
+	// a live grid owns the terminal: what a pool still preparing (or a warm-up) says waits until it ends
+	const held: string[] = [];
+	let holding = false;
+	const say = (line: string) => (holding ? held.push(line) : ctx.err(line));
+	const flush = () => {
+		holding = false;
+		for (const line of held.splice(0)) ctx.err(line);
+	};
+	const pctx: CommandContext = { ...ctx, err: say };
 	const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
 		reportError(ctx, r.name, message);
 		return { code: r.interrupted() ? 130 : 1, ...extra };
@@ -1448,16 +1631,15 @@ async function supervise(
 	/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
 	const teardown = async () => {
 		const { serve, metro, recordings, warm } = services;
-		const helpers = [...(services.helpers ?? [])];
+		const helpers: WarmHelper[] = [];
 		services.serve = undefined;
 		services.metro = undefined;
 		services.recordings = [];
-		services.helpers = [];
 		services.warm = undefined;
 		if (warm) {
-			// a run that ended before it collected the warm-up: stop waiting for it and close what came up
+			// stop waiting for warm-ups still under way, close every helper that came up (bar those closed already)
 			warm.abort();
-			helpers.push(...(await warm.settled()).helpers);
+			helpers.push(...(await warm.settled()).helpers.filter((h) => !services.closed.has(h)));
 		}
 		if (serve) await stopServe(deps, serve);
 		await Promise.all(recordings.map((rec) => rec.stop()));
@@ -1469,22 +1651,24 @@ async function supervise(
 		const up = await startServices(ctx, deps, args, r, runEnv(session, args, batchDir), services, run.metro);
 		if (!up.success) return fail(up.error, { batchDir });
 		const { env, vars } = up.data;
-		const { prepared, setups } = await preparePools(ctx, deps, args, r, env);
-		const live = prepared.flatMap((p) => p.live);
-		if (live.length === 0) {
-			const failedLogs = (setups ?? []).filter((d) => !d.ok).map((d) => d.log);
-			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
-		}
-		// independent of each other: the dev client's first launch loads the bundle while a late window closes
 		const metroPlan = args.metro;
 		const metroUp = services.metro;
-		await Promise.all([
-			metroPlan && metroUp ? openOnDevices(ctx, r.name, r.platform, metroPlan, metroUp, live) : undefined,
-			hideLateWindows(ctx, deps, args, r, session, live),
-		]);
-		if (run.warm) await settleWarm(ctx, r, live, run.warm, services, sockets);
-		else if (hooks.residentSocket && r.platform === "ios") await residentSockets(live, hooks.residentSocket, sockets);
-		const queues = poolQueues(ctx, deps, args, r, prepared, {
+		const prepare = {
+			env,
+			metro: metroPlan && metroUp ? { plan: metroPlan, up: metroUp } : undefined,
+			slim: run.slim?.slim ?? recordedSlim(ctx, deps),
+			warm: run.warm,
+			closed: services.closed,
+		};
+		// 12-3: each pool goes from setup to its first job on its own, without waiting for the other legs
+		const { preparing, ready } = startPools(pctx, deps, args, r, session, prepare);
+		if (!(await firstLive(preparing))) {
+			const setups = setupsOf(r, await Promise.all(preparing));
+			const failedLogs = (setups ?? []).filter((d) => !d.ok).map((d) => d.log ?? d.error);
+			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
+		}
+		const socketFor = deviceSockets(ctx, r, run.warm, run.warm ? undefined : hooks.residentSocket, say);
+		const toQueue = queueMaker(ctx, deps, args, r, {
 			jobs,
 			cmd,
 			env,
@@ -1493,18 +1677,23 @@ async function supervise(
 			logs,
 			resultFiles,
 			drains,
-			sockets,
+			socketFor,
 		});
-		const total = queues.reduce((n, q) => n + q.jobs.length, 0);
+		const total = r.pools.length * jobs.length;
 		const startedAt = ctx.now();
-		const { summary, screen } = await runGrid(ctx, deps, args, r, queues, {
-			total,
-			startedAt,
-			resultFiles,
-			flows: hooks.flows,
-		});
+		holding = args.tui && deps.terminal.isTTY;
+		const { summary, screen } = await runGrid(
+			ctx,
+			deps,
+			args,
+			r,
+			preparing.map((p) => p.then(toQueue)),
+			{ ready: ready.map(toQueue), total, startedAt, resultFiles, flows: hooks.flows }
+		);
+		const setups = setupsOf(r, await Promise.all(preparing));
 		const endedAt = ctx.now();
 		screen.end();
+		flush();
 		await teardown();
 		const { devices } = r;
 		const done: BatchRun = {
@@ -1535,7 +1724,10 @@ async function supervise(
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	} finally {
+		flush();
 		await teardown();
+		// a slim still under way (a run that failed before its setup) ends before its device is released
+		await run.slim?.settled();
 		stopHold();
 		await session.release();
 	}
@@ -1717,6 +1909,11 @@ export async function runSession(
 					signal: controller.signal,
 				})
 			: undefined;
+	// each device is slimmed the moment it is leased, alongside its app install and warm-up (12-4)
+	const slim =
+		hooks.setup?.slim && platform === "ios"
+			? startEarlySlim<ClaimedDevice>({ slim: recordedSlim(ctx, deps), skip: (c) => alreadySlimmed(ctx, c) })
+			: undefined;
 	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
 		deps.onSignal(signal, () => {
 			controller.abort();
@@ -1727,10 +1924,11 @@ export async function runSession(
 		const legFlags = lease.legs?.map((leg) => leg.flags);
 		const progress = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
 		const onLeased =
-			progress || warm
+			progress || warm || slim
 				? (outcome: ClaimOutcome, leg: number) => {
 						progress?.(outcome);
 						warm?.leased(outcome, leg);
+						slim?.leased(outcome);
 					}
 				: undefined;
 		const plan = lease.metro;
@@ -1744,6 +1942,7 @@ export async function runSession(
 						log: join(batchDir, "metro.log"),
 						env: { ...ctx.env, ...lease.env, WARDEN_BATCH_DIR: batchDir, WARDEN_PORT: String(port) },
 						interrupted,
+						signal: controller.signal,
 					});
 					// up before the claim is done: say so above the claim spinner (the overlap is the point)
 					void launch.pending.then((result) => {
@@ -1772,6 +1971,7 @@ export async function runSession(
 	for (const off of offSignals) off();
 	if (!claimed.success || interrupted()) {
 		await closeWarm(warm);
+		await slim?.settled();
 		if (claimed.success) await claimed.data.release();
 		await launch?.stop();
 		const metro = launch ? await launch.pending : undefined;
@@ -1796,6 +1996,7 @@ export async function runSession(
 			controller,
 			metro: launch,
 			warm,
+			slim,
 		}
 	);
 }

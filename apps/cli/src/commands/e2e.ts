@@ -290,7 +290,7 @@ async function e2e(
 		const notRun = flows.map((f): FlowVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
 		await publish(ctx, deps, opts, {
 			...base,
-			isolate: suiteIsolation(suite.config),
+			isolate: runIsolation(suite.config, opts, passed),
 			ok: true,
 			headless,
 			flows: notRun,
@@ -407,7 +407,7 @@ function sessionHooks(
 			specEnv({
 				...spec.env,
 				launchArgs: specLaunchArgs(spec.launch, job.metroUrl),
-				out: attemptOut(job.batchDir, job.worker, job.seq),
+				out: attemptOut(job.batchDir, job.worker, job.seq, job.pass),
 			}),
 	};
 }
@@ -453,11 +453,12 @@ async function runPlan(
 	if (!legs.success) return legs;
 	const argvOf = (files: readonly string[]) =>
 		runnerArgv({ bun: spec.bun, preload: spec.preload, flowPaths: files, timeoutMs: spec.env.timeouts.timeoutMs });
-	const plan = jobPlan(
-		flows,
-		suiteIsolation(config) === "device" ? shardCount(args.data, legs.data) : undefined,
-		argvOf
-	);
+	const isolation = runIsolation(config, opts, passed);
+	if (isolation === "device" && args.data.passes > 1)
+		return err(
+			`--passes ${args.data.passes} needs isolate "flow": suite "${suite.name}" sets isolate "device" (one process per device reruns its whole shard)`
+		);
+	const plan = jobPlan(flows, isolation === "device" ? shardCount(args.data, legs.data) : undefined, argvOf);
 	const planned = planOf(
 		{ ...args.data, jobs: { kind: "list", jobs: plan.jobs } },
 		legs.data,
@@ -471,6 +472,12 @@ async function runPlan(
 		plan,
 		argvOf,
 	});
+}
+
+/** The run's isolation from the suite and the `passes` it runs with: a CLI `--passes` counts too (12-10). */
+function runIsolation(config: E2eSuiteConfig, opts: E2eOpts, passed: ReadonlySet<string>): E2eIsolation {
+	const passes = passed.has("passes") && /^\d+$/.test(opts.passes) ? Number(opts.passes) : config.passes;
+	return suiteIsolation({ ...config, passes });
 }
 
 /** Flows in the biggest shard (1 when every flow is its own job). */

@@ -7,7 +7,7 @@ import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { createBatchCommand, defaultBatchDeps } from "./batch";
+import { createBatchCommand, defaultBatchDeps, openOnDevices } from "./batch";
 import { harness } from "./batch.testing";
 
 let ctx: TestContext | undefined;
@@ -1095,5 +1095,37 @@ describe("warden batch auto-gc (12-2)", () => {
 		expect(await createBatchCommand(harness().deps).run(c)).toBe(0);
 		expect(order.gcBeforeClaim()).toBe(false);
 		expect(autoGcConsidered(c.db)).toBe(true);
+	});
+});
+
+describe("openOnDevices", () => {
+	const plan = { projectRoot: "/p", env: {}, prewarm: false, readyTimeoutMs: 1, launchArgs: [] };
+	const metro = { port: 8081, url: "http://127.0.0.1:8081" };
+
+	test("Android: a device whose port cannot be reversed after a retry is returned, to be dropped (12-7)", async () => {
+		const calls: string[][] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push([...cmd]);
+			const bad = cmd[2] === "emulator-5556" && cmd[3] === "reverse";
+			return { exitCode: bad ? 1 : 0, stdout: "", stderr: bad ? "error: device offline" : "" };
+		};
+		ctx = testContext([], { exec });
+		const devices = [{ udid: "emulator-5554" }, { udid: "emulator-5556" }];
+		const unreachable = await openOnDevices(ctx, "e2e", "android", plan, metro, devices);
+		expect(unreachable.map((u) => u.udid)).toEqual(["emulator-5556"]);
+		expect(unreachable[0]?.error).toContain("device offline");
+		expect(calls.filter((c) => c[2] === "emulator-5556").map((c) => c[3])).toEqual([
+			"reverse",
+			"wait-for-device",
+			"reverse",
+		]);
+		expect(calls.filter((c) => c[2] === "emulator-5554").map((c) => c[3])).toEqual(["reverse"]);
+	});
+
+	test("iOS: a failed launch only warns; no device is dropped", async () => {
+		ctx = testContext([], { exec: async () => ({ exitCode: 143, stdout: "", stderr: "" }) });
+		const unreachable = await openOnDevices(ctx, "e2e", "ios", { ...plan, bundleId: "com.x" }, metro, [{ udid: "U1" }]);
+		expect(unreachable).toEqual([]);
+		expect(ctx.stderr.join("\n")).toContain("simctl launch");
 	});
 });

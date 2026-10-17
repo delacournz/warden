@@ -51,6 +51,8 @@ export type WarmDeps = {
 	timeoutMs?: number;
 	/** a warning line for the terminal */
 	warn?: (line: string) => void;
+	/** one device's outcome the moment it settles (its helper when warm, its warning when not), before the others */
+	onDevice?: (device: Warmed, helper: WarmHelper | undefined, warning: string | undefined) => void;
 };
 
 export type WarmOutcome = {
@@ -132,15 +134,17 @@ export async function warmDrivers(run: WarmRun, deps: WarmDeps): Promise<WarmOut
 			});
 			if (late === "timeout") void pending.then((s) => (s.helper ? discard(s.helper) : undefined));
 			else if (late === "interrupt") void pending.then((s) => s.helper?.close().catch(() => {}));
+			let warning: string | undefined;
 			if (step.helper) {
 				helpers.push(step.helper);
 				note("snapshot ok — bridge resident");
 			} else {
 				note(`not warm: ${step.error}`);
-				deps.warn?.(`warm ${device.udid}: ${step.error} (continuing cold) — log: ${log}`);
+				warning = `warm ${device.udid}: ${step.error} (continuing cold) — log: ${log}`;
+				deps.warn?.(warning);
 			}
 			await run.writeFile(log, `${lines.join("\n")}\n`).catch(() => {});
-			return {
+			const warmed: Warmed = {
 				worker: device.worker,
 				udid: device.udid,
 				ok: step.helper !== undefined,
@@ -148,6 +152,8 @@ export async function warmDrivers(run: WarmRun, deps: WarmDeps): Promise<WarmOut
 				...(step.error !== undefined ? { error: step.error } : {}),
 				log,
 			};
+			deps.onDevice?.(warmed, step.helper, warning);
+			return warmed;
 		})
 	);
 	return { devices, helpers };

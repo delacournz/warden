@@ -63,8 +63,8 @@ export function harness(
 		slim?: "ok" | "fail";
 		/** who the Metro probe finds on the leased port (default: this project's Metro) */
 		metroOwner?: MetroOwner;
-		/** the prewarm outcome: "fail" = the bundle does not build */
-		prewarm?: "ok" | "fail";
+		/** the prewarm outcome: "fail" = the bundle does not build, "hang" = still building until its signal aborts */
+		prewarm?: "ok" | "fail" | "hang";
 		/** the warm-up helper: "fail" = cannot connect, "snapshot-fail" = connects but cannot snapshot (default "ok") */
 		warm?: "ok" | "fail" | "snapshot-fail";
 		/** `bun` on PATH (default `/usr/bin/bun`; null = not installed) */
@@ -211,8 +211,16 @@ export function harness(
 					},
 				};
 			},
-			prewarm: async (url, platform) => {
+			prewarm: async (url, platform, signal) => {
 				h.prewarmed.push(`${platform} ${url}`);
+				if (opts.prewarm === "hang") {
+					await new Promise<void>((resolve) => {
+						if (signal?.aborted) resolve();
+						signal?.addEventListener("abort", () => resolve(), { once: true });
+					});
+					h.events.push("prewarm:aborted");
+					return { success: false, error: `interrupted while building the ${platform} bundle` };
+				}
 				return opts.prewarm === "fail"
 					? { success: false, error: "Metro could not build the ios bundle (HTTP 500): SyntaxError" }
 					: { success: true, data: { bundled: true } };

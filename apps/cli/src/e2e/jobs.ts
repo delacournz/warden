@@ -42,9 +42,12 @@ export function jobPlan(
 	return { jobs: [...argvs.keys()], argvs, shardOf, shards: byShard };
 }
 
-/** Where the spec process of attempt `seq` on `worker` writes `results.jsonl` and its artifacts (`WARDEN_E2E_OUT`). */
-export const attemptOut = (batchDir: string, worker: number, seq: number): string =>
-	join(batchDir, "e2e", `${worker}-${seq}`);
+/**
+ * Where the spec process of attempt `seq` on `worker` writes `results.jsonl` and its artifacts
+ * (`WARDEN_E2E_OUT`); a later pass (`pass` > 0) of the attempt gets its own `-p<pass>` directory (12-10).
+ */
+export const attemptOut = (batchDir: string, worker: number, seq: number, pass = 0): string =>
+	join(batchDir, "e2e", `${worker}-${seq}${pass > 0 ? `-p${pass}` : ""}`);
 
 /** One spawn of a job, as the batch asks for its argv. */
 export type AttemptRun = { job: string; worker: number; seq: number; attempt: number; batchDir: string };

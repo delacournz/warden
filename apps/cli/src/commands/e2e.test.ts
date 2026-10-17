@@ -345,6 +345,30 @@ describe("warden e2e", () => {
 			expect(await run).toBe(0);
 		});
 
+		test("iOS: warden's own dev-client launch is bounded at 30 s; a launch past it only warns (12-6)", async () => {
+			await resuite(suite, projects);
+			const sim = fakeSimctl([wardenSim(1, "Booted")]);
+			const timeouts: Array<number | undefined> = [];
+			const exec: Exec = async (cmd, opts) => {
+				if (cmd[0] === "git") return bunExec(cmd, opts);
+				if (cmd[0] === "xcrun" && cmd[2] === "launch") {
+					timeouts.push(opts?.timeoutMs);
+					// a hung launch: only the exec timeout ends it (bunExec kills it with SIGTERM)
+					if (opts?.timeoutMs === undefined) await new Promise(() => {});
+					return { exitCode: 143, stdout: "", stderr: "" };
+				}
+				return sim(cmd, opts);
+			};
+			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			ctx.cwd = dir;
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+			expect(timeouts).toEqual([30_000]);
+			expect(h.jobs()).toHaveLength(1);
+			expect(ctx.stderr.join("\n")).toContain("simctl launch --terminate-running-process U1 com.x");
+		});
+
 		test("open: false leaves launching the app to the specs", async () => {
 			await resuite({ ...suite, metro: { ...suite.metro, open: false } }, projects);
 			const calls: string[][] = [];
@@ -474,6 +498,40 @@ describe("warden e2e", () => {
 			expect(h.metro()?.kills).toContain("SIGTERM");
 			expect(h.jobs()).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("SIGINT while the bundle still builds → exit 130 without waiting for it; Metro is stopped (12-5)", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ prewarm: "hang" });
+			const install = Promise.withResolvers<void>();
+			h.deps.ensureApp = async () => {
+				await install.promise;
+				return installed;
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.signals.has("SIGINT") && h.prewarmed.length === 1);
+			h.signals.get("SIGINT")?.();
+			install.resolve();
+			expect(await run).toBe(130);
+			expect(h.events).toContain("prewarm:aborted");
+			expect(h.metro()?.kills).toContain("SIGTERM");
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("a claim that fails while the bundle still builds is reported without waiting for it (12-5)", async () => {
+			await resuite({ ...suite, app: true }, projects);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ prewarm: "hang" });
+			h.deps.ensureApp = async () => {
+				await waitFor(() => h.prewarmed.length === 1);
+				return { success: false, error: "no build" };
+			};
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(h.events).toContain("prewarm:aborted");
+			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
+			expect(c.stderr.join("\n")).toContain("no build");
 		});
 
 		test("Metro's readiness is announced once, under the claim spinner when it is up before the app", async () => {
@@ -1111,6 +1169,67 @@ describe("warden e2e", () => {
 			});
 		});
 
+		const twoLegs = () => {
+			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
+			const sim = fakeSimctl(sims);
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			ctx.cwd = dir;
+			return ctx;
+		};
+		const legs = [
+			{ profile: "iphone-17", count: 1 },
+			{ profile: "ipad", count: 1, default: false },
+		];
+
+		test("legs: a device whose warm-up hangs holds only its own first job, not the other leg's (12-3)", async () => {
+			await resuite({ devices: legs });
+			const c = twoLegs();
+			const h = harness();
+			const base = h.deps.warmConnect(c);
+			const hung = Promise.withResolvers<void>();
+			h.deps.warmConnect = () => async (udid) => {
+				if (udid === "P1") await hung.promise;
+				return base(udid);
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.jobs().length === 1);
+			expect(h.jobs().map((j) => [j.opts.env.WARDEN_UDID, j.opts.env.WARDEN_SIMD_SOCKET])).toEqual([
+				["U1", "/tmp/warden-simd-U1.sock"],
+			]);
+			// P1's warm-up times out: its job runs cold
+			for (const timer of h.timers.filter((t) => t.ms === 120_000 && !t.cancelled)) timer.fire();
+			expect(await run).toBe(0);
+			const p1 = h.jobs().find((j) => j.opts.env.WARDEN_UDID === "P1");
+			expect(p1?.opts.env.WARDEN_SIMD_SOCKET).toBeUndefined();
+			expect(c.stderr.join("\n")).toContain("warm P1: timed out after 120s");
+			hung.resolve();
+		});
+
+		test("legs: a leg still slimming does not hold the other leg's first job (12-3)", async () => {
+			await resuite({ devices: legs, slim: true });
+			const c = twoLegs();
+			const h = harness();
+			const slow = Promise.withResolvers<void>();
+			const slim = h.deps.slim;
+			h.deps.slim = async (udid) => {
+				if (udid === "P1") await slow.promise;
+				return slim(udid);
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.jobs().length === 1);
+			expect(h.jobs().map((j) => j.opts.env.WARDEN_UDID)).toEqual(["U1"]);
+			slow.resolve();
+			expect(await run).toBe(0);
+			expect(
+				h
+					.jobs()
+					.map((j) => j.opts.env.WARDEN_UDID)
+					.sort()
+			).toEqual(["P1", "U1"]);
+		});
+
 		test("a headless run hides the simulator windows first", async () => {
 			if (process.platform !== "darwin") return;
 			await resuite({ headless: true });
@@ -1260,6 +1379,26 @@ describe("warden e2e", () => {
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
 			expect(jobNames(h)).toEqual(["chats", "chats"]);
+		});
+
+		test("a CLI --passes 2 also falls back to a process per flow; each pass writes its own out dir (12-10)", async () => {
+			await resuiteDefault();
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(setup(["--files", "src/chat/lazy.tsx", "--passes", "2"]))).toBe(0);
+			expect(jobNames(h)).toEqual(["chats", "chats"]);
+			const outs = h.jobs().map((j) => j.opts.env.WARDEN_E2E_OUT ?? "");
+			expect(new Set(outs).size).toBe(2);
+			expect(outs[1]).toMatch(/-p1$/);
+		});
+
+		test("a CLI --passes 2 with isolate: device is refused before anything is claimed (12-10)", async () => {
+			await resuiteDefault({ isolate: "device" });
+			const h = harness();
+			const c = setup(["--files", "src/chat/lazy.tsx", "--passes", "2"]);
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain('--passes 2 needs isolate "flow"');
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
 		});
 
 		test("flows run in id order in a device's one process", async () => {
@@ -1560,6 +1699,55 @@ describe("warden e2e", () => {
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		expect(h.slimmed).toEqual(["U1"]);
 		expect(c.db.listDevices().find((d) => d.id === "U1")?.slimmedAt).toBe(c.now());
+	});
+
+	test("a device recorded as slimmed that the claim did not boot is not probed again (12-4)", async () => {
+		await resuite({ slim: true });
+		const c = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
+		c.db.setSlimmed("ios", "U1", 5);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.slimmed).toEqual([]);
+		expect(reportOf(h.files, c).setup).toEqual([{ worker: 0, udid: "U1", ok: true, slim: { jobs: 0 } }]);
+	});
+
+	test("a device recorded as slimmed that the claim booted is slimmed again (12-4)", async () => {
+		await resuite({ slim: true });
+		const sim = fakeSimctl([wardenSim(1, "Shutdown")]);
+		const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+		ctx = testContext(["--files", "src/chat/lazy.tsx", "--no-shutdown"], { exec });
+		ctx.env = { ...ctx.env, ...OWNER_ENV };
+		ctx.cwd = dir;
+		ctx.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
+		ctx.db.setSlimmed("ios", "U1", 5);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+		expect(h.slimmed).toEqual(["U1"]);
+	});
+
+	test("the slim starts when the device is leased, alongside its app install (12-4)", async () => {
+		await resuite(
+			{ project: "app", app: true, slim: true, setup: "prep {udid}" },
+			{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] }
+		);
+		const c = setup(["--files", "src/chat/lazy.tsx"]);
+		const h = harness();
+		const install = Promise.withResolvers<void>();
+		h.deps.ensureApp = async () => {
+			h.events.push("app:start");
+			await install.promise;
+			h.events.push("app:end");
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+		};
+		const run = createE2eCommand(h.deps).run(c);
+		await waitFor(() => h.slimmed.length === 1);
+		expect(h.slimmed).toEqual(["U1"]);
+		expect(h.events).not.toContain("app:end");
+		install.resolve();
+		expect(await run).toBe(0);
+		// the setup command still waits for the slim
+		expect(h.events.indexOf("slim:U1")).toBeLessThan(h.events.indexOf("setup:U1"));
 	});
 
 	test("suite slim: every device is slimmed before its setup; a failed slim only warns", async () => {

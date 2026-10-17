@@ -11,9 +11,11 @@ import {
 	INTERRUPTED,
 	LEASES_LOST,
 	type LeaseArgs,
+	overlapHide,
 	type RunEnsureApp,
 	sessionEnsureApp,
 } from "./lease-session";
+import type { HideStart } from "./sim-windows";
 import { fakeSimctl } from "./simctl.testing";
 import { type TestContext, testContext } from "./testing";
 
@@ -339,5 +341,77 @@ describe("holdLeases", () => {
 			heartbeatMs: HEARTBEAT_INTERVAL_MS,
 		});
 		h.stop();
+	});
+});
+
+describe("overlapHide (16-8)", () => {
+	type Outcome = { closed: string[]; rebooted: string[]; failed?: string[] };
+	const hideOf = (down: string[]) => {
+		const settled = Promise.withResolvers<Outcome>();
+		const start: HideStart = {
+			closed: ["U1", "U2"],
+			down: Promise.resolve(down.map((udid) => ({ udid, name: `warden-${udid}` }))),
+			settled: settled.promise,
+		};
+		return { start, settle: (outcome: Outcome) => settled.resolve(outcome) };
+	};
+
+	test("nothing shut down: the leg is leased and installs before the hide has settled", async () => {
+		const { start, settle } = hideOf([]);
+		const events: string[] = [];
+		const done = overlapHide(start, {
+			leased: () => events.push("leased"),
+			install: async (ready) => {
+				await Promise.all(["U1", "U2"].map((udid) => ready(udid).then(() => events.push(`install:${udid}`))));
+				return "ok";
+			},
+		});
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		expect(events).toEqual(["leased", "install:U1", "install:U2"]);
+		settle({ closed: ["U1", "U2"], rebooted: [] });
+		expect(await done).toEqual({ result: "ok", failed: [] });
+	});
+
+	test("a device the close shut down waits for its reboot; the others install at once", async () => {
+		const { start, settle } = hideOf(["U2"]);
+		const events: string[] = [];
+		const done = overlapHide(start, {
+			leased: () => events.push("leased"),
+			install: async (ready) => {
+				await Promise.all(["U1", "U2"].map((udid) => ready(udid).then(() => events.push(`install:${udid}`))));
+				return "ok";
+			},
+		});
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		expect(events).toEqual(["install:U1"]);
+		settle({ closed: ["U1", "U2"], rebooted: ["U2"] });
+		expect(await done).toEqual({ result: "ok", failed: [] });
+		expect(events).toEqual(["install:U1", "leased", "install:U2"]);
+	});
+
+	test("a device that did not come back is reported failed and the leg is never leased", async () => {
+		const { start, settle } = hideOf(["U2"]);
+		const events: string[] = [];
+		const done = overlapHide(start, {
+			leased: () => events.push("leased"),
+			install: async () => "ok",
+		});
+		settle({ closed: ["U1", "U2"], rebooted: [], failed: ["U2"] });
+		expect(await done).toEqual({ result: "ok", failed: ["U2"] });
+		expect(events).toEqual([]);
+	});
+
+	test("no hide (not headless): leased and installed straight away", async () => {
+		const events: string[] = [];
+		const done = await overlapHide(undefined, {
+			leased: () => events.push("leased"),
+			install: async (ready) => {
+				await ready("U1");
+				events.push("install");
+				return 1;
+			},
+		});
+		expect(done).toEqual({ result: 1, failed: [] });
+		expect(events).toEqual(["leased", "install"]);
 	});
 });

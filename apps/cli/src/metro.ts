@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import type { Exec } from "@delacour/warden-core/exec";
+import { type Exec, execError } from "@delacour/warden-core/exec";
 import { findNodeBin } from "@delacour/warden-core/node-bin";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
@@ -259,28 +259,39 @@ function launchAssetUrl(manifest: unknown): string | undefined {
 /**
  * Build the `platform` bundle once before any device asks for it (the first request is the slow
  * one). No readable manifest → `bundled: false` (nothing to warm); a bundle Metro cannot build is
- * an error carrying Metro's message, since every flow would hit it.
+ * an error carrying Metro's message, since every flow would hit it. `signal` (a Ctrl-C, a failed
+ * claim) ends either request at once, as an error (12-5).
  */
-export async function prewarmMetro(url: string, platform: Platform): AsyncResult<{ bundled: boolean }> {
+export async function prewarmMetro(
+	url: string,
+	platform: Platform,
+	signal?: AbortSignal
+): AsyncResult<{ bundled: boolean }> {
+	const bounded = () =>
+		signal
+			? AbortSignal.any([signal, AbortSignal.timeout(PREWARM_TIMEOUT_MS)])
+			: AbortSignal.timeout(PREWARM_TIMEOUT_MS);
+	const interrupted = err(`interrupted while building the ${platform} bundle`);
 	let bundleUrl: string;
 	try {
 		const res = await fetch(`${url}/`, {
 			headers: { "expo-platform": platform, accept: "application/expo+json,application/json" },
-			signal: AbortSignal.timeout(PREWARM_TIMEOUT_MS),
+			signal: bounded(),
 		});
 		const assetUrl = launchAssetUrl(await res.json());
 		if (!res.ok || assetUrl === undefined) return ok({ bundled: false });
 		bundleUrl = assetUrl;
 	} catch {
-		return ok({ bundled: false });
+		return signal?.aborted ? interrupted : ok({ bundled: false });
 	}
 	try {
-		const res = await fetch(bundleUrl, { signal: AbortSignal.timeout(PREWARM_TIMEOUT_MS) });
+		const res = await fetch(bundleUrl, { signal: bounded() });
 		const body = await res.text();
 		if (res.ok) return ok({ bundled: true });
 		const detail = body.trim().split("\n").slice(0, 3).join(" | ").slice(0, 600);
 		return err(`Metro could not build the ${platform} bundle (HTTP ${res.status})${detail ? `: ${detail}` : ""}`);
 	} catch (error) {
+		if (signal?.aborted) return interrupted;
 		return err(`Metro bundle request failed: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
@@ -314,4 +325,19 @@ export function devClientLaunchArgv(
 /** Android: make the host's Metro port reachable as 127.0.0.1 on the device. */
 export function adbReverseArgv(serial: string, port: number): string[] {
 	return ["adb", "-s", serial, "reverse", `tcp:${port}`, `tcp:${port}`];
+}
+
+/** How long a reverse retry waits for the device to come back (adbd restarting just after boot). */
+const ADB_WAIT_MS = 30_000;
+
+/**
+ * `adb reverse` the Metro port onto the device, retried once after `adb wait-for-device` (bounded):
+ * a device that still cannot reach Metro is an error, since every flow on it would time out (12-7).
+ */
+export async function reverseMetroPort(exec: Exec, serial: string, port: number): AsyncResult<void> {
+	const argv = adbReverseArgv(serial, port);
+	if ((await exec(argv)).exitCode === 0) return ok(undefined);
+	await exec(["adb", "-s", serial, "wait-for-device"], { timeoutMs: ADB_WAIT_MS });
+	const again = await exec(argv);
+	return again.exitCode === 0 ? ok(undefined) : err(execError(argv, again));
 }

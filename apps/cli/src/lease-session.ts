@@ -14,6 +14,7 @@ import type { CommandContext } from "./context";
 import { releaseDevices } from "./device-lease";
 import { installModeOption, legacyCleanOption, parseInstallFlags, RESET_KEYCHAIN_HELP } from "./install-flags";
 import { reportError } from "./output";
+import type { HideStart } from "./sim-windows";
 import type { Spinner } from "./ui";
 
 /** Shared by `warden run` and `warden batch`: claim devices + ports, child env, heartbeat, release. */
@@ -220,15 +221,24 @@ export const INTERRUPTED = "interrupted";
 /** One device's app, as `claimAll` reports it once every leg is in. */
 type InstalledApp = { deviceId: string; result: EnsureResult };
 
-/** `--app`: ensure the app on every device of one claim in parallel (waits for all, then reports the first failure). */
+/**
+ * `--app`: ensure the app on every device of one claim in parallel (waits for all, then reports the first
+ * failure); each device's install starts once `ready` says the device is up (16-8).
+ */
 async function installLegApp(
 	ctx: CommandContext,
 	ensure: RunEnsureApp,
 	owner: Owner,
 	claim: ClaimOutcome,
-	opts: EnsureOptions
+	opts: EnsureOptions,
+	ready: (udid: string) => Promise<void> = async () => {}
 ): AsyncResult<InstalledApp[]> {
-	const results = await Promise.all(claim.claimed.map((c) => ensure(ctx, owner, c.device.platform, c.device.id, opts)));
+	const results = await Promise.all(
+		claim.claimed.map(async (c) => {
+			await ready(c.device.id);
+			return ensure(ctx, owner, c.device.platform, c.device.id, opts);
+		})
+	);
 	const apps: InstalledApp[] = [];
 	for (const [i, c] of claim.claimed.entries()) {
 		const res = results[i];
@@ -324,8 +334,34 @@ type LegInstall = { ensure: RunEnsureApp; opts: EnsureOptions };
 const failure = (error: unknown): Result<never> => err(error instanceof Error ? error.message : String(error));
 
 /**
- * Claim one leg, then install the app on its devices without waiting for the other legs. Never
- * throws and never releases: `claimAll` owns every lease once all legs have landed.
+ * A headless iOS claim's hide, overlapped with the leg's work (16-8): the devices the window close did
+ * not shut down are leased (`leased`) and installed at once; a device the close shut down waits for
+ * `settled` (its reboot), and so does `leased` then. `settled` is always awaited (it puts Simulator's
+ * close setting back); `failed` lists the devices that did not come back (`leased` is then not called).
+ */
+export async function overlapHide<T>(
+	hide: HideStart | undefined,
+	o: { leased: () => void; install: (ready: (udid: string) => Promise<void>) => Promise<T> }
+): Promise<{ result: T; failed: string[] }> {
+	const down = new Set((hide ? await hide.down : []).map((s) => s.udid));
+	const failed = hide ? hide.settled.then((outcome) => outcome.failed ?? []) : Promise.resolve([]);
+	const back = failed.then(() => {});
+	if (down.size === 0) o.leased();
+	const leased =
+		down.size === 0
+			? Promise.resolve()
+			: failed.then((lost) => {
+					if (lost.length === 0) o.leased();
+				});
+	const result = await o.install((udid) => (down.has(udid) ? back : Promise.resolve()));
+	await leased;
+	return { result, failed: await failed };
+}
+
+/**
+ * Claim one leg, then install the app on its devices without waiting for the other legs (nor, on a
+ * headless iOS claim, for the hide's reboots of devices that stayed up: `overlapHide`). Never throws
+ * and never releases: `claimAll` owns every lease once all legs have landed.
  */
 async function runLeg(
 	ctx: CommandContext,
@@ -338,20 +374,31 @@ async function runLeg(
 ): Promise<LegRun> {
 	if (args.aborted?.()) return { claim: err(INTERRUPTED) };
 	let claim: Result<ClaimOutcome>;
+	const hides: HideStart[] = [];
 	try {
-		claim = await claimWithFlags(ctx, owner, flags, pid);
+		claim = await claimWithFlags(ctx, owner, flags, pid, { onHide: (start) => hides.push(start) });
 	} catch (error) {
+		await hides[0]?.settled;
 		return { claim: failure(error) };
 	}
 	if (!claim.success) return { claim };
-	args.onLeased?.(claim.data, leg);
-	if (!install) return { claim };
-	if (args.aborted?.()) return { claim, install: err(INTERRUPTED) };
-	try {
-		return { claim, install: await installLegApp(ctx, install.ensure, owner, claim.data, install.opts) };
-	} catch (error) {
-		return { claim, install: failure(error) };
-	}
+	const outcome = claim.data;
+	const { result, failed } = await overlapHide(hides[0], {
+		leased: () => args.onLeased?.(outcome, leg),
+		install: async (ready): Promise<LegRun["install"]> => {
+			if (!install) return undefined;
+			if (args.aborted?.()) return err(INTERRUPTED);
+			try {
+				return await installLegApp(ctx, install.ensure, owner, outcome, install.opts, ready);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	// a device the hide shut down and could not boot again is unhealthy: the run does not go on with it
+	if (failed.length > 0)
+		return { claim, install: err(`${failed.join(", ")} did not come back after the headless hide`) };
+	return result === undefined ? { claim } : { claim, install: result };
 }
 
 /**

@@ -196,6 +196,25 @@ describe("slimSimulator", () => {
 			expect(stats.started.filter((s) => s.startsWith("disable")).length).toBeLessThanOrEqual(SLIM_CONCURRENCY);
 		});
 
+		test("a fresh sim: every label is disabled, only the loaded ones are booted out (2 + 36 + 10 spawns, 16-12)", async () => {
+			const loaded = SLIM_DENYLIST.slice(0, 10);
+			const calls: string[][] = [];
+			const exec: Exec = async (cmd) => {
+				calls.push([...cmd]);
+				const verb = cmd[5];
+				const stdout =
+					verb === "list"
+						? `PID\tStatus\tLabel\n${loaded.map((label, i) => `${100 + i}\t0\t${label}`).join("\n")}`
+						: "";
+				return { exitCode: 0, stdout, stderr: "" };
+			};
+			const res = await slimSimulator(exec, "U1");
+			expect(res.success && res.data).toEqual([...SLIM_DENYLIST]);
+			expect(calls).toHaveLength(2 + SLIM_DENYLIST.length + loaded.length);
+			const bootedOut = calls.filter((c) => c[5] === "bootout").map((c) => c[6]);
+			expect(bootedOut.sort()).toEqual(loaded.map((label) => `system/${label}`).sort());
+		});
+
 		test("each job is disabled before it is booted out", async () => {
 			const { exec, stats } = gauge();
 			await slimSimulator(exec, "U1");
