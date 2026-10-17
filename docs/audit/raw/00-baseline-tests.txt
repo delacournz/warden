@@ -1,0 +1,67 @@
+# Baseline: typecheck + serial bun test per package
+commit dfcc68b · bun 1.4.2 · 2026-10-16T15:27:23Z · linux container, no devices
+
+## bun run typecheck (turbo)
+exit=0 wall=27s
+ Tasks:    9 successful, 9 total
+Cached:    0 cached, 9 total
+
+## packages/core — bun run test
+exit=1 wall=15s
+(fail) isPortFree (real sockets) > bound port is busy, free again after stop [22.83ms]
+ 650 pass
+ 1 fail
+Ran 651 tests across 52 files. [15.34s]
+
+## packages/e2e — bun run test
+exit=0 wall=10s
+ 1792 pass
+ 0 fail
+Ran 1792 tests across 96 files. [9.70s]
+
+## apps/cli — bun run test
+exit=1 wall=57s
+(fail) warden doctor > everything installed → all ok [7.95ms]
+(fail) warden port claim > prints the claimed port and leases it for the agent session [16.34ms]
+(fail) warden port claim > the lease's owner location comes from the command's git cache [14.82ms]
+(fail) warden port claim > --count + --ttl + --json [11.88ms]
+(fail) warden port claim > second claim skips the first claim's port [12.61ms]
+(fail) warden port claim > user owner (no session) leases with pid = owner pid [9.32ms]
+(fail) warden port release > by port, only own leases unless --force [13.53ms]
+(fail) warden port release > --lease takes several ids [12.95ms]
+(fail) warden port release > --lease ids and --mine [15.02ms]
+ 1313 pass
+ 9 fail
+Ran 1322 tests across 109 files. [57.80s]
+
+## packages/e2e-bench — bun run test
+exit=1 wall=5s
+(fail) realExec > times out [5000.13ms]
+ 354 pass
+ 1 fail
+Ran 355 tests across 37 files. [5.55s]
+
+Full logs: scratchpad/baseline/*.log (not committed).
+
+## Failure excerpts (environment check; agent 21 root-causes, nobody fixes)
+
+### core
+      1 error: script "test" exited with code 1
+      1 error: expect(received).toBe(expected)
+      1 Received: false
+      1 Expected: true
+
+### cli
+      7 error: expect(received).toBe(expected)
+      6 Received: 1
+      6 Expected: 0
+      1 error: script "test" exited with code 1
+      1 error: expect(received).toContain(expected)
+      1 error: Received value must be an array type, or both received and expected values must be strings.
+      1 Received: 0
+      1 Received: "warden port release: invalid port \"NaN\""
+      1 Expected: 2
+
+### e2e-bench
+      1 error: script "test" exited with code 1
+      1   ^ this test timed out after 5000ms.
