@@ -294,6 +294,29 @@ describe("fill", () => {
 		expect(state.value).toBe("grace@example.test");
 	});
 
+	test("on a driver with setText a filled field is replaced in one call and still read back", async () => {
+		const { driver, state } = fieldFixture({ value: "ada@example.test", selectAll: true, setText: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("grace@example.test");
+		expect(driver.callsOf("setText").map((call) => call.text)).toEqual(["grace@example.test"]);
+		expect(driver.callsOf("selectAll")).toEqual([]);
+		expect(driver.callsOf("typeText")).toEqual([]);
+		expect(state.value).toBe("grace@example.test");
+	});
+
+	test("a setText that did not take is caught by the read-back and retyped the counted way", async () => {
+		const { driver, state } = fieldFixture({ value: "ada", setText: true });
+		driver.setText = async (text) => {
+			driver.calls.push({ method: "setText", text });
+			return { success: true, data: undefined };
+		};
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("grace");
+		expect(driver.callsOf("setText")).toHaveLength(1);
+		expect(driver.callsOf("typeText").map((call) => call.text)).toEqual(["grace"]);
+		expect(state.value).toBe("grace");
+	});
+
 	test("an empty field that shows its placeholder as the value sends no clearing keys", async () => {
 		const { driver, state } = fieldFixture({ placeholder: "ada@example.test", selectAll: true });
 		const { screen } = setup(driver);

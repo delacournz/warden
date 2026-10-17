@@ -1,4 +1,5 @@
-import type { KeyName, Modifier, Point, Rect, Snapshot } from "../driver/driver.types";
+import type { Driver, Element, KeyName, Modifier, Point, Rect, Snapshot } from "../driver/driver.types";
+import { canDetectAlerts, canObserve } from "../driver/observation-cache";
 import { snapshotHash } from "../driver/settle";
 import { typeText } from "../driver/typing";
 import { E2eError } from "../errors";
@@ -464,6 +465,30 @@ export class Locator {
 	}
 
 	/**
+	 * Where a hit-test is cheap (`capabilities.cheapHitTest`, iOS), the tap after an assertion need not take a second
+	 * snapshot: when the observation cache holds one younger than `HIT_TEST_MAX_AGE_MS` with no input since, its one
+	 * actionable match is hit-tested at the tap point, and the match is taken as is when the hit is that element (same
+	 * role, identifier, label, enabled state and frame to 1 pt). That hit is also the second look of the stable-frame
+	 * rule: the element is where the snapshot had it. Anything else (no such snapshot, an alert on it, several or no
+	 * matches, a blocked match, a hit on a child or a neighbour, a failed hit-test) is undefined: `actionable` looks again.
+	 */
+	private async aimFromKept(spec: ActionSpec, position: Point | undefined): Promise<Actionable | undefined> {
+		const driver = await this.rt.host.driver();
+		if (driver.capabilities.cheapHitTest !== true || !canObserve(driver)) return undefined;
+		const kept = driver.peek?.();
+		if (kept === undefined || kept.ageMs >= HIT_TEST_MAX_AGE_MS || showsAlert(driver, kept.snapshot)) return undefined;
+		const observation = await this.rt.tryObserve({ reuse: true, alerts: false });
+		if (!observation.ok || observation.observed.snapshot !== kept.snapshot) return undefined;
+		const { observed } = observation;
+		const [entry, ...others] = resolve(this.expr, observed.index);
+		if (entry === undefined || others.length > 0 || blockedReason(entry, spec, observed) !== undefined)
+			return undefined;
+		const hit = await observed.driver.elementAtPoint(tapPointOf(entry, position));
+		if (!hit.success || hit.data === null || !sameElement(hit.data, entry.element)) return undefined;
+		return { entry, observed };
+	}
+
+	/**
 	 * Taps the one visible, enabled match. With `until` it is also the retrying tap: the press on a tab bar or a list row
 	 * right after a navigation is sometimes dropped with nothing on screen to tell, so it checks that `until` shows
 	 * within `windowMs` and presses again, up to `retries` more times.
@@ -491,11 +516,10 @@ export class Locator {
 	/** One press; resolves to the snapshot it aimed from (the screen just before the press). */
 	private async tapOnce(options: TapOptions): Promise<Snapshot> {
 		const withPosition = options.position !== undefined;
-		const found = await this.actionable(
-			{ enabled: !withPosition, tapPointOnScreen: !withPosition },
-			options.timeout ?? this.rt.actionTimeout(),
-			true
-		);
+		const spec = { enabled: !withPosition, tapPointOnScreen: !withPosition };
+		const found =
+			(await this.aimFromKept(spec, options.position)) ??
+			(await this.actionable(spec, options.timeout ?? this.rt.actionTimeout(), true));
 		const point =
 			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
 		this.rt.drive("tap", await found.observed.driver.tap(point));
@@ -779,6 +803,24 @@ export function textOf(entry: NodeEntry): string {
 const STABLE_INPUT_GAP_MS = 300;
 /** At most this many extra looks wait for a frame to hold still; then the latest one is used. */
 const MAX_STABILITY_LOOKS = 2;
+
+/** A tap may aim from a kept snapshot this young, checked by a hit-test (`aimFromKept`). */
+const HIT_TEST_MAX_AGE_MS = 150;
+
+/** Whether a hit-test answer is the element a snapshot had: same role, ids, enabled state and frame (to 1 pt). */
+function sameElement(hit: Element, seen: Element): boolean {
+	return (
+		hit.role === seen.role &&
+		hit.identifier === seen.identifier &&
+		hit.label === seen.label &&
+		hit.enabled === seen.enabled &&
+		sameFrame(hit.frame, seen.frame)
+	);
+}
+
+function showsAlert(driver: Driver, snapshot: Snapshot): boolean {
+	return snapshot.modal !== undefined || (canDetectAlerts(driver) && driver.alertIn(snapshot) !== null);
+}
 
 function sameFrame(a: Rect, b: Rect): boolean {
 	return (

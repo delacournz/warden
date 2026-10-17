@@ -39,6 +39,18 @@ export function canSelectAll(driver: Driver): driver is Driver & SelectsAll {
 	return typeof (driver as Partial<SelectsAll>).selectAll === "function";
 }
 
+/**
+ * Optional fast path next to the frozen `Driver`: replace the whole text of the focused field in one call (Android
+ * `warden-uiad` `setText`, `ACTION_SET_TEXT`: the same action its `typeText` inserts with). `screen/field.ts` uses it
+ * for a `fill` over a field that holds text, instead of select-all then typing; the read-back checks it took. A
+ * refusal (no server, no focused input) is an error, and the caller types the old way.
+ */
+export type SetsText = { setText(text: string): DriverResult<void> };
+
+export function canSetText(driver: Driver): driver is Driver & SetsText {
+	return typeof (driver as Partial<SetsText>).setText === "function";
+}
+
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function graphemesOf(text: string): string[] {

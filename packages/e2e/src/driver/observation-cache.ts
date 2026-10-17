@@ -27,7 +27,14 @@ export type Observes = {
 	 * used to answer a read: the kept snapshot is returned whatever its age.
 	 */
 	previous?(): PreviousLook;
+	/**
+	 * The kept snapshot and its age, when no input came since it was taken (whatever its age; the caller judges). Never
+	 * reads the device. For a tap that checks a young kept snapshot with a hit-test instead of taking a new one.
+	 */
+	peek?(): KeptLook | undefined;
 };
+
+export type KeptLook = { snapshot: Snapshot; ageMs: number };
 
 export type PreviousLook = {
 	/** the kept snapshot, when no input came since it was taken (whatever its age) */
@@ -74,6 +81,7 @@ const READS: ReadonlySet<string> = new Set([
 	"observe",
 	"invalidateObservations",
 	"previous",
+	"peek",
 ]);
 
 /** Look when called with no argument, change something when given one (`orientation()` vs `orientation("landscapeLeft")`). */
@@ -130,6 +138,11 @@ export function cacheObservations<D extends Driver>(driver: D, options: Observat
 		generation,
 		sinceInputMs: lastInputAt === undefined ? undefined : now() - lastInputAt,
 	});
+
+	const peek = (): KeptLook | undefined =>
+		kept !== undefined && kept.generation === generation
+			? { snapshot: kept.snapshot, ageMs: now() - kept.at }
+			: undefined;
 
 	const usable = (): Kept | undefined =>
 		kept !== undefined && kept.generation === generation && now() - kept.at < maxAgeMs ? kept : undefined;
@@ -221,7 +234,7 @@ export function cacheObservations<D extends Driver>(driver: D, options: Observat
 		});
 	};
 
-	const own: Record<string, unknown> = { observe, invalidateObservations: moveOn, previous, snapshot };
+	const own: Record<string, unknown> = { observe, invalidateObservations: moveOn, previous, peek, snapshot };
 	if (canDetectAlerts(driver)) own.alert = alertFromSnapshot(driver);
 	return wrap(driver, own) as D & Observes;
 }

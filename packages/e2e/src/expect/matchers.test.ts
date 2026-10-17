@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { el, fakeDriver, snapshotOf } from "../driver/driver.testing";
+import { el, failWith, fakeDriver, snapshotOf } from "../driver/driver.testing";
+import type { DriverError, Snapshot } from "../driver/driver.types";
 import { E2eError } from "../errors";
 import { createScreen } from "../screen/screen";
 import { fieldFixture, staticDriver, testHost } from "../screen/screen.testing";
@@ -258,6 +259,81 @@ describe("negation", () => {
 		const { screen } = setup(staticDriver([]), { assertionTimeoutMs: 400 });
 		const negated = new LocatorAssertions(screen.getByTestId("x"), { negate: true });
 		expect((await failure(negated.toHaveText("a"))).message).toContain("Received: element not found");
+	});
+});
+
+describe("negation on a driver that can tell the screen is quiet", () => {
+	/** an empty screen on a driver with native settle; `settle` answers `quiet` unless told otherwise */
+	function quietDriver(
+		settle?: (call: number) => { data: unknown } | { error: DriverError },
+		screens?: () => Snapshot
+	) {
+		let settles = 0;
+		return fakeDriver({
+			screens: screens ?? (() => snapshotOf([])),
+			capabilities: { nativeSettle: true },
+			onCall: (call) => (call.method === "settle" && settle !== undefined ? settle(settles++) : undefined),
+		});
+	}
+
+	const negated = (screen: ReturnType<typeof setup>["screen"]) =>
+		new LocatorAssertions(screen.getByTestId("x"), { negate: true });
+
+	test("passes after one settle that reports quiet and one fresh poll, not the whole hold", async () => {
+		const driver = quietDriver();
+		const { host, screen } = setup(driver);
+		await negated(screen).toBeVisible();
+		expect(driver.callsOf("settle")).toEqual([{ method: "settle", opts: { quietMs: 250, timeoutMs: 1000 } }]);
+		expect(driver.callsOf("snapshot")).toHaveLength(2);
+		expect(host.clock.elapsed()).toBe(0);
+	});
+
+	test("a settle that is not quiet leaves the full hold, and is not asked again", async () => {
+		const driver = quietDriver(() => ({ data: { quiet: false, waitedMs: 0 } }));
+		const { host, screen } = setup(driver);
+		await negated(screen).toBeVisible();
+		expect(host.clock.elapsed()).toBe(1000);
+		expect(driver.callsOf("settle")).toHaveLength(1);
+	});
+
+	test("a settle that fails leaves the full hold", async () => {
+		const driver = quietDriver(() => failWith("E_TIMEOUT"));
+		const { host, screen } = setup(driver);
+		await negated(screen).toBeVisible();
+		expect(host.clock.elapsed()).toBe(1000);
+	});
+
+	test("the poll after a quiet settle still has to hold: a break restarts the full window", async () => {
+		let reads = 0;
+		const driver = quietDriver(undefined, () =>
+			reads++ === 1 ? snapshotOf([el("button", { id: "x" })]) : snapshotOf([])
+		);
+		const { host, screen } = setup(driver);
+		await negated(screen).toBeVisible();
+		expect(driver.callsOf("settle")).toHaveLength(1);
+		expect(host.clock.elapsed()).toBe(1100);
+	});
+
+	test("the settle is bounded by the hold: a short timeout gives it only that", async () => {
+		const driver = quietDriver();
+		const { screen } = setup(driver);
+		await negated(screen).toBeVisible({ timeout: 300 });
+		expect(driver.callsOf("settle")[0]?.opts).toEqual({ quietMs: 250, timeoutMs: 300 });
+	});
+
+	test("a driver without native settle is never asked: it would be polled snapshots or a dump", async () => {
+		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const { host, screen } = setup(driver);
+		await negated(screen).toBeVisible();
+		expect(driver.callsOf("settle")).toHaveLength(0);
+		expect(host.clock.elapsed()).toBe(1000);
+	});
+
+	test("a positive matcher never settles", async () => {
+		const driver = quietDriver(undefined, () => snapshotOf([el("button", { id: "x" })]));
+		const { screen, that } = setup(driver);
+		await that(screen.getByTestId("x")).toBeVisible();
+		expect(driver.callsOf("settle")).toHaveLength(0);
 	});
 });
 

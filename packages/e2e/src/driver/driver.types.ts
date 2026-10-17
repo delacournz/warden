@@ -153,6 +153,12 @@ export type DriverCapabilities = {
 	nativeSettle: boolean;
 	alerts: boolean;
 	reachability: boolean;
+	/**
+	 * `elementAtPoint` costs far less than a whole `snapshot` (iOS: one AX hit-test, ~10 ms, against ~76 ms), so a tap
+	 * may check the snapshot an assertion just kept with one hit-test instead of taking another. Absent = no (Android's
+	 * hit-test is a whole snapshot).
+	 */
+	cheapHitTest?: boolean;
 };
 
 export type AppCommands = {
