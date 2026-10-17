@@ -70,6 +70,33 @@ function parsePoint(raw: string | undefined): { x: number; y: number } | undefin
 	return x !== undefined && y !== undefined && Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined;
 }
 
+/** `x,y x,y|x,y x,y` (what `gesture path` records) back into one point list per finger. */
+function parsePaths(raw: string | undefined): { x: number; y: number }[][] | undefined {
+	if (raw === undefined) return undefined;
+	const paths = raw.split("|").map((finger) =>
+		finger
+			.split(" ")
+			.filter((word) => word.length > 0)
+			.map(parsePoint)
+	);
+	const valid = paths.every((path) => path.length >= 2 && path.every((point) => point !== undefined));
+	return valid ? paths.map((path) => path.flatMap((point) => (point ? [point] : []))) : undefined;
+}
+
+/** The fields `pinch` and `rotate` share: the optional target, radius and duration. */
+function twoFinger(
+	args: RecordStep["args"],
+	target: Target | undefined
+): { target?: Target; radius?: number; durationMs?: number } {
+	const radius = num(args, "radius");
+	const durationMs = num(args, "ms");
+	return {
+		...(target ? { target } : {}),
+		...(radius !== undefined ? { radius } : {}),
+		...(durationMs !== undefined ? { durationMs } : {}),
+	};
+}
+
 const DIRECTIONS: readonly Direction[] = ["up", "down", "left", "right"];
 const asDirection = (raw: string | undefined): Direction | undefined => DIRECTIONS.find((d) => d === raw);
 
@@ -89,7 +116,26 @@ export function stepsFromRecord(step: RecordStep, grounded: Grounded, env: Env, 
 		case "gesture-longpress": {
 			const durationMs = num(args, "ms");
 			return target
-				? [{ kind: "longpress", ...base, target, ...(durationMs !== undefined ? { durationMs } : {}) }]
+				? [{ kind: "gesture", type: "longpress", ...base, target, ...(durationMs !== undefined ? { durationMs } : {}) }]
+				: [];
+		}
+		case "gesture-pinch": {
+			const scale = num(args, "scale");
+			return scale === undefined
+				? []
+				: [{ kind: "gesture", type: "pinch", ...base, scale, ...twoFinger(args, target) }];
+		}
+		case "gesture-rotate": {
+			const degrees = num(args, "degrees");
+			return degrees === undefined
+				? []
+				: [{ kind: "gesture", type: "rotate", ...base, degrees, ...twoFinger(args, target) }];
+		}
+		case "gesture-path": {
+			const paths = parsePaths(str(args, "paths"));
+			const durationMs = num(args, "ms");
+			return paths
+				? [{ kind: "gesture", type: "path", ...base, paths, ...(durationMs !== undefined ? { durationMs } : {}) }]
 				: [];
 		}
 		case "fill": {
@@ -109,7 +155,7 @@ export function stepsFromRecord(step: RecordStep, grounded: Grounded, env: Env, 
 		case "gesture-swipe": {
 			const from = parsePoint(str(args, "from"));
 			const to = parsePoint(str(args, "to"));
-			return from && to ? [{ kind: "swipe", ...base, gesture: { by: "path", from, to } }] : [];
+			return from && to ? [{ kind: "gesture", type: "swipe", ...base, by: "path", from, to }] : [];
 		}
 		case "scroll": {
 			const direction = asDirection(str(args, "direction"));
@@ -157,14 +203,14 @@ function deviceSteps(step: RecordStep, base: Base, grounded: Grounded): NewStep[
 			const orientation = str(args, "orientation");
 			const known = ["portrait", "portraitUpsideDown", "landscapeLeft", "landscapeRight"] as const;
 			const found = known.find((candidate) => candidate === orientation);
-			return found ? [{ kind: "rotate", ...base, orientation: found }] : [];
+			return found ? [{ kind: "screen", type: "rotate", ...base, orientation: found }] : [];
 		}
 		case "screen-appearance": {
 			const mode = str(args, "mode");
-			return mode === "light" || mode === "dark" ? [{ kind: "appearance", ...base, mode }] : [];
+			return mode === "light" || mode === "dark" ? [{ kind: "screen", type: "appearance", ...base, mode }] : [];
 		}
 		case "screen-screenshot":
-			return [{ kind: "screenshot", ...base }];
+			return [{ kind: "screen", type: "screenshot", ...base }];
 		case "wait": {
 			const state = str(args, "state");
 			const timeoutMs = num(args, "timeoutMs");

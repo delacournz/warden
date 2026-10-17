@@ -6,7 +6,7 @@ import { snapshotHash } from "../driver/settle";
 import type { Flow, NewStep } from "./flow.schema";
 import { flowOf } from "./flow.testing";
 import { targetFromElement } from "./record";
-import { type ReplayDeps, replayFlow } from "./replay";
+import { describeStep, type ReplayDeps, replayFlow } from "./replay";
 import { recordingActors } from "./replay.testing";
 
 const SIGN_IN = { x: 24, y: 300, width: 342, height: 48 };
@@ -346,6 +346,61 @@ describe("replayFlow", () => {
 		});
 		const outcome = await replayFlow(recorded(), deps);
 		expect(outcome).toMatchObject({ status: "failed", step: 0, error: { code: "E_AX_UNAVAILABLE" } });
+	});
+
+	test("a pinch on a selector resolves the target and hands the actor the step", async () => {
+		const base = screen();
+		const target = targetFromElement(elementNamed(base, "sign-in"), base);
+		const seen: { scale: number; via: string | undefined }[] = [];
+		const { deps } = harness(base);
+		deps.act = {
+			...deps.act,
+			"gesture.pinch": async (step, ctx) => {
+				seen.push({ scale: step.scale, via: ctx.targets.target?.via });
+				return ok(undefined);
+			},
+		};
+		const outcome = await replayFlow(flowOf([{ kind: "gesture", type: "pinch", at: 1, scale: 2, target }]), deps);
+		expect(outcome).toMatchObject({ status: "passed", steps: 1 });
+		expect(seen).toEqual([{ scale: 2, via: "id" }]);
+	});
+
+	test("a path needs no snapshot, a pinch without a target neither", async () => {
+		const { deps, driver, calls } = harness(screen());
+		const outcome = await replayFlow(
+			flowOf([
+				{
+					kind: "gesture",
+					type: "path",
+					at: 1,
+					paths: [
+						[
+							{ x: 1, y: 1 },
+							{ x: 2, y: 2 },
+						],
+					],
+				},
+				{ kind: "gesture", type: "pinch", at: 2, scale: 0.5 },
+				{ kind: "screen", type: "rotate", at: 3, orientation: "landscapeLeft" },
+			]),
+			deps
+		);
+		expect(outcome).toMatchObject({ status: "passed", steps: 3 });
+		expect(calls).toEqual(["0 gesture.path", "1 gesture.pinch", "2 screen.rotate"]);
+		expect(driver.callsOf("snapshot")).toHaveLength(0);
+	});
+
+	test("describeStep labels gestures", () => {
+		const at = { i: 0, at: 1 };
+		expect(describeStep({ ...at, kind: "gesture", type: "pinch", scale: 2 })).toBe("×2");
+		expect(describeStep({ ...at, kind: "gesture", type: "rotate", degrees: -45 })).toBe("-45°");
+		const finger = [
+			{ x: 0, y: 0 },
+			{ x: 1, y: 1 },
+		];
+		expect(describeStep({ ...at, kind: "gesture", type: "path", paths: [finger] })).toBe("1 finger");
+		expect(describeStep({ ...at, kind: "gesture", type: "path", paths: [finger, finger] })).toBe("2 fingers");
+		expect(describeStep({ ...at, kind: "screen", type: "appearance", mode: "dark" })).toBe("dark");
 	});
 });
 
