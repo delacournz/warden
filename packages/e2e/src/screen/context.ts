@@ -1,6 +1,6 @@
 import type { DevtoolsFacet } from "../devtools/devtools.types";
 import type { Driver, DriverError, DriverResult, Snapshot } from "../driver/driver.types";
-import { canDetectAlerts, canObserve } from "../driver/observation-cache";
+import { canDetectAlerts, canObserve, type PreviousLook } from "../driver/observation-cache";
 import { DEFAULT_ASSERTION_TIMEOUT_MS } from "../env";
 import { E2eError } from "../errors";
 import type { SpanOptions, SpanRunner } from "../runner/span";
@@ -44,7 +44,15 @@ export type ScreenHost = {
 
 export type Observed = { driver: Driver; snapshot: Snapshot; index: NodeIndex };
 
-export type Observation = { ok: true; observed: Observed } | { ok: false; error: DriverError };
+/** The look before this one, when the observation cache can tell (`ObserveOptions.withPrevious`). */
+export type Earlier = {
+	/** the kept snapshot from before this look, with no input between the two; undefined when there is none */
+	previous: Observed | undefined;
+	/** ms from the end of the last input to the start of this look; undefined before any input */
+	sinceInputMs: number | undefined;
+};
+
+export type Observation = { ok: true; observed: Observed; earlier?: Earlier } | { ok: false; error: DriverError };
 
 /** Lines of the accessibility tree attached to a failure. */
 const EXCERPT_LINES = 40;
@@ -65,6 +73,8 @@ export type ObserveOptions = {
 	reuse?: boolean;
 	/** Answer a system alert the snapshot shows when `test.use({ systemAlerts })` says to. Default: yes. */
 	alerts?: boolean;
+	/** Also say what the look before this one was (`Observation.earlier`), for an action's stability rule. Default: no. */
+	withPrevious?: boolean;
 };
 
 export class Runtime {
@@ -117,16 +127,30 @@ export class Runtime {
 		const driver = await this.host.driver();
 		let reuse = options.reuse === true;
 		for (let answered = 0; ; answered += 1) {
+			const before = options.withPrevious === true && canObserve(driver) ? driver.previous?.() : undefined;
 			const result = canObserve(driver) ? await driver.observe({ reuse }) : await driver.snapshot();
 			if (!result.success) return { ok: false, error: result.error };
 			const observation: Observation = {
 				ok: true,
 				observed: { driver, snapshot: result.data, index: this.indexOf(result.data) },
 			};
+			if (before !== undefined) observation.earlier = this.earlierThan(driver, before, result.data);
 			if (options.alerts === false || answered >= MAX_ALERT_ANSWERS) return observation;
 			if (!(await this.answeredAlert(driver, result.data))) return observation;
 			reuse = false;
 		}
+	}
+
+	/** What came before `look`, given the cache's answer from just before it was taken. */
+	private earlierThan(driver: Driver, before: PreviousLook, look: Snapshot): Earlier {
+		const after = canObserve(driver) ? driver.previous?.() : undefined;
+		// `look` was kept in the generation the earlier one belongs to: no input came between the two
+		const same = after !== undefined && after.generation === before.generation && after.snapshot === look;
+		const earlier = same && before.snapshot !== look ? before.snapshot : undefined;
+		return {
+			previous: earlier === undefined ? undefined : { driver, snapshot: earlier, index: this.indexOf(earlier) },
+			sinceInputMs: before.sinceInputMs,
+		};
 	}
 
 	/** Whether `snapshot` showed an alert that has now been answered. A screen without one costs no extra read. */
