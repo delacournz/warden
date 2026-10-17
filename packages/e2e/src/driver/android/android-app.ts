@@ -64,9 +64,17 @@ export function parseStartWait(stdout: string): StartWait {
 	return parsed;
 }
 
+/** The span detail of a launch that `am start -W` made. */
+function noteStarted(started: StartWait): void {
+	noteSpanDetail("launch", "am-start");
+	if (started.status !== undefined) noteSpanDetail("startStatus", started.status);
+	if (started.launchState !== undefined) noteSpanDetail("launchState", started.launchState);
+	if (started.totalTimeMs !== undefined) noteSpanDetail("totalTimeMs", started.totalTimeMs);
+}
+
 /**
  * `AppCommands` over `am` / `pm` (and `monkey` when the launcher cannot be resolved) in the session and host
- * `adb install|uninstall` through `exec`. A launch is one `am start -W -S -n <launcher>`: a binder call (no JVM start,
+ * `adb install|uninstall` through `exec`. A launch is one `am start -W -S -a MAIN -c LAUNCHER -n <launcher>`: a binder call (no JVM start,
  * where `monkey` is an `app_process` program) that returns once the first frame is drawn.
  */
 export function createAppCommands(deps: AppDeps): AppCommands {
@@ -91,16 +99,18 @@ export function createAppCommands(deps: AppDeps): AppCommands {
 		const res = await session.run(shellCommand(startComponentArgv(component, { stop: relaunch })), {
 			timeoutMs: START_WAIT_TIMEOUT_MS,
 		});
+		// the start was sent; only the wait for the first frame (held by a keep-on-screen splash, a first bundle) ran out
+		if (!res.success && res.error.code === "E_TIMEOUT") {
+			noteStarted({ launchState: "timeout" });
+			return { success: true, data: true };
+		}
 		if (!res.success) return res;
 		const started = parseStartWait(res.data.stdout);
 		if (res.data.exitCode !== 0 || started.error !== undefined) {
 			launchers.delete(bundleId);
 			return { success: true, data: false };
 		}
-		noteSpanDetail("launch", "am-start");
-		if (started.status !== undefined) noteSpanDetail("startStatus", started.status);
-		if (started.launchState !== undefined) noteSpanDetail("launchState", started.launchState);
-		if (started.totalTimeMs !== undefined) noteSpanDetail("totalTimeMs", started.totalTimeMs);
+		noteStarted(started);
 		return { success: true, data: true };
 	};
 

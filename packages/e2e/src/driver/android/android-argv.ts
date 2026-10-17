@@ -198,10 +198,23 @@ export function resolveLauncherArgv(packageName: string): string[] {
 
 /**
  * Start a known component and wait (`-W`) until its first frame is drawn; `stop` (`-S`) force-stops the app first, so
- * a relaunch is one round trip. Prints `Status`, `LaunchState` and `TotalTime`.
+ * a relaunch is one round trip. Prints `Status`, `LaunchState` and `TotalTime`. The intent is the launcher's own
+ * (MAIN + LAUNCHER, what `monkey` sends): it matches a running task's root, so without `-S` the app is brought to the
+ * front with its state, where a bare `-n` intent can stack a second instance on top.
  */
 export function startComponentArgv(component: string, options: { stop: boolean }): string[] {
-	return ["am", "start", "-W", ...(options.stop ? ["-S"] : []), "-n", component];
+	return [
+		"am",
+		"start",
+		"-W",
+		...(options.stop ? ["-S"] : []),
+		"-a",
+		"android.intent.action.MAIN",
+		"-c",
+		"android.intent.category.LAUNCHER",
+		"-n",
+		component,
+	];
 }
 
 export function forceStopArgv(packageName: string): string[] {

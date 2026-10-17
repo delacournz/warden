@@ -2,8 +2,8 @@ import type { Element, Point } from "./driver/driver.types";
 
 /**
  * Button names `device.alert("accept")` / `("dismiss")` look for, in order. The Android permission prompt's own
- * labels ("While using the app", "Only this time", "Don't allow") are here too; on Android `accept` goes by the
- * button id first (`ANDROID_ALLOW_IDS`), which also holds in other locales. "Don't allow" is matched by
+ * labels ("While using the app", "Only this time", "Don't allow") are here too; on Android `accept` and `dismiss` go
+ * by the button id first (`ANDROID_ALLOW_IDS`, `ANDROID_DENY_IDS`), which also holds in other locales. "Don't allow" is matched by
  * "Don't Allow" (names compare ignoring case).
  */
 export const ACCEPT_BUTTONS = [
@@ -61,4 +61,15 @@ export const ANDROID_ALLOW_IDS: readonly string[] = [
 	"permission_allow_foreground_only_button",
 	"permission_allow_one_time_button",
 	"button1",
+];
+
+/**
+ * The buttons that say no, in the order `device.alert("dismiss")` tries them on Android: the permission prompt's
+ * deny (the plain one before "don't ask again", which a later prompt could not undo), then `AlertDialog`'s negative
+ * `button2`. Going by id holds in other locales, where the names in `DISMISS_BUTTONS` do not match.
+ */
+export const ANDROID_DENY_IDS: readonly string[] = [
+	"permission_deny_button",
+	"permission_deny_and_dont_ask_again_button",
+	"button2",
 ];

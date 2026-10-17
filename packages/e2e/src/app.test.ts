@@ -165,22 +165,39 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 		const driver = launchingDriver(clock, { contentAt: 1000 });
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
 		await app.open({ wait: "quiet" });
-		expect(clock.now()).toBeGreaterThanOrEqual(1000);
-		expect(clock.now()).toBeLessThan(1100);
+		// looks at 0, 100, 300, 700 and 1100 ms (the back-off below)
+		expect(clock.now()).toBe(1100);
 		const methods = driver.calls.map((c) => c.method);
 		expect(methods[0]).toBe("app.launch");
 		expect(methods.at(-1)).toBe("settle");
-		expect(methods.filter((m) => m === "snapshot")).toHaveLength(11);
+		expect(methods.filter((m) => m === "snapshot")).toHaveLength(5);
 	});
 
-	test("polls every 100 ms through the observation cache without reusing a kept snapshot", async () => {
+	test("backs off 100, 200, then 400 ms between looks, so full dumps do not compete with the cold start", async () => {
+		const clock = fakeClock();
+		const driver = launchingDriver(clock, { contentAt: Number.POSITIVE_INFINITY });
+		const looks: number[] = [];
+		const watched = {
+			...driver,
+			snapshot: (...args: Parameters<FakeDriver["snapshot"]>) => {
+				looks.push(clock.now());
+				return driver.snapshot(...args);
+			},
+		};
+		const app = createApp({ session: { out: "/tmp/out" }, driver: watched, env: baseEnv, clock });
+		await app.open({ wait: "quiet" });
+		// the last gap is cut to the 3 s deadline
+		expect(looks).toEqual([0, 100, 300, 700, 1100, 1500, 1900, 2300, 2700, 3000]);
+	});
+
+	test("polls through the observation cache without reusing a kept snapshot", async () => {
 		const clock = fakeClock();
 		const inner = launchingDriver(clock, { contentAt: 300 });
 		const driver = cacheObservations(inner, { now: clock.now });
 		await driver.snapshot();
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
 		await app.open({ wait: "quiet" });
-		expect(inner.callsOf("snapshot")).toHaveLength(1 + 4);
+		expect(inner.callsOf("snapshot")).toHaveLength(1 + 3);
 		expect(clock.now()).toBe(300);
 	});
 
@@ -211,7 +228,29 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 			clock,
 		});
 		await app.open({ wait: "quiet" });
-		expect(clock.now()).toBe(500);
+		expect(clock.now()).toBe(700);
+	});
+
+	test("the Android 12+ splash screen's view ids are not content", async () => {
+		const clock = fakeClock();
+		const driver = launchingDriver(clock, {
+			platform: "android",
+			contentAt: 500,
+			launch: [
+				el("other", {
+					id: "splashscreen_view",
+					children: [el("image", { id: "splashscreen_icon_view" }), el("image", { id: "splashscreen_branding_view" })],
+				}),
+			],
+		});
+		const app = createApp({
+			session: { out: "/tmp/out" },
+			driver,
+			env: { ...baseEnv, platform: "android", launchArgs: [] },
+			clock,
+		});
+		await app.open({ wait: "quiet" });
+		expect(clock.now()).toBe(700);
 	});
 
 	test("a snapshot that fails while the app starts is a look with no content, not an error", async () => {
@@ -224,7 +263,7 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
 		await app.open({ wait: "quiet" });
 		expect(driver.callsOf("snapshot")).toHaveLength(3);
-		expect(clock.now()).toBe(200);
+		expect(clock.now()).toBe(300);
 	});
 });
 

@@ -1,6 +1,6 @@
 import type { AlertInfo, Element } from "../driver.types";
 
-export { ANDROID_ALLOW_IDS } from "../../alert-buttons";
+export { ANDROID_ALLOW_IDS, ANDROID_DENY_IDS } from "../../alert-buttons";
 
 /**
  * System alerts on Android are ordinary windows in the dump. `AlertDialog` uses `android:id/button1|2|3`

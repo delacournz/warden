@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ANDROID_ALLOW_IDS, detectAlert } from "./android-alert";
+import { ANDROID_ALLOW_IDS, ANDROID_DENY_IDS, detectAlert } from "./android-alert";
 import { REAL_ANR_DUMP, REAL_ANR_SCREEN } from "./anr.fixture";
 import { parseUiautomatorXml } from "./uiautomator";
 import { SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN } from "./uiautomator.fixture";
@@ -98,6 +98,14 @@ describe("detectAlert", () => {
 			"permission_allow_foreground_only_button",
 			"permission_allow_one_time_button",
 			"button1",
+		]);
+	});
+
+	test("ANDROID_DENY_IDS: the plain deny before don't-ask-again, then AlertDialog's negative button", () => {
+		expect(ANDROID_DENY_IDS).toEqual([
+			"permission_deny_button",
+			"permission_deny_and_dont_ask_again_button",
+			"button2",
 		]);
 	});
 

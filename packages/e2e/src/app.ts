@@ -26,11 +26,11 @@ export type OpenOptions = {
 	 * `"none"` (default): return when the launch call returns, which is before the app is on screen.
 	 *
 	 * `"quiet"`: then wait for the first screen and for it to stop moving. A launch screen (a storyboard, an Android
-	 * splash) is idle while the app loads, so "quiet" alone would end on it: the screen is read every 100 ms until it
-	 * shows content (a visible control, or any element with a testID), for at most 3 s, then settled (what
-	 * `device.settle()` waits for: 250 ms of quiet, at most 3 s). That is a best-effort wait, never an error: a first
-	 * screen with no control and no testID waits out the 3 s, and an app that is not quiet in time is returned as it is,
-	 * so assert on what the test needs.
+	 * splash) is idle while the app loads, so "quiet" alone would end on it: the screen is read after 100, 200, then
+	 * every 400 ms until it shows content (a visible control, or any element with a testID), for at most 3 s, then
+	 * settled (what `device.settle()` waits for: 250 ms of quiet, at most 3 s). That is a best-effort wait, never an
+	 * error: a first screen with no control and no testID waits out the 3 s, and an app that is not quiet in time is
+	 * returned as it is, so assert on what the test needs.
 	 *
 	 * `{ until }`: wait for that locator to be visible (an error after `timeout`, like `toBeVisible()`), then settle
 	 * once, so the next tap lands on a mounted screen. Use it in place of `open()` followed by `toBeVisible()`.
@@ -38,12 +38,16 @@ export type OpenOptions = {
 	wait?: "quiet" | "none" | OpenWaitUntil;
 };
 
-/** How often `wait: "quiet"` looks for the first screen. */
-const CONTENT_POLL_MS = 100;
+/**
+ * The gaps between `wait: "quiet"`'s looks for the first screen; the last one repeats. Full dumps back to back would
+ * compete with the cold start for CPU.
+ */
+const CONTENT_POLL_MS: readonly number[] = [100, 200, 400];
 
 /**
  * Ids of Android's own window decor (`android:id/content`, the AppCompat action bar root, the system bar
- * backgrounds), present on a splash screen too, so they say nothing about the app's first screen.
+ * backgrounds) and of the API 31+ splash screen's views (core-splashscreen's icon and branding), present on a splash
+ * screen too, so they say nothing about the app's first screen.
  */
 const DECOR_IDS: ReadonlySet<string> = new Set([
 	"content",
@@ -53,6 +57,9 @@ const DECOR_IDS: ReadonlySet<string> = new Set([
 	"decor_content_parent",
 	"statusBarBackground",
 	"navigationBarBackground",
+	"splashscreen_view",
+	"splashscreen_icon_view",
+	"splashscreen_branding_view",
 ]);
 
 /** A visible control or a visible element with a testID: what a launch screen has none of. */
@@ -157,12 +164,13 @@ export function createApp({ session, driver, env, log = stderrLog, clock = syste
 	/** Polls until the screen has content (see `OpenOptions.wait`), at most `DEFAULT_SETTLE_TIMEOUT_MS`; never an error. */
 	const waitForContent = async (): Promise<void> => {
 		const deadline = clock.now() + DEFAULT_SETTLE_TIMEOUT_MS;
-		for (;;) {
+		for (let poll = 0; ; poll++) {
 			const snapshot = await look();
 			if (snapshot !== undefined && hasContent(snapshot)) return;
 			const left = deadline - clock.now();
 			if (left <= 0) return;
-			await clock.sleep(Math.min(CONTENT_POLL_MS, left));
+			const gap = CONTENT_POLL_MS[Math.min(poll, CONTENT_POLL_MS.length - 1)] ?? 100;
+			await clock.sleep(Math.min(gap, left));
 		}
 	};
 

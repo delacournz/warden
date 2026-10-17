@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import {
 	ACCEPT_BUTTONS,
 	ANDROID_ALLOW_IDS,
+	ANDROID_DENY_IDS,
 	centre,
 	DISMISS_BUTTONS,
 	findButton,
@@ -128,25 +129,28 @@ function nextShotNumber(dir: string, issued: ReadonlyMap<string, number>): numbe
 	return highest + 1;
 }
 
-/** The first of `buttons` whose id is in `ANDROID_ALLOW_IDS`, in that list's order. */
-function androidAllowButton(buttons: readonly Element[]): Element | undefined {
-	for (const id of ANDROID_ALLOW_IDS) {
+/** The first of `buttons` whose id is in `ids` (`ANDROID_ALLOW_IDS`, `ANDROID_DENY_IDS`), in that list's order. */
+function androidButton(buttons: readonly Element[], ids: readonly string[]): Element | undefined {
+	for (const id of ids) {
 		const found = buttons.find((button) => button.identifier === id);
 		if (found !== undefined) return found;
 	}
 	return undefined;
 }
 
-/** The button `device.alert(action)` presses; undefined = none to press. Android `accept` goes by button id first. */
+/** The button `device.alert(action)` presses; undefined = none to press. Android `accept`/`dismiss` go by button id first. */
 function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): Element | undefined {
 	const { buttons } = info;
 	if (action === "accept") {
-		const byId = platform === "android" ? androidAllowButton(buttons) : undefined;
+		const byId = platform === "android" ? androidButton(buttons, ANDROID_ALLOW_IDS) : undefined;
 		return byId ?? firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
 	}
 	// Cancel on "Open in …?" only throws away a link the test opened: open it
 	if (action === "dismiss" && isOpenInSheet(info)) return findButton(buttons, "Open");
-	if (action === "dismiss") return firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
+	if (action === "dismiss") {
+		const byId = platform === "android" ? androidButton(buttons, ANDROID_DENY_IDS) : undefined;
+		return byId ?? firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
+	}
 	const target = findButton(buttons, action.button);
 	if (target === undefined) {
 		const names = buttons.map((b) => nameOf(b) ?? "?").join(", ");

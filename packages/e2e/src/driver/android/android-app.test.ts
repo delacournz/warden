@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { driverErr } from "../errors";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
-import { openAdbSession } from "./adb-session";
+import { type AdbSession, openAdbSession } from "./adb-session";
 import { createAppCommands, parseLauncherComponent, parseStartWait } from "./android-app";
 import { fakeAndroidHost } from "./android-host.testing";
 
 const RESOLVED = "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\ncom.x/.MainActivity\n";
 const STARTED =
 	"Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] cmp=com.x/.MainActivity }\nStatus: ok\nLaunchState: COLD\nActivity: com.x/.MainActivity\nTotalTime: 812\nWaitTime: 815\nComplete\n";
+
+const START = "am start -W";
+/** the launcher's intent, so a start without -S brings a running task to the front instead of stacking an instance */
+const INTENT = "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER";
 
 function setup(init: Parameters<typeof fakeAndroidHost>[0] = {}, appPackage?: string) {
 	const host = fakeAndroidHost(init);
@@ -64,8 +69,8 @@ describe("app commands", () => {
 		expect((await app.launch("com.x")).success).toBe(true);
 		expect(host.shell).toEqual([
 			"cmd package resolve-activity --brief -c android.intent.category.LAUNCHER com.x",
-			"am start -W -S -n com.x/.MainActivity",
-			"am start -W -S -n com.x/.MainActivity",
+			`${START} -S ${INTENT} -n com.x/.MainActivity`,
+			`${START} -S ${INTENT} -n com.x/.MainActivity`,
 		]);
 		await session.close();
 	});
@@ -91,7 +96,52 @@ describe("app commands", () => {
 			],
 		});
 		await app.launch("com.x", { relaunch: false });
-		expect(host.shell.at(-1)).toBe("am start -W -n com.x/.MainActivity");
+		expect(host.shell.at(-1)).toBe(`${START} ${INTENT} -n com.x/.MainActivity`);
+		await session.close();
+	});
+
+	test("an `am start -W` that outlives its budget (a held first frame) counts as started: no monkey, launchState timeout", async () => {
+		const { host, session } = setup({ shell: [{ match: "cmd package resolve-activity", reply: RESOLVED }] });
+		const run: AdbSession["run"] = (cmd, opts) =>
+			cmd.startsWith(START)
+				? Promise.resolve(driverErr("E_TIMEOUT", `\`${cmd}\` did not finish within ${opts?.timeoutMs}ms on s1`))
+				: session.run(cmd, opts);
+		const timing = createAppCommands({ session: { ...session, run }, exec: host.exec, adb: "adb", serial: "s1" });
+		const notes: SpanDetail = {};
+		expect((await collectSpanDetail(notes, () => timing.launch("com.x"))).success).toBe(true);
+		expect(notes).toMatchObject({ launch: "am-start", launchState: "timeout" });
+		expect(host.shell.some((c) => c.startsWith("monkey") || c.startsWith("am force-stop"))).toBe(false);
+		// the component stays known: the next launch does not resolve it again
+		await timing.launch("com.x");
+		expect(host.shell.filter((c) => c.startsWith("cmd package"))).toHaveLength(1);
+		await session.close();
+	});
+
+	test("a session failure other than the timeout is returned as it is (a start that answered with an error falls back, above)", async () => {
+		const { host, session } = setup({ shell: [{ match: "cmd package resolve-activity", reply: RESOLVED }] });
+		const run: AdbSession["run"] = (cmd, opts) =>
+			cmd.startsWith(START) ? Promise.resolve(driverErr("E_IO", "adb shell exited")) : session.run(cmd, opts);
+		const failing = createAppCommands({ session: { ...session, run }, exec: host.exec, adb: "adb", serial: "s1" });
+		const res = await failing.launch("com.x");
+		expect(!res.success && res.error.code).toBe("E_IO");
+		await session.close();
+	});
+
+	test("`Status: timeout` from am's own wait is a start: no monkey, the status is noted", async () => {
+		const { host, session, app } = setup({
+			shell: [
+				{ match: "cmd package resolve-activity", reply: RESOLVED },
+				{
+					match: START,
+					reply:
+						"Starting: Intent { cmp=com.x/.MainActivity }\nStatus: timeout\nActivity: com.x/.MainActivity\nComplete\n",
+				},
+			],
+		});
+		const notes: SpanDetail = {};
+		expect((await collectSpanDetail(notes, () => app.launch("com.x"))).success).toBe(true);
+		expect(notes).toMatchObject({ launch: "am-start", startStatus: "timeout" });
+		expect(host.shell.some((c) => c.startsWith("monkey"))).toBe(false);
 		await session.close();
 	});
 
@@ -141,7 +191,7 @@ describe("app commands", () => {
 		expect((await app.launch("com.x")).success).toBe(true);
 		expect((await app.launch("com.x")).success).toBe(true);
 		expect(host.shell.slice(2)).toEqual([
-			"am start -W -S -n com.x/.MainActivity",
+			`${START} -S ${INTENT} -n com.x/.MainActivity`,
 			"am force-stop com.x",
 			"monkey -p com.x -c android.intent.category.LAUNCHER 1",
 		]);

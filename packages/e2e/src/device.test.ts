@@ -199,6 +199,36 @@ describe("device.alert on Android permission prompts", () => {
 		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(3));
 	});
 
+	test("dismiss goes by the button id too, so a translated prompt is denied, not granted", async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [locationPrompt(["Bei Nutzung der App", "Nur dieses Mal", "Nicht zulassen"])],
+		});
+		expect(await device.alert("dismiss")).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(3));
+	});
+
+	test("dismiss: the ids are tried in ANDROID_DENY_IDS order; AlertDialog's negative button2 whatever it says", async () => {
+		const prompt = setup({
+			platform: "android",
+			screens: [
+				permissionPrompt(
+					pc("permission_allow_foreground_only_button", "Bei Nutzung der App"),
+					pc("permission_deny_and_dont_ask_again_button", "Nicht zulassen und nicht mehr fragen"),
+					pc("permission_deny_button", "Nicht zulassen")
+				),
+			],
+		});
+		await prompt.device.alert("dismiss");
+		expect(prompt.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(3));
+		const dialog = setup({
+			platform: "android",
+			screens: [permissionPrompt(pc("button1", "Löschen"), pc("button2", "Abbrechen"))],
+		});
+		await dialog.device.alert("dismiss");
+		expect(dialog.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
 	test("the Android labels are accept words by name as well", async () => {
 		const { device, driver } = setup({ screens: [withAlert("Don't allow", "Only this time")] });
 		await device.alert("accept");

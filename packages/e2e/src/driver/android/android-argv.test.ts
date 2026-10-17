@@ -209,23 +209,27 @@ describe("app argv", () => {
 			"android.intent.category.LAUNCHER",
 			"com.x",
 		]);
+		const main = ["-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER"];
 		expect(startComponentArgv("com.x/.MainActivity", { stop: true })).toEqual([
 			"am",
 			"start",
 			"-W",
 			"-S",
+			...main,
 			"-n",
 			"com.x/.MainActivity",
 		]);
+		// the launcher's own intent (MAIN + LAUNCHER) matches the task's root, so a running app is brought to the front
 		expect(startComponentArgv("com.x/.MainActivity", { stop: false })).toEqual([
 			"am",
 			"start",
 			"-W",
+			...main,
 			"-n",
 			"com.x/.MainActivity",
 		]);
 		expect(shellCommand(startComponentArgv("com.x/com.x.Main$Alias", { stop: true }))).toBe(
-			"am start -W -S -n 'com.x/com.x.Main$Alias'"
+			"am start -W -S -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n 'com.x/com.x.Main$Alias'"
 		);
 	});
 
