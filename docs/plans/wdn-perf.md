@@ -377,7 +377,7 @@ Not done, and why:
 **PERF-5.1 · `WDN-PERF 5 - ⚡️ perf: quiet parent process`**
 - `apps/cli/src/batch.ts:585-622` (`flowPoller`): track a byte offset per `results.jsonl` and parse new lines once. Today it does a full re-read, 2 parses and a zod `safeParse` per line every second, which is quadratic.
 - `batch.ts:215` (`FRAME_MS 100`): render at 1 Hz plus on events.
-- `batch/stamped-log.ts`: children stamp their own lines (`WARDEN_LOG_STAMP=1` in the spec env); the parent pipes bytes straight through. Review `LOG_DRAIN_MS 2000`.
+- `batch/stamped-log.ts`: ~~children stamp their own lines; the parent pipes bytes straight through~~ — won't do (audit 13-6): parent stamping measured at 6.2 µs of CPU per 3-line chunk (under 0.3 % of a core), so the parent keeps stamping and the stamps are chunk arrival times. Done instead: `drained` is event-driven (settles when the last pump ends, or on one quiet/ceiling timer, no 10 ms poll; `LOG_DRAIN_MS 2000` / `LOG_QUIET_MS 250` kept) and each job's drain wait is `logDrainMs` in its `batch.json` entry, so a grandchild holding the pipes shows up.
 - Accept: bench host CPU avg ≤ 5% for a `warden e2e example` run (sampler from `packages/e2e-bench/src/harness/sampler.ts` reused via a small script). Since the 2026-10-16 audit (19-5, 19-6) judge it on host **CPU-seconds per rep** (`RepResult.resources.cpuSeconds`, timed run only, warm median), not on the `ps %cpu` average, which moves with suite length.
 
 **PERF-5.2 · `WDN-PERF 5 - ⚡️ perf: TypeScript graph out of the parent`**

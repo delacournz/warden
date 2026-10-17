@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import type { UiDeps } from "../agent-ui/driver";
-import { readState } from "../agent-ui/state";
+import { readState, updateState } from "../agent-ui/state";
 import type { VideoSpec } from "../agent-ui/video";
 import { cleanupHarnesses, doc, harness, LOGIN, UDID } from "./ui.testing";
 
@@ -655,6 +655,43 @@ describe("video", () => {
 		expect(doc(h.c).result).toEqual({ action: "video", state: "stopped", path });
 		expect(readState(h.c, UDID).video).toBeUndefined();
 		expect(await h.run("video", "stop", "--json")).toBe(1);
+	});
+
+	test("a record another call writes while stop waits on the recorder survives the stop (14-6)", async () => {
+		const fake = fakeVideo();
+		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
+		const kill = fake.video.kill;
+		fake.video.kill = (pid, signal) => {
+			kill(pid, signal);
+			updateState(h.c, UDID, (state) => ({ ...state, collector: { pid: 5151, startedAt: 1 } }));
+		};
+		await h.run("video", "start");
+		expect(await h.run("video", "stop", "--json")).toBe(0);
+		expect(readState(h.c, UDID).video).toBeUndefined();
+		expect(readState(h.c, UDID).collector).toEqual({ pid: 5151, startedAt: 1 });
+	});
+
+	test("a recorder pid now running another program is never signalled: stop forgets it, start records anew (14-4)", async () => {
+		const fake = fakeVideo();
+		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
+		await h.run("video", "start");
+		fake.video.command = () => "/usr/bin/vim notes.txt";
+		expect(await h.run("video", "start", "--json")).toBe(0);
+		expect(fake.specs).toHaveLength(2);
+		expect(await h.run("video", "stop", "--json")).toBe(0);
+		expect(fake.signals).toEqual([]);
+		expect(doc(h.c).warnings?.[0]).toContain("had already ended");
+		expect(readState(h.c, UDID).video).toBeUndefined();
+	});
+
+	test("the recorder is signalled while its command line is still this device's recordVideo into the file", async () => {
+		const fake = fakeVideo();
+		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
+		fake.video.command = () => fake.specs.at(-1)?.argv.join(" ");
+		await h.run("video", "start");
+		expect(await h.run("video", "stop", "--json")).toBe(0);
+		expect(fake.signals).toEqual(["SIGINT"]);
+		expect(doc(h.c).warnings ?? []).toEqual([]);
 	});
 
 	test("a recorder that ignores SIGINT is killed with a warning", async () => {

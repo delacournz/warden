@@ -40,6 +40,7 @@ type BatchJson = {
 		endedAt: number;
 		exitCode: number;
 		screenshot?: string;
+		logDrainMs?: number;
 	}>;
 };
 
@@ -448,11 +449,27 @@ describe("warden batch", () => {
 		try {
 			expect(await proc.exited).toBe(0);
 			expect(performance.now() - started).toBeLessThan(1_500);
+			// the held pipe shows up as the quiet window the drain sat out (13-6)
+			expect(proc.logDrainMs?.()).toBeGreaterThanOrEqual(200);
 			expect(readFileSync(log, "utf8")).toMatch(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\] hello\n$/);
 		} finally {
 			const pid = Number(readFileSync(pidFile, "utf8").trim());
 			if (pid > 0) process.kill(pid);
 		}
+	});
+
+	test("how long each job's log drained after its exit lands in its batch.json entry, summed over passes (13-6)", async () => {
+		const c = setup(["ios", "--jobs", "a", "--passes", "2", "--", "x"]);
+		const h = harness({ logDrainMs: 12.4 });
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		const summary = JSON.parse(h.files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "batch.json")) ?? "{}");
+		expect((summary as BatchJson).jobs.map((j) => j.logDrainMs)).toEqual([25]);
+
+		const plain = setup(["ios", "--jobs", "a", "--", "x"]);
+		const quiet = harness();
+		expect(await createBatchCommand(quiet.deps).run(plain)).toBe(0);
+		const doc = JSON.parse(quiet.files.get(join(plain.env.WARDEN_HOME ?? "", "batches", "b1", "batch.json")) ?? "{}");
+		expect((doc as BatchJson).jobs[0]).not.toHaveProperty("logDrainMs");
 	});
 
 	test("--json: batch.json shape on stdout only", async () => {

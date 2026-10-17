@@ -11,6 +11,7 @@ import {
 	type HelperDeps,
 	helperStatus,
 	ownerKey,
+	SHUTDOWN_WAIT_MS,
 	type SpawnSpec,
 	type StartOutcome,
 	type StartSignal,
@@ -775,6 +776,67 @@ describe("stopHelper", () => {
 		expect(s.clock.t - 1_000_000).toBeLessThanOrEqual(2100);
 		expect(existsSync(socketPath)).toBe(false);
 		expect(readState(c, UDID).helper).toBeUndefined();
+	});
+});
+
+describe("pid identity before a signal (14-4)", () => {
+	const foreign = () => "/usr/bin/vim notes.txt";
+
+	/** A recorded helper `pid` with its socket file; `command` reads command lines (`up`: it answers but ignores shutdown). */
+	function recorded(
+		command: (pid: number, socketPath: string) => string | undefined,
+		opts: { pid?: number; up?: boolean } = {}
+	) {
+		const t = setup();
+		const pid = opts.pid ?? 4242;
+		mkdirSync(join(t.socketPath, ".."), { recursive: true });
+		writeFileSync(t.socketPath, "");
+		t.s.alive.add(pid);
+		t.s.up.value = opts.up === true;
+		writeState(t.c, UDID, { generation: 0, updatedAt: 0, helper: { pid, socket: t.socketPath } });
+		const deps: HelperDeps = { ...t.s.deps, command: (p) => command(p, t.socketPath) };
+		return { ...t, deps };
+	}
+
+	test("the recorded pid now runs another program: no signal, no wait, the record and stale socket are dropped", async () => {
+		const { c, s, socketPath, deps } = recorded(foreign);
+		expect((await stopHelper(c, UDID, { deps })).stopped).toBe(true);
+		expect(s.kills).toEqual([]);
+		expect(s.clock.t - 1_000_000).toBeLessThan(100);
+		expect(existsSync(socketPath)).toBe(false);
+		expect(readState(c, UDID).helper).toBeUndefined();
+	});
+
+	test("the recorded pid is still `warden-simd --udid <udid> --socket <socket>`: SIGTERMed as before", async () => {
+		const { c, s, deps } = recorded(
+			(pid, socketPath) =>
+				pid === 4242 ? `/opt/warden/warden-simd --udid ${UDID} --socket ${socketPath} --idle-timeout 600` : undefined,
+			{ up: true }
+		);
+		expect(await stopHelper(c, UDID, { deps })).toEqual({ stopped: true, how: "sigterm" });
+		expect(s.kills).toEqual([[4242, "SIGTERM"]]);
+	});
+
+	test("a command line that cannot be read is not signalled either", async () => {
+		const { c, s, deps } = recorded(() => undefined, { up: true });
+		expect((await stopHelper(c, UDID, { deps })).stopped).toBe(true);
+		expect(s.kills).toEqual([]);
+		expect(readState(c, UDID).helper).toBeUndefined();
+	});
+
+	test("ensureHelper: a refusing socket whose recorded pid was reused spawns at once, signalling nobody", async () => {
+		const { c, s, socketPath, host, deps } = recorded(foreign, { pid: 777 });
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
+		expect(s.kills).toEqual([]);
+		expect(s.spawns).toHaveLength(1);
+		expect(s.clock.t - 1_000_000).toBeLessThan(SHUTDOWN_WAIT_MS);
+		expect(readState(c, UDID).helper?.pid).toBe(4242);
+	});
+
+	test("status: a recorded pid that now runs another program is not running", () => {
+		const { c, deps } = recorded(foreign);
+		expect(helperStatus(c, UDID, deps).running).toBe(false);
 	});
 });
 

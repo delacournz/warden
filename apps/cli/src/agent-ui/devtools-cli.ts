@@ -21,9 +21,10 @@ import { DEFAULT_TAIL } from "./devtools-register";
 import type { UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
 import { uiDir } from "./paths";
+import { mayBeRecorded, type ProcessCommand, processCommand, safeToSignal } from "./process-identity";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { positiveInt } from "./snapshot-command";
-import { readState, writeState } from "./state";
+import { readState, updateState } from "./state";
 
 const START_HINT = "start the dev client with `warden ui open <bundle> --metro <url>`";
 const COLLECT_HINT = "run `warden ui logs start` first";
@@ -45,6 +46,8 @@ export type DevtoolsDeps = {
 		spawnDetached: (spec: { cmd: string[]; logPath: string }) => { pid: number };
 		kill: (pid: number, signal: "SIGTERM" | "SIGKILL") => void;
 		pidAlive: PidAlive;
+		/** a pid's command line (`ps`): the recorded pid is signalled only while it is still this device's collector. Absent: liveness alone */
+		command?: ProcessCommand;
 	};
 };
 
@@ -75,8 +78,12 @@ export const defaultDevtoolsDeps: DevtoolsDeps = {
 			}
 		},
 		pidAlive: processAlive,
+		command: processCommand,
 	},
 };
+
+/** What the collector's command line carries (`ui-collect --out <device dir>`): tells it from a reused pid. */
+const collectorMarks = (ctx: CommandContext, udid: string): string[] => ["ui-collect", `--out ${uiDir(ctx, udid)}`];
 
 type MetroOption = { metro?: string };
 type DevtoolsOptionValues = UiOptionValues & MetroOption;
@@ -278,7 +285,7 @@ async function startCollector(
 ): Promise<Result<{ device: ReturnType<typeof infoOf>; result: unknown; text: string; warnings?: string[] }, UiError>> {
 	const d = devtoolsDeps(deps);
 	const state = readState(ctx, device.udid);
-	if (state.collector && d.collector.pidAlive(state.collector.pid)) {
+	if (state.collector && mayBeRecorded(d.collector, state.collector.pid, collectorMarks(ctx, device.udid))) {
 		return ok({
 			device: infoOf(device),
 			result: { action: "logs", state: "collecting", pid: state.collector.pid, already: true },
@@ -301,7 +308,7 @@ async function startCollector(
 		...(opts.bodies === true ? ["--include-bodies"] : []),
 	];
 	const { pid } = d.collector.spawnDetached({ cmd, logPath: join(out, COLLECTOR_LOG) });
-	writeState(ctx, device.udid, { ...state, collector: { pid, startedAt: ctx.now() } });
+	updateState(ctx, device.udid, (current) => ({ ...current, collector: { pid, startedAt: ctx.now() } }));
 	return ok({
 		device: infoOf(device),
 		result: { action: "logs", state: "collecting", pid, metroUrl: metro.data, out },
@@ -316,9 +323,13 @@ function stopCollector(ctx: CommandContext, deps: UiDeps, device: UiDevice) {
 	if (!running) {
 		return { success: false as const, error: uiError("usage", "not collecting", { hint: COLLECT_HINT }) };
 	}
-	if (d.collector.pidAlive(running.pid)) d.collector.kill(running.pid, "SIGTERM");
-	const { collector: _stopped, ...rest } = state;
-	writeState(ctx, device.udid, rest);
+	if (safeToSignal(d.collector, running.pid, collectorMarks(ctx, device.udid)))
+		d.collector.kill(running.pid, "SIGTERM");
+	updateState(ctx, device.udid, (current) => {
+		if (current.collector?.pid !== running.pid) return current;
+		const { collector: _stopped, ...rest } = current;
+		return rest;
+	});
 	return ok({
 		device: infoOf(device),
 		result: { action: "logs", state: "stopped", pid: running.pid },

@@ -161,6 +161,28 @@ export function writeState(ctx: Pick<CommandContext, "env" | "now">, udid: strin
 }
 
 /**
+ * Read-modify-write of `state.json`: re-reads the file and writes what `update` returns, all under the store's
+ * `BEGIN IMMEDIATE` transaction (the cross-process mutex), so two `warden ui` processes setting different records
+ * (helper, video, recording, collector, app) never lose each other's. Every `state.json` writer goes through here.
+ * `update` must not block (it runs inside the transaction); returning the state it was given writes nothing.
+ * Without a store in `ctx` it is a plain read-modify-write. Returns the state as it now stands.
+ */
+export function updateState(
+	ctx: Pick<CommandContext, "env" | "now"> & Partial<Pick<CommandContext, "store">>,
+	udid: string,
+	update: (state: UiState) => UiState
+): UiState {
+	const apply = (): UiState => {
+		const current = readState(ctx, udid);
+		const next = update(current);
+		if (next === current) return current;
+		writeState(ctx, udid, next);
+		return { ...next, updatedAt: ctx.now() };
+	};
+	return ctx.store === undefined ? apply() : ctx.store().transaction(apply);
+}
+
+/**
  * Takes the device's next generation number and runs `write` with it, all under the store's `BEGIN IMMEDIATE`
  * transaction (the cross-process mutex), so two `warden ui` processes never share a generation and the stored
  * snapshot always carries the highest one. The counter lives in a store meta row (`ui_generation:<udid>`); a

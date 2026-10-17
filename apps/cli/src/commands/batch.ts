@@ -90,7 +90,12 @@ import { withSpinner } from "../spinner-context";
 
 export type KillSignal = ForwardedSignal | "SIGKILL";
 
-export type ProcHandle = { exited: Promise<number>; kill: (signal: KillSignal) => void };
+export type ProcHandle = {
+	exited: Promise<number>;
+	kill: (signal: KillSignal) => void;
+	/** once `exited` has settled: how long (ms) its log took to drain after the exit (a grandchild holding the pipes shows here) */
+	logDrainMs?: () => number | undefined;
+};
 
 export type SpawnOptions = {
 	env: Record<string, string | undefined>;
@@ -378,6 +383,9 @@ export type Logs = ReadonlyMap<string, string>;
 /** Spec results by attempt: `<worker>:<seq>` → the `results.jsonl` the job writes (jobs whose env sets `WARDEN_E2E_OUT`). */
 export type ResultFiles = ReadonlyMap<string, string>;
 
+/** How long each attempt's log drained after its exit (`attemptKey` → ms, summed over passes). */
+export type LogDrains = ReadonlyMap<string, number>;
+
 /** Key of one job attempt in `Screenshots` / `Logs`. */
 export const attemptKey = (r: { worker: number; seq: number }) => `${r.worker}:${r.seq}`;
 
@@ -390,7 +398,8 @@ function summaryJson(
 	devices: Device[],
 	summary: BatchSummary,
 	screenshots: Screenshots,
-	headless: boolean
+	headless: boolean,
+	drains?: LogDrains
 ) {
 	return {
 		batchId,
@@ -416,6 +425,7 @@ function summaryJson(
 			startedAt: r.startedAt,
 			endedAt: r.endedAt,
 			exitCode: r.exitCode,
+			...(drains?.has(attemptKey(r)) ? { logDrainMs: Math.round(drains.get(attemptKey(r)) ?? 0) } : {}),
 		})),
 	};
 }
@@ -633,11 +643,19 @@ type JobRunnerOptions = {
 	logs: Map<string, string>;
 	/** filled with each attempt's `results.jsonl` (`attemptKey`), for jobs whose env sets `WARDEN_E2E_OUT` */
 	resultFiles: Map<string, string>;
+	/** filled with how long each attempt's log drained after its exit (`attemptKey`, summed over passes) */
+	drains?: Map<string, number>;
 	/** each warm device's helper socket (udid → path), filled by the warm step before the first job */
 	sockets: ReadonlyMap<string, string>;
 	running: Set<ProcHandle>;
 	interrupted: () => boolean;
 };
+
+/** Add `proc`'s log drain wait (when it reports one) to the attempt's total in `drains`. */
+function addDrain(drains: Map<string, number> | undefined, key: string, proc: ProcHandle): void {
+	const drained = proc.logDrainMs?.();
+	if (drained !== undefined && drains) drains.set(key, (drains.get(key) ?? 0) + drained);
+}
 
 /** Arm the job timeout: `onExpire` (the screenshot) runs first, then SIGTERM, then SIGKILL after the grace period. */
 function watchdog(deps: BatchDeps, timeoutMs: number | undefined, proc: ProcHandle, onExpire: () => Promise<void>) {
@@ -762,6 +780,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			timer.cancel();
 			o.running.delete(proc);
 		}
+		addDrain(o.drains, attemptKey({ worker: w.worker, seq }), proc);
 		if (timer.expired()) return TIMEOUT_EXIT;
 		if (code !== 0 && !o.interrupted() && !(await runnerShot(out))) await shoot(w, seq, log);
 		return code;
@@ -788,13 +807,24 @@ type BatchRun = {
 	endedAt: number;
 	summary: BatchSummary;
 	screenshots: Screenshots;
+	drains?: LogDrains;
 	cast?: Cast;
 };
 
 /** Write `batch.json` (+ `tui.cast`), print `--json` / the closing lines. */
 async function report(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, r: BatchRun): Promise<void> {
 	const headless = args.flags.headless === true;
-	const doc = summaryJson(r.batchId, r.cmd, r.startedAt, r.endedAt, r.devices, r.summary, r.screenshots, headless);
+	const doc = summaryJson(
+		r.batchId,
+		r.cmd,
+		r.startedAt,
+		r.endedAt,
+		r.devices,
+		r.summary,
+		r.screenshots,
+		headless,
+		r.drains
+	);
 	await deps.writeFile(join(r.batchDir, "batch.json"), `${JSON.stringify(doc, null, 2)}\n`);
 	if (r.cast) await deps.writeFile(join(r.batchDir, "tui.cast"), r.cast.text());
 	if (args.json) emit(ctx, true, doc, "");
@@ -1294,6 +1324,7 @@ function poolQueues(
 		screenshots: Map<string, string>;
 		logs: Map<string, string>;
 		resultFiles: Map<string, string>;
+		drains?: Map<string, number>;
 		sockets: ReadonlyMap<string, string>;
 	}
 ): Queue[] {
@@ -1323,6 +1354,7 @@ function poolQueues(
 			screenshots: o.screenshots,
 			logs: o.logs,
 			resultFiles: o.resultFiles,
+			...(o.drains ? { drains: o.drains } : {}),
 			sockets: o.sockets,
 			running: r.running,
 			interrupted: r.interrupted,
@@ -1402,6 +1434,7 @@ async function supervise(
 	const screenshots = new Map<string, string>();
 	const logs = new Map<string, string>();
 	const resultFiles = new Map<string, string>();
+	const drains = new Map<string, number>();
 	const sockets = new Map<string, string>();
 	const stopHold = holdLeases(ctx, deps, session.leaseIds, (signal) => {
 		controller.abort();
@@ -1459,6 +1492,7 @@ async function supervise(
 			screenshots,
 			logs,
 			resultFiles,
+			drains,
 			sockets,
 		});
 		const total = queues.reduce((n, q) => n + q.jobs.length, 0);
@@ -1473,7 +1507,19 @@ async function supervise(
 		screen.end();
 		await teardown();
 		const { devices } = r;
-		const done: BatchRun = { batchId, batchDir, logDir, cmd, devices, total, startedAt, endedAt, summary, screenshots };
+		const done: BatchRun = {
+			batchId,
+			batchDir,
+			logDir,
+			cmd,
+			devices,
+			total,
+			startedAt,
+			endedAt,
+			summary,
+			screenshots,
+			drains,
+		};
 		await report(ctx, deps, args, screen.cast ? { ...done, cast: screen.cast } : done);
 		if (!r.interrupted()) await shutdownDevices(ctx, hooks, session, summary);
 		return {
@@ -1830,13 +1876,15 @@ export const defaultBatchDeps: BatchDeps = {
 			});
 			void log.pump(proc.stdout);
 			void log.pump(proc.stderr);
+			let drainMs: number | undefined;
 			return {
 				// a grandchild still holding the pipes can't hold up the exit: silent for LOG_QUIET_MS, or LOG_DRAIN_MS at most
 				exited: proc.exited.then(async (code) => {
-					await log.drained({ quietMs: LOG_QUIET_MS, maxMs: LOG_DRAIN_MS });
+					drainMs = await log.drained({ quietMs: LOG_QUIET_MS, maxMs: LOG_DRAIN_MS });
 					log.close();
 					return exitCodeOf(proc, code);
 				}),
+				logDrainMs: () => drainMs,
 				kill: (signal) => {
 					try {
 						if (opts.group) process.kill(-proc.pid, signal);

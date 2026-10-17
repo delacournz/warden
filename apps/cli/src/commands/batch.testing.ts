@@ -39,6 +39,11 @@ export type Harness = {
 	warmStopped: string[];
 };
 
+/** A job spawn's `logDrainMs` when the harness reports one. */
+function drainOf(ms: number | undefined, spawnOpts: SpawnOptions): Pick<ProcHandle, "logDrainMs"> {
+	return ms !== undefined && spawnOpts.job ? { logDrainMs: () => ms } : {};
+}
+
 /**
  * Fake effects: jobs exit on their own with `exitCodes[WARDEN_JOB]` (default 0) unless `manual`;
  * serve (a `group` spawn) runs until killed; `probe` answers from `ready()`.
@@ -66,6 +71,8 @@ export function harness(
 		bun?: string | null;
 		/** where `@delacour/warden-e2e/preload` resolves (default under `/proj/node_modules`; null = not installed) */
 		preload?: string | null;
+		/** how long each job's log took to drain after it exited (`ProcHandle.logDrainMs`; default: not reported) */
+		logDrainMs?: number;
 	} = {}
 ): Harness {
 	const h: Harness = {
@@ -108,6 +115,7 @@ export function harness(
 					queueMicrotask(() => resolveExit(opts.exitCodeFor?.(spawnOpts.env) ?? opts.exitCodes?.[job ?? ""] ?? 0));
 				return {
 					exited,
+					...drainOf(opts.logDrainMs, spawnOpts),
 					kill: (signal) => {
 						entry.kills.push(signal);
 						h.events.push(`${daemon ?? `job:${job}`}:${signal}`);

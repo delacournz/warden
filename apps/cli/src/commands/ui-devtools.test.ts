@@ -41,6 +41,8 @@ type Harness = {
 	killed: [number, string][];
 	alive: Set<number>;
 	probes: number[];
+	/** the fake devtools deps (a test may give the collector a `command` reader) */
+	devtools: DevtoolsDeps;
 };
 
 /** A leased device, a fake Metro with scripted evaluate answers (the reload probe answers `expo` and clears the JS context like a real reload), and a fake collector spawner. */
@@ -131,6 +133,7 @@ function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}
 		killed,
 		alive,
 		probes,
+		devtools,
 		run: (...argv) => {
 			c.argv = [...argv, "--udid", UDID];
 			c.stdout.length = 0;
@@ -342,6 +345,26 @@ describe("warden ui logs", () => {
 		expect(h.killed).toEqual([[pid, "SIGTERM"]]);
 		expect(readState(h.c, UDID).collector).toBeUndefined();
 		expect(await h.run("logs", "stop")).toBe(1);
+	});
+
+	test("a collector pid now running another program is never signalled: stop forgets it, start spawns anew (14-4)", async () => {
+		const h = harness();
+		await h.run("logs", "start", "--metro", h.fake.url);
+		h.devtools.collector.command = () => "/usr/bin/vim notes.txt";
+		expect(await h.run("logs", "start", "--metro", h.fake.url, "--json")).toBe(0);
+		expect(h.spawned).toHaveLength(2);
+		expect(await h.run("logs", "stop")).toBe(0);
+		expect(h.killed).toEqual([]);
+		expect(readState(h.c, UDID).collector).toBeUndefined();
+	});
+
+	test("the collector is SIGTERMed while its command line is still `ui-collect --out <this device's dir>`", async () => {
+		const h = harness();
+		h.devtools.collector.command = () => h.spawned.at(-1)?.cmd.join(" ");
+		await h.run("logs", "start", "--metro", h.fake.url);
+		const pid = readState(h.c, UDID).collector?.pid ?? 0;
+		expect(await h.run("logs", "stop")).toBe(0);
+		expect(h.killed).toEqual([[pid, "SIGTERM"]]);
 	});
 
 	test("logs [n] reads the tail of console.jsonl", async () => {

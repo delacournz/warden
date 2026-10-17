@@ -117,6 +117,38 @@ describe("StampedLog.drained", () => {
 		held.end();
 	});
 
+	test("settles the moment the last stream ends, without a polling timer, and says how long it waited (13-6)", async () => {
+		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
+		const log = openStampedLog(join(dir, "job.log"), () => AT);
+		const held = heldOpen();
+		void log.pump(held.stream);
+		void log.pump(streamOf("done\n"));
+		const drained = log.drained({ quietMs: 1000, maxMs: 2000 });
+		await Bun.sleep(30);
+		held.end();
+		// the end of the pipe settles it within microtasks: before any timer (a 10 ms poll would lose this race)
+		const first = await Promise.race([drained.then(() => "drained"), Bun.sleep(1).then(() => "timer")]);
+		expect(first).toBe("drained");
+		const waited = await drained;
+		expect(waited).toBeGreaterThanOrEqual(25);
+		expect(waited).toBeLessThan(500);
+		log.close();
+	});
+
+	test("reports 0 when nothing was left to drain, and the quiet window it sat out for a held pipe", async () => {
+		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
+		const log = openStampedLog(join(dir, "job.log"), () => AT);
+		await log.pump(streamOf("a\n"));
+		expect(await log.drained(windowMs)).toBe(0);
+		const held = heldOpen();
+		void log.pump(held.stream);
+		const waited = await log.drained(windowMs);
+		expect(waited).toBeGreaterThanOrEqual(windowMs.quietMs - 5);
+		expect(waited).toBeLessThan(windowMs.maxMs / 2);
+		log.close();
+		held.end();
+	});
+
 	test("output still arriving keeps the wait going, up to maxMs", async () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
 		const log = openStampedLog(join(dir, "job.log"), () => AT);
