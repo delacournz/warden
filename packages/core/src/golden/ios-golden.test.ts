@@ -155,6 +155,21 @@ describe("pruneGoldens", () => {
 		expect(all.success && all.data.map((s) => s.udid)).toEqual(["G"]);
 		expect(host.sims.map((s) => s.udid)).toEqual(["POOL"]);
 	});
+
+	test("a profile whose target cannot be read: its older goldens are pruned, a newer recipe's is kept (ios-claim-path-S3)", async () => {
+		const next = GOLDEN_RECIPE + 1;
+		const host = fakeHost({
+			sims: [
+				{ udid: "OLD", name: goldenName("no-such-device", "0000000000"), state: "Shutdown" },
+				{ udid: "NEW", name: goldenName("no-such-device", "1111111111", next), state: "Shutdown" },
+				{ udid: "NEWWIP", name: wipName("no-such-device", "2222222222", next), state: "Shutdown" },
+			],
+			migrationPolls: 0,
+		});
+		const pruned = await pruneGoldens(deps(host), { all: false });
+		expect(pruned.success && pruned.data.map((s) => s.udid)).toEqual(["OLD"]);
+		expect(host.sims.map((s) => s.udid)).toEqual(["NEW", "NEWWIP"]);
+	});
 });
 
 const AUTOMATION = ["defaults", "write", "com.apple.Accessibility", "AutomationEnabled", "-bool", "true"];

@@ -15,6 +15,7 @@ import type { Store } from "../store";
 import type { Owner } from "../types";
 import {
 	GOLDEN_PREFIX,
+	GOLDEN_RECIPE,
 	type GoldenInputs,
 	goldenKey,
 	goldenName,
@@ -364,6 +365,11 @@ function goldenProfile(name: string): string | undefined {
 	return new RegExp(`^${GOLDEN_PREFIX}-(.+)-[0-9a-f]{10}(-r\\d+)?(-wip)?$`).exec(name)?.[1];
 }
 
+/** Not a newer recipe's golden (another warden version's): `-r<recipe>` at most ours, no suffix being recipe 1. */
+function notNewer(sim: SimctlSim): boolean {
+	return Number(/-r(\d+)(-wip)?$/.exec(sim.name)?.[1] ?? 1) <= GOLDEN_RECIPE;
+}
+
 /** Every golden on the machine (all runtimes, including unavailable). */
 export async function listGoldens(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
 	const sims = await allSims(deps);
@@ -384,7 +390,7 @@ export async function pruneGoldens(deps: GoldenDeps, opts: { all: boolean }): As
 		for (const profile of profiles) {
 			const target = await readGoldenTarget(deps, profile);
 			const mine = goldens.data.filter((s) => goldenProfile(s.name) === profile);
-			stale.push(...(target.success ? planGolden(mine, profile, goldenKey(target.data)).stale : mine));
+			stale.push(...(target.success ? planGolden(mine, profile, goldenKey(target.data)).stale : mine.filter(notNewer)));
 		}
 		return deleteSims(deps, stale);
 	});

@@ -356,21 +356,33 @@ function waitMessage(request: DeviceRequest, poolSize: number): string {
  * overloaded host), left out of the next round only, so a pool of one is asked again rather than
  * starved. `overload`: the last overloaded reading, while every failure so far was `skipOnly`.
  */
-type HealthLog = { skip: Set<string>; skipOnce: Set<string>; reasons: string[]; overload?: HostLoad | undefined };
+type HealthLog = {
+	skip: Set<string>;
+	skipOnce: Set<string>;
+	reasons: string[];
+	overload?: HostLoad | undefined;
+	/** failures counted against `MAX_HEALTH_RETRIES`: all but overload skips made while `--wait` time remains */
+	spent: number;
+};
 
 function overloadMessage(load: HostLoad, reasons: string[]): string {
-	return `host overloaded (load ${load.load1.toFixed(1)} ≥ ${load.cores} cores); retry later — ${reasons.join("; ")}`;
+	const last = reasons.slice(-(MAX_HEALTH_RETRIES + 1));
+	return `host overloaded (load ${load.load1.toFixed(1)} ≥ ${load.cores} cores); retry later — ${last.join("; ")}`;
 }
 
-/** Remember devices that failed their probe; the error to give up with once retries are spent. */
-function noteUnhealthy(log: HealthLog, bad: UnhealthyDevice[]): string | undefined {
+/**
+ * Remember devices that failed their probe; the error to give up with once retries are spent. While
+ * `waiting` (`--wait` time left), an overload skip is free: the next round asks again, up to the deadline.
+ */
+function noteUnhealthy(log: HealthLog, bad: UnhealthyDevice[], waiting: boolean): string | undefined {
 	for (const b of bad) {
+		if (!(b.skipOnly && waiting)) log.spent++;
 		const onlySkips = log.reasons.length === 0 || log.overload !== undefined;
 		(b.skipOnly ? log.skipOnce : log.skip).add(b.device.id);
 		log.reasons.push(b.reason);
 		log.overload = b.skipOnly && onlySkips ? b.load : undefined;
 	}
-	if (log.reasons.length <= MAX_HEALTH_RETRIES) return undefined;
+	if (log.spent <= MAX_HEALTH_RETRIES) return undefined;
 	if (log.overload) return overloadMessage(log.overload, log.reasons);
 	return `${log.reasons.length} device(s) failed the health probe, giving up: ${log.reasons.join("; ")}`;
 }
@@ -384,11 +396,12 @@ async function completeRound(
 	input: ClaimInput,
 	items: Reserved[],
 	reclaimed: string[],
-	health: HealthLog
+	health: HealthLog,
+	deadline: number
 ): Promise<Result<ClaimOutcome> | undefined> {
 	const done = await complete(input, items, reclaimed);
 	if (!("retry" in done)) return done;
-	const giveUp = noteUnhealthy(health, done.retry);
+	const giveUp = noteUnhealthy(health, done.retry, deadline - input.now() > 0);
 	return giveUp ? err(giveUp) : undefined;
 }
 
@@ -402,7 +415,7 @@ async function completeRound(
 export async function claimDevices(input: ClaimInput): AsyncResult<ClaimOutcome> {
 	const deadline = input.now() + input.waitMs;
 	const reclaimed: string[] = [];
-	const health: HealthLog = { skip: new Set(), skipOnce: new Set(), reasons: [] };
+	const health: HealthLog = { skip: new Set(), skipOnce: new Set(), reasons: [], spent: 0 };
 	let conflicts = 0;
 
 	for (;;) {
@@ -429,7 +442,8 @@ async function settle(
 	const { health } = round;
 	const skippedOnce = health.skipOnce.size > 0;
 	health.skipOnce.clear();
-	if (reservation.kind === "assign") return completeRound(input, reservation.items, round.reclaimed, health);
+	if (reservation.kind === "assign")
+		return completeRound(input, reservation.items, round.reclaimed, health, round.deadline);
 	const remaining = round.deadline - input.now();
 	if (remaining <= 0) {
 		if (skippedOnce && health.overload) return err(overloadMessage(health.overload, health.reasons));
@@ -502,8 +516,15 @@ async function complete(
 	const bad = results.flatMap((r) => (r.unhealthy ? [r.unhealthy] : []));
 	const failures = results.flatMap((r) => (r.ok.success || r.unhealthy ? [] : [r.ok.error]));
 	if (failures.length > 0 || bad.length > 0) {
-		input.store.deleteLeases(results.map((r) => r.leaseId));
-		await quarantineUnhealthy(input, bad);
+		// a device this claim booted and skipped keeps its lease until it is shut down again, so no other
+		// claim can lease it in between and have it shut down under them
+		const held = (r: Realised) => r.unhealthy?.skipOnly === true && r.unhealthy.bootedByClaim === true;
+		input.store.deleteLeases(results.filter((r) => !held(r)).map((r) => r.leaseId));
+		try {
+			await quarantineUnhealthy(input, bad);
+		} finally {
+			input.store.deleteLeases(results.filter(held).map((r) => r.leaseId));
+		}
 		if (failures.length > 0) return err(failures.join("; "));
 		return { retry: bad };
 	}

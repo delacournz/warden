@@ -9,7 +9,7 @@ import { createIosProvider } from "./providers/ios";
 import { simctlDevicesJson } from "./providers/ios.fixture";
 import type { BootReady, DeviceProvider } from "./providers/provider.types";
 import { openStore, type Store } from "./store";
-import type { DeviceRequest, InventoryDevice, Owner } from "./types";
+import { type DeviceRequest, type InventoryDevice, type Owner, resourceKey } from "./types";
 
 let dir: string;
 let store: Store;
@@ -706,6 +706,19 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBeUndefined();
 	});
 
+	test("the skipped device is shut down while this claim still holds its lease (ios-claim-path-S1)", async () => {
+		const provider = poolOfOne([TIMEOUT("1"), TIMEOUT("1")]);
+		const leasedAtShutdown: string[][] = [];
+		provider.shutdown = async (id) => {
+			provider.calls.push(`shutdown ${id}`);
+			leasedAtShutdown.push(store.listLeases().map((l) => resourceKey(l.resource)));
+			return ok(undefined);
+		};
+		await claimDevices(input(provider, { request: request({ max: 1 }), load: overloaded }));
+		expect(leasedAtShutdown).toEqual([["device:ios:1"]]);
+		expect(store.listLeases()).toEqual([]);
+	});
+
 	test("a reused device that was already booted is still left alone when skipped", async () => {
 		const provider = poolOfOne([TIMEOUT("1"), TIMEOUT("1")]);
 		provider.devices[0] = { ...(provider.devices[0] as InventoryDevice), state: "booted" };
@@ -733,7 +746,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 	});
 
 	test("with --wait on a host that stays overloaded: bounded, ends with the host-overloaded error", async () => {
-		const provider = poolOfOne(Array.from({ length: 20 }, () => TIMEOUT("1")));
+		const provider = poolOfOne(Array.from({ length: 1_000 }, () => TIMEOUT("1")));
 		let t = NOW;
 		const result = await claimDevices(
 			input(provider, {
@@ -750,6 +763,53 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 		if (result.success) return;
 		expect(result.error).toContain("host overloaded");
 		expect(store.listLeases()).toEqual([]);
+	});
+});
+
+describe("claim under host load with --wait (ios-claim-path-S2)", () => {
+	const TIMEOUT = (id: string) => `${id}: launchctl list did not answer within 15s`;
+	const overloaded = () => ({ load1: 30, cores: 8 });
+
+	function poolOfOne(answers: string[]): FakeProvider {
+		const device = sim("1", { state: "booted" });
+		const provider = fakeProvider([device]);
+		provider.probe = async (id) => {
+			provider.calls.push(`probe ${id}`);
+			const next = answers.shift();
+			return next === undefined || next === "ok" ? ok(undefined) : err(next);
+		};
+		return provider;
+	}
+
+	function waiting(provider: FakeProvider, waitMs: number) {
+		let t = NOW;
+		return input(provider, {
+			request: request({ max: 1 }),
+			load: overloaded,
+			waitMs,
+			now: () => t,
+			sleep: async (ms) => {
+				t += ms;
+			},
+		});
+	}
+
+	test("overload skips do not spend the retry budget while wait remains: claimed once the host calms down", async () => {
+		const provider = poolOfOne([...Array.from({ length: 10 }, () => TIMEOUT("1")), "ok"]);
+		const result = await claimDevices(waiting(provider, 600_000));
+		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["1"]);
+		expect(provider.calls.filter((c) => c === "probe 1")).toHaveLength(11);
+	});
+
+	test("an overload that outlasts the wait ends at the deadline with the host-overloaded error", async () => {
+		const provider = poolOfOne(Array.from({ length: 1_000 }, () => TIMEOUT("1")));
+		const result = await claimDevices(waiting(provider, 60_000));
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error).toContain("host overloaded (load 30.0 ≥ 8 cores); retry later");
+		expect(store.listLeases()).toEqual([]);
+		// one round per probe pair, each ~5 s reprobe + 2 s poll: the whole 60 s is used
+		expect(provider.calls.filter((c) => c === "probe 1").length).toBeGreaterThan(6);
 	});
 });
 
