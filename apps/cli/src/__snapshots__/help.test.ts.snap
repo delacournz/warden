@@ -826,15 +826,11 @@ Commands:
                                is re-verified first
   tap <target...>              tap an element or point; an @eN older than 30 s
                                is re-verified first
-  longpress <target...>        press and hold an element or point (default 800
-                               ms)
   fill <args...>               replace a text field's content, then read it back
                                (use -- before text starting with -)
   type <text>                  type into whatever has focus
   key <name>                   press a key: Enter Backspace Tab Space Escape
                                Delete Up Down Left Right
-  swipe <args...>              raw swipe: the way the finger moves (swipe up
-                               reveals what is below), or x1 y1 x2 y2
   scroll <direction> [amount]  scroll content: scroll down reveals what is
                                below; --until swipes until a selector is on
                                screen
@@ -842,12 +838,10 @@ Commands:
                                it
   home                         press the home button
   back                         press back (Android only)
-  rotate [orientation]         set the orientation (none = read it)
-  appearance [mode]            set light or dark mode (none = read it)
-  screenshot [path]            save a PNG of the screen (default:
-                               $WARDEN_HOME/ui/<udid>/shots/NNN.png)
-  video <action> [path]        record the screen: video start [path] | video
-                               stop
+  screen                       the device screen: orientation, appearance,
+                               screenshot, video
+  gesture                      touch gestures: swipe, longpress, pinch, rotate,
+                               raw paths
   wait <args...>               poll (100 ms, --timeout) until an element is
                                visible; also: absent <sel> | text <…> | stable
                                [ms]
@@ -1046,33 +1040,6 @@ Options:
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
-$ warden ui longpress --help
-Usage: warden ui longpress [options] <target...>
-
-press and hold an element or point (default 800 ms)
-
-Arguments:
-  target                 @eN | selector | x y, then optionally the duration in
-                         ms
-
-Options:
-  --verify               re-check an @eN against a fresh snapshot first
-  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
-                         ms) and print what changed
-  --udid <udid>          device udid (iOS) / serial (Android)
-  --serial <serial>      Android serial
-  --lease <id>           use the device behind this lease id
-  --claim                take over a stale/missing lease, or claim a device when
-                         none is held
-  --platform <platform>  platform for --claim with no device named: ios
-                         (default) | android
-  --profile <slug>       device profile for --claim with no device named
-  --runtime <runtime>    runtime for --claim with no device named
-  --timeout <ms>         deadline in milliseconds (default 5000)
-  --no-record            don't append this step to a running flow recording
-  --json                 machine-readable output: one JSON document on stdout
-  -h, --help             display help for command
-
 $ warden ui fill --help
 Usage: warden ui fill [options] <args...>
 
@@ -1137,33 +1104,6 @@ Arguments:
   name                   key name
 
 Options:
-  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
-                         ms) and print what changed
-  --udid <udid>          device udid (iOS) / serial (Android)
-  --serial <serial>      Android serial
-  --lease <id>           use the device behind this lease id
-  --claim                take over a stale/missing lease, or claim a device when
-                         none is held
-  --platform <platform>  platform for --claim with no device named: ios
-                         (default) | android
-  --profile <slug>       device profile for --claim with no device named
-  --runtime <runtime>    runtime for --claim with no device named
-  --timeout <ms>         deadline in milliseconds (default 5000)
-  --no-record            don't append this step to a running flow recording
-  --json                 machine-readable output: one JSON document on stdout
-  -h, --help             display help for command
-
-$ warden ui swipe --help
-Usage: warden ui swipe [options] <args...>
-
-raw swipe: the way the finger moves (swipe up reveals what is below), or x1 y1
-x2 y2
-
-Arguments:
-  args                   up | down | left | right | x1 y1 x2 y2
-
-Options:
-  --from <target>        swipe inside this element instead of the whole screen
   --settle [ms]          wait for a quiet screen afterwards (default budget 3000
                          ms) and print what changed
   --udid <udid>          device udid (iOS) / serial (Android)
@@ -1280,8 +1220,24 @@ Options:
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
-$ warden ui rotate --help
-Usage: warden ui rotate [options] [orientation]
+$ warden ui screen --help
+Usage: warden ui screen [options] [command]
+
+the device screen: orientation, appearance, screenshot, video
+
+Options:
+  -h, --help             display help for command
+
+Commands:
+  rotate [orientation]   set the orientation (none = read it)
+  appearance [mode]      set light or dark mode (none = read it)
+  screenshot [path]      save a PNG of the screen (default:
+                         $WARDEN_HOME/ui/<udid>/shots/NNN.png)
+  video <action> [path]  record the screen: video start [path] | video stop
+  help [command]         display help for command
+
+$ warden ui screen rotate --help
+Usage: warden ui screen rotate [options] [orientation]
 
 set the orientation (none = read it)
 
@@ -1306,8 +1262,8 @@ Options:
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
-$ warden ui appearance --help
-Usage: warden ui appearance [options] [mode]
+$ warden ui screen appearance --help
+Usage: warden ui screen appearance [options] [mode]
 
 set light or dark mode (none = read it)
 
@@ -1331,8 +1287,8 @@ Options:
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
-$ warden ui screenshot --help
-Usage: warden ui screenshot [options] [path]
+$ warden ui screen screenshot --help
+Usage: warden ui screen screenshot [options] [path]
 
 save a PNG of the screen (default: $WARDEN_HOME/ui/<udid>/shots/NNN.png)
 
@@ -1354,8 +1310,8 @@ Options:
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
-$ warden ui video --help
-Usage: warden ui video [options] <action> [path]
+$ warden ui screen video --help
+Usage: warden ui screen video [options] <action> [path]
 
 record the screen: video start [path] | video stop
 
@@ -1364,6 +1320,167 @@ Arguments:
   path                   output file for start
 
 Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui gesture --help
+Usage: warden ui gesture [options] [command]
+
+touch gestures: swipe, longpress, pinch, rotate, raw paths
+
+Options:
+  -h, --help             display help for command
+
+Commands:
+  swipe <args...>        raw swipe: the way the finger moves (swipe up reveals
+                         what is below), or x1 y1 x2 y2
+  longpress <target...>  press and hold an element or point (default 800 ms)
+  pinch <args...>        two-finger pinch around an element, a point or the
+                         screen centre: scale > 1 spreads the fingers (zoom in),
+                         < 1 closes them
+  rotate <args...>       two-finger rotation (device orientation is \`screen
+                         rotate\`): positive degrees turn clockwise
+  path                   raw touch paths: one --path per finger (max 2), fingers
+                         go down and lift together
+  help [command]         display help for command
+
+$ warden ui gesture swipe --help
+Usage: warden ui gesture swipe [options] <args...>
+
+raw swipe: the way the finger moves (swipe up reveals what is below), or x1 y1
+x2 y2
+
+Arguments:
+  args                   up | down | left | right | x1 y1 x2 y2
+
+Options:
+  --from <target>        swipe inside this element instead of the whole screen
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui gesture longpress --help
+Usage: warden ui gesture longpress [options] <target...>
+
+press and hold an element or point (default 800 ms)
+
+Arguments:
+  target                 @eN | selector | x y, then optionally the duration in
+                         ms
+
+Options:
+  --verify               re-check an @eN against a fresh snapshot first
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui gesture pinch --help
+Usage: warden ui gesture pinch [options] <args...>
+
+two-finger pinch around an element, a point or the screen centre: scale > 1
+spreads the fingers (zoom in), < 1 closes them
+
+Arguments:
+  args                   [@eN | selector | x y] <scale>: the last word is the
+                         scale (0.1-10, not 1)
+
+Options:
+  --duration <ms>        how long the gesture takes (default 500)
+  --radius <n>           finger distance from the centre at the start, in points
+  --verify               re-check an @eN against a fresh snapshot first
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui gesture rotate --help
+Usage: warden ui gesture rotate [options] <args...>
+
+two-finger rotation (device orientation is \`screen rotate\`): positive degrees
+turn clockwise
+
+Arguments:
+  args                   [@eN | selector | x y] <degrees>: the last word is the
+                         angle (not 0, at most 720)
+
+Options:
+  --duration <ms>        how long the gesture takes (default 500)
+  --radius <n>           finger distance from the centre, in points
+  --verify               re-check an @eN against a fresh snapshot first
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui gesture path --help
+Usage: warden ui gesture path [options]
+
+raw touch paths: one --path per finger (max 2), fingers go down and lift
+together
+
+Options:
+  --path <points>        one finger's route: x,y x,y … (repeat for a second
+                         finger) (default: [])
+  --duration <ms>        how long the gesture takes (default 600)
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
@@ -1722,6 +1839,19 @@ Options:
   -h, --help             display help for command"
 `;
 
+exports[`help output warden __affected-graph --help (and nested subcommands) 1`] = `
+"$ warden __affected-graph --help
+Usage: warden __affected-graph [options] <request>
+
+walk the import graph for \`warden affected\` and print it as JSON (internal)
+
+Arguments:
+  request     the graph request, as JSON
+
+Options:
+  -h, --help  display help for command"
+`;
+
 exports[`help output warden ui-collect --help (and nested subcommands) 1`] = `
 "$ warden ui-collect --help
 Usage: warden ui-collect [options]
@@ -1930,17 +2060,4 @@ exports[`help output unknown command suggests the closest registered one 1`] = `
 "error: unknown command 'claime'
 (Did you mean claim?)
 (add --help for usage)"
-`;
-
-exports[`help output warden __affected-graph --help (and nested subcommands) 1`] = `
-"$ warden __affected-graph --help
-Usage: warden __affected-graph [options] <request>
-
-walk the import graph for \`warden affected\` and print it as JSON (internal)
-
-Arguments:
-  request     the graph request, as JSON
-
-Options:
-  -h, --help  display help for command"
 `;

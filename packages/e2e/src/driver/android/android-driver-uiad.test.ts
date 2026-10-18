@@ -95,6 +95,51 @@ describe("with the server", () => {
 		expect(canSelectAll(driver)).toBe(true);
 	});
 
+	test("reports pinch and two pointers", async () => {
+		const { driver } = await setup({ sdk: 30 });
+		expect(driver.capabilities).toMatchObject({ pinch: true, maxPointers: 2 });
+	});
+
+	test("pinch is one gesture request with the radius in pixels (100 x the screen scale)", async () => {
+		const { driver, uiad, host } = await setup({
+			uiad: {
+				handle: (request) =>
+					request.op === "gesture" ? { data: { frames: 2, pointers: 2, maxLagMs: 0, via: "inject3" } } : undefined,
+			},
+		});
+		await value(driver.pinch({ x: 540, y: 1200 }, 2, { angle: 0 }));
+		const request = uiad.of("gesture")[0];
+		const paths = request?.paths as Array<Array<{ x: number; y: number }>>;
+		expect(paths).toHaveLength(2);
+		const radius = 100 * (420 / 160);
+		expect(paths[0]?.[0]?.x).toBeCloseTo(540 - radius, 1);
+		expect(paths[1]?.[0]?.x).toBeCloseTo(540 + radius, 1);
+		expect(paths[1]?.at(-1)?.x).toBeCloseTo(540 + radius * 2, 1);
+		expect(inputs(host).filter((c) => c.includes("motionevent"))).toEqual([]);
+	});
+
+	test("a refused two-finger gesture is E_UNSUPPORTED, not a one-finger line; a refused one-finger path is the motionevent line", async () => {
+		const { driver, host } = await setup({
+			uiad: {
+				handle: (request) =>
+					request.op === "gesture" ? { error: { code: "E_HID", message: "no", retryable: false } } : undefined,
+			},
+		});
+		const two = await driver.rotate({ x: 540, y: 1200 }, 90);
+		expect(!two.success && two.error.code).toBe("E_UNSUPPORTED");
+		await value(
+			driver.gesture([
+				{
+					points: [
+						{ x: 1, y: 2 },
+						{ x: 30, y: 40 },
+					],
+				},
+			])
+		);
+		expect(inputs(host).some((c) => c.includes("motionevent DOWN 1 2"))).toBe(true);
+	});
+
 	test("is not started until a call needs it: opening a link, or nothing at all, costs nothing", async () => {
 		const { driver, uiad, host } = await setup();
 		expect(uiad.started()).toBe(0);

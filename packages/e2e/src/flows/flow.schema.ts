@@ -2,7 +2,7 @@ import { z } from "zod";
 import { QUERY_ROLES } from "../screen/roles";
 
 /**
- * The `.flow.json` file format (`v: 1`): what `warden ui record` writes, `replay` re-runs and `export` turns into a spec.
+ * The `.flow.json` file format (`v: 2`): what `warden ui record` writes, `replay` re-runs and `export` turns into a spec.
  * Targets are always resolved selectors (never `@eN` refs) so a flow survives across sessions.
  */
 
@@ -78,18 +78,85 @@ const base = {
 	settle: settleSchema.optional(),
 };
 
-const swipeGestureSchema = z.union([
+const durationMs = z.number().positive().optional();
+const scale = z.number().positive().refine(Number.isFinite, "must be finite");
+const degrees = finite.refine((value) => value !== 0, "must not be 0");
+const touchPath = z.array(pointSchema).min(2);
+
+/** Device-level steps: `screen rotate|appearance|screenshot`. */
+const screenStepSchema = z.discriminatedUnion("type", [
+	z.strictObject({ ...base, kind: z.literal("screen"), type: z.literal("rotate"), orientation: orientationSchema }),
 	z.strictObject({
+		...base,
+		kind: z.literal("screen"),
+		type: z.literal("appearance"),
+		mode: z.enum(["light", "dark"]),
+	}),
+	z.strictObject({
+		...base,
+		kind: z.literal("screen"),
+		type: z.literal("screenshot"),
+		name: z.string().min(1).optional(),
+	}),
+]);
+
+/** `gesture swipe`: by direction (optionally within a target) or by an explicit from/to path. */
+const swipeStepSchema = z.discriminatedUnion("by", [
+	z.strictObject({
+		...base,
+		kind: z.literal("gesture"),
+		type: z.literal("swipe"),
 		by: z.literal("direction"),
 		direction: directionSchema,
 		momentum: momentumSchema.optional(),
 		target: targetSchema.optional(),
 	}),
 	z.strictObject({
+		...base,
+		kind: z.literal("gesture"),
+		type: z.literal("swipe"),
 		by: z.literal("path"),
 		from: pointSchema,
 		to: pointSchema,
-		durationMs: z.number().positive().optional(),
+		durationMs,
+	}),
+]);
+
+/** Touch gestures: `gesture swipe|longpress|pinch|rotate|path`. `pinch`/`rotate` without a target work on the screen centre. */
+const gestureStepSchema = z.discriminatedUnion("type", [
+	swipeStepSchema,
+	z.strictObject({
+		...base,
+		kind: z.literal("gesture"),
+		type: z.literal("longpress"),
+		target: targetSchema,
+		durationMs,
+	}),
+	z.strictObject({
+		...base,
+		kind: z.literal("gesture"),
+		type: z.literal("pinch"),
+		scale,
+		target: targetSchema.optional(),
+		radius: z.number().positive().optional(),
+		durationMs,
+	}),
+	z.strictObject({
+		...base,
+		kind: z.literal("gesture"),
+		type: z.literal("rotate"),
+		degrees,
+		target: targetSchema.optional(),
+		radius: z.number().positive().optional(),
+		durationMs,
+	}),
+	z.strictObject({
+		...base,
+		kind: z.literal("gesture"),
+		type: z.literal("path"),
+		/** one array per finger */
+		paths: z.array(touchPath).min(1).max(2),
+		durationMs,
 	}),
 ]);
 
@@ -103,12 +170,6 @@ export const stepSchema = z.discriminatedUnion("kind", [
 		args: z.array(z.string()).optional(),
 	}),
 	z.strictObject({ ...base, kind: z.literal("press"), target: targetSchema }),
-	z.strictObject({
-		...base,
-		kind: z.literal("longpress"),
-		target: targetSchema,
-		durationMs: z.number().positive().optional(),
-	}),
 	z.strictObject({ ...base, kind: z.literal("fill"), target: targetSchema, text: textSchema }),
 	z.strictObject({ ...base, kind: z.literal("type"), target: targetSchema.optional(), text: textSchema }),
 	z.strictObject({
@@ -118,7 +179,6 @@ export const stepSchema = z.discriminatedUnion("kind", [
 		modifiers: z.array(modifierSchema).optional(),
 		target: targetSchema.optional(),
 	}),
-	z.strictObject({ ...base, kind: z.literal("swipe"), gesture: swipeGestureSchema }),
 	z.strictObject({
 		...base,
 		kind: z.literal("scroll"),
@@ -157,10 +217,9 @@ export const stepSchema = z.discriminatedUnion("kind", [
 	z.strictObject({ ...base, kind: z.literal("home") }),
 	z.strictObject({ ...base, kind: z.literal("back") }),
 	z.strictObject({ ...base, kind: z.literal("reload") }),
-	z.strictObject({ ...base, kind: z.literal("rotate"), orientation: orientationSchema }),
-	z.strictObject({ ...base, kind: z.literal("appearance"), mode: z.enum(["light", "dark"]) }),
 	z.strictObject({ ...base, kind: z.literal("snapshot"), interactiveOnly: z.boolean().optional() }),
-	z.strictObject({ ...base, kind: z.literal("screenshot"), name: z.string().min(1).optional() }),
+	screenStepSchema,
+	gestureStepSchema,
 ]);
 
 export const recordedOnSchema = z.strictObject({
@@ -173,7 +232,7 @@ export const recordedOnSchema = z.strictObject({
 
 export const flowSchema = z
 	.strictObject({
-		v: z.literal(1),
+		v: z.literal(2),
 		name: z.string().min(1),
 		createdAt: z.number().nonnegative(),
 		recordedOn: recordedOnSchema,
@@ -199,7 +258,21 @@ export type CoordsTarget = z.infer<typeof coordsTargetSchema>;
 export type Target = z.infer<typeof targetSchema>;
 export type Step = z.infer<typeof stepSchema>;
 export type StepKind = Step["kind"];
-export type StepOf<K extends StepKind> = Extract<Step, { kind: K }>;
+export type ScreenStep = Extract<Step, { kind: "screen" }>;
+export type GestureStep = Extract<Step, { kind: "gesture" }>;
+/** What an executor is keyed by: the step kind, except `screen` and `gesture` which are keyed `screen.<type>` / `gesture.<type>`. */
+export type StepKey =
+	| Exclude<StepKind, "screen" | "gesture">
+	| `screen.${ScreenStep["type"]}`
+	| `gesture.${GestureStep["type"]}`;
+export type StepOf<K extends StepKey> = K extends `${infer Kind}.${infer Type}`
+	? Extract<Step, { kind: Kind; type: Type }>
+	: Extract<Step, { kind: K }>;
+
+export function stepKey(step: Step): StepKey {
+	// the template is the union of `screen.<type>` and `gesture.<type>` spelled out; TS only sees the cross product
+	return step.kind === "screen" || step.kind === "gesture" ? (`${step.kind}.${step.type}` as StepKey) : step.kind;
+}
 export type RecordedOn = z.infer<typeof recordedOnSchema>;
 export type Flow = z.infer<typeof flowSchema>;
 
@@ -208,4 +281,4 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 /** A step before the recorder numbers it: `i` is assigned under the file lock so concurrent appends stay ordered. */
 export type NewStep = DistributiveOmit<Step, "i">;
 
-export const FLOW_VERSION = 1;
+export const FLOW_VERSION = 2;

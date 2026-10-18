@@ -124,10 +124,10 @@ describe("longpress", () => {
 	test("default 800 ms, explicit ms after a ref, and x y with / without ms", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		await h.run("snapshot");
-		await h.run("longpress", "@e4");
-		await h.run("longpress", "@e4", "700");
-		await h.run("longpress", "100", "200");
-		await h.run("longpress", "100", "200", "500");
+		await h.run("gesture", "longpress", "@e4");
+		await h.run("gesture", "longpress", "@e4", "700");
+		await h.run("gesture", "longpress", "100", "200");
+		await h.run("gesture", "longpress", "100", "200", "500");
 		expect(h.driver.callsOf("longPress")).toEqual([
 			{ method: "longPress", point: SIGN_IN, opts: { durationMs: 800 } },
 			{ method: "longPress", point: SIGN_IN, opts: { durationMs: 700 } },
@@ -308,7 +308,7 @@ describe("type / key", () => {
 describe("swipe", () => {
 	test("a direction is the way the finger moves, across the middle of the screen", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		expect(await h.run("swipe", "up")).toBe(0);
+		expect(await h.run("gesture", "swipe", "up")).toBe(0);
 		expect(h.driver.callsOf("swipe")).toEqual([
 			{
 				method: "swipe",
@@ -321,7 +321,7 @@ describe("swipe", () => {
 
 	test("`swipe up` (finger direction) and `scroll down` (content direction) are the same gesture", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		await h.run("swipe", "up");
+		await h.run("gesture", "swipe", "up");
 		await h.run("scroll", "down");
 		const [finger, content] = h.driver.callsOf("swipe");
 		expect(finger).toMatchObject({ from: content?.from, to: content?.to });
@@ -329,7 +329,7 @@ describe("swipe", () => {
 
 	test("x1 y1 x2 y2 is used as given", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		expect(await h.run("swipe", "10", "20", "30", "40")).toBe(0);
+		expect(await h.run("gesture", "swipe", "10", "20", "30", "40")).toBe(0);
 		expect(h.driver.callsOf("swipe")[0]).toMatchObject({ from: { x: 10, y: 20 }, to: { x: 30, y: 40 } });
 	});
 
@@ -338,7 +338,7 @@ describe("swipe", () => {
 			el("window", { children: [el("list", { id: "list", frame: { x: 20, y: 100, width: 350, height: 400 } })] }),
 		]);
 		const h = harness([list]);
-		expect(await h.run("swipe", "left", "--from", "id=list")).toBe(0);
+		expect(await h.run("gesture", "swipe", "left", "--from", "id=list")).toBe(0);
 		expect(h.driver.callsOf("swipe")[0]).toMatchObject({
 			from: { x: 195 + 87.5, y: 300 },
 			to: { x: 195 - 87.5, y: 300 },
@@ -347,7 +347,7 @@ describe("swipe", () => {
 
 	test("nonsense: usage error", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		expect(await h.run("swipe", "sideways", "--json")).toBe(1);
+		expect(await h.run("gesture", "swipe", "sideways", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
 	});
 });
@@ -574,21 +574,21 @@ describe("device controls", () => {
 
 	test("rotate sets (and reads) the orientation", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		expect(await h.run("rotate", "landscape-left", "--json")).toBe(0);
+		expect(await h.run("screen", "rotate", "landscape-left", "--json")).toBe(0);
 		expect(h.driver.callsOf("orientation")).toEqual([{ method: "orientation", set: "landscapeLeft" }]);
 		expect(doc(h.c).result.orientation).toBe("landscapeLeft");
-		expect(await h.run("rotate", "--json")).toBe(0);
+		expect(await h.run("screen", "rotate", "--json")).toBe(0);
 		expect(doc(h.c).result.orientation).toBe("landscapeLeft");
-		expect(await h.run("rotate", "sideways", "--json")).toBe(1);
+		expect(await h.run("screen", "rotate", "sideways", "--json")).toBe(1);
 	});
 
 	test("appearance sets (and reads) light / dark", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		expect(await h.run("appearance", "dark", "--json")).toBe(0);
+		expect(await h.run("screen", "appearance", "dark", "--json")).toBe(0);
 		expect(h.driver.callsOf("appearance")).toEqual([{ method: "appearance", set: "dark" }]);
-		expect(await h.run("appearance", "--json")).toBe(0);
+		expect(await h.run("screen", "appearance", "--json")).toBe(0);
 		expect(doc(h.c).result.appearance).toBe("dark");
-		expect(await h.run("appearance", "blue", "--json")).toBe(1);
+		expect(await h.run("screen", "appearance", "blue", "--json")).toBe(1);
 	});
 
 	test("screenshot numbers its files under $WARDEN_HOME/ui/<udid>/shots, or goes where told", async () => {
@@ -598,13 +598,13 @@ describe("device controls", () => {
 				return undefined;
 			},
 		});
-		await h.run("screenshot", "--json");
+		await h.run("screen", "screenshot", "--json");
 		const first: string = doc(h.c).result.path;
 		expect(first).toMatch(new RegExp(`/ui/${UDID}/shots/001\\.png$`));
 		expect(h.driver.callsOf("screenshot")[0]?.opts?.path).toBe(first);
-		await h.run("screenshot", "--json");
+		await h.run("screen", "screenshot", "--json");
 		expect(doc(h.c).result.path).toMatch(/\/shots\/002\.png$/);
-		await h.run("screenshot", "out/shot.png", "--json");
+		await h.run("screen", "screenshot", "out/shot.png", "--json");
 		expect(doc(h.c).result.path).toBe(`${h.c.cwd}/out/shot.png`);
 	});
 });
@@ -632,7 +632,7 @@ describe("video", () => {
 	test("iOS: start spawns simctl recordVideo and remembers the pid; stop sends SIGINT and forgets it", async () => {
 		const fake = fakeVideo();
 		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
-		expect(await h.run("video", "start", "--json")).toBe(0);
+		expect(await h.run("screen", "video", "start", "--json")).toBe(0);
 		const path: string = doc(h.c).result.path;
 		expect(path).toMatch(new RegExp(`/ui/${UDID}/videos/001\\.mp4$`));
 		expect(fake.specs[0]?.argv).toEqual([
@@ -647,14 +647,14 @@ describe("video", () => {
 		]);
 		expect(readState(h.c, UDID).video).toMatchObject({ pid: 4242, path });
 
-		expect(await h.run("video", "start", "--json")).toBe(1);
+		expect(await h.run("screen", "video", "start", "--json")).toBe(1);
 		expect(doc(h.c).error.message).toContain("already recording");
 
-		expect(await h.run("video", "stop", "--json")).toBe(0);
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual(["SIGINT"]);
 		expect(doc(h.c).result).toEqual({ action: "video", state: "stopped", path });
 		expect(readState(h.c, UDID).video).toBeUndefined();
-		expect(await h.run("video", "stop", "--json")).toBe(1);
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(1);
 	});
 
 	test("a recorder that ignores SIGINT is killed with a warning", async () => {
@@ -664,8 +664,8 @@ describe("video", () => {
 			if (signal === "SIGKILL") return;
 		};
 		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
-		await h.run("video", "start");
-		expect(await h.run("video", "stop", "--json")).toBe(0);
+		await h.run("screen", "video", "start");
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual(["SIGINT", "SIGKILL"]);
 		expect(doc(h.c).warnings?.[0]).toContain("ignored SIGINT");
 	});

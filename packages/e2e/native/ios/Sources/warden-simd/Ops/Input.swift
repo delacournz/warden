@@ -3,7 +3,7 @@ import FBControlCore
 import FBSimulatorControl
 import Foundation
 
-// HID input ops: tap, longPress, swipe, drag, pinch, pressButton, key, typeText, paste, selectAll.
+// HID input ops: tap, longPress, swipe, drag, pinch, gesture, pressButton, key, typeText, paste, selectAll.
 //
 // Layout: `HIDPlan` builds idb `SimulatorHIDEvent`s from validated numbers (pure, unit-tested); `InputEngine` parses
 // request params, resolves units, and sends the events through a `HIDGate` so only one event stream is in flight at a
@@ -133,6 +133,28 @@ enum HIDPlan {
     events.append(.twoFingerTouch(direction: .up, finger1: end.0, finger2: end.1))
     return .composite(events)
   }
+
+  /// One or two equal-length paths replayed frame by frame: down at frame 0, `hold` after it, `frame` between frames,
+  /// `release` after the last, then up at the last positions. One path uses single touches, two use
+  /// `twoFingerTouch` (the fingers lift together). One frame is a tap.
+  static func gesture(paths: [[CGPoint]], frame: Double, hold: Double, release: Double) -> SimulatorHIDEvent {
+    func touch(_ index: Int, _ direction: SimulatorHIDDirection) -> SimulatorHIDEvent {
+      if paths.count == 2 {
+        return .twoFingerTouch(direction: direction, finger1: paths[0][index], finger2: paths[1][index])
+      }
+      return .touch(direction: direction, x: paths[0][index].x, y: paths[0][index].y)
+    }
+    let count = paths[0].count
+    var events: [SimulatorHIDEvent] = [touch(0, .down)]
+    if hold > 0 { events.append(.delay(hold)) }
+    for index in 1..<max(count, 1) {
+      events.append(.delay(frame))
+      events.append(touch(index, .down))
+    }
+    if release > 0 { events.append(.delay(release)) }
+    events.append(touch(count - 1, .up))
+    return .composite(events)
+  }
 }
 
 /// Lets one HID event stream through at a time, FIFO. Waiters that are cancelled (op timeout) leave the queue.
@@ -237,6 +259,39 @@ struct InputParams {
     return unit
   }
 
+  /// `paths`: one or two arrays of `{x,y}` points, equal length, 1...1000 points each.
+  func paths() throws -> [[(x: Double, y: Double)]] {
+    guard let outer = json["paths"]?.arrayValue else { throw WireError(.badRequest, "missing \"paths\" array") }
+    guard (1...2).contains(outer.count) else {
+      throw WireError(.badRequest, "\"paths\" must hold 1 or 2 paths, got \(outer.count)")
+    }
+    var result: [[(x: Double, y: Double)]] = []
+    for entry in outer {
+      guard let points = entry.arrayValue, (1...1000).contains(points.count) else {
+        throw WireError(.badRequest, "each path must be an array of 1...1000 {x,y} points")
+      }
+      result.append(
+        try points.map { point in
+          guard let object = point.objectValue else { throw WireError(.badRequest, "each path point must be {x,y}") }
+          let inner = InputParams(json: .object(object))
+          return (try inner.required("x"), try inner.required("y"))
+        })
+    }
+    guard result.allSatisfy({ $0.count == result[0].count }) else {
+      throw WireError(.badRequest, "all \"paths\" must have the same number of points")
+    }
+    return result
+  }
+
+  /// A fractional-millisecond duration within `range`, `fallback` when absent.
+  func ms(_ key: String, default fallback: Double, within range: ClosedRange<Double>) throws -> Double {
+    let value = try optional(key) ?? fallback
+    guard range.contains(value) else {
+      throw WireError(.badRequest, "\"\(key)\" must be within \(range.lowerBound)...\(range.upperBound) ms, got \(value)")
+    }
+    return value
+  }
+
   func string(_ key: String) throws -> String {
     guard let value = json[key]?.stringValue else { throw WireError(.badRequest, "missing \"\(key)\" string") }
     return value
@@ -255,11 +310,15 @@ struct InputEnvironment: Sendable {
 struct InputEngine: Sendable {
   let environment: InputEnvironment
 
-  private func resolve(_ point: (x: Double, y: Double), unit: CoordinateUnit) async throws -> CGPoint {
+  /// The screen in `unit`; landscape is read once here (only `norm` needs it).
+  private func geometry(_ unit: CoordinateUnit) async -> ScreenGeometry {
     let size = environment.screen()
     let landscape = unit == .norm ? await environment.isLandscape() : false
-    return try ScreenGeometry(width: size.width, height: size.height, landscape: landscape)
-      .points(x: point.x, y: point.y, unit: unit)
+    return ScreenGeometry(width: size.width, height: size.height, landscape: landscape)
+  }
+
+  private func resolve(_ point: (x: Double, y: Double), unit: CoordinateUnit) async throws -> CGPoint {
+    try await geometry(unit).points(x: point.x, y: point.y, unit: unit)
   }
 
   private func send(_ event: SimulatorHIDEvent) async throws -> JSON {
@@ -299,6 +358,8 @@ struct InputEngine: Sendable {
           release: try params.seconds("releaseMs", default: 100)))
     case "pinch":
       return try await send(try await pinch(params))
+    case "gesture":
+      return try await send(try await gesture(params))
     case "pressButton":
       return try await pressButton(try params.string("button"))
     case "key":
@@ -332,6 +393,24 @@ struct InputEngine: Sendable {
     return HIDPlan.pinch(
       center: center, scale: scale, radius: radius, angle: degrees * .pi / 180,
       duration: try params.seconds("durationMs", default: 400))
+  }
+
+  /// `gesture`: validates everything before sending; the whole replay must fit in 60 s.
+  private func gesture(_ params: InputParams) async throws -> SimulatorHIDEvent {
+    let unit = try params.unit()
+    let raw = try params.paths()
+    let frameCount = raw[0].count
+    let frameMs =
+      frameCount > 1 ? try params.ms("frameMs", default: 16, within: 0.001...1000) : 16
+    let holdMs = try params.ms("holdMs", default: 0, within: 0...60_000)
+    let releaseMs = try params.ms("releaseMs", default: 0, within: 0...60_000)
+    let totalMs = Double(frameCount - 1) * frameMs + holdMs + releaseMs
+    guard totalMs <= 60_000 else {
+      throw WireError(.badRequest, "gesture would take \(totalMs) ms, the limit is 60000")
+    }
+    let geometry = await geometry(unit)
+    let paths = try raw.map { path in try path.map { try geometry.points(x: $0.x, y: $0.y, unit: unit) } }
+    return HIDPlan.gesture(paths: paths, frame: frameMs / 1000, hold: holdMs / 1000, release: releaseMs / 1000)
   }
 
   static let buttons: [String: SimulatorHIDButton] = [
@@ -402,7 +481,7 @@ final class NullLogger: ControlCoreLogger, @unchecked Sendable {
 
 enum InputOps {
   static let names = [
-    "tap", "longPress", "swipe", "drag", "pinch", "pressButton", "key", "typeText", "paste", "selectAll",
+    "tap", "longPress", "swipe", "drag", "pinch", "gesture", "pressButton", "key", "typeText", "paste", "selectAll",
   ]
 
   /// One gate per simulator for the process lifetime (a helper serves one UDID; tests may open several).

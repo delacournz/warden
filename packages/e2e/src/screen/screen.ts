@@ -1,6 +1,20 @@
 import type { Point } from "../driver/driver.types";
 import { E2eError } from "../errors";
-import { type Momentum, type SwipeDirection, screenRect, swipeVector } from "./actions";
+import {
+	assertDegrees,
+	assertScale,
+	centreOf,
+	type Momentum,
+	PATH_MS,
+	PINCH_MS,
+	pinchRadius,
+	ROTATE_MS,
+	requireGesture,
+	rotateRadius,
+	type SwipeDirection,
+	screenRect,
+	swipeVector,
+} from "./actions";
 import { Runtime, type ScreenHost } from "./context";
 import { type ActionOptions, Locator, type ScrollOptions, scrollUntilVisible } from "./locator";
 import {
@@ -20,6 +34,25 @@ export type ScreenSwipeOptions =
 	| { direction: SwipeDirection; momentum?: Momentum }
 	| { from: Point; to: Point; durationMs?: number };
 
+export type ScreenPinchOptions = { scale: number; center?: Point; radius?: number; durationMs?: number };
+export type ScreenRotateOptions = { degrees: number; center?: Point; radius?: number; durationMs?: number };
+/**
+ * `paths` are 1-2 fingers' routes in screen points, each with at least one finite point (give two or more for a
+ * real path; a single point is a held touch). More fingers than the driver's `capabilities.maxPointers` is `INVALID_ARGUMENT`.
+ */
+export type ScreenPathOptions = { paths: readonly (readonly Point[])[]; durationMs?: number };
+
+/** Viewport-level gestures; `screen.swipe` is the same as `screen.gesture.swipe`. */
+export type ScreenGestures = {
+	/** pinch about the screen centre (or `center`); `scale` above 1 zooms in */
+	pinch(options: ScreenPinchOptions): Promise<void>;
+	/** rotate about the screen centre (or `center`); positive `degrees` turn clockwise */
+	rotate(options: ScreenRotateOptions): Promise<void>;
+	/** replay 1-2 finger paths on one timeline; no observation, coordinates are used as given */
+	path(options: ScreenPathOptions): Promise<void>;
+	swipe(options: ScreenSwipeOptions): Promise<void>;
+};
+
 /** The `screen` of the spec API: lazy queries over the device, plus viewport-level gestures. */
 export type Screen = {
 	getByTestId(id: TextMatch, options?: TestIdOptions): Locator;
@@ -32,6 +65,7 @@ export type Screen = {
 	locator(selector: string): Locator;
 	tapAt(point: Point, options?: ActionOptions): Promise<void>;
 	swipe(options: ScreenSwipeOptions): Promise<void>;
+	gesture: ScreenGestures;
 	scrollUntilVisible(target: Locator, options?: ScrollOptions): Promise<void>;
 };
 
@@ -42,6 +76,32 @@ function isFinitePoint(point: Point): boolean {
 export function createScreen(host: ScreenHost): Screen {
 	const rt = new Runtime(host);
 	const lazy = (query: Query): Locator => new Locator({ kind: "query", query }, rt);
+
+	const swipe = async (options: ScreenSwipeOptions): Promise<void> => {
+		const keys = Object.keys(options);
+		const allowed = "direction" in options ? ["direction", "momentum"] : ["from", "to", "durationMs"];
+		const unknown = keys.filter((key) => !allowed.includes(key));
+		if (unknown.length > 0 || keys.length === 0 || ("direction" in options && "from" in options)) {
+			throw new E2eError(
+				"INVALID_ARGUMENT",
+				"swipe takes either { direction, momentum? } or { from, to, durationMs? }, not a mix"
+			);
+		}
+		return rt.step("swipe", async () => {
+			if ("direction" in options) {
+				const observed = await rt.observe();
+				const vector = swipeVector(options.direction, screenRect(observed.snapshot.screen), options.momentum);
+				rt.drive("swipe", await observed.driver.swipe(vector.from, vector.to, vector.options));
+				return;
+			}
+			if (!isFinitePoint(options.from) || !isFinitePoint(options.to)) {
+				throw new E2eError("INVALID_ARGUMENT", "swipe needs finite coordinates for from and to");
+			}
+			const driver = await host.driver();
+			const opts = options.durationMs === undefined ? undefined : { durationMs: options.durationMs };
+			rt.drive("swipe", await driver.swipe(options.from, options.to, opts));
+		});
+	};
 
 	return {
 		getByTestId: (id, options) => lazy(testIdQuery(id, options)),
@@ -61,30 +121,66 @@ export function createScreen(host: ScreenHost): Screen {
 			});
 		},
 
-		async swipe(options) {
-			const keys = Object.keys(options);
-			const allowed = "direction" in options ? ["direction", "momentum"] : ["from", "to", "durationMs"];
-			const unknown = keys.filter((key) => !allowed.includes(key));
-			if (unknown.length > 0 || keys.length === 0 || ("direction" in options && "from" in options)) {
-				throw new E2eError(
-					"INVALID_ARGUMENT",
-					"swipe takes either { direction, momentum? } or { from, to, durationMs? }, not a mix"
-				);
-			}
-			return rt.step("swipe", async () => {
-				if ("direction" in options) {
+		swipe,
+
+		gesture: {
+			async pinch(options) {
+				assertScale(options.scale);
+				return rt.step(`pinch ×${options.scale}`, async () => {
 					const observed = await rt.observe();
-					const vector = swipeVector(options.direction, screenRect(observed.snapshot.screen), options.momentum);
-					rt.drive("swipe", await observed.driver.swipe(vector.from, vector.to, vector.options));
-					return;
+					const rect = screenRect(observed.snapshot.screen);
+					requireGesture(observed.driver, "pinch", "screen.gesture.pinch");
+					rt.drive(
+						"pinch",
+						await observed.driver.pinch(options.center ?? centreOf(rect), options.scale, {
+							durationMs: options.durationMs ?? PINCH_MS,
+							radius: options.radius ?? pinchRadius(rect, options.scale, observed.snapshot.screen),
+						})
+					);
+				});
+			},
+
+			async rotate(options) {
+				assertDegrees(options.degrees);
+				return rt.step(`rotate ${options.degrees}°`, async () => {
+					const observed = await rt.observe();
+					const rect = screenRect(observed.snapshot.screen);
+					requireGesture(observed.driver, "pinch", "screen.gesture.rotate");
+					rt.drive(
+						"rotate",
+						await observed.driver.rotate(options.center ?? centreOf(rect), options.degrees, {
+							durationMs: options.durationMs ?? ROTATE_MS,
+							radius: options.radius ?? rotateRadius(rect, observed.snapshot.screen),
+						})
+					);
+				});
+			},
+
+			async path(options) {
+				const { paths } = options;
+				if (paths.length < 1 || paths.length > 2) {
+					throw new E2eError("INVALID_ARGUMENT", `gesture.path takes 1 or 2 paths, got ${paths.length}`);
 				}
-				if (!isFinitePoint(options.from) || !isFinitePoint(options.to)) {
-					throw new E2eError("INVALID_ARGUMENT", "swipe needs finite coordinates for from and to");
+				if (paths.some((points) => points.length < 1 || !points.every(isFinitePoint))) {
+					throw new E2eError(
+						"INVALID_ARGUMENT",
+						"gesture.path needs at least one point per path, all with finite x and y"
+					);
 				}
-				const driver = await host.driver();
-				const opts = options.durationMs === undefined ? undefined : { durationMs: options.durationMs };
-				rt.drive("swipe", await driver.swipe(options.from, options.to, opts));
-			});
+				return rt.step(`gesture path (${paths.length} ${paths.length === 1 ? "finger" : "fingers"})`, async () => {
+					const driver = await host.driver();
+					requireGesture(driver, "path", "screen.gesture.path", paths.length);
+					rt.drive(
+						"gesture",
+						await driver.gesture(
+							paths.map((points) => ({ points: [...points] })),
+							{ durationMs: options.durationMs ?? PATH_MS }
+						)
+					);
+				});
+			},
+
+			swipe,
 		},
 
 		scrollUntilVisible: (target, options) => scrollUntilVisible(rt, target, options),
