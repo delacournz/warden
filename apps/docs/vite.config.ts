@@ -19,7 +19,10 @@ export default defineConfig({
 			preset: "bun",
 			compressPublicAssets: true,
 			routeRules,
-			handlers: [{ route: "/**", middleware: true, handler: "./src/server/compress.ts" }],
+			handlers: [
+				{ route: "/**", middleware: true, handler: "./src/server/otel.ts" },
+				{ route: "/**", middleware: true, handler: "./src/server/compress.ts" },
+			],
 		})],
 	resolve: {
 		tsconfigPaths: true,
