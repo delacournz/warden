@@ -28,6 +28,7 @@ import {
 	focusAndClear,
 	focusClearType,
 	hitTestField,
+	tapToFocus,
 } from "./field";
 import type { NodeEntry } from "./nodes";
 import type { PollStep } from "./poll";
@@ -707,7 +708,7 @@ export class Locator {
 
 	private async focus({ entry, observed }: Actionable): Promise<void> {
 		if (entry.states.focused) return;
-		this.rt.drive("focus", await observed.driver.tap(focusPoint(entry.element.frame)));
+		this.rt.drive("focus", await tapToFocus(observed.driver, this.pause, focusPoint(entry.element.frame), entry));
 	}
 
 	private async focusAndClear({ entry, observed }: Actionable, method: ClearMethod): Promise<void> {

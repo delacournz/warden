@@ -198,15 +198,22 @@ describe("fill", () => {
 
 	test("a field that shows its placeholder as the value is typed into with no clearing keys", async () => {
 		let typed = "";
+		let focused = false;
 		const placeholderScreen = (value: string) =>
 			snapshotOf([
 				el("window", {
-					children: [el("textfield", { label: "Email", id: "email", value: value || "Email", placeholder: "Email" })],
+					children: [
+						el("textfield", { label: "Email", id: "email", value: value || "Email", placeholder: "Email", focused }),
+					],
 				}),
 			]);
 		const h = harness([placeholderScreen("")], {
 			selectAll: true,
 			onCall: (call, driver) => {
+				if (call.method === "tap") {
+					focused = true;
+					driver.set(placeholderScreen(typed));
+				}
 				if (call.method === "typeText") {
 					typed += call.text;
 					driver.set(placeholderScreen(typed));
@@ -218,7 +225,8 @@ describe("fill", () => {
 		expect(h.driver.callsOf("key")).toEqual([]);
 		expect(h.driver.callsOf("selectAll")).toEqual([]);
 		expect(doc(h.c).result).toMatchObject({ verified: true });
-		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(2);
+		// one hit-test sees the field take focus after the tap, two confirm the text
+		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(3);
 	});
 
 	test("the retry after a field did not take the text backspaces per character, not by select-all", async () => {

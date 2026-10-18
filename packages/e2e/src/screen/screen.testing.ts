@@ -47,7 +47,9 @@ export const FIELD_FRAME = { x: 24, y: 200, width: 300, height: 44 };
  * the next N reads (snapshot or hit-test) still show the value from before it. `placeholder` is what an empty field
  * shows as its value (iOS); `placeholderMeta: false` leaves it out of the element's `placeholder`, as React Native on iOS
  * does. `selectAll` gives the driver the select-all capability (the next Backspace or typing replaces the whole text);
- * `selectAllRefused` offers it but selects nothing (a field with its context menu hidden).
+ * `selectAllRefused` offers it but selects nothing (a field with its context menu hidden). `focused` is the field's
+ * focus before any tap; a tap focuses it, seen from the read after `focusReads` more reads (default 0: the next read),
+ * unless `neverFocuses` (a field that never reports focus, as iOS text fields did before `is-editing` counted).
  */
 export function fieldFixture(
 	options: {
@@ -60,6 +62,8 @@ export function fieldFixture(
 		dropKeys?: number;
 		lagReads?: number;
 		focused?: boolean;
+		focusReads?: number;
+		neverFocuses?: boolean;
 		placeholder?: string;
 		placeholderMeta?: boolean;
 		selectAll?: boolean;
@@ -76,11 +80,18 @@ export function fieldFixture(
 		lag: 0,
 		reads: 0,
 		selected: false,
+		focused: options.focused,
+		focusIn: -1,
 	};
 	const lagReads = options.lagReads ?? 0;
 	const driver = fakeDriver({
 		screens: () => {
 			state.reads += 1;
+			if (state.focusIn > 0) state.focusIn -= 1;
+			else if (state.focusIn === 0) {
+				state.focused = true;
+				state.focusIn = -1;
+			}
 			if (state.lag > 0) state.lag -= 1;
 			else state.shown = state.value;
 			const empty = state.shown === "";
@@ -94,13 +105,14 @@ export function fieldFixture(
 					...(options.placeholder !== undefined && options.placeholderMeta !== false
 						? { placeholder: options.placeholder }
 						: {}),
-					...(options.focused === undefined ? {} : { focused: options.focused }),
+					...(state.focused === undefined ? {} : { focused: state.focused }),
 				}),
 			]);
 		},
 		onCall(call) {
 			if (call.method === "tap") {
 				state.selected = false;
+				if (state.focused !== true && options.neverFocuses !== true) state.focusIn = options.focusReads ?? 0;
 			} else if (call.method === "selectAll") {
 				state.selected = options.selectAllRefused !== true;
 			} else if (call.method === "typeText") {

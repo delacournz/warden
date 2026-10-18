@@ -119,3 +119,23 @@ test("toSnapshot", () => {
 	});
 	expect(snapshot.flat).toHaveLength(5);
 });
+
+describe("focus", () => {
+	test("the text field UIKit is editing is focused even from a helper that left `focused` false", () => {
+		const { flat } = normalizeElements(
+			[
+				{
+					role: "textfield",
+					rawType: "TextField",
+					frame: frame(0, 0, 100, 40),
+					traits: ["is-editing"],
+					focused: false,
+				},
+				{ role: "textfield", rawType: "TextField", frame: frame(0, 40, 100, 40), traits: [], focused: false },
+				{ role: "securefield", rawType: "SecureTextField", frame: frame(0, 80, 100, 40), traits: ["is-editing"] },
+			],
+			screen
+		);
+		expect(flat.map((element) => element.focused)).toEqual([true, false, true]);
+	});
+});
