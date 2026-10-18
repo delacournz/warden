@@ -202,7 +202,6 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 				platform,
 				hash,
 				env,
-				now: input.now,
 				log: input.log,
 				...(project.compilerCache === false ? { compilerCache: false } : {}),
 				...(input.git ? { git: input.git } : {}),

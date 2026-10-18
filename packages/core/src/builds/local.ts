@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
@@ -71,18 +71,94 @@ export function artifactCandidates(
 	return productDirs.flatMap((d) => children(d).filter((p) => p.endsWith(".app")));
 }
 
-/** Newest candidate modified at/after `since` (the build start). */
+/** Every candidate's mtime, taken just before the build runs. */
+export type ArtifactSnapshot = ReadonlyMap<string, number>;
+
+export function snapshotArtifacts(
+	root: string,
+	platform: Platform,
+	derivedData: string,
+	configuration: BuildConfiguration = "Debug"
+): ArtifactSnapshot {
+	return new Map(artifactCandidates(root, platform, derivedData, configuration).map((p) => [p, mtime(p)]));
+}
+
+/**
+ * `rebuilt`: new or rewritten during the build. `up-to-date`: the build left this project's only
+ * matching output in place. `ambiguous`: it left several, so none can be told apart from a stale one.
+ */
+export type LocatedArtifact =
+	| { kind: "rebuilt"; path: string }
+	| { kind: "up-to-date"; path: string }
+	| { kind: "ambiguous"; paths: string[] };
+
+function real(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
+}
+
+function samePath(a: string, b: string): boolean {
+	return a === b || real(a) === real(b);
+}
+
+function isInside(path: string, root: string): boolean {
+	const rel = relative(real(root), real(path));
+	return rel !== "" && !rel.startsWith("..") && !rel.startsWith(sep);
+}
+
+const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+/** Xcode records the workspace a DerivedData dir belongs to in its `info.plist` (`WorkspacePath`). */
+function derivedDataWorkspace(projectDir: string): string | undefined {
+	try {
+		const plist = readFileSync(join(projectDir, "info.plist"), "utf8");
+		const raw = /<key>WorkspacePath<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
+		return raw?.replace(/&(amp|lt|gt|quot|apos);/g, (_, name: string) => XML_ENTITIES[name] ?? "");
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Is `artifact` this project's own output? Android apks and `ios/build` live under the root; a
+ * DerivedData product only when its project dir's `WorkspacePath` sits in `<root>/ios` (never
+ * another checkout or worktree of the same app, nested or not).
+ */
+function ownedBy(artifact: string, root: string, derivedData: string): boolean {
+	if (isInside(artifact, root)) return true;
+	const [projectDir] = relative(derivedData, artifact).split(sep);
+	if (!projectDir || projectDir.startsWith("..")) return false;
+	const workspace = derivedDataWorkspace(join(derivedData, projectDir));
+	return workspace !== undefined && samePath(dirname(workspace), join(root, "ios"));
+}
+
+/**
+ * The artifact a successful build produced, vs the `before` snapshot: the newest of this project's
+ * candidates it created or rewrote; else, for an up-to-date build (Gradle / xcodebuild skipped every
+ * task), this project's single unchanged candidate; else the newest rewritten candidate of unknown
+ * owner (a workspace outside `<root>/ios`).
+ */
 export function locateArtifact(
 	root: string,
 	platform: Platform,
 	derivedData: string,
-	since: number,
+	before: ArtifactSnapshot,
 	configuration: BuildConfiguration = "Debug"
-): string | undefined {
-	return artifactCandidates(root, platform, derivedData, configuration)
-		.map((path) => ({ path, at: mtime(path) }))
-		.filter((c) => c.at >= since)
-		.sort((a, b) => b.at - a.at)[0]?.path;
+): LocatedArtifact | undefined {
+	const candidates = artifactCandidates(root, platform, derivedData, configuration)
+		.map((path) => ({ path, at: mtime(path), owned: ownedBy(path, root, derivedData) }))
+		.filter((c) => c.at > 0)
+		.sort((a, b) => b.at - a.at);
+	const changed = candidates.filter((c) => before.get(c.path) !== c.at);
+	const ownChanged = changed.find((c) => c.owned);
+	if (ownChanged) return { kind: "rebuilt", path: ownChanged.path };
+	const kept = candidates.filter((c) => c.owned && before.get(c.path) === c.at);
+	if (kept.length > 1) return { kind: "ambiguous", paths: kept.map((c) => c.path) };
+	if (kept[0]) return { kind: "up-to-date", path: kept[0].path };
+	return changed[0] ? { kind: "rebuilt", path: changed[0].path } : undefined;
 }
 
 export function derivedDataDir(env: Record<string, string | undefined>): string {
@@ -95,8 +171,6 @@ export type LocalBuildDeps = {
 	platform: Platform;
 	hash: string;
 	env: Record<string, string | undefined>;
-	/** wall clock (ms) — artifacts older than the build start are ignored */
-	now: () => number;
 	log: (line: string) => void;
 	timeoutMs?: number;
 	/** inject ccache / Xcode / Gradle caching env (default true); integrator: pass `project.build.cache !== false` */
@@ -149,7 +223,8 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<string> {
 	const { project, platform } = deps;
 	const command = project.build[platform];
-	const since = deps.now() - 1_000;
+	const derivedData = derivedDataDir(deps.env);
+	const before = snapshotArtifacts(project.root, platform, derivedData, project.buildConfiguration);
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
 	const argv = ["sh", "-c", command];
 	const caching = await cacheEnv(deps);
@@ -159,12 +234,18 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<string> {
 		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
 	});
 	if (res.exitCode !== 0) return err(`local build failed: ${execError(argv, res)}`);
-	const artifact = locateArtifact(project.root, platform, derivedDataDir(deps.env), since, project.buildConfiguration);
-	if (!artifact || !existsSync(artifact)) {
+	const located = locateArtifact(project.root, platform, derivedData, before, project.buildConfiguration);
+	const kind = `${project.buildConfiguration} ${platform === "ios" ? ".app" : ".apk"}`;
+	if (located?.kind === "ambiguous") {
 		return err(
-			`local build succeeded but no ${project.buildConfiguration} ${platform === "ios" ? ".app" : ".apk"} was found (DerivedData / android/app/build/outputs)`
+			`local build was up to date but left ${located.paths.length} ${kind}s, any of which could be stale: ${located.paths.join(", ")}; delete the ones this build should not produce and retry`
 		);
 	}
+	if (!located || !existsSync(located.path)) {
+		return err(`local build succeeded but no ${kind} was found (DerivedData / android/app/build/outputs)`);
+	}
+	const artifact = located.path;
+	if (located.kind === "up-to-date") deps.log(`build was up to date; reusing ${artifact}`);
 	const after = await computeCacheKey(deps.exec, project, platform);
 	if (!after.success) return after;
 	if (after.data.key !== deps.hash) {
