@@ -82,7 +82,8 @@ enum ElementBuilder {
       normFrame: frame.normalized(width: options.screenWidth, height: options.screenHeight),
       traits: traits,
       enabled: enabled,
-      focused: flat(node.focused),
+      // UIKit leaves AX `focused` false on the first responder text field; `is-editing` is its keyboard focus
+      focused: traits.contains("is-editing") ? true : flat(node.focused),
       hidden: hidden,
       selected: node.traits == nil ? nil : traits.contains("selected"),
       checked: checked(role: role, value: value),

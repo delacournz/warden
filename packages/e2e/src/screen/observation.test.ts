@@ -210,7 +210,7 @@ describe("only the first poll of a wait may reuse", () => {
 describe("field confirm reads", () => {
 	test("never come from the kept snapshot: each one is a read of the device", async () => {
 		const driver = fakeDriver({
-			screens: () => snapshotOf([el("textfield", { id: "field", label: "Email", value: "a@b.co" })]),
+			screens: () => snapshotOf([el("textfield", { id: "field", label: "Email", value: "a@b.co", focused: true })]),
 			onCall: (call) => (call.method === "elementAtPoint" ? { data: null } : undefined),
 		});
 		const host = testHost(driver, { cache: true });

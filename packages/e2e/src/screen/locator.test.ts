@@ -36,6 +36,9 @@ function login() {
 	]);
 }
 
+/** The hit-test after the focusing tap that sees the field take focus (`tapToFocus`). */
+const FOCUS_CHECK = 1;
+
 function setup(driver = login(), options: Parameters<typeof testHost>[1] = {}) {
 	const host = testHost(driver, options);
 	return { driver, host, screen: createScreen(host) };
@@ -381,14 +384,14 @@ describe("fill", () => {
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("ada@example.test");
 		expect(state.value).toBe("ada@example.test");
-		expect(driver.callsOf("elementAtPoint")).toHaveLength(CONFIRM_READS);
+		expect(driver.callsOf("elementAtPoint")).toHaveLength(FOCUS_CHECK + CONFIRM_READS);
 	});
 
 	test("a field that already held the wanted text still needs the longer run of reads", async () => {
 		const { driver } = fieldFixture({ value: "ada@example.test", selectAll: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("ada@example.test");
-		expect(driver.callsOf("elementAtPoint")).toHaveLength(STALE_RISK_READS);
+		expect(driver.callsOf("elementAtPoint")).toHaveLength(FOCUS_CHECK + STALE_RISK_READS);
 	});
 
 	test("a value still changing keeps the wait going past the usual window", async () => {
@@ -416,8 +419,10 @@ describe("fill", () => {
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("hi");
 		expect(driver.callsOf("snapshot")).toHaveLength(1);
-		expect(driver.callsOf("elementAtPoint").length).toBeGreaterThanOrEqual(2);
-		expect(driver.callsOf("elementAtPoint")[0]?.point).toEqual({ x: 174, y: 222 });
+		const [focus, ...reads] = driver.callsOf("elementAtPoint");
+		expect(focus?.point).toEqual({ x: 294, y: 222 });
+		expect(reads.length).toBeGreaterThanOrEqual(2);
+		expect(reads.map((call) => call.point)).toEqual(reads.map(() => ({ x: 174, y: 222 })));
 	});
 
 	test("iOS types the whole string in one request, with no client pacing", async () => {
@@ -535,7 +540,7 @@ describe("type, clear and press", () => {
 		expect(driver.callsOf("elementAtPoint")).toEqual([]);
 	});
 
-	test("press sends one key, with modifiers, after focusing", async () => {
+	test("press sends one key, with modifiers, after focusing (a field that took focus is not tapped again)", async () => {
 		const { driver } = fieldFixture();
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").press("Enter");
@@ -544,7 +549,7 @@ describe("type, clear and press", () => {
 			{ method: "key", key: "Enter" },
 			{ method: "key", key: "Tab", modifiers: ["shift"] },
 		]);
-		expect(driver.callsOf("tap")).toHaveLength(2);
+		expect(driver.callsOf("tap")).toHaveLength(1);
 	});
 });
 
