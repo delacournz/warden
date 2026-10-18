@@ -162,6 +162,15 @@ describe("gesture rotate", () => {
 		expect(doc(h.c)).toMatchObject({ command: "gesture rotate", result: { action: "gesture-rotate", degrees: 90 } });
 	});
 
+	test("--json rounds a derived radius to 0.01", async () => {
+		const square = snapshotOf([
+			el("window", { children: [el("other", { id: "sq", frame: { x: 20, y: 100, width: 333, height: 333 } })] }),
+		]);
+		const h = harness([square]);
+		expect(await h.run("gesture", "rotate", "id=sq", "45", "--json")).toBe(0);
+		expect(doc(h.c)).toMatchObject({ result: { radius: 99.9 } });
+	});
+
 	test("negative degrees parse and reach the driver", async () => {
 		const h = harness([LIST]);
 		expect(await h.run("gesture", "rotate", "id=list", "-45")).toBe(0);

@@ -227,7 +227,7 @@ function runTwoFinger(
 				ms: durationMs,
 				...(parsed.data.radius !== undefined ? { radius: parsed.data.radius } : {}),
 			},
-			extra: { [key]: amount, center, radius, durationMs },
+			extra: { [key]: amount, center, radius: Math.round(radius * 100) / 100, durationMs },
 		});
 	});
 }

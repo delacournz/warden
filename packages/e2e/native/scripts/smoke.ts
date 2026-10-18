@@ -191,6 +191,45 @@ async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 	await step("swipe up", () =>
 		driver.swipe({ x: width / 2, y: height * 0.7 }, { x: width / 2, y: height * 0.3 }, { durationMs: 300 })
 	);
+	await gestureSteps(driver, { x: width / 2, y: height / 2 });
+}
+
+/** pinch, rotate and 1- and 2-finger paths around `middle` (GES-2/3): each should land without an error. */
+async function gestureSteps(driver: Driver, middle: { x: number; y: number }): Promise<void> {
+	await step("pinch", () => driver.pinch(middle, 1.5, { durationMs: 400 }));
+	await step("rotate", () => driver.rotate(middle, 90, { durationMs: 500 }));
+	await step("gesture 1-finger", () =>
+		driver.gesture(
+			[
+				{
+					points: [
+						{ x: middle.x - 60, y: middle.y },
+						{ x: middle.x + 60, y: middle.y },
+					],
+				},
+			],
+			{ durationMs: 300 }
+		)
+	);
+	await step("gesture 2-finger", () =>
+		driver.gesture(
+			[
+				{
+					points: [
+						{ x: middle.x - 40, y: middle.y },
+						{ x: middle.x - 80, y: middle.y },
+					],
+				},
+				{
+					points: [
+						{ x: middle.x + 40, y: middle.y },
+						{ x: middle.x + 80, y: middle.y },
+					],
+				},
+			],
+			{ durationMs: 300 }
+		)
+	);
 }
 
 /**
@@ -233,40 +272,7 @@ async function blind(driver: Driver, screen: { width: number; height: number }):
 	await step("drag", () =>
 		driver.drag({ x: middle.x, y: screen.height * 0.6 }, { x: middle.x, y: screen.height * 0.4 }, { durationMs: 300 })
 	);
-	await step("pinch", () => driver.pinch(middle, 1.5, { durationMs: 400 }));
-	await step("rotate", () => driver.rotate(middle, 90, { durationMs: 500 }));
-	await step("gesture 1-finger", () =>
-		driver.gesture(
-			[
-				{
-					points: [
-						{ x: middle.x - 60, y: middle.y },
-						{ x: middle.x + 60, y: middle.y },
-					],
-				},
-			],
-			{ durationMs: 300 }
-		)
-	);
-	await step("gesture 2-finger", () =>
-		driver.gesture(
-			[
-				{
-					points: [
-						{ x: middle.x - 40, y: middle.y },
-						{ x: middle.x - 80, y: middle.y },
-					],
-				},
-				{
-					points: [
-						{ x: middle.x + 40, y: middle.y },
-						{ x: middle.x + 80, y: middle.y },
-					],
-				},
-			],
-			{ durationMs: 300 }
-		)
-	);
+	await gestureSteps(driver, middle);
 }
 
 /** `--kill-helper`: SIGKILL warden-simd while a long press is in flight, expect one E_HELPER_CRASHED, then success. */
