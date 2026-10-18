@@ -29,7 +29,7 @@ import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "..
 import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
 import { exitGate, type FlowVerdict, type RunShape, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
-import { emit, reportError, success, warn } from "../output";
+import { emit, note, reportError, success, warn } from "../output";
 import { currentBuild } from "../update/build-info";
 import { type AffectedOpts, explain, runAffected, selectedFlows } from "./affected";
 import {
@@ -119,17 +119,18 @@ function onePlatform(affected: Affected): Result<Selection> {
 	return ok(only);
 }
 
-/** Suite settings the platform can't honour (undefined = fine). */
-function platformError(suite: E2eSuiteConfig, platform: Platform): string | undefined {
-	return suite.slim && platform !== "ios" ? "slim is iOS-only" : undefined;
+/** `slim` applies to iOS simulators only: true when the suite asks for it and this run is on iOS. */
+function slimsDevices(suite: E2eSuiteConfig, platform: Platform): boolean {
+	return suite.slim === true && platform === "ios";
 }
 
-/** The per-device prep a suite asks for (`slim`, then `setup`). */
-function deviceSetup(suite: E2eSuiteConfig): DeviceSetupSpec | undefined {
-	if (suite.setup === undefined && !suite.slim) return undefined;
+/** The per-device prep a suite asks for (`slim` on iOS, then `setup`); undefined when there is none on this platform. */
+function deviceSetup(suite: E2eSuiteConfig, platform: Platform): DeviceSetupSpec | undefined {
+	const slim = slimsDevices(suite, platform);
+	if (suite.setup === undefined && !slim) return undefined;
 	return {
 		...(suite.setup !== undefined ? { command: suite.setup } : {}),
-		...(suite.slim ? { slim: true } : {}),
+		...(slim ? { slim: true } : {}),
 	};
 }
 
@@ -308,6 +309,7 @@ async function e2e(
 		jobs.jobs,
 		jobs.argvs.get(jobs.jobs[0] ?? "") ?? [],
 		sessionHooks(suite, flows, shape, spec, runs, {
+			platform: selection.platform,
 			shutdown: shutsDownOnPass(ctx, suite, opts),
 			warm: warmHook(ctx, deps, suite, opts),
 		})
@@ -346,7 +348,7 @@ function buildReport(
 	};
 }
 
-/** Everything that can be refused before a device is leased: the platform, the spec runner, the run's flags. */
+/** Everything that can be refused before a device is leased: the spec runner and the run's flags (suite settings the platform can't honour are skipped with a note). */
 async function preparedRun(
 	ctx: CommandContext,
 	deps: BatchDeps,
@@ -356,8 +358,7 @@ async function preparedRun(
 	opts: E2eOpts,
 	passed: ReadonlySet<string>
 ): AsyncResult<RunPlan & { spec: SpecPlan }> {
-	const unsupported = platformError(suite.config, platform);
-	if (unsupported) return err(unsupported);
+	if (suite.config.slim && platform !== "ios") note(ctx, `warden e2e: slim is iOS-only; skipped on ${platform}`);
 	const spec = await specPlan(ctx, deps, suite, platform);
 	if (!spec.success) return spec;
 	const run = await runPlan(ctx, suite, platform, flows, spec.data, opts, passed);
@@ -376,11 +377,11 @@ function sessionHooks(
 	shape: RunShape,
 	spec: SpecPlan,
 	runs: ShardRuns,
-	o: { shutdown: boolean; warm: WarmConnect | undefined }
+	o: { platform: Platform; shutdown: boolean; warm: WarmConnect | undefined }
 ): SessionHooks {
 	return {
 		name: "e2e",
-		setup: deviceSetup(suite.config),
+		setup: deviceSetup(suite.config, o.platform),
 		// batch skips it off iOS
 		warmDrivers: o.warm,
 		flows: trackedFlows(flows, shape),

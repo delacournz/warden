@@ -866,6 +866,7 @@ async function prepareDevices(
 	deps: BatchDeps,
 	name: string,
 	spec: DeviceSetupSpec | undefined,
+	platform: Platform,
 	devices: Device[],
 	env: Record<string, string | undefined>,
 	cwd: string,
@@ -880,12 +881,16 @@ async function prepareDevices(
 		cwd,
 		logDir,
 		spawn: (argv, o) => deps.spawn(argv, o),
-		// recorded, so a later plain `warden claim` knows to restore the device
-		slim: async (udid) => {
-			const res = await deps.slim(udid);
-			if (res.success) ctx.store().setSlimmed("ios", udid, ctx.now());
-			return res;
-		},
+		// a simulator op, so never off iOS; recorded, so a later plain `warden claim` knows to restore the device
+		...(platform === "ios"
+			? {
+					slim: async (udid: string) => {
+						const res = await deps.slim(udid);
+						if (res.success) ctx.store().setSlimmed("ios", udid, ctx.now());
+						return res;
+					},
+				}
+			: {}),
 		track: (proc) => {
 			const handle = proc as ProcHandle;
 			running.add(handle);
@@ -1230,6 +1235,7 @@ async function preparePools(
 				deps,
 				r.name,
 				setup,
+				r.platform,
 				pool.devices,
 				setupEnv,
 				args.cwd,

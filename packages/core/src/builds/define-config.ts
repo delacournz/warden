@@ -560,7 +560,10 @@ export interface WardenE2eSuite {
 	 * (`{udid}` is substituted). A non-zero exit drops that device; its flows go to the others.
 	 */
 	setup?: string | undefined;
-	/** iOS only: switch off the simulator daemons flows never need on each leased device, before `setup`. */
+	/**
+	 * iOS only: switch off the simulator daemons flows never need on each leased device, before `setup`.
+	 * Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"`.
+	 */
 	slim?: boolean | undefined;
 	/** Removed: renamed `warmDrivers`. */
 	warmRunners?: undefined;

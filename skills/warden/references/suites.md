@@ -77,7 +77,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `count`, `profile` | claim defaults | single pool |
 | `metro` | none | `{ enabled = true, port = "8081:100", launchArgs = [], open = true, env, prewarm = true, readyTimeout = "2m" }`. warden starts one Metro for the run and points the dev client at it |
 | `headless` | off | keep Simulator.app windows closed |
-| `slim` | off | iOS only: switch off simulator daemons flows never need, before `setup` |
+| `slim` | off | iOS only: switch off simulator daemons flows never need, before `setup`. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
 | `warmDrivers` | on | iOS: start every device's driver helper before the flows |
 
 ### App, ports, serve, setup
