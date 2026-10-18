@@ -9,6 +9,7 @@ import { openStore, type Store } from "../store";
 import type { Owner } from "../types";
 import {
 	androidTools,
+	bootSettingsCommand,
 	createAndroidProvider,
 	listAvds,
 	parseAdbDevices,
@@ -331,10 +332,62 @@ describe("waitReady", () => {
 		if (!result.success) expect(result.error).toContain("timed out");
 	});
 
+	test("applies the boot settings once booted", async () => {
+		const log: string[] = [];
+		const settingsKey = `${ADB} -s emulator-5554 shell ${bootSettingsCommand()}`;
+		const { exec, calls } = fakeExec({
+			[`${ADB} -s emulator-5554 wait-for-device`]: out(""),
+			[`${ADB} -s emulator-5554 shell getprop sys.boot_completed`]: () => {
+				log.push("getprop");
+				return out(log.length >= 2 ? "1\n" : "\n");
+			},
+			[settingsKey]: () => {
+				log.push("settings");
+				return out("");
+			},
+		});
+		const clock = fakeClock();
+		const provider = createAndroidProvider(deps(exec, clock.now), { sleep: clock.sleep, pollIntervalMs: 1_000 });
+		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
+		expect(calls.filter((c) => c === settingsKey)).toHaveLength(1);
+		expect(log).toEqual(["getprop", "getprop", "settings"]);
+	});
+
+	test("a failing settings put does not fail readiness", async () => {
+		const { exec, calls } = fakeExec({
+			[`${ADB} -s emulator-5554 wait-for-device`]: out(""),
+			[`${ADB} -s emulator-5554 shell getprop sys.boot_completed`]: out("1\n"),
+			[`${ADB} -s emulator-5554 shell ${bootSettingsCommand()}`]: fail("boom"),
+		});
+		const provider = createAndroidProvider(deps(exec), { sleep: async () => {} });
+		expect(await provider.waitReady("emulator-5554", 1_000)).toEqual(ok(undefined));
+		expect(calls).toContain(`${ADB} -s emulator-5554 shell ${bootSettingsCommand()}`);
+	});
+
+	test("times out → no settings call", async () => {
+		const { exec, calls } = fakeExec({
+			[`${ADB} -s emulator-5554 wait-for-device`]: out(""),
+			[`${ADB} -s emulator-5554 shell getprop sys.boot_completed`]: out("0\n"),
+		});
+		const clock = fakeClock();
+		const provider = createAndroidProvider(deps(exec, clock.now), { sleep: clock.sleep, pollIntervalMs: 1_000 });
+		const result = await provider.waitReady("emulator-5554", 3_000);
+		expect(result.success).toBe(false);
+		expect(calls.some((c) => c.includes("settings put"))).toBe(false);
+	});
+
 	test("wait-for-device failure → err", async () => {
 		const { exec } = fakeExec({ [`${ADB} -s emulator-5554 wait-for-device`]: fail("timeout") });
 		const result = await createAndroidProvider(deps(exec), { sleep: async () => {} }).waitReady("emulator-5554", 1_000);
 		expect(result.success).toBe(false);
+	});
+});
+
+describe("bootSettingsCommand", () => {
+	test("is the exact three-put shell line", () => {
+		expect(bootSettingsCommand()).toBe(
+			"settings put global package_verifier_user_consent -1; settings put global verifier_verify_adb_installs 0; settings put global package_verifier_enable 0"
+		);
 	});
 });
 
