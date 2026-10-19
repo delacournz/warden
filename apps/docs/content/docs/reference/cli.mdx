@@ -151,7 +151,7 @@ Every simulator / emulator, booted or not, plus Android AVDs — with warden own
 
 ### Device health: `release --bad`, `sim unquarantine`
 
-After booting or reusing an iOS sim, `warden claim` checks that `simctl spawn <udid> launchctl print system` answers within 5 s and that SpringBoard is running. A device that fails is quarantined (recorded in the store with a reason, shut down if warden created it) and the claim picks another one; after 2 retries it fails with a clear error. A foreign device that fails is skipped, never touched. Android has no probe yet.
+After booting or reusing an iOS sim, `warden claim` checks that `simctl spawn <udid> launchctl print system` answers within 5 s and that SpringBoard is running. A device that fails is quarantined (recorded in the store with a reason, shut down if warden created it) and the claim picks another one; after 2 retries it fails with a clear error. A foreign device that fails is skipped, never touched. Android has no probe yet. warden switches Play Protect's adb-install verification off (and pre-answers its consent prompt) on every emulator it boots; the change lives in the emulator's throwaway overlay.
 
 - `warden release <leaseId…> --bad [reason]` releases and quarantines the devices by hand (warden devices only). Quarantined devices are never allocated and free their pool slot.
 - `warden sim unquarantine <udid|serial>` clears it. `warden devices` shows `quarantined` and `slim` next to the warden column.
