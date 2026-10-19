@@ -4,7 +4,19 @@ import { snapshotHash } from "../driver/settle";
 import { indexSnapshot, type NodeEntry, type NodeIndex } from "../screen/nodes";
 import { renderSnapshot } from "../screen/render";
 import { matchesSelector, parseSelector } from "../screen/selector";
-import type { ChainEntry, Flow, SelectorTarget, Step, StepKind, StepOf, Target, Text } from "./flow.schema";
+import {
+	type ChainEntry,
+	type Flow,
+	type GestureStep,
+	type SelectorTarget,
+	type Step,
+	type StepKey,
+	type StepKind,
+	type StepOf,
+	stepKey,
+	type Target,
+	type Text,
+} from "./flow.schema";
 import { type Env, resolveText } from "./record";
 
 /**
@@ -53,10 +65,10 @@ export type ActContext = {
 	text(value: Text): string;
 };
 
-export type StepActor<K extends StepKind> = (step: StepOf<K>, ctx: ActContext) => Promise<Result<void, ActError>>;
+export type StepActor<K extends StepKey> = (step: StepOf<K>, ctx: ActContext) => Promise<Result<void, ActError>>;
 
-/** One executor per step kind; the CLI binds real driver actions, tests bind recorders. */
-export type ActMap = { [K in StepKind]: StepActor<K> };
+/** One executor per step kind (`screen` and `gesture` per type, see `StepKey`); the CLI binds real driver actions, tests bind recorders. */
+export type ActMap = { [K in StepKey]: StepActor<K> };
 
 /** Reported after every step that ran: what it was, how long it took, and whether the screen had drifted. */
 export type StepEvent = { step: number; kind: StepKind; label: string; ms: number; drift?: ReplayDrift };
@@ -111,11 +123,10 @@ export type ReplayOutcome =
 
 type StepSlots = { target?: Target; until?: Target };
 
-/** The targets a step points at. `swipe` hides its target inside the gesture, `scroll` calls it `until`. */
+/** The targets a step points at. `scroll` calls it `until`; pinch, rotate and direction swipes may have none (the screen). */
 export function targetsOf(step: Step): StepSlots {
 	switch (step.kind) {
 		case "press":
-		case "longpress":
 		case "fill":
 		case "wait":
 		case "is":
@@ -124,11 +135,25 @@ export function targetsOf(step: Step): StepSlots {
 		case "type":
 		case "key":
 			return step.target ? { target: step.target } : {};
-		case "swipe":
-			return step.gesture.by === "direction" && step.gesture.target ? { target: step.gesture.target } : {};
+		case "gesture":
+			return gestureTargets(step);
 		case "scroll":
 			return step.until ? { until: step.until } : {};
 		default:
+			return {};
+	}
+}
+
+function gestureTargets(step: GestureStep): StepSlots {
+	switch (step.type) {
+		case "longpress":
+			return { target: step.target };
+		case "swipe":
+			return step.by === "direction" && step.target ? { target: step.target } : {};
+		case "pinch":
+		case "rotate":
+			return step.target ? { target: step.target } : {};
+		case "path":
 			return {};
 	}
 }
@@ -145,15 +170,28 @@ export function describeStep(step: Step): string {
 			return step.key;
 		case "alert":
 			return typeof step.action === "string" ? step.action : step.action.button;
-		case "rotate":
-			return step.orientation;
-		case "appearance":
-			return step.mode;
+		case "screen":
+			return step.type === "rotate" ? step.orientation : step.type === "appearance" ? step.mode : (step.name ?? "");
 		case "scroll":
 			return step.direction ?? "down";
-		case "swipe":
-			return step.gesture.by === "direction" ? step.gesture.direction : "path";
+		case "gesture":
+			return describeGesture(step);
 		default:
+			return "";
+	}
+}
+
+function describeGesture(step: GestureStep): string {
+	switch (step.type) {
+		case "swipe":
+			return step.by === "direction" ? step.direction : "path";
+		case "pinch":
+			return `×${step.scale}`;
+		case "rotate":
+			return `${step.degrees}°`;
+		case "path":
+			return `${step.paths.length} finger${step.paths.length === 1 ? "" : "s"}`;
+		case "longpress":
 			return "";
 	}
 }
@@ -168,7 +206,6 @@ function eagerSlots(step: Step, slots: StepSlots): StepSlots {
 function withTargets(step: Step, slots: StepSlots): Step {
 	switch (step.kind) {
 		case "press":
-		case "longpress":
 		case "fill":
 		case "wait":
 		case "is":
@@ -176,10 +213,8 @@ function withTargets(step: Step, slots: StepSlots): Step {
 		case "type":
 		case "key":
 			return slots.target ? { ...step, target: slots.target } : step;
-		case "swipe":
-			return step.gesture.by === "direction" && slots.target
-				? { ...step, gesture: { ...step.gesture, target: slots.target } }
-				: step;
+		case "gesture":
+			return slots.target && "target" in step ? { ...step, target: slots.target } : step;
 		case "scroll":
 			return slots.until ? { ...step, until: slots.until } : step;
 		default:
@@ -288,8 +323,8 @@ function excerpt(snapshot: Snapshot): string {
 }
 
 function dispatch(act: ActMap, step: Step, ctx: ActContext): Promise<Result<void, ActError>> {
-	// one cast: `act[step.kind]` takes exactly the step kind it is keyed by, which the type system cannot correlate here
-	const actor = act[step.kind] as (step: Step, ctx: ActContext) => Promise<Result<void, ActError>>;
+	// one cast: `act[key]` takes exactly the step it is keyed by, which the type system cannot correlate here
+	const actor = act[stepKey(step)] as (step: Step, ctx: ActContext) => Promise<Result<void, ActError>>;
 	return actor(step, ctx);
 }
 

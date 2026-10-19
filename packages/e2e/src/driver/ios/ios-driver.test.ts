@@ -342,6 +342,90 @@ describe("Driver methods over the helper", () => {
 		expect(timeouts[3]).toBeGreaterThan(900);
 	});
 
+	test("pinch forwards angle (degrees)", async () => {
+		const { driver, helper } = await open(() => ({ data: null }));
+		await unwrapped(driver.pinch({ x: 9, y: 9 }, 2, { angle: 45 }));
+		expect(helper.of("pinch")[0]).toMatchObject({ angle: 45 });
+	});
+
+	test("capabilities report two pointers", async () => {
+		const { driver } = await open(() => ({ data: null }));
+		expect(driver.capabilities.maxPointers).toBe(2);
+	});
+
+	test("rotate sends op gesture with two equal-length paths", async () => {
+		const { driver, helper } = await open(() => ({ data: null }));
+		await unwrapped(driver.rotate({ x: 200, y: 400 }, 90, { durationMs: 500 }));
+		const [request] = helper.of("gesture");
+		const paths = request?.paths as { x: number; y: number }[][];
+		expect(paths).toHaveLength(2);
+		expect(paths[0]?.length).toBe(paths[1]?.length);
+		expect(paths[0]?.length).toBeGreaterThan(2);
+		expect(typeof request?.frameMs).toBe("number");
+		expect(request?.timeoutMs ?? 0).toBeGreaterThan(500);
+	});
+
+	test("gesture sends paths, frameMs, holdMs and releaseMs with a timeout beyond the plan", async () => {
+		const { driver, helper } = await open(() => ({ data: null }));
+		await unwrapped(
+			driver.gesture(
+				[
+					{
+						points: [
+							{ x: 10, y: 10 },
+							{ x: 110, y: 10 },
+						],
+					},
+				],
+				{ durationMs: 160, holdMs: 40, releaseMs: 20 }
+			)
+		);
+		const [request] = helper.of("gesture");
+		expect(request).toMatchObject({ op: "gesture", holdMs: 40, releaseMs: 20 });
+		expect(request?.paths).toHaveLength(1);
+		expect(typeof request?.frameMs).toBe("number");
+		expect(request?.timeoutMs ?? 0).toBeGreaterThan(160 + 40 + 20);
+	});
+
+	test("an invalid gesture plan is returned without a request", async () => {
+		const { driver, helper } = await open(() => ({ data: null }));
+		const none = await driver.gesture([]);
+		expect(!none.success && none.error.code).toBe("E_BAD_REQUEST");
+		const nan = await driver.rotate({ x: 1, y: 1 }, Number.NaN);
+		expect(!nan.success && nan.error.code).toBe("E_BAD_REQUEST");
+		expect(helper.of("gesture")).toHaveLength(0);
+	});
+
+	test("an old helper (unknown op) maps to E_UNSUPPORTED helper_outdated and later calls send nothing", async () => {
+		const { driver, helper } = await open((request) =>
+			request.op === "gesture"
+				? { error: { code: "E_BAD_REQUEST", message: 'unknown input op "gesture"' } }
+				: { data: null }
+		);
+		const first = await driver.rotate({ x: 200, y: 400 }, 45);
+		expect(!first.success && first.error).toMatchObject({
+			code: "E_UNSUPPORTED",
+			detail: { reason: "helper_outdated" },
+		});
+		expect(!first.success && first.error.message).toContain("warden ui close --udid UDID-1");
+		expect(!first.success && first.error.message).toContain("native:build");
+		const second = await driver.gesture([{ points: [{ x: 1, y: 1 }] }]);
+		expect(!second.success && second.error.code).toBe("E_UNSUPPORTED");
+		expect(helper.of("gesture")).toHaveLength(1);
+	});
+
+	test("other E_BAD_REQUEST replies from the helper pass through", async () => {
+		const { driver, helper } = await open((request) =>
+			request.op === "gesture"
+				? { error: { code: "E_BAD_REQUEST", message: '"frameMs" must be within 1...1000' } }
+				: { data: null }
+		);
+		const result = await driver.rotate({ x: 200, y: 400 }, 45);
+		expect(!result.success && result.error).toMatchObject({ code: "E_BAD_REQUEST" });
+		await driver.rotate({ x: 200, y: 400 }, 45);
+		expect(helper.of("gesture")).toHaveLength(2);
+	});
+
 	test("helper errors surface mapped", async () => {
 		const { driver } = await open(() => ({ error: { code: "E_HID", message: "indigo send failed" } }));
 		const result = await driver.tap({ x: 0, y: 0 });

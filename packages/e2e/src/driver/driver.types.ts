@@ -38,6 +38,24 @@ export type DriverResult<T> = AsyncResult<T, DriverError>;
 export type Point = { x: number; y: number };
 export type Rect = { x: number; y: number; width: number; height: number };
 
+/** A point on one finger's route; `t` = ms after touch-down. Every point of a gesture carries `t`, or none does. */
+export type TouchPoint = Point & { t?: number };
+/** One finger: down at the first point, through the rest, up at the last. All fingers go down and lift together. */
+export type TouchPath = { points: readonly TouchPoint[] };
+export type GestureOptions = {
+	/** untimed paths only: first point to last, each finger at constant speed (by arc length). Default 300. */
+	durationMs?: number;
+	/** fingers still at their first points before moving (press-then-drag). Default 0. */
+	holdMs?: number;
+	/** fingers still at their last points before lifting (no fling). Default 0. */
+	releaseMs?: number;
+};
+/**
+ * `radius`: finger distance from the centre (default 100 pt on iOS, 100 x screen scale px on Android);
+ * `angle`: the finger axis in degrees, 0 = horizontal.
+ */
+export type TwoFingerOptions = { durationMs?: number; radius?: number; angle?: number };
+
 export type Role =
 	| "button"
 	| "text"
@@ -148,7 +166,10 @@ export type LaunchOptions = {
 };
 
 export type DriverCapabilities = {
+	/** two-finger `pinch` and `rotate` */
 	pinch: boolean;
+	/** most fingers `gesture` takes: 2 multi-touch, 1 single-finger paths only, 0 no `gesture` */
+	maxPointers: 0 | 1 | 2;
 	unicodeText: boolean;
 	nativeSettle: boolean;
 	alerts: boolean;
@@ -189,7 +210,12 @@ export interface Driver {
 		to: Point,
 		opts?: { pressMs?: number; durationMs?: number; releaseMs?: number }
 	): DriverResult<void>;
-	pinch(center: Point, scale: number, opts?: { durationMs?: number; radius?: number }): DriverResult<void>;
+	/** Two fingers around `center` spread (`scale` > 1) or close (< 1). */
+	pinch(center: Point, scale: number, opts?: TwoFingerOptions): DriverResult<void>;
+	/** Two fingers turn `degrees` around `center`; positive is clockwise on screen. */
+	rotate(center: Point, degrees: number, opts?: TwoFingerOptions): DriverResult<void>;
+	/** 1-2 finger paths on one timeline (`driver/gesture-geometry.ts`); fingers go down and lift together. */
+	gesture(paths: readonly TouchPath[], opts?: GestureOptions): DriverResult<void>;
 	/** iOS: HID keyboard → paste fallback for non-ASCII; Android: `input text` (ASCII only) */
 	typeText(text: string): DriverResult<void>;
 	key(key: KeyName, modifiers?: readonly Modifier[]): DriverResult<void>;

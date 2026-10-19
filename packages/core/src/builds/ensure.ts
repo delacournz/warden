@@ -179,7 +179,6 @@ function buildStep(
 			hash: input.hash,
 			...(input.native !== undefined ? { native: input.native } : {}),
 			env: input.env,
-			now: input.now,
 			log: input.log,
 			...(project.compilerCache === false ? { compilerCache: false } : {}),
 			...(input.git ? { git: input.git } : {}),

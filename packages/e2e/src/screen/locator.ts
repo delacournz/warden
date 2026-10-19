@@ -4,10 +4,18 @@ import { snapshotHash } from "../driver/settle";
 import { typeText } from "../driver/typing";
 import { E2eError } from "../errors";
 import {
+	assertDegrees,
+	assertScale,
+	centreOf,
 	fieldValue,
 	focusPoint,
 	isOnScreen,
 	type Momentum,
+	PINCH_MS,
+	pinchRadius,
+	ROTATE_MS,
+	requireGesture,
+	rotateRadius,
 	type SwipeDirection,
 	screenRect,
 	swipeVector,
@@ -22,6 +30,7 @@ import {
 	focusAndClear,
 	focusClearType,
 	hitTestField,
+	tapToFocus,
 } from "./field";
 import type { NodeEntry } from "./nodes";
 import type { PollStep } from "./poll";
@@ -77,6 +86,9 @@ export type TapOptions = ActionOptions & {
 export type LongPressOptions = ActionOptions & { durationMs?: number };
 export type PressOptions = ActionOptions & { modifiers?: readonly Modifier[] };
 export type LocatorSwipeOptions = ActionOptions & { direction: SwipeDirection; momentum?: Momentum };
+/** A pinch or rotate: `radius` is each finger's distance from the centre at the start, in points. */
+export type PinchOptions = ActionOptions & { durationMs?: number; radius?: number };
+export type RotateOptions = PinchOptions;
 export type ScrollOptions = ActionOptions & { direction?: SwipeDirection; momentum?: Momentum; maxSwipes?: number };
 export type WaitState = "attached" | "detached" | "visible" | "hidden";
 export type WaitForOptions = ActionOptions & { state?: WaitState };
@@ -707,6 +719,61 @@ export class Locator {
 		});
 	}
 
+	/**
+	 * A two-finger pinch centred on this node's visible part: `scale` above 1 spreads the fingers (zoom in), below 1
+	 * brings them together. `INVALID_ARGUMENT` for a scale outside 0.1-10 or exactly 1, or on a driver without pinch.
+	 */
+	async pinch(scale: number, options: PinchOptions = {}): Promise<void> {
+		assertOptions("pinch", options, ["durationMs", "radius", "timeout"]);
+		assertScale(scale);
+		return this.act(
+			"pinch",
+			async () => {
+				const { entry, observed } = await this.actionable(
+					{ enabled: false, tapPointOnScreen: false },
+					options.timeout ?? this.rt.actionTimeout()
+				);
+				const screen = observed.snapshot.screen;
+				const rect = visibleRect(entry.element.frame, screen);
+				requireGesture(observed.driver, "pinch", "locator.pinch");
+				this.rt.drive(
+					"pinch",
+					await observed.driver.pinch(centreOf(rect), scale, {
+						durationMs: options.durationMs ?? PINCH_MS,
+						radius: options.radius ?? pinchRadius(rect, scale, screen),
+					})
+				);
+			},
+			` ×${scale}`
+		);
+	}
+
+	/** A two-finger rotation about this node's visible centre; positive `degrees` turn clockwise. */
+	async rotate(degrees: number, options: RotateOptions = {}): Promise<void> {
+		assertOptions("rotate", options, ["durationMs", "radius", "timeout"]);
+		assertDegrees(degrees);
+		return this.act(
+			"rotate",
+			async () => {
+				const { entry, observed } = await this.actionable(
+					{ enabled: false, tapPointOnScreen: false },
+					options.timeout ?? this.rt.actionTimeout()
+				);
+				const screen = observed.snapshot.screen;
+				const rect = visibleRect(entry.element.frame, screen);
+				requireGesture(observed.driver, "pinch", "locator.rotate");
+				this.rt.drive(
+					"rotate",
+					await observed.driver.rotate(centreOf(rect), degrees, {
+						durationMs: options.durationMs ?? ROTATE_MS,
+						radius: options.radius ?? rotateRadius(rect, screen),
+					})
+				);
+			},
+			` ${degrees}°`
+		);
+	}
+
 	/** Scrolls the screen until this locator is on screen. */
 	scrollTo(options: ScrollOptions = {}): Promise<void> {
 		return scrollUntilVisible(this.rt, this, options);
@@ -740,7 +807,7 @@ export class Locator {
 
 	private async focus({ entry, observed }: Actionable): Promise<void> {
 		if (entry.states.focused) return;
-		this.rt.drive("focus", await observed.driver.tap(focusPoint(entry.element.frame)));
+		this.rt.drive("focus", await tapToFocus(observed.driver, this.pause, focusPoint(entry.element.frame), entry));
 	}
 
 	private async focusAndClear({ entry, observed }: Actionable, method: ClearMethod): Promise<void> {

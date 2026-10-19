@@ -54,6 +54,20 @@ describe("reads that follow each other", () => {
 	test.each([
 		["tapAt", (s: ReturnType<typeof setup>["screen"]) => s.tapAt({ x: 5, y: 5 })],
 		["swipe", (s: ReturnType<typeof setup>["screen"]) => s.swipe({ from: { x: 1, y: 1 }, to: { x: 1, y: 9 } })],
+		["pinch", (s: ReturnType<typeof setup>["screen"]) => s.gesture.pinch({ scale: 2 })],
+		["rotate", (s: ReturnType<typeof setup>["screen"]) => s.gesture.rotate({ degrees: 30 })],
+		[
+			"gesture",
+			(s: ReturnType<typeof setup>["screen"]) =>
+				s.gesture.path({
+					paths: [
+						[
+							{ x: 1, y: 1 },
+							{ x: 1, y: 9 },
+						],
+					],
+				}),
+		],
 	])("%s counts as input", async (_name, act) => {
 		const { driver, screen } = setup();
 		await screen.getByTestId("title").isVisible();
@@ -261,7 +275,7 @@ describe("only the first poll of a wait may reuse", () => {
 describe("field confirm reads", () => {
 	test("never come from the kept snapshot: each one is a read of the device", async () => {
 		const driver = fakeDriver({
-			screens: () => snapshotOf([el("textfield", { id: "field", label: "Email", value: "a@b.co" })]),
+			screens: () => snapshotOf([el("textfield", { id: "field", label: "Email", value: "a@b.co", focused: true })]),
 			onCall: (call) => (call.method === "elementAtPoint" ? { data: null } : undefined),
 		});
 		const host = testHost(driver, { cache: true });

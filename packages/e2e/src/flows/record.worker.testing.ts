@@ -8,7 +8,7 @@ if (file === undefined || tag === undefined || count === undefined) {
 }
 
 for (let n = 0; n < Number(count); n += 1) {
-	const result = await appendStep(file, { kind: "screenshot", at: n, name: `${tag}-${n}` });
+	const result = await appendStep(file, { kind: "screen", type: "screenshot", at: n, name: `${tag}-${n}` });
 	if (!result.success) {
 		console.error(`${result.error.code}: ${result.error.message}`);
 		process.exit(1);

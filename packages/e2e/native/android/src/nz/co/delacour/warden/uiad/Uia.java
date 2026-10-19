@@ -24,6 +24,9 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * One connected `UiAutomation` and the ops built on it. The connection is made exactly the way the platform's own
@@ -563,6 +566,124 @@ final class Uia {
 		inject(u, true);
 		u.recycle();
 		return "{}";
+	}
+
+	private static final int GESTURE_MAX_FRAMES = 1000;
+	private static final long GESTURE_MAX_MS = 60000;
+
+	private static OpError badGesture(String message) {
+		return new OpError("E_BAD_REQUEST", message, false);
+	}
+
+	/** One MotionEvent of a gesture: `count` pointers, ids 0..count-1, at frame `frame`. */
+	private static MotionEvent gestureEvent(long downTime, long eventTime, int action, int count, float[][][] frames, int frame) {
+		MotionEvent.PointerProperties[] props = new MotionEvent.PointerProperties[count];
+		MotionEvent.PointerCoords[] coords = new MotionEvent.PointerCoords[count];
+		for (int p = 0; p < count; p++) {
+			props[p] = new MotionEvent.PointerProperties();
+			props[p].id = p;
+			props[p].toolType = MotionEvent.TOOL_TYPE_FINGER;
+			coords[p] = new MotionEvent.PointerCoords();
+			coords[p].x = frames[p][frame][0];
+			coords[p].y = frames[p][frame][1];
+			coords[p].pressure = 1f;
+			coords[p].size = 1f;
+		}
+		return MotionEvent.obtain(downTime, eventTime, action, count, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
+	}
+
+	private void injectGesture(long downTime, long eventTime, int action, int count, float[][][] frames, int frame, boolean sync) throws OpError {
+		MotionEvent e = gestureEvent(downTime, eventTime, action, count, frames, frame);
+		try {
+			inject(e, sync);
+		} finally {
+			e.recycle();
+		}
+	}
+
+	/**
+	 * 1-2 finger paths on one timeline: DOWN (and POINTER_DOWN), `holdMs`, a MOVE per frame on an absolute schedule
+	 * (`start + round(i * frameMs)`), `releaseMs`, POINTER_UP, UP. Replies `{frames, pointers, maxLagMs, via}`.
+	 * A refused first DOWN is rethrown (`E_HID`: the host may use another way); a failure after a finger went down
+	 * cancels the gesture and is `E_INTERNAL`.
+	 */
+	String gesture(JSONArray paths, double frameMs, long holdMs, long releaseMs) throws OpError {
+		if (paths == null || paths.length() < 1 || paths.length() > 2) throw badGesture("gesture takes 1 or 2 paths");
+		int pointers = paths.length();
+		int n = -1;
+		float[][][] frames = null;
+		try {
+			for (int p = 0; p < pointers; p++) {
+				JSONArray path = paths.getJSONArray(p);
+				if (n < 0) {
+					n = path.length();
+					if (n < 1 || n > GESTURE_MAX_FRAMES) throw badGesture("a path has 1.." + GESTURE_MAX_FRAMES + " points");
+					frames = new float[pointers][n][2];
+				} else if (path.length() != n) {
+					throw badGesture("all paths need the same number of points");
+				}
+				for (int i = 0; i < n; i++) {
+					JSONObject pt = path.getJSONObject(i);
+					double x = pt.getDouble("x");
+					double y = pt.getDouble("y");
+					if (Double.isNaN(x) || Double.isInfinite(x) || Double.isNaN(y) || Double.isInfinite(y)) throw badGesture("points must be finite");
+					frames[p][i][0] = (float) x;
+					frames[p][i][1] = (float) y;
+				}
+			}
+		} catch (JSONException e) {
+			throw badGesture("bad path: " + e.getMessage());
+		}
+		if (!(frameMs > 0 && frameMs <= 1000)) throw badGesture("frameMs must be in (0, 1000]");
+		if (holdMs < 0 || releaseMs < 0) throw badGesture("holdMs and releaseMs must be >= 0");
+		if ((n - 1) * frameMs + holdMs + releaseMs > GESTURE_MAX_MS) throw badGesture("a gesture lasts at most " + GESTURE_MAX_MS + " ms");
+
+		long down = SystemClock.uptimeMillis();
+		int sent = 0;
+		int downs = 0;
+		long maxLag = 0;
+		try {
+			injectGesture(down, down, MotionEvent.ACTION_DOWN, 1, frames, 0, false);
+			downs = 1;
+			if (pointers == 2) {
+				injectGesture(down, down, MotionEvent.ACTION_POINTER_DOWN | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, frames, 0, false);
+				downs = 2;
+			}
+			if (holdMs > 0) SystemClock.sleep(holdMs);
+			long start = SystemClock.uptimeMillis();
+			for (int i = 1; i < n; i++) {
+				long due = start + Math.round(i * frameMs);
+				long wait = due - SystemClock.uptimeMillis();
+				if (wait > 0) SystemClock.sleep(wait);
+				else maxLag = Math.max(maxLag, -wait);
+				injectGesture(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, pointers, frames, i, false);
+				sent = i;
+			}
+			if (releaseMs > 0) SystemClock.sleep(releaseMs);
+			if (pointers == 2) {
+				injectGesture(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_POINTER_UP | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, frames, n - 1, false);
+				downs = 1;
+			}
+			injectGesture(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, 1, frames, n - 1, true);
+		} catch (OpError e) {
+			if (downs == 0) throw e;
+			cancelGesture(down, downs, frames, sent);
+			throw new OpError("E_INTERNAL", "gesture interrupted after " + sent + "/" + (n - 1) + " frames: " + e.getMessage(), false);
+		} catch (Throwable t) {
+			if (downs == 0) throw new OpError("E_HID", "gesture failed before any input: " + t, false);
+			cancelGesture(down, downs, frames, sent);
+			throw new OpError("E_INTERNAL", "gesture interrupted after " + sent + "/" + (n - 1) + " frames: " + t, false);
+		}
+		return "{\"frames\":" + n + ",\"pointers\":" + pointers + ",\"maxLagMs\":" + maxLag + ",\"via\":" + q(injectNoAnimationWait != null ? "inject3" : "inject2") + "}";
+	}
+
+	/** Best effort: end a gesture whose fingers are still down. */
+	private void cancelGesture(long downTime, int downPointers, float[][][] frames, int frame) {
+		try {
+			injectGesture(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_CANCEL, downPointers, frames, frame, true);
+		} catch (Throwable ignored) {
+			// the device refused again: nothing more to do
+		}
 	}
 
 	String key(int keyCode, int metaState, int times, long gapMs, boolean sync) throws OpError {

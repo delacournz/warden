@@ -18,6 +18,7 @@ import type {
 	Snapshot,
 } from "../driver.types";
 import { driverError } from "../errors";
+import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
 import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import type { SelectsAll } from "../typing";
@@ -193,9 +194,11 @@ export function createIosDriver(
 	const bridgeUp = ready.ax.bridge === "available";
 	let settleUnsupported = !nativeSettle;
 	let rebindUnsupported = false;
+	let gestureUnsupported = false;
 
 	const capabilities: DriverCapabilities = {
 		pinch: true,
+		maxPointers: 2,
 		unicodeText: true,
 		nativeSettle,
 		alerts: true,
@@ -260,6 +263,32 @@ export function createIosDriver(
 	};
 
 	const gestureTimeout = (durationMs: number | undefined, base = 0) => (durationMs ?? 0) + base + GESTURE_MARGIN_MS;
+
+	const helperOutdated = () =>
+		fail(
+			driverError(
+				"E_UNSUPPORTED",
+				`this warden-simd predates the gesture op: restart the helper (warden ui close --udid ${udid}) or rebuild it (bun run --cwd packages/e2e native:build)`,
+				{ detail: { reason: "helper_outdated" } }
+			)
+		);
+
+	/** Replays a plan through the helper's `gesture` op; an old helper that doesn't know the op is remembered. */
+	const sendGesture = async (planned: Result<GesturePlan, DriverError>): DriverResult<void> => {
+		if (!planned.success) return planned;
+		if (gestureUnsupported) return helperOutdated();
+		const plan = planned.data;
+		const result = await sendVoid(
+			"gesture",
+			{ paths: plan.paths, frameMs: plan.frameMs, holdMs: plan.holdMs, releaseMs: plan.releaseMs },
+			gestureTimeout(plan.totalMs, 300)
+		);
+		if (!result.success && result.error.code === "E_BAD_REQUEST" && /unknown (input )?op/.test(result.error.message)) {
+			gestureUnsupported = true;
+			return helperOutdated();
+		}
+		return result;
+	};
 
 	const fetchSnapshot = async (o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }) => {
 		const result = await request("snapshot", params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend }));
@@ -502,9 +531,11 @@ export function createIosDriver(
 		pinch: (center, scale, o) =>
 			sendVoid(
 				"pinch",
-				params({ center, scale, durationMs: o?.durationMs, radius: o?.radius }),
+				params({ center, scale, durationMs: o?.durationMs, radius: o?.radius, angle: o?.angle }),
 				gestureTimeout(o?.durationMs, 300)
 			),
+		rotate: (center, degrees, o) => sendGesture(rotatePlan(center, degrees, o, DEFAULT_RADIUS)),
+		gesture: (paths, o) => sendGesture(planGesture(paths, o, 2)),
 		typeText,
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		selectAll: () => sendVoid("selectAll"),
