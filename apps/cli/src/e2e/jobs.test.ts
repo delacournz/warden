@@ -187,4 +187,9 @@ describe("attemptOut", () => {
 	test("one directory per attempt under the batch dir", () => {
 		expect(attemptOut("/batch", 2, 5)).toBe("/batch/e2e/2-5");
 	});
+
+	test("a later pass of the same attempt gets its own directory (12-10)", () => {
+		expect(attemptOut("/batch", 2, 5, 0)).toBe("/batch/e2e/2-5");
+		expect(attemptOut("/batch", 2, 5, 1)).toBe("/batch/e2e/2-5-p1");
+	});
 });

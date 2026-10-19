@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bytes, ms, pct, ratio, signedMs, signedPct } from "./format";
+import { bytes, cpuSeconds, ms, pct, ratio, signedCpuSeconds, signedMs, signedPct } from "./format";
 
 describe("format", () => {
 	test("ms", () => {
@@ -34,5 +34,16 @@ describe("format", () => {
 		expect(ratio(1)).toBe("1.00×");
 		expect(ratio(1.516)).toBe("1.52×");
 		expect(ratio(undefined)).toBe("—");
+	});
+});
+
+describe("format CPU seconds", () => {
+	test("cpuSeconds always in seconds with two decimals; signed for deltas", () => {
+		expect(cpuSeconds(0.854)).toBe("0.85 s");
+		expect(cpuSeconds(12.3)).toBe("12.30 s");
+		expect(cpuSeconds(undefined)).toBe("—");
+		expect(signedCpuSeconds(-1)).toBe("-1.00 s");
+		expect(signedCpuSeconds(0.5)).toBe("+0.50 s");
+		expect(signedCpuSeconds(Number.NaN)).toBe("—");
 	});
 });

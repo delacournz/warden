@@ -1,4 +1,4 @@
-import { type ElementSpec, el, type FakeDriver, fakeDriver, snapshotOf } from "../driver/driver.testing";
+import { type ElementSpec, el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "../driver/driver.testing";
 import type { Driver, Platform } from "../driver/driver.types";
 import { cacheObservations } from "../driver/observation-cache";
 import type { ScreenHost } from "./context";
@@ -68,6 +68,8 @@ export function fieldFixture(
 		placeholderMeta?: boolean;
 		selectAll?: boolean;
 		selectAllRefused?: boolean;
+		/** offer `setText` (Android `warden-uiad`): it replaces the whole value; `refused` offers it and fails every call */
+		setText?: boolean | "refused";
 	} = {}
 ) {
 	const state = {
@@ -113,6 +115,11 @@ export function fieldFixture(
 			if (call.method === "tap") {
 				state.selected = false;
 				if (state.focused !== true && options.neverFocuses !== true) state.focusIn = options.focusReads ?? 0;
+			} else if (call.method === "setText") {
+				if (options.setText === "refused") return failWith("E_UNSUPPORTED", "setText needs the warden-uiad server");
+				state.value = call.text;
+				state.selected = false;
+				state.lag = lagReads;
 			} else if (call.method === "selectAll") {
 				state.selected = options.selectAllRefused !== true;
 			} else if (call.method === "typeText") {
@@ -137,6 +144,7 @@ export function fieldFixture(
 			return undefined;
 		},
 		selectAll: options.selectAll === true || options.selectAllRefused === true,
+		setText: options.setText !== undefined && options.setText !== false,
 	});
 	return { driver, state };
 }

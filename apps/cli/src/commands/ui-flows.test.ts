@@ -68,9 +68,9 @@ type Harness = {
 };
 
 /** A leased device, a fake driver, and the real flow recorder (no `record` dep): the files land in a temp cwd. */
-function harness(screen: Snapshot = snapshotOf(login())): Harness {
+function harness(screen: Snapshot = snapshotOf(login()), options: { setText?: boolean } = {}): Harness {
 	const clock = { t: 1_000_000 };
-	const driver = fakeDriver({ screens: [screen] });
+	const driver = fakeDriver({ screens: [screen], ...(options.setText ? { setText: true } : {}) });
 	const deps: UiDeps = {
 		driver: async () => ok(driver),
 		sleep: async (ms) => {
@@ -203,6 +203,25 @@ describe("replay", () => {
 				.join("")
 		).toBe("me@example.comhunter22hello");
 		expect(h.driver.callsOf("app.launch")[0]?.bundleId).toBe("com.example.app");
+	});
+
+	test("fill on a driver with setText: typed by default, set under WARDEN_ANDROID_SETTEXT=1", async () => {
+		const h = harness(snapshotOf(login()), { setText: true });
+		await recordSession(h);
+		h.driver.calls.length = 0;
+		expect(await h.run("replay", h.flowPath)).toBe(0);
+		expect(h.driver.callsOf("setText")).toEqual([]);
+		expect(
+			h.driver
+				.callsOf("typeText")
+				.map((call) => call.text)
+				.join("")
+		).toBe("me@example.comhunter22hello");
+		h.c.env = { ...h.c.env, WARDEN_ANDROID_SETTEXT: "1" };
+		h.driver.calls.length = 0;
+		expect(await h.run("replay", h.flowPath)).toBe(0);
+		expect(h.driver.callsOf("setText").map((call) => call.text)).toEqual(["me@example.com", "hunter22"]);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["hello"]);
 	});
 
 	test("--json: one envelope with the steps", async () => {

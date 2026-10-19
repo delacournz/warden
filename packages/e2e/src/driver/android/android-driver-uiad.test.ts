@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { Driver, DriverResult } from "../driver.types";
 import { canDetectAlerts } from "../observation-cache";
 import { settleDetailOf } from "../settle";
-import { canRepeatKeys, canSelectAll } from "../typing";
+import { canRepeatKeys, canSelectAll, canSetText } from "../typing";
 import { openAndroidDriver } from "./android-driver";
 import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
 import { type AndroidStateStore, memoryAndroidState } from "./android-state";
@@ -85,6 +85,12 @@ describe("off by default", () => {
 		expect(dumps(host)).toBe(1);
 		expect(driver.capabilities.nativeSettle).toBe(false);
 		expect(canSelectAll(driver)).toBe(false);
+		expect(canSetText(driver)).toBe(false);
+	});
+
+	test("without the server option there is no setText: a fill types as before", async () => {
+		const { driver } = await setup({ uiad: false });
+		expect(canSetText(driver)).toBe(false);
 	});
 });
 
@@ -224,6 +230,41 @@ describe("with the server", () => {
 		});
 		await value(driver.typeText("héllo"));
 		expect(uiad.of("typeText")[0]).toMatchObject({ text: "héllo" });
+		expect(inputs(host)).toEqual([]);
+	});
+
+	test("setText replaces the focused field's text in one server request, then waits for the edit to land", async () => {
+		const { driver, host, uiad } = await setup({
+			uiad: { handle: (r) => (r.op === "setText" ? { data: { text: r.text } } : undefined) },
+		});
+		if (!canSetText(driver)) throw new Error("no setText");
+		await value(driver.setText("grace@example.com"));
+		expect(uiad.of("setText")).toEqual([expect.objectContaining({ op: "setText", text: "grace@example.com" })]);
+		expect(uiad.of("setText")[0]).not.toHaveProperty("resourceId");
+		expect(uiad.of("settle")).toHaveLength(1);
+		expect(inputs(host)).toEqual([]);
+	});
+
+	test("setText of empty text is the recorded reply", async () => {
+		const { driver, uiad } = await setup();
+		if (!canSetText(driver)) throw new Error("no setText");
+		await value(driver.setText(""));
+		expect(uiad.of("setText")[0]).toMatchObject({ text: "" });
+	});
+
+	test("a setText the server refuses (nothing focused) is an error for the caller, never `input text`", async () => {
+		const { driver, host } = await setup({
+			uiad: {
+				handle: (r) =>
+					r.op === "setText"
+						? { error: { code: "E_NO_ELEMENT", message: "no focused input to set text on", retryable: false } }
+						: undefined,
+			},
+		});
+		if (!canSetText(driver)) throw new Error("no setText");
+		const set = await driver.setText("abc");
+		expect(set.success).toBe(false);
+		if (!set.success) expect(set.error.code).toBe("E_UNSUPPORTED");
 		expect(inputs(host)).toEqual([]);
 	});
 

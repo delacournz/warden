@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { BatchWorker } from "@delacour/warden-core/batch/schedule";
-import type { AsyncResult } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 
 /** What `warden e2e` runs on each leased device before its first flow. */
 export type DeviceSetupSpec = {
@@ -21,6 +21,8 @@ export type DeviceSetup = {
 	log?: string;
 	/** `slim`: the jobs switched off, or why it failed (a failed slim only warns) */
 	slim?: { jobs: number } | { error: string };
+	/** why a device that passed its setup was still dropped before its first job (it cannot reach Metro, 12-7) */
+	error?: string;
 };
 
 type Proc = { exited: Promise<number> };
@@ -84,4 +86,36 @@ export async function setupDevices(run: SetupRun): Promise<DeviceSetup[]> {
 			}
 		})
 	);
+}
+
+/** The slim of each device started the moment it is leased, alongside its app install and warm-up (12-4). */
+export type EarlySlim<C extends { device: { id: string } }> = {
+	/** `LeaseArgs.onLeased`: start slimming these devices (`skip`ped ones resolve to no jobs touched, unprobed) */
+	leased: (outcome: { claimed: readonly C[] }) => void;
+	/** `SetupRun.slim`: a leased device's slim already under way, else a fresh one */
+	slim: (udid: string) => AsyncResult<string[]>;
+	/** every slim started, settled (never rejects) */
+	settled: () => Promise<void>;
+};
+
+/** Start each leased device's slim at once; `skip(claimed)` says the device is slimmed already, so it is not even probed. */
+export function startEarlySlim<C extends { device: { id: string } }>(deps: {
+	slim: (udid: string) => AsyncResult<string[]>;
+	skip: (claimed: C) => boolean;
+}): EarlySlim<C> {
+	const started = new Map<string, Promise<Awaited<ReturnType<typeof deps.slim>>>>();
+	const run = (udid: string) =>
+		deps.slim(udid).catch((error: unknown) => err(error instanceof Error ? error.message : String(error)));
+	return {
+		leased: (outcome) => {
+			for (const c of outcome.claimed) {
+				const udid = c.device.id;
+				if (!started.has(udid)) started.set(udid, deps.skip(c) ? Promise.resolve(ok([])) : run(udid));
+			}
+		},
+		slim: (udid) => started.get(udid) ?? run(udid),
+		settled: async () => {
+			await Promise.all(started.values());
+		},
+	};
 }

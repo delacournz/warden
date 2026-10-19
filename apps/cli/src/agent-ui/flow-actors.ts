@@ -136,7 +136,9 @@ export function flowActors(
 				deps.sleep,
 				at.element ? focusPoint(at.element.frame) : at.point,
 				at.entry,
-				c.text(step.text)
+				c.text(step.text),
+				"auto",
+				ctx.env
 			);
 			return uiFailure(fromDriver(typed));
 		},

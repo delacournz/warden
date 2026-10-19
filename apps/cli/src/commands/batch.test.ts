@@ -7,7 +7,7 @@ import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { createBatchCommand, defaultBatchDeps } from "./batch";
+import { createBatchCommand, defaultBatchDeps, openOnDevices, startRecordings } from "./batch";
 import { harness } from "./batch.testing";
 
 let ctx: TestContext | undefined;
@@ -40,6 +40,7 @@ type BatchJson = {
 		endedAt: number;
 		exitCode: number;
 		screenshot?: string;
+		logDrainMs?: number;
 	}>;
 };
 
@@ -448,11 +449,27 @@ describe("warden batch", () => {
 		try {
 			expect(await proc.exited).toBe(0);
 			expect(performance.now() - started).toBeLessThan(1_500);
+			// the held pipe shows up as the quiet window the drain sat out (13-6)
+			expect(proc.logDrainMs?.()).toBeGreaterThanOrEqual(200);
 			expect(readFileSync(log, "utf8")).toMatch(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\] hello\n$/);
 		} finally {
 			const pid = Number(readFileSync(pidFile, "utf8").trim());
 			if (pid > 0) process.kill(pid);
 		}
+	});
+
+	test("how long each job's log drained after its exit lands in its batch.json entry, summed over passes (13-6)", async () => {
+		const c = setup(["ios", "--jobs", "a", "--passes", "2", "--", "x"]);
+		const h = harness({ logDrainMs: 12.4 });
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		const summary = JSON.parse(h.files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "batch.json")) ?? "{}");
+		expect((summary as BatchJson).jobs.map((j) => j.logDrainMs)).toEqual([25]);
+
+		const plain = setup(["ios", "--jobs", "a", "--", "x"]);
+		const quiet = harness();
+		expect(await createBatchCommand(quiet.deps).run(plain)).toBe(0);
+		const doc = JSON.parse(quiet.files.get(join(plain.env.WARDEN_HOME ?? "", "batches", "b1", "batch.json")) ?? "{}");
+		expect((doc as BatchJson).jobs[0]).not.toHaveProperty("logDrainMs");
 	});
 
 	test("--json: batch.json shape on stdout only", async () => {
@@ -1078,5 +1095,52 @@ describe("warden batch auto-gc (12-2)", () => {
 		expect(await createBatchCommand(harness().deps).run(c)).toBe(0);
 		expect(order.gcBeforeClaim()).toBe(false);
 		expect(autoGcConsidered(c.db)).toBe(true);
+	});
+});
+
+describe("openOnDevices", () => {
+	const plan = { projectRoot: "/p", env: {}, prewarm: false, readyTimeoutMs: 1, launchArgs: [] };
+	const metro = { port: 8081, url: "http://127.0.0.1:8081" };
+
+	test("Android: a device whose port cannot be reversed after a retry is returned, to be dropped (12-7)", async () => {
+		const calls: string[][] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push([...cmd]);
+			const bad = cmd[2] === "emulator-5556" && cmd[3] === "reverse";
+			return { exitCode: bad ? 1 : 0, stdout: "", stderr: bad ? "error: device offline" : "" };
+		};
+		ctx = testContext([], { exec });
+		const devices = [{ udid: "emulator-5554" }, { udid: "emulator-5556" }];
+		const unreachable = await openOnDevices(ctx, "e2e", "android", plan, metro, devices);
+		expect(unreachable.map((u) => u.udid)).toEqual(["emulator-5556"]);
+		expect(unreachable[0]?.error).toContain("device offline");
+		expect(calls.filter((c) => c[2] === "emulator-5556").map((c) => c[3])).toEqual([
+			"reverse",
+			"wait-for-device",
+			"reverse",
+		]);
+		expect(calls.filter((c) => c[2] === "emulator-5554").map((c) => c[3])).toEqual(["reverse"]);
+	});
+
+	test("iOS: a failed launch only warns; no device is dropped", async () => {
+		ctx = testContext([], { exec: async () => ({ exitCode: 143, stdout: "", stderr: "" }) });
+		const unreachable = await openOnDevices(ctx, "e2e", "ios", { ...plan, bundleId: "com.x" }, metro, [{ udid: "U1" }]);
+		expect(unreachable).toEqual([]);
+		expect(ctx.stderr.join("\n")).toContain("simctl launch");
+	});
+});
+
+describe("startRecordings", () => {
+	test("a device the headless hide lost gets no recorder and no video entry (batch-pipeline-S2)", async () => {
+		const h = harness();
+		const devices = [0, 1, 2].map((worker): { worker: number; udid: string; name: string; video?: string } => ({
+			worker,
+			udid: `U${worker}`,
+			name: `sim-${worker}`,
+		}));
+		const out = await startRecordings(h.deps, "/rec", devices, ["U1"]);
+		expect(out.success).toBe(true);
+		expect(h.events).toEqual(["record:U0:/rec/dev-0.mp4", "record:U2:/rec/dev-2.mp4"]);
+		expect(devices.map((d) => d.video)).toEqual(["dev-0.mp4", undefined, "dev-2.mp4"]);
 	});
 });

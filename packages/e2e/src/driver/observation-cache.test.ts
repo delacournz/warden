@@ -158,6 +158,26 @@ describe("previous", () => {
 	});
 });
 
+describe("peek", () => {
+	test("is the kept snapshot with its age, and reads nothing", async () => {
+		const { raw, driver, clock } = setup();
+		expect(driver.peek?.()).toBeUndefined();
+		const first = unwrap(await driver.observe(FRESH));
+		clock.advance(40);
+		expect(driver.peek?.()).toEqual({ snapshot: first, ageMs: 40 });
+		expect(raw.callsOf("snapshot")).toHaveLength(1);
+	});
+
+	test("an input ends it, and a hit-test does not", async () => {
+		const { driver } = setup();
+		await driver.observe(FRESH);
+		await driver.elementAtPoint({ x: 1, y: 1 });
+		expect(driver.peek?.()).toBeDefined();
+		await driver.tap({ x: 1, y: 1 });
+		expect(driver.peek?.()).toBeUndefined();
+	});
+});
+
 describe("input generation", () => {
 	type Act = [string, (driver: Driver & Observes) => Promise<unknown>];
 	const ACTS: Act[] = [

@@ -20,6 +20,8 @@ export type FakeHost = {
 	migrationPolls: number;
 	/** %CPU samples returned for a booted sim, in order (last repeats) */
 	cpu: number[];
+	/** `xcode-select -p` + `plutil` read the Xcode build from `version.plist` (false: unreadable, as with no plist) */
+	xcodePlist: boolean;
 	/** clone of a booted source fails like simctl does */
 	exec: Exec;
 };
@@ -73,6 +75,7 @@ function simctlVerbs(host: FakeHost, nextId: () => number): Record<string, Handl
 		boot: setState("Booted"),
 		shutdown: setState("Shutdown"),
 		bootstatus: () => ok(),
+		spawn: () => ok(),
 		rename: (args) => {
 			const sim = find(args[0]);
 			if (sim) sim.name = args[1] ?? sim.name;
@@ -85,13 +88,19 @@ function simctlVerbs(host: FakeHost, nextId: () => number): Record<string, Handl
 	};
 }
 
-/** `xcodebuild`, `plutil` (migration record), `launchctl` + `ps` (CPU) handlers. */
+/** `xcodebuild`, `xcode-select`, `plutil` (Xcode build, migration record), `launchctl` + `ps` (CPU) handlers. */
 function hostTools(host: FakeHost): Record<string, Handler> {
 	const polls = new Map<string, number>();
 	let cpuIndex = 0;
 	return {
 		xcodebuild: () => ok("Xcode 26.6\nBuild version 17F113\n"),
+		"xcode-select": () => ok("/Applications/Xcode.app/Contents/Developer\n"),
 		plutil: (args) => {
+			if (args.includes("ProductBuildVersion")) {
+				return host.xcodePlist && args.at(-1) === "/Applications/Xcode.app/Contents/version.plist"
+					? ok("17F113\n")
+					: fail("Could not extract value");
+			}
 			const udid = /Devices\/([^/]+)\/data/.exec(args[args.length - 1] ?? "")?.[1] ?? "";
 			const seen = (polls.get(udid) ?? 0) + 1;
 			polls.set(udid, seen);
@@ -111,13 +120,16 @@ function hostTools(host: FakeHost): Record<string, Handler> {
 }
 
 /** Stateful fake of `xcrun simctl`, `xcodebuild`, `plutil`, `launchctl`, `ps` for golden tests. */
-export function fakeHost(init: Partial<Pick<FakeHost, "sims" | "migrationPolls" | "cpu">> = {}): FakeHost {
+export function fakeHost(
+	init: Partial<Pick<FakeHost, "sims" | "migrationPolls" | "cpu" | "xcodePlist">> = {}
+): FakeHost {
 	let next = 1;
 	const host: FakeHost = {
 		sims: init.sims ?? [],
 		calls: [],
 		migrationPolls: init.migrationPolls ?? 1,
 		cpu: init.cpu ?? [10],
+		xcodePlist: init.xcodePlist ?? true,
 		exec: async (cmd) => {
 			host.calls.push([...cmd]);
 			const [bin = "", ...rest] = cmd;

@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import { cacheCap, cacheTotal } from "@delacour/warden-core/builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
+import { androidSnapshotsDue } from "@delacour/warden-core/golden/android-snapshot-pending";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import type { CommandContext } from "./context";
 
@@ -39,8 +41,9 @@ export function spawnDetached(cmd: string[], env: Record<string, string | undefi
 /**
  * Kick off `nice -n 10 warden gc --quiet` when there is something for it to do: at most once per
  * `AUTO_GC_INTERVAL_MS` (the throttle is kept in the store, so every hook/claim across every
- * process shares it) it looks at the store: a lease whose owner died, or a warden device that went
- * idle since the last pass. Nothing there, nothing is spawned (a pass is a full warden process,
+ * process shares it) it looks at the store: a lease whose owner died, a warden device that went
+ * idle since the last pass, a build cache over its cap (one `SUM` over the builds table), or an AVD a claim
+ * cold-booted for want of a quick-boot snapshot (not under `CI`). Nothing there, nothing is spawned (a pass is a full warden process,
  * ~100 MB). This is what reaps sims left behind by sessions that died without a SessionEnd: their
  * leases go stale, gc shuts them down. `WARDEN_AUTO_GC=0` disables. The child gets the context's
  * env, so it gcs the same `WARDEN_HOME`.
@@ -62,6 +65,18 @@ export function maybeAutoGc(
 	});
 	if (!due) return;
 	const work = store.gcWork(now, DEFAULT_IDLE_MS, opts.pidAlive ?? processAlive);
-	if (work.staleLeases === 0 && work.idleDevices === 0) return;
+	if (
+		work.staleLeases === 0 &&
+		work.idleDevices === 0 &&
+		!cacheOverCap(ctx) &&
+		!androidSnapshotsDue(store, ctx.env, now)
+	)
+		return;
 	run([...(opts.nice ?? niceCommand()), ...self, "gc", "--quiet"]);
+}
+
+/** The build cache is over the cap gc would prune it to; a bad `WARDEN_MAX_CACHE_SIZE` (gc skips the prune) is not. */
+function cacheOverCap(ctx: CommandContext): boolean {
+	const cap = cacheCap(undefined, ctx.env).bytes;
+	return cap.success && cacheTotal(ctx.store()) > cap.data;
 }

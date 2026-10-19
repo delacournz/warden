@@ -216,7 +216,9 @@ async function typeAndConfirm(
 	const readable = plan.verify && !plan.secure && entry !== undefined;
 	for (let attempt = 1; attempt <= (readable ? 2 : 1); attempt += 1) {
 		const method: ClearMethod = attempt === 1 ? "auto" : "counted";
-		const typed = fromDriver(await focusClearType(driver, deps.sleep, caretPoint(resolved), entry, text, method));
+		const typed = fromDriver(
+			await focusClearType(driver, deps.sleep, caretPoint(resolved), entry, text, method, ctx.env)
+		);
 		if (!typed.success) return typed;
 		if (!readable) break;
 		const back = await readBack(ctx, deps, driver, entry, text, { budgetMs: plan.budgetMs, maxMs: plan.maxMs });

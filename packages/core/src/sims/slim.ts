@@ -169,7 +169,7 @@ async function launchctlOk(exec: Exec, udid: string, ...args: string[]): AsyncRe
 /**
  * Disable (or with `restore`, re-enable) the denylisted jobs on one booted simulator; resolves to
  * the labels touched. Each job is `launchctl disable`d inside the simulator, which that device
- * remembers across its own reboots, then `bootout`ed so it stops now. The disabled state is kept
+ * remembers across its own reboots, then `bootout`ed (when loaded) so it stops now. The disabled state is kept
  * outside the device's `data/`, so a `simctl clone` of a slimmed image boots with nothing disabled.
  * Idempotent: a slimmed sim is a no-op (bar re-enabling labels a past denylist wrongly disabled). Widget and poster extensions are spawned by SpringBoard,
  * not launchd, so a few survive; starving their daemons still stops most of them. The per-job spawns
@@ -191,8 +191,11 @@ export async function slimSimulator(exec: Exec, udid: string, options: SlimOptio
 	const listCmd = launchctl(udid, "list");
 	const listed = await exec(listCmd);
 	if (listed.exitCode !== 0) return err(execError(listCmd, listed));
-	const labels = planSlim(parseLaunchctlList(listed.stdout), disabled);
+	const jobs = parseLaunchctlList(listed.stdout);
+	const labels = planSlim(jobs, disabled);
 	if (options.dryRun) return ok(labels);
+	// a label launchd has not loaded has nothing to boot out: on a fresh sim most of the denylist (16-12)
+	const loaded = new Set(jobs.map((job) => job.label));
 	// best effort, and only effective on the device's next boot
 	await eachBounded(planHeal(disabled), SLIM_CONCURRENCY, async (label) => {
 		await exec(launchctl(udid, "enable", `system/${label}`));
@@ -201,8 +204,8 @@ export async function slimSimulator(exec: Exec, udid: string, options: SlimOptio
 	const slimmed = await eachBounded(labels, SLIM_CONCURRENCY, async (label) => {
 		const disabledNow = await launchctlOk(exec, udid, "disable", `system/${label}`);
 		if (!disabledNow.success) return disabledNow;
-		// not loaded / already exited is fine: the disable is what persists
-		await exec(launchctl(udid, "bootout", `system/${label}`));
+		// already exited is fine: the disable is what persists
+		if (loaded.has(label)) await exec(launchctl(udid, "bootout", `system/${label}`));
 		return ok(undefined);
 	});
 	return slimmed.success ? ok(labels) : slimmed;

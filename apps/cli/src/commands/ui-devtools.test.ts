@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fakePage, startFakeMetro } from "@delacour/warden-e2e/devtools/devtools.testing";
 import type { ConsoleLine, NetworkEntry } from "@delacour/warden-e2e/devtools/devtools.types";
@@ -41,6 +41,8 @@ type Harness = {
 	killed: [number, string][];
 	alive: Set<number>;
 	probes: number[];
+	/** the fake devtools deps (a test may give the collector a `command` reader) */
+	devtools: DevtoolsDeps;
 };
 
 /** A leased device, a fake Metro with scripted evaluate answers (the reload probe answers `expo` and clears the JS context like a real reload), and a fake collector spawner. */
@@ -131,6 +133,7 @@ function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}
 		killed,
 		alive,
 		probes,
+		devtools,
 		run: (...argv) => {
 			c.argv = [...argv, "--udid", UDID];
 			c.stdout.length = 0;
@@ -342,6 +345,58 @@ describe("warden ui logs", () => {
 		expect(h.killed).toEqual([[pid, "SIGTERM"]]);
 		expect(readState(h.c, UDID).collector).toBeUndefined();
 		expect(await h.run("logs", "stop")).toBe(1);
+	});
+
+	test("a collector pid now running another program is never signalled: stop forgets it, start spawns anew (14-4)", async () => {
+		const h = harness();
+		await h.run("logs", "start", "--metro", h.fake.url);
+		h.devtools.collector.command = () => "/usr/bin/vim notes.txt";
+		expect(await h.run("logs", "start", "--metro", h.fake.url, "--json")).toBe(0);
+		expect(h.spawned).toHaveLength(2);
+		expect(await h.run("logs", "stop")).toBe(0);
+		expect(h.killed).toEqual([]);
+		expect(readState(h.c, UDID).collector).toBeUndefined();
+	});
+
+	test("the collector is SIGTERMed while its command line is still `ui-collect --out <this device's dir>`", async () => {
+		const h = harness();
+		h.devtools.collector.command = () => h.spawned.at(-1)?.cmd.join(" ");
+		await h.run("logs", "start", "--metro", h.fake.url);
+		const pid = readState(h.c, UDID).collector?.pid ?? 0;
+		expect(await h.run("logs", "stop")).toBe(0);
+		expect(h.killed).toEqual([[pid, "SIGTERM"]]);
+	});
+
+	test("a live collector whose command line cannot be read is not signalled and stays recorded, with a warning", async () => {
+		const h = harness();
+		await h.run("logs", "start", "--metro", h.fake.url);
+		const recorded = readState(h.c, UDID).collector;
+		h.devtools.collector.command = () => undefined;
+		expect(await h.run("logs", "stop", "--json")).toBe(0);
+		expect(h.killed).toEqual([]);
+		const out = h.json();
+		expect(result(out)).toMatchObject({ state: "collecting", pid: recorded?.pid });
+		expect((out.warnings as string[] | undefined)?.[0]).toContain(
+			`could not stop the collector (pid ${recorded?.pid})`
+		);
+		expect(readState(h.c, UDID).collector).toEqual(recorded);
+	});
+
+	test("the collector is told by the --out it was started with, not by today's WARDEN_HOME spelling", async () => {
+		const h = harness();
+		h.devtools.collector.command = () => h.spawned.at(-1)?.cmd.join(" ");
+		await h.run("logs", "start", "--metro", h.fake.url);
+		const pid = readState(h.c, UDID).collector?.pid ?? 0;
+		const home = h.c.env.WARDEN_HOME ?? "";
+		const alias = `${home}-alias`;
+		symlinkSync(home, alias);
+		cleanup.push(() => rmSync(alias, { force: true }));
+		h.c.env.WARDEN_HOME = alias;
+		expect(await h.run("logs", "start", "--metro", h.fake.url, "--json")).toBe(0);
+		expect(result(h.json()).already).toBe(true);
+		expect(h.spawned).toHaveLength(1);
+		expect(await h.run("logs", "stop")).toBe(0);
+		expect(h.killed).toEqual([[pid, "SIGTERM"]]);
 	});
 
 	test("logs [n] reads the tail of console.jsonl", async () => {

@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Exec } from "@delacour/warden-core/exec";
 import {
+	adbReverseArgv,
 	devClientLaunchArgs,
 	devClientLaunchArgv,
 	launchMetro,
@@ -14,6 +16,7 @@ import {
 	prewarmMetro,
 	READY_POLL_MS,
 	resolveExpoBin,
+	reverseMetroPort,
 	startMetro,
 } from "./metro";
 import { fakeExec } from "./testing";
@@ -34,7 +37,7 @@ function tempDir(): string {
 }
 
 /** A fake dev server on a free port. */
-function serve(handler: (url: URL, req: Request) => Response): Server {
+function serve(handler: (url: URL, req: Request) => Response | Promise<Response>): Server {
 	const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => handler(new URL(req.url), req) });
 	const s = { port: server.port ?? 0, stop: () => server.stop(true) };
 	servers.push(s);
@@ -419,9 +422,69 @@ describe("prewarmMetro", () => {
 		if (!res.success) expect(res.error).toContain("SyntaxError: app.tsx: Unexpected token");
 	});
 
+	test("an abort ends a prewarm still waiting for the bundle at once (12-5)", async () => {
+		const s = serve((url) =>
+			url.pathname === "/"
+				? Response.json({ launchAsset: { url: `http://127.0.0.1:${s.port}/index.bundle` } })
+				: new Promise<Response>(() => {})
+		);
+		const controller = new AbortController();
+		const pending = prewarmMetro(metroUrl(s.port), "ios", controller.signal);
+		await Bun.sleep(20);
+		controller.abort();
+		const started = Date.now();
+		expect(await pending).toEqual({ success: false, error: "interrupted while building the ios bundle" });
+		expect(Date.now() - started).toBeLessThan(1_000);
+	});
+
+	test("an abort before the manifest answers is an interrupt too, not a skipped prewarm", async () => {
+		const s = serve(() => new Promise<Response>(() => {}));
+		const controller = new AbortController();
+		const pending = prewarmMetro(metroUrl(s.port), "ios", controller.signal);
+		await Bun.sleep(20);
+		controller.abort();
+		expect(await pending).toEqual({ success: false, error: "interrupted while building the ios bundle" });
+	});
+
 	test("no readable manifest → skipped, not an error", async () => {
 		const s = serve(() => new Response("nope", { status: 404 }));
 		expect(await prewarmMetro(metroUrl(s.port), "ios")).toEqual({ success: true, data: { bundled: false } });
+	});
+});
+
+describe("reverseMetroPort (12-7)", () => {
+	const fakeAdb = (exits: number[], calls: string[][]): Exec => {
+		return async (cmd, opts) => {
+			calls.push([...cmd, ...(opts?.timeoutMs !== undefined ? [`timeout=${opts.timeoutMs}`] : [])]);
+			const exitCode = cmd[3] === "reverse" ? (exits.shift() ?? 0) : 0;
+			return { exitCode, stdout: "", stderr: exitCode === 0 ? "" : "error: device offline" };
+		};
+	};
+
+	test("a reverse that works first time is the only call", async () => {
+		const calls: string[][] = [];
+		expect(await reverseMetroPort(fakeAdb([0], calls), "emulator-5554", 8081)).toEqual({
+			success: true,
+			data: undefined,
+		});
+		expect(calls).toEqual([adbReverseArgv("emulator-5554", 8081)]);
+	});
+
+	test("a failed reverse is retried once after a bounded adb wait-for-device", async () => {
+		const calls: string[][] = [];
+		expect((await reverseMetroPort(fakeAdb([1, 0], calls), "emulator-5554", 8081)).success).toBe(true);
+		expect(calls).toEqual([
+			adbReverseArgv("emulator-5554", 8081),
+			["adb", "-s", "emulator-5554", "wait-for-device", "timeout=30000"],
+			adbReverseArgv("emulator-5554", 8081),
+		]);
+	});
+
+	test("failing twice is an error naming the command", async () => {
+		const res = await reverseMetroPort(fakeAdb([1, 1], []), "emulator-5554", 8081);
+		expect(res.success).toBe(false);
+		if (!res.success)
+			expect(res.error).toContain("adb -s emulator-5554 reverse tcp:8081 tcp:8081` exited 1: error: device offline");
 	});
 });
 

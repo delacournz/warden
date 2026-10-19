@@ -29,7 +29,7 @@ import {
 	snapshotHash,
 } from "../settle";
 import { noteSpanDetail } from "../span-detail";
-import type { RepeatingKeys, SelectsAll } from "../typing";
+import type { RepeatingKeys, SelectsAll, SetsText } from "../typing";
 import { type AdbSession, openAdbSession, type SpawnAdb } from "./adb-session";
 import { detectAlert } from "./android-alert";
 import { type AnimationGuard, disableAnimations } from "./android-animations";
@@ -274,7 +274,7 @@ function buildDriver(
 	clock: Clock,
 	execBinary: ExecBinary,
 	facts: DeviceFacts
-): Driver & RepeatingKeys & DetectsAlerts & Partial<SelectsAll> {
+): Driver & RepeatingKeys & DetectsAlerts & Partial<SelectsAll> & Partial<SetsText> {
 	const { serial, adb, exec, log } = options;
 	const { sdk } = facts;
 	const initialRoute = options.dumpRoute ?? facts.savedRoute;
@@ -423,6 +423,13 @@ function buildDriver(
 		}
 		return input(shellCommand(selectAllArgv()));
 	};
+
+	/**
+	 * See `SetsText`: the server replaces the focused field's text (`ACTION_SET_TEXT`, the action its `typeText` inserts
+	 * with). There is no shell fallback: a refusal or a server that is off is `E_UNSUPPORTED`, and the caller types.
+	 */
+	const setText: SetsText["setText"] = async (text) =>
+		(await uiad?.setText(text)) ?? driverErr("E_UNSUPPORTED", "setText needs the warden-uiad server");
 
 	/**
 	 * Hold-then-move on sdk 26+ (`input motionevent` DOWN, interpolated MOVEs, UP, one shell line); older images
@@ -622,6 +629,7 @@ function buildDriver(
 		key,
 		pressKeyRepeat,
 		...(uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK) ? { selectAll } : {}),
+		...(uiad !== undefined ? { setText } : {}),
 		pressButton,
 		screenshot,
 		orientation,

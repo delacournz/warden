@@ -31,8 +31,8 @@ export type UiState = {
 	/** the flow being recorded (`warden ui record start`) */
 	recording?: { file: string; name: string; startedAt: number };
 	helper?: HelperRecord;
-	/** the running `logs start` collector (`warden ui-collect`): host pid and start time */
-	collector?: { pid: number; startedAt: number };
+	/** the running `logs start` collector (`warden ui-collect`): host pid, start time and (newer warden) its `--out` dir */
+	collector?: { pid: number; startedAt: number; out?: string };
 	/** the running `video start` recorder: host pid, output file, and (Android) the file on the device */
 	video?: { pid: number; path: string; remote?: string; startedAt: number };
 	updatedAt: number;
@@ -113,7 +113,7 @@ const stateSchema = z.object({
 			lease: z.string().optional(),
 		})
 		.optional(),
-	collector: z.object({ pid: z.number(), startedAt: z.number() }).optional(),
+	collector: z.object({ pid: z.number(), startedAt: z.number(), out: z.string().optional() }).optional(),
 	video: z
 		.object({ pid: z.number(), path: z.string(), remote: z.string().optional(), startedAt: z.number() })
 		.optional(),
@@ -158,6 +158,28 @@ export function writeState(ctx: Pick<CommandContext, "env" | "now">, udid: strin
 	const dir = uiDir(ctx, udid);
 	mkdirSync(dir, { recursive: true });
 	writeFileAtomic(join(dir, "state.json"), `${JSON.stringify({ ...state, updatedAt: ctx.now() }, null, 2)}\n`);
+}
+
+/**
+ * Read-modify-write of `state.json`: re-reads the file and writes what `update` returns, all under the store's
+ * `BEGIN IMMEDIATE` transaction (the cross-process mutex), so two `warden ui` processes setting different records
+ * (helper, video, recording, collector, app) never lose each other's. Every `state.json` writer goes through here.
+ * `update` must not block (it runs inside the transaction); returning the state it was given writes nothing.
+ * Without a store in `ctx` it is a plain read-modify-write. Returns the state as it now stands.
+ */
+export function updateState(
+	ctx: Pick<CommandContext, "env" | "now"> & Partial<Pick<CommandContext, "store">>,
+	udid: string,
+	update: (state: UiState) => UiState
+): UiState {
+	const apply = (): UiState => {
+		const current = readState(ctx, udid);
+		const next = update(current);
+		if (next === current) return current;
+		writeState(ctx, udid, next);
+		return { ...next, updatedAt: ctx.now() };
+	};
+	return ctx.store === undefined ? apply() : ctx.store().transaction(apply);
 }
 
 /**

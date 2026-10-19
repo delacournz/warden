@@ -3,7 +3,7 @@ import type { z } from "zod";
 import type { e2eFlowSchema, e2eSuiteSchema } from "../affected/affected.schema";
 import type { batchPresetSchema } from "../batch/preset.schema";
 import type { appOptionSchema } from "./app-option.schema";
-import type { projectConfigSchema, wardenConfigSchema } from "./config";
+import type { projectConfigSchema, wardenConfigSchema } from "./config.schema";
 import {
 	defineConfig,
 	type WardenAppOption,

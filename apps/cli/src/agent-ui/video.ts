@@ -7,8 +7,9 @@ import type { CommandContext } from "../context";
 import type { UiDeps } from "./driver";
 import { uiError } from "./output";
 import { uiDir } from "./paths";
+import { mayBeRecorded, type ProcessCommand, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
 import { runUi, type UiOptionValues } from "./run";
-import { readState, writeState } from "./state";
+import { readState, type UiState, updateState } from "./state";
 
 /** `video stop` waits this long for the recorder to finish the file before it SIGKILLs it. */
 export const VIDEO_STOP_WAIT_MS = 5000;
@@ -24,6 +25,8 @@ export type VideoDeps = {
 	spawnDetached: (spec: VideoSpec) => { pid: number };
 	kill: (pid: number, signal: "SIGINT" | "SIGKILL") => void;
 	pidAlive: PidAlive;
+	/** a pid's command line (`ps`): the recorded pid is signalled only while it still names this device and file. Absent: liveness alone */
+	command?: ProcessCommand;
 };
 
 export const defaultVideoDeps: VideoDeps = {
@@ -45,7 +48,13 @@ export const defaultVideoDeps: VideoDeps = {
 		}
 	},
 	pidAlive: processAlive,
+	command: processCommand,
 };
+
+type VideoRecord = NonNullable<UiState["video"]>;
+
+/** What the recorder's command line carries (its argv names the device and the output file): tells it from a reused pid. */
+const recorderMarks = (udid: string, video: VideoRecord): string[] => [udid, video.remote ?? video.path];
 
 function nextVideoPath(ctx: CommandContext, udid: string): string {
 	const dir = join(uiDir(ctx, udid), "videos");
@@ -78,7 +87,7 @@ export function uiVideo(
 		const adb = androidTools(ctx.env).adb;
 
 		if (what === "start") {
-			if (state.video && video.pidAlive(state.video.pid)) {
+			if (state.video && mayBeRecorded(video, state.video.pid, recorderMarks(device.udid, state.video))) {
 				return {
 					success: false,
 					error: uiError("usage", `already recording to ${state.video.path}`, {
@@ -95,10 +104,10 @@ export function uiVideo(
 					? ["xcrun", "simctl", "io", device.udid, "recordVideo", "--codec=h264", "--force", path]
 					: [adb, "-s", device.udid, "shell", "screenrecord", remote];
 			const { pid } = video.spawnDetached({ argv, logPath: join(uiDir(ctx, device.udid), "video.log") });
-			writeState(ctx, device.udid, {
-				...state,
+			updateState(ctx, device.udid, (current) => ({
+				...current,
 				video: { pid, path, ...(remote !== undefined ? { remote } : {}), startedAt: ctx.now() },
-			});
+			}));
 			return ok({
 				device: info,
 				result: { action: "video", state: "recording", path, pid },
@@ -116,15 +125,29 @@ export function uiVideo(
 				};
 			}
 			const warnings: string[] = [];
+			const marks = recorderMarks(device.udid, running);
+			const identity = recordedIdentity(video, running.pid, marks);
+			const ours = identity === "match";
+			if (running.remote === undefined && identity === "unknown") {
+				// alive but its command line unreadable: it may still be the recorder, so it is neither signalled nor forgotten
+				return ok({
+					device: info,
+					result: { action: "video", state: "recording", path: running.path, pid: running.pid },
+					text: `recorder (pid ${running.pid}) left running`,
+					warnings: [`could not stop the recorder (pid ${running.pid}): its command line could not be read`],
+				});
+			}
 			if (running.remote !== undefined) {
 				await ctx.exec([adb, "-s", device.udid, "shell", "pkill", "-2", "screenrecord"]);
-				video.kill(running.pid, "SIGINT");
+				if (ours) video.kill(running.pid, "SIGINT");
 				await deps.sleep(SCREENRECORD_FINISH_MS);
 				const pulled = await ctx.exec([adb, "-s", device.udid, "pull", running.remote, running.path]);
 				if (pulled.exitCode !== 0) {
 					warnings.push(`could not pull ${running.remote}: ${pulled.stderr.trim() || `exit ${pulled.exitCode}`}`);
 				}
 				await ctx.exec([adb, "-s", device.udid, "shell", "rm", running.remote]);
+			} else if (!ours) {
+				warnings.push(`the recorder (pid ${running.pid}) had already ended: ${running.path} may be unfinished`);
 			} else {
 				video.kill(running.pid, "SIGINT");
 				let waited = 0;
@@ -132,13 +155,16 @@ export function uiVideo(
 					await deps.sleep(POLL_MS);
 					waited += POLL_MS;
 				}
-				if (video.pidAlive(running.pid)) {
+				if (safeToSignal(video, running.pid, marks)) {
 					video.kill(running.pid, "SIGKILL");
 					warnings.push("the recorder ignored SIGINT and was killed: the file may be unfinished");
 				}
 			}
-			const { video: _stopped, ...rest } = state;
-			writeState(ctx, device.udid, rest);
+			updateState(ctx, device.udid, (current) => {
+				if (current.video?.pid !== running.pid) return current;
+				const { video: _stopped, ...rest } = current;
+				return rest;
+			});
 			return ok({
 				device: info,
 				result: { action: "video", state: "stopped", path: running.path },

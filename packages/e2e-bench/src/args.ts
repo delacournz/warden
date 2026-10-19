@@ -40,7 +40,7 @@ Run options:
   --frameworks a,b          default all (warden,maestro,argent,agent-device,tester-army,detox)
   --runs N                  reps per framework, rep 1 is cold (default 3)
   --retries N               forwarded to every framework (default 0)
-  --udid X                  use a device you already leased (no claim, no release)
+  --udid X                  use a device you already leased (no claim, release or heartbeat: hold it yourself)
   --reboot-between          reboot the device between frameworks
   --out DIR                 output dir (default .bench/<timestamp>-<platform>)
   --skip-doctor             do not run doctor before each framework

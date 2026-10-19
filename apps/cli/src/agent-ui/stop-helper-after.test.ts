@@ -7,11 +7,15 @@ import { type HelperLoader, stopHelperAfter } from "./stop-helper-after";
 const IOS = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 const PHONE = "00008110-001A2B3C4D5E6F70";
 const ANDROID = "emulator-5554";
-const ctx = { env: { WARDEN_HOME: "/h" }, now: () => 0 };
+const errs: string[] = [];
+const ctx = { env: { WARDEN_HOME: "/h" }, now: () => 0, err: (line: string) => errs.push(line) };
 
-function loader(): { load: HelperLoader; loads: number; stopped: string[] } {
+function loader(stop: StopOutcome = { stopped: true, how: "shutdown" }): {
+	load: HelperLoader;
+	loads: number;
+	stopped: string[];
+} {
 	const seen = { loads: 0, stopped: [] as string[] };
-	const stop: StopOutcome = { stopped: true, how: "shutdown" };
 	return {
 		load: async () => {
 			seen.loads += 1;
@@ -35,6 +39,17 @@ describe("stopHelperAfter", () => {
 		await stopHelperAfter(ctx, l.load)(IOS);
 		await stopHelperAfter(ctx, l.load)(PHONE);
 		expect(l.stopped).toEqual([IOS, PHONE]);
+	});
+
+	test("a helper kept with a warning (its command line unreadable) says so on stderr, once (S4)", async () => {
+		errs.length = 0;
+		const warning = "could not stop warden-simd (pid 777): its command line could not be read, so it was left running";
+		const l = loader({ stopped: false, how: "none", warning });
+		await stopHelperAfter(ctx, l.load)(IOS);
+		expect(errs).toEqual([`warden: ${warning}`]);
+		errs.length = 0;
+		await stopHelperAfter(ctx, loader().load)(IOS);
+		expect(errs).toEqual([]);
 	});
 
 	test("an Android serial or a CDP target has no helper: nothing is loaded for it", async () => {

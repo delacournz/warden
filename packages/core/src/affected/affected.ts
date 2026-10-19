@@ -9,6 +9,7 @@ import { DEFAULT_E2E_COUNT, DEFAULT_FLOWS_DIR, DEV_MENU_OFF_ARGS } from "./affec
 import { type E2eSuiteConfig, e2eSuiteSchema } from "./affected.schema";
 import { scanFlows } from "./flows";
 import { type ChangedFile, changedFiles } from "./git";
+import { resolveTypescript, typescriptMissing, typescriptVersionProblem } from "./graph";
 import { graphEntries, type LoadedGraph, loadImportGraph } from "./graph-process";
 import { type SelectInput, type Selection, selectFlows } from "./select";
 
@@ -39,6 +40,8 @@ export type AffectedInput = {
 	files?: readonly string[];
 	/** no diff at all: every flow, or exactly the named ones (see `SelectInput.only`) */
 	only?: SelectInput["only"];
+	/** where the analysed project's TypeScript compiler is, undefined: none. Default: `resolveTypescript` */
+	typescript?: (repoRoot: string) => string | undefined;
 	/** persist parsed imports under this dir (one file per config dir), e.g. `$WARDEN_HOME/affected` */
 	cacheDir?: string;
 	/** per-command memo of the git facts (default: a short-lived shared one) */
@@ -159,13 +162,15 @@ function platformsOf(input: AffectedInput, suite: Suite): Platform[] {
 	return suite.config.platform ? [suite.config.platform] : ["ios", "android"];
 }
 
-/** The graph of one platform: a snapshot or a worker process when it can be, so the TypeScript compiler stays out of this process. */
-function importGraphFor(
+/** The graph of one platform (undefined: not `needed`): a snapshot or a worker process when it can be, so the TypeScript compiler stays out of this process. */
+async function importGraphFor(
+	needed: boolean,
 	input: AffectedInput,
 	{ config, configDir }: Suite,
 	platform: Platform,
 	importCachePath: string | undefined
-): Promise<LoadedGraph> {
+): AsyncResult<LoadedGraph | undefined> {
+	if (!needed) return ok(undefined);
 	return loadImportGraph({
 		exec: input.exec,
 		platform,
@@ -175,6 +180,22 @@ function importGraphFor(
 		...(importCachePath !== undefined ? { importCachePath } : {}),
 		...(input.cacheDir !== undefined ? { cacheDir: input.cacheDir } : {}),
 	});
+}
+
+/**
+ * Whether a run walks imports (some flow has entries and something changed); an error when it must but the project
+ * at `configDir` has no TypeScript compiler for the walk (`resolveTypescript`), or its package.json says it is too old.
+ */
+function graphNeeded(
+	input: AffectedInput,
+	{ config, configDir }: Suite,
+	changes: readonly ChangedFile[]
+): Result<boolean> {
+	if (!(Object.values(config.flows).some((f) => f.entries.length > 0) && changes.length > 0)) return ok(false);
+	const path = (input.typescript ?? resolveTypescript)(configDir);
+	if (path === undefined) return err(typescriptMissing(configDir));
+	const problem = typescriptVersionProblem(path);
+	return problem === undefined ? ok(true) : err(problem);
 }
 
 /** false when `files` / `only` replace the git diff (so there is no base to report). */
@@ -192,13 +213,17 @@ export async function computeAffected(given: AffectedInput): AsyncResult<Affecte
 	const changes = await loadChanges(input, suite.data, base);
 	if (!changes.success) return changes;
 	const scan = scanFlows(join(configDir, config.flowsDir));
-	const needsGraph = Object.values(config.flows).some((f) => f.entries.length > 0) && changes.data.length > 0;
+	const graphNeed = graphNeeded(input, suite.data, changes.data);
+	if (!graphNeed.success) return graphNeed;
+	const needsGraph = graphNeed.data;
 	const importCachePath =
 		input.cacheDir === undefined ? undefined : join(input.cacheDir, `${Bun.hash(configDir).toString(36)}.json`);
 	const selections: Selection[] = [];
 	const warnings = [...scan.warnings];
 	for (const platform of platformsOf(input, suite.data)) {
-		const loaded = needsGraph ? await importGraphFor(input, suite.data, platform, importCachePath) : undefined;
+		const graph = await importGraphFor(needsGraph, input, suite.data, platform, importCachePath);
+		if (!graph.success) return graph;
+		const loaded = graph.data;
 		if (loaded?.warning !== undefined) warnings.push(loaded.warning);
 		selections.push(
 			selectFlows({

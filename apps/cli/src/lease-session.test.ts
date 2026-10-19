@@ -11,9 +11,11 @@ import {
 	INTERRUPTED,
 	LEASES_LOST,
 	type LeaseArgs,
+	overlapHide,
 	type RunEnsureApp,
 	sessionEnsureApp,
 } from "./lease-session";
+import type { HideStart } from "./sim-windows";
 import { fakeSimctl } from "./simctl.testing";
 import { type TestContext, testContext } from "./testing";
 
@@ -84,7 +86,10 @@ describe("claimAll with device legs", () => {
 	const agent: Owner = { kind: "agent", sessionId: "me", cwd: "/" };
 	const installed = { appPath: "/c/A.app", hash: "H", source: "cache" as const, installed: true };
 
-	/** `boot` of a gated udid waits for `open(udid)`; every boot start is logged in `events`, in start order. */
+	/**
+	 * The boot step of a gated udid (`bootstatus -b`, which boots a shut-down sim, or its `boot` fallback)
+	 * waits for `open(udid)`; every boot start is logged once in `events`, in start order.
+	 */
 	function legSetup(
 		sims: Array<ReturnType<typeof sim>>,
 		o: { gated?: string[]; bootFails?: string[]; events?: string[] } = {}
@@ -93,9 +98,9 @@ describe("claimAll with device legs", () => {
 		const gates = new Map((o.gated ?? []).map((udid) => [udid, Promise.withResolvers<void>()]));
 		const base = fakeSimctl(sims);
 		const exec: Exec = async (cmd, opts) => {
-			if (cmd[0] === "xcrun" && cmd[2] === "boot") {
+			if (cmd[0] === "xcrun" && (cmd[2] === "boot" || cmd[2] === "bootstatus")) {
 				const udid = cmd[3] ?? "";
-				events.push(`boot:${udid}`);
+				if (!events.includes(`boot:${udid}`)) events.push(`boot:${udid}`);
 				await gates.get(udid)?.promise;
 				if (o.bootFails?.includes(udid)) return { exitCode: 1, stdout: "", stderr: "boot failed" };
 			}
@@ -212,6 +217,24 @@ describe("claimAll with device legs", () => {
 		const session = await running;
 		expect(session.success).toBe(false);
 		if (!session.success) expect(session.error).toContain("boot failed");
+		expect(s.ctx.db.listLeases()).toEqual([]);
+	});
+
+	test("a failed leg releases the other legs' devices only after beforeRelease is done (batch-pipeline R3)", async () => {
+		const s = legSetup([sim("U1", "warden-iphone-17-1", "Booted"), sim("P1", "warden-ipad-1", "Shutdown")], {
+			bootFails: ["P1"],
+		});
+		const quiet = Promise.withResolvers<void>();
+		let asked = false;
+		const beforeRelease = () => {
+			asked = true;
+			return quiet.promise;
+		};
+		const running = claimAll(s.ctx, deps(), agent, args({ beforeRelease }), "e2e");
+		await waitFor(() => asked);
+		expect(s.ctx.db.listLeases()).toHaveLength(1);
+		quiet.resolve();
+		expect((await running).success).toBe(false);
 		expect(s.ctx.db.listLeases()).toEqual([]);
 	});
 
@@ -336,5 +359,95 @@ describe("holdLeases", () => {
 			heartbeatMs: HEARTBEAT_INTERVAL_MS,
 		});
 		h.stop();
+	});
+});
+
+describe("overlapHide (16-8)", () => {
+	type Outcome = { closed: string[]; rebooted: string[]; failed?: string[] };
+	const hideOf = (down: string[]) => {
+		const settled = Promise.withResolvers<Outcome>();
+		const start: HideStart = {
+			closed: ["U1", "U2"],
+			down: Promise.resolve(down.map((udid) => ({ udid, name: `warden-${udid}` }))),
+			settled: settled.promise,
+		};
+		return { start, settle: (outcome: Outcome) => settled.resolve(outcome) };
+	};
+
+	test("nothing shut down: the leg is leased and installs before the hide has settled", async () => {
+		const { start, settle } = hideOf([]);
+		const events: string[] = [];
+		const done = overlapHide(start, {
+			leased: () => events.push("leased"),
+			install: async (ready) => {
+				await Promise.all(["U1", "U2"].map((udid) => ready(udid).then(() => events.push(`install:${udid}`))));
+				return "ok";
+			},
+		});
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		expect(events).toEqual(["leased", "install:U1", "install:U2"]);
+		settle({ closed: ["U1", "U2"], rebooted: [] });
+		expect(await done).toEqual({ result: "ok", failed: [] });
+	});
+
+	test("a device the close shut down waits for its reboot; the others install at once", async () => {
+		const { start, settle } = hideOf(["U2"]);
+		const events: string[] = [];
+		const done = overlapHide(start, {
+			leased: () => events.push("leased"),
+			install: async (ready) => {
+				await Promise.all(["U1", "U2"].map((udid) => ready(udid).then(() => events.push(`install:${udid}`))));
+				return "ok";
+			},
+		});
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		expect(events).toEqual(["install:U1"]);
+		settle({ closed: ["U1", "U2"], rebooted: ["U2"] });
+		expect(await done).toEqual({ result: "ok", failed: [] });
+		expect(events).toEqual(["install:U1", "leased", "install:U2"]);
+	});
+
+	test("a device that did not come back is reported failed and the leg is never leased", async () => {
+		const { start, settle } = hideOf(["U2"]);
+		const events: string[] = [];
+		const done = overlapHide(start, {
+			leased: () => events.push("leased"),
+			install: async () => "ok",
+		});
+		settle({ closed: ["U1", "U2"], rebooted: [], failed: ["U2"] });
+		expect(await done).toEqual({ result: "ok", failed: ["U2"] });
+		expect(events).toEqual([]);
+	});
+
+	test("a device that did not come back is not installed on: its ready says it is down (batch-pipeline R5)", async () => {
+		const { start, settle } = hideOf(["U2"]);
+		const up: Array<[string, boolean]> = [];
+		const done = overlapHide(start, {
+			leased: () => {},
+			install: async (ready) => {
+				for (const udid of ["U1", "U2"]) up.push([udid, await ready(udid)]);
+				return "ok";
+			},
+		});
+		settle({ closed: ["U1", "U2"], rebooted: [], failed: ["U2"] });
+		expect(await done).toEqual({ result: "ok", failed: ["U2"] });
+		expect(up).toEqual([
+			["U1", true],
+			["U2", false],
+		]);
+	});
+
+	test("no hide (not headless): leased and installed straight away", async () => {
+		const events: string[] = [];
+		const done = await overlapHide(undefined, {
+			leased: () => events.push("leased"),
+			install: async (ready) => {
+				await ready("U1");
+				events.push("install");
+				return 1;
+			},
+		});
+		expect(done).toEqual({ result: 1, failed: [] });
+		expect(events).toEqual(["leased", "install"]);
 	});
 });

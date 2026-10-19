@@ -89,7 +89,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "golden",
 		group: "Devices",
-		summary: "golden iOS images new sims are cloned from (fast boots): ensure | ls | prune",
+		summary: "golden iOS images / Android snapshots new devices start from (fast boots): ensure | ls | prune",
 		load: async () => (await import("./golden")).goldenCommand,
 	},
 	{

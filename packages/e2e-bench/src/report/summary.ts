@@ -9,7 +9,7 @@ import {
 	platformSchema,
 	type Series,
 } from "../results/schema";
-import { perTestMatrix, summaryRows } from "./tables";
+import { perTestMatrix, type SummaryRow, summaryRows } from "./tables";
 
 /** Bump when the shape changes; the docs page rejects files it does not know. */
 export const SUMMARY_VERSION = 1;
@@ -31,6 +31,9 @@ const seriesSummarySchema = z.object({
 	cpuPeakPct: z.number(),
 	rssAvgBytes: z.number(),
 	rssPeakBytes: z.number(),
+	/** whole-framework CPU-seconds and rate (optional: runs from before the `ps time` sampler lack them) */
+	cpuSeconds: z.number().optional(),
+	cpuRatePct: z.number().optional(),
 });
 
 const okFrameworkSchema = z.object({
@@ -49,6 +52,8 @@ const okFrameworkSchema = z.object({
 	passRate: z.number(),
 	flakeRate: z.number(),
 	stepLatency: distSummarySchema.optional(),
+	/** host CPU-seconds per rep (warm median of the timed runs): the CPU headline; optional, see `seriesSummarySchema` */
+	cpuSecondsPerRep: z.number().optional(),
 	resources: z.object({ host: seriesSummarySchema, sim: seriesSummarySchema }),
 	residue: z.object({ processes: z.number().int(), driverApps: z.number().int(), paths: z.number().int() }),
 	footprint: z.object({
@@ -143,9 +148,13 @@ const seriesSummary = (s: Series) => ({
 	cpuPeakPct: round(s.cpuPeakPct, 1),
 	rssAvgBytes: round(s.rssAvgBytes),
 	rssPeakBytes: round(s.rssPeakBytes),
+	...opt("cpuSeconds", roundOpt(s.cpuSeconds, 2)),
+	...opt("cpuRatePct", roundOpt(s.cpuRatePct, 1)),
 });
 
-function frameworkSummary(f: FrameworkResult, failing: boolean, fastest: boolean): SummaryFramework {
+function frameworkSummary(f: FrameworkResult, row: SummaryRow | undefined): SummaryFramework {
+	const failing = row?.failing ?? false;
+	const fastest = row?.fastest ?? false;
 	if (f.status === "unsupported") {
 		return { framework: f.framework, status: "unsupported", ...opt("version", f.version), reason: f.reason };
 	}
@@ -175,6 +184,7 @@ function frameworkSummary(f: FrameworkResult, failing: boolean, fastest: boolean
 		passRate: round(s.passRate, 3),
 		flakeRate: round(s.flakeRate, 3),
 		...(s.stepLatency !== undefined ? { stepLatency: distSummary(s.stepLatency) } : {}),
+		...opt("cpuSecondsPerRep", roundOpt(row?.cpuSecondsPerRep, 2)),
 		resources: { host: seriesSummary(f.resources.host), sim: seriesSummary(f.resources.sim) },
 		residue: {
 			processes: f.residue.processes.length,
@@ -223,8 +233,10 @@ export function benchSummary(run: BenchRun, manifest: Manifest): BenchSummary {
 		},
 		options: { runs: run.options.runs, retries: run.options.retries, caffeinated: run.options.caffeinated },
 		frameworks: run.frameworks.map((f) => {
-			const row = rows.find((r) => r.framework === f.framework);
-			return frameworkSummary(f, row?.failing ?? false, row?.fastest ?? false);
+			return frameworkSummary(
+				f,
+				rows.find((r) => r.framework === f.framework)
+			);
 		}),
 		tests: matrix.rows.map((r) => ({
 			id: r.id,

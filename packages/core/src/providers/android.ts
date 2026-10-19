@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { profileSlug } from "../allocate";
 import { DEFAULT_TTL_MS } from "../config.defaults";
-import { type ExecOptions, execError } from "../exec";
+import { type Exec, type ExecOptions, execError } from "../exec";
+import { type PidAlive, processAlive } from "../liveness";
 import { wardenHome } from "../store";
 import type { InventoryDevice, Lease } from "../types";
 import type { DeviceProvider, ProviderDeps } from "./provider.types";
@@ -57,6 +58,11 @@ export function pickConsolePort(taken: ReadonlySet<number>): number | undefined 
 
 type ExecDeps = Pick<ProviderDeps, "exec" | "env">;
 
+/** `adb emu …` talks to the emulator console, which a wedged emulator never answers. */
+export const EMU_CONSOLE_TIMEOUT_MS = 10_000;
+/** `emulator -list-avds` starts the emulator binary. */
+export const LIST_AVDS_TIMEOUT_MS = 15_000;
+
 /** Run a command; exec throwing (e.g. binary not found) becomes a failed result. */
 async function run(deps: ExecDeps, cmd: readonly string[], opts?: ExecOptions): AsyncResult<string> {
 	try {
@@ -67,14 +73,34 @@ async function run(deps: ExecDeps, cmd: readonly string[], opts?: ExecOptions): 
 	}
 }
 
-/** AVD names from `emulator -list-avds`. */
-export async function listAvds(deps: ExecDeps): AsyncResult<string[]> {
+/** Successful `-list-avds` per exec (one per process in the CLI) and emulator binary. */
+const avdLists = new WeakMap<Exec, Map<string, Promise<Result<string[]>>>>();
+
+/**
+ * AVD names from `emulator -list-avds`, run once per process (per `exec`): a claim resolves `auto` and
+ * then the AVD of each create from the same list. `fresh` re-reads it (an AVD made since); failures are
+ * never kept.
+ */
+export async function listAvds(deps: ExecDeps, opts: { fresh?: boolean } = {}): AsyncResult<string[]> {
 	const { emulator } = androidTools(deps.env);
-	const result = await run(deps, [emulator, "-list-avds"]);
-	return result.success ? ok(parseAvdList(result.data)) : result;
+	let lists = avdLists.get(deps.exec);
+	if (lists === undefined) {
+		lists = new Map();
+		avdLists.set(deps.exec, lists);
+	}
+	const cached = opts.fresh === true ? undefined : lists.get(emulator);
+	if (cached !== undefined) return cached;
+	const pending = run(deps, [emulator, "-list-avds"], { timeoutMs: LIST_AVDS_TIMEOUT_MS }).then(
+		(result): Result<string[]> => (result.success ? ok(parseAvdList(result.data)) : result)
+	);
+	lists.set(emulator, pending);
+	const result = await pending;
+	if (!result.success && lists.get(emulator) === pending) lists.delete(emulator);
+	return result;
 }
 
-async function listEmulators(deps: ExecDeps): AsyncResult<AdbEmulator[]> {
+/** Running emulators from `adb devices -l`. */
+export async function listEmulators(deps: ExecDeps): AsyncResult<AdbEmulator[]> {
 	const { adb } = androidTools(deps.env);
 	const result = await run(deps, [adb, "devices", "-l"]);
 	return result.success ? ok(parseAdbDevices(result.data)) : result;
@@ -86,10 +112,22 @@ export type SpawnDetached = (cmd: readonly string[], logPath: string) => AsyncRe
 export type AndroidProviderOptions = {
 	spawnDetached?: SpawnDetached;
 	sleep?: (ms: number) => Promise<void>;
-	/** `sys.boot_completed` poll interval, default 2 s */
+	/** `sys.boot_completed` poll interval of the fallback loop, default 250 ms */
 	pollIntervalMs?: number;
 	/** how long the default `spawnDetached` watches for an immediate exit, default 1.5 s */
 	earlyExitMs?: number;
+	/** is the launched emulator process still alive (default: `kill -0`) */
+	pidAlive?: PidAlive;
+	/**
+	 * Name of a warden quick-boot snapshot of `avd` to launch from (see `golden/android-golden.ts`), when
+	 * one exists: a claim never builds one. `ok(undefined)` = none (off, not built yet, no SDK). A failure
+	 * only logs: the emulator then cold-boots as before.
+	 */
+	snapshot?: (avd: string) => AsyncResult<string | undefined>;
+	/** The emulator logged that `snapshot` of `avd` did not load (it cold-booted instead): drop it so it is rebuilt. */
+	snapshotFailed?: (avd: string, snapshot: string) => AsyncResult<unknown>;
+	/** The emulator launched from `snapshot` of `avd` and reached ready with no load failure logged. */
+	snapshotLoaded?: (avd: string, snapshot: string) => void;
 };
 
 /** How often, and how long, `boot` looks for a just-launched warden emulator in `adb devices`. */
@@ -98,12 +136,35 @@ const REGISTER_TIMEOUT_MS = 15_000;
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-function logTail(logPath: string): string {
+/** One `adb shell` that returns once the guest has booted; POSIX `sh` (toybox `[`). */
+export const BOOT_WAIT_SCRIPT = 'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 0.2; done';
+/** How often a boot wait checks that the launched emulator process is still alive. */
+const LIVENESS_POLL_MS = 500;
+/** Bound on one `getprop sys.boot_completed` read in the fallback loop. */
+const PROP_READ_TIMEOUT_MS = 5_000;
+/** `create` reuses the `adb devices` listing of an `inventory` this recent. */
+const LISTING_REUSE_MS = 5_000;
+
+function readLog(logPath: string, from = 0): string {
 	try {
-		return readFileSync(logPath, "utf8").trim().split("\n").slice(-3).join(" | ");
+		return readFileSync(logPath).subarray(from).toString("utf8");
 	} catch {
 		return "";
 	}
+}
+
+/** Bytes already in a log the next launch appends to: what it writes starts there. */
+function logSize(logPath: string): number {
+	try {
+		return statSync(logPath).size;
+	} catch {
+		return 0;
+	}
+}
+
+/** The last 3 lines of an emulator log, one line. */
+export function logTail(logPath: string): string {
+	return readLog(logPath).trim().split("\n").slice(-3).join(" | ");
 }
 
 /**
@@ -138,6 +199,178 @@ export function createSpawnDetached(earlyExitMs = 1_500): SpawnDetached {
 	};
 }
 
+/** Cheap headless flags every warden emulator gets: no audio backend (unless `WARDEN_EMULATOR_AUDIO=1`), no usage metrics. */
+export function headlessEmulatorFlags(env: Record<string, string | undefined>): string[] {
+	return [...(env.WARDEN_EMULATOR_AUDIO === "1" ? [] : ["-no-audio"]), "-no-metrics"];
+}
+
+/** An early exit whose message says the emulator does not know one of its options (an older emulator). */
+export function rejectedOption(error: string): boolean {
+	return /unknown option|unrecognized option|invalid command-line (parameter|option)/i.test(error);
+}
+
+/** A claim's emulator: headless, `-read-only` (one AVD backs many), from `snapshot` when given, never saving on exit. */
+export function claimEmulatorArgv(
+	tools: AndroidTools,
+	env: Record<string, string | undefined>,
+	avd: string,
+	port: number,
+	snapshot?: string,
+	/** `false` leaves out `headlessEmulatorFlags` (an emulator that rejected them) */
+	headless = true
+): string[] {
+	return [
+		tools.emulator,
+		"-avd",
+		avd,
+		"-port",
+		String(port),
+		"-no-window",
+		"-read-only",
+		...(snapshot !== undefined ? ["-snapshot", snapshot] : []),
+		"-no-snapshot-save",
+		"-no-boot-anim",
+		...(headless ? headlessEmulatorFlags(env) : []),
+	];
+}
+
+export type BootWaitDeps = ExecDeps & {
+	now: () => number;
+	sleep: (ms: number) => Promise<void>;
+	pidAlive: PidAlive;
+	/** fallback `getprop` poll interval */
+	pollIntervalMs: number;
+};
+
+/** The launched emulator process, when known: a boot wait fails as soon as it is gone. */
+export type BootWatch = { pid?: number; logPath?: string };
+
+/** Fallback when the one-shot shell fails (adbd restarting mid-boot): `wait-for-device`, then bounded `getprop` reads. */
+async function pollBootCompleted(
+	deps: BootWaitDeps,
+	serial: string,
+	deadline: number,
+	signal: AbortSignal
+): AsyncResult<void> {
+	const { adb } = androidTools(deps.env);
+	const remaining = () => Math.max(1, deadline - deps.now());
+	const waited = await run(deps, [adb, "-s", serial, "wait-for-device"], { timeoutMs: remaining(), signal });
+	if (!waited.success) return waited;
+	while (!signal.aborted) {
+		const prop = await run(deps, [adb, "-s", serial, "shell", "getprop", "sys.boot_completed"], {
+			timeoutMs: Math.min(PROP_READ_TIMEOUT_MS, remaining()),
+			signal,
+		});
+		if (prop.success && prop.data.trim() === "1") return ok(undefined);
+		if (deps.now() >= deadline) break;
+		await deps.sleep(deps.pollIntervalMs);
+	}
+	return err("boot wait stopped");
+}
+
+/** Every 0.5 s until `signal` aborts: fail once the launched emulator is gone or the deadline passed. */
+async function watchBoot(
+	deps: BootWaitDeps,
+	serial: string,
+	deadline: number,
+	watch: BootWatch,
+	signal: AbortSignal,
+	timedOut: () => Result<void>
+): AsyncResult<void> {
+	while (!signal.aborted) {
+		await deps.sleep(LIVENESS_POLL_MS);
+		if (signal.aborted) break;
+		if (watch.pid !== undefined && !deps.pidAlive(watch.pid))
+			return err(emulatorExited(serial, watch.pid, watch.logPath));
+		if (deps.now() >= deadline) return timedOut();
+	}
+	return err("boot wait stopped");
+}
+
+function emulatorExited(serial: string, pid: number, logPath: string | undefined): string {
+	const tail = logPath !== undefined ? logTail(logPath) : "";
+	const where = logPath !== undefined ? ` (log: ${logPath})` : "";
+	return `${serial}: the emulator (pid ${pid}) exited while booting${tail ? `: ${tail}` : ""}${where}`;
+}
+
+/**
+ * Wait for `sys.boot_completed=1` within `timeoutMs`: one `adb wait-for-device shell <loop>` bounded by
+ * the budget (falling back to a bounded poll when it fails early), raced against the deadline and the
+ * emulator process staying alive, so a dead emulator fails in ≤ 0.5 s with its log tail instead of
+ * waiting out the budget. Whatever is still running when it settles is aborted.
+ */
+export async function waitBootCompleted(
+	deps: BootWaitDeps,
+	serial: string,
+	timeoutMs: number,
+	watch: BootWatch = {}
+): AsyncResult<void> {
+	const { adb } = androidTools(deps.env);
+	const deadline = deps.now() + timeoutMs;
+	const abort = new AbortController();
+	const timedOut = (): Result<void> => err(`timed out after ${timeoutMs}ms waiting for ${serial} to finish booting`);
+	const wait = (async (): AsyncResult<void> => {
+		const once = await run(deps, [adb, "-s", serial, "wait-for-device", "shell", BOOT_WAIT_SCRIPT], {
+			timeoutMs,
+			signal: abort.signal,
+		});
+		if (once.success) return ok(undefined);
+		if (abort.signal.aborted) return once;
+		if (deps.now() >= deadline) return timedOut();
+		const polled = await pollBootCompleted(deps, serial, deadline, abort.signal);
+		return polled.success || deps.now() < deadline ? polled : timedOut();
+	})();
+	const watcher = watchBoot(deps, serial, deadline, watch, abort.signal, timedOut);
+	try {
+		return await Promise.race([wait, watcher]);
+	} finally {
+		abort.abort();
+	}
+}
+
+/**
+ * Take a console-port lease (`emulator <name>`) under the store's cross-process lock: the first even
+ * port whose console and adb ports are neither leased nor used by a running emulator.
+ */
+export function leaseConsolePort(
+	deps: Pick<ProviderDeps, "store" | "owner" | "now">,
+	name: string,
+	running: AdbEmulator[]
+): Result<{ lease: Lease; port: number }> {
+	return deps.store.transaction(() => {
+		const taken = new Set<number>();
+		for (const lease of deps.store.listLeases()) {
+			if (lease.resource.kind === "port") taken.add(lease.resource.port);
+		}
+		for (const emu of running) {
+			taken.add(emu.port);
+			taken.add(emu.port + 1);
+		}
+		const port = pickConsolePort(taken);
+		if (port === undefined) {
+			return err(`no free emulator console port in ${CONSOLE_PORT_MIN}-${CONSOLE_PORT_MAX}`);
+		}
+		const lease = deps.store.insertLease(
+			{ resource: { kind: "port", port }, owner: deps.owner, ttlMs: DEFAULT_TTL_MS, label: `emulator ${name}` },
+			deps.now()
+		);
+		return ok({ lease, port });
+	});
+}
+
+/** Label prefix of the console-port lease a snapshot build's writable emulator runs on. */
+export const GOLDEN_PORT_LABEL = "emulator golden ";
+
+/**
+ * A snapshot load the emulator gave up on (it then cold-boots by itself). The wording is the emulator's
+ * and unverified on a device; a successful load logs `Successfully loaded snapshot …`, which does not match.
+ */
+export function snapshotLoadFailed(log: string): boolean {
+	return /(fail|error|cannot|could not|unable|does not have)[^\n]*snapshot|snapshot[^\n]*(fail|not found|does not exist|could not|invalid|error)/i.test(
+		log
+	);
+}
+
 function serialPort(serial: string): number | undefined {
 	const match = /^emulator-(\d+)$/.exec(serial);
 	return match?.[1] ? Number(match[1]) : undefined;
@@ -155,18 +388,40 @@ function isEmulatorPortLease(lease: Lease | undefined): lease is Lease {
 export function createAndroidProvider(deps: ProviderDeps, options: AndroidProviderOptions = {}): DeviceProvider {
 	const tools = androidTools(deps.env);
 	const sleep = options.sleep ?? defaultSleep;
-	const pollIntervalMs = options.pollIntervalMs ?? 2_000;
+	const pollIntervalMs = options.pollIntervalMs ?? 250;
+	const pidAlive = options.pidAlive ?? processAlive;
 	const spawnDetached = options.spawnDetached ?? createSpawnDetached(options.earlyExitMs);
+	/** emulators this provider launched: the boot wait watches their pid */
+	const launches = new Map<
+		string,
+		{ pid: number; logPath: string; logOffset: number; avd: string; snapshot?: string }
+	>();
+	/** the last inventory's `adb devices`, reused by a `create` right after it */
+	let lastListing: { at: number; emulators: AdbEmulator[] } | undefined;
 
 	const adb = (serial: string, ...args: string[]): readonly string[] => [tools.adb, "-s", serial, ...args];
 
-	async function describeEmulator(emu: AdbEmulator, recordedName: string | undefined): Promise<InventoryDevice> {
-		const booted = emu.state === "device";
+	/** `emu avd name`, bounded; `hung` = the console did not answer in time. */
+	async function avdNameOf(serial: string): Promise<{ name?: string; hung: boolean }> {
+		const started = deps.now();
+		const avd = await run(deps, adb(serial, "emu", "avd", "name"), { timeoutMs: EMU_CONSOLE_TIMEOUT_MS });
+		if (avd.success) return { name: avd.data.split("\n")[0]?.trim(), hung: false };
+		return { hung: deps.now() - started >= EMU_CONSOLE_TIMEOUT_MS };
+	}
+
+	async function describeEmulator(
+		emu: AdbEmulator,
+		recordedName: string | undefined,
+		golden: boolean
+	): Promise<InventoryDevice> {
+		const online = emu.state === "device";
 		const [avd, sdk] = await Promise.all([
-			run(deps, adb(emu.serial, "emu", "avd", "name")),
-			booted ? run(deps, adb(emu.serial, "shell", "getprop", "ro.build.version.sdk")) : Promise.resolve(err("offline")),
+			avdNameOf(emu.serial),
+			online ? run(deps, adb(emu.serial, "shell", "getprop", "ro.build.version.sdk")) : Promise.resolve(err("offline")),
 		]);
-		const avdName = avd.success ? avd.data.split("\n")[0]?.trim() : undefined;
+		const avdName = avd.name;
+		// a console that does not answer is not a usable emulator yet: booting, no profile, the round goes on
+		const booted = online && !avd.hung;
 		const device: InventoryDevice = {
 			platform: "android",
 			id: emu.serial,
@@ -174,38 +429,18 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			state: booted ? "booted" : "booting",
 			wardenCreated: false,
 		};
+		if (golden) device.golden = true;
 		if (avdName) device.profile = profileSlug(avdName);
 		const level = sdk.success ? sdk.data.trim() : "";
 		if (/^\d+$/.test(level)) device.runtime = `android-${level}`;
 		return device;
 	}
 
-	/** Take a console-port lease under the store's cross-process lock. */
-	function leaseConsolePort(name: string, running: AdbEmulator[]): Result<{ lease: Lease; port: number }> {
-		return deps.store.transaction(() => {
-			const taken = new Set<number>();
-			for (const lease of deps.store.listLeases()) {
-				if (lease.resource.kind === "port") taken.add(lease.resource.port);
-			}
-			for (const emu of running) {
-				taken.add(emu.port);
-				taken.add(emu.port + 1);
-			}
-			const port = pickConsolePort(taken);
-			if (port === undefined) {
-				return err(`no free emulator console port in ${CONSOLE_PORT_MIN}-${CONSOLE_PORT_MAX}`);
-			}
-			const lease = deps.store.insertLease(
-				{ resource: { kind: "port", port }, owner: deps.owner, ttlMs: DEFAULT_TTL_MS, label: `emulator ${name}` },
-				deps.now()
-			);
-			return ok({ lease, port });
-		});
-	}
-
-	/** The AVD whose `profileSlug` is `profile`. */
+	/** The AVD whose `profileSlug` is `profile` (the per-process list, re-read once on a miss). */
 	async function resolveAvd(profile: string): AsyncResult<string> {
-		const avds = await listAvds(deps);
+		let avds = await listAvds(deps);
+		if (avds.success && !avds.data.some((a) => profileSlug(a) === profile))
+			avds = await listAvds(deps, { fresh: true });
 		if (!avds.success) return avds;
 		const avd = avds.data.find((a) => profileSlug(a) === profile);
 		if (avd !== undefined) return ok(avd);
@@ -213,26 +448,67 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		return err(`no AVD matches profile "${profile}"; available: ${available}`);
 	}
 
+	/** Warden's snapshot of `avd`, if any; a failure to make one is logged, not fatal. */
+	async function snapshotFor(avd: string): Promise<string | undefined> {
+		if (options.snapshot === undefined) return undefined;
+		const snapshot = await options.snapshot(avd);
+		if (snapshot.success) return snapshot.data;
+		deps.log?.(`no quick-boot snapshot for ${avd} (${snapshot.error}) — cold boot`);
+		return undefined;
+	}
+
 	/** Launch a headless, read-only emulator of `avd` on `port`, logging to `$WARDEN_HOME/logs/<serial>.log`. */
-	async function launch(avd: string, port: number, serial: string): AsyncResult<{ pid: number }> {
+	async function launch(
+		avd: string,
+		port: number,
+		serial: string,
+		snapshot: string | undefined,
+		headless: boolean
+	): AsyncResult<{ pid: number; logPath: string; logOffset: number }> {
 		const logDir = join(wardenHome(deps.env), "logs");
 		try {
 			mkdirSync(logDir, { recursive: true });
 		} catch (error) {
 			return err(error);
 		}
-		const cmd = [
-			tools.emulator,
-			"-avd",
-			avd,
-			"-port",
-			String(port),
-			"-no-window",
-			"-read-only",
-			"-no-snapshot-save",
-			"-no-boot-anim",
-		];
-		return spawnDetached(cmd, join(logDir, `${serial}.log`));
+		const logPath = join(logDir, `${serial}.log`);
+		const logOffset = logSize(logPath);
+		const argv = claimEmulatorArgv(tools, deps.env, avd, port, snapshot, headless);
+		const spawned = await spawnDetached(argv, logPath);
+		return spawned.success ? ok({ pid: spawned.data.pid, logPath, logOffset }) : spawned;
+	}
+
+	/** `adb devices` for a create: the last inventory's when it is recent (the claim's own), else a fresh one. */
+	async function runningEmulators(): AsyncResult<AdbEmulator[]> {
+		if (lastListing !== undefined && deps.now() - lastListing.at <= LISTING_REUSE_MS) return ok(lastListing.emulators);
+		return listEmulators(deps);
+	}
+
+	/**
+	 * Launch from `snapshot`; if that launch fails, once more with today's cold-boot argv. An emulator that
+	 * rejects the headless flags (too old for `-no-metrics`) is relaunched once without them.
+	 */
+	async function launchOrColdBoot(
+		avd: string,
+		port: number,
+		serial: string,
+		snapshot: string | undefined
+	): AsyncResult<{ pid: number; logPath: string; logOffset: number; snapshot?: string }> {
+		let headless = true;
+		const attempt = async (from: string | undefined) => {
+			const first = await launch(avd, port, serial, from, headless);
+			if (first.success || !headless || !rejectedOption(first.error)) return first;
+			headless = false;
+			deps.log?.(
+				`${serial}: the emulator rejected ${headlessEmulatorFlags(deps.env).join(" ")} — relaunching without them`
+			);
+			return launch(avd, port, serial, from, false);
+		};
+		const launched = await attempt(snapshot);
+		if (launched.success) return snapshot !== undefined ? ok({ ...launched.data, snapshot }) : launched;
+		if (snapshot === undefined) return launched;
+		deps.log?.(`${serial}: launch from snapshot ${snapshot} failed (${launched.error}) — retrying with a cold boot`);
+		return attempt(undefined);
 	}
 
 	return {
@@ -241,26 +517,38 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		async inventory() {
 			const emulators = await listEmulators(deps);
 			if (!emulators.success) return emulators;
+			lastListing = { at: deps.now(), emulators: emulators.data };
 			const recorded = new Map(deps.store.listDevices("android").map((r) => [r.id, r.name]));
+			const goldenPorts = new Set(
+				deps.store
+					.listLeases()
+					.flatMap((l) =>
+						l.resource.kind === "port" && l.label?.startsWith(GOLDEN_PORT_LABEL) ? [l.resource.port] : []
+					)
+			);
 			const known = emulators.data.filter((e) => e.state === "device" || e.state === "offline");
-			return ok(await Promise.all(known.map((e) => describeEmulator(e, recorded.get(e.serial)))));
+			return ok(
+				await Promise.all(known.map((e) => describeEmulator(e, recorded.get(e.serial), goldenPorts.has(e.port))))
+			);
 		},
 
 		async create(name, profile, runtime) {
 			const avd = await resolveAvd(profile);
 			if (!avd.success) return avd;
-			const running = await listEmulators(deps);
+			const snapshot = await snapshotFor(avd.data);
+			const running = await runningEmulators();
 			if (!running.success) return running;
 
-			const leased = leaseConsolePort(name, running.data);
+			const leased = leaseConsolePort(deps, name, running.data);
 			if (!leased.success) return leased;
 			const { lease, port } = leased.data;
 			const serial = `emulator-${port}`;
-			const launched = await launch(avd.data, port, serial);
+			const launched = await launchOrColdBoot(avd.data, port, serial, snapshot);
 			if (!launched.success) {
 				deps.store.deleteLeases([lease.id]);
 				return launched;
 			}
+			launches.set(serial, { ...launched.data, avd: avd.data });
 
 			const recordedRuntime = runtime !== undefined && runtime !== "latest" ? runtime : undefined;
 			deps.store.recordDevice({ platform: "android", id: serial, name, profile, runtime: recordedRuntime }, deps.now());
@@ -293,24 +581,24 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		},
 
 		async waitReady(id, timeoutMs) {
-			const start = deps.now();
-			const waited = await run(deps, adb(id, "wait-for-device"), { timeoutMs });
-			if (!waited.success) return waited;
-			while (true) {
-				const prop = await run(deps, adb(id, "shell", "getprop", "sys.boot_completed"));
-				if (prop.success && prop.data.trim() === "1") return ok(undefined);
-				if (deps.now() - start >= timeoutMs) {
-					return err(`timed out after ${timeoutMs}ms waiting for ${id} to finish booting`);
-				}
-				await sleep(pollIntervalMs);
+			const launched = launches.get(id);
+			const ready = await waitBootCompleted({ ...deps, sleep, pidAlive, pollIntervalMs }, id, timeoutMs, launched);
+			const snapshot = launched?.snapshot;
+			if (ready.success && launched && snapshot) {
+				if (snapshotLoadFailed(readLog(launched.logPath, launched.logOffset))) {
+					deps.log?.(`${id}: snapshot ${snapshot} did not load, the emulator cold-booted (log: ${launched.logPath})`);
+					const dropped = await options.snapshotFailed?.(launched.avd, snapshot);
+					if (dropped && !dropped.success) deps.log?.(`${id}: snapshot ${snapshot} kept: ${dropped.error}`);
+				} else options.snapshotLoaded?.(launched.avd, snapshot);
 			}
+			return ready;
 		},
 
 		async shutdown(id) {
 			if (!deps.store.listDevices("android").some((d) => d.id === id)) {
 				return err(`refusing to shut down foreign emulator ${id}`);
 			}
-			const killed = await run(deps, adb(id, "emu", "kill"));
+			const killed = await run(deps, adb(id, "emu", "kill"), { timeoutMs: EMU_CONSOLE_TIMEOUT_MS });
 			if (!killed.success) {
 				const emulators = await listEmulators(deps);
 				if (!emulators.success || emulators.data.some((e) => e.serial === id)) return killed;

@@ -1,4 +1,4 @@
-export type { OpenOptions } from "./app";
+export type { OpenOptions, OpenWaitUntil } from "./app";
 export { E2eError } from "./errors";
 export { expect } from "./expect/expect";
 export type { App, Device, Screen, SystemAlerts, TestFixtures } from "./runner/fixtures.types";

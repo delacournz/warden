@@ -362,6 +362,94 @@ describe("focusClearType with select-all types over the selection", () => {
 	});
 });
 
+describe("focusClearType with setText (Android warden-uiad, opt-in)", () => {
+	test("auto never sets text without the opt-in: it selects all and types, as before", async () => {
+		const { driver, state } = fieldFixture({ value: "old text", selectAll: true, setText: true });
+		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "auto", {});
+		expect(result.success).toBe(true);
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "typeText"]);
+		expect(state.value).toBe("new");
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1 opts auto into setText", async () => {
+		const { driver, state } = fieldFixture({ value: "old text", selectAll: true, setText: true });
+		const env = { WARDEN_ANDROID_SETTEXT: "1" };
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "auto", env);
+		expect(methods(driver)).toEqual(["tap", "setText"]);
+		expect(state.value).toBe("new");
+	});
+
+	test("the opt-in does not touch the counted retry", async () => {
+		const { driver } = fieldFixture({ value: "ab", selectAll: true, setText: true });
+		const env = { WARDEN_ANDROID_SETTEXT: "1" };
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "counted", env);
+		expect(driver.callsOf("setText")).toEqual([]);
+	});
+
+	test("setText on a driver without it (iOS) selects all and types like auto", async () => {
+		const { driver, state } = fieldFixture({ value: "old", selectAll: true });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "setText");
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "typeText"]);
+		expect(state.value).toBe("new");
+	});
+
+	test("a filled field is replaced in one call after the focus tap: no select-all, no typing", async () => {
+		const { driver, state } = fieldFixture({ value: "old text", selectAll: true, setText: true });
+		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "setText");
+		expect(result.success).toBe(true);
+		expect(methods(driver)).toEqual(["tap", "setText"]);
+		expect(driver.callsOf("setText")[0]?.text).toBe("new");
+		expect(state.value).toBe("new");
+	});
+
+	test("empty text empties a filled field in that one call", async () => {
+		const { driver, state } = fieldFixture({ value: "old", selectAll: true, setText: true });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "", "setText");
+		expect(methods(driver)).toEqual(["tap", "setText"]);
+		expect(state.value).toBe("");
+	});
+
+	test("an empty field is typed into as before (setText would save nothing there)", async () => {
+		const { driver, state } = fieldFixture({ selectAll: true, setText: true });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "x", "setText");
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "typeText"]);
+		expect(state.value).toBe("x");
+	});
+
+	test("a secure field is not set: it cannot be read back, so it keeps the backspaces and typing", async () => {
+		const { driver, state } = fieldFixture({ secure: true, value: "abc", selectAll: true, setText: true });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "xy", "setText");
+		expect(driver.callsOf("setText")).toEqual([]);
+		expect(state.value).toBe("xy");
+	});
+
+	test("the counted retry types, never setText", async () => {
+		const { driver, state } = fieldFixture({ value: "ab", selectAll: true, setText: true });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "counted");
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "key", "key", "key", "typeText"]);
+		expect(state.value).toBe("new");
+	});
+
+	test("a refused setText falls back to select-all and typing, with no second tap", async () => {
+		const { driver, state } = fieldFixture({ value: "old", selectAll: true, setText: "refused" });
+		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "setText");
+		expect(result.success).toBe(true);
+		expect(methods(driver)).toEqual(["tap", "setText", "selectAll", "typeText"]);
+		expect(state.value).toBe("new");
+	});
+
+	test("a failed focus tap stops before setText", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([el("textfield", { id: "field", value: "ab" })])],
+			setText: true,
+			onCall: (call) => (call.method === "tap" ? failWith("E_HID") : undefined),
+		});
+		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "setText");
+		expect(result.success).toBe(false);
+		expect(methods(driver)).toEqual(["tap"]);
+	});
+});
+
 describe("confirmReadsFor", () => {
 	const entry = (driver: Parameters<typeof entryOfField>[0]) => entryOfField(driver);
 

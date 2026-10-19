@@ -20,8 +20,10 @@ import { bundleIdFor, type EasSettings, loadProject, type Project } from "./conf
 import { type Download, resolveFromEas } from "./eas";
 import {
 	appMatchesArtifact,
+	executableStamp,
 	type FileSize,
-	installApp,
+	type FileStamp,
+	installAndProbe,
 	nodeResetFs,
 	probeApp,
 	type ResetFs,
@@ -103,6 +105,8 @@ export type EnsureInput = ProjectContext & {
 	resetFs?: ResetFs;
 	/** file sizes for the installed-app identity check (default node:fs) */
 	fileSize?: FileSize;
+	/** `ino:mtime` of the installed executable, recorded at install to skip that check (default node:fs) */
+	fileStamp?: FileStamp;
 	download?: Download;
 	easPollMs?: number;
 	lockPollMs?: number;
@@ -263,8 +267,15 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		steps.device = {
 			installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId.data)?.hash),
 			confirm: () => probeApp(deps, target, bundleId.data),
-			matches: (cachedPath, installed) =>
-				appMatchesArtifact(deps, target, bundleId.data, cachedPath, installed.container),
+			matches: async (cachedPath, installed) => {
+				// the container this process recorded at install, executable untouched: that install (17-7, no plutil)
+				const record = getInstall(store, platform, deviceId, bundleId.data);
+				const container = installed.container;
+				if (container !== undefined && record?.container === container && record.exeStamp !== undefined) {
+					if ((await executableStamp(container, input.fileStamp)) === record.exeStamp) return ok(true);
+				}
+				return appMatchesArtifact(deps, target, bundleId.data, cachedPath, container);
+			},
 			uninstall: async () => {
 				input.log(`uninstalling ${bundleId.data} from ${deviceId} (${input.installMode ?? "reinstall"})`);
 				const gone = await uninstallApp(deps, target, bundleId.data);
@@ -277,17 +288,20 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 			},
 			install: async (appPath) => {
 				input.log(`installing ${appPath} on ${deviceId}`);
-				const done = await installApp(deps, target, appPath, bundleId.data);
-				if (done.success) {
-					recordInstall(store, {
-						platform,
-						deviceId,
-						bundleId: bundleId.data,
-						hash: installKey,
-						installedAt: input.now(),
-					});
-				}
-				return done;
+				const done = await installAndProbe(deps, target, appPath, bundleId.data);
+				if (!done.success) return done;
+				const { container } = done.data;
+				const exeStamp = container === undefined ? undefined : await executableStamp(container, input.fileStamp);
+				recordInstall(store, {
+					platform,
+					deviceId,
+					bundleId: bundleId.data,
+					hash: installKey,
+					installedAt: input.now(),
+					...(container !== undefined ? { container } : {}),
+					...(exeStamp !== undefined ? { exeStamp } : {}),
+				});
+				return ok(undefined);
 			},
 		};
 	}
