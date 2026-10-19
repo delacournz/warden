@@ -2,13 +2,17 @@
 /**
  * Publish every warden npm package at one version.
  *   bun run release 0.2.0
+ *   bun run release 0.2.0 --otp 123456
  *
  * Writes that version into the cli and e2e package.jsons, commits it on the current branch,
  * then builds and `npm publish`es the platform packages, `@delacour/warden`, and
  * `@delacour/warden-e2e` (platform packages first). A version already on npm is skipped.
+ * Accounts with publish 2FA are asked for a one-time password after the build, so it has not
+ * expired. `--otp` skips that prompt. A rejected code is asked for again.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { $ } from "bun";
 import { RELEASE_TARGETS } from "../src/npm/platforms";
@@ -18,6 +22,18 @@ import { parseVersion } from "../src/update/version";
 export const VERSION_FILES = ["apps/cli/package.json", "packages/e2e/package.json"] as const;
 
 const VERSION_FIELD = /("version"[ \t]*:[ \t]*")[^"]*(")/;
+
+/** Digits from an authenticator. npm rejects publish without one when the account requires 2FA. */
+export function npmOtp(input: string): string {
+	const code = input.trim();
+	if (!/^\d{6,8}$/.test(code)) throw new Error("npm one-time password should be the digits from your authenticator");
+	return code;
+}
+
+/** npm's EOTP: the authenticator code was missing, wrong, or already used. */
+export function isNpmOtpError(text: string): boolean {
+	return text.includes("EOTP") || text.includes("one-time password");
+}
 
 /** `v1.2.3` and `1.2.3` → `1.2.3`; anything else → undefined. */
 export function releaseVersion(input: string): string | undefined {
@@ -56,13 +72,29 @@ export function publishPackageDirs(npmDir: string): string[] {
 	];
 }
 
-function takeVersion(argv: string[]): string {
-	const { positionals } = parseArgs({ args: argv, allowPositionals: true, strict: true });
+type ReleaseArgs = { version: string; otp?: string };
+
+function takeArgs(argv: string[]): ReleaseArgs {
+	const { values, positionals } = parseArgs({
+		args: argv,
+		allowPositionals: true,
+		strict: true,
+		options: { otp: { type: "string" } },
+	});
 	const [input, extra] = positionals;
-	if (!input || extra !== undefined) throw new Error("usage: bun run release <version>");
+	if (!input || extra !== undefined) throw new Error("usage: bun run release <version> [--otp <code>]");
 	const version = releaseVersion(input);
 	if (!version) throw new Error(`not a version: ${input}`);
-	return version;
+	return values.otp === undefined ? { version } : { version, otp: npmOtp(values.otp) };
+}
+
+async function askOtp(): Promise<string> {
+	const rl = createInterface({ input: process.stdin, output: process.stderr });
+	try {
+		return npmOtp(await rl.question("npm one-time password: "));
+	} finally {
+		rl.close();
+	}
 }
 
 function isVersionFile(file: string): file is (typeof VERSION_FILES)[number] {
@@ -138,7 +170,33 @@ function readManifest(dir: string): Manifest {
 	return { name, version };
 }
 
-async function publishAll(root: string, version: string): Promise<void> {
+async function publishDir(root: string, dir: string, otp: string): Promise<"ok" | "otp"> {
+	const result = await $`npm publish ${dir} --access public --ignore-scripts --otp=${otp}`.cwd(root).nothrow();
+	if (result.exitCode === 0) return "ok";
+	const text = `${result.stdout.toString()}${result.stderr.toString()}`;
+	if (isNpmOtpError(text)) return "otp";
+	throw new Error(text.trim() || `npm publish failed (${result.exitCode})`);
+}
+
+async function freshOtp(code: string | undefined): Promise<string> {
+	if (code !== undefined) return code;
+	if (!process.stdin.isTTY) throw new Error("npm publish requires a one-time password; pass --otp <code>");
+	return askOtp();
+}
+
+/** Asks again when npm rejects the code. Returns the code that was accepted, for the next package. */
+async function publishUntilAccepted(root: string, dir: string, code: string | undefined): Promise<string> {
+	let otp = code;
+	for (;;) {
+		otp = await freshOtp(otp);
+		if ((await publishDir(root, dir, otp)) === "ok") return otp;
+		otp = undefined;
+		console.error("npm rejected that one-time password");
+	}
+}
+
+async function publishAll(root: string, version: string, otp: string | undefined): Promise<void> {
+	let code = otp;
 	for (const dir of publishPackageDirs(join(root, "apps", "cli", "dist", "npm"))) {
 		const manifest = readManifest(dir);
 		if (manifest.version !== version) {
@@ -151,12 +209,12 @@ async function publishAll(root: string, version: string): Promise<void> {
 			continue;
 		}
 		console.log(`publishing ${spec}`);
-		await $`npm publish ${dir} --access public --ignore-scripts`.cwd(root);
+		code = await publishUntilAccepted(root, dir, code);
 	}
 }
 
 async function main(): Promise<void> {
-	const version = takeVersion(process.argv.slice(2));
+	const { version, otp } = takeArgs(process.argv.slice(2));
 	const root = resolve(import.meta.dir, "..", "..", "..");
 	const who = await $`npm whoami`.cwd(root).quiet().nothrow();
 	if (who.exitCode !== 0) throw new Error("npm whoami failed; run `npm login` before releasing");
@@ -165,7 +223,7 @@ async function main(): Promise<void> {
 	applyVersion(root, version);
 	await commitVersion(root, version);
 	await buildPackages(root);
-	await publishAll(root, version);
+	await publishAll(root, version, otp);
 	console.log(`published ${version}`);
 }
 

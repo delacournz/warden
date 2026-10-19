@@ -2,7 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { applyVersion, publishPackageDirs, releaseVersion, VERSION_FILES, withPackageVersion } from "./release";
+import {
+	applyVersion,
+	isNpmOtpError,
+	npmOtp,
+	publishPackageDirs,
+	releaseVersion,
+	VERSION_FILES,
+	withPackageVersion,
+} from "./release";
 
 describe("releaseVersion", () => {
 	test("accepts a semver and strips a leading v", () => {
@@ -15,6 +23,24 @@ describe("releaseVersion", () => {
 		expect(releaseVersion("1.2")).toBeUndefined();
 		expect(releaseVersion("latest")).toBeUndefined();
 		expect(releaseVersion("")).toBeUndefined();
+	});
+});
+
+describe("npmOtp", () => {
+	test("keeps a 6 to 8 digit authenticator code", () => {
+		expect(npmOtp("123456")).toBe("123456");
+		expect(npmOtp(" 12345678 ")).toBe("12345678");
+	});
+
+	test("rejects anything else", () => {
+		expect(() => npmOtp("12345")).toThrow("one-time password");
+		expect(() => npmOtp("abcdef")).toThrow("one-time password");
+	});
+
+	test("recognises npm's EOTP failure", () => {
+		expect(isNpmOtpError("npm error code EOTP")).toBe(true);
+		expect(isNpmOtpError("npm error This operation requires a one-time password")).toBe(true);
+		expect(isNpmOtpError("npm error code E404")).toBe(false);
 	});
 });
 
