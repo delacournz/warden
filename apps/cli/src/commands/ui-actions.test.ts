@@ -749,8 +749,8 @@ describe("video", () => {
 			kill(pid, signal);
 			updateState(h.c, UDID, (state) => ({ ...state, collector: { pid: 5151, startedAt: 1 } }));
 		};
-		await h.run("video", "start");
-		expect(await h.run("video", "stop", "--json")).toBe(0);
+		await h.run("screen", "video", "start");
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(readState(h.c, UDID).video).toBeUndefined();
 		expect(readState(h.c, UDID).collector).toEqual({ pid: 5151, startedAt: 1 });
 	});
@@ -758,11 +758,11 @@ describe("video", () => {
 	test("a recorder pid now running another program is never signalled: stop forgets it, start records anew (14-4)", async () => {
 		const fake = fakeVideo();
 		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
-		await h.run("video", "start");
+		await h.run("screen", "video", "start");
 		fake.video.command = () => "/usr/bin/vim notes.txt";
-		expect(await h.run("video", "start", "--json")).toBe(0);
+		expect(await h.run("screen", "video", "start", "--json")).toBe(0);
 		expect(fake.specs).toHaveLength(2);
-		expect(await h.run("video", "stop", "--json")).toBe(0);
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual([]);
 		expect(doc(h.c).warnings?.[0]).toContain("had already ended");
 		expect(readState(h.c, UDID).video).toBeUndefined();
@@ -771,10 +771,10 @@ describe("video", () => {
 	test("a live recorder whose command line cannot be read is not signalled and stays recorded, with a warning", async () => {
 		const fake = fakeVideo();
 		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
-		await h.run("video", "start");
+		await h.run("screen", "video", "start");
 		const recorded = readState(h.c, UDID).video;
 		fake.video.command = () => undefined;
-		expect(await h.run("video", "stop", "--json")).toBe(0);
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual([]);
 		expect(doc(h.c).result).toMatchObject({ action: "video", state: "recording", pid: 4242 });
 		expect(doc(h.c).warnings?.[0]).toContain("could not stop the recorder (pid 4242)");
@@ -785,8 +785,8 @@ describe("video", () => {
 		const fake = fakeVideo();
 		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
 		fake.video.command = () => fake.specs.at(-1)?.argv.join(" ");
-		await h.run("video", "start");
-		expect(await h.run("video", "stop", "--json")).toBe(0);
+		await h.run("screen", "video", "start");
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual(["SIGINT"]);
 		expect(doc(h.c).warnings ?? []).toEqual([]);
 	});

@@ -367,7 +367,7 @@ describe("focusClearType with setText (Android warden-uiad, opt-in)", () => {
 		const { driver, state } = fieldFixture({ value: "old text", selectAll: true, setText: true });
 		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "auto", {});
 		expect(result.success).toBe(true);
-		expect(methods(driver)).toEqual(["tap", "selectAll", "typeText"]);
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "typeText"]);
 		expect(state.value).toBe("new");
 	});
 
@@ -389,7 +389,7 @@ describe("focusClearType with setText (Android warden-uiad, opt-in)", () => {
 	test("setText on a driver without it (iOS) selects all and types like auto", async () => {
 		const { driver, state } = fieldFixture({ value: "old", selectAll: true });
 		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "setText");
-		expect(methods(driver)).toEqual(["tap", "selectAll", "typeText"]);
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "typeText"]);
 		expect(state.value).toBe("new");
 	});
 
@@ -412,7 +412,7 @@ describe("focusClearType with setText (Android warden-uiad, opt-in)", () => {
 	test("an empty field is typed into as before (setText would save nothing there)", async () => {
 		const { driver, state } = fieldFixture({ selectAll: true, setText: true });
 		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "x", "setText");
-		expect(methods(driver)).toEqual(["tap", "typeText"]);
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "typeText"]);
 		expect(state.value).toBe("x");
 	});
 
@@ -426,7 +426,7 @@ describe("focusClearType with setText (Android warden-uiad, opt-in)", () => {
 	test("the counted retry types, never setText", async () => {
 		const { driver, state } = fieldFixture({ value: "ab", selectAll: true, setText: true });
 		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "counted");
-		expect(methods(driver)).toEqual(["tap", "key", "key", "key", "typeText"]);
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "key", "key", "key", "typeText"]);
 		expect(state.value).toBe("new");
 	});
 
