@@ -99,7 +99,7 @@ The ten fix-round commits were read again, one adversarial reviewer per commit a
 
 ### Verification after fix round 2
 
-On this Linux container with the fake drivers, on the head that carries both fix rounds: `bun run typecheck` 9/9; `bun run check` clean with the warning counts unchanged; `packages/core` 875 pass; `packages/e2e` 1928 pass; `packages/e2e-bench` 400 pass; `apps/cli` 1515 pass and 1 fail (the `warden doctor` all-ok row, which needs the macOS sim helper and fails on the base branch too). CI on GitHub (macOS runner) was green on the head before this round; it re-runs on this push.
+On this Linux container with the fake drivers, on the head that carries both fix rounds: `bun run typecheck` 9/9; `bun run check` clean with the warning counts unchanged; `packages/core` 875 pass; `packages/e2e` 1928 pass; `packages/e2e-bench` 400 pass; `apps/cli` 1515 pass and 1 fail (the `warden doctor` all-ok row, which needs the macOS sim helper and fails on the base branch too). CI on GitHub (macOS runner) was green on the head before this round; it re-runs on this push. After Wave 1 landed on main as #32 and main (the `warden ui screen`/`gesture` groups #34, #35, the iOS focus wait #37, #40, #41) was merged into this branch: core 885, e2e 2022, e2e-bench 400, cli 1550 pass with the same doctor row; the Wave 2 tests that drove `warden ui video` now go through `screen video`, and the setText tests expect the focus read main added after the tap.
 
 ## Device checklist
 
