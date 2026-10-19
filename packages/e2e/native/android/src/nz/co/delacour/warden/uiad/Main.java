@@ -22,7 +22,7 @@ import org.json.JSONObject;
  */
 public final class Main {
 	static final int PROTOCOL = 1;
-	static final String VERSION = "0.2.0";
+	static final String VERSION = "0.3.0";
 	private static final Charset ASCII = Charset.forName("US-ASCII");
 
 	private static FileOutputStream stdout;
@@ -144,6 +144,9 @@ public final class Main {
 					break;
 				case "swipe":
 					data = uia.swipe((float) req.getDouble("x1"), (float) req.getDouble("y1"), (float) req.getDouble("x2"), (float) req.getDouble("y2"), req.optLong("durationMs", 300), req.optInt("steps", 8), req.optLong("pressMs", 0), req.optLong("releaseMs", 0));
+					break;
+				case "gesture":
+					data = uia.gesture(req.getJSONArray("paths"), req.optDouble("frameMs", 16), req.optLong("holdMs", 0), req.optLong("releaseMs", 0));
 					break;
 				case "key":
 					data = uia.key(req.getInt("keyCode"), req.optInt("metaState", 0), req.optInt("times", 1), req.optLong("gapMs", 30), req.optBoolean("sync", true));

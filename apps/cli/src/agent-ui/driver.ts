@@ -1,3 +1,4 @@
+import type { PidAlive } from "@delacour/warden-core/liveness";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -21,6 +22,8 @@ export type UiDeps = {
 	devtools?: DevtoolsDeps;
 	/** clock and helper/driver plumbing of `bench` (default: wall clock, real helper) */
 	bench?: BenchDeps;
+	/** pid liveness for the busy-device check (default: `kill(pid, 0)`) */
+	pidAlive?: PidAlive;
 };
 
 const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code"]>([

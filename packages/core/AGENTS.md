@@ -8,7 +8,7 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 |------|---------|
 | `types.ts` | `Resource` / `Owner` / `Lease` / `InventoryDevice` / `AllocationPlan` unions, `resourceKey` |
 | `store.ts` | bun:sqlite `$WARDEN_HOME/warden.db` (WAL). `transaction()` = `BEGIN IMMEDIATE` = cross-process mutex. `MIGRATIONS` append-only |
-| `liveness.ts` | lease alive = heartbeat within ttl OR pid alive (pure; `processAlive` = kill 0) |
+| `liveness.ts` | lease alive = heartbeat within ttl OR pid alive; a supervised lease (pid + `heartbeat_ms`, stamped by `holdLeases`) with a dead pid only within `LOST_HEARTBEATS` (3) periods (pure; `processAlive` = kill 0) |
 | `allocate.ts` | pure `(inventory, leases, request) → assign{reuse/boot/create} | wait` |
 | `owner.ts` | detect owner: hook session → CI → session env → parent pid; git repo/worktree |
 | `inventory.ts` | mark warden-created devices (store record or `warden-<profile>-N` name) |

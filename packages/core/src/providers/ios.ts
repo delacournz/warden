@@ -43,7 +43,16 @@ function isRawSim(value: unknown): value is RawSim {
 	);
 }
 
-const STATES: Record<string, DeviceState> = { Booted: "booted", Shutdown: "shutdown", Booting: "booting" };
+/**
+ * `Shutting Down` counts as `shutdown`: the device is on its way down (e.g. gc shutting it while a
+ * claim reads the list), so a claim must boot it (`boot` waits out the shutdown), never reuse it.
+ */
+const STATES: Record<string, DeviceState> = {
+	Booted: "booted",
+	Shutdown: "shutdown",
+	Booting: "booting",
+	"Shutting Down": "shutdown",
+};
 
 /** `com.apple.CoreSimulator.SimRuntime.iOS-26-5` → `iOS-26-5`. */
 export function shortRuntime(identifier: string): string {
@@ -52,8 +61,8 @@ export function shortRuntime(identifier: string): string {
 
 /**
  * Flatten `xcrun simctl list devices available -j` into iOS inventory. Non-iOS runtimes (watchOS,
- * tvOS, visionOS) and unavailable sims are dropped; states other than booted/shutdown/booting
- * (e.g. `Shutting Down`) are reported as `booting` — busy, not free to boot. `wardenCreated` is
+ * tvOS, visionOS) and unavailable sims are dropped; `Shutting Down` is reported as `shutdown`, any
+ * other state as `booting` — busy, not free to boot. `wardenCreated` is
  * always false here; callers mark warden's own with `markWardenDevices`.
  */
 export function parseSimctlDevices(stdout: string): Result<InventoryDevice[]> {
@@ -270,7 +279,23 @@ export type IosCloneStrategy = (
 export type IosProviderOptions = {
 	/** when set, `create` clones (e.g. from a golden) and falls back to `simctl create` on failure */
 	clone?: IosCloneStrategy;
+	/** waits between `boot` attempts on a sim still `Shutting Down` (default: real timers) */
+	sleep?: (ms: number) => Promise<void>;
 };
+
+/** How often, and how long, `boot` retries a sim that is still `Shutting Down`. */
+const SHUTTING_DOWN_POLL_MS = 500;
+const SHUTTING_DOWN_WAIT_MS = 30_000;
+
+/** `simctl boot`, waiting out a shutdown in progress (simctl refuses to boot a `Shutting Down` sim). */
+async function bootAfterShutdown(exec: Exec, id: string, sleep: (ms: number) => Promise<void>): AsyncResult<void> {
+	for (let waited = 0; ; waited += SHUTTING_DOWN_POLL_MS) {
+		const booted = await idempotent(exec, ["boot", id], "Booted");
+		if (booted.success || !booted.error.includes("current state: Shutting Down")) return booted;
+		if (waited >= SHUTTING_DOWN_WAIT_MS) return booted;
+		await sleep(SHUTTING_DOWN_POLL_MS);
+	}
+}
 
 /** iOS simulators on `xcrun simctl` (default CoreSimulator set). Boots headless — never opens Simulator.app. */
 export function createIosProvider(deps: ProviderDeps, options: IosProviderOptions = {}): DeviceProvider {
@@ -302,7 +327,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			return ok(record(id, name, profile, shortRuntime(target.data.runtime.identifier)));
 		},
 
-		boot: (id) => idempotent(exec, ["boot", id], "Booted"),
+		boot: (id) => bootAfterShutdown(exec, id, options.sleep ?? Bun.sleep),
 
 		async waitReady(id, timeoutMs) {
 			const out = await simctl(exec, ["bootstatus", id, "-b"], timeoutMs);

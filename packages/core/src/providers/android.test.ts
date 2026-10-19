@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok } from "@delacour/warden-types/result";
+import { claimDevices } from "../claim";
 import { DEFAULT_TTL_MS } from "../config.defaults";
 import type { Exec, ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
@@ -288,6 +289,63 @@ describe("boot", () => {
 		const missing = await provider.boot("emulator-5570");
 		expect(missing.success).toBe(false);
 		if (!missing.success) expect(missing.error).toContain("created, not booted");
+	});
+});
+
+describe("boot right after create (16-4)", () => {
+	const ADB_DEVICES_5554 = "List of devices attached\nemulator-5554          device product:sdk_gphone64_arm64\n";
+
+	test("a warden emulator not yet registered with adb is polled for, not failed", async () => {
+		store.recordDevice({ platform: "android", id: "emulator-5554", name: "warden-pixel-10-1" }, 1);
+		let listed = 0;
+		const { exec } = fakeExec({
+			[`${ADB} devices -l`]: () => (++listed >= 3 ? out(ADB_DEVICES_5554) : out(ADB_DEVICES_EMPTY)),
+		});
+		const slept: number[] = [];
+		const provider = createAndroidProvider(deps(exec), { sleep: async (ms) => void slept.push(ms) });
+		expect(await provider.boot("emulator-5554")).toEqual(ok(undefined));
+		expect(listed).toBe(3);
+		expect(slept).toEqual([250, 250]);
+	});
+
+	test("gives up after ~15 s when the warden emulator never registers", async () => {
+		store.recordDevice({ platform: "android", id: "emulator-5554", name: "warden-pixel-10-1" }, 1);
+		const { exec, calls } = fakeExec({ [`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY) });
+		const slept: number[] = [];
+		const provider = createAndroidProvider(deps(exec), { sleep: async (ms) => void slept.push(ms) });
+		const result = await provider.boot("emulator-5554");
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toContain("did not register with adb");
+		expect(slept.reduce((a, b) => a + b, 0)).toBe(15_000);
+		expect(calls.length).toBe(61);
+	});
+
+	test("a claim of a fresh emulator succeeds when adb lists it only after a few polls", async () => {
+		let listed = 0;
+		const { exec } = fakeExec({
+			[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+			// 1: claim inventory, 2: create's running check, 3-4: boot polls miss, 5: registered
+			[`${ADB} devices -l`]: () => (++listed >= 5 ? out(ADB_DEVICES_5554) : out(ADB_DEVICES_EMPTY)),
+			[`${ADB} -s emulator-5554 wait-for-device`]: out(""),
+			[`${ADB} -s emulator-5554 shell getprop sys.boot_completed`]: out("1\n"),
+		});
+		const spawnDetached: SpawnDetached = async () => ok({ pid: 4242 });
+		const provider = createAndroidProvider(deps(exec), { spawnDetached, sleep: async () => {} });
+		const result = await claimDevices({
+			store,
+			provider,
+			owner,
+			request: { platform: "android", profile: "pixel-10", count: 1, max: 1 },
+			ttlMs: 60_000,
+			now: () => 1_000,
+			pidAlive: () => false,
+			waitMs: 0,
+			sleep: async () => {},
+		});
+		expect(result.success && result.data.claimed.map((c) => [c.action, c.device.id])).toEqual([
+			["create", "emulator-5554"],
+		]);
+		expect(listed).toBe(5);
 	});
 });
 

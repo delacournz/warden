@@ -1,5 +1,5 @@
 import { ok } from "@delacour/warden-types/result";
-import type { Driver, DriverError, DriverResult, Point } from "../driver/driver.types";
+import type { Driver, DriverError, DriverResult, Element, Point } from "../driver/driver.types";
 import { canSelectAll, pressKeys, type Sleep, typeText } from "../driver/typing";
 import { clearKeyPresses, fieldContent, fieldValue } from "./actions";
 import { entryOfElement, type NodeEntry } from "./nodes";
@@ -98,6 +98,46 @@ export async function hitTestField(
 	return { ok: true, entry: entry?.role === wanted.role ? entry : undefined };
 }
 
+/** Gap between the hit-tests that wait for a tapped field to take focus. */
+export const FOCUS_POLL_MS = 20;
+/**
+ * Most hit-tests (~10 ms each, `FOCUS_POLL_MS` apart) spent waiting for a tapped field to report focus: about 0.75 s.
+ * Measured on a simulator: focus shows 70-250 ms after the tap, the keyboard coming up included.
+ */
+export const FOCUS_POLLS = 25;
+
+/** Whether `hit` is the field `entry` (same role, and the same identifier when the field has one). */
+function isSameField(hit: Element, entry: NodeEntry): boolean {
+	const identifier = entry.element.identifier;
+	return hit.role === entry.element.role && (identifier === undefined || hit.identifier === identifier);
+}
+
+/**
+ * Taps `point` to focus the text field `entry` and, on iOS, returns once the field reports focus (a hit-test at
+ * `point`, every `FOCUS_POLL_MS`, at most `FOCUS_POLLS` times). Keys sent while focus is still moving reach a React
+ * Native controlled input during its focus re-render and are lost or reordered ("Hllo", "lol, World 123!H"): 5 in 400
+ * tap-then-type runs, none in 300 that waited for focus (85-112 ms) or in 200 that re-tapped the field already focused. So a field
+ * that already had focus, Android (`warden-uiad` types into the focused node itself), a bare coordinate and a
+ * hit-test that cannot tell (failed, or another element there, e.g. content that moved up for the keyboard) are not
+ * waited on.
+ */
+export async function tapToFocus(
+	driver: Driver,
+	sleep: Sleep,
+	point: Point,
+	entry: NodeEntry | undefined
+): DriverResult<void> {
+	const tapped = await driver.tap(point);
+	if (!tapped.success || driver.platform !== "ios" || entry === undefined || entry.states.focused === true)
+		return tapped;
+	for (let poll = 1; poll <= FOCUS_POLLS; poll += 1) {
+		const hit = await driver.elementAtPoint(point);
+		if (!hit.success || !hit.data || !isSameField(hit.data, entry) || hit.data.focused === true) break;
+		if (poll < FOCUS_POLLS) await sleep(FOCUS_POLL_MS);
+	}
+	return ok(undefined);
+}
+
 /**
  * How a field is emptied. `auto` selects everything and presses one Backspace when the driver can select all, else
  * presses one Backspace per character; `counted` always presses one per character (the retry after select-all left
@@ -124,7 +164,7 @@ async function focusAndSelect(
 	entry: NodeEntry | undefined,
 	method: ClearMethod
 ): DriverResult<Prepared> {
-	const focused = await driver.tap(point);
+	const focused = await tapToFocus(driver, sleep, point, entry);
 	if (!focused.success) return focused;
 	if (entry === undefined) return ok({ pending: "none" });
 	const content = fieldContent(entry);

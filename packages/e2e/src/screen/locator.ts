@@ -1,18 +1,27 @@
-import type { KeyName, Modifier, Point, Rect } from "../driver/driver.types";
+import type { KeyName, Modifier, Point, Rect, Snapshot } from "../driver/driver.types";
+import { snapshotHash } from "../driver/settle";
 import { typeText } from "../driver/typing";
 import { E2eError } from "../errors";
 import {
+	assertDegrees,
+	assertScale,
+	centreOf,
 	fieldValue,
 	focusPoint,
 	isOnScreen,
 	type Momentum,
+	PINCH_MS,
+	pinchRadius,
+	ROTATE_MS,
+	requireGesture,
+	rotateRadius,
 	type SwipeDirection,
 	screenRect,
 	swipeVector,
 	tapPointOf,
 	visibleRect,
 } from "./actions";
-import type { Observed, Runtime } from "./context";
+import type { Earlier, Observed, Runtime } from "./context";
 import {
 	type ClearMethod,
 	confirmFieldValue,
@@ -20,6 +29,7 @@ import {
 	focusAndClear,
 	focusClearType,
 	hitTestField,
+	tapToFocus,
 } from "./field";
 import type { NodeEntry } from "./nodes";
 import type { PollStep } from "./poll";
@@ -60,7 +70,9 @@ export type TapOptions = ActionOptions & {
 	 * Tap again when this does not show up. A locator counts once it is visible; a function once it resolves true (its
 	 * reads share one snapshot per check). After the tap and after each re-tap the wait is `windowMs`, except that the
 	 * last re-tap is not waited on: like a hand-rolled tap-and-check helper, `tap` returns and the next assertion says
-	 * whether it landed.
+	 * whether it landed. With a locator, the screen is also compared with the one the press aimed from: once it
+	 * changed (a spinner, a disabled button, the target gone) the press landed and is never sent again, however late
+	 * `until` is; a screen that has not changed at all is pressed again from 750 ms on, without waiting out `windowMs`.
 	 */
 	until?: TapUntil;
 	/** extra taps when `until` has not shown within `windowMs` of the previous tap. Default 2. Needs `until`. */
@@ -73,6 +85,9 @@ export type TapOptions = ActionOptions & {
 export type LongPressOptions = ActionOptions & { durationMs?: number };
 export type PressOptions = ActionOptions & { modifiers?: readonly Modifier[] };
 export type LocatorSwipeOptions = ActionOptions & { direction: SwipeDirection; momentum?: Momentum };
+/** A pinch or rotate: `radius` is each finger's distance from the centre at the start, in points. */
+export type PinchOptions = ActionOptions & { durationMs?: number; radius?: number };
+export type RotateOptions = PinchOptions;
 export type ScrollOptions = ActionOptions & { direction?: SwipeDirection; momentum?: Momentum; maxSwipes?: number };
 export type WaitState = "attached" | "detached" | "visible" | "hidden";
 export type WaitForOptions = ActionOptions & { state?: WaitState };
@@ -380,6 +395,10 @@ export class Locator {
 	 * With `allowReact` a component that only the React tree knows (a plain `getByTestId`) counts as a match.
 	 * Every look is a new snapshot, never the one a read or an `expect` kept: the action goes to where the element is
 	 * now, and a snapshot taken while the screen was still sliding in has it somewhere else.
+	 * A fresh snapshot can also be of a screen still moving, so a match is taken only once its frame held still across
+	 * two looks with no input between them (Playwright's "stable"): the look a read or an `expect` kept, when there is
+	 * one, costs nothing; with none, a look less than `STABLE_INPUT_GAP_MS` after an input is checked by one more. An
+	 * element that never stops moving is taken after `MAX_STABILITY_LOOKS` extra looks.
 	 */
 	private actionable(spec: ActionSpec, timeoutMs: number): Promise<Actionable>;
 	private actionable(spec: ActionSpec, timeoutMs: number, allowReact: boolean): Promise<Actionable | ReactActionable>;
@@ -388,21 +407,13 @@ export class Locator {
 		timeoutMs: number,
 		allowReact = false
 	): Promise<Actionable | ReactActionable> {
+		let extraLooks = 0;
 		const result = await this.rt.poll<Actionable | ReactActionable, Seen>(async () => {
-			const observation = await this.rt.tryObserve({ reuse: false });
-			if (!observation.ok) {
-				if (!observation.error.retryable) {
-					throw new E2eError("DRIVER", `snapshot failed: ${observation.error.code}: ${observation.error.message}`);
-				}
-				return { done: false, state: { kind: "driver", message: observation.error.message } };
+			for (;;) {
+				const step = await this.actionableLook(spec, allowReact, extraLooks >= MAX_STABILITY_LOOKS);
+				if (step !== "moving") return step;
+				extraLooks += 1;
 			}
-			const { observed } = observation;
-			const entries = resolve(this.expr, observed.index);
-			if (entries.length === 0) return this.reactStep(spec, observed, allowReact);
-			const entry = this.exactlyOne(entries, observed);
-			const reason = blockedReason(entry, spec, observed);
-			if (reason !== undefined) return { done: false, state: { kind: "blocked", reason, snapshot: observed.snapshot } };
-			return { done: true, value: { entry, observed } };
 		}, timeoutMs);
 		if (result.status === "done") return result.value;
 		const seen = result.last;
@@ -429,6 +440,41 @@ export class Locator {
 		);
 	}
 
+	/** One look of `actionable`: done, not yet, or `moving` (the match has not held still yet; look again at once). */
+	private async actionableLook(
+		spec: ActionSpec,
+		allowReact: boolean,
+		anyFrame: boolean
+	): Promise<PollStep<Actionable | ReactActionable, Seen> | "moving"> {
+		const observation = await this.rt.tryObserve({ reuse: false, withPrevious: true });
+		if (!observation.ok) {
+			if (!observation.error.retryable) {
+				throw new E2eError("DRIVER", `snapshot failed: ${observation.error.code}: ${observation.error.message}`);
+			}
+			return { done: false, state: { kind: "driver", message: observation.error.message } };
+		}
+		const { observed } = observation;
+		const entries = resolve(this.expr, observed.index);
+		if (entries.length === 0) return this.reactStep(spec, observed, allowReact);
+		const entry = this.exactlyOne(entries, observed);
+		const reason = blockedReason(entry, spec, observed);
+		if (reason !== undefined) return { done: false, state: { kind: "blocked", reason, snapshot: observed.snapshot } };
+		if (!anyFrame && !this.heldStill(entry, observation.earlier)) return "moving";
+		return { done: true, value: { entry, observed } };
+	}
+
+	/**
+	 * Whether `entry`'s frame, to 1 pt, is where the look before this one had this locator's one match. Without that look:
+	 * still unless an input ended less than `STABLE_INPUT_GAP_MS` before this one. No observation cache = still (no history).
+	 */
+	private heldStill(entry: NodeEntry, earlier: Earlier | undefined): boolean {
+		if (earlier === undefined) return true;
+		const { previous, sinceInputMs } = earlier;
+		if (previous === undefined) return sinceInputMs === undefined || sinceInputMs >= STABLE_INPUT_GAP_MS;
+		const [before, ...others] = resolve(this.expr, previous.index);
+		return before !== undefined && others.length === 0 && sameFrame(before.element.frame, entry.element.frame);
+	}
+
 	/**
 	 * Taps the one visible, enabled match. With `until` it is also the retrying tap: the press on a tab bar or a list row
 	 * right after a navigation is sometimes dropped with nothing on screen to tell, so it checks that `until` shows
@@ -441,18 +487,21 @@ export class Locator {
 		return this.act(
 			"tap",
 			async () => {
-				await this.tapOnce(options);
+				let before = await this.tapOnce(options);
 				if (retry === undefined) return;
 				for (let resent = 0; resent < retry.retries; resent += 1) {
-					if (await this.arrivedWithin(retry)) return;
-					await this.tapOnce(options);
+					const outcome = await this.arrivedWithin(retry, snapshotHash(before));
+					// a screen that reacted got the press: pressing again would be a second submit or toggle
+					if (outcome !== "press-again") return;
+					before = await this.tapOnce(options);
 				}
 			},
 			suffix
 		);
 	}
 
-	private async tapOnce(options: TapOptions): Promise<void> {
+	/** One press; resolves to the snapshot it aimed from (the screen just before the press). */
+	private async tapOnce(options: TapOptions): Promise<Snapshot> {
 		const withPosition = options.position !== undefined;
 		const found = await this.actionable(
 			{ enabled: !withPosition, tapPointOnScreen: !withPosition },
@@ -462,34 +511,58 @@ export class Locator {
 		const point =
 			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
 		this.rt.drive("tap", await found.observed.driver.tap(point));
+		return found.observed.snapshot;
 	}
 
 	/**
 	 * Polls `plan.until` for `plan.windowMs`, one look at the screen per check. A locator is checked on the snapshot of
-	 * the poll itself. A function is called with the kept snapshot forgotten (after the first check), so its own reads
-	 * take one new snapshot between them rather than the previous check's.
+	 * the poll itself, which is also compared with `pressedOn` (the hash of the screen the press aimed from): once the
+	 * screen changed the press landed, so it is never sent again (`landed`, even when `until` is late); a screen still
+	 * unchanged on `UNCHANGED_CHECKS` checks in a row from `UNCHANGED_AFTER_MS` on is pressed again at once. A function
+	 * is called with the kept snapshot forgotten (after the first check), so its own reads take one new snapshot
+	 * between them rather than the previous check's; it gets the whole window.
 	 */
-	private async arrivedWithin(plan: RetryPlan): Promise<boolean> {
+	private async arrivedWithin(plan: RetryPlan, pressedOn: string): Promise<TapOutcome> {
 		const { until } = plan;
-		const result = await this.rt.poll<true, undefined>(
+		const watch: PressWatch = { pressedOn, started: this.rt.clock.now(), changed: false, unchanged: 0 };
+		const result = await this.rt.poll<TapOutcome, undefined>(
 			async (attempt) => {
-				if (typeof until === "function") {
-					if (attempt > 1) await this.rt.forgetObservation();
-					return (await until()) ? { done: true, value: true } : { done: false, state: undefined };
-				}
-				const observation = await until.runtime.tryObserve({ reuse: attempt === 1 });
-				if (!observation.ok) {
-					if (!observation.error.retryable) {
-						throw new E2eError("DRIVER", `snapshot failed: ${observation.error.code}: ${observation.error.message}`);
-					}
-					return { done: false, state: undefined };
-				}
-				return until.visibleIn(observation.observed) ? { done: true, value: true } : { done: false, state: undefined };
+				if (typeof until !== "function") return this.checkLocatorUntil(until, watch, attempt);
+				if (attempt > 1) await this.rt.forgetObservation();
+				return (await until()) ? { done: true, value: "arrived" } : { done: false, state: undefined };
 			},
 			plan.windowMs,
 			{ intervalMs: plan.pollMs }
 		);
-		return result.status === "done";
+		if (result.status === "done") return result.value;
+		return watch.changed ? "landed" : "press-again";
+	}
+
+	/** One check of a locator `until`: shown, the press looks dropped (`press-again`), or not yet (noting whether the screen moved). */
+	private async checkLocatorUntil(
+		until: Locator,
+		watch: PressWatch,
+		attempt: number
+	): Promise<PollStep<TapOutcome, undefined>> {
+		const observation = await until.runtime.tryObserve({ reuse: attempt === 1 });
+		if (!observation.ok) {
+			if (!observation.error.retryable) {
+				throw new E2eError("DRIVER", `snapshot failed: ${observation.error.code}: ${observation.error.message}`);
+			}
+			watch.unchanged = 0;
+			return { done: false, state: undefined };
+		}
+		if (until.visibleIn(observation.observed)) return { done: true, value: "arrived" };
+		if (snapshotHash(observation.observed.snapshot) === watch.pressedOn) watch.unchanged += 1;
+		else {
+			watch.changed = true;
+			watch.unchanged = 0;
+		}
+		const dropped =
+			!watch.changed &&
+			watch.unchanged >= UNCHANGED_CHECKS &&
+			this.rt.clock.now() - watch.started >= UNCHANGED_AFTER_MS;
+		return dropped ? { done: true, value: "press-again" } : { done: false, state: undefined };
 	}
 
 	async longPress(options: LongPressOptions = {}): Promise<void> {
@@ -608,6 +681,61 @@ export class Locator {
 		});
 	}
 
+	/**
+	 * A two-finger pinch centred on this node's visible part: `scale` above 1 spreads the fingers (zoom in), below 1
+	 * brings them together. `INVALID_ARGUMENT` for a scale outside 0.1-10 or exactly 1, or on a driver without pinch.
+	 */
+	async pinch(scale: number, options: PinchOptions = {}): Promise<void> {
+		assertOptions("pinch", options, ["durationMs", "radius", "timeout"]);
+		assertScale(scale);
+		return this.act(
+			"pinch",
+			async () => {
+				const { entry, observed } = await this.actionable(
+					{ enabled: false, tapPointOnScreen: false },
+					options.timeout ?? this.rt.actionTimeout()
+				);
+				const screen = observed.snapshot.screen;
+				const rect = visibleRect(entry.element.frame, screen);
+				requireGesture(observed.driver, "pinch", "locator.pinch");
+				this.rt.drive(
+					"pinch",
+					await observed.driver.pinch(centreOf(rect), scale, {
+						durationMs: options.durationMs ?? PINCH_MS,
+						radius: options.radius ?? pinchRadius(rect, scale, screen),
+					})
+				);
+			},
+			` ×${scale}`
+		);
+	}
+
+	/** A two-finger rotation about this node's visible centre; positive `degrees` turn clockwise. */
+	async rotate(degrees: number, options: RotateOptions = {}): Promise<void> {
+		assertOptions("rotate", options, ["durationMs", "radius", "timeout"]);
+		assertDegrees(degrees);
+		return this.act(
+			"rotate",
+			async () => {
+				const { entry, observed } = await this.actionable(
+					{ enabled: false, tapPointOnScreen: false },
+					options.timeout ?? this.rt.actionTimeout()
+				);
+				const screen = observed.snapshot.screen;
+				const rect = visibleRect(entry.element.frame, screen);
+				requireGesture(observed.driver, "pinch", "locator.rotate");
+				this.rt.drive(
+					"rotate",
+					await observed.driver.rotate(centreOf(rect), degrees, {
+						durationMs: options.durationMs ?? ROTATE_MS,
+						radius: options.radius ?? rotateRadius(rect, screen),
+					})
+				);
+			},
+			` ${degrees}°`
+		);
+	}
+
 	/** Scrolls the screen until this locator is on screen. */
 	scrollTo(options: ScrollOptions = {}): Promise<void> {
 		return scrollUntilVisible(this.rt, this, options);
@@ -641,7 +769,7 @@ export class Locator {
 
 	private async focus({ entry, observed }: Actionable): Promise<void> {
 		if (entry.states.focused) return;
-		this.rt.drive("focus", await observed.driver.tap(focusPoint(entry.element.frame)));
+		this.rt.drive("focus", await tapToFocus(observed.driver, this.pause, focusPoint(entry.element.frame), entry));
 	}
 
 	private async focusAndClear({ entry, observed }: Actionable, method: ClearMethod): Promise<void> {
@@ -714,12 +842,47 @@ export function textOf(entry: NodeEntry): string {
 	return normalizeText(entry.name ?? "") || entry.subtreeText;
 }
 
+/** A look that starts this soon after an input, with no earlier look of the same screen, is checked by one more. */
+const STABLE_INPUT_GAP_MS = 300;
+/** At most this many extra looks wait for a frame to hold still; then the latest one is used. */
+const MAX_STABILITY_LOOKS = 2;
+
+function sameFrame(a: Rect, b: Rect): boolean {
+	return (
+		Math.round(a.x) === Math.round(b.x) &&
+		Math.round(a.y) === Math.round(b.y) &&
+		Math.round(a.width) === Math.round(b.width) &&
+		Math.round(a.height) === Math.round(b.height)
+	);
+}
+
 /** A tap with `until` is sent again this many times, each given this long to show its result, checked this often. */
 const TAP_RETRIES = 2;
 const TAP_WINDOW_MS = 4000;
 const TAP_CHECK_MS = 250;
 
+/**
+ * A screen that still matches the pre-press one on this many checks in a row, this long after the press, dropped it:
+ * press again without waiting out the window.
+ */
+const UNCHANGED_CHECKS = 2;
+const UNCHANGED_AFTER_MS = 750;
+
 type RetryPlan = { until: TapUntil; retries: number; windowMs: number; pollMs: number };
+
+/** How one press's window ended: `until` showed; the screen reacted without it (no second press); or press again. */
+type TapOutcome = "arrived" | "landed" | "press-again";
+
+/** What the checks after one press have seen of the screen. */
+type PressWatch = {
+	/** hash of the snapshot the press aimed from */
+	pressedOn: string;
+	started: number;
+	/** some check saw a screen other than `pressedOn`: the press landed */
+	changed: boolean;
+	/** checks in a row that saw `pressedOn` */
+	unchanged: number;
+};
 
 function wholeNumber(name: string, value: number, atLeast: number): void {
 	if (!Number.isInteger(value) || value < atLeast) {

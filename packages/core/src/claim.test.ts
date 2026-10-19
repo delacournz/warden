@@ -368,6 +368,51 @@ describe("claim health probe", () => {
 	});
 });
 
+describe("claim readiness timeout (16-2)", () => {
+	function stuck(provider: FakeProvider, bad: Set<string>): FakeProvider {
+		provider.waitReady = async (id, timeoutMs) => {
+			provider.calls.push(`ready ${id}`);
+			return bad.has(id) ? err(`${id} not ready within ${timeoutMs / 1000}s: bootstatus timed out`) : ok(undefined);
+		};
+		return provider;
+	}
+
+	test("a warden device that never gets ready is quarantined, shut down, and another one claimed", async () => {
+		const provider = stuck(fakeProvider([sim("1", { state: "booted" }), sim("2")]), new Set(["1"]));
+		const logs: string[] = [];
+		const result = await claimDevices(input(provider, { readyTimeoutMs: 300_000, log: (l) => logs.push(l) }));
+		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
+		expect(store.listDevices().find((d) => d.id === "1")?.quarantineReason).toContain("not ready within 300s");
+		expect(provider.calls).toContain("shutdown 1");
+		expect(store.listLeases().map((l) => l.resource.kind === "device" && l.resource.id)).toEqual(["2"]);
+		expect(logs.join("\n")).toContain("quarantined");
+	});
+
+	test("the stuck device is not offered to the next claim", async () => {
+		const provider = stuck(fakeProvider([sim("1", { state: "booted" })]), new Set(["1"]));
+		const first = await claimDevices(input(provider, { request: request({ max: 1 }) }));
+		expect(first.success && first.data.claimed[0]?.device.id).toBe("NEW1");
+		provider.calls.length = 0;
+		const second = await claimDevices(input(provider, { owner: other, request: request({ max: 1 }) }));
+		expect(second.success).toBe(false);
+		expect(provider.calls).not.toContain("ready 1");
+	});
+
+	test("a foreign device that never gets ready is skipped, not quarantined or shut down", async () => {
+		const provider = stuck(
+			fakeProvider([
+				sim("F", { name: "Chris iPhone", wardenCreated: false, profile: "iphone-17", state: "booted" }),
+				sim("2", { state: "booted" }),
+			]),
+			new Set(["F"])
+		);
+		const result = await claimDevices(input(provider, { request: request({ adopt: true }) }));
+		expect(result.success && result.data.claimed[0]?.device.id).toBe("2");
+		expect(store.listDevices().find((d) => d.id === "F")).toBeUndefined();
+		expect(provider.calls).not.toContain("shutdown F");
+	});
+});
+
 describe("claim warm path", () => {
 	function withWarm(provider: FakeProvider, ok_: boolean): FakeProvider {
 		provider.probe = async (id) => {
@@ -416,7 +461,7 @@ describe("claim spawn counts (iOS provider)", () => {
 	const LAUNCHCTL_LIST = "PID\tStatus\tLabel\n412\t0\tUIKitApplication:com.apple.springboard[ab][rb-legacy]";
 
 	/** A fake simctl with one warden sim in `state`; every spawn is recorded. */
-	function world(state: "Booted" | "Shutdown", springboard = true) {
+	function world(state: "Booted" | "Shutdown" | "Shutting Down", springboard = true) {
 		const spawns: string[] = [];
 		const exec: Exec = async (cmd): Promise<ExecResult> => {
 			const joined = cmd.join(" ");
@@ -452,6 +497,18 @@ describe("claim spawn counts (iOS provider)", () => {
 			"xcrun simctl spawn U1 launchctl print system",
 			"xcrun simctl spawn U1 launchctl list",
 		]);
+	});
+
+	test("a sim still Shutting Down is never a reuse step: the claim boots it (16-1)", async () => {
+		const { spawns, provider } = world("Shutting Down");
+		const result = await claimDevices(input(provider));
+		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
+		expect(spawns.slice(0, 3)).toEqual([
+			"xcrun simctl list devices available -j",
+			"xcrun simctl boot U1",
+			"xcrun simctl bootstatus U1 -b",
+		]);
+		expect(store.listLeases()[0]?.bootedByOwner).toBe(true);
 	});
 
 	test("a booted sim whose SpringBoard is not up yet still gets bootstatus before the full probe", async () => {

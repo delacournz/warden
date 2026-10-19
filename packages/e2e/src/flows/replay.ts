@@ -4,7 +4,19 @@ import { snapshotHash } from "../driver/settle";
 import { indexSnapshot, type NodeEntry, type NodeIndex } from "../screen/nodes";
 import { renderSnapshot } from "../screen/render";
 import { matchesSelector, parseSelector } from "../screen/selector";
-import type { ChainEntry, Flow, SelectorTarget, Step, StepKind, StepOf, Target, Text } from "./flow.schema";
+import {
+	type ChainEntry,
+	type Flow,
+	type GestureStep,
+	type SelectorTarget,
+	type Step,
+	type StepKey,
+	type StepKind,
+	type StepOf,
+	stepKey,
+	type Target,
+	type Text,
+} from "./flow.schema";
 import { type Env, resolveText } from "./record";
 
 /**
@@ -31,8 +43,12 @@ export type ResolvedTarget = {
 
 export type StepTargets = { target?: ResolvedTarget; until?: ResolvedTarget };
 
-/** A recorded target looked up on the current screen: where it is, or why it is not there. */
-export type Located = { resolved: ResolvedTarget } | { missing: string };
+/**
+ * A recorded target looked up on the current screen: where it is, or why it is not there. `moved` is the third state:
+ * the chain found the element (same role) but farther than {@link LANDMARK_TOLERANCE} from its landmark. It is on
+ * screen, so state checks use it; `moved` says by how much, for a warning.
+ */
+export type Located = { resolved: ResolvedTarget; moved?: string } | { missing: string };
 
 export type ActContext = {
 	driver: Driver;
@@ -43,16 +59,16 @@ export type ActContext = {
 	 * only appear (or vanish) during the step, so those executors look it up themselves with `find`.
 	 */
 	targets: StepTargets;
-	/** resolve a recorded target against a fresh snapshot (chain + landmark); never throws */
+	/** resolve a recorded target against a fresh snapshot (chain + landmark; past the landmark it is `moved`, not missing); never throws */
 	find(target: Target): Promise<Result<Located, ActError>>;
 	/** plain text for a stored `Text` (secrets already looked up; checked before the step runs) */
 	text(value: Text): string;
 };
 
-export type StepActor<K extends StepKind> = (step: StepOf<K>, ctx: ActContext) => Promise<Result<void, ActError>>;
+export type StepActor<K extends StepKey> = (step: StepOf<K>, ctx: ActContext) => Promise<Result<void, ActError>>;
 
-/** One executor per step kind; the CLI binds real driver actions, tests bind recorders. */
-export type ActMap = { [K in StepKind]: StepActor<K> };
+/** One executor per step kind (`screen` and `gesture` per type, see `StepKey`); the CLI binds real driver actions, tests bind recorders. */
+export type ActMap = { [K in StepKey]: StepActor<K> };
 
 /** Reported after every step that ran: what it was, how long it took, and whether the screen had drifted. */
 export type StepEvent = { step: number; kind: StepKind; label: string; ms: number; drift?: ReplayDrift };
@@ -77,8 +93,11 @@ export type ReplayDeps = {
 
 export type ReplayDrift = { step: number; expected: string; actual: string };
 
+/** A `wait`/`is`/`get`/`scroll` target the chain found away from its recorded landmark (used anyway, as it is on screen). */
+export type ReplayMove = { step: number; kind: StepKind; reason: string };
+
 export type ReplayOutcome =
-	| { status: "passed"; steps: number; warnings: ReplayDrift[]; updated?: Flow }
+	| { status: "passed"; steps: number; warnings: ReplayDrift[]; moves?: ReplayMove[]; updated?: Flow }
 	| {
 			status: "diverged";
 			code: "replay_divergence";
@@ -88,6 +107,7 @@ export type ReplayOutcome =
 			/** interactive tree of the screen the step could not be placed in */
 			snapshot: string;
 			warnings: ReplayDrift[];
+			moves?: ReplayMove[];
 	  }
 	| {
 			status: "failed";
@@ -96,17 +116,17 @@ export type ReplayOutcome =
 			error: ActError;
 			snapshot?: string;
 			warnings: ReplayDrift[];
+			moves?: ReplayMove[];
 	  };
 
 // ---- targets and texts of a step --------------------------------------------------------------------------------
 
 type StepSlots = { target?: Target; until?: Target };
 
-/** The targets a step points at. `swipe` hides its target inside the gesture, `scroll` calls it `until`. */
+/** The targets a step points at. `scroll` calls it `until`; pinch, rotate and direction swipes may have none (the screen). */
 export function targetsOf(step: Step): StepSlots {
 	switch (step.kind) {
 		case "press":
-		case "longpress":
 		case "fill":
 		case "wait":
 		case "is":
@@ -115,11 +135,25 @@ export function targetsOf(step: Step): StepSlots {
 		case "type":
 		case "key":
 			return step.target ? { target: step.target } : {};
-		case "swipe":
-			return step.gesture.by === "direction" && step.gesture.target ? { target: step.gesture.target } : {};
+		case "gesture":
+			return gestureTargets(step);
 		case "scroll":
 			return step.until ? { until: step.until } : {};
 		default:
+			return {};
+	}
+}
+
+function gestureTargets(step: GestureStep): StepSlots {
+	switch (step.type) {
+		case "longpress":
+			return { target: step.target };
+		case "swipe":
+			return step.by === "direction" && step.target ? { target: step.target } : {};
+		case "pinch":
+		case "rotate":
+			return step.target ? { target: step.target } : {};
+		case "path":
 			return {};
 	}
 }
@@ -136,15 +170,28 @@ export function describeStep(step: Step): string {
 			return step.key;
 		case "alert":
 			return typeof step.action === "string" ? step.action : step.action.button;
-		case "rotate":
-			return step.orientation;
-		case "appearance":
-			return step.mode;
+		case "screen":
+			return step.type === "rotate" ? step.orientation : step.type === "appearance" ? step.mode : (step.name ?? "");
 		case "scroll":
 			return step.direction ?? "down";
-		case "swipe":
-			return step.gesture.by === "direction" ? step.gesture.direction : "path";
+		case "gesture":
+			return describeGesture(step);
 		default:
+			return "";
+	}
+}
+
+function describeGesture(step: GestureStep): string {
+	switch (step.type) {
+		case "swipe":
+			return step.by === "direction" ? step.direction : "path";
+		case "pinch":
+			return `×${step.scale}`;
+		case "rotate":
+			return `${step.degrees}°`;
+		case "path":
+			return `${step.paths.length} finger${step.paths.length === 1 ? "" : "s"}`;
+		case "longpress":
 			return "";
 	}
 }
@@ -159,7 +206,6 @@ function eagerSlots(step: Step, slots: StepSlots): StepSlots {
 function withTargets(step: Step, slots: StepSlots): Step {
 	switch (step.kind) {
 		case "press":
-		case "longpress":
 		case "fill":
 		case "wait":
 		case "is":
@@ -167,10 +213,8 @@ function withTargets(step: Step, slots: StepSlots): Step {
 		case "type":
 		case "key":
 			return slots.target ? { ...step, target: slots.target } : step;
-		case "swipe":
-			return step.gesture.by === "direction" && slots.target
-				? { ...step, gesture: { ...step.gesture, target: slots.target } }
-				: step;
+		case "gesture":
+			return slots.target && "target" in step ? { ...step, target: slots.target } : step;
 		case "scroll":
 			return slots.until ? { ...step, until: slots.until } : step;
 		default:
@@ -232,7 +276,8 @@ function walkChain(target: SelectorTarget, index: NodeIndex): { found: Found } |
 	return { tried: notes.join(", ") };
 }
 
-type Resolution = { resolved: ResolvedTarget } | { divergence: string };
+/** `moved`: the divergence is only the distance; the element the chain found is still there (see {@link Located}). */
+type Resolution = { resolved: ResolvedTarget } | { divergence: string; moved?: ResolvedTarget };
 
 function resolveTarget(target: SelectorTarget, index: NodeIndex): Resolution {
 	const walked = walkChain(target, index);
@@ -242,13 +287,15 @@ function resolveTarget(target: SelectorTarget, index: NodeIndex): Resolution {
 	if (entry.role !== landmark.role) {
 		return { divergence: `${target.selector} now resolves to a ${entry.role}, recorded as a ${landmark.role}` };
 	}
+	const resolved: ResolvedTarget = { point: pointOf(entry.element), via: by, element: entry.element, entry };
 	const moved = distance(centreOf(landmark.frame), centreOf(entry.element.frame));
 	if (moved > LANDMARK_TOLERANCE) {
 		return {
 			divergence: `${target.selector} moved ${Math.round(moved)} pt from where it was recorded (limit ${LANDMARK_TOLERANCE})`,
+			moved: resolved,
 		};
 	}
-	return { resolved: { point: pointOf(entry.element), via: by, element: entry.element, entry } };
+	return { resolved };
 }
 
 function refreshed(target: Target, resolved: ResolvedTarget): Target {
@@ -264,9 +311,11 @@ function refreshed(target: Target, resolved: ResolvedTarget): Target {
 	};
 }
 
+/** The lazy lookup (`find`): a moved element is located, with the move noted; a gone or re-roled one is missing. */
 function toLocated(target: SelectorTarget, index: NodeIndex): Located {
 	const outcome = resolveTarget(target, index);
-	return "divergence" in outcome ? { missing: outcome.divergence } : outcome;
+	if (!("divergence" in outcome)) return outcome;
+	return outcome.moved ? { resolved: outcome.moved, moved: outcome.divergence } : { missing: outcome.divergence };
 }
 
 function excerpt(snapshot: Snapshot): string {
@@ -274,8 +323,8 @@ function excerpt(snapshot: Snapshot): string {
 }
 
 function dispatch(act: ActMap, step: Step, ctx: ActContext): Promise<Result<void, ActError>> {
-	// one cast: `act[step.kind]` takes exactly the step kind it is keyed by, which the type system cannot correlate here
-	const actor = act[step.kind] as (step: Step, ctx: ActContext) => Promise<Result<void, ActError>>;
+	// one cast: `act[key]` takes exactly the step it is keyed by, which the type system cannot correlate here
+	const actor = act[stepKey(step)] as (step: Step, ctx: ActContext) => Promise<Result<void, ActError>>;
 	return actor(step, ctx);
 }
 
@@ -351,13 +400,35 @@ function noteDrift(step: Step, hash: string | undefined, log: (line: string) => 
 	log(`drift step ${step.i} ${step.kind}: screen differs from the recording (${step.snapshotHash} → ${hash})`);
 }
 
+/** `ActContext.find` for `step`: coordinates as they are, selectors against a fresh snapshot, moves noted. */
+function lazyFind(step: Step, deps: ReplayDeps, moves: ReplayMove[]): ActContext["find"] {
+	return async (target) => {
+		if (target.kind === "coords") {
+			return { success: true, data: { resolved: { point: { x: target.x, y: target.y }, via: "coords" } } };
+		}
+		const taken = await deps.snapshot();
+		if (!taken.success) return taken;
+		const located = toLocated(target, indexSnapshot(taken.data));
+		if ("moved" in located && located.moved !== undefined) noteMove(step, located.moved, deps.log, moves);
+		return { success: true, data: located };
+	};
+}
+
+/** One warning per step, however often its executor polls `find`. */
+function noteMove(step: Step, reason: string, log: (line: string) => void, moves: ReplayMove[]): void {
+	if (moves.some((move) => move.step === step.i)) return;
+	moves.push({ step: step.i, kind: step.kind, reason });
+	log(`moved step ${step.i} ${step.kind}: ${reason}; using it where it is now`);
+}
+
 type StepDone = { hash: string | undefined; refreshed: StepSlots };
 
 /** One step: secrets, fresh screen, drift, place the targets, act, settle. Either a stop or what `updateSnapshots` needs. */
 async function runStep(
 	step: Step,
 	deps: ReplayDeps,
-	warnings: ReplayDrift[]
+	warnings: ReplayDrift[],
+	moves: ReplayMove[]
 ): Promise<{ stop: Stop } | { done: StepDone }> {
 	const env = deps.env ?? {};
 	const slots = eagerSlots(step, targetsOf(step));
@@ -384,14 +455,7 @@ async function runStep(
 		const plain = resolveText(value, env);
 		return plain.success ? plain.data : "";
 	};
-	const find = async (target: Target): Promise<Result<Located, ActError>> => {
-		if (target.kind === "coords") {
-			return { success: true, data: { resolved: { point: { x: target.x, y: target.y }, via: "coords" } } };
-		}
-		const taken = await deps.snapshot();
-		if (!taken.success) return taken;
-		return { success: true, data: toLocated(target, indexSnapshot(taken.data)) };
-	};
+	const find = lazyFind(step, deps, moves);
 	const context: ActContext = { driver: deps.driver, snapshot, targets: placed.targets, find, text };
 	const acted = await dispatch(deps.act, step, context);
 	if (!acted.success) {
@@ -411,6 +475,8 @@ async function runStep(
 
 export async function replayFlow(flow: Flow, deps: ReplayDeps): Promise<ReplayOutcome> {
 	const warnings: ReplayDrift[] = [];
+	const moves: ReplayMove[] = [];
+	const withMoves = <O extends ReplayOutcome>(outcome: O): O => (moves.length > 0 ? { ...outcome, moves } : outcome);
 	const updatedSteps: Step[] = [...flow.steps];
 	const from = deps.from ?? 0;
 	let executed = 0;
@@ -418,8 +484,8 @@ export async function replayFlow(flow: Flow, deps: ReplayDeps): Promise<ReplayOu
 	for (const step of flow.steps) {
 		if (step.i < from) continue;
 		const started = deps.now();
-		const outcome = await runStep(step, deps, warnings);
-		if ("stop" in outcome) return outcome.stop;
+		const outcome = await runStep(step, deps, warnings, moves);
+		if ("stop" in outcome) return withMoves(outcome.stop);
 		if (deps.updateSnapshots) {
 			const next = withTargets(step, outcome.done.refreshed);
 			updatedSteps[step.i] = outcome.done.hash === undefined ? next : { ...next, snapshotHash: outcome.done.hash };
@@ -431,10 +497,10 @@ export async function replayFlow(flow: Flow, deps: ReplayDeps): Promise<ReplayOu
 		deps.onStep?.({ step: step.i, kind: step.kind, label: describeStep(step), ms, ...(drift && { drift }) });
 	}
 
-	return {
+	return withMoves({
 		status: "passed",
 		steps: executed,
 		warnings,
 		...(deps.updateSnapshots && { updated: { ...flow, steps: updatedSteps } }),
-	};
+	});
 }

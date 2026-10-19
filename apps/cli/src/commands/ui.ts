@@ -12,6 +12,11 @@ import { type Command, defineCommand } from "../command";
  * rules of `resolveUiDevice` (the hook's `ensureCallerLease`). Exit codes: 0 ok · 1 failed/usage · 2 lease
  * · 3 engine unavailable · 4 stale ref · 130 interrupted. `deps` injects the driver + clock for tests.
  */
+/** Commander accumulator for a repeatable `--path`. */
+function collectPath(value: string, previous: string[]): string[] {
+	return [...previous, value];
+}
+
 export function createUiCommand(deps: UiDeps): Command {
 	return defineCommand({
 		name: "ui",
@@ -85,17 +90,6 @@ export function createUiCommand(deps: UiDeps): Command {
 			}
 			withUiOptions(
 				cmd
-					.command("longpress")
-					.description("press and hold an element or point (default 800 ms)")
-					.argument("<target...>", "@eN | selector | x y, then optionally the duration in ms")
-					.option("--verify", "re-check an @eN against a fresh snapshot first")
-					.option("--settle [ms]", SETTLE)
-			).action(async (words, opts) => {
-				const { uiLongpress } = await import("../agent-ui/actions");
-				done(await uiLongpress(ctx, deps, words, opts));
-			});
-			withUiOptions(
-				cmd
 					.command("fill")
 					.description("replace a text field's content, then read it back (use -- before text starting with -)")
 					.argument("<args...>", "<target> <text>: the last word is the text")
@@ -126,17 +120,6 @@ export function createUiCommand(deps: UiDeps): Command {
 			).action(async (name, opts) => {
 				const { uiKey } = await import("../agent-ui/actions");
 				done(await uiKey(ctx, deps, name, opts));
-			});
-			withUiOptions(
-				cmd
-					.command("swipe")
-					.description("raw swipe: the way the finger moves (swipe up reveals what is below), or x1 y1 x2 y2")
-					.argument("<args...>", "up | down | left | right | x1 y1 x2 y2")
-					.option("--from <target>", "swipe inside this element instead of the whole screen")
-					.option("--settle [ms]", SETTLE)
-			).action(async (words, opts) => {
-				const { uiSwipe } = await import("../agent-ui/actions");
-				done(await uiSwipe(ctx, deps, words, opts));
 			});
 			withUiOptions(
 				cmd
@@ -175,8 +158,9 @@ export function createUiCommand(deps: UiDeps): Command {
 					done(await uiHardware(ctx, deps, button, opts));
 				});
 			}
+			const screen = cmd.command("screen").description("the device screen: orientation, appearance, screenshot, video");
 			withUiOptions(
-				cmd
+				screen
 					.command("rotate")
 					.description("set the orientation (none = read it)")
 					.argument("[orientation]", "portrait | portrait-upside-down | landscape-left | landscape-right")
@@ -186,7 +170,7 @@ export function createUiCommand(deps: UiDeps): Command {
 				done(await uiRotate(ctx, deps, orientation, opts));
 			});
 			withUiOptions(
-				cmd
+				screen
 					.command("appearance")
 					.description("set light or dark mode (none = read it)")
 					.argument("[mode]", "light | dark")
@@ -196,7 +180,7 @@ export function createUiCommand(deps: UiDeps): Command {
 				done(await uiAppearance(ctx, deps, mode, opts));
 			});
 			withUiOptions(
-				cmd
+				screen
 					.command("screenshot")
 					.description("save a PNG of the screen (default: $WARDEN_HOME/ui/<udid>/shots/NNN.png)")
 					.argument("[path]", "output file")
@@ -205,7 +189,7 @@ export function createUiCommand(deps: UiDeps): Command {
 				done(await uiScreenshot(ctx, deps, path, opts));
 			});
 			withUiOptions(
-				cmd
+				screen
 					.command("video")
 					.description("record the screen: video start [path] | video stop")
 					.argument("<action>", "start | stop")
@@ -213,6 +197,73 @@ export function createUiCommand(deps: UiDeps): Command {
 			).action(async (action, path, opts) => {
 				const { uiVideo } = await import("../agent-ui/video");
 				done(await uiVideo(ctx, deps, action, path, opts));
+			});
+			const gesture = cmd.command("gesture").description("touch gestures: swipe, longpress, pinch, rotate, raw paths");
+			withUiOptions(
+				gesture
+					.command("swipe")
+					.description("raw swipe: the way the finger moves (swipe up reveals what is below), or x1 y1 x2 y2")
+					.argument("<args...>", "up | down | left | right | x1 y1 x2 y2")
+					.option("--from <target>", "swipe inside this element instead of the whole screen")
+					.option("--settle [ms]", SETTLE)
+			).action(async (words, opts) => {
+				const { uiSwipe } = await import("../agent-ui/actions");
+				done(await uiSwipe(ctx, deps, words, opts));
+			});
+			withUiOptions(
+				gesture
+					.command("longpress")
+					.description("press and hold an element or point (default 800 ms)")
+					.argument("<target...>", "@eN | selector | x y, then optionally the duration in ms")
+					.option("--verify", "re-check an @eN against a fresh snapshot first")
+					.option("--settle [ms]", SETTLE)
+			).action(async (words, opts) => {
+				const { uiLongpress } = await import("../agent-ui/actions");
+				done(await uiLongpress(ctx, deps, words, opts));
+			});
+			withUiOptions(
+				gesture
+					.command("pinch")
+					.description(
+						"two-finger pinch around an element, a point or the screen centre: scale > 1 spreads the fingers (zoom in), < 1 closes them"
+					)
+					.argument("<args...>", "[@eN | selector | x y] <scale>: the last word is the scale (0.1-10, not 1)")
+					.option("--duration <ms>", "how long the gesture takes (default 500)")
+					.option("--radius <n>", "finger distance from the centre at the start, in points")
+					.option("--verify", "re-check an @eN against a fresh snapshot first")
+					.option("--settle [ms]", SETTLE)
+			).action(async (words, opts) => {
+				const { uiGesturePinch } = await import("../agent-ui/gestures");
+				done(await uiGesturePinch(ctx, deps, words, opts));
+			});
+			withUiOptions(
+				gesture
+					.command("rotate")
+					.description("two-finger rotation (device orientation is `screen rotate`): positive degrees turn clockwise")
+					.argument("<args...>", "[@eN | selector | x y] <degrees>: the last word is the angle (not 0, at most 720)")
+					.option("--duration <ms>", "how long the gesture takes (default 500)")
+					.option("--radius <n>", "finger distance from the centre, in points")
+					.option("--verify", "re-check an @eN against a fresh snapshot first")
+					.option("--settle [ms]", SETTLE)
+			).action(async (words, opts) => {
+				const { uiGestureRotate } = await import("../agent-ui/gestures");
+				done(await uiGestureRotate(ctx, deps, words, opts));
+			});
+			withUiOptions(
+				gesture
+					.command("path")
+					.description("raw touch paths: one --path per finger (max 2), fingers go down and lift together")
+					.option(
+						"--path <points>",
+						"one finger's route: x,y x,y … (repeat for a second finger)",
+						collectPath,
+						[] as string[]
+					)
+					.option("--duration <ms>", "how long the gesture takes (default 600)")
+					.option("--settle [ms]", SETTLE)
+			).action(async (opts) => {
+				const { uiGesturePath } = await import("../agent-ui/gestures");
+				done(await uiGesturePath(ctx, deps, opts));
 			});
 			withUiOptions(
 				cmd

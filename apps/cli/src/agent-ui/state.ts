@@ -7,11 +7,20 @@ import type { CommandContext } from "../context";
 import { uiDir } from "./paths";
 
 /**
- * The device's resident `warden-simd`: its pid and socket, plus what it was started for. `owner` is the lease owner
- * at spawn (`ownerKey`) and `binary` the helper executable (path + mtime): when either differs at the next use the
- * helper is replaced, not reused. Both are absent on records written by an older warden, which are always reused.
+ * The device's resident `warden-simd`: its pid and socket, plus what it was started with. `binary` is the helper
+ * executable (realpath + mtime) and `env` a hash of the `WARDEN_SIMD_*` environment it inherited: when either differs
+ * at the next use the helper is replaced, not reused (unless `lease`, the lease it was spawned under, is still the
+ * device's lease: a run never has its own helper replaced). `owner` is the lease owner at spawn (`ownerKey`), kept for
+ * reference only. Fields are absent on records written by an older warden, which are not guessed at.
  */
-export type HelperRecord = { pid: number; socket: string; owner?: string; binary?: { path: string; mtimeMs: number } };
+export type HelperRecord = {
+	pid: number;
+	socket: string;
+	owner?: string;
+	binary?: { path: string; mtimeMs: number };
+	env?: string;
+	lease?: string;
+};
 
 /** `state.json`. `generation` bumps only on `snapshot`, `snapshot --settle` and `find`. */
 export type UiState = {
@@ -100,6 +109,8 @@ const stateSchema = z.object({
 			socket: z.string(),
 			owner: z.string().optional(),
 			binary: z.object({ path: z.string(), mtimeMs: z.number() }).optional(),
+			env: z.string().optional(),
+			lease: z.string().optional(),
 		})
 		.optional(),
 	collector: z.object({ pid: z.number(), startedAt: z.number() }).optional(),

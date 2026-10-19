@@ -40,6 +40,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--platform ios\|android` `--profile <slug>` `--runtime <rt>` | choose the device for a `--claim` with none named (default ios) |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--no-record` | keep this step out of a running recording |
+| `--force` | drive the device while your running `warden e2e` / `batch` / `run` / `dev` holds it (else exit 2 `device_busy`); it disturbs that run |
 | `--json` | one JSON document on stdout |
 
 Actions also take `--settle [ms]`: wait for a quiet screen (budget 3000 ms), then print what changed.
@@ -67,19 +68,24 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `find` | `<selector>` | matches with fresh `@eN` |
 | `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted |
 | `press` / `tap` | `<@eN\|selector\|x y> [--verify] [--settle]` | |
-| `longpress` | `<target> [ms]` | default 800 ms; `--verify`, `--settle` |
 | `fill` | `<target> <text> [--secure] [--no-verify] [--settle]` | `--` before text starting with `-`; reads back, retries once; `--secure` skips read-back and never echoes or records the text |
 | `type` | `<text> [--submit] [--settle]` | into whatever has focus |
 | `key` | `Enter\|Backspace\|Tab\|Space\|Escape\|Delete\|Up\|Down\|Left\|Right [--settle]` | |
-| `swipe` | `up\|down\|left\|right \| x1 y1 x2 y2 [--from <target>] [--settle]` | finger direction: `swipe up` reveals what is below |
 | `scroll` | `<dir> [amount=0.5] [--until <sel>] [--in <target>] [--max 10] [--settle]` | content direction: `scroll down` reveals what is below; amount 0-1; `--until` prints the fresh ref |
 | `alert` | `accept\|dismiss\|get [--settle]` | `get` with none = empty list; accept/dismiss with none = `no_alert` |
 | `home` | `[--settle]` | |
 | `back` | `[--settle]` | Android only |
-| `rotate` | `[portrait\|portrait-upside-down\|landscape-left\|landscape-right]` | no arg reads it |
-| `appearance` | `[light\|dark]` | no arg reads it |
-| `screenshot` | `[path]` | default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
-| `video` | `start [path]` / `stop` | 3 min device limit |
+| `screen rotate` | `[portrait\|portrait-upside-down\|landscape-left\|landscape-right]` | device orientation; no arg reads it |
+| `screen appearance` | `[light\|dark]` | no arg reads it |
+| `screen screenshot` | `[path]` | default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
+| `screen video` | `start [path]` / `stop` | 3 min device limit |
+| `gesture swipe` | `up\|down\|left\|right \| x1 y1 x2 y2 [--from <target>] [--settle]` | finger direction: `gesture swipe up` reveals what is below |
+| `gesture longpress` | `<target> [ms]` | default 800 ms; `--verify`, `--settle` |
+| `gesture pinch` | `[target] <scale> [--duration 500] [--radius px] [--verify] [--settle]` | 2 fingers; scale > 1 zooms in, 0.1-10 and not 1; no target = screen centre |
+| `gesture rotate` | `[target] <degrees> [--duration 500] [--radius px] [--verify] [--settle]` | 2 fingers; positive = clockwise, `-45` works (`gesture rotate @e3 -45`); not 0, max 720 |
+| `gesture path` | `--path 'x,y x,y ...' [--path ...] [--duration ms] [--settle]` | 1-2 fingers, each >= 2 points, default 600 ms, down and lift together; points in pt (iOS) / px (Android) |
+
+`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1). Flows are format v2 (`kind: screen|gesture` + `type`); v1 files migrate on read.
 | `wait` | `<sel>` / `absent <sel>` / `text "..."` / `stable [ms=250]` | polls 100 ms for 1 s, then 250 ms, up to `--timeout` |
 | `is` | `<sel> visible\|hittable\|enabled\|checked\|selected\|focused` | exit 0 true, 1 false (JSON still `ok:true`) |
 | `get` | `<sel> text\|value\|label\|id\|role\|frame\|count` | `frame` = `x y w h`; `count` 0 is success |
@@ -161,9 +167,9 @@ Secrets: `fill --secure` text is never stored. Set `WARDEN_UI_SECRET_<NAME>` whi
 
 - Snapshots come from `warden-uiad`, a small UiAutomation server warden starts on the emulator with each command (about 0.1 s, then 10-40 ms per snapshot, taps and typing in tens of ms, non-ASCII text works). Without it (`WARDEN_ANDROID_UIAD=0`, Android < 8, a device it cannot run on) snapshots are `uiautomator dump`: 0.8-2.4 s, the first call probes three dump routes. An empty tree is retried 3 times, 400 ms apart, then `E_AX_UNAVAILABLE` (exit 3). Only one UiAutomation client can be on a device: when Maestro, an `am instrument` run or a `uiautomator` command holds it, snapshot and settle fail naming it (see troubleshooting 23).
 - `id=` is the resource-id / testID without package prefix; `hittable` is derived.
-- No pinch, no clipboard, no `--metro`/`--args` on `open <bundleId>`; non-ASCII text needs the server (`E_UNSUPPORTED_TEXT` without it).
+- Pinch, rotate and 2-finger `gesture path` need `warden-uiad` (default on API 26+); with `WARDEN_ANDROID_UIAD=0` they fail `E_UNSUPPORTED` (`details.driver`); 1-finger paths fall back to `input motionevent`. No clipboard, no `--metro`/`--args` on `open <bundleId>`; non-ASCII text needs the server (`E_UNSUPPORTED_TEXT` without it).
 - `status` showing `helper not started` is normal (no helper process).
-- `back`, `home`, `rotate`, `appearance`, `video` work.
+- `back`, `home`, `screen rotate`, `screen appearance`, `screen video` work.
 
 ## View missing from the snapshot
 

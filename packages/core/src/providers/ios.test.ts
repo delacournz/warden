@@ -73,6 +73,14 @@ describe("parseSimctlDevices", () => {
 		for (const d of result.data) expect(d.wardenCreated).toBe(false);
 	});
 
+	test("a sim still Shutting Down is reported shut down, so a claim boots it instead of reusing it (16-1)", () => {
+		const json = simctlDevicesJson({
+			"iOS-26-5": [{ udid: "S", name: "warden-iphone-17-1", state: "Shutting Down" }],
+		});
+		const result = parseSimctlDevices(json);
+		expect(result.success && result.data.map((d) => d.state)).toEqual(["shutdown"]);
+	});
+
 	test("marks golden devices", () => {
 		const json = simctlDevicesJson({
 			"iOS-26-5": [
@@ -300,6 +308,47 @@ describe("createIosProvider", () => {
 		const broken = provider(fake([["xcrun simctl boot", { exitCode: 1, stderr: "Invalid device: U1" }]]));
 		const result = await broken.boot("U1");
 		expect(result.success).toBe(false);
+	});
+
+	test("boot of a sim still Shutting Down waits for the shutdown to finish, then boots (16-1)", async () => {
+		const calls: Call[] = [];
+		let boots = 0;
+		const exec: Exec = async (cmd) => {
+			calls.push({ cmd: [...cmd] });
+			if (cmd.join(" ") !== "xcrun simctl boot U1") return { exitCode: 127, stdout: "", stderr: "unexpected" };
+			return ++boots < 3
+				? { exitCode: 149, stdout: "", stderr: "Unable to boot device in current state: Shutting Down" }
+				: { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const slept: number[] = [];
+		const p = createIosProvider(
+			{ exec, store, env: {}, now: () => 42, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{ sleep: async (ms) => void slept.push(ms) }
+		);
+		expect(await p.boot("U1")).toEqual({ success: true, data: undefined });
+		expect(boots).toBe(3);
+		expect(slept).toEqual([500, 500]);
+	});
+
+	test("boot gives up when the sim stays Shutting Down", async () => {
+		const exec: Exec = async () => ({
+			exitCode: 149,
+			stdout: "",
+			stderr: "Unable to boot device in current state: Shutting Down",
+		});
+		let slept = 0;
+		const p = createIosProvider(
+			{ exec, store, env: {}, now: () => 42, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{
+				sleep: async (ms) => {
+					slept += ms;
+				},
+			}
+		);
+		const result = await p.boot("U1");
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toContain("Shutting Down");
+		expect(slept).toBe(30_000);
 	});
 
 	test("waitReady uses bootstatus -b with timeout", async () => {

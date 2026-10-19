@@ -166,6 +166,59 @@ describe("deadline", () => {
 	});
 });
 
+describe("zombies", () => {
+	test("a body or afterEach the runner gave up on cannot drive the device during the next test", async () => {
+		const run = await runSpec("zombie");
+		expect(byTitle(run, "sleeps past its deadline then taps")).toMatchObject({ status: "timed-out" });
+		expect(byTitle(run, "its afterEach outlives the cleanup limit")).toMatchObject({
+			status: "failed",
+			error: { code: "TIMEOUT" },
+		});
+		expect(byTitle(run, "runs while the zombie body taps").status).toBe("passed");
+		expect(byTitle(run, "runs while the zombie afterEach taps").status).toBe("passed");
+		expect(run.log).toHaveLength(4);
+		expect(run.log).toContain("victim of the body done");
+		expect(run.log).toContain("victim of the hook done");
+		const rejected = run.log.filter((line) => /^(body|afterEach) tap rejected (TIMEOUT|SESSION)$/.test(line));
+		expect(rejected.map((line) => line.split(" ")[0]).sort()).toEqual(["afterEach", "body"]);
+
+		for (const victim of ["runs while the zombie body taps", "runs while the zombie afterEach taps"]) {
+			const dir = byTitle(run, victim).artifacts?.dir;
+			const path = dir === undefined ? "" : join(dir, "trace.jsonl");
+			const trace = existsSync(path) ? readTrace(readFileSync(path, "utf8")) : [];
+			expect(trace.filter((e) => e.type !== "span").map((e) => [e.type, e.label])).toEqual([]);
+			expect(trace.filter((e) => e.type === "span").map((e) => e.op)).toEqual([]);
+		}
+	});
+});
+
+describe("post-deadline budget", () => {
+	test("slow afterEach hooks share one budget inside bun's margin: bun never starts the next test early", async () => {
+		const run = await runSpec("slow-cleanup");
+		const lines = run.stdout.split("\n");
+		const end = lines.findIndex((l) => l.startsWith("■") && l.includes("slow cleanup"));
+		const nextStart = lines.findIndex((l) => l.startsWith("▶") && l.includes("next"));
+		expect(end).toBeGreaterThanOrEqual(0);
+		expect(nextStart).toBeGreaterThan(end);
+		expect(run.results.map((r) => [r.title.at(-1), r.status])).toEqual([
+			["slow cleanup", "timed-out"],
+			["next", "passed"],
+		]);
+		const slow = byTitle(run, "slow cleanup");
+		expect(slow.durationMs).toBeLessThan(1_600);
+		expect(run.log[0]).toBe("afterEach 1 done");
+		expect(run.log).toContain("next body");
+		expect(run.stderr).not.toContain("this test timed out after");
+	});
+
+	test("a test.use({ timeout }) below a test in the same scope is warned about, once", async () => {
+		const run = await runSpec("use-late");
+		expect(run.exitCode).toBe(0);
+		const warnings = run.stderr.split("\n").filter((l) => l.includes("comes after a test in the same scope"));
+		expect(warnings).toEqual([expect.stringContaining("test.use({ timeout: 200000 })")]);
+	});
+});
+
 describe("only", () => {
 	test("is recorded in the result, and passes outside CI", async () => {
 		const run = await runSpec("only");

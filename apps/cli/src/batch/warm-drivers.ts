@@ -8,8 +8,13 @@ export type WarmHelper = {
 	socketPath: string;
 	/** one UI snapshot: makes the in-sim bridge resident */
 	snapshot: () => AsyncResult<unknown>;
-	/** stop the helper */
+	/** disconnect from the helper; it stays resident for the jobs and after the run */
 	close: () => Promise<void>;
+	/**
+	 * stop the helper process itself (and disconnect): for a helper whose device will run its jobs cold, which
+	 * would otherwise each spawn a helper of their own beside it (two quiescence streams on one sim, 20-1)
+	 */
+	stop?: () => Promise<void>;
 };
 
 /** Connect to (spawning when needed) the socket helper of one device. */
@@ -58,7 +63,18 @@ type Step = { helper?: WarmHelper; error?: string };
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-/** `connect` then one snapshot; never throws. A helper that connects but cannot snapshot is closed. */
+/** A helper whose device goes cold: stopped when it can be (else only disconnected); never throws. */
+const discard = (helper: WarmHelper): Promise<void> => (helper.stop ? helper.stop() : helper.close()).catch(() => {});
+
+/**
+ * `connect` then one snapshot; never throws. A helper that connects but cannot snapshot is stopped: it may be
+ * wedged, so the device's jobs are not handed its socket, and it must not stay resident beside their own helpers.
+ */
+async function coldHelper(helper: WarmHelper, note: (line: string) => void): Promise<void> {
+	await discard(helper);
+	note(helper.stop ? "stopped the helper: this device's jobs start their own" : "closed the helper");
+}
+
 async function warmOne(connect: WarmConnect, udid: string, note: (line: string) => void): Promise<Step> {
 	let helper: WarmHelper;
 	try {
@@ -72,10 +88,10 @@ async function warmOne(connect: WarmConnect, udid: string, note: (line: string) 
 	try {
 		const shot = await helper.snapshot();
 		if (shot.success) return { helper };
-		await helper.close().catch(() => {});
+		await coldHelper(helper, note);
 		return { error: `snapshot failed: ${shot.error}` };
 	} catch (error) {
-		await helper.close().catch(() => {});
+		await coldHelper(helper, note);
 		return { error: `snapshot failed: ${message(error)}` };
 	}
 }
@@ -83,7 +99,8 @@ async function warmOne(connect: WarmConnect, udid: string, note: (line: string) 
 /**
  * Per device, in parallel: connect the socket helper and take one snapshot, so the in-sim bridge is
  * resident before the first job. Each device logs to `<logDir>/warm-<worker>.log`. Failures, the
- * timeout and an interrupt only leave that device cold (a late helper is closed); this never throws.
+ * timeout and an interrupt only leave that device cold; this never throws. A helper that arrives after
+ * the timeout is stopped (its device's jobs run cold); after an interrupt it is only disconnected.
  */
 export async function warmDrivers(run: WarmRun, deps: WarmDeps): Promise<WarmOutcome> {
 	const helpers: WarmHelper[] = [];
@@ -94,7 +111,7 @@ export async function warmDrivers(run: WarmRun, deps: WarmDeps): Promise<WarmOut
 			const log = join(run.logDir, `warm-${device.worker}.log`);
 			note(`warming ${device.udid}`);
 			const pending = warmOne(deps.connect, device.udid, note);
-			let late = false;
+			let late: "timeout" | "interrupt" | undefined;
 			const step = await new Promise<Step>((resolve) => {
 				const finish = (s: Step) => {
 					cancel();
@@ -102,18 +119,19 @@ export async function warmDrivers(run: WarmRun, deps: WarmDeps): Promise<WarmOut
 					resolve(s);
 				};
 				const cancel = run.after(deps.timeoutMs ?? WARM_TIMEOUT_MS, () => {
-					late = true;
+					late = "timeout";
 					finish({ error: `timed out after ${(deps.timeoutMs ?? WARM_TIMEOUT_MS) / 1000}s` });
 				});
 				const onAbort = () => {
-					late = true;
+					late = "interrupt";
 					finish({ error: "interrupted" });
 				};
 				run.signal?.addEventListener("abort", onAbort, { once: true });
 				if (run.signal?.aborted) onAbort();
 				void pending.then(finish);
 			});
-			if (late) void pending.then((s) => s.helper?.close().catch(() => {}));
+			if (late === "timeout") void pending.then((s) => (s.helper ? discard(s.helper) : undefined));
+			else if (late === "interrupt") void pending.then((s) => s.helper?.close().catch(() => {}));
 			if (step.helper) {
 				helpers.push(step.helper);
 				note("snapshot ok — bridge resident");

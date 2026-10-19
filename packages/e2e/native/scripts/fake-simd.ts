@@ -15,6 +15,8 @@
  *   exitBeforeReady: exit code to exit with right after writing stderr
  *   ready:    false (never send `ready`) | partial `ready` event fields merged over the default
  *   startup:  raw lines written right after `ready` (garbage-line tests)
+ *   readyDelay: { ms, connections?: number[] } socket mode, opt-in: hold a connection's `ready` back `ms` (a busy
+ *             helper that accepts but is slow to greet); `connections` (1-based) limits it to those, default all
  *   announce: socket mode, what stdout says once the socket listens: "ready" (default: the helper's process-level
  *             `{"event":"ready","socket","pid",…}` line), "legacy" (an older helper: only a `listening on …` log
  *             line) or "none" (nothing)
@@ -47,6 +49,7 @@ type Script = {
 	stderr?: string[];
 	ready?: false | Record<string, unknown>;
 	startup?: string[];
+	readyDelay?: { ms: number; connections?: number[] };
 	announce?: "ready" | "legacy" | "none";
 	fatal?: { error: WireError; beforeReady?: boolean };
 	dieAfter?: { requests: number; exitCode?: number; once?: boolean };
@@ -191,6 +194,7 @@ function serveSocket(path: string): void {
 		// nothing stale
 	}
 	const feeds = new WeakMap<object, (chunk: Uint8Array) => void>();
+	let connections = 0;
 	Bun.listen<undefined>({
 		unix: path,
 		socket: {
@@ -202,7 +206,11 @@ function serveSocket(path: string): void {
 					conn,
 					lineReader((line) => onLine(line, write))
 				);
-				greet(write);
+				connections += 1;
+				const delay = script.readyDelay;
+				if (delay && (delay.connections === undefined || delay.connections.includes(connections))) {
+					setTimeout(() => greet(write), delay.ms);
+				} else greet(write);
 			},
 			data(conn, chunk) {
 				feeds.get(conn)?.(chunk);

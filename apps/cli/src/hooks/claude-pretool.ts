@@ -43,12 +43,38 @@ function startWorker(deps: HookDeps, sessionId: string): boolean {
 }
 
 /**
+ * A lease a running process still holds: its pid is alive and it heartbeats (within the TTL), as a
+ * `warden e2e` / `batch` / `run` / `dev` the agent started in a background shell does.
+ */
+function heldByLiveProcess(lease: Lease, now: number, pidAlive: PidAlive): boolean {
+	return lease.pid !== undefined && now - lease.heartbeatAt <= lease.ttlMs && pidAlive(lease.pid);
+}
+
+/** The session's leases to release now, and (on `/clear`) the ones a live process keeps. */
+function splitHeld(owned: Lease[], keepRunning: boolean, deps: HookDeps): { leases: Lease[]; kept: Lease[] } {
+	if (!keepRunning) return { leases: owned, kept: [] };
+	const now = deps.now();
+	const kept = owned.filter((l) => heldByLiveProcess(l, now, deps.pidAlive));
+	return { leases: owned.filter((l) => !kept.includes(l)), kept };
+}
+
+/** `warden: released …` first, `warden: kept …` last (each only when there is one). */
+function outcomeLines(released: Lease[], kept: Lease[], lines: string[]): string[] {
+	const out = released.length > 0 ? [`warden: released ${released.map((l) => l.id).join(" ")}`, ...lines] : lines;
+	if (kept.length === 0) return out;
+	const pids = [...new Set(kept.map((l) => l.pid))].join(" ");
+	return [...out, `warden: kept ${kept.map((l) => l.id).join(" ")} (held by running warden pid ${pids})`];
+}
+
+/**
  * SessionEnd: shut down the session's devices the shutdown policy allows (warden-created, or booted
  * by this session) so nothing is left running, then release every lease the session holds. On
  * `/clear` (reason `clear`) devices stay up — the conversation restarts but the work usually goes on
- * with the same sim, which the new session re-claims with its next `warden claim`. When there are devices
- * to shut down the work goes to a detached worker (`warden release --session S --shutdown`, which
- * shuts down before releasing) so the hook returns inside the agent's time cap; inline otherwise.
+ * with the same sim, which the new session re-claims with its next `warden claim` — and leases a
+ * live process holds (a background `warden e2e` / `batch`, see `heldByLiveProcess`) are kept: that
+ * run releases them itself when it ends. When there are devices to shut down the work goes to a
+ * detached worker (`warden release --session S --shutdown`, which shuts down before releasing) so
+ * the hook returns inside the agent's time cap; inline otherwise.
  */
 export async function handleSessionEnd(raw: unknown, deps: HookDeps): Promise<HookResult> {
 	try {
@@ -56,9 +82,10 @@ export async function handleSessionEnd(raw: unknown, deps: HookDeps): Promise<Ho
 		if (!sessionId || !isRecord(raw)) return { exitCode: 0 };
 		const owner: AgentOwner = { kind: "agent", sessionId, cwd: "" };
 		const store = deps.store();
-		const leases = store.listLeasesByOwner(owner);
+		const owned = store.listLeasesByOwner(owner);
 		const lines: string[] = [];
 		const keepRunning = stringField(raw, "reason") === "clear";
+		const { leases, kept } = splitHeld(owned, keepRunning, deps);
 		const hasDevices = leases.some((l) => l.resource.kind === "device");
 		if (!keepRunning && hasDevices && startWorker(deps, sessionId)) {
 			return {
@@ -81,8 +108,8 @@ export async function handleSessionEnd(raw: unknown, deps: HookDeps): Promise<Ho
 			leases.map((l) => l.id),
 			{ after: deps.stopHelper }
 		);
-		if (leases.length > 0) lines.unshift(`warden: released ${leases.map((l) => l.id).join(" ")}`);
-		return lines.length > 0 ? { exitCode: 0, stdout: lines.join("\n") } : { exitCode: 0 };
+		const out = outcomeLines(leases, kept, lines);
+		return out.length > 0 ? { exitCode: 0, stdout: out.join("\n") } : { exitCode: 0 };
 	} catch (error) {
 		return { exitCode: 0, stderr: `warden hook session-end: ${errorMessage(error)}` };
 	}

@@ -199,6 +199,25 @@ await first.request("swipe", {
 	pressMs: 20,
 	releaseMs: 10,
 });
+// a small pinch near the screen centre (two fingers closing), then an invalid request
+await first.request("gesture", {
+	paths: [
+		[
+			{ x: 340, y: 1200 },
+			{ x: 400, y: 1200 },
+			{ x: 460, y: 1200 },
+		],
+		[
+			{ x: 740, y: 1200 },
+			{ x: 680, y: 1200 },
+			{ x: 620, y: 1200 },
+		],
+	],
+	frameMs: 16,
+	holdMs: 0,
+	releaseMs: 20,
+});
+await first.request("gesture", { paths: [] });
 await first.request("setText", { text: "" });
 await first.request("snapshot");
 await first.request("shutdown");

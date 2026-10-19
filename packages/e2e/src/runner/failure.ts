@@ -12,13 +12,22 @@ export const NETWORK_JSONL = "network.jsonl";
 /** Longest a single capture call may take: a wedged device must not hold the test run. */
 export const CAPTURE_TIMEOUT_MS = 10_000;
 
+class CaptureTimeout extends Error {}
+
 function limited<T>(promise: Promise<T>, ms: number): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const timeout = new Promise<never>((_, reject) => {
-		timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+		timer = setTimeout(() => reject(new CaptureTimeout(`timed out after ${ms}ms`)), ms);
 	});
 	return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
+
+/** What is left of the runner's post-deadline budget, in ms; the default never runs out. */
+export type CaptureBudget = () => number;
+
+const unlimited: CaptureBudget = () => Number.POSITIVE_INFINITY;
+
+const SPENT = "skipped, the post-deadline budget is used up";
 
 export type FailureCapture = {
 	/** files written into `dir`, relative to it */
@@ -30,12 +39,14 @@ export type FailureCapture = {
 /**
  * Best-effort `failure.png` (`driver.screenshot`) and `screen-at-failure.txt` (`driver.snapshot`,
  * rendered like `warden ui snapshot --all`) into `dir`. Never throws: the test's own error is
- * the one worth reporting.
+ * the one worth reporting. Each call gets `timeoutMs` or what `budget` says is left, whichever is less; a
+ * screenshot that timed out skips the snapshot (the device is not answering).
  */
 export async function captureFailure(
 	driver: Driver,
 	dir: string,
-	timeoutMs = CAPTURE_TIMEOUT_MS
+	timeoutMs = CAPTURE_TIMEOUT_MS,
+	budget: CaptureBudget = unlimited
 ): Promise<FailureCapture> {
 	const capture: FailureCapture = { files: [], problems: [] };
 	try {
@@ -45,34 +56,63 @@ export async function captureFailure(
 		return capture;
 	}
 
+	const shot = await captureScreenshot(driver, dir, Math.min(timeoutMs, budget()), capture);
+	if (shot === "unanswered") {
+		// the device did not answer a screenshot: a snapshot would only spend the next test's time
+		capture.problems.push("snapshot: skipped, the screenshot timed out (the device is not answering)");
+		return capture;
+	}
+	await captureSnapshot(driver, dir, Math.min(timeoutMs, budget()), capture);
+	return capture;
+}
+
+const message = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
+
+async function captureScreenshot(
+	driver: Driver,
+	dir: string,
+	ms: number,
+	capture: FailureCapture
+): Promise<"answered" | "unanswered"> {
+	if (ms <= 0) {
+		capture.problems.push(`screenshot: ${SPENT}`);
+		return "answered";
+	}
 	try {
-		const shot = await limited(driver.screenshot({ path: join(dir, FAILURE_PNG) }), timeoutMs);
+		const shot = await limited(driver.screenshot({ path: join(dir, FAILURE_PNG) }), ms);
 		if (!shot.success) {
 			capture.problems.push(`screenshot: ${shot.error.code}: ${shot.error.message}`);
-		} else {
-			if (shot.data.path === undefined && shot.data.png !== undefined) {
-				writeFileSync(join(dir, FAILURE_PNG), shot.data.png);
-			}
-			capture.files.push(FAILURE_PNG);
+			return "answered";
 		}
+		if (shot.data.path === undefined && shot.data.png !== undefined) {
+			writeFileSync(join(dir, FAILURE_PNG), shot.data.png);
+		}
+		capture.files.push(FAILURE_PNG);
 	} catch (cause) {
-		capture.problems.push(`screenshot: ${cause instanceof Error ? cause.message : String(cause)}`);
+		capture.problems.push(`screenshot: ${message(cause)}`);
+		if (cause instanceof CaptureTimeout) return "unanswered";
 	}
+	return "answered";
+}
 
+async function captureSnapshot(driver: Driver, dir: string, ms: number, capture: FailureCapture): Promise<void> {
+	if (ms <= 0) {
+		capture.problems.push(`snapshot: ${SPENT}`);
+		return;
+	}
 	try {
-		const result = await limited(driver.snapshot(), timeoutMs);
+		const result = await limited(driver.snapshot(), ms);
 		if (!result.success) {
 			capture.problems.push(`snapshot: ${result.error.code}: ${result.error.message}`);
-		} else {
-			const rendered = renderSnapshot(result.data, { interactiveOnly: false, refs: new Map() });
-			const header = renderHeader({ snapshot: result.data, rendered, interactiveOnly: false });
-			writeFileSync(join(dir, SCREEN_AT_FAILURE), `${[header, ...rendered.lines].join("\n")}\n`);
-			capture.files.push(SCREEN_AT_FAILURE);
+			return;
 		}
+		const rendered = renderSnapshot(result.data, { interactiveOnly: false, refs: new Map() });
+		const header = renderHeader({ snapshot: result.data, rendered, interactiveOnly: false });
+		writeFileSync(join(dir, SCREEN_AT_FAILURE), `${[header, ...rendered.lines].join("\n")}\n`);
+		capture.files.push(SCREEN_AT_FAILURE);
 	} catch (cause) {
-		capture.problems.push(`snapshot: ${cause instanceof Error ? cause.message : String(cause)}`);
+		capture.problems.push(`snapshot: ${message(cause)}`);
 	}
-	return capture;
 }
 
 /**
@@ -82,11 +122,17 @@ export async function captureFailure(
 export async function captureDevtoolsArtifacts(
 	facet: DevtoolsFacet,
 	dir: string,
-	timeoutMs = CAPTURE_TIMEOUT_MS
+	timeoutMs = CAPTURE_TIMEOUT_MS,
+	budget: CaptureBudget = unlimited
 ): Promise<FailureCapture> {
 	const capture: FailureCapture = { files: [], problems: [] };
+	const ms = Math.min(timeoutMs, budget());
+	if (ms <= 0) {
+		capture.problems.push(`devtools artifacts: ${SPENT}`);
+		return capture;
+	}
 	try {
-		const written = await limited(facet.attachArtifacts(dir), timeoutMs);
+		const written = await limited(facet.attachArtifacts(dir), ms);
 		if (written.success) capture.files.push(CONSOLE_JSONL, NETWORK_JSONL);
 		else capture.problems.push(`devtools artifacts: ${written.error.code}: ${written.error.message}`);
 	} catch (cause) {

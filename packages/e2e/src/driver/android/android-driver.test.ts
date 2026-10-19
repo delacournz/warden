@@ -166,6 +166,7 @@ describe("open", () => {
 		const { driver } = await setup();
 		expect(driver.capabilities).toEqual({
 			pinch: false,
+			maxPointers: 1,
 			unicodeText: false,
 			nativeSettle: false,
 			alerts: true,
@@ -471,10 +472,72 @@ describe("input", () => {
 		expect(!shake.success && shake.error.code).toBe("E_UNSUPPORTED");
 	});
 
-	test("pinch and clipboard are E_UNSUPPORTED", async () => {
+	test("pinch and rotate need the server; a two-finger gesture is E_UNSUPPORTED without it", async () => {
+		const { driver, host } = await setup();
+		for (const res of [
+			await driver.pinch({ x: 500, y: 500 }, 2),
+			await driver.rotate({ x: 500, y: 500 }, 90),
+			await driver.gesture([
+				{
+					points: [
+						{ x: 1, y: 1 },
+						{ x: 5, y: 5 },
+					],
+				},
+				{
+					points: [
+						{ x: 9, y: 9 },
+						{ x: 4, y: 4 },
+					],
+				},
+			]),
+		]) {
+			expect(!res.success && res.error.code).toBe("E_UNSUPPORTED");
+			expect(!res.success && /warden-uiad|at most 1 finger/.test(res.error.message)).toBe(true);
+		}
+		expect(host.shell.some((c) => c.includes("motionevent"))).toBe(false);
+	});
+
+	test("a one-finger gesture on sdk 26+ is one motionevent line, with a plan error returned as is", async () => {
+		const { driver, host } = await setup();
+		await value(
+			driver.gesture(
+				[
+					{
+						points: [
+							{ x: 100, y: 200 },
+							{ x: 300, y: 400 },
+						],
+					},
+				],
+				{ durationMs: 160, holdMs: 20 }
+			)
+		);
+		const line = host.shell.find((c) => c.includes("motionevent"));
+		expect(line).toStartWith("input motionevent DOWN 100 200 && sleep 0.020");
+		expect(line).toContain("input motionevent UP 300 400 || (input motionevent CANCEL 300 400; exit 1)");
+		const bad = await driver.gesture([]);
+		expect(!bad.success && bad.error.code).toBe("E_BAD_REQUEST");
+	});
+
+	test("maxPointers follows the sdk: 1 from 26, 0 below and when unknown; below 26 a gesture is E_UNSUPPORTED", async () => {
+		const old = await setup({ shell: [{ match: "getprop sys.boot_completed", reply: probe(24) }] });
+		expect(old.driver.capabilities.maxPointers).toBe(0);
+		const res = await old.driver.gesture([
+			{
+				points: [
+					{ x: 1, y: 1 },
+					{ x: 5, y: 5 },
+				],
+			},
+		]);
+		expect(!res.success && res.error.code).toBe("E_UNSUPPORTED");
+		const unknown = await setup({ shell: [{ match: "getprop sys.boot_completed", reply: probe(undefined) }] });
+		expect(unknown.driver.capabilities.maxPointers).toBe(0);
+	});
+
+	test("clipboard is E_UNSUPPORTED", async () => {
 		const { driver } = await setup();
-		const pinch = await driver.pinch({ x: 1, y: 1 }, 2);
-		expect(!pinch.success && pinch.error.code).toBe("E_UNSUPPORTED");
 		const clip = await driver.clipboard("x");
 		expect(!clip.success && clip.error.code).toBe("E_UNSUPPORTED");
 		expect((await driver.clipboard()).success).toBe(false);

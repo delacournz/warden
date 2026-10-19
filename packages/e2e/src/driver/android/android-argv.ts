@@ -1,6 +1,7 @@
 import type { Result } from "@delacour/warden-types/result";
 import type { DriverError, HardwareButton, KeyName, Point } from "../driver.types";
 import { driverErr } from "../errors";
+import type { GesturePlan } from "../gesture-geometry";
 
 /**
  * Pure argv builders for the Android driver. The `string[]` ones run INSIDE the persistent
@@ -72,6 +73,32 @@ export function dragMotionCommand(from: Point, to: Point, timing: DragTiming): s
 	}
 	parts.push(sleepArgv(timing.releaseMs), motionEventArgv("UP", to));
 	const cancel = shellCommand(motionEventArgv("CANCEL", to));
+	return `${parts.map((argv) => shellCommand(argv)).join(" && ")} || (${cancel}; exit 1)`;
+}
+
+/** Most MOVEs a one-finger gesture line sends: each `input motionevent` is a process start (~100+ ms). */
+export const GESTURE_LINE_MAX_MOVES = 12;
+
+/**
+ * One shell line for a one-finger `GesturePlan` (the fallback when `warden-uiad` is not there): DOWN at the first
+ * frame, sleep `holdMs`, at most `maxMoves` MOVEs at evenly spaced frame indices (the last frame always among
+ * them, the sleeps between sum to the plan's travel time), sleep `releaseMs`, UP at the last frame. Like
+ * `dragMotionCommand`, a failure after DOWN lifts the finger with CANCEL and exits 1. Needs one path.
+ */
+export function gestureMotionCommand(plan: GesturePlan, maxMoves: number = GESTURE_LINE_MAX_MOVES): string {
+	const path = plan.paths[0] ?? [];
+	const first = path[0] ?? { x: 0, y: 0 };
+	const last = path.at(-1) ?? first;
+	const intervals = path.length - 1;
+	const count = Math.min(Math.max(1, Math.floor(maxMoves)), Math.max(0, intervals));
+	const travelMs = Math.max(0, intervals) * plan.frameMs;
+	const parts: string[][] = [motionEventArgv("DOWN", first), sleepArgv(plan.holdMs)];
+	for (let k = 1; k <= count; k++) {
+		const at = path[Math.round((k * intervals) / count)] ?? last;
+		parts.push(sleepArgv(travelMs / count), motionEventArgv("MOVE", at));
+	}
+	parts.push(sleepArgv(plan.releaseMs), motionEventArgv("UP", last));
+	const cancel = shellCommand(motionEventArgv("CANCEL", last));
 	return `${parts.map((argv) => shellCommand(argv)).join(" && ")} || (${cancel}; exit 1)`;
 }
 

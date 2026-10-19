@@ -54,6 +54,20 @@ describe("reads that follow each other", () => {
 	test.each([
 		["tapAt", (s: ReturnType<typeof setup>["screen"]) => s.tapAt({ x: 5, y: 5 })],
 		["swipe", (s: ReturnType<typeof setup>["screen"]) => s.swipe({ from: { x: 1, y: 1 }, to: { x: 1, y: 9 } })],
+		["pinch", (s: ReturnType<typeof setup>["screen"]) => s.gesture.pinch({ scale: 2 })],
+		["rotate", (s: ReturnType<typeof setup>["screen"]) => s.gesture.rotate({ degrees: 30 })],
+		[
+			"gesture",
+			(s: ReturnType<typeof setup>["screen"]) =>
+				s.gesture.path({
+					paths: [
+						[
+							{ x: 1, y: 1 },
+							{ x: 1, y: 9 },
+						],
+					],
+				}),
+		],
 	])("%s counts as input", async (_name, act) => {
 		const { driver, screen } = setup();
 		await screen.getByTestId("title").isVisible();
@@ -162,6 +176,71 @@ describe("assertions and actions", () => {
 	});
 });
 
+describe("a frame that held still across two looks", () => {
+	/** a button whose y is `ys[n]` on the n-th snapshot (the last one sticks), plus an unrelated "menu" button */
+	function moving(ys: readonly number[]) {
+		let looks = 0;
+		const driver = fakeDriver({
+			screens: () => {
+				const y = ys[Math.min(looks, ys.length - 1)] ?? 0;
+				looks += 1;
+				return snapshotOf([
+					el("button", { id: "menu", label: "Menu", hittable: true, frame: { x: 0, y: 40, width: 80, height: 40 } }),
+					el("button", { id: "next", label: "Next", hittable: true, frame: { x: 24, y, width: 300, height: 44 } }),
+				]);
+			},
+		});
+		const host = testHost(driver, { cache: true });
+		return { driver, host, screen: createScreen(host) };
+	}
+
+	test("a three-position slide: the tap lands where the button settled, not where it was passing", async () => {
+		const { driver, screen } = moving([300, 450, 600]);
+		await expectLocator(screen.getByTestId("next")).toBeVisible();
+		await screen.getByTestId("next").tap();
+		expect(driver.callsOf("tap")[0]?.point).toEqual({ x: 174, y: 622 });
+	});
+
+	test("right after an input, with nothing seen since, the first look is checked by a second one", async () => {
+		const { driver, screen } = moving([300, 600]);
+		await screen.tapAt({ x: 1, y: 1 });
+		await screen.getByTestId("next").tap();
+		expect(driver.callsOf("tap").at(-1)?.point).toEqual({ x: 174, y: 622 });
+		expect(snapshots(driver)).toBe(3);
+	});
+
+	test("a tap whose element an assertion of the same generation saw where it still is takes no extra look", async () => {
+		const { driver, screen } = moving([600]);
+		await screen.tapAt({ x: 1, y: 1 });
+		await expectLocator(screen.getByTestId("next")).toBeVisible();
+		await screen.getByTestId("next").tap();
+		expect(snapshots(driver)).toBe(2);
+	});
+
+	test("a look long after the last input, with nothing seen since, is trusted alone", async () => {
+		const { driver, host, screen } = moving([600]);
+		await screen.tapAt({ x: 1, y: 1 });
+		host.clock.advance(300);
+		await screen.getByTestId("next").tap();
+		expect(snapshots(driver)).toBe(1);
+	});
+
+	test("an element that never stops moving is tapped after two extra looks, not waited on", async () => {
+		const { driver, screen } = moving([100, 200, 300, 400, 500, 600, 700]);
+		await screen.tapAt({ x: 1, y: 1 });
+		await screen.getByTestId("next").tap();
+		expect(snapshots(driver)).toBe(3);
+		expect(driver.callsOf("tap").at(-1)?.point).toEqual({ x: 174, y: 322 });
+	});
+
+	test("a frame that moves by less than half a point counts as still", async () => {
+		const { driver, screen } = moving([600.2, 600.4]);
+		await expectLocator(screen.getByTestId("next")).toBeVisible();
+		await screen.getByTestId("next").tap();
+		expect(snapshots(driver)).toBe(2);
+	});
+});
+
 describe("only the first poll of a wait may reuse", () => {
 	function lateScreen() {
 		let shown = false;
@@ -196,7 +275,7 @@ describe("only the first poll of a wait may reuse", () => {
 describe("field confirm reads", () => {
 	test("never come from the kept snapshot: each one is a read of the device", async () => {
 		const driver = fakeDriver({
-			screens: () => snapshotOf([el("textfield", { id: "field", label: "Email", value: "a@b.co" })]),
+			screens: () => snapshotOf([el("textfield", { id: "field", label: "Email", value: "a@b.co", focused: true })]),
 			onCall: (call) => (call.method === "elementAtPoint" ? { data: null } : undefined),
 		});
 		const host = testHost(driver, { cache: true });

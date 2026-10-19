@@ -145,14 +145,14 @@ export function uiHardware(
 	});
 }
 
-/** `warden ui rotate [orientation]`: set the orientation, or read it. */
+/** `warden ui screen rotate [orientation]`: set the orientation, or read it. */
 export function uiRotate(
 	ctx: CommandContext,
 	deps: UiDeps,
 	raw: string | undefined,
 	opts: ActionOptionValues
 ): Promise<number> {
-	return runUi(ctx, deps, "rotate", opts, async (device, env) => {
+	return runUi(ctx, deps, "screen rotate", opts, async (device, env) => {
 		const settle = parseSettle(opts.settle);
 		if (!settle.success) return settle;
 		const wanted = raw === undefined ? undefined : parseOrientation(raw);
@@ -162,7 +162,7 @@ export function uiRotate(
 		const now = fromDriver(await driver.data.orientation(wanted?.data));
 		if (!now.success) return now;
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-			action: "rotate",
+			action: "screen-rotate",
 			text: wanted ? `orientation ${now.data}` : `orientation is ${now.data}`,
 			...(wanted ? { args: { orientation: now.data } } : {}),
 			extra: { orientation: now.data },
@@ -170,14 +170,14 @@ export function uiRotate(
 	});
 }
 
-/** `warden ui appearance [light|dark]`: set the appearance, or read it. */
+/** `warden ui screen appearance [light|dark]`: set the appearance, or read it. */
 export function uiAppearance(
 	ctx: CommandContext,
 	deps: UiDeps,
 	raw: string | undefined,
 	opts: ActionOptionValues
 ): Promise<number> {
-	return runUi(ctx, deps, "appearance", opts, async (device, env) => {
+	return runUi(ctx, deps, "screen appearance", opts, async (device, env) => {
 		const settle = parseSettle(opts.settle);
 		if (!settle.success) return settle;
 		if (raw !== undefined && raw !== "light" && raw !== "dark") {
@@ -191,7 +191,7 @@ export function uiAppearance(
 		const now = fromDriver(await driver.data.appearance(raw));
 		if (!now.success) return now;
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-			action: "appearance",
+			action: "screen-appearance",
 			text: raw === undefined ? `appearance is ${now.data}` : `appearance ${now.data}`,
 			...(raw === undefined ? {} : { args: { mode: now.data } }),
 			extra: { appearance: now.data },
@@ -211,14 +211,14 @@ export function nextShotPath(ctx: CommandContext, udid: string): string {
 	return join(dir, `${String(highest + 1).padStart(3, "0")}.png`);
 }
 
-/** `warden ui screenshot [path]`: a PNG of the screen; default `$WARDEN_HOME/ui/<udid>/shots/NNN.png`. */
+/** `warden ui screen screenshot [path]`: a PNG of the screen; default `$WARDEN_HOME/ui/<udid>/shots/NNN.png`. */
 export function uiScreenshot(
 	ctx: CommandContext,
 	deps: UiDeps,
 	pathArg: string | undefined,
 	opts: ActionOptionValues
 ): Promise<number> {
-	return runUi(ctx, deps, "screenshot", opts, async (device, env) => {
+	return runUi(ctx, deps, "screen screenshot", opts, async (device, env) => {
 		const settle = parseSettle(opts.settle);
 		if (!settle.success) return settle;
 		const path = pathArg === undefined ? nextShotPath(ctx, device.udid) : resolve(ctx.cwd, pathArg);
@@ -232,7 +232,7 @@ export function uiScreenshot(
 		}
 		const written = shot.data.path ?? path;
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-			action: "screenshot",
+			action: "screen-screenshot",
 			text: written,
 			extra: { path: written },
 		});

@@ -140,7 +140,7 @@ function reserve(
 type Realised = {
 	ok: Result<ClaimedDevice>;
 	leaseId: string;
-	/** the device booted but failed its health probe */
+	/** the device booted but never got ready, or failed its health probe */
 	unhealthy?: { device: InventoryDevice; reason: string };
 };
 
@@ -193,7 +193,11 @@ async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 		return { ok: ok({ lease, device, action: item.action }), leaseId: lease.id };
 	}
 	const ready = await provider.waitReady(device.id, readyMs);
-	if (!ready.success) return { ok: ready, leaseId: lease.id };
+	if (!ready.success) {
+		// Never ready is unhealthy too: quarantine (or skip) it and claim another, so it is not picked first next time.
+		const reason = `not ready within ${Math.round(readyMs / 1000)}s: ${ready.error}`;
+		return { ok: ready, leaseId: lease.id, unhealthy: { device, reason } };
+	}
 	const healthy = provider.probe ? await provider.probe(device.id) : ok(undefined);
 	if (!healthy.success) {
 		return { ok: healthy, leaseId: lease.id, unhealthy: { device, reason: healthy.error } };

@@ -7,6 +7,7 @@ const ids = {
 	password: "password",
 	notes: "notes",
 	list: "list",
+	map: "map",
 	todosScreen: "todos-screen",
 	spinner: "spinner",
 	rememberMe: "remember-me",
@@ -29,8 +30,16 @@ test("sign in", async ({ app, device, screen }) => {
 	await screen.getByTestId(ids.notes).press("Tab", { modifiers: ["shift"] });
 	await screen.getByRole("button", "Row").longPress({ durationMs: 800 });
 	await screen.getByTestId(ids.list).swipe({ direction: "down", momentum: "fast" });
-	await screen.swipe({ direction: "left" });
-	await screen.swipe({ from: { x: 200, y: 600 }, to: { x: 200, y: 200 }, durationMs: 400 });
+	await screen.gesture.swipe({ direction: "left" });
+	await screen.gesture.swipe({ from: { x: 200, y: 600 }, to: { x: 200, y: 200 }, durationMs: 400 });
+	await screen.getByTestId(ids.map).pinch(2, { durationMs: 700 });
+	await screen.gesture.pinch({ scale: 0.5 });
+	// FIXME: pinch target was recorded by coordinates (recorded by coordinates)
+	await screen.gesture.pinch({ scale: 3, center: { x: 150, y: 250 }, radius: 80 });
+	await screen.getByTestId(ids.map).rotate(45);
+	await screen.gesture.rotate({ degrees: -90, durationMs: 800, radius: 120 });
+	await screen.gesture.path({ paths: [[{ x: 100, y: 400 }, { x: 200, y: 300 }, { x: 300, y: 400 }]] });
+	await screen.gesture.path({ paths: [[{ x: 100, y: 400 }, { x: 150, y: 400 }], [{ x: 300, y: 400 }, { x: 250, y: 400 }]], durationMs: 450 });
 	await screen.scrollUntilVisible(screen.getByRole("text", "Footer"), { direction: "down", maxSwipes: 5, timeout: 20000 });
 	await screen.swipe({ direction: "up" });
 	await expect(screen.getByTestId(ids.todosScreen)).toBeVisible({ timeout: 5000 });
@@ -56,7 +65,7 @@ test("sign in", async ({ app, device, screen }) => {
 	await device.appearance("dark");
 	await device.snapshot({ interactiveOnly: true });
 	await device.screenshot("after-login");
-	await device.screenshot("step-36");
+	await device.screenshot("step-43");
 	await screen.getByRole("switch").nth(1).tap();
 	await screen.getByLabel("Settings").tap();
 	await screen.getByRole("tab", "Profile").tap();

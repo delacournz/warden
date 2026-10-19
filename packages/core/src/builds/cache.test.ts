@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { openStore, type Store } from "../store";
 import { fakeApp } from "./builds.testing";
 import {
+	aliasBuild,
 	buildDir,
 	cachedBuild,
 	diskSize,
@@ -134,6 +135,55 @@ describe("storeArtifact / cachedBuild", () => {
 });
 
 describe("legacy + installs + diskSize", () => {
+	test("aliasBuild: a second key for the same files, counted once, touched with and removed with its primary", async () => {
+		const stored = await storeArtifact({
+			store,
+			env,
+			projectKey: KEY,
+			platform: "ios",
+			profile: "local",
+			hash: "h1",
+			artifact: fakeApp(join(dir, "src")),
+			source: "build",
+			now: 10,
+		});
+		if (!stored.success) throw new Error(stored.error);
+		expect(aliasBuild(store, stored.data, "h2", 20)).toBe(true);
+		expect(getBuild(store, KEY, "ios", "h2")).toMatchObject({ path: stored.data.path, size: 0, source: "build" });
+		expect(listBuilds(store).reduce((sum, b) => sum + b.size, 0)).toBe(12);
+
+		expect(cachedBuild(store, KEY, "ios", "h2", 30)?.path).toBe(stored.data.path);
+		expect(getBuild(store, KEY, "ios", "h1")?.lastUsedAt).toBe(30);
+
+		const primary = getBuild(store, KEY, "ios", "h1");
+		if (!primary) throw new Error("no primary");
+		removeBuild(store, env, primary);
+		expect(listBuilds(store)).toEqual([]);
+	});
+
+	test("aliasBuild keeps an existing build of the alias key", async () => {
+		const store1 = async (hash: string) => {
+			const res = await storeArtifact({
+				store,
+				env,
+				projectKey: KEY,
+				platform: "ios",
+				profile: "local",
+				hash,
+				artifact: fakeApp(join(dir, `src-${hash}`)),
+				source: "build",
+				now: 10,
+			});
+			if (!res.success) throw new Error(res.error);
+			return res.data;
+		};
+		const h1 = await store1("h1");
+		const h2 = await store1("h2");
+		expect(aliasBuild(store, h1, "h2", 20)).toBe(false);
+		expect(getBuild(store, KEY, "ios", "h2")?.path).toBe(h2.path);
+		expect(aliasBuild(store, h1, "h1", 20)).toBe(false);
+	});
+
 	test("findLegacyArtifact looks for <dir>/<hash>/*.app", () => {
 		const legacy = join(dir, "legacy");
 		fakeApp(join(legacy, "abc"), "Salient.app");

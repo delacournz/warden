@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { cp } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, join, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Store } from "../store";
 import { wardenHome } from "../store";
@@ -162,7 +162,22 @@ export function cachedBuild(
 		return undefined;
 	}
 	touchBuild(store, key, platform, hash, now);
+	// an alias shares the path: keep its primary (the row that owns the files) as recent for the LRU prune
+	store.db.query("UPDATE builds SET last_used_at = ? WHERE path = ?").run(now, record.path);
 	return { ...record, lastUsedAt: now };
+}
+
+/**
+ * Register `record`'s artifact under a second key `hash` (a fresh checkout's post-prebuild key, 17-1):
+ * same path, no files of its own, size 0 so totals and the prune count the bytes once. An existing
+ * build of `hash` whose files are there is kept. Returns whether the alias was written.
+ */
+export function aliasBuild(store: Store, record: BuildRecord, hash: string, now: number): boolean {
+	if (hash === record.hash) return false;
+	const existing = getBuild(store, record.projectKey, record.platform, hash);
+	if (existing && existsSync(existing.path)) return false;
+	upsertBuild(store, { ...record, hash, size: 0, createdAt: now, lastUsedAt: now });
+	return true;
 }
 
 export type StoreArtifactInput = {
@@ -221,8 +236,13 @@ export async function storeArtifact(input: StoreArtifactInput): AsyncResult<Buil
 
 /** Remove a cached build's files and record. */
 export function removeBuild(store: Store, env: Record<string, string | undefined>, record: BuildRecord): void {
-	rmSync(buildDir(env, record.projectKey, record.platform, record.hash), { recursive: true, force: true });
+	const dir = buildDir(env, record.projectKey, record.platform, record.hash);
+	rmSync(dir, { recursive: true, force: true });
 	deleteBuildRecord(store, record.projectKey, record.platform, record.hash);
+	// aliases of the removed files (`aliasBuild`) go with them
+	for (const alias of listBuilds(store)) {
+		if (alias.path.startsWith(`${dir}${sep}`)) deleteBuildRecord(store, alias.projectKey, alias.platform, alias.hash);
+	}
 }
 
 /** Artifact for `hash` in any legacy cache root (`<dir>/<hash>/*.app|*.apk`). */

@@ -42,7 +42,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 - `test(title, [options], async ({ app, device, screen, platform }) => ...)`
 - `options`: `{ timeout, skip, only, platforms: ("ios"|"android")[], retry }`. `retry` is bun's retry; only the last attempt lands in `results.jsonl`.
 - `test.skip`, `test.only`, `test.todo(title)`, `test.skipIf(cond)(title, body)`.
-- `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none", systemAlerts?: "accept" | "dismiss" | "off" })` applies to the file or the enclosing `describe`. `systemAlerts` (default `"off"`): reads, actions and `expect` that see an alert on top answer it (`device.alert(mode)`, 3 answers max per look) and look again. Answers the app's own alerts too.
+- `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none", systemAlerts?: "accept" | "dismiss" | "off" })` applies to the file or the enclosing `describe`. `systemAlerts` (default `"off"`): reads, actions and `expect` that see an alert on top answer it (`device.alert(mode)`, 3 answers max per look) and look again. Answers the app's own alerts too. `"dismiss"` answers iOS's "Open in …?" sheet with Open, and nothing is answered while `device.openLink` waits on a link (it owns the sheet).
 - `test.extend<Extra>({ name: async (base, use) => { await use(value) } })` returns a `test` with the extra fixture.
 - `describe(title, [{ serial }], body)`. `serial` is accepted but changes nothing (bun runs a file's tests in order).
 - `beforeEach/afterEach` receive the fixtures. `beforeAll/afterAll` receive `app`, `device`, `screen`, `platform` only.
@@ -101,6 +101,10 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `tapAt({ x, y })` | tap a point |
 | `swipe({ direction, momentum? })` or `swipe({ from, to, durationMs? })` | `direction` up/down/left/right, `momentum` `"none" \| "slow" \| "fast"` |
 | `scrollUntilVisible(locator, { direction = "down", momentum?, maxSwipes = 10, timeout? })` | scroll the screen |
+| `screen.gesture.pinch({ scale, center?, radius?, durationMs? })` | 2 fingers; default centre = screen centre; scale > 1 zooms in; 0.1-10, not 1; 500 ms |
+| `screen.gesture.rotate({ degrees, center?, radius?, durationMs? })` | 2 fingers; positive = clockwise; not 0, max 720; 500 ms |
+| `screen.gesture.path({ paths, durationMs? })` | 1-2 finger paths (`Point[][]`), down and lift together; 600 ms |
+| `screen.gesture.swipe(...)` | same as `swipe(...)` |
 
 Roles: button link textbox searchbox checkbox radio switch slider image heading text tab tablist menu menuitem list listitem row alert dialog navigation group other.
 
@@ -113,11 +117,12 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 - **Snapshot reuse:** the runner keeps the last whole-screen snapshot (iOS 150 ms, Android 1 s) and reuses it for the first look of a read or `expect` when nothing was done since (tap, key, launch, settle drop it). Actions that aim (`tap`, `longPress`, `fill`, `type`, `clear`, `press`, `scrollTo`) and `boundingBox` never reuse: they always take a new snapshot, so `expect(x).toBeVisible()` then `x.tap()` is two snapshots (a snapshot from a screen still sliding in has the wrong coordinates). `fill` confirm reads and `device.snapshot()` are always real.
 - **Wait:** `waitFor({ state: "attached" | "detached" | "visible" | "hidden", timeout? })`. Default state is `visible`.
 - **Actions** wait for exactly one visible match. Several matches fail with `LOCATOR_AMBIGUOUS`.
-  - `tap({ position?, timeout?, until?, retries = 2, windowMs = 4000, pollMs = 250 })`, `longPress({ durationMs? })`. `until` (a locator that must be visible, or `async () => boolean`) makes the tap retrying: after each tap it polls for `windowMs`, re-taps when `until` did not hold. The last tap is not waited on (the next assertion reports what is missing). `retries`/`windowMs`/`pollMs` without `until` are `INVALID_ARGUMENT`. Replaces hand-written `tapUntil` helpers.
+  - `tap({ position?, timeout?, until?, retries = 2, windowMs = 4000, pollMs = 250 })`, `longPress({ durationMs? })`. `until` (a locator that must be visible, or `async () => boolean`) makes the tap retrying: after each tap it polls for `windowMs`, re-taps when `until` did not hold. With a locator `until` a screen that changed after the tap counts as landed (no re-tap, however late `until` is), and an unchanged screen is re-tapped from 750 ms on. The last tap is not waited on (the next assertion reports what is missing). `retries`/`windowMs`/`pollMs` without `until` are `INVALID_ARGUMENT`. Replaces hand-written `tapUntil` helpers.
   - `fill(text)` backspaces, types, verifies on two reads, retries once. Secure fields are not verified.
   - `clear()`, `type(text)` (at the caret)
   - `press(key, { modifiers? })` sends a KEY (`Enter Backspace Tab Space Escape Delete Up Down Left Right`), it is not a tap. Use `tap()` to tap.
   - `swipe({ direction, momentum? })`, `scrollTo()`
+  - `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` (positive = clockwise). Out-of-range `scale`/`degrees` and unsupported gestures throw `INVALID_ARGUMENT` (no `capabilities.pinch`, or more than `maxPointers` fingers; Android without `warden-uiad`: no pinch/rotate, 1-finger paths only): skip with `test({ platforms: ["ios"] })`.
 
 ## Matchers
 
@@ -222,6 +227,7 @@ These do not exist. Do not write them.
 
 - `app.launch`, `app.openLink`, `app.reload` (use `app.open`, `device.openLink`, `device.devtools.reloadJs()`)
 - `device.rotate` (use `device.orientation`)
+- `screen.rotate` / `screen.pinch` (use `screen.gesture.rotate` / `screen.gesture.pinch`; orientation is `device.orientation`)
 - `toBeHittable`
 - locator `scroll` / `scrollUntil` (use `locator.scrollTo()` or `screen.scrollUntilVisible()`)
 - `agent.*`

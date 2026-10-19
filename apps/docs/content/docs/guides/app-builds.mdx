@@ -60,7 +60,7 @@ Why not share DerivedData? Its build database and dependency files hold absolute
 <Step>**Installed** — the device already has this fingerprint hash.</Step>
 <Step>**Cache** — `~/.warden/builds/<projectKey>/<platform>/<hash>`, then legacy caches. All worktrees of a repo share one cache.</Step>
 <Step>**EAS** — `build:list --fingerprint-hash`, then download. Waits for builds already in flight; triggers the workflow only if `eas.trigger` is set.</Step>
-<Step>**Local build** — verified against the fingerprint. Debug by default; set `build.configuration: "Release"` to build and find a Release simulator build (the JS bundle is embedded, so no Metro is needed at test time).</Step>
+<Step>**Local build** — verified against the fingerprint. Debug by default; set `build.configuration: "Release"` to build and find a Release simulator build (the JS bundle is embedded, so no Metro is needed at test time). The artifact is the `.app` / `.apk` the build wrote; when Gradle or Xcode was up to date and rewrote nothing, it is this project's existing one (`android/app/build/outputs`, `ios/build`, or the DerivedData dir whose workspace is `<root>/ios`). Two unchanged candidates (e.g. two Release flavors) are refused rather than guessed: delete the stale one.</Step>
 </Steps>
 
 ## Release builds and JS changes

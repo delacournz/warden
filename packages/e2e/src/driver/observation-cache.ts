@@ -22,6 +22,20 @@ export type Observes = {
 	observe(options: { reuse: boolean }): DriverResult<Snapshot>;
 	/** forgets the kept snapshot: the next `observe` reads the device */
 	invalidateObservations(): void;
+	/**
+	 * The look before the next one, for an action's stability rule (a frame that held still across two looks). Never
+	 * used to answer a read: the kept snapshot is returned whatever its age.
+	 */
+	previous?(): PreviousLook;
+};
+
+export type PreviousLook = {
+	/** the kept snapshot, when no input came since it was taken (whatever its age) */
+	snapshot: Snapshot | undefined;
+	/** the input generation now: two answers with the same number had no input between them */
+	generation: number;
+	/** ms since the last input ended; undefined before any input */
+	sinceInputMs: number | undefined;
 };
 
 export function canObserve(driver: Driver): driver is Driver & Observes {
@@ -59,6 +73,7 @@ const READS: ReadonlySet<string> = new Set([
 	"isRunning",
 	"observe",
 	"invalidateObservations",
+	"previous",
 ]);
 
 /** Look when called with no argument, change something when given one (`orientation()` vs `orientation("landscapeLeft")`). */
@@ -97,11 +112,24 @@ export function cacheObservations<D extends Driver>(driver: D, options: Observat
 	const maxAgeMs = options.maxAgeMs ?? OBSERVATION_MAX_AGE_MS[driver.platform];
 	let generation = 0;
 	let kept: Kept | undefined;
+	let lastInputAt: number | undefined;
 
 	const moveOn = (): void => {
 		generation += 1;
 		kept = undefined;
 	};
+
+	/** an input starts or ends: the generation moves on and the time is noted */
+	const inputEdge = (): void => {
+		moveOn();
+		lastInputAt = now();
+	};
+
+	const previous = (): PreviousLook => ({
+		snapshot: kept !== undefined && kept.generation === generation ? kept.snapshot : undefined,
+		generation,
+		sinceInputMs: lastInputAt === undefined ? undefined : now() - lastInputAt,
+	});
 
 	const usable = (): Kept | undefined =>
 		kept !== undefined && kept.generation === generation && now() - kept.at < maxAgeMs ? kept : undefined;
@@ -151,19 +179,19 @@ export function cacheObservations<D extends Driver>(driver: D, options: Observat
 	/** `fn`, with the kept snapshot dropped before it starts and after it ends, however it ends. */
 	const asInput = (fn: Call, target: object): Call => {
 		return (...args) => {
-			moveOn();
+			inputEdge();
 			let result: unknown;
 			try {
 				result = Reflect.apply(fn, target, args);
 			} catch (error) {
-				moveOn();
+				inputEdge();
 				throw error;
 			}
 			if (!isThenable(result)) {
-				moveOn();
+				inputEdge();
 				return result;
 			}
-			return Promise.resolve(result).finally(moveOn);
+			return Promise.resolve(result).finally(inputEdge);
 		};
 	};
 
@@ -193,7 +221,7 @@ export function cacheObservations<D extends Driver>(driver: D, options: Observat
 		});
 	};
 
-	const own: Record<string, unknown> = { observe, invalidateObservations: moveOn, snapshot };
+	const own: Record<string, unknown> = { observe, invalidateObservations: moveOn, previous, snapshot };
 	if (canDetectAlerts(driver)) own.alert = alertFromSnapshot(driver);
 	return wrap(driver, own) as D & Observes;
 }

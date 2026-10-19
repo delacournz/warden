@@ -18,6 +18,7 @@ import type {
 	Snapshot,
 } from "../driver.types";
 import { driverError } from "../errors";
+import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
 import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import type { SelectsAll } from "../typing";
@@ -25,8 +26,8 @@ import { type SwappableClient, swappableClient } from "./ios-session";
 import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
-import { connectSimd, type SimdClient, spawnSimd } from "./simd-client";
-import type { AlertButtonsData, SettleData } from "./simd-protocol";
+import { connectSimd, type RequestOptions, type SimdClient, spawnSimd } from "./simd-client";
+import type { AlertButtonsData, OpData, SettleData } from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
 import { typeTextBudgetMs } from "./type-budget";
 
@@ -109,6 +110,23 @@ const BUTTONS: Readonly<Record<Exclude<HardwareButton, "back">, string>> = {
 /** Helper errors after which `simctl io screenshot` is worth trying (op missing / failing, not a dead helper). */
 const SCREENSHOT_FALLBACK: ReadonlySet<string> = new Set(["E_UNSUPPORTED", "E_IO", "E_BAD_REQUEST", "E_INTERNAL"]);
 
+/**
+ * Reads asked once more after a lost helper was replaced (03-1). Input ops are never re-sent: the lost
+ * helper may already have delivered them, so their `E_HELPER_CRASHED` goes back to the caller unchanged.
+ */
+const RETRIED_AFTER_CRASH: ReadonlySet<string> = new Set([
+	"snapshot",
+	"health",
+	"alertButtons",
+	"frontmost",
+	"settle",
+	"elementAtPoint",
+	"screenshot",
+]);
+
+/** How long `connect` waits before asking a configured socket a second time (20-1). */
+const SOCKET_RETRY_MS = 500;
+
 type Params = Record<string, unknown>;
 
 /** Drops `undefined` so optional driver options are absent on the wire rather than `null`. */
@@ -176,17 +194,67 @@ export function createIosDriver(
 	const bridgeUp = ready.ax.bridge === "available";
 	let settleUnsupported = !nativeSettle;
 	let rebindUnsupported = false;
+	let gestureUnsupported = false;
 
 	const capabilities: DriverCapabilities = {
 		pinch: true,
+		maxPointers: 2,
 		unicodeText: true,
 		nativeSettle,
 		alerts: true,
 		reachability: true,
 	};
 
+	/**
+	 * Set once a lost helper could not be replaced: every later call answers it at once, not retryable, rather
+	 * than paying a connect and a spawn each time or having each look poll a dead client until its timeout.
+	 */
+	let lost: DriverError | undefined;
+	/** the generation of the helper that last answered; one reconnect per helper that answered, so a crash loop stops */
+	let answeredGeneration = swap.generation();
+
+	/**
+	 * Replace the helper that went away under generation `seen`, once. Undefined: go on (replaced now, or by a
+	 * concurrent caller); else the error to return (a helper that never answered since its replacement is not
+	 * replaced again, so a crash loop stops).
+	 */
+	async function replaceLost(op: string, seen: number, crash: DriverError): Promise<DriverError | undefined> {
+		if (seen !== swap.generation()) return undefined;
+		if (seen !== answeredGeneration) return crash;
+		opts.log?.(`[ios] warden-simd went away during \`${op}\` (E_HELPER_CRASHED: ${crash.message}); reconnecting`);
+		const restarted = await swap.restart(seen, { crashed: true });
+		if (restarted.success) return undefined;
+		const why = `${restarted.error.code}: ${restarted.error.message}`;
+		opts.log?.(`[ios] could not replace warden-simd (${why})`);
+		lost ??= driverError("E_HELPER_CRASHED", `${crash.message}; could not replace it (${why})`, { retryable: false });
+		return lost;
+	}
+
+	/**
+	 * Every helper request. `E_HELPER_CRASHED` (the helper exited or the socket daemon's connection closed) is
+	 * answered like a stale bridge: the helper is replaced once (`swap.restart`, socket first, else a stdio
+	 * spawn) and a read is asked again; an input op's error is returned unchanged, the next call uses the new helper.
+	 */
+	async function request<Op extends string>(op: Op, p: Params = {}, o: RequestOptions = {}): DriverResult<OpData<Op>> {
+		if (lost) return fail(lost);
+		const seen = swap.generation();
+		const first = await client.request(op, p, o);
+		if (first.success) {
+			answeredGeneration = seen;
+			return first;
+		}
+		if (first.error.code !== "E_HELPER_CRASHED") return first;
+		const stop = await replaceLost(op, seen, first.error);
+		if (stop) return fail(stop);
+		if (!RETRIED_AFTER_CRASH.has(op)) return first;
+		const generation = swap.generation();
+		const again = await client.request(op, p, o);
+		if (again.success) answeredGeneration = generation;
+		return again;
+	}
+
 	const send = (op: string, p: Params = {}, timeoutMs?: number) =>
-		client.request(op, p, timeoutMs === undefined ? {} : { timeoutMs });
+		request(op, p, timeoutMs === undefined ? {} : { timeoutMs });
 
 	const sendVoid = async (op: string, p: Params = {}, timeoutMs?: number): DriverResult<void> => {
 		const result = await send(op, p, timeoutMs);
@@ -195,11 +263,34 @@ export function createIosDriver(
 
 	const gestureTimeout = (durationMs: number | undefined, base = 0) => (durationMs ?? 0) + base + GESTURE_MARGIN_MS;
 
-	const fetchSnapshot = async (o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }) => {
-		const result = await client.request(
-			"snapshot",
-			params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend })
+	const helperOutdated = () =>
+		fail(
+			driverError(
+				"E_UNSUPPORTED",
+				`this warden-simd predates the gesture op: restart the helper (warden ui close --udid ${udid}) or rebuild it (bun run --cwd packages/e2e native:build)`,
+				{ detail: { reason: "helper_outdated" } }
+			)
 		);
+
+	/** Replays a plan through the helper's `gesture` op; an old helper that doesn't know the op is remembered. */
+	const sendGesture = async (planned: Result<GesturePlan, DriverError>): DriverResult<void> => {
+		if (!planned.success) return planned;
+		if (gestureUnsupported) return helperOutdated();
+		const plan = planned.data;
+		const result = await sendVoid(
+			"gesture",
+			{ paths: plan.paths, frameMs: plan.frameMs, holdMs: plan.holdMs, releaseMs: plan.releaseMs },
+			gestureTimeout(plan.totalMs, 300)
+		);
+		if (!result.success && result.error.code === "E_BAD_REQUEST" && /unknown (input )?op/.test(result.error.message)) {
+			gestureUnsupported = true;
+			return helperOutdated();
+		}
+		return result;
+	};
+
+	const fetchSnapshot = async (o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }) => {
+		const result = await request("snapshot", params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend }));
 		if (!result.success) return result;
 		const { fallback } = result.data;
 		if (fallback) opts.log?.(`[ios] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}`);
@@ -267,7 +358,7 @@ export function createIosDriver(
 	 */
 	async function rebind(bundleId: string): Promise<boolean> {
 		if (rebindUnsupported || settleUnsupported) return false;
-		const reply = await client.request(
+		const reply = await request(
 			"rebind",
 			{ bundleId, rebindTimeoutMs: REBIND_TIMEOUT_MS },
 			{ timeoutMs: REBIND_TIMEOUT_MS + SETTLE_MARGIN_MS }
@@ -292,7 +383,7 @@ export function createIosDriver(
 		if (!settleUnsupported) {
 			// the helper's budget is `settleTimeoutMs`; the envelope `timeoutMs` is only our padded transport timer
 			const expected = launchedBundle;
-			const native = await client.request(
+			const native = await request(
 				"settle",
 				{ quietMs, settleTimeoutMs: timeoutMs, ...(expected === undefined ? {} : { bundleId: expected }) },
 				{ timeoutMs: timeoutMs + SETTLE_MARGIN_MS }
@@ -318,7 +409,7 @@ export function createIosDriver(
 	}
 
 	async function screenshot(o?: { path?: string; scale?: number }): DriverResult<{ path?: string; png?: Uint8Array }> {
-		const viaHelper = await client.request("screenshot", params({ path: o?.path, scale: o?.scale }));
+		const viaHelper = await request("screenshot", params({ path: o?.path, scale: o?.scale }));
 		if (viaHelper.success) {
 			const { path, png } = viaHelper.data;
 			if (o?.path) return { success: true, data: { path: path ?? o.path } };
@@ -341,7 +432,7 @@ export function createIosDriver(
 
 	/** The helper's `alertButtons`: both readers without a `backend`, only that one with it. */
 	async function readAlert(backend?: AlertBackend): DriverResult<AlertInfo | null> {
-		const result = await client.request("alertButtons", params({ backend }));
+		const result = await request("alertButtons", params({ backend }));
 		if (!result.success) return result;
 		return { success: true, data: result.data === null ? null : toAlertInfo(result.data) };
 	}
@@ -354,12 +445,12 @@ export function createIosDriver(
 
 	async function isFrontmost(bundleId: string): DriverResult<boolean> {
 		if (!bridgeUp) return fail(driverError("E_UNSUPPORTED", "frontmost needs the axbridge backend"));
-		const result = await client.request("frontmost", { bundleId }, { timeoutMs: FRONTMOST_TIMEOUT_MS });
+		const result = await request("frontmost", { bundleId }, { timeoutMs: FRONTMOST_TIMEOUT_MS });
 		return result.success ? { success: true, data: result.data.frontmost } : result;
 	}
 
 	async function health(): DriverResult<HealthInfo> {
-		const result = await client.request("health");
+		const result = await request("health");
 		if (!result.success) return result;
 		const d = result.data;
 		return {
@@ -385,7 +476,7 @@ export function createIosDriver(
 	}
 
 	async function orientation(set?: Orientation): DriverResult<Orientation> {
-		const result = await client.request("orientation", params({ set }));
+		const result = await request("orientation", params({ set }));
 		if (!result.success) return result;
 		const { orientation: read, source } = result.data;
 		if (source !== undefined && source !== "device")
@@ -410,10 +501,7 @@ export function createIosDriver(
 		health,
 		snapshot,
 		async elementAtPoint(point, o) {
-			const result = await client.request(
-				"elementAtPoint",
-				params({ x: point.x, y: point.y, reachability: o?.reachability })
-			);
+			const result = await request("elementAtPoint", params({ x: point.x, y: point.y, reachability: o?.reachability }));
 			if (!result.success) return result;
 			return {
 				success: true,
@@ -442,9 +530,11 @@ export function createIosDriver(
 		pinch: (center, scale, o) =>
 			sendVoid(
 				"pinch",
-				params({ center, scale, durationMs: o?.durationMs, radius: o?.radius }),
+				params({ center, scale, durationMs: o?.durationMs, radius: o?.radius, angle: o?.angle }),
 				gestureTimeout(o?.durationMs, 300)
 			),
+		rotate: (center, degrees, o) => sendGesture(rotatePlan(center, degrees, o, DEFAULT_RADIUS)),
+		gesture: (paths, o) => sendGesture(planGesture(paths, o, 2)),
 		typeText,
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		selectAll: () => sendVoid("selectAll"),
@@ -490,12 +580,27 @@ export function createIosDriver(
 const timeoutOption = (o: OpenIosDriverOptions) => (o.defaultTimeoutMs ? { defaultTimeoutMs: o.defaultTimeoutMs } : {});
 
 /** The pre-warmed daemon, when a socket is configured and answers; undefined means "spawn instead". */
+/**
+ * A configured socket that does not answer is asked once more after {@link SOCKET_RETRY_MS} (a loaded host, a
+ * daemon still starting): a stdio helper next to a live daemon means two quiescence streams on one simulator,
+ * which slows every `settle` of both (20-1). A protocol mismatch is not retried.
+ */
 async function trySocket(o: OpenIosDriverOptions, log: Logger): Promise<SimdClient | undefined> {
 	const socketPath = o.socketPath ?? o.env?.simdSocket;
 	if (!socketPath) return undefined;
-	const viaSocket = await connectSimd({ socketPath, log, ...timeoutOption(o) });
-	if (viaSocket.success) return viaSocket.data;
-	log(`[ios] ${viaSocket.error.message}; spawning a helper on stdio instead`);
+	const first = await connectSimd({ socketPath, log, ...timeoutOption(o) });
+	if (first.success) return first.data;
+	if (!first.error.retryable) {
+		log(`[ios] WARNING: ${first.error.message}; spawning a helper on stdio instead`);
+		return undefined;
+	}
+	log(`[ios] WARNING: ${first.error.message}; retrying once in ${SOCKET_RETRY_MS} ms`);
+	await (o.sleep ?? ((ms: number) => Bun.sleep(ms)))(SOCKET_RETRY_MS);
+	const second = await connectSimd({ socketPath, log, ...timeoutOption(o) });
+	if (second.success) return second.data;
+	log(
+		`[ios] WARNING: ${second.error.message}; spawning a helper on stdio instead (a live daemon on ${socketPath} would now share the simulator with it)`
+	);
 	return undefined;
 }
 
