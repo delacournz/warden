@@ -194,6 +194,144 @@ final class InputTests: XCTestCase {
     XCTAssertEqual(a.x, 100, accuracy: 0.001)
   }
 
+  // MARK: gesture
+
+  private func path(_ points: [(Double, Double)]) -> JSON {
+    .array(points.map { ["x": .double($0.0), "y": .double($0.1)] })
+  }
+
+  func testGestureOneFingerSendsTouchDownFramesThenUp() {
+    let event = HIDPlan.gesture(
+      paths: [[CGPoint(x: 1, y: 2), CGPoint(x: 3, y: 4), CGPoint(x: 5, y: 6)]], frame: 0.016, hold: 0, release: 0)
+    XCTAssertEqual(
+      event,
+      .composite([
+        .touch(direction: .down, x: 1, y: 2),
+        .delay(0.016), .touch(direction: .down, x: 3, y: 4),
+        .delay(0.016), .touch(direction: .down, x: 5, y: 6),
+        .touch(direction: .up, x: 5, y: 6),
+      ]))
+  }
+
+  func testGestureTwoFingersUseTwoFingerTouchAndLiftTogether() {
+    let a = [CGPoint(x: 1, y: 1), CGPoint(x: 2, y: 2)]
+    let b = [CGPoint(x: 9, y: 9), CGPoint(x: 8, y: 8)]
+    let event = HIDPlan.gesture(paths: [a, b], frame: 0.02, hold: 0, release: 0)
+    XCTAssertEqual(
+      event,
+      .composite([
+        .twoFingerTouch(direction: .down, finger1: a[0], finger2: b[0]),
+        .delay(0.02), .twoFingerTouch(direction: .down, finger1: a[1], finger2: b[1]),
+        .twoFingerTouch(direction: .up, finger1: a[1], finger2: b[1]),
+      ]))
+  }
+
+  func testGestureHoldAndReleaseAddDelays() {
+    let p = [CGPoint(x: 1, y: 1), CGPoint(x: 2, y: 2)]
+    let event = HIDPlan.gesture(paths: [p], frame: 0.01, hold: 0.5, release: 0.25)
+    XCTAssertEqual(
+      event,
+      .composite([
+        .touch(direction: .down, x: 1, y: 1), .delay(0.5),
+        .delay(0.01), .touch(direction: .down, x: 2, y: 2),
+        .delay(0.25), .touch(direction: .up, x: 2, y: 2),
+      ]))
+  }
+
+  func testGestureSingleFrameIsATap() {
+    let event = HIDPlan.gesture(paths: [[CGPoint(x: 7, y: 8)]], frame: 0.016, hold: 0.1, release: 0)
+    XCTAssertEqual(
+      event,
+      .composite([.touch(direction: .down, x: 7, y: 8), .delay(0.1), .touch(direction: .up, x: 7, y: 8)]))
+  }
+
+  func testGestureOpSendsOneCompositeFromTheWire() async throws {
+    let recorder = Recorder()
+    let result = try await call(
+      engine(recorder), "gesture",
+      ["paths": [path([(1, 2), (3, 4)])], "frameMs": 20, "holdMs": 100, "releaseMs": 50])
+    XCTAssertEqual(result, .object([:]))
+    XCTAssertEqual(
+      recorder.events,
+      [
+        .composite([
+          .touch(direction: .down, x: 1, y: 2), .delay(0.1),
+          .delay(0.02), .touch(direction: .down, x: 3, y: 4),
+          .delay(0.05), .touch(direction: .up, x: 3, y: 4),
+        ])
+      ])
+  }
+
+  func testGestureNormResolvesLandscapeOncePerOp() async throws {
+    let recorder = Recorder()
+    let counter = Recorder()
+    let engine = InputEngine(
+      environment: InputEnvironment(
+        send: { await recorder.record($0) },
+        screen: { (390, 844) },
+        isLandscape: {
+          await counter.record(.delay(0))
+          return true
+        },
+        shake: {}))
+    _ = try await call(
+      engine, "gesture", ["paths": [path([(0, 0), (1, 1)]), path([(1, 0), (0, 1)])], "unit": "norm"])
+    XCTAssertEqual(counter.events.count, 1)
+    XCTAssertEqual(
+      recorder.events.first,
+      .composite([
+        .twoFingerTouch(direction: .down, finger1: CGPoint(x: 0, y: 0), finger2: CGPoint(x: 844, y: 0)),
+        .delay(0.016),
+        .twoFingerTouch(direction: .down, finger1: CGPoint(x: 844, y: 390), finger2: CGPoint(x: 0, y: 390)),
+        .twoFingerTouch(direction: .up, finger1: CGPoint(x: 844, y: 390), finger2: CGPoint(x: 0, y: 390)),
+      ]))
+  }
+
+  func testGestureRejectsBadShapes() async {
+    let one = path([(1, 1), (2, 2)])
+    let many = path((0..<1001).map { (Double($0), 0) })
+    let cases: [[String: JSON]] = [
+      ["paths": []],
+      ["paths": [one, one, one]],
+      ["paths": [one, path([(1, 1)])]],
+      ["paths": [many]],
+      ["paths": [.array([])]],
+      ["paths": [one], "frameMs": 0],
+      ["paths": [one], "frameMs": 1001],
+      ["paths": [one], "holdMs": -1],
+      ["paths": [one], "holdMs": 60001],
+      ["paths": [one], "releaseMs": 60001],
+      ["paths": [one], "holdMs": 30000, "releaseMs": 30000, "frameMs": 1],
+      ["paths": [[1, 2]]],
+      ["paths": [[["x": 1]]]],
+      ["paths": "nope"],
+      ["paths": [one], "unit": "px"],
+      ["paths": [path([(2, 0), (1, 1)])], "unit": "norm"],
+    ]
+    for params in cases {
+      let error = await failure { try await call(engine(Recorder()), "gesture", params) }
+      XCTAssertEqual(error?.code, .badRequest, "\(params)")
+    }
+  }
+
+  func testGestureRejectsNaNFrameMs() async {
+    let error = await failure {
+      try await call(engine(Recorder()), "gesture", ["paths": [path([(1, 1), (2, 2)])], "frameMs": .double(.nan)])
+    }
+    XCTAssertEqual(error?.code, .badRequest)
+  }
+
+  func testGestureTotalDurationOverSixtySecondsIsRejectedButExactlySixtyPasses() async throws {
+    let over = await failure {
+      try await call(
+        engine(Recorder()), "gesture",
+        ["paths": [path((0..<61).map { (Double($0), 0) })], "frameMs": 1000, "holdMs": 1])
+    }
+    XCTAssertEqual(over?.code, .badRequest)
+    _ = try await call(
+      engine(Recorder()), "gesture", ["paths": [path((0..<61).map { (Double($0), 0) })], "frameMs": 1000])
+  }
+
   // MARK: buttons
 
   func testPressButtonMapsNames() async throws {

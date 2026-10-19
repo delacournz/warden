@@ -1,6 +1,6 @@
 import { isQueryRole } from "../screen/roles";
 import { type ParsedSelector, parseSelector, type SelectorValue } from "../screen/selector";
-import type { Flow, SelectorTarget, Step, StepOf, Target, Text } from "./flow.schema";
+import type { Flow, GestureStep, ScreenStep, SelectorTarget, Step, StepOf, Target, Text } from "./flow.schema";
 import { SECRET_PREFIX } from "./record";
 
 /**
@@ -226,10 +226,6 @@ function interaction(step: Step, gen: Gen): string[] | undefined {
 				`await screen.tapAt(${point(step.target.x, step.target.y)});`,
 			];
 		}
-		case "longpress":
-			return located(step.target, gen, "long press at a point", (l) => [
-				`await ${l}.${call("longPress", options([["durationMs", step.durationMs]]))};`,
-			]);
 		case "fill":
 			return located(step.target, gen, "fill without an element", (l) => [
 				`await ${l}.fill(${textOf(step.text, gen)});`,
@@ -249,16 +245,21 @@ function interaction(step: Step, gen: Gen): string[] | undefined {
 	}
 }
 
-function gestures(step: Step, gen: Gen): string[] | undefined {
-	switch (step.kind) {
+/** `screen.gesture.swipe` takes `{ from, to }` or `{ direction }`, like `screen.swipe`; pinch/rotate on a locator or the screen. */
+function gesture(step: GestureStep, gen: Gen): string[] {
+	switch (step.type) {
+		case "longpress":
+			return located(step.target, gen, "long press at a point", (l) => [
+				`await ${l}.${call("longPress", options([["durationMs", step.durationMs]]))};`,
+			]);
 		case "swipe": {
-			if (step.gesture.by === "path") {
+			if (step.by === "path") {
 				gen.uses.screen = true;
-				const { from, to, durationMs } = step.gesture;
+				const { from, to, durationMs } = step;
 				const duration = durationMs === undefined ? "" : `, durationMs: ${durationMs}`;
-				return [`await screen.swipe({ from: ${point(from.x, from.y)}, to: ${point(to.x, to.y)}${duration} });`];
+				return [`await screen.gesture.swipe({ from: ${point(from.x, from.y)}, to: ${point(to.x, to.y)}${duration} });`];
 			}
-			const { direction, momentum, target } = step.gesture;
+			const { direction, momentum, target } = step;
 			const opts = options([
 				["direction", direction],
 				["momentum", momentum],
@@ -267,9 +268,47 @@ function gestures(step: Step, gen: Gen): string[] | undefined {
 			gen.uses.screen = true;
 			return [
 				...(target ? [`// FIXME: swipe target was recorded by coordinates (${target.warning})`] : []),
-				`await screen.swipe(${opts});`,
+				`await screen.gesture.swipe(${opts});`,
 			];
 		}
+		case "pinch":
+		case "rotate": {
+			const amount = step.type === "pinch" ? step.scale : step.degrees;
+			const opts = options([
+				["durationMs", step.durationMs],
+				["radius", step.radius],
+			]);
+			const { target } = step;
+			if (target?.kind === "selector") {
+				return [`await ${locatorOf(target, gen)}.${call(step.type, String(amount), opts)};`];
+			}
+			gen.uses.screen = true;
+			const key = step.type === "pinch" ? "scale" : "degrees";
+			const fields = [
+				`${key}: ${amount}`,
+				...(target ? [`center: ${point(target.x, target.y)}`] : []),
+				...(step.durationMs === undefined ? [] : [`durationMs: ${step.durationMs}`]),
+				...(step.radius === undefined ? [] : [`radius: ${step.radius}`]),
+			];
+			const spec = `{ ${fields.join(", ")} }`;
+			return [
+				...(target ? [`// FIXME: ${step.type} target was recorded by coordinates (${target.warning})`] : []),
+				`await screen.gesture.${step.type}(${spec});`,
+			];
+		}
+		case "path": {
+			gen.uses.screen = true;
+			const paths = step.paths.map((path) => `[${path.map((p) => point(p.x, p.y)).join(", ")}]`).join(", ");
+			const spec = `{ ${[`paths: [${paths}]`, ...(step.durationMs === undefined ? [] : [`durationMs: ${step.durationMs}`])].join(", ")} }`;
+			return [`await screen.gesture.path(${spec});`];
+		}
+	}
+}
+
+function gestures(step: Step, gen: Gen): string[] | undefined {
+	switch (step.kind) {
+		case "gesture":
+			return gesture(step, gen);
 		case "scroll": {
 			gen.uses.screen = true;
 			const direction = step.direction ?? "down";
@@ -327,6 +366,17 @@ function checks(step: Step, gen: Gen): string[] | undefined {
 	}
 }
 
+function screenStep(step: ScreenStep): string[] {
+	switch (step.type) {
+		case "rotate":
+			return [`await device.orientation(${lit(step.orientation)});`];
+		case "appearance":
+			return [`await device.appearance(${lit(step.mode)});`];
+		case "screenshot":
+			return [`await device.screenshot(${lit(step.name ?? `step-${step.i}`)});`];
+	}
+}
+
 function deviceStep(step: Step, gen: Gen): string[] {
 	gen.uses.device = true;
 	switch (step.kind) {
@@ -343,14 +393,10 @@ function deviceStep(step: Step, gen: Gen): string[] {
 				'if (!device.devtools) throw new Error("reload needs a Metro devtools session");',
 				"await device.devtools.reloadJs();",
 			];
-		case "rotate":
-			return [`await device.orientation(${lit(step.orientation)});`];
-		case "appearance":
-			return [`await device.appearance(${lit(step.mode)});`];
+		case "screen":
+			return screenStep(step);
 		case "snapshot":
 			return [`await ${call("device.snapshot", step.interactiveOnly === true ? "{ interactiveOnly: true }" : "")};`];
-		case "screenshot":
-			return [`await device.screenshot(${lit(step.name ?? `step-${step.i}`)});`];
 		default:
 			throw new Error(`unhandled step kind ${step.kind}`);
 	}

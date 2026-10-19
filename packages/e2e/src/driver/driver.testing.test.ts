@@ -177,6 +177,35 @@ describe("fakeDriver", () => {
 		expect(d.callsOf("isFrontmost")).toHaveLength(2);
 	});
 
+	test("rotate and gesture are recorded; the fake takes two fingers by default", async () => {
+		const d = fakeDriver({ screens: [home] });
+		expect(d.capabilities.maxPointers).toBe(2);
+		expect((await d.rotate({ x: 1, y: 2 }, 45, { radius: 10 })).success).toBe(true);
+		const paths = [
+			{
+				points: [
+					{ x: 0, y: 0 },
+					{ x: 5, y: 5 },
+				],
+			},
+		];
+		expect((await d.gesture(paths, { durationMs: 100 })).success).toBe(true);
+		expect(d.callsOf("rotate")).toEqual([
+			{ method: "rotate", center: { x: 1, y: 2 }, degrees: 45, opts: { radius: 10 } },
+		]);
+		expect(d.callsOf("gesture")).toEqual([{ method: "gesture", paths, opts: { durationMs: 100 } }]);
+	});
+
+	test("gesture validates like a real driver", async () => {
+		const d = fakeDriver({ screens: [home], capabilities: { maxPointers: 1 } });
+		const one = { points: [{ x: 0, y: 0 }] };
+		const empty = await d.gesture([]);
+		const two = await d.gesture([one, one]);
+		expect(empty.success ? "ok" : empty.error.code).toBe("E_BAD_REQUEST");
+		expect(two.success ? "ok" : two.error.code).toBe("E_UNSUPPORTED");
+		expect(d.callsOf("gesture")).toHaveLength(2);
+	});
+
 	test("capabilities can be overridden", () => {
 		const d = fakeDriver({ screens: [home], platform: "android", capabilities: { pinch: false } });
 		expect(d.platform).toBe("android");

@@ -1,4 +1,5 @@
-import type { Point, Rect, ScreenInfo } from "../driver/driver.types";
+import type { Driver, Point, Rect, ScreenInfo } from "../driver/driver.types";
+import { E2eError } from "../errors";
 import type { NodeEntry } from "./nodes";
 
 /** Pure helpers behind the locator actions: where to tap, how to swipe, how to empty a field. No driver calls. */
@@ -48,7 +49,7 @@ export function swipeVector(direction: SwipeDirection, rect: Rect, momentum: Mom
 /**
  * The one swipe geometry: the finger path inside `rect`, centred, covering `fraction` (0-1) of it, that scrolls the
  * content `direction` (`down` reveals what is below, so the finger travels up). Spec swipes, flow `swipe`/`scroll` steps
- * and `warden ui scroll` use it as is; `warden ui swipe <dir>` names the finger's direction instead and flips it
+ * and `warden ui scroll` use it as is; `warden ui gesture swipe <dir>` names the finger's direction instead and flips it
  * (`fingerPath` in the CLI).
  */
 export function contentPath(direction: SwipeDirection, rect: Rect, fraction: number): { from: Point; to: Point } {
@@ -149,5 +150,83 @@ export function clearKeyPresses(entry: NodeEntry): number {
 			return Math.min(graphemes(content.text) + 1, MAX_CLEAR_KEYS);
 		case "dots":
 			return Math.min(content.count + 1, MAX_CLEAR_KEYS);
+	}
+}
+
+/** Default length of a locator or screen pinch. */
+export const PINCH_MS = 500;
+/** Default length of a locator or screen rotate. */
+export const ROTATE_MS = 500;
+/** Default length of a `screen.gesture.path`. */
+export const PATH_MS = 600;
+/** The scales a pinch accepts (exactly 1 is no gesture and is rejected separately). */
+export const SCALE_RANGE = [0.1, 10] as const;
+/** The most degrees a rotate accepts either way: two turns. */
+export const MAX_ROTATE_DEGREES = 720;
+
+/** Share of a rect's shorter half-side a finger may reach during a pinch. */
+const REACH = 0.8;
+/** Smallest finger distance from the centre, as a share of the screen's shorter side (fingers 8% apart). */
+const MIN_RADIUS = 0.04;
+/** Share of a rect's shorter side a rotate's finger distance covers (before clamping). */
+const ROTATE_SHARE = 0.3;
+
+/** The middle of `rect`. */
+export function centreOf(rect: Rect): Point {
+	return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+}
+
+/**
+ * The finger distance from the centre a pinch starts at. Fingers end at `radius * scale`, so the larger of the two
+ * stays inside `REACH` of the rect's shorter half-side; the smaller never goes below 4% of the screen's shorter side.
+ * When both cannot hold (an extreme scale on a tiny rect) the gap wins, and the fingers may leave the rect.
+ */
+export function pinchRadius(rect: Rect, scale: number, screen: ScreenInfo): number {
+	const reach = (Math.min(rect.width, rect.height) / 2) * REACH;
+	const floor = MIN_RADIUS * Math.min(screen.width, screen.height);
+	return Math.max(reach / Math.max(1, scale), floor / Math.min(1, scale));
+}
+
+/** The finger distance a rotate uses: 30% of the rect's shorter side, kept between 4% and 30% of the screen's shorter side. */
+export function rotateRadius(rect: Rect, screen: ScreenInfo): number {
+	const side = Math.min(screen.width, screen.height);
+	return Math.min(Math.max(Math.min(rect.width, rect.height) * ROTATE_SHARE, MIN_RADIUS * side), ROTATE_SHARE * side);
+}
+
+/**
+ * Throws `INVALID_ARGUMENT` when the driver cannot do `cap`: `pinch` (pinch and rotate) needs `capabilities.pinch`,
+ * `path` needs `fingers` (default 1) or more of `capabilities.maxPointers`. Like `device.back()` on iOS, the error
+ * names the fix.
+ */
+export function requireGesture(driver: Driver, cap: "pinch" | "path", verb: string, fingers = 1): void {
+	const { capabilities, platform } = driver;
+	if (cap === "pinch" ? capabilities.pinch : capabilities.maxPointers >= fingers) return;
+	const detail =
+		cap === "pinch"
+			? "capabilities.pinch is false"
+			: `capabilities.maxPointers is ${capabilities.maxPointers}, needs ${fingers}`;
+	throw new E2eError(
+		"INVALID_ARGUMENT",
+		`${verb} is not supported on ${platform} (driver capability: ${detail}); use test({ platforms: [...] }) to skip`
+	);
+}
+
+/** `INVALID_ARGUMENT` unless `scale` is a finite number in `SCALE_RANGE` other than 1. */
+export function assertScale(scale: number): void {
+	if (!Number.isFinite(scale) || scale < SCALE_RANGE[0] || scale > SCALE_RANGE[1] || scale === 1) {
+		throw new E2eError(
+			"INVALID_ARGUMENT",
+			`pinch scale must be a finite number from ${SCALE_RANGE[0]} to ${SCALE_RANGE[1]} and not 1, got ${scale}`
+		);
+	}
+}
+
+/** `INVALID_ARGUMENT` unless `degrees` is finite, not 0 and within `MAX_ROTATE_DEGREES` either way. */
+export function assertDegrees(degrees: number): void {
+	if (!Number.isFinite(degrees) || degrees === 0 || Math.abs(degrees) > MAX_ROTATE_DEGREES) {
+		throw new E2eError(
+			"INVALID_ARGUMENT",
+			`rotate degrees must be finite, not 0 and at most ${MAX_ROTATE_DEGREES} either way, got ${degrees}`
+		);
 	}
 }

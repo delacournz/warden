@@ -59,7 +59,7 @@ function nextVideoPath(ctx: CommandContext, udid: string): string {
 }
 
 /**
- * `warden ui video start [path]` / `video stop`. The recorder is a detached host process whose pid is kept in
+ * `warden ui screen video start [path]` / `video stop`. The recorder is a detached host process whose pid is kept in
  * `state.json`: iOS `xcrun simctl io <udid> recordVideo`, Android `adb shell screenrecord` (3 minute device
  * limit; `stop` pulls the file). `stop` sends SIGINT so the mp4 is finalised. Default path
  * `$WARDEN_HOME/ui/<udid>/videos/NNN.mp4`.
@@ -71,7 +71,7 @@ export function uiVideo(
 	pathArg: string | undefined,
 	opts: UiOptionValues
 ): Promise<number> {
-	return runUi(ctx, deps, "video", opts, async (device) => {
+	return runUi(ctx, deps, "screen video", opts, async (device) => {
 		const video = deps.video ?? defaultVideoDeps;
 		const info = { udid: device.udid, platform: device.platform, name: device.name };
 		const state = readState(ctx, device.udid);
@@ -81,7 +81,9 @@ export function uiVideo(
 			if (state.video && video.pidAlive(state.video.pid)) {
 				return {
 					success: false,
-					error: uiError("usage", `already recording to ${state.video.path}`, { hint: "`warden ui video stop` first" }),
+					error: uiError("usage", `already recording to ${state.video.path}`, {
+						hint: "`warden ui screen video stop` first",
+					}),
 				};
 			}
 			const path = pathArg === undefined ? nextVideoPath(ctx, device.udid) : resolve(ctx.cwd, pathArg);
@@ -108,7 +110,10 @@ export function uiVideo(
 		if (what === "stop") {
 			const running = state.video;
 			if (!running) {
-				return { success: false, error: uiError("usage", "not recording", { hint: "`warden ui video start` first" }) };
+				return {
+					success: false,
+					error: uiError("usage", "not recording", { hint: "`warden ui screen video start` first" }),
+				};
 			}
 			const warnings: string[] = [];
 			if (running.remote !== undefined) {

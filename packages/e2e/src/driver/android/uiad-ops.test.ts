@@ -241,6 +241,52 @@ describe("taps and swipes", () => {
 		expect(fake.of("swipe")[0]).toMatchObject({ pressMs: 500, durationMs: 600, releaseMs: 40, steps: 8 });
 	});
 
+	test("a gesture sends the plan's paths and timing, with a timeout that covers its length", async () => {
+		const plan = {
+			paths: [
+				[
+					{ x: 1, y: 2 },
+					{ x: 3, y: 4 },
+				],
+				[
+					{ x: 5, y: 6 },
+					{ x: 7, y: 8 },
+				],
+			],
+			frameMs: 16,
+			holdMs: 30,
+			releaseMs: 50,
+			totalMs: 96,
+		};
+		const { ops, fake } = setup({
+			handle: (request) =>
+				request.op === "gesture" ? { data: { frames: 2, pointers: 2, maxLagMs: 1, via: "inject3" } } : undefined,
+		});
+		await value(ops.gesture(plan));
+		expect(fake.of("gesture")[0]).toMatchObject({ paths: plan.paths, frameMs: 16, holdMs: 30, releaseMs: 50 });
+	});
+
+	test("a refused gesture (E_HID, E_UNSUPPORTED) falls back; E_INTERNAL is surfaced", async () => {
+		const plan = { paths: [[{ x: 1, y: 2 }]], frameMs: 16, holdMs: 0, releaseMs: 0, totalMs: 0 };
+		const refused = setup({
+			handle: (request) => (request.op === "gesture" ? { error: wire("E_HID", "refused") } : undefined),
+		});
+		expect(await refused.ops.gesture(plan)).toBeUndefined();
+		expect(refused.backend.status()).toBe("up");
+		const unsupported = setup({
+			handle: (request) => (request.op === "gesture" ? { error: wire("E_UNSUPPORTED", "no") } : undefined),
+		});
+		expect(await unsupported.ops.gesture(plan)).toBeUndefined();
+		const broken = setup({
+			handle: (request) =>
+				request.op === "gesture" ? { error: wire("E_INTERNAL", "gesture interrupted after 3/9 frames") } : undefined,
+		});
+		const res = await broken.ops.gesture(plan);
+		expect(res?.success).toBe(false);
+		if (res === undefined || res.success) return;
+		expect(res.error.code).toBe("E_INTERNAL");
+	});
+
 	test("an injection the server refuses falls back to `input` for that call and the server stays", async () => {
 		const { ops, backend } = setup({
 			handle: (request, nth) =>

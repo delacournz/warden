@@ -105,14 +105,14 @@ export function splitDuration(words: readonly string[]): { target: string[]; ms?
 	return { target: [...words] };
 }
 
-/** `warden ui longpress <target> [ms]`. */
+/** `warden ui gesture longpress <target> [ms]`. */
 export function uiLongpress(
 	ctx: CommandContext,
 	deps: UiDeps,
 	words: string[],
 	opts: PressOptionValues
 ): Promise<number> {
-	return runUi(ctx, deps, "longpress", opts, async (device, env) => {
+	return runUi(ctx, deps, "gesture longpress", opts, async (device, env) => {
 		const settle = parseSettle(opts.settle);
 		if (!settle.success) return settle;
 		const split = splitDuration(words);
@@ -127,7 +127,7 @@ export function uiLongpress(
 		if (!pressed.success) return pressed;
 		const where = recordTarget(target.data, resolved.data);
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-			action: "longpress",
+			action: "gesture-longpress",
 			text: `long-pressed ${targetLabel(where)} for ${durationMs} ms`,
 			target: where,
 			args: { ms: durationMs },
@@ -358,7 +358,7 @@ export function fingerPath(way: Way, rect: Rect, distance: number): { from: Poin
 	return contentPath(OPPOSITE[way], rect, distance);
 }
 
-async function currentScreen(driver: Driver): Promise<Result<ScreenInfo, UiError>> {
+export async function currentScreen(driver: Driver): Promise<Result<ScreenInfo, UiError>> {
 	const taken = await driver.snapshot({ interactiveOnly: true });
 	return taken.success ? ok(taken.data.screen) : { success: false, error: driverUiError(taken.error) };
 }
@@ -384,11 +384,11 @@ export async function regionOf(
 }
 
 /**
- * `warden ui swipe <up|down|left|right | x1 y1 x2 y2> [--from <target>]`: a raw finger swipe. The word is the way
+ * `warden ui gesture swipe <up|down|left|right | x1 y1 x2 y2> [--from <target>]`: a raw finger swipe. The word is the way
  * the finger moves (`swipe up` moves content up, revealing what is below); `--from` swipes inside that element.
  */
 export function uiSwipe(ctx: CommandContext, deps: UiDeps, words: string[], opts: SwipeOptionValues): Promise<number> {
-	return runUi(ctx, deps, "swipe", opts, async (device, env) => {
+	return runUi(ctx, deps, "gesture swipe", opts, async (device, env) => {
 		const settle = parseSettle(opts.settle);
 		if (!settle.success) return settle;
 		const driver = await env.driver();
@@ -410,14 +410,14 @@ export function uiSwipe(ctx: CommandContext, deps: UiDeps, words: string[], opts
 			return {
 				success: false,
 				error: uiError("usage", "swipe needs a direction or four coordinates", {
-					hint: "warden ui swipe <up|down|left|right> | warden ui swipe x1 y1 x2 y2",
+					hint: "warden ui gesture swipe <up|down|left|right> | warden ui gesture swipe x1 y1 x2 y2",
 				}),
 			};
 		}
 		const swiped = fromDriver(await driver.data.swipe(from, to, { durationMs: SWIPE_MS, momentum: false }));
 		if (!swiped.success) return swiped;
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-			action: "swipe",
+			action: "gesture-swipe",
 			text: `swiped ${label}`,
 			args: { from: `${from.x},${from.y}`, to: `${to.x},${to.y}` },
 			extra: { from, to },
