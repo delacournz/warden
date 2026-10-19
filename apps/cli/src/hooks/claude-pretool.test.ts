@@ -109,6 +109,73 @@ describe("handleSessionEnd", () => {
 		expect(store.listLeases()).toEqual([]);
 	});
 
+	test("/clear keeps the leases of a live `warden e2e` / `batch` the session started; a dead holder's are released", async () => {
+		const run = (id: string, pid: number) =>
+			store.insertLease(
+				{
+					resource: { kind: "device", platform: "ios", id, name: id },
+					owner: { kind: "agent", sessionId: "s1", cwd: "/work/cowrie" },
+					ttlMs: DEFAULT_TTL_MS,
+					label: "warden e2e",
+					pid,
+				},
+				now
+			);
+		const live = run(UDID, 4242);
+		const port = store.insertLease(
+			{
+				resource: { kind: "port", port: 8081 },
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+				ttlMs: DEFAULT_TTL_MS,
+				pid: 4242,
+			},
+			now
+		);
+		run("CRASHED", 999);
+		lease("BARE");
+		pidAlive = (pid) => pid === 4242;
+		const result = await handleSessionEnd({ session_id: "s1", hook_event_name: "SessionEnd", reason: "clear" }, deps());
+		expect(
+			store
+				.listLeases()
+				.map((l) => l.id)
+				.sort()
+		).toEqual([live.id, port.id].sort());
+		expect(result.stdout).toContain("kept");
+		expect(shutdowns).toEqual([]);
+	});
+
+	test("/clear releases a live pid's lease whose heartbeat went stale", async () => {
+		store.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: UDID, name: UDID },
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+				ttlMs: 60_000,
+				pid: 4242,
+			},
+			now
+		);
+		now += 60_001;
+		pidAlive = () => true;
+		await handleSessionEnd({ session_id: "s1", reason: "clear" }, deps());
+		expect(store.listLeases()).toEqual([]);
+	});
+
+	test("a real SessionEnd still releases a live pid's leases", async () => {
+		store.insertLease(
+			{
+				resource: { kind: "port", port: 8081 },
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+				ttlMs: 60_000,
+				pid: 4242,
+			},
+			now
+		);
+		pidAlive = () => true;
+		await handleSessionEnd({ session_id: "s1", reason: "exit" }, deps());
+		expect(store.listLeases()).toEqual([]);
+	});
+
 	test("shutdown failure still releases", async () => {
 		lease(UDID);
 		const d = deps();

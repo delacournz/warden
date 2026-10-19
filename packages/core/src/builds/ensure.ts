@@ -5,7 +5,17 @@ import type { PidAlive } from "../liveness";
 import type { Store } from "../store";
 import type { Owner, Platform } from "../types";
 import type { InstallMode } from "./app-option.schema";
-import { type BuildSource, cachedBuild, findLegacyArtifact, getInstall, recordInstall, storeArtifact } from "./cache";
+import {
+	aliasBuild,
+	type BuildSource,
+	buildsRoot,
+	cachedBuild,
+	findLegacyArtifact,
+	getBuild,
+	getInstall,
+	recordInstall,
+	storeArtifact,
+} from "./cache";
 import { bundleIdFor, type EasSettings, loadProject, type Project } from "./config";
 import { type Download, resolveFromEas } from "./eas";
 import {
@@ -147,6 +157,40 @@ function easStep(input: EnsureInput, eas: EasSettings, cache: CacheFn): NonNulla
 	};
 }
 
+/**
+ * The local build step, cached under the requested key: every fresh checkout (and this session's other
+ * devices) computes it. A prebuild re-key (17-1) also aliases the post-build key and reports it.
+ */
+function buildStep(
+	input: EnsureInput,
+	cache: CacheFn,
+	onPostKey: (postKey: string) => void
+): NonNullable<ResolveSteps["build"]> {
+	const { project } = input;
+	return async () => {
+		const built = await runLocalBuild({
+			exec: input.exec,
+			project,
+			platform: input.platform,
+			hash: input.hash,
+			...(input.native !== undefined ? { native: input.native } : {}),
+			env: input.env,
+			log: input.log,
+			...(project.compilerCache === false ? { compilerCache: false } : {}),
+			...(input.git ? { git: input.git } : {}),
+		});
+		if (!built.success) return built;
+		const stored = await cache(built.data.artifact, "build", false);
+		if (!stored.success) return stored;
+		const { postKey } = built.data;
+		if (postKey !== undefined) {
+			aliasBuild(input.store, stored.data, postKey, input.now());
+			onPostKey(postKey);
+		}
+		return ok(stored.data.path);
+	};
+}
+
 /** Wire the real effects (sqlite cache, simctl/adb, eas-cli, local build) into `resolveApp`. */
 export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	const { store, env, project, projectKey, platform, hash } = input;
@@ -164,8 +208,18 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 			now: input.now(),
 		});
 
+	/** the key later runs in this checkout compute: the post-prebuild key once this call's build re-keyed (17-1) */
+	let installKey = hash;
+	/** an install at `recorded` is this build when both keys name the same cached files (an alias) */
+	const installedAt = (recorded: string | undefined) => {
+		if (recorded === undefined || recorded === hash) return recorded;
+		const mine = getBuild(store, projectKey, platform, hash)?.path;
+		return mine !== undefined && getBuild(store, projectKey, platform, recorded)?.path === mine ? hash : recorded;
+	};
+
 	const steps: ResolveSteps = {
 		hash,
+		flightKey: `${buildsRoot(env)}|${buildLockKey(projectKey, platform, hash)}`,
 		...(input.installMode !== undefined ? { installMode: input.installMode } : {}),
 		log: input.log,
 		cached: () => cachedBuild(store, projectKey, platform, hash, input.now())?.path,
@@ -195,21 +249,9 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	const easSettings = project.eas;
 	if (input.eas && easSettings) steps.eas = easStep(input, easSettings, cache);
 	if (input.build) {
-		steps.build = async () => {
-			const built = await runLocalBuild({
-				exec: input.exec,
-				project,
-				platform,
-				hash,
-				env,
-				log: input.log,
-				...(project.compilerCache === false ? { compilerCache: false } : {}),
-				...(input.git ? { git: input.git } : {}),
-			});
-			if (!built.success) return built;
-			const stored = await cache(built.data, "build", false);
-			return stored.success ? ok(stored.data.path) : stored;
-		};
+		steps.build = buildStep(input, cache, (postKey) => {
+			installKey = postKey;
+		});
 	}
 
 	const deviceId = input.deviceId;
@@ -219,7 +261,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		const target = { platform, deviceId };
 		const deps = { exec: input.exec, env, ...(input.fileSize ? { fileSize: input.fileSize } : {}) };
 		steps.device = {
-			installedHash: () => getInstall(store, platform, deviceId, bundleId.data)?.hash,
+			installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId.data)?.hash),
 			confirm: () => probeApp(deps, target, bundleId.data),
 			matches: (cachedPath, installed) =>
 				appMatchesArtifact(deps, target, bundleId.data, cachedPath, installed.container),
@@ -237,7 +279,13 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 				input.log(`installing ${appPath} on ${deviceId}`);
 				const done = await installApp(deps, target, appPath, bundleId.data);
 				if (done.success) {
-					recordInstall(store, { platform, deviceId, bundleId: bundleId.data, hash, installedAt: input.now() });
+					recordInstall(store, {
+						platform,
+						deviceId,
+						bundleId: bundleId.data,
+						hash: installKey,
+						installedAt: input.now(),
+					});
 				}
 				return done;
 			},

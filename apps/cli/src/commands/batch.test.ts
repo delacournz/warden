@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { JSON_CONFIG_FILE } from "@delacour/warden-core/builds/config";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-core/exec";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
+import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { createBatchCommand, defaultBatchDeps } from "./batch";
@@ -1065,5 +1066,17 @@ describe("warden batch", () => {
 			writeConfig(plain.cwd, { batches: { p: { platform: "ios" } } });
 			expect(await createBatchCommand(harness().deps).run(plain)).toBe(0);
 		});
+	});
+});
+
+describe("warden batch auto-gc (12-2)", () => {
+	test("auto-gc is considered only after claimAll has leased the devices", async () => {
+		const c = setup(["ios", "--count", "2", "--jobs", "a,b", "--", "run", "{job}"]);
+		const order = autoGcOrder(c.exec, () => c.db);
+		c.exec = order.exec;
+		c.env = allowAutoGc(c.env);
+		expect(await createBatchCommand(harness().deps).run(c)).toBe(0);
+		expect(order.gcBeforeClaim()).toBe(false);
+		expect(autoGcConsidered(c.db)).toBe(true);
 	});
 });

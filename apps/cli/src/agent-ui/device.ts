@@ -1,4 +1,4 @@
-import { processAlive } from "@delacour/warden-core/liveness";
+import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { claimWithFlags, leasePidFor, parseClaimFlags, parsePlatform, resolveOwner } from "../claim-flags";
@@ -21,7 +21,12 @@ export type UiDeviceFlags = {
 	platform?: string;
 	profile?: string;
 	runtime?: string;
+	/** drive the device even while a live warden process holds the caller's lease on it */
+	force?: boolean;
 };
+
+/** How `resolveUiDevice` checks the lease: `exclusive` = refuse an own lease a live warden process holds. */
+export type UiLeaseCheck = { exclusive: boolean; pidAlive?: PidAlive };
 
 /** Where the device came from. */
 export type UiDeviceSource = "flag" | "WARDEN_UDID" | "WARDEN_UDIDS" | "lease" | "claim";
@@ -138,22 +143,24 @@ function leaseCandidate(
 	ctx: CommandContext,
 	owner: Owner,
 	candidate: Candidate,
-	claim: boolean
+	claim: boolean,
+	check: UiLeaseCheck
 ): Result<UiDevice, UiError> {
 	const platform = candidate.platform !== undefined ? ok(candidate.platform) : platformOf(ctx, candidate.id);
 	if (!platform.success) return fail(uiError("usage", platform.error));
 	const pid = leasePidFor(owner);
 	const leased = ensureCallerLease(ctx.store(), owner, platform.data, candidate.id, {
 		now: ctx.now(),
-		pidAlive: processAlive,
+		pidAlive: check.pidAlive ?? processAlive,
 		claim,
 		label: UI_LEASE_LABEL,
 		...(pid !== undefined ? { pid } : {}),
+		exclusive: check.exclusive,
 	});
 	if (!leased.success) {
 		const { code, message } = leased.error;
 		return fail(
-			code === "device_foreign"
+			code === "device_foreign" || code === "device_busy"
 				? uiError(code, message)
 				: uiError(code, message, { hint: `add --claim, or run warden claim ${platform.data} --json` })
 		);
@@ -173,9 +180,14 @@ function leaseCandidate(
  * The device a `warden ui` call acts on, and proof the caller may use it. Order: `--udid|--serial|--lease`
  * → `WARDEN_UDID` → `WARDEN_UDIDS` (if one) → the caller's own device leases (one → it; none → exit 2, or a
  * fresh claim with `--claim`; several → exit 2 listing them). A named device then goes through
- * `ensureCallerLease`: own → heartbeat, foreign live → exit 2, stale/none → only with `--claim`.
+ * `ensureCallerLease`: own → heartbeat (held by a live warden process, with `check.exclusive` → exit 2
+ * `device_busy`), foreign live → exit 2, stale/none → only with `--claim`.
  */
-export async function resolveUiDevice(ctx: CommandContext, flags: UiDeviceFlags): Promise<Result<UiDevice, UiError>> {
+export async function resolveUiDevice(
+	ctx: CommandContext,
+	flags: UiDeviceFlags,
+	check: UiLeaseCheck = { exclusive: flags.force !== true }
+): Promise<Result<UiDevice, UiError>> {
 	const owner = resolveOwner(ctx);
 	const named = fromFlags(ctx, flags);
 	if (!named.success) return named;
@@ -188,5 +200,5 @@ export async function resolveUiDevice(ctx: CommandContext, flags: UiDeviceFlags)
 		candidate = held.data;
 	}
 	if (candidate === "claim") return claimFresh(ctx, owner, flags);
-	return leaseCandidate(ctx, owner, candidate, flags.claim === true);
+	return leaseCandidate(ctx, owner, candidate, flags.claim === true, check);
 }

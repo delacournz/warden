@@ -58,13 +58,51 @@ describe("captureFailure", () => {
 		expect(existsSync(join(dir, "failure.png"))).toBe(false);
 	});
 
-	test("a hung driver is cut off by the capture timeout", async () => {
+	test("a hung driver is cut off by the capture timeout, and a timed-out screenshot skips the snapshot", async () => {
+		const dir = tmp();
+		const driver = fakeDriver({ screens });
+		let snapshots = 0;
+		driver.screenshot = () => new Promise(() => undefined);
+		driver.snapshot = () => {
+			snapshots += 1;
+			return new Promise(() => undefined);
+		};
+		const capture = await captureFailure(driver, dir, 30);
+		expect(capture.files).toEqual([]);
+		expect(capture.problems).toEqual([
+			"screenshot: timed out after 30ms",
+			"snapshot: skipped, the screenshot timed out (the device is not answering)",
+		]);
+		expect(snapshots).toBe(0);
+	});
+
+	test("a hung snapshot after a good screenshot is cut off too", async () => {
+		const dir = tmp();
+		const driver = fakeDriver({ screens });
+		driver.snapshot = () => new Promise(() => undefined);
+		const capture = await captureFailure(driver, dir, 30);
+		expect(capture.problems).toEqual(["snapshot: timed out after 30ms"]);
+	});
+
+	test("each call takes no more than what is left of the budget", async () => {
 		const dir = tmp();
 		const driver = fakeDriver({ screens });
 		driver.screenshot = () => new Promise(() => undefined);
-		driver.snapshot = () => new Promise(() => undefined);
-		const capture = await captureFailure(driver, dir, 30);
+		const started = Date.now();
+		const capture = await captureFailure(driver, dir, 10_000, () => 40);
+		expect(Date.now() - started).toBeLessThan(1_000);
+		expect(capture.problems[0]).toBe("screenshot: timed out after 40ms");
+	});
+
+	test("a spent budget captures nothing and says so", async () => {
+		const dir = tmp();
+		const driver = fakeDriver({ screens });
+		const capture = await captureFailure(driver, dir, 10_000, () => 0);
 		expect(capture.files).toEqual([]);
-		expect(capture.problems).toEqual(["screenshot: timed out after 30ms", "snapshot: timed out after 30ms"]);
+		expect(capture.problems).toEqual([
+			"screenshot: skipped, the post-deadline budget is used up",
+			"snapshot: skipped, the post-deadline budget is used up",
+		]);
+		expect(driver.calls.filter((c) => c.method === "screenshot" || c.method === "snapshot")).toEqual([]);
 	});
 });

@@ -8,7 +8,7 @@ import type { FixtureSession } from "./fixture-session";
 export type OpenOptions = {
 	/** opened with `driver.app.openUrl` once the app is launched */
 	url?: string;
-	/** appended after `WARDEN_LAUNCH_ARGS` */
+	/** appended after `WARDEN_LAUNCH_ARGS` (on Android, which cannot take launch args, these still fail the launch) */
 	args?: readonly string[];
 	env?: Record<string, string>;
 	/**
@@ -47,10 +47,30 @@ export type AppDeps = {
 	session: FixtureSession;
 	driver: Driver;
 	env: E2eEnv;
+	/** where the one "dropped WARDEN_LAUNCH_ARGS on Android" line goes; default stderr */
+	log?: (line: string) => void;
 };
 
-export function createApp({ session, driver, env }: AppDeps): App {
+const stderrLog = (line: string): void => {
+	process.stderr.write(`${line}\n`);
+};
+
+export function createApp({ session, driver, env, log = stderrLog }: AppDeps): App {
 	const bundleId = env.bundleId;
+	let droppedLogged = false;
+	/**
+	 * `WARDEN_LAUNCH_ARGS` as this platform can take them. Android launches have no args (the dev client reaches Metro
+	 * through `adb reverse` and its default url), so the env's args (Metro's `--initialUrl`, `spec.launchArgs`) are
+	 * dropped there, with one log line; explicit `open({ args })` are kept so they still fail loudly.
+	 */
+	const envLaunchArgs = (): readonly string[] => {
+		if (driver.platform !== "android" || env.launchArgs.length === 0) return env.launchArgs;
+		if (!droppedLogged) {
+			droppedLogged = true;
+			log(`[warden-e2e] Android launch takes no args: ignoring WARDEN_LAUNCH_ARGS ${JSON.stringify(env.launchArgs)}`);
+		}
+		return [];
+	};
 	/**
 	 * One `settle`. iOS names the bundle `app.launch` started (the helper holds "quiet" back until that app is in front);
 	 * a driver that cannot settle is left alone, as `device.settle()` would poll instead.
@@ -70,7 +90,7 @@ export function createApp({ session, driver, env }: AppDeps): App {
 			throw new E2eError("INVALID_ARGUMENT", `app.open wait must be "quiet" or "none", got ${JSON.stringify(wait)}`);
 		}
 		const opts: LaunchOptions = {
-			args: [...env.launchArgs, ...(options.args ?? [])],
+			args: [...envLaunchArgs(), ...(options.args ?? [])],
 			relaunch: true,
 		};
 		if (options.env !== undefined) opts.env = options.env;

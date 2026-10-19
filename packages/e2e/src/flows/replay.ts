@@ -43,8 +43,12 @@ export type ResolvedTarget = {
 
 export type StepTargets = { target?: ResolvedTarget; until?: ResolvedTarget };
 
-/** A recorded target looked up on the current screen: where it is, or why it is not there. */
-export type Located = { resolved: ResolvedTarget } | { missing: string };
+/**
+ * A recorded target looked up on the current screen: where it is, or why it is not there. `moved` is the third state:
+ * the chain found the element (same role) but farther than {@link LANDMARK_TOLERANCE} from its landmark. It is on
+ * screen, so state checks use it; `moved` says by how much, for a warning.
+ */
+export type Located = { resolved: ResolvedTarget; moved?: string } | { missing: string };
 
 export type ActContext = {
 	driver: Driver;
@@ -55,7 +59,7 @@ export type ActContext = {
 	 * only appear (or vanish) during the step, so those executors look it up themselves with `find`.
 	 */
 	targets: StepTargets;
-	/** resolve a recorded target against a fresh snapshot (chain + landmark); never throws */
+	/** resolve a recorded target against a fresh snapshot (chain + landmark; past the landmark it is `moved`, not missing); never throws */
 	find(target: Target): Promise<Result<Located, ActError>>;
 	/** plain text for a stored `Text` (secrets already looked up; checked before the step runs) */
 	text(value: Text): string;
@@ -89,8 +93,11 @@ export type ReplayDeps = {
 
 export type ReplayDrift = { step: number; expected: string; actual: string };
 
+/** A `wait`/`is`/`get`/`scroll` target the chain found away from its recorded landmark (used anyway, as it is on screen). */
+export type ReplayMove = { step: number; kind: StepKind; reason: string };
+
 export type ReplayOutcome =
-	| { status: "passed"; steps: number; warnings: ReplayDrift[]; updated?: Flow }
+	| { status: "passed"; steps: number; warnings: ReplayDrift[]; moves?: ReplayMove[]; updated?: Flow }
 	| {
 			status: "diverged";
 			code: "replay_divergence";
@@ -100,6 +107,7 @@ export type ReplayOutcome =
 			/** interactive tree of the screen the step could not be placed in */
 			snapshot: string;
 			warnings: ReplayDrift[];
+			moves?: ReplayMove[];
 	  }
 	| {
 			status: "failed";
@@ -108,6 +116,7 @@ export type ReplayOutcome =
 			error: ActError;
 			snapshot?: string;
 			warnings: ReplayDrift[];
+			moves?: ReplayMove[];
 	  };
 
 // ---- targets and texts of a step --------------------------------------------------------------------------------
@@ -267,7 +276,8 @@ function walkChain(target: SelectorTarget, index: NodeIndex): { found: Found } |
 	return { tried: notes.join(", ") };
 }
 
-type Resolution = { resolved: ResolvedTarget } | { divergence: string };
+/** `moved`: the divergence is only the distance; the element the chain found is still there (see {@link Located}). */
+type Resolution = { resolved: ResolvedTarget } | { divergence: string; moved?: ResolvedTarget };
 
 function resolveTarget(target: SelectorTarget, index: NodeIndex): Resolution {
 	const walked = walkChain(target, index);
@@ -277,13 +287,15 @@ function resolveTarget(target: SelectorTarget, index: NodeIndex): Resolution {
 	if (entry.role !== landmark.role) {
 		return { divergence: `${target.selector} now resolves to a ${entry.role}, recorded as a ${landmark.role}` };
 	}
+	const resolved: ResolvedTarget = { point: pointOf(entry.element), via: by, element: entry.element, entry };
 	const moved = distance(centreOf(landmark.frame), centreOf(entry.element.frame));
 	if (moved > LANDMARK_TOLERANCE) {
 		return {
 			divergence: `${target.selector} moved ${Math.round(moved)} pt from where it was recorded (limit ${LANDMARK_TOLERANCE})`,
+			moved: resolved,
 		};
 	}
-	return { resolved: { point: pointOf(entry.element), via: by, element: entry.element, entry } };
+	return { resolved };
 }
 
 function refreshed(target: Target, resolved: ResolvedTarget): Target {
@@ -299,9 +311,11 @@ function refreshed(target: Target, resolved: ResolvedTarget): Target {
 	};
 }
 
+/** The lazy lookup (`find`): a moved element is located, with the move noted; a gone or re-roled one is missing. */
 function toLocated(target: SelectorTarget, index: NodeIndex): Located {
 	const outcome = resolveTarget(target, index);
-	return "divergence" in outcome ? { missing: outcome.divergence } : outcome;
+	if (!("divergence" in outcome)) return outcome;
+	return outcome.moved ? { resolved: outcome.moved, moved: outcome.divergence } : { missing: outcome.divergence };
 }
 
 function excerpt(snapshot: Snapshot): string {
@@ -386,13 +400,35 @@ function noteDrift(step: Step, hash: string | undefined, log: (line: string) => 
 	log(`drift step ${step.i} ${step.kind}: screen differs from the recording (${step.snapshotHash} → ${hash})`);
 }
 
+/** `ActContext.find` for `step`: coordinates as they are, selectors against a fresh snapshot, moves noted. */
+function lazyFind(step: Step, deps: ReplayDeps, moves: ReplayMove[]): ActContext["find"] {
+	return async (target) => {
+		if (target.kind === "coords") {
+			return { success: true, data: { resolved: { point: { x: target.x, y: target.y }, via: "coords" } } };
+		}
+		const taken = await deps.snapshot();
+		if (!taken.success) return taken;
+		const located = toLocated(target, indexSnapshot(taken.data));
+		if ("moved" in located && located.moved !== undefined) noteMove(step, located.moved, deps.log, moves);
+		return { success: true, data: located };
+	};
+}
+
+/** One warning per step, however often its executor polls `find`. */
+function noteMove(step: Step, reason: string, log: (line: string) => void, moves: ReplayMove[]): void {
+	if (moves.some((move) => move.step === step.i)) return;
+	moves.push({ step: step.i, kind: step.kind, reason });
+	log(`moved step ${step.i} ${step.kind}: ${reason}; using it where it is now`);
+}
+
 type StepDone = { hash: string | undefined; refreshed: StepSlots };
 
 /** One step: secrets, fresh screen, drift, place the targets, act, settle. Either a stop or what `updateSnapshots` needs. */
 async function runStep(
 	step: Step,
 	deps: ReplayDeps,
-	warnings: ReplayDrift[]
+	warnings: ReplayDrift[],
+	moves: ReplayMove[]
 ): Promise<{ stop: Stop } | { done: StepDone }> {
 	const env = deps.env ?? {};
 	const slots = eagerSlots(step, targetsOf(step));
@@ -419,14 +455,7 @@ async function runStep(
 		const plain = resolveText(value, env);
 		return plain.success ? plain.data : "";
 	};
-	const find = async (target: Target): Promise<Result<Located, ActError>> => {
-		if (target.kind === "coords") {
-			return { success: true, data: { resolved: { point: { x: target.x, y: target.y }, via: "coords" } } };
-		}
-		const taken = await deps.snapshot();
-		if (!taken.success) return taken;
-		return { success: true, data: toLocated(target, indexSnapshot(taken.data)) };
-	};
+	const find = lazyFind(step, deps, moves);
 	const context: ActContext = { driver: deps.driver, snapshot, targets: placed.targets, find, text };
 	const acted = await dispatch(deps.act, step, context);
 	if (!acted.success) {
@@ -446,6 +475,8 @@ async function runStep(
 
 export async function replayFlow(flow: Flow, deps: ReplayDeps): Promise<ReplayOutcome> {
 	const warnings: ReplayDrift[] = [];
+	const moves: ReplayMove[] = [];
+	const withMoves = <O extends ReplayOutcome>(outcome: O): O => (moves.length > 0 ? { ...outcome, moves } : outcome);
 	const updatedSteps: Step[] = [...flow.steps];
 	const from = deps.from ?? 0;
 	let executed = 0;
@@ -453,8 +484,8 @@ export async function replayFlow(flow: Flow, deps: ReplayDeps): Promise<ReplayOu
 	for (const step of flow.steps) {
 		if (step.i < from) continue;
 		const started = deps.now();
-		const outcome = await runStep(step, deps, warnings);
-		if ("stop" in outcome) return outcome.stop;
+		const outcome = await runStep(step, deps, warnings, moves);
+		if ("stop" in outcome) return withMoves(outcome.stop);
 		if (deps.updateSnapshots) {
 			const next = withTargets(step, outcome.done.refreshed);
 			updatedSteps[step.i] = outcome.done.hash === undefined ? next : { ...next, snapshotHash: outcome.done.hash };
@@ -466,10 +497,10 @@ export async function replayFlow(flow: Flow, deps: ReplayDeps): Promise<ReplayOu
 		deps.onStep?.({ step: step.i, kind: step.kind, label: describeStep(step), ms, ...(drift && { drift }) });
 	}
 
-	return {
+	return withMoves({
 		status: "passed",
 		steps: executed,
 		warnings,
 		...(deps.updateSnapshots && { updated: { ...flow, steps: updatedSteps } }),
-	};
+	});
 }

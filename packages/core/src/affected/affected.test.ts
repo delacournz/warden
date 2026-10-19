@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec, type Exec } from "../exec";
@@ -54,6 +54,30 @@ describe("computeAffected", () => {
 		write("src/settings/form.tsx", "export const changed = 2;\n");
 		await computeAffected({ exec, cwd: join(dir, "src"), cacheDir });
 		expect(workers).toHaveLength(2);
+	});
+
+	test("a suite in a subdirectory of the repo still sees its untracked files", async () => {
+		const outer = realpathSync(mkdtempSync(join(tmpdir(), "warden-affected-outer-")));
+		cleanup.push(outer);
+		rmSync(join(dir, ".git"), { recursive: true, force: true });
+		mkdirSync(join(outer, "apps"));
+		const app = join(outer, "apps", "mobile");
+		renameSync(dir, app);
+		for (const args of [
+			["init", "-q", "-b", "main"],
+			["config", "user.email", "t@t"],
+			["config", "user.name", "t"],
+			["add", "."],
+			["commit", "-qm", "base"],
+			["checkout", "-qb", "feature"],
+		]) {
+			const res = Bun.spawnSync(["git", ...args], { cwd: outer });
+			if (res.exitCode !== 0) throw new Error(res.stderr.toString());
+		}
+		writeFileSync(join(app, "src/settings/extra.tsx"), "export {};\n");
+		const res = await computeAffected({ exec: bunExec, cwd: join(app, "src") });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.changes).toEqual([{ path: "src/settings/extra.tsx", status: "added" }]);
 	});
 
 	test("--files instead of git, relative to cwd", async () => {

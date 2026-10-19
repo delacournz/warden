@@ -36,10 +36,15 @@ function fixture(signal?: AbortSignal): Fixture {
 	return { run, files, timers, warnings: [] };
 }
 
-type Fake = { helper: WarmHelper; closed: () => boolean; snapshots: () => number };
+type Fake = { helper: WarmHelper; closed: () => boolean; stopped: () => boolean; snapshots: () => number };
 
-function fake(udid: string, snapshot: () => ReturnType<WarmHelper["snapshot"]> = async () => ok(null)): Fake {
+function fake(
+	udid: string,
+	snapshot: () => ReturnType<WarmHelper["snapshot"]> = async () => ok(null),
+	o: { stoppable?: boolean } = {}
+): Fake {
 	let closed = false;
+	let stopped = false;
 	let snapshots = 0;
 	return {
 		helper: {
@@ -51,8 +56,16 @@ function fake(udid: string, snapshot: () => ReturnType<WarmHelper["snapshot"]> =
 			close: async () => {
 				closed = true;
 			},
+			...(o.stoppable
+				? {
+						stop: async () => {
+							stopped = true;
+						},
+					}
+				: {}),
 		},
 		closed: () => closed,
+		stopped: () => stopped,
 		snapshots: () => snapshots,
 	};
 }
@@ -122,6 +135,72 @@ describe("warmDrivers", () => {
 		expect(out.devices[0]?.socketPath).toBeUndefined();
 		expect(one.closed()).toBe(true);
 		expect(out.helpers).toHaveLength(1);
+	});
+
+	test("a helper that cannot snapshot is stopped, not left resident beside the jobs' own helpers (20-1)", async () => {
+		const f = fixture();
+		const one = fake("U0", async () => err("AX denied"), { stoppable: true });
+		const connect: WarmConnect = async (udid) => ok(udid === "U0" ? one.helper : fake(udid).helper);
+		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
+		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: AX denied" });
+		expect(one.stopped()).toBe(true);
+		expect(f.files.get("/logs/warm-0.log")).toContain("stopped the helper");
+	});
+
+	test("a snapshot that throws stops the helper too", async () => {
+		const f = fixture();
+		const one = fake(
+			"U0",
+			async () => {
+				throw new Error("socket reset");
+			},
+			{ stoppable: true }
+		);
+		const out = await warmDrivers(f.run, { connect: async () => ok(one.helper) });
+		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: socket reset" });
+		expect(one.stopped()).toBe(true);
+	});
+
+	test("a helper that arrives after the timeout is stopped: its device's jobs already run cold (20-1)", async () => {
+		const f = fixture();
+		const one = fake("U0", undefined, { stoppable: true });
+		let arrive: () => void = () => {};
+		const connect: WarmConnect = async (udid) => {
+			if (udid !== "U0") return ok(fake(udid).helper);
+			await new Promise<void>((resolve) => {
+				arrive = resolve;
+			});
+			return ok(one.helper);
+		};
+		const running = warmDrivers(f.run, { connect, timeoutMs: 5_000 });
+		await Bun.sleep(1);
+		f.timers.find((t) => !t.cancelled)?.fire();
+		await running;
+		arrive();
+		await Bun.sleep(1);
+		expect(one.stopped()).toBe(true);
+	});
+
+	test("a helper that arrives after an interrupt is only disconnected: no job runs, it stays resident", async () => {
+		const controller = new AbortController();
+		const f = fixture(controller.signal);
+		const one = fake("U0", undefined, { stoppable: true });
+		let arrive: () => void = () => {};
+		const connect: WarmConnect = async (udid) => {
+			if (udid !== "U0") return ok(fake(udid).helper);
+			await new Promise<void>((resolve) => {
+				arrive = resolve;
+			});
+			return ok(one.helper);
+		};
+		const running = warmDrivers(f.run, { connect });
+		await Bun.sleep(1);
+		controller.abort();
+		await running;
+		arrive();
+		await Bun.sleep(1);
+		expect(one.closed()).toBe(true);
+		expect(one.stopped()).toBe(false);
 	});
 
 	test("the timeout leaves the device cold and closes the helper when it finally arrives", async () => {

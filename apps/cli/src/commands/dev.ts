@@ -344,7 +344,6 @@ async function dev(
 	const timeout = parseDuration(opts.readyTimeout);
 	if (!timeout.success) return fail(`--ready-timeout: ${timeout.error}`);
 	const owner = resolveOwner(ctx);
-	maybeAutoGc(ctx);
 	const start = projectStart(ctx, opts.project);
 	if (!start.success) return fail(start.error);
 	const variant = opts.variant ?? "dev";
@@ -413,6 +412,8 @@ async function dev(
 		else spinner.fail(`${platform.data} dev build not ready`);
 		return result;
 	});
+	// after the claim: its own lease keeps the background gc off the device it just took (16-1)
+	maybeAutoGc(ctx);
 	for (const off of offSignals) off();
 	if (!session.success) {
 		await launch?.stop();

@@ -79,8 +79,13 @@ export type Session = {
 	step<T>(kind: string, label: string, fn: () => Promise<T>): Promise<T>;
 	/** times one call as a `span` in the running attempt's `trace.jsonl` (no console line); just runs it outside an attempt */
 	span: SpanRunner;
-	enterAttempt(attempt: AttemptContext): void;
-	leaveAttempt(): void;
+	/**
+	 * Makes `attempt` the running one. With `replacing`, only when that is still the running one: an attempt's
+	 * cleanup must not take the slot back from the next test that bun already started.
+	 */
+	enterAttempt(attempt: AttemptContext, replacing?: AttemptContext): void;
+	/** Clears the running attempt; with `attempt`, only when that is the running one (never another test's). */
+	leaveAttempt(attempt?: AttemptContext): void;
 	/** idempotent; closes the driver only if it was opened */
 	close(): Promise<void>;
 };
@@ -217,18 +222,32 @@ export function createSession(opts: SessionOptions = {}): Session {
 					devtoolsErr("devtools_unavailable", "no Metro URL (WARDEN_METRO_URL): release builds have no devtools")
 				);
 			}
-			devtoolsOpening ??= openFacet(resolved).then(
+			if (devtoolsOpening !== undefined) return devtoolsOpening;
+			const opening = openFacet(resolved).then(
 				(result) => {
-					if (result.success) facet = result.data;
-					else devtoolsOpening = undefined;
+					if (!result.success) {
+						if (devtoolsOpening === opening) devtoolsOpening = undefined;
+						return result;
+					}
+					const opened = result.data;
+					facet = opened;
+					// a facet that gave up reconnecting (an app relaunch outlasted its budget) is dropped, so the next
+					// call attaches again and failure capture never writes a dead facet's rings
+					opened.on("lost", () => {
+						if (facet !== opened) return;
+						facet = undefined;
+						if (devtoolsOpening === opening) devtoolsOpening = undefined;
+						opened.close();
+					});
 					return result;
 				},
 				(cause: unknown) => {
-					devtoolsOpening = undefined;
+					if (devtoolsOpening === opening) devtoolsOpening = undefined;
 					return devtoolsErr("devtools_unavailable", cause instanceof Error ? cause.message : String(cause));
 				}
 			);
-			return devtoolsOpening;
+			devtoolsOpening = opening;
+			return opening;
 		},
 		peekDevtools() {
 			return facet;
@@ -239,10 +258,12 @@ export function createSession(opts: SessionOptions = {}): Session {
 		span(op, fn, options) {
 			return runSpan(attempt?.trace, op, fn, options);
 		},
-		enterAttempt(next) {
+		enterAttempt(next, replacing) {
+			if (replacing !== undefined && attempt !== replacing) return;
 			attempt = next;
 		},
-		leaveAttempt() {
+		leaveAttempt(leaving) {
+			if (leaving !== undefined && attempt !== leaving) return;
 			attempt = undefined;
 		},
 		close() {
@@ -277,6 +298,66 @@ export function createSession(opts: SessionOptions = {}): Session {
 				};
 	if (exitListener !== undefined) process.on("exit", exitListener);
 	return session;
+}
+
+/** Which context one attempt's own fixtures use right now; `finished` once the runner is done with the attempt. */
+export type AttemptBinding = { readonly context: AttemptContext; readonly finished: boolean };
+
+/**
+ * `session` as one attempt's fixtures see it: `signal`, `attempt`, `attemptDir`, `trace`, `step` and `span` follow
+ * `binding` (that attempt's run context, then its cleanup context, then an aborted one), never whichever attempt is
+ * running when a call is made. So work the runner gave up on (a timed-out body that swallowed its `TIMEOUT`, an
+ * `afterEach` past its limit) fails its next driver call instead of tapping into the next test. Everything else is
+ * the shared session.
+ */
+export function attemptSession(session: Session, binding: () => AttemptBinding): Session {
+	const context = (): AttemptContext => binding().context;
+	const trace = (): TraceWriter | undefined => (binding().finished ? undefined : context().trace);
+	return {
+		get env() {
+			return session.env;
+		},
+		get out() {
+			return session.out;
+		},
+		get results() {
+			return session.results;
+		},
+		get fixtures() {
+			return session.fixtures;
+		},
+		set fixtures(factory) {
+			session.fixtures = factory;
+		},
+		get log() {
+			return session.log;
+		},
+		get attempt() {
+			return binding().finished ? undefined : context();
+		},
+		get signal() {
+			return context().signal;
+		},
+		get attemptDir() {
+			return context().dir;
+		},
+		get trace() {
+			return trace();
+		},
+		driver: () => session.driver(),
+		peekDriver: () => session.peekDriver(),
+		devtools: () => session.devtools(),
+		peekDevtools: () => session.peekDevtools(),
+		step(kind, label, fn) {
+			return runStep(context(), kind, label, fn);
+		},
+		span(op, fn, options) {
+			return runSpan(trace(), op, fn, options);
+		},
+		enterAttempt: (next, replacing) => session.enterAttempt(next, replacing),
+		leaveAttempt: (leaving) => session.leaveAttempt(leaving),
+		close: () => session.close(),
+	};
 }
 
 /** The process-wide session (`globalThis[Symbol.for("@delacour/warden-e2e/session")]`), created on first call. */

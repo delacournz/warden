@@ -13,6 +13,7 @@ import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp
 import type { CommandContext } from "./context";
 import { releaseDevices } from "./device-lease";
 import { installModeOption, legacyCleanOption, parseInstallFlags, RESET_KEYCHAIN_HELP } from "./install-flags";
+import { reportError } from "./output";
 import type { Spinner } from "./ui";
 
 /** Shared by `warden run` and `warden batch`: claim devices + ports, child env, heartbeat, release. */
@@ -457,9 +458,15 @@ export function leasedProgress(
 	};
 }
 
+/** Why a run stops when its heartbeat finds some of its leases gone. */
+export const LEASES_LOST =
+	"leases were released by another process: warden release or SessionEnd — stopping so the devices are not driven by two owners";
+
 /**
- * Heartbeat `leaseIds` every `HEARTBEAT_INTERVAL_MS` and route SIGINT/SIGTERM to `onSignal`
- * until the returned stop function is called.
+ * Heartbeat `leaseIds` now and every `HEARTBEAT_INTERVAL_MS` (each beat records the period, so a crashed
+ * holder's leases go stale after a few missed beats instead of the TTL) and route SIGINT/SIGTERM to
+ * `onSignal` until the returned stop function is called. A beat that updates fewer leases than it holds
+ * means someone else released them: report `LEASES_LOST` and abort through `onSignal("SIGTERM")`, once.
  */
 export function holdLeases(
 	ctx: CommandContext,
@@ -468,9 +475,21 @@ export function holdLeases(
 	onSignal: (signal: ForwardedSignal) => void
 ): () => void {
 	const store = ctx.store();
-	const stopHeartbeat = deps.every(HEARTBEAT_INTERVAL_MS, () => {
-		store.heartbeat([...leaseIds], ctx.now());
-	});
+	let lost = false;
+	const beat = () => {
+		if (lost) return;
+		const updated = store.heartbeat([...leaseIds], ctx.now(), HEARTBEAT_INTERVAL_MS);
+		if (updated >= leaseIds.length) return;
+		lost = true;
+		reportError(ctx, "lease", LEASES_LOST);
+		onSignal("SIGTERM");
+	};
+	try {
+		beat();
+	} catch {
+		// a busy store at start is not fatal: the next tick beats again
+	}
+	const stopHeartbeat = deps.every(HEARTBEAT_INTERVAL_MS, beat);
 	const unsubscribe = (["SIGINT", "SIGTERM"] as const).map((signal) => deps.onSignal(signal, () => onSignal(signal)));
 	return () => {
 		stopHeartbeat();

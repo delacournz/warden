@@ -3,9 +3,17 @@ import { dirname, join } from "node:path";
 import { ACCEPT_BUTTONS, centre, DISMISS_BUTTONS, findButton, firstOf, nameOf } from "./alert-buttons";
 import { createAlertReader } from "./alert-reader";
 import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
-import { linkKey, OPEN_LINK_WAIT_MS, sheetlessFor, waitForLink } from "./device-link";
+import {
+	isOpenInSheet,
+	linkInFlight,
+	linkKey,
+	OPEN_LINK_WAIT_MS,
+	sheetlessFor,
+	waitForLink,
+	whileLinkInFlight,
+} from "./device-link";
 import { canProbeFrontmost } from "./driver/alerts";
-import type { Driver, Element, Orientation, Snapshot } from "./driver/driver.types";
+import type { AlertInfo, Driver, Element, Orientation, Snapshot } from "./driver/driver.types";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
@@ -112,6 +120,21 @@ function nextShotNumber(dir: string, issued: ReadonlyMap<string, number>): numbe
 	return highest + 1;
 }
 
+/** The button `device.alert(action)` presses; undefined = none to press. */
+function alertTarget(info: AlertInfo, action: AlertAction): Element | undefined {
+	const { buttons } = info;
+	if (action === "accept") return firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
+	// Cancel on "Open in …?" only throws away a link the test opened: open it
+	if (action === "dismiss" && isOpenInSheet(info)) return findButton(buttons, "Open");
+	if (action === "dismiss") return firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
+	const target = findButton(buttons, action.button);
+	if (target === undefined) {
+		const names = buttons.map((b) => nameOf(b) ?? "?").join(", ");
+		throw new E2eError("ACTION_FAILED", `alert has no "${action.button}" button (buttons: ${names})`);
+	}
+	return target;
+}
+
 export function createDevice({ session, driver, env, clock = systemClock }: DeviceDeps): Device {
 	const issued = new Map<string, number>();
 	// the signal is read per call: the runner swaps it for every attempt
@@ -166,17 +189,9 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 			// the bridge also sees what the app itself shows (Keychain "Save Password?"), so it answers "none" alone
 			const info = await readAlert("axbridge");
 			if (info === null || info.buttons.length === 0) return false;
-			const { buttons } = info;
-			let target: Element | undefined;
-			if (action === "accept") target = firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
-			else if (action === "dismiss") target = firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
-			else {
-				target = findButton(buttons, action.button);
-				if (target === undefined) {
-					const names = buttons.map((b) => nameOf(b) ?? "?").join(", ");
-					throw new E2eError("ACTION_FAILED", `alert has no "${action.button}" button (buttons: ${names})`);
-				}
-			}
+			// openLink is answering this sheet itself and must see it to know the link has one
+			if (isOpenInSheet(info) && typeof action === "string" && linkInFlight(session)) return false;
+			const target = alertTarget(info, action);
 			if (target === undefined) return false;
 			await pressAlertButton(target, "press alert button");
 			return true;
@@ -190,16 +205,18 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 			await unwrap(() => driver.app.openUrl(url), `open ${url}`, signal());
 			const answersSheet = options.accept !== false && driver.platform === "ios" && driver.capabilities.alerts;
 			if (!answersSheet && options.until === undefined) return;
-			await waitForLink(
-				{
-					clock,
-					readAlert,
-					press: (button) => pressAlertButton(button, "accept open-in sheet"),
-					appInFront,
-					isVisible,
-					sheetless: sheetlessFor(session),
-				},
-				{ key: linkKey(url), answersSheet, waitMs, ...(options.until === undefined ? {} : { until: options.until }) }
+			await whileLinkInFlight(session, () =>
+				waitForLink(
+					{
+						clock,
+						readAlert,
+						press: (button) => pressAlertButton(button, "accept open-in sheet"),
+						appInFront,
+						isVisible,
+						sheetless: sheetlessFor(session),
+					},
+					{ key: linkKey(url), answersSheet, waitMs, ...(options.until === undefined ? {} : { until: options.until }) }
+				)
 			);
 		},
 

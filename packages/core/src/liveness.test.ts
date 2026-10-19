@@ -36,3 +36,31 @@ describe("isLeaseAlive", () => {
 		expect(isLeaseAlive(base, 1_500, () => false)).toBe(true);
 	});
 });
+
+describe("isLeaseAlive: supervised leases (pid + heartbeat period)", () => {
+	// `warden run` / `dev` / `batch` / `e2e`: a 30 min TTL, heartbeat every 30 s, its own pid
+	const supervised: Lease = { ...base, ttlMs: 30 * 60_000, pid: 42, heartbeatMs: 30_000 };
+	const dead = () => false;
+
+	test("dead pid within three heartbeat periods is alive (suspend/resume grace)", () => {
+		expect(isLeaseAlive(supervised, 1_000 + 90_000, dead)).toBe(true);
+	});
+
+	test("dead pid past three heartbeat periods is dead, long before the TTL", () => {
+		expect(isLeaseAlive(supervised, 1_000 + 90_001, dead)).toBe(false);
+	});
+
+	test("live pid keeps a supervised lease alive however old its heartbeat", () => {
+		expect(isLeaseAlive(supervised, 1_000 + 3_600_000, (pid) => pid === 42)).toBe(true);
+	});
+
+	test("the TTL still bounds a dead pid when it is shorter than three periods", () => {
+		expect(isLeaseAlive({ ...supervised, ttlMs: 500 }, 1_600, dead)).toBe(false);
+	});
+
+	test("a heartbeat period without a pid keeps the TTL rule", () => {
+		const { pid: _pid, ...pidless } = supervised;
+		expect(isLeaseAlive(pidless, 1_000 + 90_001, dead)).toBe(true);
+		expect(isLeaseAlive(pidless, 1_000 + 30 * 60_000 + 1, () => true)).toBe(false);
+	});
+});

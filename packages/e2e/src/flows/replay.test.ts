@@ -6,7 +6,7 @@ import { snapshotHash } from "../driver/settle";
 import type { Flow, NewStep } from "./flow.schema";
 import { flowOf } from "./flow.testing";
 import { targetFromElement } from "./record";
-import { describeStep, type ReplayDeps, replayFlow } from "./replay";
+import { describeStep, type Located, type ReplayDeps, replayFlow } from "./replay";
 import { recordingActors } from "./replay.testing";
 
 const SIGN_IN = { x: 24, y: 300, width: 342, height: 48 };
@@ -413,3 +413,76 @@ function toSpec(element: Element): ReturnType<typeof el> {
 		children: element.children.map(toSpec),
 	});
 }
+
+describe("a lazily found target that moved past the landmark", () => {
+	/**
+	 * `wait` and `is` as the CLI's flow actors judge them (`apps/cli/src/agent-ui/flow-actors.ts`): present means
+	 * `find` resolved it, showing means it resolved to a visible entry. One look, no polling.
+	 */
+	function judgingActors(driver: ReturnType<typeof fakeDriver>): ReplayDeps["act"] {
+		const present = (located: Located): boolean => "resolved" in located;
+		const showing = (located: Located): boolean => "resolved" in located && located.resolved.entry?.visible === true;
+		return {
+			...recordingActors(driver, []),
+			wait: async (step, ctx) => {
+				const looked = await ctx.find(step.target);
+				if (!looked.success) return looked;
+				const state = step.state ?? "visible";
+				const reached = {
+					visible: showing(looked.data),
+					hidden: !showing(looked.data),
+					attached: present(looked.data),
+					detached: !present(looked.data),
+				}[state];
+				return reached
+					? ok(undefined)
+					: { success: false, error: { code: "replay_divergence", message: `not ${state}` } };
+			},
+			is: async (step, ctx) => {
+				const looked = await ctx.find(step.target);
+				if (!looked.success) return looked;
+				const entry = "resolved" in looked.data ? looked.data.resolved.entry : undefined;
+				const hidden = entry === undefined || !entry.visible;
+				const holds = step.state === "hidden" ? hidden : entry?.visible === true;
+				return holds !== (step.not === true)
+					? ok(undefined)
+					: { success: false, error: { code: "assertion_failed", message: `not ${step.state}` } };
+			},
+		};
+	}
+
+	const base = screen();
+	const signIn = targetFromElement(elementNamed(base, "sign-in"), base);
+	const moved = () => screen({ signIn: { y: SIGN_IN.y + 100 } });
+
+	function run(step: NewStep) {
+		const h = harness(moved());
+		h.deps.act = judgingActors(h.driver);
+		return { outcome: replayFlow(flowOf([step]), h.deps), logs: h.logs };
+	}
+
+	test("is hidden fails: the element is still on screen, 100 pt lower", async () => {
+		const { outcome } = run({ kind: "is", at: 1, target: signIn, state: "hidden" });
+		expect(await outcome).toMatchObject({ status: "failed", error: { code: "assertion_failed" } });
+	});
+
+	test("wait detached fails: the element is still attached", async () => {
+		const { outcome } = run({ kind: "wait", at: 1, target: signIn, state: "detached" });
+		expect((await outcome).status).toBe("diverged");
+	});
+
+	test("wait visible passes, with the move reported as a warning", async () => {
+		const { outcome, logs } = run({ kind: "wait", at: 1, target: signIn, state: "visible" });
+		const result = await outcome;
+		expect(result.status).toBe("passed");
+		expect(result.moves).toEqual([{ step: 0, kind: "wait", reason: expect.stringContaining("moved 100 pt") }]);
+		expect(logs.filter((line) => line.startsWith("moved step 0 wait"))).toHaveLength(1);
+	});
+
+	test("a press on the same moved element still diverges: its position is what it acts on", async () => {
+		const { outcome } = run({ kind: "press", at: 1, target: signIn });
+		const result = await outcome;
+		expect(result.status).toBe("diverged");
+		expect(result.moves).toBeUndefined();
+	});
+});

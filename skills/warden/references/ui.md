@@ -40,6 +40,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--platform ios\|android` `--profile <slug>` `--runtime <rt>` | choose the device for a `--claim` with none named (default ios) |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--no-record` | keep this step out of a running recording |
+| `--force` | drive the device while your running `warden e2e` / `batch` / `run` / `dev` holds it (else exit 2 `device_busy`); it disturbs that run |
 | `--json` | one JSON document on stdout |
 
 Actions also take `--settle [ms]`: wait for a quiet screen (budget 3000 ms), then print what changed.

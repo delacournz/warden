@@ -59,6 +59,11 @@ export type UiadBackendDeps = {
 /** How many times a server may be started again after it died, and how many starts in a row may fail, before giving up. */
 const MAX_RESTARTS = 3;
 const MAX_START_FAILURES = 2;
+/**
+ * How many starts in a row must fail to connect UiAutomation (`connect_failed`) before that is written down. One can be
+ * a `system_server` hiccup (an emulator that has just booted, a loaded host), so it is only one failed start.
+ */
+const CONNECT_FAILURES_TO_PERSIST = 2;
 /** After a busy slot, how long before asking again (a polling loop must not start a server on every tick). */
 const BUSY_BACKOFF_MS = 2_000;
 
@@ -70,7 +75,11 @@ export function uiadFromEnv(env: Readonly<Record<string, string | undefined>>): 
 	return env[UIAD_ENV] === "0" ? undefined : true;
 }
 
-/** A start failure that retrying will not fix: the hidden API is missing, or the server cannot even load. */
+/**
+ * A start failure that retrying will not fix: the hidden API is missing, or the server cannot even load. An
+ * `E_UNSUPPORTED` is written down at once; a `connect_failed` only when {@link CONNECT_FAILURES_TO_PERSIST} starts in a
+ * row end with it, since the server cannot yet tell a missing API from a transient connect error.
+ */
 export function isPersistentStartFailure(error: DriverError): boolean {
 	const detail: unknown = error.detail;
 	const reason =
@@ -89,6 +98,8 @@ export function createUiadBackend(deps: UiadBackendDeps): UiadBackend {
 	let starting: Promise<UiadClient | undefined> | undefined;
 	let started = 0;
 	let startFailures = 0;
+	/** starts in a row that failed with `connect_failed` */
+	let connectFailures = 0;
 	let busy: { error: DriverError; at: number } | undefined;
 
 	const giveUp = (why: string): void => {
@@ -117,6 +128,7 @@ export function createUiadBackend(deps: UiadBackendDeps): UiadBackend {
 		if (launched.success) {
 			started++;
 			startFailures = 0;
+			connectFailures = 0;
 			busy = undefined;
 			current = launched.data;
 			return current;
@@ -128,13 +140,15 @@ export function createUiadBackend(deps: UiadBackendDeps): UiadBackend {
 	function failedStart(error: DriverError): undefined {
 		if (isBusy(error)) {
 			busy = { error, at: clock.now() };
+			connectFailures = 0;
 			log?.(`uiad: ${error.message}`);
 			return undefined;
 		}
 		log?.(`uiad: could not start (${error.code}: ${error.message})`);
 		busy = undefined;
 		startFailures++;
-		if (isPersistentStartFailure(error)) {
+		connectFailures = error.code !== "E_UNSUPPORTED" && isPersistentStartFailure(error) ? connectFailures + 1 : 0;
+		if (error.code === "E_UNSUPPORTED" || connectFailures >= CONNECT_FAILURES_TO_PERSIST) {
 			deps.onUnsupported?.(uiadBuildId());
 			giveUp(error.message);
 		} else if (startFailures >= MAX_START_FAILURES) {

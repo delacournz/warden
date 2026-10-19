@@ -1,5 +1,6 @@
 import { createApp } from "./app";
 import { createDevice, type Device } from "./device";
+import { linkInFlight } from "./device-link";
 import type { DevtoolsFacet } from "./devtools/devtools.types";
 import type { BaseFixtures, FixtureContext } from "./runner/fixtures.types";
 import type { ScreenHost } from "./screen/context";
@@ -14,7 +15,9 @@ export function screenHostFor(ctx: FixtureContext, device?: Pick<Device, "alert"
 	const { session } = ctx;
 	const alerts = ctx.systemAlerts;
 	const answerSystemAlert =
-		device === undefined || alerts === undefined || alerts === "off" ? undefined : () => device.alert(alerts);
+		device === undefined || alerts === undefined || alerts === "off"
+			? undefined
+			: async () => !linkInFlight(session) && (await device.alert(alerts));
 	// the facet is attached on the first tree read; without a Metro URL (release build) there is nothing to read
 	const reactTree: Pick<DevtoolsFacet, "tree"> | undefined =
 		session.env.metroUrl === undefined
