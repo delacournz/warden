@@ -191,7 +191,7 @@ describe("steps", () => {
 			{ kind: "alert", at: 1, action: { button: "Allow" } },
 			{ kind: "alert", at: 2, action: "dismiss" },
 			{ kind: "reload", at: 3 },
-			{ kind: "screenshot", at: 4 }
+			{ kind: "screen", type: "screenshot", at: 4 }
 		);
 		expect(spec).toContain('await device.alert({ button: "Allow" });');
 		expect(spec).toContain('await device.alert("dismiss");');

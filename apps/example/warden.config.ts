@@ -53,6 +53,7 @@ const AFFECTED = {
 		"todo-detail": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/todo/[id].tsx"] },
 		settings: { entries: [...SIGNED_IN, "src/app/(tabs)/settings.tsx"] },
 		devtools: { entries: ["src/app/welcome.tsx"] },
+		gestures: { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
 

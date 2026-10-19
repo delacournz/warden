@@ -226,8 +226,16 @@ describe("warden ui on a device a live warden process holds (refuse unless --for
 		expect(h.opens.count).toBe(0);
 	});
 
-	test("every driving subcommand refuses (screenshot, type, open, close)", async () => {
-		for (const argv of [["screenshot"], ["type", "hi"], ["open", "com.x.y"], ["close"]]) {
+	test("every driving subcommand refuses (screen screenshot/video, type, open, close, gesture swipe)", async () => {
+		// `screenshot` and `video` live under the `screen` group, swipes under `gesture` (WDN-GES, #34)
+		for (const argv of [
+			["screen", "screenshot"],
+			["screen", "video", "start"],
+			["type", "hi"],
+			["open", "com.x.y"],
+			["close"],
+			["gesture", "swipe", "up"],
+		]) {
 			const h = harness(() => snap(), { lease: RUN, pidAlive: () => true });
 			expect(await h.run(...argv)).toBe(2);
 			expect(h.opens.count).toBe(0);

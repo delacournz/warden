@@ -9,6 +9,7 @@ import {
 	dumpStdoutArgv,
 	dumpTtyHostArgv,
 	forceStopArgv,
+	gestureMotionCommand,
 	getpropArgv,
 	installArgv,
 	keycombinationArgv,
@@ -323,6 +324,48 @@ describe("hold-then-move drag", () => {
 			dragMotionCommand({ x: 0, y: 0 }, { x: 10, y: 20 }, { pressMs: 100, durationMs: 200, releaseMs: 0, steps: 1 })
 		).toBe(
 			"input motionevent DOWN 0 0 && sleep 0.100 && input motionevent MOVE 10 20 && sleep 0.200 && sleep 0.000 && input motionevent UP 10 20 || (input motionevent CANCEL 10 20; exit 1)"
+		);
+	});
+});
+
+describe("single-finger gesture line", () => {
+	const plan = (n: number, holdMs = 0, releaseMs = 0) => ({
+		paths: [Array.from({ length: n }, (_, i) => ({ x: i * 10, y: i }))],
+		frameMs: 20,
+		holdMs,
+		releaseMs,
+		totalMs: (n - 1) * 20 + holdMs + releaseMs,
+	});
+	const moves = (line: string): string[] => line.match(/motionevent MOVE \d+ \d+/g) ?? [];
+
+	test("a short path sends every frame as a MOVE, then UP at the last", () => {
+		const line = gestureMotionCommand(plan(3, 100, 50));
+		expect(line).toBe(
+			"input motionevent DOWN 0 0 && sleep 0.100 && sleep 0.020 && input motionevent MOVE 10 1 && sleep 0.020 && input motionevent MOVE 20 2 && sleep 0.050 && input motionevent UP 20 2 || (input motionevent CANCEL 20 2; exit 1)"
+		);
+	});
+
+	test("a long path is downsampled to at most 12 evenly spaced MOVEs and keeps the last frame", () => {
+		const line = gestureMotionCommand(plan(101));
+		const found = moves(line);
+		expect(found).toHaveLength(12);
+		expect(found.at(-1)).toBe("motionevent MOVE 1000 100");
+		const xs = found.map((m) => Number(m.split(" ")[2]) / 10);
+		const gaps = xs.slice(1).map((x, i) => x - (xs[i] as number));
+		expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(1);
+		expect(line).toContain("input motionevent UP 1000 100");
+	});
+
+	test("maxMoves is honoured, and the sleeps keep the total travel time", () => {
+		const line = gestureMotionCommand(plan(101), 4);
+		expect(moves(line)).toHaveLength(4);
+		const sleeps = [...line.matchAll(/sleep (\d+\.\d+)/g)].map((m) => Number(m[1]));
+		expect(sleeps.reduce((a, b) => a + b, 0)).toBeCloseTo(2, 2);
+	});
+
+	test("one frame is DOWN then UP", () => {
+		expect(gestureMotionCommand(plan(1))).toBe(
+			"input motionevent DOWN 0 0 && sleep 0.000 && sleep 0.000 && input motionevent UP 0 0 || (input motionevent CANCEL 0 0; exit 1)"
 		);
 	});
 });

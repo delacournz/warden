@@ -13,6 +13,7 @@
 		"lint": "turbo lint",
 		"fmt": "turbo fmt",
 		"test": "turbo test",
+		"release": "bun apps/cli/scripts/release.ts",
 		"cli:link": "bun apps/cli/scripts/link.ts link",
 		"cli:unlink": "bun apps/cli/scripts/link.ts unlink",
 		"smoke:ui-bench": "bun scripts/smoke/ui-bench.ts",

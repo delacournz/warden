@@ -161,7 +161,7 @@ describe("appendStep", () => {
 	test("a missing file is flow_missing and an invalid one flow_invalid", async () => {
 		const missing = await appendStep(join(dir, "nope.flow.json"), { kind: "home", at: 1 });
 		expect(!missing.success && missing.error.code).toBe("flow_missing");
-		writeFileSync(file, '{"v":2}');
+		writeFileSync(file, '{"v":3}');
 		const invalid = await appendStep(file, { kind: "home", at: 1 });
 		expect(!invalid.success && invalid.error.code).toBe("flow_invalid");
 	});
@@ -201,7 +201,7 @@ describe("appendStep", () => {
 		const run = async (tag: string) => {
 			const results = [];
 			for (let n = 0; n < total; n += 1)
-				results.push(await appendStep(file, { kind: "screenshot", at: n, name: `${tag}-${n}` }));
+				results.push(await appendStep(file, { kind: "screen", type: "screenshot", at: n, name: `${tag}-${n}` }));
 			return results;
 		};
 		const [a, b] = await Promise.all([run("a"), run("b")]);
@@ -212,7 +212,9 @@ describe("appendStep", () => {
 		expect(read.data.steps.map((step) => step.i)).toEqual(Array.from({ length: total * 2 }, (_, i) => i));
 		for (const tag of ["a", "b"]) {
 			const sequence = read.data.steps.flatMap((step) =>
-				step.kind === "screenshot" && step.name?.startsWith(`${tag}-`) ? [Number(step.name.slice(2))] : []
+				step.kind === "screen" && step.type === "screenshot" && step.name?.startsWith(`${tag}-`)
+					? [Number(step.name.slice(2))]
+					: []
 			);
 			expect(sequence).toEqual(Array.from({ length: total }, (_, n) => n));
 		}

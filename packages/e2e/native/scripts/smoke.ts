@@ -2,10 +2,12 @@
 /**
  * Hand-run smoke test of the iOS driver against a real, booted simulator (never part of `bun test`):
  *
- *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--out <dir>] [--fills <n>] [--kill-bridge] [--kill-helper]
+ *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--out <dir>] [--fills <n>]
+ *     [--focus-types <n> [--focus-mode cold|switch|same] [--other-field <testID>] [--raw-tap]] [--kill-bridge] [--kill-helper]
  *
  * open → health → launch → settle → snapshot → tap first button → fill a textfield (if present; `--fills <n>` then
- * fills it n more times through the spec `fill` clear path and counts the lost characters) →
+ * fills it n more times through the spec `fill` clear path and counts the lost characters; `--focus-types <n>` taps and
+ * types into it n times, see `focusTypeLoop`) →
  * swipe → screenshot → settle → terminate → close. Prints the duration of each step; exits 1 when a
  * step fails; ops the helper does not implement yet (`E_BAD_REQUEST`) are reported as skipped. Lease the simulator first (`warden claim ios`) and install the app (`warden app ensure`).
  */
@@ -16,10 +18,11 @@ import { bunExec } from "@delacour/warden-core/exec";
 import { canProbeFrontmost, canReadAlertOn } from "../../src/driver/alerts";
 import type { AlertInfo, Driver, DriverResult, Element, Point, Snapshot } from "../../src/driver/driver.types";
 import { openIosDriver } from "../../src/driver/ios/ios-driver";
+import { canSelectAll } from "../../src/driver/typing";
 import { ENV_NAMES } from "../../src/env";
 import { focusPoint } from "../../src/screen/actions";
-import { focusClearType } from "../../src/screen/field";
-import { indexSnapshot } from "../../src/screen/nodes";
+import { focusClearType, tapToFocus } from "../../src/screen/field";
+import { entryOfElement, indexSnapshot, type NodeEntry } from "../../src/screen/nodes";
 
 const DEFAULT_BUNDLE = "nz.co.delacour.warden.example";
 const TYPED = "Hello, World 123!";
@@ -160,10 +163,83 @@ async function fillLoop(driver: Driver, identifier: string | undefined, fills: n
 	);
 }
 
+/** The field `identifier` on the current screen, polled for up to `timeoutMs`. */
+async function findField(driver: Driver, identifier: string, timeoutMs = 5000): Promise<NodeEntry | undefined> {
+	const started = performance.now();
+	while (performance.now() - started < timeoutMs) {
+		const snap = await driver.snapshot();
+		const entry = snap.success
+			? indexSnapshot(snap.data).entries.find((e) => e.element.identifier === identifier && usable(e.element))
+			: undefined;
+		if (entry) return entry;
+		await Bun.sleep(100);
+	}
+	return undefined;
+}
+
+/**
+ * `--focus-types <n>`: tap the field, then type into it, n times, reading each result back; the tap is `tapToFocus`
+ * (waits until the field reports focus), or a bare `tap` with `--raw-tap` (what lost "e" of "Hello" in 5 of 400 runs).
+ * `--focus-mode cold` (default) relaunches the app first, so the keyboard has to come up; `switch` hops from
+ * `--other-field` with the keyboard already up; `same` re-taps the field that already has focus.
+ */
+async function focusTypeLoop(driver: Driver, identifier: string, other: string, count: number): Promise<void> {
+	const modeArg = arg("focus-mode");
+	const mode = modeArg === "switch" || modeArg === "same" ? modeArg : "cold";
+	const raw = process.argv.includes("--raw-tap");
+	let lost = 0;
+	let typeMs = 0;
+	let focusMs = 0;
+	for (let run = 0; run < count; run += 1) {
+		if (mode === "cold") {
+			await driver.app.terminate(bundle);
+			await driver.app.launch(bundle);
+			await driver.settle({ timeoutMs: 10_000 });
+			await reachTextfield(driver);
+		} else {
+			const field = await findField(driver, identifier);
+			if (field) {
+				await tapToFocus(driver, Bun.sleep, centre(field.element), field);
+				if (canSelectAll(driver)) await driver.selectAll();
+				await driver.key("Backspace");
+			}
+			const away = mode === "switch" ? await findField(driver, other) : undefined;
+			if (away) await tapToFocus(driver, Bun.sleep, centre(away.element), away);
+			await driver.settle();
+		}
+		const field = await findField(driver, identifier);
+		if (!field) {
+			lost += 1;
+			process.stdout.write(`FAIL  focus-type #${run + 1}: ${identifier} not found\n`);
+			continue;
+		}
+		const tapStarted = performance.now();
+		const point = centre(field.element);
+		const tapped = raw ? await driver.tap(point) : await tapToFocus(driver, Bun.sleep, point, field);
+		const started = performance.now();
+		focusMs += started - tapStarted;
+		const typed = tapped.success ? await driver.typeText(TYPED) : tapped;
+		typeMs += performance.now() - started;
+		const back = typed.success ? await readBack(driver, identifier, (value) => value === TYPED) : undefined;
+		if (back?.value !== TYPED) {
+			lost += 1;
+			process.stdout.write(
+				`FAIL  focus-type #${run + 1} -> ${JSON.stringify(back?.value)} ${typed.success ? "" : typed.error.code}\n`
+			);
+		}
+	}
+	if (lost > 0) failures += 1;
+	const runs = Math.max(1, count);
+	process.stdout.write(
+		`${lost === 0 ? "ok   " : "FAIL "} ${count} focus-types (${mode}${raw ? ", raw tap" : ""})  ${lost} not exact, tap+focus ${Math.round(focusMs / runs)} ms, typeText ${(typeMs / (runs * TYPED.length)).toFixed(1)} ms/char\n`
+	);
+}
+
 async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 	const field = await reachTextfield(driver);
 	if (field) {
-		await step(`focus ${field.identifier ?? "textfield"}`, () => driver.tap(centre(field)));
+		const entry = entryOfElement(field, { platform: driver.platform });
+		await step(`focus ${field.identifier ?? "textfield"}`, () => tapToFocus(driver, Bun.sleep, centre(field), entry));
 		await step("typeText", () => driver.typeText(TYPED));
 		await step(
 			"settle",
@@ -185,11 +261,53 @@ async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 		);
 		const fills = Number(arg("fills") ?? 0);
 		if (fills > 0) await fillLoop(driver, field.identifier, fills);
+		const focusTypes = Number(arg("focus-types") ?? 0);
+		if (focusTypes > 0 && field.identifier)
+			await focusTypeLoop(driver, field.identifier, arg("other-field") ?? "sign-in-password", focusTypes);
 	} else process.stdout.write("skip  fill                     no textfield reachable\n");
 
 	const { width, height } = snapshot.screen;
 	await step("swipe up", () =>
 		driver.swipe({ x: width / 2, y: height * 0.7 }, { x: width / 2, y: height * 0.3 }, { durationMs: 300 })
+	);
+	await gestureSteps(driver, { x: width / 2, y: height / 2 });
+}
+
+/** pinch, rotate and 1- and 2-finger paths around `middle` (GES-2/3): each should land without an error. */
+async function gestureSteps(driver: Driver, middle: { x: number; y: number }): Promise<void> {
+	await step("pinch", () => driver.pinch(middle, 1.5, { durationMs: 400 }));
+	await step("rotate", () => driver.rotate(middle, 90, { durationMs: 500 }));
+	await step("gesture 1-finger", () =>
+		driver.gesture(
+			[
+				{
+					points: [
+						{ x: middle.x - 60, y: middle.y },
+						{ x: middle.x + 60, y: middle.y },
+					],
+				},
+			],
+			{ durationMs: 300 }
+		)
+	);
+	await step("gesture 2-finger", () =>
+		driver.gesture(
+			[
+				{
+					points: [
+						{ x: middle.x - 40, y: middle.y },
+						{ x: middle.x - 80, y: middle.y },
+					],
+				},
+				{
+					points: [
+						{ x: middle.x + 40, y: middle.y },
+						{ x: middle.x + 80, y: middle.y },
+					],
+				},
+			],
+			{ durationMs: 300 }
+		)
 	);
 }
 
@@ -233,7 +351,7 @@ async function blind(driver: Driver, screen: { width: number; height: number }):
 	await step("drag", () =>
 		driver.drag({ x: middle.x, y: screen.height * 0.6 }, { x: middle.x, y: screen.height * 0.4 }, { durationMs: 300 })
 	);
-	await step("pinch", () => driver.pinch(middle, 1.5, { durationMs: 400 }));
+	await gestureSteps(driver, middle);
 }
 
 /** `--kill-helper`: SIGKILL warden-simd while a long press is in flight, expect one E_HELPER_CRASHED, then success. */

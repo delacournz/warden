@@ -8,7 +8,7 @@ import {
 	type FakeOverride,
 	fakeDriver,
 } from "@delacour/warden-e2e/driver/driver.testing";
-import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import type { DriverCapabilities, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import { ok } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import type { RecordStep } from "../agent-ui/record";
@@ -47,6 +47,8 @@ export type HarnessOptions = {
 	selectAll?: boolean;
 	/** the fake driver offers `setText` (like the Android driver with `warden-uiad`) */
 	setText?: boolean;
+	/** override the fake driver's capabilities (e.g. `pinch: false`, `maxPointers: 1`) */
+	capabilities?: Partial<DriverCapabilities>;
 	video?: UiDeps["video"];
 	/** the device lease's holder pid + label (a running `warden e2e` / `batch` / `run` sets both) */
 	lease?: { pid?: number; label?: string };
@@ -69,6 +71,7 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 		screens,
 		...(options.selectAll ? { selectAll: true } : {}),
 		...(options.setText ? { setText: true } : {}),
+		...(options.capabilities ? { capabilities: options.capabilities } : {}),
 		onCall: (call) => options.onCall?.(call, driver),
 	});
 	const opens = { count: 0 };

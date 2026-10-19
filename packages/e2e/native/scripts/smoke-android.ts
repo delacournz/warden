@@ -55,6 +55,7 @@ const opened = await openAndroidDriver({
 	serial,
 	adb: androidTools(process.env).adb,
 	exec: bunExec,
+	uiad: true,
 	log: (line) => console.log(`      ${line}`),
 });
 if (!opened.success) {
@@ -112,6 +113,47 @@ try {
 		const h = snap.screen.height;
 		await step("swipe up", () => driver.swipe({ x: w / 2, y: h * 0.7 }, { x: w / 2, y: h * 0.3 }, { durationMs: 250 }));
 	}
+
+	const cx = (snap?.screen.width ?? 1080) / 2;
+	const cy = (snap?.screen.height ?? 2400) / 2;
+	await step("pinch out", () => driver.pinch({ x: cx, y: cy }, 2), false);
+	await step("pinch in", () => driver.pinch({ x: cx, y: cy }, 0.5), false);
+	await step("rotate 90", () => driver.rotate({ x: cx, y: cy }, 90), false);
+	await step(
+		"gesture (one finger)",
+		() =>
+			driver.gesture(
+				[
+					{
+						points: [
+							{ x: cx, y: cy * 1.4 },
+							{ x: cx, y: cy * 0.6 },
+						],
+					},
+				],
+				{ durationMs: 300 }
+			),
+		false
+	);
+	await step(
+		"gesture (two fingers)",
+		() =>
+			driver.gesture([
+				{
+					points: [
+						{ x: cx - 100, y: cy },
+						{ x: cx - 200, y: cy },
+					],
+				},
+				{
+					points: [
+						{ x: cx + 100, y: cy },
+						{ x: cx + 200, y: cy },
+					],
+				},
+			]),
+		false
+	);
 
 	const shot = await step("screenshot", () => driver.screenshot({ path: join(out, "smoke.png") }));
 	if (shot?.path) console.log(`      ${shot.path}`);

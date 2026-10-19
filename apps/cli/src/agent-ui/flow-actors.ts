@@ -1,4 +1,4 @@
-import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
+import type { Driver, Point, Rect, ScreenInfo } from "@delacour/warden-e2e/driver/driver.types";
 import { typeText } from "@delacour/warden-e2e/driver/typing";
 import type { Target } from "@delacour/warden-e2e/flows/flow.schema";
 import {
@@ -9,7 +9,19 @@ import {
 	type Located,
 	type ResolvedTarget,
 } from "@delacour/warden-e2e/flows/replay";
-import { contentPath, fieldValue, focusPoint, screenRect, visibleRect } from "@delacour/warden-e2e/screen/actions";
+import {
+	centreOf,
+	contentPath,
+	fieldValue,
+	focusPoint,
+	PATH_MS,
+	PINCH_MS,
+	pinchRadius,
+	ROTATE_MS,
+	rotateRadius,
+	screenRect,
+	visibleRect,
+} from "@delacour/warden-e2e/screen/actions";
 import { focusClearType } from "@delacour/warden-e2e/screen/field";
 import { textOf } from "@delacour/warden-e2e/screen/locator";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -67,6 +79,8 @@ async function watch(
 const present = (located: Located): boolean => "resolved" in located;
 const showing = (located: Located): boolean => "resolved" in located && located.resolved.entry?.visible === true;
 
+type Region = { rect: Rect; screen: ScreenInfo; center: Point };
+
 /** The replay executor for every step kind, bound to a real driver through the helpers the `warden ui` actions use. */
 export function flowActors(
 	ctx: CommandContext,
@@ -76,16 +90,22 @@ export function flowActors(
 	timeoutMs: number
 ): ActMap {
 	const facade = () => deviceFacade(ctx, deps, device, driver, timeoutMs);
+	/** Where a gesture works: the visible frame of a resolved element (or the whole screen), and its centre; a coords target keeps its point. */
+	const regionFor = async (c: ActContext, resolved: ResolvedTarget | undefined): Promise<Region | Done> => {
+		const taken = c.snapshot ? undefined : await driver.snapshot({ interactiveOnly: true });
+		const screen = c.snapshot?.screen ?? (taken?.success ? taken.data.screen : undefined);
+		if (!screen) return fail("failed", "no screen for the gesture");
+		const rect = resolved?.element ? visibleRect(resolved.element.frame, screen) : screenRect(screen);
+		return { rect, screen, center: resolved && !resolved.element ? resolved.point : centreOf(rect) };
+	};
 	const swipeWithin = async (
 		c: ActContext,
 		way: "up" | "down" | "left" | "right",
 		region: ResolvedTarget | undefined
 	) => {
-		const taken = c.snapshot ? undefined : await driver.snapshot({ interactiveOnly: true });
-		const screen = c.snapshot?.screen ?? (taken?.success ? taken.data.screen : undefined);
-		if (!screen) return fail("failed", "no screen to swipe in");
-		const rect = region?.element ? visibleRect(region.element.frame, screen) : screenRect(screen);
-		const path = contentPath(way, rect, DEFAULT_SCROLL_AMOUNT);
+		const where = await regionFor(c, region);
+		if ("success" in where) return where;
+		const path = contentPath(way, where.rect, DEFAULT_SCROLL_AMOUNT);
 		return settled(await driver.swipe(path.from, path.to, { durationMs: SWIPE_MS, momentum: false }));
 	};
 
@@ -108,12 +128,6 @@ export function flowActors(
 			const at = pointOf(step, c.targets.target);
 			return isDone(at) ? at : settled(await driver.tap(at.point));
 		},
-		async longpress(step, c) {
-			const at = pointOf(step, c.targets.target);
-			return isDone(at)
-				? at
-				: settled(await driver.longPress(at.point, { durationMs: step.durationMs ?? DEFAULT_LONGPRESS_MS }));
-		},
 		async fill(step, c) {
 			const at = pointOf(step, c.targets.target);
 			if (isDone(at)) return at;
@@ -134,12 +148,46 @@ export function flowActors(
 		async key(step) {
 			return settled(await driver.key(step.key, step.modifiers));
 		},
-		async swipe(step, c) {
-			if (step.gesture.by === "path") {
-				const { from, to, durationMs } = step.gesture;
+		async "gesture.swipe"(step, c) {
+			if (step.by === "path") {
+				const { from, to, durationMs } = step;
 				return settled(await driver.swipe(from, to, { durationMs: durationMs ?? SWIPE_MS, momentum: false }));
 			}
-			return swipeWithin(c, step.gesture.direction, c.targets.target);
+			return swipeWithin(c, step.direction, c.targets.target);
+		},
+		async "gesture.longpress"(step, c) {
+			const at = pointOf(step, c.targets.target);
+			return isDone(at)
+				? at
+				: settled(await driver.longPress(at.point, { durationMs: step.durationMs ?? DEFAULT_LONGPRESS_MS }));
+		},
+		async "gesture.pinch"(step, c) {
+			const where = await regionFor(c, c.targets.target);
+			if ("success" in where) return where;
+			return settled(
+				await driver.pinch(where.center, step.scale, {
+					durationMs: step.durationMs ?? PINCH_MS,
+					radius: step.radius ?? pinchRadius(where.rect, step.scale, where.screen),
+				})
+			);
+		},
+		async "gesture.rotate"(step, c) {
+			const where = await regionFor(c, c.targets.target);
+			if ("success" in where) return where;
+			return settled(
+				await driver.rotate(where.center, step.degrees, {
+					durationMs: step.durationMs ?? ROTATE_MS,
+					radius: step.radius ?? rotateRadius(where.rect, where.screen),
+				})
+			);
+		},
+		async "gesture.path"(step) {
+			return settled(
+				await driver.gesture(
+					step.paths.map((points) => ({ points })),
+					{ durationMs: step.durationMs ?? PATH_MS }
+				)
+			);
 		},
 		async scroll(step, c) {
 			const way = step.direction ?? "down";
@@ -224,16 +272,16 @@ export function flowActors(
 				"reload needs a Metro devtools session, which warden ui replay does not attach"
 			);
 		},
-		async rotate(step) {
+		async "screen.rotate"(step) {
 			return settled(await driver.orientation(step.orientation));
 		},
-		async appearance(step) {
+		async "screen.appearance"(step) {
 			return settled(await driver.appearance(step.mode));
 		},
 		async snapshot() {
 			return done;
 		},
-		async screenshot() {
+		async "screen.screenshot"() {
 			return settled(await driver.screenshot({ path: nextShotPath(ctx, device.udid) }));
 		},
 	};
