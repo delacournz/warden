@@ -7,7 +7,7 @@ on:
 permissions: {}
 
 # Build and publish are split so dependency code never runs next to publish
-# credentials: `build` installs/compiles with a read-only token and no secrets;
+# credentials: `build` installs/compiles with a read-only token and only the `read:packages` NPM_TOKEN;
 # `publish` holds the OIDC + release write permissions but never installs or
 # executes repo dependencies. `build` runs on Namespace like CI; `publish` stays
 # on a GitHub-hosted runner — npm trusted publishing + provenance refuse
@@ -38,7 +38,11 @@ jobs:
         with:
           path: ~/Library/Caches/warden-idb
 
+      # `@delacournz/*` resolves from GitHub Packages (bunfig.toml): NPM_TOKEN is a classic PAT with
+      # only `read:packages`, scoped to this step so nothing else in the job can read it.
       - run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Tag must match apps/cli version
         run: |
@@ -112,12 +116,11 @@ jobs:
       # Platform packages first so @delacour/warden's optionalDependencies resolve the moment it lands;
       # @delacour/warden-e2e last (exact peer dependency on @delacour/warden, same version).
       # Already-published versions are skipped, so a re-run finishes a partial publish.
-      # Auth is OIDC trusted publishing (npm >= 11.5.1); NPM_TOKEN is only a fallback until
-      # the trusted publisher is configured on npmjs.com, then delete the secret.
+      # Auth is OIDC trusted publishing (npm >= 11.5.1) only. Never pass NPM_TOKEN here: it is the
+      # GitHub Packages read token for `bun install`, and npm would send it to registry.npmjs.org.
       # --ignore-scripts: nothing in the tarballs runs here.
       - name: Publish to npm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           REPO_PRIVATE: ${{ github.event.repository.private }}
         run: |
           provenance=""
