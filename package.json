@@ -39,7 +39,8 @@
 		"typescript": "^5.9.3"
 	},
 	"overrides": {
-		"mdast-util-to-markdown": "2.1.2"
+		"mdast-util-to-markdown": "2.1.2",
+		"@delacournz/otel": "0.1.0"
 	},
 	"patchedDependencies": {
 		"react-native-pulsar@1.7.0": "patches/react-native-pulsar@1.7.0.patch"
