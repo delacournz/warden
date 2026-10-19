@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
+import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { claimCommand } from "./claim";
@@ -29,7 +30,7 @@ describe("warden claim", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--count", "2"], fakeSimctl([wardenSim(1), wardenSim(2, "Booted")], calls));
 		expect(await claimCommand.run(c)).toBe(0);
-		expect(calls.map((x) => x.join(" "))).toContain("xcrun simctl boot U1");
+		expect(calls.map((x) => x.join(" "))).toContain("xcrun simctl bootstatus U1 -b");
 		const text = c.stdout.join("\n");
 		expect(text).toContain("U1");
 		expect(text).toContain("U2");
@@ -185,5 +186,16 @@ describe("warden claim → arrange", () => {
 		const c = setup(["ios"], fakeSimctl([wardenSim(2, "Booted")], calls));
 		expect(await claimCommand.run(c)).toBe(0);
 		expect(calls.some((x) => x.includes("print-disabled"))).toBe(false);
+	});
+});
+
+describe("warden claim auto-gc (16-1)", () => {
+	test("auto-gc is considered only after the claim has leased its device", async () => {
+		const order = autoGcOrder(fakeSimctl([wardenSim(2, "Booted")]), () => c.db);
+		const c = setup(["ios"], order.exec);
+		c.env = allowAutoGc(c.env);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(order.gcBeforeClaim()).toBe(false);
+		expect(autoGcConsidered(c.db)).toBe(true);
 	});
 });

@@ -11,15 +11,17 @@ import {
 	type HelperDeps,
 	helperStatus,
 	ownerKey,
+	SHUTDOWN_WAIT_MS,
 	type SpawnSpec,
 	type StartOutcome,
 	type StartSignal,
+	simdEnvKey,
 	socketPathFor,
 	stopHelper,
 	sweepDeadHelpers,
 	watchStart,
 } from "./helper";
-import { readState, writeState } from "./state";
+import { type HelperRecord, readState, writeState } from "./state";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -150,7 +152,7 @@ describe("ensureHelper", () => {
 			"600",
 		]);
 		expect(s.spawns[0]?.logPath).toBe(join(c.cwd, "simd", `${UDID}.log`));
-		expect(readState(c, UDID).helper).toEqual({ pid: 4242, socket: socketPath });
+		expect(readState(c, UDID).helper).toEqual({ pid: 4242, socket: socketPath, env: simdEnvKey(c.env) });
 		expect(c.db.getMeta(`simd_spawn:${UDID}`)).toBeUndefined();
 	});
 
@@ -194,17 +196,46 @@ describe("ensureHelper", () => {
 		expect(hung.s.spawns).toHaveLength(1);
 	});
 
-	test("never listens: engine_unavailable after 5 s, row released", async () => {
+	test("never listens: engine_unavailable after 15 s, the spawned child is SIGTERMed and forgotten, row released", async () => {
 		const { s, socketPath, host, c } = setup();
 		s.listenAfterMs.value = undefined;
 		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
 		expect(res.success).toBe(false);
 		if (!res.success) {
 			expect(res.error.code).toBe("engine_unavailable");
-			expect(res.error.message).toContain("within 5000 ms");
+			expect(res.error.message).toContain("within 15000 ms");
 		}
-		expect(s.clock.t - 1_000_000).toBeGreaterThanOrEqual(5000);
+		expect(s.clock.t - 1_000_000).toBeGreaterThanOrEqual(15_000);
+		expect(s.kills).toEqual([[4242, "SIGTERM"]]);
+		expect(readState(c, UDID).helper).toBeUndefined();
 		expect(c.db.getMeta(`simd_spawn:${UDID}`)).toBeUndefined();
+	});
+
+	test("a spawned child still starting after 5 s (listens at 7 s) is waited for, not abandoned (14-1)", async () => {
+		const { s, socketPath, host, c } = setup();
+		s.listenAfterMs.value = 7000;
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
+		expect(s.spawns).toHaveLength(1);
+		expect(s.kills).toEqual([]);
+		expect(readState(c, UDID).helper?.pid).toBe(4242);
+	});
+
+	test("a waiter keeps waiting past 5 s while a live spawn row says another caller is still starting (14-1)", async () => {
+		const { s, socketPath, host, c } = setup();
+		c.db.setMeta(`simd_spawn:${UDID}`, JSON.stringify({ pid: 999, at: s.clock.t }));
+		s.alive.add(999);
+		const connect = s.deps.connect;
+		const deps: HelperDeps = {
+			...s.deps,
+			connect: async (path) => {
+				if (s.clock.t - 1_000_000 >= 7000) s.up.value = true;
+				return connect(path);
+			},
+		};
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: false } });
+		expect(s.spawns).toEqual([]);
 	});
 
 	test("the spawned helper dies at startup: fails fast with the log tail", async () => {
@@ -250,6 +281,103 @@ describe("ensureHelper", () => {
 		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
 		expect(res).toEqual({ success: true, data: { socketPath, spawned: false } });
 		expect(s.spawns).toEqual([]);
+	});
+});
+
+const timedOut: DriverError = {
+	code: "E_TIMEOUT",
+	message: "warden-simd sent no ready event within 2000 ms",
+	retryable: true,
+};
+
+describe("ensureHelper: silence vs a busy helper (14-2)", () => {
+	test("no socket file: spawns at once, without probing a socket that is not there", async () => {
+		const { s, socketPath, host } = setup();
+		s.signal.make = signalOf("up", { count: 0 });
+		const res = await ensureHelper(host, UDID, {
+			socketPath,
+			helperPath: "/h/w",
+			deps: { ...s.deps, socketExists: () => s.spawns.length > 0 },
+		});
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
+		expect(s.connects.total - s.connects.afterSpawn).toBe(0);
+		expect(s.sleeps).toEqual([]);
+	});
+
+	/** A resident helper (pid 777, recorded, socket file present) whose handshake times out while `busy()` holds. */
+	function busyResident(busy: () => boolean) {
+		const t = setup();
+		t.s.alive.add(777);
+		mkdirSync(join(t.socketPath, ".."), { recursive: true });
+		writeFileSync(t.socketPath, "");
+		writeState(t.c, UDID, { generation: 0, updatedAt: 0, helper: { pid: 777, socket: t.socketPath } });
+		const events: string[] = [];
+		const connect = t.s.deps.connect;
+		const deps: HelperDeps = {
+			...t.s.deps,
+			connect: async (path): Promise<Result<SimdClient, DriverError>> => {
+				if (t.s.alive.has(777) && busy()) {
+					t.s.connects.total += 1;
+					return { success: false, error: timedOut };
+				}
+				if (t.s.alive.has(777)) t.s.up.value = true;
+				return connect(path);
+			},
+			spawnDetached: (spec) => {
+				events.push("spawn");
+				return t.s.deps.spawnDetached(spec);
+			},
+			kill: (pid, signal) => {
+				events.push(`kill ${pid}`);
+				t.s.deps.kill(pid, signal);
+			},
+		};
+		return { ...t, deps, events };
+	}
+
+	test("a handshake timeout while the recorded pid is alive means busy: waited for, no second helper spawned", async () => {
+		const { s, socketPath, host, deps, c } = busyResident(() => s.clock.t - 1_000_000 < 3000);
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: false } });
+		expect(s.spawns).toEqual([]);
+		expect(s.kills).toEqual([]);
+		expect(existsSync(socketPath)).toBe(true);
+		expect(readState(c, UDID).helper?.pid).toBe(777);
+	});
+
+	test("a helper still busy after 5 s is stopped (its recorded pid) before the one replacement is spawned", async () => {
+		const { s, socketPath, host, deps, events, c } = busyResident(() => true);
+		s.signal.make = signalOf("up", { count: 0 });
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
+		expect(events).toEqual(["kill 777", "spawn"]);
+		expect(readState(c, UDID).helper?.pid).toBe(4242);
+	});
+
+	test("a busy helper whose command line cannot be read is not stopped, and no second helper is spawned beside it", async () => {
+		const { s, socketPath, host, deps, c } = busyResident(() => true);
+		const res = await ensureHelper(host, UDID, {
+			socketPath,
+			helperPath: "/h/w",
+			deps: { ...deps, command: () => undefined },
+		});
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error.message).toContain("not starting a second one");
+		expect(s.spawns).toEqual([]);
+		expect(s.kills).toEqual([]);
+		expect(existsSync(socketPath)).toBe(true);
+		expect(readState(c, UDID).helper?.pid).toBe(777);
+	});
+
+	test("refused while the recorded pid is alive (no socket file): the record is dropped before spawning, never two records", async () => {
+		const { s, socketPath, host, c } = setup();
+		s.alive.add(777);
+		writeState(c, UDID, { generation: 0, updatedAt: 0, helper: { pid: 777, socket: socketPath } });
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
+		expect(s.spawns).toHaveLength(1);
+		expect(s.kills).toEqual([]);
+		expect(readState(c, UDID).helper?.pid).toBe(4242);
 	});
 });
 
@@ -389,6 +517,8 @@ describe("ensureHelper: starting", () => {
 			socket: socketPath,
 			owner: ownerKey(agentA),
 			binary: { path: "/h/w", mtimeMs: 300 },
+			env: simdEnvKey(c.env),
+			lease: c.db.findLeaseByResource({ kind: "device", platform: "ios", id: UDID, name: UDID })?.id,
 		});
 	});
 
@@ -424,11 +554,13 @@ describe("ensureHelper: starting", () => {
 });
 
 describe("ensureHelper: a resident helper", () => {
-	function resident(owner?: Owner, record: { owner?: string; binary?: { path: string; mtimeMs: number } } = {}) {
+	function resident(owner?: Owner, record: Omit<HelperRecord, "pid" | "socket"> = {}) {
 		const t = setup();
 		if (owner) lease(t.c, owner);
 		t.s.up.value = true;
 		t.s.alive.add(777);
+		mkdirSync(join(t.socketPath, ".."), { recursive: true });
+		writeFileSync(t.socketPath, "");
 		writeState(t.c, UDID, {
 			generation: 0,
 			updatedAt: 0,
@@ -446,13 +578,94 @@ describe("ensureHelper: a resident helper", () => {
 		expect(s.connects.total).toBe(1);
 	});
 
-	test("the lease passed to another owner: the helper is stopped and a fresh one spawned for the new owner", async () => {
-		const { s, c, socketPath, host } = resident(agentB, { owner: ownerKey(agentA) });
+	test("the lease passed to another owner with the same env and binary: reused, not replaced (14-5)", async () => {
+		const { s, socketPath, host } = resident(agentB, { owner: ownerKey(agentA) });
 		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
-		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
-		expect(s.requests).toEqual(["shutdown"]);
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: false } });
+		expect(s.requests).toEqual([]);
+		expect(s.spawns).toEqual([]);
+	});
+
+	test("owner churn user:1 → user:2 (a new shell pid per `bun run`): the second ensureHelper does not stop the first's helper", async () => {
+		const { s, c, socketPath, host } = setup();
+		s.mtimes.set("/h/w", 100);
+		s.signal.make = signalOf("up", { count: 0 });
+		const user = (pid: number): Owner => ({ kind: "user", pid, cwd: "/w" });
+		const first = c.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner: user(1), ttlMs: 3_600_000 },
+			c.now()
+		);
+		expect(await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps })).toMatchObject({
+			success: true,
+			data: { spawned: true },
+		});
+		c.db.deleteLeases([first.id]);
+		lease(c, user(2));
+		const second = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+		expect(second).toEqual({ success: true, data: { socketPath, spawned: false } });
+		expect(s.requests).toEqual([]);
+		expect(s.kills).toEqual([]);
 		expect(s.spawns).toHaveLength(1);
-		expect(readState(c, UDID).helper).toEqual({ pid: 4242, socket: socketPath, owner: ownerKey(agentB) });
+	});
+
+	test("the WARDEN_SIMD_* env changed since the helper was spawned: replaced; other env changes: reused", async () => {
+		const changed = resident(agentA, { env: simdEnvKey({ WARDEN_SIMD_PACE_MS: "10" }) });
+		changed.c.env = { ...changed.c.env, WARDEN_SIMD_PACE_MS: "20" };
+		const res = await ensureHelper(changed.host, UDID, {
+			socketPath: changed.socketPath,
+			helperPath: "/h/w",
+			deps: changed.s.deps,
+		});
+		expect(res.success && res.data.spawned).toBe(true);
+		expect(changed.s.requests).toEqual(["shutdown"]);
+		expect(readState(changed.c, UDID).helper?.env).toBe(simdEnvKey({ WARDEN_SIMD_PACE_MS: "20" }));
+		ctx?.cleanup();
+
+		const other = resident(agentA, { env: simdEnvKey({ WARDEN_SIMD_PACE_MS: "10" }) });
+		other.c.env = {
+			...other.c.env,
+			WARDEN_SIMD_PACE_MS: "10",
+			WARDEN_SIMD: "/elsewhere/warden-simd",
+			WARDEN_SIMD_SOCKET: "/x.sock",
+			PATH: "/changed",
+		};
+		const reused = await ensureHelper(other.host, UDID, {
+			socketPath: other.socketPath,
+			helperPath: "/h/w",
+			deps: other.s.deps,
+		});
+		expect(reused.success && reused.data.spawned).toBe(false);
+		expect(other.s.requests).toEqual([]);
+	});
+
+	test("the binary changed but the helper was spawned under the device's current lease: kept for the rest of the run", async () => {
+		const t = setup();
+		lease(t.c, agentA);
+		const held = t.c.db.findLeaseByResource({ kind: "device", platform: "ios", id: UDID, name: UDID });
+		t.s.up.value = true;
+		t.s.alive.add(777);
+		t.s.mtimes.set("/h/w", 200);
+		writeState(t.c, UDID, {
+			generation: 0,
+			updatedAt: 0,
+			helper: { pid: 777, socket: t.socketPath, binary: { path: "/h/w", mtimeMs: 100 }, lease: held?.id ?? "" },
+		});
+		const res = await ensureHelper(t.host, UDID, { socketPath: t.socketPath, helperPath: "/h/w", deps: t.s.deps });
+		expect(res).toEqual({ success: true, data: { socketPath: t.socketPath, spawned: false } });
+		expect(t.s.requests).toEqual([]);
+	});
+
+	test("the binary is compared by realpath: a symlinked path to the same helper is not a change", async () => {
+		const t = resident(agentA, { binary: { path: "/real/warden-simd", mtimeMs: 100 } });
+		t.s.mtimes.set("/real/warden-simd", 100);
+		t.s.mtimes.set("/link/warden-simd", 100);
+		const deps: HelperDeps = {
+			...t.s.deps,
+			realpath: (path) => (path === "/link/warden-simd" ? "/real/warden-simd" : path),
+		};
+		const res = await ensureHelper(t.host, UDID, { socketPath: t.socketPath, helperPath: "/link/warden-simd", deps });
+		expect(res.success && res.data.spawned).toBe(false);
+		expect(t.s.requests).toEqual([]);
 	});
 
 	test("a record with no owner (older warden) or a device with no lease is not guessed at: it is reused", async () => {
@@ -501,7 +714,7 @@ describe("ensureHelper: a resident helper", () => {
 	});
 
 	test("another caller already replacing it (live spawn row): waits for the new helper, never stops it twice", async () => {
-		const { s, c, socketPath, host } = resident(agentB, { owner: ownerKey(agentA) });
+		const { s, c, socketPath, host } = resident(agentB, { env: "stale-env" });
 		c.db.setMeta(`simd_spawn:${UDID}`, JSON.stringify({ pid: 999, at: s.clock.t }));
 		s.alive.add(999);
 		let polls = 0;
@@ -514,7 +727,7 @@ describe("ensureHelper: a resident helper", () => {
 					writeState(c, UDID, {
 						generation: 0,
 						updatedAt: 0,
-						helper: { pid: 888, socket: socketPath, owner: ownerKey(agentB) },
+						helper: { pid: 888, socket: socketPath, env: simdEnvKey(c.env) },
 					});
 				return connect(path);
 			},
@@ -577,6 +790,168 @@ describe("stopHelper", () => {
 		expect(s.kills).toEqual([[4242, "SIGTERM"]]);
 		expect(s.clock.t - 1_000_000).toBeLessThanOrEqual(2100);
 		expect(existsSync(socketPath)).toBe(false);
+		expect(readState(c, UDID).helper).toBeUndefined();
+	});
+});
+
+describe("pid identity before a signal (14-4)", () => {
+	const foreign = () => "/usr/bin/vim notes.txt";
+
+	/** A recorded helper `pid` with its socket file; `command` reads command lines (`up`: it answers but ignores shutdown). */
+	function recorded(
+		command: (pid: number, socketPath: string) => string | undefined,
+		opts: { pid?: number; up?: boolean } = {}
+	) {
+		const t = setup();
+		const pid = opts.pid ?? 4242;
+		mkdirSync(join(t.socketPath, ".."), { recursive: true });
+		writeFileSync(t.socketPath, "");
+		t.s.alive.add(pid);
+		t.s.up.value = opts.up === true;
+		writeState(t.c, UDID, { generation: 0, updatedAt: 0, helper: { pid, socket: t.socketPath } });
+		const deps: HelperDeps = { ...t.s.deps, command: (p) => command(p, t.socketPath) };
+		return { ...t, deps };
+	}
+
+	test("the recorded pid now runs another program: no signal, no wait, the record and stale socket are dropped", async () => {
+		const { c, s, socketPath, deps } = recorded(foreign);
+		expect((await stopHelper(c, UDID, { deps })).stopped).toBe(true);
+		expect(s.kills).toEqual([]);
+		expect(s.clock.t - 1_000_000).toBeLessThan(100);
+		expect(existsSync(socketPath)).toBe(false);
+		expect(readState(c, UDID).helper).toBeUndefined();
+	});
+
+	test("the recorded pid is still `warden-simd --udid <udid> --socket <socket>`: SIGTERMed as before", async () => {
+		const { c, s, deps } = recorded(
+			(pid, socketPath) =>
+				pid === 4242 ? `/opt/warden/warden-simd --udid ${UDID} --socket ${socketPath} --idle-timeout 600` : undefined,
+			{ up: true }
+		);
+		expect(await stopHelper(c, UDID, { deps })).toEqual({ stopped: true, how: "sigterm" });
+		expect(s.kills).toEqual([[4242, "SIGTERM"]]);
+	});
+
+	test("a command line that cannot be read is not signalled, and the helper is kept: record, socket, a warning", async () => {
+		const { c, s, socketPath, deps } = recorded(() => undefined, { up: true });
+		const out = await stopHelper(c, UDID, { deps });
+		expect(out.stopped).toBe(false);
+		expect(out.warning).toContain("could not stop warden-simd (pid 4242)");
+		expect(s.kills).toEqual([]);
+		expect(existsSync(socketPath)).toBe(true);
+		expect(readState(c, UDID).helper).toEqual({ pid: 4242, socket: socketPath });
+	});
+
+	test("no socket file, the recorded pid alive and unreadable: kept with a warning, and ensureHelper spawns no second one (S1)", async () => {
+		const { s, socketPath, host, c } = setup();
+		s.alive.add(777);
+		writeState(c, UDID, { generation: 0, updatedAt: 0, helper: { pid: 777, socket: socketPath } });
+		const deps: HelperDeps = { ...s.deps, command: () => undefined };
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error.message).toContain("not starting a second one");
+		expect(s.spawns).toEqual([]);
+		expect(s.kills).toEqual([]);
+		expect(readState(c, UDID).helper).toEqual({ pid: 777, socket: socketPath });
+		const out = await stopHelper(c, UDID, { deps });
+		expect(out).toMatchObject({ stopped: false, how: "none" });
+		expect(out.warning).toContain("could not stop warden-simd (pid 777)");
+		expect(readState(c, UDID).helper).toEqual({ pid: 777, socket: socketPath });
+	});
+
+	test("ensureHelper giving up on its own child signals it on liveness alone, even when its command line cannot be read", async () => {
+		const { s, socketPath, host, c } = setup();
+		s.listenAfterMs.value = undefined;
+		const deps: HelperDeps = { ...s.deps, command: () => undefined };
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res.success).toBe(false);
+		expect(s.kills).toEqual([[4242, "SIGTERM"]]);
+		expect(readState(c, UDID).helper).toBeUndefined();
+	});
+
+	test("ensureHelper: a refusing socket whose recorded pid was reused spawns at once, signalling nobody", async () => {
+		const { c, s, socketPath, host, deps } = recorded(foreign, { pid: 777 });
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
+		expect(s.kills).toEqual([]);
+		expect(s.spawns).toHaveLength(1);
+		expect(s.clock.t - 1_000_000).toBeLessThan(SHUTDOWN_WAIT_MS);
+		expect(readState(c, UDID).helper?.pid).toBe(4242);
+	});
+
+	test("status: a recorded pid that now runs another program is not running", () => {
+		const { c, deps } = recorded(foreign);
+		expect(helperStatus(c, UDID, deps).running).toBe(false);
+	});
+});
+
+describe("stopHelper racing a spawn (14-3)", () => {
+	/** A recorded helper (pid 4242) whose socket file exists and that ignores shutdown, so the stop waits ≤ 2 s. */
+	function resident() {
+		const t = setup();
+		mkdirSync(join(t.socketPath, ".."), { recursive: true });
+		writeFileSync(t.socketPath, "old");
+		t.s.alive.add(4242);
+		t.s.up.value = true;
+		writeState(t.c, UDID, { generation: 0, updatedAt: 0, helper: { pid: 4242, socket: t.socketPath } });
+		return t;
+	}
+
+	test("a new helper that takes the socket path and the record during the stop's wait keeps both", async () => {
+		const { c, s, socketPath } = resident();
+		let replaced = false;
+		const deps: HelperDeps = {
+			...s.deps,
+			sleep: async (ms) => {
+				await s.deps.sleep(ms);
+				if (replaced) return;
+				replaced = true;
+				// the old helper exits (removing its socket); a new one binds the same path and records itself
+				s.alive.delete(4242);
+				unlinkSync(socketPath);
+				writeFileSync(socketPath, "new");
+				s.alive.add(5555);
+				writeState(c, UDID, { ...readState(c, UDID), helper: { pid: 5555, socket: socketPath } });
+			},
+		};
+		expect((await stopHelper(c, UDID, { deps })).stopped).toBe(true);
+		expect(readFileSync(socketPath, "utf8")).toBe("new");
+		expect(readState(c, UDID).helper).toEqual({ pid: 5555, socket: socketPath });
+		expect(s.kills).toEqual([]);
+	});
+
+	test("stopHelper holds the spawn row: an ensureHelper racing it waits, and the helper it spawns afterwards survives", async () => {
+		const { c, s, socketPath, host } = resident();
+		const stopDeps: HelperDeps = { ...s.deps, pid: 111 };
+		const spawnerDeps: HelperDeps = {
+			...s.deps,
+			pid: 222,
+			// the old helper refuses new clients while it shuts down; once it is SIGTERMed, the spawned one answers
+			connect: async (path) => (s.kills.length === 0 ? { success: false, error: refused } : s.deps.connect(path)),
+			spawnDetached: (spec) => {
+				const out = s.deps.spawnDetached(spec);
+				writeFileSync(socketPath, "new");
+				return out;
+			},
+		};
+		s.alive.add(222);
+		const stopping = stopHelper(c, UDID, { deps: stopDeps });
+		const ensuring = ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: spawnerDeps });
+		const [stopped, ensured] = await Promise.all([stopping, ensuring]);
+		expect(stopped).toEqual({ stopped: true, how: "sigterm" });
+		expect(ensured).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
+		expect(readFileSync(socketPath, "utf8")).toBe("new");
+		expect(readState(c, UDID).helper?.pid).toBe(4242);
+		expect(c.db.getMeta(`simd_spawn:${UDID}`)).toBeUndefined();
+	});
+
+	test("a spawn row held by a live spawner: stopHelper waits briefly, then stops anyway without taking the row", async () => {
+		const { c, s } = resident();
+		s.alive.add(999);
+		c.db.setMeta(`simd_spawn:${UDID}`, JSON.stringify({ pid: 999, at: s.clock.t }));
+		expect((await stopHelper(c, UDID, { deps: s.deps })).stopped).toBe(true);
+		expect(s.kills).toEqual([[4242, "SIGTERM"]]);
+		expect(c.db.getMeta(`simd_spawn:${UDID}`)).toContain("999");
 		expect(readState(c, UDID).helper).toBeUndefined();
 	});
 });

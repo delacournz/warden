@@ -90,6 +90,8 @@ Claim devices and fan a job queue out over them, one worker per device; the comm
 
 With `--headless` (or the preset's `headless`), the leased sims' windows are closed at claim and again before the first job, serve and jobs get `WARDEN_HEADLESS=1`, and `batch.json` has `"headless": true`. `--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed.
 
+Each `batch.json` job entry (one per attempt) may carry `logDrainMs`: how long warden waited, after the job exited, for its log pipes to drain, summed over its `--passes` runs.
+
 If the first operand is the name of a preset in [`warden.config.ts`](/docs/reference/configuration#batches) `batches` (found by walking up from the cwd to the git root), that preset supplies the platform and defaults:
 
 - Flags you actually pass override the preset; commander defaults (`--count 1`, `--retry 0`, `--serve-timeout 10m`…) do not.
@@ -122,7 +124,7 @@ List the flows of `e2e.<suite>` (optional with one suite) that the changes since
 | `--strict` | exit 3 when a changed file reaches no flow |
 | `--json` | selections, reasons, skipped and unreached files |
 
-See [Affected e2e](/docs/guides/affected-e2e).
+Following `entries` through the import graph needs TypeScript 5.0 or later: the compiled binary uses the project's own, the nearest `node_modules/typescript` from the config's directory upward (Yarn Plug'n'Play is not supported); without one the run exits 1 naming that path. See [Affected e2e](/docs/guides/affected-e2e).
 
 ### `warden e2e [suite]`
 
@@ -151,9 +153,9 @@ Every simulator / emulator, booted or not, plus Android AVDs — with warden own
 
 ### Device health: `release --bad`, `sim unquarantine`
 
-After booting or reusing an iOS sim, `warden claim` checks that `simctl spawn <udid> launchctl print system` answers within 5 s and that SpringBoard is running. A device that fails is quarantined (recorded in the store with a reason, shut down if warden created it) and the claim picks another one; after 2 retries it fails with a clear error. A foreign device that fails is skipped, never touched. Android has no probe yet. warden switches Play Protect's adb-install verification off (and pre-answers its consent prompt) on every emulator it boots; the change lives in the emulator's throwaway overlay.
+After booting or reusing an iOS sim, `warden claim` checks that `simctl spawn <udid> launchctl print system` answers within 5 s and that SpringBoard is running. A sim this claim just booted (`bootstatus -b` saw the boot finish) only needs SpringBoard running. A device that fails is quarantined (recorded in the store with a reason starting `claim:`, shut down if warden created it) and the claim picks another one; after 2 retries it fails with a clear error. A probe that times out while the 1-min load average is at or above the core count is asked once more after 5 s, and a second timeout only skips the device for the next round: a busy host is not a hung sim. It is not quarantined, and if this claim booted it, it is shut down again. With `--wait` it is asked again on a later round; when it was the only candidate the claim fails with `host overloaded (load X ≥ N cores); retry later`. A claim's quarantine expires after 24 h, so the device gets another chance, but only while the pool has room under `--max` (a replacement may have taken its slot). A foreign device that fails is skipped, never touched. Android has no probe yet. warden switches Play Protect's adb-install verification off (and pre-answers its consent prompt) on every emulator it boots; the change lives in the emulator's throwaway overlay.
 
-- `warden release <leaseId…> --bad [reason]` releases and quarantines the devices by hand (warden devices only). Quarantined devices are never allocated and free their pool slot.
+- `warden release <leaseId…> --bad [reason]` releases and quarantines the devices by hand (warden devices only). Quarantined devices are never allocated and free their pool slot; a quarantine set by hand does not expire.
 - `warden sim unquarantine <udid|serial>` clears it. `warden devices` shows `quarantined` and `slim` next to the warden column.
 - A claim that has to build the golden image prints `warden ... prewarm with: warden golden ensure --profile <profile>` first.
 - `warden app ensure` no longer trusts its install record alone: on iOS it also compares the installed app's `CFBundleVersion`, executable size and `main.jsbundle` size with the cached build, and reinstalls on a difference.
@@ -246,7 +248,7 @@ Refresh heartbeats so leases don't go stale. Same selectors as `release`.
 
 ### `warden gc`
 
-Reclaim stale leases and shut down unleased warden devices idle for `--idle` (default `20m`). Never deletes — use `warden sims prune` to free disk. `--quiet` prints nothing (used by background auto-gc).
+Reclaim stale leases and shut down unleased warden devices idle for `--idle` (default `20m`). Never deletes devices — use `warden sims prune` to free sim disk. Then prunes the build cache, least-recently-used first, down to `--max-cache-size` (else `WARDEN_MAX_CACHE_SIZE`, default `20G`; the same cap as `warden builds prune --max-size`); builds used in the last 30 min and builds being fetched or built stay, and the notes list what was pruned. A bad `WARDEN_MAX_CACHE_SIZE` only skips the prune, with a note; a bad `--max-cache-size` exits 1. Background auto-gc also runs when the cache is over that cap. `--quiet` prints nothing (used by background auto-gc).
 
 ## Ports
 
@@ -278,7 +280,7 @@ Then the dev client is opened on the device: iOS relaunches the app with `--init
 
 ### `warden builds ls | prune | import`
 
-- `prune [--max-size 20G] [--dry-run] [--yes]` — remove least-recently-used builds until the cache fits; build-locked ones stay.
+- `prune [--max-size 20G] [--dry-run] [--yes]` — remove least-recently-used builds until the cache fits; build-locked ones stay. `--max-size` defaults to `WARDEN_MAX_CACHE_SIZE`, else `20G` (the cap `warden gc --max-cache-size` uses).
 - `import <path.app|path.apk> --hash <h> [--platform] [--project] [--profile] [--bundle-id]` — copy a local build into the cache.
 
 ## Drive a device
@@ -293,6 +295,7 @@ The agent CLI over the e2e driver: read the screen, act on it, wait, record flow
 | `--claim` | take a device when none is leased, or take over a stale lease; `--platform ios\|android`, `--profile <slug>`, `--runtime <runtime>` pick it |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--no-record` | keep this step out of a running recording |
+| `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`, `dev`) holds your lease on it; without it the call exits 2 (`device_busy`) naming the owner, pid and label. Another owner's live lease still refuses |
 | `--json` | one JSON document on stdout: `{ok, command, device, generation?, durationMs, result, warnings?}` or `{ok:false, command, error:{code, message, hint?}}` |
 
 Exit codes: 0 ok · 1 failed or usage · 2 lease · 3 engine unavailable (`engine_unavailable`, `devtools_unavailable`) · 4 stale ref · 130 interrupted.
@@ -304,12 +307,18 @@ Exit codes: 0 ok · 1 failed or usage · 2 lease · 3 engine unavailable (`engin
 | `close` | stops this device's helper; `--app [bundleId]` quits the app, `--release` frees the lease |
 | `snapshot` | `-i`/`--interactive` interactive only, `--all` no line cap, `--depth <n>`, `--settle [ms]` quiet-screen diff |
 | `find <selector...>` | elements matching `id=… label=… text=… role=… value=… editable=… nth=…`, with refs |
-| `press <target>` (alias `tap`) · `longpress <target> [ms]` | target = `@eN` \| selector \| `x y`; `--verify`, `--settle [ms]` |
+| `press <target>` (alias `tap`) | target = `@eN` \| selector \| `x y`; `--verify`, `--settle [ms]` |
 | `fill <target> <text>` · `type <text>` · `key <name>` | `fill`: `--secure`, `--no-verify`; `type`: `--submit` |
-| `swipe <dir\|x1 y1 x2 y2>` · `scroll <dir> [amount]` | `swipe --from <target>`; `scroll --until <selector> --in <target> --max <n>` |
+| `scroll <dir> [amount]` | `--until <selector> --in <target> --max <n>` |
 | `wait` · `is` · `get` | poll the live screen: `wait <selector>\|absent <selector>\|text "…"\|stable [ms]`, `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` (exit 0/1), `get <selector> text\|value\|label\|id\|role\|frame\|count` |
-| `alert accept\|dismiss\|get` · `home` · `back` · `rotate [o]` · `appearance [light\|dark]` | `back` is Android only. `alert get` with no alert shows an empty button list (exit 0); `alert accept\|dismiss` then fail with `no_alert` (exit 1) |
-| `screenshot [path]` · `video start [path]\|stop` | default under `$WARDEN_HOME/ui/<udid>/` |
+| `alert accept\|dismiss\|get` · `home` · `back` | `back` is Android only. `alert get` with no alert shows an empty button list (exit 0); `alert accept\|dismiss` then fail with `no_alert` (exit 1) |
+| `screen rotate [orientation]` · `screen appearance [light\|dark]` | the device's orientation (`portrait`, `portrait-upside-down`, `landscape-left`, `landscape-right`) and light / dark mode; no argument reads the current value |
+| `screen screenshot [path]` · `screen video start [path]\|stop` | default under `$WARDEN_HOME/ui/<udid>/` |
+| `gesture swipe <dir\|x1 y1 x2 y2>` · `gesture longpress <target> [ms]` | `swipe --from <target>`; `longpress`: `--verify`, `--settle [ms]` |
+| `gesture pinch [target] <scale>` · `gesture rotate [target] <degrees>` | two fingers around the target or the screen centre; `--duration <ms>` (default 500), `--radius <px>`, `--verify`, `--settle [ms]`; `scale` above 1 zooms in (0.1 to 10, not 1), positive `degrees` is clockwise (negative works; not 0, at most 720) |
+| `gesture path --path 'x,y x,y …' [--path …]` | 1-2 fingers (each path at least 2 points) that go down and lift together; `--duration <ms>` (default 600), `--settle [ms]`; coordinates in points (iOS) or px (Android). Two fingers on Android need `warden-uiad` |
+
+The old top-level `rotate`, `appearance`, `screenshot`, `video`, `swipe` and `longpress` are removed (unknown command, no aliases).
 | `eval <expr>` · `tree` · `logs` · `network` · `reload` | dev client only (`--metro <url>`): `eval --await`; `tree --all --max <n> --screen <name>`; `logs [n]\|start [--bodies]\|stop\|mark <label>\|clear`; `network [n] --include headers,body --id <id>` |
 | `record start <name> [--out file]\|stop\|status` · `replay <file>` · `export <file> --to <spec>` | `replay`: `--from <i>`, `--update-snapshots`, `--settle [ms]`; `export`: `--ids <module>`, `--force` |
 

@@ -8,7 +8,7 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 |------|---------|
 | `types.ts` | `Resource` / `Owner` / `Lease` / `InventoryDevice` / `AllocationPlan` unions, `resourceKey` |
 | `store.ts` | bun:sqlite `$WARDEN_HOME/warden.db` (WAL). `transaction()` = `BEGIN IMMEDIATE` = cross-process mutex. `MIGRATIONS` append-only |
-| `liveness.ts` | lease alive = heartbeat within ttl OR pid alive (pure; `processAlive` = kill 0) |
+| `liveness.ts` | lease alive = heartbeat within ttl OR pid alive; a supervised lease (pid + `heartbeat_ms`, stamped by `holdLeases`) with a dead pid only within `LOST_HEARTBEATS` (3) periods (pure; `processAlive` = kill 0) |
 | `allocate.ts` | pure `(inventory, leases, request) → assign{reuse/boot/create} | wait` |
 | `owner.ts` | detect owner: hook session → CI → session env → parent pid; git repo/worktree |
 | `inventory.ts` | mark warden-created devices (store record or `warden-<profile>-N` name) |
@@ -19,7 +19,7 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 | `providers/*.ts` | `DeviceProvider` impls (`ios`, `android`) on simctl / adb / emulator; Android console ports leased 5554–5584; android `waitReady` applies post-boot Play Protect verifier settings |
 | `builds/*.ts` | app build cache: `config` (zod `warden.config.{ts,json}` loader), `define-config` (public documented types + `defineConfig`, published as `@delacour/warden/config`), `project-key`, `fingerprint`, `cache`, `eas`, `local`, `install`, `lock` (build lease), `resolve` (5-step resolver), `prune`, `ensure` |
 | `sims/*.ts` | `warden sims audit\|prune\|delete`, one path: `list` (the only `simctl list devices -j` parser, `SimctlSim`, du fallback), `rules` (pure `judgeSims`: owner / blockers / reasons / verdict / budget, `canPrune` · `canDelete` · `isSuggested`, `describeReasons`), `delete` (`deleteSims`: lease under txn → shutdown → delete → forget → release), `audit` (totals), `prune` (list + judge + delete), `runtimes` (report-only), `sims.defaults` (idle 7d / stale 30d) |
-| `golden/*.ts` | golden iOS images: `golden` (key, names, staleness plan, migration/settle parsers, pure), `ios-golden` (build under `golden:ios` lease, clone, prune) |
+| `golden/*.ts` | golden iOS images: `golden` (key, names, staleness plan, migration/settle parsers, pure), `ios-golden` (build under `golden:ios` lease, clone, prune); `android-golden`: warden's quick-boot snapshot `warden-<key>` per AVD (key from image/emulator/config files and launch flags, writable build under `golden:android:<avd>`, list, prune) that the Android provider's `snapshot` hook launches claims from; claims never build it (`android-snapshot-pending` marks the AVD, `warden gc` / `golden ensure` build) |
 | `*.race-fixture.ts` | child-process fixtures for cross-process race tests |
 
 ## Rules

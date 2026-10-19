@@ -291,7 +291,7 @@ async function e2e(
 		const notRun = flows.map((f): FlowVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
 		await publish(ctx, deps, opts, {
 			...base,
-			isolate: suiteIsolation(suite.config),
+			isolate: runIsolation(suite.config, opts, passed),
 			ok: true,
 			headless,
 			flows: notRun,
@@ -311,7 +311,7 @@ async function e2e(
 		sessionHooks(suite, flows, shape, spec, runs, {
 			platform: selection.platform,
 			shutdown: shutsDownOnPass(ctx, suite, opts),
-			warm: warmHook(ctx, deps, suite, opts),
+			...warmHooks(ctx, deps, suite, opts),
 		})
 	);
 	const result = await verdicts(flows, session, shape, {
@@ -365,9 +365,20 @@ async function preparedRun(
 	return run.success ? ok({ ...run.data, spec: spec.data }) : run;
 }
 
-/** The socket-helper warm-up: on unless the suite sets `warmDrivers: false` or `--no-warm` is passed. */
-function warmHook(ctx: CommandContext, deps: BatchDeps, suite: Suite, opts: E2eOpts): WarmConnect | undefined {
-	return suite.config.warmDrivers === false || opts.warm === false ? undefined : deps.warmConnect(ctx);
+/**
+ * The socket-helper warm-up: on unless the suite sets `warmDrivers: false` or `--no-warm` is passed. Without
+ * it, a helper that is already running for a device still serves that device's jobs (`resident`).
+ */
+function warmHooks(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	suite: Suite,
+	opts: E2eOpts
+): { warm: WarmConnect | undefined; resident: ((udid: string) => Promise<string | undefined>) | undefined } {
+	if (suite.config.warmDrivers === false || opts.warm === false) {
+		return { warm: undefined, resident: deps.residentSocket?.(ctx) };
+	}
+	return { warm: deps.warmConnect(ctx), resident: undefined };
 }
 
 /** How the batch session runs the suite: per-device setup, spec argv + env per job, live flows (device isolation) and the shutdown rule. */
@@ -377,13 +388,19 @@ function sessionHooks(
 	shape: RunShape,
 	spec: SpecPlan,
 	runs: ShardRuns,
-	o: { platform: Platform; shutdown: boolean; warm: WarmConnect | undefined }
+	o: {
+		platform: Platform;
+		shutdown: boolean;
+		warm: WarmConnect | undefined;
+		resident: ((udid: string) => Promise<string | undefined>) | undefined;
+	}
 ): SessionHooks {
 	return {
 		name: "e2e",
 		setup: deviceSetup(suite.config, o.platform),
-		// batch skips it off iOS
+		// batch skips both off iOS
 		warmDrivers: o.warm,
+		residentSocket: o.resident,
 		flows: trackedFlows(flows, shape),
 		// a passed gate frees the sims when asked to; a failed one always leaves them up to inspect
 		...(o.shutdown ? { shutdownIf: (summary) => exitGate(flows, summary, shape) } : {}),
@@ -392,7 +409,7 @@ function sessionHooks(
 			specEnv({
 				...spec.env,
 				launchArgs: specLaunchArgs(spec.launch, job.metroUrl),
-				out: attemptOut(job.batchDir, job.worker, job.seq),
+				out: attemptOut(job.batchDir, job.worker, job.seq, job.pass),
 			}),
 	};
 }
@@ -438,11 +455,12 @@ async function runPlan(
 	if (!legs.success) return legs;
 	const argvOf = (files: readonly string[]) =>
 		runnerArgv({ bun: spec.bun, preload: spec.preload, flowPaths: files, timeoutMs: spec.env.timeouts.timeoutMs });
-	const plan = jobPlan(
-		flows,
-		suiteIsolation(config) === "device" ? shardCount(args.data, legs.data) : undefined,
-		argvOf
-	);
+	const isolation = runIsolation(config, opts, passed);
+	if (isolation === "device" && args.data.passes > 1)
+		return err(
+			`--passes ${args.data.passes} needs isolate "flow": suite "${suite.name}" sets isolate "device" (one process per device reruns its whole shard)`
+		);
+	const plan = jobPlan(flows, isolation === "device" ? shardCount(args.data, legs.data) : undefined, argvOf);
 	const planned = planOf(
 		{ ...args.data, jobs: { kind: "list", jobs: plan.jobs } },
 		legs.data,
@@ -456,6 +474,12 @@ async function runPlan(
 		plan,
 		argvOf,
 	});
+}
+
+/** The run's isolation from the suite and the `passes` it runs with: a CLI `--passes` counts too (12-10). */
+function runIsolation(config: E2eSuiteConfig, opts: E2eOpts, passed: ReadonlySet<string>): E2eIsolation {
+	const passes = passed.has("passes") && /^\d+$/.test(opts.passes) ? Number(opts.passes) : config.passes;
+	return suiteIsolation({ ...config, passes });
 }
 
 /** Flows in the biggest shard (1 when every flow is its own job). */

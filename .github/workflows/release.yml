@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
         with:
           persist-credentials: false
 
@@ -29,15 +29,14 @@ jobs:
       # warden-simd links idb's library package, built with a recent Swift: use the newest Xcode on the runner image.
       - name: Select newest Xcode
         run: |
-          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
-          sudo xcode-select -s "$xcode"
+          xcode=$(ls -d /Applications/Xcode_*.app /Applications/Xcode-*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$xcode" ]; then sudo xcode-select -s "$xcode"; fi
           xcodebuild -version
           swift --version
 
-      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+      - uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
         with:
           path: ~/Library/Caches/warden-idb
-          key: warden-idb-${{ hashFiles('packages/e2e/native/idb.lock.json') }}
 
       - run: bun install --frozen-lockfile
 

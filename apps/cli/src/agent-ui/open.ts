@@ -8,7 +8,7 @@ import type { UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { uiError } from "./output";
 import { runUi } from "./run";
-import { readState, writeState } from "./state";
+import { updateState } from "./state";
 
 export type OpenOptionValues = ActionOptionValues & {
 	relaunch?: true;
@@ -101,12 +101,11 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 		const launched = await launchBundle(ctx, driver.data, device, what, opts);
 		if (!launched.success) return launched;
 		const attached = launched.data.attached;
-		const state = readState(ctx, device.udid);
-		writeState(ctx, device.udid, {
+		updateState(ctx, device.udid, (state) => ({
 			...state,
 			app: what,
 			...(opts.metro !== undefined ? { metroUrl: opts.metro } : {}),
-		});
+		}));
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "open",
 			text: `${launchVerb(opts.relaunch === true, attached)} ${what}${opts.metro ? ` (metro ${opts.metro})` : ""}${attached ? " (already running: attached, state kept; --relaunch starts it fresh)" : ""}`,

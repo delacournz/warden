@@ -3,10 +3,10 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { Platform } from "../types";
 import { type E2eSuiteConfig, e2eSuiteSchema } from "./affected.schema";
-import { makeFixtureRepo } from "./fixture.testing";
+import { graphOf, makeFixtureRepo } from "./fixture.testing";
 import { scanFlows } from "./flows";
 import type { ChangedFile } from "./git";
-import { createImportGraph } from "./graph";
+
 import { type Reason, selectFlows } from "./select";
 
 let dir: string;
@@ -39,7 +39,7 @@ function suite(overrides: Partial<Record<keyof E2eSuiteConfig, unknown>> = {}): 
 }
 
 async function select(changed: string[], platform: Platform = "ios", s = suite()) {
-	const graph = await createImportGraph({ platform, repoRoot: dir });
+	const graph = await graphOf({ platform, repoRoot: dir });
 	const changes: ChangedFile[] = changed.map((path) => ({ path, status: "modified" }));
 	return selectFlows({
 		suite: s,

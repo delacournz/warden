@@ -136,6 +136,31 @@ describe("startEarlyWarm", () => {
 		expect((await warm.settled()).devices[0]?.error).toBe("interrupted");
 	});
 
+	test("device(udid): one device's warm-up, as soon as it is done, whatever the others do (12-3)", async () => {
+		const f = fake();
+		f.deps.legCounts = [2];
+		const warm = startEarlyWarm(f.deps);
+		warm.leased(held("U1", "U2"), 0);
+		expect(warm.peek("U1")).toBeUndefined();
+		f.release("U1");
+		const u1 = await warm.device("U1");
+		expect(u1.socketPath).toBe("/s/U1.sock");
+		expect(u1.helper?.socketPath).toBe("/s/U1.sock");
+		expect(u1.warning).toBeUndefined();
+		expect(warm.peek("U1")).toEqual(u1);
+		// U2 is still connecting: nothing waited for it
+		expect(warm.peek("U2")).toBeUndefined();
+		f.release("U2", "fail");
+		const u2 = await warm.device("U2");
+		expect(u2.socketPath).toBeUndefined();
+		expect(u2.warning).toBe("warm U2: helper did not start (continuing cold) — log: /logs/warm-1.log");
+	});
+
+	test("device(udid) of a device never leased is cold at once", async () => {
+		const warm = startEarlyWarm(fake().deps);
+		expect(await warm.device("X")).toEqual({});
+	});
+
 	test("nothing leased: settled is an empty outcome", async () => {
 		const f = fake();
 		const warm = startEarlyWarm(f.deps);

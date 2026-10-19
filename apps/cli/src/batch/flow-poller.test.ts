@@ -151,6 +151,19 @@ describe("flowPoller", () => {
 		expect(r.marks.at(-1)).toEqual({ worker: 1, marks: { settings: "passed" } });
 	});
 
+	test("a later pass's results file replaces the earlier pass's for the same attempt (batch-pipeline R2)", async () => {
+		const r = rig({ [OUT]: jsonl(result(file("todos"), "a")) });
+		await r.tick();
+		const pass1 = "/out/1-0-p1/results.jsonl";
+		r.resultFiles.set("1:0", pass1);
+		r.files.set(pass1, jsonl(result(file("todos"), "a", "failed")));
+		await r.tick();
+		expect(r.lines).toEqual(["✓ todos › a (1.25s)", "✗ todos › a (1.25s)"]);
+		r.ended.add("1:0");
+		await r.poller.poll();
+		expect(r.marks.at(-1)).toEqual({ worker: 1, marks: { todos: "failed" } });
+	});
+
 	test("results of files that are not tracked make no line", async () => {
 		const r = rig({ [OUT]: jsonl(result("/app/e2e/other.e2e.ts", "x")) });
 		await r.tick();

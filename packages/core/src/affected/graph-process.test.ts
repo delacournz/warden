@@ -4,9 +4,15 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { bunExec, type Exec, type ExecResult } from "../exec";
 import { findSuite } from "./affected";
-import { makeSuiteRepo } from "./fixture.testing";
-import { createImportGraph, reachable } from "./graph";
-import { compiledBinary, GRAPH_WORKER_SUBCOMMAND, graphEntries, loadImportGraph } from "./graph-process";
+import { graphOf, makeSuiteRepo } from "./fixture.testing";
+import { reachable, TYPESCRIPT_UNUSABLE_EXIT } from "./graph";
+import {
+	compiledBinary,
+	GRAPH_WORKER_SUBCOMMAND,
+	graphEntries,
+	type LoadGraphOptions,
+	loadImportGraph,
+} from "./graph-process";
 import { buildGraphDoc } from "./graph-worker";
 
 let dir: string;
@@ -33,7 +39,7 @@ afterEach(() => {
 const chats = () => join(dir, "src/app/(app)/chats.tsx");
 const rel = (files: Iterable<string>) => [...files].map((f) => relative(dir, f)).sort();
 
-const load = (extra: Partial<Parameters<typeof loadImportGraph>[0]> = {}) =>
+const loadResult = (extra: Partial<LoadGraphOptions> = {}) =>
 	loadImportGraph({
 		exec: counting,
 		platform: "ios",
@@ -42,6 +48,19 @@ const load = (extra: Partial<Parameters<typeof loadImportGraph>[0]> = {}) =>
 		cacheDir,
 		...extra,
 	});
+
+/** `loadImportGraph`, failing the test when it is an error. */
+async function loaded(options: LoadGraphOptions) {
+	const res = await loadImportGraph(options);
+	if (!res.success) throw new Error(res.error);
+	return res.data;
+}
+
+const load = async (extra: Partial<LoadGraphOptions> = {}) => {
+	const res = await loadResult(extra);
+	if (!res.success) throw new Error(res.error);
+	return res.data;
+};
 
 const done = (stdout: string, exitCode = 0, stderr = ""): ExecResult => ({ exitCode, stdout, stderr });
 
@@ -52,7 +71,7 @@ describe("loadImportGraph", () => {
 		expect(loaded.warning).toBeUndefined();
 		expect(spawns).toHaveLength(1);
 		expect(spawns[0]?.[1]).toEndWith("graph-worker.ts");
-		const direct = await createImportGraph({ platform: "ios", repoRoot: dir });
+		const direct = await graphOf({ platform: "ios", repoRoot: dir });
 		const want = reachable([chats()], direct.imports);
 		const got = reachable([chats()], loaded.graph.imports);
 		expect(rel(got.keys())).toEqual(rel(want.keys()));
@@ -118,6 +137,35 @@ describe("loadImportGraph", () => {
 		expect(rel(reachable([chats()], noBun.graph.imports).keys())).toContain("packages/ui/src/button.tsx");
 	});
 
+	test("a worker with no usable typescript is that error, not an in-process walk (cli-size-R5)", async () => {
+		const res = await loadResult({
+			exec: async (cmd, o) =>
+				cmd[0] === "git" ? bunExec(cmd, o) : done("", TYPESCRIPT_UNUSABLE_EXIT, "typescript 4.6 at /x is too old\n"),
+		});
+		expect(res).toEqual({ success: false, error: "typescript 4.6 at /x is too old" });
+	});
+
+	test("a worker error is its last non-empty stderr line with colour codes stripped (cli-size-S2)", async () => {
+		const colored = await loadResult({
+			exec: async (cmd, o) =>
+				cmd[0] === "git"
+					? bunExec(cmd, o)
+					: done(
+							"",
+							TYPESCRIPT_UNUSABLE_EXIT,
+							`\x1b[31m✖ warden ${GRAPH_WORKER_SUBCOMMAND}: no typescript\x1b[39m\n\n`
+						),
+		});
+		expect(colored).toEqual({ success: false, error: "no typescript" });
+		const empty = await loadResult({
+			exec: async (cmd, o) => (cmd[0] === "git" ? bunExec(cmd, o) : done("", TYPESCRIPT_UNUSABLE_EXIT, "")),
+		});
+		expect(empty).toEqual({
+			success: false,
+			error: `the import graph worker found no usable typescript (exit ${TYPESCRIPT_UNUSABLE_EXIT}, no message)`,
+		});
+	});
+
 	test("a worker that cannot start (exit 127) falls back silently", async () => {
 		const loaded = await load({ exec: async (cmd) => (cmd[0] === "git" ? done("", 128) : done("", 127)) });
 		expect(loaded.via).toBe("in-process");
@@ -152,10 +200,10 @@ describe("loadImportGraph", () => {
 				entries: [join(plain, "a.ts")],
 				cacheDir,
 			};
-			const first = await loadImportGraph(options);
+			const first = await loaded(options);
 			expect(first.via).toBe("process");
 			expect(first.graph.imports(join(plain, "a.ts"))).toEqual([join(plain, "b.ts")]);
-			expect((await loadImportGraph(options)).via).toBe("process");
+			expect((await loaded(options)).via).toBe("process");
 			expect(readdirSync(cacheDir)).toEqual([]);
 		} finally {
 			rmSync(plain, { recursive: true, force: true });
@@ -183,14 +231,14 @@ describe("loadImportGraph in a compiled binary (no worker script on disk)", () =
 	const asBinary: Exec = async (cmd, opts) => {
 		if (cmd[0] !== SELF) return counting(cmd, opts);
 		selfCalls.push([...cmd]);
-		return done(JSON.stringify(await buildGraphDoc(JSON.parse(cmd[2] ?? ""))));
+		const built = await buildGraphDoc(JSON.parse(cmd[2] ?? ""));
+		return built.success ? done(JSON.stringify(built.data)) : done("", TYPESCRIPT_UNUSABLE_EXIT, built.error);
 	};
 	beforeEach(() => {
 		selfCalls = [];
 	});
 
-	const compiled = (extra: Partial<Parameters<typeof loadImportGraph>[0]> = {}) =>
-		load({ exec: asBinary, self: SELF, bun: null, ...extra });
+	const compiled = (extra: Partial<LoadGraphOptions> = {}) => load({ exec: asBinary, self: SELF, bun: null, ...extra });
 
 	test("the binary runs its own hidden subcommand with the request, and the table is the in-process graph's", async () => {
 		const loaded = await compiled();
@@ -200,7 +248,7 @@ describe("loadImportGraph in a compiled binary (no worker script on disk)", () =
 		expect(selfCalls[0]?.slice(0, 2)).toEqual([SELF, GRAPH_WORKER_SUBCOMMAND]);
 		expect(JSON.parse(selfCalls[0]?.[2] ?? "")).toMatchObject({ platform: "ios", repoRoot: dir, entries: [chats()] });
 		expect(spawns).toHaveLength(0);
-		const direct = await createImportGraph({ platform: "ios", repoRoot: dir });
+		const direct = await graphOf({ platform: "ios", repoRoot: dir });
 		expect([...reachable([chats()], loaded.graph.imports)]).toEqual([...reachable([chats()], direct.imports)]);
 	});
 
@@ -232,6 +280,20 @@ describe("loadImportGraph in a compiled binary (no worker script on disk)", () =
 		const junk = await compiled({ exec: async (cmd, o) => (cmd[0] === SELF ? done("hello") : counting(cmd, o)) });
 		expect(junk.via).toBe("in-process");
 		expect(junk.warning).toContain("printed no import graph");
+		expect(readdirSync(cacheDir)).toEqual([]);
+	});
+
+	test("a binary with no usable typescript is that error, not an in-process walk (cli-size-R5)", async () => {
+		const why = "needs typescript in the analysed project: add it as a devDependency";
+		const res = await loadResult({
+			exec: async (cmd, o) =>
+				cmd[0] === SELF
+					? done("", TYPESCRIPT_UNUSABLE_EXIT, `✖ warden ${GRAPH_WORKER_SUBCOMMAND}: ${why}\n`)
+					: counting(cmd, o),
+			self: SELF,
+			bun: null,
+		});
+		expect(res).toEqual({ success: false, error: why });
 		expect(readdirSync(cacheDir)).toEqual([]);
 	});
 

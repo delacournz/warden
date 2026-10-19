@@ -26,6 +26,7 @@ import {
 	type Target,
 	type Text,
 } from "./flow.schema";
+import { migrateFlow } from "./migrate";
 
 /**
  * Recording: turn what a user pointed at into a durable target, keep secrets out of the file, and append steps to the
@@ -159,7 +160,7 @@ export function parseFlow(raw: string): Result<Flow, FlowFileError> {
 	} catch {
 		return fileError("flow_invalid", "not valid JSON");
 	}
-	const parsed = flowSchema.safeParse(json);
+	const parsed = flowSchema.safeParse(migrateFlow(json));
 	if (!parsed.success) {
 		const issue = parsed.error.issues[0];
 		const where = issue?.path.length ? ` at ${issue.path.join(".")}` : "";

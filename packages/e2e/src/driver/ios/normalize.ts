@@ -28,6 +28,8 @@ function optionalFields(node: WireElement): Partial<Element> {
 		const value = node[key];
 		if (typeof value === "boolean") fields[key] = value;
 	}
+	// a helper built before it reported `is-editing` as focus (one can stay resident for minutes after an upgrade)
+	if (node.traits?.includes("is-editing")) fields.focused = true;
 	if (node.tapPoint) fields.tapPoint = node.tapPoint;
 	if (typeof node.pid === "number") fields.pid = node.pid;
 	return fields;

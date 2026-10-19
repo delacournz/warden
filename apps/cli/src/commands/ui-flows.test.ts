@@ -68,9 +68,9 @@ type Harness = {
 };
 
 /** A leased device, a fake driver, and the real flow recorder (no `record` dep): the files land in a temp cwd. */
-function harness(screen: Snapshot = snapshotOf(login())): Harness {
+function harness(screen: Snapshot = snapshotOf(login()), options: { setText?: boolean } = {}): Harness {
 	const clock = { t: 1_000_000 };
-	const driver = fakeDriver({ screens: [screen] });
+	const driver = fakeDriver({ screens: [screen], ...(options.setText ? { setText: true } : {}) });
 	const deps: UiDeps = {
 		driver: async () => ok(driver),
 		sleep: async (ms) => {
@@ -203,6 +203,25 @@ describe("replay", () => {
 				.join("")
 		).toBe("me@example.comhunter22hello");
 		expect(h.driver.callsOf("app.launch")[0]?.bundleId).toBe("com.example.app");
+	});
+
+	test("fill on a driver with setText: typed by default, set under WARDEN_ANDROID_SETTEXT=1", async () => {
+		const h = harness(snapshotOf(login()), { setText: true });
+		await recordSession(h);
+		h.driver.calls.length = 0;
+		expect(await h.run("replay", h.flowPath)).toBe(0);
+		expect(h.driver.callsOf("setText")).toEqual([]);
+		expect(
+			h.driver
+				.callsOf("typeText")
+				.map((call) => call.text)
+				.join("")
+		).toBe("me@example.comhunter22hello");
+		h.c.env = { ...h.c.env, WARDEN_ANDROID_SETTEXT: "1" };
+		h.driver.calls.length = 0;
+		expect(await h.run("replay", h.flowPath)).toBe(0);
+		expect(h.driver.callsOf("setText").map((call) => call.text)).toEqual(["me@example.com", "hunter22"]);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["hello"]);
 	});
 
 	test("--json: one envelope with the steps", async () => {
@@ -358,5 +377,90 @@ describe("export", () => {
 		expect(await h.plain("export", "nope.flow.json", "--to", "e2e/x.e2e.ts", "--json")).toBe(1);
 		expect(h.doc().ok).toBe(false);
 		expect(existsSync(join(h.c.cwd, "e2e", "x.e2e.ts"))).toBe(false);
+	});
+});
+
+describe("flow v2: screen and gesture steps", () => {
+	async function recordGestures(h: Harness): Promise<void> {
+		expect(await h.run("record", "start", FLOW)).toBe(0);
+		expect(await h.run("gesture", "pinch", "id=sign-in-submit", "2")).toBe(0);
+		expect(await h.run("gesture", "rotate", "45")).toBe(0);
+		expect(await h.run("gesture", "path", "--path", "100,200 200,300", "--path", "300,200 250,300")).toBe(0);
+		expect(await h.run("screen", "rotate", "landscape-left")).toBe(0);
+		expect(await h.run("record", "stop")).toBe(0);
+	}
+
+	test("records v2 steps, replays them through the driver and exports them", async () => {
+		const h = harness();
+		await recordGestures(h);
+
+		const raw = JSON.parse(h.read());
+		expect(raw.v).toBe(2);
+		const flow = flowSchema.parse(raw);
+		expect(
+			flow.steps.map((step) =>
+				step.kind === "screen" || step.kind === "gesture" ? `${step.kind}.${step.type}` : step.kind
+			)
+		).toEqual(["gesture.pinch", "gesture.rotate", "gesture.path", "screen.rotate"]);
+		const [pinch, rotate, path, orientation] = flow.steps;
+		expect(pinch).toMatchObject({ scale: 2, target: { kind: "selector", selector: "id=sign-in-submit" } });
+		expect(rotate).toMatchObject({ degrees: 45 });
+		expect(rotate && "target" in rotate).toBe(false);
+		expect(path).toMatchObject({
+			paths: [
+				[
+					{ x: 100, y: 200 },
+					{ x: 200, y: 300 },
+				],
+				[
+					{ x: 300, y: 200 },
+					{ x: 250, y: 300 },
+				],
+			],
+		});
+		expect(orientation).toMatchObject({ orientation: "landscapeLeft" });
+
+		h.driver.calls.length = 0;
+		expect(await h.run("replay", h.flowPath)).toBe(0);
+		expect(h.driver.callsOf("pinch")).toHaveLength(1);
+		expect(h.driver.callsOf("pinch")[0]).toMatchObject({ scale: 2, center: { x: 195, y: 172 } });
+		expect(h.driver.callsOf("rotate")[0]).toMatchObject({ degrees: 45 });
+		expect(h.driver.callsOf("gesture")[0]?.paths).toHaveLength(2);
+		expect(h.driver.callsOf("orientation")[0]).toMatchObject({ set: "landscapeLeft" });
+
+		expect(await h.plain("export", h.flowPath, "--to", "e2e/gestures.e2e.ts")).toBe(0);
+		const text = readFileSync(join(h.c.cwd, "e2e", "gestures.e2e.ts"), "utf8");
+		expect(text).toContain("screen.gesture.path(");
+		expect(text).toContain(".pinch(2");
+		expect(text).toContain("screen.gesture.rotate({ degrees: 45, durationMs: 500 })");
+		expect(text).toContain('device.orientation("landscapeLeft")');
+		expect(typecheck(join(h.c.cwd, "e2e", "gestures.e2e.ts"))).toEqual([]);
+	});
+
+	test("a checked-in v1 flow is migrated on read and replays", async () => {
+		const h = harness();
+		const target = {
+			kind: "selector",
+			selector: "id=sign-in-submit",
+			chain: [{ by: "id", selector: "id=sign-in-submit" }],
+			landmark: { role: "button", frame: { x: 0, y: 150, width: 390, height: 44 } },
+		};
+		const v1 = {
+			v: 1,
+			name: "old",
+			createdAt: 1,
+			recordedOn: { platform: "ios", device: "sim", screen: { width: 390, height: 844, scale: 3 } },
+			steps: [
+				{ i: 0, at: 1, kind: "longpress", target, durationMs: 700 },
+				{ i: 1, at: 2, kind: "swipe", gesture: { by: "path", from: { x: 10, y: 20 }, to: { x: 30, y: 40 } } },
+				{ i: 2, at: 3, kind: "rotate", orientation: "landscapeRight" },
+			],
+		};
+		writeFileSync(join(h.c.cwd, "old.flow.json"), JSON.stringify(v1));
+		expect(await h.run("replay", "old.flow.json", "--json")).toBe(0);
+		expect(h.doc().result).toMatchObject({ status: "passed", steps: 3 });
+		expect(h.driver.callsOf("longPress")[0]).toMatchObject({ opts: { durationMs: 700 } });
+		expect(h.driver.callsOf("swipe")[0]).toMatchObject({ from: { x: 10, y: 20 }, to: { x: 30, y: 40 } });
+		expect(h.driver.callsOf("orientation")[0]).toMatchObject({ set: "landscapeRight" });
 	});
 });

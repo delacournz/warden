@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { el, type FakeDriver, fakeDriver, snapshotOf } from "../driver/driver.testing";
 import { KEY_PACE_MS } from "../driver/typing";
 import { E2eError } from "../errors";
-import { CONFIRM_READS, FIELD_POLL_MS, STALE_RISK_READS } from "./field";
+import { CONFIRM_READS, FIELD_POLL_MS, SETTEXT_ENV, STALE_RISK_READS } from "./field";
 import { createScreen } from "./screen";
 import { FIELD_FRAME, fieldFixture, staticDriver, testHost } from "./screen.testing";
 
@@ -35,6 +35,9 @@ function login() {
 		el("other", { id: "card2", children: [el("text", { label: "Invoice 43" })] }),
 	]);
 }
+
+/** The hit-test after the focusing tap that sees the field take focus (`tapToFocus`). */
+const FOCUS_CHECK = 1;
 
 function setup(driver = login(), options: Parameters<typeof testHost>[1] = {}) {
 	const host = testHost(driver, options);
@@ -294,6 +297,38 @@ describe("fill", () => {
 		expect(state.value).toBe("grace@example.test");
 	});
 
+	test("on a driver with setText a filled field is still selected and typed over without the opt-in", async () => {
+		const { driver, state } = fieldFixture({ value: "ada@example.test", selectAll: true, setText: true });
+		const { screen } = setup(driver);
+		await withoutSetTextOptIn(() => screen.getByTestId("field").fill("grace@example.test"));
+		expect(driver.callsOf("setText")).toEqual([]);
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+		expect(state.value).toBe("grace@example.test");
+	});
+
+	test("under WARDEN_ANDROID_SETTEXT=1 a filled field is replaced in one call and still read back", async () => {
+		const { driver, state } = fieldFixture({ value: "ada@example.test", selectAll: true, setText: true });
+		const { screen } = setup(driver);
+		await withSetTextOptIn(() => screen.getByTestId("field").fill("grace@example.test"));
+		expect(driver.callsOf("setText").map((call) => call.text)).toEqual(["grace@example.test"]);
+		expect(driver.callsOf("selectAll")).toEqual([]);
+		expect(driver.callsOf("typeText")).toEqual([]);
+		expect(state.value).toBe("grace@example.test");
+	});
+
+	test("under the opt-in, a setText that did not take is caught by the read-back and retyped the counted way", async () => {
+		const { driver, state } = fieldFixture({ value: "ada", setText: true });
+		driver.setText = async (text) => {
+			driver.calls.push({ method: "setText", text });
+			return { success: true, data: undefined };
+		};
+		const { screen } = setup(driver);
+		await withSetTextOptIn(() => screen.getByTestId("field").fill("grace"));
+		expect(driver.callsOf("setText")).toHaveLength(1);
+		expect(driver.callsOf("typeText").map((call) => call.text)).toEqual(["grace"]);
+		expect(state.value).toBe("grace");
+	});
+
 	test("an empty field that shows its placeholder as the value sends no clearing keys", async () => {
 		const { driver, state } = fieldFixture({ placeholder: "ada@example.test", selectAll: true });
 		const { screen } = setup(driver);
@@ -381,14 +416,14 @@ describe("fill", () => {
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("ada@example.test");
 		expect(state.value).toBe("ada@example.test");
-		expect(driver.callsOf("elementAtPoint")).toHaveLength(CONFIRM_READS);
+		expect(driver.callsOf("elementAtPoint")).toHaveLength(FOCUS_CHECK + CONFIRM_READS);
 	});
 
 	test("a field that already held the wanted text still needs the longer run of reads", async () => {
 		const { driver } = fieldFixture({ value: "ada@example.test", selectAll: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("ada@example.test");
-		expect(driver.callsOf("elementAtPoint")).toHaveLength(STALE_RISK_READS);
+		expect(driver.callsOf("elementAtPoint")).toHaveLength(FOCUS_CHECK + STALE_RISK_READS);
 	});
 
 	test("a value still changing keeps the wait going past the usual window", async () => {
@@ -416,8 +451,10 @@ describe("fill", () => {
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("hi");
 		expect(driver.callsOf("snapshot")).toHaveLength(1);
-		expect(driver.callsOf("elementAtPoint").length).toBeGreaterThanOrEqual(2);
-		expect(driver.callsOf("elementAtPoint")[0]?.point).toEqual({ x: 174, y: 222 });
+		const [focus, ...reads] = driver.callsOf("elementAtPoint");
+		expect(focus?.point).toEqual({ x: 294, y: 222 });
+		expect(reads.length).toBeGreaterThanOrEqual(2);
+		expect(reads.map((call) => call.point)).toEqual(reads.map(() => ({ x: 174, y: 222 })));
 	});
 
 	test("iOS types the whole string in one request, with no client pacing", async () => {
@@ -535,7 +572,7 @@ describe("type, clear and press", () => {
 		expect(driver.callsOf("elementAtPoint")).toEqual([]);
 	});
 
-	test("press sends one key, with modifiers, after focusing", async () => {
+	test("press sends one key, with modifiers, after focusing (a field that took focus is not tapped again)", async () => {
 		const { driver } = fieldFixture();
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").press("Enter");
@@ -544,7 +581,7 @@ describe("type, clear and press", () => {
 			{ method: "key", key: "Enter" },
 			{ method: "key", key: "Tab", modifiers: ["shift"] },
 		]);
-		expect(driver.callsOf("tap")).toHaveLength(2);
+		expect(driver.callsOf("tap")).toHaveLength(1);
 	});
 });
 
@@ -746,5 +783,90 @@ describe("refinement and scoping", () => {
 		expect(String(screen.getByTestId("card").getByText("x").first())).toBe(
 			'getByTestId("card").getByText("x").first()'
 		);
+	});
+});
+
+/** Runs `fn` with `WARDEN_ANDROID_SETTEXT` set to `value` (or unset), then puts the old value back. */
+async function withSetTextEnv(value: string | undefined, fn: () => Promise<unknown>): Promise<void> {
+	const before = process.env[SETTEXT_ENV];
+	if (value === undefined) delete process.env[SETTEXT_ENV];
+	else process.env[SETTEXT_ENV] = value;
+	try {
+		await fn();
+	} finally {
+		if (before === undefined) delete process.env[SETTEXT_ENV];
+		else process.env[SETTEXT_ENV] = before;
+	}
+}
+
+const withSetTextOptIn = (fn: () => Promise<unknown>) => withSetTextEnv("1", fn);
+const withoutSetTextOptIn = (fn: () => Promise<unknown>) => withSetTextEnv(undefined, fn);
+
+describe("pinch and rotate", () => {
+	const feed = () => staticDriver([el("other", { id: "canvas", frame: { x: 0, y: 100, width: 390, height: 400 } })]);
+
+	test("pinch is centred on the frame with the computed radius and default duration", async () => {
+		const { driver, host, screen } = setup(feed());
+		await screen.getByTestId("canvas").pinch(2);
+		expect(driver.callsOf("pinch")).toEqual([
+			{ method: "pinch", center: { x: 195, y: 300 }, scale: 2, opts: { durationMs: 500, radius: 78 } },
+		]);
+		expect(host.steps.at(-1)).toContain("×2");
+	});
+
+	test("durationMs and radius pass through", async () => {
+		const { driver, screen } = setup(feed());
+		await screen.getByTestId("canvas").pinch(0.5, { durationMs: 900, radius: 70 });
+		await screen.getByTestId("canvas").rotate(-45, { durationMs: 700, radius: 60 });
+		expect(driver.callsOf("pinch")[0]?.opts).toEqual({ durationMs: 900, radius: 70 });
+		expect(driver.callsOf("rotate")).toEqual([
+			{ method: "rotate", center: { x: 195, y: 300 }, degrees: -45, opts: { durationMs: 700, radius: 60 } },
+		]);
+	});
+
+	test("rotate defaults to 500 ms and 30% of the shorter side", async () => {
+		const { driver, screen } = setup(feed());
+		await screen.getByTestId("canvas").rotate(90);
+		expect(driver.callsOf("rotate")[0]?.opts).toEqual({ durationMs: 500, radius: 117 });
+	});
+
+	test("the off-screen part of the frame is clipped", async () => {
+		const { driver, screen } = setup(
+			staticDriver([el("other", { id: "canvas", frame: { x: 0, y: 644, width: 390, height: 400 } })])
+		);
+		await screen.getByTestId("canvas").pinch(2);
+		expect(driver.callsOf("pinch")[0]?.center).toEqual({ x: 195, y: 744 });
+	});
+
+	test.each([Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 0.05, 11, 1])(
+		"pinch scale %f is INVALID_ARGUMENT",
+		async (scale) => {
+			const { driver, screen } = setup(feed());
+			expect((await failure(screen.getByTestId("canvas").pinch(scale))).code).toBe("INVALID_ARGUMENT");
+			expect(driver.callsOf("pinch")).toEqual([]);
+		}
+	);
+
+	test.each([Number.NaN, 0, 721, -721])("rotate degrees %f is INVALID_ARGUMENT", async (degrees) => {
+		const { screen } = setup(feed());
+		expect((await failure(screen.getByTestId("canvas").rotate(degrees))).code).toBe("INVALID_ARGUMENT");
+	});
+
+	test("an unknown option is INVALID_ARGUMENT", async () => {
+		const { screen } = setup(feed());
+		// @ts-expect-error not an option
+		expect((await failure(screen.getByTestId("canvas").pinch(2, { direction: "up" }))).code).toBe("INVALID_ARGUMENT");
+		// @ts-expect-error not an option
+		expect((await failure(screen.getByTestId("canvas").rotate(5, { scale: 1 }))).code).toBe("INVALID_ARGUMENT");
+	});
+
+	test("a driver without pinch is INVALID_ARGUMENT", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([el("other", { id: "canvas" })])],
+			capabilities: { pinch: false },
+		});
+		const { screen } = setup(driver);
+		expect((await failure(screen.getByTestId("canvas").pinch(2))).code).toBe("INVALID_ARGUMENT");
+		expect((await failure(screen.getByTestId("canvas").rotate(30))).code).toBe("INVALID_ARGUMENT");
 	});
 });

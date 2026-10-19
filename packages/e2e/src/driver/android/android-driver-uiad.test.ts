@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { Driver, DriverResult } from "../driver.types";
 import { canDetectAlerts } from "../observation-cache";
 import { settleDetailOf } from "../settle";
-import { canRepeatKeys, canSelectAll } from "../typing";
+import { canRepeatKeys, canSelectAll, canSetText } from "../typing";
 import { openAndroidDriver } from "./android-driver";
 import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
 import { type AndroidStateStore, memoryAndroidState } from "./android-state";
@@ -85,6 +85,12 @@ describe("off by default", () => {
 		expect(dumps(host)).toBe(1);
 		expect(driver.capabilities.nativeSettle).toBe(false);
 		expect(canSelectAll(driver)).toBe(false);
+		expect(canSetText(driver)).toBe(false);
+	});
+
+	test("without the server option there is no setText: a fill types as before", async () => {
+		const { driver } = await setup({ uiad: false });
+		expect(canSetText(driver)).toBe(false);
 	});
 });
 
@@ -93,6 +99,51 @@ describe("with the server", () => {
 		const { driver } = await setup({ sdk: 30 });
 		expect(driver.capabilities).toMatchObject({ unicodeText: true, nativeSettle: true });
 		expect(canSelectAll(driver)).toBe(true);
+	});
+
+	test("reports pinch and two pointers", async () => {
+		const { driver } = await setup({ sdk: 30 });
+		expect(driver.capabilities).toMatchObject({ pinch: true, maxPointers: 2 });
+	});
+
+	test("pinch is one gesture request with the radius in pixels (100 x the screen scale)", async () => {
+		const { driver, uiad, host } = await setup({
+			uiad: {
+				handle: (request) =>
+					request.op === "gesture" ? { data: { frames: 2, pointers: 2, maxLagMs: 0, via: "inject3" } } : undefined,
+			},
+		});
+		await value(driver.pinch({ x: 540, y: 1200 }, 2, { angle: 0 }));
+		const request = uiad.of("gesture")[0];
+		const paths = request?.paths as Array<Array<{ x: number; y: number }>>;
+		expect(paths).toHaveLength(2);
+		const radius = 100 * (420 / 160);
+		expect(paths[0]?.[0]?.x).toBeCloseTo(540 - radius, 1);
+		expect(paths[1]?.[0]?.x).toBeCloseTo(540 + radius, 1);
+		expect(paths[1]?.at(-1)?.x).toBeCloseTo(540 + radius * 2, 1);
+		expect(inputs(host).filter((c) => c.includes("motionevent"))).toEqual([]);
+	});
+
+	test("a refused two-finger gesture is E_UNSUPPORTED, not a one-finger line; a refused one-finger path is the motionevent line", async () => {
+		const { driver, host } = await setup({
+			uiad: {
+				handle: (request) =>
+					request.op === "gesture" ? { error: { code: "E_HID", message: "no", retryable: false } } : undefined,
+			},
+		});
+		const two = await driver.rotate({ x: 540, y: 1200 }, 90);
+		expect(!two.success && two.error.code).toBe("E_UNSUPPORTED");
+		await value(
+			driver.gesture([
+				{
+					points: [
+						{ x: 1, y: 2 },
+						{ x: 30, y: 40 },
+					],
+				},
+			])
+		);
+		expect(inputs(host).some((c) => c.includes("motionevent DOWN 1 2"))).toBe(true);
 	});
 
 	test("is not started until a call needs it: opening a link, or nothing at all, costs nothing", async () => {
@@ -179,6 +230,41 @@ describe("with the server", () => {
 		});
 		await value(driver.typeText("héllo"));
 		expect(uiad.of("typeText")[0]).toMatchObject({ text: "héllo" });
+		expect(inputs(host)).toEqual([]);
+	});
+
+	test("setText replaces the focused field's text in one server request, then waits for the edit to land", async () => {
+		const { driver, host, uiad } = await setup({
+			uiad: { handle: (r) => (r.op === "setText" ? { data: { text: r.text } } : undefined) },
+		});
+		if (!canSetText(driver)) throw new Error("no setText");
+		await value(driver.setText("grace@example.com"));
+		expect(uiad.of("setText")).toEqual([expect.objectContaining({ op: "setText", text: "grace@example.com" })]);
+		expect(uiad.of("setText")[0]).not.toHaveProperty("resourceId");
+		expect(uiad.of("settle")).toHaveLength(1);
+		expect(inputs(host)).toEqual([]);
+	});
+
+	test("setText of empty text is the recorded reply", async () => {
+		const { driver, uiad } = await setup();
+		if (!canSetText(driver)) throw new Error("no setText");
+		await value(driver.setText(""));
+		expect(uiad.of("setText")[0]).toMatchObject({ text: "" });
+	});
+
+	test("a setText the server refuses (nothing focused) is an error for the caller, never `input text`", async () => {
+		const { driver, host } = await setup({
+			uiad: {
+				handle: (r) =>
+					r.op === "setText"
+						? { error: { code: "E_NO_ELEMENT", message: "no focused input to set text on", retryable: false } }
+						: undefined,
+			},
+		});
+		if (!canSetText(driver)) throw new Error("no setText");
+		const set = await driver.setText("abc");
+		expect(set.success).toBe(false);
+		if (!set.success) expect(set.error.code).toBe("E_UNSUPPORTED");
 		expect(inputs(host)).toEqual([]);
 	});
 

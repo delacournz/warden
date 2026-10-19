@@ -75,6 +75,36 @@ describe("cold start", () => {
 	});
 });
 
+describe("cold start: the commands agents call most", () => {
+	const FORBID = [
+		"/node_modules/zod/",
+		"/node_modules/ora/",
+		"/node_modules/@clack/",
+		"/packages/e2e/",
+		"/node_modules/typescript/",
+	];
+	/** `--help` where a real call would touch a device or a toolchain; the module graph is the same up to dispatch. */
+	const CASES: { args: string[]; forbid: string[] }[] = [
+		{ args: ["hook", "pretool"], forbid: FORBID },
+		{ args: ["heartbeat"], forbid: FORBID },
+		{ args: ["claim", "--help"], forbid: FORBID },
+		{ args: ["ls", "--json"], forbid: FORBID },
+		{ args: ["devices", "--help"], forbid: FORBID },
+		{ args: ["check", "--help"], forbid: FORBID },
+		{ args: ["port", "ls", "--json"], forbid: FORBID },
+		// run, dev and app parse a config only once called with a project (15-2): zod loads at the parse, not at start
+		{ args: ["run", "--help"], forbid: FORBID },
+		{ args: ["dev", "--help"], forbid: FORBID },
+		{ args: ["app", "--help"], forbid: FORBID },
+	];
+
+	for (const { args, forbid } of CASES) {
+		test(`\`warden ${args.join(" ")}\` loads none of zod, ora, clack, the e2e package or typescript`, async () => {
+			expect(loaded(await loadedBy(args), forbid)).toEqual([]);
+		});
+	}
+});
+
 describe("cold start: gc and release", () => {
 	const HEAVY = [
 		"/packages/e2e/",
@@ -158,6 +188,7 @@ describe("cold start: warden ui", () => {
 		"/agent-ui/bench.ts",
 		"/agent-ui/video.ts",
 		"/agent-ui/controls.ts",
+		"/agent-ui/gestures.ts",
 		"/agent-ui/ui-driver.ts",
 	];
 	const without = (needles: string[], skip: string) => needles.filter((needle) => needle !== skip);
@@ -184,6 +215,12 @@ describe("cold start: warden ui", () => {
 		const files = await loadedBy(["ui", "press", "@e1", "--json"]);
 		expect(has(files, "/agent-ui/actions.ts")).toBe(true);
 		expect(loaded(files, [...OTHERS, ...DRIVERS, "/agent-ui/query.ts"])).toEqual([]);
+	});
+
+	test("`ui gesture pinch` without a lease loads gestures.ts and no driver", async () => {
+		const files = await loadedBy(["ui", "gesture", "pinch", "@e1", "2", "--json"]);
+		expect(has(files, "/agent-ui/gestures.ts")).toBe(true);
+		expect(loaded(files, [...without(OTHERS, "/agent-ui/gestures.ts"), ...DRIVERS, "/agent-ui/query.ts"])).toEqual([]);
 	});
 
 	test("`ui status` and `ui close` read the helper record without loading a driver", async () => {

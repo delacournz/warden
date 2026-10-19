@@ -6,7 +6,7 @@ import { snapshotHash } from "../driver/settle";
 import type { Flow, NewStep } from "./flow.schema";
 import { flowOf } from "./flow.testing";
 import { targetFromElement } from "./record";
-import { type ReplayDeps, replayFlow } from "./replay";
+import { describeStep, type Located, type ReplayDeps, replayFlow } from "./replay";
 import { recordingActors } from "./replay.testing";
 
 const SIGN_IN = { x: 24, y: 300, width: 342, height: 48 };
@@ -347,6 +347,61 @@ describe("replayFlow", () => {
 		const outcome = await replayFlow(recorded(), deps);
 		expect(outcome).toMatchObject({ status: "failed", step: 0, error: { code: "E_AX_UNAVAILABLE" } });
 	});
+
+	test("a pinch on a selector resolves the target and hands the actor the step", async () => {
+		const base = screen();
+		const target = targetFromElement(elementNamed(base, "sign-in"), base);
+		const seen: { scale: number; via: string | undefined }[] = [];
+		const { deps } = harness(base);
+		deps.act = {
+			...deps.act,
+			"gesture.pinch": async (step, ctx) => {
+				seen.push({ scale: step.scale, via: ctx.targets.target?.via });
+				return ok(undefined);
+			},
+		};
+		const outcome = await replayFlow(flowOf([{ kind: "gesture", type: "pinch", at: 1, scale: 2, target }]), deps);
+		expect(outcome).toMatchObject({ status: "passed", steps: 1 });
+		expect(seen).toEqual([{ scale: 2, via: "id" }]);
+	});
+
+	test("a path needs no snapshot, a pinch without a target neither", async () => {
+		const { deps, driver, calls } = harness(screen());
+		const outcome = await replayFlow(
+			flowOf([
+				{
+					kind: "gesture",
+					type: "path",
+					at: 1,
+					paths: [
+						[
+							{ x: 1, y: 1 },
+							{ x: 2, y: 2 },
+						],
+					],
+				},
+				{ kind: "gesture", type: "pinch", at: 2, scale: 0.5 },
+				{ kind: "screen", type: "rotate", at: 3, orientation: "landscapeLeft" },
+			]),
+			deps
+		);
+		expect(outcome).toMatchObject({ status: "passed", steps: 3 });
+		expect(calls).toEqual(["0 gesture.path", "1 gesture.pinch", "2 screen.rotate"]);
+		expect(driver.callsOf("snapshot")).toHaveLength(0);
+	});
+
+	test("describeStep labels gestures", () => {
+		const at = { i: 0, at: 1 };
+		expect(describeStep({ ...at, kind: "gesture", type: "pinch", scale: 2 })).toBe("×2");
+		expect(describeStep({ ...at, kind: "gesture", type: "rotate", degrees: -45 })).toBe("-45°");
+		const finger = [
+			{ x: 0, y: 0 },
+			{ x: 1, y: 1 },
+		];
+		expect(describeStep({ ...at, kind: "gesture", type: "path", paths: [finger] })).toBe("1 finger");
+		expect(describeStep({ ...at, kind: "gesture", type: "path", paths: [finger, finger] })).toBe("2 fingers");
+		expect(describeStep({ ...at, kind: "screen", type: "appearance", mode: "dark" })).toBe("dark");
+	});
 });
 
 /** Re-spec a built element so `snapshotOf` can lay a tree out again (identifier → id). */
@@ -358,3 +413,76 @@ function toSpec(element: Element): ReturnType<typeof el> {
 		children: element.children.map(toSpec),
 	});
 }
+
+describe("a lazily found target that moved past the landmark", () => {
+	/**
+	 * `wait` and `is` as the CLI's flow actors judge them (`apps/cli/src/agent-ui/flow-actors.ts`): present means
+	 * `find` resolved it, showing means it resolved to a visible entry. One look, no polling.
+	 */
+	function judgingActors(driver: ReturnType<typeof fakeDriver>): ReplayDeps["act"] {
+		const present = (located: Located): boolean => "resolved" in located;
+		const showing = (located: Located): boolean => "resolved" in located && located.resolved.entry?.visible === true;
+		return {
+			...recordingActors(driver, []),
+			wait: async (step, ctx) => {
+				const looked = await ctx.find(step.target);
+				if (!looked.success) return looked;
+				const state = step.state ?? "visible";
+				const reached = {
+					visible: showing(looked.data),
+					hidden: !showing(looked.data),
+					attached: present(looked.data),
+					detached: !present(looked.data),
+				}[state];
+				return reached
+					? ok(undefined)
+					: { success: false, error: { code: "replay_divergence", message: `not ${state}` } };
+			},
+			is: async (step, ctx) => {
+				const looked = await ctx.find(step.target);
+				if (!looked.success) return looked;
+				const entry = "resolved" in looked.data ? looked.data.resolved.entry : undefined;
+				const hidden = entry === undefined || !entry.visible;
+				const holds = step.state === "hidden" ? hidden : entry?.visible === true;
+				return holds !== (step.not === true)
+					? ok(undefined)
+					: { success: false, error: { code: "assertion_failed", message: `not ${step.state}` } };
+			},
+		};
+	}
+
+	const base = screen();
+	const signIn = targetFromElement(elementNamed(base, "sign-in"), base);
+	const moved = () => screen({ signIn: { y: SIGN_IN.y + 100 } });
+
+	function run(step: NewStep) {
+		const h = harness(moved());
+		h.deps.act = judgingActors(h.driver);
+		return { outcome: replayFlow(flowOf([step]), h.deps), logs: h.logs };
+	}
+
+	test("is hidden fails: the element is still on screen, 100 pt lower", async () => {
+		const { outcome } = run({ kind: "is", at: 1, target: signIn, state: "hidden" });
+		expect(await outcome).toMatchObject({ status: "failed", error: { code: "assertion_failed" } });
+	});
+
+	test("wait detached fails: the element is still attached", async () => {
+		const { outcome } = run({ kind: "wait", at: 1, target: signIn, state: "detached" });
+		expect((await outcome).status).toBe("diverged");
+	});
+
+	test("wait visible passes, with the move reported as a warning", async () => {
+		const { outcome, logs } = run({ kind: "wait", at: 1, target: signIn, state: "visible" });
+		const result = await outcome;
+		expect(result.status).toBe("passed");
+		expect(result.moves).toEqual([{ step: 0, kind: "wait", reason: expect.stringContaining("moved 100 pt") }]);
+		expect(logs.filter((line) => line.startsWith("moved step 0 wait"))).toHaveLength(1);
+	});
+
+	test("a press on the same moved element still diverges: its position is what it acts on", async () => {
+		const { outcome } = run({ kind: "press", at: 1, target: signIn });
+		const result = await outcome;
+		expect(result.status).toBe("diverged");
+		expect(result.moves).toBeUndefined();
+	});
+});

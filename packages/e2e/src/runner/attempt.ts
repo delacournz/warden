@@ -1,16 +1,53 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { E2eError } from "../errors";
-import type { Session } from "../session";
+import { type AttemptBinding, attemptSession, type Session } from "../session";
 import { attemptDir, flowIdOf, hash6 } from "./artifacts";
-import { captureDevtoolsArtifacts, captureFailure } from "./failure";
+import { CAPTURE_TIMEOUT_MS, captureDevtoolsArtifacts, captureFailure } from "./failure";
 import type { AttemptContext, BaseFixtures } from "./fixtures.types";
 import type { TestResult } from "./results";
-import { hooksFor, type ResolvedUse, resolveUse, type Scope } from "./scope";
+import { BUN_TIMEOUT_MARGIN_MS, hooksFor, type ResolvedUse, resolveUse, type Scope } from "./scope";
+import { runStep } from "./step";
 import { formatConsoleLine, openTrace, shortName } from "./trace";
 
 /** Longest one hook or fixture teardown may take once the test itself is over. */
 export const CLEANUP_TIMEOUT_MS = 10_000;
+
+/** Part of bun's margin the runner never spends after a deadline: the `■` line and the results line still need it. */
+export const POST_DEADLINE_RESERVE_MS = 5_000;
+
+/** The runner's own time limits around a test body (see {@link setRunnerTiming}). */
+export type RunnerTiming = {
+	/** longest one `afterEach` hook or fixture teardown may take ({@link CLEANUP_TIMEOUT_MS}) */
+	cleanupTimeoutMs: number;
+	/** longest one failure capture call may take (`CAPTURE_TIMEOUT_MS`) */
+	captureTimeoutMs: number;
+	/** what bun's own per-test timeout adds over warden's deadline (`BUN_TIMEOUT_MARGIN_MS`) */
+	bunMarginMs: number;
+	/** part of that margin left unspent ({@link POST_DEADLINE_RESERVE_MS}) */
+	reserveMs: number;
+};
+
+const DEFAULT_TIMING: RunnerTiming = {
+	cleanupTimeoutMs: CLEANUP_TIMEOUT_MS,
+	captureTimeoutMs: CAPTURE_TIMEOUT_MS,
+	bunMarginMs: BUN_TIMEOUT_MARGIN_MS,
+	reserveMs: POST_DEADLINE_RESERVE_MS,
+};
+
+let timing: RunnerTiming = { ...DEFAULT_TIMING };
+
+export function runnerTiming(): Readonly<RunnerTiming> {
+	return timing;
+}
+
+/**
+ * Test seam: a runner fixture spec shrinks the limits (before it registers its tests) so a slow-cleanup case runs
+ * in milliseconds. `undefined` restores the defaults.
+ */
+export function setRunnerTiming(next: Partial<RunnerTiming> | undefined): void {
+	timing = next === undefined ? { ...DEFAULT_TIMING } : { ...timing, ...next };
+}
 
 type Bag = BaseFixtures & Record<string, unknown>;
 
@@ -31,6 +68,8 @@ export type AttemptSpec<F extends object> = {
 	only: boolean;
 	/** no retries left: only a final (or passing) attempt appends to `results.jsonl` */
 	final: boolean;
+	/** bun's own timeout for this test, fixed when it was registered (default: the resolved timeout + bun's margin) */
+	bunTimeoutMs?: number;
 };
 
 /** A stand-in that throws a clear `SESSION` error on first use instead of failing at construction. */
@@ -112,6 +151,16 @@ async function startFixture(entry: FixtureEntry, bag: Record<string, unknown>): 
 	};
 }
 
+/**
+ * When the runner must be done with an attempt: bun's own timeout for the test (or the resolved timeout plus bun's
+ * margin, if that is sooner) minus the reserve. Failure capture, `afterEach` hooks and fixture teardowns all spend
+ * from this one budget, so bun never gives up on a test (and starts the next one) while its cleanup still runs.
+ */
+export function cleanupDeadline(startedAt: number, timeoutMs: number, bunTimeoutMs: number | undefined): number {
+	const t = runnerTiming();
+	return startedAt + Math.min(timeoutMs + t.bunMarginMs, bunTimeoutMs ?? Number.POSITIVE_INFINITY) - t.reserveMs;
+}
+
 function limited<T>(label: string, ms: number, fn: () => Promise<T>): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const timeout = new Promise<never>((_, reject) => {
@@ -153,6 +202,8 @@ export async function runAttempt<F extends object>(session: Session, spec: Attem
 		spec.timeout
 	);
 	const startedAt = Date.now();
+	const cleanupBy = cleanupDeadline(startedAt, use.timeoutMs, spec.bunTimeoutMs);
+	const budget = (): number => cleanupBy - Date.now();
 	const device = { udid: env.udid, platform: env.platform };
 	const clock = !env.logTimestamps;
 	const short = shortName(spec.file);
@@ -162,9 +213,11 @@ export async function runAttempt<F extends object>(session: Session, spec: Attem
 	};
 
 	const files = new Set<string>();
+	// what this attempt's fixtures and steps run against: the run context, its cleanup context, then a finished one
+	let binding: AttemptBinding | undefined;
 	const trace = openTrace(join(dir, "trace.jsonl"), (event) => {
 		files.add("trace.jsonl");
-		print(formatConsoleLine(event, { clock, short, depth: session.attempt?.depth ?? 0 }));
+		print(formatConsoleLine(event, { clock, short, depth: binding?.context.depth ?? 0 }));
 	});
 	const controller = new AbortController();
 	const ctx: AttemptContext = {
@@ -176,6 +229,8 @@ export async function runAttempt<F extends object>(session: Session, spec: Attem
 		files,
 		softFailures: [],
 	};
+	binding = { context: ctx, finished: false };
+	const bound = attemptSession(session, () => binding ?? { context: ctx, finished: false });
 
 	print(
 		formatConsoleLine(
@@ -201,7 +256,7 @@ export async function runAttempt<F extends object>(session: Session, spec: Attem
 	let failure: unknown;
 
 	try {
-		await Promise.race([setUpAndRun(session, spec, use, controller.signal, state, teardowns), deadline]);
+		await Promise.race([setUpAndRun(bound, spec, use, controller.signal, state, teardowns), deadline]);
 	} catch (error) {
 		failed = true;
 		failure = error;
@@ -213,11 +268,17 @@ export async function runAttempt<F extends object>(session: Session, spec: Attem
 		failed = true;
 		failure = softFailureError(ctx.softFailures);
 	}
-	if (failed) await captureFailureArtifacts(session, ctx);
+	if (failed) await captureFailureArtifacts(session, ctx, budget);
 
-	const cleanupErrors = await runCleanup(session, spec, ctx, state.bag, teardowns);
-	if (!controller.signal.aborted) controller.abort(new E2eError("SESSION", "attempt finished"));
-	session.leaveAttempt();
+	const cleanupErrors = await runCleanup(session, spec, ctx, state.bag, teardowns, budget, (context) => {
+		binding = { context, finished: false };
+	});
+	const finished = new E2eError("SESSION", "attempt finished");
+	if (!controller.signal.aborted) controller.abort(finished);
+	// anything of this attempt still running (a body that outlived its deadline, an afterEach past its limit) now
+	// fails its next step or driver call instead of acting in the next test
+	binding = { context: { ...ctx, signal: AbortSignal.abort(finished), depth: 0 }, finished: true };
+	session.leaveAttempt(ctx);
 	trace.flush();
 
 	if (!failed && cleanupErrors.length > 0) {
@@ -296,12 +357,13 @@ async function setUpAndRun<F extends object>(
  * `failure.png` + `screen-at-failure.txt` from the already-open driver and `console.jsonl` + `network.jsonl` from the
  * already-attached devtools (never opens either); problems go to the trace.
  */
-async function captureFailureArtifacts(session: Session, ctx: AttemptContext): Promise<void> {
+async function captureFailureArtifacts(session: Session, ctx: AttemptContext, budget: () => number): Promise<void> {
 	const driver = session.peekDriver();
 	const facet = session.peekDevtools();
+	const { captureTimeoutMs } = runnerTiming();
 	const captures = [
-		...(driver === undefined ? [] : [await captureFailure(driver, ctx.dir)]),
-		...(facet === undefined ? [] : [await captureDevtoolsArtifacts(facet, ctx.dir)]),
+		...(driver === undefined ? [] : [await captureFailure(driver, ctx.dir, captureTimeoutMs, budget)]),
+		...(facet === undefined ? [] : [await captureDevtoolsArtifacts(facet, ctx.dir, captureTimeoutMs, budget)]),
 	];
 	for (const capture of captures) {
 		for (const file of capture.files) ctx.files.add(file);
@@ -313,36 +375,45 @@ async function captureFailureArtifacts(session: Session, ctx: AttemptContext): P
 
 /**
  * `afterEach` hooks (innermost scope first) then fixture teardowns (reverse order), each limited to
- * {@link CLEANUP_TIMEOUT_MS} and run under a fresh signal: the test's own may already be aborted.
- * Returns every error instead of throwing, so one failing hook never skips the rest.
+ * {@link CLEANUP_TIMEOUT_MS} or what is left of the attempt's budget, whichever is less, and run under a fresh
+ * signal: the test's own may already be aborted. Once the budget is spent the rest are skipped, each with a
+ * `TIMEOUT` error. Returns every error instead of throwing, so one failing hook never skips the rest.
  */
 async function runCleanup<F extends object>(
 	session: Session,
 	spec: AttemptSpec<F>,
 	ctx: AttemptContext,
 	built: Bag | undefined,
-	teardowns: ReadonlyArray<{ name: string; run: () => Promise<void> }>
+	teardowns: ReadonlyArray<{ name: string; run: () => Promise<void> }>,
+	budget: () => number,
+	bind: (context: AttemptContext) => void
 ): Promise<unknown[]> {
 	const cleanup = new AbortController();
-	session.enterAttempt({ ...ctx, signal: cleanup.signal, depth: 0 });
+	const cleanupCtx: AttemptContext = { ...ctx, signal: cleanup.signal, depth: 0 };
+	// only this attempt's own slot: bun may already have started the next test
+	session.enterAttempt(cleanupCtx, ctx);
+	bind(cleanupCtx);
+	const step = <T>(kind: string, label: string, fn: () => Promise<T>): Promise<T> =>
+		runStep(cleanupCtx, kind, label, fn);
 	const errors: unknown[] = [];
 	const attempt = async (label: string, fn: () => Promise<void>): Promise<void> => {
 		try {
-			await limited(label, CLEANUP_TIMEOUT_MS, fn);
+			const left = budget();
+			if (left <= 0) throw new E2eError("TIMEOUT", `${label} skipped: the cleanup budget after the test is used up`);
+			await limited(label, Math.min(timing.cleanupTimeoutMs, left), fn);
 		} catch (error) {
 			errors.push(error);
 		}
 	};
 	if (built !== undefined) {
 		for (const hook of hooksFor(spec.scope, "afterEach")) {
-			await attempt("afterEach", () => session.step("hook", "afterEach", async () => hook(built)));
+			await attempt("afterEach", () => step("hook", "afterEach", async () => hook(built)));
 		}
 	}
 	for (const fixture of [...teardowns].reverse()) {
-		await attempt(`fixture ${fixture.name} teardown`, () =>
-			session.step("fixture", `${fixture.name} teardown`, fixture.run)
-		);
+		await attempt(`fixture ${fixture.name} teardown`, () => step("fixture", `${fixture.name} teardown`, fixture.run));
 	}
 	cleanup.abort(new E2eError("SESSION", "attempt finished"));
+	session.leaveAttempt(cleanupCtx);
 	return errors;
 }

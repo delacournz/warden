@@ -21,6 +21,11 @@ export type Lease = {
 	pid?: number;
 	/** the owner booted this device (it was off when leased) — so it's theirs to shut down on release */
 	bootedByOwner?: boolean;
+	/**
+	 * Heartbeat period of the process that holds this lease (`run` / `dev` / `batch` / `e2e`, which also
+	 * record their own `pid`). With a pid, a dead pid makes the lease stale after `LOST_HEARTBEATS` periods.
+	 */
+	heartbeatMs?: number;
 };
 
 export type DeviceState = "booted" | "shutdown" | "booting";

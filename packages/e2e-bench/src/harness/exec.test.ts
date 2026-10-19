@@ -14,9 +14,37 @@ describe("realExec", () => {
 		expect(r.timedOut).toBe(false);
 	});
 
+	test("reports the child's CPU time at exit, the descendants it reaped included (bench-fidelity-R4)", async () => {
+		const loop = "i=0; while [ $i -lt 60000 ]; do i=$((i+1)); done";
+		const r = await realExec.run("sh", ["-c", `${loop}; (${loop})`]);
+		expect(r.code).toBe(0);
+		expect(r.cpuSec).toBeGreaterThan(0.01);
+		expect(r.cpuSec).toBeLessThan(30);
+	});
+
 	test("times out", async () => {
 		const r = await realExec.run("sh", ["-c", "sleep 5"], { timeoutMs: 100 });
 		expect(r.timedOut).toBe(true);
+		expect(r.durationMs).toBeLessThan(2_000);
+	});
+
+	test("a timeout is a bound even when a grandchild holds the pipes", async () => {
+		const r = await realExec.run("sh", ["-c", "echo started; sleep 30 & wait"], { timeoutMs: 200 });
+		expect(r.timedOut).toBe(true);
+		expect(r.stdout).toBe("started\n");
+		expect(r.durationMs).toBeLessThan(2_000);
+	});
+
+	test("the timeout kills the child's whole process group, not just the child", async () => {
+		const r = await realExec.run("sh", ["-c", "sleep 30 & echo $!; wait"], { timeoutMs: 200 });
+		const grandchild = Number(r.stdout.trim());
+		expect(grandchild).toBeGreaterThan(0);
+		await Bun.sleep(100);
+		// gone, or a zombie waiting for a reaper (in a container pid 1 may never reap it)
+		const state = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(grandchild)])
+			.stdout.toString()
+			.trim();
+		expect(state === "" || state.startsWith("Z")).toBe(true);
 	});
 
 	test("reports a missing binary as a spawn error", async () => {

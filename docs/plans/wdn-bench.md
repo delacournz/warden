@@ -102,8 +102,8 @@ FrameworkResult =
   | { framework, status: "unsupported", version?, reason }
   | { framework, status: "failed", version, phase: "doctor"|"prepare"|"run"|"teardown", error, partial?: RepResult[] }
   | { framework, status: "ok", version, phases { prepareMs, teardownMs }, reps: RepResult[], resources { host: Series, sim: Series }, residue { processes: string[], driverApps: string[], paths: {path, deltaBytes}[] }, footprint { testSourceLoc, testSourceBytes, depsBytes, binaryBytes, notes[] }, stats: FrameworkStats /* derived, recomputable */ }
-Series { cpuAvgPct, cpuPeakPct, rssAvgBytes, rssPeakBytes, samples }   // raw ticks in artifacts/<fw>/rep-<n>/resources.ndjson
-RepResult { index, cold, wallMs, wallSource: "harness", startedAt, tests: TestResult[], rawArtifactDir }
+Series { cpuAvgPct, cpuPeakPct, rssAvgBytes, rssPeakBytes, samples, cpuSeconds?, cpuRatePct?, byGroup?: Partial<Record<"bun-test"|"warden-simd"|"warden-cli"|"adb"|"emulator"|"other", { cpuSeconds, rssAvgBytes, rssPeakBytes }>> }   // raw ticks in artifacts/<fw>/rep-<n>/resources.ndjson; FrameworkResult.resources is whole-framework
+RepResult { index, cold, wallMs, wallSource: "harness", startedAt, tests: TestResult[], rawArtifactDir, resources?: { window { startMs, endMs }, host: Series, sim: Series, cpuSeconds, rssPeakBytes } /* timed run only; the CPU headline is host cpuSeconds per rep */ }
 TestResult { id: CanonicalId, nativeName, status: "passed" | "failed" | "skipped" | "timed-out" | "missing" /* manifest id absent from output */, durationMs, steps?: { kind, label, ms, status }[], error?, artifacts?: { kind: "screenshot"|"video"|"log"|"junit"|"json", path }[] }
 FrameworkStats { warmSuiteWall: Dist, coldSuiteWallMs, perTest: Record<CanonicalId, Dist & { ratioToFastest, passRate, flakeRate }>, overheadMs /* median(wall − Σ tests) */, coldStartMs /* prepareMs + rep1.test[0] − median(warm test[0]) */, firstTestOverheadMs, prepareMs, teardownMs, stepLatency?: Dist, passRate, flakeRate, ratioToFastestSuite }
 Dist { n, median, p95, min, max, stddev, cvPct }   // reuse percentile from apps/cli/src/agent-ui/bench.ts

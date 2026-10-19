@@ -23,6 +23,7 @@ Flows stay in your repo's own `*.e2e.ts` files, written with [`@delacour/warden-
    - **Runtime imports only.** `import type` / `export type` are dropped, as the bundler drops them.
    - **Router layouts.** With `routerRoot`, every `_layout` above an entry counts as an entry too (file-based routers render them around the route).
    - **`maxDepth`** limits how many import hops from an entry still count. Apps with hub modules (a session context, a shared API client) otherwise reach almost everything from every screen; `3` is a good start.
+   - **Needs TypeScript 5.0 or later.** The graph is walked with a TypeScript compiler: warden's own when it runs from source, else (the compiled `warden` binary, which does not carry one) the analysed project's, found as `node_modules/typescript` from the config's directory upward. Add `typescript` as a devDependency; without it (or with one older than 5.0) a run that needs the graph exits 1 and says so. `warden e2e --all` / `--flows` and runs with no changes do not need it. Yarn Plug'n'Play installs have no `node_modules`, so they are not supported (use `nodeLinker: node-modules`).
 5. **Flow files.** A changed flow selects itself; a changed helper (any other `.ts` file in the flows directory) selects every flow that imports it.
 6. **`always`** flows run every time, and so do flows with no `entries` / `paths` unless `unmapped` is `"skip"`.
 

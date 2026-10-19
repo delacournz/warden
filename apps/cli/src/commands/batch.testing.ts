@@ -35,7 +35,14 @@ export type Harness = {
 	warmed: string[];
 	/** every warm helper stopped: the udid */
 	warmClosed: string[];
+	/** every warm helper whose process was stopped (`WarmHelper.stop`, a failed warm-up): the udid */
+	warmStopped: string[];
 };
+
+/** A job spawn's `logDrainMs` when the harness reports one. */
+function drainOf(ms: number | undefined, spawnOpts: SpawnOptions): Pick<ProcHandle, "logDrainMs"> {
+	return ms !== undefined && spawnOpts.job ? { logDrainMs: () => ms } : {};
+}
 
 /**
  * Fake effects: jobs exit on their own with `exitCodes[WARDEN_JOB]` (default 0) unless `manual`;
@@ -56,14 +63,16 @@ export function harness(
 		slim?: "ok" | "fail";
 		/** who the Metro probe finds on the leased port (default: this project's Metro) */
 		metroOwner?: MetroOwner;
-		/** the prewarm outcome: "fail" = the bundle does not build */
-		prewarm?: "ok" | "fail";
+		/** the prewarm outcome: "fail" = the bundle does not build, "hang" = still building until its signal aborts */
+		prewarm?: "ok" | "fail" | "hang";
 		/** the warm-up helper: "fail" = cannot connect, "snapshot-fail" = connects but cannot snapshot (default "ok") */
 		warm?: "ok" | "fail" | "snapshot-fail";
 		/** `bun` on PATH (default `/usr/bin/bun`; null = not installed) */
 		bun?: string | null;
 		/** where `@delacour/warden-e2e/preload` resolves (default under `/proj/node_modules`; null = not installed) */
 		preload?: string | null;
+		/** how long each job's log took to drain after it exited (`ProcHandle.logDrainMs`; default: not reported) */
+		logDrainMs?: number;
 	} = {}
 ): Harness {
 	const h: Harness = {
@@ -82,6 +91,7 @@ export function harness(
 		slimmed: [],
 		warmed: [],
 		warmClosed: [],
+		warmStopped: [],
 		timers: [],
 		tickers: [],
 		metroProbes: [],
@@ -105,6 +115,7 @@ export function harness(
 					queueMicrotask(() => resolveExit(opts.exitCodeFor?.(spawnOpts.env) ?? opts.exitCodes?.[job ?? ""] ?? 0));
 				return {
 					exited,
+					...drainOf(opts.logDrainMs, spawnOpts),
 					kill: (signal) => {
 						entry.kills.push(signal);
 						h.events.push(`${daemon ?? `job:${job}`}:${signal}`);
@@ -193,11 +204,23 @@ export function harness(
 							h.warmClosed.push(udid);
 							h.events.push(`warm-close:${udid}`);
 						},
+						stop: async () => {
+							h.warmStopped.push(udid);
+							h.events.push(`warm-stop:${udid}`);
+						},
 					},
 				};
 			},
-			prewarm: async (url, platform) => {
+			prewarm: async (url, platform, signal) => {
 				h.prewarmed.push(`${platform} ${url}`);
+				if (opts.prewarm === "hang") {
+					await new Promise<void>((resolve) => {
+						if (signal?.aborted) resolve();
+						signal?.addEventListener("abort", () => resolve(), { once: true });
+					});
+					h.events.push("prewarm:aborted");
+					return { success: false, error: `interrupted while building the ${platform} bundle` };
+				}
 				return opts.prewarm === "fail"
 					? { success: false, error: "Metro could not build the ios bundle (HTTP 500): SyntaxError" }
 					: { success: true, data: { bundled: true } };

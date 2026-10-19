@@ -15,8 +15,10 @@ export type SwappableClient = {
 	/**
 	 * Replace the helper: ask the current one to `shutdown`, drop it, `reopen()` (socket first, else a
 	 * fresh stdio spawn). Single-flight; a caller whose `seenGeneration` is already stale just returns ok.
+	 * `crashed`: the helper (or the connection to it) is already gone, so nothing is asked of it; asking
+	 * would only make a stdio client respawn a helper to shut it down.
 	 */
-	restart(seenGeneration: number): Promise<Result<void, DriverError>>;
+	restart(seenGeneration: number, o?: { crashed?: boolean }): Promise<Result<void, DriverError>>;
 };
 
 const SHUTDOWN_TIMEOUT_MS = 500;
@@ -51,12 +53,12 @@ export function swappableClient(
 		close: () => current.close(),
 	};
 
-	async function doRestart(): Promise<Result<void, DriverError>> {
+	async function doRestart(crashed: boolean): Promise<Result<void, DriverError>> {
 		const { reopen } = o;
 		if (!reopen) return { success: false, error: driverError("E_INTERNAL", "no way to reopen warden-simd") };
 		const stale = current;
 		// A shared socket daemon only stops if asked; a stdio helper would be asked by close() anyway.
-		await stale.request("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
+		if (!crashed) await stale.request("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
 		await stale.close();
 		const next = await reopen();
 		if (!next.success) return next;
@@ -68,9 +70,9 @@ export function swappableClient(
 	return {
 		client,
 		generation: () => generation,
-		restart(seenGeneration) {
+		restart(seenGeneration, r) {
 			if (seenGeneration !== generation) return Promise.resolve({ success: true, data: undefined });
-			restarting ??= doRestart().finally(() => {
+			restarting ??= doRestart(r?.crashed === true).finally(() => {
 				restarting = undefined;
 			});
 			return restarting;

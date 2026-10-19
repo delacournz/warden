@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { fakeDriver } from "../driver/driver.testing";
+import { E2eError } from "../errors";
 import {
+	centreOf,
 	clearKeyPresses,
 	contentPath,
 	fieldContent,
 	fieldValue,
 	focusPoint,
 	isOnScreen,
+	pinchRadius,
+	requireGesture,
+	rotateRadius,
 	swipeVector,
 	tapPointOf,
 	visibleRect,
@@ -200,5 +206,42 @@ describe("visibleRect", () => {
 
 	test("a frame fully off screen is empty", () => {
 		expect(visibleRect({ x: 0, y: 900, width: 10, height: 10 }, screen).height).toBe(0);
+	});
+});
+
+describe("gesture geometry", () => {
+	const screen = { width: 390, height: 844, scale: 3 };
+	const rect = { x: 20, y: 100, width: 350, height: 400 };
+
+	test("centreOf is the middle", () => {
+		expect(centreOf(rect)).toEqual({ x: 195, y: 300 });
+	});
+
+	test.each([0.5, 2, 4])("pinchRadius at scale %f keeps both finger ends in the rect and apart", (scale) => {
+		const radius = pinchRadius(rect, scale, screen);
+		const widest = radius * Math.max(1, scale);
+		expect(widest).toBeLessThanOrEqual((Math.min(rect.width, rect.height) / 2) * 0.8 + 1e-9);
+		expect(radius * Math.min(1, scale)).toBeGreaterThanOrEqual(0.04 * 390 - 1e-9);
+	});
+
+	test("pinchRadius lets the gap win when the rect is tiny", () => {
+		const tiny = { x: 0, y: 0, width: 40, height: 40 };
+		expect(pinchRadius(tiny, 4, screen)).toBeCloseTo(0.04 * 390);
+	});
+
+	test("rotateRadius is 30% of the shorter side, clamped", () => {
+		expect(rotateRadius(rect, screen)).toBeCloseTo(105);
+		expect(rotateRadius({ x: 0, y: 0, width: 10, height: 10 }, screen)).toBeCloseTo(0.04 * 390);
+		expect(rotateRadius({ x: 0, y: 0, width: 800, height: 800 }, screen)).toBeCloseTo(0.3 * 390);
+	});
+
+	test("requireGesture names the capability and the way out", () => {
+		const driver = fakeDriver({ screens: [], platform: "android", capabilities: { pinch: false, maxPointers: 1 } });
+		expect(() => requireGesture(driver, "pinch", "locator.pinch")).toThrow(
+			/locator\.pinch is not supported on android/
+		);
+		expect(() => requireGesture(driver, "pinch", "locator.pinch")).toThrow(/test\(\{ platforms/);
+		expect(() => requireGesture(driver, "path", "p", 2)).toThrow(E2eError);
+		expect(() => requireGesture(driver, "path", "p", 1)).not.toThrow();
 	});
 });

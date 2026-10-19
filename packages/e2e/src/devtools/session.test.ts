@@ -41,6 +41,13 @@ async function until(condition: () => boolean, timeoutMs = 2_000): Promise<void>
 	}
 }
 
+/** `1+1` and `2+2` answered by value, like a live Hermes page. */
+const arithmetic: NonNullable<Parameters<typeof startFakeMetro>[0]>["respond"] = (r) => {
+	if (r.method !== "Runtime.evaluate") return undefined;
+	const value = { "1+1": 2, "2+2": 4 }[String(r.params.expression)];
+	return value === undefined ? undefined : { result: { result: { type: "number", value } } };
+};
+
 describe("connectDevtools", () => {
 	test("runs the Fusebox connect sequence and picks the target", async () => {
 		const fake = metro();
@@ -270,6 +277,70 @@ describe("reconnect", () => {
 		expect(lost).toEqual(["devtools_unavailable"]);
 		const result = await session.evaluate("1");
 		expect(!result.success && result.error.code).toBe("devtools_unavailable");
+	});
+
+	test("keeps retrying past the old 10 attempts while the target is away, then evaluate works", async () => {
+		const fake = metro({ respond: arithmetic });
+		let sleeps = 0;
+		const session = await connect(fake, {
+			sleep: async () => {
+				sleeps += 1;
+				await Bun.sleep(1);
+			},
+		});
+		const lost: string[] = [];
+		session.on("lost", (error) => lost.push(error.code));
+		fake.setTargets([]);
+		fake.dropAll();
+		await until(() => sleeps > 15);
+		fake.setTargets([fakeTarget(fake.port, 2)]);
+		const result = await session.evaluate("1+1");
+		expect(result).toEqual({ success: true, data: 2 });
+		expect(lost).toEqual([]);
+		expect(session.target.id).toBe("dev1-2");
+	});
+
+	test("the backoff starts at 200 ms and grows to 1 s; the budget is time-based", async () => {
+		const fake = metro();
+		const sleeps: number[] = [];
+		let clock = 0;
+		const session = await connect(fake, {
+			now: () => clock,
+			sleep: async (ms) => {
+				sleeps.push(ms);
+				clock += ms;
+				await Bun.sleep(1);
+			},
+		});
+		const lost: string[] = [];
+		session.on("lost", (error) => lost.push(error.code));
+		fake.setTargets([]);
+		fake.dropAll();
+		await until(() => lost.length === 1, 5_000);
+		expect(sleeps[0]).toBe(200);
+		expect(Math.max(...sleeps)).toBe(1_000);
+		expect(sleeps.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(30_000);
+		expect(sleeps.reduce((a, b) => a + b, 0)).toBeGreaterThan(29_000);
+	});
+
+	test("lost is not final: the next call re-attaches once the target is back", async () => {
+		const fake = metro({ respond: arithmetic });
+		const session = await connect(fake, { maxReconnectAttempts: 2 });
+		const lost: string[] = [];
+		const reconnected: string[] = [];
+		session.on("lost", (error) => lost.push(error.code));
+		session.on("reconnected", (target) => reconnected.push(target.id));
+		fake.setTargets([]);
+		fake.dropAll();
+		await until(() => lost.length === 1);
+		const still = await session.evaluate("1");
+		expect(!still.success && still.error.code).toBe("devtools_unavailable");
+		fake.setTargets([fakeTarget(fake.port, 2)]);
+		const [a, b] = await Promise.all([session.evaluate("1+1"), session.evaluate("2+2")]);
+		expect(a).toEqual({ success: true, data: 2 });
+		expect(b).toEqual({ success: true, data: 4 });
+		expect(reconnected).toEqual(["dev1-2"]);
+		expect(fake.upgrades).toHaveLength(2);
 	});
 
 	test("close() stops reconnecting", async () => {

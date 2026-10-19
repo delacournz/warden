@@ -242,6 +242,24 @@ final class ElementTests: XCTestCase {
     XCTAssertEqual(roundTrip, element)
   }
 
+  // MARK: focus
+
+  /// UIKit never sets AX `focused` on the first responder text field; the editing field carries `IsEditing` instead.
+  func testEditingTextFieldIsFocused() {
+    var editing = node(type: "TextField", identifier: "email", traits: ["IsEditing"])
+    editing.focused = .some(false)
+    XCTAssertEqual(ElementBuilder.convert(editing, path: "0", depth: 0, options: options).focused, true)
+    let unset = node(type: "SecureTextField", traits: ["IsEditing", "SecureTextField"])
+    XCTAssertEqual(ElementBuilder.convert(unset, path: "0", depth: 0, options: options).focused, true)
+  }
+
+  func testIdleTextFieldKeepsWhatAXSaid() {
+    var idle = node(type: "TextField", identifier: "email")
+    idle.focused = .some(false)
+    XCTAssertEqual(ElementBuilder.convert(idle, path: "0", depth: 0, options: options).focused, false)
+    XCTAssertNil(ElementBuilder.convert(node(type: "TextField"), path: "0", depth: 0, options: options).focused)
+  }
+
   func testUnsetOptionalsAreOmittedNotNull() throws {
     let element = ElementBuilder.convert(AccessibilityDocumentElement(), path: "0", depth: 0, options: options)
     let fields = try XCTUnwrap(element.json.objectValue)

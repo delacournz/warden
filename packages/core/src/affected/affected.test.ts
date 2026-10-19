@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec, type Exec } from "../exec";
@@ -56,11 +56,59 @@ describe("computeAffected", () => {
 		expect(workers).toHaveLength(2);
 	});
 
+	test("a suite in a subdirectory of the repo still sees its untracked files", async () => {
+		const outer = realpathSync(mkdtempSync(join(tmpdir(), "warden-affected-outer-")));
+		cleanup.push(outer);
+		rmSync(join(dir, ".git"), { recursive: true, force: true });
+		mkdirSync(join(outer, "apps"));
+		const app = join(outer, "apps", "mobile");
+		renameSync(dir, app);
+		for (const args of [
+			["init", "-q", "-b", "main"],
+			["config", "user.email", "t@t"],
+			["config", "user.name", "t"],
+			["add", "."],
+			["commit", "-qm", "base"],
+			["checkout", "-qb", "feature"],
+		]) {
+			const res = Bun.spawnSync(["git", ...args], { cwd: outer });
+			if (res.exitCode !== 0) throw new Error(res.stderr.toString());
+		}
+		writeFileSync(join(app, "src/settings/extra.tsx"), "export {};\n");
+		const res = await computeAffected({ exec: bunExec, cwd: join(app, "src") });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.changes).toEqual([{ path: "src/settings/extra.tsx", status: "added" }]);
+	});
+
 	test("--files instead of git, relative to cwd", async () => {
 		const res = await computeAffected({ exec: bunExec, cwd: join(dir, "src"), files: ["chat/lazy.tsx"] });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.base).toBeUndefined();
 		expect(res.data.selections[0]?.selected.map((f) => f.id)).toEqual(["chats"]);
+	});
+
+	test("a diff run in a project without typescript: a clear error naming the fix", async () => {
+		write("src/settings/form.tsx", "export const changed = 1;\n");
+		const res = await computeAffected({ exec: bunExec, cwd: join(dir, "src"), typescript: () => undefined });
+		expect(res.success).toBe(false);
+		if (res.success) return;
+		expect(res.error).toStartWith("needs typescript in the analysed project: add it as a devDependency");
+		expect(res.error).toContain(`node_modules/typescript from ${dir}`);
+	});
+
+	test("a diff run whose typescript is older than 5.0: the version and path, before any walk (cli-size-R1)", async () => {
+		write("src/settings/form.tsx", "export const changed = 1;\n");
+		write("node_modules/typescript/package.json", JSON.stringify({ name: "typescript", version: "4.9.5" }));
+		write("node_modules/typescript/index.js", "module.exports = {};\n");
+		const entry = join(dir, "node_modules/typescript/index.js");
+		const res = await computeAffected({ exec: bunExec, cwd: join(dir, "src"), typescript: () => entry });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain(`typescript 4.9.5 at ${entry}`);
+	});
+
+	test("no typescript is fine when no graph is needed (--only)", async () => {
+		const res = await computeAffected({ exec: bunExec, cwd: dir, only: { mode: "all" }, typescript: () => undefined });
+		expect(res.success).toBe(true);
 	});
 
 	test("unknown suite", async () => {

@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDevice } from "./device";
+import { sheetlessFor } from "./device-link";
 import { type ElementSpec, el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "./driver/driver.testing";
 import type { Platform, Snapshot } from "./driver/driver.types";
 import type { E2eEnv } from "./env";
@@ -130,6 +131,150 @@ describe("device.alert", () => {
 		expect(await device.alert("dismiss")).toBe(false);
 		expect(driver.calls.map((c) => c.method)).toEqual(["alert"]);
 		expect(clock.time()).toBe(0);
+	});
+});
+
+describe("device.alert on Android permission prompts", () => {
+	const pc = (id: string, label: string): ElementSpec => el("button", { id, text: label });
+	/** the permissioncontroller dialog as the fake reads it: an alert holding the buttons in layout order */
+	const permissionPrompt = (...buttons: ElementSpec[]): Snapshot =>
+		snapshotOf([el("alert", { label: "Allow Demo to access this device's location?", children: buttons })], {
+			platform: "android",
+		});
+	const locationPrompt = (labels: [string, string, string]): Snapshot =>
+		permissionPrompt(
+			pc("permission_allow_foreground_only_button", labels[0]),
+			pc("permission_allow_one_time_button", labels[1]),
+			pc("permission_deny_button", labels[2])
+		);
+
+	test('accept on the three-button prompt presses "While using the app", not the last button ("Don\'t allow")', async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [locationPrompt(["While using the app", "Only this time", "Don't allow"])],
+		});
+		expect(await device.alert("accept")).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test("accept goes by the button id, so a translated prompt is granted too", async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [locationPrompt(["Bei Nutzung der App", "Nur dieses Mal", "Nicht zulassen"])],
+		});
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test("the ids are tried in ANDROID_ALLOW_IDS order, not layout order", async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [
+				permissionPrompt(
+					pc("permission_allow_one_time_button", "Only this time"),
+					pc("permission_allow_foreground_only_button", "While using the app"),
+					pc("permission_deny_button", "Don't allow")
+				),
+			],
+		});
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
+	test("AlertDialog: accept presses the positive button1 whatever it says", async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [permissionPrompt(pc("button1", "Löschen"), pc("button2", "Abbrechen"))],
+		});
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test('dismiss on the three-button prompt presses "Don\'t allow"', async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [locationPrompt(["While using the app", "Only this time", "Don't allow"])],
+		});
+		expect(await device.alert("dismiss")).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(3));
+	});
+
+	test("dismiss goes by the button id too, so a translated prompt is denied, not granted", async () => {
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [locationPrompt(["Bei Nutzung der App", "Nur dieses Mal", "Nicht zulassen"])],
+		});
+		expect(await device.alert("dismiss")).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(3));
+	});
+
+	test("dismiss: the ids are tried in ANDROID_DENY_IDS order; AlertDialog's negative button2 whatever it says", async () => {
+		const prompt = setup({
+			platform: "android",
+			screens: [
+				permissionPrompt(
+					pc("permission_allow_foreground_only_button", "Bei Nutzung der App"),
+					pc("permission_deny_and_dont_ask_again_button", "Nicht zulassen und nicht mehr fragen"),
+					pc("permission_deny_button", "Nicht zulassen")
+				),
+			],
+		});
+		await prompt.device.alert("dismiss");
+		expect(prompt.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(3));
+		const dialog = setup({
+			platform: "android",
+			screens: [permissionPrompt(pc("button1", "Löschen"), pc("button2", "Abbrechen"))],
+		});
+		await dialog.device.alert("dismiss");
+		expect(dialog.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
+	test("React Native alerts fill buttons by position: dismiss presses Cancel by name before AlertDialog's button2", async () => {
+		// Alert.alert([Cancel, Delete, Keep]): neutral button3 = Cancel, negative button2 = Delete, positive button1 = Keep
+		const three = setup({
+			platform: "android",
+			screens: [permissionPrompt(pc("button3", "Cancel"), pc("button2", "Delete"), pc("button1", "Keep"))],
+		});
+		await three.device.alert("dismiss");
+		expect(three.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+		// Alert.alert([OK, Cancel]): negative button2 = OK, positive button1 = Cancel
+		const two = setup({
+			platform: "android",
+			screens: [permissionPrompt(pc("button2", "OK"), pc("button1", "Cancel"))],
+		});
+		await two.device.alert("dismiss");
+		expect(two.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
+	test("React Native alerts: accept presses OK by name before AlertDialog's button1", async () => {
+		// Alert.alert([OK, Cancel]): negative button2 = OK, positive button1 = Cancel
+		const { device, driver } = setup({
+			platform: "android",
+			screens: [permissionPrompt(pc("button2", "OK"), pc("button1", "Cancel"))],
+		});
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test("the Android labels are accept words by name as well", async () => {
+		const { device, driver } = setup({ screens: [withAlert("Don't allow", "Only this time")] });
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+		const second = setup({ screens: [withAlert("While using the app", "Don't allow")] });
+		await second.device.alert("accept");
+		expect(second.driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test("on iOS a button1 identifier means nothing: names decide", async () => {
+		const { device, driver } = setup({
+			screens: [
+				snapshotOf([
+					el("alert", { label: "T", children: [el("button", { id: "button1", label: "Cancel" }), button("Keep")] }),
+				]),
+			],
+		});
+		await device.alert("accept");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
 	});
 });
 
@@ -570,6 +715,76 @@ describe("device.openLink until", () => {
 		await expect(locator.isVisible()).rejects.toBeDefined();
 		await device.openLink("myapp://x", { until: locator, waitMs: 500 });
 		expect(clock.time()).toBeGreaterThanOrEqual(500);
+	});
+});
+
+describe('the "Open in …?" sheet under systemAlerts', () => {
+	const OPEN_IN = "Open in “Example”?";
+	const openInSheet = () => el("alert", { label: OPEN_IN, children: [button("Cancel"), button("Open")] });
+
+	/**
+	 * An iOS app in front whose "Open in …?" sheet comes up right after the first alert read of `openLink` (that read
+	 * sees nothing) and stays until a button is pressed; Open shows the target screen. The screen's reads answer system
+	 * alerts with `device.alert("dismiss")`, as `test.use({ systemAlerts: "dismiss" })` does.
+	 */
+	function lateSheet() {
+		const clock = fakeClock();
+		let sheet: "none" | "up" | "opened" | "cancelled" = "none";
+		let alertReads = 0;
+		const pressed = (point: { y: number }): void => {
+			if (sheet === "up") sheet = point.y === rowCentre(2).y ? "opened" : "cancelled";
+		};
+		// the first read sees nothing; the sheet is up by the next snapshot
+		const firstRead = (): { data: null } | undefined => {
+			alertReads += 1;
+			if (alertReads > 1 || sheet !== "none") return undefined;
+			sheet = "up";
+			return { data: null };
+		};
+		const driver: FakeDriver = fakeDriver({
+			screens: () => {
+				if (sheet === "up") return snapshotOf([openInSheet()], { modal: { pid: 7 } });
+				return snapshotOf(sheet === "opened" ? [el("text", { id: "target", label: "Target" })] : []);
+			},
+			onCall: (call) => {
+				if (call.method === "tap") pressed(call.point);
+				if (call.method === "alertOn" || call.method === "alert") return firstRead();
+				return undefined;
+			},
+			alertBackends: ["ax", "axbridge"],
+			frontmost: () => env.bundleId,
+		});
+		const session: FixtureSession = { out: "/tmp/out" };
+		const device = createDevice({ session, driver, env, clock });
+		const host = testHost(driver);
+		host.answerSystemAlert = () => device.alert("dismiss");
+		const screen = createScreen(host);
+		return { driver, device, session, screen, sheetState: () => sheet };
+	}
+
+	test("openLink({ until }): the until read leaves the sheet to openLink, which presses Open, and the scheme is not memoised", async () => {
+		const { device, session, screen, sheetState } = lateSheet();
+		await device.openLink("myapp://x", { until: screen.getByTestId("target") });
+		expect(sheetState()).toBe("opened");
+		expect(sheetlessFor(session).has("myapp")).toBe(false);
+	});
+
+	test('dismiss never presses Cancel on an "Open in …?" sheet: it opens the link the test asked for', async () => {
+		const { driver, device } = setup({ screens: [snapshotOf([openInSheet()])] });
+		expect(await device.alert("dismiss")).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
+	test("an explicit Cancel is still pressed", async () => {
+		const { driver, device } = setup({ screens: [snapshotOf([openInSheet()])] });
+		expect(await device.alert({ button: "Cancel" })).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+	});
+
+	test("dismiss still presses Cancel on other alerts", async () => {
+		const { driver, device } = setup({ screens: [withAlert("Cancel", "Open")] });
+		expect(await device.alert("dismiss")).toBe(true);
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
 	});
 });
 

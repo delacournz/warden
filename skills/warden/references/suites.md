@@ -175,6 +175,8 @@ e2e/<w>-<seq>/<flowId>/<title>-<hash6>/   trace.jsonl screenshots/ failure.png s
 
 `e2e-report.json`: `{ suite, platform, base?, mode?, ok, headless, batchDir?, flows[], only?, setup? }`. Each flow has `verdict`, `attempts`, `tests[]`.
 
+`batch.json` jobs (one per attempt) may carry `logDrainMs`: ms spent draining the job's log pipes after it exited, summed over its `passes`.
+
 ## When it fails, in order
 
 1. `e2e-report.json`: which flows, which verdict, which device.

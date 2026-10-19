@@ -89,11 +89,18 @@ describe("tap({ until })", () => {
 	});
 
 	test("the defaults are 2 retries, 4000 ms windows, 250 ms checks", async () => {
+		const { driver, host, screen } = reacting({ untilAt: Number.POSITIVE_INFINITY });
+		await screen.getByTestId("next").tap({ until: screen.getByText("Plan") });
+		expect(driver.callsOf("tap")).toHaveLength(1);
+		expect(host.clock.elapsed()).toBe(4000);
+		expect(new Set(host.clock.sleeps)).toEqual(new Set([250]));
+	});
+
+	test("with the defaults, a press the screen shows no sign of is sent again after 750 ms, not 4 s", async () => {
 		const { driver, host, screen } = setup(99);
 		await screen.getByTestId("next").tap({ until: screen.getByText("Plan") });
 		expect(driver.callsOf("tap")).toHaveLength(3);
-		expect(host.clock.elapsed()).toBe(8000);
-		expect(new Set(host.clock.sleeps)).toEqual(new Set([250]));
+		expect(host.clock.elapsed()).toBe(1500);
 	});
 
 	test("every check is one fresh snapshot, even with two reads in it and checks closer than the cache's age limit", async () => {
@@ -185,6 +192,95 @@ describe("tap({ until })", () => {
 		expect(error.message).toBe("boom");
 	});
 });
+
+/**
+ * A press that lands: the screen reacts at once (a spinner replaces the title; with `hides`, Next goes too), and the
+ * `until` text "Plan" shows `untilAt` ms after the first press. Records the clock at each press.
+ */
+function reacting(options: { untilAt: number; hides?: boolean }) {
+	let pressedAt: number | undefined;
+	const pressTimes: number[] = [];
+	const holder: { now?: () => number } = {};
+	const driver = fakeDriver({
+		screens: () => {
+			const now = holder.now?.() ?? 0;
+			if (pressedAt === undefined) return welcome("Welcome");
+			const specs = [el("text", { id: "title", label: now - pressedAt >= options.untilAt ? "Plan" : "Loading" })];
+			if (options.hides !== true) {
+				specs.push(el("button", { id: "next", label: "Next", frame: { x: 24, y: 600, width: 300, height: 44 } }));
+			}
+			return snapshotOf(specs);
+		},
+		onCall: (call) => {
+			if (call.method === "tap") {
+				const now = holder.now?.() ?? 0;
+				pressTimes.push(now);
+				pressedAt ??= now;
+			}
+			return undefined;
+		},
+	});
+	const host = testHost(driver, { cache: true });
+	holder.now = host.clock.now;
+	return { driver, host, screen: createScreen(host), pressTimes };
+}
+
+describe("tap({ until }) watches the screen between presses", () => {
+	test("a press the screen reacted to is not sent again while until is late, and tap returns at the window's end", async () => {
+		const { driver, host, screen } = reacting({ untilAt: 6000 });
+		await screen.getByTestId("next").tap({ until: screen.getByText("Plan") });
+		expect(driver.callsOf("tap")).toHaveLength(1);
+		expect(host.clock.elapsed()).toBe(4000);
+	});
+
+	test("a press the screen reacted to returns as soon as until shows", async () => {
+		const { driver, host, screen } = reacting({ untilAt: 2000 });
+		await screen.getByTestId("next").tap({ until: screen.getByText("Plan") });
+		expect(driver.callsOf("tap")).toHaveLength(1);
+		expect(host.clock.elapsed()).toBe(2000);
+	});
+
+	test("an unchanged screen is pressed again at about 1 s", async () => {
+		const { screen, pressTimes } = setupTimed(2);
+		await screen.getByTestId("next").tap({ until: screen.getByText("Plan") });
+		expect(pressTimes).toHaveLength(2);
+		expect(pressTimes[1]).toBeGreaterThanOrEqual(750);
+		expect(pressTimes[1]).toBeLessThanOrEqual(1000);
+	});
+
+	test("a target the press took away is not waited for: no LOCATOR_NOT_FOUND", async () => {
+		const { driver, screen } = reacting({ untilAt: Number.POSITIVE_INFINITY, hides: true });
+		await screen.getByTestId("next").tap({ until: screen.getByText("Plan") });
+		expect(driver.callsOf("tap")).toHaveLength(1);
+	});
+
+	test("a function until keeps the fixed window", async () => {
+		const { driver, host, screen } = setup(99);
+		await screen.getByTestId("next").tap({ until: titleIs(screen.getByTestId("title"), "Plan"), retries: 1 });
+		expect(driver.callsOf("tap")).toHaveLength(2);
+		expect(host.clock.elapsed()).toBe(4000);
+	});
+});
+
+/** `setup`, recording the clock at each press. */
+function setupTimed(landingTap: number) {
+	const pressTimes: number[] = [];
+	const holder: { now?: () => number } = {};
+	let title = "Welcome";
+	const driver = fakeDriver({
+		screens: () => welcome(title),
+		onCall: (call) => {
+			if (call.method === "tap") {
+				pressTimes.push(holder.now?.() ?? 0);
+				if (pressTimes.length >= landingTap) title = "Plan";
+			}
+			return undefined;
+		},
+	});
+	const host = testHost(driver, { cache: true });
+	holder.now = host.clock.now;
+	return { driver, host, screen: createScreen(host), pressTimes };
+}
 
 describe("tap options", () => {
 	test.each([

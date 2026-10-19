@@ -1,4 +1,5 @@
 import type { DriverError, DriverResult, Logger, Point, ScreenInfo, Snapshot } from "../driver.types";
+import type { GesturePlan } from "../gesture-geometry";
 import type { SettleDetail } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import { DEFAULT_LONG_PRESS_MS, DEFAULT_SWIPE_MS, DRAG_STEPS } from "./android-argv";
@@ -38,9 +39,13 @@ export type UiadOps = {
 	longPress(point: Point, durationMs?: number): Maybe<void>;
 	swipe(from: Point, to: Point, durationMs?: number): Maybe<void>;
 	drag(from: Point, to: Point, timing: { pressMs: number; durationMs: number; releaseMs: number }): Maybe<void>;
+	/** replay a 1-2 finger plan as one multi-pointer MotionEvent stream (`gesture` op, server 0.3.0+) */
+	gesture(plan: GesturePlan): Maybe<void>;
 	key(keyCode: number, times?: number): Maybe<void>;
 	selectAll(): Maybe<void>;
 	typeText(text: string): Maybe<void>;
+	/** replace the whole text of the focused input (`ACTION_SET_TEXT`); `undefined` = refused or no server */
+	setText(text: string): Maybe<void>;
 	stop(): Promise<void>;
 };
 
@@ -205,6 +210,12 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 				},
 				{ timeoutMs: KEY_BASE_TIMEOUT_MS + timing.pressMs + timing.durationMs + timing.releaseMs }
 			),
+		gesture: (plan) =>
+			effect(
+				"gesture",
+				{ paths: plan.paths, frameMs: plan.frameMs, holdMs: plan.holdMs, releaseMs: plan.releaseMs },
+				{ timeoutMs: KEY_BASE_TIMEOUT_MS + plan.totalMs }
+			),
 		key: (keyCode, times = 1) =>
 			edit("key", (server) =>
 				server.request(
@@ -215,6 +226,7 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 			),
 		selectAll: () => call("selectAll", async (server) => mapVoid(await server.request("selectAll")), true),
 		typeText: (text) => edit("typeText", (server) => server.typeText(text)),
+		setText: (text) => edit("setText", (server) => server.request("setText", { text })),
 		stop: () => backend.stop(),
 	};
 }

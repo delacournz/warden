@@ -44,6 +44,18 @@ export function bytes(n: number | undefined): string {
 	return `${n < 0 ? "-" : ""}${text} ${units[unit]}`;
 }
 
+/** CPU time in seconds, always with two decimals (`0.85 s`): the per-rep CPU figures are often below one second. */
+export function cpuSeconds(n: number | undefined): string {
+	if (!finite(n)) return DASH;
+	return `${n.toFixed(2)} s`;
+}
+
+/** Signed CPU seconds for deltas: `+0.50 s`, `-1.00 s`. */
+export function signedCpuSeconds(n: number | undefined): string {
+	if (!finite(n)) return DASH;
+	return `${n > 0 ? "+" : n < 0 ? "-" : ""}${cpuSeconds(Math.abs(n))}`;
+}
+
 /** A ratio as `1.52×`. */
 export function ratio(n: number | undefined): string {
 	if (!finite(n)) return DASH;

@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { loadManifest } from "../results/manifest";
 import { median } from "../results/stats";
-import { buildSampleRun } from "./fixtures/make-sample";
-import { perTestMatrix, summaryRows, untracedRows } from "./tables";
+import { buildSampleRun, withRepCpu } from "./fixtures/make-sample";
+import { cpuSecondsPerRep, perTestMatrix, summaryRows, untracedRows } from "./tables";
 
 const manifest = loadManifest(join(import.meta.dir, "../.."));
 const run = buildSampleRun();
@@ -108,5 +108,31 @@ describe("untracedRows", () => {
 			for (const rep of f.reps) for (const t of rep.tests) delete t.untracedMs;
 		}
 		expect(untracedRows(bare)).toEqual([]);
+	});
+});
+
+describe("CPU-seconds per rep (19-6)", () => {
+	test("median host CPU-seconds over the warm reps, the summary row's headline", () => {
+		const cpu = withRepCpu(run, (_f, rep) => [0, 9, 4, 6][rep] ?? 0);
+		const warden = cpu.frameworks.find((f) => f.framework === "warden");
+		if (warden?.status !== "ok") throw new Error("expected ok");
+		expect(cpuSecondsPerRep(warden)).toBe(5);
+		expect(summaryRows(cpu).find((r) => r.framework === "warden")?.cpuSecondsPerRep).toBe(5);
+	});
+	test("absent without per-rep resources (older results)", () => {
+		expect(summaryRows(run).every((r) => r.cpuSecondsPerRep === undefined)).toBe(true);
+	});
+	test("reps whose resources have no CPU time are skipped, and none at all is absent, not 0 (bench-fidelity-R1)", () => {
+		const cpu = withRepCpu(run, (_f, rep) => [0, 9, 4, 6][rep] ?? 0);
+		const warden = cpu.frameworks.find((f) => f.framework === "warden");
+		if (warden?.status !== "ok") throw new Error("expected ok");
+		const drop = (r: (typeof warden.reps)[number]) => {
+			if (r.resources !== undefined) delete r.resources.cpuSeconds;
+		};
+		const third = warden.reps.find((r) => r.index === 3);
+		if (third !== undefined) drop(third);
+		expect(cpuSecondsPerRep(warden)).toBe(4);
+		for (const r of warden.reps) drop(r);
+		expect(cpuSecondsPerRep(warden)).toBeUndefined();
 	});
 });

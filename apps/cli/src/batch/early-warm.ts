@@ -1,4 +1,4 @@
-import { type WarmConnect, type WarmOutcome, type WarmRun, warmDrivers } from "./warm-drivers";
+import { type WarmConnect, type WarmHelper, type WarmOutcome, type WarmRun, warmDrivers } from "./warm-drivers";
 
 /** What the early warm-up needs: the `warmDrivers` effects plus the run's shape. */
 export type EarlyWarmDeps = Pick<WarmRun, "logDir" | "now" | "after" | "writeFile"> & {
@@ -13,6 +13,9 @@ export type EarlyWarmDeps = Pick<WarmRun, "logDir" | "now" | "after" | "writeFil
 /** `WarmOutcome` with the warm-up's warnings held back, so a run that is torn down prints none. */
 export type EarlyWarmOutcome = WarmOutcome & { warnings: string[] };
 
+/** One device's warm-up once it settled: its socket and helper when warm, its (held back) warning when not; `{}` for a device never warmed. */
+export type DeviceWarm = { socketPath?: string; helper?: WarmHelper; warning?: string };
+
 /**
  * The iOS driver warm-up started while the run is still claiming: a leg's helpers are spawned and
  * snapshotted the moment its devices are leased, in parallel with the app install, Metro and the
@@ -23,6 +26,10 @@ export type EarlyWarm = {
 	leased: (outcome: { claimed: ReadonlyArray<{ device: { id: string } }> }, leg: number) => void;
 	/** every warm-up's outcome, once all have settled */
 	settled: () => Promise<EarlyWarmOutcome>;
+	/** one device's outcome as soon as it settled, without waiting for any other device (12-3); never rejects */
+	device: (udid: string) => Promise<DeviceWarm>;
+	/** one device's outcome if it has settled already */
+	peek: (udid: string) => DeviceWarm | undefined;
 	/** stop waiting for helpers still starting (a late one is closed) */
 	abort: () => void;
 };
@@ -34,9 +41,12 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 	const warnings: string[] = [];
 	const pending: Promise<WarmOutcome>[] = [];
 	const firstWorker = (leg: number) => deps.legCounts.slice(0, leg).reduce((sum, n) => sum + n, 0);
+	const byDevice = new Map<string, ReturnType<typeof Promise.withResolvers<DeviceWarm>>>();
+	const done = new Map<string, DeviceWarm>();
 	return {
 		leased: (outcome, leg) => {
 			const first = firstWorker(leg);
+			for (const c of outcome.claimed) byDevice.set(c.device.id, Promise.withResolvers<DeviceWarm>());
 			pending.push(
 				warmDrivers(
 					{
@@ -50,6 +60,15 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 					{
 						connect: deps.connect,
 						warn: (line) => warnings.push(line),
+						onDevice: (warmed, helper, warning) => {
+							const outcome: DeviceWarm = {
+								...(warmed.socketPath !== undefined ? { socketPath: warmed.socketPath } : {}),
+								...(helper ? { helper } : {}),
+								...(warning !== undefined ? { warning } : {}),
+							};
+							done.set(warmed.udid, outcome);
+							byDevice.get(warmed.udid)?.resolve(outcome);
+						},
 						...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
 					}
 				)
@@ -63,6 +82,8 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 				warnings,
 			};
 		},
+		device: (udid) => byDevice.get(udid)?.promise ?? Promise.resolve({}),
+		peek: (udid) => done.get(udid),
 		abort: () => own.abort(),
 	};
 }

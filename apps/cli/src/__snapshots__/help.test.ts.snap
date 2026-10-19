@@ -47,8 +47,9 @@ Devices:
                                 (macOS; also runs after iOS claims)
   clone <source>                duplicate a shut-down iOS simulator into
                                 warden's pool (fast: no first boot)
-  golden                        golden iOS images new sims are cloned from (fast
-                                boots): ensure | ls | prune
+  golden                        golden iOS images / Android snapshots new
+                                devices start from (fast boots): ensure | ls |
+                                prune
 
 Builds:
   app                           fingerprint an Expo app and install the matching
@@ -598,7 +599,8 @@ exports[`help output warden golden --help (and nested subcommands) 1`] = `
 "$ warden golden --help
 Usage: warden golden [options] [command]
 
-golden iOS images new sims are cloned from (fast boots): ensure | ls | prune
+golden iOS images / Android snapshots new devices start from (fast boots):
+ensure | ls | prune
 
 Options:
   -h, --help      display help for command
@@ -615,10 +617,11 @@ Usage: warden golden ensure [options]
 build (once) or reuse the golden image
 
 Options:
-  --profile <slug>     device profile (default: iphone-17)
-  --runtime <runtime>  runtime: latest, iOS-26-5, 26.5 …
-  --json               machine-readable output
-  -h, --help           display help for command
+  --platform <platform>  ios (default) or android
+  --profile <slug>       device profile (default: iphone-17; android: first AVD)
+  --runtime <runtime>    runtime: latest, iOS-26-5, 26.5 …
+  --json                 machine-readable output
+  -h, --help             display help for command
 
 $ warden golden ls --help
 Usage: warden golden ls [options]
@@ -626,8 +629,9 @@ Usage: warden golden ls [options]
 list golden images
 
 Options:
-  --json      machine-readable output
-  -h, --help  display help for command
+  --platform <platform>  ios (default) or android
+  --json                 machine-readable output
+  -h, --help             display help for command
 
 $ warden golden prune --help
 Usage: warden golden prune [options]
@@ -635,10 +639,11 @@ Usage: warden golden prune [options]
 delete stale goldens (--all: every golden)
 
 Options:
-  --all       delete every golden image, not just stale ones
-  -y, --yes   don't ask before --all deletes
-  --json      machine-readable output
-  -h, --help  display help for command"
+  --platform <platform>  ios (default) or android
+  --all                  delete every golden image, not just stale ones
+  -y, --yes              don't ask before --all deletes
+  --json                 machine-readable output
+  -h, --help             display help for command"
 `;
 
 exports[`help output warden check --help (and nested subcommands) 1`] = `
@@ -679,11 +684,14 @@ Usage: warden gc [options]
 reclaim stale leases; shut down idle warden devices (never deletes)
 
 Options:
-  --idle <duration>  shut down unleased warden devices idle this long (default:
-                     20m)
-  --quiet            print nothing (background auto-gc)
-  --json             machine-readable output
-  -h, --help         display help for command"
+  --idle <duration>        shut down unleased warden devices idle this long
+                           (default: 20m)
+  --max-cache-size <size>  prune least-recently-used cached builds down to this
+                           size, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE or
+                           20G; builds used in the last 30 min stay)
+  --quiet                  print nothing (background auto-gc)
+  --json                   machine-readable output
+  -h, --help               display help for command"
 `;
 
 exports[`help output warden port --help (and nested subcommands) 1`] = `
@@ -826,15 +834,11 @@ Commands:
                                is re-verified first
   tap <target...>              tap an element or point; an @eN older than 30 s
                                is re-verified first
-  longpress <target...>        press and hold an element or point (default 800
-                               ms)
   fill <args...>               replace a text field's content, then read it back
                                (use -- before text starting with -)
   type <text>                  type into whatever has focus
   key <name>                   press a key: Enter Backspace Tab Space Escape
                                Delete Up Down Left Right
-  swipe <args...>              raw swipe: the way the finger moves (swipe up
-                               reveals what is below), or x1 y1 x2 y2
   scroll <direction> [amount]  scroll content: scroll down reveals what is
                                below; --until swipes until a selector is on
                                screen
@@ -842,12 +846,10 @@ Commands:
                                it
   home                         press the home button
   back                         press back (Android only)
-  rotate [orientation]         set the orientation (none = read it)
-  appearance [mode]            set light or dark mode (none = read it)
-  screenshot [path]            save a PNG of the screen (default:
-                               $WARDEN_HOME/ui/<udid>/shots/NNN.png)
-  video <action> [path]        record the screen: video start [path] | video
-                               stop
+  screen                       the device screen: orientation, appearance,
+                               screenshot, video
+  gesture                      touch gestures: swipe, longpress, pinch, rotate,
+                               raw paths
   wait <args...>               poll (100 ms, --timeout) until an element is
                                visible; also: absent <sel> | text <…> | stable
                                [ms]
@@ -888,6 +890,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -912,6 +916,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -937,6 +943,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -960,6 +968,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -989,6 +999,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1015,6 +1027,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1041,33 +1055,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
-  --timeout <ms>         deadline in milliseconds (default 5000)
-  --no-record            don't append this step to a running flow recording
-  --json                 machine-readable output: one JSON document on stdout
-  -h, --help             display help for command
-
-$ warden ui longpress --help
-Usage: warden ui longpress [options] <target...>
-
-press and hold an element or point (default 800 ms)
-
-Arguments:
-  target                 @eN | selector | x y, then optionally the duration in
-                         ms
-
-Options:
-  --verify               re-check an @eN against a fresh snapshot first
-  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
-                         ms) and print what changed
-  --udid <udid>          device udid (iOS) / serial (Android)
-  --serial <serial>      Android serial
-  --lease <id>           use the device behind this lease id
-  --claim                take over a stale/missing lease, or claim a device when
-                         none is held
-  --platform <platform>  platform for --claim with no device named: ios
-                         (default) | android
-  --profile <slug>       device profile for --claim with no device named
-  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1097,6 +1086,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1123,6 +1114,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1148,33 +1141,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
-  --timeout <ms>         deadline in milliseconds (default 5000)
-  --no-record            don't append this step to a running flow recording
-  --json                 machine-readable output: one JSON document on stdout
-  -h, --help             display help for command
-
-$ warden ui swipe --help
-Usage: warden ui swipe [options] <args...>
-
-raw swipe: the way the finger moves (swipe up reveals what is below), or x1 y1
-x2 y2
-
-Arguments:
-  args                   up | down | left | right | x1 y1 x2 y2
-
-Options:
-  --from <target>        swipe inside this element instead of the whole screen
-  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
-                         ms) and print what changed
-  --udid <udid>          device udid (iOS) / serial (Android)
-  --serial <serial>      Android serial
-  --lease <id>           use the device behind this lease id
-  --claim                take over a stale/missing lease, or claim a device when
-                         none is held
-  --platform <platform>  platform for --claim with no device named: ios
-                         (default) | android
-  --profile <slug>       device profile for --claim with no device named
-  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1206,6 +1174,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1231,6 +1201,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1253,6 +1225,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1275,13 +1249,31 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
-$ warden ui rotate --help
-Usage: warden ui rotate [options] [orientation]
+$ warden ui screen --help
+Usage: warden ui screen [options] [command]
+
+the device screen: orientation, appearance, screenshot, video
+
+Options:
+  -h, --help             display help for command
+
+Commands:
+  rotate [orientation]   set the orientation (none = read it)
+  appearance [mode]      set light or dark mode (none = read it)
+  screenshot [path]      save a PNG of the screen (default:
+                         $WARDEN_HOME/ui/<udid>/shots/NNN.png)
+  video <action> [path]  record the screen: video start [path] | video stop
+  help [command]         display help for command
+
+$ warden ui screen rotate --help
+Usage: warden ui screen rotate [options] [orientation]
 
 set the orientation (none = read it)
 
@@ -1301,13 +1293,15 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
-$ warden ui appearance --help
-Usage: warden ui appearance [options] [mode]
+$ warden ui screen appearance --help
+Usage: warden ui screen appearance [options] [mode]
 
 set light or dark mode (none = read it)
 
@@ -1326,13 +1320,15 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
-$ warden ui screenshot --help
-Usage: warden ui screenshot [options] [path]
+$ warden ui screen screenshot --help
+Usage: warden ui screen screenshot [options] [path]
 
 save a PNG of the screen (default: $WARDEN_HOME/ui/<udid>/shots/NNN.png)
 
@@ -1349,13 +1345,15 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
-$ warden ui video --help
-Usage: warden ui video [options] <action> [path]
+$ warden ui screen video --help
+Usage: warden ui screen video [options] <action> [path]
 
 record the screen: video start [path] | video stop
 
@@ -1373,6 +1371,179 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui gesture --help
+Usage: warden ui gesture [options] [command]
+
+touch gestures: swipe, longpress, pinch, rotate, raw paths
+
+Options:
+  -h, --help             display help for command
+
+Commands:
+  swipe <args...>        raw swipe: the way the finger moves (swipe up reveals
+                         what is below), or x1 y1 x2 y2
+  longpress <target...>  press and hold an element or point (default 800 ms)
+  pinch <args...>        two-finger pinch around an element, a point or the
+                         screen centre: scale > 1 spreads the fingers (zoom in),
+                         < 1 closes them
+  rotate <args...>       two-finger rotation (device orientation is \`screen
+                         rotate\`): positive degrees turn clockwise
+  path                   raw touch paths: one --path per finger (max 2), fingers
+                         go down and lift together
+  help [command]         display help for command
+
+$ warden ui gesture swipe --help
+Usage: warden ui gesture swipe [options] <args...>
+
+raw swipe: the way the finger moves (swipe up reveals what is below), or x1 y1
+x2 y2
+
+Arguments:
+  args                   up | down | left | right | x1 y1 x2 y2
+
+Options:
+  --from <target>        swipe inside this element instead of the whole screen
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui gesture longpress --help
+Usage: warden ui gesture longpress [options] <target...>
+
+press and hold an element or point (default 800 ms)
+
+Arguments:
+  target                 @eN | selector | x y, then optionally the duration in
+                         ms
+
+Options:
+  --verify               re-check an @eN against a fresh snapshot first
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui gesture pinch --help
+Usage: warden ui gesture pinch [options] <args...>
+
+two-finger pinch around an element, a point or the screen centre: scale > 1
+spreads the fingers (zoom in), < 1 closes them
+
+Arguments:
+  args                   [@eN | selector | x y] <scale>: the last word is the
+                         scale (0.1-10, not 1)
+
+Options:
+  --duration <ms>        how long the gesture takes (default 500)
+  --radius <n>           finger distance from the centre at the start, in points
+  --verify               re-check an @eN against a fresh snapshot first
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui gesture rotate --help
+Usage: warden ui gesture rotate [options] <args...>
+
+two-finger rotation (device orientation is \`screen rotate\`): positive degrees
+turn clockwise
+
+Arguments:
+  args                   [@eN | selector | x y] <degrees>: the last word is the
+                         angle (not 0, at most 720)
+
+Options:
+  --duration <ms>        how long the gesture takes (default 500)
+  --radius <n>           finger distance from the centre, in points
+  --verify               re-check an @eN against a fresh snapshot first
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running flow recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui gesture path --help
+Usage: warden ui gesture path [options]
+
+raw touch paths: one --path per finger (max 2), fingers go down and lift
+together
+
+Options:
+  --path <points>        one finger's route: x,y x,y … (repeat for a second
+                         finger) (default: [])
+  --duration <ms>        how long the gesture takes (default 600)
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1398,6 +1569,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1422,6 +1595,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1445,6 +1620,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1469,6 +1646,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1507,6 +1686,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1527,6 +1708,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1547,6 +1730,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1576,6 +1761,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1615,6 +1802,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1641,6 +1830,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1667,6 +1858,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1694,6 +1887,8 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1714,12 +1909,27 @@ Options:
                          (default) | android
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run, dev) holds your lease on it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
   --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
                          this owner's leased ports)
   -h, --help             display help for command"
+`;
+
+exports[`help output warden __affected-graph --help (and nested subcommands) 1`] = `
+"$ warden __affected-graph --help
+Usage: warden __affected-graph [options] <request>
+
+walk the import graph for \`warden affected\` and print it as JSON (internal)
+
+Arguments:
+  request     the graph request, as JSON
+
+Options:
+  -h, --help  display help for command"
 `;
 
 exports[`help output warden ui-collect --help (and nested subcommands) 1`] = `
@@ -1772,7 +1982,8 @@ remove least-recently-used builds until the cache fits --max-size (build-locked
 ones stay)
 
 Options:
-  --max-size <size>  cache size limit, e.g. 20G (default 20G)
+  --max-size <size>  cache size limit, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE
+                     or 20G; gc's --max-cache-size)
   --dry-run          only show what would be removed
   --yes              don't ask before removing
   --json             machine-readable output
@@ -1930,17 +2141,4 @@ exports[`help output unknown command suggests the closest registered one 1`] = `
 "error: unknown command 'claime'
 (Did you mean claim?)
 (add --help for usage)"
-`;
-
-exports[`help output warden __affected-graph --help (and nested subcommands) 1`] = `
-"$ warden __affected-graph --help
-Usage: warden __affected-graph [options] <request>
-
-walk the import graph for \`warden affected\` and print it as JSON (internal)
-
-Arguments:
-  request     the graph request, as JSON
-
-Options:
-  -h, --help  display help for command"
 `;

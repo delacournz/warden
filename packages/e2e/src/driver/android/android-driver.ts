@@ -19,6 +19,7 @@ import type {
 	Snapshot,
 } from "../driver.types";
 import { driverErr } from "../errors";
+import { DEFAULT_RADIUS, type GesturePlan, pinchPlan, planGesture, rotatePlan } from "../gesture-geometry";
 import type { DetectsAlerts } from "../observation-cache";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
@@ -28,7 +29,7 @@ import {
 	snapshotHash,
 } from "../settle";
 import { noteSpanDetail } from "../span-detail";
-import type { RepeatingKeys, SelectsAll } from "../typing";
+import type { RepeatingKeys, SelectsAll, SetsText } from "../typing";
 import { type AdbSession, openAdbSession, type SpawnAdb } from "./adb-session";
 import { detectAlert } from "./android-alert";
 import { type AnimationGuard, disableAnimations } from "./android-animations";
@@ -37,6 +38,8 @@ import {
 	buttonKeycode,
 	DRAG_STEPS,
 	dragMotionCommand,
+	GESTURE_LINE_MAX_MOVES,
+	gestureMotionCommand,
 	getpropArgv,
 	keycombinationArgv,
 	keyeventArgv,
@@ -131,6 +134,7 @@ export type AndroidDriverOptions = {
 /** What the dump-and-`input` driver reports; with the server on, `unicodeText` and `nativeSettle` are true. */
 const CAPABILITIES: DriverCapabilities = {
 	pinch: false,
+	maxPointers: 0,
 	unicodeText: false,
 	nativeSettle: false,
 	alerts: true,
@@ -270,7 +274,7 @@ function buildDriver(
 	clock: Clock,
 	execBinary: ExecBinary,
 	facts: DeviceFacts
-): Driver & RepeatingKeys & DetectsAlerts & Partial<SelectsAll> {
+): Driver & RepeatingKeys & DetectsAlerts & Partial<SelectsAll> & Partial<SetsText> {
 	const { serial, adb, exec, log } = options;
 	const { sdk } = facts;
 	const initialRoute = options.dumpRoute ?? facts.savedRoute;
@@ -421,6 +425,13 @@ function buildDriver(
 	};
 
 	/**
+	 * See `SetsText`: the server replaces the focused field's text (`ACTION_SET_TEXT`, the action its `typeText` inserts
+	 * with). There is no shell fallback: a refusal or a server that is off is `E_UNSUPPORTED`, and the caller types.
+	 */
+	const setText: SetsText["setText"] = async (text) =>
+		(await uiad?.setText(text)) ?? driverErr("E_UNSUPPORTED", "setText needs the warden-uiad server");
+
+	/**
 	 * Hold-then-move on sdk 26+ (`input motionevent` DOWN, interpolated MOVEs, UP, one shell line); older images
 	 * and an unreadable sdk fall back to a long `input swipe` (no hold).
 	 */
@@ -440,6 +451,47 @@ function buildDriver(
 			dragMotionCommand(from, to, timing),
 			INPUT_TEXT_BASE_MS + total + (DRAG_STEPS + 2) * DRAG_PROCESS_BUDGET_MS
 		);
+	};
+
+	/**
+	 * Replays a plan. With the server: one multi-pointer MotionEvent stream. Without it (or when it refuses): one
+	 * finger as a downsampled `input motionevent` line on sdk 26+; two fingers cannot be injected by `input`.
+	 */
+	const runGesture = async (plan: GesturePlan): DriverResult<void> => {
+		const fast = await uiad?.gesture(plan);
+		if (fast !== undefined) return fast;
+		if (plan.paths.length > 1) {
+			return driverErr(
+				"E_UNSUPPORTED",
+				"two-finger gestures need the warden-uiad server (API 26+, WARDEN_ANDROID_UIAD not 0)"
+			);
+		}
+		if (sdk === undefined || sdk < MOTIONEVENT_MIN_SDK) {
+			return driverErr("E_UNSUPPORTED", "gestures need Android 8+ (`input motionevent`) or the warden-uiad server");
+		}
+		return input(
+			gestureMotionCommand(plan),
+			INPUT_TEXT_BASE_MS + plan.totalMs + (GESTURE_LINE_MAX_MOVES + 2) * DRAG_PROCESS_BUDGET_MS
+		);
+	};
+
+	/** pointers `gesture` takes: 2 with the server, 1 where `input motionevent` exists (sdk is known at open), else 0 */
+	const maxPointers = (): 0 | 1 | 2 => {
+		if (uiad?.enabled()) return 2;
+		return sdk !== undefined && sdk >= MOTIONEVENT_MIN_SDK ? 1 : 0;
+	};
+	const radius = DEFAULT_RADIUS * baseScreen.scale;
+	const pinch: Driver["pinch"] = async (center, scale, opts) => {
+		const plan = pinchPlan(center, scale, opts, radius);
+		return plan.success ? runGesture(plan.data) : plan;
+	};
+	const rotate: Driver["rotate"] = async (center, degrees, opts) => {
+		const plan = rotatePlan(center, degrees, opts, radius);
+		return plan.success ? runGesture(plan.data) : plan;
+	};
+	const gesture: Driver["gesture"] = async (paths, opts) => {
+		const plan = planGesture(paths, opts, maxPointers());
+		return plan.success ? runGesture(plan.data) : plan;
 	};
 
 	const pressButton: Driver["pressButton"] = async (button: HardwareButton) => {
@@ -553,13 +605,13 @@ function buildDriver(
 		return { success: true, data: info };
 	};
 
-	const unsupported = (what: string) => async () => driverErr("E_UNSUPPORTED", `${what} is not supported on Android`);
-
 	return {
 		platform: "android",
 		id: serial,
 		get capabilities(): DriverCapabilities {
-			return uiad?.enabled() ? { ...CAPABILITIES, unicodeText: true, nativeSettle: true } : CAPABILITIES;
+			return uiad?.enabled()
+				? { ...CAPABILITIES, pinch: true, maxPointers: 2, unicodeText: true, nativeSettle: true }
+				: { ...CAPABILITIES, maxPointers: maxPointers() };
 		},
 		health,
 		snapshot,
@@ -570,11 +622,14 @@ function buildDriver(
 		swipe: async (from, to, opts) =>
 			(await uiad?.swipe(from, to, opts?.durationMs)) ?? input(shellCommand(swipeArgv(from, to, opts?.durationMs))),
 		drag,
-		pinch: unsupported("pinch"),
+		pinch,
+		rotate,
+		gesture,
 		typeText,
 		key,
 		pressKeyRepeat,
 		...(uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK) ? { selectAll } : {}),
+		...(uiad !== undefined ? { setText } : {}),
 		pressButton,
 		screenshot,
 		orientation,

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
 import type { Exec } from "@delacour/warden-core/exec";
 import type { Owner } from "@delacour/warden-core/types";
 import { fakeSimctl, wardenSim } from "../simctl.testing";
@@ -171,6 +174,89 @@ describe("warden gc", () => {
 	});
 });
 
+describe("warden gc: build cache prune (17-11)", () => {
+	const MIN = 60_000;
+	/** a cached `.app` of `bytes` bytes, last used at `usedAt` */
+	async function seed(c: TestContext, hash: string, bytes: number, usedAt: number): Promise<string> {
+		const app = join(c.cwd, "src", hash, "App.app");
+		mkdirSync(app, { recursive: true });
+		writeFileSync(join(app, "App"), "x".repeat(bytes));
+		const res = await storeArtifact({
+			store: c.db,
+			env: c.env,
+			projectKey: "k",
+			platform: "ios",
+			profile: "local",
+			hash,
+			artifact: app,
+			source: "build",
+			now: usedAt,
+		});
+		if (!res.success) throw new Error(res.error);
+		return res.data.path;
+	}
+
+	test("prunes the least-recently-used builds down to --max-cache-size and reports them", async () => {
+		const c = setup(["--json", "--max-cache-size", "250"], []);
+		const old = await seed(c, "old", 100, 1);
+		await seed(c, "mid", 100, 2);
+		await seed(c, "new", 100, 3);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(
+			listBuilds(c.db)
+				.map((b) => b.hash)
+				.sort()
+		).toEqual(["mid", "new"]);
+		expect(existsSync(old)).toBe(false);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.notes.join("\n")).toContain("pruned 1 cached build");
+	});
+
+	test("WARDEN_MAX_CACHE_SIZE sets the cap; a build used in the last 30 min is kept even over it", async () => {
+		const c = setup(["--json"], []);
+		c.env.WARDEN_MAX_CACHE_SIZE = "0";
+		await seed(c, "old", 100, NOW - 31 * MIN);
+		await seed(c, "hot", 100, NOW - 29 * MIN);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db).map((b) => b.hash)).toEqual(["hot"]);
+	});
+
+	test("under the default 20 GB cap nothing is pruned and nothing is reported", async () => {
+		const c = setup(["--json"], []);
+		await seed(c, "a", 100, 1);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db)).toHaveLength(1);
+		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).not.toContain("pruned");
+	});
+
+	test("--quiet (auto-gc) prunes too", async () => {
+		const c = setup(["--quiet", "--max-cache-size", "0"], []);
+		await seed(c, "a", 100, 1);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db)).toEqual([]);
+	});
+
+	test("a bad --max-cache-size → exit 1, nothing pruned", async () => {
+		const c = setup(["--max-cache-size", "lots"], []);
+		await seed(c, "a", 100, 1);
+		expect(await gcCommand.run(c)).toBe(1);
+		expect(listBuilds(c.db)).toHaveLength(1);
+	});
+
+	test("a bad WARDEN_MAX_CACHE_SIZE skips only the prune, with a note: leases and idle devices are still handled (R5)", async () => {
+		const c = setup(["--json"], []);
+		c.env.WARDEN_MAX_CACHE_SIZE = "20GBs";
+		await seed(c, "a", 100, 1);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db)).toHaveLength(1);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.reclaimed).toHaveLength(1);
+		expect(out.notes.join("\n")).toContain("WARDEN_MAX_CACHE_SIZE");
+		expect(out.notes.join("\n")).toContain("build cache prune skipped");
+		expect(out.shutdown).toEqual([{ platform: "ios", id: "U1", name: "warden-iphone-17-1" }]);
+	});
+});
+
 describe("warden gc: parallel shutdown", () => {
 	/** `base` with every `simctl shutdown` taking `ms`, counting how many are under way at once */
 	function slowShutdowns(base: Exec, ms: number): { exec: Exec; peak: () => number; order: string[] } {
@@ -254,5 +340,78 @@ describe("warden gc: parallel shutdown", () => {
 				.sort()
 		);
 		expect(out.notes.join("\n")).toContain("shutdown U13 failed");
+	});
+});
+
+describe("warden gc: a device claimed while the pass runs (16-1, 12-2)", () => {
+	const U1 = { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
+
+	/** one idle booted warden sim; `during` runs when gc lists devices, i.e. after gc read its leases */
+	function racing(during: (c: TestContext) => void, calls: string[][] = []): TestContext {
+		const base = fakeSimctl([wardenSim(1, "Booted"), wardenSim(5, "Booted")], calls);
+		const c = testContext(["--json"], {
+			now: () => NOW,
+			exec: async (cmd, opts) => {
+				if (cmd.join(" ").startsWith("xcrun simctl list devices")) during(c);
+				return base(cmd, opts);
+			},
+		});
+		ctx = c;
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
+		c.db.recordDevice({ platform: "ios", id: "U5", name: "warden-iphone-17-5" }, 0);
+		return c;
+	}
+
+	const shutdowns = (calls: string[][]) => calls.filter((x) => x[2] === "shutdown").map((x) => x[3]);
+
+	test("a device leased after gc read its leases is not shut down", async () => {
+		const calls: string[][] = [];
+		const c = racing((t) => {
+			if (!t.db.findLeaseByResource(U1)) t.db.insertLease({ resource: U1, owner: agent, ttlMs: 60_000 }, NOW);
+		}, calls);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(shutdowns(calls)).toEqual(["U5"]);
+		expect(JSON.parse(c.stdout.join("\n")).shutdown.map((d: { id: string }) => d.id)).toEqual(["U5"]);
+		expect(c.db.findLeaseByResource(U1)?.owner).toEqual(agent);
+	});
+
+	test("a device used again (last_used_at moved) since the plan is not shut down", async () => {
+		const calls: string[][] = [];
+		const c = racing((t) => t.db.touchDevice("ios", "U1", NOW), calls);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(shutdowns(calls)).toEqual(["U5"]);
+	});
+
+	test("gc holds a gc-shutdown lease on the device while shutting it down, and drops it after", async () => {
+		const held: Array<string | undefined> = [];
+		const base = fakeSimctl([wardenSim(1, "Booted")]);
+		const c = testContext(["--json"], {
+			now: () => NOW,
+			exec: async (cmd, opts) => {
+				if (cmd[2] === "shutdown") held.push(c.db.findLeaseByResource(U1)?.label);
+				return base(cmd, opts);
+			},
+		});
+		ctx = c;
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(held).toEqual(["gc-shutdown"]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("the gc-shutdown lease is dropped when the shutdown fails too", async () => {
+		const c = testContext(["--json"], {
+			now: () => NOW,
+			exec: fakeSimctl(
+				[wardenSim(1, "Booted")],
+				[],
+				[["xcrun simctl shutdown U1", { exitCode: 1, stderr: "Unable to shutdown device" }]]
+			),
+		});
+		ctx = c;
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).toContain("shutdown U1 failed");
+		expect(c.db.listLeases()).toEqual([]);
 	});
 });

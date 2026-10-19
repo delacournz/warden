@@ -77,7 +77,10 @@ async function loadContext(
 
 /** Cache key + log it loudly (a hash that differs from EAS's never finds a build). */
 async function fingerprint(ctx: CommandContext, project: ProjectContext, platform: Platform): AsyncResult<CacheKey> {
-	const hash = await computeCacheKey(ctx.exec, project.project, platform);
+	const hash = await computeCacheKey(ctx.exec, project.project, platform, undefined, {
+		store: ctx.store(),
+		now: ctx.now(),
+	});
 	if (!hash.success) return hash;
 	const { color } = ctx.ui;
 	const rule = color.dim("────────────────────────────────────────────────────────");

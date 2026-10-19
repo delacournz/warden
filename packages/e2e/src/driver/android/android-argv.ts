@@ -1,6 +1,7 @@
 import type { Result } from "@delacour/warden-types/result";
 import type { DriverError, HardwareButton, KeyName, Point } from "../driver.types";
 import { driverErr } from "../errors";
+import type { GesturePlan } from "../gesture-geometry";
 
 /**
  * Pure argv builders for the Android driver. The `string[]` ones run INSIDE the persistent
@@ -72,6 +73,32 @@ export function dragMotionCommand(from: Point, to: Point, timing: DragTiming): s
 	}
 	parts.push(sleepArgv(timing.releaseMs), motionEventArgv("UP", to));
 	const cancel = shellCommand(motionEventArgv("CANCEL", to));
+	return `${parts.map((argv) => shellCommand(argv)).join(" && ")} || (${cancel}; exit 1)`;
+}
+
+/** Most MOVEs a one-finger gesture line sends: each `input motionevent` is a process start (~100+ ms). */
+export const GESTURE_LINE_MAX_MOVES = 12;
+
+/**
+ * One shell line for a one-finger `GesturePlan` (the fallback when `warden-uiad` is not there): DOWN at the first
+ * frame, sleep `holdMs`, at most `maxMoves` MOVEs at evenly spaced frame indices (the last frame always among
+ * them, the sleeps between sum to the plan's travel time), sleep `releaseMs`, UP at the last frame. Like
+ * `dragMotionCommand`, a failure after DOWN lifts the finger with CANCEL and exits 1. Needs one path.
+ */
+export function gestureMotionCommand(plan: GesturePlan, maxMoves: number = GESTURE_LINE_MAX_MOVES): string {
+	const path = plan.paths[0] ?? [];
+	const first = path[0] ?? { x: 0, y: 0 };
+	const last = path.at(-1) ?? first;
+	const intervals = path.length - 1;
+	const count = Math.min(Math.max(1, Math.floor(maxMoves)), Math.max(0, intervals));
+	const travelMs = Math.max(0, intervals) * plan.frameMs;
+	const parts: string[][] = [motionEventArgv("DOWN", first), sleepArgv(plan.holdMs)];
+	for (let k = 1; k <= count; k++) {
+		const at = path[Math.round((k * intervals) / count)] ?? last;
+		parts.push(sleepArgv(travelMs / count), motionEventArgv("MOVE", at));
+	}
+	parts.push(sleepArgv(plan.releaseMs), motionEventArgv("UP", last));
+	const cancel = shellCommand(motionEventArgv("CANCEL", last));
 	return `${parts.map((argv) => shellCommand(argv)).join(" && ")} || (${cancel}; exit 1)`;
 }
 
@@ -189,6 +216,32 @@ export function startUrlArgv(url: string, packageName?: string): string[] {
 /** Launch a package's launcher activity without knowing its activity name. */
 export function monkeyLaunchArgv(packageName: string): string[] {
 	return ["monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1"];
+}
+
+/** The launcher activity of a package; `--brief` prints the component (`pkg/.Activity`) on its last line. */
+export function resolveLauncherArgv(packageName: string): string[] {
+	return ["cmd", "package", "resolve-activity", "--brief", "-c", "android.intent.category.LAUNCHER", packageName];
+}
+
+/**
+ * Start a known component and wait (`-W`) until its first frame is drawn; `stop` (`-S`) force-stops the app first, so
+ * a relaunch is one round trip. Prints `Status`, `LaunchState` and `TotalTime`. The intent is the launcher's own
+ * (MAIN + LAUNCHER, what `monkey` sends): it matches a running task's root, so without `-S` the app is brought to the
+ * front with its state, where a bare `-n` intent can stack a second instance on top.
+ */
+export function startComponentArgv(component: string, options: { stop: boolean }): string[] {
+	return [
+		"am",
+		"start",
+		"-W",
+		...(options.stop ? ["-S"] : []),
+		"-a",
+		"android.intent.action.MAIN",
+		"-c",
+		"android.intent.category.LAUNCHER",
+		"-n",
+		component,
+	];
 }
 
 export function forceStopArgv(packageName: string): string[] {

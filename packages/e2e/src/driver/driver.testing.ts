@@ -8,6 +8,7 @@ import type {
 	DriverError,
 	DriverResult,
 	Element,
+	GestureOptions,
 	HardwareButton,
 	HealthInfo,
 	KeyName,
@@ -21,9 +22,12 @@ import type {
 	ScreenInfo,
 	Snapshot,
 	SnapshotBackend,
+	TouchPath,
+	TwoFingerOptions,
 } from "./driver.types";
 import { driverError } from "./errors";
-import type { SelectsAll } from "./typing";
+import { planGesture } from "./gesture-geometry";
+import type { SelectsAll, SetsText } from "./typing";
 
 /**
  * Test doubles for `Driver`: `fakeDriver` (scripted screens, records every call) and the element-tree
@@ -163,10 +167,13 @@ export type DriverCall =
 			to: Point;
 			opts?: { pressMs?: number; durationMs?: number; releaseMs?: number };
 	  }
-	| { method: "pinch"; center: Point; scale: number; opts?: { durationMs?: number; radius?: number } }
+	| { method: "pinch"; center: Point; scale: number; opts?: TwoFingerOptions }
+	| { method: "rotate"; center: Point; degrees: number; opts?: TwoFingerOptions }
+	| { method: "gesture"; paths: readonly TouchPath[]; opts?: GestureOptions }
 	| { method: "typeText"; text: string }
 	| { method: "key"; key: KeyName; modifiers?: readonly Modifier[] }
 	| { method: "selectAll" }
+	| { method: "setText"; text: string }
 	| { method: "pressButton"; button: HardwareButton }
 	| { method: "screenshot"; opts?: { path?: string; scale?: number } }
 	| { method: "orientation"; set?: Orientation }
@@ -199,6 +206,8 @@ export type FakeDriverOptions = {
 	capabilities?: Partial<DriverCapabilities>;
 	/** offer the optional `SelectsAll` capability (calls are recorded as `selectAll`); a plain driver has none */
 	selectAll?: boolean;
+	/** offer the optional `SetsText` capability (calls are recorded as `setText`); a plain driver has none */
+	setText?: boolean;
 	/** inspect every call (after it is recorded); return an override to fail it or fake its result */
 	onCall?: (call: DriverCall) => FakeOverride | undefined;
 	/**
@@ -212,6 +221,7 @@ export type FakeDriverOptions = {
 
 export type FakeDriver = Driver &
 	Partial<SelectsAll> &
+	Partial<SetsText> &
 	Partial<ReadsAlertOn & ProbesFrontmost> & {
 		/** every call so far, in order */
 		readonly calls: DriverCall[];
@@ -228,6 +238,7 @@ export type FakeDriver = Driver &
 
 const DEFAULT_CAPABILITIES: DriverCapabilities = {
 	pinch: true,
+	maxPointers: 2,
 	unicodeText: false,
 	nativeSettle: false,
 	alerts: true,
@@ -383,6 +394,18 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		async pinch(center, scale, opts) {
 			return run({ method: "pinch", center, scale, ...(opts && { opts }) }, () => undefined);
 		},
+		async rotate(center, degrees, opts) {
+			return run({ method: "rotate", center, degrees, ...(opts && { opts }) }, () => undefined);
+		},
+		async gesture(paths, opts) {
+			const call: DriverCall = { method: "gesture", paths, ...(opts && { opts }) };
+			const plan = planGesture(paths, opts, driver.capabilities.maxPointers);
+			if (!plan.success) {
+				calls.push(call);
+				return plan;
+			}
+			return run(call, () => undefined);
+		},
 		async typeText(text) {
 			return run({ method: "typeText", text }, () => undefined);
 		},
@@ -428,6 +451,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		},
 	};
 	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
+	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
 	const { alertBackends, frontmost } = options;
 	if (alertBackends !== undefined) {
 		driver.alertOn = async (backend) =>

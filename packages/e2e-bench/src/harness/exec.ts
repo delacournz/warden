@@ -8,7 +8,7 @@ import type { AsyncResult } from "@delacour/warden-types/result";
 export type ExecOptions = {
 	cwd?: string;
 	env?: Record<string, string | undefined>;
-	/** kill the process (SIGTERM, then SIGKILL after 5 s) when it runs longer than this */
+	/** kill the process and its process group (SIGTERM, then SIGKILL after 5 s) when it runs longer than this */
 	timeoutMs?: number;
 	/** every stdout/stderr line as it arrives (for the per-phase log) */
 	onLine?: (stream: "stdout" | "stderr", line: string) => void;
@@ -25,6 +25,11 @@ export type ExecResult = {
 	timedOut: boolean;
 	/** the exec never started (missing binary, spawn error) */
 	spawnError?: string;
+	/**
+	 * CPU time (user + system, seconds) of the child at exit, from its rusage, which includes the
+	 * descendants it waited for; absent when the runtime has none (a fake, a spawn error)
+	 */
+	cpuSec?: number;
 };
 
 /** A long-running child (a daemon or server) the harness started and must stop. */
@@ -62,20 +67,57 @@ function splitLines(onLine: ExecOptions["onLine"], stream: "stdout" | "stderr") 
 	};
 }
 
-async function drain(
+/** Read `stream` to EOF; `cancel` stops early (a descendant still holding the pipe) and keeps what was read. */
+function drain(
 	stream: ReadableStream<Uint8Array> | null | undefined,
 	sink: ReturnType<typeof splitLines>
-): Promise<string> {
-	if (!stream) return "";
-	const decoder = new TextDecoder();
-	let all = "";
-	for await (const chunk of stream) {
-		const text = decoder.decode(chunk, { stream: true });
-		all += text;
-		sink.push(text);
+): { text: Promise<string>; cancel: () => void } {
+	if (!stream) return { text: Promise.resolve(""), cancel: () => undefined };
+	const reader = stream.getReader();
+	const text = (async () => {
+		const decoder = new TextDecoder();
+		let all = "";
+		try {
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				const chunk = decoder.decode(value, { stream: true });
+				all += chunk;
+				sink.push(chunk);
+			}
+		} catch {
+			// cancelled or broken pipe: keep what arrived
+		}
+		sink.flush();
+		return all;
+	})();
+	return { text, cancel: () => void reader.cancel().catch(() => undefined) };
+}
+
+/** After a timeout kill, how long output may still drain once the child is gone (a grandchild can hold the pipe). */
+const DRAIN_GRACE_MS = 250;
+
+/** Process groups of timed-out-capable runs still alive; killed if the bench exits (a forced second Ctrl-C). */
+const liveGroups = new Set<number>();
+let exitHookInstalled = false;
+
+/** Signal the process group led by `pid` (a `detached` child is its own group leader), never our own. */
+function killGroup(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
+	if (pid <= 1 || pid === process.pid) return;
+	try {
+		process.kill(-pid, signal);
+	} catch {
+		// the group is already gone
 	}
-	sink.flush();
-	return all;
+}
+
+function trackGroup(pid: number): void {
+	liveGroups.add(pid);
+	if (exitHookInstalled) return;
+	exitHookInstalled = true;
+	process.once("exit", () => {
+		for (const group of liveGroups) killGroup(group, "SIGKILL");
+	});
 }
 
 function mergedEnv(env: ExecOptions["env"]): Record<string, string> {
@@ -84,11 +126,21 @@ function mergedEnv(env: ExecOptions["env"]): Record<string, string> {
 	return out;
 }
 
+/** A finished child's CPU time in seconds (Bun reports microseconds, as a bigint at runtime despite its types). */
+function exitCpuSec(proc: {
+	resourceUsage(): { cpuTime: { total: number | bigint } } | undefined;
+}): number | undefined {
+	const total = proc.resourceUsage()?.cpuTime.total;
+	return total === undefined ? undefined : Number(total) / 1e6;
+}
+
 /** The real `Exec` over `Bun.spawn`. */
 export const realExec: Exec = {
 	async run(cmd, args, options = {}) {
 		const started = performance.now();
 		let proc: ReturnType<typeof Bun.spawn>;
+		// With a timeout the child leads its own process group, so the kill reaches its descendants too.
+		const grouped = options.timeoutMs !== undefined;
 		try {
 			proc = Bun.spawn([cmd, ...args], {
 				cwd: options.cwd,
@@ -96,6 +148,7 @@ export const realExec: Exec = {
 				stdout: "pipe",
 				stderr: "pipe",
 				stdin: options.stdin !== undefined ? new TextEncoder().encode(options.stdin) : "ignore",
+				detached: grouped,
 			});
 		} catch (e) {
 			return {
@@ -107,25 +160,47 @@ export const realExec: Exec = {
 				spawnError: e instanceof Error ? e.message : String(e),
 			};
 		}
-		options.onSpawn?.(proc.pid);
+		const pid = proc.pid;
+		options.onSpawn?.(pid);
+		if (grouped) trackGroup(pid);
 		let timedOut = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let killer: ReturnType<typeof setTimeout> | undefined;
+		let onKill: () => void = () => undefined;
+		const killed = new Promise<void>((resolve) => {
+			onKill = resolve;
+		});
 		if (options.timeoutMs !== undefined) {
 			timer = setTimeout(() => {
 				timedOut = true;
-				proc.kill("SIGTERM");
-				killer = setTimeout(() => proc.kill("SIGKILL"), KILL_GRACE_MS);
+				killGroup(pid, "SIGTERM");
+				killer = setTimeout(() => killGroup(pid, "SIGKILL"), KILL_GRACE_MS);
+				onKill();
 			}, options.timeoutMs);
 		}
-		const [stdout, stderr, code] = await Promise.all([
-			drain(proc.stdout as ReadableStream<Uint8Array> | null, splitLines(options.onLine, "stdout")),
-			drain(proc.stderr as ReadableStream<Uint8Array> | null, splitLines(options.onLine, "stderr")),
-			proc.exited,
-		]);
+		const out = drain(proc.stdout as ReadableStream<Uint8Array> | null, splitLines(options.onLine, "stdout"));
+		const err = drain(proc.stderr as ReadableStream<Uint8Array> | null, splitLines(options.onLine, "stderr"));
+		const all = Promise.all([out.text, err.text, proc.exited]);
+		// after a kill: the child gone plus a short grace, then stop waiting for EOF on the pipes
+		const graceAfterKill = killed.then(() => proc.exited).then(() => Bun.sleep(DRAIN_GRACE_MS));
+		const finished = await Promise.race([all.then(() => true), graceAfterKill.then(() => false)]);
+		if (!finished) {
+			out.cancel();
+			err.cancel();
+		}
+		const [stdout, stderr, code] = await all;
 		if (timer !== undefined) clearTimeout(timer);
 		if (killer !== undefined) clearTimeout(killer);
-		return { code, stdout, stderr, durationMs: performance.now() - started, timedOut };
+		liveGroups.delete(pid);
+		const cpuSec = exitCpuSec(proc);
+		return {
+			code,
+			stdout,
+			stderr,
+			durationMs: performance.now() - started,
+			timedOut,
+			...(cpuSec !== undefined ? { cpuSec } : {}),
+		};
 	},
 	start(cmd, args, options = {}) {
 		const proc = Bun.spawn([cmd, ...args], {
@@ -136,8 +211,8 @@ export const realExec: Exec = {
 			stdin: "ignore",
 		});
 		options.onSpawn?.(proc.pid);
-		void drain(proc.stdout as ReadableStream<Uint8Array> | null, splitLines(options.onLine, "stdout"));
-		void drain(proc.stderr as ReadableStream<Uint8Array> | null, splitLines(options.onLine, "stderr"));
+		void drain(proc.stdout as ReadableStream<Uint8Array> | null, splitLines(options.onLine, "stdout")).text;
+		void drain(proc.stderr as ReadableStream<Uint8Array> | null, splitLines(options.onLine, "stderr")).text;
 		return {
 			pid: proc.pid,
 			exited: proc.exited,

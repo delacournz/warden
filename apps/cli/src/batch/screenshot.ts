@@ -1,10 +1,28 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import type { Platform } from "@delacour/warden-core/types";
+import type { TestResult } from "@delacour/warden-e2e/runner/results";
 
 /** A failed job's screenshot is best effort: it never delays the batch past this. */
 export const SCREENSHOT_TIMEOUT_MS = 5_000;
+
+/** What the spec runner names the screenshot it takes from its open driver at a failed test. */
+const RUNNER_FAILURE_PNG = "failure.png";
+
+/**
+ * The spec runner's own failure screenshot among `results` (the last failed or timed-out test whose
+ * attempt dir holds `failure.png`): the device at the failing test, which a batch shot taken after the
+ * spec process exited is not.
+ */
+export function runnerFailureShot(results: readonly TestResult[]): string | undefined {
+	for (let i = results.length - 1; i >= 0; i--) {
+		const r = results[i];
+		if (r === undefined || (r.status !== "failed" && r.status !== "timed-out")) continue;
+		if (r.artifacts?.files.includes(RUNNER_FAILURE_PNG)) return join(r.artifacts.dir, RUNNER_FAILURE_PNG);
+	}
+	return undefined;
+}
 
 /** Run `argv`, return its exit code + stdout bytes (throws on spawn failure). */
 export type ScreenshotRun = (argv: string[]) => Promise<{ exitCode: number; stdout: Uint8Array }>;

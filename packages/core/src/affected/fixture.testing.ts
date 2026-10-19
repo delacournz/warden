@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createImportGraph, type GraphOptions, type ImportGraph } from "./graph";
 
 /**
  * A small RN-shaped monorepo on disk: tsconfig `paths`, an Expo Router tree with layouts, platform
@@ -93,4 +94,11 @@ export async function makeSuiteRepo(
 		if (res.exitCode !== 0) throw new Error(res.stderr.toString());
 	}
 	return repo;
+}
+
+/** `createImportGraph`, failing the test when it is an error. */
+export async function graphOf(opts: GraphOptions): Promise<ImportGraph> {
+	const res = await createImportGraph(opts);
+	if (!res.success) throw new Error(res.error);
+	return res.data;
 }

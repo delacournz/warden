@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import type { UiDeps } from "../agent-ui/driver";
-import { readState } from "../agent-ui/state";
+import { readState, updateState } from "../agent-ui/state";
 import type { VideoSpec } from "../agent-ui/video";
 import { cleanupHarnesses, doc, harness, LOGIN, UDID } from "./ui.testing";
 
@@ -124,10 +124,10 @@ describe("longpress", () => {
 	test("default 800 ms, explicit ms after a ref, and x y with / without ms", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		await h.run("snapshot");
-		await h.run("longpress", "@e4");
-		await h.run("longpress", "@e4", "700");
-		await h.run("longpress", "100", "200");
-		await h.run("longpress", "100", "200", "500");
+		await h.run("gesture", "longpress", "@e4");
+		await h.run("gesture", "longpress", "@e4", "700");
+		await h.run("gesture", "longpress", "100", "200");
+		await h.run("gesture", "longpress", "100", "200", "500");
 		expect(h.driver.callsOf("longPress")).toEqual([
 			{ method: "longPress", point: SIGN_IN, opts: { durationMs: 800 } },
 			{ method: "longPress", point: SIGN_IN, opts: { durationMs: 700 } },
@@ -198,15 +198,22 @@ describe("fill", () => {
 
 	test("a field that shows its placeholder as the value is typed into with no clearing keys", async () => {
 		let typed = "";
+		let focused = false;
 		const placeholderScreen = (value: string) =>
 			snapshotOf([
 				el("window", {
-					children: [el("textfield", { label: "Email", id: "email", value: value || "Email", placeholder: "Email" })],
+					children: [
+						el("textfield", { label: "Email", id: "email", value: value || "Email", placeholder: "Email", focused }),
+					],
 				}),
 			]);
 		const h = harness([placeholderScreen("")], {
 			selectAll: true,
 			onCall: (call, driver) => {
+				if (call.method === "tap") {
+					focused = true;
+					driver.set(placeholderScreen(typed));
+				}
 				if (call.method === "typeText") {
 					typed += call.text;
 					driver.set(placeholderScreen(typed));
@@ -218,7 +225,8 @@ describe("fill", () => {
 		expect(h.driver.callsOf("key")).toEqual([]);
 		expect(h.driver.callsOf("selectAll")).toEqual([]);
 		expect(doc(h.c).result).toMatchObject({ verified: true });
-		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(2);
+		// one hit-test sees the field take focus after the tap, two confirm the text
+		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(3);
 	});
 
 	test("the retry after a field did not take the text backspaces per character, not by select-all", async () => {
@@ -285,6 +293,82 @@ describe("fill", () => {
 	});
 });
 
+describe("fill on a driver with setText (Android warden-uiad)", () => {
+	/** a filled email field; `setText` and `typeText` both leave the field showing what they were given */
+	function setTextHarness(optIn: boolean) {
+		let typed = "";
+		const h = harness([typingScreen("a@b.co")], {
+			selectAll: true,
+			setText: true,
+			onCall: (call, driver) => {
+				if (call.method === "setText") driver.set(typingScreen(call.text));
+				if (call.method === "typeText") {
+					typed += call.text;
+					driver.set(typingScreen(typed));
+				}
+				return undefined;
+			},
+		});
+		if (optIn) h.c.env = { ...h.c.env, WARDEN_ANDROID_SETTEXT: "1" };
+		return h;
+	}
+	const inputs = (h: ReturnType<typeof setTextHarness>): string[] =>
+		h.driver.calls.map((call) => call.method).filter((m) => m !== "snapshot" && m !== "elementAtPoint");
+
+	test("without the opt-in the field is selected and typed over, never set", async () => {
+		const h = setTextHarness(false);
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "selectAll", "typeText", "close"]);
+		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true });
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1: one setText after the focus tap, then the read-back confirms it", async () => {
+		const h = setTextHarness(true);
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "setText", "close"]);
+		expect(h.driver.callsOf("setText").map((call) => call.text)).toEqual(["new@x.co"]);
+		expect(h.driver.callsOf("elementAtPoint").length).toBeGreaterThan(0);
+		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1 with a setText that did not take: the counted retry types", async () => {
+		const h = setTextHarness(true);
+		h.driver.setText = async (text) => {
+			h.driver.calls.push({ method: "setText", text });
+			return { success: true, data: undefined };
+		};
+		expect(await h.run("fill", "id=email", "new", "--json")).toBe(0);
+		expect(h.driver.callsOf("setText")).toHaveLength(1);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new"]);
+		expect(doc(h.c).result).toMatchObject({ verified: true });
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1 --no-verify: set without a read-back", async () => {
+		const h = setTextHarness(true);
+		expect(await h.run("fill", "id=email", "x", "--no-verify", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "setText", "close"]);
+		expect(h.driver.callsOf("elementAtPoint")).toEqual([]);
+		expect(doc(h.c).result.verified).toBeUndefined();
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1 --secure: set, unconfirmed, the text neither echoed nor recorded", async () => {
+		const h = setTextHarness(true);
+		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--json")).toBe(0);
+		expect(h.driver.callsOf("setText").map((call) => call.text)).toEqual(["hunter2hunter2"]);
+		expect(h.driver.callsOf("elementAtPoint")).toEqual([]);
+		expect(doc(h.c).result).toMatchObject({ verified: "unconfirmed", secure: true, characters: 14 });
+		expect(h.c.stdout.join("\n")).not.toContain("hunter2");
+		expect(h.steps[0]?.args).toEqual({ secure: true });
+	});
+
+	test("WARDEN_ANDROID_SETTEXT=1 with an x y target: nothing known to clear, so it is typed into", async () => {
+		const h = setTextHarness(true);
+		expect(await h.run("fill", "50", "60", "abc", "--json")).toBe(0);
+		expect(h.driver.callsOf("setText")).toEqual([]);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["abc"]);
+	});
+});
+
 describe("type / key", () => {
 	test("type --submit types then presses Enter", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
@@ -308,7 +392,7 @@ describe("type / key", () => {
 describe("swipe", () => {
 	test("a direction is the way the finger moves, across the middle of the screen", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		expect(await h.run("swipe", "up")).toBe(0);
+		expect(await h.run("gesture", "swipe", "up")).toBe(0);
 		expect(h.driver.callsOf("swipe")).toEqual([
 			{
 				method: "swipe",
@@ -321,7 +405,7 @@ describe("swipe", () => {
 
 	test("`swipe up` (finger direction) and `scroll down` (content direction) are the same gesture", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		await h.run("swipe", "up");
+		await h.run("gesture", "swipe", "up");
 		await h.run("scroll", "down");
 		const [finger, content] = h.driver.callsOf("swipe");
 		expect(finger).toMatchObject({ from: content?.from, to: content?.to });
@@ -329,7 +413,7 @@ describe("swipe", () => {
 
 	test("x1 y1 x2 y2 is used as given", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		expect(await h.run("swipe", "10", "20", "30", "40")).toBe(0);
+		expect(await h.run("gesture", "swipe", "10", "20", "30", "40")).toBe(0);
 		expect(h.driver.callsOf("swipe")[0]).toMatchObject({ from: { x: 10, y: 20 }, to: { x: 30, y: 40 } });
 	});
 
@@ -338,7 +422,7 @@ describe("swipe", () => {
 			el("window", { children: [el("list", { id: "list", frame: { x: 20, y: 100, width: 350, height: 400 } })] }),
 		]);
 		const h = harness([list]);
-		expect(await h.run("swipe", "left", "--from", "id=list")).toBe(0);
+		expect(await h.run("gesture", "swipe", "left", "--from", "id=list")).toBe(0);
 		expect(h.driver.callsOf("swipe")[0]).toMatchObject({
 			from: { x: 195 + 87.5, y: 300 },
 			to: { x: 195 - 87.5, y: 300 },
@@ -347,7 +431,7 @@ describe("swipe", () => {
 
 	test("nonsense: usage error", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		expect(await h.run("swipe", "sideways", "--json")).toBe(1);
+		expect(await h.run("gesture", "swipe", "sideways", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
 	});
 });
@@ -574,21 +658,21 @@ describe("device controls", () => {
 
 	test("rotate sets (and reads) the orientation", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		expect(await h.run("rotate", "landscape-left", "--json")).toBe(0);
+		expect(await h.run("screen", "rotate", "landscape-left", "--json")).toBe(0);
 		expect(h.driver.callsOf("orientation")).toEqual([{ method: "orientation", set: "landscapeLeft" }]);
 		expect(doc(h.c).result.orientation).toBe("landscapeLeft");
-		expect(await h.run("rotate", "--json")).toBe(0);
+		expect(await h.run("screen", "rotate", "--json")).toBe(0);
 		expect(doc(h.c).result.orientation).toBe("landscapeLeft");
-		expect(await h.run("rotate", "sideways", "--json")).toBe(1);
+		expect(await h.run("screen", "rotate", "sideways", "--json")).toBe(1);
 	});
 
 	test("appearance sets (and reads) light / dark", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
-		expect(await h.run("appearance", "dark", "--json")).toBe(0);
+		expect(await h.run("screen", "appearance", "dark", "--json")).toBe(0);
 		expect(h.driver.callsOf("appearance")).toEqual([{ method: "appearance", set: "dark" }]);
-		expect(await h.run("appearance", "--json")).toBe(0);
+		expect(await h.run("screen", "appearance", "--json")).toBe(0);
 		expect(doc(h.c).result.appearance).toBe("dark");
-		expect(await h.run("appearance", "blue", "--json")).toBe(1);
+		expect(await h.run("screen", "appearance", "blue", "--json")).toBe(1);
 	});
 
 	test("screenshot numbers its files under $WARDEN_HOME/ui/<udid>/shots, or goes where told", async () => {
@@ -598,13 +682,13 @@ describe("device controls", () => {
 				return undefined;
 			},
 		});
-		await h.run("screenshot", "--json");
+		await h.run("screen", "screenshot", "--json");
 		const first: string = doc(h.c).result.path;
 		expect(first).toMatch(new RegExp(`/ui/${UDID}/shots/001\\.png$`));
 		expect(h.driver.callsOf("screenshot")[0]?.opts?.path).toBe(first);
-		await h.run("screenshot", "--json");
+		await h.run("screen", "screenshot", "--json");
 		expect(doc(h.c).result.path).toMatch(/\/shots\/002\.png$/);
-		await h.run("screenshot", "out/shot.png", "--json");
+		await h.run("screen", "screenshot", "out/shot.png", "--json");
 		expect(doc(h.c).result.path).toBe(`${h.c.cwd}/out/shot.png`);
 	});
 });
@@ -632,7 +716,7 @@ describe("video", () => {
 	test("iOS: start spawns simctl recordVideo and remembers the pid; stop sends SIGINT and forgets it", async () => {
 		const fake = fakeVideo();
 		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
-		expect(await h.run("video", "start", "--json")).toBe(0);
+		expect(await h.run("screen", "video", "start", "--json")).toBe(0);
 		const path: string = doc(h.c).result.path;
 		expect(path).toMatch(new RegExp(`/ui/${UDID}/videos/001\\.mp4$`));
 		expect(fake.specs[0]?.argv).toEqual([
@@ -647,14 +731,64 @@ describe("video", () => {
 		]);
 		expect(readState(h.c, UDID).video).toMatchObject({ pid: 4242, path });
 
-		expect(await h.run("video", "start", "--json")).toBe(1);
+		expect(await h.run("screen", "video", "start", "--json")).toBe(1);
 		expect(doc(h.c).error.message).toContain("already recording");
 
-		expect(await h.run("video", "stop", "--json")).toBe(0);
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual(["SIGINT"]);
 		expect(doc(h.c).result).toEqual({ action: "video", state: "stopped", path });
 		expect(readState(h.c, UDID).video).toBeUndefined();
-		expect(await h.run("video", "stop", "--json")).toBe(1);
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(1);
+	});
+
+	test("a record another call writes while stop waits on the recorder survives the stop (14-6)", async () => {
+		const fake = fakeVideo();
+		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
+		const kill = fake.video.kill;
+		fake.video.kill = (pid, signal) => {
+			kill(pid, signal);
+			updateState(h.c, UDID, (state) => ({ ...state, collector: { pid: 5151, startedAt: 1 } }));
+		};
+		await h.run("screen", "video", "start");
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
+		expect(readState(h.c, UDID).video).toBeUndefined();
+		expect(readState(h.c, UDID).collector).toEqual({ pid: 5151, startedAt: 1 });
+	});
+
+	test("a recorder pid now running another program is never signalled: stop forgets it, start records anew (14-4)", async () => {
+		const fake = fakeVideo();
+		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
+		await h.run("screen", "video", "start");
+		fake.video.command = () => "/usr/bin/vim notes.txt";
+		expect(await h.run("screen", "video", "start", "--json")).toBe(0);
+		expect(fake.specs).toHaveLength(2);
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
+		expect(fake.signals).toEqual([]);
+		expect(doc(h.c).warnings?.[0]).toContain("had already ended");
+		expect(readState(h.c, UDID).video).toBeUndefined();
+	});
+
+	test("a live recorder whose command line cannot be read is not signalled and stays recorded, with a warning", async () => {
+		const fake = fakeVideo();
+		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
+		await h.run("screen", "video", "start");
+		const recorded = readState(h.c, UDID).video;
+		fake.video.command = () => undefined;
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
+		expect(fake.signals).toEqual([]);
+		expect(doc(h.c).result).toMatchObject({ action: "video", state: "recording", pid: 4242 });
+		expect(doc(h.c).warnings?.[0]).toContain("could not stop the recorder (pid 4242)");
+		expect(readState(h.c, UDID).video).toEqual(recorded);
+	});
+
+	test("the recorder is signalled while its command line is still this device's recordVideo into the file", async () => {
+		const fake = fakeVideo();
+		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
+		fake.video.command = () => fake.specs.at(-1)?.argv.join(" ");
+		await h.run("screen", "video", "start");
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
+		expect(fake.signals).toEqual(["SIGINT"]);
+		expect(doc(h.c).warnings ?? []).toEqual([]);
 	});
 
 	test("a recorder that ignores SIGINT is killed with a warning", async () => {
@@ -664,8 +798,8 @@ describe("video", () => {
 			if (signal === "SIGKILL") return;
 		};
 		const h = harness([snapshotOf(LOGIN)], { video: fake.video });
-		await h.run("video", "start");
-		expect(await h.run("video", "stop", "--json")).toBe(0);
+		await h.run("screen", "video", "start");
+		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual(["SIGINT", "SIGKILL"]);
 		expect(doc(h.c).warnings?.[0]).toContain("ignored SIGINT");
 	});
