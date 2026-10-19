@@ -6,7 +6,8 @@ import type { AdbProcess, SpawnAdb } from "./adb-session";
  * command text), host `adb` calls through `exec`, and binary `exec-out`. Records every call. Never spawns.
  */
 
-export type ShellReply = string | { stdout: string; exitCode?: number } | "crash";
+/** `"hang"`: the command is received and never answers (a wait that outlives its budget, a stalled transport). */
+export type ShellReply = string | { stdout: string; exitCode?: number } | "crash" | "hang";
 
 /**
  * First rule whose `match` is a prefix of (or regex-matches) the command wins; later `unshift`s override.
@@ -49,10 +50,10 @@ export function fakeAndroidHost(
 	let spawnCount = 0;
 	const png = init.screencap ?? PNG_BYTES;
 
-	function shellReply(cmd: string): { stdout: string; exitCode: number } | "crash" {
+	function shellReply(cmd: string): { stdout: string; exitCode: number } | "crash" | "hang" {
 		const rule = shellRules.find((r) => matches(r, cmd));
 		const raw = typeof rule?.reply === "function" ? rule.reply(cmd) : rule?.reply;
-		if (raw === "crash") return "crash";
+		if (raw === "crash" || raw === "hang") return raw;
 		if (raw === undefined) return { stdout: "", exitCode: 0 };
 		return typeof raw === "string" ? { stdout: raw, exitCode: 0 } : { stdout: raw.stdout, exitCode: raw.exitCode ?? 0 };
 	}
@@ -83,6 +84,7 @@ export function fakeAndroidHost(
 					resolveExit(1);
 					return;
 				}
+				if (reply === "hang") return;
 				controller?.enqueue(new TextEncoder().encode(`${reply.stdout}${m[2] ?? ""}${reply.exitCode}__\n`));
 			},
 			kill() {

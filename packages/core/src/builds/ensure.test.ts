@@ -121,6 +121,83 @@ describe("ensureApp", () => {
 		expect(calls.some((c) => c.startsWith("stat"))).toBe(false);
 	});
 
+	describe("recorded install identity (17-7)", () => {
+		const plist = JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" });
+		/** ino+mtime of each container's executable; `/data/App.app/App` until a test changes it */
+		let stamps: Record<string, string>;
+		const fileStamp = async (path: string) => stamps[path];
+		let container: string;
+		const device = (calls: string[]) =>
+			fake(
+				[
+					["xcrun simctl install U1", {}],
+					[
+						"xcrun simctl get_app_container U1 com.x.app",
+						{
+							get stdout() {
+								return container;
+							},
+						},
+					],
+					["plutil -convert json", { stdout: plist }],
+				],
+				calls
+			);
+		beforeEach(() => {
+			stamps = { "/data/App.app/App": "11:100" };
+			container = "/data/App.app";
+		});
+
+		test("install records the container and the executable's ino+mtime", async () => {
+			await seedCache();
+			await ensureApp(input(device([]), { fileSize, fileStamp }));
+			expect(getInstall(store, "ios", "U1", "com.x.app")).toMatchObject({
+				hash: "H",
+				container: "/data/App.app",
+				exeStamp: "11:100",
+			});
+		});
+
+		test("same container, same executable: the already-installed check is one get_app_container, no plutil", async () => {
+			await seedCache();
+			await ensureApp(input(device([]), { fileSize, fileStamp }));
+			const calls: string[] = [];
+			const res = await ensureApp(input(device(calls), { fileSize, fileStamp }));
+			expect(res.success && res.data.source).toBe("installed");
+			expect(calls).toEqual(["xcrun simctl get_app_container U1 com.x.app"]);
+		});
+
+		test("another container (a foreign reinstall) falls back to the plutil identity check", async () => {
+			await seedCache();
+			await ensureApp(input(device([]), { fileSize, fileStamp }));
+			container = "/data/Other/App.app";
+			stamps["/data/Other/App.app/App"] = "12:200";
+			const calls: string[] = [];
+			const res = await ensureApp(input(device(calls), { fileSize, fileStamp }));
+			expect(res.success && res.data.source).toBe("installed");
+			expect(calls.filter((c) => c.startsWith("plutil"))).toHaveLength(2);
+		});
+
+		test("an executable replaced in place falls back to the plutil identity check", async () => {
+			await seedCache();
+			await ensureApp(input(device([]), { fileSize, fileStamp }));
+			stamps["/data/App.app/App"] = "11:999";
+			const calls: string[] = [];
+			await ensureApp(input(device(calls), { fileSize, fileStamp }));
+			expect(calls.filter((c) => c.startsWith("plutil"))).toHaveLength(2);
+		});
+
+		test("an unreadable executable records no stamp, so every check uses plutil", async () => {
+			await seedCache();
+			stamps = {};
+			await ensureApp(input(device([]), { fileSize, fileStamp }));
+			expect(getInstall(store, "ios", "U1", "com.x.app")?.exeStamp).toBeUndefined();
+			const calls: string[] = [];
+			await ensureApp(input(device(calls), { fileSize, fileStamp }));
+			expect(calls.filter((c) => c.startsWith("plutil"))).toHaveLength(2);
+		});
+	});
+
 	test("app on the device differs from the cached build → reinstall", async () => {
 		const path = await seedCache();
 		const exec = fake(

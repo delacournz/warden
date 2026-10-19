@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { makeFixtureRepo } from "@delacour/warden-core/affected/fixture.testing";
+import { TYPESCRIPT_UNUSABLE_EXIT } from "@delacour/warden-core/affected/graph";
 import { type GraphRequest, parseGraphDoc } from "@delacour/warden-core/affected/graph-snapshot";
 import { buildGraphDoc } from "@delacour/warden-core/affected/graph-worker";
+import { err } from "@delacour/warden-types/result";
 import { main } from "../cli";
 import { type TestContext, testContext } from "../testing";
-import { affectedGraphCommand } from "./affected-graph";
+import { affectedGraphCommand, walk } from "./affected-graph";
 import { COMMANDS } from "./registry";
 
 let dir: string;
@@ -23,6 +25,12 @@ afterEach(() => {
 
 const request = (): GraphRequest => ({ platform: "ios", repoRoot: dir, entries: [`${dir}/src/app/(app)/chats.tsx`] });
 
+async function built() {
+	const doc = await buildGraphDoc(request());
+	if (!doc.success) throw new Error(doc.error);
+	return doc.data;
+}
+
 async function run(argv: string[]): Promise<{ code: number; ctx: TestContext }> {
 	ctx = testContext(argv);
 	return { code: await affectedGraphCommand.run(ctx), ctx };
@@ -35,7 +43,7 @@ describe("warden __affected-graph", () => {
 		expect(ctx.stderr).toEqual([]);
 		expect(ctx.stdout).toHaveLength(1);
 		const doc = parseGraphDoc(ctx.stdout[0] ?? "");
-		expect(doc).toEqual(await buildGraphDoc(request()));
+		expect(doc).toEqual(await built());
 		expect(doc?.files.some((f) => f.endsWith("packages/ui/src/button.tsx"))).toBe(true);
 	});
 
@@ -46,6 +54,15 @@ describe("warden __affected-graph", () => {
 			expect(ctx.stdout).toEqual([]);
 			expect(ctx.stderr.join("\n")).toContain("__affected-graph");
 		}
+	});
+
+	test("no usable typescript: the reason on stderr, its own exit code, no stdout, no throw (cli-size-R5)", async () => {
+		ctx = testContext([]);
+		const why = "needs typescript in the analysed project: add it as a devDependency";
+		const code = await walk(ctx, JSON.stringify(request()), async () => err(why));
+		expect(code).toBe(TYPESCRIPT_UNUSABLE_EXIT);
+		expect(ctx.stdout).toEqual([]);
+		expect(ctx.stderr.join("\n")).toContain(`__affected-graph: ${why}`);
 	});
 
 	test("no request is a usage error", async () => {
@@ -76,6 +93,6 @@ describe("warden __affected-graph", () => {
 		);
 		const [stdout, exit] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
 		expect(exit).toBe(0);
-		expect(parseGraphDoc(stdout)).toEqual(await buildGraphDoc(request()));
+		expect(parseGraphDoc(stdout)).toEqual(await built());
 	});
 });

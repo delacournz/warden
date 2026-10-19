@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { loadManifest } from "../results/manifest";
-import { buildSampleRun } from "./fixtures/make-sample";
+import { buildSampleRun, withRepCpu } from "./fixtures/make-sample";
 import { benchSummary, benchSummarySchema } from "./summary";
 
 const manifest = loadManifest(join(import.meta.dir, "../.."));
@@ -39,5 +39,25 @@ describe("benchSummary", () => {
 	});
 	test("is deterministic", () => {
 		expect(JSON.stringify(benchSummary(run, manifest))).toBe(JSON.stringify(summary));
+	});
+});
+
+describe("benchSummary CPU-seconds (19-6)", () => {
+	test("ok frameworks carry CPU-seconds per rep and the whole-framework CPU-seconds when the run has them", () => {
+		const summary = benchSummary(
+			withRepCpu(run, () => 3.456),
+			manifest
+		);
+		expect(benchSummarySchema.safeParse(JSON.parse(JSON.stringify(summary))).success).toBe(true);
+		const warden = summary.frameworks.find((f) => f.framework === "warden");
+		if (warden?.status !== "ok") throw new Error("expected ok");
+		expect(warden.cpuSecondsPerRep).toBe(3.46);
+		expect(warden.resources.host.cpuSeconds).toBe(12.37);
+	});
+	test("older runs keep the old shape", () => {
+		const warden = benchSummary(run, manifest).frameworks.find((f) => f.framework === "warden");
+		if (warden?.status !== "ok") throw new Error("expected ok");
+		expect("cpuSecondsPerRep" in warden).toBe(false);
+		expect("cpuSeconds" in warden.resources.host).toBe(false);
 	});
 });

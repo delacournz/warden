@@ -30,7 +30,7 @@ describe("warden claim", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--count", "2"], fakeSimctl([wardenSim(1), wardenSim(2, "Booted")], calls));
 		expect(await claimCommand.run(c)).toBe(0);
-		expect(calls.map((x) => x.join(" "))).toContain("xcrun simctl boot U1");
+		expect(calls.map((x) => x.join(" "))).toContain("xcrun simctl bootstatus U1 -b");
 		const text = c.stdout.join("\n");
 		expect(text).toContain("U1");
 		expect(text).toContain("U2");

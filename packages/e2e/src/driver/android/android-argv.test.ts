@@ -23,6 +23,7 @@ import {
 	pidofArgv,
 	pmClearArgv,
 	pmPathArgv,
+	resolveLauncherArgv,
 	rotationArgvs,
 	SELECT_ALL_MIN_SDK,
 	screencapArgv,
@@ -30,6 +31,7 @@ import {
 	shellCommand,
 	shellQuote,
 	sleepArgv,
+	startComponentArgv,
 	startUrlArgv,
 	swipeArgv,
 	tapArgv,
@@ -196,6 +198,40 @@ describe("app argv", () => {
 		expect(monkeyLaunchArgv("com.x")).toEqual(["monkey", "-p", "com.x", "-c", "android.intent.category.LAUNCHER", "1"]);
 		expect(forceStopArgv("com.x")).toEqual(["am", "force-stop", "com.x"]);
 		expect(pmClearArgv("com.x")).toEqual(["pm", "clear", "com.x"]);
+	});
+
+	test("launcher resolution and the waiting component start", () => {
+		expect(resolveLauncherArgv("com.x")).toEqual([
+			"cmd",
+			"package",
+			"resolve-activity",
+			"--brief",
+			"-c",
+			"android.intent.category.LAUNCHER",
+			"com.x",
+		]);
+		const main = ["-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER"];
+		expect(startComponentArgv("com.x/.MainActivity", { stop: true })).toEqual([
+			"am",
+			"start",
+			"-W",
+			"-S",
+			...main,
+			"-n",
+			"com.x/.MainActivity",
+		]);
+		// the launcher's own intent (MAIN + LAUNCHER) matches the task's root, so a running app is brought to the front
+		expect(startComponentArgv("com.x/.MainActivity", { stop: false })).toEqual([
+			"am",
+			"start",
+			"-W",
+			...main,
+			"-n",
+			"com.x/.MainActivity",
+		]);
+		expect(shellCommand(startComponentArgv("com.x/com.x.Main$Alias", { stop: true }))).toBe(
+			"am start -W -S -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n 'com.x/com.x.Main$Alias'"
+		);
 	});
 
 	test("animations off covers all three scales", () => {

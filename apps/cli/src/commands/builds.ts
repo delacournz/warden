@@ -3,7 +3,7 @@ import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defa
 import { type BuildRecord, listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
 import { ccacheCleanup } from "@delacour/warden-core/builds/compiler-cache";
 import { LOCAL_PROFILE } from "@delacour/warden-core/builds/ensure";
-import { formatSize, parseSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
+import { cacheCap, formatSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { formatDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { wardenHome } from "@delacour/warden-core/store";
@@ -68,14 +68,17 @@ async function confirmPrune(ctx: CommandContext, remove: readonly BuildRecord[])
 }
 
 /**
- * LRU-prune the cache down to `--max-size`. In a terminal (without `--yes` / `--dry-run`) shows
+ * LRU-prune the cache down to `--max-size` (else `WARDEN_MAX_CACHE_SIZE`, else 20G, the cap `warden gc`
+ * uses too). In a terminal (without `--yes` / `--dry-run`) shows
  * what goes and asks first.
  */
 async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 	const { ui } = ctx;
 	const { color } = ui;
-	const max = parseSize(opts.maxSize ?? DEFAULT_MAX_CACHE_SIZE);
-	if (!max.success) return fail(ctx, "prune", max.error);
+	const cap = cacheCap(opts.maxSize, ctx.env);
+	const max = cap.bytes;
+	if (!max.success)
+		return fail(ctx, "prune", `${cap.source === "env" ? "WARDEN_MAX_CACHE_SIZE" : "--max-size"}: ${max.error}`);
 	const dryRun = opts.dryRun === true;
 	const prune = (dry: boolean) =>
 		pruneBuilds({
@@ -180,7 +183,10 @@ export const buildsCommand = defineCommand({
 		cmd
 			.command("prune")
 			.description("remove least-recently-used builds until the cache fits --max-size (build-locked ones stay)")
-			.option("--max-size <size>", `cache size limit, e.g. 20G (default ${DEFAULT_MAX_CACHE_SIZE})`)
+			.option(
+				"--max-size <size>",
+				`cache size limit, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE or ${DEFAULT_MAX_CACHE_SIZE}; gc's --max-cache-size)`
+			)
 			.option("--dry-run", "only show what would be removed")
 			.option("--yes", "don't ask before removing")
 			.option("--json", "machine-readable output")

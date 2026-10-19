@@ -1,4 +1,5 @@
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import { androidTools } from "../providers/android";
@@ -15,6 +16,26 @@ export const nodeFileSize: FileSize = async (path) => {
 		return undefined;
 	}
 };
+
+/** `ino:mtime` of a file; undefined when it cannot be read. Injected so tests need no real container. */
+export type FileStamp = (path: string) => Promise<string | undefined>;
+
+export const nodeFileStamp: FileStamp = async (path) => {
+	try {
+		const st = await stat(path);
+		return `${st.ino}:${st.mtimeMs}`;
+	} catch {
+		return undefined;
+	}
+};
+
+/**
+ * `ino:mtime` of an installed `.app`'s executable, guessed as the bundle's own name (`App.app/App`, what
+ * Xcode's `EXECUTABLE_NAME` defaults to) so no `plutil` is needed; undefined when that file is not there.
+ */
+export function executableStamp(container: string, fileStamp: FileStamp = nodeFileStamp): Promise<string | undefined> {
+	return fileStamp(join(container, basename(container, ".app")));
+}
 
 export type InstallerDeps = {
 	exec: Exec;
@@ -149,16 +170,27 @@ export async function installApp(
 	appPath: string,
 	bundleId: string
 ): AsyncResult<void> {
+	const done = await installAndProbe(deps, target, appPath, bundleId);
+	return done.success ? ok(undefined) : done;
+}
+
+/** `installApp`, keeping what the confirming probe found (iOS: the new bundle container, 17-7). */
+export async function installAndProbe(
+	deps: InstallerDeps,
+	target: InstallTarget,
+	appPath: string,
+	bundleId: string
+): AsyncResult<InstalledApp> {
 	const argv = installArgv(target, appPath, deps.env);
 	const res = await deps.exec(argv, { timeoutMs: INSTALL_TIMEOUT_MS });
 	// `adb install` can exit 0 while printing `Failure [INSTALL_…]`
 	if (res.exitCode !== 0 || /Failure \[/.test(res.stdout)) return err(`install failed: ${execError(argv, res)}`);
-	const present = await isAppInstalled(deps, target, bundleId);
+	const present = await probeApp(deps, target, bundleId);
 	if (!present.success) return present;
-	if (!present.data) {
+	if (!present.data.present) {
 		return err(`installed ${appPath} on ${target.deviceId} but ${bundleId} is not there — wrong bundle id in config?`);
 	}
-	return ok(undefined);
+	return present;
 }
 
 /** Filesystem ops the iOS data wipe needs (injected; tests pass fakes). */

@@ -5,12 +5,23 @@ import { type Exec, runOk } from "./exec";
 /** A device the run uses; `leaseId` is set only when this harness claimed it (and so must release it). */
 export type ClaimedDevice = { udid: string; leaseId?: string; name?: string; runtime?: string };
 
+/**
+ * The bench's lease TTL. A bare `warden claim` from an agent session gets the 5 min agent TTL, and a
+ * framework's reps run for minutes without any warden call, so the bench asks for a TTL longer than any
+ * run and also heartbeats every 60 s (`heartbeatDevice`); the TTL only matters when the bench dies without
+ * reaching its `finally`.
+ */
+export const BENCH_LEASE_TTL = "4h";
+
+/** The lease label `warden ls` shows for the bench's device. */
+export const BENCH_LEASE_LABEL = "bench";
+
 export type ClaimInput = {
 	platform: Platform;
 	/** `apps/cli/src/cli.ts`: this checkout's warden, not whatever is on PATH */
 	cliPath: string;
 	repoRoot: string;
-	/** a device the caller already leased: no claim, the lease stays theirs */
+	/** a device the caller already leased: no claim, no heartbeat, the lease stays theirs (the caller keeps it alive) */
 	udid?: string;
 	log: (line: string) => void;
 };
@@ -41,7 +52,17 @@ export async function claimDevice(exec: Exec, input: ClaimInput): AsyncResult<Cl
 		input.log(`using caller-leased device ${input.udid}`);
 		return ok({ udid: input.udid });
 	}
-	const ran = await runOk(exec, process.execPath, [input.cliPath, "claim", input.platform, "--json"], {
+	const argv = [
+		input.cliPath,
+		"claim",
+		input.platform,
+		"--ttl",
+		BENCH_LEASE_TTL,
+		"--label",
+		BENCH_LEASE_LABEL,
+		"--json",
+	];
+	const ran = await runOk(exec, process.execPath, argv, {
 		cwd: input.repoRoot,
 		onLine: (_s, line) => input.log(line),
 	});
@@ -49,6 +70,17 @@ export async function claimDevice(exec: Exec, input: ClaimInput): AsyncResult<Cl
 	const claim = parseClaim(ran.data.stdout);
 	if (claim === undefined) return err(`warden claim: unparseable output: ${ran.data.stdout.slice(0, 200)}`);
 	return ok({ udid: claim.udid, leaseId: claim.leaseId, ...(claim.name !== undefined ? { name: claim.name } : {}) });
+}
+
+/** `warden heartbeat <leaseId>`: refreshes exactly the lease the bench claimed. */
+export async function heartbeatDevice(
+	exec: Exec,
+	input: { cliPath: string; leaseId: string; repoRoot?: string }
+): AsyncResult<void> {
+	const ran = await runOk(exec, process.execPath, [input.cliPath, "heartbeat", input.leaseId], {
+		...(input.repoRoot !== undefined ? { cwd: input.repoRoot } : {}),
+	});
+	return ran.success ? ok(undefined) : ran;
 }
 
 /** Releases exactly one lease id. Never `--mine`: agents of one session share the session id. */

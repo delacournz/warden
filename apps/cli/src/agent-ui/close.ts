@@ -38,7 +38,7 @@ export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValu
 			terminated = bundleId;
 		}
 
-		let helper: { stopped: boolean; how: string };
+		let helper: { stopped: boolean; how: string; warning?: string };
 		if (opts.release === true) {
 			await releaseDevices(ctx, [device.lease.id], { after: stopHelperAfter(ctx) });
 			helper = { stopped: true, how: "release" };
@@ -48,7 +48,11 @@ export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValu
 		const released = opts.release === true;
 		const text = [
 			terminated === null ? undefined : `terminated ${terminated}`,
-			helper.stopped ? `helper stopped (${helper.how})` : "helper was not running",
+			helper.stopped
+				? `helper stopped (${helper.how})`
+				: helper.warning === undefined
+					? "helper was not running"
+					: undefined,
 			released ? `released ${device.lease.id}` : undefined,
 		]
 			.filter((line): line is string => line !== undefined)
@@ -57,6 +61,7 @@ export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValu
 			device: { udid: device.udid, platform: device.platform, name: device.name },
 			result: { app: terminated, helper, released },
 			text,
+			warnings: helper.warning === undefined ? [] : [helper.warning],
 		});
 	});
 }

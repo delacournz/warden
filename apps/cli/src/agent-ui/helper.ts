@@ -24,7 +24,8 @@ import { driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
 import { simdDir } from "./paths";
-import { type HelperRecord, readState, type UiState, writeState } from "./state";
+import { mayBeRecorded, type ProcessCommand, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
+import { type HelperRecord, readState, updateState } from "./state";
 
 /**
  * How long a caller waits for a helper that answers the socket but not its handshake (busy) before replacing it.
@@ -87,6 +88,11 @@ export type HelperDeps = {
 	realpath?: (path: string) => string;
 	/** whether the socket file is there; false skips the probe (nothing can answer). Absent: always probe */
 	socketExists?: (path: string) => boolean;
+	/**
+	 * a pid's command line (`ps`), checked for `--udid <udid> --socket <socket>` before the recorded pid is signalled
+	 * or counted as the helper: a reused pid is never signalled. Absent (test fakes): liveness alone decides
+	 */
+	command?: ProcessCommand;
 };
 
 /**
@@ -205,7 +211,11 @@ export const defaultHelperDeps: HelperDeps = {
 		}
 	},
 	socketExists: existsSync,
+	command: processCommand,
 };
+
+/** What a helper's command line carries (`spawnHelper`'s argv): how a recorded pid is told from a reused one. */
+const helperMarks = (udid: string, socket: string): string[] => [`--udid ${udid}`, `--socket ${socket}`];
 
 /** The slice of a command context the helper lifecycle needs. */
 export type HelperHost = Pick<CommandContext, "env" | "now"> & Partial<Pick<CommandContext, "store" | "exec">>;
@@ -413,7 +423,11 @@ function spawnHelper(
 	stopped: number | undefined
 ): Result<SpawnResult, UiError> {
 	const previous = readState(host, udid).helper;
-	if (previous?.socket === socketPath && previous.pid !== stopped && deps.pidAlive(previous.pid)) {
+	if (
+		previous?.socket === socketPath &&
+		previous.pid !== stopped &&
+		mayBeRecorded(deps, previous.pid, helperMarks(udid, socketPath))
+	) {
 		return unavailable(`warden-simd (pid ${previous.pid}) is still running for ${udid}; not starting a second one`);
 	}
 	const idle = idleSeconds(opts.idleTimeout ?? host.env[IDLE_TIMEOUT_ENV] ?? DEFAULT_IDLE_TIMEOUT);
@@ -444,7 +458,7 @@ function spawnHelper(
 		env: simdEnvKey(host.env),
 		...(lease !== undefined ? { lease: lease.id } : {}),
 	};
-	writeState(host, udid, { ...readState(host, udid), helper: record });
+	updateState(host, udid, (state) => ({ ...state, helper: record }));
 	return ok(spawned);
 }
 
@@ -493,15 +507,20 @@ async function onAnswer(a: Attempt, client: SimdClient): Promise<Step> {
 	a.held = true;
 	a.replaced = true;
 	const pid = readState(a.host, a.udid).helper?.pid;
-	await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
-	a.stopped = pid;
+	const stop = await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
+	// a helper that could not be stopped is still the recorded one: `spawnHelper` refuses to start beside it
+	if (stop.warning === undefined) a.stopped = pid;
 	return RETRY;
 }
 
-/** The recorded helper's pid when it is alive, else undefined. */
+/** The recorded helper's pid when it is alive (and not reused by another program), else undefined. */
 function liveRecordedPid(a: Attempt): number | undefined {
 	const record = readState(a.host, a.udid).helper;
-	return record !== undefined && record.socket === a.socketPath && a.deps.pidAlive(record.pid) ? record.pid : undefined;
+	return record !== undefined &&
+		record.socket === a.socketPath &&
+		mayBeRecorded(a.deps, record.pid, helperMarks(a.udid, record.socket))
+		? record.pid
+		: undefined;
 }
 
 /**
@@ -512,8 +531,8 @@ async function onBusy(a: Attempt, pid: number): Promise<Step> {
 	if (a.deps.now() - a.started < SPAWN_WAIT_MS) return WAIT;
 	if (!a.held && !claimSpawnRow(a.host, a.udid, a.deps)) return WAIT;
 	a.held = true;
-	await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
-	a.stopped = pid;
+	const stop = await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
+	if (stop.warning === undefined) a.stopped = pid;
 	return spawn(a);
 }
 
@@ -536,8 +555,8 @@ async function onSilence(a: Attempt): Promise<Step> {
 	// a recorded helper whose pid is alive but that refuses (or has no socket file) is stopped before another starts
 	const recorded = liveRecordedPid(a);
 	if (recorded !== undefined && recorded !== a.stopped) {
-		await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
-		a.stopped = recorded;
+		const stop = await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
+		if (stop.warning === undefined) a.stopped = recorded;
 	}
 	return spawn(a);
 }
@@ -582,10 +601,10 @@ async function attempt(a: Attempt): Promise<Step> {
  * start late beside whatever the caller falls back to.
  */
 function abandonSpawn(a: Attempt, spawned: SpawnResult): void {
-	a.deps.kill(spawned.pid, "SIGTERM");
+	// the child this process just spawned: liveness alone says it is still ours
+	if (a.deps.pidAlive(spawned.pid)) a.deps.kill(spawned.pid, "SIGTERM");
 	unlinkQuietly(a.socketPath);
-	const state = readState(a.host, a.udid);
-	if (state.helper?.pid === spawned.pid) forgetHelper(a.host, a.udid, state);
+	forgetHelper(a.host, a.udid, spawned.pid);
 }
 
 /**
@@ -658,7 +677,8 @@ export async function connectHelper(
 	return { success: false, error: driverUiError(driver.error) };
 }
 
-export type StopOutcome = { stopped: boolean; how: "none" | "shutdown" | "sigterm" };
+/** `warning`: the helper may still be running but could not be stopped (its command line could not be read). */
+export type StopOutcome = { stopped: boolean; how: "none" | "shutdown" | "sigterm"; warning?: string };
 
 async function waitUntil(done: () => boolean, ms: number, deps: HelperDeps): Promise<boolean> {
 	const until = deps.now() + ms;
@@ -726,13 +746,27 @@ async function stopRecorded(
 	const record = readState(host, udid).helper;
 	const socketPath = opts.socketPath ?? record?.socket ?? socketPathFor(host, udid);
 	const found = fileIdentity(socketPath);
-	const running = found !== undefined || (record !== undefined && deps.pidAlive(record.pid));
+	// a recorded pid now running another program (reused) is not the helper: never waited on, never signalled
+	const marks = helperMarks(udid, record?.socket ?? socketPath);
+	// alive but its command line unreadable: it may still be the helper, so it is neither signalled nor forgotten,
+	// whether or not its socket file is there (no socket file must not read as "already gone")
+	if (record !== undefined && recordedIdentity(deps, record.pid, marks) === "unknown") {
+		return {
+			stopped: false,
+			how: "none",
+			warning: `could not stop warden-simd (pid ${record.pid}): its command line could not be read, so it was left running`,
+		};
+	}
+	const ours = record !== undefined && mayBeRecorded(deps, record.pid, marks);
+	const running = found !== undefined || ours;
 	if (!running) {
 		forgetRecorded(host, udid, record);
 		return { stopped: false, how: "none" };
 	}
 	const gone = () =>
-		found === undefined || fileIdentity(socketPath) !== found || (record !== undefined && !deps.pidAlive(record.pid));
+		found === undefined ||
+		fileIdentity(socketPath) !== found ||
+		(record !== undefined && (!ours || !deps.pidAlive(record.pid)));
 	const attached = found !== undefined ? await deps.connect(socketPath) : undefined;
 	if (attached?.success) {
 		await attached.data.request("shutdown", {}, { timeoutMs: SHUTDOWN_REQUEST_MS });
@@ -741,7 +775,7 @@ async function stopRecorded(
 	let how: StopOutcome["how"] = "shutdown";
 	if (!(await waitUntil(gone, SHUTDOWN_WAIT_MS - (attached?.success ? SHUTDOWN_REQUEST_MS : 0), deps))) {
 		how = "sigterm";
-		if (record !== undefined) deps.kill(record.pid, "SIGTERM");
+		if (record !== undefined && safeToSignal(deps, record.pid, marks)) deps.kill(record.pid, "SIGTERM");
 		await waitUntil(gone, KILL_WAIT_MS, deps);
 	}
 	if (found !== undefined && fileIdentity(socketPath) === found) unlinkQuietly(socketPath);
@@ -750,20 +784,17 @@ async function stopRecorded(
 }
 
 /** Drop `record` from `state.json`, but only while it is still the recorded helper (a newer one is kept). */
-function forgetRecorded(
-	host: Pick<CommandContext, "env" | "now">,
-	udid: string,
-	record: HelperRecord | undefined
-): void {
-	if (record === undefined) return;
-	const state = readState(host, udid);
-	if (state.helper?.pid === record.pid) forgetHelper(host, udid, state);
+function forgetRecorded(host: StopHost, udid: string, record: HelperRecord | undefined): void {
+	if (record !== undefined) forgetHelper(host, udid, record.pid);
 }
 
-function forgetHelper(host: Pick<CommandContext, "env" | "now">, udid: string, state: UiState): void {
-	if (state.helper === undefined) return;
-	const { helper: _helper, ...rest } = state;
-	writeState(host, udid, rest);
+/** Drop the helper record if it still names `pid`, re-read under the store's lock (`updateState`). */
+function forgetHelper(host: StopHost, udid: string, pid: number): void {
+	updateState(host, udid, (state) => {
+		if (state.helper?.pid !== pid) return state;
+		const { helper: _helper, ...rest } = state;
+		return rest;
+	});
 }
 
 /** What `warden ui status` shows for the helper. */
@@ -772,11 +803,12 @@ export type HelperStatus = { running: boolean; pid: number | null; socket: strin
 export function helperStatus(
 	host: Pick<CommandContext, "env">,
 	udid: string,
-	deps: Pick<HelperDeps, "pidAlive"> = defaultHelperDeps
+	deps: Pick<HelperDeps, "pidAlive" | "command"> = defaultHelperDeps
 ): HelperStatus {
 	const record = readState(host, udid).helper;
 	if (record === undefined) return { running: false, pid: null, socket: null };
-	return { running: deps.pidAlive(record.pid) && existsSync(record.socket), pid: record.pid, socket: record.socket };
+	const alive = mayBeRecorded(deps, record.pid, helperMarks(udid, record.socket));
+	return { running: alive && existsSync(record.socket), pid: record.pid, socket: record.socket };
 }
 
 /**
@@ -795,7 +827,7 @@ export function sweepDeadHelpers(
 		if (record === undefined || deps.pidAlive(record.pid)) continue;
 		if (existsSync(record.socket)) removed.push(record.socket);
 		unlinkQuietly(record.socket);
-		forgetHelper(host, udid, state);
+		forgetHelper(host, udid, record.pid);
 	}
 	return removed;
 }

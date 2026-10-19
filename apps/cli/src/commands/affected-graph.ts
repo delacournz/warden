@@ -1,5 +1,6 @@
+import { TYPESCRIPT_UNUSABLE_EXIT } from "@delacour/warden-core/affected/graph";
 import { GRAPH_WORKER_SUBCOMMAND } from "@delacour/warden-core/affected/graph-process";
-import type { GraphRequest } from "@delacour/warden-core/affected/graph-snapshot";
+import type { GraphDoc, GraphRequest } from "@delacour/warden-core/affected/graph-snapshot";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -23,17 +24,32 @@ async function parseRequest(raw: string): AsyncResult<GraphRequest> {
 /**
  * `warden __affected-graph '<request json>'`: the import graph walk of `warden affected`, run in a process of its own so
  * the TypeScript compiler stays out of the CLI. From source that process is `bun graph-worker.ts`; a compiled binary has
- * no script on disk, so it runs this subcommand of itself (`graph-process.ts`). Prints the table as one JSON line.
+ * no script on disk, so it runs this subcommand of itself (`graph-process.ts`). Prints the table as one JSON line; no
+ * usable TypeScript compiler is `TYPESCRIPT_UNUSABLE_EXIT` with the reason, which the caller reports as is.
  */
-async function walk(ctx: CommandContext, raw: string): Promise<number> {
+export async function walk(
+	ctx: CommandContext,
+	raw: string,
+	build: (request: GraphRequest) => AsyncResult<GraphDoc> = defaultBuild
+): Promise<number> {
 	const request = await parseRequest(raw);
 	if (!request.success) {
 		reportError(ctx, GRAPH_WORKER_SUBCOMMAND, request.error);
 		return 1;
 	}
-	const { buildGraphDoc } = await import("@delacour/warden-core/affected/graph-worker");
-	ctx.out(JSON.stringify(await buildGraphDoc(request.data)));
+	const doc = await build(request.data);
+	if (!doc.success) {
+		reportError(ctx, GRAPH_WORKER_SUBCOMMAND, doc.error);
+		return TYPESCRIPT_UNUSABLE_EXIT;
+	}
+	ctx.out(JSON.stringify(doc.data));
 	return 0;
+}
+
+/** The walker, imported on use (it loads the compiler). */
+async function defaultBuild(request: GraphRequest): AsyncResult<GraphDoc> {
+	const { buildGraphDoc } = await import("@delacour/warden-core/affected/graph-worker");
+	return buildGraphDoc(request);
 }
 
 export const affectedGraphCommand = defineCommand({

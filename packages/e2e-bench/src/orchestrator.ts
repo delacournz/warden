@@ -6,14 +6,21 @@ import type { BenchAdapter, FrameworkId, RunContext } from "./adapters/adapter.t
 import { DETOX_BEST_EFFORT } from "./adapters/detox";
 import { dismissAnr, hideErrorDialogs } from "./harness/anr";
 import { appFingerprint, type EnsuredApp, ensureApp, terminateApp } from "./harness/app";
-import { type ClaimedDevice, claimDevice, deviceInfo, releaseDevice } from "./harness/device";
+import { type ClaimedDevice, claimDevice, deviceInfo, heartbeatDevice, releaseDevice } from "./harness/device";
 import type { Child, Exec, ExecOptions } from "./harness/exec";
 import { hostInfo } from "./harness/host";
 import { isolate, recordAnimationScales, restoreAnimationScales } from "./harness/isolation";
 import { openPhaseLog, timed } from "./harness/phases";
 import { diffResidue, type Owner, ownerFilter, snapshotResidue } from "./harness/residue";
-import { startSampler, type Tick } from "./harness/sampler";
-import { ms as fmtMs, pct as fmtPct, ratio as fmtRatio } from "./report/format";
+import {
+	type ExitCharge,
+	groupOfArgv,
+	type SamplerOptions,
+	startSampler,
+	type Tick,
+	windowSummary,
+} from "./harness/sampler";
+import { cpuSeconds as fmtCpu, ms as fmtMs, pct as fmtPct, ratio as fmtRatio } from "./report/format";
 import { renderMarkdown } from "./report/markdown";
 import { benchSummary } from "./report/summary";
 import { summaryRows } from "./report/tables";
@@ -23,6 +30,7 @@ import {
 	type BenchRun,
 	type FrameworkResult,
 	type Host,
+	type HostGroup,
 	type OkFrameworkResult,
 	type Phase,
 	type Platform,
@@ -67,6 +75,10 @@ export type BenchDeps = {
 	renderHtml?: (run: BenchRun, manifest: Manifest) => string;
 	/** sampler tick interval (default 500) */
 	samplerIntervalMs?: number;
+	/** schedule the lease heartbeat `fn` every `ms`; returns the canceller (default `setInterval`) */
+	heartbeatEvery?: (fn: () => void, ms: number) => () => void;
+	/** `harness/sampler.ts` `startSampler`, injected so the orchestrator test can drive the sampler clock */
+	startSampler?: (options: SamplerOptions) => ReturnType<typeof startSampler>;
 };
 
 export type BenchOutcome = { runDir: string; run: BenchRun; interrupted: boolean };
@@ -80,6 +92,10 @@ type Session = {
 	/** exec that records every child pid for the sampler */
 	exec: Exec;
 	pids: Set<number>;
+	/** the host group each spawned pid was started as (`trackingExec`) */
+	labels: Map<number, HostGroup>;
+	/** where `trackingExec` reports a `run` child's CPU time at exit: the running sampler, if any */
+	exitHook: { current?: (pid: number, cpuSec: number) => void };
 	env: Record<string, string | undefined>;
 	log: (line: string) => void;
 };
@@ -94,16 +110,40 @@ export function runStamp(date: Date): string {
 	return date.toISOString().slice(0, 19).replaceAll(":", "-");
 }
 
-/** Wraps `base` so every spawned child's pid lands in `pids` (the sampler's root pids). */
-export function trackingExec(base: Exec, pids: Set<number>): Exec {
-	const onSpawn = (pid: number): void => {
+/**
+ * Wraps `base` so every spawned child's pid lands in `pids` (the sampler's root pids) and, when given,
+ * `labels` records what it was spawned as (`groupOfArgv` of the command and its first argument, else
+ * `other`), so the sampler can attribute a child whose own argv does not say (an `xcrun` under `warden`).
+ * `onExit` gets each `run` child's CPU time at exit (`ExecResult.cpuSec`), for the sampler's exit charge.
+ */
+export function trackingExec(
+	base: Exec,
+	pids: Set<number>,
+	labels?: Map<number, HostGroup>,
+	onExit?: (pid: number, cpuSec: number) => void
+): Exec {
+	const register = (cmd: string, args: readonly string[]) => (pid: number) => {
 		pids.add(pid);
+		labels?.set(pid, groupOfArgv(cmd, args[0]) ?? "other");
 	};
 	return {
-		run: (cmd, args, options) => base.run(cmd, args, { ...options, onSpawn: chain(options, onSpawn) }),
+		run: async (cmd, args, options) => {
+			let spawned: number | undefined;
+			const own = register(cmd, args);
+			const result = await base.run(cmd, args, {
+				...options,
+				onSpawn: chain(options, (pid) => {
+					spawned = pid;
+					own(pid);
+				}),
+			});
+			if (spawned !== undefined && result.cpuSec !== undefined) onExit?.(spawned, result.cpuSec);
+			return result;
+		},
 		start: (cmd, args, options): Child => {
-			const child = base.start(cmd, args, { ...options, onSpawn: chain(options, onSpawn) });
-			pids.add(child.pid);
+			const own = register(cmd, args);
+			const child = base.start(cmd, args, { ...options, onSpawn: chain(options, own) });
+			own(child.pid);
 			return child;
 		},
 		which: (cmd) => base.which(cmd),
@@ -156,6 +196,10 @@ type PhaseState = {
 	teardownMs: number;
 	/** where the sampler appends ticks right now (per rep, or the framework dir between reps) */
 	tickFile: { path: string };
+	/** the sampler clock (ms since this framework's sampler started) */
+	clock: () => number;
+	/** per rep index: the timed `run` window on that clock */
+	windows: Map<number, { startMs: number; endMs: number }>;
 };
 
 type FrameworkCtx = { s: Session; adapter: BenchAdapter; fwDir: string };
@@ -194,7 +238,9 @@ async function repPhase(fc: FrameworkCtx, st: PhaseState, n: number): Promise<Ou
 			ctx.log(`dismissed an "isn't responding" dialog for ${anr.data.packageName} before rep ${n}`);
 	}
 	const startedAt = s.deps.now().toISOString();
+	const startMs = st.clock();
 	const { result, ms } = await timed("run", () => adapter.run(ctx));
+	st.windows.set(n, { startMs, endMs: st.clock() });
 	if (!result.success) {
 		const e = result.error;
 		return e.kind === "unsupported"
@@ -324,24 +370,41 @@ async function measure(fc: FrameworkCtx, version: string): Promise<FrameworkResu
 	};
 	const owner: Owner = { udid: s.device.udid, benchPids: () => [...s.pids], ownedPaths: ownedPathsOf(s) };
 	const before = await snapshotResidue(probe);
-	const st: PhaseState = { reps: [], prepareMs: 0, teardownMs: 0, tickFile: { path: join(fwDir, "resources.ndjson") } };
-	const sampler = startSampler({
+	const tickFile = { path: join(fwDir, "resources.ndjson") };
+	const sampler = (s.deps.startSampler ?? startSampler)({
 		exec: s.deps.exec,
 		rootPids: () => [...s.pids],
+		rootLabels: () => s.labels,
 		processPatterns: adapter.residuePatterns.processes,
 		owned: (rows) => ownerFilter(rows, owner),
 		simUdid: s.device.udid,
 		platform: s.opts.platform,
 		...(s.deps.samplerIntervalMs !== undefined ? { intervalMs: s.deps.samplerIntervalMs } : {}),
-		sink: (tick: Tick) => appendTick(st.tickFile.path, tick),
+		sink: (tick: Tick) => appendTick(tickFile.path, tick),
+		log: (line: string) => s.log(`${adapter.id}: ${line}`),
 	});
+	// exit CPU only for children spawned while this sampler runs (an older child's rusage predates it)
+	const spawnedBefore = new Set(s.pids);
+	s.exitHook.current = (pid, cpuSec) => {
+		if (!spawnedBefore.has(pid)) sampler.exited(pid, cpuSec);
+	};
+	const st: PhaseState = {
+		reps: [],
+		prepareMs: 0,
+		teardownMs: 0,
+		tickFile,
+		clock: () => sampler.elapsed(),
+		windows: new Map(),
+	};
 	let outcome: Outcome;
 	try {
 		outcome = await executeAdapter(fc, st);
 	} catch (e) {
 		outcome = { kind: "failed", phase: "run", error: e instanceof Error ? e.message : String(e) };
 	}
-	const resources = await sampler.stop();
+	s.exitHook.current = undefined;
+	const { ticks, exits, ...resources } = await sampler.stop();
+	st.reps = withRepResources(st.reps, st.windows, ticks, exits);
 	const problem = toResult(outcome, adapter.id, version, st.reps);
 	if (problem !== undefined) return problem;
 	const residue = await diffResidue({ ...probe, owner, before });
@@ -357,6 +420,19 @@ async function measure(fc: FrameworkCtx, version: string): Promise<FrameworkResu
 		footprint,
 		stats: frameworkStats({ reps: st.reps, prepareMs: st.prepareMs, teardownMs: st.teardownMs }),
 	};
+}
+
+/** Each rep with the resources of its own timed-run window (`resources` = the whole framework, "whole-framework"). */
+function withRepResources(
+	reps: readonly RepResult[],
+	windows: ReadonlyMap<number, { startMs: number; endMs: number }>,
+	ticks: readonly Tick[],
+	exits: readonly ExitCharge[]
+): RepResult[] {
+	return reps.map((r) => {
+		const w = windows.get(r.index);
+		return w === undefined ? r : { ...r, resources: windowSummary(ticks, w.startMs, w.endMs, exits) };
+	});
 }
 
 function appendTick(path: string, tick: Tick): void {
@@ -381,8 +457,12 @@ export function writeReports(runDir: string, run: BenchRun, deps: Pick<BenchDeps
 
 /** A short console table of the summary rows. */
 export function summaryLines(run: BenchRun): string[] {
+	const summary = summaryRows(run);
+	// the CPU-seconds column only when some framework has one (else the pre-19-6 layout)
+	const withCpu = summary.some((r) => r.cpuSecondsPerRep !== undefined);
 	const header = ["framework", "status", "version", "median", "ratio", "pass", "flake", "cold start"];
-	const rows = summaryRows(run).map((r) => [
+	if (withCpu) header.push("cpu-s/rep");
+	const rows = summary.map((r) => [
 		r.framework,
 		r.status,
 		r.version ?? "-",
@@ -391,6 +471,7 @@ export function summaryLines(run: BenchRun): string[] {
 		fmtPct(r.passRate),
 		fmtPct(r.flakeRate),
 		fmtMs(r.coldStartMs),
+		...(withCpu ? [fmtCpu(r.cpuSecondsPerRep)] : []),
 	]);
 	const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
 	const line = (cols: readonly string[]) =>
@@ -399,6 +480,27 @@ export function summaryLines(run: BenchRun): string[] {
 			.join("  ")
 			.trimEnd();
 	return [line(header), ...rows.map(line)];
+}
+
+const HEARTBEAT_MS = 60_000;
+
+/**
+ * Heartbeats the bench's own lease every 60 s for the whole run (a framework's reps make no warden call
+ * for minutes). Uses the untracked exec, so the heartbeat processes never count as framework load. A
+ * failed heartbeat is logged and the run goes on (the 4 h TTL still holds the lease).
+ */
+function startHeartbeat(deps: BenchDeps, leaseId: string): () => void {
+	const every =
+		deps.heartbeatEvery ??
+		((fn: () => void, ms: number) => {
+			const handle = setInterval(fn, ms);
+			return () => clearInterval(handle);
+		});
+	return every(() => {
+		void heartbeatDevice(deps.exec, { cliPath: deps.cliPath, leaseId, repoRoot: deps.repoRoot }).then((r) => {
+			if (!r.success) deps.log(`heartbeat ${leaseId} failed: ${r.error}`);
+		});
+	}, HEARTBEAT_MS);
 }
 
 function startCaffeinate(exec: Exec, log: (line: string) => void): Child | undefined {
@@ -423,7 +525,7 @@ type Prepared = {
 async function prepareRun(
 	opts: BenchOptions,
 	deps: BenchDeps,
-	claimed: { device?: ClaimedDevice }
+	claimed: { device?: ClaimedDevice; stopHeartbeat?: () => void }
 ): AsyncResult<Prepared> {
 	const host = await hostInfo(deps.exec, { cliPath: deps.cliPath });
 	if (!host.success) return host;
@@ -440,6 +542,7 @@ async function prepareRun(
 	});
 	if (!device.success) return device;
 	claimed.device = device.data;
+	if (device.data.leaseId !== undefined) claimed.stopHeartbeat = startHeartbeat(deps, device.data.leaseId);
 	if (opts.platform === "android") {
 		const hidden = await hideErrorDialogs(deps.exec, device.data.udid, true);
 		if (!hidden.success) deps.log(`hide_error_dialogs: ${hidden.error}`);
@@ -525,7 +628,7 @@ async function runAll(s: Session, run: BenchRun): Promise<boolean> {
  */
 export async function runBench(opts: BenchOptions, deps: BenchDeps): AsyncResult<BenchOutcome> {
 	const caffeinate = startCaffeinate(deps.exec, deps.log);
-	const claimed: { device?: ClaimedDevice } = {};
+	const claimed: { device?: ClaimedDevice; stopHeartbeat?: () => void } = {};
 	try {
 		const prepared = await prepareRun(opts, deps, claimed);
 		if (!prepared.success) return prepared;
@@ -541,14 +644,18 @@ export async function runBench(opts: BenchOptions, deps: BenchDeps): AsyncResult
 		const run = skeleton(opts, deps, basename(runDir), prepared.data, caffeinate !== undefined);
 		writeBenchResults(runDir, run);
 		const pids = new Set<number>();
+		const labels = new Map<number, HostGroup>();
+		const exitHook: Session["exitHook"] = {};
 		const session: Session = {
 			opts,
 			deps,
 			runDir,
 			device: prepared.data.device,
 			app: prepared.data.app,
-			exec: trackingExec(deps.exec, pids),
+			exec: trackingExec(deps.exec, pids, labels, (pid, cpuSec) => exitHook.current?.(pid, cpuSec)),
 			pids,
+			labels,
+			exitHook,
 			env: envFor(opts, deps.env),
 			log,
 		};
@@ -564,6 +671,7 @@ export async function runBench(opts: BenchOptions, deps: BenchDeps): AsyncResult
 		deps.log(`results: ${runDir}`);
 		return ok({ runDir, run: finished, interrupted });
 	} finally {
+		claimed.stopHeartbeat?.();
 		caffeinate?.kill();
 		if (claimed.device !== undefined && opts.platform === "android") {
 			const shown = await hideErrorDialogs(deps.exec, claimed.device.udid, false);

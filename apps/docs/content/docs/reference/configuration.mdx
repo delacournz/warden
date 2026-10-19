@@ -43,6 +43,7 @@ Besides `projects`, `batches` and `e2e`:
 <TypeTable
   type={{
     headless: { type: "boolean", description: "iOS: close the Simulator.app windows of every device an `e2e` suite or `batches` preset leases. The default for those that don't set their own `headless`. `--headless` / `--no-headless` override it; `WARDEN_HEADLESS=1` applies only when it's unset. `warden dev` ignores it. See [Headless e2e](/docs/guides/headless).", default: "false" },
+    "android.snapshot": { type: "boolean", description: "Android: launch claimed emulators from warden's quick-boot snapshot of the AVD when it exists; `warden gc` builds it once per AVD from one writable cold boot while the AVD is idle (never under `CI`), and `false` means warden never boots your AVD writable (see [Golden images](/docs/guides/golden-images#android-wardens-quick-boot-snapshot)). `WARDEN_ANDROID_SNAPSHOT=0` / `=1` override it.", default: "true" },
   }}
 />
 

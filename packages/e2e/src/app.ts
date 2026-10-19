@@ -1,9 +1,20 @@
-import type { Driver, LaunchOptions } from "./driver/driver.types";
+import type { Driver, Element, LaunchOptions, Snapshot } from "./driver/driver.types";
+import { canObserve } from "./driver/observation-cache";
 import { DEFAULT_SETTLE_QUIET_MS, DEFAULT_SETTLE_TIMEOUT_MS } from "./driver/settle";
 import { settled, toE2eError, unwrap } from "./driver/unwrap";
 import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
-import type { FixtureSession } from "./fixture-session";
+import { type Clock, type FixtureSession, systemClock } from "./fixture-session";
+import { isLocator, type Locator } from "./screen/locator";
+import { isInteractiveRole, resolveRole } from "./screen/roles";
+
+/** `app.open({ wait: { until } })`: the first screen, named by a locator. */
+export type OpenWaitUntil = {
+	/** a locator made by `screen` that is visible once the app's first screen is up */
+	until: Locator;
+	/** how long `until` gets to show; default the assertion timeout (`WARDEN_ASSERTION_TIMEOUT_MS`) */
+	timeout?: number;
+};
 
 export type OpenOptions = {
 	/** opened with `driver.app.openUrl` once the app is launched */
@@ -12,21 +23,88 @@ export type OpenOptions = {
 	args?: readonly string[];
 	env?: Record<string, string>;
 	/**
-	 * `"none"` (default): return when the launch call returns, which is before the app is on screen. `"quiet"`: then
-	 * also wait for the app to be frontmost and the screen to stop moving (what `device.settle()` waits for, 250 ms of
-	 * quiet, at most 3 s). That is a best-effort wait, never an error: an app that is not quiet in time is returned as
-	 * it is, so assert on what the test needs.
+	 * `"none"` (default): return when the launch call returns, which is before the app is on screen.
+	 *
+	 * `"quiet"`: then wait for the first screen and for it to stop moving. A launch screen (a storyboard, an Android
+	 * splash) is idle while the app loads, so "quiet" alone would end on it: the screen is read after 100, 200, then
+	 * every 400 ms until it shows content (a visible control, or any element with a testID), for at most 3 s, then
+	 * settled (what `device.settle()` waits for: 250 ms of quiet, at most 3 s). That is a best-effort wait, never an
+	 * error: a first screen with no control and no testID waits out the 3 s, and an app that is not quiet in time is
+	 * returned as it is, so assert on what the test needs.
+	 *
+	 * `{ until }`: wait for that locator to be visible (an error after `timeout`, like `toBeVisible()`), then settle
+	 * once, so the next tap lands on a mounted screen. Use it in place of `open()` followed by `toBeVisible()`.
 	 */
-	wait?: "quiet" | "none";
+	wait?: "quiet" | "none" | OpenWaitUntil;
 };
 
-const WAITS: readonly string[] = ["quiet", "none"];
+/**
+ * The gaps between `wait: "quiet"`'s looks for the first screen; the last one repeats. Full dumps back to back would
+ * compete with the cold start for CPU.
+ */
+const CONTENT_POLL_MS: readonly number[] = [100, 200, 400];
+
+/**
+ * Ids of Android's own window decor (`android:id/content`, the AppCompat action bar root, the system bar
+ * backgrounds) and of the API 31+ splash screen's views (core-splashscreen's icon and branding), present on a splash
+ * screen too, so they say nothing about the app's first screen.
+ */
+const DECOR_IDS: ReadonlySet<string> = new Set([
+	"content",
+	"action_bar_root",
+	"action_bar_container",
+	"action_bar",
+	"decor_content_parent",
+	"statusBarBackground",
+	"navigationBarBackground",
+	"splashscreen_view",
+	"splashscreen_icon_view",
+	"splashscreen_branding_view",
+]);
+
+/** A visible control or a visible element with a testID: what a launch screen has none of. */
+function isContent(element: Element, parent: Element | undefined, platform: Snapshot["platform"]): boolean {
+	if (element.hidden === true) return false;
+	const id = element.identifier;
+	if (id !== undefined && id !== "" && !(platform === "android" && DECOR_IDS.has(id))) return true;
+	return isInteractiveRole(resolveRole(element, parent).role);
+}
+
+function hasContent(snapshot: Snapshot): boolean {
+	const visit = (element: Element, parent: Element | undefined): boolean =>
+		isContent(element, parent, snapshot.platform) || element.children.some((child) => visit(child, element));
+	return snapshot.elements.some((element) => visit(element, undefined));
+}
+
+type ParsedWait = { kind: "none" } | { kind: "quiet" } | { kind: "until"; until: Locator; timeout?: number };
+
+function parseWait(wait: OpenOptions["wait"]): ParsedWait {
+	if (wait === undefined || wait === "none") return { kind: "none" };
+	if (wait === "quiet") return { kind: "quiet" };
+	if (typeof wait === "object" && wait !== null && isLocator(wait.until)) {
+		const { timeout } = wait;
+		if (timeout !== undefined && (!Number.isFinite(timeout) || timeout < 0)) {
+			throw new E2eError("INVALID_ARGUMENT", `app.open wait timeout must be a non-negative number, got ${timeout}`);
+		}
+		return timeout === undefined ? { kind: "until", until: wait.until } : { kind: "until", until: wait.until, timeout };
+	}
+	throw new E2eError(
+		"INVALID_ARGUMENT",
+		`app.open wait must be "quiet", "none" or { until: <locator made by screen> }, got ${describeWait(wait)}`
+	);
+}
+
+function describeWait(wait: unknown): string {
+	if (typeof wait === "string") return JSON.stringify(wait);
+	if (wait === null || typeof wait !== "object") return String(wait);
+	return `{ ${Object.keys(wait).join(", ")} }`;
+}
 
 /** The app under test (`WARDEN_BUNDLE_ID`). */
 export type App = {
 	/**
 	 * Launches the app (terminating a running instance first) with `WARDEN_LAUNCH_ARGS` + `args`, then
-	 * opens `url` if given, then waits when `wait: "quiet"`. The runner calls this (with no options) for the per-test
+	 * opens `url` if given, then waits as `wait` says (`"quiet"`: first content then still; `{ until }`). The runner calls this (with no options) for the per-test
 	 * `launch: "fresh"` default.
 	 */
 	open(options?: OpenOptions): Promise<void>;
@@ -49,13 +127,15 @@ export type AppDeps = {
 	env: E2eEnv;
 	/** where the one "dropped WARDEN_LAUNCH_ARGS on Android" line goes; default stderr */
 	log?: (line: string) => void;
+	/** time for the `wait: "quiet"` content poll; default the system clock */
+	clock?: Clock;
 };
 
 const stderrLog = (line: string): void => {
 	process.stderr.write(`${line}\n`);
 };
 
-export function createApp({ session, driver, env, log = stderrLog }: AppDeps): App {
+export function createApp({ session, driver, env, log = stderrLog, clock = systemClock }: AppDeps): App {
 	const bundleId = env.bundleId;
 	let droppedLogged = false;
 	/**
@@ -71,9 +151,32 @@ export function createApp({ session, driver, env, log = stderrLog }: AppDeps): A
 		}
 		return [];
 	};
+	/** One fresh look at the whole screen (never a kept snapshot); undefined when the read failed (the app is starting). */
+	const look = async (): Promise<Snapshot | undefined> => {
+		const read = await settled(
+			() => (canObserve(driver) ? driver.observe({ reuse: false }) : driver.snapshot()),
+			`read ${bundleId}`,
+			session.signal
+		);
+		return read.success ? read.data : undefined;
+	};
+
+	/** Polls until the screen has content (see `OpenOptions.wait`), at most `DEFAULT_SETTLE_TIMEOUT_MS`; never an error. */
+	const waitForContent = async (): Promise<void> => {
+		const deadline = clock.now() + DEFAULT_SETTLE_TIMEOUT_MS;
+		for (let poll = 0; ; poll++) {
+			const snapshot = await look();
+			if (snapshot !== undefined && hasContent(snapshot)) return;
+			const left = deadline - clock.now();
+			if (left <= 0) return;
+			const gap = CONTENT_POLL_MS[Math.min(poll, CONTENT_POLL_MS.length - 1)] ?? 100;
+			await clock.sleep(Math.min(gap, left));
+		}
+	};
+
 	/**
-	 * One `settle`. iOS names the bundle `app.launch` started (the helper holds "quiet" back until that app is in front);
-	 * a driver that cannot settle is left alone, as `device.settle()` would poll instead.
+	 * One `settle` (250 ms of quiet, at most 3 s); a driver that cannot settle is left alone, as `device.settle()`
+	 * would poll instead. iOS: after a launch that rebound the helper the app is in front already.
 	 */
 	const waitUntilQuiet = async (): Promise<void> => {
 		const quiet = await settled(
@@ -85,10 +188,7 @@ export function createApp({ session, driver, env, log = stderrLog }: AppDeps): A
 	};
 
 	const launch = async (options: OpenOptions = {}): Promise<void> => {
-		const wait = options.wait ?? "none";
-		if (!WAITS.includes(wait)) {
-			throw new E2eError("INVALID_ARGUMENT", `app.open wait must be "quiet" or "none", got ${JSON.stringify(wait)}`);
-		}
+		const wait = parseWait(options.wait);
 		const opts: LaunchOptions = {
 			args: [...envLaunchArgs(), ...(options.args ?? [])],
 			relaunch: true,
@@ -99,7 +199,14 @@ export function createApp({ session, driver, env, log = stderrLog }: AppDeps): A
 			const url = options.url;
 			await unwrap(() => driver.app.openUrl(url), `open ${url}`, session.signal);
 		}
-		if (wait === "quiet") await waitUntilQuiet();
+		if (wait.kind === "quiet") {
+			await waitForContent();
+			await waitUntilQuiet();
+		}
+		if (wait.kind === "until") {
+			await wait.until.waitFor({ state: "visible", timeout: wait.timeout ?? env.assertionTimeoutMs });
+			await waitUntilQuiet();
+		}
 	};
 
 	const terminate = (): Promise<void> =>

@@ -45,6 +45,8 @@ export type HarnessOptions = {
 	onCall?: (call: DriverCall, driver: FakeDriver) => FakeOverride | undefined;
 	/** the fake driver offers select-all (like the iOS driver) */
 	selectAll?: boolean;
+	/** the fake driver offers `setText` (like the Android driver with `warden-uiad`) */
+	setText?: boolean;
 	/** override the fake driver's capabilities (e.g. `pinch: false`, `maxPointers: 1`) */
 	capabilities?: Partial<DriverCapabilities>;
 	video?: UiDeps["video"];
@@ -68,6 +70,7 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 	const driver: FakeDriver = fakeDriver({
 		screens,
 		...(options.selectAll ? { selectAll: true } : {}),
+		...(options.setText ? { setText: true } : {}),
 		...(options.capabilities ? { capabilities: options.capabilities } : {}),
 		onCall: (call) => options.onCall?.(call, driver),
 	});

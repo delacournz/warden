@@ -25,7 +25,7 @@ bun run bench compare .bench/<run-a> .bench/<run-b>  # markdown diff of two runs
 | `--frameworks a,b` | all six | `warden,maestro,argent,agent-device,tester-army,detox` |
 | `--runs N` | `3` | reps per framework; rep 1 is cold, the rest warm |
 | `--retries N` | `0` | forwarded to every framework |
-| `--udid X` | claim one | use a device you already leased (no claim, no release) |
+| `--udid X` | claim one (`--ttl 4h --label bench`, heartbeat every 60 s) | use a device you already leased (no claim, release or heartbeat: hold that lease yourself, e.g. a long `--ttl` or `warden heartbeat`) |
 | `--reboot-between` | off | reboot the device between frameworks |
 | `--out DIR` | `.bench/<timestamp>-<platform>` | output dir |
 | `--skip-doctor` | off | skip the per-framework doctor |

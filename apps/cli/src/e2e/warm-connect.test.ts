@@ -21,8 +21,23 @@ describe("residentSocket", () => {
 		const ctx = host();
 		const socket = join(home ?? "", "U1.sock");
 		writeFileSync(socket, "");
+		// a stand-in whose command line carries the helper's `--udid <udid> --socket <socket>`
+		const helper = Bun.spawn(["sh", "-c", "sleep 30; :", "sh", "--udid", "U1", "--socket", socket]);
+		try {
+			writeState(ctx, "U1", { generation: 0, helper: { pid: helper.pid, socket }, updatedAt: 1 });
+			expect(await residentSocket(ctx)("U1")).toBe(socket);
+		} finally {
+			helper.kill("SIGKILL");
+			await helper.exited;
+		}
+	});
+
+	test("a recorded pid that now runs another program (reused): none (14-4)", async () => {
+		const ctx = host();
+		const socket = join(home ?? "", "U1.sock");
+		writeFileSync(socket, "");
 		writeState(ctx, "U1", { generation: 0, helper: { pid: process.pid, socket }, updatedAt: 1 });
-		expect(await residentSocket(ctx)("U1")).toBe(socket);
+		expect(await residentSocket(ctx)("U1")).toBeUndefined();
 	});
 
 	test("no record, a dead pid or a missing socket file: none", async () => {

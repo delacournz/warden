@@ -286,6 +286,41 @@ export function buildSampleRun(): BenchRun {
 	};
 }
 
+/**
+ * `run` with per-rep resources on every ok framework (`cpuSecondsOf(framework, repIndex)` host CPU-seconds,
+ * a fixed window) and a whole-framework host split by group. The committed sample has none, so the report
+ * goldens stay the pre-CPU-seconds format; tests of the new columns use this.
+ */
+export function withRepCpu(run: BenchRun, cpuSecondsOf: (framework: string, rep: number) => number): BenchRun {
+	const out = structuredClone(run);
+	for (const f of out.frameworks) {
+		if (f.status !== "ok") continue;
+		let total = 0;
+		for (const rep of f.reps) {
+			const cpuSeconds = cpuSecondsOf(f.framework, rep.index);
+			total += cpuSeconds;
+			const host = { ...f.resources.host, cpuSeconds, cpuRatePct: (cpuSeconds / (rep.wallMs / 1000)) * 100 };
+			rep.resources = {
+				window: { startMs: rep.index * 100_000, endMs: rep.index * 100_000 + rep.wallMs },
+				host,
+				sim: f.resources.sim,
+				cpuSeconds,
+				rssPeakBytes: host.rssPeakBytes,
+			};
+		}
+		f.resources.host = {
+			...f.resources.host,
+			cpuSeconds: total + 2,
+			cpuRatePct: 9.5,
+			byGroup: {
+				"bun-test": { cpuSeconds: total, rssAvgBytes: 100 * 1024 ** 2, rssPeakBytes: 120 * 1024 ** 2 },
+				"warden-simd": { cpuSeconds: 2, rssAvgBytes: 30 * 1024 ** 2, rssPeakBytes: 31 * 1024 ** 2 },
+			},
+		};
+	}
+	return out;
+}
+
 if (import.meta.main) {
 	const out = join(dirname(fileURLToPath(import.meta.url)), "bench-results.sample.json");
 	writeFileSync(out, `${JSON.stringify(buildSampleRun(), null, "\t")}\n`);

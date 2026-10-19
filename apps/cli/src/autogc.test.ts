@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
+import { storeArtifact } from "@delacour/warden-core/builds/cache";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
+import { markAndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { Owner } from "@delacour/warden-core/types";
 import { AUTO_GC_INTERVAL_MS, maybeAutoGc, niceCommand } from "./autogc";
 import { type TestContext, testContext } from "./testing";
@@ -85,6 +88,64 @@ describe("maybeAutoGc", () => {
 		clock += DEFAULT_IDLE_MS;
 		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
 		expect(spawned).toHaveLength(2);
+	});
+
+	test("a build cache over its cap is work too, even with no stale lease or idle device (R4)", async () => {
+		const clock = 5 * AUTO_GC_INTERVAL_MS;
+		ctx = testContext([], { now: () => clock });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", WARDEN_MAX_CACHE_SIZE: "10" };
+		const stored = await storeArtifact({
+			store: ctx.db,
+			env: ctx.env,
+			projectKey: "k",
+			platform: "ios",
+			profile: "local",
+			hash: "h",
+			artifact: fakeApp(ctx.cwd),
+			source: "build",
+			now: clock,
+		});
+		expect(stored.success).toBe(true);
+		const spawned: string[][] = [];
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
+	});
+
+	test("a cache under its cap (or a bad WARDEN_MAX_CACHE_SIZE, which gc would not prune with) is no work (R4)", async () => {
+		let clock = 5 * AUTO_GC_INTERVAL_MS;
+		ctx = testContext([], { now: () => clock });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		await storeArtifact({
+			store: ctx.db,
+			env: ctx.env,
+			projectKey: "k",
+			platform: "ios",
+			profile: "local",
+			hash: "h",
+			artifact: fakeApp(ctx.cwd),
+			source: "build",
+			now: clock,
+		});
+		const spawned: string[][] = [];
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		clock += AUTO_GC_INTERVAL_MS;
+		ctx.env = { ...ctx.env, WARDEN_MAX_CACHE_SIZE: "tiny" };
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		expect(spawned).toEqual([]);
+	});
+
+	test("an AVD a claim cold-booted for want of a snapshot is work, except under CI (R2)", () => {
+		const clock = 5 * AUTO_GC_INTERVAL_MS;
+		ctx = testContext([], { now: () => clock });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", CI: "1" };
+		markAndroidSnapshotPending(ctx.db, "Pixel_10");
+		const spawned: string[][] = [];
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		expect(spawned).toEqual([]);
+		ctx.db.deleteMeta("auto_gc_checked_at");
+		ctx.env = { ...ctx.env, CI: undefined };
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
 	});
 
 	test("WARDEN_AUTO_GC=0 and WARDEN_BACKGROUND=0 disable it, without even checking", () => {

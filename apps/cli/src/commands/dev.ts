@@ -8,7 +8,6 @@ import { bunExec } from "@delacour/warden-core/exec";
 import { isPortFree } from "@delacour/warden-core/ports";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { z } from "zod";
 import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, resolveOwner, resolvePlatform, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
@@ -92,8 +91,18 @@ export function devClientUrl(scheme: string, port: number): string {
 	return `${scheme}://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${port}`)}`;
 }
 
-const expoSlug = z.object({ expo: z.object({ slug: z.string().min(1) }) });
-const publicConfig = z.object({ slug: z.string().min(1) });
+/** `value[key]` of a (non-array) object, else undefined. Hand-written checks keep zod off `dev`'s start path (15-2). */
+function field(value: unknown, key: string): unknown {
+	return typeof value === "object" && value !== null && !Array.isArray(value) && key in value
+		? (value as Record<string, unknown>)[key]
+		: undefined;
+}
+
+/** `value.slug` when it is a non-empty string. */
+function slugOf(value: unknown): string | undefined {
+	const slug = field(value, "slug");
+	return typeof slug === "string" && slug.length > 0 ? slug : undefined;
+}
 
 function parseJson(text: string): unknown {
 	try {
@@ -108,14 +117,14 @@ async function devScheme(ctx: CommandContext, project: Project, override: string
 	if (override !== undefined) return ok(override);
 	const appJson = join(project.root, "app.json");
 	if (existsSync(appJson)) {
-		const parsed = expoSlug.safeParse(parseJson(readFileSync(appJson, "utf8")));
-		if (parsed.success) return ok(`exp+${parsed.data.expo.slug}`);
+		const slug = slugOf(field(parseJson(readFileSync(appJson, "utf8")), "expo"));
+		if (slug !== undefined) return ok(`exp+${slug}`);
 	}
 	const argv = ["bunx", "expo", "config", "--json", "--type", "public"];
 	const res = await ctx.exec(argv, { cwd: project.root, env: { EXPO_NO_TELEMETRY: "1" } });
-	const parsed = publicConfig.safeParse(parseJson(res.stdout));
-	return res.exitCode === 0 && parsed.success
-		? ok(`exp+${parsed.data.slug}`)
+	const slug = slugOf(parseJson(res.stdout));
+	return res.exitCode === 0 && slug !== undefined
+		? ok(`exp+${slug}`)
 		: err("could not read the app slug from `expo config` — pass --scheme <scheme>");
 }
 

@@ -97,6 +97,8 @@ Key idb calls (verify names in the idb source at the pinned tag when implementin
 
 One `adb -s <serial> shell` process per driver (commands + `echo "__WDN_<id>_$?__"` sentinel, FIFO, respawn once). Snapshot: `uiautomator dump /dev/stdout` (fallback `/sdcard` file) → hand-written XML walker → `Element`; `interactiveOnly` keeps clickable/long-clickable/checkable/scrollable/EditText + ancestors. Input: `input tap|swipe|keyevent|text` (ASCII only, quoted; else `E_UNSUPPORTED_TEXT`); pinch / rotate / 2-finger `gesture` need `warden-uiad`'s multi-pointer `gesture` op (WDN-GES), else `E_UNSUPPORTED`. App: `am start -a VIEW -d`, `monkey -p <pkg> 1`/`am start -n`, `am force-stop`, `pm clear`, host `adb install -r`. Alerts: `android:id/button1|2|3`, permission-controller allow button. Settle: hash polling (`settle.ts`). Screenshot: reuse `batch/screenshot.ts` argv. At open: `getprop sys.boot_completed`, animations off (`settings put global *_animation_scale 0`). Expected: tap ~60–120 ms, dump 300–900 ms. Later accelerator (not v1): 30 KB instrumentation APK behind the same `Driver`.
 
+Capabilities (`DriverCapabilities` in `driver.types.ts`, read by the spec layer): `pinch`, `unicodeText`, `nativeSettle` (the driver can wait for quiet itself; `.not` matchers may end their hold early on it), `alerts`, `reachability`, and the optional `cheapHitTest` (`elementAtPoint` costs far less than a snapshot: iOS sets it, so a plain `tap()` right after an assertion checks the kept snapshot with one hit-test instead of taking another; absent on Android, whose hit-test is a whole snapshot).
+
 ## Public spec API (`@delacour/warden-e2e`)
 
 ```ts

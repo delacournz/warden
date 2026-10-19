@@ -14,7 +14,7 @@ import { flowActors } from "./flow-actors";
 import { reportError, type UiError, uiError } from "./output";
 import { runUi, type UiOptionValues } from "./run";
 import { takeSnapshot } from "./snapshot";
-import { readState, writeState } from "./state";
+import { readState, updateState } from "./state";
 
 /** Where recordings go unless `--out` says otherwise, relative to the working directory. */
 export const FLOWS_DIR = ".warden-ui";
@@ -91,7 +91,10 @@ export function uiRecordStart(
 				error: uiError("usage", created.error.message, { hint: "pick another name or --out, or delete the file" }),
 			};
 		}
-		writeState(ctx, device.udid, { ...state, recording: { file, name: flowName, startedAt: ctx.now() } });
+		updateState(ctx, device.udid, (current) => ({
+			...current,
+			recording: { file, name: flowName, startedAt: ctx.now() },
+		}));
 		return ok({
 			device: { udid: device.udid, platform: device.platform, name: device.name },
 			result: { name: flowName, file },
@@ -103,13 +106,16 @@ export function uiRecordStart(
 /** `warden ui record stop`: end the recording and report how many steps it holds. */
 export function uiRecordStop(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues): Promise<number> {
 	return runUi(ctx, deps, "record stop", opts, async (device) => {
-		const state = readState(ctx, device.udid);
-		const { recording, ...rest } = state;
+		const { recording } = readState(ctx, device.udid);
 		if (!recording) {
 			return { success: false, error: uiError("usage", "not recording", { hint: "warden ui record start <name>" }) };
 		}
 		const flow = readFlowFile(recording.file);
-		writeState(ctx, device.udid, rest);
+		updateState(ctx, device.udid, (current) => {
+			if (current.recording?.file !== recording.file) return current;
+			const { recording: _stopped, ...rest } = current;
+			return rest;
+		});
 		const steps = flow.success ? flow.data.steps.length : 0;
 		return ok({
 			device: { udid: device.udid, platform: device.platform, name: device.name },

@@ -2,33 +2,21 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { z } from "zod";
+import type { z } from "zod";
 import { type Exec, execError } from "../exec";
 import type { Platform } from "../types";
 import { EAS_POLL_MS, EAS_TIMEOUT_MS, EAS_TRIGGER_GRACE_MS } from "./builds.defaults";
 import type { EasSettings } from "./config";
+import type { easBuildSchema } from "./eas.schema";
 
 const MINUTE = 60_000;
 
-export const easBuildStatusSchema = z.enum([
-	"NEW",
-	"IN_QUEUE",
-	"IN_PROGRESS",
-	"PENDING_CANCEL",
-	"ERRORED",
-	"FINISHED",
-	"CANCELED",
-]);
-
-/** The slice of eas-cli's `BuildFragment` (`eas build:list --json`) warden reads. */
-export const easBuildSchema = z.object({
-	id: z.string(),
-	status: easBuildStatusSchema,
-	createdAt: z.string(),
-	platform: z.string().nullish(),
-	isForIosSimulator: z.boolean().nullish(),
-	artifacts: z.object({ applicationArchiveUrl: z.string().nullish() }).nullish(),
-});
+/** The schemas (`eas.schema.ts`), loaded on the first parse so zod stays off the start path (15-2); sync like the parsers. */
+let schemas: typeof import("./eas.schema") | undefined;
+function easSchemas(): typeof import("./eas.schema") {
+	schemas ??= require("./eas.schema") as typeof import("./eas.schema");
+	return schemas;
+}
 
 export type EasBuild = z.infer<typeof easBuildSchema>;
 
@@ -43,12 +31,12 @@ function parseJson<T>(stdout: string, schema: z.ZodType<T>, what: string): Resul
 }
 
 export function parseBuildList(stdout: string): Result<EasBuild[]> {
-	return parseJson(stdout, z.array(easBuildSchema), "`eas build:list` output");
+	return parseJson(stdout, easSchemas().easBuildListSchema, "`eas build:list` output");
 }
 
 /** `eas build:download --json` prints `{ path }` — the extracted `.app` in eas-cli's cache. */
 export function parseDownloadPath(stdout: string): Result<string> {
-	const parsed = parseJson(stdout, z.object({ path: z.string().min(1) }), "`eas build:download` output");
+	const parsed = parseJson(stdout, easSchemas().easDownloadSchema, "`eas build:download` output");
 	return parsed.success ? ok(parsed.data.path) : parsed;
 }
 

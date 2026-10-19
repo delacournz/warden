@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { claimDevice, deviceInfo, parseClaim, releaseDevice } from "./device";
+import { BENCH_LEASE_TTL, claimDevice, deviceInfo, heartbeatDevice, parseClaim, releaseDevice } from "./device";
 import { fakeExec } from "./exec";
 
 const CLAIM = JSON.stringify({
@@ -26,7 +26,8 @@ describe("claimDevice", () => {
 		const exec = fakeExec([{ cmd: process.execPath, result: { stdout: CLAIM } }]);
 		const r = await claimDevice(exec, base);
 		expect(r).toEqual({ success: true, data: { udid: "U1", leaseId: "L1", name: "iPhone 16" } });
-		expect(exec.calls[0]?.args).toEqual(["/cli.ts", "claim", "ios", "--json"]);
+		expect(exec.calls[0]?.args).toEqual(["/cli.ts", "claim", "ios", "--ttl", "4h", "--label", "bench", "--json"]);
+		expect(BENCH_LEASE_TTL).toBe("4h");
 	});
 	test("failure and garbage are errors", async () => {
 		const bad = await claimDevice(
@@ -43,6 +44,23 @@ describe("parseClaim", () => {
 	test("rejects missing fields", () => {
 		expect(parseClaim(JSON.stringify({ leases: [] }))).toBeUndefined();
 		expect(parseClaim(JSON.stringify({ leases: [{ udid: "x" }] }))).toBeUndefined();
+	});
+});
+
+describe("heartbeatDevice (19-2)", () => {
+	test("refreshes exactly the lease id", async () => {
+		const exec = fakeExec([{ cmd: process.execPath, result: {} }]);
+		const r = await heartbeatDevice(exec, { cliPath: "/cli.ts", leaseId: "L1", repoRoot: "/repo" });
+		expect(r.success).toBe(true);
+		expect(exec.calls[0]?.args).toEqual(["/cli.ts", "heartbeat", "L1"]);
+		expect(exec.calls[0]?.options?.cwd).toBe("/repo");
+	});
+	test("failure surfaces", async () => {
+		const r = await heartbeatDevice(fakeExec([{ cmd: process.execPath, result: { code: 1, stderr: "x" } }]), {
+			cliPath: "/c",
+			leaseId: "L",
+		});
+		expect(r.success).toBe(false);
 	});
 });
 
