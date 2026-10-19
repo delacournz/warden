@@ -77,7 +77,11 @@ jobs:
         with:
           cache: bun
 
+      # `@delacournz/*` resolves from GitHub Packages (bunfig.toml): NPM_TOKEN is a classic PAT with
+      # only `read:packages`, scoped to this step so nothing else in the job can read it.
       - run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: bun run typecheck
       - run: bun run check
       - run: bun run test
@@ -146,7 +150,11 @@ jobs:
           restore-keys: |
             warden-simd-build-${{ runner.os }}-${{ hashFiles('packages/e2e/native/idb.lock.json', 'packages/e2e/native/ios/Package.swift') }}-
 
+      # `@delacournz/*` resolves from GitHub Packages (bunfig.toml): NPM_TOKEN is a classic PAT with
+      # only `read:packages`, scoped to this step so nothing else in the job can read it.
       - run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: bun run --cwd packages/e2e native:deps
       - run: bun run --cwd packages/e2e native:build
       - run: swift test --package-path packages/e2e/native/ios
