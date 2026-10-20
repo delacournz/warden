@@ -158,6 +158,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./install")).installCommand,
 	},
 	{
+		name: "init",
+		group: "Setup",
+		summary: "set an Expo app up for warden dev / warden e2e (warden.config.ts, a first spec)",
+		load: async () => (await import("./init")).initCommand,
+	},
+	{
 		name: "skill",
 		group: "Setup",
 		summary: "the warden agent skill: show (copy/paste) | install (bunx/npx skills add)",

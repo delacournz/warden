@@ -130,6 +130,8 @@ Following `entries` through the import graph needs TypeScript 5.0 or later: the 
 
 Select like `warden affected`, then run the flows like `warden batch` — each flow as a `bun test` spec process (`@delacour/warden-e2e`, configured by the suite's `spec`) — and gate: exit 0 when every required flow passed, 1 otherwise, 130 when interrupted. Takes every `batch` flag except the job flags, the `affected` selection flags, plus:
 
+With no `e2e` suite configured (and none named), the Expo app around the cwd gets a default suite: every `*.e2e.ts` spec under `e2e/`, one `@delacour/warden-e2e` spec process per device (`isolate: "device"`) over a pool of 2 simulators (`--count`), the dev client (the `dev` variant when the project has one) on a Metro warden starts, opened with the Expo dev menu off. No git diff is involved. `warden init` writes this suite into `warden.config.ts`.
+
 | Flag | |
 |---|---|
 | `--dry-run` | select and explain, run nothing |
@@ -272,11 +274,15 @@ Install the build matching the fingerprint on a device (`--lease <id>` or `--udi
 
 ### `warden dev [platform] [-- <expo start args>]`
 
-The worktree-friendly `expo run:*`. Uses the device of `--udid` / `--lease` / your single lease, else claims one (claim options apply). Ensures the `dev` variant's build (or the project's own when it has no `dev`; `--variant` to pick, which must exist), leases a Metro port (`--port`, default `8081:100`) and runs `bunx expo start --dev-client --port <p>` in the project root.
+The worktree-friendly `expo run:*`; the platform defaults to `ios`. Before leasing anything it checks that the project has a bundle id for the platform and lists `expo-dev-client`, and names the fix. Uses the device of `--udid` / `--lease` / your single lease, else claims one (claim options apply). Ensures the `dev` variant's build (or the project's own when it has no `dev`; `--variant` to pick, which must exist), leases a Metro port (`--port`, default `8081:100`) and runs `bunx expo start --dev-client --port <p>` in the project root.
 
 Metro counts as ready (`--ready-timeout`, default `2m`) only once `/status` on that port is proven to serve **this** project root (the `X-React-Native-Project-Root` header, else the listening process's cwd). Another checkout's Metro on the port fails the command with `port <p> is served by <dir>, not this worktree` instead of being attached to.
 
 Then the dev client is opened on the device: iOS relaunches the app with `--initialUrl <metroUrl>` (no "Open in …?" alert); Android runs `adb reverse` and opens `exp+<slug>://expo-development-client/?url=…` (`--scheme` to override). `--no-open` skips this. `--json` prints one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready (Metro's own output goes to stderr). The device and port stay leased (heartbeat every 30 s) until Metro exits; Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--install-mode`, `--reset-keychain`, `--project`, `--bundle-id`. `--headless` closes the claimed sim's window and gives Metro `WARDEN_HEADLESS=1`; dev is headless only with the flag (config `headless` and `WARDEN_HEADLESS` don't apply).
+
+### `warden init`
+
+Set an Expo app up for `warden dev` / `warden e2e`, in the app's root (`--project <dir>`). Writes a starter `warden.config.ts` (the project and a dev-client e2e suite) and an `@delacour/warden-e2e` spec `e2e/smoke.e2e.ts` when the app has no flows. `--bundle-id <id>` fills in `expo.ios.bundleIdentifier` / `expo.android.package` in `app.json` when they are missing (required for an app with no id). Existing files are kept unless `--force`; a warden config in another format is never replaced. Missing packages (`expo-dev-client`, `@delacour/warden-e2e` pinned to this warden's version) are named, not installed. `--dry-run`, `--json` (`{ root, written, skipped, install }`).
 
 ### `warden builds ls | prune | import`
 

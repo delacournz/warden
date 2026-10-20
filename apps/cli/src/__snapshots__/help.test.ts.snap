@@ -69,6 +69,8 @@ Setup:
   install                       install warden to ~/.local/bin + hooks for
                                 detected agents (Claude Code: skill, rule, hook;
                                 Codex: hook)
+  init                          set an Expo app up for warden dev / warden e2e
+                                (warden.config.ts, a first spec)
   skill                         the warden agent skill: show (copy/paste) |
                                 install (bunx/npx skills add)
   doctor                        check warden's setup: home, db, device tools,
@@ -189,8 +191,7 @@ install the cached dev build for this fingerprint, start Metro, open the dev
 client (replaces expo run:*)
 
 Arguments:
-  platform                    ios | android (asked for when omitted in a
-                              terminal)
+  platform                    ios | android (default: ios)
   expoArgs                    extra \`expo start\` args, after --
 
 Options:
@@ -233,8 +234,9 @@ Options:
                               only)
   -h, --help                  display help for command
 
-Example:
-  warden dev ios -- --clear"
+Examples:
+  warden dev
+  warden dev android -- --clear"
 `;
 
 exports[`help output warden batch --help (and nested subcommands) 1`] = `
@@ -2048,6 +2050,25 @@ Options:
   --shim      running from source: link ~/.local/bin/warden to this checkout
   --json      machine-readable output (diffs go to stderr)
   -h, --help  display help for command"
+`;
+
+exports[`help output warden init --help (and nested subcommands) 1`] = `
+"$ warden init --help
+Usage: warden init [options]
+
+set an Expo app up for warden dev / warden e2e (warden.config.ts, a first spec)
+
+Options:
+  --project <dir>   the Expo app's directory (default: cwd)
+  --bundle-id <id>  bundle id / package for an app that has none yet (written to
+                    app.json)
+  --force           overwrite files that already exist
+  --dry-run         print what would be written, write nothing
+  --json            machine-readable output
+  -h, --help        display help for command
+
+Example:
+  warden init --bundle-id com.example.app"
 `;
 
 exports[`help output warden skill --help (and nested subcommands) 1`] = `
