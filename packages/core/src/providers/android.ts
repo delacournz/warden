@@ -381,6 +381,22 @@ function isEmulatorPortLease(lease: Lease | undefined): lease is Lease {
 }
 
 /**
+ * Global settings applied after every boot. On a fresh playstore image the first `adb install` can pop a Play
+ * Protect consent dialog (a GMS activity the e2e alert detector cannot classify), and every adb install otherwise
+ * waits on the GMS verifier (up to the 10 s verifier_timeout). Warden's emulators run `-read-only -no-snapshot-save`,
+ * so /data changes are a per-boot overlay and must be re-applied on each boot.
+ */
+export const BOOT_SETTINGS: ReadonlyArray<readonly [key: string, value: string]> = [
+	["package_verifier_user_consent", "-1"],
+	["verifier_verify_adb_installs", "0"],
+	["package_verifier_enable", "0"],
+];
+
+export function bootSettingsCommand(): string {
+	return BOOT_SETTINGS.map(([key, value]) => `settings put global ${key} ${value}`).join("; ");
+}
+
+/**
  * Android emulators on `adb` + `emulator`. Warden never boots an existing emulator — it launches a
  * new headless `-read-only` instance of an AVD (so one AVD backs many emulators) on a leased even
  * console port, and only kills emulators it launched (store `devices` table).
@@ -583,6 +599,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		async waitReady(id, timeoutMs) {
 			const launched = launches.get(id);
 			const ready = await waitBootCompleted({ ...deps, sleep, pidAlive, pollIntervalMs }, id, timeoutMs, launched);
+			if (ready.success) await run(deps, adb(id, "shell", bootSettingsCommand()));
 			const snapshot = launched?.snapshot;
 			if (ready.success && launched && snapshot) {
 				if (snapshotLoadFailed(readLog(launched.logPath, launched.logOffset))) {

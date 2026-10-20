@@ -968,6 +968,7 @@ async function prepareDevices(
 	deps: BatchDeps,
 	name: string,
 	spec: DeviceSetupSpec | undefined,
+	platform: Platform,
 	devices: Device[],
 	env: Record<string, string | undefined>,
 	cwd: string,
@@ -983,7 +984,8 @@ async function prepareDevices(
 		cwd,
 		logDir,
 		spawn: (argv, o) => deps.spawn(argv, o),
-		slim,
+		// a simulator op, so never off iOS
+		...(platform === "ios" ? { slim } : {}),
 		track: (proc) => {
 			const handle = proc as ProcHandle;
 			running.add(handle);
@@ -1412,6 +1414,7 @@ async function preparePool(
 		deps,
 		r.name,
 		r.hooks.setup,
+		r.platform,
 		devices,
 		setupEnv,
 		args.cwd,

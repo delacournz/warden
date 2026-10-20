@@ -1884,17 +1884,26 @@ describe("warden e2e", () => {
 		expect(reportOf(h.files, c).setup?.every((d) => d.ok && d.slim !== undefined)).toBe(true);
 	});
 
-	test("slim alone (no setup command) still slims; slim on android is refused", async () => {
+	test("slim alone (no setup command) still slims", async () => {
 		await resuite({ slim: true });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		expect(h.slimmed).toHaveLength(1);
 		expect(h.setups()).toEqual([]);
+	});
 
-		c.argv = ["--files", "src/chat/lazy.tsx", "--platform", "android"];
-		expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
-		expect(c.stderr.join("\n")).toContain("slim is iOS-only");
+	test("slim on android is skipped with a note, not refused; the android devices are never slimmed", async () => {
+		await resuite({ slim: true, setup: "prep {udid}" });
+		const calls: string[][] = [];
+		const c = setup(["--files", "src/chat/lazy.tsx", "--platform", "android"], calls);
+		const h = harness();
+		await createE2eCommand(h.deps).run(c);
+		const stderr = c.stderr.join("\n");
+		expect(stderr.split("\n").filter((line) => line.includes("slim is iOS-only; skipped on android"))).toHaveLength(1);
+		// not refused at config: the run went on to claim android devices
+		expect(calls.some((call) => call[0] === "emulator")).toBe(true);
+		expect(h.slimmed).toEqual([]);
 	});
 
 	test("--all runs every flow with no diff; include / exclude narrow it", async () => {
