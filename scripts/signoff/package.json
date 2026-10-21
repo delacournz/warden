@@ -1,0 +1,18 @@
+{
+	"name": "@delacour/warden-signoff",
+	"version": "0.1.0",
+	"description": "Local CI: run the PR checks on this machine and write the gh-signoff commit statuses main requires",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"fmt": "biome format --write .",
+		"lint": "biome lint --write .",
+		"check": "biome check .",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*",
+		"typescript": "^5.9.3"
+	}
+}

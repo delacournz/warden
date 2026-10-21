@@ -20,12 +20,14 @@
 		"demo:compose": "bun scripts/demo/compose.ts",
 		"demo:fixture": "bun scripts/demo/fixture.ts",
 		"nuke": "rm -rf node_modules ./apps/**/node_modules ./packages/**/node_modules && bun install --no-cache -f",
-		"bench": "bun packages/e2e-bench/src/cli.ts"
+		"bench": "bun packages/e2e-bench/src/cli.ts",
+		"signoff": "bun scripts/signoff/signoff.ts"
 	},
 	"workspaces": [
 		"apps/*",
 		"packages/*",
 		"scripts/demo",
+		"scripts/signoff",
 		"scripts/smoke"
 	],
 	"devDependencies": {
