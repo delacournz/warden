@@ -24,7 +24,7 @@ packages/
   biome-config/       # shared Biome config (root.jsonc, react.jsonc)
   tsconfig/           # shared tsconfig (tsconfig.base.json, tsconfig.react.json)
   types/              # shared utility types (Result, AsyncResult, ok, err)
-scripts/              # repo scripts (pre-commit biome)
+scripts/              # repo scripts (pre-commit biome, signoff/ = local CI gate)
 ```
 
 ## Key Patterns
@@ -61,6 +61,18 @@ scripts/              # repo scripts (pre-commit biome)
 6. No `any` — use discriminated unions
 7. Biome for lint + format
 8. prek hooks — biome on commit, typecheck on push
+
+## Signoff (local CI)
+
+PRs into `main` are gated on local signoff, not GitHub Actions. Branch protection requires one commit status, `signoff`, written by [basecamp/gh-signoff](https://github.com/basecamp/gh-signoff) from the authoring machine.
+
+- One-off per machine: `gh extension install basecamp/gh-signoff`.
+- With the PR open, a clean tree and HEAD pushed: `bun run signoff` (`-- --dry-run` previews the plan). It diffs against the PR base, runs every applicable check from `scripts/signoff/signoff-checks.ts` (typecheck, check, test always; `native` when `packages/e2e/native/**` changed), writes `signoff/<check>` per pass, then the `signoff` umbrella, and posts one report comment naming the actor and runner (agents show as agents).
+- A status binds to a SHA: every push (or **Update branch**) drops it, so re-run.
+- A failing check is work to fix, never a reason to skip. `--only` / `--skip` write the passed sub-contexts but never the umbrella.
+- Can't run a check here (no Mac/Xcode for `native`)? Dispatch the real thing from CI, which writes the same statuses: `gh workflow run ci --ref <branch> -f signoff-sha=$(git rev-parse HEAD)`. Review fork code before dispatching.
+- Never bare `gh signoff` (it attests without running anything) unless the user explicitly asks; say so in the PR if you do.
+- New always-on check: add it to `signoff-checks.ts` and the `signoff` job in `.github/workflows/ci.yml` (a drift test enforces it). Never make a path-gated context required.
 
 ## Checklists
 

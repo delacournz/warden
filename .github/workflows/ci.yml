@@ -1,71 +1,53 @@
 name: ci
 
-# PRs from maintainers (write/maintain/admin on the repo) run on every push.
-# Fork PRs don't start at all until a maintainer clicks "Approve workflows to
-# run": the repo requires approval for all external contributors, and that
-# setting is the security boundary — a fork PR runs its own copy of this file,
-# so it can strip the gate below. The gate is a second check: `checks` only runs
-# once a maintainer has also approved the PR's current head commit. Approve the
-# PR first, then the run (or re-run it after approving). A new push needs both
-# again. Require the `ci` check on main.
+# Pull requests into main are gated on local signoff, not on this workflow: `bun run signoff` runs
+# the checks on the authoring machine and writes the `signoff` commit status branch protection
+# requires (scripts/signoff/, AGENTS.md § Signoff). Running the same checks again on billed macOS
+# runners for every push was the cost this replaced.
+#
+# This is the escape hatch for a machine that cannot run a check (no Mac, no Xcode for `native`).
+# It runs every check scripts/signoff/signoff-checks.ts defines against one commit and, only when
+# all of them pass, writes the same statuses a local run would:
+#
+#   gh workflow run ci --ref <branch> -f signoff-sha=$(git rev-parse HEAD)
+#
+# Dispatching needs write access, so a maintainer chooses every run. For a fork PR, review the code
+# first: this checks it out and runs it. The status write lives in its own job that never checks
+# anything out, so only that job holds `statuses: write`.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      signoff-sha:
+        description: Full commit SHA to test and sign off (the PR head)
+        required: true
+        type: string
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ inputs.signoff-sha }}
   cancel-in-progress: true
 
 jobs:
-  gate:
+  # The SHA ends up in API paths and checkout refs; refuse anything but a full hex SHA.
+  validate:
     runs-on: namespace-profile-linux-small
-    outputs:
-      run: ${{ steps.gate.outputs.run }}
     steps:
-      - id: gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - env:
+          SHA: ${{ inputs.signoff-sha }}
         run: |
-          # Payload author_association reports private org members as CONTRIBUTOR,
-          # so ask the API for the user's actual repo permission instead.
-          is_maintainer() {
-            perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$1/permission" --jq .permission 2>/dev/null || echo none)
-            case "$perm" in admin|maintain|write) return 0;; *) return 1;; esac
-          }
-
-          if [ "$EVENT" = "push" ] || is_maintainer "$AUTHOR"; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          if ! echo "$SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "signoff-sha must be a full 40-char commit SHA, got: $SHA" >&2; exit 1
           fi
 
-          approvers=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate \
-            --jq ".[] | select(.state == \"APPROVED\" and .commit_id == \"$HEAD_SHA\") | .user.login" | sort -u)
-          for user in $approvers; do
-            if is_maintainer "$user"; then
-              echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
-            fi
-          done
-
-          echo "::notice::Awaiting maintainer approval of $HEAD_SHA before CI runs"
-          echo "run=false" >> "$GITHUB_OUTPUT"
-
   checks:
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
+    needs: validate
     runs-on: namespace-profile-mac-small
     steps:
       - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.signoff-sha }}
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -86,10 +68,9 @@ jobs:
       - run: bun run check
       - run: bun run test
 
-  # Paths filter for the native job: did this change touch packages/e2e/native/**?
+  # Paths filter for the native job: does this commit touch packages/e2e/native/** against main?
   native-changes:
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
+    needs: validate
     runs-on: namespace-profile-linux-small
     outputs:
       native: ${{ steps.paths.outputs.native }}
@@ -97,16 +78,10 @@ jobs:
       - id: paths
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          PR: ${{ github.event.pull_request.number }}
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.sha }}
+          SHA: ${{ inputs.signoff-sha }}
         run: |
-          if [ "$EVENT" = "pull_request" ]; then
-            files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[].filename')
-          else
-            files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$AFTER" --jq '.files[].filename' 2>/dev/null || echo "packages/e2e/native/")
-          fi
+          # An unreadable compare runs native rather than skipping it.
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$SHA" --jq '.files[].filename' 2>/dev/null || echo "packages/e2e/native/")
           if echo "$files" | grep -q '^packages/e2e/native/'; then
             echo "native=true" >> "$GITHUB_OUTPUT"
           else
@@ -123,7 +98,7 @@ jobs:
     steps:
       - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.signoff-sha }}
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -154,23 +129,36 @@ jobs:
       - run: bun run --cwd packages/e2e native:build
       - run: swift test --package-path packages/e2e/native/ios
 
-  # Single required status check. Skipped jobs count as passing for branch
-  # protection, so this fails explicitly when CI hasn't been approved/run.
-  ci:
-    needs: [gate, checks, native-changes, native]
+  # Writes the statuses, sub-contexts first and the required `signoff` umbrella last, only when every
+  # applicable check passed. Skipped jobs count as passing for `needs`, so results are checked explicitly.
+  signoff:
+    needs: [checks, native-changes, native]
     if: always()
     runs-on: namespace-profile-linux-small
+    permissions:
+      statuses: write
     steps:
       - env:
-          GATE: ${{ needs.gate.result }}
-          RUN: ${{ needs.gate.outputs.run }}
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.signoff-sha }}
           CHECKS: ${{ needs.checks.result }}
           NATIVE: ${{ needs.native.result }}
           NATIVE_CHANGES: ${{ needs.native-changes.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [ "$GATE" != "success" ]; then echo "gate $GATE" >&2; exit 1; fi
-          if [ "$RUN" != "true" ]; then echo "awaiting maintainer approval" >&2; exit 1; fi
           if [ "$CHECKS" != "success" ]; then echo "checks $CHECKS" >&2; exit 1; fi
           if [ "$NATIVE_CHANGES" != "success" ]; then echo "native-changes $NATIVE_CHANGES" >&2; exit 1; fi
-          # native is skipped when the change does not touch packages/e2e/native/**.
+          # native is skipped when the commit does not touch packages/e2e/native/**.
           if [ "$NATIVE" != "success" ] && [ "$NATIVE" != "skipped" ]; then echo "native $NATIVE" >&2; exit 1; fi
+
+          post() {
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f "context=$1" \
+              -f "description=GitHub Actions (ci) signed off" -f "target_url=$RUN_URL" > /dev/null
+          }
+          post signoff/typecheck
+          post signoff/check
+          post signoff/test
+          if [ "$NATIVE" = "success" ]; then
+            post signoff/native
+          fi
+          post signoff
