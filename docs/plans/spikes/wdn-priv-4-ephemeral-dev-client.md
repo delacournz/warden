@@ -13,12 +13,12 @@ Why it works: the dev launcher + dev menu are native (their JS UI is embedded in
 Verified with `warden ui snapshot -i`: app rendered `welcome-screen` (first route of the example), dev menu showed "Connected to: http://127.0.0.1:8091". Metro log: `iOS Bundled 9281ms index.ts (4498 modules)`.
 
 ## Test subject
-Copy of `apps/example` (src, assets, config; warden workspace deps and scripts stripped; `expo-dev-client` removed from package.json, the app.config.ts plugin entry and node_modules), standalone `bun install` (8.6 s, 599 pkgs). SDK 57, RN 0.86.3. Layout: `$SP/real` (user checkout), `$SP/shadow`, `$SP/dd` (DerivedData).
+Copy of `apps/example` (src, assets, config; warden workspace deps and scripts stripped; `expo-dev-client` removed from package.json, the app.config.ts plugin entry and node_modules), standalone `bun install` (8.6 s, 599 pkgs). SDK 57, RN 0.86.3. Layout: `real/` (user checkout), `shadow/`, `dd/` (DerivedData).
 
 ## Exact commands (all verified)
 ```sh
 cp -c -R real shadow                                  # APFS clone, 557 MB incl node_modules
-cd shadow && bunx expo install expo-dev-client        # 57.0.20, adds plugin? NO, see gotcha 1
+cd shadow && bunx expo install expo-dev-client        # 57.0.20
 bunx expo prebuild --platform ios --no-install
 (cd ios && pod install)
 xcodebuild -workspace wardenexample.xcworkspace -scheme wardenexample -configuration Debug \
