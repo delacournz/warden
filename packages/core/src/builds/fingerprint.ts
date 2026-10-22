@@ -8,7 +8,8 @@ import type { Store } from "../store";
 import type { Platform } from "../types";
 import { FINGERPRINT_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
 import type { Project } from "./config";
-import { combineKey, jsInputsHash, type ReadFile } from "./js-inputs";
+import { combineKey, jsInputsHash, type ReadFile, readFileOrUndefined } from "./js-inputs";
+import { planPrebuiltRn } from "./prebuilt-rn";
 
 const BARE_HASH = /^[0-9a-f]{8,}$/i;
 
@@ -465,6 +466,23 @@ export function releaseKey(native: string): string {
 	return combineKey(native, "configuration:Release");
 }
 
+/** Salt of an iOS build that opts into React Native's precompiled core: it changes the native output (see `planPrebuiltRn`). */
+async function prebuiltRnSalt(
+	project: Project,
+	platform: Platform,
+	env: Record<string, string | undefined>,
+	readFile: ReadFile
+): Promise<string | undefined> {
+	const plan = await planPrebuiltRn({
+		platform,
+		projectRoot: project.root,
+		optOut: project.prebuiltReactNative === false,
+		env,
+		readFile,
+	});
+	return plan.salt;
+}
+
 /**
  * The cache / install key of `project`. Native projects: the native fingerprint (salted for Release). JS-aware projects
  * (`fingerprint.include: "native+js"`): sha256 of the native fingerprint + a content hash of the
@@ -478,7 +496,8 @@ export async function computeCacheKey(
 	project: Project,
 	platform: Platform,
 	readFile?: ReadFile,
-	memo?: FingerprintMemo
+	memo?: FingerprintMemo,
+	env: Record<string, string | undefined> = {}
 ): AsyncResult<CacheKey> {
 	const [native, js] = await Promise.all([
 		memo ? memoisedFingerprint(exec, project, platform, memo) : computeFingerprint(exec, project, platform),
@@ -492,10 +511,12 @@ export async function computeCacheKey(
 				}),
 	]);
 	if (!native.success) return native;
+	const salt = await prebuiltRnSalt(project, platform, env, readFile ?? readFileOrUndefined);
+	const salted = (key: string): string => (salt ? combineKey(key, salt) : key);
 	if (js === undefined) {
 		const key = project.buildConfiguration === "Release" ? releaseKey(native.data) : native.data;
-		return ok({ key, native: native.data });
+		return ok({ key: salted(key), native: native.data });
 	}
 	if (!js.success) return js;
-	return ok({ key: combineKey(native.data, js.data), native: native.data, js: js.data });
+	return ok({ key: salted(combineKey(native.data, js.data)), native: native.data, js: js.data });
 }

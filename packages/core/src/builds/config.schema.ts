@@ -43,6 +43,8 @@ const buildSchema = perPlatform.extend({
 	configuration: z.enum(["Debug", "Release"]).optional(),
 	/** false = don't inject the shared compiler caches (ccache, Xcode compilation caching, Gradle build cache) into local builds */
 	cache: z.boolean().optional(),
+	/** false = don't opt iOS builds into React Native's precompiled core (RN 0.81-0.83 only; newer RN has it on by default) */
+	prebuiltReactNative: z.boolean().optional(),
 });
 
 /** A named build of the project (`variants.<name>`): each key set here replaces the project's own. */

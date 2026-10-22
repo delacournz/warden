@@ -738,3 +738,33 @@ describe("runLocalBuild: iOS artifacts from other projects (17-3)", () => {
 		expect(await runLocalBuild(s.deps)).toEqual({ success: true, data: { artifact: app } });
 	});
 });
+
+describe("runLocalBuild: prebuilt React Native env", () => {
+	test("RN 0.82 iOS: build env carries RCT_USE_*; user value wins; opt-out drops it", async () => {
+		const root = join(dir, "rn");
+		mkdirSync(join(root, "node_modules", "react-native"), { recursive: true });
+		writeFileSync(join(root, "node_modules", "react-native", "package.json"), '{"version":"0.82.1"}');
+		const seen: Array<Record<string, string> | undefined> = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[0] === "sh") seen.push(opts?.env as Record<string, string> | undefined);
+			return { exitCode: 1, stdout: "", stderr: "stop" };
+		};
+		const run = (env: Record<string, string | undefined>, extra = {}) =>
+			runLocalBuild({
+				exec,
+				project: testProject({ root, ...extra }),
+				platform: "ios",
+				hash: "h",
+				env,
+				log: () => {},
+				compilerCache: false,
+			});
+		await run({});
+		await run({ RCT_USE_PREBUILT_RNCORE: "0" });
+		await run({}, { prebuiltReactNative: false });
+		expect(seen[0]).toMatchObject({ RCT_USE_PREBUILT_RNCORE: "1", RCT_USE_RN_DEP: "1" });
+		expect(seen[1]?.RCT_USE_PREBUILT_RNCORE).toBeUndefined();
+		expect(seen[1]?.RCT_USE_RN_DEP).toBe("1");
+		expect(seen[2]?.RCT_USE_RN_DEP).toBeUndefined();
+	});
+});
