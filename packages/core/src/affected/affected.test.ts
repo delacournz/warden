@@ -132,6 +132,31 @@ describe("computeAffected", () => {
 		}
 	});
 
+	test("overlay config: flows resolve in the overlay, project root and git diff stay in the checkout", async () => {
+		const home = mkdtempSync(join(tmpdir(), "warden-affected-home-"));
+		cleanup.push(home);
+		const env = { WARDEN_HOME: home };
+		rmSync(join(dir, "warden.config.json"));
+		const { overlayDirFor } = await import("../builds/overlay");
+		const overlay = await overlayDirFor(bunExec, dir, env);
+		if (!overlay) throw new Error("no overlay dir");
+		mkdirSync(join(overlay, "e2e"), { recursive: true });
+		writeFileSync(
+			join(overlay, "warden.config.json"),
+			JSON.stringify({
+				projects: [{ name: "app", bundleId: { ios: "com.x.app" } }],
+				e2e: { priv: { project: "app", flowsDir: "e2e" } },
+			})
+		);
+		const res = await findSuite(bunExec, join(dir, "src"), undefined, undefined, env);
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.source).toBe("overlay");
+		expect(res.data.configDir).toBe(overlay);
+		expect(res.data.rootDir).toBe(dir);
+		expect(res.data.projectRoot).toBe(dir);
+		expect(res.data.cwd).toBe(dir);
+	});
+
 	test("computeAffected asks git for the toplevel once, through the facts cache (also across calls)", async () => {
 		write("src/settings/form.tsx", "export const changed = 1;\n");
 		const spawns: string[] = [];

@@ -33,6 +33,7 @@ import {
 } from "./install";
 import { runLocalBuild } from "./local";
 import { buildLockKey, withBuildLock } from "./lock";
+import { overlayDirUnlessRepoConfig } from "./overlay";
 import { readProjectKey } from "./project-key";
 import { type EnsureResult, type ResolveSteps, resolveApp } from "./resolve";
 
@@ -60,10 +61,12 @@ export type ProjectContextInput = {
 export async function projectContext(input: ProjectContextInput): AsyncResult<ProjectContext> {
 	const facts = await readGitFacts(input.exec, input.start, input.git);
 	const stopAt = facts?.toplevel;
+	const overlay = await overlayDirUnlessRepoConfig(input.exec, input.start, stopAt, input.env, input.git);
 	const project = loadProject({
 		start: input.start,
 		env: input.env,
 		...(stopAt ? { stopAt } : {}),
+		...(overlay ? { overlayDir: overlay } : {}),
 		...(input.name !== undefined ? { name: input.name } : {}),
 		...(input.bundleId ? { bundleId: input.bundleId } : {}),
 		...(input.variant !== undefined ? { variant: input.variant } : {}),

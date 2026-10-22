@@ -56,11 +56,28 @@ export type Project = {
 	buildConfiguration: BuildConfiguration;
 	/** false = `build.cache: false`: no shared compiler caches in local builds */
 	compilerCache?: false;
+	/** false = `build.prebuiltReactNative: false`: never opt iOS builds into the precompiled RN core */
+	prebuiltReactNative?: false;
 	/** the `variants.<name>` this project was resolved with; undefined = the project's own settings */
 	variant?: string;
 	cacheDirs: string[];
 	/** where the project came from */
 	origin: "config" | "app.json" | "app.config";
+	/** which lookup found it: the repo's own config, the `~/.warden` overlay config, or autodetected from the app config */
+	source: ConfigSource;
+};
+
+/** `repo` = a `warden.config.*` in the checkout; `overlay` = one in `<WARDEN_HOME>/projects/<key>/`; `auto` = none (app.json). */
+export type ConfigSource = "repo" | "overlay" | "auto";
+
+/** A parsed warden config and where it was found. */
+export type FoundConfig = {
+	/** the config's own dir: what a config function sees as `configDir`, and what suite `flowsDir`s resolve against */
+	dir: string;
+	config: ParsedWardenConfig;
+	source: Exclude<ConfigSource, "auto">;
+	/** what `projects[].root` resolves against: `dir` for a repo config, the checkout root for an overlay one */
+	rootDir: string;
 };
 
 /** Validate a config value; `file` names it in the error. */
@@ -110,8 +127,10 @@ function fromConfig(entry: ParsedProjectConfig, configDir: string, env: Record<s
 			resolve(root, expandHome(d, env.HOME))
 		),
 		origin: "config",
+		source: "repo",
 	};
 	if (entry.build?.cache === false) project.compilerCache = false;
+	if (entry.build?.prebuiltReactNative === false) project.prebuiltReactNative = false;
 	if (entry.fingerprint?.command !== undefined) project.fingerprintCommand = entry.fingerprint.command;
 	if (entry.fingerprint?.include === "native+js" && entry.fingerprint.jsInputs) {
 		project.jsInputs = entry.fingerprint.jsInputs;
@@ -179,6 +198,7 @@ function autoDetect(
 	const name = info.data.name ?? dir.split(sep).at(-1) ?? "app";
 	const project = fromConfig({ name, root: ".", bundleId }, dir, env);
 	project.origin = hasAppJson ? "app.json" : "app.config";
+	project.source = "auto";
 	return ok(project);
 }
 
@@ -195,6 +215,8 @@ export type LoadProjectInput = {
 	variant?: string;
 	/** a missing `variant` falls back to the project's own settings instead of erroring (`warden dev`) */
 	variantOptional?: boolean;
+	/** `<WARDEN_HOME>/projects/<key>/` (see `overlay.ts`): its config is used when the repo has none */
+	overlayDir?: string;
 };
 
 /** `entry` with `variants.<name>` applied: each key the variant sets replaces the project's own. */
@@ -249,27 +271,51 @@ function readModule(path: string, context: WardenConfigContext): Result<unknown>
 	return ok(value);
 }
 
+/** Is there a warden config file in `start` or a parent (to `stopAt`)? File names only: nothing is evaluated. */
+export function hasRepoConfig(start: string, stopAt?: string): boolean {
+	return ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined).some((dir) =>
+		CONFIG_FILES.some((f) => existsSync(join(dir, f)))
+	);
+}
+
+/** The config in `dir` (undefined: none), parsed. A config function gets `{ configDir: dir, env }`. */
+function readConfigIn(
+	dir: string,
+	env: Record<string, string | undefined>
+): Result<{ config: ParsedWardenConfig } | undefined> {
+	const files = CONFIG_FILES.filter((f) => existsSync(join(dir, f)));
+	const [file, ...extra] = files;
+	if (file === undefined) return ok(undefined);
+	if (extra.length > 0) return err(`several warden configs in ${dir} (${files.join(", ")}) — keep one`);
+	const path = join(dir, file);
+	const raw = file === JSON_CONFIG_FILE ? readJson(path) : readModule(path, { configDir: dir, env });
+	if (!raw.success) return raw;
+	const config = parseWardenConfig(raw.data, basename(path));
+	return config.success ? ok({ config: config.data }) : config;
+}
+
 /**
  * The nearest `warden.config.{ts,mts,js,mjs,json}` walking up from `start` (to `stopAt`), parsed;
- * undefined = none. A config function gets `{ configDir, env }`.
+ * undefined = none. Else the one in `overlayDir`, if given (project roots then resolve against the
+ * checkout: `stopAt`, else `start`). A config function gets `{ configDir, env }`.
  */
 export function findWardenConfig(
 	start: string,
 	stopAt?: string,
-	env: Record<string, string | undefined> = process.env
-): Result<{ dir: string; config: ParsedWardenConfig } | undefined> {
+	env: Record<string, string | undefined> = process.env,
+	overlayDir?: string
+): Result<FoundConfig | undefined> {
 	for (const dir of ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined)) {
-		const files = CONFIG_FILES.filter((f) => existsSync(join(dir, f)));
-		const [file, ...extra] = files;
-		if (file === undefined) continue;
-		if (extra.length > 0) return err(`several warden configs in ${dir} (${files.join(", ")}) — keep one`);
-		const path = join(dir, file);
-		const raw = file === JSON_CONFIG_FILE ? readJson(path) : readModule(path, { configDir: dir, env });
-		if (!raw.success) return raw;
-		const config = parseWardenConfig(raw.data, basename(path));
-		return config.success ? ok({ dir, config: config.data }) : config;
+		const read = readConfigIn(dir, env);
+		if (!read.success) return read;
+		if (read.data) return ok({ dir, config: read.data.config, source: "repo", rootDir: dir });
 	}
-	return ok(undefined);
+	if (overlayDir === undefined) return ok(undefined);
+	const dir = resolve(overlayDir);
+	const read = readConfigIn(dir, env);
+	if (!read.success) return read;
+	if (!read.data) return ok(undefined);
+	return ok({ dir, config: read.data.config, source: "overlay", rootDir: resolve(stopAt ?? start) });
 }
 
 /** The configured project containing `start` (or `input.name`), resolved with `input.variant`. */
@@ -277,7 +323,8 @@ function configuredProject(
 	projects: readonly ParsedProjectConfig[],
 	configDir: string,
 	start: string,
-	input: LoadProjectInput
+	input: LoadProjectInput,
+	source: FoundConfig["source"]
 ): Result<Project> {
 	const selected = selectProject(
 		projects.map((p) => fromConfig(p, configDir, input.env)),
@@ -291,22 +338,23 @@ function configuredProject(
 	if (!resolved.success) return resolved;
 	const project = fromConfig(resolved.data.entry, configDir, input.env);
 	if (resolved.data.variant !== undefined) project.variant = resolved.data.variant;
+	project.source = source;
 	return ok(project);
 }
 
 /**
  * Find the project for `start`: nearest warden config walking up (to `stopAt`), else the
- * nearest Expo app (`app.json` / `app.config.*`). `--bundle-id` overrides the configured id.
+ * `overlayDir` config, else the nearest Expo app (`app.json` / `app.config.*`). `--bundle-id` overrides the configured id.
  */
 export function loadProject(input: LoadProjectInput): Result<Project> {
 	const start = resolve(input.start);
 	const override = input.bundleId ?? {};
 	const dirs = ancestors(start, input.stopAt ? resolve(input.stopAt) : undefined);
-	const found = findWardenConfig(start, input.stopAt, input.env);
+	const found = findWardenConfig(start, input.stopAt, input.env, input.overlayDir);
 	if (!found.success) return found;
 	const projects = found.data?.config.projects;
 	if (found.data && projects) {
-		const project = configuredProject(projects, found.data.dir, start, input);
+		const project = configuredProject(projects, found.data.rootDir, start, input, found.data.source);
 		return project.success ? ok({ ...project.data, bundleId: { ...project.data.bundleId, ...override } }) : project;
 	}
 	for (const dir of dirs) {

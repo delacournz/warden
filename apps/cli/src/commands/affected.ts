@@ -44,6 +44,7 @@ export function affectedInput(
 		exec: ctx.exec,
 		cwd: ctx.cwd,
 		git: ctx.git,
+		env: ctx.env,
 		cacheDir: join(wardenHome(ctx.env), "affected"),
 		...(suite !== undefined ? { suite } : {}),
 		...(opts.base !== undefined ? { base: opts.base } : {}),
@@ -87,8 +88,9 @@ function describeReason(reason: Reason, color: ChalkInstance): string[] {
 
 /** What the selection was made from. */
 function selectionSource(affected: Affected): string {
-	if (affected.suite.implicit) return "default suite";
-	return affected.base === undefined ? "--files" : `base ${affected.base}`;
+	const origin = affected.suite.source === "overlay" ? ", overlay config" : "";
+	if (affected.suite.implicit) return `default suite${origin}`;
+	return `${affected.base === undefined ? "--files" : `base ${affected.base}`}${origin}`;
 }
 
 /** `--explain`: per platform, every selected flow with why, then what was skipped / unreached. */
@@ -116,6 +118,7 @@ export function explain(affected: Affected, requiredOnly: boolean, color: ChalkI
 function jsonDoc(affected: Affected, requiredOnly: boolean) {
 	return {
 		suite: affected.suite.name,
+		source: affected.suite.source,
 		...(affected.base !== undefined ? { base: affected.base } : {}),
 		changes: affected.changes,
 		platforms: affected.selections.map((s) => ({ ...s, selected: selectedFlows(s, requiredOnly) })),
