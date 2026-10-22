@@ -24,7 +24,8 @@ import type { WarmConnect } from "../batch/warm-drivers";
 import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { findBun, findPreload, runnerArgv, type SpecEnvOptions, specEnv } from "../e2e/bun-runner";
+import { findBun, runnerArgv, type SpecEnvOptions, specEnv } from "../e2e/bun-runner";
+import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
 import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
 import { exitGate, type FlowVerdict, type RunShape, type Verdicts, verdicts } from "../e2e/verdicts";
@@ -518,7 +519,14 @@ const specDuration = (field: string, value: string | undefined, fallback: string
 async function specPlan(ctx: CommandContext, deps: BatchDeps, suite: Suite, platform: Platform): AsyncResult<SpecPlan> {
 	const bun = findBun(ctx.env, deps.which);
 	if (!bun.success) return bun;
-	const preload = findPreload(suite.cwd, deps.resolveModule);
+	const version = currentBuild().version;
+	const preload = await selectPreload({
+		cwd: suite.cwd,
+		version,
+		resolve: deps.resolveModule,
+		readVersion: deps.e2eVersion,
+		stage: () => deps.bundledE2e(ctx),
+	});
 	if (!preload.success) return preload;
 	const bundleId = await specBundleId(ctx, suite, platform);
 	if (!bundleId.success) return bundleId;
@@ -531,7 +539,7 @@ async function specPlan(ctx: CommandContext, deps: BatchDeps, suite: Suite, plat
 	if (!assertionTimeoutMs.success) return assertionTimeoutMs;
 	return ok({
 		bun: bun.data,
-		preload: preload.data,
+		preload: preload.data.path,
 		launch: {
 			metroLaunchArgs: suite.config.metro?.enabled ? suite.config.metro.launchArgs : [],
 			launchArgs: spec?.launchArgs ?? [],
@@ -546,7 +554,7 @@ async function specPlan(ctx: CommandContext, deps: BatchDeps, suite: Suite, plat
 			},
 			flowsDir: resolve(suite.configDir, suite.config.flowsDir),
 			helperDir: ctx.env.WARDEN_HELPER_DIR ?? deps.helperDir(),
-			version: currentBuild().version,
+			version,
 		},
 	});
 }
