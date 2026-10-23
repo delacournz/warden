@@ -5,6 +5,7 @@ import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
 import { DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { bunExec } from "@delacour/warden-core/exec";
+import { readGitFactsSync } from "@delacour/warden-core/git-facts";
 import { isPortFree } from "@delacour/warden-core/ports";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
@@ -406,6 +407,7 @@ async function dev(
 					sleep: deps.sleep,
 					spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, json ? "stderr" : "inherit"),
 					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
+					git: (root) => readGitFactsSync(root, { cache: ctx.git }),
 				},
 				{
 					projectRoot: project.data.project.root,

@@ -7,7 +7,7 @@ import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "
 import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-core/claim";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
-import { readGitFacts } from "@delacour/warden-core/git-facts";
+import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts";
 import { resolveHeadless } from "@delacour/warden-core/headless";
 import { isPortFree } from "@delacour/warden-core/ports";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
@@ -1128,6 +1128,7 @@ function launchRunMetro(
 				sleep: deps.sleep,
 				spawn: (cmd, env, cwd) => deps.spawn(cmd, { env, log: o.log, cwd, group: true, metro: true }),
 				expoBin: (root) => resolveExpoBin(root, deps.which),
+				git: (root) => readGitFactsSync(root, { cache: ctx.git }),
 			},
 			{
 				projectRoot: plan.projectRoot,
