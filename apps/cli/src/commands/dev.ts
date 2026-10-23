@@ -201,6 +201,8 @@ async function openSession(
 					const first = leased[0]?.port;
 					if (first !== undefined) early.start(first, undefined);
 				},
+				// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`
+				onLeased: (outcome) => ctx.store().markShared(outcome.claimed.map((c) => c.lease.id)),
 				aborted: early.aborted,
 			},
 			"dev"

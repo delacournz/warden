@@ -123,6 +123,37 @@ describe("ensureCallerLease", () => {
 			expect(res.success && res.data.action).toBe("own");
 		});
 
+		test("shared (warden dev) lease a live process holds: attached, not busy; no heartbeat", () => {
+			const lease = store.insertLease({ ...run, label: "warden dev", shared: true }, now);
+			now += 5000;
+			alive = true;
+			const res = ensureCallerLease(store, me, "ios", UDID, { ...opts(true), exclusive: true });
+			expect(res.success && res.data.action).toBe("attached");
+			expect(res.success && res.data.lease.id).toBe(lease.id);
+			expect(store.getLease(lease.id)?.heartbeatAt).toBe(lease.heartbeatAt);
+		});
+
+		test("shared lease whose holder died: own (heartbeat), as any own lease", () => {
+			store.insertLease({ ...run, shared: true }, now);
+			alive = false;
+			const res = ensureCallerLease(store, me, "ios", UDID, { ...opts(false), exclusive: true });
+			expect(res.success && res.data.action).toBe("own");
+		});
+
+		test("shared lease, not exclusive (status, --force): still attached, never taken as the caller's own", () => {
+			store.insertLease({ ...run, shared: true }, now);
+			alive = true;
+			const res = ensureCallerLease(store, me, "ios", UDID, opts(false));
+			expect(res.success && res.data.action).toBe("attached");
+		});
+
+		test("another session's shared lease stays foreign", () => {
+			store.insertLease({ ...run, owner: other, shared: true }, now);
+			alive = true;
+			const res = ensureCallerLease(store, me, "ios", UDID, { ...opts(true), exclusive: true });
+			expect(!res.success && res.error.code).toBe("device_foreign");
+		});
+
 		test("no label: the message leaves it out", () => {
 			const lease = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS, pid: 4242 }, now);
 			expect(busyMessage(lease)).toContain("(pid 4242);");

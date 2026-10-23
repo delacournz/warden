@@ -205,7 +205,7 @@ What differs from iOS:
 | `--claim` | take a device when none is leased (`--platform ios\|android`, `--profile`, `--runtime` choose it), or take over a stale lease |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--no-record` | do not append this step to a running recording |
-| `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`, `dev`) holds your lease on it. Without it every subcommand but `status` exits 2 (`device_busy`) naming the owner, pid and label |
+| `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`) holds your lease on it. Without it every subcommand but `status` exits 2 (`device_busy`) naming the owner, pid and label. Not needed for your own `warden dev` device (see [Lease rules](#lease-rules)) |
 | `--json` | the envelope above |
 
 `status` prints the device, your lease on it, the helper and the recording. `close` stops this device's helper; `--app [bundleId]` also quits the app (default: the one `open` launched) and `--release` frees the lease.
@@ -215,9 +215,10 @@ What differs from iOS:
 `warden ui` checks the lease on every call, in its own process. There is no PreToolUse hook to install or forget:
 
 - **Your lease:** the call proceeds and heartbeats the lease, so a device you keep driving does not expire.
+- **Your own running `warden dev`:** the call shares that device instead of failing with `device_busy`, no `--force` needed. The `--json` envelope carries `"attachedTo": "<leaseId>"` and `open` prints `sharing <leaseId> with warden dev (pid N)`. With no device named and several leased, the live `warden dev` device is picked. `close --release` stops the helper but keeps the lease, with a warning: `warden dev` releases it when you stop it (Ctrl-C). A running `warden e2e`, `batch` or `run` is still refused (`device_busy`).
 - **Another live session's lease:** exit 2 (`device_foreign`). Claim your own device and switch to it.
 - **No lease, or a stale one:** exit 2 with a hint, unless you pass `--claim`, which leases the device for your session (labelled `warden ui`).
-- **Several devices leased and none named:** exit 2 (`ambiguous_device`) listing them. Pick one with `--udid`.
+- **Several devices leased and none named:** exit 2 (`ambiguous_device`) listing them, unless exactly one is your live `warden dev` device. Pick one with `--udid`.
 
 Release only what you leased: `warden ui close --release`, or `warden release <leaseId>`. Subagents never run `warden release --mine`, which would free the parent's devices: release the lease id you hold, or claim with `--label x` and use `release --mine --label x`.
 

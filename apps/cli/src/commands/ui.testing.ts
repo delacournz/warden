@@ -51,7 +51,7 @@ export type HarnessOptions = {
 	capabilities?: Partial<DriverCapabilities>;
 	video?: UiDeps["video"];
 	/** the device lease's holder pid + label (a running `warden e2e` / `batch` / `run` sets both) */
-	lease?: { pid?: number; label?: string };
+	lease?: { pid?: number; label?: string; shared?: boolean };
 	/** the pid liveness probe `warden ui` uses (default: the real one) */
 	pidAlive?: PidAlive;
 };
@@ -101,6 +101,7 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 			ttlMs: 10 * 60 * 60_000,
 			...(options.lease?.pid !== undefined ? { pid: options.lease.pid } : {}),
 			...(options.lease?.label !== undefined ? { label: options.lease.label } : {}),
+			...(options.lease?.shared ? { shared: true } : {}),
 		},
 		clock.t
 	);

@@ -51,6 +51,8 @@ export type UiJson =
 			device: UiDeviceInfo;
 			generation?: number;
 			durationMs: number;
+			/** the caller's `warden dev` lease this call used beside it (shared, not taken over; `close --release` keeps it) */
+			attachedTo?: string;
 			result: unknown;
 			warnings?: string[];
 	  }
@@ -94,6 +96,8 @@ export type UiSuccess = {
 	warnings?: string[];
 	/** exit code when not 0: `is` answers false with 1 and still prints its result */
 	exit?: UiExitCode;
+	/** set by `runUi`: the shared `warden dev` lease id the device was attached through */
+	attachedTo?: string;
 };
 
 /** Print a success (JSON envelope, or `text` on stdout; warnings on stderr in text mode) and return exit 0 (or `success.exit`). */
@@ -105,6 +109,7 @@ export function reportOk(ctx: CommandContext, report: UiReport, success: UiSucce
 			device: success.device,
 			...(success.generation !== undefined ? { generation: success.generation } : {}),
 			durationMs: Math.max(0, ctx.now() - report.startedAt),
+			...(success.attachedTo !== undefined ? { attachedTo: success.attachedTo } : {}),
 			result: success.result,
 			...(success.warnings && success.warnings.length > 0 ? { warnings: success.warnings } : {}),
 		};

@@ -177,6 +177,19 @@ describe("warden dev", () => {
 		expect(h.spawned).toEqual([]);
 	});
 
+	test("the device lease it claims is shared (warden ui attaches to it); the port lease is not", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		const byKind = Object.fromEntries(c.db.listLeases().map((l) => [l.resource.kind, l]));
+		expect(byKind.device?.shared).toBe(true);
+		expect(byKind.port?.shared).toBeUndefined();
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
 	test("--udid reuses that device (no device claim)", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--udid", "U9"], calls);
