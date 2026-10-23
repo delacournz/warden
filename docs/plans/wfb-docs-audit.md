@@ -10,7 +10,7 @@ Trigger: feedback #1 (an Expo adopter). `installation.mdx` said the npm release 
 |---|---|---|
 | WFB-DOCS-1 | 📝 docs: installation.mdx: npm is primary, from source is secondary, GH Actions uses npm or `github.token` (repo is public) | done |
 | WFB-DOCS-2 | 📝 docs: full audit of `apps/docs/content/docs/**`, README, `packages/*/AGENTS.md`, `skills/warden/**` (8 parallel auditors split by section) | done |
-| WFB-DOCS-3 | 🔧 chore: code / help-text follow-ups below (not docs) | open |
+| WFB-DOCS-3 | 🔧 chore: code / help-text follow-ups below (not docs) | done |
 
 ## Verification
 
@@ -170,3 +170,27 @@ Left undocumented on purpose (build-time or internal): `WARDEN_E2E_VERSION`, `WA
 13. Bench: `e2e-bench/src/adapters/tester-army.ts:60` hard-codes `~/.nvm/versions/node/v24.19.0/bin` when `BENCH_NODE_BIN` is unset. The Android 2026-10-16 data has a negative warden `coldStartMs` (-1974), which the page shows as-is. `docs/bench/android-2026-10-18-slim-baseline.md` has no matching chart data.
 
 Dismissed: "nested `<cmd> <sub> -h` prints root help". This was the auditors' zsh harness passing `"port claim"` as one argument; `warden port claim -h` works.
+
+### WFB-DOCS-3 outcome (2026-10-23)
+
+Fixed:
+1. `install-warden`: repo described as public; `token` optional, defaults to `github.token`. README + `installation.mdx` examples drop it.
+2. `port claim` / `--port` help: `FROM..FROM+SPAN-1 (inclusive)`; help snapshot updated.
+3. `warden dev`: `--count` hidden from help (still accepted as 1, anything else refused as before).
+4. `app.ts` comment: `WARDEN_E2E_ASSERTION_TIMEOUT`.
+5. `preload.ts` comment: a version mismatch refuses the run (exit 2).
+6. `test.extend(...).beforeEach` / `afterEach` added, typed with that test's fixtures and run only for its tests (`ownHook` / `hooksFor` filter, `hooks.types.test.ts`). The top-level hooks keep the base fixtures, which is what they get.
+7. `WARDEN_HEADLESS` / `WARDEN_WORKER` are no longer parsed by `readEnv` (nothing read them), so a bad value cannot fail spec-env validation. Both are still exported for the spec's own tools; `setHeadlessEnv` only sets `WARDEN_HEADLESS=1` on a headless run.
+8. `warden e2e`: install flags on a suite with no `app` (and no `--app`) are refused in `runPlan`, naming the suite. They were already refused before claiming, but with a generic message. Exit code 1, like every other `e2e` failure.
+9. `--platform android` already wins over the default suite's `platform: "ios"` (`platformsOf`); added a test and documented it. iOS default and `count: 2` unchanged.
+10. `warden affected --help` example: `warden affected mobile --platform ios | warden batch ios --jobs-from - -- <runner> {job}`.
+11. `doctor`: darwin-x64 `sim-helper` row is now `warn` (`warden ui` / `warden e2e` cannot drive iOS sims there).
+12. `configuration.mdx`: `jobsFrom` typed `string | { command: string }` (`"-"` is a string).
+13. Bench: `nodeBinDir` uses `BENCH_NODE_BIN`, then the newest in-range nvm Node, otherwise the doctor fails with a clear reason. A negative cold-start cost is shown as "none (rep 1 not slower, …)" by markdown, HTML and the docs Startup table (shared `coldStartCost`), with a footnote in `bench/comparison.mdx`. The negative value is run-to-run noise (the formula is `cold - warm median + prepare`), not a bug; the data is unchanged.
+
+Deferred / not fixable:
+- 9: a true Android default suite would force `--platform` on every no-config run; left iOS.
+- 13: `docs/bench/android-2026-10-18-slim-baseline.md` is a hand-written ASLIM-0 report with no results JSON; a chart needs a bench rerun.
+- 8: exit code stays 1, not 2 (the `e2e` path never uses 2).
+
+Verification: `bun run typecheck` and `bun run check` pass. Tests: `packages/e2e` 2025 pass; `e2e-bench` `src` 390 pass; `apps/cli` help/doctor/dev/port/affected/lease-session 135 pass; e2e + core affected 139 pass.
