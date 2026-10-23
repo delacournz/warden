@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import { claimCommand } from "./claim";
 
 let ctx: TestContext | undefined;
@@ -65,7 +65,7 @@ describe("warden claim", () => {
 	});
 
 	test("pool exhausted → exit 1 with guidance", async () => {
-		const c = setup(["ios", "--max", "1"], fakeSimctl([wardenSim(1, "Booted")]));
+		const c = setup(["ios", "--max", "1", "--no-wait"], fakeSimctl([wardenSim(1, "Booted")]));
 		c.db.insertLease(
 			{
 				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
@@ -76,6 +76,42 @@ describe("warden claim", () => {
 		);
 		expect(await claimCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("all 1 warden-iphone-17 devices leased; max 1");
+	});
+
+	test("a full host queues: the progress line is on stderr and --json stdout stays empty on failure", async () => {
+		const c = setup(
+			["ios", "--json", "--no-wait", "--priority", "high"],
+			fakeSimctl([wardenSim(1, "Booted"), wardenSim(2)])
+		);
+		c.env = { ...c.env, WARDEN_CAPACITY_MAX: "1" };
+		c.db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
+				owner: { kind: "agent", sessionId: "other", cwd: "/" },
+				ttlMs: 60_000,
+			},
+			c.now()
+		);
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stdout).toEqual([]);
+		// withSpinner routes ctx.err progress through spinner.log, which the real UI writes to stderr
+		expect((c.ui as ScriptedUi).events.join("\n")).toMatch(/log: warden: queued #1 of 1 \(high\) — no room, /);
+		expect(c.db.listQueue()).toEqual([]);
+	});
+
+	test("WARDEN_CAPACITY=off never queues", async () => {
+		const c = setup(["ios", "--json", "--no-wait"], fakeSimctl([wardenSim(1, "Booted"), wardenSim(2)]));
+		c.env = { ...c.env, WARDEN_CAPACITY_MAX: "1", WARDEN_CAPACITY: "off" };
+		c.db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
+				owner: { kind: "agent", sessionId: "other", cwd: "/" },
+				ttlMs: 60_000,
+			},
+			c.now()
+		);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect((c.ui as ScriptedUi).events.join("\n")).not.toContain("queued #");
 	});
 
 	test("bad flags → exit 1", async () => {

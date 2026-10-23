@@ -103,3 +103,19 @@ export function sameOwner(a: Owner, b: Owner): boolean {
 	if (a.kind === "ci" && b.kind === "ci") return a.runId === b.runId;
 	return false;
 }
+
+/** A claim waiting for host capacity to boot devices (`boot_queue` row). */
+export type QueueEntry = {
+	id: string;
+	platform: Platform;
+	profile: string;
+	/** capacity units the boots need */
+	units: number;
+	/** numeric base priority (see `PRIORITY` in queue.ts); aging adds to it */
+	priority: number;
+	enqueuedAt: number;
+	heartbeatAt: number;
+	owner: Owner;
+	label?: string;
+	pid?: number;
+};

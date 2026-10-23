@@ -15,6 +15,10 @@ Lease:
                                 warden created)
   ls                            list leases (resource, state, owner,
                                 repo/worktree, age, heartbeat)
+  capacity                      machine capacity: budget, booted devices
+                                (foreign too), per-device cost, memory pressure
+  queue                         claims waiting for host capacity, head first
+                                (position, priority, age, owner)
   check                         exit 0 if a device is free or yours, 2 if
                                 another owner holds it
   heartbeat [leaseIds...]       refresh lease heartbeats so they don't go stale
@@ -90,26 +94,30 @@ Usage: warden claim [options] [platform]
 lease iOS sims / Android emulators (reuse, boot or create), booted and ready
 
 Arguments:
-  platform             ios | android (asked for when omitted in a terminal)
+  platform               ios | android (asked for when omitted in a terminal)
 
 Options:
-  --profile <slug>     device profile, e.g. iphone-17 / pixel-10 (android
-                       default: first AVD)
-  --runtime <runtime>  runtime: latest, iOS-26-5, 26.5 …
-  --count <n>          how many devices (default: "1")
-  --max <n>            max warden devices of this profile (default: cores/4, cap
-                       4)
-  --wait <duration>    wait this long for a free device, e.g. 10m
-  --ttl <duration>     lease TTL without heartbeat (default 30m; bare \`claim\` by
-                       an agent: 5m)
-  --label <label>      label shown in \`warden ls\`
-  --adopt              allow allocating foreign (non-warden) devices
-  --headless           iOS: close the claimed sims' Simulator.app windows (no
-                       window, even with Simulator open)
-  --no-headless        show the windows even when config / WARDEN_HEADLESS say
-                       headless
-  --json               machine-readable output
-  -h, --help           display help for command"
+  --profile <slug>       device profile, e.g. iphone-17 / pixel-10 (android
+                         default: first AVD)
+  --runtime <runtime>    runtime: latest, iOS-26-5, 26.5 …
+  --count <n>            how many devices (default: "1")
+  --max <n>              max warden devices of this profile (default: what the
+                         machine's capacity allows)
+  --wait <duration>      queue up to this long for a free device or host
+                         capacity (default 30m)
+  --no-wait              fail at once instead of queueing when no device is free
+  --priority <priority>  boot-queue priority: interactive|high|normal|low or a
+                         number (env WARDEN_PRIORITY; default by command)
+  --ttl <duration>       lease TTL without heartbeat (default 30m; bare \`claim\`
+                         by an agent: 5m)
+  --label <label>        label shown in \`warden ls\`
+  --adopt                allow allocating foreign (non-warden) devices
+  --headless             iOS: close the claimed sims' Simulator.app windows (no
+                         window, even with Simulator open)
+  --no-headless          show the windows even when config / WARDEN_HEADLESS say
+                         headless
+  --json                 machine-readable output
+  -h, --help             display help for command"
 `;
 
 exports[`help output warden release --help (and nested subcommands) 1`] = `
@@ -149,9 +157,13 @@ Options:
                          default: first AVD)
   --runtime <runtime>    runtime: latest, iOS-26-5, 26.5 …
   --count <n>            how many devices (default: "1")
-  --max <n>              max warden devices of this profile (default: cores/4,
-                         cap 4)
-  --wait <duration>      wait this long for a free device, e.g. 10m
+  --max <n>              max warden devices of this profile (default: what the
+                         machine's capacity allows)
+  --wait <duration>      queue up to this long for a free device or host
+                         capacity (default 30m)
+  --no-wait              fail at once instead of queueing when no device is free
+  --priority <priority>  boot-queue priority: interactive|high|normal|low or a
+                         number (env WARDEN_PRIORITY; default by command)
   --ttl <duration>       lease TTL without heartbeat (default 30m; bare \`claim\`
                          by an agent: 5m)
   --label <label>        label shown in \`warden ls\`
@@ -199,9 +211,15 @@ Options:
                               default: first AVD)
   --runtime <runtime>         runtime: latest, iOS-26-5, 26.5 …
   --count <n>                 how many devices (default: "1")
-  --max <n>                   max warden devices of this profile (default:
-                              cores/4, cap 4)
-  --wait <duration>           wait this long for a free device, e.g. 10m
+  --max <n>                   max warden devices of this profile (default: what
+                              the machine's capacity allows)
+  --wait <duration>           queue up to this long for a free device or host
+                              capacity (default 30m)
+  --no-wait                   fail at once instead of queueing when no device is
+                              free
+  --priority <priority>       boot-queue priority: interactive|high|normal|low
+                              or a number (env WARDEN_PRIORITY; default by
+                              command)
   --ttl <duration>            lease TTL without heartbeat (default 30m; bare
                               \`claim\` by an agent: 5m)
   --label <label>             label shown in \`warden ls\`
@@ -257,9 +275,15 @@ Options:
                               default: first AVD)
   --runtime <runtime>         runtime: latest, iOS-26-5, 26.5 …
   --count <n>                 how many devices (default: "1")
-  --max <n>                   max warden devices of this profile (default:
-                              cores/4, cap 4)
-  --wait <duration>           wait this long for a free device, e.g. 10m
+  --max <n>                   max warden devices of this profile (default: what
+                              the machine's capacity allows)
+  --wait <duration>           queue up to this long for a free device or host
+                              capacity (default 30m)
+  --no-wait                   fail at once instead of queueing when no device is
+                              free
+  --priority <priority>       boot-queue priority: interactive|high|normal|low
+                              or a number (env WARDEN_PRIORITY; default by
+                              command)
   --ttl <duration>            lease TTL without heartbeat (default 30m; bare
                               \`claim\` by an agent: 5m)
   --label <label>             label shown in \`warden ls\`
@@ -357,9 +381,15 @@ Options:
                               default: first AVD)
   --runtime <runtime>         runtime: latest, iOS-26-5, 26.5 …
   --count <n>                 how many devices (default: "1")
-  --max <n>                   max warden devices of this profile (default:
-                              cores/4, cap 4)
-  --wait <duration>           wait this long for a free device, e.g. 10m
+  --max <n>                   max warden devices of this profile (default: what
+                              the machine's capacity allows)
+  --wait <duration>           queue up to this long for a free device or host
+                              capacity (default 30m)
+  --no-wait                   fail at once instead of queueing when no device is
+                              free
+  --priority <priority>       boot-queue priority: interactive|high|normal|low
+                              or a number (env WARDEN_PRIORITY; default by
+                              command)
   --ttl <duration>            lease TTL without heartbeat (default 30m; bare
                               \`claim\` by an agent: 5m)
   --label <label>             label shown in \`warden ls\`
@@ -436,6 +466,29 @@ exports[`help output warden ls --help (and nested subcommands) 1`] = `
 Usage: warden ls [options]
 
 list leases (resource, state, owner, repo/worktree, age, heartbeat)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden capacity --help (and nested subcommands) 1`] = `
+"$ warden capacity --help
+Usage: warden capacity [options]
+
+machine capacity: budget, booted devices (foreign too), per-device cost, memory
+pressure
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden queue --help (and nested subcommands) 1`] = `
+"$ warden queue --help
+Usage: warden queue [options]
+
+claims waiting for host capacity, head first (position, priority, age, owner)
 
 Options:
   --json      machine-readable output

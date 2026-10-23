@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type BatchEvent, type BatchWorker, runBatch } from "./schedule";
+import { type BatchEvent, type BatchHandle, type BatchWorker, runBatch } from "./schedule";
 
 const WORKERS: BatchWorker[] = [
 	{ worker: 0, udid: "U0" },
@@ -183,5 +183,86 @@ describe("runBatch", () => {
 		expect(summary.results.map((r) => r.job)).toEqual(["a", "b"]);
 		expect(summary.stopped).toBe(true);
 		expect(summary.ok).toBe(false);
+	});
+});
+
+describe("runBatch elastic workers", () => {
+	test("a worker added mid-run pulls from the shared queue and emits worker-join", async () => {
+		const m = manual();
+		let clock = 0;
+		const events: BatchEvent[] = [];
+		let handle: BatchHandle | undefined;
+		const done = runBatch({
+			workers: [WORKERS[0] as BatchWorker],
+			jobs: ["a", "b", "c"],
+			retry: 0,
+			run: m.run,
+			now: () => clock,
+			onEvent: (e) => events.push(e),
+			onStart: (h) => {
+				handle = h;
+			},
+		});
+		await flush();
+		expect(m.pending.map((p) => p.job)).toEqual(["a"]);
+		clock = 130;
+		expect(handle?.addWorker({ worker: 3, udid: "U3" })).toBe(true);
+		await flush();
+		expect(m.pending.map((p) => [p.worker, p.job, p.seq])).toEqual([
+			[0, "a", 0],
+			[3, "b", 0],
+		]);
+		expect(events).toContainEqual({ type: "worker-join", worker: 3, udid: "U3", at: 130 });
+		m.take("a").settle(0);
+		await flush();
+		m.take("b").settle(0);
+		await flush();
+		m.take("c").settle(0);
+		const summary = await done;
+		expect(summary.ok).toBe(true);
+		expect(summary.results.map((r) => r.job).sort()).toEqual(["a", "b", "c"]);
+	});
+
+	test("a worker arriving after the queue drained is refused and the run still ends", async () => {
+		const m = manual();
+		let handle: BatchHandle | undefined;
+		const done = runBatch({
+			workers: [WORKERS[0] as BatchWorker],
+			jobs: ["a"],
+			retry: 0,
+			run: m.run,
+			now: () => 0,
+			onStart: (h) => {
+				handle = h;
+			},
+		});
+		await flush();
+		expect(handle?.pending()).toBe(0);
+		expect(handle?.addWorker({ worker: 1, udid: "U1" })).toBe(false);
+		m.take("a").settle(0);
+		await done;
+		expect(handle?.addWorker({ worker: 2, udid: "U2" })).toBe(false);
+	});
+
+	test("addWorker is refused once the signal aborted", async () => {
+		const m = manual();
+		const ac = new AbortController();
+		let handle: BatchHandle | undefined;
+		const done = runBatch({
+			workers: [WORKERS[0] as BatchWorker],
+			jobs: ["a", "b"],
+			retry: 0,
+			run: m.run,
+			now: () => 0,
+			signal: ac.signal,
+			onStart: (h) => {
+				handle = h;
+			},
+		});
+		await flush();
+		ac.abort();
+		expect(handle?.addWorker({ worker: 1, udid: "U1" })).toBe(false);
+		m.take("a").settle(0);
+		expect((await done).stopped).toBe(true);
 	});
 });

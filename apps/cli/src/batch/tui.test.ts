@@ -287,3 +287,16 @@ describe("plainLine", () => {
 		);
 	});
 });
+
+describe("elastic workers", () => {
+	test("worker-join stamps the row and logs when the worker joined", () => {
+		const base = midRun();
+		const joined = { type: "worker-join", worker: 3, udid: "U3", at: 130_000 } as const;
+		const view = applyEvent(
+			{ ...base, devices: [...base.devices, ...initialView([{ worker: 3, udid: "U3", name: "late" }], 0, 0).devices] },
+			joined
+		);
+		expect(view.devices.find((d) => d.worker === 3)?.joinedAt).toBe(130_000);
+		expect(plainLine(view, joined)).toBe("warden batch: worker 4 joined after 2m10s (queued)");
+	});
+});

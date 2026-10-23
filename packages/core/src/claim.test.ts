@@ -3,11 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
-import { type ClaimInput, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
+import { CLAIM_ABORTED, type ClaimInput, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
 import type { Exec, ExecResult } from "./exec";
+import type { MemoryPressure } from "./host";
 import { createIosProvider } from "./providers/ios";
 import { simctlDevicesJson } from "./providers/ios.fixture";
 import type { BootReady, DeviceProvider } from "./providers/provider.types";
+import { PRIORITY } from "./queue";
 import { openStore, type Store } from "./store";
 import { type DeviceRequest, type InventoryDevice, type Owner, resourceKey } from "./types";
 
@@ -846,5 +848,227 @@ describe("claim quarantine expiry respects max (ios-claim-path-R3)", () => {
 		await claimDevices(input(provider, { request: request({ max: 2 }) }));
 		const stillQuarantined = store.listDevices().filter((d) => d.quarantinedAt !== undefined);
 		expect(stillQuarantined).toHaveLength(1);
+	});
+});
+
+describe("claim capacity queue", () => {
+	const MIN = 60_000;
+	let logs: string[];
+	let shutdownIdle: string[];
+	beforeEach(() => {
+		logs = [];
+		shutdownIdle = [];
+	});
+
+	function capInput(
+		provider: FakeProvider,
+		overrides: Partial<ClaimInput> & { pressure?: MemoryPressure; cpu?: number } = {}
+	) {
+		const { pressure, cpu = 2, ...rest } = overrides;
+		return input(provider, {
+			pidAlive: (pid) => pid === process.pid,
+			request: request({ max: 5 }),
+			log: (line) => logs.push(line),
+			capacity: {
+				budget: { memMb: 1_000_000, cpu, maxUnits: Number.POSITIVE_INFINITY },
+				config: {},
+				hostInventory: async () => ok(provider.devices.map((d) => ({ ...d }))),
+				...(pressure !== undefined ? { pressure: async () => ok(pressure) } : {}),
+				shutdownIdle: async (device) => {
+					shutdownIdle.push(device.id);
+					const d = provider.devices.find((x) => x.id === device.id);
+					if (d) d.state = "shutdown";
+					return ok(undefined);
+				},
+			},
+			...rest,
+		});
+	}
+
+	/** Two booted devices leased by `other`, so the host (2 cpu units) is full. */
+	async function fullHost(extra: InventoryDevice[] = []): Promise<FakeProvider> {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" }), ...extra]);
+		const held = await claimDevices(input(provider, { owner: other, request: request({ count: 2 }) }));
+		expect(held.success).toBe(true);
+		return provider;
+	}
+
+	function queueRow(id: string, priority: number, enqueuedAt: number, pid = process.pid) {
+		store.enqueue({
+			id,
+			platform: "ios",
+			profile: "iphone-17",
+			units: 1,
+			priority,
+			enqueuedAt,
+			heartbeatAt: NOW,
+			owner: other,
+			pid,
+		});
+	}
+
+	test("abort ends a queued claim and leaves no queue row", async () => {
+		const provider = await fullHost();
+		let polls = 0;
+		const result = await claimDevices(
+			capInput(provider, { waitMs: 10 * MIN, sleep: async () => void polls++, abort: () => polls >= 1 })
+		);
+		expect(result).toEqual({ success: false, error: CLAIM_ABORTED });
+		expect(store.listQueue()).toEqual([]);
+	});
+
+	test("a full host queues the claim, then admits it once a slot frees", async () => {
+		const provider = await fullHost();
+		let polls = 0;
+		const result = await claimDevices(
+			capInput(provider, {
+				waitMs: 10 * MIN,
+				sleep: async () => {
+					polls++;
+					store.deleteLeases(
+						store
+							.listLeases()
+							.filter((l) => l.resource.kind === "device" && l.resource.id === "1")
+							.map((l) => l.id)
+					);
+					const d = provider.devices.find((x) => x.id === "1");
+					if (d) d.state = "shutdown";
+				},
+			})
+		);
+		expect(result.success).toBe(true);
+		expect(polls).toBe(1);
+		expect(logs).toHaveLength(1);
+		expect(logs[0]).toMatch(/^queued #1 of 1 \(normal\) — no room, cpu binds/);
+		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
+		expect(store.listQueue()).toEqual([]);
+	});
+
+	test("--no-wait on a full host fails naming the position and binding dimension, and leaves no row", async () => {
+		const provider = await fullHost();
+		const result = await claimDevices(capInput(provider));
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toMatch(/#1 of 1.*cpu binds/);
+		expect(store.listQueue()).toEqual([]);
+	});
+
+	test("a lower-priority claim waits behind a higher-priority row even when the host has room", async () => {
+		const provider = fakeProvider([]);
+		queueRow("rival", PRIORITY.high, NOW);
+		const result = await claimDevices(capInput(provider, { cpu: 4 }));
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toContain("#2 of 2");
+		expect(store.listQueue().map((e) => e.id)).toEqual(["rival"]);
+	});
+
+	test("a higher priority than the waiting row is admitted first", async () => {
+		const provider = fakeProvider([]);
+		queueRow("rival", PRIORITY.normal, NOW - MIN);
+		const result = await claimDevices(capInput(provider, { cpu: 4, priority: PRIORITY.interactive }));
+		expect(result.success).toBe(true);
+		expect(store.listQueue().map((e) => e.id)).toEqual(["rival"]);
+	});
+
+	test("aging lets an old low row overtake a fresh normal claim", async () => {
+		const provider = fakeProvider([]);
+		queueRow("old", PRIORITY.low, NOW - 120 * MIN);
+		const result = await claimDevices(capInput(provider, { cpu: 4 }));
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toContain("#2 of 2");
+	});
+
+	test("a pure reuse backfills past a waiting head", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		queueRow("rival", PRIORITY.interactive, NOW);
+		const result = await claimDevices(capInput(provider, { cpu: 1 }));
+		expect(result.success && result.data.claimed[0]?.action).toBe("reuse");
+		expect(store.listQueue().map((e) => e.id)).toEqual(["rival"]);
+	});
+
+	test("the head shuts down an idle warden device of another profile to make room", async () => {
+		const idle = sim("A", { name: "warden-ipad-1", state: "booted" });
+		const provider = await fullHost([idle]);
+		const result = await claimDevices(capInput(provider, { cpu: 3 }));
+		expect(shutdownIdle).toEqual(["A"]);
+		expect(result.success && result.data.claimed[0]?.action).toBe("create");
+		expect(logs.some((l) => l.includes("idle, shut down"))).toBe(true);
+		expect(store.listLeases().some((l) => l.label === "capacity-evict")).toBe(false);
+	});
+
+	test("foreign booted devices count against the budget but are never shut down", async () => {
+		const provider = fakeProvider([
+			sim("F1", { name: "iPhone 17", state: "booted" }),
+			sim("F2", { name: "iPad", state: "booted" }),
+		]);
+		const result = await claimDevices(capInput(provider));
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toContain("cpu binds");
+		expect(shutdownIdle).toEqual([]);
+		expect(provider.calls).toEqual([]);
+	});
+
+	test("an idle device is not evicted when that would not make room", async () => {
+		const idle = sim("A", { name: "warden-ipad-1", state: "booted" });
+		const provider = fakeProvider([idle, sim("F1", { name: "iPhone 17", state: "booted" })]);
+		const result = await claimDevices(capInput(provider, { cpu: 1 }));
+		expect(result.success).toBe(false);
+		expect(shutdownIdle).toEqual([]);
+	});
+
+	test("memory pressure warn holds a claim that would fit; normal admits it", async () => {
+		const provider = fakeProvider([]);
+		const held = await claimDevices(capInput(provider, { cpu: 4, pressure: "warn" }));
+		expect(held.success).toBe(false);
+		if (!held.success) expect(held.error).toContain("memory pressure warn");
+		const admitted = await claimDevices(capInput(provider, { cpu: 4, pressure: "normal" }));
+		expect(admitted.success).toBe(true);
+	});
+
+	test("rows of dead waiters do not block", async () => {
+		const provider = fakeProvider([]);
+		queueRow("ghost", PRIORITY.interactive, NOW - MIN, 999_999);
+		const result = await claimDevices(capInput(provider, { cpu: 4 }));
+		expect(result.success).toBe(true);
+		expect(store.listQueue()).toEqual([]);
+	});
+
+	test("a health-probe retry keeps the claim's original queue age", async () => {
+		const provider = fakeProvider([sim("1"), sim("2")]);
+		provider.probe = async (id) => (id === "1" ? err("1: hung") : ok(undefined));
+		queueRow("rival", PRIORITY.high, NOW);
+		const stamps: number[] = [];
+		const enqueue = store.enqueue.bind(store);
+		store.enqueue = (entry) => {
+			if (entry.id !== "rival") stamps.push(entry.enqueuedAt);
+			return enqueue(entry);
+		};
+		let clock = NOW;
+		const result = await claimDevices(
+			capInput(provider, {
+				waitMs: 10 * MIN,
+				now: () => clock,
+				sleep: async () => {
+					clock += MIN;
+					store.dequeue("rival");
+				},
+			})
+		);
+		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
+		expect(stamps.length).toBeGreaterThanOrEqual(3);
+		expect(new Set(stamps)).toEqual(new Set([NOW]));
+	});
+
+	test("the queue row is removed when the claim errors", async () => {
+		const provider = fakeProvider([sim("1")], { boot: "1" });
+		const result = await claimDevices(capInput(provider, { cpu: 4 }));
+		expect(result.success).toBe(false);
+		expect(store.listQueue()).toEqual([]);
+	});
+
+	test("without capacity a full host never queues", async () => {
+		const provider = fakeProvider([]);
+		const result = await claimDevices(input(provider));
+		expect(result.success).toBe(true);
+		expect(store.listQueue()).toEqual([]);
 	});
 });
