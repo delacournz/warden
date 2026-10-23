@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
 import { createGitFactsCache } from "@delacour/warden-core/git-facts";
+import type { HostFacts } from "@delacour/warden-core/host";
 import { openStore, type Store } from "@delacour/warden-core/store";
 import { Chalk } from "chalk";
 import type { CommandContext } from "./context";
@@ -65,6 +66,9 @@ export function scriptedUi(
 	return ui;
 }
 
+/** The host every `testContext` budgets from (12 cpu units): capacity never binds by accident, on any CI runner. */
+export const TEST_HOST: HostFacts = { totalMem: 64 * 1024 ** 3, perfCores: 20, effCores: 4, os: "darwin" };
+
 export type TestContext = CommandContext & {
 	stdout: string[];
 	stderr: string[];
@@ -91,6 +95,7 @@ export function testContext(argv: string[], overrides: Partial<CommandContext> =
 		git: createGitFactsCache(),
 		readStdin: async () => "",
 		ui: scriptedUi(),
+		hostFacts: async () => TEST_HOST,
 		...overrides,
 		stdout,
 		stderr,

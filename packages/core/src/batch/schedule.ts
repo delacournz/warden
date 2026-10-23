@@ -10,6 +10,8 @@ export type BatchEvent =
 	| ({ type: "job-start"; at: number } & JobRun)
 	| ({ type: "job-end"; willRetry: boolean } & JobResult)
 	| { type: "worker-idle"; worker: number; udid: string; at: number }
+	/** a worker added mid-run (`BatchHandle.addWorker`); the initial workers emit none */
+	| { type: "worker-join"; worker: number; udid: string; at: number }
 	| { type: "done"; ok: boolean; stopped: boolean; at: number };
 
 export type BatchSummary = {
@@ -23,6 +25,17 @@ export type BatchSummary = {
 	stopped: boolean;
 };
 
+/** Handed to `onStart`: lets workers join a run already under way. */
+export type BatchHandle = {
+	/**
+	 * Join `worker` to the shared queue. Returns false (nothing started) when the queue is already
+	 * drained, the run was stopped or it has ended: the caller still owns the worker and must release it.
+	 */
+	addWorker: (worker: BatchWorker) => boolean;
+	/** jobs not yet pulled by any worker: 0 once a late worker would have nothing to do */
+	pending: () => number;
+};
+
 export type RunBatchOptions = {
 	workers: readonly BatchWorker[];
 	jobs: readonly string[];
@@ -34,6 +47,8 @@ export type RunBatchOptions = {
 	onEvent?: (event: BatchEvent) => void;
 	/** aborted → workers finish their current job and stop pulling */
 	signal?: AbortSignal;
+	/** called once, synchronously, before the initial workers start */
+	onStart?: (handle: BatchHandle) => void;
 };
 
 /**
@@ -76,7 +91,24 @@ export async function runBatch(opts: RunBatchOptions): Promise<BatchSummary> {
 		emit({ type: "worker-idle", worker: w.worker, udid: w.udid, at: opts.now() });
 	};
 
-	await Promise.all(opts.workers.map(work));
+	const active = new Set<Promise<void>>();
+	const start = (w: BatchWorker) => {
+		const p: Promise<void> = work(w).finally(() => active.delete(p));
+		active.add(p);
+	};
+	let ended = false;
+	opts.onStart?.({
+		pending: () => queue.length,
+		addWorker: (w) => {
+			if (ended || stopped() || queue.length === 0) return false;
+			emit({ type: "worker-join", worker: w.worker, udid: w.udid, at: opts.now() });
+			start(w);
+			return true;
+		},
+	});
+	for (const w of opts.workers) start(w);
+	while (active.size > 0) await Promise.all([...active]);
+	ended = true;
 	const ok = failed.length === 0 && !stopped();
 	emit({ type: "done", ok, stopped: stopped(), at: opts.now() });
 	return { ok, results, failed, stopped: stopped() };

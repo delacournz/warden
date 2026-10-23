@@ -17,6 +17,10 @@ icon: Variable
 | `WARDEN_EMULATOR_AUDIO=1` | Android: keep the emulator's audio (claimed emulators run `-no-audio` otherwise) |
 | `WARDEN_ARRANGE=0` | don't tile Simulator.app windows after iOS claims |
 | `WARDEN_HEADLESS=1` | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/guides/headless)); `warden dev` ignores it |
+| `WARDEN_PRIORITY` | boot queue priority (`interactive\|high\|normal\|low\|N`) when no `--priority` is given ([Capacity & queue](/docs/guides/capacity)) |
+| `WARDEN_CAPACITY=off` | skip the capacity gate and boot queue |
+| `WARDEN_CAPACITY_MAX` | hard cap on weighted cpu units booted machine-wide (1 per iOS sim, 2 per Android emulator) |
+| `WARDEN_CAPACITY_HEADROOM_GB` | RAM held back from the budget (default `max(8, 25% of RAM)`) |
 | `WARDEN_AUTO_GC=0` | turn off background auto-gc |
 | `WARDEN_MAX_CACHE_SIZE` | build cache cap (e.g. `50G`, default `20G`) for `warden gc` (`--max-cache-size`), `warden builds prune` (`--max-size`) and auto-gc, which runs when the cache is over it |
 | `WARDEN_ANDROID_UIAD=0` | Android: don't use the resident UiAutomation server (`warden-uiad`); snapshots, settle and input go through `uiautomator dump` and `input` ([Android driver](/docs/reference/e2e-driver#android-driver)) |

@@ -1,0 +1,78 @@
+---
+title: Capacity & queue
+description: How warden sizes the host, queues boots by priority and frees idle devices.
+icon: Gauge
+---
+
+warden decides how many sims and emulators may run at once from the host's RAM and CPU. A claim that needs a new boot while the host is full joins a priority queue and boots when a slot frees. Agents just call `warden claim` / `ui open` / `e2e` and block: no retry loops, no `--max` games.
+
+## Cost model
+
+Weighted units, not a flat count: an Android emulator costs about twice an iOS sim.
+
+```
+budget.mem = totalMem - headroom        headroom = max(8 GB, 25% of totalMem)
+budget.cpu = perfCores x 0.6            leaves room for Metro, xcodebuild, gradle
+iOS sim    = 2 GB, 1 cpu unit
+Android    = 4 GB, 2 cpu units
+```
+
+A boot fits when summed memory and cpu of everything booted, plus the request, stay inside both budgets (and under `capacity.max` if set). On macOS `perfCores` is the performance cluster (`hw.perflevel0.physicalcpu`); elsewhere all cores.
+
+| Host | Budget | iOS sims | Android emulators |
+|---|---|---|---|
+| 16 GB, 8 cores | 8 GB, 4.8 cpu | 4 | 2 |
+| 48 GB, 10 performance cores | 36 GB, 6 cpu | 6 | 3 |
+| 128 GB, 16 cores | 96 GB, 9.6 cpu | 9 | 4 |
+
+Mixed loads share the budget: on the 48 GB host, 4 iOS + 1 Android fills it. CPU usually binds before memory; `warden capacity` says which.
+
+- **Foreign devices count, never get touched.** Every booted device on the host (warden's and not) uses budget. Foreign ones are never shut down, erased or installed on.
+- **Reuse is free.** Reusing an already-booted free device needs no slot. Only `boot` and `create` do.
+- **Memory pressure gate.** Before admitting a boot warden reads the OS memory pressure (macOS `kern.memorystatus_vm_pressure_level`, Linux `/proc/meminfo`). Anything but `normal` holds new boots even when the budget fits. An unreadable signal counts as `normal`.
+
+## Queue
+
+A claim that cannot fit (or is not first in line) writes a row in warden's store and waits; progress goes to stderr:
+
+```
+queued #2 of 4 (high) — no room, cpu binds: need 7.0 of 6.0 cpu (units); using 6.0/6.0 cpu units, 12288/36864 MB
+```
+
+- **Order:** effective priority (high first), then arrival time. Only the head may take slots.
+- **Priority:** `interactive` 30, `high` 20, `normal` 10, `low` 0, or any integer.
+- **Aging:** a waiting row climbs one priority level (+10) per 10 min, so a `low` claim overtakes a fresh `high` one after 20 min, inside the default 30 min wait.
+- **Backfill:** a claim that needs no slot (pure reuse of a booted device) goes ahead of the queue; it never takes slots the head waits for.
+- **Eviction:** when the head waits and idle, unleased, booted warden devices exist (not golden, not quarantined, not planned for this claim), warden shuts down the least recently used ones until the head fits. Devices with a live lease are never evicted.
+- **Dead rows:** a row whose process died is reclaimed like a stale lease.
+- **Timeout:** the default `--wait` is `30m`. After it the claim fails with `timed out in the boot queue at #N of M: <reason>`. `--no-wait` fails right away when nothing fits.
+
+Default priorities by caller:
+
+| Caller | Priority |
+|---|---|
+| `warden ui open`, `warden dev` | `high` |
+| `warden claim`, `warden run`, `warden e2e` | `normal` |
+| `warden batch`, extra `e2e` batch workers | `low` |
+
+`warden e2e` batch workers are elastic: the suite starts with the devices that fit and adds workers as slots free up, instead of waiting for all of them.
+
+## Commands
+
+```bash
+warden capacity [--json]   # budget, usage, per-device cost, what binds, memory pressure
+warden queue [--json]      # waiting claims: position, effective priority, age, owner
+```
+
+## Flags and overrides
+
+| | |
+|---|---|
+| `--priority <interactive\|high\|normal\|low\|N>` | priority of this claim; `WARDEN_PRIORITY` sets it for the shell |
+| `--wait <duration>` | queue timeout, default `30m` |
+| `--no-wait` | fail fast instead of queueing |
+| `WARDEN_CAPACITY=off` | skip the capacity gate and queue (old behaviour: only `--max` limits the pool) |
+| `WARDEN_CAPACITY_MAX=<n>` | hard cap on weighted cpu units |
+| `WARDEN_CAPACITY_HEADROOM_GB=<n>` | RAM held back instead of `max(8 GB, 25%)` |
+
+`--max` still caps how many devices of one profile warden creates; it does not raise the capacity budget, so passing it never jumps the queue.

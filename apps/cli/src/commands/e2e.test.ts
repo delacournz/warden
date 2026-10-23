@@ -459,7 +459,7 @@ describe("warden e2e", () => {
 			// no warden sim exists and none may be created: the device claim fails after the port lease
 			const sim = fakeSimctl([]);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
-			ctx = testContext(["--files", "src/chat/lazy.tsx", "--max", "0"], { exec });
+			ctx = testContext(["--files", "src/chat/lazy.tsx", "--max", "0", "--no-wait"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			const c = ctx;

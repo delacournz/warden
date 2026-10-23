@@ -32,7 +32,7 @@ A bare agent `warden claim` prints a hint and expires in 5 min; nothing refreshe
 
 - warden creates and reuses its own **`warden-<profile>-N`** simulators in the default CoreSimulator set, and launches Android emulators with `-read-only`.
 - A booted device with no lease that warden didn't create is **foreign** — your Simulator.app, another tool's sim. It is never allocated unless you pass `--adopt`, and never shut down, erased or installed on.
-- The pool grows on demand up to `--max` devices per profile (default: cores / 4, capped at 4).
+- The pool grows on demand up to `--max` devices per profile (default: cores / 4, capped at 4). How many may be booted at once is set by host RAM and CPU: a claim that does not fit waits in a priority queue, `--wait 30m` by default. See [Capacity & queue](/docs/guides/capacity).
 - `warden gc` shuts down idle warden devices after 20 min. It never deletes them.
 
 ## Shutdown policy

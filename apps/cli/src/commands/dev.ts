@@ -7,6 +7,7 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { bunExec } from "@delacour/warden-core/exec";
 import { readGitFactsSync } from "@delacour/warden-core/git-facts";
 import { isPortFree } from "@delacour/warden-core/ports";
+import { PRIORITY } from "@delacour/warden-core/queue";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
@@ -187,7 +188,13 @@ async function openSession(
 	if (!held.success) return held;
 	if (held.data === undefined) {
 		// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
-		const flags = parseClaimFlags(platform, { ...opts, headless: opts.headless === true });
+		const flags = parseClaimFlags(
+			platform,
+			{ ...opts, headless: opts.headless === true },
+			undefined,
+			undefined,
+			PRIORITY.high
+		);
 		if (!flags.success) return flags;
 		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
 		const session = await claimAll(

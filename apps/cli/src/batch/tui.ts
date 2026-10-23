@@ -16,6 +16,8 @@ export type DeviceView = {
 	passed: number;
 	failed: number;
 	idle: boolean;
+	/** an elastic worker that joined after the run started: when (ms clock) */
+	joinedAt?: number;
 	/** finished jobs, in order (a retried attempt only counts once it is final) */
 	results: FlowMark[];
 	/** device isolation: the flows this device ran, from the runner's report */
@@ -131,6 +133,8 @@ export function applyEvent(view: BatchView, event: BatchEvent): BatchView {
 		}
 		case "worker-idle":
 			return update(event.worker, ({ current: _, ...d }) => ({ ...d, idle: true }));
+		case "worker-join":
+			return update(event.worker, (d) => ({ ...d, joinedAt: event.at }));
 		case "done":
 			return { ...view, now, result: { ok: event.ok, stopped: event.stopped } };
 	}
@@ -397,6 +401,8 @@ export function plainLine(view: BatchView, event: BatchEvent): string | undefine
 		}
 		case "worker-idle":
 			return undefined;
+		case "worker-join":
+			return `warden batch: worker ${event.worker + 1} joined after ${formatDuration(Math.max(0, event.at - view.startedAt))} (queued)`;
 		case "done": {
 			const { passed, failed } = totals(view);
 			return `warden batch: ${passed}/${view.total} passed, ${failed} failed${event.stopped ? " (stopped)" : ""}`;

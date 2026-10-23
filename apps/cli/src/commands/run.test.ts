@@ -196,7 +196,7 @@ describe("warden run", () => {
 	});
 
 	test("claim failure → exit 1, child never spawned", async () => {
-		const c = setup(["ios", "--count", "3", "--max", "2", "--", "true"]);
+		const c = setup(["ios", "--count", "3", "--max", "2", "--no-wait", "--", "true"]);
 		const h = harness();
 		expect(await createRunCommand(h.deps).run(c)).toBe(1);
 		expect(h.spawned).toEqual([]);
