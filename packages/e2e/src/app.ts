@@ -12,7 +12,7 @@ import { isInteractiveRole, resolveRole } from "./screen/roles";
 export type OpenWaitUntil = {
 	/** a locator made by `screen` that is visible once the app's first screen is up */
 	until: Locator;
-	/** how long `until` gets to show; default the assertion timeout (`WARDEN_ASSERTION_TIMEOUT_MS`) */
+	/** how long `until` gets to show; default the assertion timeout (`WARDEN_E2E_ASSERTION_TIMEOUT`) */
 	timeout?: number;
 };
 

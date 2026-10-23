@@ -133,7 +133,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
     serveReady: { type: "string", description: "`http://…`, `tcp:PORT` or `file:PATH` (relative to the preset's cwd)." },
     serveTimeout: { type: "string", description: "Give up waiting for `serveReady`.", default: "10m" },
     jobs: { type: "string[]", description: "The jobs. At most one of `jobs` / `jobsFrom`." },
-    jobsFrom: { type: 'string | "-" | { command: string }', description: "A file of jobs (one per line), `-` for stdin, or a `sh -c` command whose stdout lines are the jobs (nonzero exit fails the batch)." },
+    jobsFrom: { type: "string | { command: string }", description: "A file of jobs (one per line; the string `-` reads stdin), or a `sh -c` command whose stdout lines are the jobs (nonzero exit fails the batch)." },
     record: { type: "string", description: "iOS: record every simulator and the TUI into this dir." },
     logs: { type: "string", description: "Per-job log dir." },
     headless: { type: "boolean", description: "iOS: close this run's Simulator.app windows (see [Headless e2e](/docs/guides/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both.", default: "top-level `headless`" },

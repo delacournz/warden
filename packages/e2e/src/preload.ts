@@ -29,8 +29,8 @@ export type PreloadDeps = {
 };
 
 /**
- * The protocol handshake: `warden e2e` and this package version in lock-step. A mismatch is a warning, not an
- * error (most pairs still work), but the install fix is spelled out. Nothing to compare without `WARDEN_VERSION`
+ * The protocol handshake: `warden e2e` and this package version in lock-step. A mismatch refuses the run (exit 2)
+ * with the install fix spelled out. Nothing to compare without `WARDEN_VERSION`
  * (a by-hand run) or from the workspace sources (not a published build).
  */
 export function versionMismatch(wardenVersion: string | undefined, e2eVersion: string): string | undefined {
