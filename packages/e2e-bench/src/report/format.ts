@@ -61,3 +61,8 @@ export function ratio(n: number | undefined): string {
 	if (!finite(n)) return DASH;
 	return `${n.toFixed(2)}×`;
 }
+
+/** Cold-start cost for display: a negative value means rep 1 was not slower than warm, so it is not a duration. */
+export function coldStartCost(n: number | undefined): string {
+	return n !== undefined && Number.isFinite(n) && n < 0 ? `none (rep 1 not slower, ${signedMs(n)})` : ms(n);
+}

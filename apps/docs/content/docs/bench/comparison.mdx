@@ -33,6 +33,8 @@ Warm median per canonical test. Compare these before the step numbers.
 
 Cold-start cost is the first run minus the warm median, plus the time spent in prepare: what installing a runner app or starting a daemon costs, not steady-state speed. Overhead is suite wall time minus the sum of test durations.
 
+A negative cold-start cost is not a duration. It means the cold first run finished faster than the warm median (run-to-run noise on a framework with little startup cost, for example warden on Android 2026-10-16: -1.97 s), so the table shows "none (rep 1 not slower, ...)" and leaves it out of the fastest-cell highlight.
+
 <BenchStartup />
 
 ## Resources
