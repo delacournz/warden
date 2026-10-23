@@ -1,5 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
+import { basename } from "node:path";
 import { type Exec, execError } from "@delacour/warden-core/exec";
+import type { GitFacts } from "@delacour/warden-core/git-facts";
 import { findNodeBin } from "@delacour/warden-core/node-bin";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
@@ -23,6 +25,8 @@ export type MetroDeps = {
 	spawn: (cmd: string[], env: Record<string, string | undefined>, cwd: string) => MetroProc;
 	/** the project's own `expo` bin, when it can be run directly (default: none, so `bunx expo`) */
 	expoBin?: (projectRoot: string) => string | undefined;
+	/** git facts of the project root, for `worktreeEnv` (default: none, so no `WARDEN_WORKTREE`) */
+	git?: (projectRoot: string) => GitFacts | undefined;
 };
 
 /** Who answers on a Metro port, relative to one project root. */
@@ -183,6 +187,19 @@ async function waitForOurs(
 }
 
 /**
+ * What Metro learns about its checkout: `WARDEN_WORKTREE` (the checkout dir) and `WARDEN_BRANCH`
+ * (absent on a detached HEAD), so `app.config.ts` can name the dev server after the worktree in the
+ * dev client's launcher. Metro-only: a native build never sees them, so the fingerprint is unchanged.
+ */
+export function worktreeEnv(facts: GitFacts | undefined): Record<string, string> {
+	if (facts === undefined) return {};
+	return {
+		WARDEN_WORKTREE: basename(facts.toplevel),
+		...(facts.branch === "" ? {} : { WARDEN_BRANCH: facts.branch }),
+	};
+}
+
+/**
  * Start Metro for `projectRoot` on `port` and wait until that port is verified to serve this root.
  * On any failure the spawned Metro is stopped.
  */
@@ -191,7 +208,7 @@ export async function startMetro(deps: MetroDeps, o: MetroOptions): AsyncResult<
 	try {
 		proc = deps.spawn(
 			metroArgv(o.port, o.args, deps.expoBin?.(o.projectRoot)),
-			{ ...o.env, EXPO_NO_TELEMETRY: "1" },
+			{ ...o.env, ...worktreeEnv(deps.git?.(o.projectRoot)), EXPO_NO_TELEMETRY: "1" },
 			o.projectRoot
 		);
 	} catch (error) {

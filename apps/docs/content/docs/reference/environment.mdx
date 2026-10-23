@@ -40,6 +40,23 @@ icon: Variable
 | `WARDEN_APP_PATH`, `WARDEN_APP_HASH` | with `--app`: installed build + fingerprint |
 | `WARDEN_HEADLESS` | `1` when the run is headless (also for `batch` / `e2e` serve, setup and jobs, and `dev`'s Metro); removed otherwise |
 
+## Set for Metro
+
+Every Metro warden starts (`warden dev`, `warden e2e` / `batch` serve) also gets these, so `app.config.ts` can tell worktrees apart. A native build never sees them, so the binary and its fingerprint stay the same.
+
+| Variable | Value |
+|---|---|
+| `WARDEN_WORKTREE` | the checkout's folder name (`basename` of the git toplevel) |
+| `WARDEN_BRANCH` | the current branch; absent on a detached HEAD |
+
+Name the dev server after the worktree in expo-dev-launcher's server list and "Recently opened":
+
+```ts
+// app.config.ts
+const worktree = process.env.WARDEN_WORKTREE;
+export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ };
+```
+
 ## Set for batch jobs
 
 `warden batch` and `warden e2e` add these to every job, on top of the `warden run` variables above (details in [e2e scripts](/docs/guides/e2e)):
