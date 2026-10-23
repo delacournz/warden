@@ -63,7 +63,7 @@ function heldByOtherProcess(lease: Lease, opts: EnsureLeaseOptions): boolean {
 }
 
 /**
- * The one lease check for a caller using a device (the PreToolUse hook and `warden ui`), atomically:
+ * The one lease check for a caller using a device (`warden ui`), atomically:
  * own lease → heartbeat (with `exclusive`, one a live warden process holds → `device_busy`); another live
  * owner → `device_foreign`; stale or missing → taken over when `claim`, else `device_not_leased`.
  */

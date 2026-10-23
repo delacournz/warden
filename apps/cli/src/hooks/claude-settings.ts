@@ -7,7 +7,7 @@ export type HookName = "pretool" | "session-end";
 export const RETIRED_HOOKS: readonly HookName[] = ["pretool"];
 
 export type WardenHookSpec = {
-	event: "PreToolUse" | "SessionEnd";
+	event: "SessionEnd";
 	name: HookName;
 	matcher?: string;
 	timeout: number;

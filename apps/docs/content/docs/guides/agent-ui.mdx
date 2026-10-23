@@ -212,7 +212,7 @@ What differs from iOS:
 
 ## Lease rules
 
-`warden ui` checks the lease on every call, in the process, so a missing hook cannot let it touch someone else's device:
+`warden ui` checks the lease on every call, in its own process. There is no PreToolUse hook to install or forget:
 
 - **Your lease:** the call proceeds and heartbeats the lease, so a device you keep driving does not expire.
 - **Another live session's lease:** exit 2 (`device_foreign`). Claim your own device and switch to it.

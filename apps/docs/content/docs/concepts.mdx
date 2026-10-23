@@ -20,7 +20,7 @@ warden works out who is asking:
 | **ci** | `CI`, `GITHUB_RUN_ID` |
 | **user** | the parent shell's pid |
 
-The repo and worktree are recorded with the lease, so `warden ls` and a blocked hook can tell you *which* worktree holds a device.
+The repo and worktree are recorded with the lease, so `warden ls` and a blocked `warden ui` call can tell you *which* worktree holds a device.
 
 ## Liveness
 
