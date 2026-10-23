@@ -8,7 +8,7 @@
 		"dev": "vite dev",
 		"build": "bun run seo:assets && vite build",
 		"seo:assets": "bun run scripts/generate-og.ts",
-		"start": "bun --preload @delacournz/otel-start/preload .output/server/index.mjs",
+		"start": "bun --preload ./src/server/otel-preload.ts .output/server/index.mjs",
 		"fmt": "biome format --write ./src ./scripts",
 		"lint": "biome lint --write ./src ./scripts",
 		"check": "biome check ./src ./scripts",
@@ -17,7 +17,6 @@
 	},
 	"dependencies": {
 		"@delacour/warden-e2e-bench": "workspace:*",
-		"@delacournz/otel-start": "0.1.0",
 		"@fontsource-variable/onest": "^5.3.1",
 		"@fontsource-variable/red-hat-mono": "^5.3.0",
 		"@tanstack/react-router": "1.170.27",
@@ -28,6 +27,10 @@
 		"lucide-react": "^1.31.0",
 		"react": "19.2.3",
 		"react-dom": "19.2.3"
+	},
+	"optionalDependencies": {
+		"@delacournz/otel": "0.1.0",
+		"@delacournz/otel-start": "0.1.0"
 	},
 	"devDependencies": {
 		"@fontsource/onest": "^5.2.0",
