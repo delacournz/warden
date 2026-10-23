@@ -15,6 +15,7 @@ Several agents, Orca worktrees, repos and humans share one Mac's simulators, emu
 - **Liveness**: a lease stays alive while its pid is alive or its heartbeat is within the TTL (default 30 min; a bare `warden claim` by an agent gets 5 min, so only wrappers or `warden heartbeat` hold a device longer). Stale leases are reclaimed on every claim and by `warden gc`.
 - **Devices**: warden creates and reuses its own `warden-<profile>-N` simulators and launches `-read-only` emulators. It never allocates, shuts down or erases a device it didn't create, unless you pass `--adopt`.
 - **Builds**: Expo fingerprint → installed → local cache → EAS → local build. All worktrees of a repo share one cache.
+- **Drive and test**: `warden ui` drives a leased device by hand; `*.e2e.ts` specs run with `warden e2e`, and only the flows a change touches.
 
 ## 30-second tour
 
@@ -28,5 +29,6 @@ warden release --mine --shutdown # done: release + stop sims warden booted
   <Card title="Installation" href="/docs/installation" />
   <Card title="Concepts" href="/docs/concepts" />
   <Card title="Agents" href="/docs/guides/agents" />
+  <Card title="App builds" href="/docs/guides/app-builds" />
   <Card title="CLI reference" href="/docs/reference/cli" />
 </Cards>

@@ -10,8 +10,6 @@ Machine-wide leasing of **iOS simulators, Android emulators, ports and native ap
 
 ## Install
 
-> The npm release of `@delacour/warden` is pending: the commands below are the intended install path and work once the first version is published. Until then, build from source.
-
 ```bash
 npm i -g @delacour/warden && warden install    # or: bun add -g @delacour/warden && warden install
 ```
@@ -67,7 +65,7 @@ For source builds and one-shot installs, `~/.local/bin` must be on `PATH`. Set `
 | **release**: copied by `npx`/`bunx @delacour/warden install` | npm registry: `@delacour/warden/latest` → newer? download `@delacour/warden-<os>-<arch>` → verify sha512 `dist.integrity` → self-check → swap in place |
 | **npm**: `@delacour/warden` via npm / bun / pnpm / npx / bunx | prints the package manager's upgrade command (e.g. `npm i -g @delacour/warden@latest`, `npx @delacour/warden@latest install`) and leaves `node_modules` alone; `--to <path>` still installs a standalone release binary |
 
-The binary is swapped atomically at the same path, so the next `warden` in your current shell runs the new version. No new shell or `source` is needed; if `PATH` resolves `warden` elsewhere, update warns you. Flags: `--check` (report only), `--force`, `--to <path>`, `--json`. Releases come from the private `delacournz/warden` repo through `gh` (auth required). Set `WARDEN_RELEASE_REPO` to use another repo, and `WARDEN_NPM_REGISTRY` to use another npm registry.
+The binary is swapped atomically at the same path, so the next `warden` in your current shell runs the new version. No new shell or `source` is needed; if `PATH` resolves `warden` elsewhere, update warns you. Flags: `--check` (report only), `--release` (install the latest GitHub release; also switches a dev/local build to it), `--force`, `--to <path>`, `--json`. Releases come from the public `delacournz/warden` repo through `gh`. Set `WARDEN_RELEASE_REPO` to use another repo, and `WARDEN_NPM_REGISTRY` to use another npm registry.
 
 ### Releasing
 
@@ -87,7 +85,9 @@ warden release <leaseId> --bad [reason]          # release + quarantine the devi
 warden sim slim <udid> [--restore]               # slim state is recorded; a plain `warden claim` re-enables what a run left slimmed
 warden ls                                        # leases: resource, state, owner, repo/worktree, age, heartbeat
 warden clone <udid|name> [--name x]              # duplicate a shut-down sim into the pool (seconds, no first boot)
-warden golden ensure|ls|prune [--all]            # golden images new sims are cloned from
+warden golden ensure|ls|prune [--all]            # golden iOS images / Android snapshots new devices start from
+warden arrange                                   # tile warden simulator windows in name order (macOS; also runs after iOS claims)
+warden doctor [--json]                           # check home, db, device tools, helper, install method, hooks, stale leases
 warden devices [ios|android]                     # every sim/emulator (booted or not) + AVDs, warden-owned?, leased by (alias: list)
 warden sims [--max-size 40G]                     # disk audit: every sim + runtime, size, owner, lease, what can go
 warden sims prune [--dry-run|--yes]              # delete idle/orphaned/broken warden sims (+ LRU over --max-size)
@@ -102,15 +102,15 @@ warden port release --mine
 
 ### Installing warden in GitHub Actions
 
-The repo is private and the npm package is not required for CI: the release workflow attaches a compiled single-file binary per platform (`warden-darwin-arm64` …, plus `checksums.txt`) to each GitHub release, and a composite action in this repo installs the right one:
+The npm package is not required for CI: the release workflow attaches a compiled single-file binary per platform (`warden-darwin-arm64` …, plus `checksums.txt`) to each GitHub release, and a composite action in this repo installs the right one:
 
 ```yaml
 - uses: delacournz/warden/.github/actions/install-warden@main
   with:
-    token: ${{ secrets.WARDEN_RELEASE_TOKEN }}   # optional pin: version: v0.1.0
+    token: ${{ github.token }}   # optional pin: version: v0.1.0
 ```
 
-`WARDEN_RELEASE_TOKEN` is a fine-grained PAT (or GitHub App token) with **Contents: read** on `delacournz/warden`; the default `GITHUB_TOKEN` of another repo cannot read it. For `uses:` itself to resolve, allow it under warden's Settings → Actions → General → Access ("accessible from repositories in the delacournz organization"). The action verifies the sha256 and puts `warden` on `PATH`. A bare script works too: `gh release download --repo delacournz/warden --pattern warden-darwin-arm64 --pattern checksums.txt`.
+`token` is required by the action (it drives `gh`); the workflow's own `github.token` is enough because the repo is public, so no PAT and no Actions access setting are needed. The action verifies the sha256 and puts `warden` on `PATH`. A bare script works too: `gh release download --repo delacournz/warden --pattern warden-darwin-arm64 --pattern checksums.txt`.
 
 A clean macOS runner needs no prior state: the `--profile` is created on claim (cloned from a golden image that is built on first use, about a minute or two; cache `~/Library/Developer/CoreSimulator/Devices` between runs to keep it) and falls back to `simctl create`. The runner must have the iOS runtime installed.
 
@@ -205,7 +205,7 @@ Flows are `*.e2e.ts` specs written with `@delacour/warden-e2e` (`bun add -d @del
 
 ### Benchmarks
 
-`packages/e2e-bench` runs the same 8-test suite through warden, Maestro, Argent, agent-device, tester.army and Detox on one leased device and writes a Markdown + HTML report (suite and per-test timings, cold start, resources, residue).
+`packages/e2e-bench` runs the same 8-test suite through warden, Maestro, Detox and the retired Argent, agent-device and tester.army on one leased device and writes a Markdown + HTML report (suite and per-test timings, cold start, resources, residue).
 
 ```bash
 bun run bench doctor && bun run bench run --platform ios --runs 3

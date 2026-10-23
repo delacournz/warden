@@ -44,7 +44,7 @@ A line is `@ref [role] "name" id=<testID> value="…" <states> (x,y w×h)`. Stat
 |---|---|
 | `snapshot [-i\|--interactive] [--all] [--depth n]` | the screen. `-i` filters to interactive elements and `testID`s; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels |
 | `snapshot --settle [ms]` | wait for a quiet screen (the tree hash is unchanged for 250 ms; default budget 3000 ms), then print what changed against the previous snapshot as `-` / `+` lines and a `= N unchanged` count |
-| `find <selector…>` | only the elements matching a [selector](#selectors), each with a fresh `@eN` |
+| `find <selector…>` | only the elements matching a [selector](#targets-and-selectors), each with a fresh `@eN` |
 | `screen screenshot [path]` | a PNG; default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
 | `screen video start [path]` · `screen video stop` | record the screen (iOS `simctl recordVideo`, Android `screenrecord`, 3 min device limit); default `$WARDEN_HOME/ui/<udid>/videos/NNN.mp4` |
 
@@ -110,7 +110,7 @@ These poll the live screen every 100 ms for the first second, then every 250 ms 
 | `wait absent <selector>` | until no match is visible |
 | `wait text "…"` | until that text is visible |
 | `wait stable [ms]` | until the screen has stopped changing for that long (default 250 ms) |
-| `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` | prints `true` / `false`; exit 0 when true, 1 when false or nothing matches: usable in a shell `if` (`--json`: `{ matched, state, reason? }`) |
+| `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` | prints `true` / `false`; exit 0 when true, 1 when false or nothing matches: usable in a shell `if` (`--json`: `{ matched, state, element?, waitedMs, reason? }`) |
 | `get <selector> text\|value\|label\|id\|role\|frame\|count` | print one bare value (`frame` as `x y w h`; `count`: how many match, `0` is a success); no match is `target_not_found` |
 
 A `wait` that runs out fails (exit 1) with `wait_target_absent` (never in the tree), `wait_target_hidden` (in the tree, not visible), `wait_target_present` (`absent`: still visible), `wait_text_absent` or `wait_not_stable`. `--json` failures carry `details: { matched: false, waitedMs, reason }`. Into an active flow, `wait <selector>` (as a visible check), `is` and `get` (a text property) are recorded; `wait absent|text|stable` are not.
@@ -133,7 +133,8 @@ For a dev client launched with `open --metro <url>`. A release build, or a dev c
 Two things to know:
 
 - Without a running collector, `logs` and `network` read the files of the previous run, not the live app. Run `logs start` first, then interact.
-- A collector started before the app was restarted (`open --relaunch`, a crash, a rebuild) gives up after ten reconnect attempts and ends as `lost`. Run `logs start` again after the restart.
+- A collector started before the app was restarted (`open --relaunch`, a crash, a rebuild) gives up after a 30 s reconnect budget and ends as `lost`. Run `logs start` again after the restart.
+- The collector also stops by itself after 60 s without a console line or `fetch` call. Run `logs start` again before the next action.
 
 ## Flows
 
@@ -166,7 +167,7 @@ A `scroll` or a direction `gesture swipe` step in a flow: `scroll` names the **c
 |---|---|---|
 | 0 | ok | |
 | 1 | failed or bad usage | `failed`, `usage`, `target_not_found`, `no_alert`, `wait_target_absent`, `wait_target_hidden`, `wait_target_present`, `wait_text_absent`, `wait_not_stable`, `replay_divergence` |
-| 2 | lease problem | `device_foreign`, `device_not_leased`, `no_device_leased`, `ambiguous_device`, `lease_not_found` |
+| 2 | lease problem | `device_foreign`, `device_busy`, `device_not_leased`, `no_device_leased`, `ambiguous_device`, `lease_not_found` |
 | 3 | engine unavailable | `engine_unavailable` (the iOS helper or `adb` cannot be reached), `devtools_unavailable` (no dev client or Metro) |
 | 4 | stale ref | `stale_ref`: take a new snapshot |
 | 130 | interrupted | `interrupted` |
@@ -188,7 +189,7 @@ Same commands, same refs and selectors; name the emulator with `--serial <serial
 
 What differs from iOS:
 
-- **Snapshots come from `warden-uiad`, else `uiautomator dump`.** Each command starts a small UiAutomation server on the emulator (a ~27 KB program written to `/data/local/tmp`, started in about 100 ms, gone when the command ends) and reads the tree from it in 10-40 ms; `WARDEN_ANDROID_UIAD=0`, Android older than 8, or a device it cannot run on use the dump below instead. Roles come from the view class (`Button`, `EditText`, `TextView`, clickable `ViewGroup` becomes `button`), `id=` is the `resource-id` (or React Native `testID`) without its package prefix. `hittable` is derived (clickable, enabled, on screen). Where a dump may be written differs between images, so the first snapshot probes three routes (`/dev/stdout`, `exec-out … /dev/tty`, a file on `/sdcard`) and remembers the one that worked in `$WARDEN_HOME/ui/<serial>/android-dump-route`; later calls start there. A dump that comes back empty (`null root node`, common while a window opens) is retried 3 times, 400 ms apart, before `E_AX_UNAVAILABLE` (exit 3).
+- **Snapshots come from `warden-uiad`, else `uiautomator dump`.** Each command starts a small UiAutomation server on the emulator (a ~27 KB program written to `/data/local/tmp`, started in about 100 ms, gone when the command ends) and reads the tree from it in 10-40 ms; `WARDEN_ANDROID_UIAD=0`, Android older than 8, or a device it cannot run on use the dump below instead. Roles come from the view class (`Button`, `EditText`, `TextView`, clickable `ViewGroup` becomes `button`), `id=` is the `resource-id` (or React Native `testID`) without its package prefix. `hittable` is derived (clickable, enabled, on screen). Where a dump may be written differs between images, so the first snapshot probes three routes (`/dev/stdout`, `exec-out … /dev/tty`, a file on `/sdcard`) and remembers the one that worked in `$WARDEN_HOME/android/<serial>.json`; later calls start there. A dump that comes back empty (`null root node`, common while a window opens) is retried 3 times, 400 ms apart, before `E_AX_UNAVAILABLE` (exit 3).
 - **Speed.** With the server a warm snapshot is 10-40 ms and a press about 30 ms, plus about 100 ms once per command to start it (on a heavily loaded machine, load average 50-170, a snapshot still took under 200 ms). Without it `warden ui bench` targets p50 800 ms for a warm snapshot and 120 ms for a press: a dump is a process start inside the emulator, and on that machine the same emulator gave snapshot p50 2.4 s and press p50 94 ms; the first call on a device is slower still while the dump routes are probed. Check `bench` on a quiet machine before trusting a number.
 - **`fill`** taps the field, selects its text and deletes it (the server selects it whole; without the server one batched `input keyevent 67 …` call), types the text (the server inserts it into the focused field, any characters; without it `input text`, where spaces, quotes and `%s` are escaped and a `%` before a space or `s` is split into a second call) and reads the value back with the same polling as iOS. Secure fields type but are not read back.
 - `back`, `home`, `screen rotate` and `screen appearance` (`cmd uimode`) work; `alert` reads `AlertDialog` and runtime-permission buttons.

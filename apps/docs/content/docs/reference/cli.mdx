@@ -64,6 +64,7 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--app` | install the project's app on each device first |
 | `--project <dir>` | `--app`: project directory (default: cwd) |
 | `--bundle-id <id>` | `--app`: override the bundle id / package |
+| `--variant <name>` | `--app`: install this `projects[].variants` build (`dev`, `e2e`…) |
 | `--no-eas` / `--no-build` | `--app`: skip EAS downloads / local builds |
 | `--install-mode <clean\|reinstall>` | `--app`: `clean` = fresh app data each run without reinstalling an unchanged build (falls back to reinstall if the reset fails); `reinstall` = uninstall + install each run. Default: install only when the build differs |
 | `--reset-keychain` | `--install-mode`: also reset the iOS simulator's keychain (not cleared by uninstall either) |
@@ -85,7 +86,7 @@ Claim devices and fan a job queue out over them, one worker per device; the comm
 | `--serve-timeout <duration>` | give up waiting for `--serve-ready` (default `10m`) |
 | `--job-timeout <duration>` | a job still running after this is screenshotted, killed and failed (exit 124); off by default |
 | `--record <dir>` | iOS: record every simulator and the TUI (`batch.json`, `tui.cast`, `dev-<i>.mp4`) |
-| `--logs <dir>` | per-job logs |
+| `--logs <dir>` | per-job logs (default: `<record dir>/logs`, else `$WARDEN_HOME/batches/<id>/logs`) |
 | `--no-tui` | plain log lines instead of the live grid |
 
 With `--headless` (or the preset's `headless`), the leased sims' windows are closed at claim and again before the first job, serve and jobs get `WARDEN_HEADLESS=1`, and `batch.json` has `"headless": true`. `--label` also labels the port leases (default `warden batch`). With fewer jobs than `--count`, only one device per job is claimed.
@@ -122,13 +123,13 @@ List the flows of `e2e.<suite>` (optional with one suite) that the changes since
 | `--required-only` | only `required` flows |
 | `--explain` | why each flow was picked, with the import chain |
 | `--strict` | exit 3 when a changed file reaches no flow |
-| `--json` | selections, reasons, skipped and unreached files |
+| `--json` | `{ suite, base?, changes, platforms: [{ platform, selected (each flow with its reasons), skipped, unreached, warnings }], warnings }` |
 
 Following `entries` through the import graph needs TypeScript 5.0 or later: the compiled binary uses the project's own, the nearest `node_modules/typescript` from the config's directory upward (Yarn Plug'n'Play is not supported); without one the run exits 1 naming that path. See [Affected e2e](/docs/guides/affected-e2e).
 
 ### `warden e2e [suite]`
 
-Select like `warden affected`, then run the flows like `warden batch` — each flow as a `bun test` spec process (`@delacour/warden-e2e`, configured by the suite's `spec`) — and gate: exit 0 when every required flow passed, 1 otherwise, 130 when interrupted. Takes every `batch` flag except the job flags, the `affected` selection flags, plus:
+Select like `warden affected`, then run the flows like `warden batch` — each flow as a `bun test` spec process (`@delacour/warden-e2e`, configured by the suite's `spec`) — and gate: exit 0 when every required flow passed, 1 otherwise, 130 when interrupted. Takes every `batch` flag except the job flags (`--jobs`, `--jobs-from`), plus the `affected` selection flags (`--base`, `--platform`, `--files`, `--required-only`, `--explain`) and:
 
 With no `e2e` suite configured (and none named), the Expo app around the cwd gets a default suite: every `*.e2e.ts` spec under `e2e/`, one `@delacour/warden-e2e` spec process per device (`isolate: "device"`) over a pool of 2 simulators (`--count`), the dev client (the `dev` variant when the project has one) on a Metro warden starts, opened with the Expo dev menu off. No git diff is involved. `warden init` writes this suite into `warden.config.ts`.
 
@@ -238,7 +239,7 @@ Duplicate a shut-down iOS simulator (udid or name) into warden's pool. `--name` 
 
 ### `warden golden ensure | ls | prune`
 
-Golden iOS images new sims are cloned from. `ensure [--profile] [--runtime]` builds once or reuses; `prune` deletes stale goldens (`--all` every golden, `-y` skips the prompt). See [Golden images](/docs/guides/golden-images).
+Golden iOS images / Android snapshots new devices start from. All three take `--platform ios|android` (default `ios`). `ensure [--profile] [--runtime]` builds once or reuses (profile default `iphone-17`; Android: first AVD); `ls` lists them; `prune` deletes stale goldens (`--all` every golden, `-y` skips the prompt before `--all`). See [Golden images](/docs/guides/golden-images).
 
 ### `warden check`
 
@@ -258,6 +259,10 @@ Reclaim stale leases and shut down unleased warden devices idle for `--idle` (de
 
 `--from` (8091), `--span` (20), `--count` (1), `--ttl` (30m), `--label`. Prints one port per line. See [Ports](/docs/guides/ports).
 
+### `warden port ls`
+
+List port leases.
+
 ### `warden port release [ports...]`
 
 By port, `--lease <id...>` or `--mine`. `--force` releases leases held by someone else.
@@ -274,7 +279,7 @@ Install the build matching the fingerprint on a device (`--lease <id>` or `--udi
 
 ### `warden dev [platform] [-- <expo start args>]`
 
-The worktree-friendly `expo run:*`; the platform defaults to `ios`. Before leasing anything it checks that the project has a bundle id for the platform and lists `expo-dev-client`, and names the fix. Uses the device of `--udid` / `--lease` / your single lease, else claims one (claim options apply). Ensures the `dev` variant's build (or the project's own when it has no `dev`; `--variant` to pick, which must exist), leases a Metro port (`--port`, default `8081:100`) and runs `bunx expo start --dev-client --port <p>` in the project root.
+The worktree-friendly `expo run:*`; the platform defaults to `ios`. Before leasing anything it checks that the project has a bundle id for the platform and lists `expo-dev-client`, and names the fix. One device only: `--count` other than 1 fails with `warden dev runs on one device (drop --count)`. Uses the device of `--udid` / `--lease` / your single lease, else claims one (claim options apply). Ensures the `dev` variant's build (or the project's own when it has no `dev`; `--variant` to pick, which must exist), leases a Metro port (`--port`, default `8081:100`) and runs `bunx expo start --dev-client --port <p>` in the project root.
 
 Metro counts as ready (`--ready-timeout`, default `2m`) only once `/status` on that port is proven to serve **this** project root (the `X-React-Native-Project-Root` header, else the listening process's cwd). Another checkout's Metro on the port fails the command with `port <p> is served by <dir>, not this worktree` instead of being attached to.
 
@@ -323,10 +328,10 @@ Exit codes: 0 ok · 1 failed or usage · 2 lease · 3 engine unavailable (`engin
 | `gesture swipe <dir\|x1 y1 x2 y2>` · `gesture longpress <target> [ms]` | `swipe --from <target>`; `longpress`: `--verify`, `--settle [ms]` |
 | `gesture pinch [target] <scale>` · `gesture rotate [target] <degrees>` | two fingers around the target or the screen centre; `--duration <ms>` (default 500), `--radius <px>`, `--verify`, `--settle [ms]`; `scale` above 1 zooms in (0.1 to 10, not 1), positive `degrees` is clockwise (negative works; not 0, at most 720) |
 | `gesture path --path 'x,y x,y …' [--path …]` | 1-2 fingers (each path at least 2 points) that go down and lift together; `--duration <ms>` (default 600), `--settle [ms]`; coordinates in points (iOS) or px (Android). Two fingers on Android need `warden-uiad` |
+| `eval <expr>` · `tree` · `logs` · `network` · `reload` | dev client only (`--metro <url>`): `eval --await`; `tree --all --max <n> --screen <name>`; `logs [n]\|start [--bodies]\|stop\|mark <label>\|clear`; `network [n]` (default 50) `--include headers,body --id <id>`; `eval`, `tree`, `logs` and `reload` take `--metro <url>` (default: `WARDEN_METRO_URL`, `state.json`, then this owner's leased ports) |
+| `record start <name> [--out file]\|stop\|status` (default file `.warden-ui/<name>.flow.json`) · `replay <file>` · `export <file> --to <spec>` | `replay`: `--from <i>`, `--update-snapshots`, `--settle [ms]`; `export`: `--to <spec>` (required), `--ids <module>`, `--force` (overwrite an existing spec) |
 
 The old top-level `rotate`, `appearance`, `screenshot`, `video`, `swipe` and `longpress` are removed (unknown command, no aliases).
-| `eval <expr>` · `tree` · `logs` · `network` · `reload` | dev client only (`--metro <url>`): `eval --await`; `tree --all --max <n> --screen <name>`; `logs [n]\|start [--bodies]\|stop\|mark <label>\|clear`; `network [n] --include headers,body --id <id>` |
-| `record start <name> [--out file]\|stop\|status` · `replay <file>` · `export <file> --to <spec>` | `replay`: `--from <i>`, `--update-snapshots`, `--settle [ms]`; `export`: `--ids <module>`, `--force` |
 
 ### `warden ui bench`
 
@@ -347,13 +352,13 @@ A metric passes up to its target times 1.5 (`ok` in the JSON; a loaded machine s
 
 ### `warden install`
 
-Install warden to `~/.local/bin` plus hooks for detected agents. `--claude`, `--codex`, `-y/--yes`, `--dry-run`, `--shim` (running from source: link `~/.local/bin/warden` to this checkout).
+Install warden to `~/.local/bin` plus hooks for detected agents (default: every detected agent). `--claude`, `--codex`, `-y/--yes` (apply agent-config changes without asking), `--dry-run` (show diffs, write nothing), `--shim` (running from source: link `~/.local/bin/warden` to this checkout), `--json` (diffs go to stderr).
 
 ### `warden skill show | install`
 
-`show [--file <name>]` prints SKILL.md, or one file of the skill folder such as `references/ui.md`. `warden install --claude` stages the embedded skill in `$WARDEN_HOME/skill/warden/` and installs it with the same `skills add` command.
+`show [--file <name>] [--json]` prints SKILL.md, or one file of the skill folder such as `references/ui.md`. `warden install --claude` stages the embedded skill in `$WARDEN_HOME/skill/warden/` and installs it with the same `skills add` command.
 
-`install --from local|github`, `--project`, `-a/--agent <agent...>`, `--copy`, `-y`, `--dry-run`.
+`install` runs `bunx skills add` (npx fallback): `--from local|github` (default `local`: this binary's embedded copy; `github` is the updatable release repo), `--project` (default: global), `-a/--agent <agent...>`, `--copy` (copy instead of symlink), `-y`, `--dry-run` (print the command, run nothing), `--json`.
 
 ### `warden hook session-end`
 

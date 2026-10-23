@@ -31,12 +31,12 @@ The package is a small node shim plus one prebuilt binary per platform (`@delaco
 ### Choose agents
 
 ```bash
-warden install            # binary + hooks for every detected agent; shows a diff, asks first
-warden install --claude   # force Claude Code only: skill (via `skills add`) + rule + SessionEnd hook
+warden install            # binary + skill, rule and hooks for every detected agent
+warden install --claude   # force Claude Code only: skill (via `skills add`) + rule + SessionEnd hook in ~/.claude/settings.json
 warden install --codex    # force Codex only: hooks in $CODEX_HOME/hooks.json
 ```
 
-Every agent-config change shows a diff and asks first. `--yes` skips the prompt, `--dry-run` only prints, and a non-TTY without `--yes` skips. Merges are idempotent and keep all other config. See [Agents](/docs/guides/agents) for what gets installed.
+Agents are detected from `~/.claude` / `claude` on `PATH` and `$CODEX_HOME` (`~/.codex`) / `codex` on `PATH`; with none found only the binary is installed. Edits to `~/.claude/settings.json` and Codex `hooks.json` show a diff and ask first: `--yes` skips the prompt, and a non-TTY without `--yes` skips the step. The Claude rule `~/.claude/rules/warden.md` is written directly, and the skill is placed by the `skills` CLI (it may prompt; `--yes` is passed through). `--dry-run` only prints. Merges are idempotent and keep all other config. After a first Codex install, run `/hooks` in Codex to trust the new hook. See [Agents](/docs/guides/agents) for what gets installed.
 
 </Step>
 <Step>
@@ -47,7 +47,7 @@ Every agent-config change shows a diff and asks first. `--yes` skips the prompt,
 warden doctor
 ```
 
-`doctor` checks warden's home, the db, device tools (`xcrun simctl`, `adb`, `emulator`), how warden was installed (and how to upgrade it), `PATH`, Claude/Codex hooks, skill and rule, and stale leases.
+`doctor` checks warden's home, the db, device tools (`xcrun simctl`, `adb`, `emulator`), how warden was installed (and how to upgrade it), `ccache` (for native iOS builds), the iOS simulator helper `warden-simd` (`warden doctor --fetch-helper` downloads it for this version when a standalone or self-updated binary has none), `PATH`, Claude/Codex hooks, skill and rule, and stale leases. Only a failing home or db makes it exit 1; everything else warns. `--json` for machines.
 
 </Step>
 </Steps>

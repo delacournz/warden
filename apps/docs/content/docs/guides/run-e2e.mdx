@@ -12,11 +12,11 @@ That is the whole run. No device to pick, no port to export, no bundler to start
 
 ## Try it on the example app
 
-`apps/example` in the warden repo carries two suites over the same five flows:
+`apps/example` in the warden repo carries two suites over the same seven flows:
 
 | Suite | Build | Metro | Spec processes |
 |---|---|---|---|
-| `example` | Release, JS embedded | none | one `bun test` per flow |
+| `example` | Release, JS embedded | none | one `bun test` per device, each running its share of the flows |
 | `example-dev` | Debug dev client | warden's, on a leased port | one `bun test` per device, each running its share of the flows |
 
 ```bash
@@ -81,8 +81,8 @@ When the run ends, every failed flow is listed with its failing tests, the first
 |---|---|
 | verdict per flow, and per test (`tests[]`) | stdout, and `e2e-report.json` in the batch dir (`--json` prints it) |
 | every test's status, duration and error | `<batchDir>/e2e/<worker>-<seq>/results.jsonl` |
-| a failed test's evidence | `<batchDir>/e2e/<worker>-<seq>/<flow>/<test>-<hash>/`: `failure.png`, `screen-at-failure.txt` (the full accessibility tree), `trace.jsonl` |
-| a spec process's output | `<batchDir>/logs/<worker>-<seq>-<job>.log`, screenshot next to it |
+| a failed test's evidence | `<batchDir>/e2e/<worker>-<seq>/<flow>/<test>-<hash>/`: `failure.png`, `screen-at-failure.txt` (the full accessibility tree), `trace.jsonl`, plus `console.jsonl` / `network.jsonl` when devtools were attached |
+| a spec process's output | `<batchDir>/logs/<worker>-<seq>-<job>.log` (`<job>` is `shard-<k>` under device isolation, the flow id with `isolate: "flow"`), screenshot next to it |
 | Metro's output | `<batchDir>/metro.log` |
 | a device's driver warm-up | `<batchDir>/logs/warm-<worker>.log` |
 | a device that keeps failing | `warden release <leaseId> --bad "<why>"` keeps it out of the pool |
@@ -90,6 +90,8 @@ When the run ends, every failed flow is listed with its failing tests, the first
 `e2e-report.json` gives each flow `verdict`, `attempts` and `tests[]` (`title`, `status`, `durationMs`, `error`, `artifacts`). A flow fails when any of its tests failed or timed out, or its process exited non-zero. When a process wrote no `results.jsonl` at all (a crash before the first test), the verdict falls back to the exit code with a warning. Under `CI`, a `test.only` left in a spec fails the run and is listed under `only`.
 
 As soon as each device is leased, warden starts its iOS driver helper and takes one accessibility snapshot (`warmDrivers`, on by default), while the app installs and Metro builds, so the first spec on a device does not pay the cold start. Jobs get `WARDEN_SIMD_SOCKET` and connect in milliseconds. `warmDrivers: false` on the suite, or `--no-warm`, turns it off; a failed warm-up only warns.
+
+Exit code: 0 when every required flow passed (optional failures are reported, not fatal), 1 otherwise or on a setup error, 130 when interrupted. Nothing selected exits 0 without claiming a device. With no `e2e` suites configured and none named, `warden e2e` runs every `e2e/*.e2e.ts` flow of the Expo app around the current directory on the dev client with warden's Metro (2 sims); `warden init` scaffolds it.
 
 ## Don't
 

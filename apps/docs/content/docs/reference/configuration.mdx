@@ -34,16 +34,16 @@ import type { WardenConfig } from "@delacour/warden/config";
 export default { batches: { smoke: { platform: "ios", cmd: ["true"] } } } satisfies WardenConfig;
 ```
 
-The section types are exported too: `WardenProject`, `WardenBatchPreset`, `WardenE2eSuite`, `WardenE2eFlow`.
+The section types are exported too: `WardenConfig`, `WardenProject`, `WardenBatchPreset`, `WardenE2eSuite`, `WardenE2eFlow`, `WardenE2eMetro`, `WardenE2eSpec`, `WardenE2eDeviceLeg`, `WardenAppOption`.
 
 ## Top level
 
-Besides `projects`, `batches` and `e2e`:
+Besides `projects`, `batches` and `e2e`, the top level takes:
 
 <TypeTable
   type={{
     headless: { type: "boolean", description: "iOS: close the Simulator.app windows of every device an `e2e` suite or `batches` preset leases. The default for those that don't set their own `headless`. `--headless` / `--no-headless` override it; `WARDEN_HEADLESS=1` applies only when it's unset. `warden dev` ignores it. See [Headless e2e](/docs/guides/headless).", default: "false" },
-    "android.snapshot": { type: "boolean", description: "Android: launch claimed emulators from warden's quick-boot snapshot of the AVD when it exists; `warden gc` builds it once per AVD from one writable cold boot while the AVD is idle (never under `CI`), and `false` means warden never boots your AVD writable (see [Golden images](/docs/guides/golden-images#android-wardens-quick-boot-snapshot)). `WARDEN_ANDROID_SNAPSHOT=0` / `=1` override it.", default: "true" },
+    "android.snapshot": { type: "boolean", description: "The only key of the `android` section. Android: launch claimed emulators from warden's quick-boot snapshot of the AVD when it exists; `warden gc` builds it once per AVD from one writable cold boot while the AVD is idle (never under `CI`), and `false` means warden never boots your AVD writable (see [Golden images](/docs/guides/golden-images#android-wardens-quick-boot-snapshot)). `WARDEN_ANDROID_SNAPSHOT=0` / `=1` override it.", default: "true" },
   }}
 />
 
@@ -67,22 +67,23 @@ export default defineConfig({
 <TypeTable
   type={{
     name: { type: "string", description: "Project name, used in the cache key." },
-    root: { type: "string", description: "Project directory, relative to the repo root." },
-    bundleId: { type: "{ ios?: string; android?: string }", description: "Bundle id / package. Required for a dynamic app.config." },
+    root: { type: "string", description: "Project directory, relative to the config file.", default: '"."' },
+    bundleId: { type: "{ ios?: string; android?: string }", description: "Bundle id / package per platform. The key is required (`{}` is accepted); the values are needed for a dynamic app.config." },
     "fingerprint.command": { type: "string", description: "Command that prints the native fingerprint. `{platform}` is substituted. Default: `@expo/fingerprint`." },
     "fingerprint.include": { type: '"native" | "native+js"', description: "What the cache / install key covers. `native+js` adds a content hash of `jsInputs`, for Release builds that embed the JS bundle.", default: '"native"' },
     "fingerprint.jsInputs": { type: "string[]", description: "Required with `native+js`. Globs, relative to the project root, of the JS sources. A glob starting with `../` reaches outside the project (a workspace package the bundle embeds, e.g. `../../../packages/engine/src/**`). Only git-tracked and untracked-not-ignored files count." },
-    "eas.profile": { type: "string", description: "EAS build profile to look up builds under." },
+    "eas.profile": { type: "string", description: "EAS build profile to look up builds under. Without an `eas` section, EAS is used only when the project has an `eas.json` (this profile, no trigger).", default: '"development-simulator"' },
     "eas.workflow": { type: "string", description: "EAS workflow file to trigger on a miss." },
     "eas.trigger": { type: "boolean", description: "Trigger the workflow when no EAS build matches.", default: "false" },
     build: { type: "{ ios?: string; android?: string; configuration?: \"Debug\" | \"Release\"; cache?: boolean }", description: "Local build command per platform, used as the last resort." },
     "build.configuration": { type: '"Debug" | "Release"', description: "Which build a local build produces. Sets the artifact search (`<Config>-iphonesimulator`, `apk/release`) and, unless `build.<platform>` is set, the default command (`--configuration Release` / `--variant release`).", default: '"Debug"' },
     "build.cache": { type: "boolean", description: "Shared compiler caches for local builds: ccache (`$WARDEN_HOME/ccache`, `CCACHE_BASEDIR` = git toplevel, so worktrees hit each other's objects), Xcode 26 compilation caching, Gradle build cache. `false` turns them off.", default: "true" },
-    variants: { type: "Record<string, { fingerprint?; eas?; build? }>", description: "Named builds (`dev`, `e2e`…) picked with `--variant`, `app: { variant }`, or `warden dev` (uses `dev` when present). Each key a variant sets replaces the project's own wholesale. Every variant has its own cache key." },
+    cacheDirs: { type: "string[]", description: "Extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand. `~` expands to `$HOME`; relative paths resolve against the project root." },
+    variants: { type: "Record<string, { fingerprint?; eas?; build? }>", description: "Named builds (`dev`, `e2e`…) picked with `--variant`, `app: { variant }`, or `warden dev` (uses `dev` when present). A variant takes `fingerprint`, `eas` and `build`; each key it sets replaces the project's own wholesale. Every variant has its own cache key." },
   }}
 />
 
-The file needs at least one of `projects`, `batches` and `e2e`. With only `batches`, app builds fall back to detecting `app.json` / `app.config.*`.
+The file needs at least one of `projects`, `batches` and `e2e`. Without `projects`, app builds fall back to detecting `app.json` / `app.config.*`. With several projects, the one whose root contains the cwd is picked (deepest wins), else pass `--project`.
 
 ## Batches
 
@@ -119,11 +120,11 @@ The preset's cwd is its project's root, or the config file's directory when ther
     count: { type: "number", description: "Devices to claim.", default: "1" },
     max: { type: "number", description: "Max warden devices of this profile." },
     profile: { type: "string", description: "Device profile, e.g. `iphone-17`." },
-    runtime: { type: "string", description: "Runtime, e.g. `latest`, `26.5`." },
+    runtime: { type: "string", description: "Runtime, e.g. `latest`." },
     label: { type: "string", description: "Label on the device and port leases.", default: "the preset name" },
-    ttl: { type: "string", description: "Lease TTL without heartbeat.", default: "30m" },
-    wait: { type: "string", description: "Wait this long for free devices." },
-    ports: { type: "string[]", description: "`FROM:SPAN` port specs (`WARDEN_PORT_<i>`)." },
+    ttl: { type: "string", description: "Lease TTL without heartbeat (`30s`, `10m`, `2h`).", default: "30m" },
+    wait: { type: "string", description: "Wait this long for free devices (`30s`, `10m`, `2h`)." },
+    ports: { type: "string[]", description: "`FROM[:SPAN]` port specs (`WARDEN_PORT_<i>`)." },
     app: { type: "boolean | { installMode?: 'clean' | 'reinstall'; resetKeychain?: boolean; variant?: string }", description: "Ensure the app on every device first (`WARDEN_APP_PATH` / `WARDEN_APP_HASH` in serve and job env). Default: install only when the build differs (kept data). `{ installMode: \"clean\" }` = fresh app data each run without reinstalling an unchanged build (iOS: terminate, defaults delete, wipe data + app-group containers, privacy reset; Android: `pm clear`; falls back to reinstall if the reset fails); `{ installMode: \"reinstall\" }` = uninstall + install each run; `resetKeychain: true` (needs `installMode`) also resets the iOS sim keychain. `{ clean: true }` is a deprecated alias of reinstall. `{ variant }` installs that `projects[].variants` build." },
     retry: { type: "number", description: "Re-run a failed job up to N times on the same device.", default: "0" },
     passes: { type: "number", description: "A job passes only after N consecutive green runs on its device.", default: "1" },
@@ -170,11 +171,11 @@ export default defineConfig({
     flowsDir: { type: "string", description: "Required. Directory of flows: `*.e2e.ts(x)` specs (other `.ts` files there are helpers; a helper change selects every flow importing it). Searched recursively; dot dirs, `node_modules` and `__baselines__` skipped." },
     spec: { type: "{ bundleId?; launchArgs?; timeout?; actionTimeout?; assertionTimeout? }", description: "How `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`, see [Write e2e specs](/docs/guides/specs)). `bundleId`: the app under test (default: the suite project's `bundleId` for the platform). `launchArgs`: passed by `app.open()` after `--initialUrl <metro url>` and `metro.launchArgs`. `timeout` (default `\"2m\"`): per test. `actionTimeout` (default `\"30s\"`): per tap, fill or wait for an element. `assertionTimeout` (default `\"5s\"`): polling timeout of `expect(locator)`. The specs run in the suite's `project` root, else the config file's directory." },
     runner: { type: "removed", description: "Setting it fails validation: `e2e.<suite>.runner was removed: flows run with @delacour/warden-e2e, see spec`. Move the app, launch arguments and timeouts into `spec`; there is no runner argv or `{…}` placeholder substitution any more." },
-    isolate: { type: '"device" | "flow"', description: "`device`: one `bun test` process per device runs its share of the flows (sharded round-robin by flow id), so a device's specs run in order in one process and the devices run in parallel; start-up is paid once per device. Every flow still gets its own verdict from `results.jsonl`, and a retry reruns only the flows that did not pass. `flow`: one process per flow, one worker per device: each flow starts fresh and the devices share the flows dynamically. `device` is not allowed with `passes` > 1.", default: '"device" ("flow" when `passes` > 1)' },
+    isolate: { type: '"device" | "flow"', description: "`device`: one `bun test` process per device runs its share of the flows (sharded round-robin by flow id), so a device's specs run in order in one process and the devices run in parallel; start-up is paid once per device. Every flow still gets its own verdict from `results.jsonl`, and a retry reruns only the flows that did not pass. `flow`: one process per flow, one worker per device: slower (each process pays bun's start, the preload and a driver connect), but a flow never sees what the one before left behind, and the devices share the flows dynamically. `device` is not allowed with `passes` > 1.", default: '"device" ("flow" when `passes` > 1)' },
     mode: { type: '"per-flow" | "single"', description: "The old spelling of `isolate`: `single` is `device`, `per-flow` is `flow`. Deprecated.", default: "unset" },
     shutdown: { type: '"always" | "idle"', description: "What a passed gate does to the devices warden created or booted for the run. `always`: shut them down before releasing. `idle`: leave them booted so the next run skips the 10-30 s boot, and let `warden gc` shut them down once they have been idle for 20 min. A failed run always leaves them up. `--no-shutdown` wins.", default: '"idle" locally, "always" when `CI` is set' },
     jobTimeoutMs: { type: "number", description: "Per flow: a spec process still going after this many milliseconds for each flow it runs (one flow, or a device's share with `isolate: \"device\"`) is screenshotted, killed (SIGTERM, SIGKILL 5 s later, whole process group) and counted as failed (exit 124). `--job-timeout` overrides.", default: "600000" },
-    devices: { type: "{ profile; count?; env?; default? }[]", description: "Device legs, replacing `profile` / `count`: each claims its own pool (`count`, default 1) and runs the selected flows concurrently with the others, with its `env` added and only its own devices in `WARDEN_UDIDS`. `default: false` legs run only with `--devices all` or `--devices <profile>`." },
+    devices: { type: "{ profile; count?; env?; default? }[]", description: "Device legs, replacing `profile` / `count`: each claims its own pool (`count`, default 1) and runs the selected flows concurrently with the others, with its `env` added and only its own devices in `WARDEN_UDIDS`. `default: false` legs run only with `--devices all` or `--devices <profile>`. `profile` is required and names the leg (`{leg}`, `WARDEN_LEG`)." },
     metro: { type: "{ enabled?; port?; launchArgs?; open?; env?; prewarm?; readyTimeout? }", description: "Dev-client suites: warden starts one Metro for the run; see below." },
     platform: { type: '"ios" | "android"', description: "Default platform. Without it `warden affected` reports both and `warden e2e` needs `--platform`." },
     base: { type: "string", description: "Ref changes are measured against (merge-base with HEAD).", default: '"main"' },

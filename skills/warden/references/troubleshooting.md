@@ -15,7 +15,7 @@
 | 9 | Dropped characters | Key pacing too fast, or keys sent while focus was still moving to the field (iOS: first letters lost or moved, `"Hllo"`) | Never lower `WARDEN_SIMD_PACE_MS` / `WARDEN_SIMD_HOLD_MS`. `fill` (spec, `warden ui`, flows) and spec `type` / `press` wait for the field to report `focused`; by hand, `press` the field then `is <sel> focused` before `type`. `fill` verifies and retries |
 | 10 | App back at Welcome mid-test | Native crash | Read `~/Library/Logs/DiagnosticReports/<app>-*.ips` |
 | 11 | Deep link ignored | Opened while the app was settling | `device.openLink(url, { until })` again (example app: `openDeepLink`) |
-| 12 | `E_AX_UNAVAILABLE` right after launch | Transient | Built-in 5x300 ms retry. `simctl launch` can take >30 s under load |
+| 12 | `E_AX_UNAVAILABLE` right after launch | Transient (marked retryable) | Retry the call. `simctl launch` can take >30 s under load |
 | 13 | Exit 3 `engine_unavailable` | No `warden-simd` helper | `warden doctor --fetch-helper` (Intel Mac: no helper) |
 | 14 | Locator not found | View is not `accessible` | Fix the component (`accessible` + `testID`); inspect with `warden ui snapshot -i` and `warden ui tree` |
 | 15 | Tests run stale JS on a Release build | Native-only fingerprint | Use `native+js` with `jsInputs` in the build config |
@@ -38,7 +38,7 @@
 |---|---|
 | 0 | ok |
 | 1 | `failed` `usage` `target_not_found` `no_alert` `wait_target_absent` `wait_target_hidden` `wait_target_present` `wait_text_absent` `wait_not_stable` `replay_divergence` |
-| 2 | `device_foreign` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` |
+| 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` |
 | 3 | `engine_unavailable` `devtools_unavailable` |
 | 4 | `stale_ref` (snapshot again) |
 | 130 | `interrupted` |

@@ -5,7 +5,7 @@ icon: ChartBar
 ---
 
 {/* Data: content/docs/bench/data/<platform>-<date>.json. Regenerate with
-    bun run bench summary packages/e2e-bench/.bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json */}
+    bun run bench summary .bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json */}
 
 Every framework runs the same 8 parity tests against the same `.app` on the same leased device, one after the other, with no LLM involved. See [Benchmark e2e frameworks](/docs/guides/bench) to run it yourself.
 
@@ -61,6 +61,7 @@ Residue is what is left on the machine after teardown. Footprint is how much sui
 - Frameworks run sequentially, with daemons stopped between them.
 - `caffeinate -dims` held for the run, host otherwise idle, load average recorded.
 - Warm medians exclude rep 1.
+- Machine-readable reporters only.
 - A framework with any failing test never sets the pace, so it is never the fastest.
 
 ## Caveats per framework
