@@ -83,7 +83,7 @@ type DevOpts = ClaimFlagValues & {
 	installMode?: InstallMode;
 	resetKeychain?: true;
 	clean?: true;
-	/** `--json`: one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready */
+	/** `--json`: one line `{ udid, port, metroUrl, leaseIds, source }` on stdout once Metro is ready */
 	json?: true;
 	/** false = `--no-open` */
 	open: boolean;
@@ -344,7 +344,8 @@ async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Ru
 				warn(ctx, `warden dev: couldn't open the dev client (${opened.error})${link}`);
 			}
 		}
-		if (json) emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds }, "");
+		if (json)
+			emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }, "");
 		else note(ctx, `warden dev: holding ${deviceId} + :${port} until Metro exits (WARDEN_UDID=${deviceId})`);
 		return await metro.data.proc.exited;
 	} finally {

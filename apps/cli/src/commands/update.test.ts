@@ -53,6 +53,13 @@ function fakeHandlers(opts: FakeOpts): Handler[] {
 				return "";
 			},
 		},
+		{
+			match: (bin, args) => bin === "bun" && args[0]?.endsWith("e2e-runtime.ts") === true,
+			run: (args) => {
+				writeFileSync(args[2] ?? "", "{}");
+				return "";
+			},
+		},
 		{ match: (bin, args) => bin === "git" && args.includes("rev-parse"), run: () => "abc1234\n" },
 		{ match: (bin, args) => bin === "git" && args.includes("status"), run: () => (opts.gitDirty ? " M x.ts\n" : "") },
 		{ match: (bin) => bin === "xattr", run: () => "" },

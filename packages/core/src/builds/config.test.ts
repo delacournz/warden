@@ -205,6 +205,7 @@ describe("loadProject", () => {
 			buildConfiguration: "Debug",
 			cacheDirs: ["/home/me/.cache/salient-dev-builds"],
 			origin: "config",
+			source: "repo",
 		});
 	});
 

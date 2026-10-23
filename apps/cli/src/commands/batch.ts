@@ -64,6 +64,7 @@ import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { helperDir } from "../e2e/bun-runner";
+import { readE2ePackageVersion, stageBundledRuntime } from "../e2e/e2e-runtime";
 import { residentSocket, warmConnect } from "../e2e/warm-connect";
 import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "../elastic";
 import {
@@ -98,6 +99,7 @@ import {
 import { emit, note, reportError, warn } from "../output";
 import { hideSimWindows } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
+import { currentBuild } from "../update/build-info";
 
 export type KillSignal = ForwardedSignal | "SIGKILL";
 
@@ -166,6 +168,10 @@ export type BatchDeps = LeaseSessionDeps & {
 	which: (cmd: string) => string | null | undefined;
 	/** `Bun.resolveSync`: the file a package specifier resolves to from `from` (throws when it does not) */
 	resolveModule: (specifier: string, from: string) => string;
+	/** the published version of the `@delacour/warden-e2e` that owns a resolved preload (`undefined`: workspace sources) */
+	e2eVersion: (preloadPath: string) => string | undefined;
+	/** extract the `@delacour/warden-e2e` copy this warden ships and return its preload (repos without the dependency) */
+	bundledE2e: (ctx: CommandContext) => AsyncResult<string>;
 	/** where the spec drivers' native helper lives next to this warden (`WARDEN_HELPER_DIR`) */
 	helperDir: () => string;
 };
@@ -2386,6 +2392,8 @@ export const defaultBatchDeps: BatchDeps = {
 	residentSocket,
 	which: (cmd) => Bun.which(cmd),
 	resolveModule: (specifier, from) => Bun.resolveSync(specifier, from),
+	e2eVersion: readE2ePackageVersion,
+	bundledE2e: (ctx) => stageBundledRuntime(ctx.env, currentBuild()),
 	helperDir: () => helperDir(Bun.main, process.execPath),
 };
 

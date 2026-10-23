@@ -1,7 +1,9 @@
-import { join } from "node:path";
+import { rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
 import { execError } from "@delacour/warden-core/exec";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { RUNTIME_BLOB } from "../e2e/e2e-runtime";
 import { type BuildInfo, DEFINE_KEY } from "./build-info";
 
 export type EmbeddedBuild = Exclude<BuildInfo, { channel: "dev" }>;
@@ -19,7 +21,14 @@ export const STRAY_SOURCE_MAP = "cli.js.map";
  * in anything bundled (`cli.ts` uses `.then`). `--external typescript`: the compiler is 28 MB of the bundle (a quarter
  * of the binary) for `warden affected`'s graph walk only, which loads the analysed project's own (`resolveTypescript`).
  */
-export function compileArgs(opts: { entry: string; outfile: string; info: EmbeddedBuild; target?: string }): string[] {
+export function compileArgs(opts: {
+	entry: string;
+	outfile: string;
+	info: EmbeddedBuild;
+	target?: string;
+	/** extra files to embed (`Bun.embeddedFiles`), e.g. the `@delacour/warden-e2e` runtime blob */
+	embed?: readonly string[];
+}): string[] {
 	return [
 		"bun",
 		"build",
@@ -30,12 +39,18 @@ export function compileArgs(opts: { entry: string; outfile: string; info: Embedd
 		"--external",
 		"typescript",
 		opts.entry,
+		...(opts.embed ?? []),
 		"--outfile",
 		opts.outfile,
 		...(opts.target ? [`--target=${opts.target}`] : []),
 		"--define",
 		`${DEFINE_KEY}=${JSON.stringify(opts.info)}`,
 	];
+}
+
+/** `bun <apps/cli/scripts/e2e-runtime.ts> <repoRoot> <blob> <version>`: writes the runtime blob the binary embeds. */
+export function runtimeBlobArgs(sourceDir: string, blob: string, version: string): string[] {
+	return ["bun", join(cliDir(sourceDir), "scripts", "e2e-runtime.ts"), sourceDir, blob, version];
 }
 
 export function cliDir(sourceDir: string): string {
@@ -66,7 +81,16 @@ export async function buildFromSource(
 		...(commit ? { commit } : {}),
 		builtAt: new Date(now()).toISOString(),
 	};
-	const cmd = compileArgs({ entry: join(cliDir(sourceDir), "src", "cli.ts"), outfile, info });
-	const result = await exec(cmd, { cwd: cliDir(sourceDir) });
-	return result.exitCode === 0 ? ok(info) : err(execError(cmd, result));
+	// the blob's name is what `Bun.embeddedFiles` reports (plus a hash), so it must be called RUNTIME_BLOB
+	const blob = join(dirname(outfile), RUNTIME_BLOB);
+	const pack = runtimeBlobArgs(sourceDir, blob, version);
+	const packed = await exec(pack, { cwd: cliDir(sourceDir) });
+	if (packed.exitCode !== 0) return err(execError(pack, packed));
+	try {
+		const cmd = compileArgs({ entry: join(cliDir(sourceDir), "src", "cli.ts"), outfile, info, embed: [blob] });
+		const result = await exec(cmd, { cwd: cliDir(sourceDir) });
+		return result.exitCode === 0 ? ok(info) : err(execError(cmd, result));
+	} finally {
+		rmSync(blob, { force: true });
+	}
 }

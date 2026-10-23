@@ -689,11 +689,26 @@ describe("warden e2e", () => {
 			expect(set.jobs()[0]?.cmd[0]).toBe("/opt/bun");
 		});
 
-		test("@delacour/warden-e2e missing: the error says what to install", async () => {
+		test("no @delacour/warden-e2e in the repo: the specs run on the copy warden ships", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ preload: null });
+			const h = harness({ preload: null, bundled: "/home/e2e-runtime/1/fallback-preload.mjs" });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.jobs()[0]?.cmd.slice(2, 4)).toEqual(["--preload", "/home/e2e-runtime/1/fallback-preload.mjs"]);
+		});
+
+		test("no @delacour/warden-e2e and the bundled copy cannot be extracted: the error is surfaced", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ preload: null, bundled: "fail" });
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
-			expect(c.stderr.join("\n")).toContain("bun add -d @delacour/warden-e2e");
+			expect(c.stderr.join("\n")).toContain("could not extract the bundled @delacour/warden-e2e");
+			expect(h.jobs()).toEqual([]);
+		});
+
+		test("the repo's @delacour/warden-e2e at another version: a clear error, no job", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness({ e2eVersion: "0.0.1" });
+			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("does not match warden");
 			expect(h.jobs()).toEqual([]);
 		});
 
