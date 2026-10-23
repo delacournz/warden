@@ -197,6 +197,6 @@ A failed run leaves sims booted (so does a passed local one, until `warden gc` r
 
 ## Headless, slim, warm, versions
 
-- Headless: `--headless` on claim/run/batch/e2e, `headless: true` in a suite, or `WARDEN_HEADLESS=1`. `warden dev` honors only an explicit `--headless`. warden never launches Simulator.app and closes the windows of devices it leased. That needs Accessibility permission for the terminal, and a failure only warns. Android is always headless.
+- Headless: `--headless` on claim/run/batch/e2e, `headless: true` in a suite, or `WARDEN_HEADLESS=1`. `warden dev` honors only an explicit `--headless`. warden never launches Simulator.app and closes the windows of devices it leased. That needs Accessibility permission for the terminal, and a failure only warns. Xcode 27's Device Hub has one window for every sim, so there is nothing to close or tile; don't tap a leased sim in Device Hub (it can swallow warden's input until the sim reboots). Android is always headless.
 - `slim: true` trims simulator daemons per device (iOS). `warmDrivers` (default on, `--no-warm` to skip) starts one `warden-simd` per device after setup, found through `WARDEN_SIMD_SOCKET`.
 - `@delacour/warden-e2e` must equal the warden version. After upgrading warden: `bun add -d @delacour/warden-e2e@<version>`.

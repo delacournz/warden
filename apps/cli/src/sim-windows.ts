@@ -125,13 +125,26 @@ const osascript = (exec: Exec, script: string, ...args: string[]) =>
 	exec(["osascript", "-l", "JavaScript", "-e", script, ...args], { timeoutMs: 15_000 });
 
 /**
- * Is Simulator.app running? `pgrep -xq` (~10 ms) answers before an osascript JXA start (35 ms and
- * up) is spent asking an app that is not there — the usual case for a headless run. Only a plain
- * "no match" (exit 1) says no; any other outcome (pgrep missing or failing) means "ask osascript".
+ * The simulator viewer running on this Mac. Xcode ≤ 26: Simulator.app (process `Simulator`), one
+ * window per booted device, which warden tiles or closes. Xcode 27 removed it for Device Hub
+ * (`Xcode.app/Contents/Applications/DeviceHub.app`, `com.apple.dt.Devices`, process `DeviceHub`):
+ * one window with a device list, so there is no per-device window to tile or close.
  */
-async function simulatorRunning(exec: Exec): Promise<boolean> {
-	const found = await exec(["pgrep", "-xq", "Simulator"]);
-	return found.exitCode !== 1;
+export type SimViewer = { kind: "simulator" } | { kind: "device-hub" } | { kind: "none" };
+
+const NOT_RUNNING = 1;
+
+/**
+ * Which viewer is running, by process rather than by Xcode version: the windows belong to whichever
+ * app is up, and a Mac can have Xcode 26 and 27 side by side. `pgrep -xq` (~10 ms) answers before an
+ * osascript JXA start (35 ms and up) is spent asking an app that is not there — the usual case for a
+ * headless run. Only a plain "no match" (exit 1) says no; any other outcome of the Simulator probe
+ * (pgrep missing or failing) means "Simulator.app, ask osascript", as before Device Hub existed.
+ */
+export async function detectSimViewer(exec: Exec): Promise<SimViewer> {
+	if ((await exec(["pgrep", "-xq", "Simulator"])).exitCode !== NOT_RUNNING) return { kind: "simulator" };
+	if ((await exec(["pgrep", "-xq", "DeviceHub"])).exitCode === 0) return { kind: "device-hub" };
+	return { kind: "none" };
 }
 
 function scriptError(cmd: string, result: { exitCode: number; stdout: string; stderr: string }): string {
@@ -141,21 +154,26 @@ function scriptError(cmd: string, result: { exitCode: number; stdout: string; st
 	return `${execError(["osascript", cmd], result)}${hint}`;
 }
 
+/** What `arrangeSimWindows` did, and which viewer it found (Device Hub: nothing to tile). */
+export type Arranged = { arranged: string[]; viewer: SimViewer["kind"] };
+
 /**
  * Tile open Simulator.app windows of warden sims in name order (macOS, via System Events). Never
- * launches Simulator.app: no windows → nothing to do. Returns the device names it arranged.
+ * launches a viewer: no windows → nothing to do. Device Hub (Xcode 27) shows every sim in its one
+ * window, which is the user's and is left alone. Returns the device names it arranged.
  */
-export async function arrangeSimWindows(exec: Exec): AsyncResult<{ arranged: string[] }> {
-	if (!(await simulatorRunning(exec))) return ok({ arranged: [] });
+export async function arrangeSimWindows(exec: Exec): AsyncResult<Arranged> {
+	const { kind: viewer } = await detectSimViewer(exec);
+	if (viewer !== "simulator") return ok({ arranged: [], viewer });
 	const read = await osascript(exec, READ_SCRIPT);
 	if (read.exitCode !== 0) return err(scriptError("(read windows)", read));
 	const parsed = parseRead(read.stdout);
 	if (!parsed.success) return parsed;
 	const moves = layoutWindows(parsed.data.windows, parsed.data.screen);
-	if (moves.length === 0) return ok({ arranged: [] });
+	if (moves.length === 0) return ok({ arranged: [], viewer });
 	const moved = await osascript(exec, MOVE_SCRIPT, JSON.stringify(moves));
 	if (moved.exitCode !== 0) return err(scriptError("(move windows)", moved));
-	return ok({ arranged: moves.map((m) => deviceName(m.title)) });
+	return ok({ arranged: moves.map((m) => deviceName(m.title)), viewer });
 }
 
 export type AutoArrangeDeps = {
@@ -466,9 +484,12 @@ async function holdDetachPref(deps: HideDeps): Promise<DetachHold> {
 	};
 }
 
-/** Titles of the open Simulator.app windows that belong to `sims`; undefined after a warned error. */
+/**
+ * Titles of the open Simulator.app windows that belong to `sims`; undefined after a warned error.
+ * Device Hub (Xcode 27) has no per-device window, only the user's one, so there is nothing to close.
+ */
 async function leasedTitles(deps: HideDeps, sims: readonly LeasedSim[]): Promise<string[] | undefined> {
-	if (!(await simulatorRunning(deps.exec))) return [];
+	if ((await detectSimViewer(deps.exec)).kind !== "simulator") return [];
 	const read = await osascript(deps.exec, READ_SCRIPT);
 	if (read.exitCode !== 0) {
 		deps.warn(`headless: ${scriptError("(read windows)", read)}`);
@@ -492,7 +513,8 @@ async function closeTitles(deps: HideDeps, titles: readonly string[]): Promise<b
 
 /**
  * Headless: close the Simulator.app windows of the leased devices (matched by `deviceName(title)`,
- * never another device's), macOS only. Never launches Simulator.app — not running → nothing to do.
+ * never another device's), macOS only. Never launches a viewer — not running → nothing to do; Device
+ * Hub (Xcode 27) → nothing to do either (`leasedTitles`).
  * The close detaches (Simulator's `DetachOnWindowClose`, restored afterwards — by the last of
  * concurrent hides when `detachLock` is given), so the device keeps running; ones that shut down
  * anyway are booted again in parallel without a window (`simctl boot` + `bootstatus -b`, then the
