@@ -131,7 +131,9 @@ Following `entries` through the import graph needs TypeScript 5.0 or later: the 
 
 Select like `warden affected`, then run the flows like `warden batch` — each flow as a `bun test` spec process (`@delacour/warden-e2e`, configured by the suite's `spec`) — and gate: exit 0 when every required flow passed, 1 otherwise, 130 when interrupted. Takes every `batch` flag except the job flags (`--jobs`, `--jobs-from`), plus the `affected` selection flags (`--base`, `--platform`, `--files`, `--required-only`, `--explain`) and:
 
-With no `e2e` suite configured (and none named), the Expo app around the cwd gets a default suite: every `*.e2e.ts` spec under `e2e/`, one `@delacour/warden-e2e` spec process per device (`isolate: "device"`) over a pool of 2 simulators (`--count`), the dev client (the `dev` variant when the project has one) on a Metro warden starts, opened with the Expo dev menu off. No git diff is involved. `warden init` writes this suite into `warden.config.ts`.
+With no `e2e` suite configured (and none named), the Expo app around the cwd gets a default suite: every `*.e2e.ts` spec under `e2e/`, one `@delacour/warden-e2e` spec process per device (`isolate: "device"`) over a pool of 2 devices (`--count`), on iOS unless you pass `--platform android`, the dev client (the `dev` variant when the project has one) on a Metro warden starts, opened with the Expo dev menu off. No git diff is involved. `warden init` writes this suite into `warden.config.ts`.
+
+`--install-mode`, `--reset-keychain` and `--clean` act on the installed app, so a suite that installs none (no `app` in its config) refuses them up front unless you also pass `--app`.
 
 | Flag | |
 |---|---|
