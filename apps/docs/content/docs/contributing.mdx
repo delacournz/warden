@@ -29,6 +29,8 @@ Bun + Turborepo monorepo, TypeScript strict, Biome for lint + format, prek git h
 
 ## Commands
 
+`bun install` needs no token. `@delacournz/otel*` (GitHub Packages, see `bunfig.toml`) is an optional dependency of the docs site: without a classic `read:packages` PAT in `NPM_TOKEN` it is skipped with a `401` warning, and the site builds and runs untraced. Export the token only to trace the docs locally; the Railway deploy has its own.
+
 ```bash
 bun run test        # turbo: core + cli (incl. cross-process race tests)
 bun run typecheck
