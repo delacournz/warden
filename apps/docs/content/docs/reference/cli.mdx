@@ -43,12 +43,18 @@ Lease iOS sims / Android emulators — reuse, boot or create — booted and read
 | `--profile <slug>` | `iphone-17` / first AVD | device profile, e.g. `iphone-17`, `pixel-10` |
 | `--runtime <runtime>` | `latest` | `latest`, `iOS-26-5`, `26.5` … |
 | `--count <n>` | `1` | how many devices |
-| `--max <n>` | cores/4, cap 4 | max warden devices of this profile |
-| `--wait <duration>` | | wait this long for a free device, e.g. `10m` |
+| `--max <n>` | cores/4, cap 4 | max warden devices of this profile (pool size; machine-wide boots are capped by [capacity](/docs/guides/capacity)) |
+| `--wait <duration>` | `30m` | how long to wait for a free device or a slot in the boot queue, e.g. `10m` |
+| `--no-wait` | | fail fast instead of queueing |
+| `--priority <interactive\|high\|normal\|low\|N>` | `WARDEN_PRIORITY`, else per command | boot queue priority; see [Capacity & queue](/docs/guides/capacity) |
 | `--ttl <duration>` | `30m` (bare `claim` by an agent: `5m`) | lease TTL without heartbeat |
 | `--label <label>` | | shown in `warden ls` |
 | `--adopt` | | allow allocating foreign (non-warden) devices |
 | `--headless` / `--no-headless` | `WARDEN_HEADLESS`, else off | iOS: close the claimed sims' Simulator.app windows instead of tiling them; `--no-headless` overrides config and env. See [Headless e2e](/docs/guides/headless) |
+
+### `warden capacity` / `warden queue`
+
+`warden capacity [--json]` prints the host budget (RAM, performance cores), what is booted (warden and foreign), per-device cost, the binding dimension and memory pressure. `warden queue [--json]` lists claims waiting for a boot slot: position, effective priority, age, owner. See [Capacity & queue](/docs/guides/capacity).
 
 ### `warden release [leaseIds...]`
 
