@@ -185,6 +185,7 @@ describe("warden dev", () => {
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		const byKind = Object.fromEntries(c.db.listLeases().map((l) => [l.resource.kind, l]));
 		expect(byKind.device?.shared).toBe(true);
+		expect(byKind.device?.label).toBe("warden dev");
 		expect(byKind.port?.shared).toBeUndefined();
 		h.finish(0);
 		expect(await running).toBe(0);
