@@ -71,6 +71,8 @@ Setup:
                                 Codex: hook)
   init                          set an Expo app up for warden dev / warden e2e
                                 (warden.config.ts, a first spec)
+  completion [shell]            print the tab-completion script for zsh / bash /
+                                fish (\`warden install\` sets it up)
   skill                         the warden agent skill: show (copy/paste) |
                                 install (bunx/npx skills add)
   doctor                        check warden's setup: home, db, device tools,
@@ -2043,13 +2045,15 @@ install warden to ~/.local/bin + hooks for detected agents (Claude Code: skill,
 rule, hook; Codex: hook)
 
 Options:
-  --claude    install for Claude Code (default: every detected agent)
-  --codex     install for Codex (default: every detected agent)
-  -y, --yes   apply agent-config changes without asking
-  --dry-run   show what would change (diffs), write nothing
-  --shim      running from source: link ~/.local/bin/warden to this checkout
-  --json      machine-readable output (diffs go to stderr)
-  -h, --help  display help for command"
+  --claude         install for Claude Code (default: every detected agent)
+  --codex          install for Codex (default: every detected agent)
+  -y, --yes        apply agent-config changes without asking
+  --dry-run        show what would change (diffs), write nothing
+  --shim           running from source: link ~/.local/bin/warden to this
+                   checkout
+  --no-completion  don't set up tab completion for $SHELL
+  --json           machine-readable output (diffs go to stderr)
+  -h, --help       display help for command"
 `;
 
 exports[`help output warden init --help (and nested subcommands) 1`] = `
@@ -2069,6 +2073,30 @@ Options:
 
 Example:
   warden init --bundle-id com.example.app"
+`;
+
+exports[`help output warden completion --help (and nested subcommands) 1`] = `
+"$ warden completion --help
+Usage: warden completion [options] [shell]
+
+print the tab-completion script for zsh / bash / fish (\`warden install\` sets it
+up)
+
+Arguments:
+  shell       default: $SHELL (choices: "zsh", "bash", "fish")
+
+Options:
+  -h, --help  display help for command
+
+Load it in your shell:
+  zsh   source <(warden completion zsh)
+  bash  source <(warden completion bash)
+  fish  warden completion fish | source"
+`;
+
+exports[`help output warden __complete --help (and nested subcommands) 1`] = `
+"$ warden __complete --help
+option	--help	display help for command"
 `;
 
 exports[`help output warden skill --help (and nested subcommands) 1`] = `

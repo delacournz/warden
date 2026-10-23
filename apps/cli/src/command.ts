@@ -94,6 +94,30 @@ export async function runProgram(
 	ctx: CommandContext,
 	known: readonly Pick<Command, "name" | "aliases">[] = commands
 ): Promise<number> {
+	let code = 0;
+	const program = buildProgram(commands, argv, ctx, known, (n) => {
+		code = n;
+	});
+	try {
+		await program.parseAsync(argv, { from: "user" });
+	} catch (error) {
+		if (error instanceof CommanderError) return error.exitCode === 0 ? 0 : 1;
+		throw error;
+	}
+	return code;
+}
+
+/**
+ * The commander tree `runProgram` parses: every command registered under its group, help styled, output
+ * routed through `ctx`. Also what `warden __complete` walks, so completions can't drift from `--help`.
+ */
+export function buildProgram(
+	commands: readonly Command[],
+	argv: readonly string[],
+	ctx: CommandContext,
+	known: readonly Pick<Command, "name" | "aliases">[] = commands,
+	done: (code: number) => void = () => {}
+): Commander {
 	const names = new Set(known.flatMap((c) => [c.name, ...(c.aliases ?? [])]));
 	const program = new Commander("warden")
 		.description(PROGRAM_DESCRIPTION)
@@ -110,7 +134,6 @@ export async function runProgram(
 		})
 		.configureHelp(helpStyle(ctx.ui))
 		.showHelpAfterError(ctx.ui.color.dim("(add --help for usage)"));
-	let code = 0;
 	const grouped = [...commands].sort(
 		(a, b) => COMMAND_GROUPS.indexOf(a.group ?? "Setup") - COMMAND_GROUPS.indexOf(b.group ?? "Setup")
 	);
@@ -120,18 +143,10 @@ export async function runProgram(
 			.description(command.summary);
 		if (command.group) sub.helpGroup(`${command.group}:`);
 		for (const alias of command.aliases ?? []) sub.alias(alias);
-		command.register(sub, ctx, (n) => {
-			code = n;
-		});
+		command.register(sub, ctx, done);
 	}
 	program.commandsGroup("Setup:").helpCommand(true);
-	try {
-		await program.parseAsync(argv, { from: "user" });
-	} catch (error) {
-		if (error instanceof CommanderError) return error.exitCode === 0 ? 0 : 1;
-		throw error;
-	}
-	return code;
+	return program;
 }
 
 /**

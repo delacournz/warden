@@ -164,6 +164,18 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./init")).initCommand,
 	},
 	{
+		name: "completion",
+		group: "Setup",
+		summary: "print the tab-completion script for zsh / bash / fish (`warden install` sets it up)",
+		load: async () => (await import("./completion")).completionCommand,
+	},
+	{
+		name: "__complete",
+		summary: "list completions for a partial command line (internal; used by `warden completion` scripts)",
+		hidden: true,
+		load: async () => (await import("./complete")).completeCommand,
+	},
+	{
 		name: "skill",
 		group: "Setup",
 		summary: "the warden agent skill: show (copy/paste) | install (bunx/npx skills add)",
