@@ -33,7 +33,6 @@ export function deviceFacade(
 		timeoutMs,
 		actionTimeoutMs: timeoutMs,
 		assertionTimeoutMs: timeoutMs,
-		headless: true,
 		logTimestamps: false,
 	};
 	return createDevice({ session: { out }, driver, env, clock: { now: ctx.now, sleep: deps.sleep } });

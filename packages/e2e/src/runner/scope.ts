@@ -33,8 +33,17 @@ export type ResolvedUse = {
 	systemAlerts: SystemAlerts;
 };
 
-/** `beforeEach`/`afterEach` hooks get the base fixtures (bun's own hooks take no arguments). */
+/** Scope hooks are stored against the base fixtures; `test.extend(...).beforeEach` hooks are narrowed back to theirs by the runner (bun's own hooks take no arguments). */
 export type Hook = (fixtures: BaseFixtures) => void | Promise<void>;
+
+/** Fixture sets that own a hook (`test.extend(...).beforeEach`): it runs only for tests whose fixtures start with the owner's. */
+const hookOwners = new WeakMap<Hook, readonly object[]>();
+
+/** Marks `hook` as belonging to tests built from `fixtures` (entries compared by identity, in definition order). */
+export function ownHook(hook: Hook, fixtures: readonly object[]): Hook {
+	if (fixtures.length > 0) hookOwners.set(hook, fixtures);
+	return hook;
+}
 
 export type Scope = {
 	/** describe titles from the root down to this scope */
@@ -96,11 +105,16 @@ export function scopeChain(scope: Scope): Scope[] {
 	return chain;
 }
 
-/** `beforeEach`: outermost first. `afterEach`: innermost first. */
-export function hooksFor(scope: Scope, kind: "beforeEach" | "afterEach"): Hook[] {
+/** `beforeEach`: outermost first. `afterEach`: innermost first. Hooks owned by another fixture set are left out. */
+export function hooksFor(scope: Scope, kind: "beforeEach" | "afterEach", fixtures: readonly object[] = []): Hook[] {
 	const chain = scopeChain(scope);
 	if (kind === "afterEach") chain.reverse();
-	return chain.flatMap((s) => s[kind]);
+	return chain
+		.flatMap((s) => s[kind])
+		.filter((hook) => {
+			const owner = hookOwners.get(hook);
+			return owner === undefined || owner.every((entry, i) => fixtures[i] === entry);
+		});
 }
 
 /** Session defaults (env contract) under the nearest `test.use`, under the test's own `timeout`. */
