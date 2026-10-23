@@ -106,11 +106,11 @@ The npm package is not required for CI: the release workflow attaches a compiled
 
 ```yaml
 - uses: delacournz/warden/.github/actions/install-warden@main
-  with:
-    token: ${{ github.token }}   # optional pin: version: v0.1.0
+  # with:
+  #   version: v0.1.0   # optional pin; token defaults to github.token
 ```
 
-`token` is required by the action (it drives `gh`); the workflow's own `github.token` is enough because the repo is public, so no PAT and no Actions access setting are needed. The action verifies the sha256 and puts `warden` on `PATH`. A bare script works too: `gh release download --repo delacournz/warden --pattern warden-darwin-arm64 --pattern checksums.txt`.
+`token` (it drives `gh`) defaults to the workflow's own `github.token`, which is enough because the repo is public, so no PAT and no Actions access setting are needed. The action verifies the sha256 and puts `warden` on `PATH`. A bare script works too: `gh release download --repo delacournz/warden --pattern warden-darwin-arm64 --pattern checksums.txt`.
 
 A clean macOS runner needs no prior state: the `--profile` is created on claim (cloned from a golden image that is built on first use, about a minute or two; cache `~/Library/Developer/CoreSimulator/Devices` between runs to keep it) and falls back to `simctl create`. The runner must have the iOS runtime installed.
 

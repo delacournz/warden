@@ -94,10 +94,8 @@ Or download the release binary (checksum-verified, no Node needed):
 
 ```yaml
 - uses: delacournz/warden/.github/actions/install-warden@main
-  with:
-    token: ${{ github.token }}
 ```
 
-The action downloads `warden-<os>-<arch>` from the latest (or `version:`) release of `delacournz/warden`, checks `checksums.txt` and adds `warden` to `PATH`. `token` is required; the workflow's own `github.token` can read the public releases.
+The action downloads `warden-<os>-<arch>` from the latest (or `version:`) release of `delacournz/warden`, checks `checksums.txt` and adds `warden` to `PATH`. `token` defaults to the workflow's own `github.token`, which can read the public releases; set it only for a private fork named by `repo`.
 
 A clean macOS runner needs no setup beyond an installed iOS runtime: the profile's simulators are created on claim, cloned from a golden image built on first use (cache `~/Library/Developer/CoreSimulator/Devices` to skip that next time).
