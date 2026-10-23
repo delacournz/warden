@@ -347,7 +347,13 @@ A metric passes up to its target times 1.5 (`ok` in the JSON; a loaded machine s
 
 ### `warden install`
 
-Install warden to `~/.local/bin` plus hooks for detected agents. `--claude`, `--codex`, `-y/--yes`, `--dry-run`, `--shim` (running from source: link `~/.local/bin/warden` to this checkout).
+Install warden to `~/.local/bin` plus hooks for detected agents. `--claude`, `--codex`, `-y/--yes`, `--dry-run`, `--shim` (running from source: link `~/.local/bin/warden` to this checkout), `--no-completion` (skip tab completion).
+
+### `warden completion [zsh|bash|fish]`
+
+Print the tab-completion script for a shell (default: `$SHELL`). `warden install` sets it up for `$SHELL`: zsh / bash get `$WARDEN_HOME/completion/warden.<shell>` sourced from `.zshrc` / `.bashrc` (one line, diff + confirm), fish gets `~/.config/fish/completions/warden.fish`. By hand: `source <(warden completion zsh)` after `compinit`.
+
+Every tab asks `warden __complete -- <words…>`, which walks the same command tree as `--help`: subcommands at every depth, options after `-`, `.choices()` and `a | b` help hints as values (`warden claim <tab>` → `android ios`), files for free-form arguments. zsh: tab once lists with descriptions, tab twice picks the first, further tabs cycle (menu select, unless you set your own `menu` style). fish cycles by default. bash cycles only with readline's `bind 'TAB:menu-complete'`, `bind 'set show-all-if-ambiguous on'` and `bind 'set menu-complete-display-prefix on'`, which warden leaves to you.
 
 ### `warden skill show | install`
 

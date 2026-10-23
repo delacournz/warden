@@ -603,3 +603,71 @@ describe("detectRuntime", () => {
 		});
 	});
 });
+
+describe("warden install: shell completion", () => {
+	const stepOf = (c: TestContext, name: string) =>
+		(JSON.parse(c.stdout.join("\n")) as { steps: Array<{ step: string; status: string; path: string }> }).steps.find(
+			(s) => s.step === name
+		);
+
+	test("zsh: writes the script under $WARDEN_HOME and sources it from .zshrc after a confirm", async () => {
+		const { c, home, deps, questions } = setup(["--json"]);
+		c.env = { ...c.env, SHELL: "/bin/zsh" };
+		writeFileSync(join(home, ".zshrc"), "autoload -Uz compinit\ncompinit\n");
+		expect(await runInstall(c, deps)).toBe(0);
+		const script = join(c.env.WARDEN_HOME ?? "", "completion", "warden.zsh");
+		expect(read(script)).toContain("compdef _warden warden");
+		const rc = read(join(home, ".zshrc"));
+		expect(rc.startsWith("autoload -Uz compinit\ncompinit\n")).toBe(true);
+		expect(rc).toContain(`source "${script}"`);
+		expect(questions.some((q) => q.includes(".zshrc"))).toBe(true);
+		expect(stepOf(c, "completion")).toMatchObject({ status: "written", path: join(home, ".zshrc") });
+	});
+
+	test("a second install leaves .zshrc alone", async () => {
+		const first = setup(["--json"]);
+		first.c.env = { ...first.c.env, SHELL: "/bin/zsh" };
+		await runInstall(first.c, first.deps);
+		const before = read(join(first.home, ".zshrc"));
+		first.c.stdout.length = 0;
+		expect(await runInstall(first.c, first.deps)).toBe(0);
+		expect(read(join(first.home, ".zshrc"))).toBe(before);
+		expect(stepOf(first.c, "completion")?.status).toBe("unchanged");
+	});
+
+	test("bash: .bashrc; fish: the completions dir, no rc edit", async () => {
+		const bash = setup(["--json"]);
+		bash.c.env = { ...bash.c.env, SHELL: "/bin/bash" };
+		await runInstall(bash.c, bash.deps);
+		expect(read(join(bash.home, ".bashrc"))).toContain("warden.bash");
+		bash.c.cleanup();
+
+		const fish = setup(["--json"]);
+		fish.c.env = { ...fish.c.env, SHELL: "/usr/local/bin/fish" };
+		await runInstall(fish.c, fish.deps);
+		const path = join(fish.home, ".config", "fish", "completions", "warden.fish");
+		expect(read(path)).toContain("complete -c warden");
+		expect(stepOf(fish.c, "completion")).toMatchObject({ status: "written", path });
+	});
+
+	test("declining the rc edit is a declined step, nothing appended", async () => {
+		const { c, home, deps } = setup(["--json"], { confirm: [false, false, false, false, false] });
+		c.env = { ...c.env, SHELL: "/bin/zsh" };
+		await runInstall(c, deps);
+		expect(existsSync(join(home, ".zshrc"))).toBe(false);
+		expect(stepOf(c, "completion")?.status).toBe("declined");
+	});
+
+	test("--no-completion and an unknown $SHELL skip the step", async () => {
+		const off = setup(["--json", "--no-completion"]);
+		off.c.env = { ...off.c.env, SHELL: "/bin/zsh" };
+		await runInstall(off.c, off.deps);
+		expect(stepOf(off.c, "completion")).toBeUndefined();
+		off.c.cleanup();
+
+		const tcsh = setup(["--json"]);
+		tcsh.c.env = { ...tcsh.c.env, SHELL: "/bin/tcsh" };
+		await runInstall(tcsh.c, tcsh.deps);
+		expect(stepOf(tcsh.c, "completion")).toBeUndefined();
+	});
+});

@@ -42,6 +42,8 @@ warden install --codex    # force Codex only: hooks in $CODEX_HOME/hooks.json
 
 Every agent-config change shows a diff and asks first. `--yes` skips the prompt, `--dry-run` only prints, and a non-TTY without `--yes` skips. Merges are idempotent and keep all other config. See [Agents](/docs/guides/agents) for what gets installed.
 
+`warden install` also sets up tab completion for your shell (zsh, bash or fish, from `$SHELL`): `warden sims <tab>` lists `audit / prune / delete`, and in zsh further tabs cycle through them. The `.zshrc` / `.bashrc` line is shown and confirmed like the rest; `--no-completion` skips it. See [`warden completion`](/docs/reference/cli#warden-completion-zshbashfish).
+
 </Step>
 <Step>
 
