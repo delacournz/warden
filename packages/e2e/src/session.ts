@@ -11,7 +11,7 @@ import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools
 import { openDevtoolsFacet } from "./devtools/facet";
 import type { NativeLogDeps } from "./devtools/native-log";
 import type { Driver, DriverResult } from "./driver/driver.types";
-import { type HidRecoveryDeps, rebootSim } from "./driver/ios/hid-recovery";
+import { type HidRecoveryDeps, rebootSim, stopResidentHelper } from "./driver/ios/hid-recovery";
 import { cacheObservations } from "./driver/observation-cache";
 import { traceDriver } from "./driver/traced-driver";
 import { type E2eEnv, readEnv } from "./env";
@@ -184,6 +184,9 @@ function resolveEnv(env: E2eEnv | undefined): E2eEnv {
 	return read.data;
 }
 
+const WARM_TRIES = 15;
+const WARM_INTERVAL_MS = 2_000;
+
 export function createSession(opts: SessionOptions = {}): Session {
 	const resolved = resolveEnv(opts.env);
 	const factory = opts.driverFactory ?? defaultFactory ?? missingFactory;
@@ -221,11 +224,37 @@ export function createSession(opts: SessionOptions = {}): Session {
 		);
 	}
 
+	/**
+	 * A freshly booted sim answers the first accessibility reads with `E_AX_UNAVAILABLE` until the in-sim bridge binds
+	 * (what `warden e2e`'s warm step waits out): snapshot until one succeeds, a few times, then carry on regardless.
+	 */
+	async function warmBridge(): Promise<void> {
+		const sleep = hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+		for (let tries = 0; tries < WARM_TRIES; tries += 1) {
+			try {
+				const driver = await session.driver();
+				if ((await driver.snapshot()).success) return;
+			} catch {
+				// not up yet: try again
+			}
+			await sleep(WARM_INTERVAL_MS);
+		}
+	}
+
 	/** Only the device `warden e2e` leased (this session's `WARDEN_UDID`), only once: a second loss fails as before. */
 	async function recoverHid(): Promise<boolean> {
-		if (hid === undefined || hidRecovered || closing !== undefined) return false;
-		hidRecovered = true;
+		if (hid === undefined || closing !== undefined) return false;
 		const name = resolved.deviceName ?? resolved.udid;
+		if (hidRecovered) {
+			note(`sim ${name}: HID connection lost again after a reboot; \`warden release <id> --shutdown\` and retry`);
+			return false;
+		}
+		hidRecovered = true;
+		await resetDevice();
+		if (resolved.simdSocket !== undefined) {
+			const stopped = await stopResidentHelper(hid, resolved.simdSocket);
+			if (!stopped.success) note(`sim ${name}: ${stopped.error}`);
+		}
 		const rebooted = await rebootSim(hid, resolved.udid);
 		if (!rebooted.success) {
 			note(
@@ -233,7 +262,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 			);
 			return false;
 		}
-		await resetDevice();
+		await warmBridge();
 		note(`sim ${name}: HID connection lost (Device Hub quit?), rebooted; running the test again`);
 		return true;
 	}

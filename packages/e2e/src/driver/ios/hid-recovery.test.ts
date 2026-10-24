@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
 import { E2eError } from "../../errors";
-import { isHidLost, rebootSim } from "./hid-recovery";
+import { isHidLost, rebootSim, stopResidentHelper } from "./hid-recovery";
+import type { SimdClient } from "./simd-client";
 
 const ok: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
 
@@ -46,6 +47,17 @@ describe("rebootSim", () => {
 		});
 		expect((await rebootSim({ exec }, "U-1")).success).toBe(true);
 	});
+	test("Xcode 27.1 reports an already shut down sim as exit 149 with the state text", async () => {
+		const { exec } = script({
+			"xcrun simctl shutdown U-1": {
+				exitCode: 149,
+				stdout: "",
+				stderr:
+					"An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=405): Unable to shutdown device in current state: Shutdown",
+			},
+		});
+		expect((await rebootSim({ exec }, "U-1")).success).toBe(true);
+	});
 	test("a failed shutdown stops before booting", async () => {
 		const { exec, calls } = script({
 			"xcrun simctl shutdown U-1": { exitCode: 1, stdout: "", stderr: "boom" },
@@ -60,5 +72,49 @@ describe("rebootSim", () => {
 		});
 		const result = await rebootSim({ exec }, "U-1");
 		expect(result.success).toBe(false);
+	});
+});
+
+describe("stopResidentHelper", () => {
+	function fakeDaemon(opts: { connects?: boolean; goesAway?: boolean } = {}) {
+		const requests: string[] = [];
+		let present = true;
+		const client = {
+			ready: Promise.resolve(),
+			request: async (op: string) => {
+				requests.push(op);
+				if (opts.goesAway !== false) present = false;
+				return { success: true as const, data: {} };
+			},
+			close: async () => {
+				requests.push("close");
+			},
+		} as unknown as SimdClient;
+		const deps = {
+			exec: script({}).exec,
+			connect: async () =>
+				opts.connects === false
+					? { success: false as const, error: { code: "E_HELPER_CRASHED" as const, message: "gone", retryable: false } }
+					: { success: true as const, data: client },
+			socketExists: () => present,
+			sleep: async () => {},
+		};
+		return { deps, requests };
+	}
+
+	test("asks the daemon on the socket to shut down and waits for the socket to vanish", async () => {
+		const { deps, requests } = fakeDaemon();
+		const result = await stopResidentHelper(deps, "/h/simd/U-1.sock");
+		expect(result).toEqual({ success: true, data: "stopped" });
+		expect(requests).toEqual(["shutdown", "close"]);
+	});
+	test("a daemon that stays after shutdown is an error", async () => {
+		const { deps } = fakeDaemon({ goesAway: false });
+		expect((await stopResidentHelper(deps, "/s")).success).toBe(false);
+	});
+	test("no daemon on the socket: nothing to stop", async () => {
+		const { deps, requests } = fakeDaemon({ connects: false });
+		expect(await stopResidentHelper(deps, "/s")).toEqual({ success: true, data: "none" });
+		expect(requests).toEqual([]);
 	});
 });

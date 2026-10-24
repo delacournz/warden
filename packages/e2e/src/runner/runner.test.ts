@@ -257,6 +257,7 @@ describe("lost HID connection", () => {
 			"body run 3",
 		]);
 		expect(run.stdout).toContain("HID connection lost (Device Hub quit?), rebooted");
+		expect(run.stdout).toContain("lost again after a reboot; `warden release <id> --shutdown`");
 		const first = run.results.filter((r) => r.title.at(-1) === "tap after Device Hub quit");
 		expect(first.map((r) => r.status)).toEqual(["passed"]);
 		const second = run.results.filter((r) => r.title.at(-1) === "a second loss is not recovered");
