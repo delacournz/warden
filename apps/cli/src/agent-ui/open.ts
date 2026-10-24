@@ -4,7 +4,7 @@ import type { CommandContext } from "../context";
 import { adbReverseArgv, devClientLaunchArgs } from "../metro";
 import { type ActionOptionValues, finishAction, parseSettle } from "./act";
 import { deviceFacade, viaFacade } from "./controls";
-import type { UiDevice } from "./device";
+import { sharedNote, type UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { uiError } from "./output";
 import { runUi } from "./run";
@@ -108,7 +108,10 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 		}));
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "open",
-			text: `${launchVerb(opts.relaunch === true, attached)} ${what}${opts.metro ? ` (metro ${opts.metro})` : ""}${attached ? " (already running: attached, state kept; --relaunch starts it fresh)" : ""}`,
+			text: [
+				`${launchVerb(opts.relaunch === true, attached)} ${what}${opts.metro ? ` (metro ${opts.metro})` : ""}${attached ? " (already running: attached, state kept; --relaunch starts it fresh)" : ""}`,
+				...(device.action === "attached" ? [sharedNote(device.lease)] : []),
+			].join("\n"),
 			args: {
 				bundleId: what,
 				relaunch: opts.relaunch === true,

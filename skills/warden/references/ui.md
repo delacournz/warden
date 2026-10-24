@@ -20,13 +20,14 @@ warden ui close --release --udid $UDID
 1. `--udid` / `--serial` / `--lease <id>`
 2. `WARDEN_UDID`
 3. `WARDEN_UDIDS` with exactly one entry
-4. your single device lease. None: exit 2 (`no_device_leased`); `--claim` claims one (label `warden ui`, 30 m). Several: `ambiguous_device`.
+4. your single device lease. None: exit 2 (`no_device_leased`); `--claim` claims one (label `warden ui`, 30 m). Several: your live `warden dev` device if exactly one, else `ambiguous_device`.
 
 Every call heartbeats your lease. Another live session's lease: `device_foreign`. Stale or missing: `device_not_leased` unless `--claim`.
 
 ## Dev client
 
 - `warden dev ios --json` already opens the dev client. `open <bundleId>` then only attaches (`attached to <id>`); `--relaunch` restarts it.
+- `warden ui` shares the device your own running `warden dev` holds: no `--force`, no `device_busy`. `--json` adds `"attachedTo": "<leaseId>"`; `open` prints `sharing <leaseId> with warden dev (pid N)`. `close --release` keeps that lease (warning `not released: … belongs to warden dev`); Ctrl-C `warden dev` releases it. Another session's device stays `device_foreign`; your running `warden e2e` / `batch` / `run` stays `device_busy`.
 - `--metro <url>` launches the dev client on that Metro and remembers it for the devtools commands.
 - Android: `open <bundleId>` takes `--metro`/`--args` in the CLI but the driver rejects them. `warden dev android` opens the dev client via `adb reverse` + `exp+<slug>://expo-development-client/?url=...`. By hand, `open <url>` with that deep link.
 - `--relaunch`, `--metro`, `--args` apply to a bundle id, not a URL (`usage`).
@@ -40,7 +41,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--platform ios\|android` `--profile <slug>` `--runtime <rt>` | choose the device for a `--claim` with none named (default ios) |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--no-record` | keep this step out of a running recording |
-| `--force` | drive the device while your running `warden e2e` / `batch` / `run` / `dev` holds it (else exit 2 `device_busy`); it disturbs that run |
+| `--force` | drive the device while your running `warden e2e` / `batch` / `run` holds it (else exit 2 `device_busy`); it disturbs that run. Not needed for your own `warden dev` |
 | `--json` | one JSON document on stdout |
 
 Actions also take `--settle [ms]`: wait for a quiet screen (budget 3000 ms), then print what changed.

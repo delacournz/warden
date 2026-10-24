@@ -301,7 +301,7 @@ The agent CLI over the e2e driver: read the screen, act on it, wait, record flow
 | `--claim` | take a device when none is leased, or take over a stale lease; `--platform ios\|android`, `--profile <slug>`, `--runtime <runtime>` pick it |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--no-record` | keep this step out of a running recording |
-| `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`, `dev`) holds your lease on it; without it the call exits 2 (`device_busy`) naming the owner, pid and label. Another owner's live lease still refuses |
+| `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`) holds your lease on it; without it the call exits 2 (`device_busy`) naming the owner, pid and label. Your own `warden dev` device needs no `--force`: the call shares it (`"attachedTo": "<leaseId>"` in `--json`; `close --release` keeps that lease). Another owner's live lease still refuses |
 | `--json` | one JSON document on stdout: `{ok, command, device, generation?, durationMs, result, warnings?}` or `{ok:false, command, error:{code, message, hint?}}` |
 
 Exit codes: 0 ok · 1 failed or usage · 2 lease · 3 engine unavailable (`engine_unavailable`, `devtools_unavailable`) · 4 stale ref · 130 interrupted.

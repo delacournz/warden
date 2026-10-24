@@ -1,6 +1,8 @@
+import type { Lease } from "@delacour/warden-core/types";
 import { ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
+import type { UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { stopHelper } from "./helper";
 import { uiError } from "./output";
@@ -14,10 +16,28 @@ export type CloseOptionValues = UiOptionValues & {
 	release?: true;
 };
 
+/** Why `close --release` left an attached `warden dev` lease alone. */
+function keptWarning(lease: Lease): string {
+	const holder = lease.pid === undefined ? "warden dev" : `warden dev (pid ${lease.pid})`;
+	return `not released: ${lease.id} belongs to ${holder}; stop warden dev (Ctrl-C) to release it`;
+}
+
+/** Release the lease (its `after` stops the helper) or just stop the helper. */
+async function endHelper(
+	ctx: CommandContext,
+	device: UiDevice,
+	release: boolean
+): Promise<{ stopped: boolean; how: string; warning?: string }> {
+	if (!release) return stopHelper(ctx, device.udid);
+	await releaseDevices(ctx, [device.lease.id], { after: stopHelperAfter(ctx) });
+	return { stopped: true, how: "release" };
+}
+
 /**
  * `warden ui close [--app] [--release]`: end this device's `warden ui` session. Stops the helper daemon
  * (≤ ~2.3 s even if it ignores `shutdown`) — closing is the explicit way to end a resident helper, which a plain
- * release leaves to its idle timeout; `--app` terminates the app first; `--release` also releases the lease.
+ * release leaves to its idle timeout; `--app` terminates the app first; `--release` also releases the lease, unless
+ * the call attached to the session's live `warden dev` lease: that one is `warden dev`'s to release (Ctrl-C it).
  */
 export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValues): Promise<number> {
 	return runUi(ctx, deps, "close", opts, async (device, env) => {
@@ -38,14 +58,9 @@ export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValu
 			terminated = bundleId;
 		}
 
-		let helper: { stopped: boolean; how: string; warning?: string };
-		if (opts.release === true) {
-			await releaseDevices(ctx, [device.lease.id], { after: stopHelperAfter(ctx) });
-			helper = { stopped: true, how: "release" };
-		} else {
-			helper = await stopHelper(ctx, device.udid);
-		}
-		const released = opts.release === true;
+		const keep = opts.release === true && device.action === "attached";
+		const released = opts.release === true && !keep;
+		const helper = await endHelper(ctx, device, released);
 		const text = [
 			terminated === null ? undefined : `terminated ${terminated}`,
 			helper.stopped
@@ -61,7 +76,10 @@ export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValu
 			device: { udid: device.udid, platform: device.platform, name: device.name },
 			result: { app: terminated, helper, released },
 			text,
-			warnings: helper.warning === undefined ? [] : [helper.warning],
+			warnings: [
+				...(helper.warning === undefined ? [] : [helper.warning]),
+				...(keep ? [keptWarning(device.lease)] : []),
+			],
 		});
 	});
 }

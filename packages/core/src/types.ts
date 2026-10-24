@@ -26,6 +26,11 @@ export type Lease = {
 	 * record their own `pid`). With a pid, a dead pid makes the lease stale after `LOST_HEARTBEATS` periods.
 	 */
 	heartbeatMs?: number;
+	/**
+	 * The holding process (`warden dev`) lets its owner's other processes drive the device beside it: `warden ui`
+	 * attaches to it instead of refusing with `device_busy`, and never releases it. Other owners still see it as foreign.
+	 */
+	shared?: boolean;
 };
 
 export type DeviceState = "booted" | "shutdown" | "booting";

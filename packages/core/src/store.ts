@@ -82,6 +82,7 @@ export const MIGRATIONS: readonly string[] = [
 	);`,
 	`ALTER TABLE installs ADD COLUMN container TEXT;
 	ALTER TABLE installs ADD COLUMN exe_stamp TEXT;`,
+	`ALTER TABLE leases ADD COLUMN shared INTEGER;`,
 ];
 
 export function ownerKey(owner: Owner): string {
@@ -102,6 +103,7 @@ export type NewLease = {
 	label?: string;
 	pid?: number;
 	bootedByOwner?: boolean;
+	shared?: boolean;
 };
 
 /** A device warden created (sim) or launched (emulator). */
@@ -131,6 +133,7 @@ type LeaseRow = {
 	pid: number | null;
 	booted_by_owner: number | null;
 	heartbeat_ms: number | null;
+	shared: number | null;
 };
 
 type DeviceRow = {
@@ -159,6 +162,7 @@ function toLease(row: LeaseRow): Lease {
 	if (row.pid !== null) lease.pid = row.pid;
 	if (row.booted_by_owner) lease.bootedByOwner = true;
 	if (row.heartbeat_ms !== null) lease.heartbeatMs = row.heartbeat_ms;
+	if (row.shared) lease.shared = true;
 	return lease;
 }
 
@@ -215,10 +219,11 @@ export class Store {
 		if (input.label !== undefined) lease.label = input.label;
 		if (input.pid !== undefined) lease.pid = input.pid;
 		if (input.bootedByOwner) lease.bootedByOwner = true;
+		if (input.shared) lease.shared = true;
 		this.db
 			.query(
-				`INSERT INTO leases (id, resource_key, resource, owner_key, owner, label, acquired_at, heartbeat_at, ttl_ms, pid, booted_by_owner)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO leases (id, resource_key, resource, owner_key, owner, label, acquired_at, heartbeat_at, ttl_ms, pid, booted_by_owner, shared)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				lease.id,
@@ -231,9 +236,19 @@ export class Store {
 				now,
 				lease.ttlMs,
 				lease.pid ?? null,
-				lease.bootedByOwner ? 1 : null
+				lease.bootedByOwner ? 1 : null,
+				lease.shared ? 1 : null
 			);
 		return lease;
+	}
+
+	/** Mark leases shared (`Lease.shared`): `warden dev` on the device leases it just claimed. */
+	markShared(ids: readonly string[]): void {
+		if (ids.length === 0) return;
+		const stmt = this.db.query("UPDATE leases SET shared = 1 WHERE id = ?");
+		this.transaction(() => {
+			for (const id of ids) stmt.run(id);
+		});
 	}
 
 	/** Record that this lease's owner booted its device (claim boot/create, hook saw it shut down). */
