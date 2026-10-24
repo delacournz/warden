@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<trace-query-result>
+<node xpath='//trace-toc[1]/run[1]/data[1]/table[3]'>
+<schema name="leaks"><col><mnemonic>address</mnemonic><name>Address</name></col><col><mnemonic>type</mnemonic><name>Leaked Object</name></col><col><mnemonic>size</mnemonic><name>Size</name></col><col><mnemonic>count</mnemonic><name>Count</name></col><col><mnemonic>responsible-frame</mnemonic><name>Responsible Frame</name></col><col><mnemonic>stack</mnemonic><name>Stack</name></col></schema>
+<row><address id="1" fmt="0x600000a01000">105553140000768</address><string id="2" fmt="ImageCache">ImageCache</string><size id="3" fmt="96.00 KiB">98304</size><count id="4" fmt="1">1</count><string id="5" fmt="-[CatalogVC setupCache]">-[CatalogVC setupCache]</string><backtrace id="6"><frame id="7" name="malloc" addr="0x1"><binary id="8" name="libsystem_malloc.dylib" path="/usr/lib/system/libsystem_malloc.dylib"/></frame><frame id="9" name="-[CatalogVC setupCache]" addr="0x100005000"><binary id="10" name="ShopApp" path="/x/ShopApp.app/ShopApp"/></frame></backtrace></row>
+<row><address id="11" fmt="0x600000a02000">105553140004864</address><string ref="2"/><size id="12" fmt="96.00 KiB">98304</size><count ref="4"/><string ref="5"/><backtrace ref="6"/></row>
+<row><address id="13" fmt="0x600000a03000">105553140008960</address><string id="14" fmt="NSMutableArray">NSMutableArray</string><size id="15" fmt="48 Bytes">48</size><count ref="4"/><sentinel/><backtrace id="16"><frame ref="7"/><frame ref="9"/></backtrace></row>
+</node>
+</trace-query-result>
