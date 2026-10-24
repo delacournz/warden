@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-core/exec";
+import { traceProcessorPin } from "@delacour/warden-perf/android/trace-processor.data";
 import { type TestContext, testContext } from "../testing";
 import type { PerfTarget } from "./device";
 import { type AndroidNativeDeps, createAndroidNativeProfiler } from "./native-android";
@@ -370,5 +371,32 @@ describe("analyze", () => {
 			trace: join(env.dir, "android.perfetto-trace"),
 		});
 		expect(res).toMatchObject({ success: false, error: { code: "tool_missing" } });
+	});
+
+	test("yes: true downloads without asking (the input flag, not argv)", async () => {
+		setup();
+		mkdirSync(env.dir, { recursive: true });
+		writeFileSync(join(env.dir, "android.perfetto-trace"), "x");
+		const fetched: string[] = [];
+		const deps: AndroidNativeDeps = {
+			...env.deps,
+			traceProcessor: {
+				...env.deps.traceProcessor,
+				pinFor: traceProcessorPin,
+				fetch: async (url) => {
+					fetched.push(url);
+					throw new Error("offline");
+				},
+			},
+		};
+		await createAndroidNativeProfiler(deps).analyze(env.c, perfDeps(), {
+			target: TARGET,
+			app: APP,
+			dir: env.dir,
+			trace: join(env.dir, "android.perfetto-trace"),
+			yes: true,
+		});
+		expect(fetched).toHaveLength(1);
+		expect(fetched[0]).toEndWith("/trace_processor_shell");
 	});
 });

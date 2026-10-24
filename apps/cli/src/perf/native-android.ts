@@ -269,7 +269,7 @@ async function stopAndroid(
 		app: input.app,
 		dir: input.dir,
 		trace: input.handle.out,
-		yes: wantsYes(ctx, input),
+		yes: input.yes === true,
 		hz: state.hz,
 	});
 	if (!analysis.success) {
@@ -283,12 +283,6 @@ async function stopAndroid(
 		});
 	}
 	return ok({ out: input.handle.out, analysis: analysis.data, warnings: [...warnings, ...analysis.data.warnings] });
-}
-
-/** `--yes` (download consent): the input's flag when the command passes one, else the raw argv. */
-function wantsYes(ctx: CommandContext, input: object): boolean {
-	if ("yes" in input && typeof input.yes === "boolean") return input.yes;
-	return ctx.argv.includes("--yes") || ctx.argv.includes("-y");
 }
 
 function perfettoLines(
@@ -460,7 +454,7 @@ export function createAndroidNativeProfiler(deps: AndroidNativeDeps): NativeProf
 		analyze: (ctx, perf, input) =>
 			analyzeAndroid(ctx, perf, deps, {
 				...input,
-				yes: wantsYes(ctx, input),
+				yes: input.yes === true,
 				hz: input.trace.endsWith(".data") ? SIMPLEPERF_HZ : DEFAULT_SAMPLE_HZ,
 			}),
 	};
