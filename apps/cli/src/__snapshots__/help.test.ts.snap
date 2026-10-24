@@ -3487,3 +3487,16 @@ exports[`help output unknown command suggests the closest registered one 1`] = `
 (Did you mean claim?)
 (add --help for usage)"
 `;
+
+exports[`help output warden __android-host --help (and nested subcommands) 1`] = `
+"$ warden __android-host --help
+Usage: warden __android-host [options]
+
+resident Android driver host behind \`warden ui\` (internal)
+
+Options:
+  --serial <serial>
+  --socket <path>
+  --idle-timeout <seconds>
+  -h, --help                display help for command"
+`;

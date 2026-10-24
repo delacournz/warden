@@ -23,6 +23,7 @@ import { wardenHome } from "@delacour/warden-core/store";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { stopAndroidHostsLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
@@ -1423,6 +1424,12 @@ async function startServe(
 
 type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
 
+/** A resident `warden ui` host would fight the jobs' own drivers for an emulator's one `warden-uiad` slot: stop it. */
+async function stopResidentHosts(ctx: CommandContext, name: string, devices: readonly Device[]): Promise<void> {
+	const serials = devices.map((d) => d.udid);
+	for (const warning of await stopAndroidHostsLazily(ctx, serials)) warn(ctx, `warden ${name}: ${warning}`);
+}
+
 /**
  * One pool from its claim to its first job, on its own devices only (12-3): setup (slim, then the
  * command), then Metro's open beside the late-window hide. A device whose setup fails, or that cannot
@@ -1449,6 +1456,7 @@ async function preparePool(
 	for (const d of pool.devices)
 		if (lost.has(d.udid)) reportError(ctx, r.name, `${d.udid} ${lost.get(d.udid)}, dropped`);
 	const setupEnv = poolEnv(o.env, pool, devices);
+	if (r.platform === "android") await stopResidentHosts(ctx, r.name, devices);
 	const setup = await prepareDevices(
 		ctx,
 		deps,

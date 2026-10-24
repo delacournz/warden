@@ -18,14 +18,15 @@ import type { Owner } from "@delacour/warden-core/types";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { resolveHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
 import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
+import type { RemoteClient } from "@delacour/warden-e2e/driver/remote/remote-client";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
-import { simdDir } from "./paths";
+import { androidHostDir, simdDir } from "./paths";
 import { mayBeRecorded, type ProcessCommand, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
-import { type HelperRecord, readState, updateState } from "./state";
+import { type HelperRecord, readState, type UiState, updateState } from "./state";
 
 /**
  * How long a caller waits for a helper that answers the socket but not its handshake (busy) before replacing it.
@@ -73,12 +74,18 @@ export type StartSignal = { up: Promise<StartOutcome>; detach: () => void };
 
 export type SpawnResult = { pid: number; signal?: StartSignal };
 
+/** What the lifecycle needs of a connected helper client: ask it to shut down, and hang up. `SimdClient` is one. */
+export type HelperClient = {
+	request(op: "shutdown", params: Record<string, unknown>, opts: { timeoutMs?: number }): Promise<unknown>;
+	close(): Promise<void>;
+};
+
 /** Everything impure about the helper lifecycle; tests replace pieces (clock, spawn, connect, kill). */
-/** per-connection client options `ensureHelper` resolves from `requestTimeout` / `$WARDEN_SIMD_TIMEOUT` */
+/** per-connection client options `ensureHelperOf` resolves from `requestTimeout` / the kind's `timeoutEnv` */
 export type ConnectOptions = { defaultTimeoutMs?: number };
 
-export type HelperDeps = {
-	connect: (socketPath: string, options?: ConnectOptions) => Promise<Result<SimdClient, DriverError>>;
+export type HelperDeps<C extends HelperClient = SimdClient> = {
+	connect: (socketPath: string, options?: ConnectOptions) => Promise<Result<C, DriverError>>;
 	/** start the helper detached from this process (survives our exit); `signal` tells when its socket is up */
 	spawnDetached: (spec: SpawnSpec) => SpawnResult;
 	pidAlive: PidAlive;
@@ -101,6 +108,8 @@ export type HelperDeps = {
 	 * or counted as the helper: a reused pid is never signalled. Absent (test fakes): liveness alone decides
 	 */
 	command?: ProcessCommand;
+	/** argv that re-runs this warden (the Android host is warden itself). Absent: `selfCommand()` */
+	self?: () => string[];
 };
 
 /**
@@ -180,7 +189,7 @@ function isUpLine(line: string): boolean {
 	}
 }
 
-export const defaultHelperDeps: HelperDeps = {
+export const defaultHelperDeps: HelperDeps<SimdClient> = {
 	connect: async (socketPath, options) =>
 		(await import("@delacour/warden-e2e/driver/ios/simd-client")).connectSimd({
 			socketPath,
@@ -226,9 +235,6 @@ export const defaultHelperDeps: HelperDeps = {
 	command: processCommand,
 };
 
-/** What a helper's command line carries (`spawnHelper`'s argv): how a recorded pid is told from a reused one. */
-const helperMarks = (udid: string, socket: string): string[] => [`--udid ${udid}`, `--socket ${socket}`];
-
 /** The slice of a command context the helper lifecycle needs. */
 export type HelperHost = Pick<CommandContext, "env" | "now"> & Partial<Pick<CommandContext, "store" | "exec">>;
 
@@ -238,21 +244,26 @@ export type HelperHost = Pick<CommandContext, "env" | "now"> & Partial<Pick<Comm
  * whichever was used.
  */
 export function socketPathFor(host: Pick<CommandContext, "env">, udid: string): string {
-	const preferred = join(simdDir(host), `${udid}.sock`);
-	if (Buffer.byteLength(preferred) < MAX_SOCKET_PATH) return preferred;
-	const tag = Bun.hash(wardenHome(host.env)).toString(36).slice(0, 8);
-	return join(process.platform === "darwin" ? "/tmp" : tmpdir(), `wsimd-${tag}-${udid.slice(0, 8)}.sock`);
+	return socketPathOf(SIMD_KIND, host, udid);
 }
 
-export type HelperInfo = {
+/** `socketPathFor` for any helper kind: `<kind dir>/<id>.sock`, or a short `/tmp` path when that is too long. */
+export function socketPathOf(kind: HelperKind, host: Pick<CommandContext, "env">, id: string): string {
+	const preferred = join(kind.dir(host), `${id}.sock`);
+	if (Buffer.byteLength(preferred) < MAX_SOCKET_PATH) return preferred;
+	const tag = Bun.hash(wardenHome(host.env)).toString(36).slice(0, 8);
+	return join(process.platform === "darwin" ? "/tmp" : tmpdir(), `${kind.socketTag}-${tag}-${id.slice(0, 8)}.sock`);
+}
+
+export type HelperInfo<C extends HelperClient = SimdClient> = {
 	socketPath: string;
 	pid?: number;
 	spawned: boolean;
 	/** the connected (handshaken) client, present with `keepClient`: the caller owns it and closes it */
-	client?: SimdClient;
+	client?: C;
 };
 
-export type EnsureHelperOptions = {
+export type EnsureHelperOptions<C extends HelperClient = SimdClient> = {
 	helperPath?: string;
 	socketPath?: string;
 	/** `10m`-style; the helper exits after this long without a client. Default `$WARDEN_SIMD_IDLE_TIMEOUT`, else 10 min */
@@ -261,7 +272,7 @@ export type EnsureHelperOptions = {
 	requestTimeout?: string;
 	/** hand back the client that proved the helper is up instead of closing it, so the driver does not connect again */
 	keepClient?: boolean;
-	deps?: HelperDeps;
+	deps?: HelperDeps<C>;
 };
 
 /** The same identity `sameOwner` compares: one agent session, one shell pid, one CI run. */
@@ -292,7 +303,129 @@ export function simdEnvKey(env: Readonly<Record<string, string | undefined>>): s
 	return Bun.hash(JSON.stringify(entries)).toString(36);
 }
 
-const rowKey = (udid: string) => `simd_spawn:${udid}`;
+/** `WARDEN_ANDROID_*` names that only steer the client (whether to use the host at all): left out of `androidHostEnvKey`. */
+const ANDROID_CLIENT_ONLY_ENV = new Set(["WARDEN_ANDROID_HOST"]);
+
+/** `simdEnvKey` for the Android host: the `WARDEN_ANDROID_*` knobs its driver reads (uiad, settext, snapshot…). */
+export function androidHostEnvKey(env: Readonly<Record<string, string | undefined>>): string {
+	const entries = Object.entries(env)
+		.filter((entry): entry is [string, string] => entry[0].startsWith("WARDEN_ANDROID_") && entry[1] !== undefined)
+		.filter(([name]) => !ANDROID_CLIENT_ONLY_ENV.has(name))
+		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+	return Bun.hash(JSON.stringify(entries)).toString(36);
+}
+
+/** The `state.json` field a kind's record lives in. */
+type RecordField = "helper" | "androidHost";
+
+/**
+ * One kind of resident per-device helper process: everything that differs between iOS's `warden-simd` and Android's
+ * `warden __android-host`. The lifecycle around it (spawn arbitration, busy / stale replacement, stop, sweep) is
+ * shared and lives in this file.
+ */
+export type HelperKind = {
+	/** names it in messages */
+	label: string;
+	platform: "ios" | "android";
+	/** `<rowPrefix>:<id>` is the spawn row in the store's meta table */
+	rowPrefix: string;
+	dir: (host: Pick<CommandContext, "env">) => string;
+	/** prefix of the short `/tmp` socket used when `dir` is too deep */
+	socketTag: string;
+	field: RecordField;
+	envKey: (env: Readonly<Record<string, string | undefined>>) => string;
+	/** env var overriding the idle timeout */
+	idleEnv: string;
+	/** env var setting how long one request may take (none: the client's default) */
+	timeoutEnv?: string;
+	/** what its command line carries: how a recorded pid is told from a reused one */
+	marks: (id: string, socket: string) => string[];
+	/** the executable whose realpath + mtime identify what a spawn would run */
+	locate: (
+		host: HelperHost,
+		id: string,
+		opts: { helperPath?: string },
+		deps: HelperDeps<HelperClient>
+	) => Result<string, DriverError>;
+	/** the argv that starts it */
+	command: (input: { binary: string; id: string; socket: string; idleSeconds: number; self: string[] }) => string[];
+	/** what to suggest when it dies before it is ready */
+	hint: string;
+};
+
+export const SIMD_KIND: HelperKind = {
+	label: "warden-simd",
+	platform: "ios",
+	rowPrefix: "simd_spawn",
+	dir: simdDir,
+	socketTag: "wsimd",
+	field: "helper",
+	envKey: simdEnvKey,
+	idleEnv: IDLE_TIMEOUT_ENV,
+	timeoutEnv: REQUEST_TIMEOUT_ENV,
+	marks: (udid, socket) => [`--udid ${udid}`, `--socket ${socket}`],
+	locate: (host, udid, opts, deps) => locateHelperBinary(host, udid, opts, deps),
+	command: ({ binary, id, socket, idleSeconds }) => {
+		const resources = join(binary, "..", "Resources");
+		return [
+			binary,
+			"--udid",
+			id,
+			"--socket",
+			socket,
+			"--idle-timeout",
+			String(idleSeconds),
+			...(existsSync(resources) ? ["--resources", resources] : []),
+		];
+	},
+	hint: "run `warden doctor` to check the iOS driver helper",
+};
+
+/** `$WARDEN_ANDROID_HOST_IDLE_TIMEOUT` overrides the Android host's idle timeout (default 10 min). */
+export const ANDROID_HOST_IDLE_TIMEOUT_ENV = "WARDEN_ANDROID_HOST_IDLE_TIMEOUT";
+
+/** The hidden subcommand that serves an Android driver (`commands/android-host.ts`). */
+export const ANDROID_HOST_SUBCOMMAND = "__android-host";
+
+export const ANDROID_HOST_KIND: HelperKind = {
+	label: "warden android host",
+	platform: "android",
+	rowPrefix: "android_host_spawn",
+	dir: androidHostDir,
+	socketTag: "wahost",
+	field: "androidHost",
+	envKey: androidHostEnvKey,
+	idleEnv: ANDROID_HOST_IDLE_TIMEOUT_ENV,
+	marks: (serial, socket) => [`--serial ${serial}`, `--socket ${socket}`],
+	locate: (_host, _serial, _opts, deps) => {
+		const self = (deps.self ?? selfCommand)();
+		const binary = self[self.length - 1];
+		return binary === undefined
+			? {
+					success: false,
+					error: { code: "E_HELPER_MISSING", message: "cannot tell how to re-run warden", retryable: false },
+				}
+			: ok(binary);
+	},
+	command: ({ id, socket, idleSeconds, self }) => [
+		...self,
+		ANDROID_HOST_SUBCOMMAND,
+		"--serial",
+		id,
+		"--socket",
+		socket,
+		"--idle-timeout",
+		String(idleSeconds),
+	],
+	hint: "run with WARDEN_ANDROID_HOST=0 to drive the emulator without the resident host",
+};
+
+/** argv that re-runs this warden: the compiled binary, or `bun <cli.ts>` from source (as `autogc.ts`). */
+function selfCommand(): string[] {
+	return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
+}
+
+const rowKey = (kind: HelperKind, id: string) => `${kind.rowPrefix}:${id}`;
 
 type SpawnRow = { pid: number; at: number };
 
@@ -313,25 +446,31 @@ function parseRow(text: string | undefined): SpawnRow | undefined {
 /** Take the right to spawn this device's helper: true if nobody else holds a live, recent row. Atomic across processes. */
 function claimSpawnRow(
 	host: Required<Pick<HelperHost, "store">> & HelperHost,
+	kind: HelperKind,
 	udid: string,
-	deps: HelperDeps
+	deps: Pick<HelperDeps<HelperClient>, "now" | "pidAlive" | "pid">
 ): boolean {
 	const store = host.store();
 	return store.transaction(() => {
-		const current = parseRow(store.getMeta(rowKey(udid)));
+		const current = parseRow(store.getMeta(rowKey(kind, udid)));
 		const now = deps.now();
 		const live = current !== undefined && now - current.at < ROW_STALE_MS && deps.pidAlive(current.pid);
 		if (live) return false;
-		store.setMeta(rowKey(udid), JSON.stringify({ pid: deps.pid, at: now } satisfies SpawnRow));
+		store.setMeta(rowKey(kind, udid), JSON.stringify({ pid: deps.pid, at: now } satisfies SpawnRow));
 		return true;
 	});
 }
 
-function releaseSpawnRow(host: Required<Pick<HelperHost, "store">> & HelperHost, udid: string, deps: HelperDeps): void {
+function releaseSpawnRow(
+	host: Required<Pick<HelperHost, "store">> & HelperHost,
+	kind: HelperKind,
+	udid: string,
+	deps: Pick<HelperDeps<HelperClient>, "pid">
+): void {
 	const store = host.store();
 	store.transaction(() => {
-		const current = parseRow(store.getMeta(rowKey(udid)));
-		if (current === undefined || current.pid === deps.pid) store.deleteMeta(rowKey(udid));
+		const current = parseRow(store.getMeta(rowKey(kind, udid)));
+		if (current === undefined || current.pid === deps.pid) store.deleteMeta(rowKey(kind, udid));
 	});
 }
 
@@ -370,19 +509,19 @@ function unavailable(message: string, hint?: string): { success: false; error: U
 }
 
 /** The device's lease right now: its id and its owner as `ownerKey`; undefined when nobody holds one. */
-function currentLease(store: Store, udid: string): { id: string; owner: string } | undefined {
-	const held = store.findLeaseByResource({ kind: "device", platform: "ios", id: udid, name: udid });
+function currentLease(store: Store, kind: HelperKind, udid: string): { id: string; owner: string } | undefined {
+	const held = store.findLeaseByResource({ kind: "device", platform: kind.platform, id: udid, name: udid });
 	return held ? { id: held.id, owner: ownerKey(held.owner) } : undefined;
 }
 
-const realPath = (deps: HelperDeps, path: string): string => deps.realpath?.(path) ?? path;
+const realPath = (deps: HelperDeps<HelperClient>, path: string): string => deps.realpath?.(path) ?? path;
 
 /** The helper executable `opts` / the environment point at. */
 function locateHelperBinary(
 	host: HelperHost,
 	udid: string,
-	opts: EnsureHelperOptions,
-	deps: HelperDeps
+	opts: { helperPath?: string },
+	deps: HelperDeps<HelperClient>
 ): Result<string, DriverError> {
 	return resolveHelper({
 		udid,
@@ -404,19 +543,20 @@ function locateHelperBinary(
  */
 function staleReason(
 	host: HelperHost & Required<Pick<HelperHost, "store">>,
+	kind: HelperKind,
 	udid: string,
-	opts: EnsureHelperOptions,
-	deps: HelperDeps
+	opts: { helperPath?: string },
+	deps: HelperDeps<HelperClient>
 ): string | undefined {
-	const record = readState(host, udid).helper;
+	const record = readState(host, udid)[kind.field];
 	if (record === undefined) return undefined;
-	const lease = currentLease(host.store(), udid);
+	const lease = currentLease(host.store(), kind, udid);
 	if (lease !== undefined && record.lease === lease.id) return undefined;
-	if (record.env !== undefined && record.env !== simdEnvKey(host.env)) {
-		return "the helper's WARDEN_SIMD_* environment changed";
+	if (record.env !== undefined && record.env !== kind.envKey(host.env)) {
+		return "the helper's environment changed";
 	}
 	if (record.binary !== undefined && deps.mtime !== undefined) {
-		const located = locateHelperBinary(host, udid, opts, deps);
+		const located = kind.locate(host, udid, opts, deps);
 		const path = located.success ? realPath(deps, located.data) : undefined;
 		const mtime = path !== undefined ? deps.mtime(path) : undefined;
 		if (
@@ -437,67 +577,71 @@ function staleReason(
  */
 function spawnHelper(
 	host: HelperHost & Required<Pick<HelperHost, "store">>,
+	kind: HelperKind,
 	udid: string,
 	socketPath: string,
-	opts: EnsureHelperOptions,
-	deps: HelperDeps,
+	opts: EnsureHelperOptions<HelperClient>,
+	deps: HelperDeps<HelperClient>,
 	logPath: string,
 	stopped: number | undefined
 ): Result<SpawnResult, UiError> {
-	const previous = readState(host, udid).helper;
+	const previous = readState(host, udid)[kind.field];
 	if (
 		previous?.socket === socketPath &&
 		previous.pid !== stopped &&
-		mayBeRecorded(deps, previous.pid, helperMarks(udid, socketPath))
+		mayBeRecorded(deps, previous.pid, kind.marks(udid, socketPath))
 	) {
-		return unavailable(`warden-simd (pid ${previous.pid}) is still running for ${udid}; not starting a second one`);
+		return unavailable(`${kind.label} (pid ${previous.pid}) is still running for ${udid}; not starting a second one`);
 	}
-	const idle = idleSeconds(opts.idleTimeout ?? host.env[IDLE_TIMEOUT_ENV] ?? DEFAULT_IDLE_TIMEOUT);
+	const idle = idleSeconds(opts.idleTimeout ?? host.env[kind.idleEnv] ?? DEFAULT_IDLE_TIMEOUT);
 	if (!idle.success) return idle;
-	const located = locateHelperBinary(host, udid, opts, deps);
+	const located = kind.locate(host, udid, opts, deps);
 	if (!located.success) return { success: false, error: driverUiError(located.error) };
-	const resources = join(located.data, "..", "Resources");
-	const cmd = [
-		located.data,
-		"--udid",
-		udid,
-		"--socket",
-		socketPath,
-		"--idle-timeout",
-		String(idle.data),
-		...(existsSync(resources) ? ["--resources", resources] : []),
-	];
+	const self = (deps.self ?? selfCommand)();
+	const cmd = kind.command({ binary: located.data, id: udid, socket: socketPath, idleSeconds: idle.data, self });
 	unlinkQuietly(socketPath);
 	const spawned = deps.spawnDetached({ cmd, logPath, signalMs: SIGNAL_WAIT_MS });
 	const binary = realPath(deps, located.data);
 	const mtimeMs = deps.mtime?.(binary);
-	const lease = currentLease(host.store(), udid);
+	const lease = currentLease(host.store(), kind, udid);
 	const record: HelperRecord = {
 		pid: spawned.pid,
 		socket: socketPath,
 		...(lease !== undefined ? { owner: lease.owner } : {}),
 		...(mtimeMs !== undefined ? { binary: { path: binary, mtimeMs } } : {}),
-		env: simdEnvKey(host.env),
+		env: kind.envKey(host.env),
 		...(lease !== undefined ? { lease: lease.id } : {}),
 	};
-	updateState(host, udid, (state) => ({ ...state, helper: record }));
+	updateState(host, udid, (state) => withRecord(state, kind.field, record));
 	return ok(spawned);
 }
 
-/** What one `ensureHelper` attempt settled: an answer, another attempt right away, or a pause then another. */
-type Step = { kind: "done"; result: Result<HelperInfo, UiError> } | { kind: "retry" } | { kind: "wait" };
+/** `state` with `field` set to `record`, or dropped when `record` is undefined. */
+function withRecord(state: UiState, field: RecordField, record: HelperRecord | undefined): UiState {
+	const next: UiState = { ...state };
+	if (record === undefined) delete next[field];
+	else next[field] = record;
+	return next;
+}
 
-const RETRY: Step = { kind: "retry" };
-const WAIT: Step = { kind: "wait" };
+/** What one `ensureHelper` attempt settled: an answer, another attempt right away, or a pause then another. */
+type Step<C extends HelperClient> =
+	| { kind: "done"; result: Result<HelperInfo<C>, UiError> }
+	| { kind: "retry" }
+	| { kind: "wait" };
+
+const RETRY = { kind: "retry" } as const;
+const WAIT = { kind: "wait" } as const;
 
 /** One `ensureHelper` call's fixed inputs and what its attempts have done so far. */
-type Attempt = {
+type Attempt<C extends HelperClient> = {
 	host: HelperHost & Required<Pick<HelperHost, "store">>;
+	kind: HelperKind;
 	udid: string;
 	socketPath: string;
 	logPath: string;
-	opts: EnsureHelperOptions;
-	deps: HelperDeps;
+	opts: EnsureHelperOptions<C>;
+	deps: HelperDeps<C>;
 	/** what every `connect` of this attempt passes on to the client */
 	connectOptions?: ConnectOptions;
 	spawned?: SpawnResult;
@@ -511,8 +655,8 @@ type Attempt = {
 	started: number;
 };
 
-async function answered(a: Attempt, client: SimdClient): Promise<Step> {
-	const info: HelperInfo = {
+async function answered<C extends HelperClient>(a: Attempt<C>, client: C): Promise<Step<C>> {
+	const info: HelperInfo<C> = {
 		socketPath: a.socketPath,
 		spawned: a.spawned !== undefined,
 		...(a.spawned ? { pid: a.spawned.pid } : {}),
@@ -523,26 +667,27 @@ async function answered(a: Attempt, client: SimdClient): Promise<Step> {
 }
 
 /** Something answers on the socket: use it, unless it is stale and this caller may replace it. */
-async function onAnswer(a: Attempt, client: SimdClient): Promise<Step> {
-	const stale = a.spawned === undefined && !a.replaced ? staleReason(a.host, a.udid, a.opts, a.deps) : undefined;
+async function onAnswer<C extends HelperClient>(a: Attempt<C>, client: C): Promise<Step<C>> {
+	const stale =
+		a.spawned === undefined && !a.replaced ? staleReason(a.host, a.kind, a.udid, a.opts, a.deps) : undefined;
 	if (stale === undefined) return answered(a, client);
 	await client.close();
-	if (!a.held && !claimSpawnRow(a.host, a.udid, a.deps)) return WAIT;
+	if (!a.held && !claimSpawnRow(a.host, a.kind, a.udid, a.deps)) return WAIT;
 	a.held = true;
 	a.replaced = true;
-	const pid = readState(a.host, a.udid).helper?.pid;
-	const stop = await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
+	const pid = readState(a.host, a.udid)[a.kind.field]?.pid;
+	const stop = await stopRecorded(a.host, a.kind, a.udid, { socketPath: a.socketPath, deps: a.deps });
 	// a helper that could not be stopped is still the recorded one: `spawnHelper` refuses to start beside it
 	if (stop.warning === undefined) a.stopped = pid;
 	return RETRY;
 }
 
 /** The recorded helper's pid when it is alive (and not reused by another program), else undefined. */
-function liveRecordedPid(a: Attempt): number | undefined {
-	const record = readState(a.host, a.udid).helper;
+function liveRecordedPid<C extends HelperClient>(a: Attempt<C>): number | undefined {
+	const record = readState(a.host, a.udid)[a.kind.field];
 	return record !== undefined &&
 		record.socket === a.socketPath &&
-		mayBeRecorded(a.deps, record.pid, helperMarks(a.udid, record.socket))
+		mayBeRecorded(a.deps, record.pid, a.kind.marks(a.udid, record.socket))
 		? record.pid
 		: undefined;
 }
@@ -551,18 +696,18 @@ function liveRecordedPid(a: Attempt): number | undefined {
  * The socket accepted but the handshake timed out, and the recorded helper is alive: it is there but busy. Wait
  * for it; once it has been busy for `SPAWN_WAIT_MS`, take the row, stop it, and spawn one in its place.
  */
-async function onBusy(a: Attempt, pid: number): Promise<Step> {
+async function onBusy<C extends HelperClient>(a: Attempt<C>, pid: number): Promise<Step<C>> {
 	if (a.deps.now() - a.started < SPAWN_WAIT_MS) return WAIT;
-	if (!a.held && !claimSpawnRow(a.host, a.udid, a.deps)) return WAIT;
+	if (!a.held && !claimSpawnRow(a.host, a.kind, a.udid, a.deps)) return WAIT;
 	a.held = true;
-	const stop = await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
+	const stop = await stopRecorded(a.host, a.kind, a.udid, { socketPath: a.socketPath, deps: a.deps });
 	if (stop.warning === undefined) a.stopped = pid;
 	return spawn(a);
 }
 
 /** Nothing answers and nothing was spawned yet: spawn, if no one else is, then wait for its ready line. */
-async function onSilence(a: Attempt): Promise<Step> {
-	if (!a.held && !claimSpawnRow(a.host, a.udid, a.deps)) return WAIT;
+async function onSilence<C extends HelperClient>(a: Attempt<C>): Promise<Step<C>> {
+	if (!a.held && !claimSpawnRow(a.host, a.kind, a.udid, a.deps)) return WAIT;
 	if (!a.held) {
 		a.held = true;
 		// the previous holder may have finished between our failed connect and our claim: look again before replacing its socket
@@ -579,36 +724,36 @@ async function onSilence(a: Attempt): Promise<Step> {
 	// a recorded helper whose pid is alive but that refuses (or has no socket file) is stopped before another starts
 	const recorded = liveRecordedPid(a);
 	if (recorded !== undefined && recorded !== a.stopped) {
-		const stop = await stopRecorded(a.host, a.udid, { socketPath: a.socketPath, deps: a.deps });
+		const stop = await stopRecorded(a.host, a.kind, a.udid, { socketPath: a.socketPath, deps: a.deps });
 		if (stop.warning === undefined) a.stopped = recorded;
 	}
 	return spawn(a);
 }
 
-async function spawn(a: Attempt): Promise<Step> {
-	const began = spawnHelper(a.host, a.udid, a.socketPath, a.opts, a.deps, a.logPath, a.stopped);
+async function spawn<C extends HelperClient>(a: Attempt<C>): Promise<Step<C>> {
+	const began = spawnHelper(a.host, a.kind, a.udid, a.socketPath, a.opts, a.deps, a.logPath, a.stopped);
 	if (!began.success) return { kind: "done", result: began };
 	a.spawned = began.data;
 	return (await began.data.signal?.up) === "up" ? RETRY : WAIT;
 }
 
 /** A handshake timeout (the socket accepted, no `ready`) while the recorded helper is alive: its pid, else undefined. */
-function busyPid(a: Attempt, error: DriverError): number | undefined {
+function busyPid<C extends HelperClient>(a: Attempt<C>, error: DriverError): number | undefined {
 	return error.code === "E_TIMEOUT" ? liveRecordedPid(a) : undefined;
 }
 
-function diedBeforeReady(a: Attempt): Step {
+function diedBeforeReady<C extends HelperClient>(a: Attempt<C>): Step<C> {
 	const tail = logTail(a.logPath);
 	return {
 		kind: "done",
 		result: unavailable(
-			`warden-simd exited before it was ready${tail ? `: ${tail}` : ""}`,
-			`see ${a.logPath}; run \`warden doctor\` to check the iOS driver helper`
+			`${a.kind.label} exited before it was ready${tail ? `: ${tail}` : ""}`,
+			`see ${a.logPath}; ${a.kind.hint}`
 		),
 	};
 }
 
-async function attempt(a: Attempt): Promise<Step> {
+async function attempt<C extends HelperClient>(a: Attempt<C>): Promise<Step<C>> {
 	// no socket file: nothing can answer, so skip the probe and go straight to the spawn arbitration
 	if (a.spawned === undefined && a.deps.socketExists?.(a.socketPath) === false) return onSilence(a);
 	const attached = await a.deps.connect(a.socketPath, a.connectOptions);
@@ -624,32 +769,36 @@ async function attempt(a: Attempt): Promise<Step> {
  * The wait ran out with our own child still not answering: stop it (SIGTERM, its socket, its record) so it does not
  * start late beside whatever the caller falls back to.
  */
-function abandonSpawn(a: Attempt, spawned: SpawnResult): void {
+function abandonSpawn<C extends HelperClient>(a: Attempt<C>, spawned: SpawnResult): void {
 	// the child this process just spawned: liveness alone says it is still ours
 	if (a.deps.pidAlive(spawned.pid)) a.deps.kill(spawned.pid, "SIGTERM");
 	unlinkQuietly(a.socketPath);
-	forgetHelper(a.host, a.udid, spawned.pid);
+	forgetHelper(a.host, a.kind, a.udid, spawned.pid);
 }
 
 /**
- * The state one `ensureHelper` call threads through its steps: paths (the simd dir and the socket's parent exist
- * afterwards), the deps, and the client options every `connect` passes on (`requestTimeout`, else
- * `$WARDEN_SIMD_TIMEOUT`; a bad duration is a usage error before anything is touched).
+ * The state one `ensureHelperOf` call threads through its steps: paths (the kind's dir and the socket's parent exist
+ * afterwards), the deps, and the client options every `connect` passes on (`requestTimeout`, else the kind's
+ * `timeoutEnv`; a bad duration is a usage error before anything is touched).
  */
-function attemptFor(
+function attemptFor<C extends HelperClient>(
+	kind: HelperKind,
 	host: HelperHost & Required<Pick<HelperHost, "store">>,
 	udid: string,
-	opts: EnsureHelperOptions
-): Result<Attempt, UiError> {
-	const deps = opts.deps ?? defaultHelperDeps;
-	const timeout = requestTimeoutMs(opts.requestTimeout ?? host.env[REQUEST_TIMEOUT_ENV]);
+	deps: HelperDeps<C>,
+	opts: EnsureHelperOptions<C>
+): Result<Attempt<C>, UiError> {
+	const timeout = requestTimeoutMs(
+		opts.requestTimeout ?? (kind.timeoutEnv !== undefined ? host.env[kind.timeoutEnv] : undefined)
+	);
 	if (!timeout.success) return timeout;
-	const socketPath = opts.socketPath ?? socketPathFor(host, udid);
+	const socketPath = opts.socketPath ?? socketPathOf(kind, host, udid);
 	mkdirSync(dirname(socketPath), { recursive: true });
-	mkdirSync(simdDir(host), { recursive: true });
-	const logPath = join(simdDir(host), `${udid}.log`);
+	mkdirSync(kind.dir(host), { recursive: true });
+	const logPath = join(kind.dir(host), `${udid}.log`);
 	return ok({
 		host,
+		kind,
 		udid,
 		socketPath,
 		logPath,
@@ -680,10 +829,21 @@ export async function ensureHelper(
 	udid: string,
 	opts: EnsureHelperOptions = {}
 ): Promise<Result<HelperInfo, UiError>> {
-	const made = attemptFor(host, udid, opts);
+	return ensureHelperOf(SIMD_KIND, host, udid, opts.deps ?? defaultHelperDeps, opts);
+}
+
+/** `ensureHelper` for any helper kind: the same arbitration, with that kind's socket, row, record and argv. */
+export async function ensureHelperOf<C extends HelperClient>(
+	kind: HelperKind,
+	host: HelperHost & Required<Pick<HelperHost, "store">>,
+	udid: string,
+	deps: HelperDeps<C>,
+	opts: EnsureHelperOptions<C> = {}
+): Promise<Result<HelperInfo<C>, UiError>> {
+	const made = attemptFor(kind, host, udid, deps, opts);
 	if (!made.success) return made;
 	const a = made.data;
-	const { deps, socketPath, logPath, started } = a;
+	const { socketPath, logPath, started } = a;
 	try {
 		for (;;) {
 			const step = await attempt(a);
@@ -692,7 +852,7 @@ export async function ensureHelper(
 			if (deps.now() - started >= SPAWN_LIVE_WAIT_MS) {
 				if (a.spawned !== undefined) abandonSpawn(a, a.spawned);
 				return unavailable(
-					`warden-simd did not answer on ${socketPath} within ${SPAWN_LIVE_WAIT_MS} ms`,
+					`${kind.label} did not answer on ${socketPath} within ${SPAWN_LIVE_WAIT_MS} ms`,
 					`see ${logPath}`
 				);
 			}
@@ -700,8 +860,8 @@ export async function ensureHelper(
 		}
 	} finally {
 		a.spawned?.signal?.detach();
-		if (a.held || a.spawned !== undefined || host.store().getMeta(rowKey(udid)) !== undefined) {
-			releaseSpawnRow(host, udid, deps);
+		if (a.held || a.spawned !== undefined || host.store().getMeta(rowKey(kind, udid)) !== undefined) {
+			releaseSpawnRow(host, kind, udid, deps);
 		}
 	}
 }
@@ -732,7 +892,11 @@ export async function connectHelper(
 /** `warning`: the helper may still be running but could not be stopped (its command line could not be read). */
 export type StopOutcome = { stopped: boolean; how: "none" | "shutdown" | "sigterm"; warning?: string };
 
-async function waitUntil(done: () => boolean, ms: number, deps: HelperDeps): Promise<boolean> {
+async function waitUntil(
+	done: () => boolean,
+	ms: number,
+	deps: Pick<HelperDeps<HelperClient>, "now" | "sleep">
+): Promise<boolean> {
 	const until = deps.now() + ms;
 	while (!done()) {
 		if (deps.now() >= until) return false;
@@ -766,21 +930,31 @@ export async function stopHelper(
 	udid: string,
 	opts: { socketPath?: string; deps?: HelperDeps } = {}
 ): Promise<StopOutcome> {
-	const deps = opts.deps ?? defaultHelperDeps;
+	return stopHelperOf(SIMD_KIND, host, udid, opts.deps ?? defaultHelperDeps, opts);
+}
+
+/** `stopHelper` for any helper kind. */
+export async function stopHelperOf<C extends HelperClient>(
+	kind: HelperKind,
+	host: StopHost,
+	udid: string,
+	deps: HelperDeps<C>,
+	opts: { socketPath?: string } = {}
+): Promise<StopOutcome> {
 	const store = host.store;
 	const rowHost = store !== undefined ? { ...host, store } : undefined;
 	let claimed = false;
 	try {
 		if (rowHost !== undefined) {
-			claimed = await waitUntil(() => claimSpawnRow(rowHost, udid, deps), STOP_ROW_WAIT_MS, deps);
+			claimed = await waitUntil(() => claimSpawnRow(rowHost, kind, udid, deps), STOP_ROW_WAIT_MS, deps);
 		}
-		return await stopRecorded(host, udid, { ...opts, deps });
+		return await stopRecorded(host, kind, udid, { ...opts, deps });
 	} catch {
 		return { stopped: false, how: "none" };
 	} finally {
 		if (claimed && rowHost !== undefined) {
 			try {
-				releaseSpawnRow(rowHost, udid, deps);
+				releaseSpawnRow(rowHost, kind, udid, deps);
 			} catch {
 				// never throws
 			}
@@ -788,82 +962,80 @@ export async function stopHelper(
 	}
 }
 
+/**
+ * Ask the helper on `socketPath` (when there is a socket) to shut down and wait ≤ 2 s for `gone`; then SIGTERM `pid`
+ * (only if it is still the helper by its `marks`) and wait a little more.
+ */
+async function shutDown<C extends HelperClient>(
+	deps: HelperDeps<C>,
+	target: { socketPath: string | undefined; pid: number | undefined; marks: string[]; gone: () => boolean }
+): Promise<StopOutcome["how"]> {
+	const attached = target.socketPath !== undefined ? await deps.connect(target.socketPath) : undefined;
+	if (attached?.success) {
+		await attached.data.request("shutdown", {}, { timeoutMs: SHUTDOWN_REQUEST_MS });
+		await attached.data.close();
+	}
+	if (await waitUntil(target.gone, SHUTDOWN_WAIT_MS - (attached?.success ? SHUTDOWN_REQUEST_MS : 0), deps)) {
+		return "shutdown";
+	}
+	if (target.pid !== undefined && safeToSignal(deps, target.pid, target.marks)) deps.kill(target.pid, "SIGTERM");
+	await waitUntil(target.gone, KILL_WAIT_MS, deps);
+	return "sigterm";
+}
+
 /** `stopHelper`'s work, for a caller that already holds the spawn row (or has none to take). */
-async function stopRecorded(
+async function stopRecorded<C extends HelperClient>(
 	host: StopHost,
+	kind: HelperKind,
 	udid: string,
-	opts: { socketPath?: string; deps: HelperDeps }
+	opts: { socketPath?: string; deps: HelperDeps<C> }
 ): Promise<StopOutcome> {
 	const { deps } = opts;
-	const record = readState(host, udid).helper;
-	const socketPath = opts.socketPath ?? record?.socket ?? socketPathFor(host, udid);
+	const record = readState(host, udid)[kind.field];
+	const socketPath = opts.socketPath ?? record?.socket ?? socketPathOf(kind, host, udid);
 	const found = fileIdentity(socketPath);
 	// a recorded pid now running another program (reused) is not the helper: never waited on, never signalled
-	const marks = helperMarks(udid, record?.socket ?? socketPath);
+	const marks = kind.marks(udid, record?.socket ?? socketPath);
 	// alive but its command line unreadable: it may still be the helper, so it is neither signalled nor forgotten,
 	// whether or not its socket file is there (no socket file must not read as "already gone")
 	if (record !== undefined && recordedIdentity(deps, record.pid, marks) === "unknown") {
 		return {
 			stopped: false,
 			how: "none",
-			warning: `could not stop warden-simd (pid ${record.pid}): its command line could not be read, so it was left running`,
+			warning: `could not stop ${kind.label} (pid ${record.pid}): its command line could not be read, so it was left running`,
 		};
 	}
 	const ours = record !== undefined && mayBeRecorded(deps, record.pid, marks);
-	if (found === undefined && !ours) {
-		forgetRecorded(host, udid, record);
+	const running = found !== undefined || ours;
+	if (!running) {
+		forgetRecorded(host, kind, udid, record);
 		return { stopped: false, how: "none" };
 	}
-	const how = await shutDownHelper(deps, { socketPath, found, record, marks, ours });
+	const gone = () =>
+		found === undefined ||
+		fileIdentity(socketPath) !== found ||
+		(record !== undefined && (!ours || !deps.pidAlive(record.pid)));
+	const how = await shutDown(deps, {
+		socketPath: found !== undefined ? socketPath : undefined,
+		pid: record?.pid,
+		marks,
+		gone,
+	});
 	if (found !== undefined && fileIdentity(socketPath) === found) unlinkQuietly(socketPath);
-	forgetRecorded(host, udid, record);
+	forgetRecorded(host, kind, udid, record);
 	return { stopped: true, how };
 }
 
-/** What `stopRecorded` knows about the helper it is stopping. */
-type StopTarget = {
-	socketPath: string;
-	found: ReturnType<typeof fileIdentity>;
-	record: HelperRecord | undefined;
-	marks: ReturnType<typeof helperMarks>;
-	/** the recorded pid still reads as this device's helper */
-	ours: boolean;
-};
-
-/** The helper is gone once its socket is gone or replaced, or its recorded process is no longer ours / alive. */
-function helperGone(deps: HelperDeps, target: StopTarget): boolean {
-	const { socketPath, found, record, ours } = target;
-	if (found === undefined || fileIdentity(socketPath) !== found) return true;
-	return record !== undefined && (!ours || !deps.pidAlive(record.pid));
-}
-
-/** Ask the helper to shut down, then SIGTERM it if it is still there after the wait; says which one worked. */
-async function shutDownHelper(deps: HelperDeps, target: StopTarget): Promise<StopOutcome["how"]> {
-	const { socketPath, found, record, marks } = target;
-	const gone = () => helperGone(deps, target);
-	const attached = found !== undefined ? await deps.connect(socketPath) : undefined;
-	if (attached?.success) {
-		await attached.data.request("shutdown", {}, { timeoutMs: SHUTDOWN_REQUEST_MS });
-		await attached.data.close();
-	}
-	if (await waitUntil(gone, SHUTDOWN_WAIT_MS - (attached?.success ? SHUTDOWN_REQUEST_MS : 0), deps)) return "shutdown";
-	if (record !== undefined && safeToSignal(deps, record.pid, marks)) deps.kill(record.pid, "SIGTERM");
-	await waitUntil(gone, KILL_WAIT_MS, deps);
-	return "sigterm";
-}
-
 /** Drop `record` from `state.json`, but only while it is still the recorded helper (a newer one is kept). */
-function forgetRecorded(host: StopHost, udid: string, record: HelperRecord | undefined): void {
-	if (record !== undefined) forgetHelper(host, udid, record.pid);
+function forgetRecorded(host: StopHost, kind: HelperKind, udid: string, record: HelperRecord | undefined): void {
+	if (record !== undefined) forgetHelper(host, kind, udid, record.pid);
 }
 
 /** Drop the helper record if it still names `pid`, re-read under the store's lock (`updateState`). */
-function forgetHelper(host: StopHost, udid: string, pid: number): void {
-	updateState(host, udid, (state) => {
-		if (state.helper?.pid !== pid) return state;
-		const { helper: _helper, ...rest } = state;
-		return rest;
-	});
+function forgetHelper(host: StopHost, kind: HelperKind, udid: string, pid: number): void {
+	updateState(host, udid, (state) =>
+		state[kind.field]?.pid !== pid ? state : withRecord(state, kind.field, undefined)
+	);
 }
 
 /** What `warden ui status` shows for the helper. */
@@ -872,11 +1044,12 @@ export type HelperStatus = { running: boolean; pid: number | null; socket: strin
 export function helperStatus(
 	host: Pick<CommandContext, "env">,
 	udid: string,
-	deps: Pick<HelperDeps, "pidAlive" | "command"> = defaultHelperDeps
+	deps: Pick<HelperDeps, "pidAlive" | "command"> = defaultHelperDeps,
+	kind: HelperKind = SIMD_KIND
 ): HelperStatus {
-	const record = readState(host, udid).helper;
+	const record = readState(host, udid)[kind.field];
 	if (record === undefined) return { running: false, pid: null, socket: null };
-	const alive = mayBeRecorded(deps, record.pid, helperMarks(udid, record.socket));
+	const alive = mayBeRecorded(deps, record.pid, kind.marks(udid, record.socket));
 	return { running: alive && existsSync(record.socket), pid: record.pid, socket: record.socket };
 }
 
@@ -892,11 +1065,59 @@ export function sweepDeadHelpers(
 	const removed: string[] = [];
 	for (const udid of knownUdids(host)) {
 		const state = readState(host, udid);
-		const record = state.helper;
-		if (record === undefined || deps.pidAlive(record.pid)) continue;
-		if (existsSync(record.socket)) removed.push(record.socket);
-		unlinkQuietly(record.socket);
-		forgetHelper(host, udid, record.pid);
+		for (const kind of HELPER_KINDS) {
+			const record = state[kind.field];
+			if (record === undefined || deps.pidAlive(record.pid)) continue;
+			if (existsSync(record.socket)) removed.push(record.socket);
+			unlinkQuietly(record.socket);
+			forgetHelper(host, kind, udid, record.pid);
+		}
 	}
 	return removed;
+}
+
+const HELPER_KINDS: readonly HelperKind[] = [SIMD_KIND, ANDROID_HOST_KIND];
+
+export const defaultAndroidHostDeps: HelperDeps<RemoteClient> = {
+	...defaultHelperDeps,
+	connect: async (socketPath, options) =>
+		(await import("@delacour/warden-e2e/driver/remote/remote-client")).connectRemoteDriver({
+			socketPath,
+			readyTimeoutMs: 2000,
+			...(options?.defaultTimeoutMs !== undefined ? { requestTimeoutMs: options.defaultTimeoutMs } : {}),
+		}),
+};
+
+/** `ensureHelper` for an Android serial: its resident `warden __android-host`. */
+export function ensureAndroidHost(
+	host: HelperHost & Required<Pick<HelperHost, "store">>,
+	serial: string,
+	opts: EnsureHelperOptions<RemoteClient> = {}
+): Promise<Result<HelperInfo<RemoteClient>, UiError>> {
+	return ensureHelperOf(ANDROID_HOST_KIND, host, serial, opts.deps ?? defaultAndroidHostDeps, opts);
+}
+
+/**
+ * The Android `Driver` for a leased emulator, over its (possibly just-spawned) resident host, which keeps the adb
+ * shell, `warden-uiad` and the animation scales between `warden ui` calls. Closing it only disconnects.
+ */
+export async function connectAndroidHost(
+	ctx: CommandContext,
+	serial: string,
+	opts: EnsureHelperOptions<RemoteClient> = {}
+): Promise<Result<Driver, UiError>> {
+	const host = await ensureAndroidHost(ctx, serial, { ...opts, keepClient: true });
+	if (!host.success) return host;
+	const { client } = host.data;
+	if (client === undefined) return unavailable(`${ANDROID_HOST_KIND.label} answered without a client`);
+	return ok(client.driver());
+}
+
+/** `stopHelper` for an Android serial's resident host. */
+export function stopAndroidHost(
+	host: StopHost,
+	serial: string,
+	opts: { socketPath?: string; deps?: HelperDeps<RemoteClient> } = {}
+): Promise<StopOutcome> {
+	return stopHelperOf(ANDROID_HOST_KIND, host, serial, opts.deps ?? defaultAndroidHostDeps, opts);
 }
