@@ -35,8 +35,8 @@ Branch `feature/wfb-hook-docs`, commit `92723e60` on top of `274e61ba`. Not push
 - `apps/cli`: `bun test src/hooks src/device-lease` → 52 pass
 - `bun run typecheck` → 10/10, `bun run check` → 12/12
 
-## Open questions
+## Decisions (2026-10-23)
 
-1. Drop the hidden `warden hook pretool` no-op + `RETIRED_HOOKS` cleanup after N releases? a) keep indefinitely b) remove next minor c) remove after a deprecation note in changelog
-2. Drift test allow-list regex is loose (`older`/`removes` anywhere on the line). a) fine as is b) tighten to explicit phrases
-3. Skill / `rules/warden.md` outside this repo may still mention PreToolUse. a) audit separately b) ignore
+1. `warden hook pretool` no-op + `RETIRED_HOOKS` cleanup: **keep indefinitely**. Stale installs that never re-ran `warden install` still call it; removing it would make every agent tool call error.
+2. Drift test allow-list: **tightened** to exact retired phrases (`RETIRED_PHRASES`). Every `PreToolUse` on a line must sit inside one of them; covered by unit cases (a line with "older" + an active claim now fails).
+3. Skill / `~/.claude/rules/warden.md` PreToolUse audit: **separate task**, not done here.

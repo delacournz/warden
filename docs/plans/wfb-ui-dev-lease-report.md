@@ -58,13 +58,13 @@ would silently skip `boot_queue`. Not patched by hand: an ad-hoc `ALTER` breaks 
 candlefish (duplicate column), and an isolated `WARDEN_HOME` would hide leases from other agents.
 
 Fix options:
-- a. Merge order: whichever lands second rebases and appends its migration after the other (no code change).
+- a. **(chosen)** Merge order: whichever lands second rebases and appends its migration after the other (no code change).
 - b. Make additive-column migrations idempotent (check `PRAGMA table_info` before `ADD COLUMN`) so parallel branches
   sharing one DB converge. Recommended: worktrees all share `~/.warden`, so this will recur.
 
 ## Open questions
 
-0. Collision fix: a (merge order) or b (idempotent migrations)?
+0. ~~Collision fix~~ decided 2026-10-23: **a, merge order**. Whichever of this branch / `feature/warden-sim-capacity` lands second rebases and moves its migration after the other (`shared` becomes #9, or `boot_queue` does). Until then this branch skips its `ALTER` against the shared `~/.warden` DB (already at v8 from candlefish), so `leases.shared` is missing there and attach can't work locally.
 1. Should `ui` calls on an attached lease also heartbeat it (belt-and-braces if `warden dev`'s heartbeat loop stalls)? Current: no, holder owns liveness.
 2. Should `close --release` on an attached lease exit non-zero instead of a warning? Current: exit 0 + warning.
 3. Extend `shared` to `warden run` (long-lived human scripts) behind a flag? Current: dev only.
