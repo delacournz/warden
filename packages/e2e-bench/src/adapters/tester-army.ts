@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
@@ -26,6 +26,8 @@ export type TesterArmyDeps = {
 	exists: (path: string) => boolean;
 	readText: (path: string) => string | undefined;
 	home: () => string;
+	/** Directory names under `~/.nvm/versions/node` (`v24.19.0`); empty when nvm is absent. */
+	nvmVersions: () => string[];
 };
 
 const readTextIfPresent = (path: string): string | undefined => {
@@ -36,10 +38,19 @@ const readTextIfPresent = (path: string): string | undefined => {
 	}
 };
 
+const listNvmVersions = (): string[] => {
+	try {
+		return readdirSync(join(homedir(), ".nvm/versions/node"));
+	} catch {
+		return [];
+	}
+};
+
 export const defaultTesterArmyDeps: TesterArmyDeps = {
 	exists: existsSync,
 	readText: readTextIfPresent,
 	home: homedir,
+	nvmVersions: listNvmVersions,
 };
 
 /**
@@ -55,9 +66,25 @@ export function nodeTooOld(version: string): boolean {
 	return major < 24;
 }
 
-/** `$BENCH_NODE_BIN` or the nvm Node 24 the repo's notes pin. */
-export function nodeBinDir(env: RunContext["env"], home: string): string {
-	return env.BENCH_NODE_BIN ?? join(home, ".nvm/versions/node/v24.19.0/bin");
+const semverOf = (v: string): [number, number, number] | undefined => {
+	const m = /^v(\d+)\.(\d+)\.(\d+)$/.exec(v);
+	return m === null ? undefined : [Number(m[1]), Number(m[2]), Number(m[3])];
+};
+
+/**
+ * `$BENCH_NODE_BIN`, else the newest nvm-installed Node inside `e2e`'s range, else undefined. The
+ * default `PATH` Node is tried before this, so a PATH lookup would only find the Node already rejected.
+ */
+export function nodeBinDir(env: RunContext["env"], deps: TesterArmyDeps): string | undefined {
+	if (env.BENCH_NODE_BIN !== undefined) return env.BENCH_NODE_BIN;
+	const best = deps
+		.nvmVersions()
+		.filter((v) => semverOf(v) !== undefined && !nodeTooOld(v))
+		.sort((a, b) => {
+			const [x, y] = [semverOf(a) ?? [0, 0, 0], semverOf(b) ?? [0, 0, 0]];
+			return y[0] - x[0] || y[1] - x[1] || y[2] - x[2];
+		})[0];
+	return best === undefined ? undefined : join(deps.home(), ".nvm/versions/node", best, "bin");
 }
 
 /** The `PATH` with `nodeBin` first, so `e2e`'s `#!/usr/bin/env node` finds the newer Node. */
@@ -128,7 +155,12 @@ async function chooseNode(ctx: RunContext, deps: TesterArmyDeps): Promise<NodeCh
 	const current = await nodeVersionOn(ctx, plain);
 	if (current !== undefined && !nodeTooOld(current))
 		return { ok: true, version: current, path: plain, viaPinned: false };
-	const pinnedBin = nodeBinDir(ctx.env, deps.home());
+	const pinnedBin = nodeBinDir(ctx.env, deps);
+	if (pinnedBin === undefined)
+		return {
+			ok: false,
+			reason: `node ${current ?? "(missing)"} is outside ${NODE_RANGE_HINT}, BENCH_NODE_BIN is unset and no nvm Node in range was found`,
+		};
 	const path = nodePath(ctx.env, pinnedBin);
 	const pinned = await nodeVersionOn(ctx, path);
 	if (pinned !== undefined && !nodeTooOld(pinned)) return { ok: true, version: pinned, path, viaPinned: true };
@@ -150,7 +182,7 @@ async function doctor(ctx: RunContext, deps: TesterArmyDeps): Promise<Doctor> {
 	const notes = [
 		`@e2e-dev/mobile ${mobile}`,
 		`bundled agent-device ${agentDevice}`,
-		`node ${node.version}${node.viaPinned ? ` (pinned, ${nodeBinDir(ctx.env, deps.home())})` : ""}`,
+		`node ${node.version}${node.viaPinned ? ` (pinned, ${nodeBinDir(ctx.env, deps)})` : ""}`,
 	];
 	return { ok: true, version: `e2e ${e2e}`, notes };
 }

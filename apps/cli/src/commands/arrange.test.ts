@@ -30,7 +30,7 @@ describe("warden arrange", () => {
 	test("--json", async () => {
 		ctx = testContext(["--json"], { exec: windowsExec(["warden-iphone-17-1 – iOS 26.5"]) });
 		expect(await arrangeCommand.run(ctx)).toBe(0);
-		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ arranged: ["warden-iphone-17-1"] });
+		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ arranged: ["warden-iphone-17-1"], viewer: "simulator" });
 	});
 
 	test("no windows → says so, exit 0", async () => {
@@ -48,7 +48,28 @@ describe("warden arrange", () => {
 		expect(ctx.stderr.join("\n")).toContain("warden arrange:");
 	});
 
-	test("Simulator.app not running → nothing to arrange without starting osascript", async () => {
+	test("Xcode 27 Device Hub → says tiling is not supported yet, nothing tiled, no osascript", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], {
+			exec: async (cmd) => {
+				calls.push([...cmd]);
+				return { exitCode: cmd[0] === "pgrep" && cmd[2] !== "DeviceHub" ? 1 : 0, stdout: "", stderr: "" };
+			},
+		});
+		expect(await arrangeCommand.run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toContain("Device Hub (Xcode 27) windows are not tiled yet");
+		expect(calls.filter((cmd) => cmd[0] === "osascript")).toHaveLength(0);
+	});
+
+	test("Xcode 27 Device Hub --json → viewer device-hub", async () => {
+		ctx = testContext(["--json"], {
+			exec: async (cmd) => ({ exitCode: cmd[0] === "pgrep" && cmd[2] !== "DeviceHub" ? 1 : 0, stdout: "", stderr: "" }),
+		});
+		expect(await arrangeCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ arranged: [], viewer: "device-hub" });
+	});
+
+	test("no viewer running → nothing to arrange without starting osascript", async () => {
 		const calls: string[][] = [];
 		ctx = testContext([], {
 			exec: async (cmd) => {
@@ -58,6 +79,9 @@ describe("warden arrange", () => {
 		});
 		expect(await arrangeCommand.run(ctx)).toBe(0);
 		expect(ctx.stdout.join("\n")).toContain("no warden simulator windows open");
-		expect(calls).toEqual([["pgrep", "-xq", "Simulator"]]);
+		expect(calls).toEqual([
+			["pgrep", "-xq", "Simulator"],
+			["pgrep", "-xq", "DeviceHub"],
+		]);
 	});
 });

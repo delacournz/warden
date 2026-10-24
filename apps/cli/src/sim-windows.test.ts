@@ -10,6 +10,7 @@ import {
 	arrangeSimWindows,
 	autoArrangeSimWindows,
 	DETACH_PREF_META,
+	detectSimViewer,
 	deviceName,
 	hideSimWindows,
 	layoutWindows,
@@ -76,6 +77,45 @@ describe("layoutWindows", () => {
 /** the `osascript` calls of a fake's log (the `pgrep` guard before them is not one) */
 const osascripts = (calls: string[][]) => calls.filter((c) => c[0] === "osascript");
 
+/** both viewer probes, Simulator.app (Xcode ≤ 26) first */
+const NO_VIEWER = [
+	["pgrep", "-xq", "Simulator"],
+	["pgrep", "-xq", "DeviceHub"],
+];
+
+/** `pgrep -xq` finding only `running`'s process; anything else succeeds empty. */
+function viewerExec(running: "simulator" | "device-hub" | "none", calls: string[][] = []): Exec {
+	const proc = { simulator: "Simulator", "device-hub": "DeviceHub", none: "" }[running];
+	return async (cmd) => {
+		calls.push([...cmd]);
+		if (cmd[0] === "pgrep") return { exitCode: cmd[2] === proc ? 0 : 1, stdout: "", stderr: "" };
+		return { exitCode: 0, stdout: "", stderr: "" };
+	};
+}
+
+describe("detectSimViewer", () => {
+	test("Simulator.app (Xcode ≤ 26) running → simulator, one pgrep", async () => {
+		const calls: string[][] = [];
+		expect(await detectSimViewer(viewerExec("simulator", calls))).toEqual({ kind: "simulator" });
+		expect(calls).toEqual([["pgrep", "-xq", "Simulator"]]);
+	});
+
+	test("Device Hub (Xcode 27) running → device-hub", async () => {
+		const calls: string[][] = [];
+		expect(await detectSimViewer(viewerExec("device-hub", calls))).toEqual({ kind: "device-hub" });
+		expect(calls).toEqual(NO_VIEWER);
+	});
+
+	test("neither running → none", async () => {
+		expect(await detectSimViewer(viewerExec("none"))).toEqual({ kind: "none" });
+	});
+
+	test("pgrep broken → unknown, assume Simulator.app so osascript still looks", async () => {
+		const exec: Exec = async () => ({ exitCode: 127, stdout: "", stderr: "" });
+		expect(await detectSimViewer(exec)).toEqual({ kind: "simulator" });
+	});
+});
+
 describe("arrangeSimWindows", () => {
 	const scripted = (read: string, calls: string[][]): Exec => {
 		return async (cmd) => {
@@ -93,7 +133,10 @@ describe("arrangeSimWindows", () => {
 			windows: [sim("warden-iphone-17-2 – iOS 26.5"), sim("warden-iphone-17-1 – iOS 26.5")],
 		});
 		const result = await arrangeSimWindows(scripted(read, calls));
-		expect(result).toEqual({ success: true, data: { arranged: ["warden-iphone-17-1", "warden-iphone-17-2"] } });
+		expect(result).toEqual({
+			success: true,
+			data: { arranged: ["warden-iphone-17-1", "warden-iphone-17-2"], viewer: "simulator" },
+		});
 		const moves = osascripts(calls);
 		expect(moves).toHaveLength(2);
 		expect(moves[1]?.slice(0, 4)).toEqual(["osascript", "-l", "JavaScript", "-e"]);
@@ -106,18 +149,25 @@ describe("arrangeSimWindows", () => {
 	test("no warden windows → no move call", async () => {
 		const calls: string[][] = [];
 		const result = await arrangeSimWindows(scripted(JSON.stringify({ screen, windows: [] }), calls));
-		expect(result).toEqual({ success: true, data: { arranged: [] } });
+		expect(result).toEqual({ success: true, data: { arranged: [], viewer: "simulator" } });
 		expect(osascripts(calls)).toHaveLength(1);
 	});
 
-	test("Simulator.app not running (`pgrep -xq` finds nothing) → nothing to arrange, osascript never started", async () => {
+	test("no viewer running (`pgrep -xq` finds neither) → nothing to arrange, osascript never started", async () => {
 		const calls: string[][] = [];
 		const exec: Exec = async (cmd) => {
 			calls.push([...cmd]);
 			return { exitCode: cmd[0] === "pgrep" ? 1 : 0, stdout: "", stderr: "" };
 		};
-		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [] } });
-		expect(calls).toEqual([["pgrep", "-xq", "Simulator"]]);
+		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [], viewer: "none" } });
+		expect(calls).toEqual(NO_VIEWER);
+	});
+
+	test("Xcode 27 Device Hub → windows not tiled yet, osascript never started", async () => {
+		const calls: string[][] = [];
+		const exec = viewerExec("device-hub", calls);
+		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [], viewer: "device-hub" } });
+		expect(osascripts(calls)).toHaveLength(0);
 	});
 
 	test.each([
@@ -130,7 +180,7 @@ describe("arrangeSimWindows", () => {
 			if (cmd[0] === "pgrep") return { exitCode, stdout: "", stderr: "" };
 			return { exitCode: 0, stdout: JSON.stringify({ screen, windows: [] }), stderr: "" };
 		};
-		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [] } });
+		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [], viewer: "simulator" } });
 		expect(osascripts(calls)).toHaveLength(1);
 	});
 
@@ -180,7 +230,7 @@ describe("autoArrangeSimWindows", () => {
 		expect(osascripts(fake.calls)).toHaveLength(1);
 	});
 
-	test("Simulator.app not running → one pgrep, no osascript, no wait", async () => {
+	test("no viewer running → the two pgreps, no osascript, no wait", async () => {
 		const waits: number[] = [];
 		const calls: string[][] = [];
 		const exec: Exec = async (cmd) => {
@@ -188,7 +238,7 @@ describe("autoArrangeSimWindows", () => {
 			return { exitCode: cmd[0] === "pgrep" ? 1 : 0, stdout: "", stderr: "" };
 		};
 		await autoArrangeSimWindows({ exec, env: {}, os: "darwin", sleep: async (ms) => void waits.push(ms) }, ["a"]);
-		expect(calls).toEqual([["pgrep", "-xq", "Simulator"]]);
+		expect(calls).toEqual(NO_VIEWER);
 		expect(waits).toEqual([]);
 	});
 
@@ -319,12 +369,28 @@ describe("hideSimWindows", () => {
 		expect(f.warnings).toEqual([]);
 	});
 
-	test("Simulator.app not running → no close, never launched, not even an osascript (one `pgrep -xq` only)", async () => {
+	test("no viewer running → no close, never launched, not even an osascript (the two `pgrep -xq` only)", async () => {
 		const f = fake(undefined);
 		expect(await hideSimWindows(f.deps, leased)).toEqual({ closed: [], rebooted: [] });
-		expect(f.calls).toEqual([["pgrep", "-xq", "Simulator"]]);
+		expect(f.calls).toEqual(NO_VIEWER);
 		expect(closeCalls(f.calls)).toHaveLength(0);
 		expect(f.calls.some((c) => c.join(" ").includes("open -a"))).toBe(false);
+	});
+
+	test("Xcode 27 Device Hub → its windows are never closed, no prefs written, no warning", async () => {
+		const calls: string[][] = [];
+		const warnings: string[] = [];
+		const deps = {
+			exec: viewerExec("device-hub", calls),
+			os: "darwin" as const,
+			sleep: async () => {},
+			warn: (line: string) => warnings.push(line),
+		};
+		const start = await startHideSimWindows(deps, leased);
+		expect(start.closed).toEqual([]);
+		expect(await start.settled).toEqual({ closed: [], rebooted: [] });
+		expect(calls).toEqual(NO_VIEWER);
+		expect(warnings).toEqual([]);
 	});
 
 	test("a device the close shut down is booted again headless, with a warning", async () => {

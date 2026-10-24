@@ -4,7 +4,7 @@ Read this to run, select, configure or debug a suite. Spec authoring is in `spec
 
 ## `warden e2e [suite]`
 
-Selects the flows a change needs, leases devices, runs one `bun test` per flow (or per device), gates on the result. `[suite]` is optional with one suite. With no suite configured (and none named), an Expo app with an `e2e/` dir gets a default suite: every spec there, no git diff, 2 sims, the dev client on warden's Metro (`warden init` writes it out to edit).
+Selects the flows a change needs, leases devices, runs one `bun test` per flow (or per device), gates on the result. `[suite]` is optional with one suite. With no suite configured (and none named), an Expo app with an `e2e/` dir gets a default suite: every spec there, no git diff, 2 devices, iOS unless `--platform android`, the dev client on warden's Metro (`warden init` writes it out to edit). `--install-mode` / `--reset-keychain` / `--clean` need the suite to install an app (`app` in its config, or `--app`); otherwise refused before any device is claimed.
 
 ```bash
 warden e2e example --dry-run --explain     # what would run and why, nothing leased
@@ -197,6 +197,6 @@ A failed run leaves sims booted (so does a passed local one, until `warden gc` r
 
 ## Headless, slim, warm, versions
 
-- Headless: `--headless` on claim/run/batch/e2e, `headless: true` in a suite, or `WARDEN_HEADLESS=1`. `warden dev` honors only an explicit `--headless`. warden never launches Simulator.app and closes the windows of devices it leased. That needs Accessibility permission for the terminal, and a failure only warns. Android is always headless.
+- Headless: `--headless` on claim/run/batch/e2e, `headless: true` in a suite, or `WARDEN_HEADLESS=1`. `warden dev` honors only an explicit `--headless`. warden never launches Simulator.app and closes the windows of devices it leased. That needs Accessibility permission for the terminal, and a failure only warns. Xcode 27's Device Hub windows are left alone (warden doesn't close or tile them yet); don't tap a leased sim in Device Hub (it can swallow warden's input until the sim reboots). Android is always headless.
 - `slim: true` trims simulator daemons per device (iOS). `warmDrivers` (default on, `--no-warm` to skip) starts one `warden-simd` per device after setup, found through `WARDEN_SIMD_SOCKET`.
 - `@delacour/warden-e2e` must equal the warden version. After upgrading warden: `bun add -d @delacour/warden-e2e@<version>`.

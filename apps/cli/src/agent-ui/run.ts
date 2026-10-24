@@ -59,7 +59,8 @@ export async function runUi(
 		try {
 			const done = await work(device.data, { timeoutMs: timeout.data, record: opts.record, deps, driver });
 			if (!done.success) return reportError(ctx, report, done.error, info);
-			return reportOk(ctx, report, done.data);
+			const attachedTo = device.data.action === "attached" ? device.data.lease.id : undefined;
+			return reportOk(ctx, report, attachedTo === undefined ? done.data : { ...done.data, attachedTo });
 		} finally {
 			const used = opened === undefined ? undefined : await opened;
 			if (used?.success) await used.data.close().catch(() => undefined);

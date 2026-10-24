@@ -90,6 +90,16 @@ function callerDeviceLeases(ctx: CommandContext, owner: Owner, platform: Platfor
 		.filter((l) => l.resource.kind === "device" && (platform === undefined || l.resource.platform === platform));
 }
 
+/** How `open` / `close --release` name the shared `warden dev` lease a call attached to. */
+export function sharedNote(lease: Lease): string {
+	return `sharing ${lease.id} with warden dev${lease.pid === undefined ? "" : ` (pid ${lease.pid})`}`;
+}
+
+/** A shared (`warden dev`) lease whose holding process is alive: `warden ui` attaches to it. */
+function liveShared(lease: Lease, pidAlive: PidAlive): boolean {
+	return lease.shared === true && lease.pid !== undefined && pidAlive(lease.pid);
+}
+
 /** `--claim` with no device at all: `warden claim <platform>` (profile / runtime from the flags). */
 async function claimFresh(ctx: CommandContext, owner: Owner, flags: UiDeviceFlags): Promise<Result<UiDevice, UiError>> {
 	const platform = parsePlatform(flags.platform ?? "ios");
@@ -120,14 +130,20 @@ async function claimFresh(ctx: CommandContext, owner: Owner, flags: UiDeviceFlag
 	});
 }
 
-/** No device named: the caller's single held device, `"claim"` (with `--claim`), else an exit-2 error. */
+/**
+ * No device named: the caller's single held device (of several, the one live `warden dev` device), `"claim"` (with
+ * `--claim`), else an exit-2 error.
+ */
 function pickHeld(
 	ctx: CommandContext,
 	owner: Owner,
 	flags: UiDeviceFlags,
-	platform: Platform | undefined
+	platform: Platform | undefined,
+	pidAlive: PidAlive
 ): Result<Candidate | "claim", UiError> {
-	const mine = callerDeviceLeases(ctx, owner, platform);
+	const held = callerDeviceLeases(ctx, owner, platform);
+	const dev = held.filter((l) => liveShared(l, pidAlive));
+	const mine = held.length > 1 && dev.length === 1 ? dev : held;
 	if (mine.length > 1) {
 		const listing = mine.map((l) => (l.resource.kind === "device" ? `${l.resource.id} (${l.resource.name})` : l.id));
 		return fail(
@@ -186,9 +202,10 @@ function leaseCandidate(
 /**
  * The device a `warden ui` call acts on, and proof the caller may use it. Order: `--udid|--serial|--lease`
  * → `WARDEN_UDID` → `WARDEN_UDIDS` (if one) → the caller's own device leases (one → it; none → exit 2, or a
- * fresh claim with `--claim`; several → exit 2 listing them). A named device then goes through
- * `ensureCallerLease`: own → heartbeat (held by a live warden process, with `check.exclusive` → exit 2
- * `device_busy`), foreign live → exit 2, stale/none → only with `--claim`.
+ * fresh claim with `--claim`; several → the one live `warden dev` device, else exit 2 listing them). A named device
+ * then goes through `ensureCallerLease`: own → heartbeat (a shared `warden dev` lease its live holder keeps →
+ * `attached`; held by another live warden process, with `check.exclusive` → exit 2 `device_busy`), foreign live →
+ * exit 2, stale/none → only with `--claim`.
  */
 export async function resolveUiDevice(
 	ctx: CommandContext,
@@ -202,7 +219,7 @@ export async function resolveUiDevice(
 	if (platformFlag && !platformFlag.success) return fail(uiError("usage", platformFlag.error));
 	let candidate: Candidate | "claim" | undefined = named.data ?? fromEnv(ctx.env);
 	if (candidate === undefined) {
-		const held = pickHeld(ctx, owner, flags, platformFlag?.data);
+		const held = pickHeld(ctx, owner, flags, platformFlag?.data, check.pidAlive ?? processAlive);
 		if (!held.success) return held;
 		candidate = held.data;
 	}

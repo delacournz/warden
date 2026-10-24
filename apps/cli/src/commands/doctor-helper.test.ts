@@ -233,10 +233,16 @@ describe("helperChecks", () => {
 		expect(rows[0]?.detail).toContain("WARDEN_SIMD=/nope/warden-simd does not exist");
 	});
 
-	test("darwin-x64: no helper in this version (informational); linux: no rows", async () => {
+	test("darwin-x64: no helper in this version warns like any missing helper; linux: no rows", async () => {
 		const c = setup();
 		expect(await helperChecks(c, deps({}, { arch: "x64" }))).toEqual([
-			{ name: "sim-helper", level: "optional", status: "ok", detail: "no helper for darwin-x64 in this version" },
+			{
+				name: "sim-helper",
+				level: "optional",
+				status: "warn",
+				detail:
+					"no helper for darwin-x64 in this version — `warden ui` / `warden e2e` cannot drive iOS simulators on this Mac",
+			},
 		]);
 		expect(await helperChecks(c, deps({}, { platform: "linux" }))).toEqual([]);
 	});

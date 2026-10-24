@@ -274,3 +274,86 @@ describe("warden ui on a device a live warden process holds (refuse unless --for
 
 	const snap = () => snapshotOf(LOGIN);
 });
+
+describe("warden ui on the caller's own `warden dev` device (shared lease: attach, don't steal)", () => {
+	afterEach(cleanupHarnesses);
+	const DEV = { pid: 4242, shared: true };
+	const leaseId = (h: ReturnType<typeof harness>) => h.c.db.listLeases()[0]?.id ?? "";
+
+	test("snapshot proceeds without --force; --json carries attachedTo: <dev lease id>", async () => {
+		const h = harness(() => snap(), { lease: DEV, pidAlive: (pid) => pid === 4242 });
+		const id = leaseId(h);
+		expect(await h.run("snapshot", "--json")).toBe(0);
+		expect(doc(h.c)).toMatchObject({ ok: true, command: "snapshot", attachedTo: id });
+		expect(h.opens.count).toBe(1);
+	});
+
+	test("open says it is sharing the dev lease", async () => {
+		const h = harness(() => snap(), { lease: DEV, pidAlive: () => true });
+		expect(await h.run("open", "com.x.y")).toBe(0);
+		expect(h.c.stdout.join("\n")).toContain(`sharing ${leaseId(h)} with warden dev (pid 4242)`);
+	});
+
+	test("status reports action attached", async () => {
+		const h = harness(() => snap(), { lease: DEV, pidAlive: () => true });
+		expect(await h.run("status", "--json")).toBe(0);
+		expect(doc(h.c).result.lease.action).toBe("attached");
+	});
+
+	test("close --release keeps the dev lease (warden dev owns it) and says so", async () => {
+		const h = harness(() => snap(), { lease: DEV, pidAlive: () => true });
+		const id = leaseId(h);
+		expect(await h.run("close", "--release", "--json")).toBe(0);
+		const out = doc(h.c);
+		expect(out.attachedTo).toBe(id);
+		expect(out.result.released).toBe(false);
+		expect(out.warnings.join("\n")).toContain(`not released: ${id} belongs to warden dev (pid 4242)`);
+		expect(h.c.db.getLease(id)).toBeDefined();
+	});
+
+	test("a running e2e suite (not shared) is still refused", async () => {
+		const h = harness(() => snap(), { lease: { pid: 4242, label: "warden e2e" }, pidAlive: () => true });
+		expect(await h.run("snapshot")).toBe(2);
+		expect(h.opens.count).toBe(0);
+	});
+
+	test("dev holder gone: an ordinary own lease again (no attachedTo, close --release releases)", async () => {
+		const h = harness(() => snap(), { lease: DEV, pidAlive: () => false });
+		const id = leaseId(h);
+		expect(await h.run("close", "--release", "--json")).toBe(0);
+		const out = doc(h.c);
+		expect(out.attachedTo).toBeUndefined();
+		expect(out.result.released).toBe(true);
+		expect(h.c.db.getLease(id)).toBeUndefined();
+	});
+
+	const snap = () => snapshotOf(LOGIN);
+});
+
+describe("warden ui picks the live `warden dev` device among several held", () => {
+	test("no device named: the single live shared lease wins over a plain claim", async () => {
+		const c = setup(["status", "--json"]);
+		lease(c, UDID, mine);
+		const dev = c.db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: UDID2, name: "dev-sim" },
+				owner: mine,
+				ttlMs: 600_000,
+				pid: process.pid,
+				label: "warden dev",
+				shared: true,
+			},
+			c.now()
+		);
+		expect(await uiCommand.run(c)).toBe(0);
+		expect(json(c)).toMatchObject({ ok: true, device: { udid: UDID2 }, attachedTo: dev.id });
+	});
+
+	test("two plain claims: still ambiguous", async () => {
+		const c = setup(["status", "--json"]);
+		lease(c, UDID, mine);
+		lease(c, UDID2, mine);
+		expect(await uiCommand.run(c)).toBe(2);
+		expect(json(c).error.code).toBe("ambiguous_device");
+	});
+});

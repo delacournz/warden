@@ -4,10 +4,6 @@ description: Install warden from npm or build it from source, wire up agent hook
 icon: Download
 ---
 
-<Callout type="warn">
-The npm release of `@delacour/warden` is pending. These commands are the intended install path and work once the first version is published. Until then, [build from source](#from-source).
-</Callout>
-
 <Steps>
 <Step>
 
@@ -35,12 +31,12 @@ The package is a small node shim plus one prebuilt binary per platform (`@delaco
 ### Choose agents
 
 ```bash
-warden install            # binary + hooks for every detected agent; shows a diff, asks first
-warden install --claude   # force Claude Code only: skill (via `skills add`) + rule + SessionEnd hook
+warden install            # binary + skill, rule and hooks for every detected agent
+warden install --claude   # force Claude Code only: skill (via `skills add`) + rule + SessionEnd hook in ~/.claude/settings.json
 warden install --codex    # force Codex only: hooks in $CODEX_HOME/hooks.json
 ```
 
-Every agent-config change shows a diff and asks first. `--yes` skips the prompt, `--dry-run` only prints, and a non-TTY without `--yes` skips. Merges are idempotent and keep all other config. See [Agents](/docs/guides/agents) for what gets installed.
+Agents are detected from `~/.claude` / `claude` on `PATH` and `$CODEX_HOME` (`~/.codex`) / `codex` on `PATH`; with none found only the binary is installed. Edits to `~/.claude/settings.json` and Codex `hooks.json` show a diff and ask first: `--yes` skips the prompt, and a non-TTY without `--yes` skips the step. The Claude rule `~/.claude/rules/warden.md` is written directly, and the skill is placed by the `skills` CLI (it may prompt; `--yes` is passed through). `--dry-run` only prints. Merges are idempotent and keep all other config. After a first Codex install, run `/hooks` in Codex to trust the new hook. See [Agents](/docs/guides/agents) for what gets installed.
 
 `warden install` also sets up tab completion for your shell (zsh, bash or fish, from `$SHELL`): `warden sims <tab>` lists `audit / prune / delete`, and in zsh further tabs cycle through them. The `.zshrc` / `.bashrc` line is shown and confirmed like the rest; `--no-completion` skips it. See [`warden completion`](/docs/reference/cli#warden-completion-zshbashfish).
 
@@ -53,20 +49,22 @@ Every agent-config change shows a diff and asks first. `--yes` skips the prompt,
 warden doctor
 ```
 
-`doctor` checks warden's home, the db, device tools (`xcrun simctl`, `adb`, `emulator`), how warden was installed (and how to upgrade it), `PATH`, Claude/Codex hooks, skill and rule, and stale leases.
+`doctor` checks warden's home, the db, device tools (`xcrun simctl`, `adb`, `emulator`), how warden was installed (and how to upgrade it), `ccache` (for native iOS builds), the iOS simulator helper `warden-simd` (`warden doctor --fetch-helper` downloads it for this version when a standalone or self-updated binary has none), `PATH`, Claude/Codex hooks, skill and rule, and stale leases. Only a failing home or db makes it exit 1; everything else warns. `--json` for machines.
 
 </Step>
 </Steps>
 
 ## From source
 
-From a checkout of the warden repo:
+Only needed to work on warden itself or run an unreleased branch. From a checkout of the warden repo:
 
 ```bash
 bun install
 bun run --cwd apps/cli install:global   # local build of this checkout → ~/.local/bin/warden
 warden install
 ```
+
+No registry token is needed. The docs site's OpenTelemetry packages (`@delacournz/otel*`) live on GitHub Packages and are optional: without a `read:packages` `NPM_TOKEN`, `bun install` prints a `401` warning for them and carries on. Only the docs deploy uses them; the CLI never does.
 
 `~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`. `warden update` rebuilds from the checkout.
 
@@ -88,14 +86,18 @@ The skill is a folder, `skills/warden/` (`SKILL.md` + `references/{ui,specs,suit
 
 ## In GitHub Actions
 
-The repo is private, so CI installs the release binary with a token instead of npm:
+Install from npm like anywhere else:
+
+```yaml
+- run: npm i -g @delacour/warden
+```
+
+Or download the release binary (checksum-verified, no Node needed):
 
 ```yaml
 - uses: delacournz/warden/.github/actions/install-warden@main
-  with:
-    token: ${{ secrets.WARDEN_RELEASE_TOKEN }}
 ```
 
-`WARDEN_RELEASE_TOKEN` needs **Contents: read** on `delacournz/warden` (fine-grained PAT or GitHub App token). Allow the action's repo under Settings → Actions → General → Access. The action downloads `warden-<os>-<arch>` from the latest (or `version:`) release, checks `checksums.txt` and adds `warden` to `PATH`.
+The action downloads `warden-<os>-<arch>` from the latest (or `version:`) release of `delacournz/warden`, checks `checksums.txt` and adds `warden` to `PATH`. `token` defaults to the workflow's own `github.token`, which can read the public releases; set it only for a private fork named by `repo`.
 
 A clean macOS runner needs no setup beyond an installed iOS runtime: the profile's simulators are created on claim, cloned from a golden image built on first use (cache `~/Library/Developer/CoreSimulator/Devices` to skip that next time).

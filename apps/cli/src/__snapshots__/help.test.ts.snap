@@ -175,8 +175,8 @@ Options:
   --no-headless          show the windows even when config / WARDEN_HEADLESS say
                          headless
   --json                 machine-readable output
-  --port <from:span>     lease a port from FROM..FROM+SPAN for the child
-                         (WARDEN_PORT_<i>); repeatable (default: [])
+  --port <from:span>     lease a port from FROM..FROM+SPAN-1 (inclusive) for the
+                         child (WARDEN_PORT_<i>); repeatable (default: [])
   --app                  install the project's app (fingerprint → cache → EAS →
                          build) on each device first
   --install-mode <mode>  --app: clean = fresh app data each run without
@@ -212,7 +212,6 @@ Options:
   --profile <slug>            device profile, e.g. iphone-17 / pixel-10 (android
                               default: first AVD)
   --runtime <runtime>         runtime: latest, iOS-26-5, 26.5 …
-  --count <n>                 how many devices (default: "1")
   --max <n>                   max warden devices of this profile (default: what
                               the machine's capacity allows)
   --wait <duration>           queue up to this long for a free device or host
@@ -295,8 +294,9 @@ Options:
   --no-headless               show the windows even when config /
                               WARDEN_HEADLESS say headless
   --json                      machine-readable output
-  --port <from:span>          lease a port from FROM..FROM+SPAN for the child
-                              (WARDEN_PORT_<i>); repeatable (default: [])
+  --port <from:span>          lease a port from FROM..FROM+SPAN-1 (inclusive)
+                              for the child (WARDEN_PORT_<i>); repeatable
+                              (default: [])
   --app                       install the project's app (fingerprint → cache →
                               EAS → build) on each device first
   --install-mode <mode>       --app: clean = fresh app data each run without
@@ -364,7 +364,7 @@ Options:
 
 Examples:
   warden affected mobile --base origin/main --explain
-  warden batch ios --jobs-from - -- <runner> {job} < <(warden affected mobile --platform ios)"
+  warden affected mobile --platform ios | warden batch ios --jobs-from - -- <runner> {job}"
 `;
 
 exports[`help output warden e2e --help (and nested subcommands) 1`] = `
@@ -401,8 +401,9 @@ Options:
   --no-headless               show the windows even when config /
                               WARDEN_HEADLESS say headless
   --json                      machine-readable output
-  --port <from:span>          lease a port from FROM..FROM+SPAN for the child
-                              (WARDEN_PORT_<i>); repeatable (default: [])
+  --port <from:span>          lease a port from FROM..FROM+SPAN-1 (inclusive)
+                              for the child (WARDEN_PORT_<i>); repeatable
+                              (default: [])
   --app                       install the project's app (fingerprint → cache →
                               EAS → build) on each device first
   --install-mode <mode>       --app: clean = fresh app data each run without
@@ -761,8 +762,8 @@ Options:
   -h, --help          display help for command
 
 Commands:
-  claim               lease free port(s) from FROM..FROM+SPAN; prints one port
-                      per line
+  claim               lease free port(s) from FROM..FROM+SPAN-1 (inclusive);
+                      prints one port per line
   release [ports...]  release port leases: <port…> | --lease <id…> | --mine (own
                       leases only unless --force)
   ls                  list port leases
@@ -771,7 +772,7 @@ Commands:
 $ warden port claim --help
 Usage: warden port claim [options]
 
-lease free port(s) from FROM..FROM+SPAN; prints one port per line
+lease free port(s) from FROM..FROM+SPAN-1 (inclusive); prints one port per line
 
 Options:
   --from <port>     first port of the range (default 8091)
@@ -948,7 +949,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -974,7 +976,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1001,7 +1004,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1026,7 +1030,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1057,7 +1062,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1085,7 +1091,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1113,7 +1120,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1144,7 +1152,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1172,7 +1181,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1199,7 +1209,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1232,7 +1243,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1259,7 +1271,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1283,7 +1296,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1307,7 +1321,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1351,7 +1366,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1378,7 +1394,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1403,7 +1420,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1429,7 +1447,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1479,7 +1498,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1508,7 +1528,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1540,7 +1561,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1572,7 +1594,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1600,7 +1623,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1627,7 +1651,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1653,7 +1678,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1678,7 +1704,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1704,7 +1731,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1744,7 +1772,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1766,7 +1795,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1788,7 +1818,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1819,7 +1850,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1860,7 +1892,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1888,7 +1921,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1916,7 +1950,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1945,7 +1980,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout
@@ -1967,7 +2003,8 @@ Options:
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
-                         batch, run, dev) holds your lease on it
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running flow recording
   --json                 machine-readable output: one JSON document on stdout

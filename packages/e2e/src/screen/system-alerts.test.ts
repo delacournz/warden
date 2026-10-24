@@ -17,7 +17,6 @@ const env: E2eEnv = {
 	timeoutMs: 1000,
 	actionTimeoutMs: 1000,
 	assertionTimeoutMs: 1000,
-	headless: false,
 	logTimestamps: false,
 };
 

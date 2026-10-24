@@ -10,6 +10,7 @@ import {
 	currentScope,
 	type Hook,
 	markOnly,
+	ownHook,
 	registrationDefaults,
 	resolveUse,
 	runInScope,
@@ -51,6 +52,13 @@ export type TestApi<F extends object> = TestCallable<F> & {
 	skipIf(condition: boolean): TestCallable<F>;
 	/** applies to every test collected in the current scope (file or `describe`) */
 	use(options: UseOptions): void;
+	/**
+	 * Like the top-level `beforeEach`, typed with this `test`'s fixtures (the ones `extend` added too). It runs only
+	 * for tests made with this `test` or one extended from it, not for the base `test`'s.
+	 */
+	beforeEach(hook: (fixtures: F) => void | Promise<void>): void;
+	/** `beforeEach`'s counterpart: runs after each such test, even when it failed. */
+	afterEach(hook: (fixtures: F) => void | Promise<void>): void;
 	/** a `test` whose bodies also receive `Extra` */
 	extend<Extra extends object>(defs: FixtureDefs<F, Extra>): TestApi<F & Extra>;
 };
@@ -125,6 +133,11 @@ function eraseSetup<Base extends object, Value>(
 	return (base, use) => setup(base as Base, use);
 }
 
+/** A hook typed with a test's fixtures as the scope's {@link Hook}; the runner only calls it for tests that have them. */
+function eraseHook<F extends object>(hook: (fixtures: F) => void | Promise<void>): Hook {
+	return (fixtures) => hook(fixtures as unknown as F);
+}
+
 function isKeyOf<T extends object>(object: T, key: PropertyKey): key is keyof T {
 	return key in object;
 }
@@ -146,6 +159,12 @@ function makeTest<F extends object>(fixtures: readonly FixtureEntry[]): TestApi<
 		},
 		skipIf(condition: boolean): TestCallable<F> {
 			return makeCallable<F>(fixtures, condition ? "skip" : "run");
+		},
+		beforeEach(hook: (fixtures: F) => void | Promise<void>): void {
+			currentScope().beforeEach.push(ownHook(eraseHook(hook), fixtures));
+		},
+		afterEach(hook: (fixtures: F) => void | Promise<void>): void {
+			currentScope().afterEach.push(ownHook(eraseHook(hook), fixtures));
 		},
 		use(options: UseOptions): void {
 			if (options.systemAlerts !== undefined && !SYSTEM_ALERTS.includes(options.systemAlerts)) {

@@ -18,8 +18,11 @@ import { ok, type Result } from "@delacour/warden-types/result";
  */
 export type DeviceLeaseError = { code: "device_foreign" | "device_busy" | "device_not_leased"; message: string };
 
-/** `own` = already the caller's (heartbeat); `reclaimed` = a stale lease was replaced; `leased` = was free. */
-export type CallerLease = { lease: Lease; action: "own" | "reclaimed" | "leased" };
+/**
+ * `own` = already the caller's (heartbeat); `attached` = the caller's shared lease a live `warden dev` holds (used
+ * beside it: no heartbeat, never released by the caller); `reclaimed` = a stale lease was replaced; `leased` = was free.
+ */
+export type CallerLease = { lease: Lease; action: "own" | "attached" | "reclaimed" | "leased" };
 
 export type EnsureLeaseOptions = {
 	now: number;
@@ -36,7 +39,8 @@ export type EnsureLeaseOptions = {
 	ttlMs?: number;
 	/**
 	 * Refuse an own lease whose `pid` is a live process other than `pid` (a running `warden e2e` / `batch` /
-	 * `run` / `dev` holds it) with `device_busy`. `warden ui` sets it unless `--force`; the hook does not.
+	 * `run` holds it) with `device_busy`. `warden ui` sets it unless `--force`; the hook does not. A `shared` lease
+	 * (`warden dev`) is never busy: the caller attaches to it, exclusive or not.
 	 */
 	exclusive?: boolean;
 };
@@ -63,9 +67,9 @@ function heldByOtherProcess(lease: Lease, opts: EnsureLeaseOptions): boolean {
 }
 
 /**
- * The one lease check for a caller using a device (the PreToolUse hook and `warden ui`), atomically:
- * own lease → heartbeat (with `exclusive`, one a live warden process holds → `device_busy`); another live
- * owner → `device_foreign`; stale or missing → taken over when `claim`, else `device_not_leased`.
+ * The one lease check for a caller using a device (`warden ui`), atomically:
+ * own lease → heartbeat (with `exclusive`, one a live warden process holds → `device_busy`; a shared
+ * `warden dev` lease → `attached`); another live owner → `device_foreign`; stale or missing → taken over when `claim`, else `device_not_leased`.
  */
 export function ensureCallerLease(
 	store: Store,
@@ -97,9 +101,14 @@ export function ensureCallerLease(
 	});
 }
 
-/** The caller's own lease: heartbeat it, unless `exclusive` and a live warden process holds it (`device_busy`). */
+/**
+ * The caller's own lease. Held by another live process: shared (`warden dev`) → `attached` (its holder keeps the
+ * heartbeat), else with `exclusive` → `device_busy`. Otherwise heartbeat it.
+ */
 function ownLease(store: Store, existing: Lease, opts: EnsureLeaseOptions): Result<CallerLease, DeviceLeaseError> {
-	if (opts.exclusive && heldByOtherProcess(existing, opts)) {
+	const held = heldByOtherProcess(existing, opts);
+	if (held && existing.shared) return ok({ lease: existing, action: "attached" });
+	if (opts.exclusive && held) {
 		return { success: false, error: { code: "device_busy", message: busyMessage(existing) } };
 	}
 	store.heartbeat([existing.id], opts.now);

@@ -28,7 +28,6 @@ function hostFor(metroUrl: string | undefined, devtools: DevtoolsOpener) {
 		timeoutMs: 1000,
 		actionTimeoutMs: 1000,
 		assertionTimeoutMs: 1000,
-		headless: false,
 		logTimestamps: false,
 		...(metroUrl === undefined ? {} : { metroUrl }),
 	};
@@ -86,7 +85,6 @@ describe("screenHostFor systemAlerts", () => {
 			timeoutMs: 1000,
 			actionTimeoutMs: 1000,
 			assertionTimeoutMs: 1000,
-			headless: false,
 			logTimestamps: false,
 		};
 		return {
