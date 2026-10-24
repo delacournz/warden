@@ -1,0 +1,16 @@
+--------- beginning of crash
+10-24 10:03:00.456  4321  4360 E AndroidRuntime: FATAL EXCEPTION: mqt_native_modules
+10-24 10:03:00.456  4321  4360 E AndroidRuntime: Process: com.acme.shop, PID: 4321
+10-24 10:03:00.456  4321  4360 E AndroidRuntime: java.lang.NullPointerException: Attempt to invoke virtual method 'int java.util.List.size()' on a null object reference
+10-24 10:03:00.456  4321  4360 E AndroidRuntime: 	at com.acme.shop.cart.CartAdapter.getItemCount(CartAdapter.java:42)
+10-24 10:03:00.456  4321  4360 E AndroidRuntime: 	at androidx.recyclerview.widget.RecyclerView.onMeasure(RecyclerView.java:3891)
+10-24 10:03:00.456  4321  4360 E AndroidRuntime: 	at android.view.View.measure(View.java:30174)
+10-24 10:04:10.100  5000  5000 F libc    : Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x10 in tid 5000 (mqt_js), pid 5000 (com.acme.shop)
+10-24 10:04:10.310  5033  5033 F DEBUG   : Cmdline: com.acme.shop
+10-24 10:04:10.310  5033  5033 F DEBUG   : pid: 5000, tid: 5000, name: mqt_js  >>> com.acme.shop <<<
+10-24 10:04:10.310  5033  5033 F DEBUG   : signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0000000000000010
+10-24 10:04:10.310  5033  5033 F DEBUG   :       #00 pc 000000000004a1c4  /data/app/~~x/com.acme.shop-y/lib/arm64/libhermes.so (BuildId: 0123456789abcdef)
+10-24 10:05:30.000  7000  7000 E AndroidRuntime: FATAL EXCEPTION: main
+10-24 10:05:30.000  7000  7000 E AndroidRuntime: Process: com.other.app, PID: 7000
+10-24 10:05:30.000  7000  7000 E AndroidRuntime: java.lang.IllegalStateException: boom
+10-24 10:05:30.000  7000  7000 E AndroidRuntime: 	at com.other.app.Main.run(Main.java:7)

@@ -1,0 +1,16 @@
+Drop box contents: 1 entries
+Max entries: 1000
+
+========================================
+2026-10-24 10:05:00 data_app_anr (text, 4096 bytes)
+Process: com.acme.shop
+PID: 4321
+Flags: 0x38e83e46
+Package: com.acme.shop v7 (2.4.1)
+Foreground: Yes
+Process-Runtime: 301442
+Build: google/sdk_gphone64_arm64/emu64a:15/AE3A.240806.043/12273592:userdebug/dev-keys
+Subject: Input dispatching timed out (a1b2c3d com.acme.shop/com.acme.shop.MainActivity (server) is not responding. Waited 5001ms for MotionEvent)
+
+CPU usage from 1234ms to 0ms ago (2026-10-24 10:04:58.100 to 2026-10-24 10:05:00.002):
+  88% 4321/com.acme.shop: 80% user + 8.1% kernel / faults: 12 minor

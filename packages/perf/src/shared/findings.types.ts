@@ -21,6 +21,7 @@ type FindingExtras = {
 	"memory-growth": { slopeKbPerSec: number };
 	leak: { type: string; count: number };
 	crash: { process: string };
+	anr: { process: string };
 	"js-hotspot": { file: string; line: number };
 };
 
@@ -42,6 +43,7 @@ export const FINDING_KINDS: readonly FindingKind[] = [
 	"memory-growth",
 	"leak",
 	"crash",
+	"anr",
 	"js-hotspot",
 ];
 
