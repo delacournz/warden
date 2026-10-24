@@ -9,6 +9,7 @@ import { mkdirSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools/devtools.types";
 import { openDevtoolsFacet } from "./devtools/facet";
+import type { NativeLogDeps } from "./devtools/native-log";
 import type { Driver, DriverResult } from "./driver/driver.types";
 import { cacheObservations } from "./driver/observation-cache";
 import { traceDriver } from "./driver/traced-driver";
@@ -51,6 +52,8 @@ export type Session = {
 	readonly results: ResultsWriter;
 	/** builds `app`/`device`/`screen` for each attempt (T4/T6); settable so tests can fake it */
 	fixtures: FixtureFactory | undefined;
+	/** how a failed attempt's `native.log` / crash reports are read; absent in unit tests (nothing is spawned) */
+	nativeLog: NativeLogDeps | undefined;
 	/** where the console reporter prints one line; default fd 1 */
 	readonly log: (line: string) => void;
 	/** the running attempt, if any */
@@ -97,6 +100,8 @@ export type SessionOptions = {
 	driverFactory?: DriverFactory;
 	/** how to attach devtools; default {@link openDevtools} */
 	devtools?: DevtoolsOpener;
+	/** native log reader; default {@link setDefaultNativeLog}'s */
+	nativeLog?: NativeLogDeps;
 	/** fixture factory; default {@link setDefaultFixtureFactory}'s */
 	fixtures?: FixtureFactory;
 	/** console line sink; default writes to fd 1 (bun test captures `process.stdout`, fd 1 is not captured) */
@@ -111,6 +116,12 @@ const slot = (): SessionSlot => globalThis as SessionSlot;
 
 let defaultFactory: DriverFactory | undefined;
 let defaultFixtures: FixtureFactory | undefined;
+let defaultNativeLog: NativeLogDeps | undefined;
+
+/** Wires the native-log reader used when a session gets none (`preload.ts` registers the real one). */
+export function setDefaultNativeLog(deps: NativeLogDeps | undefined): void {
+	defaultNativeLog = deps;
+}
 
 /** Wires the factory used when `getSession` gets none (`driver/open.ts`'s opener, set by the package entry). */
 export function setDefaultDriverFactory(factory: DriverFactory | undefined): void {
@@ -178,6 +189,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 		out,
 		results,
 		fixtures: opts.fixtures ?? defaultFixtures,
+		nativeLog: opts.nativeLog ?? defaultNativeLog,
 		log: opts.log ?? writeLine,
 		get attempt() {
 			return attempt;
@@ -322,6 +334,9 @@ export function attemptSession(session: Session, binding: () => AttemptBinding):
 		},
 		get results() {
 			return session.results;
+		},
+		get nativeLog() {
+			return session.nativeLog;
 		},
 		get fixtures() {
 			return session.fixtures;

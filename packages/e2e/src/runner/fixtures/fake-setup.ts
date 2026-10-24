@@ -1,7 +1,7 @@
 import { appendFileSync, writeFileSync } from "node:fs";
 import { el, type FakeDriver, fakeDriver, snapshotOf } from "../../driver/driver.testing";
 import { defaultFixtureFactory } from "../../fixtures";
-import { setDefaultDriverFactory, setDefaultFixtureFactory } from "../../session";
+import { setDefaultDriverFactory, setDefaultFixtureFactory, setDefaultNativeLog } from "../../session";
 
 /** Appends one line to `$FIXTURE_LOG` (the runner test reads it back to assert ordering). */
 export function fixtureLog(line: string): void {
@@ -12,6 +12,7 @@ export function fixtureLog(line: string): void {
 /** The fake device of this process, for specs that assert on driver calls. */
 export const fake: { driver: FakeDriver | undefined } = { driver: undefined };
 
+setDefaultNativeLog(undefined);
 setDefaultDriverFactory(async (env) => {
 	fake.driver = fakeDriver({
 		platform: env.platform,

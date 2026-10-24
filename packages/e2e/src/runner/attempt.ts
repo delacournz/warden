@@ -3,7 +3,13 @@ import { join } from "node:path";
 import { E2eError } from "../errors";
 import { type AttemptBinding, attemptSession, type Session } from "../session";
 import { attemptDir, flowIdOf, hash6 } from "./artifacts";
-import { CAPTURE_TIMEOUT_MS, captureDevtoolsArtifacts, captureFailure } from "./failure";
+import {
+	CAPTURE_TIMEOUT_MS,
+	captureDevtoolsArtifacts,
+	captureFailure,
+	captureNativeArtifacts,
+	nativeTarget,
+} from "./failure";
 import type { AttemptContext, BaseFixtures } from "./fixtures.types";
 import type { TestResult } from "./results";
 import { BUN_TIMEOUT_MARGIN_MS, hooksFor, type ResolvedUse, resolveUse, type Scope } from "./scope";
@@ -268,7 +274,7 @@ export async function runAttempt<F extends object>(session: Session, spec: Attem
 		failed = true;
 		failure = softFailureError(ctx.softFailures);
 	}
-	if (failed) await captureFailureArtifacts(session, ctx, budget);
+	if (failed) await captureFailureArtifacts(session, ctx, budget, startedAt);
 
 	const cleanupErrors = await runCleanup(session, spec, ctx, state.bag, teardowns, budget, (context) => {
 		binding = { context, finished: false };
@@ -355,15 +361,32 @@ async function setUpAndRun<F extends object>(
 
 /**
  * `failure.png` + `screen-at-failure.txt` from the already-open driver and `console.jsonl` + `network.jsonl` from the
- * already-attached devtools (never opens either); problems go to the trace.
+ * already-attached devtools (never opens either), plus `native.log` and iOS crash reports of the app; problems go
+ * to the trace.
  */
-async function captureFailureArtifacts(session: Session, ctx: AttemptContext, budget: () => number): Promise<void> {
+async function captureFailureArtifacts(
+	session: Session,
+	ctx: AttemptContext,
+	budget: () => number,
+	startedAt: number
+): Promise<void> {
 	const driver = session.peekDriver();
 	const facet = session.peekDevtools();
 	const { captureTimeoutMs } = runnerTiming();
 	const captures = [
 		...(driver === undefined ? [] : [await captureFailure(driver, ctx.dir, captureTimeoutMs, budget)]),
 		...(facet === undefined ? [] : [await captureDevtoolsArtifacts(facet, ctx.dir, captureTimeoutMs, budget)]),
+		...(session.nativeLog === undefined
+			? []
+			: [
+					await captureNativeArtifacts(
+						nativeTarget(session.env),
+						session.nativeLog,
+						{ dir: ctx.dir, sinceMs: startedAt },
+						captureTimeoutMs,
+						budget
+					),
+				]),
 	];
 	for (const capture of captures) {
 		for (const file of capture.files) ctx.files.add(file);
