@@ -19,6 +19,7 @@ import { type InstallOrigin, installOrigin } from "../update/install-origin";
 import type { Fetch } from "../update/npm-registry";
 import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
 import { type HelperDeps, helperChecks, realHelperDeps } from "./doctor-helper";
+import { xcodeChecks } from "./doctor-xcode";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 /** core failures make doctor exit 1; optional ones only warn */
@@ -203,7 +204,7 @@ export function ccacheProject(cwd: string): Probe {
 export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHelperDeps()): Promise<DoctorCheck[]> {
 	const home = ctx.env.HOME ?? "";
 	const { adb, emulator } = androidTools(ctx.env);
-	const [simctl, adbProbe, emulatorProbe, ccache, simHelper] = await Promise.all([
+	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode] = await Promise.all([
 		tool(ctx, ["xcrun", "simctl", "help"], "xcrun simctl not available (install Xcode) — iOS disabled"),
 		tool(ctx, [adb, "version"], `${adb} not found (set ANDROID_HOME) — Android disabled`),
 		tool(ctx, [emulator, "-version"], `${emulator} not found (set ANDROID_HOME) — Android disabled`),
@@ -213,11 +214,13 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 			"ccache not on PATH — `brew install ccache` to speed up native iOS cache-miss builds"
 		),
 		helperChecks(ctx, helper),
+		xcodeChecks(ctx.exec, ctx.env),
 	]);
 	return [
 		check("home", "core", homeWritable(wardenHome(ctx.env))),
 		check("db", "core", dbSchema(ctx)),
 		check("simctl", "optional", simctl),
+		...xcode,
 		check("adb", "optional", adbProbe),
 		check("emulator", "optional", emulatorProbe),
 		check(
