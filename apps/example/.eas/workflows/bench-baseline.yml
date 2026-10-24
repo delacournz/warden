@@ -1,0 +1,169 @@
+name: Bench baseline
+
+# Warden CPU/RAM baseline on a hosted macOS worker, never on a dev Mac. Builds the pinned bench app
+# (Release simulator .app, EXPO_PUBLIC_E2E=1), then runs the bench harness against it.
+# Every run uses the same worker class (macos-large), so numbers compare only with other EAS runs.
+# Run: bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=warden
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        type: number
+        description: Reps per framework (rep 1 is cold, the rest warm)
+        default: 5
+      frameworks:
+        type: string
+        description: Comma-separated bench frameworks
+        default: warden
+
+jobs:
+  # Fingerprint the native project, then look for an existing bench build with that hash.
+  fingerprint:
+    type: fingerprint
+
+  get_ios_build:
+    needs: [fingerprint]
+    type: get-build
+    params:
+      platform: ios
+      profile: bench
+      fingerprint_hash: ${{ needs.fingerprint.outputs.ios_fingerprint_hash }}
+
+  # Build only when no build matches the fingerprint.
+  build_ios:
+    needs: [get_ios_build]
+    if: ${{ !needs.get_ios_build.outputs.build_id }}
+    type: build
+    params:
+      platform: ios
+      profile: bench
+
+  bench:
+    after: [get_ios_build, build_ios]
+    if: ${{ always() }}
+    runs_on: macos-large
+    steps:
+      # Clone the repo at the triggering ref.
+      - uses: eas/checkout
+
+      # Record where the checkout landed (the monorepo root is above the Expo base directory).
+      - name: Layout
+        run: |
+          pwd
+          git rev-parse --show-toplevel || true
+          ls
+          ls ../.. | head -30
+
+      # bun is not preinstalled on the worker image; install it only when missing.
+      - name: Install bun
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun --version || (curl -fsSL https://bun.sh/install | bash)
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun --version
+
+      # Install workspace deps at the monorepo root. No NPM_TOKEN: the private @delacournz packages are
+      # optional (apps/docs only) and a 401 is a warning, same as the tokenless CI clone.
+      - name: bun install
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          cd "$(git rev-parse --show-toplevel)"
+          bun install --frozen-lockfile
+
+      # Build the iOS helper (warden-simd) the e2e driver talks to.
+      - name: Build warden-simd
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          cd "$(git rev-parse --show-toplevel)"
+          bun run --cwd packages/e2e native:deps
+          bun run --cwd packages/e2e native:build
+
+      # Fetch the .app built by build_ios; its path is the step output.
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
+          extensions: [app]
+
+      # Host facts for the report: Xcode, runtimes, cores, load before the run.
+      - name: Host facts
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+          sysctl -n hw.ncpu hw.memsize
+          sysctl -n vm.loadavg
+          sw_vers
+          echo "app: ${{ steps.download_build.outputs.artifact_path }}"
+          ls -la "${{ steps.download_build.outputs.artifact_path }}" | head
+
+      # Build the iPhone 17 golden image first so the claim below is a quick clone and the one-time first
+      # boot (a load-average spike) is over before anything is measured.
+      - name: Prewarm golden
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          export WARDEN_SESSION_ID=eas-bench
+          cd "$(git rev-parse --show-toplevel)"
+          bun apps/cli/src/cli.ts golden ensure --profile iphone-17 || true
+          bun apps/cli/src/cli.ts golden ls || true
+
+      # Claim a headless sim, idle-control 60 s, run the bench. The trap releases the lease on any exit.
+      - name: Claim, idle control and bench
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          export WARDEN_SESSION_ID=eas-bench
+          cd "$(git rev-parse --show-toplevel)"
+          OUT="$PWD/.bench/eas-ios-warden"
+          mkdir -p "$OUT"
+          APP="${{ steps.download_build.outputs.artifact_path }}"
+          CLAIM=$(bun apps/cli/src/cli.ts claim ios --ttl 2h --label bench --headless --json)
+          echo "$CLAIM"
+          LEASE=$(echo "$CLAIM" | bun -e 'const j = JSON.parse(await Bun.stdin.text()); console.log(j.leases[0].leaseId)')
+          UDID=$(echo "$CLAIM" | bun -e 'const j = JSON.parse(await Bun.stdin.text()); console.log(j.leases[0].udid)')
+          echo "$LEASE" > "$HOME/bench-lease-id"
+          release() { bun apps/cli/src/cli.ts release "$LEASE" --shutdown || true; }
+          trap release EXIT
+          xcrun simctl install "$UDID" "$APP"
+          NCPU=$(sysctl -n hw.ncpu)
+          FORCE=""
+          for _ in $(seq 1 30); do
+            L1=$(sysctl -n vm.loadavg | awk '{print $2}')
+            echo "load1=$L1 ncpu=$NCPU"
+            awk -v l="$L1" -v n="$NCPU" 'BEGIN{exit !(l < n)}' && break
+            sleep 10
+          done
+          awk -v l="$L1" -v n="$NCPU" 'BEGIN{exit !(l < n)}' || { FORCE="--force"; echo "load still above ncpu, running with --force"; }
+          echo "load before run: $(sysctl -n vm.loadavg) force=[$FORCE]"
+          bun packages/e2e-bench/scripts/idle-sim.ts --udid "$UDID" --seconds 60 --launch nz.co.delacour.warden.example --out "$OUT/idle-control.ndjson"
+          bun run bench run --platform ios --frameworks "${{ inputs.frameworks }}" --runs "${{ inputs.runs }}" --udid "$UDID" --app "$APP" --out "$OUT" $FORCE
+
+      # Safety net: release the lease if the step above died before its trap ran.
+      - name: Release lease
+        if: ${{ always() }}
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          export WARDEN_SESSION_ID=eas-bench
+          cd "$(git rev-parse --show-toplevel)"
+          [ -f "$HOME/bench-lease-id" ] && bun apps/cli/src/cli.ts release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+
+      # Copy results to a fixed absolute dir (the artifact glob is resolved from the checkout root, not the
+      # base directory) and print the tail of every log so a failed run is readable in the job log.
+      - name: Collect results
+        if: ${{ always() }}
+        run: |
+          ROOT="$(git rev-parse --show-toplevel)"
+          DEST="$HOME/bench-results"
+          mkdir -p "$DEST"
+          { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
+          cp -R "$ROOT/.bench/eas-ios-warden/." "$DEST/" || true
+          ls "$DEST"
+          for f in "$DEST"/logs/*; do echo "=== $f"; tail -n 8 "$f" | cut -c1-240; done || true
+
+      # Results (report.md/html, bench-results.json, logs, per-rep resources) as a downloadable artifact.
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: eas-ios-warden
+          path: |
+            /Users/expo/bench-results/**/*

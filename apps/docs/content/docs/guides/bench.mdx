@@ -27,6 +27,24 @@ Rebuild with `--force` after changing `apps/example` or its Expo and React Nativ
 
 The app is the Expo project `@delacour/warden` (`extra.eas.projectId` in `app.config.ts`, GitHub base directory `apps/example`), so `bench app build --eas` also looks the `bench` profile up on EAS (`bunx eas-cli`, logged in to the `delacour` account). The `bench` variant in `apps/example/warden.config.ts` is the only place EAS is configured, and `eas.json` holds the Release simulator and APK profile. `.eas/workflows/bench-build.yml` builds both platforms on EAS: run it with `eas workflow:run .eas/workflows/bench-build.yml`, or it runs on pushes to `main` that touch `apps/example/`.
 
+### Run the baseline on EAS
+
+`.eas/workflows/bench-baseline.yml` builds the `bench` iOS app and runs the warden bench on an EAS `macos-large` worker, so a baseline never touches your Mac. Dispatch it from `apps/example`:
+
+```bash
+bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=warden
+```
+
+Inputs: `runs` (reps, default `5`; rep 1 is cold) and `frameworks` (default `warden`). The `bench` job installs bun, builds `warden-simd`, claims a headless simulator, records a 60 s idle control and runs `bench run` against the downloaded `.app`. The lease is released even when the run fails.
+
+The results land as the `eas-ios-warden` artifact on the run page (`expo.dev/accounts/delacour/projects/warden/workflows`). Download it and re-render locally:
+
+```bash
+bun run bench report .bench/eas-ios-warden
+```
+
+A hosted macOS worker idles hotter than a Mac and shares its host, so EAS numbers compare only with EAS numbers from the same worker class (`macos-large`). Never compare them with local runs.
+
 ## Run it
 
 From the repo root:

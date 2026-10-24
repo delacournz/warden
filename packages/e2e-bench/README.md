@@ -38,6 +38,16 @@ Rebuild with `--force` after changing `apps/example` or its Expo and React Nativ
 
 The app is the Expo project `@delacour/warden` (`extra.eas.projectId` in `app.config.ts`, GitHub base directory `apps/example`), so `bench app build --eas` also looks the `bench` profile up on EAS (`bunx eas-cli`, logged in to the `delacour` account). The `bench` variant in `apps/example/warden.config.ts` is the only place EAS is configured, and `eas.json` holds the Release simulator and APK profile. `.eas/workflows/bench-build.yml` builds both platforms on EAS: run it with `eas workflow:run .eas/workflows/bench-build.yml`, or it runs on pushes to `main` that touch `apps/example/`.
 
+### Baseline on EAS
+
+`apps/example/.eas/workflows/bench-baseline.yml` builds the `bench` iOS app and runs the warden bench on an EAS `macos-large` worker (inputs `runs`, default `5`, and `frameworks`, default `warden`):
+
+```bash
+cd apps/example && bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5
+```
+
+Download the `eas-ios-warden` artifact from the run page, then `bun run bench report .bench/eas-ios-warden`. A hosted worker idles hotter than a Mac: compare EAS numbers only with EAS numbers from the same worker class.
+
 `bench run` options:
 
 | Flag | Default | Meaning |
