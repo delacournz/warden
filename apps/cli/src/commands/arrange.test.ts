@@ -48,25 +48,40 @@ describe("warden arrange", () => {
 		expect(ctx.stderr.join("\n")).toContain("warden arrange:");
 	});
 
-	test("Xcode 27 Device Hub → says tiling is not supported yet, nothing tiled, no osascript", async () => {
-		const calls: string[][] = [];
-		ctx = testContext([], {
+	/** Device Hub running, its windows read as `windows` (screen 1440x900) */
+	const deviceHub = (windows: { title: string; width: number; height: number }[], calls: string[][] = []) =>
+		testContext(["--json"], {
 			exec: async (cmd) => {
 				calls.push([...cmd]);
-				return { exitCode: cmd[0] === "pgrep" && cmd[2] !== "DeviceHub" ? 1 : 0, stdout: "", stderr: "" };
+				if (cmd[0] === "pgrep") return { exitCode: cmd[2] === "DeviceHub" ? 0 : 1, stdout: "", stderr: "" };
+				const screen = { x: 0, y: 25, width: 1440, height: 875 };
+				return { exitCode: 0, stdout: JSON.stringify({ screen, windows }), stderr: "" };
 			},
 		});
+
+	test("Xcode 27 Device Hub → tiles its per-device windows and reports them, viewer device-hub", async () => {
+		const calls: string[][] = [];
+		ctx = deviceHub(
+			[
+				{ title: "warden-iphone-17-2 – iOS 27.1", width: 340, height: 751 },
+				{ title: "warden-iphone-17-1 – iOS 27.1", width: 340, height: 751 },
+			],
+			calls
+		);
 		expect(await arrangeCommand.run(ctx)).toBe(0);
-		expect(ctx.stdout.join("\n")).toContain("Device Hub (Xcode 27) windows are not tiled yet");
-		expect(calls.filter((cmd) => cmd[0] === "osascript")).toHaveLength(0);
+		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({
+			arranged: ["warden-iphone-17-1", "warden-iphone-17-2"],
+			viewer: "device-hub",
+		});
+		expect(calls.filter((cmd) => cmd[0] === "osascript")).toHaveLength(2);
 	});
 
-	test("Xcode 27 Device Hub --json → viewer device-hub", async () => {
-		ctx = testContext(["--json"], {
-			exec: async (cmd) => ({ exitCode: cmd[0] === "pgrep" && cmd[2] !== "DeviceHub" ? 1 : 0, stdout: "", stderr: "" }),
-		});
+	test("Xcode 27 Device Hub without device windows → nothing arranged, no move", async () => {
+		const calls: string[][] = [];
+		ctx = deviceHub([], calls);
 		expect(await arrangeCommand.run(ctx)).toBe(0);
 		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ arranged: [], viewer: "device-hub" });
+		expect(calls.filter((cmd) => cmd[0] === "osascript")).toHaveLength(1);
 	});
 
 	test("no viewer running → nothing to arrange without starting osascript", async () => {

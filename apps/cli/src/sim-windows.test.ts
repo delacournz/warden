@@ -163,11 +163,56 @@ describe("arrangeSimWindows", () => {
 		expect(calls).toEqual(NO_VIEWER);
 	});
 
-	test("Xcode 27 Device Hub → windows not tiled yet, osascript never started", async () => {
+	test("Xcode 27 Device Hub → reads and moves the DeviceHub process's per-device windows only", async () => {
 		const calls: string[][] = [];
-		const exec = viewerExec("device-hub", calls);
-		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [], viewer: "device-hub" } });
-		expect(osascripts(calls)).toHaveLength(0);
+		const inner = viewerExec("device-hub", calls);
+		const read = JSON.stringify({
+			screen,
+			windows: [sim("warden-iphone-17-2 – iOS 27.1"), sim("warden-iphone-17-1 – iOS 27.1")],
+		});
+		const exec: Exec = async (cmd) => {
+			if (cmd[0] === "osascript" && (cmd[4] ?? "").includes("NSScreen")) {
+				calls.push([...cmd]);
+				return { exitCode: 0, stdout: read, stderr: "" };
+			}
+			return inner(cmd);
+		};
+		const result = await arrangeSimWindows(exec);
+		expect(result).toEqual({
+			success: true,
+			data: { arranged: ["warden-iphone-17-1", "warden-iphone-17-2"], viewer: "device-hub" },
+		});
+		const [readCall, moveCall] = osascripts(calls);
+		expect(readCall?.[4]).toContain('name: "DeviceHub"');
+		expect(moveCall?.[4]).toContain('byName("DeviceHub")');
+		expect(JSON.parse(moveCall?.[5] ?? "[]").map((m: { title: string }) => m.title)).toEqual([
+			"warden-iphone-17-1 – iOS 27.1",
+			"warden-iphone-17-2 – iOS 27.1",
+		]);
+	});
+
+	test("Device Hub scripts keep only deviceWindow-* windows (its management window carries a device title); Simulator's do not filter", async () => {
+		const scripts: Record<string, string[]> = { "device-hub": [], simulator: [] };
+		for (const viewer of ["device-hub", "simulator"] as const) {
+			const inner = viewerExec(viewer);
+			const exec: Exec = async (cmd) => {
+				if (cmd[0] === "osascript") {
+					scripts[viewer]?.push(cmd[4] ?? "");
+					return {
+						exitCode: 0,
+						stdout: JSON.stringify({ screen, windows: [sim("warden-iphone-17-1 – iOS 26.5")] }),
+						stderr: "",
+					};
+				}
+				return inner(cmd);
+			};
+			await arrangeSimWindows(exec);
+		}
+		for (const script of scripts["device-hub"] ?? []) expect(script).toContain("deviceWindow-");
+		for (const script of scripts.simulator ?? []) {
+			expect(script).not.toContain("deviceWindow-");
+			expect(script).toContain('"Simulator"');
+		}
 	});
 
 	test.each([

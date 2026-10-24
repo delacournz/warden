@@ -3,7 +3,7 @@ import type { CommandContext } from "../context";
 import { emit, reportError } from "../output";
 import { type Arranged, arrangeSimWindows } from "../sim-windows";
 
-/** Tile open Simulator.app windows of warden sims in name order (Device Hub, Xcode 27: not tiled yet). */
+/** Tile open Simulator.app (Xcode ≤ 26) / Device Hub (Xcode 27) windows of warden sims in name order. */
 async function arrange(ctx: CommandContext, json: boolean): Promise<number> {
 	const result = await arrangeSimWindows(ctx.exec);
 	if (!result.success) {
@@ -15,9 +15,8 @@ async function arrange(ctx: CommandContext, json: boolean): Promise<number> {
 	return 0;
 }
 
-function arrangeText(ctx: CommandContext, { arranged, viewer }: Arranged): string {
+function arrangeText(ctx: CommandContext, { arranged }: Arranged): string {
 	const { color } = ctx.ui;
-	if (viewer === "device-hub") return color.dim("Device Hub (Xcode 27) windows are not tiled yet: nothing arranged");
 	return arranged.length === 0 ? color.dim("no warden simulator windows open") : `arranged ${arranged.join(", ")}`;
 }
 
