@@ -38,7 +38,7 @@ projects: [{
 }]
 ```
 
-`warden dev` picks `dev` when it exists; `warden app ensure --variant <name>`, `run|batch --app --variant <name>` and `e2e.<suite>.app: { variant }` pick one explicitly. A variant's keys replace the project's own wholesale. A native-only Release key is salted, so Debug and Release builds of one fingerprint never share a cache entry or an install record (EAS is still looked up by the plain native hash).
+`warden dev` picks `dev` when it exists; `warden app ensure --variant <name>`, `run|batch --app --variant <name>` and `e2e.<suite>.app: { variant }` pick one explicitly. A variant's keys replace the project's own wholesale. The example app's `bench` variant is the EAS-aware one: it names the `bench` profile and workflow, and the benchmark's `bench app build --eas` uses it. A native-only Release key is salted, so Debug and Release builds of one fingerprint never share a cache entry or an install record (EAS is still looked up by the plain native hash). EAS is on for any project directory with an `eas.json`; set `eas: false` on a project or variant to never consult eas-cli.
 
 ### Faster misses: shared compiler caches
 

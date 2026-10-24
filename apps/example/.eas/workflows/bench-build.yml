@@ -1,0 +1,30 @@
+name: Bench build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        type: choice
+        description: Platform to build
+        options:
+          - all
+          - ios
+          - android
+        default: all
+  push:
+    branches: ['main']
+    paths: ['apps/example/**']
+
+jobs:
+  build_ios:
+    if: ${{ inputs.platform != 'android' }}
+    type: build
+    params:
+      platform: ios
+      profile: bench
+  build_android:
+    if: ${{ inputs.platform != 'ios' }}
+    type: build
+    params:
+      platform: android
+      profile: bench

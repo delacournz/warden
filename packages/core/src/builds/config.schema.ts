@@ -38,6 +38,9 @@ const easSchema = z
 	})
 	.strict();
 
+/** `false`: never consult eas-cli for this project / variant, even with an `eas.json` present */
+const easOrOffSchema = z.union([easSchema, z.literal(false)]);
+
 const buildSchema = perPlatform.extend({
 	/** Xcode / Gradle configuration the local build produces; picks the default build command + where the artifact is searched */
 	configuration: z.enum(["Debug", "Release"]).optional(),
@@ -49,7 +52,7 @@ const buildSchema = perPlatform.extend({
 
 /** A named build of the project (`variants.<name>`): each key set here replaces the project's own. */
 export const variantSchema = z
-	.object({ fingerprint: fingerprintSchema.optional(), eas: easSchema.optional(), build: buildSchema.optional() })
+	.object({ fingerprint: fingerprintSchema.optional(), eas: easOrOffSchema.optional(), build: buildSchema.optional() })
 	.strict();
 
 export const projectConfigSchema = z
@@ -59,7 +62,7 @@ export const projectConfigSchema = z
 		root: z.string().min(1).default("."),
 		bundleId: perPlatform,
 		fingerprint: fingerprintSchema.optional(),
-		eas: easSchema.optional(),
+		eas: easOrOffSchema.optional(),
 		build: buildSchema.optional(),
 		/** named builds (`dev`, `e2e`…) picked with `--variant` / `app.variant`; each replaces fingerprint / eas / build wholesale */
 		variants: z.record(z.string().min(1), variantSchema).optional(),

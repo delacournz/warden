@@ -1,4 +1,9 @@
-import type { WardenConfig, WardenE2eSpec, WardenE2eSuite } from "@delacour/warden-core/builds/define-config";
+import type {
+	WardenConfig,
+	WardenE2eSpec,
+	WardenE2eSuite,
+	WardenVariant,
+} from "@delacour/warden-core/builds/define-config";
 
 /** The example app's bundle id (iOS bundle identifier and Android package). */
 const BUNDLE_ID = "nz.co.delacour.warden.example";
@@ -58,6 +63,18 @@ const AFFECTED = {
 } satisfies Partial<WardenE2eSuite>;
 
 /**
+ * The benchmark's pinned app (`bun run bench app build`): the project's own Release `EXPO_PUBLIC_E2E=1`
+ * build, keyed on native + JS (`build` and `fingerprint` are inherited). The root project sets
+ * `eas: false` because `eas.json` exists only for the `bench` profile: `warden e2e example` and
+ * `warden dev` must never call eas-cli. This variant is the only place a profile and workflow are
+ * named, and `bench app build --eas` is the only caller that asks for them. `trigger: false`: warden
+ * never starts the workflow itself. The workflow lives in `.eas/workflows/bench-build.yml`.
+ */
+const bench = {
+	eas: { profile: "bench", workflow: ".eas/workflows/bench-build.yml", trigger: false },
+} satisfies WardenVariant;
+
+/**
  * warden config for the example app: a Release simulator build (JS embedded, no Metro at test time,
  * `EXPO_PUBLIC_E2E=1` baked in) keyed on native + JS, a Debug dev-client variant keyed on native
  * only, and two e2e suites over the same `@delacour/warden-e2e` flows (`bun test` specs):
@@ -77,6 +94,7 @@ export default {
 		{
 			name: "example",
 			bundleId: { ios: BUNDLE_ID, android: BUNDLE_ID },
+			eas: false,
 			build: {
 				configuration: "Release",
 				ios: `${IOS_NATIVE} && EXPO_PUBLIC_E2E=1 bunx expo run:ios --configuration Release --no-install --no-bundler`,
@@ -91,6 +109,7 @@ export default {
 					build: { configuration: "Debug", ios: `${IOS_NATIVE} && bunx expo run:ios --no-install --no-bundler` },
 					fingerprint: { include: "native" },
 				},
+				bench,
 			},
 		},
 	],

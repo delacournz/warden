@@ -6,6 +6,27 @@ icon: Gauge
 
 `packages/e2e-bench` answers one question: how long does the same suite take in each framework, on the same build and the same device. It runs warden, Argent, agent-device and tester.army one at a time and writes a Markdown and an HTML report. No LLM is involved.
 
+## Build the app once
+
+The benchmark installs one pinned app on every framework's run. It is built once and stored at `.bench/app/<platform>/` (the `.app` or `.apk` plus a `manifest.json` with the warden fingerprint, sha256, source and commit). Every `bench run` reuses it. `bench run` never builds, fingerprints or calls EAS: it installs the pinned artifact (`simctl install` / `adb install -r`) after claiming the device, and builds it once only when it is missing.
+
+```bash
+bun run bench app build --platform ios            # build (warden cache, then a local Expo build) and pin it
+bun run bench app build --platform ios --force    # rebuild even though one is pinned
+bun run bench app build --platform android --eas  # also look the build up on EAS
+bun run bench app status --platform ios           # hash, source, builtAt; fresh or stale, exit 1 when missing or stale
+bun run bench app clean --platform ios            # remove the pinned app
+bun run bench run --platform ios --app path/to/Example.app   # use a pinned dir or import a bare .app / .apk
+```
+
+`app build` resolves the build with `warden app ensure --variant bench` on `apps/example`. Without `--force` it reuses the pinned app without fingerprinting. `app status` compares the pinned hash with `warden app fingerprint --variant bench`.
+
+Rebuild with `--force` after changing `apps/example` or its Expo and React Native dependencies. Changes to `packages/e2e` or warden do not need a rebuild.
+
+### Build on EAS
+
+The app is the Expo project `@delacour/warden` (`extra.eas.projectId` in `app.config.ts`, GitHub base directory `apps/example`), so `bench app build --eas` also looks the `bench` profile up on EAS (`bunx eas-cli`, logged in to the `delacour` account). The `bench` variant in `apps/example/warden.config.ts` is the only place EAS is configured, and `eas.json` holds the Release simulator and APK profile. `.eas/workflows/bench-build.yml` builds both platforms on EAS: run it with `eas workflow:run .eas/workflows/bench-build.yml`, or it runs on pushes to `main` that touch `apps/example/`.
+
 ## Run it
 
 From the repo root:
@@ -26,6 +47,7 @@ bun run bench summary .bench/<run-id>        # slim summary.json for the docs pa
 | `--frameworks a,b` | all four | comma list of `warden,argent,agent-device,tester-army` |
 | `--runs N` | `3` | reps per framework. Rep 1 is cold, the rest are warm |
 | `--retries N` | `0` | forwarded to every framework |
+| `--app PATH` | `.bench/app/<platform>` | pinned app dir, or a bare `.app` / `.apk` to import and pin |
 | `--udid X` | claim one | reuse a device you leased; nothing is claimed or released |
 | `--reboot-between` | off | reboot the device between frameworks |
 | `--out DIR` | `.bench/<timestamp>-<platform>` | output directory |
@@ -76,7 +98,7 @@ artifacts/<fw>/rep-<n>/   native reporter output and resource samples
 
 ## Fairness rules
 
-- Same `.app` for every framework, with its sha256 recorded.
+- Same pinned app for every framework, with its sha256 recorded.
 - Zero LLM calls.
 - Same assertions per canonical test id.
 - Same retry helpers: dropped first tap, dropped deep link, system alerts.

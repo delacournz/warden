@@ -339,6 +339,36 @@ describe("loadProject", () => {
 		expect(res.data.cacheDirs).toEqual([]);
 	});
 
+	test("eas: false opts out of the eas.json autodetect; a variant's eas replaces it", () => {
+		write("eas.json", {});
+		write(JSON_CONFIG_FILE, {
+			projects: [
+				{
+					name: "a",
+					bundleId: { ios: "x" },
+					eas: false,
+					variants: { bench: { eas: { profile: "bench", trigger: false } }, dev: {} },
+				},
+				{ name: "b", bundleId: { ios: "x" }, variants: { off: { eas: false } } },
+			],
+		});
+		const root = loadProject({ start: dir, env, name: "a" });
+		if (!root.success) throw new Error(root.error);
+		expect(root.data.eas).toBeUndefined();
+		const dev = loadProject({ start: dir, env, name: "a", variant: "dev" });
+		if (!dev.success) throw new Error(dev.error);
+		expect(dev.data.eas).toBeUndefined();
+		const bench = loadProject({ start: dir, env, name: "a", variant: "bench" });
+		if (!bench.success) throw new Error(bench.error);
+		expect(bench.data.eas).toEqual({ profile: "bench", trigger: false });
+		const plain = loadProject({ start: dir, env, name: "b" });
+		if (!plain.success) throw new Error(plain.error);
+		expect(plain.data.eas).toEqual({ profile: "development-simulator", trigger: false });
+		const off = loadProject({ start: dir, env, name: "b", variant: "off" });
+		if (!off.success) throw new Error(off.error);
+		expect(off.data.eas).toBeUndefined();
+	});
+
 	test("app.config.ts without bundle id → clear error; --bundle-id fixes it", () => {
 		write("app.config.ts", "export default {}");
 		const res = loadProject({ start: dir, env, stopAt: dir });

@@ -2,7 +2,8 @@ import type { ExpoConfig } from "expo/config";
 
 const expoConfig: ExpoConfig = {
 	name: "warden-example",
-	slug: "warden-example",
+	slug: "warden",
+	owner: "delacour",
 	scheme: "warden-example",
 	version: "0.0.0",
 	orientation: "portrait",
@@ -39,6 +40,11 @@ const expoConfig: ExpoConfig = {
 			},
 		],
 	],
+	extra: {
+		eas: {
+			projectId: "3a348f4a-7e11-49ed-9bd9-425b8878af00",
+		},
+	},
 	experiments: {
 		typedRoutes: true,
 		tsconfigPaths: true,
