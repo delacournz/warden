@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildManifest, checkIdbConstant, parseXcodeVersion, stageSteps } from "./build";
+import { buildManifest, checkIdbConstant, missingExecutableRpath, parseXcodeVersion, stageSteps } from "./build";
 
 const lock = { version: "v1.7.2", tarball: "idb-libraries.macos-arm64.tar.gz", sha256: "a".repeat(64) };
 
@@ -65,5 +65,27 @@ describe("stageSteps", () => {
 		expect(steps.sign).toEqual(["/d/A.framework", "/d/B.framework", "/d/warden-simd"]);
 		// The prebuilt in-sim guest is ad-hoc signed upstream and must never be re-signed.
 		expect(steps.sign.some((path) => path.includes("SimulatorFrameworkBridge"))).toBe(false);
+	});
+});
+
+describe("missingExecutableRpath", () => {
+	const rpath = (path: string) =>
+		`Load command 20\n          cmd LC_RPATH\n      cmdsize 32\n         path ${path} (offset 12)\n`;
+	test("is false when SwiftPM already added @loader_path (Xcode 26.6)", () => {
+		expect(missingExecutableRpath(rpath("/usr/lib/swift") + rpath("@loader_path"))).toBe(false);
+	});
+	test("is false when @executable_path is present", () => {
+		expect(missingExecutableRpath(rpath("@executable_path"))).toBe(false);
+	});
+	test("is true when only toolchain paths are present (Xcode 27.0)", () => {
+		const out =
+			rpath("/usr/lib/swift") +
+			rpath(
+				"/Applications/Xcode_27-RC.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/macosx"
+			);
+		expect(missingExecutableRpath(out)).toBe(true);
+	});
+	test("is true when there is no LC_RPATH at all", () => {
+		expect(missingExecutableRpath("Load command 1\n cmd LC_SEGMENT_64\n")).toBe(true);
 	});
 });

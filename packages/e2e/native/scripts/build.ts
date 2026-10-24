@@ -4,7 +4,8 @@
  *
  *   dist/warden-simd                                  stripped, ad-hoc signed
  *   dist/Resources/SimulatorFrameworkBridge-iOS       idb's prebuilt in-sim guest, copied unchanged (never re-signed)
- *   dist/{CoreSimulatorStub,AccessibilityPlatformTranslationStub}.framework   ad-hoc signed
+ *   dist/{CoreSimulatorStub,AccessibilityPlatformTranslationStub}.framework   ad-hoc signed, found via an
+ *                                                     `@executable_path` rpath added when SwiftPM linked none
  *   dist/manifest.json                                { version, idb, xcode, builtAt }
  *
  * Requires `native/idb-libraries/` (run `bun native/scripts/deps.ts` first).
@@ -26,6 +27,17 @@ export function checkIdbConstant(wireSwift: string, lock: IdbLock): void {
 	if (match[1] !== lock.version) {
 		throw new Error(`BuildInfo.idb is ${match[1]} but idb.lock.json pins ${lock.version}: update Protocol/Wire.swift`);
 	}
+}
+
+/**
+ * `otool -l <binary>` output → does the binary lack an rpath relative to itself? SwiftPM under Xcode 26.6 links
+ * `@loader_path`, so the stub frameworks staged next to the binary are found; Xcode 27.0 leaves only the toolchain
+ * paths and `dist/warden-simd` dies at load with "Library not loaded: @rpath/AccessibilityPlatformTranslationStub".
+ * The build adds `@executable_path` whenever neither is present (`install_name_tool -add_rpath`, before strip/sign).
+ */
+export function missingExecutableRpath(otoolOutput: string): boolean {
+	const paths = [...otoolOutput.matchAll(/^\s*path (\S+)/gm)].map((m) => m[1]);
+	return !paths.some((p) => p === "@loader_path" || p === "@executable_path");
 }
 
 /** `xcodebuild -version` output → `26.6 (17F113)`. */
@@ -100,6 +112,11 @@ export async function main(): Promise<number> {
 
 	const plan = stageSteps({ binDir, libraries, dist, frameworks });
 	for (const { from, to } of plan.copies) await cp(from, to, { recursive: true, verbatimSymlinks: true });
+	const binary = join(dist, PRODUCT);
+	if (missingExecutableRpath(await run(exec, ["otool", "-l", binary]))) {
+		log("adding @executable_path rpath (this Xcode's SwiftPM linked none)");
+		await run(exec, ["install_name_tool", "-add_rpath", "@executable_path", binary]);
+	}
 	for (const path of plan.strip) await run(exec, ["strip", "-x", path]);
 	for (const path of plan.sign) await run(exec, ["codesign", "-s", "-", "--force", path]);
 
