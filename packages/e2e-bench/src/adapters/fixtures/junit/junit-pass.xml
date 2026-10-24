@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<testsuites>
+  <testsuite name="Test Suite" device="warden-iphone-17-6 - iOS 26.5 - 66853073-902D-40F2-803C-64A29A062F17" tests="8" failures="0" time="188.08" timestamp="2026-10-16T12:21:58">
+    <testcase id="settings-account-switches-sign-out" name="settings-account-switches-sign-out" classname="settings-account-switches-sign-out" file="suites/agent-device/settings-account-switches-sign-out.yaml" time="28.624" timestamp="2026-10-16T12:21:58" status="SUCCESS"/>
+    <testcase id="todos-add-complete-filter" name="todos-add-complete-filter" classname="todos-add-complete-filter" file="suites/agent-device/todos-add-complete-filter.yaml" time="30.434" timestamp="2026-10-16T12:22:27" status="SUCCESS"/>
+    <testcase id="onboarding-steps-to-sign-in" name="onboarding-steps-to-sign-in" classname="onboarding-steps-to-sign-in" file="suites/agent-device/onboarding-steps-to-sign-in.yaml" time="7.304" timestamp="2026-10-16T12:22:57" status="SUCCESS"/>
+    <testcase id="sign-in-locked-account" name="sign-in-locked-account" classname="sign-in-locked-account" file="suites/agent-device/sign-in-locked-account.yaml" time="20.166" timestamp="2026-10-16T12:23:05" status="SUCCESS"/>
+    <testcase id="todo-detail-open-toggle-delete" name="todo-detail-open-toggle-delete" classname="todo-detail-open-toggle-delete" file="suites/agent-device/todo-detail-open-toggle-delete.yaml" time="26.194" timestamp="2026-10-16T12:23:25" status="SUCCESS"/>
+    <testcase id="todo-detail-deep-link" name="todo-detail-deep-link" classname="todo-detail-deep-link" file="suites/agent-device/todo-detail-deep-link.yaml" time="22.599" timestamp="2026-10-16T12:23:51" status="SUCCESS"/>
+    <testcase id="sign-in-valid-credentials" name="sign-in-valid-credentials" classname="sign-in-valid-credentials" file="suites/agent-device/sign-in-valid-credentials.yaml" time="20.808" timestamp="2026-10-16T12:24:14" status="SUCCESS"/>
+    <testcase id="sign-in-field-errors" name="sign-in-field-errors" classname="sign-in-field-errors" file="suites/agent-device/sign-in-field-errors.yaml" time="31.861" timestamp="2026-10-16T12:24:34" status="SUCCESS"/>
+  </testsuite>
+</testsuites>

@@ -20,7 +20,7 @@ export const CANONICAL_IDS = [
 export const canonicalIdSchema = z.enum(CANONICAL_IDS);
 export type CanonicalId = z.infer<typeof canonicalIdSchema>;
 
-export const frameworkIdSchema = z.enum(["warden", "maestro", "argent", "agent-device", "tester-army", "detox"]);
+export const frameworkIdSchema = z.enum(["warden", "argent", "agent-device", "tester-army"]);
 
 export const testStatusSchema = z.enum(["passed", "failed", "skipped", "timed-out", "missing"]);
 export type TestStatus = z.infer<typeof testStatusSchema>;

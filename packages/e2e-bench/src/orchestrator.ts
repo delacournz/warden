@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { BenchAdapter, FrameworkId, RunContext } from "./adapters/adapter.types";
-import { DETOX_BEST_EFFORT } from "./adapters/detox";
 import { dismissAnr, hideErrorDialogs } from "./harness/anr";
 import { appFingerprint, type EnsuredApp, ensureApp, terminateApp } from "./harness/app";
 import { type ClaimedDevice, claimDevice, deviceInfo, heartbeatDevice, releaseDevice } from "./harness/device";
@@ -285,10 +284,13 @@ async function doctorPhase(fc: FrameworkCtx): Promise<DoctorOutcome> {
 	const d = await adapter.doctor(ctx);
 	if (d.ok) return { kind: "ok", version: d.version };
 	const reason = `${d.reason} (${d.installHint})`;
-	const result: FrameworkResult =
-		adapter.id === "detox" && DETOX_BEST_EFFORT
-			? { framework: adapter.id, status: "unsupported", reason }
-			: { framework: adapter.id, status: "failed", version: "unknown", phase: "doctor", error: reason };
+	const result: FrameworkResult = {
+		framework: adapter.id,
+		status: "failed",
+		version: "unknown",
+		phase: "doctor",
+		error: reason,
+	};
 	return { kind: "stop", result };
 }
 

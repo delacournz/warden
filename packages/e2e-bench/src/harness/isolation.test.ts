@@ -27,9 +27,9 @@ const stub = (id: BenchAdapter["id"], residuePatterns: BenchAdapter["residuePatt
 	residuePatterns,
 });
 
-const next = stub("maestro", {
+const next = stub("agent-device", {
 	processes: [],
-	driverBundleIds: ["dev.mobile.maestro-driver-ios*"],
+	driverBundleIds: ["com.example.driver-ios*"],
 	dirs: [],
 	stateDirs: ["~/.agent-device-bench/agent-device"],
 });
@@ -89,7 +89,7 @@ function make(extra: { adbBoot?: boolean; settings?: Settings } = {}): FakeExec 
 			{
 				cmd: "adb",
 				match: (a) => a.includes("packages"),
-				result: { stdout: "package:dev.mobile.maestro-driver-ios\npackage:other\n" },
+				result: { stdout: "package:com.example.driver-ios\npackage:other\n" },
 			},
 			{ cmd: "adb", result: {} },
 		],
@@ -124,15 +124,15 @@ const cmds = (exec: FakeExec) =>
 describe("isolate", () => {
 	test("known patterns cover every framework helper", () => {
 		expect(KNOWN_PROCESS_PATTERNS.some((p) => p.test("/x/warden-simd --udid U"))).toBe(true);
-		expect(KNOWN_PROCESS_PATTERNS.some((p) => p.test("java -jar maestro-cli.jar"))).toBe(true);
+		expect(KNOWN_PROCESS_PATTERNS.some((p) => p.test("node /x/agent-device/dist/daemon.js"))).toBe(true);
 	});
 
 	test("ios warm: kill, stop helpers, terminate app only", async () => {
 		const exec = make();
 		const r = await isolate(base(exec));
 		expect(cmds(exec)).toEqual([
-			"kill -TERM 102 300 600 900",
-			"kill -KILL 102 300 600 900",
+			"kill -TERM 102 600 900",
+			"kill -KILL 102 600 900",
 			"bun /repo/apps/cli/src/cli.ts ui close --udid AAAA-BBBB",
 			"agent-device daemon stop --state-dir /h/.agent-device-bench/agent-device --clean",
 			"xcrun simctl terminate AAAA-BBBB nz.co.delacour.warden.example",
@@ -155,14 +155,14 @@ describe("isolate", () => {
 		const exec = make();
 		const r = await isolate({ ...base(exec), cold: true, rebootBetween: true });
 		expect(cmds(exec).slice(4)).toEqual([
-			"xcrun simctl uninstall AAAA-BBBB dev.mobile.maestro-driver-iosUITests.xctrunner",
+			"xcrun simctl uninstall AAAA-BBBB com.example.driver-iosUITests.xctrunner",
 			"xcrun simctl shutdown AAAA-BBBB",
 			"xcrun simctl boot AAAA-BBBB",
 			"xcrun simctl bootstatus AAAA-BBBB -b",
 			"xcrun simctl terminate AAAA-BBBB nz.co.delacour.warden.example",
 		]);
 		expect(r.success && r.data).toMatchObject({
-			uninstalled: ["dev.mobile.maestro-driver-iosUITests.xctrunner"],
+			uninstalled: ["com.example.driver-iosUITests.xctrunner"],
 			rebooted: true,
 		});
 	});
@@ -171,7 +171,7 @@ describe("isolate", () => {
 		const exec = make({ adbBoot: true });
 		const r = await isolate({ ...base(exec), platform: "android", udid: "emu-1", cold: true, rebootBetween: true });
 		const list = cmds(exec);
-		expect(list).toContain("adb -s emu-1 uninstall dev.mobile.maestro-driver-ios");
+		expect(list).toContain("adb -s emu-1 uninstall com.example.driver-ios");
 		expect(list.slice(list.indexOf("adb -s emu-1 reboot"))).toEqual([
 			"adb -s emu-1 reboot",
 			"adb -s emu-1 wait-for-device",
@@ -191,10 +191,10 @@ describe("isolate", () => {
 			...base(exec),
 			platform: "android",
 			udid: "emu-1",
-			allDrivers: ["com.argent.*", "dev.mobile.maestro*"],
+			allDrivers: ["com.argent.*", "com.example.driver*"],
 		});
 		const all = cmds(exec);
-		const driver = all.indexOf("adb -s emu-1 shell am force-stop dev.mobile.maestro-driver-ios");
+		const driver = all.indexOf("adb -s emu-1 shell am force-stop com.example.driver-ios");
 		expect(driver).toBeGreaterThan(-1);
 		expect(driver).toBeLessThan(all.indexOf("adb -s emu-1 shell am force-stop nz.co.delacour.warden.example"));
 		expect(all.some((c) => c.includes("force-stop other"))).toBe(false);

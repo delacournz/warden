@@ -138,7 +138,7 @@ const releases = (exec: ReturnType<typeof fakeExec>) =>
 describe("runBench", () => {
 	test("phase order per framework, cold flag only on rep 1, results validate", async () => {
 		const calls: Calls = [];
-		const t = setup([adapter("warden", calls), adapter("maestro", calls)]);
+		const t = setup([adapter("warden", calls), adapter("argent", calls)]);
 		const outcome = await runBench(t.opts, t.deps);
 		expect(outcome.success).toBe(true);
 		expect(calls).toEqual([
@@ -148,12 +148,12 @@ describe("runBench", () => {
 			"warden.run:warm",
 			"warden.run:warm",
 			"warden.teardown",
-			"maestro.doctor",
-			"maestro.prepare",
-			"maestro.run:cold",
-			"maestro.run:warm",
-			"maestro.run:warm",
-			"maestro.teardown",
+			"argent.doctor",
+			"argent.prepare",
+			"argent.run:cold",
+			"argent.run:warm",
+			"argent.run:warm",
+			"argent.teardown",
 		]);
 		if (!outcome.success) return;
 		const file = JSON.parse(readFileSync(join(t.opts.out ?? "", "bench-results.json"), "utf8"));
@@ -181,7 +181,7 @@ describe("runBench", () => {
 		const calls: Calls = [];
 		const seen: number[] = [];
 		const out = join(dir, "out");
-		const watcher = adapter("maestro", calls, {
+		const watcher = adapter("argent", calls, {
 			async doctor() {
 				const text = readFileSync(join(out, "bench-results.json"), "utf8");
 				seen.push((JSON.parse(text) as { frameworks: unknown[] }).frameworks.length);
@@ -196,7 +196,7 @@ describe("runBench", () => {
 	test("classification: failed run keeps partial reps, unsupported, doctor failures", async () => {
 		const calls: Calls = [];
 		let n = 0;
-		const flaky = adapter("maestro", calls, {
+		const flaky = adapter("warden", calls, {
 			async run() {
 				n++;
 				return n === 1 ? ok(rep(1)) : { success: false, error: failed("boom") };
@@ -212,21 +212,21 @@ describe("runBench", () => {
 				return { ok: false, reason: "missing", installHint: "bun add -g agent-device" };
 			},
 		});
-		const detox = adapter("detox", calls, {
+		const testerArmy = adapter("tester-army", calls, {
 			async doctor() {
-				return { ok: false, reason: "no applesimutils", installHint: "brew install applesimutils" };
+				return { ok: false, reason: "missing tool", installHint: "bun add -g e2e" };
 			},
 		});
-		const t = setup([flaky, nope, noDoctor, detox]);
+		const t = setup([flaky, nope, noDoctor, testerArmy]);
 		const outcome = await runBench(t.opts, t.deps);
 		if (!outcome.success) throw new Error(outcome.error);
 		const [a, b, c, d] = outcome.data.run.frameworks;
-		expect(a).toMatchObject({ framework: "maestro", status: "failed", phase: "run", error: "boom" });
+		expect(a).toMatchObject({ framework: "warden", status: "failed", phase: "run", error: "boom" });
 		expect(a?.status === "failed" && a.partial?.length).toBe(1);
 		expect(b).toMatchObject({ framework: "argent", status: "unsupported", reason: "RN too new", version: "1.0.0" });
 		expect(c).toMatchObject({ framework: "agent-device", status: "failed", phase: "doctor" });
-		expect(d?.status).toBe("unsupported");
-		expect(calls).toContain("maestro.teardown");
+		expect(d).toMatchObject({ framework: "tester-army", status: "failed", phase: "doctor" });
+		expect(calls).toContain("warden.teardown");
 		expect(calls).not.toContain("agent-device.prepare");
 		expect(
 			benchRunSchema.safeParse(JSON.parse(readFileSync(join(dir, "out", "bench-results.json"), "utf8"))).success
@@ -235,7 +235,7 @@ describe("runBench", () => {
 
 	test("prepare failure is phase prepare and still tears down", async () => {
 		const calls: Calls = [];
-		const bad = adapter("maestro", calls, {
+		const bad = adapter("argent", calls, {
 			async prepare() {
 				return err("no java");
 			},
@@ -244,7 +244,7 @@ describe("runBench", () => {
 		const outcome = await runBench(t.opts, t.deps);
 		if (!outcome.success) throw new Error(outcome.error);
 		expect(outcome.data.run.frameworks[0]).toMatchObject({ status: "failed", phase: "prepare", error: "no java" });
-		expect(calls).toEqual(["maestro.doctor", "maestro.teardown"]);
+		expect(calls).toEqual(["argent.doctor", "argent.teardown"]);
 	});
 
 	test("--skip-doctor skips doctor, a platform mismatch is unsupported", async () => {
@@ -306,7 +306,7 @@ describe("runBench", () => {
 		test("a framework that zeroes them does not leak that into the next framework", async () => {
 			const settings = new Map(KEYS.map((key) => [key, "1.0"]));
 			const seen: (string | undefined)[] = [];
-			const observer = adapter("maestro", [], {
+			const observer = adapter("argent", [], {
 				async run() {
 					seen.push(settings.get("window_animation_scale"));
 					return ok(rep(1));
@@ -407,12 +407,12 @@ describe("runBench", () => {
 				return ok(rep(1));
 			},
 		});
-		const t = setup([first, adapter("maestro", calls)], {}, controller.signal);
+		const t = setup([first, adapter("argent", calls)], {}, controller.signal);
 		const outcome = await runBench(t.opts, t.deps);
 		if (!outcome.success) throw new Error(outcome.error);
 		expect(outcome.data.interrupted).toBe(true);
 		expect(calls).toContain("warden.teardown");
-		expect(calls.some((c) => c.startsWith("maestro"))).toBe(false);
+		expect(calls.some((c) => c.startsWith("argent"))).toBe(false);
 		expect(outcome.data.run.frameworks[0]).toMatchObject({ status: "failed", phase: "run", error: "interrupted" });
 		expect(releases(t.exec)).toHaveLength(1);
 	});
@@ -573,7 +573,7 @@ describe("helpers", () => {
 		exec.start("/opt/bun", ["/repo/apps/cli/src/cli.ts", "ui", "snapshot"]);
 		exec.start("/opt/bun", ["test", "--preload", "p"]);
 		exec.start("/opt/sdk/platform-tools/adb", ["-s", "e"]);
-		exec.start("/opt/homebrew/bin/maestro", ["test"]);
+		exec.start("/opt/homebrew/bin/agent-device", ["test"]);
 		expect([...labels]).toEqual([
 			[1001, "warden-cli"],
 			[1002, "bun-test"],
@@ -610,8 +610,8 @@ describe("helpers", () => {
 	});
 
 	test("finalizeFrameworks leaves non-ok frameworks alone", () => {
-		const f = finalizeFrameworks([{ framework: "detox", status: "unsupported", reason: "r" }]);
-		expect(f).toEqual([{ framework: "detox", status: "unsupported", reason: "r" }]);
+		const f = finalizeFrameworks([{ framework: "tester-army", status: "unsupported", reason: "r" }]);
+		expect(f).toEqual([{ framework: "tester-army", status: "unsupported", reason: "r" }]);
 	});
 
 	test("summaryLines has a header and a row per framework", async () => {

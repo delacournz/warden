@@ -17,8 +17,6 @@ describe("benchSummary", () => {
 		expect(summary.frameworks.map((f) => f.framework)).toEqual(run.frameworks.map((f) => f.framework));
 		const failed = summary.frameworks.find((f) => f.status === "failed");
 		expect(failed?.status === "failed" && failed.error.length).toBeLessThanOrEqual(301);
-		const unsupported = summary.frameworks.find((f) => f.status === "unsupported");
-		expect(unsupported?.status === "unsupported" && unsupported.reason.length).toBeGreaterThan(0);
 	});
 	test("exactly one fastest framework, marked like the report table", () => {
 		const fastest = summary.frameworks.flatMap((f) => (f.status === "ok" && f.fastest ? [f.framework] : []));

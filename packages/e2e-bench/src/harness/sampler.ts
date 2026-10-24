@@ -154,7 +154,6 @@ export function parseAdbTop(text: string): AdbTopRow[] {
  * - `nz.co.delacour.warden.example`: the app and its `.test` instrumentation apk
  * - `uiautomator`: warden's `uiautomator dump`, argent's and agent-device's fallbacks
  * - `instrumentation`: androidx.test runners, agent-device's `SnapshotInstrumentation`
- * - `dev.mobile.maestro`: Maestro's driver app and its `.test` apk
  * - `com.callstack.agentdevice`: agent-device's snapshot helper (also what tester-army drives)
  * - `com.argent.`: argent's `androiddevtools` helper
  * - `warden-uiad`: warden's resident uiautomator server, an `app_process` that renames itself
@@ -164,7 +163,6 @@ const ANDROID_TARGET = new RegExp(
 		String.raw`nz\.co\.delacour\.warden\.example`,
 		"uiautomator",
 		"instrumentation",
-		String.raw`dev\.mobile\.maestro`,
 		String.raw`com\.callstack\.agentdevice`,
 		String.raw`com\.argent\.`,
 		"warden[-_.]?uiad",

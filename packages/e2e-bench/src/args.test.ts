@@ -6,7 +6,7 @@ describe("parseArgs run", () => {
 		expect(parseArgs(["run"])).toEqual({
 			command: "run",
 			platform: "ios",
-			frameworks: ["warden", "maestro", "argent", "agent-device", "tester-army", "detox"],
+			frameworks: ["warden", "argent", "agent-device", "tester-army"],
 			runs: 3,
 			retries: 0,
 			rebootBetween: false,
@@ -22,7 +22,7 @@ describe("parseArgs run", () => {
 			"--platform",
 			"android",
 			"--frameworks",
-			"detox,warden",
+			"argent,warden",
 			"--runs",
 			"5",
 			"--retries",
@@ -41,7 +41,7 @@ describe("parseArgs run", () => {
 		expect(r).toEqual({
 			command: "run",
 			platform: "android",
-			frameworks: ["warden", "detox"],
+			frameworks: ["warden", "argent"],
 			runs: 5,
 			retries: 1,
 			udid: "emulator-5554",
@@ -60,7 +60,7 @@ describe("parseArgs run", () => {
 		[["run", "--retries", "-1"], "--retries must be an integer >= 0, got -1"],
 		[
 			["run", "--frameworks", "warden,nope"],
-			"--frameworks: unknown nope; known: warden,maestro,argent,agent-device,tester-army,detox",
+			"--frameworks: unknown nope; known: warden,argent,agent-device,tester-army",
 		],
 		[["run", "--udid"], "--udid needs a value"],
 		[["run", "--udid", "--force"], "--udid needs a value"],

@@ -29,7 +29,7 @@ export const FAIRNESS_RULES: readonly string[] = [
 	"Warm medians exclude rep 1 (cold)",
 	"Machine-readable reporters only",
 	"Host otherwise idle; load average recorded",
-	"Android `sim` counts the app and every framework's on-device helpers (uiautomator, instrumentation runners, Maestro, agent-device, Argent, warden-uiad), matched case-insensitively",
+	"Android `sim` counts the app and every framework's on-device helpers (uiautomator, instrumentation runners, agent-device, Argent, warden-uiad), matched case-insensitively",
 	"Host processes are tracked by pid and start time, so a reused pid is never counted",
 	"Android animation scales are reset to the device's original values before every framework and restored at the end",
 ];
