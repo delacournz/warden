@@ -2,40 +2,21 @@
 
 ## Context
 
-Warden can't profile mobile apps today; there's no profiling code anywhere in the repo. Agents are still reaching for argent or agent-device to do it, and both of those are retired.
+Warden has no way to profile apps or their simulators/emulators. Agents need one place to measure and drill into perf for React Native/Expo apps (JS + React renders) and the native iOS/Android sides, from any running warden device.
 
-The goal is one command group, `warden perf`, that takes the best of both:
-- **From argent (Apache-2.0):**
-  - React commit profiling via the DevTools hook, plus a Hermes `Profiler.start`.
-  - xctrace toc→xpath export with an id/ref streaming parser.
-  - Perfetto with batched PerfettoSQL.
-  - Hot-commit filter (16ms floor plus cbrt heat).
-  - Wall-clock JS↔native alignment.
-  - Drill-down query tools.
-- **From agent-device (MIT):**
-  - `gfxinfo framestats` frames with jank clusters.
-  - `meminfo` PSS breakdown.
-  - iOS `ps` sampling with exact executable matching.
-  - Pid-scoped logs that restart when the pid changes.
-  - simpleperf.
-  - memgraph and hprof dumps.
-  - Findings taxonomy for React (`slow-commit`, `memo-defeated`, `context-cascade`, …).
-  - Artifact on disk, compact summary in the output.
-
-**Things neither tool does, which warden adds:**
-- A JS `.cpuprofile` that is **source-mapped**.
-- Real startup time: `am start -W`, plus the xctrace App Launch template.
-- CPU and memory **time series**.
-- Crash collection.
-- `perf diff` between two sessions, for regressions.
-- Perf budgets inside e2e specs.
+`warden perf` covers:
+- Hermes JS CPU profiles (source-mapped `.cpuprofile`) and heap snapshots.
+- React commit profiling with ranked findings (`slow-commit`, `memo-defeated`, `context-cascade`, …).
+- Native iOS via xctrace (Time Profiler, Hangs, Leaks), native Android via perfetto/simpleperf + PerfettoSQL.
+- CPU/memory time series, frames/jank, startup time, logs and crashes.
+- Wall-clock aligned combined report, drill-down `query`, `diff` between sessions, perf budgets in e2e specs.
+- Artifacts on disk, compact markdown/JSON summaries in output.
 
 **Decisions (answered):**
 - v1 covers simulators and emulators only. Physical devices come as a later wave (PHY-*), which is in this plan.
 - Command name is `warden perf`. `--profile` keeps its existing meaning (device profile).
 - Android SQL goes through a pinned `trace_processor_shell`. The download needs **confirmation** (interactive prompt or `--yes`) and shows a **progress bar**.
 - Output is a capped markdown summary with `next:` hints, plus `--json` (UiJson envelope), plus raw artifacts on disk.
-- argent is a **clean-room rewrite**: we study its approach as reference only and copy no code, scripts, SQL or template assets. agent-device code (MIT) may be adapted, with a notice.
 - Perf budgets for e2e (PRF-11) ship **in this PR**.
 - Live `perf metrics --watch` sparklines ship in PRF-2.
 - Sessions stop automatically after **30s by default**, with a **5m hard max** (`--max-duration`).
@@ -198,7 +179,7 @@ Each phase is tests first (fixtures from real command output under `packages/per
 
 **PRF-10 — ✨ feat(perf): logs + crashes**
 - Android: `adb logcat -v threadtime --pid <pid>`, with `pid-follow.ts` re-resolving `pidof` every 2s and restarting the stream on change. One-shot is `logcat -d -t N`.
-- iOS sim: `simctl spawn <udid> log stream --style compact --level info --predicate <bundle/exe predicate>`, using agent-device's predicate.
+- iOS sim: `simctl spawn <udid> log stream --style compact --level info --predicate <bundle/exe predicate>`.
 - Logs are redacted (tokens, `Authorization`, emails) before they are written.
 - `perf crashes`:
   - iOS: `~/Library/Logs/DiagnosticReports/*.ips` filtered by process name, `since`, and the sim udid inside the .ips.
@@ -208,7 +189,7 @@ Each phase is tests first (fixtures from real command output under `packages/per
 ### Wave 3 (parallel)
 
 **PRF-6 — ✨ feat(perf): React render profiler** (after PRF-5)
-- Injected scripts, **written clean-room** (argent's docs describe the approach; none of its code is read into our files):
+- Injected scripts:
   - Wrap `__REACT_DEVTOOLS_GLOBAL_HOOK__.rendererInterfaces[*].startProfiling` / `stopProfiling`.
   - Patch `onCommitFiberRoot` for a fiberID→displayName cache.
   - Bootstrap `react-devtools-core` `connectWithCustomMessagingProtocol` when no DevTools client is attached.
@@ -217,14 +198,14 @@ Each phase is tests first (fixtures from real command output under `packages/per
 - Pipeline:
   - Hot commits: absolute floor (under 16ms OK, 16–50ms warm, over 50ms hot) plus cbrt heat.
   - Per-component reduce, then tag (animated false positives), then rank (renders ≥3 or max ≥30ms).
-  - Findings use agent-device's taxonomy (`slow-commit`, `slow-render`, `memo-defeated`, `context-cascade`, `parent-cascade`, `render-storm`, `eager-mount`, `effect-chain`) with `costMs`, `evidence` and `fix`.
+  - Findings taxonomy (`slow-commit`, `slow-render`, `memo-defeated`, `context-cascade`, `parent-cascade`, `render-storm`, `eager-mount`, `effect-chain`) with `costMs`, `evidence` and `fix`.
   - With `--js`, Hermes samples are correlated inside each hot commit's window.
   - Component source: resolve `_debugSource` / `_debugStack` when present, else grep `cwd` for `function X|const X =`. No tree-sitter.
 - Clear errors: `rn_too_old` (below 0.74), `release_build`, `devtools_backend_missing`.
 
 **PRF-7 — ✨ feat(perf): iOS native (xctrace)**
 - `xctrace record --template 'Time Profiler' --instrument 'Hangs' [--instrument 'Leaks' --instrument 'Allocations'] --device <udid> --attach <pid> --output native/ios.trace --no-prompt`, spawned detached; stop sends SIGINT and waits.
-  - Using `--instrument` means no binary template asset. If that combination fails on a given Xcode, build **our own** `.tracetemplate` in Instruments and commit it under `packages/perf/assets/`. Never copy argent's template.
+  - Using `--instrument` means no binary template asset. If that combination fails on a given Xcode, build **our own** `.tracetemplate` in Instruments and commit it under `packages/perf/assets/`.
 - Xcode 26.4+: switch to `--all-processes` and filter by pid (`select.ts` logic).
 - `--leaks` cold-launches with `--env MallocStackLogging=1 --launch -- <App.app>`.
 - Export: `xctrace export --toc`, then `--xpath` for `time-profile`, `potential-hangs` and the Leaks detail. Parse with a streaming regex row parser that resolves `id`/`ref`; must handle 50MB+ fixtures.
@@ -274,11 +255,10 @@ Each phase is tests first (fixtures from real command output under `packages/per
 
 ### Wave 5
 
-**PRF-12 — 📝 docs(perf): guide, reference, skill, NOTICE**
+**PRF-12 — 📝 docs(perf): guide, reference, skill**
 - `apps/docs/content/docs/guides/perf.mdx` plus `guides/meta.json`.
 - `reference/cli.mdx`, plus `reference/environment.mdx` (`WARDEN_TRACE_PROCESSOR`, if added).
 - `skills/warden/references/perf.md`, linked from `SKILL.md` (the `skill.test.ts` embed check), covering the workflow: `doctor` → `record`/`start`…`stop` → `report` → `query` → fix → `diff`.
-- Root `NOTICE` with agent-device MIT attribution, only for parsers or predicates that were actually adapted. argent was clean-room, so it needs no attribution, but the guide credits it as prior art.
 
 ### Wave 6 (later, physical devices; not v1)
 
@@ -334,7 +314,6 @@ Each phase is tests first (fixtures from real command output under `packages/per
 - Profiler overhead: Hermes sampling at 100µs plus perfetto callstacks. Keep sessions short (≤30s by default, with a hard cap and an auto-stop timer in `perf-collect`) so traces don't blow up the disk; enforce a session-dir size cap and add `perf ls --prune`.
 - Leave the device clean: every capturer is stopped by `warden ui close --release` / `release`, and a stale-session sweep (dead pid) runs on `perf start`.
 - Privacy: logs, network and heap snapshots can hold PII or tokens. Logs are redacted; heap snapshots and traces are flagged "contains app memory" and never auto-uploaded.
-- Licences: argent is clean-room, so implementer subagents get **this plan, not argent source**. The scratchpad clones are not referenced. agent-device-derived code keeps its MIT notice.
 
 ## Unresolved questions
 
