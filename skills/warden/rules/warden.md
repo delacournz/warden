@@ -9,3 +9,4 @@ argent, agent-device and tester.army `e2e` / `@e2e-dev/mobile` are retired. Neve
 - **Release.** `warden ui close --release` or `warden release <leaseId> [--shutdown]`. A bare claim lasts 5 min. Subagents never run bare `warden release --mine`: release by id, or `--mine --label <x>`.
 - **Xcode 27 MCP** (`xcrun mcpbridge`, `xcrun mcp-server`): fine for build, test, previews, docs. `DeviceInteraction*` tools drive any booted sim and skip leases: only on a udid you `warden claim`ed, end the session before `warden release`. Never `mcp-server enable --unsafe-always-allow-all-agents`.
 - **Queue.** A claim may block in the boot queue when the host is full (default `--wait 30m`). Don't retry, loop or raise `--max` to jump it; `warden queue` shows your position. `--no-wait` only for fail-fast.
+- **Perf.** Profiling = `warden perf` (`doctor` → `record --all` → `report` → `query` → fix → `record --relaunch` → `diff`); see the skill's `references/perf.md`.

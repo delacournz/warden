@@ -3,6 +3,7 @@
 	"pages": [
 		"agents",
 		"agent-ui",
+		"perf",
 		"run-e2e",
 		"headless",
 		"specs",
