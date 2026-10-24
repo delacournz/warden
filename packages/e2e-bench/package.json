@@ -6,9 +6,9 @@
 	"private": true,
 	"scripts": {
 		"bench": "bun src/cli.ts",
-		"fmt": "biome format --write ./src ./suites",
-		"lint": "biome lint --write ./src ./suites",
-		"check": "biome check ./src ./suites",
+		"fmt": "biome format --write ./src ./suites ./scripts",
+		"lint": "biome lint --write ./src ./suites ./scripts",
+		"check": "biome check ./src ./suites ./scripts",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test src suites/warden/helpers"
 	},
