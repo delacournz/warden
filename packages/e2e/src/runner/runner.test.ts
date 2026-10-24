@@ -266,6 +266,21 @@ describe("lost HID connection", () => {
 	});
 });
 
+describe("windows after a HID-loss reboot", () => {
+	test("WARDEN_AFTER_REBOOT runs once after the reboot, {udid} filled in, before the test runs again", async () => {
+		const run = await runSpec("hid", { WARDEN_AFTER_REBOOT: '["rewindow","--open","{udid}"]' });
+		const udid = "FAKE-UDID-0123456789";
+		expect(run.log).toEqual([
+			"body run 1",
+			`exec xcrun simctl shutdown ${udid}`,
+			`exec xcrun simctl bootstatus ${udid} -b`,
+			`exec rewindow --open ${udid}`,
+			"body run 2",
+			"body run 3",
+		]);
+	});
+});
+
 describe("skip", () => {
 	test("skip, skipIf, option skip, platform filter and todo never run their body", async () => {
 		const run = await runSpec("skip");

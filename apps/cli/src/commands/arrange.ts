@@ -1,10 +1,24 @@
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, reportError } from "../output";
-import { type Arranged, arrangeSimWindows } from "../sim-windows";
+import { type Arranged, arrangeSimWindows, reopenSimWindows } from "../sim-windows";
 
-/** Tile open Simulator.app windows of warden sims in name order (Device Hub, Xcode 27: not tiled yet). */
-async function arrange(ctx: CommandContext, json: boolean): Promise<number> {
+/** Tile open Simulator.app (Xcode ≤ 26) / Device Hub (Xcode 27) windows of warden sims in name order. */
+async function arrange(ctx: CommandContext, json: boolean, open: readonly string[]): Promise<number> {
+	if ((ctx.os ?? process.platform) !== "darwin") {
+		emit(
+			ctx,
+			json,
+			open.length > 0 ? { opened: [] } : { arranged: [], viewer: "none" },
+			ctx.ui.color.dim("macOS only: nothing to do")
+		);
+		return 0;
+	}
+	if (open.length > 0) {
+		const opened = await reopenSimWindows(ctx, open);
+		emit(ctx, json, { opened }, opened.length === 0 ? "no windows opened" : `opened ${opened.join(", ")}`);
+		return 0;
+	}
 	const result = await arrangeSimWindows(ctx.exec);
 	if (!result.success) {
 		reportError(ctx, "arrange", result.error);
@@ -15,9 +29,8 @@ async function arrange(ctx: CommandContext, json: boolean): Promise<number> {
 	return 0;
 }
 
-function arrangeText(ctx: CommandContext, { arranged, viewer }: Arranged): string {
+function arrangeText(ctx: CommandContext, { arranged }: Arranged): string {
 	const { color } = ctx.ui;
-	if (viewer === "device-hub") return color.dim("Device Hub (Xcode 27) windows are not tiled yet: nothing arranged");
 	return arranged.length === 0 ? color.dim("no warden simulator windows open") : `arranged ${arranged.join(", ")}`;
 }
 
@@ -27,7 +40,11 @@ export const arrangeCommand = defineCommand({
 	summary: "tile warden simulator windows in name order (macOS; also runs after iOS claims)",
 	register: (cmd, ctx, done) => {
 		cmd
+			.option(
+				"--open <udid...>",
+				"first ask Device Hub for these sims' windows (Xcode 27, only while it runs), then tile"
+			)
 			.option("--json", "machine-readable output")
-			.action(async (opts) => done(await arrange(ctx, opts.json === true)));
+			.action(async (opts) => done(await arrange(ctx, opts.json === true, opts.open ?? [])));
 	},
 });

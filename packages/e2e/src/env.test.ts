@@ -16,6 +16,19 @@ describe("readEnv", () => {
 		expect(readEnv({ WARDEN_UDID: "", WARDEN_BUNDLE_ID: "x" })).toEqual({ success: true, data: undefined });
 	});
 
+	test("WARDEN_AFTER_REBOOT is a JSON argv; a bad value is reported by name", () => {
+		expect(read({ ...base, WARDEN_AFTER_REBOOT: '["warden","arrange","--open","{udid}"]' })?.afterReboot).toEqual([
+			"warden",
+			"arrange",
+			"--open",
+			"{udid}",
+		]);
+		expect(read(base)?.afterReboot).toBeUndefined();
+		const bad = readEnv({ ...base, WARDEN_AFTER_REBOOT: "warden arrange" });
+		expect(bad.success).toBe(false);
+		expect(bad.success ? "" : bad.error).toContain("WARDEN_AFTER_REBOOT");
+	});
+
 	test("defaults", () => {
 		expect(read(base)).toEqual({
 			udid: "UDID-1",

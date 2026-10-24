@@ -634,8 +634,10 @@ Usage: warden arrange [options]
 tile warden simulator windows in name order (macOS; also runs after iOS claims)
 
 Options:
-  --json      machine-readable output
-  -h, --help  display help for command"
+  --open <udid...>  first ask Device Hub for these sims' windows (Xcode 27, only
+                    while it runs), then tile
+  --json            machine-readable output
+  -h, --help        display help for command"
 `;
 
 exports[`help output warden clone --help (and nested subcommands) 1`] = `

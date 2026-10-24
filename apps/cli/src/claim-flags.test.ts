@@ -284,3 +284,59 @@ describe("headless hide wiring", () => {
 		expect(called).toBe(false);
 	});
 });
+
+describe("Device Hub windows after a claim (Xcode 27)", () => {
+	let dctx: TestContext | undefined;
+	afterEach(() => dctx?.cleanup());
+
+	/** `pgrep` finds only `running`; every other call goes to simctl; records `open`/`osascript` */
+	function viewer(running: "DeviceHub" | "none", calls: string[][]): Exec {
+		const simctl = fakeSimctl([wardenSim(1, "Shutdown")], calls);
+		return async (cmd, opts) => {
+			if (cmd[0] === "open" || cmd[0] === "osascript") calls.push([...cmd]);
+			if (cmd[0] === "pgrep") return { exitCode: cmd[2] === running ? 0 : 1, stdout: "", stderr: "" };
+			if (cmd[0] === "open") return { exitCode: 0, stdout: "", stderr: "" };
+			if (cmd[0] === "osascript") {
+				const screen = { x: 0, y: 25, width: 1440, height: 875 };
+				const windows = (cmd[4] ?? "").includes("NSScreen")
+					? [{ title: "warden-iphone-17-1 – iOS 27.1", width: 340, height: 751 }]
+					: [];
+				return {
+					exitCode: 0,
+					stdout: (cmd[4] ?? "").includes("NSScreen") ? JSON.stringify({ screen, windows }) : "",
+					stderr: "",
+				};
+			}
+			return simctl(cmd, opts);
+		};
+	}
+
+	async function claim(running: "DeviceHub" | "none", headless: boolean) {
+		const calls: string[][] = [];
+		dctx = testContext([], { exec: viewer(running, calls) });
+		dctx.env = { ...dctx.env, ...OWNER_ENV, WARDEN_ARRANGE: "1" };
+		const flags = parseClaimFlags("ios", headless ? { headless: true } : {}, 16);
+		if (!flags.success) throw new Error(flags.error);
+		const outcome = await claimWithFlags(dctx, resolveOwner(dctx), flags.data, undefined, { os: "darwin" });
+		expect(outcome.success).toBe(true);
+		return calls.filter((c) => c[0] === "open" || c[0] === "osascript");
+	}
+
+	test("non-headless, Device Hub running → a window is opened for the sim the claim booted, then tiled", async () => {
+		const calls = await claim("DeviceHub", false);
+		const opens = calls.filter((c) => c[0] === "open");
+		expect(opens).toHaveLength(1);
+		expect(opens[0]?.[1]).toBe("-g");
+		expect(opens[0]?.[2]).toMatch(/^devices:\/\/device\/open\?id=/);
+		expect(calls.filter((c) => c[0] === "osascript").length).toBeGreaterThanOrEqual(2);
+		expect(calls.indexOf(opens[0] as string[])).toBeLessThan(calls.findIndex((c) => c[0] === "osascript"));
+	});
+
+	test("non-headless, Device Hub not running → never launched: no open", async () => {
+		expect((await claim("none", false)).filter((c) => c[0] === "open")).toEqual([]);
+	});
+
+	test("headless, Device Hub running → no window opened, none touched", async () => {
+		expect(await claim("DeviceHub", true)).toEqual([]);
+	});
+});

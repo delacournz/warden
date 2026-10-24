@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
 import { E2eError } from "../../errors";
-import { isHidLost, rebootSim, stopResidentHelper } from "./hid-recovery";
+import { isHidLost, rebootSim, runAfterReboot, stopResidentHelper } from "./hid-recovery";
 import type { SimdClient } from "./simd-client";
 
 const ok: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
@@ -116,5 +116,40 @@ describe("stopResidentHelper", () => {
 		const { deps, requests } = fakeDaemon({ connects: false });
 		expect(await stopResidentHelper(deps, "/s")).toEqual({ success: true, data: "none" });
 		expect(requests).toEqual([]);
+	});
+});
+
+describe("isHidLost with the sim shut down", () => {
+	test("a helper that finds the sim not booted (Device Hub quit shuts every booted sim down) counts", () => {
+		const down = "warden-simd exited before it was ready: E_NOT_BOOTED: simulator U is shutdown, not booted";
+		expect(isHidLost(new E2eError("DRIVER", down))).toBe(true);
+		expect(isHidLost(new E2eError("ACTION_FAILED", `tap failed: ${down}`))).toBe(true);
+		expect(isHidLost(new E2eError("ASSERTION", down))).toBe(false);
+	});
+});
+
+describe("runAfterReboot", () => {
+	test("runs the argv with {udid} filled in", async () => {
+		const { exec, calls } = script({});
+		await runAfterReboot({ exec }, ["warden", "arrange", "--open", "{udid}"], "U-1");
+		expect(calls).toEqual(["warden arrange --open U-1"]);
+	});
+
+	test("nothing configured or an empty argv → nothing runs", async () => {
+		const { exec, calls } = script({});
+		await runAfterReboot({ exec }, undefined, "U-1");
+		await runAfterReboot({ exec }, [], "U-1");
+		expect(calls).toEqual([]);
+	});
+
+	test("failure or throw is logged, never raised", async () => {
+		const lines: string[] = [];
+		const failing: Exec = async () => ({ exitCode: 3, stdout: "", stderr: "no" });
+		await runAfterReboot({ exec: failing, log: (l) => lines.push(l) }, ["x"], "U-1");
+		const throwing: Exec = async () => {
+			throw new Error("spawn failed");
+		};
+		await runAfterReboot({ exec: throwing, log: (l) => lines.push(l) }, ["x"], "U-1");
+		expect(lines).toHaveLength(2);
 	});
 });

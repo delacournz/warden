@@ -17,6 +17,8 @@ const BOOT_MS = 120_000;
 const ALREADY_SHUTDOWN_EXIT = 164;
 const ALREADY_SHUTDOWN_TEXT = "current state: Shutdown";
 
+const AFTER_REBOOT_MS = 30_000;
+
 export type HidRecoveryDeps = {
 	exec: Exec;
 	log?: (line: string) => void;
@@ -52,14 +54,15 @@ export async function stopResidentHelper(deps: HidRecoveryDeps, socketPath: stri
 	return exists(socketPath) ? err(`warden-simd on ${socketPath} did not stop`) : ok("stopped");
 }
 
-/** The error of a tap/swipe/type on a sim whose HID connection is gone (wrapped as `ACTION_FAILED` or `DRIVER`). */
+/**
+ * The error of a tap/swipe/type on a sim whose HID connection is gone (wrapped as `ACTION_FAILED` or `DRIVER`), or
+ * of a helper that finds the sim shut down: quitting Device Hub normally shuts down every booted sim (DHW-0 V5), and
+ * the next call then fails `E_NOT_BOOTED`.
+ */
 export function isHidLost(error: unknown): boolean {
-	return (
-		error instanceof E2eError &&
-		(error.code === "ACTION_FAILED" || error.code === "DRIVER") &&
-		/\bE_HID\b/.test(error.message) &&
-		/dtuhidd connection[\s\S]*invalidated/.test(error.message)
-	);
+	if (!(error instanceof E2eError) || (error.code !== "ACTION_FAILED" && error.code !== "DRIVER")) return false;
+	const hidInvalidated = /\bE_HID\b/.test(error.message) && /dtuhidd connection[\s\S]*invalidated/.test(error.message);
+	return hidInvalidated || /\bE_NOT_BOOTED\b/.test(error.message);
 }
 
 /**
@@ -75,4 +78,23 @@ export async function rebootSim(deps: HidRecoveryDeps, udid: string): AsyncResul
 	const up = ["xcrun", "simctl", "bootstatus", udid, "-b"];
 	const boot = await deps.exec(up, { timeoutMs: BOOT_MS });
 	return boot.exitCode === 0 ? ok(undefined) : err(execError(up, boot));
+}
+
+/**
+ * Runs `WARDEN_AFTER_REBOOT` (`{udid}` replaced) once the sim is back — `warden` uses it to reopen the sim's Device
+ * Hub window and tile again. Best effort: a failure is logged, never raised, and never fails the test.
+ */
+export async function runAfterReboot(
+	deps: HidRecoveryDeps,
+	argv: readonly string[] | undefined,
+	udid: string
+): Promise<void> {
+	if (argv === undefined || argv.length === 0) return;
+	const cmd = argv.map((arg) => arg.replaceAll("{udid}", udid));
+	try {
+		const out = await deps.exec(cmd, { timeoutMs: AFTER_REBOOT_MS });
+		if (out.exitCode !== 0) deps.log?.(`after-reboot hook failed: ${execError(cmd, out)}`);
+	} catch (error) {
+		deps.log?.(`after-reboot hook failed: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }
