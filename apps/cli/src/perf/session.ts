@@ -61,7 +61,8 @@ const identityOf = (deps: SessionDeps): PidIdentity => ({ pidAlive: deps.pidAliv
 /** What a collector's command line carries (`perf-collect --session <id>`): tells it from a reused pid. */
 const collectorMarks = (id: string): string[] => ["perf-collect", `--session ${id}`];
 
-function collectorPid(session: PerfSession): number | undefined {
+/** The collector's pid while the session still records it as running. */
+export function collectorPid(session: PerfSession): number | undefined {
 	return session.capturers.find((c) => c.kind === "collector" && c.state === "running")?.pid;
 }
 
@@ -147,6 +148,17 @@ function finish(
 }
 
 /**
+ * SIGTERM the session's collector, but only when `safeToSignal` proves the pid is still the process warden started.
+ * Returns the pid it signalled (undefined: none recorded, or not provably ours).
+ */
+export function signalCollector(deps: SessionDeps, session: PerfSession): number | undefined {
+	const pid = collectorPid(session);
+	if (pid === undefined || !safeToSignal(identityOf(deps), pid, collectorMarks(session.id))) return undefined;
+	deps.kill(pid, "SIGTERM");
+	return pid;
+}
+
+/**
  * Stop a session: SIGTERM its collector only when `safeToSignal` proves the pid is still the process warden started
  * (a reused pid, or one whose command line cannot be read, is never signalled), then record the stop.
  */
@@ -160,9 +172,7 @@ export function stopSession(
 	const session = readSession(ctx, id);
 	if (session === undefined) return undefined;
 	if (session.status !== "running") return session;
-	const pid = collectorPid(session);
-	if (opts.signalCollector !== false && pid !== undefined && safeToSignal(identityOf(deps), pid, collectorMarks(id)))
-		deps.kill(pid, "SIGTERM");
+	if (opts.signalCollector !== false) signalCollector(deps, session);
 	return finish(ctx, session, reason === "stale" ? "aborted" : "stopped", reason);
 }
 
@@ -197,6 +207,13 @@ export function activeSessionFor(ctx: SessionHost, deps: SessionDeps, udid: stri
 	return expired || !collectorAlive(deps, session) ? undefined : session;
 }
 
+/** The session the device's `state.json` points at while it is still `running` on disk, even past its cap (`perf stop` still has captures to gather). */
+export function runningSessionFor(ctx: SessionHost, udid: string): PerfSession | undefined {
+	const id = readState(ctx, udid).perf?.sessionId;
+	const session = id === undefined ? undefined : readSession(ctx, id);
+	return session?.status === "running" ? session : undefined;
+}
+
 /**
  * Open a session on the device. One per device, whoever owns the lease: a live one is `session_active` (naming it),
  * a dead or overdue one is swept first. The device's `state.json` records the id so `mark` and `stop` find it.
@@ -212,7 +229,7 @@ export function createSession(ctx: SessionHost, deps: SessionDeps, input: NewSes
 			return {
 				success: false,
 				error: uiError("session_active", `perf session ${live.id} is already running on ${udid}`, {
-					hint: "see warden perf ls",
+					hint: "warden perf start --join attaches read-only to it; warden perf stop ends it",
 					details: { sessionId: live.id, owner: live.target.holder ?? null },
 				}),
 			};

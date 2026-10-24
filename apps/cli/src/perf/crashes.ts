@@ -213,10 +213,69 @@ function render(crashes: readonly CrashOut[]): string {
 		.join("\n\n");
 }
 
+export type CrashRead = { crashes: CrashOut[]; notes: string[] };
+
 /**
- * `warden perf crashes`: crashes and ANRs of the app. iOS reads the host's `.ips` reports for this simulator;
- * Android reads the crash log buffer and the dropbox. Raw reports are copied into the device's active session
- * (`crashes/`). `--symbolicate --dsym <path>` resolves iOS app frames. An `observe` op: needs no lease.
+ * The app's crashes and ANRs, newest first (up to `MAX_CRASHES`). iOS reads the host's `.ips` reports for this
+ * simulator; Android reads the crash log buffer and the dropbox. Raw reports are copied into `crashDir` when given.
+ */
+export async function readCrashes(
+	ctx: CommandContext,
+	target: { udid: string; platform: "ios" | "android" },
+	appId: string,
+	opts: { sinceMs?: number; crashDir?: string; dsym?: string; timeoutMs: number },
+	crashDeps: CrashDeps = defaultCrashDeps
+): Promise<CrashRead> {
+	const notes: string[] = [];
+	const { crashDir } = opts;
+	let crashes: CrashOut[];
+	if (target.platform === "ios") {
+		const bundle = await iosAppBundle(ctx, target.udid, appId);
+		const found = readIpsReports(crashDeps.reportsDir(ctx), {
+			bundleId: appId,
+			udid: target.udid,
+			...(bundle.success ? { executable: bundle.data.executable } : {}),
+			...(opts.sinceMs !== undefined ? { sinceMs: ctx.now() - opts.sinceMs } : {}),
+		});
+		if (found.note) notes.push(found.note);
+		crashes = [];
+		for (const r of found.reports.slice(0, MAX_CRASHES)) {
+			const out = iosOut(r);
+			if (crashDir !== undefined) {
+				try {
+					mkdirSync(crashDir, { recursive: true });
+					copyFileSync(r.file, join(crashDir, basename(r.file)));
+					out.file = join(crashDir, basename(r.file));
+				} catch {
+					notes.push(`could not copy ${r.file} into the session`);
+				}
+			}
+			if (opts.dsym !== undefined) {
+				const sym = await symbolicate(ctx, opts.dsym, r.text, opts.timeoutMs);
+				if (sym.success) out.symbolicated = sym.data;
+				else notes.push(sym.error.message);
+			}
+			crashes.push(out);
+		}
+	} else {
+		const found = await androidCrashes(ctx, target.udid, appId, opts.sinceMs, opts.timeoutMs);
+		notes.push(...found.notes);
+		crashes = found.crashes.slice(0, MAX_CRASHES).map(androidOut);
+		if (crashDir !== undefined) {
+			try {
+				mkdirSync(crashDir, { recursive: true });
+				for (const [name, text] of found.raw) writeFileSync(join(crashDir, name), redact(text));
+			} catch {
+				notes.push("could not write raw crash logs into the session");
+			}
+		}
+	}
+	return { crashes, notes };
+}
+
+/**
+ * `warden perf crashes`: crashes and ANRs of the app (see `readCrashes`). Raw reports are copied into the device's
+ * active session (`crashes/`). `--symbolicate --dsym <path>` resolves iOS app frames. An `observe` op: needs no lease.
  */
 export async function perfCrashes(
 	ctx: CommandContext,
@@ -240,52 +299,18 @@ export async function perfCrashes(
 		if (!app.success) return app;
 		const session = activeSessionFor(ctx, deps.session, target.udid);
 		const crashDir = session === undefined ? undefined : join(sessionDir(ctx, session.id), "crashes");
-		const notes: string[] = [];
-		let crashes: CrashOut[];
-
-		if (target.platform === "ios") {
-			const bundle = await iosAppBundle(ctx, target.udid, app.data.id);
-			const found = readIpsReports(crashDeps.reportsDir(ctx), {
-				bundleId: app.data.id,
-				udid: target.udid,
-				...(bundle.success ? { executable: bundle.data.executable } : {}),
-				...(sinceMs !== undefined ? { sinceMs: ctx.now() - sinceMs } : {}),
-			});
-			if (found.note) notes.push(found.note);
-			const newest = found.reports.slice(0, MAX_CRASHES);
-			crashes = [];
-			for (const r of newest) {
-				const out = iosOut(r);
-				if (crashDir !== undefined) {
-					try {
-						mkdirSync(crashDir, { recursive: true });
-						copyFileSync(r.file, join(crashDir, basename(r.file)));
-						out.file = join(crashDir, basename(r.file));
-					} catch {
-						notes.push(`could not copy ${r.file} into the session`);
-					}
-				}
-				if (opts.symbolicate === true && opts.dsym !== undefined) {
-					const sym = await symbolicate(ctx, opts.dsym, r.text, env.timeoutMs);
-					if (sym.success) out.symbolicated = sym.data;
-					else notes.push(sym.error.message);
-				}
-				crashes.push(out);
-			}
-		} else {
-			const found = await androidCrashes(ctx, target.udid, app.data.id, sinceMs, env.timeoutMs);
-			notes.push(...found.notes);
-			crashes = found.crashes.slice(0, MAX_CRASHES).map(androidOut);
-			if (crashDir !== undefined) {
-				try {
-					mkdirSync(crashDir, { recursive: true });
-					for (const [name, text] of found.raw) writeFileSync(join(crashDir, name), redact(text));
-				} catch {
-					notes.push("could not write raw crash logs into the session");
-				}
-			}
-		}
-
+		const { crashes, notes } = await readCrashes(
+			ctx,
+			target,
+			app.data.id,
+			{
+				...(sinceMs !== undefined ? { sinceMs } : {}),
+				...(crashDir !== undefined ? { crashDir } : {}),
+				...(opts.symbolicate === true && opts.dsym !== undefined ? { dsym: opts.dsym } : {}),
+				timeoutMs: env.timeoutMs,
+			},
+			crashDeps
+		);
 		const findings: Finding[] = crashFindings(crashes);
 		const text = crashes.length === 0 ? ctx.ui.color.dim(`no crashes for ${app.data.id}`) : render(crashes);
 		return ok({

@@ -5,6 +5,7 @@ import { androidTools } from "@delacour/warden-core/providers/android";
 import { type Anchor, analyzeFrames, type FramesReport, jankFinding } from "@delacour/warden-perf/frames/analyze";
 import { type GfxInfo, parseGfxinfo } from "@delacour/warden-perf/frames/gfxinfo";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
+import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { type UiError, uiError } from "../agent-ui/output";
 import { writeFileAtomic } from "../agent-ui/state";
@@ -55,6 +56,43 @@ export async function androidFrameRate(
 export type FramesResult =
 	| ({ status: "ok"; app: string; session?: string; reset: boolean; findings: Finding[] } & FramesReport)
 	| { status: "unsupported"; platform: "ios"; app: string; reason: string; hint: string };
+
+/**
+ * Read the app's frame stats for a session being stopped and write `<session>/frames.json` (what `perf stop` collects;
+ * the session may already be past its cap, so it is passed in rather than looked up).
+ */
+export async function captureSessionFrames(
+	ctx: CommandContext,
+	udid: string,
+	app: string,
+	session: PerfSession
+): Promise<Result<Extract<FramesResult, { status: "ok" }>, UiError>> {
+	const gfx = await readGfxinfo(ctx, udid, app);
+	if (gfx === undefined) return noStats(app);
+	const report = analyzeFrames(gfx, {
+		readAtSessionMs: ctx.now() - session.startedAt.wallMs,
+		marks: session.marks,
+	});
+	const finding = jankFinding(report);
+	const result: Extract<FramesResult, { status: "ok" }> = {
+		status: "ok",
+		app,
+		session: session.id,
+		reset: false,
+		findings: finding ? [finding] : [],
+		...report,
+	};
+	const dir = sessionDir(ctx, session.id);
+	mkdirSync(dir, { recursive: true });
+	writeFileAtomic(join(dir, FRAMES_FILE), `${JSON.stringify(result, null, 2)}\n`);
+	return ok(result);
+}
+
+/** Clear the OS frame counters so the next read covers a fresh window (a mutation: the caller holds the lease). */
+export async function resetFrameCounters(ctx: CommandContext, udid: string, app: string): Promise<boolean> {
+	const res = await ctx.exec(adb(ctx, udid, "dumpsys", "gfxinfo", app, "reset"), { timeoutMs: 10_000 });
+	return res.exitCode === 0;
+}
 
 function anchorFor(ctx: CommandContext, deps: PerfDeps, udid: string): { anchor?: Anchor; sessionId?: string } {
 	const session = activeSessionFor(ctx, deps.session, udid);

@@ -13,12 +13,11 @@ export type AutoStopDeps = {
 export type AutoStopOutcome = "capped" | "ended" | "missing" | "aborted";
 
 /**
- * The collector's auto-stop timer: sleeps until the session's cap, then stops it with `max-duration` (without
- * signalling itself). Returns early when the session is stopped by someone else, vanishes or the signal aborts.
+ * Wait until the session reaches its cap, ends, vanishes or `signal` aborts, without stopping it. `capped` leaves the
+ * stop to the caller, so the collector can flush its captures before the session is marked stopped.
  */
-export async function runAutoStop(
+export async function untilCap(
 	ctx: Pick<CommandContext, "env" | "now" | "store">,
-	sessionDeps: SessionDeps,
 	id: string,
 	deps: AutoStopDeps
 ): Promise<AutoStopOutcome> {
@@ -28,11 +27,23 @@ export async function runAutoStop(
 		if (session === undefined) return "missing";
 		if (session.status !== "running") return "ended";
 		const remaining = session.startedAt.wallMs + session.maxDurationMs - ctx.now();
-		if (remaining <= 0) {
-			stopSession(ctx, sessionDeps, id, "max-duration", { signalCollector: false });
-			return "capped";
-		}
+		if (remaining <= 0) return "capped";
 		if (deps.signal?.aborted) return "aborted";
 		await deps.sleep(Math.min(remaining, tick));
 	}
+}
+
+/**
+ * The collector's auto-stop timer: sleeps until the session's cap, then stops it with `max-duration` (without
+ * signalling itself). Returns early when the session is stopped by someone else, vanishes or the signal aborts.
+ */
+export async function runAutoStop(
+	ctx: Pick<CommandContext, "env" | "now" | "store">,
+	sessionDeps: SessionDeps,
+	id: string,
+	deps: AutoStopDeps
+): Promise<AutoStopOutcome> {
+	const outcome = await untilCap(ctx, id, deps);
+	if (outcome === "capped") stopSession(ctx, sessionDeps, id, "max-duration", { signalCollector: false });
+	return outcome;
 }

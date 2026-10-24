@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { type TestContext, testContext } from "../testing";
-import { runAutoStop } from "./auto-stop";
+import { runAutoStop, untilCap } from "./auto-stop";
 import { createSession, readSession, stopSession } from "./session";
 import { fakePerfDeps } from "./testing";
 
@@ -57,5 +57,25 @@ describe("runAutoStop", () => {
 		const sleep = async () => controller.abort();
 		expect(await runAutoStop(c, deps.session, id, { sleep, signal: controller.signal })).toBe("aborted");
 		expect(readSession(c, id)?.status).toBe("running");
+	});
+});
+
+describe("untilCap", () => {
+	test("returns capped at the cap without stopping the session", async () => {
+		const { c, id, sleep } = setup(5_000);
+		expect(await untilCap(c, id, { sleep })).toBe("capped");
+		expect(readSession(c, id)?.status).toBe("running");
+	});
+
+	test("returns missing for an unknown session", async () => {
+		const { c, sleep } = setup(5_000);
+		expect(await untilCap(c, "nope", { sleep })).toBe("missing");
+	});
+
+	test("returns aborted when the signal fires", async () => {
+		const { c, id, sleep } = setup(60_000);
+		const controller = new AbortController();
+		controller.abort();
+		expect(await untilCap(c, id, { sleep, signal: controller.signal })).toBe("aborted");
 	});
 });

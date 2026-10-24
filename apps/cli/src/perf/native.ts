@@ -141,15 +141,16 @@ export async function startNative(
 	});
 }
 
-/** The recording running on `udid`: the device's session first, else a one-shot. */
+/** The recording running on `udid`: the session (`sessionId`, else the device's active one) first, else a one-shot. `perf stop` names the session because a capped one no longer counts as active. */
 export function findNativeRun(
 	ctx: CommandContext,
 	deps: PerfDeps,
-	udid: string
+	udid: string,
+	sessionId?: string
 ): { dir: string; file: HandleFile } | undefined {
-	const session = activeSessionFor(ctx, deps.session, udid);
-	if (session !== undefined) {
-		const dir = sessionNativeDir(ctx, session.id);
+	const sessionKey = sessionId ?? activeSessionFor(ctx, deps.session, udid)?.id;
+	if (sessionKey !== undefined) {
+		const dir = sessionNativeDir(ctx, sessionKey);
 		const file = readHandleFile(dir);
 		if (file?.status === "running") return { dir, file };
 	}
@@ -165,9 +166,9 @@ export async function stopNative(
 	io: NativeIo,
 	profilers: NativeProfilers,
 	target: PerfTarget,
-	opts: { analyze: boolean; yes?: boolean }
+	opts: { analyze: boolean; yes?: boolean; sessionId?: string }
 ): Promise<Result<StoppedNative, UiError>> {
-	const found = findNativeRun(ctx, deps, target.udid);
+	const found = findNativeRun(ctx, deps, target.udid, opts.sessionId);
 	if (found === undefined) {
 		return {
 			success: false,

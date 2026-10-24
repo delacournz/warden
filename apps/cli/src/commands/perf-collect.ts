@@ -2,6 +2,10 @@ import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { reportError } from "../output";
 import { runAutoStop } from "../perf/auto-stop";
+import type { CollectorDeps } from "../perf/collector";
+import type { SessionKit } from "../perf/orchestrate";
+import { readPlan } from "../perf/plan";
+import type { PerfDeps } from "../perf/run";
 import { defaultSessionDeps, readSession, type SessionDeps, updateSession } from "../perf/session";
 
 /** What `perf-collect` reaches the outside world through; tests inject a sleep and a process table. */
@@ -9,6 +13,10 @@ export type PerfCollectDeps = {
 	sleep?: (ms: number) => Promise<void>;
 	signal?: AbortSignal;
 	session?: SessionDeps;
+	/** the session collector's effects (Metro, logs, sleep); tests inject fakes */
+	collector?: Partial<CollectorDeps>;
+	perf?: PerfDeps;
+	kit?: SessionKit;
 };
 
 async function collect(ctx: CommandContext, deps: PerfCollectDeps, id: string | undefined): Promise<number> {
@@ -34,11 +42,26 @@ async function collect(ctx: CommandContext, deps: PerfCollectDeps, id: string | 
 				{ kind: "collector", pid: process.pid, startedAtIso: new Date(ctx.now()).toISOString(), state: "running" },
 			],
 		}));
-		await runAutoStop(ctx, deps.session ?? defaultSessionDeps, id, {
-			sleep: deps.sleep ?? ((ms) => Bun.sleep(ms)),
-			signal: controller.signal,
-		});
-		return 0;
+		if (readPlan(ctx, id) === undefined) {
+			await runAutoStop(ctx, deps.session ?? defaultSessionDeps, id, {
+				sleep: deps.sleep ?? ((ms) => Bun.sleep(ms)),
+				signal: controller.signal,
+			});
+			return 0;
+		}
+		const { runSessionCollector, defaultCollectorDeps } = await import("../perf/collector");
+		const { defaultSessionKit, finalizeSession } = await import("../perf/orchestrate");
+		const { defaultPerfDeps } = await import("../perf/run");
+		const perf = deps.perf ?? defaultPerfDeps;
+		const kit = deps.kit ?? defaultSessionKit;
+		const collectorDeps: CollectorDeps = {
+			...defaultCollectorDeps((line) => ctx.err(line)),
+			...deps.collector,
+			finalize: (sessionId) =>
+				finalizeSession(ctx, perf, kit, sessionId, { reason: "max-duration", fromCollector: true }),
+		};
+		const outcome = await runSessionCollector(ctx, perf, collectorDeps, id, controller.signal);
+		return outcome.success ? 0 : 1;
 	} finally {
 		process.off("SIGTERM", stop);
 		process.off("SIGINT", stop);

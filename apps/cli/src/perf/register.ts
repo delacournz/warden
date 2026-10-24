@@ -1,6 +1,7 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import type { CommandContext } from "../context";
 import { registerCrashes } from "./crashes";
+import { registerDiff } from "./diff";
 import { registerDoctor } from "./doctor";
 import { registerFrames } from "./frames";
 import { registerHeap } from "./heap";
@@ -11,9 +12,14 @@ import { registerMark } from "./mark";
 import { registerMemory } from "./memory";
 import { registerMetrics } from "./metrics";
 import { registerNative } from "./native";
+import { registerQuery } from "./query";
 import { registerReact } from "./react";
+import { registerRecord } from "./record";
+import { registerReport } from "./report";
 import type { PerfDeps } from "./run";
+import { registerStart } from "./start";
 import { registerStartup } from "./startup";
+import { registerStop } from "./stop";
 import { registerTools } from "./tools";
 
 /**
@@ -25,6 +31,13 @@ export type PerfRegister = (cmd: Commander, ctx: CommandContext, done: (code: nu
 
 /** Every `warden perf` subcommand, in `--help` order. One line per subcommand. */
 export const PERF_SUBCOMMANDS: readonly PerfRegister[] = [
+	registerStart,
+	registerStop,
+	registerRecord,
+	registerMark,
+	registerReport,
+	registerQuery,
+	registerDiff,
 	registerMetrics,
 	registerMemory,
 	registerFrames,
@@ -36,7 +49,6 @@ export const PERF_SUBCOMMANDS: readonly PerfRegister[] = [
 	registerLogs,
 	registerCrashes,
 	registerLs,
-	registerMark,
 	registerDoctor,
 	registerTools,
 ];
