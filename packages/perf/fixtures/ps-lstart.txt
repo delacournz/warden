@@ -1,0 +1,7 @@
+  PID  PPID    RSS  %CPU STARTED                      COMMAND
+    1     0  12816   1.5 Thu Oct  1 08:00:00 2026     /sbin/launchd
+  100     1 204800  10.0 Fri Oct 16 12:07:30 2026     bun /repo/apps/cli/src/cli.ts e2e example
+  101   100 102400  20.5 Fri Oct 16 12:07:31 2026     /usr/bin/node /repo/runner.js --flag value
+  102   101  51200   5.0 Fri Oct 16 12:07:32 2026     /Users/x/bin/warden-simd --udid AAAA-BBBB
+  300     1  20480   1.0 Fri Oct 16 12:07:33 2026     /opt/homebrew/bin/java -jar maestro-cli.jar
+  400     1   1024   0.0 Thu Oct  1 08:00:05 2026     /bin/zsh -l

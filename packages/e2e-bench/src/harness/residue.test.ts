@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parsePs } from "@delacour/warden-perf/metrics/ps";
 import type { ResiduePatterns } from "../adapters/adapter.types";
 import { fakeExec } from "./exec";
 import {
@@ -14,7 +15,6 @@ import {
 	parseSimctlListApps,
 	snapshotResidue,
 } from "./residue";
-import { parsePs } from "./sampler";
 
 const fx = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
 
