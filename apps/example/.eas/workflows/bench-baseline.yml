@@ -43,43 +43,68 @@ jobs:
     after: [get_ios_build, build_ios]
     if: ${{ always() }}
     runs_on: macos-large
+    env:
+      # No golden images on the worker: the settle probe cannot see the sim in a non-GUI session, so claim
+      # does a plain simctl create + boot.
+      WARDEN_GOLDEN: '0'
+      WARDEN_SESSION_ID: eas-bench
     steps:
       # Clone the repo at the triggering ref.
       - uses: eas/checkout
 
-      # Record where the checkout landed (the monorepo root is above the Expo base directory).
-      - name: Layout
+      # Write the shared shell helpers (heartbeat for long commands) every later step sources.
+      - name: Layout and helpers
         run: |
+          echo "== layout ($(date +%T))"
           pwd
-          git rev-parse --show-toplevel || true
-          ls
-          ls ../.. | head -30
+          git rev-parse --show-toplevel
+          cat > "$HOME/bench-lib.sh" <<'LIB'
+          export PATH="$HOME/.bun/bin:$PATH"
+          ROOT="$(git rev-parse --show-toplevel)"
+          # progress <pid> <what>: heartbeat every 20 s while pid runs, with load and booted sims.
+          progress() {
+            local pid=$1 what=$2
+            while kill -0 "$pid" 2>/dev/null; do
+              echo "... $what still running $(date +%T) load=$(sysctl -n vm.loadavg) booted=$(xcrun simctl list devices booted 2>/dev/null | grep -c Booted)"
+              sleep 20
+            done
+          }
+          LIB
 
-      # bun is not preinstalled on the worker image; install it only when missing.
+      # bun ships on the worker image; install it only when missing.
       - name: Install bun
         run: |
+          echo "== install bun ($(date +%T))"
           export PATH="$HOME/.bun/bin:$PATH"
           bun --version || (curl -fsSL https://bun.sh/install | bash)
           export PATH="$HOME/.bun/bin:$PATH"
           bun --version
+          echo "== done in ${SECONDS}s"
 
       # Install workspace deps at the monorepo root. No NPM_TOKEN: the private @delacournz packages are
       # optional (apps/docs only) and a 401 is a warning, same as the tokenless CI clone.
       - name: bun install
         run: |
-          export PATH="$HOME/.bun/bin:$PATH"
-          cd "$(git rev-parse --show-toplevel)"
-          bun install --frozen-lockfile
+          . "$HOME/bench-lib.sh"
+          echo "== bun install ($(date +%T))"
+          cd "$ROOT"
+          bun install --frozen-lockfile &
+          progress $! "bun install"; wait $!
+          echo "== done in ${SECONDS}s"
 
       # Build the iOS helper (warden-simd) the e2e driver talks to.
       - name: Build warden-simd
         run: |
-          export PATH="$HOME/.bun/bin:$PATH"
-          cd "$(git rev-parse --show-toplevel)"
-          bun run --cwd packages/e2e native:deps
-          bun run --cwd packages/e2e native:build
+          . "$HOME/bench-lib.sh"
+          echo "== warden-simd deps + build ($(date +%T))"
+          cd "$ROOT"
+          bun run --cwd packages/e2e native:deps &
+          progress $! "native:deps"; wait $!
+          bun run --cwd packages/e2e native:build &
+          progress $! "warden-simd build"; wait $!
+          echo "== done in ${SECONDS}s"
 
-      # Fetch the .app built by build_ios; its path is the step output.
+      # Fetch the .app built by build_ios (or found by get_ios_build); its path is the step output.
       - uses: eas/download_build
         id: download_build
         with:
@@ -89,6 +114,7 @@ jobs:
       # Host facts for the report: Xcode, runtimes, cores, load before the run.
       - name: Host facts
         run: |
+          echo "== host facts ($(date +%T))"
           xcodebuild -version
           xcrun simctl list runtimes
           sysctl -n hw.ncpu hw.memsize
@@ -97,57 +123,60 @@ jobs:
           echo "app: ${{ steps.download_build.outputs.artifact_path }}"
           ls -la "${{ steps.download_build.outputs.artifact_path }}" | head
 
-      # Build the iPhone 17 golden image first so the claim below is a quick clone and the one-time first
-      # boot (a load-average spike) is over before anything is measured.
-      - name: Prewarm golden
-        run: |
-          export PATH="$HOME/.bun/bin:$PATH"
-          export WARDEN_SESSION_ID=eas-bench
-          cd "$(git rev-parse --show-toplevel)"
-          bun apps/cli/src/cli.ts golden ensure --profile iphone-17 || true
-          bun apps/cli/src/cli.ts golden ls || true
-
-      # Claim a headless sim, idle-control 60 s, run the bench. The trap releases the lease on any exit.
+      # Claim a headless sim, install the app, wait for load to settle, idle-control 60 s, run the bench.
+      # The trap releases the lease on any exit.
       - name: Claim, idle control and bench
         run: |
-          export PATH="$HOME/.bun/bin:$PATH"
-          export WARDEN_SESSION_ID=eas-bench
-          cd "$(git rev-parse --show-toplevel)"
-          OUT="$PWD/.bench/eas-ios-warden"
+          . "$HOME/bench-lib.sh"
+          cd "$ROOT"
+          OUT="$ROOT/.bench/eas-ios-warden"
           mkdir -p "$OUT"
           APP="${{ steps.download_build.outputs.artifact_path }}"
-          CLAIM=$(bun apps/cli/src/cli.ts claim ios --ttl 2h --label bench --headless --json)
-          echo "$CLAIM"
-          LEASE=$(echo "$CLAIM" | bun -e 'const j = JSON.parse(await Bun.stdin.text()); console.log(j.leases[0].leaseId)')
-          UDID=$(echo "$CLAIM" | bun -e 'const j = JSON.parse(await Bun.stdin.text()); console.log(j.leases[0].udid)')
+
+          echo "== claim ios ($(date +%T))"
+          bun apps/cli/src/cli.ts claim ios --ttl 2h --label bench --headless --json > "$HOME/claim.json" &
+          progress $! "claim"; wait $!
+          cat "$HOME/claim.json"
+          LEASE=$(bun -e 'const j = JSON.parse(await Bun.file(process.env.HOME + "/claim.json").text()); console.log(j.leases[0].leaseId)')
+          UDID=$(bun -e 'const j = JSON.parse(await Bun.file(process.env.HOME + "/claim.json").text()); console.log(j.leases[0].udid)')
           echo "$LEASE" > "$HOME/bench-lease-id"
           release() { bun apps/cli/src/cli.ts release "$LEASE" --shutdown || true; }
           trap release EXIT
+          echo "== done in ${SECONDS}s: lease=$LEASE udid=$UDID"
+
+          echo "== install app ($(date +%T))"
           xcrun simctl install "$UDID" "$APP"
+
+          echo "== wait for load < ncpu ($(date +%T))"
           NCPU=$(sysctl -n hw.ncpu)
           FORCE=""
-          for _ in $(seq 1 30); do
+          for _ in $(seq 1 60); do
             L1=$(sysctl -n vm.loadavg | awk '{print $2}')
-            echo "load1=$L1 ncpu=$NCPU"
+            echo "load1=$L1 threshold=$NCPU $(date +%T)"
             awk -v l="$L1" -v n="$NCPU" 'BEGIN{exit !(l < n)}' && break
-            sleep 10
+            sleep 15
           done
           awk -v l="$L1" -v n="$NCPU" 'BEGIN{exit !(l < n)}' || { FORCE="--force"; echo "load still above ncpu, running with --force"; }
           echo "load before run: $(sysctl -n vm.loadavg) force=[$FORCE]"
-          bun packages/e2e-bench/scripts/idle-sim.ts --udid "$UDID" --seconds 60 --launch nz.co.delacour.warden.example --out "$OUT/idle-control.ndjson"
-          bun run bench run --platform ios --frameworks "${{ inputs.frameworks }}" --runs "${{ inputs.runs }}" --udid "$UDID" --app "$APP" --out "$OUT" $FORCE
+
+          echo "== idle control 60 s ($(date +%T))"
+          bun packages/e2e-bench/scripts/idle-sim.ts --udid "$UDID" --seconds 60 --launch nz.co.delacour.warden.example --out "$OUT/idle-control.ndjson" &
+          progress $! "idle control"; wait $!
+
+          echo "== bench run ($(date +%T))"
+          bun run bench run --platform ios --frameworks "${{ inputs.frameworks }}" --runs "${{ inputs.runs }}" --udid "$UDID" --app "$APP" --out "$OUT" $FORCE 2>&1 | tee "$HOME/bench-run.log"
+          echo "== done in ${SECONDS}s"
 
       # Safety net: release the lease if the step above died before its trap ran.
       - name: Release lease
         if: ${{ always() }}
         run: |
-          export PATH="$HOME/.bun/bin:$PATH"
-          export WARDEN_SESSION_ID=eas-bench
-          cd "$(git rev-parse --show-toplevel)"
+          . "$HOME/bench-lib.sh"
+          cd "$ROOT"
           [ -f "$HOME/bench-lease-id" ] && bun apps/cli/src/cli.ts release "$(cat "$HOME/bench-lease-id")" --shutdown || true
 
       # Copy results to a fixed absolute dir (the artifact glob is resolved from the checkout root, not the
-      # base directory) and print the tail of every log so a failed run is readable in the job log.
+      # base directory) and print log tails so the cause of a failure is in the EAS log.
       - name: Collect results
         if: ${{ always() }}
         run: |
@@ -156,8 +185,15 @@ jobs:
           mkdir -p "$DEST"
           { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
           cp -R "$ROOT/.bench/eas-ios-warden/." "$DEST/" || true
+          cp "$HOME/bench-run.log" "$DEST/" 2>/dev/null || true
           ls "$DEST"
-          for f in "$DEST"/logs/*; do echo "=== $f"; tail -n 8 "$f" | cut -c1-240; done || true
+          for f in "$ROOT"/.bench/eas-ios-warden/logs/*.log "$HOME/bench-run.log"; do
+            [ -f "$f" ] && { echo "=== $f"; tail -n 200 "$f" | cut -c1-240; }
+          done
+          for f in "$HOME"/.warden/simd/*.log; do
+            [ -f "$f" ] && { echo "=== $f"; tail -n 200 "$f" | cut -c1-240; }
+          done
+          true
 
       # Results (report.md/html, bench-results.json, logs, per-rep resources) as a downloadable artifact.
       - uses: eas/upload_artifact
