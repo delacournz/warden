@@ -62,11 +62,14 @@ const missing = (what: string, hint: string): { success: false; error: UiError }
 	error: uiError("failed", `this session has no ${what}`, { hint }),
 });
 
-/** `2s-5s` / `2-5` / `500ms-1.5s` as session-timeline ms. */
+/** A window may start at the session start; `parseDuration` itself rejects 0. */
+const ZERO = /^0+(?:\.0+)?(?:ms|s|m)?$/;
+
+/** `2s-5s` / `2-5` / `500ms-1.5s` / `0-5s` as session-timeline ms. */
 export function parseWindow(raw: string): { fromMs: number; toMs: number } | undefined {
 	const parts = raw.split("-");
 	if (parts.length !== 2) return undefined;
-	const [a, b] = parts.map((p) => parseDuration(p));
+	const [a, b] = parts.map((p) => (ZERO.test(p.trim()) ? 0 : parseDuration(p)));
 	return a === undefined || b === undefined || b <= a ? undefined : { fromMs: a, toMs: b };
 }
 
