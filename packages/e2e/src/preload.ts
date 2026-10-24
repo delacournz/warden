@@ -13,6 +13,7 @@ import {
 	hasDefaultFixtureFactory,
 	setDefaultDriverFactory,
 	setDefaultFixtureFactory,
+	setDefaultHidRecovery,
 	setDefaultNativeLog,
 } from "./session";
 import { WARDEN_E2E_VERSION, WORKSPACE_VERSION } from "./version";
@@ -81,6 +82,7 @@ if (!hasDefaultDriverFactory()) {
 	// a test-installed fake device has no simulator to read a native log from
 	setDefaultDriverFactory(defaultDriverFactory);
 	setDefaultNativeLog(realNativeLogDeps(bunExec, androidTools(process.env).adb));
+	setDefaultHidRecovery({ exec: bunExec });
 }
 if (!hasDefaultFixtureFactory()) setDefaultFixtureFactory(defaultFixtureFactory);
 installPreload({

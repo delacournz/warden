@@ -1,5 +1,6 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { isHidLost } from "../driver/ios/hid-recovery";
 import { E2eError } from "../errors";
 import { type AttemptBinding, attemptSession, type Session } from "../session";
 import { attemptDir, flowIdOf, hash6 } from "./artifacts";
@@ -201,6 +202,15 @@ function errorInfo(error: unknown): NonNullable<TestResult["error"]> {
  * `results.jsonl` line. Throws the test's own error so bun marks the test failed.
  */
 export async function runAttempt<F extends object>(session: Session, spec: AttemptSpec<F>): Promise<void> {
+	if ((await runAttemptOnce(session, spec)) === "again") await runAttemptOnce(session, { ...spec });
+}
+
+/**
+ * The whole attempt is the unit that is run again after a lost HID connection (see `Session.recoverHid`), not the
+ * failed tap: the reboot killed the app and everything the test had set up, so only a fresh `app.open()` and the
+ * test from its first line is sound. The first run's failure is printed but not recorded in `results.jsonl`.
+ */
+async function runAttemptOnce<F extends object>(session: Session, spec: AttemptSpec<F>): Promise<"again" | undefined> {
 	const { env } = session;
 	const use = resolveUse(
 		spec.scope,
@@ -296,9 +306,13 @@ export async function runAttempt<F extends object>(session: Session, spec: Attem
 	const outcome: Outcome = failed ? { failed: true, error: failure, timedOut: deadlineHit } : { failed: false };
 	const result = buildResult(spec, ctx, { startedAt, device }, outcome);
 	print(formatConsoleLine({ type: "test-end", result }, { clock }));
+	if (failed && session.recoverHid !== undefined && isHidLost(failure) && (await session.recoverHid())) {
+		return "again";
+	}
 	if (!failed || spec.final) session.results.append(result);
 
 	if (failed) throw failure instanceof Error ? failure : new Error(String(failure));
+	return undefined;
 }
 
 /** One error for every `expect.soft` failure of the attempt. */
