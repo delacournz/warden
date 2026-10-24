@@ -43,7 +43,7 @@ warden ui close --release --udid $UDID
 
 1. `perf doctor` once per device.
 2. Record the scenario that feels slow (`record` for a fixed time, or `start` ... `perf mark` ... `stop` when you need to drive in between).
-3. `perf report`, then `perf query <id> ...` on the worst finding: `commits --by component|window|index|cascade`, `cpu --window 3s-4s [--tree]`, `stacks hang`, `frames --worst`.
+3. `perf report`, then `perf query <id> ...` on the worst finding: `commits --by component|window|index|cascade`, `cpu --window 3s-4s [--tree]`, `stacks hang|callers <fn>|thread|leaks`, `frames --worst`.
 4. Change the code. Run `perf record --relaunch` (or `--reset` to wipe app data first) so startup and the early JS / React work are inside the capture.
 5. `perf diff <before> <after>`. Add `--fail-on regress` to exit 1 when a metric got worse past `--threshold` (default 10%).
 
@@ -86,9 +86,11 @@ or pass `--yes` to `start`, `record`, `stop`, `native` or `query --rerun`. Point
 
 Specs can record a perf session around a flow and fail on a breach, so a regression is caught where the flow already runs:
 
-- `device.perf.start(opts)` / `device.perf.stop()` inside a spec returns a typed `PerfReport`.
-- `warden e2e <suite> --perf[=react,js,metrics]` records every attempt and writes `perf/` under its attempt directory; `e2e-report.json` links to it.
-- Budgets live in `warden.config.ts`: `perf: { budgets: { startupColdMs, jankPct, maxCommitMs, p95CpuPct } }`. A breach fails the test with a `perf_budget` verdict.
+- `device.perf.start(opts)`, `device.perf.mark(label)` and `device.perf.stop()` inside a spec; `stop` returns a typed `PerfReport`. `opts` are the `warden perf start` capture flags as booleans (`js`, `react`, `native`, `metrics`, `frames`, `logs`, `all`, `relaunch`, `reset`, `maxDurationMs`). `device.perf.active` says whether a session is open.
+- `warden e2e <suite> --perf[=captures]` profiles every attempt. Bare `--perf` records metrics, frames and logs; `--perf=react,js` picks captures; `--perf=all` records everything. The report is copied to `<attempt>/perf/` (`report.json`, `report.md`, `session.json`) and `e2e-report.json` links each test's `perf` dir.
+- Budgets live in `warden.config.ts`: `perf: { budgets: { startupColdMs, jankPct, maxCommitMs, p95CpuPct, peakMemoryMb } }` (cold start ms, janky frames %, slowest React commit ms, p95 CPU %, peak memory MB; all lower is better). A suite's `perf.budgets` replaces the top-level one per key.
+- A spec overrides both for itself with `device.perf.stop({ budgets: { jankPct: 2 } })`.
+- A breach fails the test with a `PERF_BUDGET` error naming metric, value and budget (kind `perf_budget` in `e2e-report.json`). A metric whose capture did not run cannot breach.
 
 See [Write specs](/docs/guides/specs) and [Run e2e](/docs/guides/run-e2e). Budgets measured on a simulator are for catching regressions between runs, not for absolute targets.
 

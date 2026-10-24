@@ -38,6 +38,7 @@ Need to act between start and stop: `perf start [flags]` ... `perf mark` ... `pe
 - `report --json` = `report.json`: `findings[]` (severity, kind, `costMs`, `evidence`, `fix`, `next`), plus per-section data (startup, frames, JS, React, native, memory). Do `next` commands literally.
 - `ls --json`: `sessions[]` (`id`, status `running|stopped|aborted|overdue`). `doctor --json`: `{ok, device?, checks[]}`.
 - Envelope on failure: `{code, message, hint?}`. Branch on `code`, not text.
+- e2e budgets: `warden e2e <suite> --perf[=captures]` (bare = metrics,frames,logs; `all`; or e.g. `react,js`) copies each attempt's report to `<attempt>/perf/`. `perf.budgets` in `warden.config.ts` (`startupColdMs`, `jankPct`, `maxCommitMs`, `p95CpuPct`, `peakMemoryMb`; a suite's value replaces the top-level one per key). In a spec: `device.perf.start(opts)`, `.mark(label)`, `.stop({ budgets })`. Breach = `PERF_BUDGET` error, kind `perf_budget` in `e2e-report.json`.
 - Finding kinds worth knowing: `slow-commit`, `slow-render`, `memo-defeated`, `context-cascade`, `parent-cascade`, `render-storm`, `js-hotspot`, `jank`, `crash`, `anr`, `memory-growth`, `startup`.
 
 ## Errors -> action

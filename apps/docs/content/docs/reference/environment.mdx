@@ -91,6 +91,9 @@ export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ }
 | `WARDEN_METRO_URL` | warden's Metro, for a dev client |
 | `WARDEN_LAUNCH_ARGS` | JSON array of the launch arguments `app.open()` passes: `--initialUrl <metro url>`, `metro.launchArgs`, `spec.launchArgs` |
 | `WARDEN_E2E_OUT` | where `results.jsonl` and the per-test artifacts go: `<batchDir>/e2e/<worker>-<seq>` |
+| `WARDEN_BIN` | JSON array (or a bare path) of the `warden` that started the run; `device.perf` shells out to it. Set by `warden e2e`; without it `device.perf` throws `SESSION` ("WARDEN_BIN is not set") |
+| `WARDEN_PERF` | comma list of captures every attempt records (`js`, `react`, `native`, `metrics`, `frames`, `logs`, `all`), from `warden e2e --perf[=…]`; empty means the default set (metrics, frames, logs). Unset: no automatic profiling |
+| `WARDEN_PERF_BUDGETS` | JSON of the suite's `perf.budgets` (`startupColdMs`, `jankPct`, `maxCommitMs`, `p95CpuPct`, `peakMemoryMb`); a breach fails the test with `PERF_BUDGET`. Set by `warden e2e` when the config has budgets |
 | `WARDEN_E2E_TIMEOUT`, `WARDEN_E2E_ACTION_TIMEOUT`, `WARDEN_E2E_ASSERTION_TIMEOUT` | the `spec` timeouts in milliseconds (defaults 120000, 30000, 5000) |
 | `WARDEN_E2E_SPECS_DIR` | the suite's `specsDir`, used to name each spec's spec id |
 | `WARDEN_SIMD_SOCKET` | the pre-warmed iOS helper's socket (`warmDrivers`); unset, the driver starts a helper itself |

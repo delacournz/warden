@@ -156,7 +156,7 @@ With no `e2e` suite configured (and none named), the Expo app around the cwd get
 | `--devices <legs>` | which `devices` legs run: `default` (the default), `all`, or profile names (comma-separated) |
 | `--job-timeout <duration>` | overrides the suite's `jobTimeoutMs` (default 10 min) |
 | `--no-shutdown` | keep the devices running after the gate passes (the default locally; under CI they are shut down. Suite `shutdown` sets it, the flag wins) |
-| `--perf[=captures]` | profile every attempt: a [perf session](/docs/guides/perf) wraps each test and its report is copied to the attempt's `perf/` dir (`report.json`, `report.md`, `session.json`). Bare `--perf` records metrics, frames and logs; `--perf=react,js` (or `all`) picks captures. `perf.budgets` apply, and a breach fails the test with a `perf_budget` error; `e2e-report.json` links each test's `perf` dir |
+| `--perf[=captures]` | profile every attempt: a [perf session](/docs/guides/perf) wraps each test and its report is copied to the attempt's `perf/` dir (`report.json`, `report.md`, `session.json`). Bare `--perf` records metrics, frames and logs; `--perf=react,js` picks captures (`js`, `react`, `native`, `metrics`, `frames`, `logs`, or `all`). `perf.budgets` apply, and a breach fails the test with a `PERF_BUDGET` error (kind `perf_budget` in `e2e-report.json`); `e2e-report.json` links each test's `perf` dir |
 | `--no-warm` | skip the iOS driver-helper warm-up (the suite's `warmDrivers: false`) |
 
 The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. With [`metro`](/docs/reference/configuration#e2e) warden starts and verifies its own Metro before any spec and stops it last. With `devices`, every picked leg claims its own pool and runs the specs concurrently (`--profile` / `--count` replace the legs with one claim); the report then has one verdict per spec and leg. By default (`isolate: "device"`) one spec process per device runs its share of the specs (round-robin by spec id) and every spec still gets its own verdict; `--retry` reruns only the specs that did not pass, and `--job-timeout` / `jobTimeoutMs` is per spec. With `isolate: "spec"` every spec is its own process. While it runs, the grid (or, with `--no-tui`, one line per finished test, `✓ todos › adds a todo (3.21s)` / `✗ …`) ticks specs and tests off as the spec processes append to their `results.jsonl`. The grid's header bar has one cell per spec (one per job with `isolate: "spec"`): green passed, red failed, cyan running, dim pending; each device row has its own bar of the jobs it ran. With `isolate: "device"` every leased device gets a row, cyan while its spec process works; when the run ends warden reads each process's `results.jsonl` and fills the device's bar with the specs it ran there. Specs run in id order (sorted file path), so `count: 1` is a stable serial run. `headless` (suite, else top-level) closes the leased sims' windows at claim and again before the first spec, unless `--no-headless`; `e2e-report.json` records `"headless"` and `"isolate"`. Nothing affected → exit 0 without claiming. Every failed spec is named at the end with its device, spec log and failure screenshot (also `device`, `log`, `screenshot` and a `tests[]` entry per test on the spec in `e2e-report.json`), then each failing test with the first line of its error and its artifact directory. Before the specs, an iOS suite warms the leased devices' driver helpers (`warmDrivers`, on by default) so the first spec does not pay the cold start. Leases are always released at the end. Under CI (`CI` set to anything but empty, `0` or `false`), or with `shutdown: "always"`, a passed gate shuts down the devices warden created (or booted for the run) before releasing them; locally (`shutdown: "idle"`, the default) they stay booted for the next run and `warden gc` shuts them down once idle. A failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
@@ -562,7 +562,7 @@ Dev builds inflate React costs: confirm on a profileable build. The simulator ba
 #### `warden perf native`
 
 ```bash
-warden perf native [start|stop] [--duration 10s] [--leaks] [--analyze <trace>] [--skip-analysis] [--flavor <name>]
+warden perf native [start|stop] [--duration 10s] [--leaks] [--analyze <trace>] [--skip-analysis] [--flavor perfetto|simpleperf] [--yes]
 ```
 
 Native CPU, hangs and (iOS) leaks from the platform profiler. iOS simulators use `xcrun xctrace record` with the Time Profiler template plus the `Hangs` instrument; `--leaks` adds `Leaks` and `Allocations`. The trace lands in `native/ios.trace` of the device's running perf session, or of a one-shot dir under `$WARDEN_HOME/perf/native-<id>/`. With no action it records for `--duration` (default 10s, max 5m), stops and analyzes; `start` begins a detached recording, `stop` ends it (SIGINT, waits for the trace to be finalised, SIGKILL only on timeout) and exports it.
@@ -570,14 +570,12 @@ Native CPU, hangs and (iOS) leaks from the platform profiler. iOS simulators use
 - Attach-only recording is observe-only: it works on any warden device and never takes or heartbeats a lease. On Xcode 26.4+ (where `xctrace record --device` deadlocks) it records `--all-processes` and filters the rows by the app's pid.
 - `--leaks` is a mutation: it terminates the app and cold-launches it with `MallocStackLogging=1` under the profiler, so it needs your own lease (`--claim`).
 - The analysis names the dominant frame of each sample (first app or third-party frame, else a React Native frame such as `RCT*`, Yoga, Hermes, JSI; system-only samples are skipped), groups threads (Main Thread, JS Thread, Shadow Thread) and reports frames over 3% of samples (over 15% is critical). Each hang lists its duration, the top 5 functions and top 3 call chains on the main thread during it. Leaks are grouped by type and responsible frame with bytes and counts.
-- `--analyze <trace>` re-analyzes an existing `.trace` without a device. `--skip-analysis` on `stop` leaves the export for later.
+- `--analyze <trace>` re-analyzes an existing `.trace` without a device. `--skip-analysis` on `stop` leaves the export for later. `--yes` (Android) downloads `trace_processor` without asking.
 - Simulator numbers are for comparing runs, not absolutes. Open the trace in Instruments for the full picture.
-- Android (PRF-8) adds its notes under this heading.
-
 Android:
 
 - Default is a Perfetto trace of the app: 100 Hz callstack sampling scoped to the package, scheduler/binder ftrace, atrace (`view gfx wm am input dalvik` + the app), SurfaceFlinger frame timeline and 1 s process stats. The config goes to `perfetto` on stdin; the trace is pulled to `native/android.perfetto-trace` and removed from the device. The trace stops at `--max-duration` at the latest.
-- `--flavor simpleperf` samples the running app pid with `simpleperf record -e cpu-clock:u` and reports the top functions from the on-device `simpleperf report` (`native/simpleperf.data`, `native/simpleperf.data.report.txt`). It needs no trace_processor.
+- `--flavor simpleperf` (in a session: `perf start --native=simpleperf`) samples the running app pid with `simpleperf record -e cpu-clock:u` and reports the top functions from the on-device `simpleperf report` (`native/simpleperf.data`, `native/simpleperf.data.report.txt`). It needs no trace_processor.
 - Analysis runs PerfettoSQL through a pinned `trace_processor_shell` (`$WARDEN_HOME/tools/trace_processor_shell-<version>`, or `WARDEN_TRACE_PROCESSOR`): CPU hotspots (critical over 15% of samples, warn 3-15%), missed-deadline frames with the main-thread state split (running / runnable / sleeping / io) and GC overlap, per-thread time, RSS growth. Raw SQL is written to `native/queries/`.
 - The trace is always kept: if trace_processor is missing the analysis is skipped with a warning naming the install command.
 - Zero samples fail with `not_profileable`: the app must be debuggable or `<profileable android:shell="true"/>` in its manifest.
@@ -586,19 +584,20 @@ Android:
 #### `warden perf start | stop | record`
 
 ```bash
-warden perf start [--js] [--react] [--native[=perfetto|simpleperf]] [--metrics] [--frames] [--logs] [--all]
+warden perf start [--js] [--react] [--native [flavor]] [--metrics] [--frames] [--logs] [--all]
                   [--relaunch] [--reset] [--max-duration 30s] [--yes] [--join]
 warden perf stop [--no-analyze] [--yes]
-warden perf record --duration 10s [same capture flags]
+warden perf record [--duration 10s] [same capture flags as start] [--no-analyze]
 ```
 
 One combined session. `start` sweeps overdue sessions, opens the session, writes `plan.json`, records a clock anchor (`{wallMs, deviceWallMs}`; Android reads `adb shell date +%s%N` and halves the round trip) and spawns one detached `warden perf-collect --session <id>` that hosts metrics, logs, the JS and React capture (one Hermes socket) and the auto-stop timer. With no capture flag you get metrics, frames and logs; `--all` adds JS, React and native.
 
 - `--relaunch` terminates the app, arms what can be armed before launch (Android perfetto), launches, waits for the Metro target and then arms JS and React. iOS native is armed right after launch (it needs the pid). `--reset` clears app data first and implies `--relaunch`. Both mutate the device, so they need your lease; a free warden device gets a short `warden perf` lease that `stop` releases. A live foreign lease fails with `device_foreign`.
+- `--native [flavor]` is `perfetto` (default) or `simpleperf` on Android; give the flavor attached, `--native=simpleperf`, so it is not read as a positional argument.
 - `--max-duration` is capped; at the cap the collector runs the same stop path as `perf stop`.
 - `--join` attaches read-only to a running session.
 - `stop` ends the capturers in reverse order, gives back a lease `start` took and writes `report.md` + `report.json` under the session dir. `--no-analyze` keeps native traces unanalyzed.
-- `record` is `start`, wait, `stop`. Ctrl-C stops early, still reports and exits 130.
+- `record` is `start`, wait `--duration` (default 10s, max 5m), `stop`. `--no-analyze` stops without building the report. Ctrl-C stops early, still reports and exits 130.
 - `warden release` and `warden ui close --release` stop a running session on the released device.
 
 #### `warden perf report`
@@ -612,19 +611,31 @@ Prints the merged report: Summary, Startup, Frames, JS CPU, React, Native CPU, H
 #### `warden perf query`
 
 ```bash
-warden perf query <id> commits [--by component] [--top N] [--window 3s-4s] [--index N]
-warden perf query <id> cpu [--window 3s-4s] [--tree]
-warden perf query <id> stacks [--worst] [--size N] [--limit N] [--rerun --yes]
-warden perf query <id> frames [--window 3s-4s]
+warden perf query <id> commits [--by component|window|index|cascade] [--size 1s] [--index N] [--limit N]
+warden perf query <id> commits --by index <n>
+warden perf query <id> cpu [--top | --tree | --window 2s-5s] [--limit N]
+warden perf query <id> stacks hang | callers <fn> | thread | leaks [--rerun --yes] [--limit N]
+warden perf query <id> frames [--worst]
 ```
 
-Drill into one session's data: React commits (ranked by component, window, index or cascade), JS CPU in a time window or call tree, native hang stacks and the frame timeline.
+`<id>` is a session id, a unique prefix or `latest`. Reads the session's files; no device needed.
+
+| Topic | Options |
+|---|---|
+| `commits` | `--by component` (default) \| `window` \| `index` \| `cascade`. `--by window` takes `--size <time>` (bucket, default 1s). `--by index` takes the commit as a positional `<n>` or `--index <n>`: one commit in depth |
+| `cpu` | `--top` (the hottest functions, default), `--tree` (call tree), `--window <a-b>` (self time between two points on the session timeline, e.g. `2s-5s`) |
+| `stacks` | `hang`, `callers <fn>`, `thread`, `leaks`; `--rerun` re-runs the Perfetto SQL (Android), `--yes` downloads `trace_processor` for it |
+| `frames` | `--worst`: the worst jank windows and hangs |
+
+`--limit <n>` caps the rows of `commits` and `cpu` (`cpu` defaults to 15). `--json` prints the `warden ui` envelope.
 
 #### `warden perf diff`
 
 ```bash
-warden perf diff <a> <b> [--fail-on regress] [--threshold 10%]
+warden perf diff <a> <b> [--fail-on regress] [--threshold 10%] [--json]
 ```
+
+Reads two sessions' reports, so it takes no device options.
 
 Compares two reports metric by metric (lower is better, except fps) with a relative threshold plus absolute floors, and lists function self-time deltas. With `--fail-on regress` exits 1 when any metric regressed.
 
