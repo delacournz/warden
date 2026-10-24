@@ -1,7 +1,7 @@
 import { bytes, DASH, ms, pct, ratio } from "@delacour/warden-e2e-bench/src/report/format";
 import type { ReactElement, ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { type BenchSummary, isOk, label, type OkFramework } from "./bench-data";
+import { type BenchSummary, hasCpuSeconds, isOk, label, type OkFramework } from "./bench-data";
 
 /** A horizontally scrollable table that keeps the first column pinned on phones. */
 function Scroll({ children, caption }: { children: ReactNode; caption: string }): ReactElement {
@@ -176,37 +176,62 @@ export function StartupTable({ summary }: { summary: BenchSummary }): ReactEleme
 	);
 }
 
-const RESOURCE_ROWS: readonly Row[] = [
+const CPU_SECONDS_ROW: Row = {
+	name: "Host CPU-s / rep",
+	best: "min",
+	pick: (f) => f.cpuSecondsPerRep,
+	text: (n) => (n === undefined ? DASH : `${n.toFixed(1)} s`),
+};
+
+const MEMORY_ROWS: readonly Row[] = [
+	{ name: "Host memory avg", best: "min", pick: (f) => f.resources.host.rssAvgBytes, text: (n) => bytes(n) },
+	{ name: "Host memory peak", best: "min", pick: (f) => f.resources.host.rssPeakBytes, text: (n) => bytes(n) },
+];
+
+const PCT_CPU_ROWS: readonly Row[] = [
 	{
-		name: "Host CPU avg",
-		best: "min",
+		name: "Host %cpu avg",
+		best: "none",
 		pick: (f) => f.resources.host.cpuAvgPct,
 		text: (n) => (n === undefined ? DASH : `${n.toFixed(1)}%`),
 	},
 	{
-		name: "Host CPU peak",
-		best: "min",
+		name: "Host %cpu peak",
+		best: "none",
 		pick: (f) => f.resources.host.cpuPeakPct,
 		text: (n) => (n === undefined ? DASH : `${n.toFixed(0)}%`),
 	},
-	{ name: "Host memory avg", best: "min", pick: (f) => f.resources.host.rssAvgBytes, text: (n) => bytes(n) },
-	{ name: "Host memory peak", best: "min", pick: (f) => f.resources.host.rssPeakBytes, text: (n) => bytes(n) },
 	{
-		name: "Simulator CPU avg",
-		best: "min",
+		name: "Simulator %cpu avg",
+		best: "none",
 		pick: (f) => f.resources.sim.cpuAvgPct,
 		text: (n) => (n === undefined ? DASH : `${n.toFixed(1)}%`),
 	},
 	{
-		name: "Simulator CPU peak",
-		best: "min",
+		name: "Simulator %cpu peak",
+		best: "none",
 		pick: (f) => f.resources.sim.cpuPeakPct,
 		text: (n) => (n === undefined ? DASH : `${n.toFixed(0)}%`),
 	},
 ];
 
+/**
+ * CPU-seconds per rep first (when the run has it), then memory, then the secondary `%cpu` rows, muted by
+ * `best: "none"`. Version 1 data has no CPU-seconds, so it falls back to memory and `%cpu` with a note.
+ */
 export function ResourceTable({ summary }: { summary: BenchSummary }): ReactElement {
-	return <MetricTable caption="Host and simulator CPU and memory" rows={RESOURCE_ROWS} summary={summary} />;
+	const rows = [...(hasCpuSeconds(summary) ? [CPU_SECONDS_ROW] : []), ...MEMORY_ROWS, ...PCT_CPU_ROWS];
+	return (
+		<>
+			<MetricTable caption="Host CPU-seconds, memory and %cpu" rows={rows} summary={summary} />
+			<p className="text-ink-2 text-xs">
+				{hasCpuSeconds(summary)
+					? "Host CPU-s / rep: warm median of the timed run. "
+					: "This run predates CPU-seconds, so only the sampled `%cpu` is available. "}
+				<code>%cpu</code> is a decaying average, inflated by a short suite; compare CPU-seconds.
+			</p>
+		</>
+	);
 }
 
 const FOOTPRINT_ROWS: readonly Row[] = [
