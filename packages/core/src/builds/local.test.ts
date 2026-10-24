@@ -783,6 +783,7 @@ describe("runLocalBuild: prebuilt React Native env", () => {
 				platform: "ios",
 				hash: "h",
 				env,
+				wardenHome: join(dir, "wh"),
 				log: () => {},
 				compilerCache: false,
 			});
