@@ -139,18 +139,18 @@ One command does the whole run: claim the devices of every leg, install the buil
 
 ### Isolation
 
-By default (`isolate: "device"`) one `bun test` process runs per device: the selected flows are sharded over the leg's devices round-robin by flow id, so the same flows always land together and a device's specs run in order in one process. That saves bun's start, the preload and the driver connect (150-250 ms) on every flow after a device's first. Every flow still gets its own verdict, read from that process's `results.jsonl`, and its own per-test artifact directory.
+By default (`isolate: "device"`) one `bun test` process runs per device: the selected flows are sharded over the leg's devices round-robin by flow id, so the same flows always land together and a device's specs run in order in one process. That saves bun's start, the preload and the driver connect (150-250 ms) on every flow after a device's first. Under device isolation the batch jobs are named `shard-<k>` (`WARDEN_JOB`, `logs/<worker>-<seq>-shard-<k>.log`). Every flow still gets its own verdict, read from that process's `results.jsonl`, and its own per-test artifact directory.
 
 - **A crash** (the process is killed, or exits without finishing): flows whose tests passed before it keep their pass; the flow that was running and every flow it never reached fail, with the process log.
 - **Retries** (`retry`, `--retry`) rerun only the flows that did not pass, in a fresh process. A flow's verdict is the one from the last attempt that ran it, and `attempts` in `e2e-report.json` counts the attempts that ran it.
 - **`jobTimeoutMs` is per flow**: a process gets it once for each flow it runs.
 - **Load is split up front**, by flow id, not as devices free up. A suite whose flows differ a lot in length, on several devices, can keep one device busy after the others finish.
 
-`isolate: "flow"` keeps one process per flow and one worker per device: each flow starts from a fresh process and the devices share the flows dynamically, at the cost of the start-up above. A suite with `passes` above 1 runs this way unless it says otherwise (a flow's passes are re-runs of that flow). `mode: "single"` / `"per-flow"` is the old spelling of `isolate: "device"` / `"flow"`.
+`isolate: "flow"` keeps one process per flow and one worker per device: each flow starts from a fresh process and the devices share the flows dynamically, at the cost of the start-up above. A suite with `passes` above 1 defaults to this (a flow's passes are re-runs of that flow); `passes` above 1 with `isolate: "device"` is a config error, and so is `--passes N` on a suite that sets `isolate: "device"`. `mode: "single"` / `"per-flow"` is the old spelling of `isolate: "device"` / `"flow"`.
 
 ### Failure screenshots
 
-When a job exits non-zero, warden screenshots its device right away (iOS `simctl io screenshot`, Android `adb exec-out screencap -p`) into the logs directory, named after the job's log (`0-2-login.log` → `0-2-login.png`; with `passes`, `….pass1.png`). Each failed retry attempt gets its own. The absolute path is the `screenshot` field on that job in `batch.json`, and on the flow in `e2e-report.json`. It is best effort with a 5 s cap: if the device can't be captured the field is simply absent and the batch carries on.
+When a job exits non-zero, warden screenshots its device right away (iOS `simctl io screenshot`, Android `adb exec-out screencap -p`) into the logs directory, named after the job's log (`0-2-login.log` → `0-2-login.png`; with `passes`, `….pass1.png`). Each failed retry attempt gets its own. The absolute path is the `screenshot` field on that job in `batch.json`, and on the flow in `e2e-report.json`. For `warden e2e` flows the report prefers the spec runner's own `failure.png` of the failed test (the device at the failing step) over this after-the-fact shot. It is best effort with a 5 s cap: if the device can't be captured the field is simply absent and the batch carries on.
 
 ### Recording a run
 

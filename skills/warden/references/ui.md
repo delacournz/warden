@@ -20,13 +20,14 @@ warden ui close --release --udid $UDID
 1. `--udid` / `--serial` / `--lease <id>`
 2. `WARDEN_UDID`
 3. `WARDEN_UDIDS` with exactly one entry
-4. your single device lease. None: exit 2 (`no_device_leased`); `--claim` claims one (label `warden ui`, 30 m). Several: `ambiguous_device`.
+4. your single device lease. None: exit 2 (`no_device_leased`); `--claim` claims one (label `warden ui`, 30 m). Several: your live `warden dev` device if exactly one, else `ambiguous_device`.
 
 Every call heartbeats your lease. Another live session's lease: `device_foreign`. Stale or missing: `device_not_leased` unless `--claim`.
 
 ## Dev client
 
 - `warden dev ios --json` already opens the dev client. `open <bundleId>` then only attaches (`attached to <id>`); `--relaunch` restarts it.
+- `warden ui` shares the device your own running `warden dev` holds: no `--force`, no `device_busy`. `--json` adds `"attachedTo": "<leaseId>"`; `open` prints `sharing <leaseId> with warden dev (pid N)`. `close --release` keeps that lease (warning `not released: … belongs to warden dev`); Ctrl-C `warden dev` releases it. Another session's device stays `device_foreign`; your running `warden e2e` / `batch` / `run` stays `device_busy`.
 - `--metro <url>` launches the dev client on that Metro and remembers it for the devtools commands.
 - Android: `open <bundleId>` takes `--metro`/`--args` in the CLI but the driver rejects them. `warden dev android` opens the dev client via `adb reverse` + `exp+<slug>://expo-development-client/?url=...`. By hand, `open <url>` with that deep link.
 - `--relaunch`, `--metro`, `--args` apply to a bundle id, not a URL (`usage`).
@@ -40,7 +41,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--platform ios\|android` `--profile <slug>` `--runtime <rt>` | choose the device for a `--claim` with none named (default ios) |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--no-record` | keep this step out of a running recording |
-| `--force` | drive the device while your running `warden e2e` / `batch` / `run` / `dev` holds it (else exit 2 `device_busy`); it disturbs that run |
+| `--force` | drive the device while your running `warden e2e` / `batch` / `run` holds it (else exit 2 `device_busy`); it disturbs that run. Not needed for your own `warden dev` |
 | `--json` | one JSON document on stdout |
 
 Actions also take `--settle [ms]`: wait for a quiet screen (budget 3000 ms), then print what changed.
@@ -85,13 +86,14 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `gesture rotate` | `[target] <degrees> [--duration 500] [--radius px] [--verify] [--settle]` | 2 fingers; positive = clockwise, `-45` works (`gesture rotate @e3 -45`); not 0, max 720 |
 | `gesture path` | `--path 'x,y x,y ...' [--path ...] [--duration ms] [--settle]` | 1-2 fingers, each >= 2 points, default 600 ms, down and lift together; points in pt (iOS) / px (Android) |
 
-`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1). Flows are format v2 (`kind: screen|gesture` + `type`); v1 files migrate on read.
 | `wait` | `<sel>` / `absent <sel>` / `text "..."` / `stable [ms=250]` | polls 100 ms for 1 s, then 250 ms, up to `--timeout` |
 | `is` | `<sel> visible\|hittable\|enabled\|checked\|selected\|focused` | exit 0 true, 1 false (JSON still `ok:true`) |
 | `get` | `<sel> text\|value\|label\|id\|role\|frame\|count` | `frame` = `x y w h`; `count` 0 is success |
 | `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets; stops the device's helper: unshared device only |
 | `eval` `tree` `logs` `network` `reload` | see Devtools | dev client only |
 | `record` `replay` `export` | see Flows | |
+
+`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1). Flows are format v2 (`kind: screen|gesture` + `type`); v1 files migrate on read.
 
 ## Selector grammar
 
@@ -124,7 +126,7 @@ Values: bare `id=sign-in`, quoted `label="Sign in"`, or regex `text=/^\d+ left$/
 
 `--metro <url>` on each; default order: `WARDEN_METRO_URL`, URL remembered by `open --metro`, your leased ports. Caveats:
 - `logs`/`network` with no collector read the previous run's files, not the live app. `logs start` before the action.
-- A collector started before a restart (`open --relaunch`, crash, rebuild) ends `lost`: `logs start` again.
+- A collector started before a restart (`open --relaunch`, crash, rebuild) ends `lost` after a 30 s reconnect budget; it also stops after 60 s with no console or fetch activity. `logs start` again.
 - `reload` falls back to Metro's broadcast `/reload`, which reloads every device on that Metro.
 
 ## Flows
@@ -151,7 +153,7 @@ Secrets: `fill --secure` text is never stored. Set `WARDEN_UI_SECRET_<NAME>` whi
 |---|---|
 | 0 | ok |
 | 1 | `failed` `usage` `target_not_found` `no_alert` `wait_*` `replay_divergence` |
-| 2 | `device_foreign` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` |
+| 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` |
 | 3 | `engine_unavailable` `devtools_unavailable` |
 | 4 | `stale_ref` |
 | 130 | `interrupted` |

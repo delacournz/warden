@@ -213,7 +213,6 @@ async function defaultOpenSecond(
 			timeoutMs: 0,
 			actionTimeoutMs: 0,
 			assertionTimeoutMs: 0,
-			headless: false,
 			logTimestamps: false,
 			simdSocket: socketPath,
 		},

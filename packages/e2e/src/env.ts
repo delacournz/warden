@@ -1,7 +1,11 @@
 import type { Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 
-/** The env names `warden e2e` writes and the spec process reads (`apps/cli` imports these). */
+/**
+ * The env names `warden e2e` writes and the spec process reads (`apps/cli` imports these). `WARDEN_HEADLESS` and
+ * `WARDEN_WORKER` are also set for the spec process but are for the spec's own tools (`process.env`): nothing here
+ * reads them, so a bad value cannot fail spec-env validation.
+ */
 export const ENV_NAMES = {
 	udid: "WARDEN_UDID",
 	deviceName: "WARDEN_DEVICE_NAME",
@@ -18,9 +22,7 @@ export const ENV_NAMES = {
 	helperDir: "WARDEN_HELPER_DIR",
 	simd: "WARDEN_SIMD",
 	simdSocket: "WARDEN_SIMD_SOCKET",
-	headless: "WARDEN_HEADLESS",
 	logTimestamps: "WARDEN_LOG_TIMESTAMPS",
-	worker: "WARDEN_WORKER",
 	/** the `warden` that started this process: the preload refuses to run when it is not this package's version */
 	version: "WARDEN_VERSION",
 } as const;
@@ -67,9 +69,7 @@ const schema = z.object({
 	helperDir: z.string().optional(),
 	simd: z.string().optional(),
 	simdSocket: z.string().optional(),
-	headless: toggle.default(false),
 	logTimestamps: toggle.default(false),
-	worker: z.string().optional(),
 	version: z.string().optional(),
 });
 
@@ -91,12 +91,8 @@ export type E2eEnv = {
 	helperDir?: string;
 	simd?: string;
 	simdSocket?: string;
-	/** nothing in this package reads it: kept for specs and helpers that honour a headless run (`guides/headless`) */
-	headless: boolean;
 	/** warden already stamps the log lines: the spec reporter prints no clock of its own */
 	logTimestamps: boolean;
-	/** nothing in this package reads it: the 0-based worker index, for specs that shard or name per-worker data (`guides/e2e`) */
-	worker?: string;
 	/** `WARDEN_VERSION`: the warden that started this run */
 	wardenVersion?: string;
 };
@@ -118,7 +114,6 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 		timeoutMs: v.timeout,
 		actionTimeoutMs: v.actionTimeout,
 		assertionTimeoutMs: v.assertionTimeout,
-		headless: v.headless,
 		logTimestamps: v.logTimestamps,
 		...defined({
 			deviceName: v.deviceName,
@@ -128,7 +123,6 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 			helperDir: v.helperDir,
 			simd: v.simd,
 			simdSocket: v.simdSocket,
-			worker: v.worker,
 			wardenVersion: v.version,
 		}),
 	};

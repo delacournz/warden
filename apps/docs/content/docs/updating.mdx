@@ -16,13 +16,13 @@ icon: RefreshCw
 
 The binary is swapped atomically at the same path, so the next `warden` in your current shell runs the new version — no new shell needed. If `PATH` resolves `warden` elsewhere, update warns you.
 
-Flags: `--check` (report only), `--force`, `--to <path>`, `--json`. Releases come from the private `delacournz/warden` repo through `gh` (auth required); set `WARDEN_RELEASE_REPO` to use another, and `WARDEN_NPM_REGISTRY` for another npm registry.
+Flags: `--check` (report only), `--release` (install the latest GitHub release; also switches a dev / local build to it), `--force`, `--to <path>` (install the binary there instead), `--json`. GitHub releases come from the public `delacournz/warden` repo through the `gh` CLI; set `WARDEN_RELEASE_REPO` to use another, and `WARDEN_NPM_REGISTRY` for another npm registry.
 
 ## Releasing
 
 <Steps>
 <Step>Bump `version` in `apps/cli/package.json` and commit.</Step>
 <Step>`git tag v<version> && git push origin v<version>`.</Step>
-<Step>`.github/workflows/release.yml` checks the tag matches the version, runs typecheck / check / test, builds `warden-{darwin,linux}-{arm64,x64}` plus `checksums.txt`, and publishes the GitHub release.</Step>
-<Step>The same workflow stages the npm packages (`bun run --cwd apps/cli build:npm`) and publishes `@delacour/warden-<os>-<arch>`, then `@delacour/warden`, with public access. It needs an `NPM_TOKEN` secret that can publish to the `@delacour` scope. Versions already on npm are skipped. While the repo is private, packages publish without provenance or repository links; both switch on once it's public.</Step>
+<Step>`.github/workflows/release.yml` checks the tag matches the version, runs typecheck / check / test, builds `warden-{darwin,linux}-{arm64,x64}`, the `warden-simd` iOS driver helper and `checksums.txt`, and publishes the GitHub release.</Step>
+<Step>The same workflow stages the npm packages (`bun run --cwd apps/cli build:npm`) and publishes `@delacour/warden-<os>-<arch>`, then `@delacour/warden`, then `@delacour/warden-e2e`, with public access, behind the `release` environment's required reviewers. It needs an `NPM_TOKEN` secret that can publish to the `@delacour` scope. Versions already on npm are skipped. The repo is public, so packages publish with provenance and repository links.</Step>
 </Steps>
