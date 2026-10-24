@@ -59,3 +59,22 @@ describe("benchSummary CPU-seconds (19-6)", () => {
 		expect("cpuSeconds" in warden.resources.host).toBe(false);
 	});
 });
+
+describe("benchSummarySchema and retired frameworks", () => {
+	test("still reads a published summary that carries a maestro or detox row", () => {
+		const summary = benchSummary(run, manifest);
+		const retired = {
+			...summary,
+			frameworks: [
+				...summary.frameworks,
+				{ framework: "maestro", status: "unsupported", version: "2.0.0", reason: "removed 2026-10-24" },
+				{ framework: "detox", status: "failed", version: "20.51.3", phase: "run", error: "RN 0.86 unsupported" },
+			],
+		};
+		expect(benchSummarySchema.safeParse(retired).success).toBe(true);
+		expect(
+			benchSummarySchema.safeParse({ ...summary, frameworks: [{ ...summary.frameworks[0], framework: "appium" }] })
+				.success
+		).toBe(false);
+	});
+});

@@ -41,11 +41,18 @@ const seriesSummarySchema = z.object({
 	cpuRatePct: z.number().optional(),
 });
 
+/**
+ * Frameworks the bench no longer runs (Maestro and Detox, removed 2026-10-24, WDN-CPU 1) still appear in
+ * summaries published before that, so a summary is read with them; a new run never writes them.
+ */
+export const RETIRED_FRAMEWORK_IDS = ["maestro", "detox"] as const;
+const summaryFrameworkIdSchema = z.union([frameworkIdSchema, z.enum(RETIRED_FRAMEWORK_IDS)]);
+
 const processSummarySchema = processRowSchema;
 export type ProcessSummary = z.infer<typeof processSummarySchema>;
 
 const okFrameworkSchema = z.object({
-	framework: frameworkIdSchema,
+	framework: summaryFrameworkIdSchema,
 	status: z.literal("ok"),
 	version: z.string(),
 	suite: distSummarySchema,
@@ -77,14 +84,14 @@ const okFrameworkSchema = z.object({
 const summaryFrameworkSchema = z.discriminatedUnion("status", [
 	okFrameworkSchema,
 	z.object({
-		framework: frameworkIdSchema,
+		framework: summaryFrameworkIdSchema,
 		status: z.literal("failed"),
 		version: z.string(),
 		phase: phaseSchema,
 		error: z.string(),
 	}),
 	z.object({
-		framework: frameworkIdSchema,
+		framework: summaryFrameworkIdSchema,
 		status: z.literal("unsupported"),
 		version: z.string().optional(),
 		reason: z.string(),
@@ -96,7 +103,7 @@ const summaryTestSchema = z.object({
 	id: z.string(),
 	title: z.string(),
 	cells: z.partialRecord(
-		frameworkIdSchema,
+		summaryFrameworkIdSchema,
 		z.object({
 			medianMs: z.number(),
 			ratio: z.number().optional(),
