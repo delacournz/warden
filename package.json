@@ -7,6 +7,7 @@
 	"scripts": {
 		"postinstall": "git rev-parse --git-dir > /dev/null 2>&1 && prek install || true",
 		"dev": "turbo dev --ui tui",
+		"dev:web": "turbo dev --filter=@delacour/warden-docs",
 		"build": "turbo build",
 		"typecheck": "turbo typecheck",
 		"check": "turbo check",
