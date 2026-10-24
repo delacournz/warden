@@ -22,6 +22,7 @@ describe("warden arrange", () => {
 	test("tiles warden sim windows and lists them in order", async () => {
 		const calls: string[][] = [];
 		ctx = testContext([], {
+			os: "darwin",
 			exec: windowsExec(["warden-iphone-17-2 – iOS 26.5", "warden-iphone-17-1 – iOS 26.5"], calls),
 		});
 		expect(await arrangeCommand.run(ctx)).toBe(0);
@@ -30,19 +31,20 @@ describe("warden arrange", () => {
 	});
 
 	test("--json", async () => {
-		ctx = testContext(["--json"], { exec: windowsExec(["warden-iphone-17-1 – iOS 26.5"]) });
+		ctx = testContext(["--json"], { os: "darwin", exec: windowsExec(["warden-iphone-17-1 – iOS 26.5"]) });
 		expect(await arrangeCommand.run(ctx)).toBe(0);
 		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ arranged: ["warden-iphone-17-1"], viewer: "simulator" });
 	});
 
 	test("no windows → says so, exit 0", async () => {
-		ctx = testContext([], { exec: windowsExec([]) });
+		ctx = testContext([], { os: "darwin", exec: windowsExec([]) });
 		expect(await arrangeCommand.run(ctx)).toBe(0);
 		expect(ctx.stdout.join("\n")).toContain("no warden simulator windows open");
 	});
 
 	test("osascript failure → exit 1", async () => {
 		ctx = testContext([], {
+			os: "darwin",
 			exec: async (cmd) =>
 				cmd[0] === "pgrep" ? { exitCode: 0, stdout: "", stderr: "" } : { exitCode: 1, stdout: "", stderr: "boom" },
 		});
@@ -53,6 +55,7 @@ describe("warden arrange", () => {
 	/** Device Hub running, its windows read as `windows` (screen 1440x900) */
 	const deviceHub = (windows: { title: string; width: number; height: number }[], calls: string[][] = []) =>
 		testContext(["--json"], {
+			os: "darwin",
 			exec: async (cmd) => {
 				calls.push([...cmd]);
 				if (cmd[0] === "pgrep") return { exitCode: cmd[2] === "DeviceHub" ? 0 : 1, stdout: "", stderr: "" };
@@ -89,6 +92,7 @@ describe("warden arrange", () => {
 	test("no viewer running → nothing to arrange without starting osascript", async () => {
 		const calls: string[][] = [];
 		ctx = testContext([], {
+			os: "darwin",
 			exec: async (cmd) => {
 				calls.push([...cmd]);
 				return { exitCode: cmd[0] === "pgrep" ? 1 : 0, stdout: "", stderr: "" };
@@ -105,6 +109,7 @@ describe("warden arrange", () => {
 	test("--open <udid> → asks Device Hub for that sim's window, then tiles; --json lists what it opened", async () => {
 		const calls: string[][] = [];
 		ctx = testContext(["--open", "U1", "--json"], {
+			os: "darwin",
 			exec: async (cmd) => {
 				calls.push([...cmd]);
 				if (cmd[0] === "pgrep") return { exitCode: cmd[2] === "DeviceHub" ? 0 : 1, stdout: "", stderr: "" };
@@ -120,5 +125,21 @@ describe("warden arrange", () => {
 		expect(await arrangeCommand.run(ctx)).toBe(0);
 		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ opened: ["warden-iphone-17-1"] });
 		expect(calls.filter((c) => c[0] === "open")).toEqual([["open", "-g", "devices://device/open?id=U1"]]);
+	});
+
+	test.each([[[]], [["--open", "U1"]]])("not macOS (%j) → nothing runs, exit 0", async (argv) => {
+		const calls: string[][] = [];
+		ctx = testContext([...argv, "--json"], {
+			os: "linux",
+			exec: async (cmd) => {
+				calls.push([...cmd]);
+				return { exitCode: 0, stdout: "", stderr: "" };
+			},
+		});
+		expect(await arrangeCommand.run(ctx)).toBe(0);
+		expect(calls).toEqual([]);
+		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual(
+			argv.length > 0 ? { opened: [] } : { arranged: [], viewer: "none" }
+		);
 	});
 });

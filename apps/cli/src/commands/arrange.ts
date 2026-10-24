@@ -5,6 +5,15 @@ import { type Arranged, arrangeSimWindows, reopenSimWindows } from "../sim-windo
 
 /** Tile open Simulator.app (Xcode ≤ 26) / Device Hub (Xcode 27) windows of warden sims in name order. */
 async function arrange(ctx: CommandContext, json: boolean, open: readonly string[]): Promise<number> {
+	if ((ctx.os ?? process.platform) !== "darwin") {
+		emit(
+			ctx,
+			json,
+			open.length > 0 ? { opened: [] } : { arranged: [], viewer: "none" },
+			ctx.ui.color.dim("macOS only: nothing to do")
+		);
+		return 0;
+	}
 	if (open.length > 0) {
 		const opened = await reopenSimWindows(ctx, open);
 		emit(ctx, json, { opened }, opened.length === 0 ? "no windows opened" : `opened ${opened.join(", ")}`);

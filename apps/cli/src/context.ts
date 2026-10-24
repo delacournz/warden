@@ -9,6 +9,8 @@ export type CommandContext = {
 	argv: string[];
 	env: Record<string, string | undefined>;
 	cwd: string;
+	/** the host platform; default `process.platform` (window commands are macOS-only; tests inject it) */
+	os?: NodeJS.Platform;
 	now: () => number;
 	out: (line: string) => void;
 	err: (line: string) => void;
