@@ -17,6 +17,27 @@ bun run bench report .bench/<run-id>                 # re-render report.md / rep
 bun run bench compare .bench/<run-a> .bench/<run-b>  # markdown diff of two runs
 ```
 
+## Build the app once
+
+The benchmark installs one pinned app on every framework's run. It is built once and stored at `.bench/app/<platform>/` (the `.app` or `.apk` plus a `manifest.json` with the warden fingerprint, sha256, source and commit). Every `bench run` reuses it. `bench run` never builds, fingerprints or calls EAS: it installs the pinned artifact (`simctl install` / `adb install -r`) after claiming the device, and builds it once only when it is missing.
+
+```bash
+bun run bench app build --platform ios            # build (warden cache, then a local Expo build) and pin it
+bun run bench app build --platform ios --force    # rebuild even though one is pinned
+bun run bench app build --platform android --eas  # also look the build up on EAS
+bun run bench app status --platform ios           # hash, source, builtAt; fresh or stale, exit 1 when missing or stale
+bun run bench app clean --platform ios            # remove the pinned app
+bun run bench run --platform ios --app path/to/Example.app   # use a pinned dir or import a bare .app / .apk
+```
+
+`app build` resolves the build with `warden app ensure --variant bench` on `apps/example`. Without `--force` it reuses the pinned app without fingerprinting. `app status` compares the pinned hash with `warden app fingerprint --variant bench`.
+
+Rebuild with `--force` after changing `apps/example` or its Expo and React Native dependencies. Changes to `packages/e2e` or warden do not need a rebuild.
+
+### Build on EAS
+
+The app is the Expo project `@delacour/warden` (`extra.eas.projectId` in `app.config.ts`, GitHub base directory `apps/example`), so `bench app build --eas` also looks the `bench` profile up on EAS (`bunx eas-cli`, logged in to the `delacour` account). The `bench` variant in `apps/example/warden.config.ts` is the only place EAS is configured, and `eas.json` holds the Release simulator and APK profile. `.eas/workflows/bench-build.yml` builds both platforms on EAS: run it with `eas workflow:run .eas/workflows/bench-build.yml`, or it runs on pushes to `main` that touch `apps/example/`.
+
 `bench run` options:
 
 | Flag | Default | Meaning |
@@ -25,6 +46,7 @@ bun run bench compare .bench/<run-a> .bench/<run-b>  # markdown diff of two runs
 | `--frameworks a,b` | all four | `warden,argent,agent-device,tester-army` |
 | `--runs N` | `3` | reps per framework; rep 1 is cold, the rest warm |
 | `--retries N` | `0` | forwarded to every framework |
+| `--app PATH` | `.bench/app/<platform>` | pinned app dir, or a bare `.app` / `.apk` to import and pin |
 | `--udid X` | claim one (`--ttl 4h --label bench`, heartbeat every 60 s) | use a device you already leased (no claim, release or heartbeat: hold that lease yourself, e.g. a long `--ttl` or `warden heartbeat`) |
 | `--reboot-between` | off | reboot the device between frameworks |
 | `--out DIR` | `.bench/<timestamp>-<platform>` | output dir |
@@ -77,7 +99,7 @@ Resource sampling, in detail:
 - **Host** processes are the framework's process tree plus every pid the bench spawned. The bench keeps every spawned pid for the whole session, and the OS reuses pids, so each pid is stamped with its `ps lstart` the first time the sampler sees it and only counts while that start time matches. A spawned child that had already exited before the sampler first looked is never trusted again. Android's `top` rows are matched by name on every read, so no pid is carried over there.
 - **Animation scales.** Warden's Android driver sets `window_animation_scale`, `transition_animation_scale` and `animator_duration_scale` to 0 for its run. Left alone, every framework measured after warden would run on a device with animations off. At bench start the harness records the three values (`adb shell settings get global …`; unset is recorded as unset), `isolate` resets them before every framework's prepare, and the run restores them when it ends. Warden's driver restoring them itself is a separate fix; the harness reset stays as defence in depth. A device that a previous warden run already left at 0 is recorded as 0: reset it by hand (`adb shell settings put global window_animation_scale 1.0`, same for the other two) before a bench run.
 
-The build comes from `warden app ensure` (Release, `EXPO_PUBLIC_E2E=1`) and runs once before any framework. App state is in memory, so every launch starts signed out on the welcome screen. Between frameworks the harness stops the previous one's daemons, stops the `warden-simd` helper before a non-warden framework (a second accessibility client on one sim degrades its settle from ~260 ms to ~2.5 s), and uninstalls driver apps before a cold rep.
+The app is the pinned bench app (`.bench/app/<platform>/`, Release, `EXPO_PUBLIC_E2E=1`, built once by `bench app build`). It is installed on the claimed device during prepare, before any framework runs. App state is in memory, so every launch starts signed out on the welcome screen. Between frameworks the harness stops the previous one's daemons, stops the `warden-simd` helper before a non-warden framework (a second accessibility client on one sim degrades its settle from ~260 ms to ~2.5 s), and uninstalls driver apps before a cold rep.
 
 ## Per-framework caveats
 

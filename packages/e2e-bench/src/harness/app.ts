@@ -7,18 +7,8 @@ import { type Exec, runOk } from "./exec";
 
 export type EnsuredApp = { appPath: string; hash: string; source: string; installed: boolean };
 
-export type EnsureInput = {
-	platform: Platform;
-	cliPath: string;
-	udid: string;
-	/** a directory name under `apps/` (default `example`) */
-	project?: string;
-	/** checkout root; `apps/<project>` is resolved against it (default: cwd) */
-	repoRoot?: string;
-	log: (line: string) => void;
-};
-
-function parseEnsure(stdout: string): EnsuredApp | undefined {
+/** Parses `warden app ensure --json` stdout; undefined when it is not the expected object. */
+export function parseEnsure(stdout: string): EnsuredApp | undefined {
 	try {
 		const raw: unknown = JSON.parse(stdout);
 		if (typeof raw !== "object" || raw === null) return undefined;
@@ -28,30 +18,6 @@ function parseEnsure(stdout: string): EnsuredApp | undefined {
 	} catch {
 		return undefined;
 	}
-}
-
-async function warden(exec: Exec, input: EnsureInput, extra: readonly string[]): AsyncResult<EnsuredApp> {
-	const dir = join(input.repoRoot ?? process.cwd(), "apps", input.project ?? "example");
-	const args = [input.cliPath, "app", "ensure", input.platform, "--project", dir, ...extra, "--json"];
-	const ran = await runOk(exec, process.execPath, args, { onLine: (_s, line) => input.log(line) });
-	if (!ran.success) return ran;
-	const parsed = parseEnsure(ran.data.stdout);
-	return parsed === undefined
-		? err(`warden app ensure: unparseable output: ${ran.data.stdout.slice(0, 200)}`)
-		: ok(parsed);
-}
-
-/**
- * Installs the project's build on the device via warden. `appPath` is "" when the app was already
- * installed and the cache no longer holds it, so a second `--no-install` call resolves the cache path
- * (the fingerprint of the artifact is recorded in the results).
- */
-export async function ensureApp(exec: Exec, input: EnsureInput): AsyncResult<EnsuredApp> {
-	const first = await warden(exec, input, ["--udid", input.udid]);
-	if (!first.success || first.data.appPath !== "") return first;
-	const resolved = await warden(exec, input, ["--no-install"]);
-	if (!resolved.success) return resolved;
-	return ok({ ...first.data, appPath: resolved.data.appPath });
 }
 
 function listFiles(root: string): string[] {

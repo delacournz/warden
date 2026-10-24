@@ -37,6 +37,8 @@ describe("parseArgs run", () => {
 			"--keep-drivers",
 			"--node-bin",
 			"/n/bin/node",
+			"--app",
+			".bench/app/android",
 		]);
 		expect(r).toEqual({
 			command: "run",
@@ -51,6 +53,7 @@ describe("parseArgs run", () => {
 			force: true,
 			keepDrivers: true,
 			nodeBin: "/n/bin/node",
+			app: ".bench/app/android",
 		});
 	});
 
@@ -68,6 +71,39 @@ describe("parseArgs run", () => {
 		[["run", "extra"], "run takes no positional arguments, got extra"],
 	])("complaint for %j", (argv, complaint) => {
 		expect(parseArgs(argv)).toBe(complaint);
+	});
+});
+
+describe("parseArgs app", () => {
+	test("build, status, clean", () => {
+		expect(parseArgs(["app", "build"])).toEqual({ command: "app-build", platform: "ios", force: false, eas: false });
+		expect(parseArgs(["app", "build", "--platform", "android", "--force", "--eas"])).toEqual({
+			command: "app-build",
+			platform: "android",
+			force: true,
+			eas: true,
+		});
+		expect(parseArgs(["app", "status", "--platform", "android"])).toEqual({
+			command: "app-status",
+			platform: "android",
+		});
+		expect(parseArgs(["app", "clean"])).toEqual({ command: "app-clean", platform: "ios" });
+	});
+
+	test.each([
+		[["app"], "app needs a subcommand: build|status|clean"],
+		[["app", "nope"], "app needs a subcommand: build|status|clean"],
+		[["app", "status", "--force"], "unknown argument --force"],
+		[["app", "build", "--runs", "2"], "unknown argument --runs"],
+		[["app", "clean", "x"], "app clean takes no positional arguments, got x"],
+		[["run", "--eas"], "unknown argument --eas"],
+	])("complaint for %j", (argv, complaint) => {
+		expect(parseArgs(argv)).toBe(complaint);
+	});
+
+	test("help documents app", () => {
+		expect(HELP).toContain("bench app build");
+		expect(HELP).toContain("--app PATH");
 	});
 });
 

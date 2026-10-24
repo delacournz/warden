@@ -14,10 +14,15 @@ export type RunCommand = {
 	force: boolean;
 	keepDrivers: boolean;
 	nodeBin?: string;
+	/** a pinned bench app dir (with `manifest.json`) or a bare `.app` / `.apk` to pin */
+	app?: string;
 };
 
 export type Command =
 	| RunCommand
+	| { command: "app-build"; platform: Platform; force: boolean; eas: boolean }
+	| { command: "app-status"; platform: Platform }
+	| { command: "app-clean"; platform: Platform }
 	| { command: "doctor"; platform: Platform }
 	| { command: "list" }
 	| { command: "report"; runDir: string }
@@ -29,6 +34,8 @@ export const HELP = `bench: benchmark six mobile e2e frameworks on the example a
 
 Usage:
   bench run [options]       run the suite per framework and write .bench/<run-id>/
+  bench app build|status|clean [--platform ios|android] [--force] [--eas]
+                            pin, inspect or remove the bench app (.bench/app/<platform>)
   bench doctor [--platform] check every framework is installed and usable
   bench list                frameworks, platforms and the 8 canonical test ids
   bench report <runDir>     re-render report.md / report.html from bench-results.json
@@ -47,6 +54,14 @@ Run options:
   --force                   run even when the host load average exceeds the core count
   --keep-drivers            keep driver apps installed (skip the cold uninstall)
   --node-bin PATH           node binary to put first on PATH for the frameworks
+  --app PATH                bench app dir (has manifest.json) or a bare .app/.apk to pin (default: .bench/app/<platform>, built once when missing)
+
+App options:
+  app build                 build (or fetch) apps/example once and pin it; no-op when already pinned
+  app status                pinned hash vs the project's current fingerprint; exit 1 when missing or stale
+  app clean                 remove the pinned app
+  --force                   (app build) rebuild even when pinned
+  --eas                     (app build) allow warden to fetch an EAS build instead of building locally
 `;
 
 type Flags = {
@@ -61,6 +76,8 @@ type Flags = {
 	skipDoctor?: boolean;
 	force?: boolean;
 	keepDrivers?: boolean;
+	eas?: boolean;
+	app?: string;
 };
 
 const intOf = (flag: string, value: string, min: number): number | string => {
@@ -107,6 +124,10 @@ const VALUE_SETTERS: Record<string, (flags: Flags, value: string) => string | un
 		flags.nodeBin = value;
 		return undefined;
 	},
+	"--app": (flags, value) => {
+		flags.app = value;
+		return undefined;
+	},
 };
 
 /** Boolean flags take no value. */
@@ -123,10 +144,24 @@ const BOOL_SETTERS: Record<string, (flags: Flags) => void> = {
 	"--keep-drivers": (flags) => {
 		flags.keepDrivers = true;
 	},
+	"--eas": (flags) => {
+		flags.eas = true;
+	},
 };
 
 const SUMMARY_FLAGS = ["--out"];
-const RUN_FLAGS = [...Object.keys(VALUE_SETTERS), ...Object.keys(BOOL_SETTERS)];
+const RUN_FLAGS = Object.keys(VALUE_SETTERS)
+	.concat(Object.keys(BOOL_SETTERS))
+	.filter((flag) => flag !== "--eas");
+const APP_SUBCOMMANDS = ["build", "status", "clean"] as const;
+type AppSubcommand = (typeof APP_SUBCOMMANDS)[number];
+const APP_FLAGS: Record<AppSubcommand, readonly string[]> = {
+	build: ["--platform", "--force", "--eas"],
+	status: ["--platform"],
+	clean: ["--platform"],
+};
+const isAppSubcommand = (name: string | undefined): name is AppSubcommand =>
+	APP_SUBCOMMANDS.some((sub) => sub === name);
 
 type Parsed = { flags: Flags; positionals: string[] };
 
@@ -169,7 +204,22 @@ function runCommand(flags: Flags): RunCommand {
 		...(flags.udid !== undefined ? { udid: flags.udid } : {}),
 		...(flags.out !== undefined ? { out: flags.out } : {}),
 		...(flags.nodeBin !== undefined ? { nodeBin: flags.nodeBin } : {}),
+		...(flags.app !== undefined ? { app: flags.app } : {}),
 	};
+}
+
+/** `bench app <sub> …`: the subcommand picks the allowed flags. */
+function parseApp(rest: readonly string[]): Command | string {
+	const [sub, ...flagArgs] = rest;
+	if (!isAppSubcommand(sub)) return `app needs a subcommand: ${APP_SUBCOMMANDS.join("|")}`;
+	const parsed = parseFlags(flagArgs, APP_FLAGS[sub]);
+	if (typeof parsed === "string") return parsed;
+	const complaint = NO_POSITIONALS(`app ${sub}`, parsed.positionals);
+	if (complaint !== undefined) return complaint;
+	const platform = parsed.flags.platform ?? "ios";
+	if (sub === "build")
+		return { command: "app-build", platform, force: parsed.flags.force ?? false, eas: parsed.flags.eas ?? false };
+	return sub === "status" ? { command: "app-status", platform } : { command: "app-clean", platform };
 }
 
 /** `positionals` must be exactly `count` long. */
@@ -223,6 +273,7 @@ function build(name: string, flags: Flags, positionals: readonly string[]): Comm
 export function parseArgs(argv: readonly string[]): Command | string {
 	const [name, ...rest] = argv;
 	if (name === undefined || name === "help" || name === "--help" || name === "-h") return { command: "help" };
+	if (name === "app") return parseApp(rest);
 	const parsed = parseFlags(
 		rest,
 		name === "run" ? RUN_FLAGS : name === "doctor" ? ["--platform"] : name === "summary" ? SUMMARY_FLAGS : []

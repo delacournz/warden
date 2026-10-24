@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import type { BenchAdapter, RunContext } from "./adapters/adapter.types";
 import { ADAPTERS } from "./adapters/registry";
 import { type Command, HELP, parseArgs } from "./args";
+import { benchAppDir, benchAppStatus, cleanBenchApp, ensureBenchApp } from "./harness/bench-app";
 import { realExec } from "./harness/exec";
 import { type BenchDeps, runBench, writeReports } from "./orchestrator";
 import { compareRuns, renderCompareMarkdown } from "./report/compare";
@@ -116,6 +117,64 @@ function compare(dirA: string, dirB: string): number {
 	return 0;
 }
 
+/** Builds (or fetches) the example app once and pins it under `.bench/app/<platform>`. */
+async function appBuild(platform: Platform, force: boolean, eas: boolean): Promise<number> {
+	const built = await ensureBenchApp(realExec, {
+		platform,
+		repoRoot: REPO_ROOT,
+		cliPath: CLI_PATH,
+		force,
+		eas,
+		now: () => new Date(),
+		log: (line) => console.log(line),
+	});
+	if (!built.success) {
+		console.error(`bench: ${built.error}`);
+		return 1;
+	}
+	const { manifest, appPath, reused } = built.data;
+	console.log(`pinned ${appPath} (hash ${manifest.hash}, source ${manifest.source}, ${reused ? "reused" : "built"})`);
+	return 0;
+}
+
+/** Pinned hash vs the project's current fingerprint; exit 1 when missing or stale. */
+async function appStatus(platform: Platform): Promise<number> {
+	const status = await benchAppStatus(realExec, { platform, repoRoot: REPO_ROOT, cliPath: CLI_PATH });
+	if (!status.success) {
+		console.error(`bench: ${status.error}`);
+		return 1;
+	}
+	if (status.data.state === "missing") {
+		console.log(
+			`no bench app at ${benchAppDir(REPO_ROOT, platform)} — run \`bun run bench app build --platform ${platform}\``
+		);
+		return 1;
+	}
+	const { state, manifest, appPath, currentHash } = status.data;
+	console.log(
+		table([
+			["state", state],
+			["platform", manifest.platform],
+			["path", appPath],
+			["hash", manifest.hash],
+			["current", currentHash ?? "-"],
+			["source", manifest.source],
+			["built", manifest.builtAt],
+			["commit", manifest.commit ?? "-"],
+			["sha256", manifest.sha256],
+			["bytes", String(manifest.bytes)],
+		])
+	);
+	return state === "stale" ? 1 : 0;
+}
+
+function appClean(platform: Platform): number {
+	const dir = benchAppDir(REPO_ROOT, platform);
+	cleanBenchApp(dir);
+	console.log(`removed ${dir}`);
+	return 0;
+}
+
 /** SIGINT / SIGTERM abort the run (teardown, release, write results); a second signal exits at once. */
 function abortOnSignal(): AbortSignal {
 	const controller = new AbortController();
@@ -166,6 +225,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 			return 0;
 		case "run":
 			return run(cmd);
+		case "app-build":
+			return appBuild(cmd.platform, cmd.force, cmd.eas);
+		case "app-status":
+			return appStatus(cmd.platform);
+		case "app-clean":
+			return appClean(cmd.platform);
 		case "doctor":
 			return doctor(cmd.platform);
 		case "list":

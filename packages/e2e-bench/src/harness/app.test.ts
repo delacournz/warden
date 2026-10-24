@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appFingerprint, ensureApp, installApp, terminateApp } from "./app";
+import { appFingerprint, installApp, parseEnsure, terminateApp } from "./app";
 import { fakeExec } from "./exec";
 
 const dirs: string[] = [];
@@ -14,43 +14,6 @@ function tmp(): string {
 	dirs.push(d);
 	return d;
 }
-
-const input = { platform: "ios" as const, cliPath: "/cli.ts", udid: "U1", repoRoot: "/repo", log: () => undefined };
-const ensured = (appPath: string) => JSON.stringify({ appPath, hash: "h1", source: "cache", installed: true });
-
-describe("ensureApp", () => {
-	test("returns the result and passes udid + project dir", async () => {
-		const exec = fakeExec([{ cmd: process.execPath, result: { stdout: ensured("/c/x.app") } }]);
-		const r = await ensureApp(exec, input);
-		expect(r).toEqual({ success: true, data: { appPath: "/c/x.app", hash: "h1", source: "cache", installed: true } });
-		expect(exec.calls[0]?.args).toEqual([
-			"/cli.ts",
-			"app",
-			"ensure",
-			"ios",
-			"--project",
-			"/repo/apps/example",
-			"--udid",
-			"U1",
-			"--json",
-		]);
-	});
-	test("empty appPath: resolves the cache path with --no-install", async () => {
-		const exec = fakeExec([
-			{ cmd: process.execPath, match: (a) => a.includes("--udid"), result: { stdout: ensured("") } },
-			{ cmd: process.execPath, match: (a) => a.includes("--no-install"), result: { stdout: ensured("/c/y.app") } },
-		]);
-		const r = await ensureApp(exec, input);
-		expect(r.success && r.data.appPath).toBe("/c/y.app");
-		expect(exec.calls).toHaveLength(2);
-	});
-	test("failure and garbage", async () => {
-		expect((await ensureApp(fakeExec([{ cmd: process.execPath, result: { code: 1 } }]), input)).success).toBe(false);
-		expect((await ensureApp(fakeExec([{ cmd: process.execPath, result: { stdout: "x" } }]), input)).success).toBe(
-			false
-		);
-	});
-});
 
 describe("appFingerprint", () => {
 	test("dir: stable, content and name sensitive", () => {
@@ -104,5 +67,20 @@ describe("installApp / terminateApp", () => {
 		const exec = fakeExec([{ cmd: "adb", result: {} }]);
 		expect((await terminateApp(exec, "android", "emu", "b.id")).success).toBe(true);
 		expect(exec.calls[0]?.args).toEqual(["-s", "emu", "shell", "am", "force-stop", "b.id"]);
+	});
+});
+
+describe("parseEnsure", () => {
+	test("reads the ensure payload", () => {
+		expect(parseEnsure(JSON.stringify({ appPath: "/a.app", hash: "h", source: "cache", installed: true }))).toEqual({
+			appPath: "/a.app",
+			hash: "h",
+			source: "cache",
+			installed: true,
+		});
+	});
+	test("garbage is undefined", () => {
+		expect(parseEnsure("nope")).toBeUndefined();
+		expect(parseEnsure("{}")).toBeUndefined();
 	});
 });

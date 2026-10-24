@@ -1,22 +1,23 @@
 # @delacour/warden-e2e-bench
 
-Benchmarks four mobile e2e frameworks (warden, argent, agent-device, tester-army) on the example app's 8-test parity suite (plan: `docs/plans/wdn-bench.md`; usage: `README.md`). Private, never published. No lease/build code here (that's `packages/core`); the suites drive the build `warden app ensure` produces.
+Benchmarks four mobile e2e frameworks (warden, argent, agent-device, tester-army) on the example app's 8-test parity suite (plan: `docs/plans/wdn-bench.md`; usage: `README.md`). Private, never published. No lease/build code here (that's `packages/core`); the suites drive the pinned bench app (`bench app build`, via `warden app ensure --variant bench`).
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
-| `src/cli.ts` | `bench run \| doctor \| list \| report \| compare \| summary` (root: `bun run bench …`); SIGINT/SIGTERM abort cleanly |
+| `src/cli.ts` | `bench run \| app build\|status\|clean \| doctor \| list \| report \| compare \| summary` (root: `bun run bench …`); SIGINT/SIGTERM abort cleanly |
 | `src/args.ts` | flag parsing, `HELP` |
 | `src/orchestrator.ts` | `runBench`: claim, `app ensure`, per framework doctor → prepare → reps → teardown → residue, `writeReports` (`report.md`, `summary.json`, `report.html`); writes `bench-results.json` after every framework |
 | `src/adapters/` | `adapter.types.ts` (`BenchAdapter`, `FRAMEWORK_IDS`, `RunContext`), `registry.ts` (`ADAPTERS`), one `<framework>.ts` each; `parse/` native reporter output → canonical `TestResult[]`; `fixtures/` real outputs |
-| `src/harness/` | `exec.ts` (the only spawn seam, `fakeExec` for tests), `device.ts` (claim/release), `app.ts` (`warden app ensure`), `phases.ts` (timing, per-phase logs), `sampler.ts` (ps CPU/RSS, CPU-seconds from per-pid `ps time` deltas, host split by process group, per-rep `windowSummary`, `processLabel` / `processReadings` (per-process `TickProcess` in each `Tick`) and `aggregateProcesses` (per-rep `ProcessRow[]`), Android `top` helper filter, pid + start-time tracking), `residue.ts`, `anr.ts` (Android ANR dialog dismiss, hide error dialogs), `isolation.ts` (stop daemons/helpers, cold uninstall, reboot, Android animation-scale reset), `host.ts` (host facts, load average) |
+| `src/harness/` | `exec.ts` (the only spawn seam, `fakeExec` for tests), `device.ts` (claim/release), `app.ts` (`installApp`, `appFingerprint`, `terminateApp`), `bench-app.ts` (`benchAppDir`, manifest schema, `readBenchApp` / `verifyBenchApp` / `exportBenchApp` / `importBenchApp` / `ensureBenchApp` / `benchAppStatus` / `cleanBenchApp`), `phases.ts` (timing, per-phase logs), `sampler.ts` (ps CPU/RSS, CPU-seconds from per-pid `ps time` deltas, host split by process group, per-rep `windowSummary`, `processLabel` / `processReadings` (per-process `TickProcess` in each `Tick`) and `aggregateProcesses` (per-rep `ProcessRow[]`), Android `top` helper filter, pid + start-time tracking), `residue.ts`, `anr.ts` (Android ANR dialog dismiss, hide error dialogs), `isolation.ts` (stop daemons/helpers, cold uninstall, reboot, Android animation-scale reset), `host.ts` (host facts, load average) |
 | `src/results/` | `schema.ts` (zod, `bench-results.json` v1, `CANONICAL_IDS`), `stats.ts`, `manifest.ts` (loads `suites/manifest.json`), `footprint.ts`, `write.ts` (atomic write / read) |
 | `src/report/` | `markdown.ts` (`FAIRNESS_RULES`), `html.ts` + `svg.ts` (self-contained), `compare.ts` (also diffs the per-process rows by name), `tables.ts` (`cpuSecondsPerRep`, `processesPerRep` = the warm-median rep's `processes`), `summary.ts` (docs JSON, `SUMMARY_VERSION` 2 adds optional `processes`), `format.ts` |
 | `suites/<framework>/` | the 8 parity tests per framework; `suites/manifest.json` is the join key (canonical id ↔ native name + step labels) |
 | `<repo root>/.bench/<run-id>/` | gitignored output (repo root, not the package): `bench-results.json`, `summary.json`, `report.md`, `report.html`, `logs/`, `artifacts/<fw>/rep-<n>/` |
 
 ## Rules
+- `bench run` never builds, fingerprints or calls EAS: it installs the pinned app from `.bench/app/<platform>/` after claiming the device. Rebuild with `bench app build --force`; `--eas` is only for `app build`.
 - Never spawn in `bun test`: inject `Exec` (`fakeExec`). Never install global tools; `doctor` prints hints.
 - Devices come from `warden claim --ttl 4h --label bench`, heartbeated every 60 s for the run; release exactly the lease ids claimed (never `--mine`). `--udid` reuses a lease and releases or heartbeats nothing: the caller must hold that lease.
 - CPU headline = host CPU-seconds per rep (`RepResult.resources.cpuSeconds`: the timed `run` window only, warm median), from per-pid deltas of `ps time`. `ps %cpu` (`cpuAvgPct`/`cpuPeakPct`) is a decaying average on macOS and the framework-level `resources` are whole-framework (prepare … teardown): never judge a target on them.
