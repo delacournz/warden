@@ -1,9 +1,11 @@
 name: Bench baseline
 
-# Warden CPU/RAM baseline on a hosted macOS worker, never on a dev Mac. Builds the pinned bench app
-# (Release simulator .app, EXPO_PUBLIC_E2E=1), then runs the bench harness against it.
+# e2e bench (warden, argent, agent-device, tester-army) on a hosted macOS worker, never on a dev Mac. Builds the
+# pinned bench app (Release simulator .app, EXPO_PUBLIC_E2E=1), installs the frameworks named in `frameworks`,
+# then runs the bench harness against it.
 # Every run uses the same worker class (macos-large), so numbers compare only with other EAS runs.
 # Run: bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=warden
+#      bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=argent,agent-device
 
 on:
   workflow_dispatch:
@@ -14,7 +16,7 @@ on:
         default: 5
       frameworks:
         type: string
-        description: Comma-separated bench frameworks
+        description: Comma-separated bench frameworks (warden,argent,agent-device,tester-army)
         default: warden
 
 jobs:
@@ -104,6 +106,33 @@ jobs:
           progress $! "warden-simd build"; wait $!
           echo "== done in ${SECONDS}s"
 
+      # Install the frameworks the run compares, from the `frameworks` input. tester-army needs nothing extra:
+      # `e2e` and `@e2e-dev/mobile` come with bun install and the image's Node is inside its range.
+      - name: Install bench frameworks
+        run: |
+          . "$HOME/bench-lib.sh"
+          cd "$ROOT"
+          FW=",${{ inputs.frameworks }},"
+          echo "== frameworks: ${{ inputs.frameworks }} ($(date +%T))"
+          case "$FW" in *,argent,*)
+            echo "-- bun add -g @swmansion/argent"
+            bun add -g @swmansion/argent &
+            progress $! "argent install"; wait $!
+            argent --version
+          ;; esac
+          case "$FW" in *,agent-device,*)
+            echo "-- bun add -g agent-device"
+            bun add -g agent-device &
+            progress $! "agent-device install"; wait $!
+            agent-device --version
+          ;; esac
+          case "$FW" in *,tester-army,*)
+            node -v
+          ;; esac
+          echo "-- bench doctor"
+          bun run bench doctor --platform ios || true
+          echo "== done in ${SECONDS}s"
+
       # Fetch the .app built by build_ios (or found by get_ios_build); its path is the step output.
       - uses: eas/download_build
         id: download_build
@@ -129,7 +158,7 @@ jobs:
         run: |
           . "$HOME/bench-lib.sh"
           cd "$ROOT"
-          OUT="$ROOT/.bench/eas-ios-warden"
+          OUT="$ROOT/.bench/eas-ios"
           mkdir -p "$OUT"
           APP="${{ steps.download_build.outputs.artifact_path }}"
 
@@ -184,10 +213,10 @@ jobs:
           DEST="$HOME/bench-results"
           mkdir -p "$DEST"
           { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
-          cp -R "$ROOT/.bench/eas-ios-warden/." "$DEST/" || true
+          cp -R "$ROOT/.bench/eas-ios/." "$DEST/" || true
           cp "$HOME/bench-run.log" "$DEST/" 2>/dev/null || true
           ls "$DEST"
-          for f in "$ROOT"/.bench/eas-ios-warden/logs/*.log "$HOME/bench-run.log"; do
+          for f in "$ROOT"/.bench/eas-ios/logs/*.log "$HOME/bench-run.log"; do
             [ -f "$f" ] && { echo "=== $f"; tail -n 200 "$f" | cut -c1-240; }
           done
           for f in "$HOME"/.warden/simd/*.log; do
@@ -200,6 +229,6 @@ jobs:
         if: ${{ always() }}
         with:
           type: other
-          name: eas-ios-warden
+          name: eas-ios
           path: |
             /Users/expo/bench-results/**/*

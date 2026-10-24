@@ -40,13 +40,14 @@ The app is the Expo project `@delacour/warden` (`extra.eas.projectId` in `app.co
 
 ### Baseline on EAS
 
-`apps/example/.eas/workflows/bench-baseline.yml` builds the `bench` iOS app and runs the warden bench on an EAS `macos-large` worker (inputs `runs`, default `5`, and `frameworks`, default `warden`):
+`apps/example/.eas/workflows/bench-baseline.yml` builds the `bench` iOS app and runs the bench on an EAS `macos-large` worker (inputs `runs`, default `5`, and `frameworks`, default `warden`). The worker installs argent and agent-device when they are in `frameworks` (`bun add -g`); tester-army comes with `bun install`:
 
 ```bash
 cd apps/example && bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5
+cd apps/example && bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=argent,agent-device
 ```
 
-The build is skipped when EAS already has a `bench` build for the current fingerprint. Download the `eas-ios-warden` artifact (URL in `eas workflow:view <run-id>`; it unpacks to `Users/expo/bench-results`), copy it to `.bench/eas-ios-warden`, then `bun run bench report .bench/eas-ios-warden`. A hosted worker idles hotter than a Mac: compare EAS numbers only with EAS numbers from the same worker class.
+The build is skipped when EAS already has a `bench` build for the current fingerprint. Download the `eas-ios` artifact (URL in `eas workflow:view <run-id>`; it unpacks to `Users/expo/bench-results`), copy it to `.bench/eas-ios`, then `bun run bench report .bench/eas-ios`. A hosted worker idles hotter than a Mac: compare EAS numbers only with EAS numbers from the same worker class.
 
 `bench run` options:
 
