@@ -274,7 +274,10 @@ export function registerStartup(
 			.option("--cold", "force-stop the app before each start (default)")
 			.option("--warm", "send the app to the background (HOME) before each start")
 			.option("--runs <n>", `launches to time, 1-${MAX_RUNS} (default ${DEFAULT_RUNS})`)
-			.option("--method <m>", "iOS: approx (simctl launch wall time, default) | xctrace (App Launch template, spike)")
+			.option(
+				"--method <m>",
+				"iOS: approx (simctl launch wall time, default) | xctrace (App Launch template, cold only)"
+			)
 	).action(async (opts) => {
 		done(await perfStartup(ctx, deps, opts));
 	});

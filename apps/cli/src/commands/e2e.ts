@@ -660,7 +660,7 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				)
 				.option(
 					"--perf [captures]",
-					"profile every attempt: metrics, frames, logs, or e.g. --perf=react,js | all; reports land in the attempt's perf/ dir"
+					"profile every attempt (bare: metrics, frames, logs; or --perf=react,js | all); reports land in the attempt's perf/ dir"
 				)
 				.option("--no-warm", "skip pre-warming the iOS socket helper per device (default: on; suite warmDrivers)")
 				.addHelpText(

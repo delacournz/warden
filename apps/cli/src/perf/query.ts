@@ -440,7 +440,7 @@ export function registerQuery(cmd: Commander, ctx: CommandContext, done: (code: 
 			.option("--worst", "frames: the worst jank windows and hangs")
 			.option("--size <time>", "commits --by window: bucket size (default 1s)")
 			.option("--index <n>", "commits --by index: one commit in depth")
-			.option("--limit <n>", "rows to show")
+			.option("--limit <n>", "rows to show (commits, cpu)")
 			.option("--rerun", "stacks hang: re-run the Perfetto SQL (Android)")
 			.option("--yes", "download trace_processor without asking (with --rerun)")
 	).action(async (id, topic, args, opts) => {
