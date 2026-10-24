@@ -52,6 +52,18 @@ When a native build can't be avoided, warden local builds get compiler caches th
 
 ccache only runs when the Podfile enables it: set `ios.ccacheEnabled: true` with `expo-build-properties` (written to `ios/Podfile.properties.json` as `apple.ccacheEnabled`) and `brew install ccache`. `warden doctor` checks both, and warns when React Native is built from source (`ios.buildReactNativeFromSource`) instead of using the prebuilt core. `warden builds prune` also runs `ccache --cleanup`.
 
+### Prebuilt React Native (iOS)
+
+React Native 0.81 added a precompiled iOS core (`RCT_USE_PREBUILT_RNCORE=1`, `RCT_USE_RN_DEP=1` at `pod install`/build time), skipping a source build of React Native on every cache miss. Warden sets both for you, with no repo change, per installed `react-native` version:
+
+| React Native | Behaviour |
+|---|---|
+| < 0.81 | not available, nothing set |
+| 0.81 – 0.83 | opt-in upstream: warden sets both vars (the default build command runs `pod install` when the Pods sandbox is stale or missing, so they take effect) |
+| ≥ 0.84 | on by default upstream (Expo SDK 54+ templates also default it): no-op, nothing set, key unchanged |
+
+Warden never overrides a var you already set, and skips the injection when the project builds React Native from source (`ios.buildReactNativeFromSource: true` via `expo-build-properties`, read from `ios/Podfile.properties.json` or `app.json`). Opt out with `build.prebuiltReactNative: false` or `WARDEN_PREBUILT_RN=0`. Prebuilt output differs from a from-source build, so the cache / install key is salted (`react-native:prebuilt`) while the env is in effect; builds of the same fingerprint never mix. The precompiled core is incompatible with `use_frameworks!`, and you can't step into React Native internals.
+
 Why not share DerivedData? Its build database and dependency files hold absolute paths, so another checkout looks entirely changed and rebuilds anyway, and two concurrent builds in one DerivedData corrupt or block each other.
 
 ## Resolution order

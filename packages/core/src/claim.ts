@@ -1,13 +1,26 @@
+import { randomUUID } from "node:crypto";
 import { availableParallelism, loadavg } from "node:os";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { allocate } from "./allocate";
+import { addCost, type Budget, type CapacityConfig, type Cost, deviceCost, explain, fits, totalCost } from "./capacity";
 import { DEFAULT_READY_TIMEOUT_MS } from "./config.defaults";
+import type { MemoryPressure } from "./host";
 import { markWardenDevices } from "./inventory";
-import type { PidAlive } from "./liveness";
+import { isLeaseAlive, type PidAlive } from "./liveness";
 import { isProbeTimeout } from "./providers/health";
 import type { DeviceProvider } from "./providers/provider.types";
+import { PRIORITY, priorityName, queuePosition } from "./queue";
 import type { DeviceRecord, Store } from "./store";
-import type { AllocationStep, DeviceRequest, DeviceResource, InventoryDevice, Lease, Owner, Platform } from "./types";
+import {
+	type AllocationStep,
+	type DeviceRequest,
+	type DeviceResource,
+	type InventoryDevice,
+	type Lease,
+	type Owner,
+	type Platform,
+	resourceKey,
+} from "./types";
 
 /**
  * Device id prefix of a placeholder lease taken while a new device is being created outside the
@@ -38,7 +51,43 @@ export type ClaimInput = {
 	log?: (line: string) => void;
 	/** 1-min load average and core count, read when a probe times out (default: `os.loadavg` / `os.availableParallelism`) */
 	load?: () => HostLoad;
+	/** machine capacity gate + priority boot queue; absent = no gate (claims never queue) */
+	capacity?: CapacityDeps;
+	/** queue priority, higher first (default `PRIORITY.normal`) */
+	priority?: number;
+	/** queue row id (default: a fresh id per `claimDevices` call) */
+	queueId?: string;
+	/** polled once per round: true ends the claim with `CLAIM_ABORTED` (nothing stays leased or queued) */
+	abort?: () => boolean;
 };
+
+/** The error of a claim ended by `ClaimInput.abort`. */
+export const CLAIM_ABORTED = "claim aborted";
+
+export type CapacityDeps = {
+	budget: Budget;
+	config: CapacityConfig;
+	/** every device on the host, all platforms, foreign included */
+	hostInventory: () => AsyncResult<InventoryDevice[]>;
+	/** read once per round; an error counts as `normal` */
+	pressure?: () => AsyncResult<MemoryPressure>;
+	/** shut down an idle warden device (any platform) to make room for the queue head; absent = never evict */
+	shutdownIdle?: (device: InventoryDevice) => AsyncResult<void>;
+};
+
+/** Per-round capacity facts, read outside the store lock. */
+type CapacityRound = {
+	deps: CapacityDeps;
+	hostInventory: InventoryDevice[];
+	pressure: MemoryPressure;
+	queueId: string;
+	/** when this `claimDevices` call began: queue age and place survive health-probe retry rounds */
+	enqueuedAt: number;
+	/** devices whose idle shutdown failed this claim: not tried again */
+	noEvict: ReadonlySet<string>;
+};
+
+type Eviction = { device: InventoryDevice; leaseId: string };
 
 export type HostLoad = { load1: number; cores: number };
 
@@ -62,7 +111,10 @@ type Reserved =
 	| { action: "reuse" | "boot"; device: InventoryDevice; lease: Lease }
 	| { action: "create"; name: string; lease: Lease };
 
-type Reservation = { kind: "assign"; items: Reserved[] } | { kind: "wait"; poolSize: number };
+type Reservation =
+	| { kind: "assign"; items: Reserved[] }
+	| { kind: "wait"; poolSize: number }
+	| { kind: "queued"; position: number; total: number; reason: string; evict: Eviction[] };
 
 const DEFAULT_POLL_MS = 2_000;
 const MAX_CONFLICT_RETRIES = 5;
@@ -109,7 +161,8 @@ function reserve(
 	input: ClaimInput,
 	rawInventory: InventoryDevice[],
 	reclaimed: string[],
-	skip: ReadonlySet<string>
+	skip: ReadonlySet<string>,
+	cap?: CapacityRound
 ): Reservation {
 	const { store, request, owner } = input;
 	const now = input.now();
@@ -120,13 +173,20 @@ function reserve(
 		withPending,
 		liftExpiredQuarantines(input, withPending, store.listDevices(request.platform), now)
 	);
+	if (cap) store.reclaimStaleQueue(now, input.pidAlive);
 	const plan = allocate({ inventory, leases, request, now, pidAlive: input.pidAlive, skip });
+	if (cap && plan.kind === "assign") {
+		const gate = admit(input, cap, plan.steps, leases, now);
+		if (gate) return gate;
+	}
 	if (plan.kind === "wait") {
+		if (cap) store.dequeue(cap.queueId);
 		const poolSize = inventory.filter(
 			(d) => d.platform === request.platform && d.wardenCreated && d.profile === request.profile
 		).length;
 		return { kind: "wait", poolSize };
 	}
+	if (cap) store.dequeue(cap.queueId);
 	const common = { owner, ...(input.label !== undefined ? { label: input.label } : {}) };
 	const items = plan.steps.map((step): Reserved => {
 		if (step.action === "create") {
@@ -154,6 +214,127 @@ function reserve(
 		return { action: step.action, device: step.device, lease };
 	});
 	return { kind: "assign", items };
+}
+
+const bootedState = (d: InventoryDevice): boolean => d.state === "booted" || d.state === "booting";
+
+/** Cost of everything booted or booting on the host (foreign included) plus creates not yet visible in it. */
+function hostUsage(cap: CapacityRound, leases: Lease[]): Cost {
+	const live = cap.hostInventory.filter(bootedState);
+	const names = new Set(live.map((d) => d.name));
+	const pending = leases.flatMap((l) =>
+		l.resource.kind === "device" && l.resource.id.startsWith(PENDING_PREFIX) && !names.has(l.resource.name)
+			? [l.resource.platform]
+			: []
+	);
+	return totalCost([...live.map((d) => d.platform), ...pending], cap.deps.config);
+}
+
+/**
+ * The capacity gate (caller holds the store lock): undefined to proceed, else the `queued` reservation.
+ * A plan that only reuses booted devices needs no slot and always proceeds (backfill). Otherwise the
+ * claim must be queue head, fit the budget and see no memory pressure.
+ */
+function admit(
+	input: ClaimInput,
+	cap: CapacityRound,
+	steps: AllocationStep[],
+	leases: Lease[],
+	now: number
+): Extract<Reservation, { kind: "queued" }> | undefined {
+	const { store, request } = input;
+	const boots = steps.filter((s) => s.action !== "reuse").length;
+	if (boots === 0) {
+		store.dequeue(cap.queueId);
+		return undefined;
+	}
+	const { config, budget } = cap.deps;
+	const need = totalCost(Array<Platform>(boots).fill(request.platform), config);
+	store.enqueue({
+		id: cap.queueId,
+		platform: request.platform,
+		profile: request.profile,
+		units: need.cpu,
+		priority: input.priority ?? PRIORITY.normal,
+		enqueuedAt: cap.enqueuedAt,
+		heartbeatAt: now,
+		owner: input.owner,
+		...(input.label !== undefined ? { label: input.label } : {}),
+		pid: input.selfPid ?? process.pid,
+	});
+	store.refreshQueue(cap.queueId, now);
+	const entries = store.listQueue();
+	const position = queuePosition(entries, cap.queueId, now) ?? 1;
+	const head = position === 1;
+	const usage = hostUsage(cap, leases);
+	const fit = fits(usage, need, budget);
+	const held = cap.pressure !== "normal";
+	if (head && fit.fits && !held) return undefined;
+	const reason = !fit.fits
+		? explain(fit, usage, budget)
+		: held
+			? `memory pressure ${cap.pressure}`
+			: "waiting behind higher-priority claims";
+	const evict = head && !fit.fits ? pickEvictions(input, cap, steps, leases, usage, need, now) : [];
+	return { kind: "queued", position, total: entries.length, reason, evict };
+}
+
+/**
+ * Idle warden devices to shut down so the queue head fits: booted, no live lease, not golden or
+ * quarantined, not about to be reused by this plan; least recently used first. Empty unless shutting
+ * them all down actually makes room. Each gets a lease so nobody claims it before it is shut down.
+ */
+function pickEvictions(
+	input: ClaimInput,
+	cap: CapacityRound,
+	steps: AllocationStep[],
+	leases: Lease[],
+	usage: Cost,
+	need: Cost,
+	now: number
+): Eviction[] {
+	const { store } = input;
+	if (!cap.deps.shutdownIdle) return [];
+	const held = new Set(leases.filter((l) => isLeaseAlive(l, now, input.pidAlive)).map((l) => resourceKey(l.resource)));
+	const planned = new Set(steps.flatMap((s) => (s.action === "create" ? [] : [s.device.id])));
+	const records = store.listDevices();
+	const lastUsed = new Map(records.map((r) => [`${r.platform}:${r.id}`, r.lastUsedAt]));
+	const used = (d: InventoryDevice) => lastUsed.get(`${d.platform}:${d.id}`) ?? 0;
+	const idle = markWardenDevices(cap.hostInventory, records)
+		.filter(
+			(d) =>
+				d.state === "booted" &&
+				d.wardenCreated &&
+				d.golden !== true &&
+				d.quarantined !== true &&
+				!planned.has(d.id) &&
+				!cap.noEvict.has(d.id) &&
+				!held.has(resourceKey({ kind: "device", platform: d.platform, id: d.id, name: d.name }))
+		)
+		.sort((a, b) => used(a) - used(b));
+	const picked: InventoryDevice[] = [];
+	let left = usage;
+	for (const device of idle) {
+		const cost = deviceCost(device.platform, cap.deps.config);
+		left = addCost(left, { memMb: -cost.memMb, cpu: -cost.cpu });
+		picked.push(device);
+		if (fits(left, need, cap.deps.budget).fits) {
+			return picked.map((device) => ({
+				device,
+				leaseId: store.insertLease(
+					{
+						resource: deviceResource(device),
+						owner: input.owner,
+						label: "capacity-evict",
+						ttlMs: input.ttlMs,
+						pid: input.selfPid ?? process.pid,
+					},
+					now
+				).id,
+			}));
+		}
+	}
+	return [];
 }
 
 function claimQuarantineExpired(record: DeviceRecord, now: number): boolean {
@@ -413,30 +594,79 @@ async function completeRound(
  * All-or-nothing: if any device fails, every lease taken by this call is released.
  */
 export async function claimDevices(input: ClaimInput): AsyncResult<ClaimOutcome> {
-	const deadline = input.now() + input.waitMs;
+	const queueId = input.queueId ?? `q_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+	try {
+		return await claimRounds(input, queueId);
+	} finally {
+		if (input.capacity) input.store.dequeue(queueId);
+	}
+}
+
+async function claimRounds(input: ClaimInput, queueId: string): AsyncResult<ClaimOutcome> {
+	const startedAt = input.now();
+	const deadline = startedAt + input.waitMs;
 	const reclaimed: string[] = [];
 	const health: HealthLog = { skip: new Set(), skipOnce: new Set(), reasons: [], spent: 0 };
+	const round: Round = { deadline, reclaimed, health, noEvict: new Set() };
 	let conflicts = 0;
 
 	for (;;) {
-		const inventory = await input.provider.inventory();
-		if (!inventory.success) return inventory;
-
-		const skip = new Set([...health.skip, ...health.skipOnce]);
-		const reservation = tryReserve(input, inventory.data, reclaimed, skip);
+		const attempt = await reserveRound(input, queueId, startedAt, round);
+		if (!attempt.success) return attempt;
+		const reservation = attempt.data;
 		if (reservation.kind === "conflict" && conflicts++ < MAX_CONFLICT_RETRIES) continue;
 		if (reservation.kind === "conflict" || reservation.kind === "error") return err(reservation.error);
-		const done = await settle(input, reservation, { deadline, reclaimed, health });
+		const done = await settle(input, reservation, round);
 		if (done) return done;
 	}
 }
 
-type Round = { deadline: number; reclaimed: string[]; health: HealthLog };
+/** One round's reads (abort, inventory, capacity) and the reservation under the store lock. */
+async function reserveRound(input: ClaimInput, queueId: string, startedAt: number, round: Round): AsyncResult<Attempt> {
+	if (input.abort?.()) return err(CLAIM_ABORTED);
+	const inventory = await input.provider.inventory();
+	if (!inventory.success) return inventory;
+	const cap = await readCapacity(input, queueId, startedAt, round.noEvict);
+	if (cap && !cap.success) return cap;
+	const skip = new Set([...round.health.skip, ...round.health.skipOnce]);
+	return ok(tryReserve(input, inventory.data, round.reclaimed, skip, cap?.data));
+}
+
+async function readCapacity(
+	input: ClaimInput,
+	queueId: string,
+	enqueuedAt: number,
+	noEvict: ReadonlySet<string>
+): Promise<Result<CapacityRound> | undefined> {
+	const deps = input.capacity;
+	if (!deps) return undefined;
+	const hostInventory = await deps.hostInventory();
+	if (!hostInventory.success) return hostInventory;
+	const pressure = deps.pressure ? await deps.pressure() : undefined;
+	return ok({
+		deps,
+		hostInventory: hostInventory.data,
+		pressure: pressure?.success ? pressure.data : "normal",
+		queueId,
+		enqueuedAt,
+		noEvict,
+	});
+}
+
+type Round = {
+	deadline: number;
+	reclaimed: string[];
+	health: HealthLog;
+	noEvict: Set<string>;
+	/** last queued line logged / reservation seen, so progress prints only on change */
+	queuedKey?: string;
+	queued?: Extract<Reservation, { kind: "queued" }>;
+};
 
 /** After a reservation: the final result, or undefined to go round again (after waiting, or without unhealthy devices). */
 async function settle(
 	input: ClaimInput,
-	reservation: Extract<Attempt, { kind: "assign" | "wait" }>,
+	reservation: Reservation,
 	round: Round
 ): Promise<Result<ClaimOutcome> | undefined> {
 	const { health } = round;
@@ -444,13 +674,49 @@ async function settle(
 	health.skipOnce.clear();
 	if (reservation.kind === "assign")
 		return completeRound(input, reservation.items, round.reclaimed, health, round.deadline);
+	if (reservation.kind === "queued") {
+		round.queued = reservation;
+		const key = `${reservation.position}/${reservation.total}/${reservation.reason}`;
+		if (key !== round.queuedKey) {
+			round.queuedKey = key;
+			const { position, total, reason } = reservation;
+			input.log?.(`queued #${position} of ${total} (${priorityName(input.priority ?? PRIORITY.normal)}) — ${reason}`);
+		}
+		if (reservation.evict.length > 0) {
+			await evictIdle(input, reservation.evict, round.noEvict);
+			return undefined;
+		}
+	}
 	const remaining = round.deadline - input.now();
 	if (remaining <= 0) {
 		if (skippedOnce && health.overload) return err(overloadMessage(health.overload, health.reasons));
+		if (reservation.kind === "queued") {
+			return err(
+				`timed out in the boot queue at #${reservation.position} of ${reservation.total}: ${reservation.reason}`
+			);
+		}
 		return err(waitMessage(input.request, reservation.poolSize));
 	}
 	await pause(input, remaining);
 	return undefined;
+}
+
+/** Shut down the idle devices the queue head displaced (leases taken under the lock keep them ours meanwhile). */
+async function evictIdle(input: ClaimInput, evict: Eviction[], noEvict: Set<string>): Promise<void> {
+	const shutdown = input.capacity?.shutdownIdle;
+	try {
+		for (const { device } of evict) {
+			const result = (await shutdown?.(device)) ?? err("no shutdown");
+			if (result.success) {
+				input.log?.(`${device.name} (${device.id}): idle, shut down to free capacity for the queue`);
+			} else {
+				noEvict.add(device.id);
+				input.log?.(`${device.name} (${device.id}): could not shut down idle device (${result.error})`);
+			}
+		}
+	} finally {
+		input.store.deleteLeases(evict.map((e) => e.leaseId));
+	}
 }
 
 type Attempt = Reservation | { kind: "conflict"; error: string } | { kind: "error"; error: string };
@@ -459,10 +725,11 @@ function tryReserve(
 	input: ClaimInput,
 	inventory: InventoryDevice[],
 	reclaimed: string[],
-	skip: ReadonlySet<string>
+	skip: ReadonlySet<string>,
+	cap?: CapacityRound
 ): Attempt {
 	try {
-		return input.store.transaction(() => reserve(input, inventory, reclaimed, skip));
+		return input.store.transaction(() => reserve(input, inventory, reclaimed, skip, cap));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { kind: isUniqueConflict(error) ? "conflict" : "error", error: message };

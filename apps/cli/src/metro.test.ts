@@ -176,6 +176,32 @@ describe("startMetro", () => {
 		expect(h.kills).toEqual(["SIGTERM"]);
 	});
 
+	test("hands Metro the checkout's worktree + branch, over any inherited value", async () => {
+		const root = tempDir();
+		const s = serve(metroStatus(root));
+		const h = harness();
+		const deps: MetroDeps = {
+			...h.deps,
+			git: (cwd) =>
+				cwd === root
+					? { toplevel: "/ws/delacour-ui/firefish", commonDir: "/repo/.git", branch: "feature/x" }
+					: undefined,
+		};
+		const metro = await startMetro(deps, {
+			projectRoot: root,
+			port: s.port,
+			env: { WARDEN_WORKTREE: "stale" },
+			readyTimeoutMs: 5_000,
+		});
+		if (!metro.success) throw new Error(metro.error);
+		expect(h.spawned[0]?.env).toEqual({
+			WARDEN_WORKTREE: "firefish",
+			WARDEN_BRANCH: "feature/x",
+			EXPO_NO_TELEMETRY: "1",
+		});
+		await metro.data.stop();
+	});
+
 	test("a foreign Metro on the port never reports ready: fails naming its root, our Metro is stopped", async () => {
 		const root = tempDir();
 		const other = tempDir();

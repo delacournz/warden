@@ -56,6 +56,18 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./ls")).lsCommand,
 	},
 	{
+		name: "capacity",
+		group: "Lease",
+		summary: "machine capacity: budget, booted devices (foreign too), per-device cost, memory pressure",
+		load: async () => (await import("./capacity")).capacityCommand,
+	},
+	{
+		name: "queue",
+		group: "Lease",
+		summary: "claims waiting for host capacity, head first (position, priority, age, owner)",
+		load: async () => (await import("./queue")).queueCommand,
+	},
+	{
 		name: "devices",
 		aliases: ["list"],
 		group: "Devices",
@@ -162,6 +174,18 @@ export const COMMANDS: readonly CommandEntry[] = [
 		group: "Setup",
 		summary: "set an Expo app up for warden dev / warden e2e (warden.config.ts, a first spec)",
 		load: async () => (await import("./init")).initCommand,
+	},
+	{
+		name: "completion",
+		group: "Setup",
+		summary: "print the tab-completion script for zsh / bash / fish (`warden install` sets it up)",
+		load: async () => (await import("./completion")).completionCommand,
+	},
+	{
+		name: "__complete",
+		summary: "list completions for a partial command line (internal; used by `warden completion` scripts)",
+		hidden: true,
+		load: async () => (await import("./complete")).completeCommand,
 	},
 	{
 		name: "skill",

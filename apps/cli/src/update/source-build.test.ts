@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { compileArgs, type EmbeddedBuild } from "./source-build";
+import { buildFromSource, compileArgs, type EmbeddedBuild, runtimeBlobArgs } from "./source-build";
 
 const info: EmbeddedBuild = { channel: "release", version: "1.2.3", builtAt: "2026-10-16T00:00:00.000Z" };
 
@@ -33,6 +33,12 @@ describe("compileArgs", () => {
 		expect(JSON.parse(value ?? "")).toEqual(info);
 	});
 
+	test("extra files to embed come after the entry", () => {
+		const embedded = compileArgs({ entry: "/src/cli.ts", outfile: "/out/w", info, embed: ["/tmp/e2e-runtime.bin"] });
+		expect(embedded.indexOf("/tmp/e2e-runtime.bin")).toBe(embedded.indexOf("/src/cli.ts") + 1);
+		expect(cmd).not.toContain("/tmp/e2e-runtime.bin");
+	});
+
 	test("a cross-compile target is passed through", () => {
 		const cross = compileArgs({ entry: "/src/cli.ts", outfile: "/out/w", info, target: "bun-linux-x64" });
 		expect(cross).toContain("--target=bun-linux-x64");
@@ -60,4 +66,47 @@ describe("bytecode build", () => {
 			rmSync(outdir, { recursive: true, force: true });
 		}
 	}, 60_000);
+});
+
+describe("buildFromSource", () => {
+	test("packs the e2e runtime blob next to the outfile, embeds it, and removes it after", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "warden-source-build-"));
+		const calls: Array<readonly string[]> = [];
+		try {
+			const built = await buildFromSource(
+				async (cmd) => {
+					calls.push(cmd);
+					if (cmd[0] === "bun" && cmd[1]?.endsWith("e2e-runtime.ts")) writeFileSync(cmd[3] ?? "", "{}");
+					return { exitCode: 0, stdout: "", stderr: "" };
+				},
+				"/repo",
+				"1.2.3",
+				join(dir, "warden"),
+				() => 0
+			);
+			expect(built.success).toBe(true);
+			const blob = join(dir, "e2e-runtime.bin");
+			expect(calls[calls.length - 2]).toEqual(runtimeBlobArgs("/repo", blob, "1.2.3"));
+			expect(calls[calls.length - 1]).toContain(blob);
+			expect(existsSync(blob)).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("a failed pack is the error and nothing is compiled", async () => {
+		const calls: Array<readonly string[]> = [];
+		const built = await buildFromSource(
+			async (cmd) => {
+				calls.push(cmd);
+				return { exitCode: cmd[1]?.endsWith("e2e-runtime.ts") ? 1 : 0, stdout: "", stderr: "boom" };
+			},
+			"/repo",
+			"1.2.3",
+			"/out/warden",
+			() => 0
+		);
+		expect(built.success).toBe(false);
+		expect(calls.some((c) => c.includes("--compile"))).toBe(false);
+	});
 });

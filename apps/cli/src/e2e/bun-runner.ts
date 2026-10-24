@@ -48,15 +48,6 @@ export function findBun(
 	return found ? ok(found) : err("bun >= 1.3 is required on PATH (or set WARDEN_BUN)");
 }
 
-/** `@delacour/warden-e2e/preload` as the suite's project resolves it (`resolve` throws when it can't). */
-export function findPreload(cwd: string, resolve: (specifier: string, from: string) => string): Result<string> {
-	try {
-		return ok(resolve("@delacour/warden-e2e/preload", cwd));
-	} catch {
-		return err("bun add -d @delacour/warden-e2e");
-	}
-}
-
 /**
  * Flows → at most `n` shards, round-robin by sorted id (flow `i` goes to shard `i % n`): the same
  * flows always land together, whatever order they were selected in. No flows, no shards.

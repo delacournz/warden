@@ -1,4 +1,5 @@
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
+import { PRIORITY } from "@delacour/warden-core/queue";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { claimWithFlags, leasePidFor, parseClaimFlags, parsePlatform, resolveOwner } from "../claim-flags";
@@ -103,11 +104,17 @@ function liveShared(lease: Lease, pidAlive: PidAlive): boolean {
 async function claimFresh(ctx: CommandContext, owner: Owner, flags: UiDeviceFlags): Promise<Result<UiDevice, UiError>> {
 	const platform = parsePlatform(flags.platform ?? "ios");
 	if (!platform.success) return fail(uiError("usage", platform.error));
-	const parsed = parseClaimFlags(platform.data, {
-		...(flags.profile !== undefined ? { profile: flags.profile } : {}),
-		...(flags.runtime !== undefined ? { runtime: flags.runtime } : {}),
-		label: UI_LEASE_LABEL,
-	});
+	const parsed = parseClaimFlags(
+		platform.data,
+		{
+			...(flags.profile !== undefined ? { profile: flags.profile } : {}),
+			...(flags.runtime !== undefined ? { runtime: flags.runtime } : {}),
+			label: UI_LEASE_LABEL,
+		},
+		undefined,
+		undefined,
+		PRIORITY.high
+	);
 	if (!parsed.success) return fail(uiError("usage", parsed.error));
 	const outcome = await claimWithFlags(ctx, owner, parsed.data, leasePidFor(owner));
 	if (!outcome.success) return fail(uiError("failed", `claim failed: ${outcome.error}`));

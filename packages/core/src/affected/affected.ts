@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { CONFIG_FILE, findWardenConfig, loadProject, type ParsedWardenConfig } from "../builds/config";
+import { CONFIG_FILE, type ConfigSource, type FoundConfig, findWardenConfig, loadProject } from "../builds/config";
+import { overlayDirUnlessRepoConfig } from "../builds/overlay";
 import type { Exec } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
 import type { Platform } from "../types";
@@ -17,6 +18,10 @@ export type Suite = {
 	name: string;
 	config: E2eSuiteConfig;
 	configDir: string;
+	/** where the config came from (`overlay`: `configDir` is under `~/.warden`, flows resolve there) */
+	source: ConfigSource;
+	/** the checkout the suite is for: what `git diff` runs in (`configDir` itself unless the config is an overlay) */
+	rootDir: string;
 	/** where the runner / serve / setup run: the suite's `project` root, else `configDir` */
 	cwd: string;
 	/** root of `project` (what `app` installs) */
@@ -46,6 +51,8 @@ export type AffectedInput = {
 	cacheDir?: string;
 	/** per-command memo of the git facts (default: a short-lived shared one) */
 	git?: GitFactsCache;
+	/** locates the `~/.warden` overlay (`WARDEN_HOME`); default `process.env` */
+	env?: Record<string, string | undefined>;
 };
 
 export type Affected = {
@@ -63,10 +70,16 @@ export type Affected = {
  * `@delacour/warden-e2e` spec process per device, against the dev client (the `dev` variant when the
  * project has one) on a Metro warden owns.
  */
-function defaultSuite(cwd: string, stopAt: string | undefined, headless: boolean | undefined): Result<Suite> {
+function defaultSuite(
+	cwd: string,
+	stopAt: string | undefined,
+	headless: boolean | undefined,
+	overlayDir: string | undefined
+): Result<Suite> {
 	const project = loadProject({
 		start: cwd,
 		env: {},
+		...(overlayDir ? { overlayDir } : {}),
 		variant: "dev",
 		variantOptional: true,
 		...(stopAt ? { stopAt } : {}),
@@ -89,6 +102,8 @@ function defaultSuite(cwd: string, stopAt: string | undefined, headless: boolean
 		name,
 		config,
 		configDir: root,
+		source: project.data.source,
+		rootDir: root,
 		cwd: root,
 		projectRoot: root,
 		implicit: true,
@@ -100,13 +115,22 @@ function defaultSuite(cwd: string, stopAt: string | undefined, headless: boolean
  * `e2e.<name>` from the nearest warden config (walking up to the git root); with no suite configured
  * and none named, the default suite of the Expo app around `cwd`.
  */
-export async function findSuite(exec: Exec, cwd: string, name?: string, git?: GitFactsCache): AsyncResult<Suite> {
+export async function findSuite(
+	exec: Exec,
+	cwd: string,
+	name?: string,
+	git?: GitFactsCache,
+	env: Record<string, string | undefined> = process.env
+): AsyncResult<Suite> {
 	const stopAt = (await readGitFacts(exec, cwd, git))?.toplevel;
-	const found = findWardenConfig(cwd, stopAt);
+	const overlay = await overlayDirUnlessRepoConfig(exec, cwd, stopAt, env, git);
+	const found = findWardenConfig(cwd, stopAt, env, overlay);
 	if (!found.success) return found;
 	const suites = found.data?.config.e2e ?? {};
 	const names = Object.keys(suites);
-	if (names.length === 0 && name === undefined) return defaultSuite(cwd, stopAt, found.data?.config.headless);
+	if (names.length === 0 && name === undefined) {
+		return defaultSuite(cwd, stopAt, found.data?.config.headless, overlay);
+	}
 	if (!found.data) return err(`no ${CONFIG_FILE} found from ${cwd}`);
 	const pick = name ?? (names.length === 1 ? names[0] : undefined);
 	if (pick === undefined)
@@ -115,19 +139,22 @@ export async function findSuite(exec: Exec, cwd: string, name?: string, git?: Gi
 		);
 	const config = suites[pick];
 	if (!config) return err(`no e2e suite "${pick}" in ${CONFIG_FILE} (${names.join(", ") || "none"})`);
-	return ok(toSuite(pick, config, found.data.dir, found.data.config));
+	return ok(toSuite(pick, config, found.data));
 }
 
 /** The suite with its project root resolved and the top-level `headless` as its default. */
-function toSuite(name: string, config: E2eSuiteConfig, dir: string, top: ParsedWardenConfig): Suite {
+function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suite {
+	const { dir, rootDir, source, config: top } = found;
 	const project = top.projects?.find((p) => p.name === config.project);
-	const projectRoot = project ? resolve(dir, project.root) : undefined;
+	const projectRoot = project ? resolve(rootDir, project.root) : undefined;
 	const headless = config.headless ?? top.headless;
 	return {
 		name,
 		config,
 		configDir: dir,
-		cwd: projectRoot ?? dir,
+		source,
+		rootDir,
+		cwd: projectRoot ?? rootDir,
 		...(projectRoot ? { projectRoot } : {}),
 		...(headless !== undefined ? { headless } : {}),
 	};
@@ -149,7 +176,7 @@ async function loadChanges(input: AffectedInput, suite: Suite, base: string): As
 	if (input.only) return ok([]);
 	if (input.files) {
 		return ok(
-			input.files.map((f) => ({ path: relative(suite.configDir, join(input.cwd, f)), status: "modified" as const }))
+			input.files.map((f) => ({ path: relative(suite.rootDir, join(input.cwd, f)), status: "modified" as const }))
 		);
 	}
 	const changed = await changedFiles(input.exec, suite.configDir, base, input.git);
@@ -203,7 +230,7 @@ const usesGit = (input: AffectedInput): boolean => !input.files && !input.only;
 
 /** Changed files → the flows each platform must run (with reasons), per `e2e.<suite>`. */
 export async function computeAffected(given: AffectedInput): AsyncResult<Affected> {
-	const suite = await findSuite(given.exec, given.cwd, given.suite, given.git);
+	const suite = await findSuite(given.exec, given.cwd, given.suite, given.git, given.env);
 	if (!suite.success) return suite;
 	// a suite nobody mapped has nothing to diff against: every flow runs
 	const everything = suite.data.implicit && !given.files && !given.only;

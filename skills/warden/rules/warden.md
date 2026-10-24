@@ -7,3 +7,4 @@ argent, agent-device and tester.army `e2e` / `@e2e-dev/mobile` are retired. Neve
 - **Saved tests = `*.e2e.ts` specs** with `@delacour/warden-e2e`, run by `warden e2e <suite>` (or `bun test --preload @delacour/warden-e2e/preload` by hand). Never start Metro or export `WARDEN_*` by hand for a suite; `warden dev ios --json` for a dev client.
 - **Evidence** = `screen-at-failure.txt` / `results.jsonl` / `e2e-report.json` under the batch dir, then logs. Fix a missing testID in the component (`accessible`), not with retries.
 - **Release.** `warden ui close --release` or `warden release <leaseId> [--shutdown]`. A bare claim lasts 5 min. Subagents never run bare `warden release --mine`: release by id, or `--mine --label <x>`.
+- **Queue.** A claim may block in the boot queue when the host is full (default `--wait 30m`). Don't retry, loop or raise `--max` to jump it; `warden queue` shows your position. `--no-wait` only for fail-fast.

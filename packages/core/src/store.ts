@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isLeaseAlive, type PidAlive } from "./liveness";
-import type { Lease, Owner, Platform, Resource } from "./types";
+import type { Lease, Owner, Platform, QueueEntry, Resource } from "./types";
 import { resourceKey } from "./types";
 
 /** `$WARDEN_HOME`, else `~/.warden`. */
@@ -82,8 +82,25 @@ export const MIGRATIONS: readonly string[] = [
 	);`,
 	`ALTER TABLE installs ADD COLUMN container TEXT;
 	ALTER TABLE installs ADD COLUMN exe_stamp TEXT;`,
+	`CREATE TABLE boot_queue (
+		id TEXT PRIMARY KEY,
+		platform TEXT NOT NULL,
+		profile TEXT NOT NULL,
+		units REAL NOT NULL,
+		priority INTEGER NOT NULL,
+		enqueued_at INTEGER NOT NULL,
+		heartbeat_at INTEGER NOT NULL,
+		owner_key TEXT NOT NULL,
+		owner TEXT NOT NULL,
+		label TEXT,
+		pid INTEGER
+	);
+	CREATE INDEX boot_queue_order ON boot_queue(priority, enqueued_at);`,
 	`ALTER TABLE leases ADD COLUMN shared INTEGER;`,
 ];
+
+/** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */
+export const QUEUE_TTL_MS = 60_000;
 
 export function ownerKey(owner: Owner): string {
 	switch (owner.kind) {
@@ -135,6 +152,35 @@ type LeaseRow = {
 	heartbeat_ms: number | null;
 	shared: number | null;
 };
+
+type QueueRow = {
+	id: string;
+	platform: Platform;
+	profile: string;
+	units: number;
+	priority: number;
+	enqueued_at: number;
+	heartbeat_at: number;
+	owner: string;
+	label: string | null;
+	pid: number | null;
+};
+
+function toQueueEntry(row: QueueRow): QueueEntry {
+	const entry: QueueEntry = {
+		id: row.id,
+		platform: row.platform,
+		profile: row.profile,
+		units: row.units,
+		priority: row.priority,
+		enqueuedAt: row.enqueued_at,
+		heartbeatAt: row.heartbeat_at,
+		owner: JSON.parse(row.owner) as Owner,
+	};
+	if (row.label !== null) entry.label = row.label;
+	if (row.pid !== null) entry.pid = row.pid;
+	return entry;
+}
 
 type DeviceRow = {
 	platform: Platform;
@@ -324,6 +370,61 @@ export class Store {
 				.filter((l) => !isLeaseAlive(l, now, pidAlive))
 				.map((l) => l.id);
 			this.deleteLeases(stale);
+			return stale;
+		});
+	}
+
+	/** Insert a queue row; an existing id keeps its `enqueuedAt` (queue age) and updates the rest. */
+	enqueue(entry: QueueEntry): QueueEntry {
+		return this.transaction(() => {
+			this.db
+				.query(
+					`INSERT INTO boot_queue (id, platform, profile, units, priority, enqueued_at, heartbeat_at, owner_key, owner, label, pid)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					 ON CONFLICT (id) DO UPDATE SET platform = excluded.platform, profile = excluded.profile, units = excluded.units,
+					   heartbeat_at = excluded.heartbeat_at, label = excluded.label, pid = excluded.pid`
+				)
+				.run(
+					entry.id,
+					entry.platform,
+					entry.profile,
+					entry.units,
+					entry.priority,
+					entry.enqueuedAt,
+					entry.heartbeatAt,
+					ownerKey(entry.owner),
+					JSON.stringify(entry.owner),
+					entry.label ?? null,
+					entry.pid ?? null
+				);
+			const row = this.db.query<QueueRow, [string]>("SELECT * FROM boot_queue WHERE id = ?").get(entry.id);
+			if (!row) throw new Error(`boot_queue row ${entry.id} vanished`);
+			return toQueueEntry(row);
+		});
+	}
+
+	/** Stamp `heartbeat_at`; false when the row is gone (reclaimed or dequeued). */
+	refreshQueue(id: string, now: number): boolean {
+		return this.db.query("UPDATE boot_queue SET heartbeat_at = ? WHERE id = ?").run(now, id).changes > 0;
+	}
+
+	dequeue(id: string): boolean {
+		return this.db.query("DELETE FROM boot_queue WHERE id = ?").run(id).changes > 0;
+	}
+
+	/** Raw insertion order (`enqueued_at`, id); use `queueOrder` for admission order. */
+	listQueue(): QueueEntry[] {
+		return this.db.query<QueueRow, []>("SELECT * FROM boot_queue ORDER BY enqueued_at, id").all().map(toQueueEntry);
+	}
+
+	/** Delete queue rows whose waiter is gone: pid dead, or heartbeat older than `QUEUE_TTL_MS`. */
+	reclaimStaleQueue(now: number, pidAlive: PidAlive): string[] {
+		return this.transaction(() => {
+			const stale = this.listQueue()
+				.filter((e) => now - e.heartbeatAt > QUEUE_TTL_MS || (e.pid !== undefined && !pidAlive(e.pid)))
+				.map((e) => e.id);
+			const stmt = this.db.query("DELETE FROM boot_queue WHERE id = ?");
+			for (const id of stale) stmt.run(id);
 			return stale;
 		});
 	}

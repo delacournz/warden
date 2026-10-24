@@ -16,6 +16,10 @@ icon: Variable
 | `WARDEN_EMULATOR_AUDIO=1` | Android: keep the emulator's audio (claimed emulators run `-no-audio` otherwise) |
 | `WARDEN_ARRANGE=0` | don't tile Simulator.app windows after iOS claims |
 | `WARDEN_HEADLESS=1` (or `true`) | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/guides/headless)); `warden dev` ignores it |
+| `WARDEN_PRIORITY` | boot queue priority (`interactive\|high\|normal\|low\|N`) when no `--priority` is given ([Capacity & queue](/docs/guides/capacity)) |
+| `WARDEN_CAPACITY=off` | skip the capacity gate and boot queue |
+| `WARDEN_CAPACITY_MAX` | hard cap on weighted cpu units booted machine-wide (1 per iOS sim, 2 per Android emulator) |
+| `WARDEN_CAPACITY_HEADROOM_GB` | RAM held back from the budget (default `max(8, 25% of RAM)`) |
 | `WARDEN_AUTO_GC=0` | turn off background auto-gc |
 | `WARDEN_MAX_CACHE_SIZE` | build cache cap (e.g. `50G`, default `20G`) for `warden gc` (`--max-cache-size`), `warden builds prune` (`--max-size`) and auto-gc, which runs when the cache is over it |
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | Android SDK location (`adb`, `emulator`); without them warden falls back to `PATH` and cannot build the Android snapshot |
@@ -42,6 +46,23 @@ icon: Variable
 | `WARDEN_PORT_<i>` | the i-th `--port` lease |
 | `WARDEN_APP_PATH`, `WARDEN_APP_HASH` | with `--app`: installed build + fingerprint |
 | `WARDEN_HEADLESS` | `1` when the run is headless (also for `batch` / `e2e` serve, setup and jobs, and `dev`'s Metro); removed otherwise |
+
+## Set for Metro
+
+Every Metro warden starts (`warden dev`, `warden e2e` / `batch` serve) also gets these, so `app.config.ts` can tell worktrees apart. A native build never sees them, so the binary and its fingerprint stay the same.
+
+| Variable | Value |
+|---|---|
+| `WARDEN_WORKTREE` | the checkout's folder name (`basename` of the git toplevel) |
+| `WARDEN_BRANCH` | the current branch; absent on a detached HEAD |
+
+Name the dev server after the worktree in expo-dev-launcher's server list and "Recently opened":
+
+```ts
+// app.config.ts
+const worktree = process.env.WARDEN_WORKTREE;
+export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ };
+```
 
 ## Set for batch jobs
 
