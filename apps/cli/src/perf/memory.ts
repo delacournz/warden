@@ -174,6 +174,13 @@ async function iosMemory(c: Ctx, snapshot: boolean, outDir: string): Promise<Res
 	const vm = await simSpawn(c, ["vmmap", "--summary", String(pid)]);
 	const vmmap: VmmapSummary | undefined = vm.exitCode === 0 ? parseVmmap(vm.stdout) : undefined;
 	if (vmmap === undefined) {
+		if (/cannot examine process/i.test(vm.stderr)) {
+			return fail(
+				uiError("not_profileable", `the OS won't let vmmap read ${c.app} (pid ${pid})`, {
+					hint: "Apple-signed and release apps can't be inspected; use a debug build (get-task-allow)",
+				})
+			);
+		}
 		return fail(uiError("failed", `vmmap failed for pid ${pid}: ${vm.stderr.trim() || `exit ${vm.exitCode}`}`));
 	}
 	const lines = [

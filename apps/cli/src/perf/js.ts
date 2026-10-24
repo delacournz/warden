@@ -1,4 +1,3 @@
-import { relative } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { formatDuration } from "@delacour/warden-core/duration";
 import { DEFAULT_SAMPLING_INTERVAL_US } from "@delacour/warden-perf/js/cpu-profile";
@@ -21,6 +20,7 @@ import {
 } from "./js-capture";
 import { type JsOut, jsOutFor } from "./js-out";
 import { withPerfOptions } from "./options";
+import { displayPath } from "./paths";
 import { type PerfDeps, type PerfOptionValues, runPerf } from "./run";
 
 export type PerfJsOptions = PerfOptionValues & { duration?: string; samplingInterval?: string; metro?: string };
@@ -112,7 +112,7 @@ function successOf(
 			banners: [SIMULATOR_BANNER, ...(h.dev === true ? [DEV_BUILD_BANNER] : [])],
 			summary: [
 				`${app} on ${target.name ?? target.udid} (${target.platform}): ${h.sampleCount} samples over ${(h.durationMs / 1000).toFixed(1)}s, ${h.idlePct}% idle`,
-				`profile: ${relative(ctx.cwd, result.cpuPath) || result.cpuPath} (open in Chrome DevTools or speedscope)`,
+				`profile: ${displayPath(ctx, result.cpuPath)} (open in Chrome DevTools or speedscope)`,
 			],
 			findings: result.findings,
 			sections: [result.section],

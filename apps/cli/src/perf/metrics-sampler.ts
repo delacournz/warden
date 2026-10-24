@@ -35,7 +35,9 @@ const notRunning = (target: MetricsTarget): UiError =>
 	});
 
 /**
- * iOS simulator: `simctl spawn ps` matched on the app's executable path. CPU % is the delta of cumulative CPU
+ * iOS simulator: simulator processes are host processes and the sim runtime ships no `ps`, so this reads host
+ * `ps` and takes the row of the pid this sim's `launchctl` reports for the app (a system app's executable path is
+ * shared by every sim of a runtime), checked against the app's executable. CPU % is the delta of cumulative CPU
  * time over the wall time between readings (`ps %cpu` is a decaying average, useless for a rate); the first
  * reading is the baseline and has no CPU %.
  */
@@ -44,19 +46,21 @@ function iosSampler(ctx: CommandContext, target: MetricsTarget, bundle: IosAppBu
 	let lastWallMs: number | undefined;
 	return {
 		sample: async () => {
-			const res = await ctx.exec(["xcrun", "simctl", "spawn", target.udid, "ps", ...PS_ARGS], {
-				timeoutMs: 10_000,
-				env: PS_ENV,
-			});
+			const pid = await appPid(ctx, { platform: "ios", id: target.udid }, target.app);
+			if (pid === undefined) return { success: false, error: notRunning(target) };
+			const res = await ctx.exec(["ps", ...PS_ARGS], { timeoutMs: 10_000, env: PS_ENV });
 			const wallMs = ctx.now();
 			if (res.exitCode !== 0) {
 				return {
 					success: false,
-					error: uiError("failed", `ps failed on ${target.udid}: ${res.stderr.trim() || `exit ${res.exitCode}`}`),
+					error: uiError("failed", `ps failed: ${res.stderr.trim() || `exit ${res.exitCode}`}`),
 				};
 			}
 			const rows = parsePs(res.stdout);
-			const row = findByExecutable(rows, bundle.executablePath);
+			const row = findByExecutable(
+				rows.filter((r) => r.pid === pid),
+				bundle.executablePath
+			);
 			if (row === undefined) return { success: false, error: notRunning(target) };
 			const baseline = lastWallMs === undefined;
 			const deltas = cpuDeltas(rows, prev, baseline);

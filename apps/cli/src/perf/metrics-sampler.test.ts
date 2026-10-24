@@ -38,12 +38,15 @@ function setup(script: Script) {
 const psWith = (cpuTime: string, rssKb: number): string =>
 	fx("ps-timed-app.txt").replace("312400  12.4   1:12.34", `${rssKb}  12.4 ${cpuTime.padStart(9)}`);
 
+const launchctl = (pid: number | "-") => `PID\tStatus\tLabel\n${pid}\t0\tUIKitApplication:${APP}[0x1a2b][rb-legacy]\n`;
+
 const iosScript =
-	(ps: () => string): Script =>
+	(ps: () => string, pid: () => number | "-" = () => 845): Script =>
 	(cmd) => {
 		if (cmd.includes("get_app_container")) return { stdout: `${EXE.slice(0, EXE.lastIndexOf("/"))}\n` };
 		if (cmd.startsWith("plutil")) return { stdout: "Example\n" };
-		if (cmd.includes("simctl spawn U1 ps")) return { stdout: ps() };
+		if (cmd.includes("simctl spawn U1 launchctl list")) return { stdout: launchctl(pid()) };
+		if (cmd.startsWith("ps -axo")) return { stdout: ps() };
 		return undefined;
 	};
 
@@ -82,7 +85,12 @@ describe("iOS sampler", () => {
 	});
 
 	test("app not running: app_not_found", async () => {
-		const { c } = setup(iosScript(() => "  PID  PPID    RSS  %CPU      TIME STARTED                      COMMAND\n"));
+		const { c } = setup(
+			iosScript(
+				() => "  PID  PPID    RSS  %CPU      TIME STARTED                      COMMAND\n",
+				() => "-"
+			)
+		);
 		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		const r = await s.data.sample();
@@ -95,11 +103,51 @@ describe("iOS sampler", () => {
 		expect(s).toMatchObject({ success: false, error: { code: "app_not_found" } });
 	});
 
-	test("only reads: nothing but get_app_container, plutil and simctl spawn ps runs", async () => {
+	test("only reads: get_app_container, plutil, launchctl list and host ps (the sim runtime has no ps)", async () => {
 		const { c, calls } = setup(iosScript(() => fx("ps-timed-app.txt")));
 		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (s.success) await s.data.sample();
-		expect(calls.every((cmd) => /get_app_container|plutil|simctl spawn U1 ps/.test(cmd))).toBe(true);
+		expect(calls.every((cmd) => /get_app_container|plutil|simctl spawn U1 launchctl list|^ps -axo/.test(cmd))).toBe(
+			true
+		);
+		expect(calls.some((cmd) => cmd.includes("simctl spawn U1 ps"))).toBe(false);
+	});
+
+	test("a system app shared by every sim of a runtime: the row of this sim's pid, not another sim's", async () => {
+		const shared =
+			"/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/Applications/Preferences.app";
+		const rows = [
+			"  PID  PPID    RSS  %CPU      TIME STARTED                      COMMAND",
+			`  700     1  90000   1.0   0:03.00 Sat Oct 24 09:00:01 2026     ${shared}/Preferences`,
+			`  845     1  50000   1.0   0:02.00 Sat Oct 24 09:10:01 2026     ${shared}/Preferences`,
+		].join("\n");
+		const { c } = setup((cmd) => {
+			if (cmd.includes("get_app_container")) return { stdout: `${shared}\n` };
+			if (cmd.startsWith("plutil")) return { stdout: "Preferences\n" };
+			if (cmd.includes("simctl spawn U1 launchctl list")) return { stdout: launchctl(845) };
+			if (cmd.startsWith("ps -axo")) return { stdout: rows };
+			return undefined;
+		});
+		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		if (!s.success) throw new Error(s.error.message);
+		const r = await s.data.sample();
+		expect(r.success && r.data).toMatchObject({ pid: 845, rssKb: 50000 });
+	});
+
+	test("app relaunched: the new pid is picked up", async () => {
+		let pid = 845;
+		const { c } = setup(
+			iosScript(
+				() => fx("ps-timed-app.txt").replace(/^ {2}845 /m, `  ${pid} `),
+				() => pid
+			)
+		);
+		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		if (!s.success) throw new Error("create");
+		await s.data.sample();
+		pid = 999;
+		const r = await s.data.sample();
+		expect(r.success && r.data.pid).toBe(999);
 	});
 });
 

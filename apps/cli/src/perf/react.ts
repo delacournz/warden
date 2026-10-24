@@ -1,4 +1,3 @@
-import { relative } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { formatDuration } from "@delacour/warden-core/duration";
 import { parseDuration } from "@delacour/warden-perf/metrics/duration";
@@ -11,6 +10,7 @@ import type { PerfTarget } from "./device";
 import { connectJs } from "./js";
 import { defaultJsDeps, type JsDeps } from "./js-capture";
 import { withPerfOptions } from "./options";
+import { displayPath } from "./paths";
 import {
 	type ReactCaptureResult,
 	reactOwner,
@@ -53,7 +53,7 @@ function stoppedSuccess(
 		...(analysis.hotCommits.length > 0 && !hasCpu
 			? ["warden perf record --js --react --duration 10s   (adds the JS functions inside each hot commit)"]
 			: []),
-		`full report: ${relative(ctx.cwd, result.findingsPath) || result.findingsPath}`,
+		`full report: ${displayPath(ctx, result.findingsPath)}`,
 	];
 	const text = renderMarkdown(
 		{

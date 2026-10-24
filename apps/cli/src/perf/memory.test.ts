@@ -69,6 +69,28 @@ describe("warden perf memory (iOS)", () => {
 		expect(c.db.listLeases().length).toBe(0);
 	});
 
+	test("an app the OS won't let vmmap read (Apple-signed, no get-task-allow): not_profileable with a hint", async () => {
+		const { c, deps } = setup(
+			sim,
+			(cmd) => {
+				if (cmd.includes("launchctl list")) return { stdout: fx("launchctl-list-two-apps.txt") };
+				if (cmd.includes("vmmap --summary 880")) {
+					return {
+						exitCode: 1,
+						stderr:
+							"vmmap[20702]: vmmap cannot examine process 880 (Preferences) for unknown reasons, even though it appears to exist; try running with `sudo`.",
+					};
+				}
+				return undefined;
+			},
+			false
+		);
+		expect(await perfMemory(c, deps, { app: APP, record: true, json: true }, io)).toBe(1);
+		const err = json(c).error;
+		expect(err.code).toBe("not_profileable");
+		expect(err.hint).toContain("debug build");
+	});
+
 	test("not running: app_not_found", async () => {
 		const { c, deps } = setup(
 			sim,

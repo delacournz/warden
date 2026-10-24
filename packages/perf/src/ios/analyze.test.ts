@@ -48,6 +48,10 @@ describe("normaliseThread", () => {
 		["com.facebook.react.ShadowQueue 0x2 (A, pid: 1)", "Shadow Thread"],
 		["Thread 0x2c03 (A, pid: 1)", "Thread"],
 		["com.apple.network.connections 0x9 (A, pid: 1)", "com.apple.network.connections"],
+		["Main Thread (0x6655fe) (WindowServer, pid: 56295)", "Main Thread"],
+		["Preferences (0x1bb1cea) (Preferences, pid: 15431)", "Main Thread"],
+		["com.apple.uikit.eventfetch-thread (0x1bb2001) (Preferences, pid: 15431)", "com.apple.uikit.eventfetch-thread"],
+		["Thread (0x2c03) (A, pid: 1)", "Thread"],
 	])("%s", (raw, want) => expect(normaliseThread(raw)).toBe(want));
 });
 

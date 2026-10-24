@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
 import type { Platform } from "@delacour/warden-core/types";
 import { parseDuration } from "@delacour/warden-perf/metrics/duration";
@@ -29,6 +29,7 @@ import {
 	type NativeStopped,
 } from "./native-types";
 import { withPerfOptions } from "./options";
+import { displayPath } from "./paths";
 import { type PerfDeps, type PerfOptionValues, runPerf } from "./run";
 import { activeSessionFor, updateSession } from "./session";
 
@@ -221,7 +222,7 @@ function nativeSuccess(
 ): UiSuccess {
 	const { analysis } = input;
 	const findings: Finding[] = analysis?.findings ?? [];
-	const rel = relative(ctx.cwd, input.out) || input.out;
+	const rel = displayPath(ctx, input.out);
 	const next = [
 		`open ${rel}   (Instruments)`,
 		...(target.platform === "ios" ? ["warden perf native --leaks   (cold launch, leak check)"] : []),
@@ -373,7 +374,7 @@ export function perfNative(
 		);
 		if (!started.success) return started;
 		if (action === "start") {
-			const rel = relative(ctx.cwd, started.data.handle.out) || started.data.handle.out;
+			const rel = displayPath(ctx, started.data.handle.out);
 			return ok({
 				device: { udid: target.udid, platform: target.platform, name: target.name },
 				result: {

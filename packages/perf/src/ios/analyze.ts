@@ -29,15 +29,20 @@ export function dominantFrame(frames: readonly StackFrame[]): { frame: StackFram
 	return rn === undefined ? undefined : { frame: rn, cls: "rn" };
 }
 
-/** `Main Thread 0x1a2 (App, pid: 42)` → `Main Thread`; React Native's JS / shadow queues get stable names. */
+/**
+ * `Main Thread (0x1a2) (App, pid: 42)` → `Main Thread`; React Native's JS / shadow queues get stable names. On a
+ * simulator the main thread is labelled with the process name (`App (0x1a2) (App, pid: 42)`).
+ */
 export function normaliseThread(raw: string): string {
+	const process = /\(([^()]*),\s*pid:\s*\d+[^()]*\)\s*$/.exec(raw)?.[1]?.trim();
 	let name = raw
 		.replace(/\s*\([^()]*pid:\s*\d+[^()]*\)\s*$/, "")
 		.replace(/\s*\(\d+\)\s*$/, "")
+		.replace(/\s*\(0x[0-9a-fA-F]+\)/g, "")
 		.replace(/\s+0x[0-9a-fA-F]+\b/g, "")
 		.trim();
 	if (name === "" || /^Thread$/i.test(name)) name = "Thread";
-	if (/^Main Thread$/i.test(name)) return "Main Thread";
+	if (/^Main Thread$/i.test(name) || (process !== undefined && name === process)) return "Main Thread";
 	if (/hermes|mqt_js|mqt_v_js|react\.JavaScript|\bJS\b/i.test(name)) return "JS Thread";
 	if (/ShadowQueue|mqt_v_shadow|\bYoga\b/i.test(name)) return "Shadow Thread";
 	return name;
