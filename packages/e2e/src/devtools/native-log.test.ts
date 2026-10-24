@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
-import { captureNativeLog, type NativeFs, type NativeTarget } from "./native-log";
+import { captureNativeLog, type NativeFs, type NativeTarget, realNativeFs } from "./native-log";
 
 const ok = (stdout: string): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
 const fail = (stderr: string): ExecResult => ({ exitCode: 1, stdout: "", stderr });
@@ -146,5 +149,17 @@ describe("captureNativeLog android", () => {
 		);
 		expect(capture.files).toEqual([]);
 		expect(capture.problems[0]).toContain("native log");
+	});
+});
+
+describe("realNativeFs", () => {
+	test("write creates the attempt dir when nothing else did", () => {
+		const root = mkdtempSync(join(tmpdir(), "wdn-native-"));
+		try {
+			realNativeFs().write(join(root, "a", "b", "native.log"), "x");
+			expect(readFileSync(join(root, "a", "b", "native.log"), "utf8")).toBe("x");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

@@ -1,6 +1,6 @@
-import { copyFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
 
 export const NATIVE_LOG = "native.log";
@@ -54,8 +54,15 @@ export function realNativeFs(): NativeFs {
 				return [];
 			}
 		},
-		copy: copyFileSync,
-		write: (path, text) => writeFileSync(path, text),
+		// the attempt dir may not exist yet: nothing else wrote there when the driver never opened
+		copy: (from, to) => {
+			mkdirSync(dirname(to), { recursive: true });
+			copyFileSync(from, to);
+		},
+		write: (path, text) => {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, text);
+		},
 	};
 }
 
