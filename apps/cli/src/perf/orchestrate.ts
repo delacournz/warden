@@ -494,6 +494,7 @@ export async function finalizeSession(
 				crashDir: join(sessionDir(ctx, id), "crashes"),
 				timeoutMs: 20_000,
 			});
+			mkdirSync(join(sessionDir(ctx, id), "crashes"), { recursive: true });
 			writeFileAtomic(
 				join(sessionDir(ctx, id), CRASH_SUMMARY),
 				`${JSON.stringify({ count: read.crashes.length, lines: read.crashes.map(crashLine), findings: crashFindings(read.crashes), notes: read.notes }, null, 2)}\n`

@@ -291,6 +291,21 @@ describe("finalizeSession", () => {
 		expect(existsSync(join(sessionDir(c, id), "report.md"))).toBe(true);
 		expect(existsSync(join(sessionDir(c, id), "report.json"))).toBe(true);
 		expect(existsSync(join(sessionDir(c, id), "frames.json"))).toBe(true);
+		expect(r.data.warnings.filter((w) => w.startsWith("crashes:"))).toEqual([]);
+		expect(existsSync(join(sessionDir(c, id), "crashes", "summary.json"))).toBe(true);
+	});
+
+	test("iOS with no crashes: crashes/summary.json is still written (the dir is created)", async () => {
+		const s = setup();
+		const ios = target({ udid: "SIM-1", platform: "ios", name: "iphone" });
+		s.c.db.recordDevice({ platform: "ios", id: "SIM-1", name: "iphone" }, T0);
+		const r = await startPerf(s.c, s.deps, s.kit, ios, startOpts({ app: APP, metrics: true }));
+		if (!r.success) throw new Error(r.error.message);
+		const id = r.data.session.id;
+		const done = await finalizeSession(s.c, s.deps, s.kit, id, { reason: "user" });
+		if (!done.success) throw new Error(done.error.message);
+		expect(done.data.warnings.filter((w) => w.startsWith("crashes:"))).toEqual([]);
+		expect(existsSync(join(sessionDir(s.c, id), "crashes", "summary.json"))).toBe(true);
 	});
 
 	test("never signals a collector pid that is no longer the collector", async () => {
