@@ -58,7 +58,7 @@ would silently skip `boot_queue`. Not patched by hand: an ad-hoc `ALTER` breaks 
 candlefish (duplicate column), and an isolated `WARDEN_HOME` would hide leases from other agents.
 
 Fix options:
-- a. Merge order: whichever lands second rebases and appends its migration after the other (no code change).
+- a. **(chosen)** Merge order: whichever lands second rebases and appends its migration after the other (no code change).
 - b. Make additive-column migrations idempotent (check `PRAGMA table_info` before `ADD COLUMN`) so parallel branches
   sharing one DB converge. Recommended: worktrees all share `~/.warden`, so this will recur.
 
