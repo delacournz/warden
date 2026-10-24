@@ -166,6 +166,7 @@
       "name": "@delacour/warden-perf",
       "version": "0.1.0",
       "dependencies": {
+        "@jridgewell/trace-mapping": "^0.3.31",
         "zod": "^4.4.3",
       },
       "devDependencies": {

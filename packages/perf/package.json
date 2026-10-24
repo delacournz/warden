@@ -15,6 +15,7 @@
 		"test": "bun test"
 	},
 	"dependencies": {
+		"@jridgewell/trace-mapping": "^0.3.31",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
