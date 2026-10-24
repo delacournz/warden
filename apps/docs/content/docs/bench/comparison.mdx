@@ -1,6 +1,6 @@
 ---
 title: Framework comparison
-description: The same 8-test suite on one build and one device in warden, Maestro, Argent, agent-device, tester.army and Detox. Suite time, per-test medians, cold start, resources and footprint.
+description: The same 8-test suite on one build and one device in warden, Argent, agent-device and tester.army. Suite time, per-test medians, cold start, resources and footprint.
 icon: ChartBar
 ---
 
@@ -68,10 +68,8 @@ Residue is what is left on the machine after teardown. Footprint is how much sui
 | Framework | Gap |
 |---|---|
 | warden | Copied from the example app, retries written with warden's own options: `tap({ until })`, a deep-link retry, `systemAlerts: "dismiss"`. The hand-rolled helpers it replaced ran the published headline numbers; the idiomatic run is reported beside them. |
-| Maestro | Retries are `retry:` blocks that rerun the tap and the wait together. Checkbox state is read from the accessibility text. Step durations include Maestro's own polling. |
 | Argent | Retries are nested `when:` guards capped at two retaps. A checkbox's checked state is not readable, so the remaining-count assertion covers the effect. |
 | agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`. Needs a runner prepare step and a daemon. |
 | tester.army | Has its own copy of the hand-rolled helpers warden used before. Runs with a private agent-device state dir and Node 24 on `PATH`. |
-| Detox | Best effort. Detox 20.51 supports React Native up to 0.84 and the app is on 0.86. Needs `applesimutils` on iOS and an instrumented build on Android. |
 
 Each run is a snapshot on one machine with few warm repetitions: read the ratios as a guide, not a verdict. The full Markdown report for each run is in `docs/bench/` in the repo.

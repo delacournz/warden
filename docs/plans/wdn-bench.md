@@ -193,3 +193,7 @@ Handoff prompt for the child agent (B0): read this plan, `packages/e2e/AGENTS.md
 ## Resolved questions (user, 2026-10-16)
 
 1. Detox: best-effort (`unsupported` on failure). 2. Report: Markdown + static HTML. 3. Platforms: iOS + Android. 4. Execution: hand off to a Claude agent in the child worktree.
+
+## Status
+
+2026-10-24: Maestro and Detox removed (WDN-CPU 1): Maestro's suite never passed and Detox cannot attach to RN 0.86.
