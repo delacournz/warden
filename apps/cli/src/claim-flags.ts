@@ -18,6 +18,7 @@ import {
 	type HideDeps,
 	type HideStart,
 	hideSimWindows,
+	openDeviceHubWindows,
 	startHideSimWindows,
 } from "./sim-windows";
 
@@ -223,11 +224,16 @@ async function settleIosWindows(
 	const deps = options.os === undefined ? headlessDeps(ctx) : { ...headlessDeps(ctx), os: options.os };
 	if (flags.headless && options.onHide) options.onHide(await startHideSimWindows(deps, sims));
 	else if (flags.headless) await hideSimWindows(deps, sims);
-	else
+	else {
+		const booted = bootedByClaim(outcome).map((c) => ({ udid: c.device.id, name: c.device.name }));
+		const windowDeps = options.os === undefined ? ctx : { exec: ctx.exec, env: ctx.env, os: options.os };
+		const opened = await openDeviceHubWindows(windowDeps, booted);
 		await autoArrangeSimWindows(
-			ctx,
-			bootedByClaim(outcome).map((c) => c.device.name)
+			windowDeps,
+			booted.map((s) => s.name),
+			opened
 		);
+	}
 }
 
 /** JSON shape of claimed devices, shared by `claim` and `run`. */

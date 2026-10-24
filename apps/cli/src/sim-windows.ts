@@ -227,21 +227,52 @@ const SETTLE_MS = 500;
 
 /**
  * After a claim: best-effort arrange (macOS, unless `WARDEN_ARRANGE=0`). A freshly booted sim's
- * window can lag the boot, so while Simulator.app is showing windows but not yet every device in
+ * window can lag the boot, so while the viewer is showing windows but not yet every device in
  * `claimed`, retry briefly. `claimed` is who to wait for: the sims this claim booted — a sim that
  * was already running keeps whatever window (or none, when it booted headless) it had, so waiting
- * for it would only burn the retries. Errors are swallowed — window layout never fails a claim.
+ * for it would only burn the retries. `opened` (what `openDeviceHubWindows` returned) are windows
+ * that were just asked for, so an empty list is also waited out for them. Errors are swallowed —
+ * window layout never fails a claim.
  */
-export async function autoArrangeSimWindows(deps: AutoArrangeDeps, claimed: readonly string[]): Promise<void> {
+export async function autoArrangeSimWindows(
+	deps: AutoArrangeDeps,
+	claimed: readonly string[],
+	opened: readonly string[] = []
+): Promise<void> {
 	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0") return;
 	const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
 	for (let attempt = 1; ; attempt++) {
 		const result = await arrangeSimWindows(deps.exec);
-		if (!result.success || result.data.arranged.length === 0) return;
+		if (!result.success) return;
 		const { arranged } = result.data;
+		if (arranged.length === 0 && opened.length === 0) return;
 		if (claimed.every((name) => arranged.includes(name)) || attempt >= SETTLE_TRIES) return;
 		await sleep(SETTLE_MS);
 	}
+}
+
+/** Device Hub's deep link: opens (or focuses) that device's own window. */
+const deviceHubUrl = (udid: string): string => `devices://device/open?id=${udid}`;
+
+/**
+ * Xcode 27, non-headless: Device Hub opens no window when a sim boots (verified on 27.1), unlike
+ * Simulator.app, so ask for one per sim — `open -g` keeps the user's app in front. Only while Device
+ * Hub is already running: the URL launches it otherwise, and warden never launches a viewer (Xcode 26
+ * parity). `sims` should be the ones this claim booted; a sim that was already running keeps whatever
+ * window state its user gave it. Returns the names it asked for; never throws or fails a claim.
+ */
+export async function openDeviceHubWindows(
+	deps: Pick<AutoArrangeDeps, "exec" | "env" | "os">,
+	sims: readonly { udid: string; name: string }[]
+): Promise<string[]> {
+	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0" || sims.length === 0) return [];
+	if ((await detectSimViewer(deps.exec)).kind !== "device-hub") return [];
+	const opened: string[] = [];
+	for (const sim of sims) {
+		const out = await deps.exec(["open", "-g", deviceHubUrl(sim.udid)], { timeoutMs: 10_000 });
+		if (out.exitCode === 0) opened.push(sim.name);
+	}
+	return opened;
 }
 
 /** A device this run leased: closing windows is limited to these names. */
