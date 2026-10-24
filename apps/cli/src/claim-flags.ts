@@ -1,15 +1,18 @@
 import { availableParallelism } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { defaultMax, profileSlug } from "@delacour/warden-core/allocate";
+import { maxConcurrent } from "@delacour/warden-core/capacity";
 import { type ClaimedDevice, type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-core/owner";
 import { listAvds } from "@delacour/warden-core/providers/android";
+import { PRIORITY, parsePriority } from "@delacour/warden-core/queue";
 import type { DeviceRequest, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
+import { buildCapacityDeps } from "./capacity-deps";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
 import {
@@ -29,8 +32,13 @@ export function withClaimOptions<Args extends unknown[], Opts extends OptionValu
 		.option("--profile <slug>", "device profile, e.g. iphone-17 / pixel-10 (android default: first AVD)")
 		.option("--runtime <runtime>", "runtime: latest, iOS-26-5, 26.5 …")
 		.option("--count <n>", "how many devices", "1")
-		.option("--max <n>", "max warden devices of this profile (default: cores/4, cap 4)")
-		.option("--wait <duration>", "wait this long for a free device, e.g. 10m")
+		.option("--max <n>", "max warden devices of this profile (default: what the machine's capacity allows)")
+		.option("--wait <duration>", `queue up to this long for a free device or host capacity (default ${DEFAULT_WAIT})`)
+		.option("--no-wait", "fail at once instead of queueing when no device is free")
+		.option(
+			"--priority <priority>",
+			"boot-queue priority: interactive|high|normal|low or a number (env WARDEN_PRIORITY; default by command)"
+		)
 		.option("--ttl <duration>", "lease TTL without heartbeat (default 30m; bare `claim` by an agent: 5m)")
 		.option("--label <label>", "label shown in `warden ls`")
 		.option("--adopt", "allow allocating foreign (non-warden) devices")
@@ -54,7 +62,9 @@ export type ClaimFlagValues = {
 	runtime?: string;
 	count?: string;
 	max?: string;
-	wait?: string;
+	/** a duration, or `false` for `--no-wait` */
+	wait?: string | false;
+	priority?: string;
 	ttl?: string;
 	label?: string;
 	adopt?: boolean;
@@ -64,12 +74,39 @@ export type ClaimFlagValues = {
 
 export type ClaimFlags = {
 	request: DeviceRequest;
+	/** how long the claim may wait for a free device / host capacity; 0 = fail at once */
 	waitMs: number;
+	/** `--priority`, when given (beats `WARDEN_PRIORITY` and the command's default) */
+	priority?: number;
+	/** the calling command's priority when neither `--priority` nor `WARDEN_PRIORITY` says */
+	defaultPriority?: number;
+	/** `--max` was not given: with capacity on, the pool grows to what the machine allows */
+	maxDefaulted?: true;
 	ttlMs: number;
 	label?: string;
 	/** iOS: close the claimed sims' Simulator.app windows instead of tiling them */
 	headless?: true;
 };
+
+/** Claim queue wait when `--wait` is not given. */
+export const DEFAULT_WAIT = "30m";
+
+/** `interactive|high|normal|low` or a non-negative integer. */
+export function parsePriorityFlag(raw: string): Result<number> {
+	const parsed = parsePriority(raw);
+	return parsed.success ? parsed : err(`--priority: ${parsed.error}`);
+}
+
+/** Priority of a claim: `--priority`, else `WARDEN_PRIORITY`, else the command's default, else normal. */
+export function resolvePriority(flags: ClaimFlags, env: Record<string, string | undefined>): Result<number> {
+	if (flags.priority !== undefined) return ok(flags.priority);
+	const fromEnv = env.WARDEN_PRIORITY?.trim();
+	if (fromEnv) {
+		const parsed = parsePriorityFlag(fromEnv);
+		return parsed.success ? parsed : err(`WARDEN_PRIORITY=${fromEnv}: ${parsed.error}`);
+	}
+	return ok(flags.defaultPriority ?? PRIORITY.normal);
+}
 
 export function parsePlatform(value: string | undefined): Result<Platform> {
 	if (value === "ios" || value === "android") return ok(value);
@@ -85,13 +122,14 @@ function positiveInt(name: string, raw: string | undefined, fallback: number, mi
 /**
  * Validate claim flags; defaults from `config.defaults` and `defaultMax(cores)`. `defaultTtlMs` is
  * what `--ttl` falls back to: wrappers keep the 30 min default (they heartbeat); only bare `claim`
- * by an agent passes the short one.
+ * by an agent passes the short one. `defaultPriority` is the calling command's queue priority.
  */
 export function parseClaimFlags(
 	platformArg: string | undefined,
 	values: ClaimFlagValues,
 	cores: number = availableParallelism(),
-	defaultTtlMs: number = DEFAULT_TTL_MS
+	defaultTtlMs: number = DEFAULT_TTL_MS,
+	defaultPriority?: number
 ): Result<ClaimFlags> {
 	const platform = parsePlatform(platformArg);
 	if (!platform.success) return platform;
@@ -99,23 +137,33 @@ export function parseClaimFlags(
 	if (!count.success) return count;
 	const max = positiveInt("max", values.max, Math.max(defaultMax(cores), count.data), 0);
 	if (!max.success) return max;
-	const waitMs = values.wait === undefined ? ok(0) : parseDuration(values.wait);
+	const waitMs = values.wait === false ? ok(0) : parseDuration(values.wait ?? DEFAULT_WAIT);
 	if (!waitMs.success) return waitMs;
+	const priority = values.priority === undefined ? undefined : parsePriorityFlag(values.priority);
+	if (priority && !priority.success) return priority;
 	const ttlMs = values.ttl === undefined ? ok(defaultTtlMs) : parseDuration(values.ttl);
 	if (!ttlMs.success) return ttlMs;
 
-	const request: DeviceRequest = {
-		platform: platform.data,
-		profile: values.profile ?? DEFAULT_PROFILE[platform.data],
-		count: count.data,
-		max: max.data,
-	};
+	const request = deviceRequest(values, platform.data, count.data, max.data);
+	const flags: ClaimFlags = { request, waitMs: waitMs.data, ttlMs: ttlMs.data };
+	if (priority) flags.priority = priority.data;
+	if (defaultPriority !== undefined) flags.defaultPriority = defaultPriority;
+	return ok(withOptionalFlags(flags, values));
+}
+
+function deviceRequest(values: ClaimFlagValues, platform: Platform, count: number, max: number): DeviceRequest {
+	const request: DeviceRequest = { platform, profile: values.profile ?? DEFAULT_PROFILE[platform], count, max };
 	if (values.runtime !== undefined) request.runtime = values.runtime;
 	if (values.adopt) request.adopt = true;
-	const flags: ClaimFlags = { request, waitMs: waitMs.data, ttlMs: ttlMs.data };
+	return request;
+}
+
+/** The flags that only exist when given: `--label`, `--headless`, and `maxDefaulted` when `--max` was not. */
+function withOptionalFlags(flags: ClaimFlags, values: ClaimFlagValues): ClaimFlags {
+	if (values.max === undefined) flags.maxDefaulted = true;
 	if (values.label !== undefined) flags.label = values.label;
 	if (values.headless) flags.headless = true;
-	return ok(flags);
+	return flags;
 }
 
 /** Owner for this invocation: `--session`/hook id → CI → session env → the invoking shell (ppid). */
@@ -169,6 +217,8 @@ export type ClaimHideOptions = {
 	onHide?: (start: HideStart) => void;
 	/** the platform the hide runs on (tests); defaults to `process.platform` */
 	os?: NodeJS.Platform;
+	/** polled while the claim waits (queue, pool): true ends it with `CLAIM_ABORTED` */
+	abort?: () => boolean;
 };
 
 /**
@@ -195,6 +245,13 @@ export async function claimWithFlags(
 		if (!profile.success) return profile;
 		request = { ...request, profile: profile.data };
 	}
+	const priority = resolvePriority(flags, ctx.env);
+	if (!priority.success) return priority;
+	const capacity = await buildCapacityDeps(ctx, owner);
+	if (capacity && flags.maxDefaulted) {
+		const room = maxConcurrent(request.platform, capacity.budget, capacity.config);
+		request = { ...request, max: Math.max(request.max, room) };
+	}
 	const outcome = await claimDevices({
 		store: ctx.store(),
 		provider: providerFor(request.platform, ctx, owner),
@@ -206,6 +263,9 @@ export async function claimWithFlags(
 		now: ctx.now,
 		pidAlive: processAlive,
 		waitMs: flags.waitMs,
+		priority: priority.data,
+		...(options.abort ? { abort: options.abort } : {}),
+		...(capacity ? { capacity } : {}),
 		log: (line) => ctx.err(`warden: ${line}`),
 	});
 	if (outcome.success && request.platform === "ios") await settleIosWindows(ctx, outcome.data, flags, options);

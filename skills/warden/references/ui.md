@@ -29,6 +29,8 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 - `warden dev ios --json` already opens the dev client. `open <bundleId>` then only attaches (`attached to <id>`); `--relaunch` restarts it.
 - `warden ui` shares the device your own running `warden dev` holds: no `--force`, no `device_busy`. `--json` adds `"attachedTo": "<leaseId>"`; `open` prints `sharing <leaseId> with warden dev (pid N)`. `close --release` keeps that lease (warning `not released: … belongs to warden dev`); Ctrl-C `warden dev` releases it. Another session's device stays `device_foreign`; your running `warden e2e` / `batch` / `run` stays `device_busy`.
 - `--metro <url>` launches the dev client on that Metro and remembers it for the devtools commands.
+- `--relaunch` without `--metro` gives no `--initialUrl`: expo-dev-client reopens the sim's most recent Metro, often another worktree's dead port → launcher home. Relaunch with `--metro <metroUrl from warden dev>`.
+- warden's Metro gets `WARDEN_WORKTREE` / `WARDEN_BRANCH`; `app.config.ts` can append them to `name` so the launcher lists each worktree's server by name.
 - Android: `open <bundleId>` takes `--metro`/`--args` in the CLI but the driver rejects them. `warden dev android` opens the dev client via `adb reverse` + `exp+<slug>://expo-development-client/?url=...`. By hand, `open <url>` with that deep link.
 - `--relaunch`, `--metro`, `--args` apply to a bundle id, not a URL (`usage`).
 

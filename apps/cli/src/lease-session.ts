@@ -2,7 +2,7 @@ import { constants } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import type { EnsureResult } from "@delacour/warden-core/builds/resolve";
-import type { ClaimOutcome } from "@delacour/warden-core/claim";
+import { CLAIM_ABORTED, type ClaimOutcome } from "@delacour/warden-core/claim";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { claimPorts, parsePortSpec } from "@delacour/warden-core/ports";
@@ -260,6 +260,26 @@ async function installLegApp(
 	return ok(apps);
 }
 
+/** One device claimed after the run started (`LeaseSession.claimMore`). */
+export type MoreClaim = {
+	outcome: ClaimOutcome;
+	/** devices the headless hide could not boot again: still leased, not to be used */
+	lost: string[];
+	/** release just this claim's leases (the run no longer needs the device) */
+	drop: () => Promise<void>;
+};
+
+export type MoreClaimOptions = {
+	/** the claim to make: one device, usually at a lower priority than the run's own */
+	flags: ClaimFlags;
+	/** worker leg index handed to `onLeased` (the early warm-up numbers late workers by it) */
+	leg: number;
+	/** polled while the claim waits and before its install: true gives up (`INTERRUPTED`) */
+	aborted: () => boolean;
+	/** the device is held — before its `--app` install */
+	onLeased?: (outcome: ClaimOutcome, leg: number) => void;
+};
+
 export type LeaseSession = {
 	/** every claimed device, leg after leg */
 	outcome: ClaimOutcome;
@@ -272,6 +292,12 @@ export type LeaseSession = {
 	lost?: string[];
 	/** delete every lease and mark the devices used now */
 	release: () => Promise<void>;
+	/**
+	 * Claim and install one more device while the run is going (elastic workers). Its leases join
+	 * `leaseIds` — so the heartbeat and `release` cover them — unless the claim fails (nothing stays
+	 * leased) or the caller `drop`s it.
+	 */
+	claimMore: (o: MoreClaimOptions) => AsyncResult<MoreClaim>;
 };
 
 /** The two halves of an ensure, injectable for tests: the device-independent prepare and the per-device install. */
@@ -394,12 +420,15 @@ async function runLeg(
 	let claim: Result<ClaimOutcome>;
 	const hides: HideStart[] = [];
 	try {
-		claim = await claimWithFlags(ctx, owner, flags, pid, { onHide: (start) => hides.push(start) });
+		claim = await claimWithFlags(ctx, owner, flags, pid, {
+			onHide: (start) => hides.push(start),
+			...(args.aborted ? { abort: args.aborted } : {}),
+		});
 	} catch (error) {
 		await hides[0]?.settled;
 		return { claim: failure(error) };
 	}
-	if (!claim.success) return { claim };
+	if (!claim.success) return { claim: claim.error === CLAIM_ABORTED ? err(INTERRUPTED) : claim };
 	const outcome = claim.data;
 	const { result, failed } = await overlapHide(hides[0], {
 		leased: () => args.onLeased?.(outcome, leg),
@@ -503,6 +532,40 @@ export async function claimAll(
 	const release = async () => {
 		await releaseDevices(ctx, leaseIds);
 	};
+	const claimMore = async (o: MoreClaimOptions): AsyncResult<MoreClaim> => {
+		const more: LeaseArgs = { ...args, aborted: o.aborted };
+		delete more.onLeased;
+		if (o.onLeased) more.onLeased = o.onLeased;
+		const run = await runLeg(
+			ctx,
+			owner,
+			o.leg,
+			o.flags,
+			more,
+			deps.pid,
+			ensure && args.app ? { ensure, opts: args.app } : undefined
+		);
+		if (!run.claim.success) return run.claim;
+		const claimed = run.claim.data;
+		const ids = claimed.claimed.map((c) => c.lease.id);
+		if (run.install && !run.install.success) {
+			await args.beforeRelease?.();
+			await releaseDevices(ctx, ids, { touch: false });
+			return run.install;
+		}
+		leaseIds.push(...ids);
+		return ok({
+			outcome: claimed,
+			lost: run.lost ?? [],
+			drop: async () => {
+				for (const id of ids) {
+					const at = leaseIds.indexOf(id);
+					if (at >= 0) leaseIds.splice(at, 1);
+				}
+				await releaseDevices(ctx, ids);
+			},
+		});
+	};
 	const env = childEnv(ctx.env, outcome, ports.data);
 	setHeadlessEnv(
 		env,
@@ -519,7 +582,16 @@ export async function claimAll(
 		if (app.result.appPath) env.WARDEN_APP_PATH = app.result.appPath;
 		env.WARDEN_APP_HASH = app.result.hash;
 	}
-	return ok({ outcome, claims, ports: ports.data, env, release, leaseIds, ...(lost.length > 0 ? { lost } : {}) });
+	return ok({
+		outcome,
+		claims,
+		ports: ports.data,
+		env,
+		release,
+		claimMore,
+		leaseIds,
+		...(lost.length > 0 ? { lost } : {}),
+	});
 }
 
 /** `leased <name>, …` — the claim spinner's line. */

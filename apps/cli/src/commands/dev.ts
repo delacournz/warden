@@ -5,7 +5,9 @@ import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
 import { DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { bunExec } from "@delacour/warden-core/exec";
+import { readGitFactsSync } from "@delacour/warden-core/git-facts";
 import { isPortFree } from "@delacour/warden-core/ports";
+import { PRIORITY } from "@delacour/warden-core/queue";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
@@ -84,7 +86,7 @@ type DevOpts = ClaimFlagValues & {
 	installMode?: InstallMode;
 	resetKeychain?: true;
 	clean?: true;
-	/** `--json`: one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready */
+	/** `--json`: one line `{ udid, port, metroUrl, leaseIds, source }` on stdout once Metro is ready */
 	json?: true;
 	/** false = `--no-open` */
 	open: boolean;
@@ -190,11 +192,13 @@ async function openSession(
 	if (held.data === undefined) {
 		// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
 		// the device lease names its holder in `warden ls` and `warden ui`'s busy / sharing messages
-		const flags = parseClaimFlags(platform, {
-			...opts,
-			headless: opts.headless === true,
-			label: opts.label ?? DEV_LEASE_LABEL,
-		});
+		const flags = parseClaimFlags(
+			platform,
+			{ ...opts, headless: opts.headless === true, label: opts.label ?? DEV_LEASE_LABEL },
+			undefined,
+			undefined,
+			PRIORITY.high
+		);
 		if (!flags.success) return flags;
 		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
 		const session = await claimAll(
@@ -346,7 +350,8 @@ async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Ru
 				warn(ctx, `warden dev: couldn't open the dev client (${opened.error})${link}`);
 			}
 		}
-		if (json) emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds }, "");
+		if (json)
+			emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }, "");
 		else note(ctx, `warden dev: holding ${deviceId} + :${port} until Metro exits (WARDEN_UDID=${deviceId})`);
 		return await metro.data.proc.exited;
 	} finally {
@@ -416,6 +421,7 @@ async function dev(
 					sleep: deps.sleep,
 					spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, json ? "stderr" : "inherit"),
 					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
+					git: (root) => readGitFactsSync(root, { cache: ctx.git }),
 				},
 				{
 					projectRoot: project.data.project.root,

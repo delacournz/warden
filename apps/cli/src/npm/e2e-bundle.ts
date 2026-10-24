@@ -11,14 +11,20 @@ export const E2E_EXTERNALS = ["bun:test", "zod"] as const;
  * matters: the preload registers the default driver on the same `session` module `test` reads, so the entries
  * must not each carry their own copy. `WARDEN_E2E_VERSION` is defined to the published version.
  */
-export async function bundleE2e(input: { srcDir: string; outDir: string; version: string }): Promise<Result<string[]>> {
+export async function bundleE2e(input: {
+	srcDir: string;
+	outDir: string;
+	version: string;
+	/** imports left to the consumer (default `E2E_EXTERNALS`); the bundled runtime fallback inlines `zod` and keeps only `bun:test` */
+	externals?: readonly string[];
+}): Promise<Result<string[]>> {
 	const result = await Bun.build({
 		entrypoints: Object.values(E2E_ENTRIES).map((entry) => join(input.srcDir, entry.js.replace(/\.mjs$/, ".ts"))),
 		outdir: input.outDir,
 		target: "bun",
 		format: "esm",
 		splitting: true,
-		external: [...E2E_EXTERNALS],
+		external: [...(input.externals ?? E2E_EXTERNALS)],
 		naming: { entry: "[name].mjs", chunk: "chunk-[hash].mjs" },
 		define: { __WARDEN_E2E_VERSION__: JSON.stringify(input.version) },
 	});

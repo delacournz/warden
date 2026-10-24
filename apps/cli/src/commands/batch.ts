@@ -3,16 +3,23 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { expandArgv, expandText, jobSlug, parseJobLines, parseJobList } from "@delacour/warden-core/batch/expand";
 import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delacour/warden-core/batch/preset";
-import { type BatchEvent, type BatchSummary, type BatchWorker, runBatch } from "@delacour/warden-core/batch/schedule";
+import {
+	type BatchEvent,
+	type BatchHandle,
+	type BatchSummary,
+	type BatchWorker,
+	runBatch,
+} from "@delacour/warden-core/batch/schedule";
 import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-core/claim";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
-import { readGitFacts } from "@delacour/warden-core/git-facts";
+import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts";
 import { resolveHeadless } from "@delacour/warden-core/headless";
 import { isPortFree } from "@delacour/warden-core/ports";
+import { PRIORITY } from "@delacour/warden-core/queue";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { wardenHome } from "@delacour/warden-core/store";
-import type { Platform } from "@delacour/warden-core/types";
+import type { Owner, Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
@@ -42,6 +49,7 @@ import {
 	withRunners,
 } from "../batch/tui";
 import type { WarmConnect, WarmHelper } from "../batch/warm-drivers";
+import { buildCapacityDeps } from "../capacity-deps";
 import {
 	bootedByClaim,
 	type ClaimFlags,
@@ -56,7 +64,9 @@ import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { helperDir } from "../e2e/bun-runner";
+import { readE2ePackageVersion, stageBundledRuntime } from "../e2e/e2e-runtime";
 import { residentSocket, warmConnect } from "../e2e/warm-connect";
+import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "../elastic";
 import {
 	type AppFlagValues,
 	claimAll,
@@ -89,6 +99,7 @@ import {
 import { emit, note, reportError, warn } from "../output";
 import { hideSimWindows } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
+import { currentBuild } from "../update/build-info";
 
 export type KillSignal = ForwardedSignal | "SIGKILL";
 
@@ -157,6 +168,10 @@ export type BatchDeps = LeaseSessionDeps & {
 	which: (cmd: string) => string | null | undefined;
 	/** `Bun.resolveSync`: the file a package specifier resolves to from `from` (throws when it does not) */
 	resolveModule: (specifier: string, from: string) => string;
+	/** the published version of the `@delacour/warden-e2e` that owns a resolved preload (`undefined`: workspace sources) */
+	e2eVersion: (preloadPath: string) => string | undefined;
+	/** extract the `@delacour/warden-e2e` copy this warden ships and return its preload (repos without the dependency) */
+	bundledE2e: (ctx: CommandContext) => AsyncResult<string>;
 	/** where the spec drivers' native helper lives next to this warden (`WARDEN_HELPER_DIR`) */
 	helperDir: () => string;
 };
@@ -285,7 +300,7 @@ export function parseBatchArgs(
 	cwd: string,
 	base: BatchBase = {}
 ): Result<BatchArgs> {
-	const flags = parseClaimFlags(platform, opts);
+	const flags = parseClaimFlags(platform, opts, undefined, undefined, PRIORITY.low);
 	if (!flags.success) return flags;
 	const app = parseAppFlags(opts);
 	if (!app.success) return app;
@@ -368,7 +383,14 @@ async function waitReady(
 	}
 }
 
-type Device = BatchWorker & { name: string; video?: string; videoStartedAt?: number; leg?: string };
+type Device = BatchWorker & {
+	name: string;
+	video?: string;
+	videoStartedAt?: number;
+	leg?: string;
+	/** an elastic worker: ms after the run started that it joined */
+	joinedAfterMs?: number;
+};
 
 /** The devices of one leg (a plain batch has one unnamed pool). */
 type Pool = { leg?: string; env: Record<string, string>; devices: Device[] };
@@ -415,6 +437,7 @@ function summaryJson(
 			udid: d.udid,
 			name: d.name,
 			...(d.leg !== undefined ? { leg: d.leg } : {}),
+			...(d.joinedAfterMs !== undefined ? { joinedAfterMs: d.joinedAfterMs } : {}),
 			...(d.video !== undefined ? { video: d.video, videoStartedAt: d.videoStartedAt } : {}),
 		})),
 		jobs: summary.results.map((r) => ({
@@ -552,6 +575,9 @@ async function runGrid(
 		startedAt: number;
 		resultFiles: ResultFiles;
 		flows: readonly TrackedFlow[] | undefined;
+		/** an elastic worker is about to join: its device (put in the grid), or undefined */
+		onJoin?: (worker: number) => Device | undefined;
+		onStart?: (queue: Queue, handle: BatchHandle) => void;
 	}
 ): Promise<{ summary: BatchSummary; screen: Display }> {
 	const rows = o.ready.flatMap((q) => q.rows).sort((a, b) => a.worker - b.worker);
@@ -566,8 +592,13 @@ async function runGrid(
 			retry: args.retry,
 			now: ctx.now,
 			signal: r.signal,
+			...(o.onStart ? { onStart: o.onStart } : {}),
 			onEvent: (e) => {
 				if (e.type === "job-end") ended.add(attemptKey(e));
+				if (e.type === "worker-join") {
+					const joined = o.onJoin?.(e.worker);
+					if (joined) screen.rows([joined]);
+				}
 				screen.event(e);
 			},
 			onQueue: (queue) => {
@@ -1128,6 +1159,7 @@ function launchRunMetro(
 				sleep: deps.sleep,
 				spawn: (cmd, env, cwd) => deps.spawn(cmd, { env, log: o.log, cwd, group: true, metro: true }),
 				expoBin: (root) => resolveExpoBin(root, deps.which),
+				git: (root) => readGitFactsSync(root, { cache: ctx.git }),
 			},
 			{
 				projectRoot: plan.projectRoot,
@@ -1221,6 +1253,8 @@ async function runPools(
 		signal: AbortSignal;
 		onEvent: (e: BatchEvent) => void;
 		onQueue: (queue: Queue) => void;
+		/** a pool's scheduler is running: workers may join it through `handle` */
+		onStart?: (queue: Queue, handle: BatchHandle) => void;
 	}
 ): Promise<BatchSummary> {
 	const pools: Queue[] = [];
@@ -1235,6 +1269,7 @@ async function runPools(
 				retry: o.retry,
 				now: o.now,
 				signal: o.signal,
+				...(o.onStart ? { onStart: (handle: BatchHandle) => o.onStart?.(pool, handle) } : {}),
 				// each pool reports its own `done`; the run has one
 				onEvent: (e) => {
 					if (e.type !== "done") o.onEvent(e);
@@ -1619,7 +1654,136 @@ type RunSetup = {
 	warm: EarlyWarm | undefined;
 	/** the iOS slim, started per device as it was leased (undefined: the suite does not slim) */
 	slim: EarlySlim<ClaimedDevice> | undefined;
+	/** capacity-limited run: the workers still to claim in the background, one at a time (undefined: all claimed up front) */
+	elastic: { plan: ElasticPlan; flags: ClaimFlags } | undefined;
 };
+
+/** What `claimLateWorker` shares with the run: the pools it prepared and the devices that may join. */
+type LateSink = { prepared: PreparedPool[]; devices: Map<number, Device> };
+
+/**
+ * An elastic worker: claim one more device at the late priority (installing the app, warming and
+ * slimming it as it is leased), prepare it like a pool of one, and hand it back for `addWorker`. A device
+ * that is lost to the headless hide or fails its setup is released.
+ */
+async function claimLateWorker(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	session: LeaseSession,
+	run: RunSetup,
+	prepare: Parameters<typeof preparePool>[6],
+	o: { worker: number; leg: number; abort: () => boolean; flags: ClaimFlags } & LateSink
+): AsyncResult<LateWorker> {
+	const more = await session.claimMore({
+		flags: o.flags,
+		leg: o.leg,
+		aborted: o.abort,
+		onLeased: (outcome, at) => {
+			run.warm?.leased(outcome, at);
+			run.slim?.leased(outcome);
+		},
+	});
+	if (!more.success) return more;
+	const { drop, lost, outcome } = more.data;
+	const c = outcome.claimed[0];
+	const pool = r.pools[0];
+	if (!c || !pool || lost.length > 0) {
+		await drop();
+		return err(`${c?.device.id ?? "device"} did not come back after the headless hide`);
+	}
+	const device: Device = { worker: o.worker, udid: c.device.id, name: c.device.name };
+	const prepared = await preparePool(
+		ctx,
+		deps,
+		args,
+		r,
+		{ ...session, outcome, lost },
+		{ ...pool, devices: [device] },
+		prepare
+	);
+	o.prepared.push(prepared);
+	if (prepared.live.length === 0) {
+		await drop();
+		return err(`setup failed on ${device.udid}`);
+	}
+	o.devices.set(o.worker, device);
+	return ok({ worker: { worker: o.worker, udid: device.udid }, drop });
+}
+
+/** The elastic workers of a run: start the background claims, admit each into the grid as it joins. */
+type ElasticRun = {
+	start: (queue: Queue, handle: BatchHandle) => void;
+	join: (worker: number) => Device | undefined;
+	/** every late worker's preparation, for the setup report */
+	prepared: PreparedPool[];
+	/** the background claims are over (they end on their own once the queue is drained or the run aborted) */
+	settled: () => Promise<unknown>;
+};
+
+/** A run without elastic workers. */
+const NO_ELASTIC: ElasticRun = { start: () => {}, join: () => undefined, prepared: [], settled: async () => {} };
+
+function elasticRun(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	r: RunContext,
+	session: LeaseSession,
+	run: RunSetup,
+	prepare: Parameters<typeof preparePool>[6],
+	startedAt: number
+): ElasticRun {
+	const plan = run.elastic;
+	const sink: LateSink = { prepared: [], devices: new Map() };
+	let claims: Promise<unknown> = Promise.resolve();
+	let queue: Queue | undefined;
+	return {
+		prepared: sink.prepared,
+		settled: () => claims,
+		start: (q, handle) => {
+			queue = q;
+			if (!plan) return;
+			claims = claimLateWorkers({
+				count: plan.plan.extra,
+				firstWorker: plan.plan.first,
+				handle,
+				signal: r.signal,
+				log: (line) => warn(ctx, `warden ${r.name}: ${line}`),
+				claim: (o) => claimLateWorker(ctx, deps, args, r, session, run, prepare, { ...o, flags: plan.flags, ...sink }),
+			});
+		},
+		join: (worker) => {
+			const device = sink.devices.get(worker);
+			if (!device) return undefined;
+			device.joinedAfterMs = Math.max(0, ctx.now() - startedAt);
+			queue?.workers.push(device);
+			r.devices.push(device);
+			return device;
+		},
+	};
+}
+
+/** What every pool's preparation shares: the run env, Metro once it is up, the slim and the warm-up. */
+function prepareOptions(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	args: BatchArgs,
+	run: RunSetup,
+	services: Services,
+	env: Record<string, string | undefined>
+): Parameters<typeof preparePool>[6] {
+	const metroPlan = args.metro;
+	const metroUp = services.metro;
+	return {
+		env,
+		metro: metroPlan && metroUp ? { plan: metroPlan, up: metroUp } : undefined,
+		slim: run.slim?.slim ?? recordedSlim(ctx, deps),
+		warm: run.warm,
+		closed: services.closed,
+	};
+}
 
 /** Everything after the claim: Metro → serve → recordings → setup → jobs → stop serve / recordings / Metro → batch.json → release. */
 async function supervise(
@@ -1657,6 +1821,8 @@ async function supervise(
 		for (const job of r.running) job.kill(signal);
 	});
 	const services: Services = { recordings: [], warm: run.warm, closed: new Set() };
+	/** elastic workers: the background claims (awaited before the release) and what they prepared */
+	let elastic = NO_ELASTIC;
 	// a live grid owns the terminal: what a pool still preparing (or a warm-up) says waits until it ends
 	const held: string[] = [];
 	let holding = false;
@@ -1693,15 +1859,7 @@ async function supervise(
 		const up = await startServices(ctx, deps, args, r, runEnv(session, args, batchDir), services, run.metro);
 		if (!up.success) return fail(up.error, { batchDir });
 		const { env, vars } = up.data;
-		const metroPlan = args.metro;
-		const metroUp = services.metro;
-		const prepare = {
-			env,
-			metro: metroPlan && metroUp ? { plan: metroPlan, up: metroUp } : undefined,
-			slim: run.slim?.slim ?? recordedSlim(ctx, deps),
-			warm: run.warm,
-			closed: services.closed,
-		};
+		const prepare = prepareOptions(ctx, deps, args, run, services, env);
 		// 12-3: each pool goes from setup to its first job on its own, without waiting for the other legs
 		const { preparing, ready } = startPools(pctx, deps, args, r, session, prepare);
 		if (!(await firstLive(preparing))) {
@@ -1724,15 +1882,25 @@ async function supervise(
 		const total = r.pools.length * jobs.length;
 		const startedAt = ctx.now();
 		holding = args.tui && deps.terminal.isTTY;
+		if (run.elastic) elastic = elasticRun(pctx, deps, args, r, session, run, prepare, startedAt);
 		const { summary, screen } = await runGrid(
 			ctx,
 			deps,
 			args,
 			r,
 			preparing.map((p) => p.then(toQueue)),
-			{ ready: ready.map(toQueue), total, startedAt, resultFiles, flows: hooks.flows }
+			{
+				ready: ready.map(toQueue),
+				total,
+				startedAt,
+				resultFiles,
+				flows: hooks.flows,
+				onStart: elastic.start,
+				onJoin: elastic.join,
+			}
 		);
-		const setups = setupsOf(r, await Promise.all(preparing));
+		await elastic.settled();
+		const setups = setupsOf(r, [...(await Promise.all(preparing)), ...elastic.prepared]);
 		const endedAt = ctx.now();
 		screen.end();
 		flush();
@@ -1767,6 +1935,8 @@ async function supervise(
 		return fail(error instanceof Error ? error.message : String(error));
 	} finally {
 		flush();
+		// an elastic claim still under way ends (it sees the queue drained or the abort) before its devices go
+		await elastic.settled().catch(() => {});
 		await teardown();
 		// a slim still under way (a run that failed before its setup) ends before its device is released
 		await run.slim?.settled();
@@ -1924,10 +2094,13 @@ export async function runSession(
 	hooks: SessionHooks = {}
 ): Promise<SessionResult> {
 	const name = hooks.name ?? "batch";
-	const lease = clampToJobs(args, jobs.length);
-	if (lease !== args) note(ctx, `warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`);
+	const clamped = clampToJobs(args, jobs.length);
+	if (clamped !== args) note(ctx, `warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`);
 	const owner = resolveOwner(ctx);
-	const { platform } = lease.flags.request;
+	const { platform } = clamped.flags.request;
+	// capacity on and the host fits fewer workers than wanted: start with what fits, the rest join later
+	const elastic = await elasticSplit(ctx, owner, clamped, name);
+	const { lease } = elastic;
 	const wanted = (lease.legs?.map((leg) => leg.flags) ?? [lease.flags])
 		.map((flags) => `${flags.request.count} ${flags.request.profile}`)
 		.join(" + ");
@@ -1943,7 +2116,10 @@ export async function runSession(
 		hooks.warmDrivers && platform === "ios"
 			? startEarlyWarm({
 					connect: hooks.warmDrivers,
-					legCounts: (lease.legs?.map((leg) => leg.flags) ?? [lease.flags]).map((flags) => flags.request.count),
+					legCounts: [
+						...(lease.legs?.map((leg) => leg.flags) ?? [lease.flags]).map((flags) => flags.request.count),
+						...Array<number>(elastic.extra).fill(1),
+					],
 					logDir,
 					now: ctx.now,
 					after: deps.after,
@@ -2048,8 +2224,37 @@ export async function runSession(
 			metro: launch,
 			warm,
 			slim,
+			elastic: elastic.setup,
 		}
 	);
+}
+
+/**
+ * Elastic workers: with capacity on, a single-pool run that wants more devices than the host fits
+ * claims what fits now (the first claim queues normally) and the rest later, one at a time, at
+ * `PRIORITY.low`. `setup` is undefined (everything claimed at once, as without capacity) for suites
+ * with legs, a single worker, capacity off or when everything fits.
+ */
+async function elasticSplit(
+	ctx: CommandContext,
+	owner: Owner,
+	args: BatchArgs,
+	name: string
+): Promise<{ lease: BatchArgs; extra: number; setup: RunSetup["elastic"] }> {
+	const { request } = args.flags;
+	const whole = { lease: args, extra: 0, setup: undefined };
+	if (args.legs || request.count < 2) return whole;
+	const plan = await planElastic(await buildCapacityDeps(ctx, owner), request.platform, request.count);
+	if (!plan) return whole;
+	note(
+		ctx,
+		`warden ${name}: host fits ${plan.first} of ${plan.first + plan.extra} ${request.platform} workers — starting with ${plan.first}, the rest join as capacity frees`
+	);
+	return {
+		lease: { ...args, flags: { ...args.flags, request: { ...request, count: plan.first } } },
+		extra: plan.extra,
+		setup: { plan, flags: { ...args.flags, priority: PRIORITY.low, request: { ...request, count: 1 } } },
+	};
 }
 
 /** Queue options shared by `warden batch` and `warden e2e`. */
@@ -2187,6 +2392,8 @@ export const defaultBatchDeps: BatchDeps = {
 	residentSocket,
 	which: (cmd) => Bun.which(cmd),
 	resolveModule: (specifier, from) => Bun.resolveSync(specifier, from),
+	e2eVersion: readE2ePackageVersion,
+	bundledE2e: (ctx) => stageBundledRuntime(ctx.env, currentBuild()),
 	helperDir: () => helperDir(Bun.main, process.execPath),
 };
 
