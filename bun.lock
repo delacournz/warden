@@ -41,8 +41,8 @@
       "version": "0.1.0",
       "dependencies": {
         "@delacour/warden-e2e-bench": "workspace:*",
-        "@fontsource-variable/onest": "^5.3.1",
-        "@fontsource-variable/red-hat-mono": "^5.3.0",
+        "@fontsource-variable/martian-mono": "5.3.0",
+        "@fontsource-variable/mona-sans": "5.3.0",
         "@tanstack/react-router": "1.170.27",
         "@tanstack/react-start": "1.168.44",
         "fumadocs-core": "16.15.1",
@@ -53,8 +53,8 @@
         "react-dom": "19.2.3",
       },
       "devDependencies": {
-        "@fontsource/onest": "^5.2.0",
-        "@fontsource/red-hat-mono": "^5.2.0",
+        "@fontsource/martian-mono": "5.3.0",
+        "@fontsource/mona-sans": "5.3.0",
         "@resvg/resvg-wasm": "^2.6.2",
         "@tailwindcss/vite": "^4.3.3",
         "@types/mdx": "^2.0.14",
@@ -578,13 +578,13 @@
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.12", "", {}, "sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww=="],
 
-    "@fontsource-variable/onest": ["@fontsource-variable/onest@5.3.1", "", {}, "sha512-xaaw6G4HDB2/RczsWLD/2bnib4ykmQlTlBUN3GOEOiyErilZukQWVJG95h9zwAy0i8KY+QzDa+COPfqhI72Acw=="],
+    "@fontsource-variable/martian-mono": ["@fontsource-variable/martian-mono@5.3.0", "", {}, "sha512-0wVODx9ILwNnaYC4XCuSaFRYtj1Prd89MRVaSuv2ng6zLiQkS4SepaWEPefs7vqCZS8sbEOA8jb/4F5KNMnGdg=="],
 
-    "@fontsource-variable/red-hat-mono": ["@fontsource-variable/red-hat-mono@5.3.0", "", {}, "sha512-/mEvTCcruJY64xRgx1gsmsYuGR7MtOduOsuyeHVJ07p+2gGvCqROauIwaTCcVHL4eBGi+Lns4EUIjrPZLCn5gQ=="],
+    "@fontsource-variable/mona-sans": ["@fontsource-variable/mona-sans@5.3.0", "", {}, "sha512-PkxRB3KI4z9Gjpk7vVqgO3GMSyQuOIIj4TaRDbvbcDj8SzWwI38jvLTQxJM/cTRorhcT7h8qjcllR+qjRtM/Fg=="],
 
-    "@fontsource/onest": ["@fontsource/onest@5.3.1", "", {}, "sha512-2uA9HUzQHBB8H7T2R6inmrnqPofB6+svATHM/huIG640duJr4rm+uanmAIheTTlbZvRC0ujMtf2T4U4RX51oEQ=="],
+    "@fontsource/martian-mono": ["@fontsource/martian-mono@5.3.0", "", {}, "sha512-0iTnU6SZi6j5z4ymwlZGep6akvp/xWm+r+WyZO9hMfDJWX+dsFLipQp9zO02S0lkUQ+zAahcZNy3XLiNP+gVqQ=="],
 
-    "@fontsource/red-hat-mono": ["@fontsource/red-hat-mono@5.3.0", "", {}, "sha512-rXSQpg6TLRd+WLhcN9qGIarP9/HVouhmdKJcCv1R3+c2mznJ2GUUaTpkKhFN6LO2Sg7lRvb8CIaXYQqvqY6aPw=="],
+    "@fontsource/mona-sans": ["@fontsource/mona-sans@5.3.0", "", {}, "sha512-+K4yLnbbtNfYuR1Znpq9kWEJUYD1W0yQ5DhWde93lC3O8VHXtydoM0bHZBvO6DofIYEXgZlZU14A9yFClisL+g=="],
 
     "@fuma-translate/react": ["@fuma-translate/react@1.0.2", "", { "peerDependencies": { "@types/react": "*", "react": "^19.2.0", "react-dom": "^19.2.0" }, "optionalPeers": ["@types/react"] }, "sha512-uOiOtBx3nRXR8Nu1GzBf1tApgF1FErDBTHxRIAQeyQdyOoZbrNRN6H4kDCWObY4qyGeGbHydG0DHzgeUgFDMIw=="],
 

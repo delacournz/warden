@@ -1,0 +1,123 @@
+---
+title: Suites
+description: Declare e2e suites in warden.config.ts and run them with warden e2e on leased devices.
+icon: Layers
+---
+
+A suite is a named entry under `e2e` in `warden.config.ts`: which specs, which app build, how many devices, whether warden runs Metro. You run it with `warden e2e <suite>`.
+
+```ts title="warden.config.ts"
+import { defineConfig } from "@delacour/warden/config";
+
+export default defineConfig({
+  e2e: {
+    "example-dev": {
+      project: "example",
+      specsDir: "e2e",
+      platform: "ios",
+      app: { variant: "dev" },
+      metro: { env: { EXPO_PUBLIC_E2E: "1" } },
+      spec: { bundleId: "com.example.app" },
+      count: 2,
+      jobTimeoutMs: 15 * 60_000,
+    },
+  },
+});
+```
+
+```bash
+warden e2e example-dev --all
+```
+
+No device to pick, no port to export, no bundler to start first. warden claims the simulators, installs the cached build, starts and verifies its own Metro when the suite has one, runs the specs and releases everything on exit (Ctrl-C included).
+
+## What a suite needs
+
+- `specsDir` (required): where the `*.e2e.ts(x)` specs are. Searched recursively; other `.ts` files there are helpers.
+- `spec`: how specs run. `bundleId` (default the project's), extra `launchArgs`, and `timeout` (default `2m`, per test), `actionTimeout` (`30s`), `assertionTimeout` (`5s`). Specs run in the suite's `project` root, else the config file's directory.
+- `project`: the `projects[].name` whose root runs specs and `serve`, and whose app is installed. Needed when the config has several projects and warden runs from the repo root.
+- `app`: `true` installs the project's app on every device first; `{ variant }` installs a `projects[].variants` build; `{ installMode: "clean" | "reinstall", resetKeychain }` resets the installed app first.
+- `metro: {}`: warden leases a port (from `8081:100`), starts `bunx expo start --dev-client --port <p>` in the project root with `CI=1`, and calls it ready only once `/status` proves the port serves **this** checkout. Another worktree's Metro on the port stops the run with `port <p> is served by <dir>, not this worktree`. With a Metro suite, warden passes `--initialUrl <metro url>` as the first launch argument, so every `app.open()` lands on warden's bundler. Metro's log is `<batchDir>/metro.log`.
+- `count`, `profile`: devices to claim and their profile.
+- `isolate`: `"device"` (default): one `bun test` process per device runs its share of the specs, sharded round-robin by spec id. `"spec"`: one process per spec, devices share the specs dynamically; each spec starts fresh. `device` is not allowed with `passes` > 1, which defaults to `spec`.
+- `jobTimeoutMs` (default 600000): per spec. A spec process still going after that long for each spec it runs is screenshotted, killed (SIGTERM, SIGKILL 5 s later, whole process group) and counted failed (exit 124).
+- `retry`, `passes`: rerun a failed spec up to N times; require N consecutive green runs on the same device (`WARDEN_PASS` = 0, 1).
+- `serve`, `serveReady`, `serveTimeout`, `ports`, `env`, `setup`, `slim`: a local API, per-device setup and spare ports; see [Affected e2e](/docs/e2e/affected#per-device-setup) and the [field reference](/docs/reference/configuration#e2e).
+
+The first run of a native fingerprint builds the app (minutes); later runs reuse the cache.
+
+## Device legs
+
+`devices` replaces `profile` / `count` with several legs, each claiming its own pool and running the selected specs concurrently with the others:
+
+```ts
+devices: [
+  { profile: "iphone-17", count: 2 },
+  { profile: "iphone-se", count: 1, env: { SMALL_SCREEN: "1" } },
+  { profile: "ipad-pro", default: false },
+]
+```
+
+Each leg's `env` is added to its processes and only its own devices appear in `WARDEN_UDIDS`. A leg with `default: false` runs only with `--devices all` or `--devices <profile>`.
+
+## Run it
+
+```bash
+warden e2e example --all             # every spec
+warden e2e example-dev               # only the specs this branch touches
+warden e2e example-dev --specs todos,settings
+warden e2e mobile --base origin/main --count 2 --report e2e-report.json
+warden e2e --dry-run --files src/modules/chat/api.ts
+```
+
+With one suite the name is optional. `warden e2e` is [`warden batch`](/docs/devices/scripts) with the job list coming from the selection, so every batch and claim flag works.
+
+| Flag | Effect |
+|---|---|
+| `--all`, `--specs <list>` | every spec of the suite, or exactly these ids / globs, skipping the git diff |
+| `--base <ref>`, `--files <list>` | compare against merge-base with this ref (default the suite's `base`, `main`), or give changed files instead of git |
+| `--required-only`, `--explain`, `--dry-run` | run only `required` specs; print why each spec was chosen; select and explain, run nothing |
+| `--platform ios\|android` | default the suite's `platform`; without either, `warden e2e` needs it |
+| `--count <n>`, `--profile <slug>`, `--runtime <rt>`, `--max <n>` | devices to claim, profile, runtime, cap on warden devices of the profile |
+| `--devices <legs>` | which `devices` legs run: `default`, `all` or `<profile,…>` |
+| `--wait <duration>`, `--no-wait`, `--priority`, `--ttl`, `--label` | queue up to 30m for a device (default) or fail at once; boot-queue priority; lease TTL (default 30m); label in `warden ls` |
+| `--app`, `--install-mode`, `--reset-keychain`, `--variant`, `--project`, `--bundle-id`, `--no-eas`, `--no-build` | the app install, as in the config's `app` |
+| `--retry <n>`, `--passes <n>`, `--job-timeout <duration>` | override the suite's values |
+| `--serve`, `--serve-ready`, `--serve-timeout`, `--port <from:span>` | a local service and leased ports for the run |
+| `--headless`, `--no-headless` | close or keep Simulator.app windows ([Headless](/docs/devices/headless)) |
+| `--record <dir>`, `--logs <dir>`, `--no-tui`, `--json`, `--report <file>` | record every simulator and the TUI (iOS); job logs dir; plain lines instead of the live grid; JSON output; also write `e2e-report.json` here |
+| `--no-shutdown`, `--no-warm`, `--adopt` | keep devices up after a pass; skip the iOS driver pre-warm; allow foreign devices |
+
+Exit 0: every required spec passed (or nothing was selected, in which case no device is claimed). Exit 1: a required spec failed, or setup failed. Exit 130: interrupted. `required: false` specs are reported but never fail the gate.
+
+With no `e2e` suites configured and none named, `warden e2e` runs every `e2e/*.e2e.ts` spec of the Expo app around the current directory on the dev client with warden's Metro (2 sims). `warden init` scaffolds it.
+
+After a pass, devices warden created stay booted locally (the next run skips the 10-30 s boot; `warden gc` shuts them down after 20 min idle) and are shut down under `CI`. A failed run always leaves them booted. `shutdown: "always" | "idle"` on the suite overrides this.
+
+## What a run prints
+
+Each spec process prints one line when a test starts and ends, and a pair per step (a tap, a fill, an assertion):
+
+```text
+[00:54:25.766] ▶ test |ios| e2e/todos.e2e.ts › adds a todo
+[00:54:25.942]   ▸ todos › app app.open
+[00:54:27.193]   ▪ todos › app app.open passed 1251ms
+[00:54:29.470] ■ test |ios| e2e/todos.e2e.ts › adds a todo passed 3.21s on warden-iphone-17-2
+```
+
+The `[HH:MM:SS.mmm]` stamp is warden's: every line in a job log, `setup-<worker>.log`, `metro.log` and `serve.log` carries the local time it arrived, and spec processes get `WARDEN_LOG_TIMESTAMPS=1`. The batch log (and `--no-tui`) adds one line per finished test, and the live grid ticks specs off:
+
+```text
+✓ todos › adds a todo (3.21s)
+✗ sign-in › a locked account shows the form alert (8.04s)
+```
+
+When the run ends, every failed spec is listed with its failing tests, the first line of each error and the artifact directory. See [Debugging](/docs/e2e/debugging).
+
+As soon as each device is leased, warden starts its iOS driver helper and takes one accessibility snapshot (`warmDrivers`, on by default) while the app installs and Metro builds, so the first spec does not pay the cold start. `warmDrivers: false` or `--no-warm` turns it off; a failed warm-up (2 min limit) only warns.
+
+## Don't
+
+- Start Metro yourself, or point a suite at a fixed port.
+- Export `WARDEN_UDID*` or port variables by hand for a suite; they exist only inside a run.
+- Hold devices with a bare `warden claim` for a test run. It lasts about 5 minutes; `warden e2e` holds its leases for as long as it runs.

@@ -4,6 +4,8 @@ description: Every warden command and flag. All commands accept --json.
 icon: Terminal
 ---
 
+This is the exhaustive list of `warden` commands and flags; use it to look up an option, and `warden <command> --help` for the version you have installed.
+
 ## Quick reference
 
 | Need | Command |
@@ -22,13 +24,18 @@ icon: Terminal
 | every sim / emulator + who leases it | `warden devices` (alias `warden list`) |
 | lighten a booted sim (fewer daemons) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` |
 | tidy Simulator.app windows | `warden arrange` |
-| look at / drive a leased device | `warden ui snapshot -i --udid <udid>` · `warden ui press @e3 --settle` ([guide](/docs/guides/agent-ui)) |
+| look at / drive a leased device | `warden ui snapshot -i --udid <udid>` · `warden ui press @e3 --settle` ([guide](/docs/agents/ui)) |
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a long lease alive | `warden heartbeat --mine` |
 | reclaim dead leases | `warden gc` |
 | sim + runtime disk usage, what can go | `warden sims` · `warden sims prune --dry-run` |
 | pick sims to delete (any owner) | `warden sims delete` (`--suggested -y` off a terminal) |
 | is the agent loop fast enough? | `warden ui bench [--runs n] [--json]` |
+| the boot queue and host budget | `warden capacity` · `warden queue` |
+| a dev client per worktree | `warden dev` ([guide](/docs/agents/dev)) |
+| set an Expo app up for warden | `warden init` |
+| install warden + agent hooks, tab completion | `warden install` · `warden completion zsh` |
+| the agent skill | `warden skill show` · `warden skill install` |
 | setup problems | `warden doctor` |
 | update warden | `warden update` (`--check` to only look) |
 
@@ -43,18 +50,18 @@ Lease iOS sims / Android emulators — reuse, boot or create — booted and read
 | `--profile <slug>` | `iphone-17` / first AVD | device profile, e.g. `iphone-17`, `pixel-10` |
 | `--runtime <runtime>` | `latest` | `latest`, `iOS-26-5`, `26.5` … |
 | `--count <n>` | `1` | how many devices |
-| `--max <n>` | cores/4, cap 4 | max warden devices of this profile (pool size; machine-wide boots are capped by [capacity](/docs/guides/capacity)) |
+| `--max <n>` | what the machine's capacity allows | max warden devices of this profile (pool size; machine-wide boots are capped by [capacity](/docs/devices/capacity)) |
 | `--wait <duration>` | `30m` | how long to wait for a free device or a slot in the boot queue, e.g. `10m` |
 | `--no-wait` | | fail fast instead of queueing |
-| `--priority <interactive\|high\|normal\|low\|N>` | `WARDEN_PRIORITY`, else per command | boot queue priority; see [Capacity & queue](/docs/guides/capacity) |
+| `--priority <interactive\|high\|normal\|low\|N>` | `WARDEN_PRIORITY`, else per command | boot queue priority; see [Capacity & queue](/docs/devices/capacity) |
 | `--ttl <duration>` | `30m` (bare `claim` by an agent: `5m`) | lease TTL without heartbeat |
 | `--label <label>` | | shown in `warden ls` |
 | `--adopt` | | allow allocating foreign (non-warden) devices |
-| `--headless` / `--no-headless` | `WARDEN_HEADLESS`, else off | iOS: close the claimed sims' Simulator.app windows instead of tiling them; `--no-headless` overrides config and env. See [Headless e2e](/docs/guides/headless) |
+| `--headless` / `--no-headless` | `WARDEN_HEADLESS`, else off | iOS: close the claimed sims' Simulator.app windows instead of tiling them; `--no-headless` overrides config and env. See [Headless e2e](/docs/devices/headless) |
 
 ### `warden capacity` / `warden queue`
 
-`warden capacity [--json]` prints the host budget (RAM, performance cores), what is booted (warden and foreign), per-device cost, the binding dimension and memory pressure. `warden queue [--json]` lists claims waiting for a boot slot: position, effective priority, age, owner. See [Capacity & queue](/docs/guides/capacity).
+`warden capacity [--json]` prints the host budget (RAM, performance cores), what is booted (warden and foreign), per-device cost, the binding dimension and memory pressure. `warden queue [--json]` lists claims waiting for a boot slot: position, effective priority, age, owner. See [Capacity & queue](/docs/devices/capacity).
 
 ### `warden release [leaseIds...]`
 
@@ -69,6 +76,7 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--port <from:span>` | lease a port for the child (`WARDEN_PORT_<i>`); repeatable |
 | `--app` | install the project's app on each device first |
 | `--project <dir>` | `--app`: project directory (default: cwd) |
+| `--variant <name>` | `--app`: install this `projects[].variants` build (`dev`, `e2e`…) |
 | `--bundle-id <id>` | `--app`: override the bundle id / package |
 | `--variant <name>` | `--app`: install this `projects[].variants` build (`dev`, `e2e`…) |
 | `--no-eas` / `--no-build` | `--app`: skip EAS downloads / local builds |
@@ -76,7 +84,7 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--reset-keychain` | `--install-mode`: also reset the iOS simulator's keychain (not cleared by uninstall either) |
 | `--clean` | deprecated alias of `--install-mode reinstall` |
 
-See [e2e scripts](/docs/guides/e2e).
+See [e2e scripts](/docs/devices/scripts).
 
 ### `warden batch [platform|preset] [-- <cmd...>]`
 
@@ -115,7 +123,7 @@ warden batch salient-e2e --count 2 --jobs qa-login -- bun e2e {job} --device {ud
 
 An operand that is neither `ios`, `android` nor a preset fails with the list of presets.
 
-Exits 0 only when every job passed. See [Batches](/docs/guides/e2e#batches-one-job-per-device).
+Exits 0 only when every job passed. See [Batches](/docs/devices/scripts#batches-one-job-per-device).
 
 ### `warden affected [suite]`
 
@@ -131,7 +139,7 @@ List the specs of `e2e.<suite>` (optional with one suite) that the changes since
 | `--strict` | exit 3 when a changed file reaches no spec |
 | `--json` | `{ suite, base?, changes, platforms: [{ platform, selected (each spec with its reasons), skipped, unreached, warnings }], warnings }` |
 
-Following `entries` through the import graph needs TypeScript 5.0 or later: the compiled binary uses the project's own, the nearest `node_modules/typescript` from the config's directory upward (Yarn Plug'n'Play is not supported); without one the run exits 1 naming that path. See [Affected e2e](/docs/guides/affected-e2e).
+Following `entries` through the import graph needs TypeScript 5.0 or later: the compiled binary uses the project's own, the nearest `node_modules/typescript` from the config's directory upward (Yarn Plug'n'Play is not supported); without one the run exits 1 naming that path. See [Affected e2e](/docs/e2e/affected).
 
 ### `warden e2e [suite]`
 
@@ -152,7 +160,15 @@ With no `e2e` suite configured (and none named), the Expo app around the cwd get
 | `--no-shutdown` | keep the devices running after the gate passes (the default locally; under CI they are shut down. Suite `shutdown` sets it, the flag wins) |
 | `--no-warm` | skip the iOS driver-helper warm-up (the suite's `warmDrivers: false`) |
 
-The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. With [`metro`](/docs/reference/configuration#e2e) warden starts and verifies its own Metro before any spec and stops it last. With `devices`, every picked leg claims its own pool and runs the specs concurrently (`--profile` / `--count` replace the legs with one claim); the report then has one verdict per spec and leg. By default (`isolate: "device"`) one spec process per device runs its share of the specs (round-robin by spec id) and every spec still gets its own verdict; `--retry` reruns only the specs that did not pass, and `--job-timeout` / `jobTimeoutMs` is per spec. With `isolate: "spec"` every spec is its own process. While it runs, the grid (or, with `--no-tui`, one line per finished test, `✓ todos › adds a todo (3.21s)` / `✗ …`) ticks specs and tests off as the spec processes append to their `results.jsonl`. The grid's header bar has one cell per spec (one per job with `isolate: "spec"`): green passed, red failed, cyan running, dim pending; each device row has its own bar of the jobs it ran. With `isolate: "device"` every leased device gets a row, cyan while its spec process works; when the run ends warden reads each process's `results.jsonl` and fills the device's bar with the specs it ran there. Specs run in id order (sorted file path), so `count: 1` is a stable serial run. `headless` (suite, else top-level) closes the leased sims' windows at claim and again before the first spec, unless `--no-headless`; `e2e-report.json` records `"headless"` and `"isolate"`. Nothing affected → exit 0 without claiming. Every failed spec is named at the end with its device, spec log and failure screenshot (also `device`, `log`, `screenshot` and a `tests[]` entry per test on the spec in `e2e-report.json`), then each failing test with the first line of its error and its artifact directory. Before the specs, an iOS suite warms the leased devices' driver helpers (`warmDrivers`, on by default) so the first spec does not pay the cold start. Leases are always released at the end. Under CI (`CI` set to anything but empty, `0` or `false`), or with `shutdown: "always"`, a passed gate shuts down the devices warden created (or booted for the run) before releasing them; locally (`shutdown: "idle"`, the default) they stay booted for the next run and `warden gc` shuts them down once idle. A failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
+The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. With [`metro`](/docs/reference/configuration#e2e) warden starts and verifies its own Metro before any spec and stops it last. With `devices`, every picked leg claims its own pool and runs the specs concurrently (`--profile` / `--count` replace the legs with one claim); the report then has one verdict per spec and leg. By default (`isolate: "device"`) one spec process per device runs its share of the specs (round-robin by spec id) and every spec still gets its own verdict; `--retry` reruns only the specs that did not pass, and `--job-timeout` / `jobTimeoutMs` is per spec. With `isolate: "spec"` every spec is its own process. 
+
+While it runs, the grid (or, with `--no-tui`, one line per finished test, `✓ todos › adds a todo (3.21s)` / `✗ …`) ticks specs and tests off as the spec processes append to their `results.jsonl`. The grid's header bar has one cell per spec (one per job with `isolate: "spec"`): green passed, red failed, cyan running, dim pending; each device row has its own bar of the jobs it ran. With `isolate: "device"` every leased device gets a row, cyan while its spec process works; when the run ends warden reads each process's `results.jsonl` and fills the device's bar with the specs it ran there. Specs run in id order (sorted file path), so `count: 1` is a stable serial run. `headless` (suite, else top-level) closes the leased sims' windows at claim and again before the first spec, unless `--no-headless`; `e2e-report.json` records `"headless"` and `"isolate"`. 
+
+Nothing affected → exit 0 without claiming. Every failed spec is named at the end with its device, spec log and failure screenshot (also `device`, `log`, `screenshot` and a `tests[]` entry per test on the spec in `e2e-report.json`), then each failing test with the first line of its error and its artifact directory. 
+
+Before the specs, an iOS suite warms the leased devices' driver helpers (`warmDrivers`, on by default) so the first spec does not pay the cold start. Leases are always released at the end. 
+
+Under CI (`CI` set to anything but empty, `0` or `false`), or with `shutdown: "always"`, a passed gate shuts down the devices warden created (or booted for the run) before releasing them; locally (`shutdown: "idle"`, the default) they stay booted for the next run and `warden gc` shuts them down once idle. A failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
 
 ### `warden ls`
 
@@ -181,7 +197,7 @@ iOS. Switches off the launchd jobs inside a booted simulator that UI specs never
 | `--dry-run` | list the jobs, change nothing |
 | `--restore` | re-enable them (fully effective on the next boot) |
 
-Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. Siri's `assistantd` and `corespeechd` are deliberately left running: the software keyboard asks them about dictation, and with them down an app that shows the keyboard spins its main thread until XCTest can no longer read it. A simulator slimmed by an older warden gets them re-enabled on the next `slim` or `--restore` (effective after its next boot). The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. `slim` and `--restore` record the state per device; a plain `warden claim` re-enables a device left slimmed (jobs already booted out stay down until its next reboot). In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/guides/affected-e2e#per-device-setup).
+Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. Siri's `assistantd` and `corespeechd` are deliberately left running: the software keyboard asks them about dictation, and with them down an app that shows the keyboard spins its main thread until XCTest can no longer read it. A simulator slimmed by an older warden gets them re-enabled on the next `slim` or `--restore` (effective after its next boot). The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. `slim` and `--restore` record the state per device; a plain `warden claim` re-enables a device left slimmed (jobs already booted out stay down until its next reboot). In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/e2e/affected#per-device-setup).
 
 ### `warden sims audit | prune | delete`
 
@@ -239,7 +255,7 @@ Permanently deletes simulators. With no udids it opens a multi-select menu (spac
 
 ### `warden arrange`
 
-macOS only. Lines up the open Simulator.app (Xcode 27: Device Hub) windows of warden sims in name order (`warden-iphone-17-2` before `-10`), left to right from the top-left of the main screen. Simulator and Device Hub windows can't be resized, so a row wider than the screen overlaps evenly, with every title bar left visible; windows wrap to a second row only if the screen is tall enough. Other simulators are left where they are, and neither viewer is ever launched. Every iOS claim (`claim`, `run`, `batch`, `e2e`) runs this automatically unless it is [headless](/docs/guides/headless); set `WARDEN_ARRANGE=0` to turn that off. Moving windows uses System Events, so your terminal needs Accessibility access (System Settings → Privacy & Security → Accessibility). Xcode 27 replaced Simulator.app with Device Hub, which opens no window when a sim boots: a non-headless claim asks for one per sim it booted (only while Device Hub already runs), then tiles them. `--open <udid…>` does that for those sims on demand (the e2e session uses it after a HID-loss reboot). `--json`: `"viewer"` is `device-hub` / `simulator` / `none`, or `{ "opened": [...] }` with `--open`. See [Device Hub](/docs/guides/headless#xcode-27-device-hub).
+macOS only. Lines up the open Simulator.app (Xcode 27: Device Hub) windows of warden sims in name order (`warden-iphone-17-2` before `-10`), left to right from the top-left of the main screen. Simulator and Device Hub windows can't be resized, so a row wider than the screen overlaps evenly, with every title bar left visible; windows wrap to a second row only if the screen is tall enough. Other simulators are left where they are, and neither viewer is ever launched. Every iOS claim (`claim`, `run`, `batch`, `e2e`) runs this automatically unless it is [headless](/docs/devices/headless); set `WARDEN_ARRANGE=0` to turn that off. Moving windows uses System Events, so your terminal needs Accessibility access (System Settings → Privacy & Security → Accessibility). Xcode 27 replaced Simulator.app with Device Hub, which opens no window when a sim boots: a non-headless claim asks for one per sim it booted (only while Device Hub already runs), then tiles them. `--open <udid…>` does that for those sims on demand (the e2e session uses it after a HID-loss reboot). `--json`: `"viewer"` is `device-hub` / `simulator` / `none`, or `{ "opened": [...] }` with `--open`. See [Device Hub](/docs/devices/headless#xcode-27-device-hub).
 
 ### `warden clone <source>`
 
@@ -247,7 +263,7 @@ Duplicate a shut-down iOS simulator (udid or name) into warden's pool. `--name` 
 
 ### `warden golden ensure | ls | prune`
 
-Golden iOS images / Android snapshots new devices start from. All three take `--platform ios|android` (default `ios`). `ensure [--profile] [--runtime]` builds once or reuses (profile default `iphone-17`; Android: first AVD); `ls` lists them; `prune` deletes stale goldens (`--all` every golden, `-y` skips the prompt before `--all`). See [Golden images](/docs/guides/golden-images).
+Golden iOS images / Android snapshots new devices start from. All three take `--platform ios|android` (default `ios`). `ensure [--profile] [--runtime]` builds once or reuses (profile default `iphone-17`; Android: first AVD); `ls` lists them; `prune` deletes stale goldens (`--all` every golden, `-y` skips the prompt before `--all`). See [Golden images](/docs/devices/golden-images).
 
 ### `warden check`
 
@@ -265,7 +281,7 @@ Reclaim stale leases and shut down unleased warden devices idle for `--idle` (de
 
 ### `warden port claim`
 
-`--from` (8091), `--span` (20), `--count` (1), `--ttl` (30m), `--label`. Prints one port per line. See [Ports](/docs/guides/ports).
+`--from` (8091), `--span` (20), `--count` (1), `--ttl` (30m), `--label`. Prints one port per line. See [Ports](/docs/devices/ports).
 
 ### `warden port ls`
 
@@ -283,7 +299,7 @@ Print the project's native fingerprint (both platforms by default). `--project`,
 
 ### `warden app ensure [platform]`
 
-Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--install-mode clean|reinstall` resets the installed app first (`clean`: fresh data, no reinstall of an unchanged build; `reinstall`: uninstall + install), `--reset-keychain` also resets the iOS sim keychain, `--clean` is a deprecated alias of `--install-mode reinstall`; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`. See [App builds](/docs/guides/app-builds).
+Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--install-mode clean|reinstall` resets the installed app first (`clean`: fresh data, no reinstall of an unchanged build; `reinstall`: uninstall + install), `--reset-keychain` also resets the iOS sim keychain, `--clean` is a deprecated alias of `--install-mode reinstall`; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`. See [App builds](/docs/devices/app-builds).
 
 ### `warden dev [platform] [-- <expo start args>]`
 
@@ -306,13 +322,14 @@ Set an Expo app up for `warden dev` / `warden e2e`, in the app's root (`--projec
 
 ### `warden ui <subcommand>`
 
-The agent CLI over the e2e driver: read the screen, act on it, wait. Full guide: [Drive a device](/docs/guides/agent-ui). Every subcommand takes the options below, and every call checks the device lease (exit 2 on a foreign or missing lease).
+The agent CLI over the e2e driver: read the screen, act on it, wait. Full guide: [Drive a device](/docs/agents/ui). Every subcommand takes the options below, and every call checks the device lease (exit 2 on a foreign or missing lease).
 
 | Option | Effect |
 |---|---|
 | `--udid <udid>` · `--serial <serial>` · `--lease <id>` | the device (else `WARDEN_UDID`, a single `WARDEN_UDIDS`, your only device lease) |
 | `--claim` | take a device when none is leased, or take over a stale lease; `--platform ios\|android`, `--profile <slug>`, `--runtime <runtime>` pick it |
 | `--timeout <ms>` | per-command deadline (default 5000) |
+
 | `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`) holds your lease on it; without it the call exits 2 (`device_busy`) naming the owner, pid and label. Your own `warden dev` device needs no `--force`: the call shares it (`"attachedTo": "<leaseId>"` in `--json`; `close --release` keeps that lease). Another owner's live lease still refuses |
 | `--json` | one JSON document on stdout: `{ok, command, device, generation?, durationMs, result, warnings?}` or `{ok:false, command, error:{code, message, hint?}}` |
 
@@ -336,6 +353,9 @@ Exit codes: 0 ok · 1 failed or usage · 2 lease · 3 engine unavailable (`engin
 | `gesture pinch [target] <scale>` · `gesture rotate [target] <degrees>` | two fingers around the target or the screen centre; `--duration <ms>` (default 500), `--radius <px>`, `--verify`, `--settle [ms]`; `scale` above 1 zooms in (0.1 to 10, not 1), positive `degrees` is clockwise (negative works; not 0, at most 720) |
 | `gesture path --path 'x,y x,y …' [--path …]` | 1-2 fingers (each path at least 2 points) that go down and lift together; `--duration <ms>` (default 600), `--settle [ms]`; coordinates in points (iOS) or px (Android). Two fingers on Android need `warden-uiad` |
 | `eval <expr>` · `tree` · `logs` · `network` · `reload` | dev client only (`--metro <url>`): `eval --await`; `tree --all --max <n> --screen <name>`; `logs [n]\|start [--bodies]\|stop\|mark <label>\|clear`; `network [n]` (default 50) `--include headers,body --id <id>`; `eval`, `tree`, `logs` and `reload` take `--metro <url>` (default: `WARDEN_METRO_URL`, `state.json`, then this owner's leased ports) |
+
+
+The old top-level `rotate`, `appearance`, `screenshot`, `video`, `swipe` and `longpress` are removed (unknown command, no aliases).
 
 The old top-level `rotate`, `appearance`, `screenshot`, `video`, `swipe` and `longpress` are removed (unknown command, no aliases).
 
@@ -374,7 +394,7 @@ Every tab asks `warden __complete -- <words…>`, which walks the same command t
 
 ### `warden hook session-end`
 
-The SessionEnd hook entrypoint: shuts down what the session booted and releases its leases. Called by Claude Code / Codex, not by hand. `warden hook pretool` still exists as a silent no-op, so a PreToolUse hook written by an older warden keeps working; `warden install` removes that hook.
+The SessionEnd hook entrypoint: shuts down what the session booted and releases its leases. Called by Claude Code / Codex, not by hand. There is no PreToolUse hook any more: `warden install` removes the `PreToolUse` hook an older warden wrote, and a hidden `warden hook pretool` no-op keeps a PreToolUse hook written by an older warden from erroring.
 
 ### `warden doctor`
 

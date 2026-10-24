@@ -4,25 +4,17 @@ description: Install the native build matching your Expo fingerprint — from th
 icon: Package
 ---
 
+warden installs the native build that matches your Expo fingerprint on a device, taken from the device, the shared cache, EAS or a local build, whichever is first; use it to skip a native rebuild.
+
 ```bash
 warden app fingerprint ios
 warden app ensure ios --udid <udid> --json
 # { "appPath": "…", "hash": "…", "source": "installed" | "cache" | "eas" | "build", "installed": true }
 ```
 
-## Worktrees: `warden dev` instead of `expo run:*`
+## Worktrees: `warden dev`
 
-`expo run:ios` rebuilds natively in every worktree: Xcode's DerivedData is keyed by the checkout's path, so a fresh worktree compiles every pod again even when the native code is identical. warden caches the **built app** by native fingerprint instead, shared by every worktree of the repo:
-
-```bash
-warden dev                  # ios by default: claim a sim, install the cached dev build, start Metro, open the dev client
-warden dev ios -- --clear   # extra args go to `expo start`
-warden dev ios --json       # one line { udid, port, metroUrl, leaseIds } once Metro is ready
-```
-
-`warden dev` owns its Metro: it only opens the dev client once the leased port is verified to serve this checkout, so a Metro left running by another worktree is refused, never attached to. It holds the device and the port until Metro exits.
-
-Same fingerprint as any earlier build (any worktree, EAS or local) → no prebuild, no Xcode, seconds to a running app. A native change → one local build, cached for every other worktree. Two worktrees missing the same hash at once share one build (build lock).
+`expo run:ios` rebuilds natively in every worktree; warden caches the built app by native fingerprint, shared by every worktree of the repo. `warden dev` claims a sim, installs the cached build, starts Metro and opens the dev client: same fingerprint as any earlier build means no prebuild, no Xcode, seconds to a running app; a native change means one local build, cached for every other worktree. Two worktrees missing the same hash at once share one build (build lock). See [Dev client per worktree](/docs/agents/dev).
 
 ### Variants: a dev client next to an e2e build
 
