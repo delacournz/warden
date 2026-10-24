@@ -163,7 +163,7 @@ describe("arrangeSimWindows", () => {
 		expect(calls).toEqual(NO_VIEWER);
 	});
 
-	test("Xcode 27 Device Hub → one window for every sim, nothing to tile, osascript never started", async () => {
+	test("Xcode 27 Device Hub → windows not tiled yet, osascript never started", async () => {
 		const calls: string[][] = [];
 		const exec = viewerExec("device-hub", calls);
 		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [], viewer: "device-hub" } });
@@ -377,7 +377,7 @@ describe("hideSimWindows", () => {
 		expect(f.calls.some((c) => c.join(" ").includes("open -a"))).toBe(false);
 	});
 
-	test("Xcode 27 Device Hub → the user's one window is never closed, no prefs written, no warning", async () => {
+	test("Xcode 27 Device Hub → its windows are never closed, no prefs written, no warning", async () => {
 		const calls: string[][] = [];
 		const warnings: string[] = [];
 		const deps = {

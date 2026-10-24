@@ -127,8 +127,9 @@ const osascript = (exec: Exec, script: string, ...args: string[]) =>
 /**
  * The simulator viewer running on this Mac. Xcode ≤ 26: Simulator.app (process `Simulator`), one
  * window per booted device, which warden tiles or closes. Xcode 27 removed it for Device Hub
- * (`Xcode.app/Contents/Applications/DeviceHub.app`, `com.apple.dt.Devices`, process `DeviceHub`):
- * one window with a device list, so there is no per-device window to tile or close.
+ * (`Xcode.app/Contents/Applications/DeviceHub.app`, `com.apple.dt.Devices`, process `DeviceHub`),
+ * which also has a window per device (System Events sees them; verified on Xcode 27.1). warden does
+ * not tile or close those yet: under Device Hub it leaves every window alone.
  */
 export type SimViewer = { kind: "simulator" } | { kind: "device-hub" } | { kind: "none" };
 
@@ -154,13 +155,13 @@ function scriptError(cmd: string, result: { exitCode: number; stdout: string; st
 	return `${execError(["osascript", cmd], result)}${hint}`;
 }
 
-/** What `arrangeSimWindows` did, and which viewer it found (Device Hub: nothing to tile). */
+/** What `arrangeSimWindows` did, and which viewer it found (Device Hub: not tiled yet). */
 export type Arranged = { arranged: string[]; viewer: SimViewer["kind"] };
 
 /**
  * Tile open Simulator.app windows of warden sims in name order (macOS, via System Events). Never
- * launches a viewer: no windows → nothing to do. Device Hub (Xcode 27) shows every sim in its one
- * window, which is the user's and is left alone. Returns the device names it arranged.
+ * launches a viewer: no windows → nothing to do. Device Hub (Xcode 27) windows are not tiled yet and
+ * are left alone. Returns the device names it arranged.
  */
 export async function arrangeSimWindows(exec: Exec): AsyncResult<Arranged> {
 	const { kind: viewer } = await detectSimViewer(exec);
@@ -486,7 +487,7 @@ async function holdDetachPref(deps: HideDeps): Promise<DetachHold> {
 
 /**
  * Titles of the open Simulator.app windows that belong to `sims`; undefined after a warned error.
- * Device Hub (Xcode 27) has no per-device window, only the user's one, so there is nothing to close.
+ * Device Hub (Xcode 27) windows are not closed yet: under Device Hub this returns none.
  */
 async function leasedTitles(deps: HideDeps, sims: readonly LeasedSim[]): Promise<string[] | undefined> {
 	if ((await detectSimViewer(deps.exec)).kind !== "simulator") return [];

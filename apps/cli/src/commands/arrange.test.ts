@@ -48,7 +48,7 @@ describe("warden arrange", () => {
 		expect(ctx.stderr.join("\n")).toContain("warden arrange:");
 	});
 
-	test("Xcode 27 Device Hub → says it has one window, nothing tiled, no osascript", async () => {
+	test("Xcode 27 Device Hub → says tiling is not supported yet, nothing tiled, no osascript", async () => {
 		const calls: string[][] = [];
 		ctx = testContext([], {
 			exec: async (cmd) => {
@@ -57,7 +57,7 @@ describe("warden arrange", () => {
 			},
 		});
 		expect(await arrangeCommand.run(ctx)).toBe(0);
-		expect(ctx.stdout.join("\n")).toContain("Device Hub");
+		expect(ctx.stdout.join("\n")).toContain("Device Hub (Xcode 27) windows are not tiled yet");
 		expect(calls.filter((cmd) => cmd[0] === "osascript")).toHaveLength(0);
 	});
 
