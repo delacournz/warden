@@ -106,3 +106,9 @@ Consequences:
 - Open windows only for sims the claim booted, only when Device Hub is already running (the URL would launch it).
 - Headless on Device Hub: nothing to close (nothing auto-opens). A user quitting Device Hub shuts down warden's sims regardless of headless, so docs/doctor should say "don't quit Device Hub mid-run"; `recoverHid` must cope with a sim that is `Shutdown`, not only a lost HID connection.
 - Workaround note: the shared `~/.warden/warden.db` is `user_version` 8 without the `leases.shared` column on this machine (migration #8 collision); the spike ran with a copied `WARDEN_HOME` with the column added.
+
+Behaviour now (DHW-1..6, branch `feature/wdn-dhw`): replaces the earlier "not tiled yet" notes above.
+- Non-headless claim/run/batch/e2e with Device Hub running: `open -g devices://device/open?id=<udid>` per sim the claim booted, then `layoutWindows` (overlap; windows can't be resized) over `deviceWindow-*` windows of the `DeviceHub` process. Device Hub not running: nothing opened, nothing launched.
+- Headless: no window opened, Device Hub never launched or touched; nothing to close.
+- HID-loss reboot (`recoverHid`): `WARDEN_AFTER_REBOOT` (JSON argv, `{udid}`) runs `warden arrange --open {udid}` for non-headless macOS runs; `E_NOT_BOOTED` counts as a loss (a Device Hub quit shuts sims down).
+- Real-device acceptance (Device Hub running, Xcode 27.1): (a) 3 windows tiled at x 0/348/696, `arrange --json` listed sims; (b) `--headless` claim: 0 windows, 3 sims Booted; (c) `warden e2e example --flows onboarding,settings --count 2` passed, 2 windows tiled; (d) the same with `--headless` passed, 0 windows. Not run: Xcode 26 parity (no 26.x Xcode on the host), quitting Device Hub mid-run end to end.
