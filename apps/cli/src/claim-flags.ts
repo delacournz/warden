@@ -231,7 +231,12 @@ async function settleIosWindows(
 		await autoArrangeSimWindows(
 			windowDeps,
 			booted.map((s) => s.name),
-			opened
+			opened,
+			(missing) =>
+				openDeviceHubWindows(
+					windowDeps,
+					booted.filter((s) => missing.includes(s.name))
+				)
 		);
 	}
 }

@@ -38,6 +38,16 @@ describe("layoutWindows", () => {
 		]);
 	});
 
+	test("Device Hub's fixed 340x751 windows (not resizable) tile side by side, name order", () => {
+		const hub = { x: 0, y: 25, width: 1440, height: 875 };
+		const windows = [3, 1, 2].map((n) => sim(`warden-iphone-17-${n} – iOS 27.1`, 340, 751));
+		expect(layoutWindows(windows, hub).map((p) => [p.title.slice(14, 20), p.x, p.y])).toEqual([
+			["17-1 –", 0, 25],
+			["17-2 –", 348, 25],
+			["17-3 –", 696, 25],
+		]);
+	});
+
 	test("only warden sims", () => {
 		const plan = layoutWindows([sim("iPhone 17 Pro – iOS 26.5"), sim("warden-iphone-17-1 – iOS 26.5")], screen);
 		expect(plan.map((p) => p.title)).toEqual(["warden-iphone-17-1 – iOS 26.5"]);
@@ -1170,5 +1180,30 @@ describe("autoArrangeSimWindows after opening Device Hub windows", () => {
 		);
 		expect(i).toBe(3);
 		expect(waits).toHaveLength(2);
+	});
+
+	test("a window still missing at attempt 3 is asked for once more", async () => {
+		let i = 0;
+		const exec: Exec = async (cmd) => {
+			if (cmd[0] === "pgrep") return { exitCode: cmd[2] === "DeviceHub" ? 0 : 1, stdout: "", stderr: "" };
+			if (!(cmd[4] ?? "").includes("NSScreen")) return { exitCode: 0, stdout: "", stderr: "" };
+			i++;
+			const names = i < 4 ? ["warden-iphone-17-1"] : ["warden-iphone-17-1", "warden-iphone-17-2"];
+			return {
+				exitCode: 0,
+				stdout: JSON.stringify({ screen, windows: names.map((n) => sim(`${n} – iOS 27.1`, 340, 751)) }),
+				stderr: "",
+			};
+		};
+		const reopened: (readonly string[])[] = [];
+		const claimed = ["warden-iphone-17-1", "warden-iphone-17-2"];
+		await autoArrangeSimWindows(
+			{ exec, env: {}, os: "darwin", sleep: async () => {} },
+			claimed,
+			claimed,
+			async (missing) => void reopened.push(missing)
+		);
+		expect(reopened).toEqual([["warden-iphone-17-2"]]);
+		expect(i).toBe(4);
 	});
 });

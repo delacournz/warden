@@ -224,6 +224,8 @@ export type AutoArrangeDeps = {
 
 const SETTLE_TRIES = 6;
 const SETTLE_MS = 500;
+/** a deep link Device Hub dropped (seen once, right after it was relaunched) is asked for again at this attempt */
+const REOPEN_AT = 3;
 
 /**
  * After a claim: best-effort arrange (macOS, unless `WARDEN_ARRANGE=0`). A freshly booted sim's
@@ -231,13 +233,15 @@ const SETTLE_MS = 500;
  * `claimed`, retry briefly. `claimed` is who to wait for: the sims this claim booted — a sim that
  * was already running keeps whatever window (or none, when it booted headless) it had, so waiting
  * for it would only burn the retries. `opened` (what `openDeviceHubWindows` returned) are windows
- * that were just asked for, so an empty list is also waited out for them. Errors are swallowed —
+ * that were just asked for, so an empty list is also waited out for them, and any still missing at
+ * attempt 3 are handed to `reopen` once. Errors are swallowed —
  * window layout never fails a claim.
  */
 export async function autoArrangeSimWindows(
 	deps: AutoArrangeDeps,
 	claimed: readonly string[],
-	opened: readonly string[] = []
+	opened: readonly string[] = [],
+	reopen?: (missing: readonly string[]) => Promise<unknown>
 ): Promise<void> {
 	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0") return;
 	const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
@@ -247,6 +251,10 @@ export async function autoArrangeSimWindows(
 		const { arranged } = result.data;
 		if (arranged.length === 0 && opened.length === 0) return;
 		if (claimed.every((name) => arranged.includes(name)) || attempt >= SETTLE_TRIES) return;
+		if (attempt === REOPEN_AT && reopen) {
+			const missing = opened.filter((name) => !arranged.includes(name));
+			if (missing.length > 0) await reopen(missing);
+		}
 		await sleep(SETTLE_MS);
 	}
 }
