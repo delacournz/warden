@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildManifest, checkIdbConstant, parseXcodeVersion, stageSteps } from "./build";
+import { buildManifest, checkIdbConstant, checkRpath, parseXcodeVersion, stageSteps } from "./build";
 
 const lock = { version: "v1.7.2", tarball: "idb-libraries.macos-arm64.tar.gz", sha256: "a".repeat(64) };
 
@@ -65,5 +65,23 @@ describe("stageSteps", () => {
 		expect(steps.sign).toEqual(["/d/A.framework", "/d/B.framework", "/d/warden-simd"]);
 		// The prebuilt in-sim guest is ad-hoc signed upstream and must never be re-signed.
 		expect(steps.sign.some((path) => path.includes("SimulatorFrameworkBridge"))).toBe(false);
+	});
+});
+
+const LOAD_COMMANDS = (rpaths: string[]) =>
+	rpaths
+		.map((path) => `Load command 20\n          cmd LC_RPATH\n      cmdsize 32\n         path ${path} (offset 12)`)
+		.join("\n");
+
+describe("checkRpath", () => {
+	test("accepts a binary that searches its own directory for the stub frameworks", () => {
+		expect(() => checkRpath(LOAD_COMMANDS(["/usr/lib/swift", "@executable_path"]))).not.toThrow();
+		expect(() => checkRpath(LOAD_COMMANDS(["@loader_path"]))).not.toThrow();
+	});
+	test("rejects the Xcode 27 default (system and toolchain paths only): dyld cannot find the frameworks", () => {
+		expect(() => checkRpath(LOAD_COMMANDS(["/usr/lib/swift", "/Applications/Xcode.app/x/swift-6.2/macosx"]))).toThrow(
+			/@executable_path/
+		);
+		expect(() => checkRpath("")).toThrow(/@executable_path/);
 	});
 });
