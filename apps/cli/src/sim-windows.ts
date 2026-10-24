@@ -55,22 +55,45 @@ export function layoutWindows(windows: readonly SimWindow[], screen: ScreenArea)
 	return moves;
 }
 
-/** JXA: Simulator.app's windows + the menu-bar screen's visible frame, flipped to top-left origin. */
-const READ_SCRIPT = `ObjC.import("AppKit");
+/** The viewer apps whose per-device windows warden can arrange or close. */
+type WindowViewer = Exclude<SimViewer["kind"], "none">;
+
+/**
+ * Device Hub's per-device windows carry this `AXIdentifier` prefix. Its management window is titled
+ * with the selected device's name in the same `<name> – iOS <ver>` format (verified on Xcode 27.1),
+ * so a `warden-` title prefix would tile it: windows are told apart by identifier, not title.
+ */
+const DEVICE_HUB_WINDOW_ID = "deviceWindow-";
+
+const PROCESS_NAME: Record<WindowViewer, string> = { simulator: "Simulator", "device-hub": "DeviceHub" };
+
+/** JS predicate over a System Events window `w`: Simulator.app has only device windows; Device Hub also has a management window. */
+const KEEP_WINDOW: Record<WindowViewer, string> = {
+	simulator: "true",
+	"device-hub": `String(w.attributes.byName("AXIdentifier").value()).startsWith("${DEVICE_HUB_WINDOW_ID}")`,
+};
+
+/** JXA: the viewer's device windows + the menu-bar screen's visible frame, flipped to top-left origin. */
+function readScript(viewer: WindowViewer): string {
+	const keep = viewer === "simulator" ? "" : `.filter((w) => ${KEEP_WINDOW[viewer]})`;
+	return `ObjC.import("AppKit");
 function run() {
 	const s = $.NSScreen.screens.objectAtIndex(0);
 	const f = s.frame, v = s.visibleFrame;
 	const screen = { x: v.origin.x, y: f.size.height - (v.origin.y + v.size.height), width: v.size.width, height: v.size.height };
-	const procs = Application("System Events").processes.whose({ name: "Simulator" });
-	const windows = procs.length === 0 ? [] : procs[0].windows().map((w) => {
+	const procs = Application("System Events").processes.whose({ name: "${PROCESS_NAME[viewer]}" });
+	const windows = procs.length === 0 ? [] : procs[0].windows()${keep}.map((w) => {
 		const size = w.size();
 		return { title: w.name() || "", width: size[0], height: size[1] };
 	});
 	return JSON.stringify({ screen, windows });
 }`;
+}
 
 /** JXA: move each window (argv[0] = WindowMove[] JSON) and raise it, in order. */
-const MOVE_SCRIPT = `function run(argv) {
+function moveScript(viewer: WindowViewer): string {
+	if (viewer === "simulator") {
+		return `function run(argv) {
 	const proc = Application("System Events").processes.byName("Simulator");
 	for (const m of JSON.parse(argv[0])) {
 		const w = proc.windows.byName(m.title);
@@ -79,8 +102,24 @@ const MOVE_SCRIPT = `function run(argv) {
 	}
 	return "";
 }`;
+	}
+	return `function run(argv) {
+	const proc = Application("System Events").processes.byName("${PROCESS_NAME[viewer]}");
+	const windows = proc.windows().filter((w) => ${KEEP_WINDOW[viewer]});
+	for (const m of JSON.parse(argv[0])) {
+		const w = windows.find((c) => c.name() === m.title);
+		if (!w) continue;
+		w.position = [m.x, m.y];
+		w.actions.byName("AXRaise").perform();
+	}
+	return "";
+}`;
+}
 
-/** JXA: close each named window (argv[0] = title[] JSON) with its close button; a missing one is skipped. */
+/**
+ * JXA: close each named Simulator.app window (argv[0] = title[] JSON) with its close button; a missing
+ * one is skipped. Device Hub opens no window by itself, so headless never closes any there.
+ */
 const CLOSE_SCRIPT = `function run(argv) {
 	const procs = Application("System Events").processes.whose({ name: "Simulator" });
 	if (procs.length === 0) return "";
@@ -155,24 +194,23 @@ function scriptError(cmd: string, result: { exitCode: number; stdout: string; st
 	return `${execError(["osascript", cmd], result)}${hint}`;
 }
 
-/** What `arrangeSimWindows` did, and which viewer it found (Device Hub: not tiled yet). */
+/** What `arrangeSimWindows` did, and which viewer it found. */
 export type Arranged = { arranged: string[]; viewer: SimViewer["kind"] };
 
 /**
- * Tile open Simulator.app windows of warden sims in name order (macOS, via System Events). Never
- * launches a viewer: no windows → nothing to do. Device Hub (Xcode 27) windows are not tiled yet and
- * are left alone. Returns the device names it arranged.
+ * Tile open Simulator.app / Device Hub windows of warden sims in name order (macOS, via System
+ * Events). Never launches a viewer: no windows → nothing to do. Returns the device names it arranged.
  */
 export async function arrangeSimWindows(exec: Exec): AsyncResult<Arranged> {
 	const { kind: viewer } = await detectSimViewer(exec);
-	if (viewer !== "simulator") return ok({ arranged: [], viewer });
-	const read = await osascript(exec, READ_SCRIPT);
+	if (viewer === "none") return ok({ arranged: [], viewer });
+	const read = await osascript(exec, readScript(viewer));
 	if (read.exitCode !== 0) return err(scriptError("(read windows)", read));
 	const parsed = parseRead(read.stdout);
 	if (!parsed.success) return parsed;
 	const moves = layoutWindows(parsed.data.windows, parsed.data.screen);
 	if (moves.length === 0) return ok({ arranged: [], viewer });
-	const moved = await osascript(exec, MOVE_SCRIPT, JSON.stringify(moves));
+	const moved = await osascript(exec, moveScript(viewer), JSON.stringify(moves));
 	if (moved.exitCode !== 0) return err(scriptError("(move windows)", moved));
 	return ok({ arranged: moves.map((m) => deviceName(m.title)), viewer });
 }
@@ -186,24 +224,89 @@ export type AutoArrangeDeps = {
 
 const SETTLE_TRIES = 6;
 const SETTLE_MS = 500;
+/** a deep link Device Hub dropped (seen once, right after it was relaunched) is asked for again at this attempt */
+const REOPEN_AT = 3;
 
 /**
  * After a claim: best-effort arrange (macOS, unless `WARDEN_ARRANGE=0`). A freshly booted sim's
- * window can lag the boot, so while Simulator.app is showing windows but not yet every device in
+ * window can lag the boot, so while the viewer is showing windows but not yet every device in
  * `claimed`, retry briefly. `claimed` is who to wait for: the sims this claim booted — a sim that
  * was already running keeps whatever window (or none, when it booted headless) it had, so waiting
- * for it would only burn the retries. Errors are swallowed — window layout never fails a claim.
+ * for it would only burn the retries. `opened` (what `openDeviceHubWindows` returned) are windows
+ * that were just asked for, so an empty list is also waited out for them, and any still missing at
+ * attempt 3 are handed to `reopen` once. Errors are swallowed —
+ * window layout never fails a claim.
  */
-export async function autoArrangeSimWindows(deps: AutoArrangeDeps, claimed: readonly string[]): Promise<void> {
+export async function autoArrangeSimWindows(
+	deps: AutoArrangeDeps,
+	claimed: readonly string[],
+	opened: readonly string[] = [],
+	reopen?: (missing: readonly string[]) => Promise<unknown>
+): Promise<void> {
 	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0") return;
 	const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
 	for (let attempt = 1; ; attempt++) {
 		const result = await arrangeSimWindows(deps.exec);
-		if (!result.success || result.data.arranged.length === 0) return;
+		if (!result.success) return;
 		const { arranged } = result.data;
+		if (arranged.length === 0 && opened.length === 0) return;
 		if (claimed.every((name) => arranged.includes(name)) || attempt >= SETTLE_TRIES) return;
+		if (attempt === REOPEN_AT && reopen) {
+			const missing = opened.filter((name) => !arranged.includes(name));
+			if (missing.length > 0) await reopen(missing);
+		}
 		await sleep(SETTLE_MS);
 	}
+}
+
+/** Device Hub's deep link: opens (or focuses) that device's own window. */
+const deviceHubUrl = (udid: string): string => `devices://device/open?id=${udid}`;
+
+/**
+ * Xcode 27, non-headless: Device Hub opens no window when a sim boots (verified on 27.1), unlike
+ * Simulator.app, so ask for one per sim — `open -g` keeps the user's app in front. Only while Device
+ * Hub is already running: the URL launches it otherwise, and warden never launches a viewer (Xcode 26
+ * parity). `sims` should be the ones this claim booted; a sim that was already running keeps whatever
+ * window state its user gave it. Returns the names it asked for; never throws or fails a claim.
+ */
+export async function openDeviceHubWindows(
+	deps: Pick<AutoArrangeDeps, "exec" | "env" | "os">,
+	sims: readonly { udid: string; name: string }[]
+): Promise<string[]> {
+	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0" || sims.length === 0) return [];
+	if ((await detectSimViewer(deps.exec)).kind !== "device-hub") return [];
+	const opened: string[] = [];
+	for (const sim of sims) {
+		const out = await deps.exec(["open", "-g", deviceHubUrl(sim.udid)], { timeoutMs: 10_000 });
+		if (out.exitCode === 0) opened.push(sim.name);
+	}
+	return opened;
+}
+
+/**
+ * Put leased sims' windows back after something rebooted them (`warden arrange --open <udid…>`, called by
+ * the e2e session after its HID-loss reboot): ask Device Hub for their windows (`openDeviceHubWindows`:
+ * only while it runs), wait for them and tile everything. Sims `simctl` does not know are skipped.
+ * Returns the names it asked for; never throws.
+ */
+export async function reopenSimWindows(deps: AutoArrangeDeps, udids: readonly string[]): Promise<string[]> {
+	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0" || udids.length === 0) return [];
+	const list = await deps.exec(["xcrun", "simctl", "list", "devices", "-j"], { timeoutMs: IOS_TIMEOUTS.listMs });
+	const all = list.exitCode === 0 ? parseAllSims(list.stdout) : undefined;
+	if (!all?.success) return [];
+	const sims = all.data.filter((d) => udids.includes(d.udid)).map((d) => ({ udid: d.udid, name: d.name }));
+	const opened = await openDeviceHubWindows(deps, sims);
+	await autoArrangeSimWindows(
+		deps,
+		sims.map((s) => s.name),
+		opened,
+		(missing) =>
+			openDeviceHubWindows(
+				deps,
+				sims.filter((s) => missing.includes(s.name))
+			)
+	);
+	return opened;
 }
 
 /** A device this run leased: closing windows is limited to these names. */
@@ -491,7 +594,7 @@ async function holdDetachPref(deps: HideDeps): Promise<DetachHold> {
  */
 async function leasedTitles(deps: HideDeps, sims: readonly LeasedSim[]): Promise<string[] | undefined> {
 	if ((await detectSimViewer(deps.exec)).kind !== "simulator") return [];
-	const read = await osascript(deps.exec, READ_SCRIPT);
+	const read = await osascript(deps.exec, readScript("simulator"));
 	if (read.exitCode !== 0) {
 		deps.warn(`headless: ${scriptError("(read windows)", read)}`);
 		return undefined;

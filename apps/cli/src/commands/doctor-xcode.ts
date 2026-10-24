@@ -60,14 +60,18 @@ export async function mcpStatusProbe(exec: Exec, major: number | undefined): Pro
 		: { ok: true, detail };
 }
 
-/** Which simulator viewer is up (Simulator.app tiles/closes per device; Device Hub is one window). */
+/** Which simulator viewer is up (Simulator.app: warden tiles/closes per-device windows; Device Hub: opens and tiles them, never closes). */
 export async function viewerProbe(exec: Exec): Promise<Probe> {
 	const viewer = await detectSimViewer(exec);
 	switch (viewer.kind) {
 		case "simulator":
 			return { ok: true, detail: "Simulator.app: warden can tile and close per-device windows" };
 		case "device-hub":
-			return { ok: true, detail: "Device Hub (Xcode 27): one window, warden does not tile or close sim windows" };
+			return {
+				ok: true,
+				detail:
+					"Device Hub (Xcode 27): non-headless claims open and tile a window per sim; headless opens none. Quitting Device Hub shuts down every booted sim",
+			};
 		case "none":
 			return { ok: true, detail: "none running (headless)" };
 	}

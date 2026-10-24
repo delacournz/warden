@@ -14,6 +14,8 @@ import {
 	deviceName,
 	hideSimWindows,
 	layoutWindows,
+	openDeviceHubWindows,
+	reopenSimWindows,
 	type SimWindow,
 	startHideSimWindows,
 } from "./sim-windows";
@@ -34,6 +36,16 @@ describe("layoutWindows", () => {
 		expect(plan).toEqual([
 			{ title: "warden-iphone-17-2 – iOS 26.5", x: 0, y: 33 },
 			{ title: "warden-iphone-17-10 – iOS 26.5", x: 464, y: 33 },
+		]);
+	});
+
+	test("Device Hub's fixed 340x751 windows (not resizable) tile side by side, name order", () => {
+		const hub = { x: 0, y: 25, width: 1440, height: 875 };
+		const windows = [3, 1, 2].map((n) => sim(`warden-iphone-17-${n} – iOS 27.1`, 340, 751));
+		expect(layoutWindows(windows, hub).map((p) => [p.title.slice(14, 20), p.x, p.y])).toEqual([
+			["17-1 –", 0, 25],
+			["17-2 –", 348, 25],
+			["17-3 –", 696, 25],
 		]);
 	});
 
@@ -163,11 +175,56 @@ describe("arrangeSimWindows", () => {
 		expect(calls).toEqual(NO_VIEWER);
 	});
 
-	test("Xcode 27 Device Hub → windows not tiled yet, osascript never started", async () => {
+	test("Xcode 27 Device Hub → reads and moves the DeviceHub process's per-device windows only", async () => {
 		const calls: string[][] = [];
-		const exec = viewerExec("device-hub", calls);
-		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [], viewer: "device-hub" } });
-		expect(osascripts(calls)).toHaveLength(0);
+		const inner = viewerExec("device-hub", calls);
+		const read = JSON.stringify({
+			screen,
+			windows: [sim("warden-iphone-17-2 – iOS 27.1"), sim("warden-iphone-17-1 – iOS 27.1")],
+		});
+		const exec: Exec = async (cmd) => {
+			if (cmd[0] === "osascript" && (cmd[4] ?? "").includes("NSScreen")) {
+				calls.push([...cmd]);
+				return { exitCode: 0, stdout: read, stderr: "" };
+			}
+			return inner(cmd);
+		};
+		const result = await arrangeSimWindows(exec);
+		expect(result).toEqual({
+			success: true,
+			data: { arranged: ["warden-iphone-17-1", "warden-iphone-17-2"], viewer: "device-hub" },
+		});
+		const [readCall, moveCall] = osascripts(calls);
+		expect(readCall?.[4]).toContain('name: "DeviceHub"');
+		expect(moveCall?.[4]).toContain('byName("DeviceHub")');
+		expect(JSON.parse(moveCall?.[5] ?? "[]").map((m: { title: string }) => m.title)).toEqual([
+			"warden-iphone-17-1 – iOS 27.1",
+			"warden-iphone-17-2 – iOS 27.1",
+		]);
+	});
+
+	test("Device Hub scripts keep only deviceWindow-* windows (its management window carries a device title); Simulator's do not filter", async () => {
+		const scripts: Record<string, string[]> = { "device-hub": [], simulator: [] };
+		for (const viewer of ["device-hub", "simulator"] as const) {
+			const inner = viewerExec(viewer);
+			const exec: Exec = async (cmd) => {
+				if (cmd[0] === "osascript") {
+					scripts[viewer]?.push(cmd[4] ?? "");
+					return {
+						exitCode: 0,
+						stdout: JSON.stringify({ screen, windows: [sim("warden-iphone-17-1 – iOS 26.5")] }),
+						stderr: "",
+					};
+				}
+				return inner(cmd);
+			};
+			await arrangeSimWindows(exec);
+		}
+		for (const script of scripts["device-hub"] ?? []) expect(script).toContain("deviceWindow-");
+		for (const script of scripts.simulator ?? []) {
+			expect(script).not.toContain("deviceWindow-");
+			expect(script).toContain('"Simulator"');
+		}
 	});
 
 	test.each([
@@ -1055,5 +1112,138 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 			expect(timeouts.get("xcrun simctl boot")).toBe(IOS_TIMEOUTS.bootMs);
 			expect(timeouts.get("xcrun simctl list")).toBe(IOS_TIMEOUTS.listMs);
 		});
+	});
+});
+
+describe("openDeviceHubWindows", () => {
+	const sims = [
+		{ udid: "U1", name: "warden-iphone-17-1" },
+		{ udid: "U2", name: "warden-iphone-17-2" },
+	];
+	const opens = (calls: string[][]) => calls.filter((c) => c[0] === "open");
+
+	test("Device Hub running → one `open -g devices://device/open?id=<udid>` per sim, names returned", async () => {
+		const calls: string[][] = [];
+		const opened = await openDeviceHubWindows({ exec: viewerExec("device-hub", calls), env: {}, os: "darwin" }, sims);
+		expect(opened).toEqual(["warden-iphone-17-1", "warden-iphone-17-2"]);
+		expect(opens(calls)).toEqual([
+			["open", "-g", "devices://device/open?id=U1"],
+			["open", "-g", "devices://device/open?id=U2"],
+		]);
+	});
+
+	test.each(["simulator", "none"] as const)(
+		"%s → nothing opened (the URL would launch Device Hub)",
+		async (running) => {
+			const calls: string[][] = [];
+			expect(await openDeviceHubWindows({ exec: viewerExec(running, calls), env: {}, os: "darwin" }, sims)).toEqual([]);
+			expect(opens(calls)).toHaveLength(0);
+		}
+	);
+
+	test("not macOS, WARDEN_ARRANGE=0 or no sims → nothing runs", async () => {
+		const calls: string[][] = [];
+		const exec = viewerExec("device-hub", calls);
+		expect(await openDeviceHubWindows({ exec, env: {}, os: "linux" }, sims)).toEqual([]);
+		expect(await openDeviceHubWindows({ exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin" }, sims)).toEqual([]);
+		expect(await openDeviceHubWindows({ exec, env: {}, os: "darwin" }, [])).toEqual([]);
+		expect(calls).toEqual([]);
+	});
+
+	test("an open that fails is skipped, the others still open; never throws", async () => {
+		const calls: string[][] = [];
+		const inner = viewerExec("device-hub", calls);
+		const exec: Exec = async (cmd) =>
+			cmd[0] === "open" && cmd[2]?.endsWith("U1") ? { exitCode: 1, stdout: "", stderr: "boom" } : inner(cmd);
+		expect(await openDeviceHubWindows({ exec, env: {}, os: "darwin" }, sims)).toEqual(["warden-iphone-17-2"]);
+	});
+});
+
+describe("autoArrangeSimWindows after opening Device Hub windows", () => {
+	test("windows not there yet → keeps polling for the opened sims instead of giving up on an empty list", async () => {
+		const lists = [[], [], ["warden-iphone-17-1"]];
+		let i = 0;
+		const waits: number[] = [];
+		const exec: Exec = async (cmd) => {
+			if (cmd[0] === "pgrep") return { exitCode: cmd[2] === "DeviceHub" ? 0 : 1, stdout: "", stderr: "" };
+			if (!(cmd[4] ?? "").includes("NSScreen")) return { exitCode: 0, stdout: "", stderr: "" };
+			const names = lists[Math.min(i++, lists.length - 1)] ?? [];
+			return {
+				exitCode: 0,
+				stdout: JSON.stringify({ screen, windows: names.map((n) => sim(`${n} – iOS 27.1`, 340, 751)) }),
+				stderr: "",
+			};
+		};
+		await autoArrangeSimWindows(
+			{ exec, env: {}, os: "darwin", sleep: async (ms) => void waits.push(ms) },
+			["warden-iphone-17-1"],
+			["warden-iphone-17-1"]
+		);
+		expect(i).toBe(3);
+		expect(waits).toHaveLength(2);
+	});
+
+	test("a window still missing at attempt 3 is asked for once more", async () => {
+		let i = 0;
+		const exec: Exec = async (cmd) => {
+			if (cmd[0] === "pgrep") return { exitCode: cmd[2] === "DeviceHub" ? 0 : 1, stdout: "", stderr: "" };
+			if (!(cmd[4] ?? "").includes("NSScreen")) return { exitCode: 0, stdout: "", stderr: "" };
+			i++;
+			const names = i < 4 ? ["warden-iphone-17-1"] : ["warden-iphone-17-1", "warden-iphone-17-2"];
+			return {
+				exitCode: 0,
+				stdout: JSON.stringify({ screen, windows: names.map((n) => sim(`${n} – iOS 27.1`, 340, 751)) }),
+				stderr: "",
+			};
+		};
+		const reopened: (readonly string[])[] = [];
+		const claimed = ["warden-iphone-17-1", "warden-iphone-17-2"];
+		await autoArrangeSimWindows(
+			{ exec, env: {}, os: "darwin", sleep: async () => {} },
+			claimed,
+			claimed,
+			async (missing) => void reopened.push(missing)
+		);
+		expect(reopened).toEqual([["warden-iphone-17-2"]]);
+		expect(i).toBe(4);
+	});
+});
+
+describe("reopenSimWindows", () => {
+	const list = simctlDevicesJson({
+		"iOS-27-1": [
+			{ udid: "U1", name: "warden-iphone-17-1", state: "Booted" },
+			{ udid: "U2", name: "warden-iphone-17-2", state: "Booted" },
+		],
+	});
+
+	test("Device Hub: opens the named udid's window only, then tiles all warden windows", async () => {
+		const calls: string[][] = [];
+		const inner = viewerExec("device-hub", calls);
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd.join(" ") === "xcrun simctl list devices -j") return { exitCode: 0, stdout: list, stderr: "" };
+			if (cmd[0] === "osascript" && (cmd[4] ?? "").includes("NSScreen")) {
+				calls.push([...cmd]);
+				const windows = [
+					sim("warden-iphone-17-2 – iOS 27.1", 340, 751),
+					sim("warden-iphone-17-1 – iOS 27.1", 340, 751),
+				];
+				return { exitCode: 0, stdout: JSON.stringify({ screen, windows }), stderr: "" };
+			}
+			return inner(cmd, opts);
+		};
+		const opened = await reopenSimWindows({ exec, env: {}, os: "darwin", sleep: async () => {} }, ["U2"]);
+		expect(opened).toEqual(["warden-iphone-17-2"]);
+		expect(calls.filter((c) => c[0] === "open")).toEqual([["open", "-g", "devices://device/open?id=U2"]]);
+		expect(osascripts(calls).length).toBeGreaterThanOrEqual(2);
+	});
+
+	test("WARDEN_ARRANGE=0, not macOS or no udids → nothing runs", async () => {
+		const calls: string[][] = [];
+		const exec = viewerExec("device-hub", calls);
+		expect(await reopenSimWindows({ exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin" }, ["U1"])).toEqual([]);
+		expect(await reopenSimWindows({ exec, env: {}, os: "linux" }, ["U1"])).toEqual([]);
+		expect(await reopenSimWindows({ exec, env: {}, os: "darwin" }, [])).toEqual([]);
+		expect(calls).toEqual([]);
 	});
 });

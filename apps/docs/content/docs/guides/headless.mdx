@@ -34,10 +34,13 @@ Closing windows uses System Events, so your terminal needs Accessibility access 
 
 ## Xcode 27: Device Hub
 
-Xcode 27 removed Simulator.app. Its viewer is **Device Hub** (`Xcode.app/Contents/Applications/DeviceHub.app`, bundle id `com.apple.dt.Devices`). Device Hub also opens a window per device (verified on Xcode 27.1), but warden does not tile or close Device Hub windows yet.
+Xcode 27 removed Simulator.app. Its viewer is **Device Hub** (`Xcode.app/Contents/Applications/DeviceHub.app`, bundle id `com.apple.dt.Devices`). Unlike Simulator.app it opens no window when a sim boots, so warden asks for them.
 
 - warden looks for the running viewer's process: `Simulator` first, then `DeviceHub`. It doesn't go by the Xcode version, so a Mac with Xcode 26 and 27 side by side still gets Simulator.app windows tiled or closed.
-- With only Device Hub running, `--headless` and the post-claim tiling do nothing. warden never closes, moves or launches Device Hub windows, and never writes Simulator's `DetachOnWindowClose`. `warden arrange` says so (`"viewer": "device-hub"` with `--json`).
+- **Not headless, Device Hub already running:** every sim the claim booted gets its own Device Hub window (`open -g devices://device/open?id=<udid>`, your frontmost app stays in front), then the windows are tiled like Simulator.app's: name order, left to right, overlapping when the row is wider than the screen. Device Hub windows can't be resized either. Sims that were already running keep whatever window you gave them. `warden arrange` tiles on demand; `warden arrange --open <udid…>` also reopens those sims' windows.
+- **Device Hub not running:** warden never launches it (opening a `devices://` link would), so there are no windows, exactly as with Xcode 26 and Simulator.app closed.
+- **Headless:** warden opens no Device Hub window, never launches it and writes no `DetachOnWindowClose`. Device Hub opens none by itself, so there is nothing to close.
+- **Don't quit Device Hub during a run, headless or not.** A normal quit shuts down every booted simulator, including ones you never opened there. Killing it leaves them booted but a sim it had open can drop warden's input (`E_HID`). `warden e2e` handles either once: it reboots the sim, reopens its window and tiles again when the run isn't headless, then reruns the test.
 - Booting is unchanged: `simctl boot` brings a device up without a window on every Xcode, and the e2e driver never needs one.
 - Don't tap or type into a leased sim from Device Hub during a run. Device Hub reportedly takes over the device's touch input after you interact with it there, and other input (warden's taps included) can be dropped until the sim reboots, even after Device Hub quits.
 
