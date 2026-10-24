@@ -87,3 +87,22 @@ Findings:
 - Quitting Device Hub invalidates the HID digitizer connection of sims it had open; they need a reboot before warden taps work. A candidate for `warden doctor`/`E_HID` hint text (open question 3).
 - Not exercised: step 9 (manual tap in Device Hub), step 11 (Xcode 26 Simulator.app side by side), whether `simctl boot` itself opens Device Hub (open question 4).
 - `warden-simd` needed an `@executable_path` rpath on Xcode 27.1 (fixed in `57e09cbd`).
+
+## Device Hub windows (DHW-0)
+
+Spike on Xcode 27.1 (27A9275), Device Hub running, 3-4 warden-claimed sims (`warden-iphone-17-5/6/8/9`), leases released by id. Probes: JXA over System Events process `DeviceHub`, `open -g "devices://device/open?id=<udid>"`, `defaults read com.apple.dt.Devices`.
+
+| # | Question | Answer |
+|---|---|---|
+| V1 | Does Device Hub open a window when a sim boots? | **No.** `simctl boot` / `warden claim` with Device Hub running leaves the window list empty (checked after 1, 3 and a 4th sim). The windows must be opened explicitly |
+| V2 | `devices://device/open?id=<udid>` | Opens a **separate** window per sim (3 URLs = 3 windows). `open -g` keeps the frontmost app (Orca stayed frontmost). **It launches Device Hub when it is not running** (pid appeared, window opened), so warden must gate on Device Hub already running |
+| V3 | Window identity / size | Per-device window: title `<name> – iOS <ver>`, `AXIdentifier` `deviceWindow-AppWindow-N`, `AXStandardWindow`, 340x751 pt (iPhone 17). **Not resizable**: `AXSize` set is silently ignored (255x563, 400x883 all stay 340x751). The management (main) window has `AXIdentifier` `com.apple.dt.DeviceKit.DeviceManagementWindow-AppWindow-1`, 1443x1021, and is **titled with the selected device's name in the same format** (`warden-iphone-17-5 – iOS 26.5`): the `warden-` title prefix does **not** exclude it. Windows must be filtered by identifier prefix `deviceWindow-`. It is closed on a fresh start (no windows), but Device Hub restores it after a relaunch |
+| V4 | Close a per-device window | Close button works (`AXCloseButton`). The sim **stays Booted**. No `DetachOnWindowClose`-like key in `com.apple.dt.Devices` (only frame/inspector keys) |
+| V5 | Device Hub quit vs sims | A normal **quit (`tell application "DeviceHub" to quit`) shuts down every booted sim**: sims never opened in Device Hub, a sim whose window was closed, and a sim booted before Device Hub launched (all went `Shutdown` within 2 s). `kill -9` / SIGKILL leaves them Booted. A sim booted with Device Hub running, never opened, then SIGKILLed Device Hub: `warden ui open`, `snapshot`, `press` all worked (no `E_HID`) |
+| V6 | Move / raise | `position` is settable and `AXRaise` works; position is clamped to the screen. Same permission as Simulator.app |
+
+Consequences:
+- Tile with `layoutWindows` (overlap), not a resizing grid: windows cannot be resized.
+- Open windows only for sims the claim booted, only when Device Hub is already running (the URL would launch it).
+- Headless on Device Hub: nothing to close (nothing auto-opens). A user quitting Device Hub shuts down warden's sims regardless of headless, so docs/doctor should say "don't quit Device Hub mid-run"; `recoverHid` must cope with a sim that is `Shutdown`, not only a lost HID connection.
+- Workaround note: the shared `~/.warden/warden.db` is `user_version` 8 without the `leases.shared` column on this machine (migration #8 collision); the spike ran with a copied `WARDEN_HOME` with the column added.
