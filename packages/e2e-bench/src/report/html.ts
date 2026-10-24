@@ -1,7 +1,7 @@
 import type { Manifest } from "../results/manifest";
 import type { BenchRun, FrameworkResult, OkFrameworkResult, Series } from "../results/schema";
 import { escapeHtml } from "./escape";
-import { bytes, DASH, ms, pct, ratio, signedMs } from "./format";
+import { bytes, coldStartCost, DASH, ms, pct, ratio } from "./format";
 import { FAIRNESS_RULES } from "./markdown";
 import { type BarGroup, type BoxGroup, barChart, boxChart, tickMs } from "./svg";
 import { type PerTestMatrix, perTestMatrix, type SummaryRow, summaryRows } from "./tables";
@@ -206,13 +206,7 @@ function summaryRowHtml(r: SummaryRow): string {
 		td(escapeHtml(ms(r.suiteP95Ms))),
 		td(escapeHtml(ratio(r.ratio))),
 		td(escapeHtml(ms(r.coldRep1Ms))),
-		td(
-			escapeHtml(
-				r.coldStartMs !== undefined && r.coldStartMs < 0
-					? `none (rep 1 not slower, ${signedMs(r.coldStartMs)})`
-					: ms(r.coldStartMs)
-			)
-		),
+		td(escapeHtml(coldStartCost(r.coldStartMs))),
 		td(escapeHtml(ms(r.prepareMs))),
 		td(escapeHtml(ms(r.teardownMs))),
 		td(escapeHtml(ms(r.overheadMs))),

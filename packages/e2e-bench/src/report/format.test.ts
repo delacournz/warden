@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bytes, cpuSeconds, ms, pct, ratio, signedCpuSeconds, signedMs, signedPct } from "./format";
+import { bytes, coldStartCost, cpuSeconds, ms, pct, ratio, signedCpuSeconds, signedMs, signedPct } from "./format";
 
 describe("format", () => {
 	test("ms", () => {
@@ -14,6 +14,11 @@ describe("format", () => {
 		expect(signedMs(-150)).toBe("-150 ms");
 		expect(signedMs(0)).toBe("0 ms");
 		expect(signedMs(Number.NaN)).toBe("—");
+	});
+	test("coldStartCost flags a negative cost as not a duration", () => {
+		expect(coldStartCost(-1974)).toBe("none (rep 1 not slower, -1.97 s)");
+		expect(coldStartCost(60_766)).toBe(ms(60_766));
+		expect(coldStartCost(undefined)).toBe("—");
 	});
 	test("pct", () => {
 		expect(pct(1)).toBe("100%");

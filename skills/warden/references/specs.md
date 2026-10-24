@@ -45,7 +45,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 - `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none", systemAlerts?: "accept" | "dismiss" | "off" })` applies to the file or the enclosing `describe`. `systemAlerts` (default `"off"`): reads, actions and `expect` that see an alert on top answer it (`device.alert(mode)`, 3 answers max per look) and look again. Answers the app's own alerts too. `"dismiss"` answers iOS's "Open in …?" sheet with Open, and nothing is answered while `device.openLink` waits on a link (it owns the sheet).
 - `test.extend<Extra>({ name: async (base, use) => { await use(value) } })` returns a `test` with the extra fixture.
 - `describe(title, [{ serial }], body)`. `serial` is accepted but changes nothing (bun runs a file's tests in order).
-- `beforeEach/afterEach` receive the fixtures. `beforeAll/afterAll` receive `app`, `device`, `screen`, `platform` only.
+- `beforeEach/afterEach` receive the base fixtures; `it.beforeEach/afterEach` on a `test.extend` result receive its fixtures too and run only for its tests. `beforeAll/afterAll` receive `app`, `device`, `screen`, `platform` only.
 - The runner calls `app.open()` before every test unless `launch: "none"`. A flow starts from a fresh launch.
 - Timeouts: test 120 s, action 30 s, assertion 5 s. Precedence: test option, then `test.use`, then env (`WARDEN_E2E_*`). In a suite, set them under `spec`.
 

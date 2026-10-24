@@ -442,6 +442,8 @@ async function runPlan(
 	if (!metro.success) return metro;
 	// --json is the e2e report here, not batch.json
 	const { json: _json, ...merged } = suiteOpts(suite, opts, passed);
+	const needsApp = appFlagsWithoutApp(suite, merged);
+	if (needsApp !== undefined) return err(needsApp);
 	const batchOpts = { ...merged, ...(config.metro?.enabled ? { port: [config.metro.port, ...merged.port] } : {}) };
 	const legOpts = (leg: E2eDeviceLeg) => ({ ...batchOpts, profile: leg.profile, count: String(leg.count) });
 	const [first] = picked.data ?? [];
@@ -474,6 +476,21 @@ async function runPlan(
 		plan,
 		argvOf,
 	});
+}
+
+/**
+ * The install flags (`--install-mode`, `--reset-keychain`, `--clean`) act on the installed app, so they need the
+ * suite to install one: `app` in the suite config or `--app` on the command line. Refused up front, naming the suite.
+ */
+function appFlagsWithoutApp(suite: Suite, opts: E2eOpts): string | undefined {
+	if (opts.app) return undefined;
+	const flags = [
+		opts.installMode !== undefined ? "--install-mode" : undefined,
+		opts.resetKeychain ? "--reset-keychain" : undefined,
+		opts.clean ? "--clean" : undefined,
+	].filter((flag) => flag !== undefined);
+	if (flags.length === 0) return undefined;
+	return `${flags.join(" / ")} need an app to install, but suite "${suite.name}" has no \`app\` — set e2e.${suite.name}.app or pass --app`;
 }
 
 /** The run's isolation from the suite and the `passes` it runs with: a CLI `--passes` counts too (12-10). */

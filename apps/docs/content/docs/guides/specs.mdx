@@ -30,12 +30,12 @@ test("add a todo", async ({ device, screen }) => {
 
 | Option | Effect |
 |---|---|
-| `timeout` | ms for the whole test, hooks included (default 2 min, `spec.timeout`) |
+| `timeout` | ms for the whole test, hooks included (default 2 min, `spec.timeout`); beats `test.use({ timeout })` |
 | `skip`, `only` | skip the test, or run only this one. A leftover `only` fails the run under `CI` |
 | `platforms` | run only on these platforms, e.g. `["ios"]` |
 | `retry` | extra attempts after a failure; only the last attempt is reported |
 
-`test.skip`, `test.only`, `test.skipIf(condition)` and `test.todo(title)` work as in `bun:test`.
+`test.skip`, `test.only`, `test.skipIf(condition)` and `test.todo(title)` work as in `bun:test` (a `test.todo` fails when bun runs with `--todo`). A test without a body throws `INVALID_ARGUMENT`.
 
 ### describe, hooks and settings
 
@@ -55,9 +55,9 @@ describe("settings", () => {
 });
 ```
 
-- `describe(title, body)` groups tests; the group title is part of every test title.
-- `beforeEach` / `afterEach` hooks receive the same fixtures as a test. `beforeAll` / `afterAll` run once per file or `describe` and receive the base fixtures (`app`, `device`, `screen`, `platform`) but not the ones added by `test.extend`.
-- `test.use({ timeout, actionTimeout, assertionTimeout, launch, systemAlerts })` applies to every test in the current file or `describe`. `launch: "none"` skips the fresh `app.open()` before each test.
+- `describe(title, body)` groups tests; the group title is part of every test title. `describe(title, { serial }, body)` takes `serial` only for parity: bun runs a file's tests one after another unless `--concurrent`.
+- `beforeEach` / `afterEach` hooks run outermost scope first / innermost first, and are typed with the base fixtures (`app`, `device`, `screen`, `platform`); `afterEach` runs even when the test failed. To get the fixtures `test.extend` added, register the hook on the extended test (`it.beforeEach(({ account }) => …)`, `it.afterEach`): it is typed with that test's fixtures and runs only for tests made with it (or extended from it). `beforeAll` / `afterAll` run once per file or `describe` with the same base fixtures and never see the ones added by `test.extend`.
+- `test.use({ timeout, actionTimeout, assertionTimeout, launch, systemAlerts })` applies to every test in the current file or `describe`. `launch: "none"` skips the fresh `app.open()` before each test. Put `test.use({ timeout })` above the tests it is for: after a test in the same scope bun has already fixed that test's timeout, and warden prints a warning. An unknown `systemAlerts` value is `INVALID_ARGUMENT`.
 - `actionTimeout` (default 30 s) bounds each tap, fill and wait for an element; `assertionTimeout` (default 5 s) bounds each `expect(locator)`.
 - `systemAlerts: "accept" | "dismiss" | "off"` (default `"off"`) answers an alert that is in the way. With `"accept"` or `"dismiss"`, a locator read, action or `expect` that sees an alert on top answers it (`device.alert("accept")` or `"dismiss"`) and looks again on a fresh screen, three answers at most per look. It answers every alert, the app's own as well as the system's, so leave it `"off"` for a test that asserts on an alert. iOS's "Open in …?" sheet is the exception: `"dismiss"` answers it with Open (Cancel would only throw away a link the test opened), and while `device.openLink` is waiting on a link no read answers any alert, because `openLink` answers the sheet itself.
 
@@ -81,17 +81,17 @@ export const test = base.extend<{ email: string }>({
 
 | Query | Matches |
 |---|---|
-| `getByTestId(id)` | the `testID` of the view |
+| `getByTestId(id, { visible? })` | the `testID` of the view |
 | `getByText(text, { exact?, visible? })` | the visible text (innermost match) |
-| `getByLabel(text)` / `getByPlaceholder(text)` / `getByValue(text)` | accessibility label, field placeholder, field value |
-| `getByRole(role, name?, { checked?, disabled?, selected? })` | a role such as `button`, `textbox`, `switch`, with an optional name |
+| `getByLabel(text, opts?)` / `getByPlaceholder(text, opts?)` / `getByValue(text, opts?)` | accessibility label, field placeholder, field value; `opts` is `{ exact?, visible? }` as for `getByText` |
+| `getByRole(role, name?, { exact?, checked?, disabled?, selected?, visible? })` | a role with an optional name (a string or `RegExp`, or `{ name }` in the options). Roles: `button`, `link`, `textbox`, `searchbox`, `checkbox`, `radio`, `switch`, `slider`, `image`, `heading`, `text`, `tab`, `tablist`, `menu`, `menuitem`, `list`, `listitem`, `row`, `alert`, `dialog`, `navigation`, `group`, `other`; anything else is `INVALID_LOCATOR` |
 | `locator("id=sign-in-submit role=button")` | the selector grammar of [`warden ui`](/docs/guides/agent-ui#targets-and-selectors) |
 
-A string matches the whole text after whitespace is collapsed; `{ exact: false }` makes it a case-insensitive substring; a `RegExp` is tested as written. Refine a locator with `.filter({ hasText, has })`, `.first()`, `.last()` and `.nth(i)`.
+A string matches the whole text after whitespace is collapsed (case-sensitive); `{ exact: false }` makes it a case-insensitive substring; a `RegExp` is tested as written (its `g` and `y` flags are ignored). `getByTestId` takes a `RegExp` too. Refine a locator with `.filter({ hasText, has })` (at least one of the two; `has` is another locator), `.first()`, `.last()` and `.nth(i)` (a non-negative integer); a bad refinement is `INVALID_LOCATOR`.
 
 Role queries and `visible: true` drop hidden elements. Actions and reads need exactly one match: none gives `LOCATOR_NOT_FOUND`, several give `LOCATOR_AMBIGUOUS` (narrow the query, or use `.first()`).
 
-Whole-screen gestures live on `screen`: `tapAt({ x, y })`, `swipe({ direction })` or `swipe({ from, to })`, and `scrollUntilVisible(locator, { direction?, maxSwipes? })`.
+Whole-screen gestures live on `screen`: `tapAt({ x, y })`, `swipe({ direction, momentum? })` or `swipe({ from, to, durationMs? })` (not a mix), and `scrollUntilVisible(locator, { direction?, momentum?, maxSwipes?, timeout? })`. `direction` is the way the content moves (`"down"` reveals what is below), `momentum` is `"none"` (default, a plain drag), `"slow"` or `"fast"` (a fling). `scrollUntilVisible` defaults to `direction: "down"` and `maxSwipes: 10`, and fails when the target is still off screen after that many swipes.
 
 Multi-touch lives on `screen.gesture`:
 
@@ -105,24 +105,26 @@ Multi-touch lives on `screen.gesture`:
 A scale or degrees out of range, a `paths` count other than 1-2, or a path with no point or a non-finite coordinate throws `E2eError` `INVALID_ARGUMENT`, as does a gesture the device cannot do: `pinch` and `rotate` need `capabilities.pinch`, a path needs as many `capabilities.maxPointers` as it has fingers (Android without `warden-uiad`: no pinch or rotate, 1-finger paths only on API 26+). Skip such a test with `test({ platforms: ["ios"] })`.
 
 <Callout>
-Specs read the accessibility tree, not the React tree. A `testID` is only exposed when the native view is `accessible`, so mark every view a flow taps or asserts as accessible.
+Specs read the accessibility tree. A `testID` is only exposed when the native view is `accessible`, so mark every view a flow taps or asserts as accessible. In a dev client, a plain `getByTestId` that finds nothing in the accessibility tree falls back to the React tree, but only `tap()` and `boundingBox()` work on such a component; anything else fails with `NOT_ACTIONABLE`.
 </Callout>
 
 ## locator: actions and reads
 
-Actions wait for the element (up to `actionTimeout`) and then act:
+Actions wait for the element (up to `actionTimeout`) and then act. Every action takes `timeout` (ms) to override `actionTimeout` for that call, and an option an action does not know is `INVALID_ARGUMENT`:
 
 | Action | |
 |---|---|
-| `tap({ position?, until?, retries?, windowMs?, pollMs? })`, `longPress({ durationMs? })` | touch the element's centre, or a point inside it. `until` makes the tap retrying (below) |
+| `tap({ position?, until?, retries?, windowMs?, pollMs?, timeout? })`, `longPress({ durationMs?, timeout? })` | touch the element's centre, or `position` (an offset from its top-left corner). `until` makes the tap retrying (below). The element must be enabled and its tap point on screen, and its frame must have held still across two looks |
 | `fill(text)` | replace the field's text (focus with the caret at the end, empty it, type the whole string), then poll until the field holds it on consecutive reads, since the accessibility value lags the keys by 100-200 ms; a mismatch is retried once with a fresh clear and retype, then fails with what the field holds. Emptying is select all on iOS and on Android 13+, then the typed text replaces the selection (no Backspace; on Android with `WARDEN_ANDROID_SETTEXT=1`, a field that holds text is replaced in one `setText` call instead); older Android and the retry press one Backspace per character, and a field that is empty or shows its placeholder gets no keys. Secure fields skip the check |
-| `type(text)`, `clear()`, `press("Enter", { modifiers? })` | keyboard input; the field is tapped first unless it already has focus. `clear()` checks the field is empty afterwards (secure fields skip the check) |
-| `swipe({ direction })`, `scrollTo()` | scroll the element, or scroll until it is visible |
+| `type(text)`, `clear()`, `press(key, { modifiers? })` | keyboard input; the field is tapped first unless it already has focus. `key` is `Enter`, `Backspace`, `Tab`, `Space`, `Escape`, `Delete`, `Up`, `Down`, `Left` or `Right`; `modifiers` is a list of `shift`, `cmd`, `alt`, `ctrl` (Android before 13 cannot send them). `clear()` checks the field is empty afterwards, with one counted retry (secure fields skip the check) |
+| `swipe({ direction, momentum? })`, `scrollTo({ direction?, momentum?, maxSwipes? })` | scroll the element, or scroll the screen until it is visible (same defaults as `screen.scrollUntilVisible`) |
 | `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` | two fingers around the element's centre, kept inside its visible rect (defaults 500 ms); `rotate` is clockwise for positive degrees. Same `scale` and `degrees` limits and `INVALID_ARGUMENT` as `screen.gesture` |
 
 Reads never wait; they answer from the screen as it is now:
 
-`text()` · `value()` · `count()` · `all()` · `allTexts()` · `isVisible()` · `isHidden()` · `isEnabled()` · `isChecked()` · `boundingBox()` · `waitFor({ state: "visible" | "hidden" | "attached" | "detached", timeout })`
+`text()` · `value()` · `count()` · `all()` · `allTexts()` · `isVisible()` · `isHidden()` · `isEnabled()` · `isChecked()` · `boundingBox()` · `waitFor({ state?: "visible" | "hidden" | "attached" | "detached", timeout? })`
+
+`waitFor` is the one read that polls: `state` defaults to `"visible"` and `timeout` to `actionTimeout`, and it fails with `TIMEOUT` carrying the screen as text.
 
 `text()` falls back to the text of the descendants when iOS leaves a container's own label empty (a `Badge`, a `Chip`), so asserting on the container works.
 
@@ -145,14 +147,14 @@ Every read, action and `expect` looks at the screen. The runner keeps the last l
 
 ## expect: the nine matchers
 
-`expect(locator)` polls every 100 ms for the first second, then every 250 ms, until the check holds or `assertionTimeout` (default 5 s) runs out. Pass `{ timeout }` to override one check.
+`expect(locator)` polls every 100 ms for the first second, then every 250 ms, until the check holds or `assertionTimeout` (default 5 s) runs out. Pass `{ timeout }` to override one check. Every matcher takes `timeout`, and an option it does not know is `INVALID_ARGUMENT`. All but `toHaveCount` need exactly one match: none keeps polling, several fail at once with `ASSERTION`.
 
 | Matcher | Holds when |
 |---|---|
 | `toBeVisible()` / `toBeHidden()` | the element is on screen / absent or off screen |
-| `toHaveText(text, { exact? })` | the text equals `text` (a `RegExp` is tested as written) |
-| `toContainText(text)` | the text contains `text` |
-| `toHaveValue(text)` | the field's value equals `text` |
+| `toHaveText(text, { exact? })` | the text equals `text` after whitespace is collapsed; `{ exact: false }`: a case-insensitive substring. A `RegExp` is tested as written |
+| `toContainText(text, { ignoreCase? })` | the text contains `text`, case-sensitively unless `ignoreCase: true` (a `RegExp` is tested as written) |
+| `toHaveValue(text)` | the field's value equals `text` (a `RegExp` is tested as written) |
 | `toBeChecked({ checked? })` | a switch or checkbox is on (`{ checked: false }`: off) |
 | `toHaveCount(n)` | exactly `n` elements match |
 | `toBeEnabled()` / `toBeDisabled()` | the element accepts / refuses input |
@@ -165,7 +167,7 @@ Every read, action and `expect` looks at the screen. The runner keeps the last l
 
 `open({ url?, args?, env?, wait? })` · `close()` · `restart()` · `reinstall()` · `clearData()` · `isRunning()`
 
-`open` always starts the app fresh: it terminates a running instance first (iOS: `simctl launch --terminate-running-process`; Android: `am start -W -S` on the launcher activity, which also waits for the first frame, or `am force-stop` then `monkey` when the launcher cannot be resolved), so a device an aborted run left mid-flow does not leak into the next test. It launches with the suite's launch arguments (`--initialUrl <metro url>` for a dev client) plus `args`. `wait: "none"` (the default) returns when the launch call does, before the app is on screen. `wait: "quiet"` then also waits for the first screen and for it to stop moving. A launch screen is idle while the app loads, so open reads the screen after 100 ms, 200 ms, then every 400 ms (fewer full reads while the app starts) until it shows content (a visible control, or any element with a testID; a storyboard or splash has neither), for at most 3 s, then settles (`device.settle()` with 250 ms of quiet, at most 3 s). It is best effort: a first screen with no control and no testID waits out the 3 s, an app that is not quiet in time is returned as it is, and a driver that cannot settle skips the settle. `wait: { until: locator, timeout? }` waits for that locator to be visible (a `TIMEOUT` after `timeout`, default the assertion timeout, like `toBeVisible()`), then settles once, so the next tap lands on a mounted screen; it replaces `open()` followed by `toBeVisible()`: `await app.open({ wait: { until: screen.getByTestId("welcome.screen") } })`. `restart()` is the same relaunch (one stop, not two); `close()` only stops. `launch: "none"` skips the runner's own `open()` and leaves the app as it is. `clearData` wipes the app's data and the keychain; `reinstall` installs the build again from `WARDEN_APP_PATH`.
+`open` always starts the app fresh: it terminates a running instance first (iOS: `simctl launch --terminate-running-process`; Android: `am start -W -S` on the launcher activity, which also waits for the first frame, or `am force-stop` then `monkey` when the launcher cannot be resolved), so a device an aborted run left mid-flow does not leak into the next test. It launches with the suite's launch arguments (`--initialUrl <metro url>` for a dev client) plus `args`, and `env` adds environment variables to the launched process; `url` is opened once the app is launched. Android cannot take launch arguments: the suite's are dropped with one log line, while an explicit `args` still fails the launch, and `env` is unsupported there. `wait: "none"` (the default) returns when the launch call does, before the app is on screen. `wait: "quiet"` then also waits for the first screen and for it to stop moving. A launch screen is idle while the app loads, so open reads the screen after 100 ms, 200 ms, then every 400 ms (fewer full reads while the app starts) until it shows content (a visible control, or any element with a testID; a storyboard or splash has neither), for at most 3 s, then settles (`device.settle()` with 250 ms of quiet, at most 3 s). It is best effort: a first screen with no control and no testID waits out the 3 s, an app that is not quiet in time is returned as it is, and a driver that cannot settle skips the settle. `wait: { until: locator, timeout? }` waits for that locator to be visible (a `TIMEOUT` after `timeout`, default the assertion timeout, like `toBeVisible()`), then settles once, so the next tap lands on a mounted screen; it replaces `open()` followed by `toBeVisible()`: `await app.open({ wait: { until: screen.getByTestId("welcome.screen") } })`. `restart()` is the same relaunch (one stop, not two); `close()` only stops. `launch: "none"` skips the runner's own `open()` and leaves the app as it is. `clearData` wipes the app's data and the keychain; `reinstall` uninstalls the app when it is installed and installs the build again from `WARDEN_APP_PATH` (`INVALID_ARGUMENT` when that is not set).
 
 `device` is the simulator or emulator:
 
@@ -177,10 +179,10 @@ Every read, action and `expect` looks at the screen. The runner keeps the last l
 | `orientation(set?)`, `appearance(set?)` | read or set the orientation and the light/dark appearance |
 | `clipboard()`, `setClipboard(text)` | the device pasteboard (iOS only; Android throws `E_UNSUPPORTED`) |
 | `hideKeyboard()` | dismiss the soft keyboard when it shows (iOS presses Enter, which may submit the field; Android presses back) |
-| `screenshot(name)` | saves `screenshots/NNN-name.png` in the test's artifact directory |
+| `screenshot(name)` | saves `screenshots/NNN-name.png` in the test's artifact directory and resolves its path |
 | `snapshot({ interactiveOnly? })` | the accessibility tree as text, the text format `warden ui snapshot` prints |
-| `settle({ quietMs?, timeout? })` | waits for a quiet UI; resolves `{ quiet, waitedMs, via?, reason?, frontmostPid? }`: `via` is `stream` (the app's run loop went idle), `snapshot` (the helper compared screens instead) or `hash` (warden polled snapshot hashes; on Android one dump that waited out the idle second reports `snapshot`); `reason` explains a not-quiet end (`frontmost_mismatch`: the launched app never came to the front) |
-| `devtools` | dev client only, `undefined` in a release build: `evaluate(expr)`, `reloadJs()`, `tree()`, `network`, `console.lines()` / `clear()` / `mark(label)`, `connect()` for the whole facet. The first access attaches |
+| `settle({ quietMs?, timeout? })` | waits for a quiet UI (defaults 250 ms of quiet, at most 3000 ms); resolves `{ quiet, waitedMs, via?, reason?, frontmostPid? }`: `via` is `stream` (the app's run loop went idle), `snapshot` (the helper compared screens instead) or `hash` (warden polled snapshot hashes; on Android one dump that waited out the idle second reports `snapshot`); `reason` explains a not-quiet end (`frontmost_mismatch`: the launched app never came to the front) |
+| `devtools` | dev client only (`WARDEN_METRO_URL` set), `undefined` in a release build: `evaluate(expr)`, `reloadJs()`, `tree()`, `network`, `console.lines()` / `clear()` / `mark(label)`, `connect()` for the whole facet. The first access attaches |
 
 `openLink` does not wait out a fixed window. It reads the system alert every 100 ms for the first second and every 250 ms after, presses "Open" once the sheet has been up for half a second, since a sheet that is still animating in ignores touches (again if it stays up, three times at most, 600 ms apart) and returns once the sheet is gone. With no sheet it returns after about 1.2 s, as soon as the app is in front: a link that shows no sheet costs about 1.4 s, and later links with the same scheme in the same run return as soon as the app is in front, without reading alerts. While another app (SpringBoard, Safari) is in front it keeps looking for the sheet until `waitMs` (default 8000, the longest wait), then returns without an error. `until` takes a locator and returns as soon as it is visible and no sheet is up, which is the fastest way to wait for the screen the link leads to:
 
@@ -194,25 +196,25 @@ await device.openLink("myapp://todo/42", { until: screen.getByTestId("todo-detai
 
 ## Imports and errors
 
-`@delacour/warden-e2e` exports `test`, `describe`, `beforeAll`, `beforeEach`, `afterEach`, `afterAll`, `expect`, `E2eError`, `WARDEN_E2E_VERSION` and the types `App`, `OpenOptions`, `Device`, `Screen`, `Locator`, `LocatorReading`, `TapOptions`, `TapUntil`, `PinchOptions`, `RotateOptions`, `ScreenGestures`, `ScreenPinchOptions`, `ScreenRotateOptions`, `ScreenPathOptions`, `SystemAlerts` and `TestFixtures`. Everything else is internal.
+`@delacour/warden-e2e` exports `test`, `describe`, `beforeAll`, `beforeEach`, `afterEach`, `afterAll`, `expect`, `E2eError`, `WARDEN_E2E_VERSION` and the types `App`, `OpenOptions`, `OpenWaitUntil`, `Device`, `Screen`, `Locator`, `LocatorReading`, `TapOptions`, `TapUntil`, `PinchOptions`, `RotateOptions`, `ScreenGestures`, `ScreenPinchOptions`, `ScreenRotateOptions`, `ScreenPathOptions`, `SystemAlerts` and `TestFixtures`. Everything else is internal.
 
-Every failure a spec sees is an `E2eError` (`instanceof` works) with a `code`: `LOCATOR_NOT_FOUND`, `LOCATOR_AMBIGUOUS`, `INVALID_LOCATOR`, `ACTION_FAILED`, `NOT_ACTIONABLE`, `TIMEOUT`, `INVALID_ARGUMENT`, `ASSERTION`, `SESSION` or `DRIVER`. A locator failure carries the screen as text (`screen`); an ambiguous one the number of `matches`. `WARDEN_E2E_VERSION` is the package version: `warden e2e` refuses to run a spec process whose `@delacour/warden-e2e` version differs from warden's.
+Every failure a spec sees is an `E2eError` (`instanceof` works) with a `code`: `LOCATOR_NOT_FOUND`, `LOCATOR_AMBIGUOUS`, `INVALID_LOCATOR`, `ACTION_FAILED`, `NOT_ACTIONABLE`, `TIMEOUT`, `INVALID_ARGUMENT`, `ASSERTION`, `SESSION` or `DRIVER`. A locator failure carries the screen as text (`screen`); an ambiguous one the number of `matches`. `WARDEN_E2E_VERSION` is the package version: the preload exits 2 in a spec process whose `@delacour/warden-e2e` version differs from the `warden` that started it (`WARDEN_VERSION`; a by-hand run compares nothing).
 
 ## Failure artifacts
 
-When a test fails, the runner writes its evidence next to the results:
+Every test attempt writes `trace.jsonl`; when a test fails, the runner adds the rest of its evidence next to the results:
 
 ```text
 <out>/<flow>/<test-title>-<hash>/
   failure.png            the device at the moment of failure
   screen-at-failure.txt  the full accessibility tree, with testIDs, labels and values
-  trace.jsonl            every step and every device / driver / locator-read call (`span` lines), with timings
+  trace.jsonl            every step and every device / driver / locator-read call (`span` lines), with timings (every test, passed or not)
   console.jsonl          dev client: JS console
   network.jsonl          dev client: network requests
-  screenshots/           device.screenshot() images
+  screenshots/           device.screenshot() images (any test)
 ```
 
-Read `screen-at-failure.txt` first: a query that found nothing is almost always an element that is missing or not `accessible` there. Under `warden e2e`, `<out>` is `<batchDir>/e2e/<worker>-<seq>/` and every test also appends one line to `results.jsonl` there; see [Run e2e](/docs/guides/run-e2e#where-to-look-when-it-fails).
+Read `screen-at-failure.txt` first: a query that found nothing is almost always an element that is missing or not `accessible` there. `<flow>` is the spec's path under the suite's `flowsDir` without `.e2e.ts`, `<test-title>` a slug of the describe and test titles. Under `warden e2e`, `<out>` is `<batchDir>/e2e/<worker>-<seq>/` (`<worker>-<seq>-p<pass>` on a later pass) and every test (skipped ones too; with `retry`, only the final attempt) also appends one line to `results.jsonl` there with `file`, `title`, `status` (`passed`, `failed`, `skipped` or `timed-out`), `durationMs`, `startedAt`, `error`, `artifacts` and `device`; see [Run e2e](/docs/guides/run-e2e#where-to-look-when-it-fails).
 
 ## Run a spec by hand
 
@@ -224,6 +226,6 @@ WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=com.example.app \
   bun test --preload @delacour/warden-e2e/preload e2e/todos.e2e.ts
 ```
 
-`WARDEN_UDID` switches the runner on: without it the preload does nothing. Add `WARDEN_PLATFORM=android` for an emulator, `WARDEN_METRO_URL` or `WARDEN_LAUNCH_ARGS` (a JSON array) for a dev client, and `WARDEN_E2E_DEBUG=1` to log every helper call with its duration. The full list is in [environment variables](/docs/reference/environment#set-for-spec-processes). Release the device with `warden release <leaseId>` when you are done.
+`WARDEN_UDID` switches the runner on: without it the preload does nothing, and with it `WARDEN_BUNDLE_ID` is required (an invalid environment exits 2). `WARDEN_E2E_OUT` sets where artifacts go (default `.warden-e2e/<timestamp>` under the current directory). Add `WARDEN_PLATFORM=android` for an emulator, `WARDEN_METRO_URL` or `WARDEN_LAUNCH_ARGS` (a JSON array) for a dev client, and `WARDEN_E2E_DEBUG=1` to log every helper call with its duration. The full list is in [environment variables](/docs/reference/environment#set-for-spec-processes). Release the device with `warden release <leaseId>` when you are done.
 
 Without `--preload`, `bun test` fails with `no driver factory configured`. To drop it, add `preload = ["@delacour/warden-e2e/preload"]` under `[test]` in `bunfig.toml`; `warden e2e` passes the preload itself.

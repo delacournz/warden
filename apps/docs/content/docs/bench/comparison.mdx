@@ -5,7 +5,7 @@ icon: ChartBar
 ---
 
 {/* Data: content/docs/bench/data/<platform>-<date>.json. Regenerate with
-    bun run bench summary packages/e2e-bench/.bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json */}
+    bun run bench summary .bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json */}
 
 Every framework runs the same 8 parity tests against the same `.app` on the same leased device, one after the other, with no LLM involved. See [Benchmark e2e frameworks](/docs/guides/bench) to run it yourself.
 
@@ -32,6 +32,8 @@ Warm median per canonical test. Compare these before the step numbers.
 ## Cold start, prepare, teardown
 
 Cold-start cost is the first run minus the warm median, plus the time spent in prepare: what installing a runner app or starting a daemon costs, not steady-state speed. Overhead is suite wall time minus the sum of test durations.
+
+A negative cold-start cost is not a duration. It means the cold first run finished faster than the warm median (run-to-run noise on a framework with little startup cost, for example warden on Android 2026-10-16: -1.97 s), so the table shows "none (rep 1 not slower, ...)" and leaves it out of the fastest-cell highlight.
 
 <BenchStartup />
 
@@ -61,6 +63,7 @@ Residue is what is left on the machine after teardown. Footprint is how much sui
 - Frameworks run sequentially, with daemons stopped between them.
 - `caffeinate -dims` held for the run, host otherwise idle, load average recorded.
 - Warm medians exclude rep 1.
+- Machine-readable reporters only.
 - A framework with any failing test never sets the pace, so it is never the fastest.
 
 ## Caveats per framework

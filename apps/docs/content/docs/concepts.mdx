@@ -6,7 +6,7 @@ icon: BookOpen
 
 ## Leases
 
-A lease is an exclusive claim on one **resource** — a device (iOS sim or Android emulator, by udid / serial) or a TCP port. Every lease has an id, an owner, an optional label, `acquiredAt`, `heartbeatAt`, a TTL and, where known, a pid.
+A lease is an exclusive claim on one **resource** — a device (iOS sim or Android emulator, by udid / serial), a TCP port, or a build lock (one fingerprint being fetched or built; see [App builds](/docs/guides/app-builds)). Every lease has an id, an owner, an optional label, `acquiredAt`, `heartbeatAt`, a TTL and, where known, a pid.
 
 All leases live in one sqlite database, `~/.warden/warden.db`, in WAL mode. Every claim runs inside `BEGIN IMMEDIATE`, which is the cross-process mutex: two processes claiming at the same instant are serialised, and the second sees the first's lease.
 
@@ -16,9 +16,11 @@ warden works out who is asking:
 
 | Owner | Detected from |
 |---|---|
-| **agent** | hook stdin, `CLAUDE_CODE_SESSION_ID`, `WARDEN_SESSION_ID` |
-| **ci** | `CI`, `GITHUB_RUN_ID` |
+| **agent** | hook stdin session id, else `WARDEN_SESSION_ID`, `CLAUDE_CODE_SESSION_ID` or `CLAUDE_SESSION_ID` |
+| **ci** | `CI` set to `true` / `1`, or `GITHUB_ACTIONS=true` |
 | **user** | the parent shell's pid |
+
+Checked in that order, except that CI wins over the session env vars: a `CI` run is `ci` even with a session id exported.
 
 The repo and worktree are recorded with the lease, so `warden ls` and a blocked `warden ui` call can tell you *which* worktree holds a device.
 
@@ -32,8 +34,8 @@ A bare agent `warden claim` prints a hint and expires in 5 min; nothing refreshe
 
 - warden creates and reuses its own **`warden-<profile>-N`** simulators in the default CoreSimulator set, and launches Android emulators with `-read-only`.
 - A booted device with no lease that warden didn't create is **foreign** — your Simulator.app, another tool's sim. It is never allocated unless you pass `--adopt`, and never shut down, erased or installed on.
-- The pool grows on demand up to `--max` devices per profile (default: cores / 4, capped at 4).
-- `warden gc` shuts down idle warden devices after 20 min. It never deletes them.
+- The pool grows on demand up to `--max` devices per profile (default: cores / 4, at least 1 and capped at 4, but never below `--count`).
+- `warden gc` shuts down idle warden devices after 20 min (`--idle` changes it). It never deletes them. It also prunes the app-build cache to `--max-cache-size` (default 20G; `$WARDEN_MAX_CACHE_SIZE`; builds used in the last 30 min stay). `claim` / `run` start it in the background at most every 10 min; `WARDEN_AUTO_GC=0` turns that off.
 
 ## Shutdown policy
 

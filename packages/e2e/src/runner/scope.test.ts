@@ -6,6 +6,7 @@ import {
 	hooksFor,
 	markOnly,
 	onlyWasSeen,
+	ownHook,
 	registrationDefaults,
 	resetOnly,
 	resolveUse,
@@ -73,6 +74,30 @@ describe("scopes", () => {
 		for (const hook of hooksFor(child ?? outer, "beforeEach")) hook(fixtures);
 		for (const hook of hooksFor(child ?? outer, "afterEach")) hook(fixtures);
 		expect(order).toEqual(["be-outer", "be-child", "ae-child", "ae-outer"]);
+	});
+});
+
+describe("hooks owned by a fixture set", () => {
+	test("run only for tests whose fixtures start with the owner's", () => {
+		const scope = createScope("owned-hooks", false);
+		const a = {};
+		const b = {};
+		const ran: string[] = [];
+		const mark = (name: string) => () => {
+			ran.push(name);
+		};
+		scope.beforeEach.push(mark("all"));
+		scope.beforeEach.push(ownHook(mark("a"), [a]));
+		scope.beforeEach.push(ownHook(mark("a+b"), [a, b]));
+		const names = (fixtures: readonly object[]) => {
+			ran.length = 0;
+			for (const hook of hooksFor(scope, "beforeEach", fixtures)) hook({} as never);
+			return [...ran];
+		};
+		expect(names([])).toEqual(["all"]);
+		expect(names([a])).toEqual(["all", "a"]);
+		expect(names([a, b])).toEqual(["all", "a", "a+b"]);
+		expect(names([b])).toEqual(["all"]);
 	});
 });
 

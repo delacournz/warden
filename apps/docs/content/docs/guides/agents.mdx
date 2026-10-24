@@ -15,7 +15,7 @@ icon: Bot
 
 ## Claude Code
 
-`warden install --claude` adds the hook, skill and rule below. It also removes the `PreToolUse` hook (`warden hook pretool`, a device-lease hook for MCP device tools) that older versions installed; `warden hook pretool` stays a no-op so an old config keeps working.
+`warden install --claude` adds the hook, skill and rule below. The hook edit to `~/.claude/settings.json` shows a diff first and applies only after you confirm or pass `--yes` (non-interactive without `--yes` skips it); `--dry-run` writes nothing. It also removes the `PreToolUse` hook (`warden hook pretool`, a device-lease hook for MCP device tools) that older versions installed; `warden hook pretool` stays a no-op so an old config keeps working.
 
 <Accordions>
 <Accordion title="SessionEnd hook">
@@ -27,7 +27,7 @@ On `/clear` (reason `clear`) sims keep running: the conversation restarts, the w
 </Accordion>
 <Accordion title="Sessions that die without SessionEnd">
 
-Killed or terminal closed: their leases go stale after their TTL (30 min; 5 min for a bare agent claim), and `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by `claim` / `run` (`WARDEN_AUTO_GC=0` turns this off).
+Killed or terminal closed: their leases go stale after their TTL (30 min; 5 min for a bare agent claim), and `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by `claim` / `run` / `batch` / `dev` (`WARDEN_AUTO_GC=0` turns this off).
 
 </Accordion>
 <Accordion title="Skill and rule">
@@ -54,4 +54,4 @@ Codex **skips new or changed hooks until you trust them**: run `/hooks` in Codex
 </Callout>
 
 - Codex caps SessionEnd hooks at 3 s and always sends reason `other`, so the `/clear` exception never applies. Anything SessionEnd can't finish in time is picked up by `warden gc` once the leases go stale.
-- For the skill in Codex, use `warden skill install`.
+- For the skill in Codex, use `warden skill install` (pick the agent with `-a`). `warden skill install --from github` installs the updatable copy from the release repo instead of this binary's embedded one.

@@ -483,11 +483,14 @@ export function createDevCommand(deps: DevDeps): Command {
 		summary:
 			"install the cached dev build for this fingerprint, start Metro, open the dev client (replaces expo run:*)",
 		register: (cmd, ctx, done) => {
-			withClaimOptions(
+			const claimed = withClaimOptions(
 				cmd
 					.argument("[platform]", "ios | android (default: ios)")
 					.argument("[expoArgs...]", "extra `expo start` args, after --")
-			)
+			);
+			// dev runs on one device: --count stays accepted (1) but is not advertised
+			for (const option of claimed.options) if (option.long === "--count") option.hideHelp();
+			claimed
 				.option("--udid <udid>", "use this device instead of claiming one")
 				.option("--lease <id>", "use the device of this lease")
 				.option("--port <from:span>", "Metro port range to lease from", DEV_PORT_SPEC)

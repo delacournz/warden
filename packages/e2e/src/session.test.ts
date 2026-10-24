@@ -40,7 +40,6 @@ const envIn = (out: string): E2eEnv => ({
 	timeoutMs: 120_000,
 	actionTimeoutMs: 30_000,
 	assertionTimeoutMs: 5_000,
-	headless: false,
 	logTimestamps: false,
 });
 
