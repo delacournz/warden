@@ -109,6 +109,27 @@ export const seriesSchema = z.object({
 export type Series = z.infer<typeof seriesSchema>;
 
 /**
+ * One label of a rep's timed `run`, from the sampler's per-pid readings (`aggregateProcesses`). Rows are per
+ * `name` and `scope`, top 12 by CPU per scope plus an `other` row. `"<label> (exit charge)"` rows (host) hold
+ * CPU no tick saw, booked at the exit of a root the bench spawned.
+ */
+export const processRowSchema = z.object({
+	/** stable label from argv (`processLabel`): `warden-simd`, `bun test`, `backboardd`, … */
+	name: z.string(),
+	/** host = the framework's process tree; sim = the iOS simulator's `launchd_sim` tree */
+	scope: z.enum(["host", "sim"]),
+	cpuSeconds: z.number(),
+	/** the label's summed RSS averaged over every tick of the window, 0 where it had no process */
+	rssAvgBytes: z.number(),
+	rssPeakBytes: z.number(),
+	/** distinct pids of this label seen in the window (a process living between two ticks is not counted) */
+	spawnCount: z.number().int().nonnegative(),
+	/** `cpuSeconds` over the scope's total CPU-seconds in the window, in percent */
+	shareOfScopePct: z.number(),
+});
+export type ProcessRow = z.infer<typeof processRowSchema>;
+
+/**
  * Resources of one rep's timed `run` only (no prepare, teardown, terminate or ANR check), on the sampler's
  * clock (ms since the framework's sampler started). `cpuSeconds` / `rssPeakBytes` are the host's: the
  * headline "host CPU-seconds per rep". `cpuSeconds` is absent when the sampler had no CPU time (ps
@@ -120,6 +141,8 @@ export const repResourcesSchema = z.object({
 	sim: seriesSchema,
 	cpuSeconds: z.number().optional(),
 	rssPeakBytes: z.number(),
+	/** per-process split of the window (optional: added after v1; absent in older results and without a `time` column) */
+	processes: z.array(processRowSchema).optional(),
 });
 export type RepResources = z.infer<typeof repResourcesSchema>;
 

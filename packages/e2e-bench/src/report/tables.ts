@@ -5,6 +5,7 @@ import {
 	type CanonicalId,
 	type FrameworkResult,
 	type OkFrameworkResult,
+	type ProcessRow,
 	type Residue,
 } from "../results/schema";
 import { median } from "../results/stats";
@@ -62,6 +63,20 @@ export function cpuSecondsPerRep(f: OkFrameworkResult): number | undefined {
 		r.resources?.cpuSeconds !== undefined ? [r.resources.cpuSeconds] : []
 	);
 	return values.length > 0 ? median(values) : undefined;
+}
+
+/**
+ * The per-process table of the warm-median rep: among the reps `cpuSecondsPerRep` draws from (warm reps, all
+ * when none is warm) that recorded `processes`, the one whose host CPU-seconds is the lower median (a rep
+ * without a figure sorts first as 0). Undefined for results from before the per-process table.
+ */
+export function processesPerRep(f: OkFrameworkResult): ProcessRow[] | undefined {
+	const warm = f.reps.filter((r) => !r.cold);
+	const pool = (warm.length > 0 ? warm : f.reps).flatMap((r) =>
+		r.resources?.processes !== undefined ? [{ cpu: r.resources.cpuSeconds ?? 0, processes: r.resources.processes }] : []
+	);
+	const sorted = [...pool].sort((a, b) => a.cpu - b.cpu);
+	return sorted[Math.floor((sorted.length - 1) / 2)]?.processes;
 }
 
 function okRow(f: OkFrameworkResult): SummaryRow {
