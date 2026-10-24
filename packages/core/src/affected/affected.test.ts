@@ -195,6 +195,15 @@ describe("computeAffected without e2e suites (an Expo app with an e2e/ dir)", ()
 		expect(res.data.selections[0]?.selected.map((f) => f.id)).toEqual(["a", "b"]);
 	});
 
+	test("the default suite is iOS unless asked: platform android runs the same flows on Android", async () => {
+		mkdirSync(join(app, "e2e"));
+		writeFileSync(join(app, "e2e/a.e2e.ts"), "export {};\n");
+		const res = await computeAffected({ exec: bunExec, cwd: app, platform: "android" });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.selections.map((s) => s.platform)).toEqual(["android"]);
+		expect(res.data.selections[0]?.selected.map((f) => f.id)).toEqual(["a"]);
+	});
+
 	test("a project with a dev variant installs it", async () => {
 		mkdirSync(join(app, "e2e"));
 		writeFileSync(

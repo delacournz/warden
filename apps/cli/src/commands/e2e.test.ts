@@ -194,6 +194,38 @@ describe("warden e2e", () => {
 		expect(seen).toEqual(["clean/true"]);
 	});
 
+	test("--install-mode on a suite without an app is refused before any device is claimed, naming the suite", async () => {
+		await resuite({ app: false });
+		const c = setup(["--files", "src/chat/lazy.tsx", "--install-mode", "clean"]);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+		expect(h.jobs()).toEqual([]);
+		const err = c.stderr.join("\n");
+		expect(err).toContain("--install-mode");
+		expect(err).toContain('suite "');
+		expect(err).toContain("app");
+	});
+
+	test("--reset-keychain and --clean on a suite without an app are refused the same way", async () => {
+		await resuite({ app: false });
+		for (const flag of [["--install-mode", "clean", "--reset-keychain"], ["--clean"]]) {
+			const c = setup(["--files", "src/chat/lazy.tsx", ...flag]);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain('suite "');
+		}
+	});
+
+	test("--install-mode with --app on the CLI is fine for a suite without an app", async () => {
+		await resuite({ app: false });
+		const c = setup(["--files", "src/chat/lazy.tsx", "--app", "--install-mode", "clean"]);
+		const h = harness();
+		h.deps.ensureApp = async () => ({
+			success: true,
+			data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true },
+		});
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+	});
+
 	test("a two-platform suite needs --platform", async () => {
 		await resuite({ platform: undefined });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);

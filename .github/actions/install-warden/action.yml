@@ -1,10 +1,11 @@
 name: Install warden
-description: Download the warden release binary for this runner from the private delacournz/warden repo, verify its checksum and put it on PATH.
+description: Download the warden release binary for this runner from the public delacournz/warden repo, verify its checksum and put it on PATH.
 
 inputs:
   token:
-    description: Token that can read releases of the warden repo (fine-grained PAT with "Contents: read" on delacournz/warden, or a GitHub App token).
-    required: true
+    description: Token gh uses to download the release. The repo is public, so the workflow's own github.token is enough (the default); pass another token only for a private fork set by `repo`.
+    required: false
+    default: ${{ github.token }}
   version:
     description: Release tag to install (e.g. v0.1.0); "latest" for the newest.
     default: latest

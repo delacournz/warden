@@ -4,7 +4,7 @@ Read this to run, select, configure or debug a suite. Spec authoring is in `spec
 
 ## `warden e2e [suite]`
 
-Selects the flows a change needs, leases devices, runs one `bun test` per flow (or per device), gates on the result. `[suite]` is optional with one suite. With no suite configured (and none named), an Expo app with an `e2e/` dir gets a default suite: every spec there, no git diff, 2 sims, the dev client on warden's Metro (`warden init` writes it out to edit).
+Selects the flows a change needs, leases devices, runs one `bun test` per flow (or per device), gates on the result. `[suite]` is optional with one suite. With no suite configured (and none named), an Expo app with an `e2e/` dir gets a default suite: every spec there, no git diff, 2 devices, iOS unless `--platform android`, the dev client on warden's Metro (`warden init` writes it out to edit). `--install-mode` / `--reset-keychain` / `--clean` need the suite to install an app (`app` in its config, or `--app`); otherwise refused before any device is claimed.
 
 ```bash
 warden e2e example --dry-run --explain     # what would run and why, nothing leased

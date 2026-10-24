@@ -346,7 +346,7 @@ async function setUpAndRun<F extends object>(
 		built[entry.name] = started.value;
 		teardowns.push({ name: entry.name, run: started.teardown });
 	}
-	for (const hook of hooksFor(spec.scope, "beforeEach")) {
+	for (const hook of hooksFor(spec.scope, "beforeEach", spec.fixtures)) {
 		await session.step("hook", "beforeEach", async () => hook(built));
 	}
 	// the one unchecked step of `test.extend`: its fixtures are typed `F`, built from the entries above
@@ -406,7 +406,7 @@ async function runCleanup<F extends object>(
 		}
 	};
 	if (built !== undefined) {
-		for (const hook of hooksFor(spec.scope, "afterEach")) {
+		for (const hook of hooksFor(spec.scope, "afterEach", spec.fixtures)) {
 			await attempt("afterEach", () => step("hook", "afterEach", async () => hook(built)));
 		}
 	}

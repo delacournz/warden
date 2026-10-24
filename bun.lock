@@ -41,7 +41,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@delacour/warden-e2e-bench": "workspace:*",
-        "@delacournz/otel-start": "0.1.0",
         "@fontsource-variable/onest": "^5.3.1",
         "@fontsource-variable/red-hat-mono": "^5.3.0",
         "@tanstack/react-router": "1.170.27",
@@ -67,6 +66,10 @@
         "tailwindcss": "^4.3.3",
         "typescript": "^6.0.3",
         "vite": "^8.2.1",
+      },
+      "optionalDependencies": {
+        "@delacournz/otel": "0.1.0",
+        "@delacournz/otel-start": "0.1.0",
       },
     },
     "apps/example": {
@@ -2548,8 +2551,6 @@
     "truncate-utf8-bytes": ["truncate-utf8-bytes@1.0.2", "", { "dependencies": { "utf8-byte-length": "^1.0.1" } }, "sha512-95Pu1QXQvruGEhv62XCMO3Mm90GscOCClvrIUwCM0PYOXK3kaF3l3sIHxx71ThJfcbM2O5Au6SO3AWCSEfW4mQ=="],
 
     "tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
-
-    "tsx": ["tsx@4.23.14", "", { "dependencies": { "esbuild": "~0.28.0" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "bin": { "tsx": "dist/cli.mjs" } }, "sha512-yFwMnbAsUFz/T3kR8P2ENc/DDUaYd9tKg4oVYo0lhkX0LlK4UuqYAO6mpQ2y6lmcyip1uPJ34C2kPACopDwG4w=="],
 
     "turbo": ["turbo@2.11.5", "", { "optionalDependencies": { "@turbo/darwin-64": "2.11.5", "@turbo/darwin-arm64": "2.11.5", "@turbo/linux-64": "2.11.5", "@turbo/linux-arm64": "2.11.5", "@turbo/windows-64": "2.11.5", "@turbo/windows-arm64": "2.11.5" }, "bin": { "turbo": "bin/turbo" } }, "sha512-qLXheqz3TUvJpHIV6MUBwkNkvwKxMVG/QsimyiKT9DfNWPHJ294G/i5nDaH+fbHJt3UH7orubNNxAqYkbUNGAQ=="],
 

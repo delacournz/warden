@@ -7,7 +7,7 @@ on:
 permissions: {}
 
 # Build and publish are split so dependency code never runs next to publish
-# credentials: `build` installs/compiles with a read-only token and only the `read:packages` NPM_TOKEN;
+# credentials: `build` installs/compiles with a read-only token and no registry secret;
 # `publish` holds the OIDC + release write permissions but never installs or
 # executes repo dependencies. `build` runs on Namespace like CI; `publish` stays
 # on a GitHub-hosted runner — npm trusted publishing + provenance refuse
@@ -38,11 +38,9 @@ jobs:
         with:
           path: ~/Library/Caches/warden-idb
 
-      # `@delacournz/*` resolves from GitHub Packages (bunfig.toml): NPM_TOKEN is a classic PAT with
-      # only `read:packages`, scoped to this step so nothing else in the job can read it.
+      # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
+      # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
       - run: bun install --frozen-lockfile
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Tag must match apps/cli version
         run: |
