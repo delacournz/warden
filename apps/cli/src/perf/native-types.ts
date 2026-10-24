@@ -88,6 +88,8 @@ export type NativeStopInput = {
 	dir: string;
 	handle: NativeHandle;
 	analyze: boolean;
+	/** `--yes`: consent to downloads the analysis needs (Android trace_processor) */
+	yes?: boolean;
 };
 
 export type NativeStopped = { out: string; analysis?: NativeAnalysis; warnings: string[] };
@@ -98,6 +100,8 @@ export type NativeAnalyzeInput = {
 	dir: string;
 	trace: string;
 	windowMs?: { startMs: number; endMs: number };
+	/** `--yes`: consent to downloads the analysis needs (Android trace_processor) */
+	yes?: boolean;
 };
 
 /** One platform's native profiler (`warden perf native`): iOS xctrace, Android perfetto/simpleperf. */

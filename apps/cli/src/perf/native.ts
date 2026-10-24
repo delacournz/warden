@@ -40,6 +40,7 @@ export type PerfNativeOptions = PerfOptionValues & {
 	leaks?: boolean;
 	skipAnalysis?: boolean;
 	flavor?: string;
+	yes?: boolean;
 };
 
 const DEFAULT_DURATION_MS = 10_000;
@@ -164,7 +165,7 @@ export async function stopNative(
 	io: NativeIo,
 	profilers: NativeProfilers,
 	target: PerfTarget,
-	opts: { analyze: boolean }
+	opts: { analyze: boolean; yes?: boolean }
 ): Promise<Result<StoppedNative, UiError>> {
 	const found = findNativeRun(ctx, deps, target.udid);
 	if (found === undefined) {
@@ -183,6 +184,7 @@ export async function stopNative(
 		dir,
 		handle: file.handle,
 		analyze: opts.analyze,
+		...(opts.yes === true ? { yes: true } : {}),
 	});
 	writeHandleFile(dir, { ...file, status: "stopped" });
 	if (file.sessionId !== undefined) {
@@ -298,7 +300,13 @@ async function reanalyze(
 		const profiler = await profilers[platform]();
 		const dir = dirname(trace);
 		const target: PerfTarget = { udid: "-", platform, ownedByCaller: false, source: "flag", mode: "observe" };
-		const analysis = await profiler.analyze(ctx, deps, { target, app: "", dir, trace });
+		const analysis = await profiler.analyze(ctx, deps, {
+			target,
+			app: "",
+			dir,
+			trace,
+			...(opts.yes === true ? { yes: true } : {}),
+		});
 		if (!analysis.success) return reportError(ctx, report, analysis.error);
 		const success = nativeSuccess(ctx, target, {
 			app: "(from trace)",
@@ -338,7 +346,7 @@ export function perfNative(
 		}
 		const analyze = opts.skipAnalysis !== true;
 		if (action === "stop") {
-			const stopped = await stopNative(ctx, deps, io, profilers, target, { analyze });
+			const stopped = await stopNative(ctx, deps, io, profilers, target, { analyze, yes: opts.yes });
 			if (!stopped.success) return stopped;
 			return ok(nativeSuccess(ctx, target, stopped.data));
 		}
@@ -381,7 +389,7 @@ export function perfNative(
 			});
 		}
 		await io.sleep(duration.data);
-		const stopped = await stopNative(ctx, deps, io, profilers, target, { analyze });
+		const stopped = await stopNative(ctx, deps, io, profilers, target, { analyze, yes: opts.yes });
 		if (!stopped.success) return stopped;
 		return ok(nativeSuccess(ctx, target, stopped.data));
 	});
@@ -406,6 +414,7 @@ export function registerNative(
 			.option("--leaks", "iOS: cold-launch the app with malloc stack logging and report leaks (needs the device lease)")
 			.option("--skip-analysis", "stop: leave the trace unexported")
 			.option("--flavor <name>", "Android: perfetto | simpleperf")
+			.option("--yes", "Android: download trace_processor without asking")
 	).action(async (action, opts) => {
 		done(await perfNative(ctx, deps, action, opts));
 	});
