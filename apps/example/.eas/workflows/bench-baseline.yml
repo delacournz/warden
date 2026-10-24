@@ -77,7 +77,7 @@ jobs:
       - name: Bench warden
         env:
           BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
-        run: bash packages/e2e-bench/scripts/eas-bench.sh
+        run: bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
       - name: Release lease
         if: ${{ always() }}
         run: |
@@ -136,7 +136,7 @@ jobs:
       - name: Bench argent
         env:
           BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
-        run: bash packages/e2e-bench/scripts/eas-bench.sh
+        run: bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
       - name: Release lease
         if: ${{ always() }}
         run: |
@@ -195,7 +195,7 @@ jobs:
       - name: Bench agent-device
         env:
           BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
-        run: bash packages/e2e-bench/scripts/eas-bench.sh
+        run: bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
       - name: Release lease
         if: ${{ always() }}
         run: |
@@ -254,7 +254,7 @@ jobs:
       - name: Bench tester-army
         env:
           BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
-        run: bash packages/e2e-bench/scripts/eas-bench.sh
+        run: bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
       - name: Release lease
         if: ${{ always() }}
         run: |
