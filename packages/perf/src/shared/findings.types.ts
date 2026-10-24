@@ -23,6 +23,7 @@ type FindingExtras = {
 	crash: { process: string };
 	anr: { process: string };
 	"js-hotspot": { file: string; line: number };
+	"native-hotspot": { thread: string; function: string; selfPct: number };
 };
 
 export type FindingKind = keyof FindingExtras;
@@ -45,6 +46,7 @@ export const FINDING_KINDS: readonly FindingKind[] = [
 	"crash",
 	"anr",
 	"js-hotspot",
+	"native-hotspot",
 ];
 
 type FindingCommon<K extends FindingKind> = {
