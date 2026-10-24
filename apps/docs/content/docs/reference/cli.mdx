@@ -364,7 +364,7 @@ A metric passes up to its target times 1.5 (`ok` in the JSON; a loaded machine s
 
 ### `warden perf`
 
-Profile an app on a warden simulator / emulator. Sessions live in `$WARDEN_HOME/perf/<id>/` (`session.json` plus what each capturer writes); `id` is `<yyyymmdd-hhmmss>-<hash6>` in UTC. Simulator and emulator numbers run on host CPU and GPU: compare relative, not absolute. Dev builds (`__DEV__`) inflate JS and React costs. One-shot and start/stop subcommands (`metrics`, `memory`, `frames`, `startup`, `js`, `heap`, `react`, `native`, `logs`, `crashes`, `tools`) work today; combined sessions (`start`, `stop`, `record`), `report`, `query` and `diff` land in a later phase.
+Profile an app on a warden simulator / emulator. Sessions live in `$WARDEN_HOME/perf/<id>/` (`session.json` plus what each capturer writes); `id` is `<yyyymmdd-hhmmss>-<hash6>` in UTC. Simulator and emulator numbers run on host CPU and GPU: compare relative, not absolute. Dev builds (`__DEV__`) inflate JS and React costs. One-shot and start/stop subcommands (`metrics`, `memory`, `frames`, `startup`, `js`, `heap`, `react`, `native`, `logs`, `crashes`, `tools`) work on their own; `start`, `stop` and `record` run several of them as one session whose `report` merges them, and `query` and `diff` read what it left behind.
 
 Device-bound subcommands take the `warden ui` options (`--udid`, `--serial`, `--lease`, `--claim`, `--platform`, `--timeout`, `--json`) plus:
 
@@ -581,6 +581,51 @@ Android:
 - The trace is always kept: if trace_processor is missing the analysis is skipped with a warning naming the install command.
 - Zero samples fail with `not_profileable`: the app must be debuggable or `<profileable android:shell="true"/>` in its manifest.
 - Observe-only: attaching never leases or restarts the device or app.
+
+#### `warden perf start | stop | record`
+
+```bash
+warden perf start [--js] [--react] [--native[=perfetto|simpleperf]] [--metrics] [--frames] [--logs] [--all]
+                  [--relaunch] [--reset] [--max-duration 30s] [--yes] [--join]
+warden perf stop [--no-analyze] [--yes]
+warden perf record --duration 10s [same capture flags]
+```
+
+One combined session. `start` sweeps overdue sessions, opens the session, writes `plan.json`, records a clock anchor (`{wallMs, deviceWallMs}`; Android reads `adb shell date +%s%N` and halves the round trip) and spawns one detached `warden perf-collect --session <id>` that hosts metrics, logs, the JS and React capture (one Hermes socket) and the auto-stop timer. With no capture flag you get metrics, frames and logs; `--all` adds JS, React and native.
+
+- `--relaunch` terminates the app, arms what can be armed before launch (Android perfetto), launches, waits for the Metro target and then arms JS and React. iOS native is armed right after launch (it needs the pid). `--reset` clears app data first and implies `--relaunch`. Both mutate the device, so they need your lease; a free warden device gets a short `warden perf` lease that `stop` releases. A live foreign lease fails with `device_foreign`.
+- `--max-duration` is capped; at the cap the collector runs the same stop path as `perf stop`.
+- `--join` attaches read-only to a running session.
+- `stop` ends the capturers in reverse order, gives back a lease `start` took and writes `report.md` + `report.json` under the session dir. `--no-analyze` keeps native traces unanalyzed.
+- `record` is `start`, wait, `stop`. Ctrl-C stops early, still reports and exits 130.
+- `warden release` and `warden ui close --release` stop a running session on the released device.
+
+#### `warden perf report`
+
+```bash
+warden perf report [id|latest] [--full] [--rebuild] [--json]
+```
+
+Prints the merged report: Summary, Startup, Frames, JS CPU, React, Native CPU, Hangs, Memory, Logs/Crashes and `next:` hints. Findings are sorted by severity then cost; overlaps are correlated (`hang 412ms @ 3.2s overlaps commit #14 (FlatList, 180ms) <- mark 'scroll feed'`). `--json` is `report.json` (`PerfReportJson`). Output is capped; `--full` lifts the cap, `--rebuild` regenerates from the session files.
+
+#### `warden perf query`
+
+```bash
+warden perf query <id> commits [--by component] [--top N] [--window 3s-4s] [--index N]
+warden perf query <id> cpu [--window 3s-4s] [--tree]
+warden perf query <id> stacks [--worst] [--size N] [--limit N] [--rerun --yes]
+warden perf query <id> frames [--window 3s-4s]
+```
+
+Drill into one session's data: React commits (ranked by component, window, index or cascade), JS CPU in a time window or call tree, native hang stacks and the frame timeline.
+
+#### `warden perf diff`
+
+```bash
+warden perf diff <a> <b> [--fail-on regress] [--threshold 10%]
+```
+
+Compares two reports metric by metric (lower is better, except fps) with a relative threshold plus absolute floors, and lists function self-time deltas. With `--fail-on regress` exits 1 when any metric regressed.
 
 #### `warden perf tools`
 
