@@ -115,13 +115,13 @@ describe("warden perf react", () => {
 		expect(doc(s).error.code).toBe("devtools_unavailable");
 	});
 
-	test("another agent's live profile: session_active naming the owner; --force takes over", async () => {
+	test("another agent's live profile: session_active naming the owner; --take-over takes over", async () => {
 		const s = setup();
 		await startReactProfile(runtimeCdp(s.g), { owner: "agent:other" });
 		expect(await perfReact(s.c, s.deps, opts(), s.js)).toBe(1);
 		expect(doc(s).error).toMatchObject({ code: "session_active", details: { owner: "agent:other" } });
 		s.c.stdout.length = 0;
-		expect(await perfReact(s.c, s.deps, opts({ force: true }), s.js)).toBe(0);
+		expect(await perfReact(s.c, s.deps, opts({ takeOver: true }), s.js)).toBe(0);
 	});
 
 	test("into a running session: that session's react dir", async () => {

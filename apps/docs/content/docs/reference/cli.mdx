@@ -33,6 +33,8 @@ icon: Terminal
 | app CPU / memory now, or live | `warden perf metrics [--watch]` |
 | JS hotspots (source-mapped) | `warden perf js --duration 10s` |
 | cold start time | `warden perf startup --cold --runs 5 --claim` |
+| why does this screen re-render? | `warden perf react --duration 10s` |
+| native CPU / hangs / leaks | `warden perf native --duration 10s` |
 | setup problems | `warden doctor` |
 | update warden | `warden update` (`--check` to only look) |
 
@@ -362,7 +364,7 @@ A metric passes up to its target times 1.5 (`ok` in the JSON; a loaded machine s
 
 ### `warden perf`
 
-Profile an app on a warden simulator / emulator. Sessions live in `$WARDEN_HOME/perf/<id>/` (`session.json` plus what each capturer writes); `id` is `<yyyymmdd-hhmmss>-<hash6>` in UTC. Simulator and emulator numbers run on host CPU and GPU: compare relative, not absolute. Dev builds (`__DEV__`) inflate JS and React costs. One-shot subcommands (`metrics`, `memory`, `frames`, `startup`, `js`, `heap`, `logs`, `crashes`) work today; combined sessions (`start`, `stop`, `record`), native traces, React profiling, `report`, `query` and `diff` land in later phases.
+Profile an app on a warden simulator / emulator. Sessions live in `$WARDEN_HOME/perf/<id>/` (`session.json` plus what each capturer writes); `id` is `<yyyymmdd-hhmmss>-<hash6>` in UTC. Simulator and emulator numbers run on host CPU and GPU: compare relative, not absolute. Dev builds (`__DEV__`) inflate JS and React costs. One-shot and start/stop subcommands (`metrics`, `memory`, `frames`, `startup`, `js`, `heap`, `react`, `native`, `logs`, `crashes`, `tools`) work today; combined sessions (`start`, `stop`, `record`), `report`, `query` and `diff` land in a later phase.
 
 Device-bound subcommands take the `warden ui` options (`--udid`, `--serial`, `--lease`, `--claim`, `--platform`, `--timeout`, `--json`) plus:
 
@@ -529,6 +531,64 @@ warden perf crashes --symbolicate --dsym build/ShopApp.app.dSYM
 - **iOS:** reads `~/Library/Logs/DiagnosticReports/*.ips` for this app on this simulator. Each crash shows exception type, signal, crashed thread, top 10 frames and the first app frame. `--symbolicate` matches the dSYM by `dwarfdump --uuid`, then runs `atos` with the image's load address; a dSYM from another build is reported as a warning and the crash is still listed.
 - **Android:** `logcat -b crash -d` plus `dumpsys dropbox --print data_app_crash` and `data_app_anr`, de-duplicated. Native tombstones are not read.
 - **In a session:** raw reports are copied into the session's `crashes/` directory.
+
+#### `warden perf react`
+
+React render profile of the running dev client (observe-only; never takes the lease): which commits were hot, which components cost the most, and ranked findings with a fix.
+
+```bash
+warden perf react [--duration 10s]      # record, then analyse
+warden perf react start                 # begin and return (profile lives in the app)
+warden perf react stop                  # end, analyse, write
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--duration <time>` | how long to record (default 10s, max 5m) |
+| `--metro <url>` | Metro to attach through (default: the one serving the device) |
+| `--take-over` | take over (or stop) a React profile another agent started |
+
+Output goes to `react/commits.json` (every commit: durations, per-fiber actual/self time, change descriptions) and `react/findings.json` (hot commits, ranked components, findings) in the running session, else a one-shot dir under `$WARDEN_HOME/perf`.
+
+- **Hot commits:** under 16ms is fine, 16-50ms warm, over 50ms hot; heat is the cube root of duration over the slowest commit.
+- **Findings** (`kind`): `slow-commit`, `slow-render`, `memo-defeated` (memoized but props change identity), `context-cascade`, `parent-cascade`, `render-storm`, `eager-mount`, `effect-chain`. Each has `costMs`, `evidence`, `fix`, `next`. Components under 2ms or 3% of render time are not reported; animation and transition components are tagged and not blamed.
+- **Where:** components are located by the runtime's `_debugSource` when it exposes one, else by grepping the project for `function Name` / `const Name =` / `class Name`.
+- **JS correlation:** with a `js/cpu.cpuprofile` from the same session (`perf start --js --react`), each hot commit lists the JS functions that ran inside it.
+- **Errors:** `rn_too_old` (React Native below 0.74), `release_build` (no DevTools hook or `__DEV__` false), `devtools_backend_missing` (no `react-devtools-core` in the bundle), `session_active` (another agent holds the profile; `--take-over`).
+
+Dev builds inflate React costs: confirm on a profileable build. The simulator banner applies.
+
+#### `warden perf native`
+
+```bash
+warden perf native [start|stop] [--duration 10s] [--leaks] [--analyze <trace>] [--skip-analysis] [--flavor <name>]
+```
+
+Native CPU, hangs and (iOS) leaks from the platform profiler. iOS simulators use `xcrun xctrace record` with the Time Profiler template plus the `Hangs` instrument; `--leaks` adds `Leaks` and `Allocations`. The trace lands in `native/ios.trace` of the device's running perf session, or of a one-shot dir under `$WARDEN_HOME/perf/native-<id>/`. With no action it records for `--duration` (default 10s, max 5m), stops and analyzes; `start` begins a detached recording, `stop` ends it (SIGINT, waits for the trace to be finalised, SIGKILL only on timeout) and exports it.
+
+- Attach-only recording is observe-only: it works on any warden device and never takes or heartbeats a lease. On Xcode 26.4+ (where `xctrace record --device` deadlocks) it records `--all-processes` and filters the rows by the app's pid.
+- `--leaks` is a mutation: it terminates the app and cold-launches it with `MallocStackLogging=1` under the profiler, so it needs your own lease (`--claim`).
+- The analysis names the dominant frame of each sample (first app or third-party frame, else a React Native frame such as `RCT*`, Yoga, Hermes, JSI; system-only samples are skipped), groups threads (Main Thread, JS Thread, Shadow Thread) and reports frames over 3% of samples (over 15% is critical). Each hang lists its duration, the top 5 functions and top 3 call chains on the main thread during it. Leaks are grouped by type and responsible frame with bytes and counts.
+- `--analyze <trace>` re-analyzes an existing `.trace` without a device. `--skip-analysis` on `stop` leaves the export for later.
+- Simulator numbers are for comparing runs, not absolutes. Open the trace in Instruments for the full picture.
+- Android (PRF-8) adds its notes under this heading.
+
+Android:
+
+- Default is a Perfetto trace of the app: 100 Hz callstack sampling scoped to the package, scheduler/binder ftrace, atrace (`view gfx wm am input dalvik` + the app), SurfaceFlinger frame timeline and 1 s process stats. The config goes to `perfetto` on stdin; the trace is pulled to `native/android.perfetto-trace` and removed from the device. The trace stops at `--max-duration` at the latest.
+- `--flavor simpleperf` samples the running app pid with `simpleperf record -e cpu-clock:u` and reports the top functions from the on-device `simpleperf report` (`native/simpleperf.data`, `native/simpleperf.data.report.txt`). It needs no trace_processor.
+- Analysis runs PerfettoSQL through a pinned `trace_processor_shell` (`$WARDEN_HOME/tools/trace_processor_shell-<version>`, or `WARDEN_TRACE_PROCESSOR`): CPU hotspots (critical over 15% of samples, warn 3-15%), missed-deadline frames with the main-thread state split (running / runnable / sleeping / io) and GC overlap, per-thread time, RSS growth. Raw SQL is written to `native/queries/`.
+- The trace is always kept: if trace_processor is missing the analysis is skipped with a warning naming the install command.
+- Zero samples fail with `not_profileable`: the app must be debuggable or `<profileable android:shell="true"/>` in its manifest.
+- Observe-only: attaching never leases or restarts the device or app.
+
+#### `warden perf tools`
+
+```bash
+warden perf tools install trace-processor [--yes] [--json]
+```
+
+Downloads the pinned Perfetto `trace_processor_shell` (about 14 MB; sha256-verified, installed atomically) into `$WARDEN_HOME/tools/`. On a terminal it asks first; without a terminal it fails with `tool_missing` (exit 3) unless `--yes` is given. A progress bar (bytes, percent, MB/s) is drawn on stderr only, so `--json` stdout stays one document. Re-running reports `already installed`.
 
 ## Setup
 

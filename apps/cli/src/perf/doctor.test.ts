@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { resetInstrumentCache } from "@delacour/warden-perf/ios/instruments";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { type DoctorCheck, perfDoctor } from "./doctor";
 import { asMe, fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;
-afterEach(() => ctx?.cleanup());
+afterEach(() => {
+	ctx?.cleanup();
+	resetInstrumentCache();
+});
 
 const fx = (name: string) =>
 	readFileSync(join(import.meta.dir, "..", "..", "..", "..", "packages", "perf", "fixtures", name), "utf8");
@@ -20,6 +24,7 @@ const HOST_OK: Handler = [
 	["xcrun xctrace version", { stdout: fx("xctrace-version.txt") }],
 	["xcodebuild -version", { stdout: "Xcode 26.3\nBuild version 17C529\n" }],
 	["adb version", { stdout: fx("adb-version.txt") }],
+	["xcrun xctrace list instruments", { stdout: fx("xctrace-list-instruments.txt") }],
 ];
 
 function setup(
@@ -169,5 +174,28 @@ describe("warden perf doctor: text mode", () => {
 		const text = c.stdout.join("\n");
 		expect(text).toContain("xctrace");
 		expect(text).toContain("trace-processor");
+	});
+});
+
+describe("warden perf doctor: xctrace instruments", () => {
+	test("Time Profiler, Hangs, Leaks and Allocations present: ok", async () => {
+		const { c, deps } = setup(sim, HOST_OK);
+		const { byId } = await run(c, deps);
+		expect(byId.instruments).toMatchObject({ status: "ok" });
+	});
+
+	test("a missing instrument warns with alternatives", async () => {
+		const listing = fx("xctrace-list-instruments.txt").replace(/^Hangs\n/m, "");
+		const { c, deps } = setup(sim, [["xcrun xctrace list instruments", { stdout: listing }], ...HOST_OK]);
+		const { code, byId } = await run(c, deps);
+		expect(code).toBe(0);
+		expect(byId.instruments?.status).toBe("warn");
+		expect(byId.instruments?.detail).toContain("Hangs");
+	});
+
+	test("not macOS: skip", async () => {
+		const { c, deps } = setup(emu, HOST_OK, { platform: "linux" });
+		const { byId } = await run(c, deps);
+		expect(byId.instruments?.status).toBe("skip");
 	});
 });

@@ -56,6 +56,6 @@ describe("warden perf", () => {
 	});
 
 	test("PERF_SUBCOMMANDS registers each subcommand exactly once", () => {
-		expect(PERF_SUBCOMMANDS).toHaveLength(11);
+		expect(PERF_SUBCOMMANDS).toHaveLength(14);
 	});
 });

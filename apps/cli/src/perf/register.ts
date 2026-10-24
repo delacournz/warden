@@ -10,8 +10,11 @@ import { registerLs } from "./ls";
 import { registerMark } from "./mark";
 import { registerMemory } from "./memory";
 import { registerMetrics } from "./metrics";
+import { registerNative } from "./native";
+import { registerReact } from "./react";
 import type { PerfDeps } from "./run";
 import { registerStartup } from "./startup";
+import { registerTools } from "./tools";
 
 /**
  * Wire one `warden perf` subcommand onto its commander node. The extension point: a phase adds a subcommand by
@@ -28,9 +31,12 @@ export const PERF_SUBCOMMANDS: readonly PerfRegister[] = [
 	registerStartup,
 	registerJs,
 	registerHeap,
+	registerReact,
+	registerNative,
 	registerLogs,
 	registerCrashes,
 	registerLs,
 	registerMark,
 	registerDoctor,
+	registerTools,
 ];

@@ -60,6 +60,24 @@ async function xcodeCheck(ctx: CommandContext, deps: PerfDeps): Promise<DoctorCh
 		: check("xcode", "ok", `Xcode ${version.text}`);
 }
 
+const NATIVE_INSTRUMENTS = ["Time Profiler", "Hangs", "Leaks", "Allocations"] as const;
+
+/** `xctrace list instruments` has what `perf native` records with (Time Profiler, Hangs, Leaks, Allocations). */
+async function instrumentsCheck(ctx: CommandContext, deps: PerfDeps): Promise<DoctorCheck> {
+	if (deps.host.platform !== "darwin") return check("instruments", "skip", "not macOS");
+	const { checkXctraceInstruments } = await import("@delacour/warden-perf/ios/instruments");
+	const found = await checkXctraceInstruments((argv) => ctx.exec(argv, { timeoutMs: 30_000 }), NATIVE_INSTRUMENTS);
+	if (found === undefined) return check("instruments", "skip", "xctrace list instruments failed");
+	if (found.ok) return check("instruments", "ok", NATIVE_INSTRUMENTS.join(", "));
+	const alts = found.missing.map((m) => `${m} (try: ${found.alternatives[m]?.join(", ") || "none"})`);
+	return check(
+		"instruments",
+		"warn",
+		`missing ${alts.join("; ")}`,
+		"perf native needs Time Profiler + Hangs (Leaks for --leaks; Allocations is optional); update Xcode"
+	);
+}
+
 async function adbCheck(ctx: CommandContext): Promise<DoctorCheck> {
 	const res = await ctx.exec([androidTools(ctx.env).adb, "version"], { timeoutMs: 10_000 });
 	const version = res.exitCode === 0 ? parseAdbVersion(res.stdout) : undefined;
@@ -187,6 +205,7 @@ export async function perfDoctor(ctx: CommandContext, deps: PerfDeps, opts: Perf
 	const checks: DoctorCheck[] = [
 		await xctraceCheck(ctx, deps),
 		await xcodeCheck(ctx, deps),
+		await instrumentsCheck(ctx, deps),
 		await adbCheck(ctx),
 		await deviceToolsCheck(ctx, device, why),
 		traceProcessorCheck(ctx),

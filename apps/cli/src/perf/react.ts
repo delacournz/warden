@@ -22,7 +22,7 @@ import {
 import { type ReactOut, reactOutFor } from "./react-out";
 import { type PerfDeps, type PerfOptionValues, runPerf } from "./run";
 
-export type PerfReactOptions = PerfOptionValues & { duration?: string; metro?: string; force?: boolean };
+export type PerfReactOptions = PerfOptionValues & { duration?: string; metro?: string; takeOver?: boolean };
 
 const DEFAULT_DURATION_MS = 10_000;
 
@@ -112,7 +112,7 @@ export function perfReact(
 				cwd: ctx.cwd,
 				...(out.sessionId === undefined ? {} : { sessionId: out.sessionId }),
 				owner: await reactOwner(ctx),
-				force: opts.force === true,
+				force: opts.takeOver === true,
 				durationMs: duration.data,
 				sleep: js.sleep,
 				now: ctx.now,
@@ -137,7 +137,7 @@ export function perfReactStart(
 		if (!connected.success) return connected;
 		const { session, app } = connected.data;
 		try {
-			const started = await startReactCapture(session, { owner: await reactOwner(ctx), force: opts.force === true });
+			const started = await startReactCapture(session, { owner: await reactOwner(ctx), force: opts.takeOver === true });
 			if (!started.success) return { success: false, error: reactUiError(started.error) };
 			const next = ["warden perf react stop   (after the interaction; max 5m before the marker goes stale)"];
 			const s = started.data;
@@ -175,7 +175,7 @@ export function perfReactStop(
 				cwd: ctx.cwd,
 				...(out.sessionId === undefined ? {} : { sessionId: out.sessionId }),
 				owner: await reactOwner(ctx),
-				force: opts.force === true,
+				force: opts.takeOver === true,
 			});
 			if (!stopped.success) return { success: false, error: reactUiError(stopped.error) };
 			return ok(stoppedSuccess(ctx, target, app, out, stopped.data));
@@ -193,7 +193,7 @@ export function registerReact(cmd: Commander, ctx: CommandContext, done: (code: 
 			.description("React render profile of the dev client: hot commits, costly components, ranked findings")
 			.option("--duration <time>", `how long to record (default ${formatDuration(DEFAULT_DURATION_MS)}, max 5m)`)
 			.option("--metro <url>", "Metro to attach through (default: the one serving the device)")
-			.option("--force", "take over a React profile another agent started")
+			.option("--take-over", "take over a React profile another agent started")
 	);
 	react.action(async (opts) => {
 		done(await perfReact(ctx, deps, opts));
@@ -203,7 +203,7 @@ export function registerReact(cmd: Commander, ctx: CommandContext, done: (code: 
 			.command("start")
 			.description("start recording React renders and return (stop with `perf react stop`)")
 			.option("--metro <url>", "Metro to attach through (default: the one serving the device)")
-			.option("--force", "take over a React profile another agent started")
+			.option("--take-over", "take over a React profile another agent started")
 	).action(async (opts) => {
 		done(await perfReactStart(ctx, deps, opts));
 	});
@@ -212,7 +212,7 @@ export function registerReact(cmd: Commander, ctx: CommandContext, done: (code: 
 			.command("stop")
 			.description("stop the recording, then rank hot commits, components and findings")
 			.option("--metro <url>", "Metro to attach through (default: the one serving the device)")
-			.option("--force", "stop a React profile another agent started")
+			.option("--take-over", "stop a React profile another agent started")
 	).action(async (opts) => {
 		done(await perfReactStop(ctx, deps, opts));
 	});

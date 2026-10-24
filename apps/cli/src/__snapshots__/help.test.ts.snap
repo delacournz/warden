@@ -489,6 +489,11 @@ Commands:
   js               Hermes JS CPU profile of the dev client, source-mapped to
                    file:line hotspots (js/cpu.cpuprofile)
   heap             Hermes heap snapshots: take one, diff two
+  react            React render profile of the dev client: hot commits, costly
+                   components, ranked findings
+  native [action]  native CPU, hangs and leaks: iOS xctrace (Time Profiler +
+                   Hangs), Android perfetto / simpleperf; start | stop, or
+                   one-shot
   logs             the app's device logs, secrets redacted (--follow streams;
                    Ctrl-C exits 130)
   crashes          crashes and ANRs of the app (iOS .ips reports, Android crash
@@ -499,6 +504,7 @@ Commands:
                    jank are tagged with the last mark)
   doctor           what profiling needs: xctrace / Xcode, adb + device tools,
                    trace_processor, Metro, a profileable app
+  tools            install the helper binaries profiling needs
   help [command]   display help for command
 
 $ warden perf metrics --help
@@ -712,6 +718,138 @@ Options:
   --json      machine-readable output
   -h, --help  display help for command
 
+$ warden perf react --help
+Usage: warden perf react [options] [command]
+
+React render profile of the dev client: hot commits, costly components, ranked
+findings
+
+Options:
+  --duration <time>       how long to record (default 10s, max 5m)
+  --metro <url>           Metro to attach through (default: the one serving the
+                          device)
+  --take-over             take over a React profile another agent started
+  --udid <udid>           device udid (iOS) / serial (Android)
+  --serial <serial>       Android serial
+  --lease <id>            use the device behind this lease id
+  --claim                 take over a stale/missing lease, or claim a device
+                          when none is held
+  --platform <platform>   platform for --claim with no device named: ios
+                          (default) | android
+  --profile <slug>        device profile for --claim with no device named
+  --runtime <runtime>     runtime for --claim with no device named
+  --force                 drive the device even while a live warden process
+                          (e2e, batch, run, dev) holds your lease on it
+  --timeout <ms>          deadline in milliseconds (default 5000)
+  --no-record             don't append this step to a running flow recording
+  --json                  machine-readable output: one JSON document on stdout
+  --app <id>              bundle id (iOS) / package (Android); default: the
+                          foreground app, then warden.config
+  --allow-mutate-foreign  let a mutating step act on a device someone else holds
+                          (refused while a live warden process holds it)
+  -h, --help              display help for command
+
+Commands:
+  start                   start recording React renders and return (stop with
+                          \`perf react stop\`)
+  stop                    stop the recording, then rank hot commits, components
+                          and findings
+
+$ warden perf react start --help
+Usage: warden perf react start [options]
+
+start recording React renders and return (stop with \`perf react stop\`)
+
+Options:
+  --metro <url>           Metro to attach through (default: the one serving the
+                          device)
+  --take-over             take over a React profile another agent started
+  --udid <udid>           device udid (iOS) / serial (Android)
+  --serial <serial>       Android serial
+  --lease <id>            use the device behind this lease id
+  --claim                 take over a stale/missing lease, or claim a device
+                          when none is held
+  --platform <platform>   platform for --claim with no device named: ios
+                          (default) | android
+  --profile <slug>        device profile for --claim with no device named
+  --runtime <runtime>     runtime for --claim with no device named
+  --force                 drive the device even while a live warden process
+                          (e2e, batch, run, dev) holds your lease on it
+  --timeout <ms>          deadline in milliseconds (default 5000)
+  --no-record             don't append this step to a running flow recording
+  --json                  machine-readable output: one JSON document on stdout
+  --app <id>              bundle id (iOS) / package (Android); default: the
+                          foreground app, then warden.config
+  --allow-mutate-foreign  let a mutating step act on a device someone else holds
+                          (refused while a live warden process holds it)
+  -h, --help              display help for command
+
+$ warden perf react stop --help
+Usage: warden perf react stop [options]
+
+stop the recording, then rank hot commits, components and findings
+
+Options:
+  --metro <url>           Metro to attach through (default: the one serving the
+                          device)
+  --take-over             stop a React profile another agent started
+  --udid <udid>           device udid (iOS) / serial (Android)
+  --serial <serial>       Android serial
+  --lease <id>            use the device behind this lease id
+  --claim                 take over a stale/missing lease, or claim a device
+                          when none is held
+  --platform <platform>   platform for --claim with no device named: ios
+                          (default) | android
+  --profile <slug>        device profile for --claim with no device named
+  --runtime <runtime>     runtime for --claim with no device named
+  --force                 drive the device even while a live warden process
+                          (e2e, batch, run, dev) holds your lease on it
+  --timeout <ms>          deadline in milliseconds (default 5000)
+  --no-record             don't append this step to a running flow recording
+  --json                  machine-readable output: one JSON document on stdout
+  --app <id>              bundle id (iOS) / package (Android); default: the
+                          foreground app, then warden.config
+  --allow-mutate-foreign  let a mutating step act on a device someone else holds
+                          (refused while a live warden process holds it)
+  -h, --help              display help for command
+
+$ warden perf native --help
+Usage: warden perf native [options] [action]
+
+native CPU, hangs and leaks: iOS xctrace (Time Profiler + Hangs), Android
+perfetto / simpleperf; start | stop, or one-shot
+
+Arguments:
+  action                  start | stop (default: record --duration, then stop)
+
+Options:
+  --duration <time>       one-shot recording length (default 10s, max 5m)
+  --analyze <trace>       re-analyze a recorded trace instead of recording
+  --leaks                 iOS: cold-launch the app with malloc stack logging and
+                          report leaks (needs the device lease)
+  --skip-analysis         stop: leave the trace unexported
+  --flavor <name>         Android: perfetto | simpleperf
+  --yes                   Android: download trace_processor without asking
+  --udid <udid>           device udid (iOS) / serial (Android)
+  --serial <serial>       Android serial
+  --lease <id>            use the device behind this lease id
+  --claim                 take over a stale/missing lease, or claim a device
+                          when none is held
+  --platform <platform>   platform for --claim with no device named: ios
+                          (default) | android
+  --profile <slug>        device profile for --claim with no device named
+  --runtime <runtime>     runtime for --claim with no device named
+  --force                 drive the device even while a live warden process
+                          (e2e, batch, run, dev) holds your lease on it
+  --timeout <ms>          deadline in milliseconds (default 5000)
+  --no-record             don't append this step to a running flow recording
+  --json                  machine-readable output: one JSON document on stdout
+  --app <id>              bundle id (iOS) / package (Android); default: the
+                          foreground app, then warden.config
+  --allow-mutate-foreign  let a mutating step act on a device someone else holds
+                          (refused while a live warden process holds it)
+  -h, --help              display help for command
+
 $ warden perf logs --help
 Usage: warden perf logs [options]
 
@@ -841,7 +979,34 @@ Options:
                           foreground app, then warden.config
   --allow-mutate-foreign  let a mutating step act on a device someone else holds
                           (refused while a live warden process holds it)
-  -h, --help              display help for command"
+  -h, --help              display help for command
+
+$ warden perf tools --help
+Usage: warden perf tools [options] [command]
+
+install the helper binaries profiling needs
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  install <tool>  download a pinned helper (trace-processor: Perfetto's
+                  trace_processor_shell, ~14 MB, sha256-checked)
+  help [command]  display help for command
+
+$ warden perf tools install --help
+Usage: warden perf tools install [options] <tool>
+
+download a pinned helper (trace-processor: Perfetto's trace_processor_shell, ~14
+MB, sha256-checked)
+
+Arguments:
+  tool        which helper (trace-processor)
+
+Options:
+  -y, --yes   download without asking
+  --json      machine-readable output
+  -h, --help  display help for command"
 `;
 
 exports[`help output warden ls --help (and nested subcommands) 1`] = `
