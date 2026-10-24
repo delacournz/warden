@@ -5,9 +5,10 @@ import { type Exec, execError } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
 import { wardenHome as resolveWardenHome } from "../store";
 import type { Platform } from "../types";
+import { readXcode } from "../xcode";
 import type { BuildConfiguration } from "./builds.defaults";
 import { LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
-import { compilerCacheEnv, parseXcodeMajor } from "./compiler-cache";
+import { compilerCacheEnv } from "./compiler-cache";
 import type { Project } from "./config";
 import { type CacheKey, computeCacheKey } from "./fingerprint";
 import { combineKey } from "./js-inputs";
@@ -214,12 +215,12 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 	if (deps.compilerCache === false) return {};
 	const { platform } = deps;
 	const gitTop = platform === "ios" ? await gitToplevel(deps) : undefined;
-	const xcode = platform === "ios" ? await probe(deps, ["xcodebuild", "-version"]) : undefined;
+	const xcode = platform === "ios" ? await readXcode(deps.exec, deps.env) : undefined;
 	return compilerCacheEnv({
 		platform,
 		wardenHome: deps.wardenHome ?? resolveWardenHome(deps.env),
 		gitTop: gitTop || undefined,
-		xcodeMajor: xcode ? parseXcodeMajor(xcode) : undefined,
+		xcodeMajor: xcode?.success ? xcode.data.major : undefined,
 		enabled: true,
 		baseEnv: deps.env,
 	});

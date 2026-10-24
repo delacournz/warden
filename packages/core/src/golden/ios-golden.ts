@@ -3,16 +3,17 @@
  * goldens runs under one machine-wide warden lease (`golden:ios`), so a build, clone or prune in one
  * process never races another — a clone never sees a half-built or deleted golden.
  */
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { withBuildLock } from "../builds/lock";
-import { type Exec, execError } from "../exec";
+import { type Exec, type ExecOptions, execError } from "../exec";
 import type { PidAlive } from "../liveness";
 import { execWithin, realTimer, type Timer } from "../providers/health";
 import { IOS_TIMEOUTS, lookupCreateTarget, timedOutError } from "../providers/ios";
 import { parseAllSims, type SimctlSim } from "../sims/list";
 import type { Store } from "../store";
 import type { Owner } from "../types";
+import { readXcode } from "../xcode";
 import {
 	GOLDEN_PREFIX,
 	GOLDEN_RECIPE,
@@ -22,7 +23,6 @@ import {
 	isSettled,
 	migrationDone,
 	olderRecipeNames,
-	parseXcodeBuild,
 	planGolden,
 	wipName,
 } from "./golden";
@@ -101,22 +101,20 @@ function timing(deps: GoldenDeps): GoldenTiming {
 const log = (deps: GoldenDeps, line: string) => deps.log?.(`golden: ${line}`);
 
 /**
- * The selected Xcode's build: `ProductBuildVersion` of `$(xcode-select -p)/../version.plist` (two
- * ~10 ms spawns), else `xcodebuild -version` (0.4–1 s). Both name the same build (`17F113`).
+ * The selected Xcode's build (`17F113`): `DEVELOPER_DIR` first, else `xcode-select` (see `readXcode`).
+ * Every spawn is bounded: a timeout reads as exit 124 so `readXcode` falls through or fails.
  */
 async function readXcodeBuild(deps: GoldenDeps): AsyncResult<string> {
-	const developer = await run(deps, ["xcode-select", "-p"], XCODE_READ_TIMEOUT_MS);
-	if (developer.success && developer.data.trim()) {
-		const plist = join(dirname(developer.data.trim()), "version.plist");
-		const build = await run(
-			deps,
-			["plutil", "-extract", "ProductBuildVersion", "raw", "-o", "-", plist],
-			XCODE_READ_TIMEOUT_MS
-		);
-		if (build.success && /^\S+$/.test(build.data.trim())) return ok(build.data.trim());
-	}
-	const xcode = await run(deps, ["xcodebuild", "-version"], XCODE_READ_TIMEOUT_MS);
-	return xcode.success ? parseXcodeBuild(xcode.data) : xcode;
+	const timed: Exec = async (cmd, opts) => {
+		const within = {
+			exec: (c: readonly string[], o?: ExecOptions) => deps.exec(c, { ...opts, ...o }),
+			timer: deps.timer ?? realTimer,
+		};
+		const result = await execWithin(within, cmd, XCODE_READ_TIMEOUT_MS);
+		return result ?? { exitCode: 124, stdout: "", stderr: `timed out after ${XCODE_READ_TIMEOUT_MS} ms` };
+	};
+	const xcode = await readXcode(timed, deps.env);
+	return xcode.success ? ok(xcode.data.build) : xcode;
 }
 
 /** Per exec (so per process in the CLI, per fake host in tests): profile + runtime → the target read in flight or done. */

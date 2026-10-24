@@ -377,7 +377,11 @@ describe("runLocalBuild compiler cache env", () => {
 				gitCalls.push(joined);
 				return { exitCode: 0, stdout: `${root}\n${root}/.git\nrefs/heads/main\n`, stderr: "" };
 			}
-			if (joined === "xcodebuild -version") return { exitCode: 0, stdout: "Xcode 26.0\n", stderr: "" };
+			if (joined === "xcode-select -p") return { exitCode: 0, stdout: "/X/Xcode.app/Contents/Developer\n", stderr: "" };
+			if (joined.startsWith("plutil -extract CFBundleShortVersionString"))
+				return { exitCode: 0, stdout: "26.0\n", stderr: "" };
+			if (joined.startsWith("plutil -extract ProductBuildVersion"))
+				return { exitCode: 0, stdout: "17A400\n", stderr: "" };
 			if (cmd[2] === "xb") {
 				envs.push(opts?.env);
 				fakeApp(out, "A.app");
