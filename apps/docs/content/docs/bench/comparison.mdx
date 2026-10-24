@@ -37,7 +37,15 @@ Cold-start cost is the first run minus the warm median, plus the time spent in p
 
 ## Resources
 
+CPU is judged in CPU-seconds per rep: the CPU time the framework's own processes used during one timed run (warm median), from per-process deltas of `ps time`. The sampled `%cpu` is shown last as a secondary number. Memory is the framework's own processes, sampled every 500 ms.
+
 <BenchResources />
+
+### Where the CPU goes
+
+The same CPU-seconds split by process name, from the warm-median rep. A name keeps its colour in every bar, the six biggest names are shown and the rest are folded into other. The sampler ticks every 500 ms, so a process that lives between two ticks only shows up through the exit charge booked when its parent reaps it.
+
+<BenchProcesses />
 
 ## Residue and footprint
 
