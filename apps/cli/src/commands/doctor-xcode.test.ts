@@ -105,7 +105,8 @@ describe("viewerProbe", () => {
 		]);
 		expect(await viewerProbe(exec)).toEqual({
 			ok: true,
-			detail: "Device Hub (Xcode 27): one window, warden does not tile or close sim windows",
+			detail:
+				"Device Hub (Xcode 27): non-headless claims open and tile a window per sim; headless opens none. Quitting Device Hub shuts down every booted sim",
 		});
 	});
 	test("none", async () => {
