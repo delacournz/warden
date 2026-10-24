@@ -37,7 +37,7 @@ bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F framewo
 
 Inputs: `runs` (reps, default `5`; rep 1 is cold) and `frameworks` (default `warden`). The `bench` job installs bun, builds `warden-simd`, claims a headless simulator, records a 60 s idle control and runs `bench run` against the downloaded `.app`. The lease is released even when the run fails.
 
-The results land as the `eas-ios-warden` artifact on the run page (`expo.dev/accounts/delacour/projects/warden/workflows`). Download it and re-render locally:
+The workflow fingerprints the native project and reuses an existing `bench` build with the same fingerprint, so it only builds when `apps/example` changed. Results land as the `eas-ios-warden` artifact on the run page (`expo.dev/accounts/delacour/projects/warden/workflows`); `bunx eas-cli workflow:view <run-id>` prints its download URL. The archive unpacks to `Users/expo/bench-results`. Copy that to `.bench/eas-ios-warden` and re-render:
 
 ```bash
 bun run bench report .bench/eas-ios-warden

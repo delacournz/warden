@@ -46,7 +46,7 @@ The app is the Expo project `@delacour/warden` (`extra.eas.projectId` in `app.co
 cd apps/example && bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5
 ```
 
-Download the `eas-ios-warden` artifact from the run page, then `bun run bench report .bench/eas-ios-warden`. A hosted worker idles hotter than a Mac: compare EAS numbers only with EAS numbers from the same worker class.
+The build is skipped when EAS already has a `bench` build for the current fingerprint. Download the `eas-ios-warden` artifact (URL in `eas workflow:view <run-id>`; it unpacks to `Users/expo/bench-results`), copy it to `.bench/eas-ios-warden`, then `bun run bench report .bench/eas-ios-warden`. A hosted worker idles hotter than a Mac: compare EAS numbers only with EAS numbers from the same worker class.
 
 `bench run` options:
 
