@@ -36,6 +36,14 @@ describe("embedded skill folder", () => {
 		expect(SKILL_MD).toStartWith("---\nname: warden\n");
 	});
 
+	test("rule and skill gate Xcode 27 MCP DeviceInteraction behind a claimed udid", () => {
+		for (const text of [RULE_MD, SKILL_MD]) {
+			expect(text).toContain("mcpbridge");
+			expect(text).toContain("DeviceInteraction");
+			expect(text).toContain("--unsafe-always-allow-all-agents");
+		}
+	});
+
 	test("every references/*.md link in SKILL.md is embedded", () => {
 		const links = new Set(SKILL_MD.match(/references\/[a-z-]+\.md/g) ?? []);
 		for (const link of links) expect((SKILL_PATHS as readonly string[]).includes(link)).toBe(true);

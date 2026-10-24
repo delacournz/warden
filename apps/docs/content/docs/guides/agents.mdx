@@ -13,6 +13,14 @@ icon: Bot
 - **Drive the device with `warden ui`** (snapshot, tap, type, wait, record): see [Drive a device](/docs/guides/agent-ui). It checks the lease on every call and refuses a device another session leased; run `warden claim` and switch to the returned device. For checks that must keep passing, write a [spec](/docs/guides/specs) instead.
 - **Release when done:** `warden ui close --release`, or `warden release <leaseId>` (add `--shutdown` to stop sims warden created). Subagents never run `warden release --mine`, which frees the parent's leases too: release the lease id you hold, or claim with `--label x` and run `release --mine --label x`.
 
+## Xcode 27 MCP
+
+Xcode 27 ships an MCP server (`xcrun mcpbridge`, headless via `xcrun mcp-server`) and an exported device-interaction skill. Build, test, preview and docs tools are fine alongside warden. The `DeviceInteraction*` tools are not: they drive **any** booted simulator and skip warden's lease check, which breaks "foreign devices are read-only".
+
+- Use `DeviceInteraction*` only on a udid you got from `warden claim ios --json`, and end the session before `warden release`.
+- Drive apps with `warden ui` or a [spec](/docs/guides/specs): taps take milliseconds there, seconds through the MCP tools.
+- Never run `xcrun mcp-server enable --unsafe-always-allow-all-agents`. `warden doctor` reports the MCP service state.
+
 ## Claude Code
 
 `warden install --claude` adds the hook, skill and rule below. The hook edit to `~/.claude/settings.json` shows a diff first and applies only after you confirm or pass `--yes` (non-interactive without `--yes` skips it); `--dry-run` writes nothing. It also removes the `PreToolUse` hook (`warden hook pretool`, a device-lease hook for MCP device tools) that older versions installed; `warden hook pretool` stays a no-op so an old config keeps working.
