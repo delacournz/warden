@@ -61,7 +61,7 @@ function setup(metro: string | null = METRO) {
 }
 
 const run = (s: ReturnType<typeof setup>, opts: Record<string, unknown> = {}) =>
-	perfJs(s.c, s.deps, { record: true, json: true, app: "com.acme.shop", ...opts }, s.js);
+	perfJs(s.c, s.deps, { json: true, app: "com.acme.shop", ...opts }, s.js);
 
 describe("warden perf js", () => {
 	test("profiles for --duration, writes the profile and hotspots, reports file:line", async () => {
@@ -92,7 +92,7 @@ describe("warden perf js", () => {
 
 	test("text mode shows the dev-build banner, the hotspot and next hints", async () => {
 		const s = setup();
-		expect(await perfJs(s.c, s.deps, { record: true, app: "com.acme.shop" }, s.js)).toBe(0);
+		expect(await perfJs(s.c, s.deps, { app: "com.acme.shop" }, s.js)).toBe(0);
 		const text = s.c.stdout.join("\n");
 		expect(text).toContain("dev build (__DEV__)");
 		expect(text).toContain("renderFeed");

@@ -33,7 +33,7 @@ const json = (c: TestContext) => JSON.parse(c.stdout.join("\n"));
 describe("warden perf frames", () => {
 	test("reads gfxinfo as observe: no lease, no reset, report in the envelope", async () => {
 		const { c, calls, deps } = setup(emu, [[READ, { stdout: fx("gfxinfo-90hz.txt") }]]);
-		expect(await perfFrames(c, deps, { record: true, json: true, app: "com.example.app" })).toBe(0);
+		expect(await perfFrames(c, deps, { json: true, app: "com.example.app" })).toBe(0);
 		const doc = json(c);
 		expect(doc).toMatchObject({
 			ok: true,
@@ -50,13 +50,11 @@ describe("warden perf frames", () => {
 			[READ, { stdout: fx("gfxinfo-60hz.txt") }],
 			[RESET, { stdout: "" }],
 		]);
-		expect(await perfFrames(c, deps, { record: true, json: true, app: "com.example.app", reset: true })).toBe(2);
+		expect(await perfFrames(c, deps, { json: true, app: "com.example.app", reset: true })).toBe(2);
 		expect(json(c)).toMatchObject({ ok: false, error: { code: "device_not_leased" } });
 		expect(calls).toEqual([]);
 
-		expect(
-			await perfFrames(c, deps, { record: true, json: true, app: "com.example.app", reset: true, claim: true })
-		).toBe(0);
+		expect(await perfFrames(c, deps, { json: true, app: "com.example.app", reset: true, claim: true })).toBe(0);
 		const cmds = calls.map((x) => x.join(" "));
 		expect(cmds.indexOf(READ)).toBeGreaterThanOrEqual(0);
 		expect(cmds.indexOf(RESET)).toBeGreaterThan(cmds.indexOf(READ));
@@ -71,7 +69,7 @@ describe("warden perf frames", () => {
 		});
 		if (!made.success) throw new Error("create");
 		clock.now = T0 + 10_000;
-		expect(await perfFrames(c, deps, { record: true, json: true, app: "com.example.app" })).toBe(0);
+		expect(await perfFrames(c, deps, { json: true, app: "com.example.app" })).toBe(0);
 		const { result } = json(c);
 		expect(result.session).toBe(made.data.id);
 		expect(result.worstWindows[0].startOffsetMs).toBeLessThanOrEqual(10_000);
@@ -81,20 +79,20 @@ describe("warden perf frames", () => {
 
 	test("no session: nothing is written", async () => {
 		const { c, deps } = setup(emu, [[READ, { stdout: fx("gfxinfo-120hz.txt") }]]);
-		await perfFrames(c, deps, { record: true, json: true, app: "com.example.app" });
+		await perfFrames(c, deps, { json: true, app: "com.example.app" });
 		expect(json(c).result.session).toBeUndefined();
 		expect(existsSync(join(sessionDir(c, "x"), FRAMES_FILE))).toBe(false);
 	});
 
 	test("app not running: app_not_found with a launch hint", async () => {
 		const { c, deps } = setup(emu, [[READ, { stdout: fx("gfxinfo-no-process.txt") }]]);
-		expect(await perfFrames(c, deps, { record: true, json: true, app: "com.example.app" })).toBe(1);
+		expect(await perfFrames(c, deps, { json: true, app: "com.example.app" })).toBe(1);
 		expect(json(c)).toMatchObject({ ok: false, error: { code: "app_not_found" } });
 	});
 
 	test("iOS sim: typed unsupported result, no xctrace or simctl frame calls", async () => {
 		const { c, calls, deps } = setup(sim, []);
-		expect(await perfFrames(c, deps, { record: true, json: true, app: "com.example.app" })).toBe(0);
+		expect(await perfFrames(c, deps, { json: true, app: "com.example.app" })).toBe(0);
 		const doc = json(c);
 		expect(doc.result).toMatchObject({ status: "unsupported", platform: "ios" });
 		expect(doc.result.hint).toContain("perf start --native");

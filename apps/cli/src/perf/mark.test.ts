@@ -32,7 +32,7 @@ describe("warden perf mark", () => {
 		const made = start(c, deps);
 		if (!made.success) throw new Error("create");
 		clock.now = T0 + 3_200;
-		expect(await perfMark(c, deps, ["scroll", "feed"], { record: true, json: true })).toBe(0);
+		expect(await perfMark(c, deps, ["scroll", "feed"], { json: true })).toBe(0);
 		const doc = JSON.parse(c.stdout.join("\n"));
 		expect(doc).toMatchObject({
 			ok: true,
@@ -46,13 +46,13 @@ describe("warden perf mark", () => {
 		const { c, clock, deps } = setup();
 		start(c, deps);
 		clock.now = T0 + 1_500;
-		expect(await perfMark(c, deps, ["tap"], { record: true })).toBe(0);
+		expect(await perfMark(c, deps, ["tap"], {})).toBe(0);
 		expect(c.stdout.join("\n")).toContain('marked "tap" at +1.5s');
 	});
 
 	test("no active session: session_not_found, exit 1", async () => {
 		const { c, deps } = setup();
-		expect(await perfMark(c, deps, ["x"], { record: true, json: true })).toBe(1);
+		expect(await perfMark(c, deps, ["x"], { json: true })).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ ok: false, error: { code: "session_not_found" } });
 	});
 
@@ -60,20 +60,20 @@ describe("warden perf mark", () => {
 		const { c, clock, deps } = setup();
 		start(c, deps);
 		clock.now = T0 + 31_000;
-		expect(await perfMark(c, deps, ["late"], { record: true, json: true })).toBe(1);
+		expect(await perfMark(c, deps, ["late"], { json: true })).toBe(1);
 	});
 
 	test("an empty label is a usage error", async () => {
 		const { c, deps } = setup();
 		start(c, deps);
-		expect(await perfMark(c, deps, ["  "], { record: true, json: true })).toBe(1);
+		expect(await perfMark(c, deps, ["  "], { json: true })).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ ok: false, error: { code: "usage" } });
 	});
 
 	test("marking never takes a lease on the device", async () => {
 		const { c, deps } = setup();
 		start(c, deps);
-		await perfMark(c, deps, ["x"], { record: true, json: true });
+		await perfMark(c, deps, ["x"], { json: true });
 		expect(c.db.listLeases()).toEqual([]);
 	});
 });

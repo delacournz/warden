@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { isHidLost } from "../driver/ios/hid-recovery";
 import { E2eError } from "../errors";
+import { perfStartFor } from "../perf/device-perf";
 import { type AttemptBinding, attemptSession, type Session } from "../session";
 import { attemptDir, hash6, specIdOf } from "./artifacts";
 import {
@@ -360,6 +361,18 @@ async function setUpAndRun<F extends object>(
 	const base = await buildBaseFixtures(session, signal, use);
 	const built: Bag = { ...base };
 	state.bag = built;
+	const perfNames = session.env.perf;
+	if (perfNames !== undefined) {
+		const { perf } = base.device;
+		await session.step("perf", "perf.start", () => perf.start(perfStartFor(perfNames)));
+		// the body may have stopped it (to pass its own budgets); then there is nothing left to end
+		teardowns.push({
+			name: "perf",
+			run: async () => {
+				if (perf.active) await perf.stop();
+			},
+		});
+	}
 	if (use.launch === "fresh") await session.step("app", "app.open", () => base.app.open());
 	for (const entry of spec.fixtures) {
 		const started = await session.step("fixture", entry.name, () => startFixture(entry, built));

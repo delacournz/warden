@@ -158,7 +158,7 @@ describe("chooseCapturers", () => {
 	});
 });
 
-const startOpts = (o: Partial<StartOptions>): StartOptions => ({ record: false, ...o });
+const startOpts = (o: Partial<StartOptions>): StartOptions => ({ ...o });
 
 describe("startPerf", () => {
 	test("opens a session, writes the plan, anchors the device clock and spawns the collector", async () => {
@@ -323,11 +323,11 @@ describe("finalizeSession", () => {
 describe("start / stop / record commands", () => {
 	test("start --json then stop --json: the report is the result", async () => {
 		const { c, deps, kit } = setup();
-		expect(await perfStart(c, deps, { record: true, json: true, app: APP, metrics: true }, kit)).toBe(0);
+		expect(await perfStart(c, deps, { json: true, app: APP, metrics: true }, kit)).toBe(0);
 		const started = JSON.parse(c.stdout.join("\n"));
 		expect(started).toMatchObject({ ok: true, command: "perf start", result: { app: APP } });
 		c.stdout.length = 0;
-		expect(await perfStop(c, deps, { record: true, json: true }, kit)).toBe(0);
+		expect(await perfStop(c, deps, { json: true }, kit)).toBe(0);
 		const stopped = JSON.parse(c.stdout.join("\n"));
 		expect(stopped.result.sessionId).toBe(started.result.sessionId);
 		expect(stopped.result.report.version).toBe(1);
@@ -335,23 +335,23 @@ describe("start / stop / record commands", () => {
 
 	test("start --join attaches read-only to the running session", async () => {
 		const { c, deps, kit } = setup();
-		await perfStart(c, deps, { record: true, json: true, app: APP, metrics: true }, kit);
+		await perfStart(c, deps, { json: true, app: APP, metrics: true }, kit);
 		const id = JSON.parse(c.stdout.join("\n")).result.sessionId;
 		c.stdout.length = 0;
-		expect(await perfStart(c, deps, { record: true, json: true, join: true }, kit)).toBe(0);
+		expect(await perfStart(c, deps, { json: true, join: true }, kit)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).result).toMatchObject({ sessionId: id, joined: true });
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
 	test("stop with no session is session_not_found", async () => {
 		const { c, deps, kit } = setup();
-		expect(await perfStop(c, deps, { record: true, json: true }, kit)).toBe(1);
+		expect(await perfStop(c, deps, { json: true }, kit)).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ error: { code: "session_not_found" } });
 	});
 
 	test("record waits the duration, then reports; the cap defaults to duration + 10s", async () => {
 		const { c, clock, deps, kit } = setup();
-		const code = await perfRecord(c, deps, { record: true, json: true, app: APP, metrics: true, duration: "5s" }, kit, {
+		const code = await perfRecord(c, deps, { json: true, app: APP, metrics: true, duration: "5s" }, kit, {
 			interrupt: () => ({ signal: new AbortController().signal, dispose: () => {} }),
 		});
 		expect(code).toBe(0);
@@ -365,7 +365,7 @@ describe("start / stop / record commands", () => {
 		const { c, deps, kit } = setup();
 		const controller = new AbortController();
 		controller.abort();
-		const code = await perfRecord(c, deps, { record: true, json: true, app: APP, metrics: true, duration: "5m" }, kit, {
+		const code = await perfRecord(c, deps, { json: true, app: APP, metrics: true, duration: "5m" }, kit, {
 			interrupt: () => ({ signal: controller.signal, dispose: () => {} }),
 		});
 		expect(code).toBe(130);
@@ -374,7 +374,7 @@ describe("start / stop / record commands", () => {
 
 	test("record rejects a duration over 5m", async () => {
 		const { c, deps, kit } = setup();
-		expect(await perfRecord(c, deps, { record: true, json: true, app: APP, duration: "6m" }, kit)).toBe(1);
+		expect(await perfRecord(c, deps, { json: true, app: APP, duration: "6m" }, kit)).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ error: { code: "usage" } });
 	});
 });

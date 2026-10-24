@@ -13,6 +13,9 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 		get devtools() {
 			return device.devtools;
 		},
+		get perf() {
+			return device.perf;
+		},
 		alert: (action) => span("device.alert", () => device.alert(action), { detail: (answered) => ({ answered }) }),
 		openLink: (url, options) => span("device.openLink", () => device.openLink(url, options)),
 		home: () => span("device.home", () => device.home()),

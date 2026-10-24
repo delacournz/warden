@@ -30,6 +30,12 @@ export const ENV_NAMES = {
 	afterReboot: "WARDEN_AFTER_REBOOT",
 	/** the `warden` that started this process: the preload refuses to run when it is not this package's version */
 	version: "WARDEN_VERSION",
+	/** JSON argv that re-runs the `warden` that started this process (`device.perf` shells out to it) */
+	bin: "WARDEN_BIN",
+	/** `warden e2e --perf`: the capture flags (`all`, or a comma list like `react,js`) every attempt records */
+	perf: "WARDEN_PERF",
+	/** JSON of the suite's `perf.budgets`; a breach fails the test with `PERF_BUDGET` */
+	perfBudgets: "WARDEN_PERF_BUDGETS",
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -77,6 +83,9 @@ const schema = z.object({
 	logTimestamps: toggle.default(false),
 	afterReboot: launchArgs.optional(),
 	version: z.string().optional(),
+	bin: z.string().optional(),
+	perf: z.string().optional(),
+	perfBudgets: z.string().optional(),
 });
 
 export type E2eEnv = {
@@ -103,6 +112,12 @@ export type E2eEnv = {
 	afterReboot?: string[];
 	/** `WARDEN_VERSION`: the warden that started this run */
 	wardenVersion?: string;
+	/** `WARDEN_BIN`: argv of the `warden` that started this run */
+	wardenBin?: string[];
+	/** `WARDEN_PERF`: capture names every attempt records (`all`, `react`, `js`…) */
+	perf?: string[];
+	/** `WARDEN_PERF_BUDGETS`: raw JSON of the suite's budgets */
+	perfBudgets?: string;
 };
 
 type Parsed = z.infer<typeof schema>;
@@ -110,6 +125,17 @@ type Parsed = z.infer<typeof schema>;
 /** Drops `undefined` values so optional fields are absent rather than `undefined`. */
 function defined<T extends Record<string, string | undefined>>(values: T): Partial<T> {
 	return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as Partial<T>;
+}
+
+/** `WARDEN_BIN` is a JSON array; a bare path counts as a one-word command. */
+function parseArgv(raw: string): string[] {
+	try {
+		const parsed = z.array(z.string()).min(1).safeParse(JSON.parse(raw));
+		if (parsed.success) return parsed.data;
+	} catch {
+		// a plain path
+	}
+	return [raw];
 }
 
 function toEnv(v: Parsed, now: () => Date): E2eEnv {
@@ -132,8 +158,18 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 			simd: v.simd,
 			simdSocket: v.simdSocket,
 			wardenVersion: v.version,
+			perfBudgets: v.perfBudgets,
 		}),
 		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
+		...(v.bin === undefined ? {} : { wardenBin: parseArgv(v.bin) }),
+		...(v.perf === undefined
+			? {}
+			: {
+					perf: v.perf
+						.split(",")
+						.map((p) => p.trim())
+						.filter((p) => p !== ""),
+				}),
 	};
 }
 

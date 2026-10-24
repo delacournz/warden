@@ -63,7 +63,7 @@ const json = (c: TestContext) => JSON.parse(c.stdout[c.stdout.length - 1] ?? "nu
 describe("warden perf metrics (one-shot)", () => {
 	test("samples for 3s at 1s: 4 readings, a summary, and a one-shot samples.jsonl", async () => {
 		const { c, deps, io } = setup();
-		expect(await perfMetrics(c, deps, { app: APP, record: true, json: true }, io)).toBe(0);
+		expect(await perfMetrics(c, deps, { app: APP, json: true }, io)).toBe(0);
 		const doc = json(c);
 		expect(doc).toMatchObject({ ok: true, command: "perf metrics", result: { app: APP, intervalMs: 1000 } });
 		expect(doc.result.summary.count).toBe(4);
@@ -77,7 +77,7 @@ describe("warden perf metrics (one-shot)", () => {
 
 	test("text mode: figures per metric, where the samples went, next:", async () => {
 		const { c, deps, io } = setup();
-		expect(await perfMetrics(c, deps, { app: APP, record: true }, io)).toBe(0);
+		expect(await perfMetrics(c, deps, { app: APP }, io)).toBe(0);
 		const text = c.stdout.join("\n");
 		expect(text).toContain(`${APP} on warden-pixel-1 (android): 4 samples over 3.0s`);
 		expect(text).toMatch(/cpu\s+min 25\.0\s+avg 25\.0\s+p95 25\.0\s+max 25\.0 %/);
@@ -89,13 +89,13 @@ describe("warden perf metrics (one-shot)", () => {
 
 	test("--interval/--duration are honoured", async () => {
 		const { c, deps, io } = setup();
-		await perfMetrics(c, deps, { app: APP, record: true, json: true, interval: "500ms", duration: "2s" }, io);
+		await perfMetrics(c, deps, { app: APP, json: true, interval: "500ms", duration: "2s" }, io);
 		expect(json(c).result.summary.count).toBe(5);
 	});
 
 	test("a steadily climbing PSS surfaces the memory-growth finding", async () => {
 		const { c, deps, io } = setup({ pss: (t) => 100_000 + t * 600 });
-		await perfMetrics(c, deps, { app: APP, record: true, json: true, duration: "10s" }, io);
+		await perfMetrics(c, deps, { app: APP, json: true, duration: "10s" }, io);
 		const doc = json(c);
 		expect(doc.result.findings[0]).toMatchObject({ kind: "memory-growth", severity: "warn" });
 	});
@@ -106,7 +106,7 @@ describe("warden perf metrics (one-shot)", () => {
 		[{ duration: "0" }, "--duration"],
 	])("bad flags %p: usage error", async (flags, fragment) => {
 		const { c, deps, io } = setup();
-		expect(await perfMetrics(c, deps, { app: APP, record: true, json: true, ...flags }, io)).toBe(1);
+		expect(await perfMetrics(c, deps, { app: APP, json: true, ...flags }, io)).toBe(1);
 		const doc = json(c);
 		expect(doc).toMatchObject({ ok: false, error: { code: "usage" } });
 		expect(doc.error.message).toContain(fragment);
@@ -114,7 +114,7 @@ describe("warden perf metrics (one-shot)", () => {
 
 	test("the app not running: app_not_found, exit 1", async () => {
 		const { c, deps, io } = setup({ running: () => false });
-		expect(await perfMetrics(c, deps, { app: APP, record: true, json: true }, io)).toBe(1);
+		expect(await perfMetrics(c, deps, { app: APP, json: true }, io)).toBe(1);
 		expect(json(c)).toMatchObject({ ok: false, error: { code: "app_not_found" } });
 	});
 
@@ -127,7 +127,7 @@ describe("warden perf metrics (one-shot)", () => {
 			await sleep(ms, signal);
 			if (++sleeps === 2) up = false;
 		};
-		expect(await perfMetrics(c, deps, { app: APP, record: true, json: true }, io)).toBe(0);
+		expect(await perfMetrics(c, deps, { app: APP, json: true }, io)).toBe(0);
 		const doc = json(c);
 		expect(doc.result.summary.count).toBe(2);
 		expect(doc.warnings.join(" ")).toContain("sampling stopped early");
@@ -135,7 +135,7 @@ describe("warden perf metrics (one-shot)", () => {
 
 	test("never takes a lease", async () => {
 		const { c, deps, io } = setup();
-		await perfMetrics(c, deps, { app: APP, record: true, json: true }, io);
+		await perfMetrics(c, deps, { app: APP, json: true }, io);
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
@@ -148,7 +148,7 @@ describe("warden perf metrics (one-shot)", () => {
 		});
 		if (!made.success) throw new Error("create");
 		clock.now = T0 + 2_000;
-		await perfMetrics(c, deps, { app: APP, record: true, json: true, duration: "1s" }, io);
+		await perfMetrics(c, deps, { app: APP, json: true, duration: "1s" }, io);
 		const doc = json(c);
 		expect(doc.result.sessionId).toBe(made.data.id);
 		expect(doc.result.samples).toBe(join(c.env.WARDEN_HOME ?? "", "perf", made.data.id, "metrics", "samples.jsonl"));
@@ -167,14 +167,14 @@ describe("warden perf metrics (one-shot)", () => {
 			...s,
 			capturers: [{ kind: "metrics", startedAtIso: "x", state: "running" }],
 		}));
-		await perfMetrics(c, deps, { app: APP, record: true, json: true, duration: "1s" }, io);
+		await perfMetrics(c, deps, { app: APP, json: true, duration: "1s" }, io);
 		const dir = join(c.env.WARDEN_HOME ?? "", "perf", made.data.id, "metrics");
 		expect(readdirSync(dir)).toEqual(["samples-manual.jsonl"]);
 	});
 
 	test("one-shot dirs are not sessions", async () => {
 		const { c, deps, io } = setup();
-		await perfMetrics(c, deps, { app: APP, record: true, json: true }, io);
+		await perfMetrics(c, deps, { app: APP, json: true }, io);
 		const root = join(c.env.WARDEN_HOME ?? "", "perf");
 		expect(existsSync(root)).toBe(true);
 		expect(readdirSync(root).every((n) => n.startsWith("metrics-"))).toBe(true);
@@ -184,7 +184,7 @@ describe("warden perf metrics (one-shot)", () => {
 describe("warden perf metrics --watch", () => {
 	test("piped (not rich): one NDJSON line per sample, then the envelope; stderr stays empty", async () => {
 		const { c, deps, io, writes } = setup({ rich: false });
-		expect(await perfMetrics(c, deps, { app: APP, record: true, watch: true, duration: "2s" }, io)).toBe(0);
+		expect(await perfMetrics(c, deps, { app: APP, watch: true, duration: "2s" }, io)).toBe(0);
 		const docs = c.stdout.map((l) => JSON.parse(l));
 		expect(docs.filter((d) => d.type === "sample").map((d) => d.atMs)).toEqual([0, 1000, 2000]);
 		expect(docs[docs.length - 1]).toMatchObject({ ok: true, command: "perf metrics" });
@@ -193,14 +193,14 @@ describe("warden perf metrics --watch", () => {
 
 	test("--json on a TTY also streams NDJSON", async () => {
 		const { c, deps, io, writes } = setup({ rich: true });
-		await perfMetrics(c, deps, { app: APP, record: true, json: true, watch: true, duration: "1s" }, io);
+		await perfMetrics(c, deps, { app: APP, json: true, watch: true, duration: "1s" }, io);
 		expect(c.stdout.filter((l) => JSON.parse(l).type === "sample")).toHaveLength(2);
 		expect(writes).toEqual([]);
 	});
 
 	test("rich: sparklines redraw on stderr, stdout only gets the final summary", async () => {
 		const { c, deps, io, writes } = setup({ rich: true });
-		expect(await perfMetrics(c, deps, { app: APP, record: true, watch: true, duration: "2s" }, io)).toBe(0);
+		expect(await perfMetrics(c, deps, { app: APP, watch: true, duration: "2s" }, io)).toBe(0);
 		expect(writes).toHaveLength(3);
 		expect(writes[0]).toContain("cpu");
 		expect(writes[0]).toMatch(/[▁-█]/);
@@ -211,13 +211,13 @@ describe("warden perf metrics --watch", () => {
 
 	test("the fps row is drawn only when a source is supplied", async () => {
 		const without = setup({ rich: true });
-		await perfMetrics(without.c, without.deps, { app: APP, record: true, watch: true, duration: "1s" }, without.io);
+		await perfMetrics(without.c, without.deps, { app: APP, watch: true, duration: "1s" }, without.io);
 		expect(without.writes.join("")).not.toContain("fps");
 		ctx?.cleanup();
 
 		const withFps = setup({ rich: true });
 		withFps.io.fps = async () => 59.5;
-		await perfMetrics(withFps.c, withFps.deps, { app: APP, record: true, watch: true, duration: "1s" }, withFps.io);
+		await perfMetrics(withFps.c, withFps.deps, { app: APP, watch: true, duration: "1s" }, withFps.io);
 		expect(withFps.writes.join("")).toContain("cur 59.5 fps");
 	});
 
@@ -228,7 +228,7 @@ describe("warden perf metrics --watch", () => {
 			asked.push(`${target.platform}:${target.udid}:${app}`);
 			return async () => 88;
 		};
-		await perfMetrics(s.c, s.deps, { app: APP, record: true, watch: true, duration: "1s" }, s.io);
+		await perfMetrics(s.c, s.deps, { app: APP, watch: true, duration: "1s" }, s.io);
 		expect(asked).toEqual([`android:${droid.id}:${APP}`]);
 		expect(s.writes.join("")).toContain("cur 88.0 fps");
 	});
@@ -241,7 +241,7 @@ describe("warden perf metrics --watch", () => {
 			await sleep(ms, signal);
 			if (++sleeps === 2) controller.abort();
 		};
-		expect(await perfMetrics(c, deps, { app: APP, record: true, watch: true }, io)).toBe(130);
+		expect(await perfMetrics(c, deps, { app: APP, watch: true }, io)).toBe(130);
 		const last = JSON.parse(c.stdout[c.stdout.length - 1] ?? "null");
 		expect(last).toMatchObject({ ok: true, result: { interrupted: true } });
 		expect(last.result.summary.count).toBe(2);
@@ -249,7 +249,7 @@ describe("warden perf metrics --watch", () => {
 
 	test("without --duration a watch is capped at 5 minutes", async () => {
 		const { c, deps, io } = setup({ rich: false });
-		await perfMetrics(c, deps, { app: APP, record: true, watch: true, interval: "30s" }, io);
+		await perfMetrics(c, deps, { app: APP, watch: true, interval: "30s" }, io);
 		const last = JSON.parse(c.stdout[c.stdout.length - 1] ?? "null");
 		expect(last.result.summary.durationMs).toBe(300_000);
 	});

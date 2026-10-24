@@ -69,7 +69,6 @@ const run = (
 			...(out.text === true ? {} : { json: true as const }),
 			...(out.noClaim === true ? {} : { claim: true }),
 			...opts,
-			record: true,
 		},
 		io
 	);

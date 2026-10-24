@@ -40,7 +40,7 @@ function setup(
 }
 
 async function run(c: TestContext, deps: ReturnType<typeof fakePerfDeps>, opts: Record<string, unknown> = {}) {
-	const code = await perfDoctor(c, deps, { record: true, json: true, ...opts });
+	const code = await perfDoctor(c, deps, { json: true, ...opts });
 	const doc = JSON.parse(c.stdout.join("\n"));
 	const byId: Record<string, DoctorCheck> = Object.fromEntries((doc.checks as DoctorCheck[]).map((k) => [k.id, k]));
 	return { code, doc, byId };
@@ -169,7 +169,7 @@ describe("warden perf doctor: device checks", () => {
 describe("warden perf doctor: text mode", () => {
 	test("prints one line per check with a status glyph word", async () => {
 		const { c, deps } = setup(sim, HOST_OK);
-		const code = await perfDoctor(c, deps, { record: true, app: "a.b" });
+		const code = await perfDoctor(c, deps, { app: "a.b" });
 		expect(code).toBe(0);
 		const text = c.stdout.join("\n");
 		expect(text).toContain("xctrace");

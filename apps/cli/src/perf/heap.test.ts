@@ -47,7 +47,7 @@ function setup(chunks: string[] = [SNAPSHOT.slice(0, 40), SNAPSHOT.slice(40)]) {
 }
 
 const snap = (s: ReturnType<typeof setup>, opts: Record<string, unknown> = {}) =>
-	perfHeapSnapshot(s.c, s.deps, { record: true, json: true, claim: true, app: "com.acme.shop", ...opts }, s.js);
+	perfHeapSnapshot(s.c, s.deps, { json: true, claim: true, app: "com.acme.shop", ...opts }, s.js);
 
 describe("warden perf heap snapshot", () => {
 	test("streams chunks into js/heap-<ts>.heapsnapshot and summarizes the top constructors", async () => {
@@ -63,7 +63,7 @@ describe("warden perf heap snapshot", () => {
 
 	test("it mutates: no lease and no --claim is refused", async () => {
 		const s = setup();
-		expect(await perfHeapSnapshot(s.c, s.deps, { record: true, json: true, app: "com.acme.shop" }, s.js)).toBe(2);
+		expect(await perfHeapSnapshot(s.c, s.deps, { json: true, app: "com.acme.shop" }, s.js)).toBe(2);
 	});
 
 	test("a runtime without the method: engine_unavailable, and no half-written file is left", async () => {
@@ -94,7 +94,7 @@ describe("warden perf heap snapshot", () => {
 
 	test("text mode lists the top constructors and a diff hint", async () => {
 		const s = setup();
-		expect(await perfHeapSnapshot(s.c, s.deps, { record: true, claim: true, app: "com.acme.shop" }, s.js)).toBe(0);
+		expect(await perfHeapSnapshot(s.c, s.deps, { claim: true, app: "com.acme.shop" }, s.js)).toBe(0);
 		const text = s.c.stdout.join("\n");
 		expect(text).toContain("Cart");
 		expect(text).toContain("warden perf heap diff");

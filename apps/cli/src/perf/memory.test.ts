@@ -61,7 +61,7 @@ const iosScript =
 describe("warden perf memory (iOS)", () => {
 	test("plain: footprint and top regions from vmmap, observe-only (no lease needed, none taken)", async () => {
 		const { c, deps } = setup(sim, iosScript(), false);
-		expect(await perfMemory(c, deps, { app: APP, record: true }, io)).toBe(0);
+		expect(await perfMemory(c, deps, { app: APP }, io)).toBe(0);
 		const text = c.stdout.join("\n");
 		expect(text).toContain(`${APP} (pid 880): footprint 168.4 MB (peak 181.9 MB)`);
 		expect(text).toContain("MALLOC_SMALL");
@@ -75,13 +75,13 @@ describe("warden perf memory (iOS)", () => {
 			(cmd) => (cmd.includes("launchctl list") ? { stdout: "PID\tStatus\tLabel\n" } : undefined),
 			false
 		);
-		expect(await perfMemory(c, deps, { app: APP, record: true, json: true }, io)).toBe(1);
+		expect(await perfMemory(c, deps, { app: APP, json: true }, io)).toBe(1);
 		expect(json(c)).toMatchObject({ ok: false, error: { code: "app_not_found" } });
 	});
 
 	test("--snapshot without your own lease: device_foreign-style refusal, nothing captured", async () => {
 		const { c, deps, calls } = setup(sim, iosScript(), false);
-		const code = await perfMemory(c, deps, { app: APP, record: true, json: true, snapshot: true }, io);
+		const code = await perfMemory(c, deps, { app: APP, json: true, snapshot: true }, io);
 		expect(code).not.toBe(0);
 		expect(calls.some((cmd) => cmd.includes("leaks"))).toBe(false);
 	});
@@ -92,7 +92,7 @@ describe("warden perf memory (iOS)", () => {
 			iosScript((cmd) => (cmd.includes(" leaks ") ? { exitCode: 1, stdout: fx("leaks-summary.txt") } : undefined)),
 			true
 		);
-		expect(await perfMemory(c, deps, { app: APP, record: true, json: true, snapshot: true }, io)).toBe(0);
+		expect(await perfMemory(c, deps, { app: APP, json: true, snapshot: true }, io)).toBe(0);
 		const doc = json(c);
 		const leaksCall = calls.find((cmd) => cmd.includes(" leaks ")) ?? "";
 		expect(leaksCall).toContain("xcrun simctl spawn U1 leaks --outputGraph=");
@@ -109,7 +109,7 @@ describe("warden perf memory (iOS)", () => {
 			iosScript((cmd) => (cmd.includes(" leaks ") ? { stdout: fx("leaks-clean.txt") } : undefined)),
 			true
 		);
-		expect(await perfMemory(c, deps, { app: APP, record: true, snapshot: true }, io)).toBe(0);
+		expect(await perfMemory(c, deps, { app: APP, snapshot: true }, io)).toBe(0);
 		expect(c.stdout.join("\n")).toContain("leaks: none");
 	});
 
@@ -121,7 +121,7 @@ describe("warden perf memory (iOS)", () => {
 			),
 			true
 		);
-		expect(await perfMemory(c, deps, { app: APP, record: true, json: true, snapshot: true }, io)).toBe(1);
+		expect(await perfMemory(c, deps, { app: APP, json: true, snapshot: true }, io)).toBe(1);
 		expect(json(c).error.message).toContain("cannot examine process");
 	});
 });
@@ -143,7 +143,7 @@ describe("warden perf memory (Android)", () => {
 
 	test("plain: PSS/RSS and the top 5 categories", async () => {
 		const { c, deps } = setup(droid, hprofScript(), false);
-		expect(await perfMemory(c, deps, { app: APP, record: true }, io)).toBe(0);
+		expect(await perfMemory(c, deps, { app: APP }, io)).toBe(0);
 		const text = c.stdout.join("\n");
 		expect(text).toContain("PSS 222.8 MB, RSS 314.9 MB");
 		expect(text).toContain("Graphics");
@@ -152,7 +152,7 @@ describe("warden perf memory (Android)", () => {
 
 	test("--snapshot: touch+chmod, dumpheap, wait for the size to settle, pull, rm", async () => {
 		const { c, deps, calls } = setup(droid, hprofScript(), true);
-		expect(await perfMemory(c, deps, { app: APP, record: true, json: true, snapshot: true }, io)).toBe(0);
+		expect(await perfMemory(c, deps, { app: APP, json: true, snapshot: true }, io)).toBe(0);
 		const doc = json(c);
 		expect(doc.result.hprof.bytes).toBe(4096000);
 		expect(doc.result.hprof.path).toContain(join("perf", "memory-"));
@@ -172,7 +172,7 @@ describe("warden perf memory (Android)", () => {
 			(cmd) => (cmd.includes(" pull ") ? { exitCode: 1, stderr: "remote object does not exist" } : script(cmd)),
 			true
 		);
-		expect(await perfMemory(c, deps, { app: APP, record: true, json: true, snapshot: true }, io)).toBe(1);
+		expect(await perfMemory(c, deps, { app: APP, json: true, snapshot: true }, io)).toBe(1);
 		expect(calls.some((cmd) => cmd.includes("rm -f /data/local/tmp/warden-"))).toBe(true);
 	});
 
@@ -187,7 +187,7 @@ describe("warden perf memory (Android)", () => {
 			}),
 			true
 		);
-		expect(await perfMemory(c, deps, { app: APP, record: true, json: true, snapshot: true }, io)).toBe(1);
+		expect(await perfMemory(c, deps, { app: APP, json: true, snapshot: true }, io)).toBe(1);
 		const err = json(c).error;
 		expect(err.code).toBe("not_profileable");
 		expect(err.hint).toContain("profileable");
@@ -201,7 +201,7 @@ describe("warden perf memory (Android)", () => {
 			(cmd) => (cmd.includes("stat -c") ? { stdout: `${++n * 1000}\n` } : script(cmd)),
 			true
 		);
-		expect(await perfMemory(c, deps, { app: APP, record: true, json: true, snapshot: true }, io)).toBe(1);
+		expect(await perfMemory(c, deps, { app: APP, json: true, snapshot: true }, io)).toBe(1);
 		expect(json(c).error.message).toContain("did not finish");
 	});
 
@@ -214,7 +214,7 @@ describe("warden perf memory (Android)", () => {
 			maxDurationMs: 60_000,
 		});
 		if (!made.success) throw new Error("create");
-		await perfMemory(c, deps, { app: APP, record: true, json: true, snapshot: true }, io);
+		await perfMemory(c, deps, { app: APP, json: true, snapshot: true }, io);
 		const dir = join(c.env.WARDEN_HOME ?? "", "perf", made.data.id, "native");
 		expect(existsSync(dir)).toBe(true);
 		expect(calls.find((cmd) => cmd.includes(" pull "))).toContain(`${dir}/${APP}-`);

@@ -45,7 +45,7 @@ const iosHandlers = (): Handlers => [
 describe("perf logs one-shot", () => {
 	test("android: pid-bound logcat, redacted, json envelope", async () => {
 		const { c, calls, deps } = setup("android", androidHandlers());
-		expect(await perfLogs(c, deps, { record: true, json: true, app: "com.acme.shop" })).toBe(0);
+		expect(await perfLogs(c, deps, { json: true, app: "com.acme.shop" })).toBe(0);
 		const logcat = calls.find((a) => a.includes("logcat"));
 		expect(logcat).toEqual(["adb", "-s", EMU, "logcat", "-d", "-v", "threadtime", "--pid", "4321", "-t", "200"]);
 		const doc = JSON.parse(c.stdout.join("\n"));
@@ -58,7 +58,7 @@ describe("perf logs one-shot", () => {
 
 	test("android: --level and --grep filter, text output", async () => {
 		const { c, calls, deps } = setup("android", androidHandlers());
-		expect(await perfLogs(c, deps, { record: true, app: "com.acme.shop", level: "E", grep: "typeerror" })).toBe(0);
+		expect(await perfLogs(c, deps, { app: "com.acme.shop", level: "E", grep: "typeerror" })).toBe(0);
 		expect(c.stdout.join("\n").split("\n")).toEqual([
 			"10-24 10:00:02.310  4321 E ReactNativeJS: [TypeError: undefined is not an object (evaluating 'cart.items.length')]",
 		]);
@@ -67,14 +67,14 @@ describe("perf logs one-shot", () => {
 
 	test("android: --since is relative to the device clock", async () => {
 		const { c, deps } = setup("android", androidHandlers());
-		await perfLogs(c, deps, { record: true, json: true, app: "com.acme.shop", since: "2s" });
+		await perfLogs(c, deps, { json: true, app: "com.acme.shop", since: "2s" });
 		const entries = JSON.parse(c.stdout.join("\n")).result.entries;
 		expect(entries.map((e: { ts: string }) => e.ts)).toEqual(["10-24 10:00:03.000"]);
 	});
 
 	test("android: --lines keeps the newest", async () => {
 		const { c, deps } = setup("android", androidHandlers());
-		await perfLogs(c, deps, { record: true, json: true, app: "com.acme.shop", lines: "2" });
+		await perfLogs(c, deps, { json: true, app: "com.acme.shop", lines: "2" });
 		const doc = JSON.parse(c.stdout.join("\n"));
 		expect(doc.result).toMatchObject({ count: 2, truncated: true });
 		expect(doc.warnings?.[0]).toContain("--lines");
@@ -82,13 +82,13 @@ describe("perf logs one-shot", () => {
 
 	test("android: app not running", async () => {
 		const { c, deps } = setup("android", [[`adb -s ${EMU} shell pidof`, { stdout: "", exitCode: 1 }]]);
-		expect(await perfLogs(c, deps, { record: true, json: true, app: "com.acme.shop" })).toBe(1);
+		expect(await perfLogs(c, deps, { json: true, app: "com.acme.shop" })).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n")).error.code).toBe("app_not_found");
 	});
 
 	test("ios: log show with the app predicate", async () => {
 		const { c, calls, deps } = setup("ios", iosHandlers());
-		expect(await perfLogs(c, deps, { record: true, json: true, app: "com.acme.shop", since: "10m" })).toBe(0);
+		expect(await perfLogs(c, deps, { json: true, app: "com.acme.shop", since: "10m" })).toBe(0);
 		const show = calls.find((a) => a.includes("show"));
 		expect(show).toEqual([
 			"xcrun",
@@ -113,17 +113,17 @@ describe("perf logs one-shot", () => {
 
 	test("ios: --level W keeps errors and faults", async () => {
 		const { c, deps } = setup("ios", iosHandlers());
-		await perfLogs(c, deps, { record: true, json: true, app: "com.acme.shop", level: "warn" });
+		await perfLogs(c, deps, { json: true, app: "com.acme.shop", level: "warn" });
 		const levels = JSON.parse(c.stdout.join("\n")).result.entries.map((e: { level: string }) => e.level);
 		expect(levels).toEqual(["E", "F"]);
 	});
 
 	test("bad flags are usage errors", async () => {
 		const { c, deps } = setup("android", androidHandlers());
-		expect(await perfLogs(c, deps, { record: true, json: true, app: "x", level: "loud" })).toBe(1);
+		expect(await perfLogs(c, deps, { json: true, app: "x", level: "loud" })).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n")).error.code).toBe("usage");
 		c.stdout.length = 0;
-		expect(await perfLogs(c, deps, { record: true, json: true, app: "x", grep: "(" })).toBe(1);
+		expect(await perfLogs(c, deps, { json: true, app: "x", grep: "(" })).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n")).error.message).toContain("--grep");
 	});
 });
@@ -158,12 +158,7 @@ describe("perf logs --follow", () => {
 	test("android: NDJSON, redacted, filtered, exit 130 on interrupt", async () => {
 		const { c, deps } = setup("android", androidHandlers());
 		const { deps: logDeps, spawned } = fakeLogDeps(ANDROID.split("\n"));
-		const code = await perfLogs(
-			c,
-			deps,
-			{ record: true, json: true, follow: true, app: "com.acme.shop", level: "W" },
-			logDeps
-		);
+		const code = await perfLogs(c, deps, { json: true, follow: true, app: "com.acme.shop", level: "W" }, logDeps);
 		expect(code).toBe(130);
 		expect(spawned[0]).toEqual(["adb", "-s", EMU, "logcat", "-v", "threadtime", "--pid", "4321"]);
 		const rows = c.stdout.map((l) => JSON.parse(l));
@@ -174,7 +169,7 @@ describe("perf logs --follow", () => {
 	test("ios: log stream with predicate, text lines", async () => {
 		const { c, deps } = setup("ios", iosHandlers());
 		const { deps: logDeps, spawned } = fakeLogDeps(IOS.split("\n"), { abortOnSpawn: true });
-		const code = await perfLogs(c, deps, { record: true, follow: true, app: "com.acme.shop", grep: "login" }, logDeps);
+		const code = await perfLogs(c, deps, { follow: true, app: "com.acme.shop", grep: "login" }, logDeps);
 		expect(code).toBe(130);
 		expect(spawned[0]?.slice(0, 8)).toEqual(["xcrun", "simctl", "spawn", "U1", "log", "stream", "--style", "compact"]);
 		expect(c.stdout).toEqual([
@@ -185,7 +180,7 @@ describe("perf logs --follow", () => {
 	test("a stream that ends on its own is a failure", async () => {
 		const { c, deps } = setup("ios", iosHandlers());
 		const logDeps: LogDeps = { ...fakeLogDeps([]).deps, spawn: () => ({ kill: () => {}, exited: Promise.resolve(3) }) };
-		expect(await perfLogs(c, deps, { record: true, json: true, follow: true, app: "com.acme.shop" }, logDeps)).toBe(1);
+		expect(await perfLogs(c, deps, { json: true, follow: true, app: "com.acme.shop" }, logDeps)).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n")).error.message).toContain("ended");
 	});
 });

@@ -76,7 +76,7 @@ function setup(device: typeof sim | typeof droid = sim) {
 }
 
 const run = (s: ReturnType<typeof setup>, action: string | undefined, opts: Record<string, unknown> = {}) =>
-	perfNative(s.c, s.deps, action, { record: true, json: true, app: "com.acme.shop", ...opts }, s.io, s.profilers);
+	perfNative(s.c, s.deps, action, { json: true, app: "com.acme.shop", ...opts }, s.io, s.profilers);
 
 describe("warden perf native", () => {
 	test("one-shot: start, wait --duration, stop + analyze, report.md written", async () => {

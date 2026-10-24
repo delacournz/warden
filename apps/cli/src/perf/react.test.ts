@@ -40,7 +40,7 @@ function setup(globalOver: Record<string, unknown> = {}) {
 	return { c, deps, js, g, renderer, opened, slept };
 }
 
-const opts = (o: Record<string, unknown> = {}) => ({ record: true, json: true as const, app: "com.acme.shop", ...o });
+const opts = (o: Record<string, unknown> = {}) => ({ json: true as const, app: "com.acme.shop", ...o });
 const doc = (s: ReturnType<typeof setup>) => JSON.parse(s.c.stdout.join("\n"));
 
 describe("warden perf react", () => {
@@ -72,7 +72,7 @@ describe("warden perf react", () => {
 
 	test("text mode: dev banner, the hot commit, next hints", async () => {
 		const s = setup();
-		expect(await perfReact(s.c, s.deps, { record: true, app: "com.acme.shop" }, s.js)).toBe(0);
+		expect(await perfReact(s.c, s.deps, { app: "com.acme.shop" }, s.js)).toBe(0);
 		const text = s.c.stdout.join("\n");
 		expect(text).toContain("dev build (__DEV__)");
 		expect(text).toContain("#0");

@@ -30,6 +30,8 @@ export type Suite = {
 	implicit?: true;
 	/** the suite's `headless`, else the top-level one (undefined: neither sets it) */
 	headless?: boolean;
+	/** the suite's perf budgets over the top-level ones, per key (undefined: none set) */
+	perfBudgets?: NonNullable<NonNullable<E2eSuiteConfig["perf"]>["budgets"]>;
 };
 
 export type AffectedInput = {
@@ -148,6 +150,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 	const project = top.projects?.find((p) => p.name === config.project);
 	const projectRoot = project ? resolve(rootDir, project.root) : undefined;
 	const headless = config.headless ?? top.headless;
+	const budgets = { ...top.perf?.budgets, ...config.perf?.budgets };
 	return {
 		name,
 		config,
@@ -157,6 +160,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 		cwd: projectRoot ?? rootDir,
 		...(projectRoot ? { projectRoot } : {}),
 		...(headless !== undefined ? { headless } : {}),
+		...(Object.keys(budgets).length > 0 ? { perfBudgets: budgets } : {}),
 	};
 }
 

@@ -458,6 +458,9 @@ Options:
   --no-shutdown               keep the devices running after the gate passes
                               (default: shut down the ones warden created under
                               CI, leave them booted locally; suite shutdown)
+  --perf [captures]           profile every attempt: metrics, frames, logs, or
+                              e.g. --perf=react,js | all; reports land in the
+                              attempt's perf/ dir
   --no-warm                   skip pre-warming the iOS socket helper per device
                               (default: on; suite warmDrivers)
   -h, --help                  display help for command

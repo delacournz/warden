@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import { e2eSuiteSchema } from "../affected/affected.schema";
+import { e2eSuiteSchema, perfConfigSchema } from "../affected/affected.schema";
 import { batchPresetSchema, RESERVED_PRESET_NAMES } from "../batch/preset.schema";
 import type { AppOption } from "./app-option.schema";
 import { DEFAULT_EAS_PROFILE } from "./builds.defaults";
@@ -115,6 +115,8 @@ export const wardenConfigSchema = z
 		e2e: z.record(z.string().min(1), e2eSuiteSchema).optional(),
 		/** default for every `e2e` suite and `batches` preset that doesn't set `headless` */
 		headless: z.boolean().optional(),
+		/** perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key) */
+		perf: perfConfigSchema.optional(),
 		/** Android emulator settings */
 		android: z
 			.object({

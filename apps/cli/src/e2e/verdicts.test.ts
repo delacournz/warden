@@ -275,3 +275,27 @@ describe("verdicts: the failure screenshot", () => {
 });
 
 const ONE_SHARD: RunShape = { legs: [undefined], shardOf: new Map([["a", "shard-0"]]) };
+
+describe("perf artifacts and budgets", () => {
+	const base = res("a", "t", "failed");
+
+	test("a test with a perf/report.json links its perf dir", () => {
+		const t = { ...base, artifacts: { dir: "/o/a/t-1", files: ["perf/report.json", "perf/report.md"] } };
+		const tests = judgeJob([A], [t], 1, real).get("a")?.tests;
+		expect(tests?.[0]).toMatchObject({ perf: "/o/a/t-1/perf" });
+		expect(tests?.[0]?.kind).toBeUndefined();
+	});
+
+	test("a PERF_BUDGET failure is a perf_budget test", () => {
+		const t = {
+			...base,
+			error: { message: "perf_budget: 1 metric over budget\n  jankPct: 12 > budget 5", code: "PERF_BUDGET" },
+		};
+		expect(judgeJob([A], [t], 1, real).get("a")?.tests?.[0]).toMatchObject({ kind: "perf_budget", status: "failed" });
+	});
+
+	test("no perf files, no link", () => {
+		const t = { ...base, artifacts: { dir: "/o", files: ["trace.jsonl"] } };
+		expect(judgeJob([A], [t], 1, real).get("a")?.tests?.[0]?.perf).toBeUndefined();
+	});
+});

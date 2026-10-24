@@ -119,7 +119,7 @@ const run = async (
 ) => {
 	c.stdout.length = 0;
 	c.stderr.length = 0;
-	const code = await perfQuery(c, deps, id, topic, rest, { record: false, json: true, ...opts });
+	const code = await perfQuery(c, deps, id, topic, rest, { json: true, ...opts });
 	return { code, doc: JSON.parse(c.stdout.at(-1) ?? "null") };
 };
 
@@ -235,7 +235,7 @@ describe("perf query stacks", () => {
 		expect(doc.result).toMatchObject({ sub: "hang", platform: "ios" });
 		const text = await (async () => {
 			c.stdout.length = 0;
-			await perfQuery(c, deps, FULL, "stacks", ["hang"], { record: false });
+			await perfQuery(c, deps, FULL, "stacks", ["hang"], {});
 			return c.stdout.join("\n");
 		})();
 		expect(text).toContain("412ms @ 3.2s (trace time) Hang");
@@ -288,7 +288,7 @@ describe("perf query frames", () => {
 		expect(doc.result.windows).toHaveLength(1);
 		expect(doc.result.hangs).toEqual(["412ms @ 3.2s (trace time) Hang"]);
 		c.stdout.length = 0;
-		await perfQuery(c, deps, FULL, "frames", [], { record: false, worst: true });
+		await perfQuery(c, deps, FULL, "frames", [], { worst: true });
 		const text = c.stdout.join("\n");
 		expect(text).toContain("55 fps, 6.5% janky, 1 frozen");
 		expect(text).toContain('3.0s..3.5s  9 frames over budget, worst 88ms  after "scroll feed"');
@@ -323,7 +323,7 @@ describe("perf query session and topic handling", () => {
 
 	test("text mode prints the lines, not JSON", async () => {
 		const { c, deps } = setup();
-		const code = await perfQuery(c, deps, FULL, "commits", [], { record: false });
+		const code = await perfQuery(c, deps, FULL, "commits", [], {});
 		expect(code).toBe(0);
 		expect(c.stdout[0]).toMatch(/^ExpensiveSort {2}renders \d+/);
 	});

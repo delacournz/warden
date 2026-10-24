@@ -33,7 +33,7 @@ const perfReport = (
 	deps: ReturnType<typeof fakePerfDeps>,
 	id: string | undefined,
 	opts: Partial<PerfReportOptions>
-) => report(c, deps, id, { record: false, ...opts });
+) => report(c, deps, id, { ...opts });
 
 const lastJson = (c: TestContext) => JSON.parse(c.stdout.at(-1) ?? "null");
 
