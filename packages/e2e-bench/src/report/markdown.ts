@@ -6,7 +6,7 @@ import {
 	type OkFrameworkResult,
 	type Series,
 } from "../results/schema";
-import { bytes, cpuSeconds, DASH, ms, pct, ratio, signedMs } from "./format";
+import { bytes, coldStartCost, cpuSeconds, DASH, ms, pct, ratio } from "./format";
 import {
 	cpuSecondsPerRep,
 	type PerTestMatrix,
@@ -45,10 +45,6 @@ const flag = (text: string, failing: boolean, ratioValue?: number): string => {
 	const suffix = ` (${ratio(ratioValue)})`;
 	return text.endsWith(suffix) ? `${text.slice(0, -suffix.length)} ✗${suffix}` : `${text} ✗`;
 };
-
-/** A negative cold-start cost means rep 1 was not slower. */
-const coldStart = (n: number | undefined): string =>
-	n !== undefined && Number.isFinite(n) && n < 0 ? `none (rep 1 not slower, ${signedMs(n)})` : ms(n);
 
 const bold = (text: string, on: boolean): string => (on && text !== DASH ? `**${text}**` : text);
 
@@ -111,7 +107,7 @@ function summarySection(run: BenchRun): string[] {
 		ms(r.suiteP95Ms),
 		ratio(r.ratio),
 		ms(r.coldRep1Ms),
-		coldStart(r.coldStartMs),
+		coldStartCost(r.coldStartMs),
 		ms(r.prepareMs),
 		ms(r.teardownMs),
 		ms(r.overheadMs),

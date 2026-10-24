@@ -158,7 +158,7 @@ export const portCommand = defineCommand({
 	register: (cmd, ctx, done) => {
 		cmd
 			.command("claim")
-			.description("lease free port(s) from FROM..FROM+SPAN; prints one port per line")
+			.description("lease free port(s) from FROM..FROM+SPAN-1 (inclusive); prints one port per line")
 			.option("--from <port>", `first port of the range (default ${DEFAULT_FROM})`)
 			.option("--span <n>", `range size (default ${DEFAULT_PORT_SPAN})`)
 			.option("--count <n>", "how many ports (default 1)")

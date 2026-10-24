@@ -177,7 +177,7 @@ export const affectedCommand = defineCommand({
 			.option("--json", "machine-readable output")
 			.addHelpText(
 				"after",
-				"\nExamples:\n  warden affected mobile --base origin/main --explain\n  warden batch ios --jobs-from - -- <runner> {job} < <(warden affected mobile --platform ios)"
+				"\nExamples:\n  warden affected mobile --base origin/main --explain\n  warden affected mobile --platform ios | warden batch ios --jobs-from - -- <runner> {job}"
 			)
 			.action(async (suite, opts) => done(await affected(ctx, suite, opts)));
 	},

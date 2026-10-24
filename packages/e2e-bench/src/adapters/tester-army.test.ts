@@ -42,10 +42,11 @@ const reportOf = (titles: readonly string[], status = "passed"): string =>
 	});
 
 type Files = Record<string, string>;
-const depsOf = (files: Files): TesterArmyDeps => ({
+const depsOf = (files: Files, nvm: string[] = ["v22.1.0", "v24.19.0", "v24.9.0", "v18.0.0"]): TesterArmyDeps => ({
 	exists: (p) => p in files,
 	readText: (p) => files[p],
 	home: () => "/home/u",
+	nvmVersions: () => nvm,
 });
 
 const ctxOf = (rules: FakeRule[], env: RunContext["env"] = { PATH: "/usr/bin" }) => {
@@ -95,9 +96,15 @@ describe("nodeTooOld", () => {
 });
 
 describe("node path helpers", () => {
-	test("BENCH_NODE_BIN wins, else the nvm Node 24 under home", () => {
-		expect(nodeBinDir({ BENCH_NODE_BIN: "/n/bin" }, "/home/u")).toBe("/n/bin");
-		expect(nodeBinDir({}, "/home/u")).toBe("/home/u/.nvm/versions/node/v24.19.0/bin");
+	test("BENCH_NODE_BIN wins, else the newest nvm Node that satisfies the range", () => {
+		const deps = depsOf({});
+		expect(nodeBinDir({ BENCH_NODE_BIN: "/n/bin" }, deps)).toBe("/n/bin");
+		expect(nodeBinDir({}, deps)).toBe("/home/u/.nvm/versions/node/v24.19.0/bin");
+	});
+
+	test("no override and no usable nvm Node gives undefined, not a made-up path", () => {
+		expect(nodeBinDir({}, depsOf({}, ["v22.1.0", "junk"]))).toBeUndefined();
+		expect(nodeBinDir({}, depsOf({}, []))).toBeUndefined();
 	});
 
 	test("nodePath prepends to PATH, or stands alone without one", () => {
@@ -165,6 +172,12 @@ describe("doctor", () => {
 		const { ctx } = ctxOf([nodeRule("v22.22.2")]);
 		const doctor = await createTesterArmyAdapter(depsOf(files)).doctor(ctx);
 		expect(doctor.ok && doctor.notes.at(-1)).toContain("v24.19.0 (pinned, /home/u/.nvm/versions/node/v24.19.0/bin)");
+	});
+
+	test("not ok with a clear reason when there is no override and no nvm Node", async () => {
+		const { ctx } = ctxOf([nodeRule("v22.22.2")]);
+		const doctor = await createTesterArmyAdapter(depsOf(files, [])).doctor(ctx);
+		expect(doctor).toMatchObject({ ok: false, reason: expect.stringContaining("BENCH_NODE_BIN is unset") });
 	});
 
 	test("not ok with an install hint when no Node is new enough", async () => {

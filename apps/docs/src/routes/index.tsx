@@ -70,7 +70,7 @@ function Section({ title, lede, children }: { title: string; lede: ReactNode; ch
  * on one Mac — and proves it with a recorded five-simulator `warden batch`
  * run. The page then shows what a batch does and how a repo declares one,
  * proves new-device speed on a measured time axis, lays out the lease
- * rules as a grouped list, shows the agent hooks, and closes on install.
+ * rules as a grouped list, shows the agent guardrails, and closes on install.
  */
 function Home(): ReactElement {
 	return (
@@ -217,15 +217,15 @@ function Home(): ReactElement {
 				</Section>
 
 				<Section
-					lede="warden install adds two hooks to Claude Code and Codex. An agent's first simulator tool call claims a device for its session; a call on someone else's device is blocked."
+					lede="warden install adds a SessionEnd hook to Claude Code and Codex. Agents claim a device before they drive it, and warden ui refuses a device another session holds."
 					title="Your agents claim before they tap."
 				>
 					<div className="grid grid-cols-1 gap-6 *:min-w-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-						<GroupedList label="Agent hooks">
+						<GroupedList label="Agent guardrails">
 							<GroupedRow
-								detail="Auto-claims an unleased device, heartbeats your own, blocks another owner's with their repo and worktree."
+								detail="Checks the lease on every call: heartbeats your own, claims with --claim, blocks another owner's with their repo and worktree."
 								leading={<Plug className="size-[18px]" />}
-								title="PreToolUse"
+								title="warden ui"
 							/>
 							<GroupedRow
 								detail="Shuts down the sims the session booted and releases its leases. /clear keeps them running."

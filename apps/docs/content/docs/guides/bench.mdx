@@ -14,8 +14,10 @@ From the repo root:
 bun run bench doctor                         # is every framework installed? prints install hints
 bun run bench run --platform ios --runs 3    # full run on a device warden claims
 bun run bench run --frameworks warden,argent --runs 2 --udid <leased-udid>
+bun run bench list                           # frameworks, platforms, the 8 canonical test ids
 bun run bench report .bench/<run-id>         # re-render the reports
 bun run bench compare .bench/<run-a> .bench/<run-b>
+bun run bench summary .bench/<run-id>        # slim summary.json for the docs page
 ```
 
 | Flag | Default | Meaning |
@@ -56,6 +58,7 @@ A run writes `.bench/<run-id>/`:
 
 ```
 bench-results.json   machine-readable, schema v1
+summary.json         slim summary the docs comparison page reads
 report.md            the tables below
 report.html          one self-contained file with charts
 logs/                one log per framework and phase
@@ -68,7 +71,7 @@ artifacts/<fw>/rep-<n>/   native reporter output and resource samples
 - **Overhead.** Suite wall time minus the sum of test durations: what the framework spends outside the tests (process start, device attach, reporting).
 - **Residue.** Processes, driver apps and directories left behind after teardown. A healthy run leaves none unless `--keep-drivers` is set.
 - **Footprint.** Lines and bytes of suite source, size of package-local dependencies and binaries. A rough measure of what you maintain.
-- **Resources.** Host and simulator CPU and RSS, sampled every 500 ms.
+- **Resources.** Host and simulator CPU and RSS, sampled every 500 ms. The CPU headline is host CPU-seconds per warm rep (timed run only); `%cpu` is a decaying average on macOS, so do not judge a framework on it.
 - **Unsupported and failed.** A framework that cannot drive the app lands here with its error. A native test name missing from the manifest is a parity breach and fails the framework.
 
 ## Fairness rules
@@ -120,8 +123,8 @@ The [framework comparison](/docs/bench/comparison) page charts the published run
 To publish a run, write its slim summary into the docs site and commit the report next to it:
 
 ```bash
-bun run bench summary packages/e2e-bench/.bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json
-cp packages/e2e-bench/.bench/<run>/report.md docs/bench/<platform>-<date>.md
+bun run bench summary .bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json
+cp .bench/<run>/report.md docs/bench/<platform>-<date>.md
 ```
 
-The comparison page picks up every `*.json` in `apps/docs/content/docs/bench/data/`, with a platform and date selector when there is more than one. `bench run` also writes `summary.json` next to `report.md`.
+The comparison page picks up every `*.json` in `apps/docs/content/docs/bench/data/`, with a platform and date selector when there is more than one. `bench run` and `bench report` also write `summary.json` next to `report.md`.

@@ -26,7 +26,6 @@ describe("readEnv", () => {
 			timeoutMs: 120_000,
 			actionTimeoutMs: 30_000,
 			assertionTimeoutMs: 5_000,
-			headless: false,
 			logTimestamps: false,
 		});
 	});
@@ -66,11 +65,17 @@ describe("readEnv", () => {
 			helperDir: "/h",
 			simd: "/h/warden-simd",
 			simdSocket: "/s.sock",
-			headless: true,
 			logTimestamps: true,
-			worker: "w1",
 			deviceName: "warden-iphone-17-5",
 		});
+	});
+
+	test("WARDEN_HEADLESS and WARDEN_WORKER are for the spec's own tools: never validated, never parsed", () => {
+		const result = readEnv({ ...base, WARDEN_HEADLESS: "maybe", WARDEN_WORKER: "w1" });
+		expect(result.success).toBe(true);
+		if (!result.success || result.data === undefined) return;
+		expect("headless" in result.data).toBe(false);
+		expect("worker" in result.data).toBe(false);
 	});
 
 	test("empty values count as unset", () => {
@@ -90,12 +95,11 @@ describe("readEnv", () => {
 			WARDEN_PLATFORM: "windows",
 			WARDEN_LAUNCH_ARGS: "not json",
 			WARDEN_E2E_TIMEOUT: "soon",
-			WARDEN_HEADLESS: "maybe",
 		});
 		expect(result.success).toBe(false);
 		if (result.success) return;
 		const names = result.error.split("\n").map((line) => line.split(":")[0]);
-		expect(names).toEqual(["WARDEN_PLATFORM", "WARDEN_LAUNCH_ARGS", "WARDEN_E2E_TIMEOUT", "WARDEN_HEADLESS"]);
+		expect(names).toEqual(["WARDEN_PLATFORM", "WARDEN_LAUNCH_ARGS", "WARDEN_E2E_TIMEOUT"]);
 		expect(result.error).toContain("WARDEN_LAUNCH_ARGS: must be a JSON array of strings");
 	});
 

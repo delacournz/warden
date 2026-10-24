@@ -160,7 +160,7 @@ export function withLeaseOptions<Args extends unknown[], Opts extends OptionValu
 	return cmd
 		.option(
 			"--port <from:span>",
-			"lease a port from FROM..FROM+SPAN for the child (WARDEN_PORT_<i>); repeatable",
+			"lease a port from FROM..FROM+SPAN-1 (inclusive) for the child (WARDEN_PORT_<i>); repeatable",
 			(value: string, previous: string[]) => [...previous, value],
 			[] as string[]
 		)

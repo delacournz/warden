@@ -207,7 +207,7 @@ async function runningHelperRow(
 /**
  * The "simulator helper" doctor rows: where `warden-simd` was found and which build it is, and, with a booted
  * iOS simulator, whether it can drive it (`hid.transport` / `ax.bridge` from `warden-simd --health`).
- * Linux has no iOS, so it gets no rows; darwin-x64 is told there is no helper for it.
+ * Linux has no iOS, so it gets no rows; darwin-x64 has no helper build, which warns like any missing helper.
  */
 export async function helperChecks(ctx: CommandContext, deps: HelperDeps): Promise<DoctorCheck[]> {
 	const row = (name: string, status: DoctorCheck["status"], detail: string): DoctorCheck => ({
@@ -218,7 +218,14 @@ export async function helperChecks(ctx: CommandContext, deps: HelperDeps): Promi
 	});
 	const target = `${deps.platform}-${deps.arch}`;
 	if (deps.platform !== "darwin") return [];
-	if (target !== HELPER_TARGET) return [row("sim-helper", "ok", `no helper for ${target} in this version`)];
+	if (target !== HELPER_TARGET)
+		return [
+			row(
+				"sim-helper",
+				"warn",
+				`no helper for ${target} in this version — \`warden ui\` / \`warden e2e\` cannot drive iOS simulators on this Mac`
+			),
+		];
 
 	const located = locateHelper({
 		env: ctx.env,

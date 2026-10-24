@@ -114,3 +114,5 @@ warden builds ls
 warden builds prune --max-size 20G        # LRU; build-locked entries stay
 warden builds import App.app --hash <h>   # file a local build under a fingerprint
 ```
+
+`--max-size` defaults to `20G` (or `$WARDEN_MAX_CACHE_SIZE`). `warden gc` runs the same prune (`--max-cache-size`), keeping builds used in the last 30 min, so the cache stays bounded without you calling it. The cache lives under `$WARDEN_HOME/builds` (`~/.warden/builds`).

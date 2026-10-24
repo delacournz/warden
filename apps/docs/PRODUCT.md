@@ -25,11 +25,11 @@ The site targets a public open-source audience discovering warden, while also se
 
 ## Positioning
 
-Parallel e2e and agent work without collisions, coordinated at the machine level, not the project level: one sqlite lease registry (`~/.warden/warden.db`, `BEGIN IMMEDIATE` as the cross-process mutex) shared by every agent session, worktree, repo, CI job and user shell on the Mac. `warden batch` adds the scheduler on top: a job queue across leased devices, a long-lived serve step (Metro), retries, a live per-device grid and recordings. Agent hooks enforce the leases on the flow runner's tool calls. It never touches devices it didn't create or lease. Tool-agnostic in public: the flow runner is configured, not named.
+Parallel e2e and agent work without collisions, coordinated at the machine level, not the project level: one sqlite lease registry (`~/.warden/warden.db`, `BEGIN IMMEDIATE` as the cross-process mutex) shared by every agent session, worktree, repo, CI job and user shell on the Mac. `warden batch` adds the scheduler on top: a job queue across leased devices, a long-lived serve step (Metro), retries, a live per-device grid and recordings. `warden ui` enforces the leases in-process on every agent call; a SessionEnd hook cleans up after each session. It never touches devices it didn't create or lease. Tool-agnostic in public: the flow runner is configured, not named.
 
 ## Operating Context
 
-- Terminal-first. Used via `warden batch <preset>`, `warden run -- <cmd>`, `warden claim`, `warden ls`, and implicitly via Claude Code / Codex PreToolUse + SessionEnd hooks.
+- Terminal-first. Used via `warden batch <preset>`, `warden run -- <cmd>`, `warden claim`, `warden ls`, and implicitly via the Claude Code / Codex SessionEnd hook.
 - Repos declare batch presets and app-build config in `warden.config.json`.
 - Environments: macOS with Xcode (`xcrun simctl`), Android SDK (`adb`, `emulator`), Expo / EAS for app builds, Orca-managed worktrees.
 - Integrates with e2e scripts through env vars (`WARDEN_UDIDS`, `WARDEN_UDID`, `WARDEN_JOB`, `WARDEN_PORT_<i>`, …).

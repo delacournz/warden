@@ -10,9 +10,12 @@ Bun + Turborepo monorepo, TypeScript strict, Biome for lint + format, prek git h
   <Folder name="apps" defaultOpen>
     <File name="cli — @delacour/warden, the warden binary (commands, hooks)" />
     <File name="docs — @delacour/warden-docs, this site (Fumadocs + TanStack Start)" />
+    <File name="example — @delacour/warden-example, Expo + Delacour UI demo app for warden e2e example" />
   </Folder>
   <Folder name="packages" defaultOpen>
     <File name="core — lease store, allocation, device providers, build cache" />
+    <File name="e2e — @delacour/warden-e2e, spec runner, iOS/Android driver, warden-simd helper" />
+    <File name="e2e-bench — private benchmark of warden against other e2e tools (bun run bench)" />
     <File name="types — Result / AsyncResult" />
     <File name="biome-config, tsconfig — shared config" />
   </Folder>
@@ -29,8 +32,10 @@ Bun + Turborepo monorepo, TypeScript strict, Biome for lint + format, prek git h
 
 ## Commands
 
+`bun install` needs no token. `@delacournz/otel*` (GitHub Packages, see `bunfig.toml`) is an optional dependency of the docs site: without a classic `read:packages` PAT in `NPM_TOKEN` it is skipped with a `401` warning, and the site builds and runs untraced. Export the token only to trace the docs locally; the Railway deploy has its own.
+
 ```bash
-bun run test        # turbo: core + cli (incl. cross-process race tests)
+bun run test        # turbo: every package with tests (incl. cross-process race tests)
 bun run typecheck
 bun run check       # biome
 bun run --cwd apps/docs dev   # this site on :3210 (PORT overrides)

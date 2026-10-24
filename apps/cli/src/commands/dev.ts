@@ -47,6 +47,9 @@ import { projectContextFor } from "../project-context";
 import { withSpinner } from "../spinner-context";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 
+/** Default label on the leases `warden dev` takes (`--label` overrides it). */
+const DEV_LEASE_LABEL = "warden dev";
+
 /** Metro port range `warden dev` leases from. */
 export const DEV_PORT_SPEC = DEFAULT_METRO_PORT_SPEC;
 /** How long to wait for Metro's `/status` before giving up. */
@@ -188,9 +191,10 @@ async function openSession(
 	if (!held.success) return held;
 	if (held.data === undefined) {
 		// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
+		// the device lease names its holder in `warden ls` and `warden ui`'s busy / sharing messages
 		const flags = parseClaimFlags(
 			platform,
-			{ ...opts, headless: opts.headless === true },
+			{ ...opts, headless: opts.headless === true, label: opts.label ?? DEV_LEASE_LABEL },
 			undefined,
 			undefined,
 			PRIORITY.high
@@ -209,6 +213,8 @@ async function openSession(
 					const first = leased[0]?.port;
 					if (first !== undefined) early.start(first, undefined);
 				},
+				// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`
+				onLeased: (outcome) => ctx.store().markShared(outcome.claimed.map((c) => c.lease.id)),
 				aborted: early.aborted,
 			},
 			"dev"
@@ -483,11 +489,14 @@ export function createDevCommand(deps: DevDeps): Command {
 		summary:
 			"install the cached dev build for this fingerprint, start Metro, open the dev client (replaces expo run:*)",
 		register: (cmd, ctx, done) => {
-			withClaimOptions(
+			const claimed = withClaimOptions(
 				cmd
 					.argument("[platform]", "ios | android (default: ios)")
 					.argument("[expoArgs...]", "extra `expo start` args, after --")
-			)
+			);
+			// dev runs on one device: --count stays accepted (1) but is not advertised
+			for (const option of claimed.options) if (option.long === "--count") option.hideHelp();
+			claimed
 				.option("--udid <udid>", "use this device instead of claiming one")
 				.option("--lease <id>", "use the device of this lease")
 				.option("--port <from:span>", "Metro port range to lease from", DEV_PORT_SPEC)

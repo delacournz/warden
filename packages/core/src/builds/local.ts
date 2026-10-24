@@ -1,14 +1,16 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
-import { type Exec, execError } from "../exec";
+import { type Exec, type ExecResult, execError } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
 import { wardenHome as resolveWardenHome } from "../store";
 import type { Platform } from "../types";
+import { readXcode } from "../xcode";
 import type { BuildConfiguration } from "./builds.defaults";
 import { LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
-import { compilerCacheEnv, parseXcodeMajor } from "./compiler-cache";
+import { compilerCacheEnv } from "./compiler-cache";
 import type { Project } from "./config";
+import { formatBuildFailure, parseBuildDiagnostics } from "./diagnostics";
 import { type CacheKey, computeCacheKey } from "./fingerprint";
 import { combineKey, readFileOrUndefined } from "./js-inputs";
 import { planPrebuiltRn } from "./prebuilt-rn";
@@ -228,14 +230,14 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 	if (deps.compilerCache === false) return prebuilt;
 	const { platform } = deps;
 	const gitTop = platform === "ios" ? await gitToplevel(deps) : undefined;
-	const xcode = platform === "ios" ? await probe(deps, ["xcodebuild", "-version"]) : undefined;
+	const xcode = platform === "ios" ? await readXcode(deps.exec, deps.env) : undefined;
 	return {
 		...prebuilt,
 		...compilerCacheEnv({
 			platform,
 			wardenHome: deps.wardenHome ?? resolveWardenHome(deps.env),
 			gitTop: gitTop || undefined,
-			xcodeMajor: xcode ? parseXcodeMajor(xcode) : undefined,
+			xcodeMajor: xcode?.success ? xcode.data.major : undefined,
 			enabled: true,
 			baseEnv: deps.env,
 		}),
@@ -315,6 +317,47 @@ async function prebuildMovedKey(deps: LocalBuildDeps, before: BeforeBuild, after
 	return now === before.status;
 }
 
+/** The whole output of a failed build, kept for the errors the summary cannot show; best effort. */
+function keepBuildLog(deps: LocalBuildDeps, res: ExecResult): string | undefined {
+	const path = join(
+		deps.wardenHome ?? resolveWardenHome(deps.env),
+		"logs",
+		`build-${deps.platform}-${deps.hash.slice(0, 12)}.log`
+	);
+	try {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, `${res.stdout}${res.stderr ? `\n${res.stderr}` : ""}`);
+		return path;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Raw `xcodebuild` output `expo run:ios` leaves in the project (`.expo/xcodebuild.log`), when its own formatting hid the errors. */
+function expoBuildLog(root: string): string {
+	try {
+		return readFileSync(join(root, ".expo", "xcodebuild.log"), "utf8");
+	} catch {
+		return "";
+	}
+}
+
+/**
+ * Why the build command failed. iOS: the compiler/linker errors with file:line:col (parsed from the output, or
+ * expo's raw `xcodebuild.log`) and where the full log is kept; otherwise the last lines, as before.
+ */
+function describeBuildFailure(deps: LocalBuildDeps, argv: string[], res: ExecResult): string {
+	const logPath = keepBuildLog(deps, res);
+	if (deps.platform !== "ios") return `${execError(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
+	const output = `${res.stdout}\n${res.stderr}`;
+	let diagnostics = parseBuildDiagnostics(output);
+	if (diagnostics.length === 0) diagnostics = parseBuildDiagnostics(expoBuildLog(deps.project.root));
+	const summary = formatBuildFailure(diagnostics, logPath);
+	return summary
+		? `exited ${res.exitCode}, ${summary}`
+		: `${execError(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
+}
+
 /**
  * Run `build.<platform>` in the project root, locate the produced `.app`/`.apk`, and verify the
  * project's cache key (native fingerprint, plus the JS sources for a JS-aware project) still equals
@@ -336,7 +379,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 		env: { ...caching, EXPO_NO_TELEMETRY: "1" },
 		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
 	});
-	if (res.exitCode !== 0) return err(`local build failed: ${execError(argv, res)}`);
+	if (res.exitCode !== 0) return err(`local build failed: ${describeBuildFailure(deps, argv, res)}`);
 	const after = await computeCacheKey(deps.exec, project, platform, undefined, undefined, deps.env);
 	if (!after.success) return after;
 	const moved = after.data.key !== deps.hash;

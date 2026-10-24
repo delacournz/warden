@@ -1,4 +1,4 @@
-import { bytes, DASH, ms, pct, ratio } from "@delacour/warden-e2e-bench/src/report/format";
+import { bytes, coldStartCost, DASH, ms, pct, ratio } from "@delacour/warden-e2e-bench/src/report/format";
 import type { ReactElement, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { type BenchSummary, hasCpuSeconds, isOk, label, type OkFramework } from "./bench-data";
@@ -87,7 +87,7 @@ const COLD_ROWS: readonly Row[] = [
 	{ name: "Warm suite median", best: "min", pick: (f) => f.suite.median, text: cellMs },
 	{ name: "Warm suite p95", best: "none", pick: (f) => f.suite.p95, text: cellMs },
 	{ name: "Cold first run", best: "none", pick: (f) => f.coldRep1Ms, text: cellMs },
-	{ name: "Cold-start cost", best: "min", positiveOnly: true, pick: (f) => f.coldStartMs, text: cellMs },
+	{ name: "Cold-start cost", best: "min", positiveOnly: true, pick: (f) => f.coldStartMs, text: coldStartCost },
 	{ name: "Prepare", best: "min", pick: (f) => f.prepareMs, text: cellMs },
 	{ name: "Teardown", best: "min", pick: (f) => f.teardownMs, text: cellMs },
 	{ name: "Overhead outside tests", best: "min", pick: (f) => f.overheadMs, text: cellMs },

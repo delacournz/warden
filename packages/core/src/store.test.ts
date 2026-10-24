@@ -111,6 +111,16 @@ describe("bootedByOwner + meta", () => {
 		expect(store.getLease(plain.id)?.bootedByOwner).toBe(true);
 	});
 
+	test("shared: insertLease + markShared round-trip (a `warden dev` lease other own processes may drive)", () => {
+		const resource = { kind: "device", platform: "ios", id: "U2", name: "n" } as const;
+		const shared = store.insertLease({ resource, owner, ttlMs: 1000, shared: true }, 1);
+		expect(store.getLease(shared.id)?.shared).toBe(true);
+		const plain = store.insertLease({ resource: { kind: "port", port: 2 }, owner, ttlMs: 1 }, 1);
+		expect(store.getLease(plain.id)?.shared).toBeUndefined();
+		store.markShared([plain.id]);
+		expect(store.getLease(plain.id)?.shared).toBe(true);
+	});
+
 	test("meta get/set", () => {
 		expect(store.getMeta("last_gc_at")).toBeUndefined();
 		store.setMeta("last_gc_at", "5");

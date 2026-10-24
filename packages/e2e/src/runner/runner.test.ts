@@ -245,6 +245,27 @@ describe("retry", () => {
 	});
 });
 
+describe("lost HID connection", () => {
+	test("the sim is rebooted once and the whole test runs again; the first failure is not recorded", async () => {
+		const run = await runSpec("hid");
+		const udid = "FAKE-UDID-0123456789";
+		expect(run.log).toEqual([
+			"body run 1",
+			`exec xcrun simctl shutdown ${udid}`,
+			`exec xcrun simctl bootstatus ${udid} -b`,
+			"body run 2",
+			"body run 3",
+		]);
+		expect(run.stdout).toContain("HID connection lost (Device Hub quit?), rebooted");
+		expect(run.stdout).toContain("lost again after a reboot; `warden release <id> --shutdown`");
+		const first = run.results.filter((r) => r.title.at(-1) === "tap after Device Hub quit");
+		expect(first.map((r) => r.status)).toEqual(["passed"]);
+		const second = run.results.filter((r) => r.title.at(-1) === "a second loss is not recovered");
+		expect(second.map((r) => r.status)).toEqual(["failed"]);
+		expect(run.exitCode).toBe(1);
+	});
+});
+
 describe("skip", () => {
 	test("skip, skipIf, option skip, platform filter and todo never run their body", async () => {
 		const run = await runSpec("skip");

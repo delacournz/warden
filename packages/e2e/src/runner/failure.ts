@@ -1,7 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DevtoolsFacet } from "../devtools/devtools.types";
+import { captureNativeLog, type NativeLogDeps, type NativeTarget } from "../devtools/native-log";
 import type { Driver } from "../driver/driver.types";
+import type { E2eEnv } from "../env";
 import { renderHeader, renderSnapshot } from "../screen/render";
 
 export const FAILURE_PNG = "failure.png";
@@ -139,4 +141,31 @@ export async function captureDevtoolsArtifacts(
 		capture.problems.push(`devtools artifacts: ${cause instanceof Error ? cause.message : String(cause)}`);
 	}
 	return capture;
+}
+
+/** The app a failed attempt ran, from the run's env. */
+export function nativeTarget(env: Pick<E2eEnv, "platform" | "udid" | "bundleId">): NativeTarget {
+	return env.platform === "ios"
+		? { platform: "ios", udid: env.udid, bundleId: env.bundleId }
+		: { platform: "android", serial: env.udid, pkg: env.bundleId };
+}
+
+/**
+ * `native.log` (+ iOS `.ips` crash reports) of the failed attempt, see {@link captureNativeLog}. Best effort
+ * like {@link captureFailure}: never throws, limited by `timeoutMs` and what `budget` has left.
+ */
+export async function captureNativeArtifacts(
+	target: NativeTarget,
+	deps: NativeLogDeps,
+	win: { dir: string; sinceMs: number },
+	timeoutMs = CAPTURE_TIMEOUT_MS,
+	budget: CaptureBudget = unlimited
+): Promise<FailureCapture> {
+	const ms = Math.min(timeoutMs, budget());
+	if (ms <= 0) return { files: [], problems: [`native log: ${SPENT}`] };
+	try {
+		return await limited(captureNativeLog(target, deps, { ...win, nowMs: Date.now(), timeoutMs: ms }), ms);
+	} catch (cause) {
+		return { files: [], problems: [`native log: ${message(cause)}`] };
+	}
 }
