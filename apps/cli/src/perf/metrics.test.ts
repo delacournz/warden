@@ -221,6 +221,18 @@ describe("warden perf metrics --watch", () => {
 		expect(withFps.writes.join("")).toContain("cur 59.5 fps");
 	});
 
+	test("io.fpsFor picks the fps source for the resolved device and app", async () => {
+		const s = setup({ rich: true });
+		const asked: string[] = [];
+		s.io.fpsFor = (_c, target, app) => {
+			asked.push(`${target.platform}:${target.udid}:${app}`);
+			return async () => 88;
+		};
+		await perfMetrics(s.c, s.deps, { app: APP, record: true, watch: true, duration: "1s" }, s.io);
+		expect(asked).toEqual([`android:${droid.id}:${APP}`]);
+		expect(s.writes.join("")).toContain("cur 88.0 fps");
+	});
+
 	test("Ctrl-C ends the run with the summary and exit 130", async () => {
 		const { c, deps, io, controller } = setup({ rich: false });
 		let sleeps = 0;

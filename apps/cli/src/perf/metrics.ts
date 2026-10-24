@@ -181,7 +181,7 @@ async function metricsWork(
 	ctx: CommandContext,
 	deps: PerfDeps,
 	opts: PerfMetricsOptions,
-	io: MetricsIo,
+	baseIo: MetricsIo,
 	display: Display,
 	target: PerfTarget
 ): Promise<Result<UiSuccess, UiError>> {
@@ -189,6 +189,10 @@ async function metricsWork(
 	if (!planned.success) return planned;
 	const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 	if (!app.success) return app;
+	const io =
+		baseIo.fps === undefined && baseIo.fpsFor !== undefined
+			? { ...baseIo, fps: baseIo.fpsFor(ctx, target, app.data.id) }
+			: baseIo;
 	const out = metricsOutFor(ctx, deps.session, target.udid);
 	const sampler = await createSampler(
 		ctx,

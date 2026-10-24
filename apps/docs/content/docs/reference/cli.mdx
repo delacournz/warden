@@ -30,6 +30,9 @@ icon: Terminal
 | pick sims to delete (any owner) | `warden sims delete` (`--suggested -y` off a terminal) |
 | is the agent loop fast enough? | `warden ui bench [--runs n] [--json]` |
 | what profiling needs on this host / device | `warden perf doctor` |
+| app CPU / memory now, or live | `warden perf metrics [--watch]` |
+| JS hotspots (source-mapped) | `warden perf js --duration 10s` |
+| cold start time | `warden perf startup --cold --runs 5 --claim` |
 | setup problems | `warden doctor` |
 | update warden | `warden update` (`--check` to only look) |
 
@@ -359,9 +362,9 @@ A metric passes up to its target times 1.5 (`ok` in the JSON; a loaded machine s
 
 ### `warden perf`
 
-Profile an app on a warden simulator / emulator. Sessions live in `$WARDEN_HOME/perf/<id>/` (`session.json` plus what each capturer writes); `id` is `<yyyymmdd-hhmmss>-<hash6>` in UTC. Simulator and emulator numbers run on host CPU and GPU: compare relative, not absolute. Dev builds (`__DEV__`) inflate JS and React costs. Only the skeleton ships so far (`ls`, `mark`, `doctor`); capture subcommands (`start`, `stop`, `record`, `metrics`, `frames`, `startup`, `report`, `diff`, ...) land in later phases.
+Profile an app on a warden simulator / emulator. Sessions live in `$WARDEN_HOME/perf/<id>/` (`session.json` plus what each capturer writes); `id` is `<yyyymmdd-hhmmss>-<hash6>` in UTC. Simulator and emulator numbers run on host CPU and GPU: compare relative, not absolute. Dev builds (`__DEV__`) inflate JS and React costs. One-shot subcommands (`metrics`, `memory`, `frames`, `startup`, `js`, `heap`, `logs`, `crashes`) work today; combined sessions (`start`, `stop`, `record`), native traces, React profiling, `report`, `query` and `diff` land in later phases.
 
-Device-bound subcommands (`mark`, `doctor`) take the `warden ui` options (`--udid`, `--serial`, `--lease`, `--claim`, `--platform`, `--timeout`, `--json`) plus:
+Device-bound subcommands take the `warden ui` options (`--udid`, `--serial`, `--lease`, `--claim`, `--platform`, `--timeout`, `--json`) plus:
 
 | Option | Effect |
 |---|---|
@@ -380,7 +383,152 @@ One active session per device, whoever holds the lease (`session_active` names t
 | `mark <label...>` | annotate the device's running session (`session_not_found`, exit 1, when none): commits, hangs and jank are tagged with the last mark before them |
 | `doctor` | read-only checks, one line each: `xctrace` (macOS; fails when missing), `xcode` (warns on 26.4+, where `xctrace --device` deadlocks), `adb`, `device-tools` (`perfetto` and `simpleperf` on an Android device), `trace-processor` (cached under `$WARDEN_HOME/tools`), `metro`, `app` (Android: debuggable or `<profileable android:shell="true"/>`). Exit 1 only on a `fail`; with no resolvable device the device checks are `skip` |
 
-Errors carry `{code, message, hint?}`; the codes added for perf are `device_unknown`, `session_active`, `session_not_found` and `app_not_found` (plus the `warden ui` lease codes). `--json` prints the `warden ui` envelope (`command` is `perf <sub>`); `ls` and `doctor` print their own document (`{sessions}` / `{devices}` / `{ok, device?, checks}`).
+Errors carry `{code, message, hint?}`; the codes added for perf are `device_unknown`, `session_active`, `session_not_found`, `app_not_found`, `unsupported`, `not_profileable` (exit 1) and `tool_missing` (exit 3) (plus the `warden ui` lease codes). `--json` prints the `warden ui` envelope (`command` is `perf <sub>`); `ls` and `doctor` print their own document (`{sessions}` / `{devices}` / `{ok, device?, checks}`).
+
+#### `warden perf metrics`
+
+CPU % and memory of the app over time. Observe-only: works on any warden device and never takes a lease.
+
+```bash
+warden perf metrics [--interval 1s] [--duration 3s] [--watch] [--app <id>]
+```
+
+- iOS simulator: `ps` matched on the app's executable; CPU % is the delta of cumulative CPU time between samples (not the decaying `%cpu`), memory is RSS.
+- Android: `top -n 1 -b -p <pid>` for CPU and `dumpsys meminfo <package>` for PSS and RSS.
+- The first sample is the CPU baseline. Output is min/avg/p95/max per metric plus the memory trend; a steadily rising series (at least 6 samples over 5s, +1 MB, +50 KB/s) adds a `memory-growth` leak hint.
+- Samples go to the running session's `metrics/samples.jsonl` (timed from the session start), else a one-shot directory under `$WARDEN_HOME/perf`.
+- `--watch` redraws CPU, memory (and fps when available) as unicode sparklines with current/avg/max on stderr. Piped, or with `--json`, it prints one NDJSON line per sample on stdout, then the result envelope. Ctrl-C prints the summary and exits 130. Without `--duration` it stops after 5 minutes.
+- `--interval` is at least 200ms. Numbers from simulators and emulators are for comparing relative changes, not absolute values.
+
+#### `warden perf memory`
+
+Where the app's memory sits right now, or a heap snapshot.
+
+```bash
+warden perf memory [--snapshot] [--app <id>]
+```
+
+- Without `--snapshot` (observe-only): Android prints TOTAL PSS/RSS and the top 5 `dumpsys meminfo` categories; iOS prints the physical footprint (and peak) and top regions from `vmmap --summary`.
+- With `--snapshot` (pauses the app; needs your own lease, so pass `--claim`):
+  - iOS: `leaks --outputGraph` writes a `.memgraph` (open it in Xcode's Memory Graph debugger) and the command reports the leak count, bytes and leaked types.
+  - Android: `am dumpheap` writes an `.hprof`, which is pulled and removed from the device. It is raw only; open it in Android Studio (Profiler, Load). The app must be debuggable or profileable.
+- Artifacts go to the running session's `native/` directory, else a one-shot directory under `$WARDEN_HOME/perf`.
+
+#### `warden perf frames`
+
+fps, janky %, dropped and frozen frames and the worst jank windows for the app on an Android device,
+read from `dumpsys gfxinfo <pkg> framestats`.
+
+```bash
+warden perf frames [--app <pkg>] [--reset] [--json]
+```
+
+- Reports `fps` and `refreshHz`. The frame deadline is the median vsync gap, clamped to 4-50ms.
+- Reports `jankPct` (the OS "Janky frames" summary since the last reset), `droppedFrames`, `frozenFrames`
+  (frames over 700ms) and `worstFrameMs`.
+- `worstWindows`: the 3 worst jank clusters. Clusters split on gaps over 500ms. Each window has
+  `startOffsetMs`, `endOffsetMs`, `missedDeadlineFrameCount` and `worstFrameMs`.
+- With a running session (`warden perf start`), offsets are measured from the session start and each window
+  carries the last `warden perf mark` before it. The report is also written to the session's `frames.json`.
+- A `jank` finding is emitted at 2% or more janky frames, or any frozen frame.
+- A plain read is observe-only. It takes no lease and changes nothing on the device.
+- `--reset` clears the OS frame counters after reading, so the next read is a fresh window. This mutates
+  the device and needs your own lease (`--claim` or a lease you hold).
+- Window offsets come from the OS's last ~120 frames (about 2s at 60Hz). The jank % and totals cover
+  everything since the last reset. For a long scenario, run `perf start` with marks and read at the end of the interaction.
+- iOS simulator: returns `status: "unsupported"` with a hint. The simulator has no frame API. Use hangs from
+  `warden perf start --native` instead.
+
+#### `warden perf startup`
+
+Cold or warm app start time, median and p90 over several launches.
+
+```bash
+warden perf startup [--cold] [--warm] [--runs <n>] [--method approx|xctrace] [--app <id>] [--claim]
+```
+
+Kills and relaunches the app, so it needs your own device lease (or `--claim` on a free device). Without a lease it fails with `device_foreign` and never touches the app.
+
+| Flag | Meaning |
+|---|---|
+| `--cold` | Stop the app before each start (default). |
+| `--warm` | Send the app to the background first, then start it. With both flags, cold runs first. |
+| `--runs <n>` | Launches to time, 1-20 (default 5). |
+| `--method <m>` | iOS only: `approx` (default) or `xctrace` (App Launch template, cold only, spike). |
+
+- **Android:** `am start -W` (`-S` for cold). Time is `TotalTime`, the time to the first frame. If the app calls `reportFullyDrawn()`, the fully-drawn time is reported too.
+- **iOS simulator:** `approx` is the wall time of `simctl launch --terminate-running-process`. It is a lower bound (time to process spawn); compare relative, not absolute. `xctrace` records the App Launch template and reads the launch periods from the trace.
+- **React Native:** when Metro is reachable, the app's `performance` marks are read after the last launch and listed. A missing Metro is noted in `startup.json`, not an error.
+- **Output:** median, p90, min and max per kind. A `startup` finding is raised when the cold median is over 2s (warn) or 5s (critical). The full result is written to `metrics/startup.json` in the active session, or in a one-shot dir under `$WARDEN_HOME/perf/`.
+
+#### `warden perf js`
+
+Hermes JS CPU profile of the running dev client, source-mapped to `file:line` hotspots. Observe only: it never leases the device.
+
+```bash
+warden perf js [--duration 10s] [--sampling-interval 100] [--metro <url>] [--app <id>] [--json]
+```
+
+- Samples for `--duration` (default 10s, max 5m) at `--sampling-interval` microseconds (default 100).
+- Writes `js/cpu.cpuprofile` (opens in Chrome DevTools or speedscope) and `js/hotspots.json` into the running session, otherwise a one-shot directory under `$WARDEN_HOME/perf`.
+- Source maps are fetched from Metro only (64MiB cap). The report lists top self and total time per function with `file:line`, groups `node_modules` frames by package, reports idle share separately, and raises `js-hotspot` findings for functions above 10% of active time.
+- Dev builds (`__DEV__`) get a banner: unminified JS and the DevTools hook inflate costs, so confirm on a release or profileable build.
+- A JS reload during the capture loses the profile. Release builds have no Metro, so the command exits 3 (`devtools_unavailable`).
+- If a running session already profiles JS, the command fails with `session_active`.
+
+#### `warden perf heap`
+
+Hermes heap snapshots of the running dev client.
+
+```bash
+warden perf heap snapshot [--metro <url>] [--app <id>] [--claim] [--json]
+warden perf heap diff <before> <after> [--json]
+```
+
+- `snapshot` freezes the JS thread while it runs, so it needs your lease on the device (or `--claim`). It streams `js/heap-<ts>.heapsnapshot` (opens in Chrome DevTools, Memory tab) and prints the top 15 constructors by self size and by count. Retained sizes are not computed; open the file for them.
+- `diff` compares two snapshot files: per-constructor count and self-size deltas, largest change first. It only reads files.
+- If the runtime lacks the needed Profiler or HeapProfiler method, the command exits 3 with `unsupported: ...` and a hint.
+
+#### `warden perf logs`
+
+The app's device logs, secrets redacted. An observe op: needs no lease, and works on any warden device.
+
+```bash
+warden perf logs --app com.acme.shop --level W --since 5m
+warden perf logs --follow --json --grep "api|cart"
+```
+
+| Flag | Meaning |
+|------|---------|
+| `-f, --follow` | Stream live: text lines, or one JSON entry per line with `--json`. Ctrl-C exits 130. |
+| `--level <V\|D\|I\|W\|E\|F>` | Minimum level (words like `error`, `warn` work too). |
+| `--grep <regex>` | Keep lines whose tag or message matches (case-insensitive). |
+| `--since <duration>` | Only lines from the last `30s`, `5m`, `1h`. |
+| `-n, --lines <n>` | Lines to show, newest last (default 200). |
+
+- **Android:** `logcat -v threadtime --pid <pid>`. While following, the pid is re-resolved every 2s and the stream restarts when the app does. `--since` is measured against the device clock.
+- **iOS simulator:** `log stream|show --style compact` with a predicate matching the app's subsystem, sub-subsystems and executable. A one-shot read looks back 5m unless `--since` is given.
+- **Redaction:** `Authorization`/`Bearer` tokens, `api_key=`, JWTs, `password=` and emails become `[redacted]` before anything is printed or written.
+- **In a session:** the collector writes the same redacted stream to `logs/device.log`.
+
+#### `warden perf crashes`
+
+Crashes and ANRs of the app, newest first (up to 10), with `crash` / `anr` findings. An observe op.
+
+```bash
+warden perf crashes --since 1h
+warden perf crashes --symbolicate --dsym build/ShopApp.app.dSYM
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--since <duration>` | Only crashes from the last `30s`, `5m`, `1h`. |
+| `--symbolicate` | iOS only: resolve app frames through a dSYM (needs `--dsym`). |
+| `--dsym <path>` | The `.dSYM` (or DWARF file) of the build that crashed. |
+
+- **iOS:** reads `~/Library/Logs/DiagnosticReports/*.ips` for this app on this simulator. Each crash shows exception type, signal, crashed thread, top 10 frames and the first app frame. `--symbolicate` matches the dSYM by `dwarfdump --uuid`, then runs `atos` with the image's load address; a dSYM from another build is reported as a warning and the crash is still listed.
+- **Android:** `logcat -b crash -d` plus `dumpsys dropbox --print data_app_crash` and `data_app_anr`, de-duplicated. Native tombstones are not read.
+- **In a session:** raw reports are copied into the session's `crashes/` directory.
 
 ## Setup
 

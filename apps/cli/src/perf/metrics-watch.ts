@@ -1,4 +1,6 @@
+import type { Platform } from "@delacour/warden-core/types";
 import type { MetricSample } from "@delacour/warden-perf/metrics/series";
+import type { CommandContext } from "../context";
 import type { FrameRateSource } from "./metrics-sampler";
 import { eraseLines, renderWatch, type WatchFrame } from "./render-spark";
 
@@ -12,8 +14,27 @@ export type MetricsIo = {
 	write: (chunk: string) => void;
 	/** an fps source (Android gfxinfo, from the frames phase); the fps sparkline is drawn only when one is given */
 	fps?: FrameRateSource | undefined;
+	/** picks `fps` once the device and app are resolved, when no fixed `fps` is given */
+	fpsFor?: (
+		ctx: CommandContext,
+		target: { udid: string; platform: Platform },
+		app: string
+	) => FrameRateSource | undefined;
 	dispose?: () => void;
 };
+
+/** Android: fps from `dumpsys gfxinfo framestats` (frames.ts, loaded on first read); the iOS simulator has none. */
+function gfxinfoFps(
+	ctx: CommandContext,
+	target: { udid: string; platform: Platform },
+	app: string
+): FrameRateSource | undefined {
+	if (target.platform !== "android") return undefined;
+	return async () => {
+		const { androidFrameRate } = await import("./frames");
+		return (await androidFrameRate(ctx, target.udid, app))?.fps;
+	};
+}
 
 /** Real timers, stderr, and a SIGINT handler that ends the run cleanly (so the summary still prints, exit 130). */
 export function defaultMetricsIo(): MetricsIo {
@@ -21,6 +42,7 @@ export function defaultMetricsIo(): MetricsIo {
 	const onSigint = () => abort.abort();
 	process.once("SIGINT", onSigint);
 	return {
+		fpsFor: gfxinfoFps,
 		signal: abort.signal,
 		write: (chunk) => {
 			process.stderr.write(chunk);

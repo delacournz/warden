@@ -75,9 +75,8 @@ async function dumpHeap(
 		const said = `${dump.stdout}\n${dump.stderr}`;
 		if (NOT_DEBUGGABLE.test(said)) {
 			return fail(
-				uiError("failed", `${app} is not debuggable or profileable, so Android refuses a heap dump`, {
+				uiError("not_profileable", `${app} is not debuggable or profileable, so Android refuses a heap dump`, {
 					hint: 'debug build, or <profileable android:shell="true"/> in the manifest (warden perf doctor)',
-					details: { reason: "not_profileable" },
 				})
 			);
 		}

@@ -176,7 +176,7 @@ describe("warden perf memory (Android)", () => {
 		expect(calls.some((cmd) => cmd.includes("rm -f /data/local/tmp/warden-"))).toBe(true);
 	});
 
-	test("a non-debuggable app: failed with the not_profileable reason and a manifest hint", async () => {
+	test("a non-debuggable app: not_profileable with a manifest hint", async () => {
 		const { c, deps } = setup(
 			droid,
 			hprofScript({
@@ -189,7 +189,7 @@ describe("warden perf memory (Android)", () => {
 		);
 		expect(await perfMemory(c, deps, { app: APP, record: true, json: true, snapshot: true }, io)).toBe(1);
 		const err = json(c).error;
-		expect(err.details).toEqual({ reason: "not_profileable" });
+		expect(err.code).toBe("not_profileable");
 		expect(err.hint).toContain("profileable");
 	});
 

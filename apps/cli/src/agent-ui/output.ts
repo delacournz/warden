@@ -33,6 +33,9 @@ export const UI_ERROR_EXIT = {
 	session_active: UI_EXIT.failed,
 	session_not_found: UI_EXIT.failed,
 	app_not_found: UI_EXIT.failed,
+	unsupported: UI_EXIT.failed,
+	not_profileable: UI_EXIT.failed,
+	tool_missing: UI_EXIT.engine,
 } as const satisfies Record<string, UiExitCode>;
 
 export type UiErrorCode = keyof typeof UI_ERROR_EXIT;
