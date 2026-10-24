@@ -184,3 +184,11 @@ export function cpuDeltas(rows: readonly PsRow[], prev: CpuReadings, baseline: b
 	for (const [pid, reading] of next) prev.set(pid, reading);
 	return out;
 }
+
+/**
+ * The row of the app's main executable: `command` is the executable's full path, alone or followed by its
+ * arguments. The path (not the name) is matched so app extensions and same-named binaries elsewhere never are.
+ */
+export function findByExecutable(rows: readonly PsRow[], executablePath: string): PsRow | undefined {
+	return rows.find((r) => r.command === executablePath || r.command.startsWith(`${executablePath} `));
+}

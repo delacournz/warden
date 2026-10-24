@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type CpuReadings, cpuDeltas, type PsRow, parseAdbTop, parseCpuTime, parsePs, withDescendants } from "./ps";
+import {
+	type CpuReadings,
+	cpuDeltas,
+	findByExecutable,
+	type PsRow,
+	parseAdbTop,
+	parseCpuTime,
+	parsePs,
+	withDescendants,
+} from "./ps";
 
 const fx = (name: string) => readFileSync(join(import.meta.dir, "..", "..", "fixtures", name), "utf8");
 
@@ -132,5 +141,21 @@ describe("cpuDeltas", () => {
 		);
 		expect(d.get(100)).toBeCloseTo(0.3, 6);
 		expect(d.get(101)).toBeCloseTo(0.2, 6);
+	});
+});
+
+describe("findByExecutable", () => {
+	const rows = parsePs(fx("ps-timed-app.txt"));
+	const exe =
+		"/Users/chris/Library/Developer/CoreSimulator/Devices/U1/data/Containers/Bundle/Application/AAAA-1111/Example.app/Example";
+
+	test("matches the main executable by full path, not its extensions", () => {
+		expect(findByExecutable(rows, exe)?.pid).toBe(845);
+	});
+	test("a prefix of another path is not a match", () => {
+		expect(findByExecutable(rows, exe.replace("Example.app/Example", "Example.app/Exam"))).toBeUndefined();
+	});
+	test("not running: undefined", () => {
+		expect(findByExecutable(rows, "/nope/App.app/App")).toBeUndefined();
 	});
 });
