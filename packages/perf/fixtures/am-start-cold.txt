@@ -1,0 +1,8 @@
+Stopping: com.acme.shop
+Starting: Intent { cmp=com.acme.shop/.MainActivity }
+Status: ok
+LaunchState: COLD
+Activity: com.acme.shop/.MainActivity
+TotalTime: 1834
+WaitTime: 1851
+Complete

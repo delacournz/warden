@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<trace-toc>
+  <run number="1">
+    <info>
+      <target><process type="launched" name="Shop" pid="4242"/></target>
+    </info>
+    <data>
+      <table schema="life-cycle-period"/>
+      <table schema="time-profile"/>
+      <table schema="os-signpost"/>
+    </data>
+  </run>
+</trace-toc>
