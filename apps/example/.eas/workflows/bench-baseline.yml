@@ -1,10 +1,11 @@
-name: Bench baseline
+name: Bench
 
-# e2e bench (warden, argent, agent-device, tester-army) on a hosted macOS worker, never on a dev Mac. Builds the
-# pinned bench app (Release simulator .app, EXPO_PUBLIC_E2E=1), installs the frameworks named in `frameworks`,
-# then runs the bench harness against it.
-# Every run uses the same worker class (macos-large), so numbers compare only with other EAS runs.
-# Run: bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=warden
+# e2e bench on hosted macOS workers, never on a dev Mac. Builds the pinned bench app once (Release simulator .app,
+# EXPO_PUBLIC_E2E=1, skipped when EAS has a build for the current fingerprint), then runs ONE JOB PER FRAMEWORK, each
+# on its own macos-large worker with its own simulator (packages/e2e-bench/scripts/eas-bench.sh). Every job stops
+# itself after `max_minutes` (results so far are kept, the lease released, the artifact uploaded). Numbers compare
+# only with other EAS runs of the same worker class.
+# Run: bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5
 #      bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=argent,agent-device
 
 on:
@@ -16,8 +17,12 @@ on:
         default: 5
       frameworks:
         type: string
-        description: Comma-separated bench frameworks (warden,argent,agent-device,tester-army)
-        default: warden
+        description: Comma-separated subset of warden,argent,agent-device,tester-army (one worker each)
+        default: warden,argent,agent-device,tester-army
+      max_minutes:
+        type: number
+        description: Hard stop per framework job, in minutes from job start
+        default: 55
 
 jobs:
   # Fingerprint the native project, then look for an existing bench build with that hash.
@@ -41,171 +46,43 @@ jobs:
       platform: ios
       profile: bench
 
-  bench:
+  # warden: its own worker and simulator; skipped unless named in `frameworks`.
+  bench_warden:
     after: [get_ios_build, build_ios]
-    if: ${{ always() }}
+    if: ${{ always() && contains(inputs.frameworks, 'warden') }}
     runs_on: macos-large
     env:
-      # No golden images on the worker: the settle probe cannot see the sim in a non-GUI session, so claim
-      # does a plain simctl create + boot.
       WARDEN_GOLDEN: '0'
-      WARDEN_SESSION_ID: eas-bench
+      WARDEN_SESSION_ID: eas-bench-warden
+      BENCH_FRAMEWORK: warden
+      BENCH_RUNS: ${{ inputs.runs }}
+      BENCH_MAX_MINUTES: ${{ inputs.max_minutes }}
     steps:
-      # Clone the repo at the triggering ref.
       - uses: eas/checkout
-
-      # Write the shared shell helpers (heartbeat for long commands) every later step sources.
-      - name: Layout and helpers
+      - name: Job start
         run: |
-          echo "== layout ($(date +%T))"
-          pwd
-          git rev-parse --show-toplevel
-          cat > "$HOME/bench-lib.sh" <<'LIB'
-          export PATH="$HOME/.bun/bin:$PATH"
-          ROOT="$(git rev-parse --show-toplevel)"
-          # progress <pid> <what>: heartbeat every 20 s while pid runs, with load and booted sims.
-          progress() {
-            local pid=$1 what=$2
-            while kill -0 "$pid" 2>/dev/null; do
-              echo "... $what still running $(date +%T) load=$(sysctl -n vm.loadavg) booted=$(xcrun simctl list devices booted 2>/dev/null | grep -c Booted)"
-              sleep 20
-            done
-          }
-          LIB
-
-      # bun ships on the worker image; install it only when missing.
-      - name: Install bun
-        run: |
-          echo "== install bun ($(date +%T))"
+          date +%s > "$HOME/job-start"
+          echo "== warden job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
           export PATH="$HOME/.bun/bin:$PATH"
           bun --version || (curl -fsSL https://bun.sh/install | bash)
-          export PATH="$HOME/.bun/bin:$PATH"
-          bun --version
-          echo "== done in ${SECONDS}s"
-
-      # Install workspace deps at the monorepo root. No NPM_TOKEN: the private @delacournz packages are
-      # optional (apps/docs only) and a 401 is a warning, same as the tokenless CI clone.
-      - name: bun install
-        run: |
-          . "$HOME/bench-lib.sh"
-          echo "== bun install ($(date +%T))"
-          cd "$ROOT"
-          bun install --frozen-lockfile &
-          progress $! "bun install"; wait $!
-          echo "== done in ${SECONDS}s"
-
-      # Build the iOS helper (warden-simd) the e2e driver talks to.
-      - name: Build warden-simd
-        run: |
-          . "$HOME/bench-lib.sh"
-          echo "== warden-simd deps + build ($(date +%T))"
-          cd "$ROOT"
-          bun run --cwd packages/e2e native:deps &
-          progress $! "native:deps"; wait $!
-          bun run --cwd packages/e2e native:build &
-          progress $! "warden-simd build"; wait $!
-          echo "== done in ${SECONDS}s"
-
-      # Install the frameworks the run compares, from the `frameworks` input. tester-army needs nothing extra:
-      # `e2e` and `@e2e-dev/mobile` come with bun install and the image's Node is inside its range.
-      - name: Install bench frameworks
-        run: |
-          . "$HOME/bench-lib.sh"
-          cd "$ROOT"
-          FW=",${{ inputs.frameworks }},"
-          echo "== frameworks: ${{ inputs.frameworks }} ($(date +%T))"
-          case "$FW" in *,argent,*)
-            echo "-- bun add -g @swmansion/argent"
-            bun add -g @swmansion/argent &
-            progress $! "argent install"; wait $!
-            argent --version
-          ;; esac
-          case "$FW" in *,agent-device,*)
-            echo "-- bun add -g agent-device"
-            bun add -g agent-device &
-            progress $! "agent-device install"; wait $!
-            agent-device --version
-          ;; esac
-          case "$FW" in *,tester-army,*)
-            node -v
-          ;; esac
-          echo "-- bench doctor"
-          bun run bench doctor --platform ios || true
-          echo "== done in ${SECONDS}s"
-
-      # Fetch the .app built by build_ios (or found by get_ios_build); its path is the step output.
       - uses: eas/download_build
         id: download_build
         with:
           build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
           extensions: [app]
-
-      # Host facts for the report: Xcode, runtimes, cores, load before the run.
       - name: Host facts
         run: |
-          echo "== host facts ($(date +%T))"
-          xcodebuild -version
-          xcrun simctl list runtimes
-          sysctl -n hw.ncpu hw.memsize
-          sysctl -n vm.loadavg
-          sw_vers
+          xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
           echo "app: ${{ steps.download_build.outputs.artifact_path }}"
-          ls -la "${{ steps.download_build.outputs.artifact_path }}" | head
-
-      # Claim a headless sim, install the app, wait for load to settle, idle-control 60 s, run the bench.
-      # The trap releases the lease on any exit.
-      - name: Claim, idle control and bench
-        run: |
-          . "$HOME/bench-lib.sh"
-          cd "$ROOT"
-          OUT="$ROOT/.bench/eas-ios"
-          mkdir -p "$OUT"
-          APP="${{ steps.download_build.outputs.artifact_path }}"
-
-          echo "== claim ios ($(date +%T))"
-          bun apps/cli/src/cli.ts claim ios --ttl 2h --label bench --headless --json > "$HOME/claim.json" &
-          progress $! "claim"; wait $!
-          cat "$HOME/claim.json"
-          LEASE=$(bun -e 'const j = JSON.parse(await Bun.file(process.env.HOME + "/claim.json").text()); console.log(j.leases[0].leaseId)')
-          UDID=$(bun -e 'const j = JSON.parse(await Bun.file(process.env.HOME + "/claim.json").text()); console.log(j.leases[0].udid)')
-          echo "$LEASE" > "$HOME/bench-lease-id"
-          release() { bun apps/cli/src/cli.ts release "$LEASE" --shutdown || true; }
-          trap release EXIT
-          echo "== done in ${SECONDS}s: lease=$LEASE udid=$UDID"
-
-          echo "== install app ($(date +%T))"
-          xcrun simctl install "$UDID" "$APP"
-
-          echo "== wait for load < ncpu ($(date +%T))"
-          NCPU=$(sysctl -n hw.ncpu)
-          FORCE=""
-          for _ in $(seq 1 60); do
-            L1=$(sysctl -n vm.loadavg | awk '{print $2}')
-            echo "load1=$L1 threshold=$NCPU $(date +%T)"
-            awk -v l="$L1" -v n="$NCPU" 'BEGIN{exit !(l < n)}' && break
-            sleep 15
-          done
-          awk -v l="$L1" -v n="$NCPU" 'BEGIN{exit !(l < n)}' || { FORCE="--force"; echo "load still above ncpu, running with --force"; }
-          echo "load before run: $(sysctl -n vm.loadavg) force=[$FORCE]"
-
-          echo "== idle control 60 s ($(date +%T))"
-          bun packages/e2e-bench/scripts/idle-sim.ts --udid "$UDID" --seconds 60 --launch nz.co.delacour.warden.example --out "$OUT/idle-control.ndjson" &
-          progress $! "idle control"; wait $!
-
-          echo "== bench run ($(date +%T))"
-          bun run bench run --platform ios --frameworks "${{ inputs.frameworks }}" --runs "${{ inputs.runs }}" --udid "$UDID" --app "$APP" --out "$OUT" $FORCE 2>&1 | tee "$HOME/bench-run.log"
-          echo "== done in ${SECONDS}s"
-
-      # Safety net: release the lease if the step above died before its trap ran.
+      - name: Bench warden
+        env:
+          BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
+        run: bash packages/e2e-bench/scripts/eas-bench.sh
       - name: Release lease
         if: ${{ always() }}
         run: |
-          . "$HOME/bench-lib.sh"
-          cd "$ROOT"
+          export PATH="$HOME/.bun/bin:$PATH"
           [ -f "$HOME/bench-lease-id" ] && bun apps/cli/src/cli.ts release "$(cat "$HOME/bench-lease-id")" --shutdown || true
-
-      # Copy results to a fixed absolute dir (the artifact glob is resolved from the checkout root, not the
-      # base directory) and print log tails so the cause of a failure is in the EAS log.
       - name: Collect results
         if: ${{ always() }}
         run: |
@@ -213,22 +90,194 @@ jobs:
           DEST="$HOME/bench-results"
           mkdir -p "$DEST"
           { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
-          cp -R "$ROOT/.bench/eas-ios/." "$DEST/" || true
-          cp "$HOME/bench-run.log" "$DEST/" 2>/dev/null || true
+          cp -R "$ROOT/.bench/eas-ios-warden/." "$DEST/" 2>/dev/null || true
+          cp "$HOME"/bench-run.log "$HOME"/fw-install.log "$HOME"/simd-build.log "$DEST/" 2>/dev/null || true
           ls "$DEST"
-          for f in "$ROOT"/.bench/eas-ios/logs/*.log "$HOME/bench-run.log"; do
-            [ -f "$f" ] && { echo "=== $f"; tail -n 200 "$f" | cut -c1-240; }
-          done
-          for f in "$HOME"/.warden/simd/*.log; do
-            [ -f "$f" ] && { echo "=== $f"; tail -n 200 "$f" | cut -c1-240; }
+          for f in "$ROOT"/.bench/eas-ios-warden/logs/*.log "$HOME/bench-run.log" "$HOME"/.warden/simd/*.log; do
+            [ -f "$f" ] && { echo "=== $f"; tail -n 120 "$f" | cut -c1-240; }
           done
           true
-
-      # Results (report.md/html, bench-results.json, logs, per-rep resources) as a downloadable artifact.
       - uses: eas/upload_artifact
         if: ${{ always() }}
         with:
           type: other
-          name: eas-ios
+          name: eas-ios-warden
+          path: |
+            /Users/expo/bench-results/**/*
+
+  # argent: its own worker and simulator; skipped unless named in `frameworks`.
+  bench_argent:
+    after: [get_ios_build, build_ios]
+    if: ${{ always() && contains(inputs.frameworks, 'argent') }}
+    runs_on: macos-large
+    env:
+      WARDEN_GOLDEN: '0'
+      WARDEN_SESSION_ID: eas-bench-argent
+      BENCH_FRAMEWORK: argent
+      BENCH_RUNS: ${{ inputs.runs }}
+      BENCH_MAX_MINUTES: ${{ inputs.max_minutes }}
+    steps:
+      - uses: eas/checkout
+      - name: Job start
+        run: |
+          date +%s > "$HOME/job-start"
+          echo "== argent job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun --version || (curl -fsSL https://bun.sh/install | bash)
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
+          extensions: [app]
+      - name: Host facts
+        run: |
+          xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
+          echo "app: ${{ steps.download_build.outputs.artifact_path }}"
+      - name: Bench argent
+        env:
+          BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
+        run: bash packages/e2e-bench/scripts/eas-bench.sh
+      - name: Release lease
+        if: ${{ always() }}
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          [ -f "$HOME/bench-lease-id" ] && bun apps/cli/src/cli.ts release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+      - name: Collect results
+        if: ${{ always() }}
+        run: |
+          ROOT="$(git rev-parse --show-toplevel)"
+          DEST="$HOME/bench-results"
+          mkdir -p "$DEST"
+          { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
+          cp -R "$ROOT/.bench/eas-ios-argent/." "$DEST/" 2>/dev/null || true
+          cp "$HOME"/bench-run.log "$HOME"/fw-install.log "$HOME"/simd-build.log "$DEST/" 2>/dev/null || true
+          ls "$DEST"
+          for f in "$ROOT"/.bench/eas-ios-argent/logs/*.log "$HOME/bench-run.log" "$HOME"/.warden/simd/*.log; do
+            [ -f "$f" ] && { echo "=== $f"; tail -n 120 "$f" | cut -c1-240; }
+          done
+          true
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: eas-ios-argent
+          path: |
+            /Users/expo/bench-results/**/*
+
+  # agent-device: its own worker and simulator; skipped unless named in `frameworks`.
+  bench_agent_device:
+    after: [get_ios_build, build_ios]
+    if: ${{ always() && contains(inputs.frameworks, 'agent-device') }}
+    runs_on: macos-large
+    env:
+      WARDEN_GOLDEN: '0'
+      WARDEN_SESSION_ID: eas-bench-agent-device
+      BENCH_FRAMEWORK: agent-device
+      BENCH_RUNS: ${{ inputs.runs }}
+      BENCH_MAX_MINUTES: ${{ inputs.max_minutes }}
+    steps:
+      - uses: eas/checkout
+      - name: Job start
+        run: |
+          date +%s > "$HOME/job-start"
+          echo "== agent-device job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun --version || (curl -fsSL https://bun.sh/install | bash)
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
+          extensions: [app]
+      - name: Host facts
+        run: |
+          xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
+          echo "app: ${{ steps.download_build.outputs.artifact_path }}"
+      - name: Bench agent-device
+        env:
+          BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
+        run: bash packages/e2e-bench/scripts/eas-bench.sh
+      - name: Release lease
+        if: ${{ always() }}
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          [ -f "$HOME/bench-lease-id" ] && bun apps/cli/src/cli.ts release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+      - name: Collect results
+        if: ${{ always() }}
+        run: |
+          ROOT="$(git rev-parse --show-toplevel)"
+          DEST="$HOME/bench-results"
+          mkdir -p "$DEST"
+          { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
+          cp -R "$ROOT/.bench/eas-ios-agent-device/." "$DEST/" 2>/dev/null || true
+          cp "$HOME"/bench-run.log "$HOME"/fw-install.log "$HOME"/simd-build.log "$DEST/" 2>/dev/null || true
+          ls "$DEST"
+          for f in "$ROOT"/.bench/eas-ios-agent-device/logs/*.log "$HOME/bench-run.log" "$HOME"/.warden/simd/*.log; do
+            [ -f "$f" ] && { echo "=== $f"; tail -n 120 "$f" | cut -c1-240; }
+          done
+          true
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: eas-ios-agent-device
+          path: |
+            /Users/expo/bench-results/**/*
+
+  # tester-army: its own worker and simulator; skipped unless named in `frameworks`.
+  bench_tester_army:
+    after: [get_ios_build, build_ios]
+    if: ${{ always() && contains(inputs.frameworks, 'tester-army') }}
+    runs_on: macos-large
+    env:
+      WARDEN_GOLDEN: '0'
+      WARDEN_SESSION_ID: eas-bench-tester-army
+      BENCH_FRAMEWORK: tester-army
+      BENCH_RUNS: ${{ inputs.runs }}
+      BENCH_MAX_MINUTES: ${{ inputs.max_minutes }}
+    steps:
+      - uses: eas/checkout
+      - name: Job start
+        run: |
+          date +%s > "$HOME/job-start"
+          echo "== tester-army job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun --version || (curl -fsSL https://bun.sh/install | bash)
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
+          extensions: [app]
+      - name: Host facts
+        run: |
+          xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
+          echo "app: ${{ steps.download_build.outputs.artifact_path }}"
+      - name: Bench tester-army
+        env:
+          BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
+        run: bash packages/e2e-bench/scripts/eas-bench.sh
+      - name: Release lease
+        if: ${{ always() }}
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          [ -f "$HOME/bench-lease-id" ] && bun apps/cli/src/cli.ts release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+      - name: Collect results
+        if: ${{ always() }}
+        run: |
+          ROOT="$(git rev-parse --show-toplevel)"
+          DEST="$HOME/bench-results"
+          mkdir -p "$DEST"
+          { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
+          cp -R "$ROOT/.bench/eas-ios-tester-army/." "$DEST/" 2>/dev/null || true
+          cp "$HOME"/bench-run.log "$HOME"/fw-install.log "$HOME"/simd-build.log "$DEST/" 2>/dev/null || true
+          ls "$DEST"
+          for f in "$ROOT"/.bench/eas-ios-tester-army/logs/*.log "$HOME/bench-run.log" "$HOME"/.warden/simd/*.log; do
+            [ -f "$f" ] && { echo "=== $f"; tail -n 120 "$f" | cut -c1-240; }
+          done
+          true
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: eas-ios-tester-army
           path: |
             /Users/expo/bench-results/**/*

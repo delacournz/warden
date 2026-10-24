@@ -29,19 +29,19 @@ The app is the Expo project `@delacour/warden` (`extra.eas.projectId` in `app.co
 
 ### Run the baseline on EAS
 
-`.eas/workflows/bench-baseline.yml` builds the `bench` iOS app and runs the bench on an EAS `macos-large` worker, so a measurement never touches your Mac. Dispatch it from `apps/example`:
+`.eas/workflows/bench-baseline.yml` builds the `bench` iOS app once, then runs one job per framework, each on its own EAS `macos-large` worker with its own simulator, so a measurement never touches your Mac and nothing one framework leaves behind reaches the next. Dispatch it from `apps/example`:
 
 ```bash
-bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=warden
+bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5                                  # all four frameworks
 bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=argent,agent-device
 ```
 
-Inputs: `runs` (reps, default `5`; rep 1 is cold) and `frameworks` (comma list of `warden,argent,agent-device,tester-army`, default `warden`). The `bench` job installs bun, builds `warden-simd`, installs argent and agent-device with `bun add -g` when they are in `frameworks` (tester-army comes with `bun install`), claims a headless simulator, records a 60 s idle control and runs `bench run` against the downloaded `.app`. The lease is released even when the run fails.
+Inputs: `runs` (reps, default `5`; rep 1 is cold), `frameworks` (comma list of `warden,argent,agent-device,tester-army`, default all four; a framework's job is skipped unless named) and `max_minutes` (default `55`). Each framework job runs `packages/e2e-bench/scripts/eas-bench.sh`: install deps, build `warden-simd`, install argent or agent-device with `bun add -g` when that is its framework (tester-army comes with `bun install`), claim a headless simulator, record a 60 s idle control and run `bench run` against the downloaded `.app`. A watchdog stops the bench when the job reaches `max_minutes`; the results so far are kept. On the way out the job screenshots the simulator (`sim-final.png`), lists the apps it still runs and releases the lease, even when the run fails.
 
-The workflow fingerprints the native project and reuses an existing `bench` build with the same fingerprint, so it only builds when `apps/example` changed. Results land as the `eas-ios` artifact on the run page (`expo.dev/accounts/delacour/projects/warden/workflows`); `bunx eas-cli workflow:view <run-id>` prints its download URL. The archive unpacks to `Users/expo/bench-results`. Copy that to `.bench/eas-ios` and re-render:
+The workflow fingerprints the native project and reuses an existing `bench` build with the same fingerprint, so it only builds when `apps/example` changed. Each job uploads an `eas-ios-<framework>` artifact to the run page (`expo.dev/accounts/delacour/projects/warden/workflows`); `bunx eas-cli workflow:view <run-id>` prints the download URLs. Each archive unpacks to `Users/expo/bench-results`. Copy one to `.bench/eas-ios-<framework>` and re-render:
 
 ```bash
-bun run bench report .bench/eas-ios
+bun run bench report .bench/eas-ios-warden
 ```
 
 A hosted macOS worker idles hotter than a Mac and shares its host, so EAS numbers compare only with EAS numbers from the same worker class (`macos-large`). Never compare them with local runs.

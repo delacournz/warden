@@ -40,14 +40,14 @@ The app is the Expo project `@delacour/warden` (`extra.eas.projectId` in `app.co
 
 ### Baseline on EAS
 
-`apps/example/.eas/workflows/bench-baseline.yml` builds the `bench` iOS app and runs the bench on an EAS `macos-large` worker (inputs `runs`, default `5`, and `frameworks`, default `warden`). The worker installs argent and agent-device when they are in `frameworks` (`bun add -g`); tester-army comes with `bun install`:
+`apps/example/.eas/workflows/bench-baseline.yml` builds the `bench` iOS app once, then runs one job per framework, each on its own EAS `macos-large` worker with its own simulator (`scripts/eas-bench.sh`). Inputs: `runs` (default `5`), `frameworks` (default all four; a job is skipped unless its framework is named) and `max_minutes` (default `55`: the job stops the bench, keeps the results so far, releases the lease and uploads). argent and agent-device are installed with `bun add -g` on their worker; tester-army comes with `bun install`:
 
 ```bash
 cd apps/example && bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5
 cd apps/example && bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=argent,agent-device
 ```
 
-The build is skipped when EAS already has a `bench` build for the current fingerprint. Download the `eas-ios` artifact (URL in `eas workflow:view <run-id>`; it unpacks to `Users/expo/bench-results`), copy it to `.bench/eas-ios`, then `bun run bench report .bench/eas-ios`. A hosted worker idles hotter than a Mac: compare EAS numbers only with EAS numbers from the same worker class.
+The build is skipped when EAS already has a `bench` build for the current fingerprint. Each job uploads an `eas-ios-<framework>` artifact (URLs in `eas workflow:view <run-id>`; each unpacks to `Users/expo/bench-results`, with `sim-final.png` showing the simulator when the job left). Copy one to `.bench/eas-ios-<framework>`, then `bun run bench report .bench/eas-ios-<framework>`. A hosted worker idles hotter than a Mac: compare EAS numbers only with EAS numbers from the same worker class.
 
 `bench run` options:
 
