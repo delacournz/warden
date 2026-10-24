@@ -1,6 +1,6 @@
 # @delacour/warden-e2e-bench
 
-Benchmarks six mobile e2e frameworks (warden, maestro, argent, agent-device, tester-army, detox) on the example app's 8-test parity suite (plan: `docs/plans/wdn-bench.md`; usage: `README.md`). Private, never published. No lease/build code here (that's `packages/core`); the suites drive the build `warden app ensure` produces.
+Benchmarks four mobile e2e frameworks (warden, argent, agent-device, tester-army) on the example app's 8-test parity suite (plan: `docs/plans/wdn-bench.md`; usage: `README.md`). Private, never published. No lease/build code here (that's `packages/core`); the suites drive the build `warden app ensure` produces.
 
 ## Layout
 

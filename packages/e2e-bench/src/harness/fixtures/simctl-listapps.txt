@@ -16,8 +16,8 @@
         ApplicationType = User;
         CFBundleIdentifier = "com.facebook.WebDriverAgentRunner.xctrunner";
     };
-    "dev.mobile.maestro-driver-iosUITests.xctrunner" =     {
+    "com.example.driver-iosUITests.xctrunner" =     {
         ApplicationType = User;
-        CFBundleIdentifier = "dev.mobile.maestro-driver-iosUITests.xctrunner";
+        CFBundleIdentifier = "com.example.driver-iosUITests.xctrunner";
     };
 }

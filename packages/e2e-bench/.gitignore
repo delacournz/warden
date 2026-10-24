@@ -1,4 +1,3 @@
 .bench/
-suites/detox/artifacts/
 suites/tester-army/.e2e/
 suites/tester-army/.e2e-output/

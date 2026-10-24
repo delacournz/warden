@@ -9,14 +9,14 @@ import { goldenText } from "./golden";
 const manifest = loadManifest(join(import.meta.dir, "../.."));
 const a = buildSampleRun();
 
-/** B = A with every ok framework 10% slower; detox dropped, tester-army now unsupported. */
+/** B = A with every ok framework 10% slower; argent dropped, tester-army now unsupported. */
 function slower(run: BenchRun): BenchRun {
 	const b = structuredClone(run);
 	b.id = "bench-2026-10-17-ios-d4e5f6";
 	b.startedAt = "2026-10-17T01:00:00.000Z";
 	const frameworks: FrameworkResult[] = [];
 	for (const f of b.frameworks) {
-		if (f.framework === "detox") continue;
+		if (f.framework === "argent") continue;
 		if (f.status === "ok") {
 			f.stats.warmSuiteWall.median = Math.round(f.stats.warmSuiteWall.median * 1.1 * 10) / 10;
 			for (const t of Object.values(f.stats.perTest)) t.median = Math.round(t.median * 1.1 * 10) / 10;
@@ -44,7 +44,7 @@ describe("compareRuns", () => {
 	});
 	test("status changes and one-sided frameworks", () => {
 		expect(result.statusChanges).toEqual([{ framework: "tester-army", from: "failed", to: "unsupported" }]);
-		expect(result.onlyInA).toEqual(["detox"]);
+		expect(result.onlyInA).toEqual(["argent"]);
 		expect(result.onlyInB).toEqual([]);
 	});
 });

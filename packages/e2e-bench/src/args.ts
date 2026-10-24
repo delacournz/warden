@@ -37,7 +37,7 @@ Usage:
 
 Run options:
   --platform ios|android    default ios
-  --frameworks a,b          default all (warden,maestro,argent,agent-device,tester-army,detox)
+  --frameworks a,b          default all (warden,argent,agent-device,tester-army)
   --runs N                  reps per framework, rep 1 is cold (default 3)
   --retries N               forwarded to every framework (default 0)
   --udid X                  use a device you already leased (no claim, release or heartbeat: hold it yourself)

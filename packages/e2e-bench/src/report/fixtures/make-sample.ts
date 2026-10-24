@@ -38,7 +38,9 @@ const BASE_MS: Record<CanonicalId, number> = {
 };
 
 type Profile = {
-	framework: "warden" | "maestro" | "argent" | "agent-device";
+	/** fixed per framework so dropping one never reshuffles the others' numbers */
+	seed: number;
+	framework: "warden" | "argent" | "agent-device";
 	version: string;
 	testScale: number;
 	overheadMs: number;
@@ -51,6 +53,7 @@ type Profile = {
 
 const PROFILES: readonly Profile[] = [
 	{
+		seed: 1000,
 		framework: "warden",
 		version: "0.19.0",
 		testScale: 1,
@@ -61,15 +64,7 @@ const PROFILES: readonly Profile[] = [
 		untracedShare: 0.2,
 	},
 	{
-		framework: "maestro",
-		version: "2.0.9",
-		testScale: 1.5,
-		overheadMs: 19500,
-		prepareMs: 9200,
-		teardownMs: 1800,
-		withSteps: true,
-	},
-	{
+		seed: 1002,
 		framework: "argent",
 		version: "0.11.2",
 		testScale: 1.8,
@@ -79,6 +74,7 @@ const PROFILES: readonly Profile[] = [
 		withSteps: false,
 	},
 	{
+		seed: 1003,
 		framework: "agent-device",
 		version: "0.7.4",
 		testScale: 2.1,
@@ -142,7 +138,7 @@ type OkBase = Omit<OkFrameworkResult, "stats">;
 function okBase(profile: Profile, seed: number, stepLabels: Record<CanonicalId, string[]>): OkBase {
 	const rand = mulberry32(seed);
 	const reps = [1, 2, 3].map((i) => buildRep(profile, i, rand, stepLabels));
-	const heavy = profile.framework === "maestro" || profile.framework === "agent-device";
+	const heavy = profile.framework === "agent-device";
 	return {
 		framework: profile.framework,
 		status: "ok",
@@ -171,13 +167,6 @@ function okBase(profile: Profile, seed: number, stepLabels: Record<CanonicalId, 
 }
 
 function residueFor(framework: Profile["framework"]): OkBase["residue"] {
-	if (framework === "maestro") {
-		return {
-			processes: ["java (maestro)", "maestro-driver"],
-			driverApps: ["dev.mobile.maestro-driver-iosUITests.xctrunner"],
-			paths: [{ path: "~/.maestro", deltaBytes: 18_874_368 }],
-		};
-	}
 	if (framework === "agent-device") {
 		return {
 			processes: ["agent-device daemon"],
@@ -196,13 +185,6 @@ function footprintFor(framework: Profile["framework"]): OkBase["footprint"] {
 			depsBytes: 0,
 			binaryBytes: 58_720_256,
 			notes: ["bundled spec API"],
-		},
-		maestro: {
-			testSourceLoc: 336,
-			testSourceBytes: 9_800,
-			depsBytes: 0,
-			binaryBytes: 214_958_080,
-			notes: ["JVM CLI, global install"],
 		},
 		argent: { testSourceLoc: 298, testSourceBytes: 8_900, depsBytes: 0, binaryBytes: 96_468_992, notes: [] },
 		"agent-device": {
@@ -223,8 +205,8 @@ export function buildSampleRun(): BenchRun {
 		CanonicalId,
 		string[]
 	>;
-	const withStats = PROFILES.map((profile, i) => {
-		const base = okBase(profile, 1000 + i, stepLabels);
+	const withStats = PROFILES.map((profile) => {
+		const base = okBase(profile, profile.seed, stepLabels);
 		return {
 			...base,
 			stats: frameworkStats({ reps: base.reps, prepareMs: base.phases.prepareMs, teardownMs: base.phases.teardownMs }),
@@ -237,11 +219,6 @@ export function buildSampleRun(): BenchRun {
 		version: "0.20.0",
 		phase: "run",
 		error: "parity breach: unmapped tests: sign-in › accepts any email (not in manifest)",
-	};
-	const detox: FrameworkResult = {
-		framework: "detox",
-		status: "unsupported",
-		reason: "Detox 20 attach failed on RN 0.86 (Fabric idling resources hang); timed out after 120 s",
 	};
 	return {
 		schemaVersion: 1,
@@ -279,10 +256,10 @@ export function buildSampleRun(): BenchRun {
 			runs: 3,
 			retries: 0,
 			rebootBetween: false,
-			frameworks: ["warden", "maestro", "argent", "agent-device", "tester-army", "detox"],
+			frameworks: ["warden", "argent", "agent-device", "tester-army"],
 			caffeinated: true,
 		},
-		frameworks: [...ok, testerArmy, detox],
+		frameworks: [...ok, testerArmy],
 	};
 }
 

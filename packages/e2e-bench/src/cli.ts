@@ -51,7 +51,7 @@ function doctorContext(platform: Platform, adapter: BenchAdapter): RunContext {
 	};
 }
 
-/** Doctor table; exit 1 when a framework other than detox (best effort) is not ok. */
+/** Doctor table; exit 1 when a framework is not ok. */
 async function doctor(platform: Platform): Promise<number> {
 	const rows: string[][] = [["framework", "status", "version", "notes / hint"]];
 	let code = 0;
@@ -66,7 +66,7 @@ async function doctor(platform: Platform): Promise<number> {
 			continue;
 		}
 		rows.push([adapter.id, "missing", "-", `${d.reason} -> ${d.installHint}`]);
-		if (adapter.id !== "detox") code = 1;
+		code = 1;
 	}
 	console.log(table(rows));
 	return code;

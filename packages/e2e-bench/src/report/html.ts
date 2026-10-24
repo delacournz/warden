@@ -11,11 +11,9 @@ type FrameworkKey = FrameworkResult["framework"];
 /** Fixed categorical slot per framework: colour follows the entity, never its rank or the filter state. */
 const SLOT: Record<FrameworkKey, number> = {
 	warden: 1,
-	maestro: 2,
 	argent: 3,
 	"agent-device": 4,
 	"tester-army": 5,
-	detox: 6,
 };
 
 /** Validated reference palette (dataviz skill), slots 1-6: [light, dark]. */

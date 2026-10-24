@@ -10,9 +10,7 @@ export const KNOWN_PROCESS_PATTERNS: RegExp[] = [
 	/warden-simd/,
 	/argent.*(simulator-server|ax-service|tool-server)/,
 	/agent-device.*daemon/,
-	/(xctest|XCTRunner).*(maestro|agent-device)/i,
-	/java.*maestro/i,
-	/detox/,
+	/(xctest|XCTRunner).*(agent-device)/i,
 ];
 
 export type IsolateInput = {
@@ -64,8 +62,8 @@ async function stopHelpers(input: IsolateInput): Promise<void> {
 }
 
 /**
- * Android: force-stops every installed driver app of any framework. A resident driver (maestro's
- * `dev.mobile.maestro`, argent's `com.argent.androiddevtools`) holds the device's UiAutomation, which
+ * Android: force-stops every installed driver app of any framework. A resident driver (
+ * argent's `com.argent.androiddevtools`) holds the device's UiAutomation, which
  * kills every later `uiautomator dump`, so the next framework must start without one.
  */
 async function stopDriverApps(input: IsolateInput): Promise<string[]> {

@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<testsuites>
+  <testsuite name="Test Suite" device="warden-iphone-17-6 - iOS 26.5 - 66853073-902D-40F2-803C-64A29A062F17" tests="8" failures="4" time="387.349" timestamp="2026-10-16T12:14:27">
+    <testcase id="settings-account-switches-sign-out" name="settings-account-switches-sign-out" classname="settings-account-switches-sign-out" file="suites/agent-device/settings-account-switches-sign-out.yaml" time="49.93" timestamp="2026-10-16T12:14:27" status="SUCCESS"/>
+    <testcase id="todos-add-complete-filter" name="todos-add-complete-filter" classname="todos-add-complete-filter" file="suites/agent-device/todos-add-complete-filter.yaml" time="56.945" timestamp="2026-10-16T12:15:17" status="ERROR">
+      <failure>Assertion is false: "2 left", id: todos-remaining is visible</failure>
+    </testcase>
+    <testcase id="onboarding-steps-to-sign-in" name="onboarding-steps-to-sign-in" classname="onboarding-steps-to-sign-in" file="suites/agent-device/onboarding-steps-to-sign-in.yaml" time="22.448" timestamp="2026-10-16T12:16:14" status="SUCCESS"/>
+    <testcase id="sign-in-locked-account" name="sign-in-locked-account" classname="sign-in-locked-account" file="suites/agent-device/sign-in-locked-account.yaml" time="36.714" timestamp="2026-10-16T12:16:36" status="SUCCESS"/>
+    <testcase id="todo-detail-open-toggle-delete" name="todo-detail-open-toggle-delete" classname="todo-detail-open-toggle-delete" file="suites/agent-device/todo-detail-open-toggle-delete.yaml" time="66.646" timestamp="2026-10-16T12:17:13" status="ERROR">
+      <failure>Assertion is false: "Active", id: todo-detail-status is visible</failure>
+    </testcase>
+    <testcase id="todo-detail-deep-link" name="todo-detail-deep-link" classname="todo-detail-deep-link" file="suites/agent-device/todo-detail-deep-link.yaml" time="53.974" timestamp="2026-10-16T12:18:20" status="ERROR">
+      <failure>Assertion is false: "Done", id: todo-detail-status is visible</failure>
+    </testcase>
+    <testcase id="sign-in-valid-credentials" name="sign-in-valid-credentials" classname="sign-in-valid-credentials" file="suites/agent-device/sign-in-valid-credentials.yaml" time="52.708" timestamp="2026-10-16T12:19:14" status="ERROR">
+      <failure>Assertion is false: "1 left", id: todos-remaining is visible</failure>
+    </testcase>
+    <testcase id="sign-in-field-errors" name="sign-in-field-errors" classname="sign-in-field-errors" file="suites/agent-device/sign-in-field-errors.yaml" time="47.798" timestamp="2026-10-16T12:20:06" status="SUCCESS"/>
+  </testsuite>
+</testsuites>

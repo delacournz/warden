@@ -25,9 +25,9 @@ const owner: Owner = {
 };
 
 const patterns: ResiduePatterns = {
-	processes: [/maestro/, /warden-simd/, /daemon/, /simulator-server/, /xcodebuild/],
-	driverBundleIds: ["dev.mobile.maestro-driver-ios*", "com.facebook.WebDriverAgentRunner.xctrunner"],
-	dirs: ["~/.maestro"],
+	processes: [/helper/, /warden-simd/, /daemon/, /simulator-server/, /xcodebuild/],
+	driverBundleIds: ["com.example.driver-ios*", "com.facebook.WebDriverAgentRunner.xctrunner"],
+	dirs: ["~/.helperdir"],
 };
 
 describe("parsers", () => {
@@ -36,11 +36,11 @@ describe("parsers", () => {
 			"com.apple.mobilesafari",
 			"nz.co.delacour.warden.example",
 			"com.facebook.WebDriverAgentRunner.xctrunner",
-			"dev.mobile.maestro-driver-iosUITests.xctrunner",
+			"com.example.driver-iosUITests.xctrunner",
 		]);
 	});
 	test("pm list packages", () => {
-		expect(parsePmList("package:com.a\npackage:dev.mobile.maestro\n\n")).toEqual(["com.a", "dev.mobile.maestro"]);
+		expect(parsePmList("package:com.a\npackage:com.example.driver\n\n")).toEqual(["com.a", "com.example.driver"]);
 	});
 	test("glob", () => {
 		expect(matchesBundle("a.b.c", "a.b*")).toBe(true);
@@ -53,14 +53,14 @@ describe("listDriverApps", () => {
 		const exec = fakeExec([{ cmd: "xcrun", result: { stdout: fx("simctl-listapps.txt") } }]);
 		expect(await listDriverApps(exec, "ios", "U", patterns.driverBundleIds)).toEqual([
 			"com.facebook.WebDriverAgentRunner.xctrunner",
-			"dev.mobile.maestro-driver-iosUITests.xctrunner",
+			"com.example.driver-iosUITests.xctrunner",
 		]);
 		expect(exec.calls[0]?.args).toEqual(["simctl", "listapps", "U"]);
 	});
 	test("android uses pm list packages", async () => {
-		const exec = fakeExec([{ cmd: "adb", result: { stdout: "package:dev.mobile.maestro-driver-ios\npackage:x.y\n" } }]);
+		const exec = fakeExec([{ cmd: "adb", result: { stdout: "package:com.example.driver-ios\npackage:x.y\n" } }]);
 		expect(await listDriverApps(exec, "android", "emu-1", patterns.driverBundleIds)).toEqual([
-			"dev.mobile.maestro-driver-ios",
+			"com.example.driver-ios",
 		]);
 		expect(exec.calls[0]?.args).toEqual(["-s", "emu-1", "shell", "pm", "list", "packages"]);
 	});
@@ -72,21 +72,21 @@ describe("checkResidue", () => {
 		const exec = fakeExec([
 			{ cmd: "ps", result: { stdout: fx("ps.txt") } },
 			{ cmd: "xcrun", result: { stdout: fx("simctl-listapps.txt") } },
-			{ cmd: "du", result: () => ({ stdout: `${du}\t/home/u/.maestro\n` }) },
+			{ cmd: "du", result: () => ({ stdout: `${du}\t/home/u/.helperdir\n` }) },
 		]);
 		const input = { exec, platform: "ios" as const, udid: "U", patterns, owner, home: "/home/u", selfPid: 100 };
 		const before = await snapshotResidue(input);
-		expect(before.dirKb).toEqual({ "/home/u/.maestro": 100 });
+		expect(before.dirKb).toEqual({ "/home/u/.helperdir": 100 });
 		du = 150;
 		const r = await checkResidue({ ...input, before });
 		// selfPid 100 and its ancestors are never reported
 		expect(r.processes).toEqual([
 			"102 /Users/x/bin/warden-simd --udid AAAA-BBBB",
-			"300 /opt/homebrew/bin/java -jar maestro-cli.jar",
+			"300 /opt/homebrew/bin/java -jar helper-cli.jar",
 			"600 /Users/x/.agent-device-bench/agent-device/daemon.js --state",
 		]);
 		expect(r.driverApps).toHaveLength(2);
-		expect(r.paths).toEqual([{ path: "/home/u/.maestro", deltaBytes: 50 * 1024 }]);
+		expect(r.paths).toEqual([{ path: "/home/u/.helperdir", deltaBytes: 50 * 1024 }]);
 	});
 
 	test("absent dir reports nothing", async () => {
@@ -106,11 +106,11 @@ describe("killMatching", () => {
 			{ cmd: "kill", result: {} },
 		]);
 		const slept: number[] = [];
-		const killed = await killMatching(exec, [/maestro/], owner, {
+		const killed = await killMatching(exec, [/helper/], owner, {
 			sleep: async (ms) => void slept.push(ms),
 			selfPid: 1,
 		});
-		expect(killed).toEqual(["300 /opt/homebrew/bin/java -jar maestro-cli.jar"]);
+		expect(killed).toEqual(["300 /opt/homebrew/bin/java -jar helper-cli.jar"]);
 		expect(slept).toEqual([3000]);
 		const kills = exec.calls.filter((c) => c.cmd === "kill").map((c) => c.args);
 		expect(kills).toEqual([

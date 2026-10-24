@@ -51,15 +51,26 @@ describe("renderHtml", () => {
 		expect(count("<svg ")).toBe(6);
 		expect(count("<desc ")).toBe(count("<svg "));
 	});
-	test("chart geometry for the sample: 4 ok frameworks", () => {
-		expect(count('<path class="mark"')).toBe(4 + 8 * 4 + 4 * 4 + 2 * 4);
+	test("chart geometry for the sample: 3 ok frameworks", () => {
+		expect(count('<path class="mark"')).toBe(3 + 8 * 3 + 4 * 3 + 2 * 3);
 		const withSteps = run.frameworks.filter((f) => f.status === "ok" && f.stats.stepLatency !== undefined).length;
 		expect(withSteps).toBeGreaterThan(0);
-		expect(count('<rect class="box"')).toBe(8 * 4 + withSteps);
+		expect(count('<rect class="box"')).toBe(8 * 3 + withSteps);
 	});
 	test("failed and unsupported frameworks are explained", () => {
 		expect(html).toContain("failed in phase <code>run</code>");
-		expect(html).toContain("<strong>detox:</strong> unsupported.");
+		const unsupported = renderHtml(
+			{
+				...run,
+				frameworks: run.frameworks.map((f) =>
+					f.framework === "tester-army"
+						? { framework: "tester-army" as const, status: "unsupported" as const, reason: "RN too new" }
+						: f
+				),
+			},
+			manifest
+		);
+		expect(unsupported).toContain("<strong>tester-army:</strong> unsupported. RN too new");
 	});
 	test("text is escaped", () => {
 		const evil = structuredClone(run);

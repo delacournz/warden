@@ -39,6 +39,7 @@ export const isOk = (f: SummaryFramework): f is OkFramework => f.status === "ok"
 
 export const PLATFORM_LABEL: Record<string, string> = { ios: "iOS", android: "Android" };
 
+/** Labels only: the framework list always comes from the dataset, so published runs that still carry `maestro` / `detox` rows keep rendering. */
 export const FRAMEWORK_LABEL: Record<string, string> = {
 	warden: "warden",
 	maestro: "Maestro",
