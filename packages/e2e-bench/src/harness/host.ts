@@ -1,4 +1,5 @@
 import { loadavg } from "node:os";
+import { readXcode } from "@delacour/warden-core/xcode";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Host } from "../results/schema";
 import type { Exec } from "./exec";
@@ -15,9 +16,14 @@ function optional<K extends string>(key: K, value: string | undefined): { [P in 
 	return value === undefined ? {} : ({ [key]: value } as { [P in K]?: string });
 }
 
-/** `xcodebuild -version` first line is `Xcode 16.2`. */
-function xcodeLine(line: string | undefined): string | undefined {
-	return line?.replace(/^Xcode\s+/i, "");
+/** The selected Xcode's version (`27.1`), honouring `DEVELOPER_DIR`; undefined when none is readable. */
+async function xcodeVersion(exec: Exec): Promise<string | undefined> {
+	const xcode = await readXcode(async (cmd, opts) => {
+		const [bin = "", ...args] = cmd;
+		const r = await exec.run(bin, args, { timeoutMs: 15_000, env: opts?.env });
+		return { exitCode: r.spawnError === undefined ? r.code : 127, stdout: r.stdout, stderr: r.stderr };
+	}, process.env);
+	return xcode.success ? xcode.data.version : undefined;
 }
 
 /** `openjdk version "17.0.9" 2023-10-17` to `17.0.9`; the raw line when the shape differs. */
@@ -43,7 +49,7 @@ export async function hostInfo(exec: Exec, opts: { cliPath?: string; wardenVersi
 		out(exec, "sysctl", ["-n", "hw.ncpu"]),
 		out(exec, "sysctl", ["-n", "hw.memsize"]),
 		out(exec, "sw_vers", ["-productVersion"]),
-		out(exec, "xcodebuild", ["-version"]),
+		xcodeVersion(exec),
 		out(exec, "java", ["-version"], "stderr"),
 		out(exec, "node", ["-v"]),
 		opts.wardenVersion === undefined && opts.cliPath !== undefined
@@ -63,7 +69,7 @@ export async function hostInfo(exec: Exec, opts: { cliPath?: string; wardenVersi
 		cores: coreCount,
 		memBytes,
 		macos: macos as string,
-		...optional("xcode", xcodeLine(xcode)),
+		...optional("xcode", xcode),
 		...optional("java", javaVersion(java)),
 		...optional("node", node?.replace(/^v/, "")),
 		bun: Bun.version,

@@ -89,6 +89,15 @@ function simctlVerbs(host: FakeHost, nextId: () => number): Record<string, Handl
 }
 
 /** `xcodebuild`, `xcode-select`, `plutil` (Xcode build, migration record), `launchctl` + `ps` (CPU) handlers. */
+/** `plutil -extract <key> raw -o - …/version.plist`: the Xcode build/version, or a failure when the plist is unreadable. */
+function xcodeVersionPlist(host: FakeHost, args: string[]): ReturnType<typeof ok> | undefined {
+	const answers: Record<string, string> = { ProductBuildVersion: "17F113\n", CFBundleShortVersionString: "26.6\n" };
+	const key = Object.keys(answers).find((k) => args.includes(k));
+	if (!key) return undefined;
+	const onPlist = args.at(-1) === "/Applications/Xcode.app/Contents/version.plist";
+	return host.xcodePlist && onPlist ? ok(answers[key] ?? "") : fail("Could not extract value");
+}
+
 function hostTools(host: FakeHost): Record<string, Handler> {
 	const polls = new Map<string, number>();
 	let cpuIndex = 0;
@@ -96,11 +105,8 @@ function hostTools(host: FakeHost): Record<string, Handler> {
 		xcodebuild: () => ok("Xcode 26.6\nBuild version 17F113\n"),
 		"xcode-select": () => ok("/Applications/Xcode.app/Contents/Developer\n"),
 		plutil: (args) => {
-			if (args.includes("ProductBuildVersion")) {
-				return host.xcodePlist && args.at(-1) === "/Applications/Xcode.app/Contents/version.plist"
-					? ok("17F113\n")
-					: fail("Could not extract value");
-			}
+			const versionPlist = xcodeVersionPlist(host, args);
+			if (versionPlist) return versionPlist;
 			const udid = /Devices\/([^/]+)\/data/.exec(args[args.length - 1] ?? "")?.[1] ?? "";
 			const seen = (polls.get(udid) ?? 0) + 1;
 			polls.set(udid, seen);

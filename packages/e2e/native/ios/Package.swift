@@ -21,7 +21,12 @@ let package = Package(
       dependencies: [
         .product(name: "FBSimulatorAX", package: "idb-libraries")
       ],
-      path: "Sources/warden-simd"
+      path: "Sources/warden-simd",
+      // The stub frameworks (CoreSimulatorStub, AccessibilityPlatformTranslationStub) are staged next to the
+      // binary and linked as `@rpath/...`. SwiftPM from Xcode 27 (Swift 6.2) no longer adds an rpath for the
+      // binary's own directory, so without this dyld only searched /usr/lib/swift and the toolchain
+      // (`Library not loaded`, exit 134). scripts/build.ts fails the build if the rpath is missing.
+      linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path"])]
     ),
     .testTarget(
       name: "warden-simdTests",

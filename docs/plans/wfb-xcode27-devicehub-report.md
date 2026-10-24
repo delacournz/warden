@@ -66,3 +66,24 @@ Host with Xcode 27 selected (`xcode-select -p`), warden from this branch (`bun r
 3. Input-capture bug: should warden warn when Device Hub is running during an e2e run, or refuse? Currently docs-only.
 4. Does `simctl boot` on Xcode 27 auto-open Device Hub? If so, headless needs a different strategy.
 5. Should detection also check `xcode-select` version to give a clearer message when neither viewer runs?
+
+## Verified on Xcode 27.1 (27A9275), 2026-10-24
+
+Host: Xcode 27.1 (27A9275), `/Applications/Xcode.app`, Device Hub already open. Warden-created sims only; leases released by id.
+
+| Step | Result |
+|---|---|
+| 1 process name | `pgrep -lx DeviceHub` → pid; name **confirmed** `DeviceHub` |
+| 2 no Simulator.app | `pgrep -lx Simulator` empty |
+| 3 baseline pref | `DetachOnWindowClose` does not exist |
+| 4 tiling | `warden claim ios` moved nothing; `warden arrange --json` → `{"arranged":[],"viewer":"device-hub"}` |
+| 5 headless | `warden claim ios --headless` left Device Hub untouched, sim still `Booted`, no warnings |
+| 6 pref untouched | still does not exist |
+| 7 watch link | `open "devices://device/open?id=<udid>"` **works**: Device Hub opens/focuses that sim's window (System Events window list reorders). Scheme confirmed |
+| 8 e2e `--headless` | Device Hub open: `onboarding` **passes**. Device Hub quit while the sim stayed booted: **fails**, `tap failed: E_HID: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated`, again on retry; after `simctl shutdown` of that sim, a fresh boot with Device Hub still quit **passes**. Device Hub was relaunched afterwards |
+
+Findings:
+- Device Hub **does** expose one System Events window per device (`<name> – iOS <ver>`), so per-device tiling/closing is possible later (open question 2).
+- Quitting Device Hub invalidates the HID digitizer connection of sims it had open; they need a reboot before warden taps work. A candidate for `warden doctor`/`E_HID` hint text (open question 3).
+- Not exercised: step 9 (manual tap in Device Hub), step 11 (Xcode 26 Simulator.app side by side), whether `simctl boot` itself opens Device Hub (open question 4).
+- `warden-simd` needed an `@executable_path` rpath on Xcode 27.1 (fixed in `57e09cbd`).

@@ -12,6 +12,13 @@ const rules = [
 	{ cmd: "sysctl", match: (a: readonly string[]) => a[1] === "hw.ncpu", result: { stdout: "12\n" } },
 	{ cmd: "sysctl", match: (a: readonly string[]) => a[1] === "hw.memsize", result: { stdout: "38654705664\n" } },
 	{ cmd: "sw_vers", result: { stdout: "15.3\n" } },
+	{ cmd: "xcode-select", result: { stdout: "/Applications/Xcode.app/Contents/Developer\n" } },
+	{ cmd: "plutil", match: (a: readonly string[]) => a[2] === "ProductBuildVersion", result: { stdout: "16C5032a\n" } },
+	{
+		cmd: "plutil",
+		match: (a: readonly string[]) => a[2] === "CFBundleShortVersionString",
+		result: { stdout: "16.2\n" },
+	},
 	{ cmd: "xcodebuild", result: { stdout: "Xcode 16.2\nBuild version 16C5032a\n" } },
 	{ cmd: "java", result: { stderr: 'openjdk version "17.0.9" 2023-10-17\nOpenJDK Runtime\n' } },
 	{ cmd: "node", result: { stdout: "v24.19.0\n" } },

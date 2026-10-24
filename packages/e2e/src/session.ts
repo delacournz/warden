@@ -9,7 +9,9 @@ import { mkdirSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools/devtools.types";
 import { openDevtoolsFacet } from "./devtools/facet";
+import type { NativeLogDeps } from "./devtools/native-log";
 import type { Driver, DriverResult } from "./driver/driver.types";
+import { type HidRecoveryDeps, rebootSim, stopResidentHelper } from "./driver/ios/hid-recovery";
 import { cacheObservations } from "./driver/observation-cache";
 import { traceDriver } from "./driver/traced-driver";
 import { type E2eEnv, readEnv } from "./env";
@@ -51,6 +53,15 @@ export type Session = {
 	readonly results: ResultsWriter;
 	/** builds `app`/`device`/`screen` for each attempt (T4/T6); settable so tests can fake it */
 	fixtures: FixtureFactory | undefined;
+	/** how a failed attempt's `native.log` / crash reports are read; absent in unit tests (nothing is spawned) */
+	nativeLog: NativeLogDeps | undefined;
+	/**
+	 * Present for iOS runs with recovery wired: after a test failed with a lost HID connection, reboots the sim and
+	 * reopens the driver and devtools, once per session. Resolves `true` when the test is worth running again.
+	 */
+	recoverHid: (() => Promise<boolean>) | undefined;
+	/** closes the open driver and devtools so the next call opens them afresh (the device was rebooted under them) */
+	resetDevice(): Promise<void>;
 	/** where the console reporter prints one line; default fd 1 */
 	readonly log: (line: string) => void;
 	/** the running attempt, if any */
@@ -97,6 +108,10 @@ export type SessionOptions = {
 	driverFactory?: DriverFactory;
 	/** how to attach devtools; default {@link openDevtools} */
 	devtools?: DevtoolsOpener;
+	/** native log reader; default {@link setDefaultNativeLog}'s */
+	nativeLog?: NativeLogDeps;
+	/** sim reboot seams; default {@link setDefaultHidRecovery}'s */
+	hidRecovery?: HidRecoveryDeps;
 	/** fixture factory; default {@link setDefaultFixtureFactory}'s */
 	fixtures?: FixtureFactory;
 	/** console line sink; default writes to fd 1 (bun test captures `process.stdout`, fd 1 is not captured) */
@@ -111,6 +126,18 @@ const slot = (): SessionSlot => globalThis as SessionSlot;
 
 let defaultFactory: DriverFactory | undefined;
 let defaultFixtures: FixtureFactory | undefined;
+let defaultNativeLog: NativeLogDeps | undefined;
+let defaultHidRecovery: HidRecoveryDeps | undefined;
+
+/** Wires the HID-loss recovery used when a session gets none (`preload.ts` registers the real one). */
+export function setDefaultHidRecovery(deps: HidRecoveryDeps | undefined): void {
+	defaultHidRecovery = deps;
+}
+
+/** Wires the native-log reader used when a session gets none (`preload.ts` registers the real one). */
+export function setDefaultNativeLog(deps: NativeLogDeps | undefined): void {
+	defaultNativeLog = deps;
+}
 
 /** Wires the factory used when `getSession` gets none (`driver/open.ts`'s opener, set by the package entry). */
 export function setDefaultDriverFactory(factory: DriverFactory | undefined): void {
@@ -157,6 +184,9 @@ function resolveEnv(env: E2eEnv | undefined): E2eEnv {
 	return read.data;
 }
 
+const WARM_TRIES = 15;
+const WARM_INTERVAL_MS = 2_000;
+
 export function createSession(opts: SessionOptions = {}): Session {
 	const resolved = resolveEnv(opts.env);
 	const factory = opts.driverFactory ?? defaultFactory ?? missingFactory;
@@ -173,11 +203,78 @@ export function createSession(opts: SessionOptions = {}): Session {
 	const openFacet = opts.devtools ?? openDevtools;
 	let attempt: AttemptContext | undefined;
 
+	const hid = opts.hidRecovery ?? defaultHidRecovery;
+	let hidRecovered = false;
+	const note = (line: string): void => (opts.log ?? writeLine)(line);
+
+	async function resetDevice(): Promise<void> {
+		const driver = opened;
+		opened = undefined;
+		current = undefined;
+		await driver?.then(
+			(d) => d.close(),
+			() => undefined
+		);
+		const attaching = devtoolsOpening;
+		devtoolsOpening = undefined;
+		facet = undefined;
+		await attaching?.then(
+			(result) => (result.success ? result.data.close() : undefined),
+			() => undefined
+		);
+	}
+
+	/**
+	 * A freshly booted sim answers the first accessibility reads with `E_AX_UNAVAILABLE` until the in-sim bridge binds
+	 * (what `warden e2e`'s warm step waits out): snapshot until one succeeds, a few times, then carry on regardless.
+	 */
+	async function warmBridge(): Promise<void> {
+		const sleep = hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+		for (let tries = 0; tries < WARM_TRIES; tries += 1) {
+			try {
+				const driver = await session.driver();
+				if ((await driver.snapshot()).success) return;
+			} catch {
+				// not up yet: try again
+			}
+			await sleep(WARM_INTERVAL_MS);
+		}
+	}
+
+	/** Only the device `warden e2e` leased (this session's `WARDEN_UDID`), only once: a second loss fails as before. */
+	async function recoverHid(): Promise<boolean> {
+		if (hid === undefined || closing !== undefined) return false;
+		const name = resolved.deviceName ?? resolved.udid;
+		if (hidRecovered) {
+			note(`sim ${name}: HID connection lost again after a reboot; \`warden release <id> --shutdown\` and retry`);
+			return false;
+		}
+		hidRecovered = true;
+		await resetDevice();
+		if (resolved.simdSocket !== undefined) {
+			const stopped = await stopResidentHelper(hid, resolved.simdSocket);
+			if (!stopped.success) note(`sim ${name}: ${stopped.error}`);
+		}
+		const rebooted = await rebootSim(hid, resolved.udid);
+		if (!rebooted.success) {
+			note(
+				`sim ${name}: HID connection lost, reboot failed: ${rebooted.error}; \`warden release <id> --shutdown\` and retry`
+			);
+			return false;
+		}
+		await warmBridge();
+		note(`sim ${name}: HID connection lost (Device Hub quit?), rebooted; running the test again`);
+		return true;
+	}
+
 	const session: Session = {
 		env: resolved,
 		out,
 		results,
 		fixtures: opts.fixtures ?? defaultFixtures,
+		nativeLog: opts.nativeLog ?? defaultNativeLog,
+		recoverHid: hid === undefined || resolved.platform !== "ios" ? undefined : recoverHid,
+		resetDevice,
 		log: opts.log ?? writeLine,
 		get attempt() {
 			return attempt;
@@ -323,6 +420,13 @@ export function attemptSession(session: Session, binding: () => AttemptBinding):
 		get results() {
 			return session.results;
 		},
+		get nativeLog() {
+			return session.nativeLog;
+		},
+		get recoverHid() {
+			return session.recoverHid;
+		},
+		resetDevice: () => session.resetDevice(),
 		get fixtures() {
 			return session.fixtures;
 		},

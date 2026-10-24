@@ -377,7 +377,11 @@ describe("runLocalBuild compiler cache env", () => {
 				gitCalls.push(joined);
 				return { exitCode: 0, stdout: `${root}\n${root}/.git\nrefs/heads/main\n`, stderr: "" };
 			}
-			if (joined === "xcodebuild -version") return { exitCode: 0, stdout: "Xcode 26.0\n", stderr: "" };
+			if (joined === "xcode-select -p") return { exitCode: 0, stdout: "/X/Xcode.app/Contents/Developer\n", stderr: "" };
+			if (joined.startsWith("plutil -extract CFBundleShortVersionString"))
+				return { exitCode: 0, stdout: "26.0\n", stderr: "" };
+			if (joined.startsWith("plutil -extract ProductBuildVersion"))
+				return { exitCode: 0, stdout: "17A400\n", stderr: "" };
 			if (cmd[2] === "xb") {
 				envs.push(opts?.env);
 				fakeApp(out, "A.app");
@@ -389,6 +393,29 @@ describe("runLocalBuild compiler cache env", () => {
 		return { root, envs, gitCalls, exec, project };
 	}
 	const common = { log: () => {} };
+
+	test("a failed iOS build reports file:line errors and keeps the full log", async () => {
+		const s = iosSetup();
+		const bad = "/src/App/Bad.swift:2:14: error: cannot convert value of type 'String' to specified type 'Int'";
+		const exec: Exec = async (cmd, opts) =>
+			cmd[2] === "xb" ? { exitCode: 65, stdout: `noise\n${bad}\n`, stderr: "** BUILD FAILED **\n" } : s.exec(cmd, opts);
+		const result = await runLocalBuild({
+			...common,
+			exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: join(dir, "wh"),
+		});
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error).toContain("local build failed");
+		expect(result.error).toContain("1 error: /src/App/Bad.swift:2:14: cannot convert value");
+		const logPath = /full log: (\S+)/.exec(result.error)?.[1] ?? "";
+		expect(logPath.startsWith(join(dir, "wh", "logs"))).toBe(true);
+		expect(readFileSync(logPath, "utf8")).toContain(bad);
+	});
 
 	test("iOS build gets ccache env", async () => {
 		const s = iosSetup();

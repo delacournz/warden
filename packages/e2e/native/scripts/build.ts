@@ -36,6 +36,20 @@ export function parseXcodeVersion(output: string): string {
 	return build ? `${version} (${build})` : version;
 }
 
+/**
+ * `otool -l` output → throws unless the binary has an `LC_RPATH` of its own directory. The stub frameworks are
+ * linked as `@rpath/…` and staged beside the binary; Xcode 27's SwiftPM stopped adding that rpath itself
+ * (Package.swift's `linkerSettings` does), and the failure is a dyld abort only at first launch.
+ */
+export function checkRpath(otoolLoadCommands: string): void {
+	const rpaths = [...otoolLoadCommands.matchAll(/cmd LC_RPATH[\s\S]*?path (\S+) \(offset/g)].map((m) => m[1]);
+	if (!rpaths.some((p) => p === "@executable_path" || p === "@loader_path")) {
+		throw new Error(
+			`warden-simd has no @executable_path rpath (has: ${rpaths.join(", ") || "none"}): the stub frameworks beside it would not load`
+		);
+	}
+}
+
 export type Manifest = { version: string; idb: string; xcode: string; builtAt: string };
 
 export function buildManifest(input: { version: string; lock: IdbLock; xcode: string; now: Date }): Manifest {
@@ -92,6 +106,7 @@ export async function main(): Promise<number> {
 		await run(exec, ["swift", "build", "-c", "release", "--package-path", packagePath, "--show-bin-path"])
 	).trim();
 
+	checkRpath(await run(exec, ["otool", "-l", join(binDir, PRODUCT)]));
 	const frameworks = (await readdir(binDir)).filter((name) => name.endsWith(".framework")).sort();
 	if (frameworks.length === 0) throw new Error(`no stub frameworks next to the binary in ${binDir}`);
 	const dist = join(NATIVE_DIR, "dist");
