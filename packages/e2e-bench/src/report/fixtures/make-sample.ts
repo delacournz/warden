@@ -8,6 +8,7 @@ import {
 	type CanonicalId,
 	type FrameworkResult,
 	type OkFrameworkResult,
+	type ProcessRow,
 	type RepResult,
 	type StepResult,
 	type TestResult,
@@ -263,9 +264,55 @@ export function buildSampleRun(): BenchRun {
 	};
 }
 
+type ProcessShape = { name: string; weight: number; rssMb: number; spawns: number };
+
+const MB = 1024 ** 2;
+
+const HOST_SHAPES: Record<string, readonly ProcessShape[]> = {
+	warden: [
+		{ name: "bun test", weight: 0.46, rssMb: 92, spawns: 1 },
+		{ name: "warden-simd", weight: 0.27, rssMb: 31, spawns: 1 },
+		{ name: "SimulatorFrameworkBridge-iOS serve", weight: 0.16, rssMb: 22, spawns: 11 },
+		{ name: "xcrun simctl launch", weight: 0.07, rssMb: 8, spawns: 9 },
+		{ name: "simctl", weight: 0.04, rssMb: 5, spawns: 9 },
+	],
+	argent: [
+		{ name: "node tool-server.cjs", weight: 0.7, rssMb: 140, spawns: 1 },
+		{ name: "bun test", weight: 0.2, rssMb: 60, spawns: 1 },
+		{ name: "xcrun simctl io", weight: 0.1, rssMb: 6, spawns: 14 },
+	],
+	"agent-device": [
+		{ name: "node daemon.js", weight: 0.55, rssMb: 310, spawns: 1 },
+		{ name: "xcodebuild", weight: 0.35, rssMb: 280, spawns: 1 },
+		{ name: "bun test", weight: 0.1, rssMb: 50, spawns: 1 },
+	],
+};
+
+const SIM_SHAPES: readonly ProcessShape[] = [
+	{ name: "backboardd", weight: 0.38, rssMb: 82, spawns: 1 },
+	{ name: "Example", weight: 0.31, rssMb: 310, spawns: 1 },
+	{ name: "SpringBoard", weight: 0.18, rssMb: 140, spawns: 1 },
+	{ name: "launchd_sim", weight: 0.13, rssMb: 41, spawns: 1 },
+];
+
+/** Per-process rows of one rep whose host (sim) CPU-seconds are `hostCpu` (`simCpu`), shapes as above. */
+function processRowsFor(framework: string, hostCpu: number, simCpu: number): ProcessRow[] {
+	const rows = (scope: "host" | "sim", shapes: readonly ProcessShape[], cpu: number): ProcessRow[] =>
+		shapes.map((s) => ({
+			name: s.name,
+			scope,
+			cpuSeconds: Math.round(cpu * s.weight * 100) / 100,
+			rssAvgBytes: s.rssMb * MB,
+			rssPeakBytes: Math.round(s.rssMb * 1.1) * MB,
+			spawnCount: s.spawns,
+			shareOfScopePct: Math.round(s.weight * 1000) / 10,
+		}));
+	return [...rows("host", HOST_SHAPES[framework] ?? [], hostCpu), ...rows("sim", SIM_SHAPES, simCpu)];
+}
+
 /**
  * `run` with per-rep resources on every ok framework (`cpuSecondsOf(framework, repIndex)` host CPU-seconds,
- * a fixed window) and a whole-framework host split by group. The committed sample has none, so the report
+ * a fixed window, realistic per-process `processes` rows) and a whole-framework host split by group. The committed sample has none, so the report
  * goldens stay the pre-CPU-seconds format; tests of the new columns use this.
  */
 export function withRepCpu(run: BenchRun, cpuSecondsOf: (framework: string, rep: number) => number): BenchRun {
@@ -283,6 +330,7 @@ export function withRepCpu(run: BenchRun, cpuSecondsOf: (framework: string, rep:
 				sim: f.resources.sim,
 				cpuSeconds,
 				rssPeakBytes: host.rssPeakBytes,
+				processes: processRowsFor(f.framework, cpuSeconds, cpuSeconds * 3),
 			};
 		}
 		f.resources.host = {

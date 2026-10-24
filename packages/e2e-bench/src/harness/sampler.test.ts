@@ -722,7 +722,7 @@ describe("exit CPU of bench-spawned roots (bench-fidelity-R4)", () => {
 		d.sampler.exited(100, 1.2);
 		await d.tickAt(1000);
 		const { host, ticks, exits } = await d.sampler.stop();
-		expect(exits).toEqual([{ t: 700, cpuSec: expect.closeTo(0.7, 6), group: "bun-test" }]);
+		expect(exits).toEqual([{ t: 700, cpuSec: expect.closeTo(0.7, 6), group: "bun-test", name: "bun test" }]);
 		// 0.5 seen by the ticks (a process born since the baseline) + 0.7 at exit = the root's rusage
 		expect(host.cpuSeconds).toBeCloseTo(1.2, 6);
 		expect(host.byGroup?.["bun-test"]?.cpuSeconds).toBeCloseTo(1.2, 6);
@@ -774,7 +774,7 @@ describe("exit CPU of bench-spawned roots (bench-fidelity-R4)", () => {
 		d.setClock(600);
 		d.sampler.exited(100, 0.5);
 		const { exits } = await d.sampler.stop();
-		expect(exits).toEqual([{ t: 600, cpuSec: expect.closeTo(0.4, 6), group: "warden-cli" }]);
+		expect(exits).toEqual([{ t: 600, cpuSec: expect.closeTo(0.4, 6), group: "warden-cli", name: "warden run" }]);
 	});
 
 	test("S4: a root registered while ps ran, seen by one tick and gone, is not charged twice", async () => {

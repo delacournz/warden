@@ -42,7 +42,7 @@ Device runs take about an hour (4 frameworks x 3 reps x 2-4 min). Keep the Mac a
 ```
 .bench/<run-id>/
   bench-results.json     schema v1 (src/results/schema.ts), rewritten after every framework
-  report.md              summary, per-test matrix, steps, resources, residue, problems
+  report.md              summary, per-test matrix, steps, resources (CPU-seconds per rep first), where the CPU goes (per-process table), residue, problems
   report.html            one self-contained file, inline data and SVG charts, no CDN
   logs/                  one log per framework and phase (<fw>.<phase>)
   artifacts/<fw>/rep-<n>/  native reporter output, resources.ndjson, failure artifacts
@@ -70,6 +70,8 @@ These are printed in every report:
 - Android animation scales are reset to the device's original values before every framework and restored at the end
 
 Resource sampling, in detail:
+
+- **Per process.** Each 500 ms tick also records `{ pid, name, scope, cpuSec, rssBytes }` for every host and (iOS) simulator process that used CPU or holds at least 1 MiB (`processes` in `resources.ndjson`; older files lack it). The report's "Where the CPU goes" section shows, per framework, the warm-median rep's rows grouped by label (`warden-simd`, `bun test`, `SimulatorFrameworkBridge-iOS serve`, `xcrun simctl launch`, `backboardd`, `SpringBoard`, the app, …): CPU-seconds, share of the scope, RSS avg and peak, and spawns (distinct pids a tick saw). CPU a bench child used between ticks shows as `<label> (exit charge)` rows. `summary.json` (version 2) carries the same rows as the optional `processes`; `bench compare` diffs them by name.
 
 - **Android `sim`** is `adb shell top -n 1` every 2 s, filtered by name (`src/harness/sampler.ts`, `ANDROID_TARGET`): the app under test and its `.test` apk, `uiautomator`, instrumentation runners (`instrumentation`, which also catches agent-device's `SnapshotInstrumentation`), `com.callstack.agentdevice*`, `com.argent.*` and `warden-uiad`. It is case-insensitive, because helper class names differ in case. A helper that renames its `app_process` (as `warden-uiad` does) shows up under the new name in `top`; add its name there when a framework gains a resident helper with a name this list does not cover. Before this the pattern was case-sensitive and only knew warden's helpers, so other frameworks' drivers were missing from their `sim` column and warden looked heavier than it was (first Android run, `v2-android-r2`: warden 384 MB average against 236 to 268 MB for the others).
 - **Host** processes are the framework's process tree plus every pid the bench spawned. The bench keeps every spawned pid for the whole session, and the OS reuses pids, so each pid is stamped with its `ps lstart` the first time the sampler sees it and only counts while that start time matches. A spawned child that had already exited before the sampler first looked is never trusted again. Android's `top` rows are matched by name on every read, so no pid is carried over there.
