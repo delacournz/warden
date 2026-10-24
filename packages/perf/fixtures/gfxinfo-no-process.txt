@@ -1,0 +1,4 @@
+Applications Graphics Acceleration Info:
+Uptime: 3600000 Realtime: 3641000
+
+No process found for: com.example.app
