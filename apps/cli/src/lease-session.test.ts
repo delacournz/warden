@@ -14,6 +14,7 @@ import {
 	overlapHide,
 	type RunEnsureApp,
 	sessionEnsureApp,
+	setAfterRebootEnv,
 } from "./lease-session";
 import type { HideStart } from "./sim-windows";
 import { fakeSimctl } from "./simctl.testing";
@@ -449,5 +450,24 @@ describe("overlapHide (16-8)", () => {
 		});
 		expect(done).toEqual({ result: 1, failed: [] });
 		expect(events).toEqual(["leased", "install"]);
+	});
+});
+
+describe("setAfterRebootEnv", () => {
+	const self = ["/usr/bin/warden"];
+
+	test("non-headless on macOS → the argv that reopens a rebooted sim's window", () => {
+		const env: Record<string, string | undefined> = {};
+		setAfterRebootEnv(env, false, self, "darwin");
+		expect(JSON.parse(env.WARDEN_AFTER_REBOOT ?? "[]")).toEqual(["/usr/bin/warden", "arrange", "--open", "{udid}"]);
+	});
+
+	test("headless or not macOS → removed, so children never inherit the parent's", () => {
+		const env: Record<string, string | undefined> = { WARDEN_AFTER_REBOOT: '["x"]' };
+		setAfterRebootEnv(env, true, self, "darwin");
+		expect(env.WARDEN_AFTER_REBOOT).toBeUndefined();
+		env.WARDEN_AFTER_REBOOT = '["x"]';
+		setAfterRebootEnv(env, false, self, "linux");
+		expect(env.WARDEN_AFTER_REBOOT).toBeUndefined();
 	});
 });

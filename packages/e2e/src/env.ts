@@ -23,6 +23,11 @@ export const ENV_NAMES = {
 	simd: "WARDEN_SIMD",
 	simdSocket: "WARDEN_SIMD_SOCKET",
 	logTimestamps: "WARDEN_LOG_TIMESTAMPS",
+	/**
+	 * JSON argv (`{udid}` is replaced) the session runs after it rebooted the sim following a lost HID connection;
+	 * `warden` sets it for non-headless runs so the sim's viewer window comes back (packages/e2e cannot import apps/cli)
+	 */
+	afterReboot: "WARDEN_AFTER_REBOOT",
 	/** the `warden` that started this process: the preload refuses to run when it is not this package's version */
 	version: "WARDEN_VERSION",
 } as const;
@@ -70,6 +75,7 @@ const schema = z.object({
 	simd: z.string().optional(),
 	simdSocket: z.string().optional(),
 	logTimestamps: toggle.default(false),
+	afterReboot: launchArgs.optional(),
 	version: z.string().optional(),
 });
 
@@ -93,6 +99,8 @@ export type E2eEnv = {
 	simdSocket?: string;
 	/** warden already stamps the log lines: the spec reporter prints no clock of its own */
 	logTimestamps: boolean;
+	/** `WARDEN_AFTER_REBOOT`: argv run after a HID-loss reboot, `{udid}` not yet replaced (see `runAfterReboot`) */
+	afterReboot?: string[];
 	/** `WARDEN_VERSION`: the warden that started this run */
 	wardenVersion?: string;
 };
@@ -125,6 +133,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 			simdSocket: v.simdSocket,
 			wardenVersion: v.version,
 		}),
+		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
 	};
 }
 

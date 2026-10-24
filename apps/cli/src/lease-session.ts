@@ -8,6 +8,7 @@ import { processAlive } from "@delacour/warden-core/liveness";
 import { claimPorts, parsePortSpec } from "@delacour/warden-core/ports";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { selfCommand } from "./autogc";
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
 import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
 import type { CommandContext } from "./context";
@@ -132,6 +133,22 @@ export function childEnv(
 export function setHeadlessEnv(env: Record<string, string | undefined>, headless: boolean): void {
 	if (headless) env.WARDEN_HEADLESS = "1";
 	else delete env.WARDEN_HEADLESS;
+}
+
+/**
+ * `WARDEN_AFTER_REBOOT` in a child env for a non-headless macOS run: the argv the e2e session runs after it rebooted a
+ * sim whose HID connection was lost (`warden arrange --open <udid>`: reopen the sim's Device Hub window, tile again).
+ * `packages/e2e` cannot import this app, so the seam is an env var holding a JSON argv, like `WARDEN_LAUNCH_ARGS`.
+ * Headless runs get none (they never show windows); removed otherwise so children see the run's own value.
+ */
+export function setAfterRebootEnv(
+	env: Record<string, string | undefined>,
+	headless: boolean,
+	self: readonly string[] = selfCommand(),
+	os: NodeJS.Platform = process.platform
+): void {
+	if (headless || os !== "darwin") delete env.WARDEN_AFTER_REBOOT;
+	else env.WARDEN_AFTER_REBOOT = JSON.stringify([...self, "arrange", "--open", "{udid}"]);
 }
 
 /** `--app` family option values shared by `run` and `batch`. */
@@ -504,10 +521,9 @@ export async function claimAll(
 		await releaseDevices(ctx, leaseIds);
 	};
 	const env = childEnv(ctx.env, outcome, ports.data);
-	setHeadlessEnv(
-		env,
-		(args.legFlags ?? [args.flags]).some((f) => f.headless === true)
-	);
+	const headless = (args.legFlags ?? [args.flags]).some((f) => f.headless === true);
+	setHeadlessEnv(env, headless);
+	setAfterRebootEnv(env, headless);
 	const failed = legsFailure(runs, outcome, lost);
 	if (failed) {
 		await args.beforeRelease?.();

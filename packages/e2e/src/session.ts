@@ -11,7 +11,7 @@ import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools
 import { openDevtoolsFacet } from "./devtools/facet";
 import type { NativeLogDeps } from "./devtools/native-log";
 import type { Driver, DriverResult } from "./driver/driver.types";
-import { type HidRecoveryDeps, rebootSim, stopResidentHelper } from "./driver/ios/hid-recovery";
+import { type HidRecoveryDeps, rebootSim, runAfterReboot, stopResidentHelper } from "./driver/ios/hid-recovery";
 import { cacheObservations } from "./driver/observation-cache";
 import { traceDriver } from "./driver/traced-driver";
 import { type E2eEnv, readEnv } from "./env";
@@ -262,6 +262,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 			);
 			return false;
 		}
+		await runAfterReboot({ ...hid, log: note }, resolved.afterReboot, resolved.udid);
 		await warmBridge();
 		note(`sim ${name}: HID connection lost (Device Hub quit?), rebooted; running the test again`);
 		return true;

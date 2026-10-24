@@ -15,6 +15,7 @@ import {
 	hideSimWindows,
 	layoutWindows,
 	openDeviceHubWindows,
+	reopenSimWindows,
 	type SimWindow,
 	startHideSimWindows,
 } from "./sim-windows";
@@ -1205,5 +1206,44 @@ describe("autoArrangeSimWindows after opening Device Hub windows", () => {
 		);
 		expect(reopened).toEqual([["warden-iphone-17-2"]]);
 		expect(i).toBe(4);
+	});
+});
+
+describe("reopenSimWindows", () => {
+	const list = simctlDevicesJson({
+		"iOS-27-1": [
+			{ udid: "U1", name: "warden-iphone-17-1", state: "Booted" },
+			{ udid: "U2", name: "warden-iphone-17-2", state: "Booted" },
+		],
+	});
+
+	test("Device Hub: opens the named udid's window only, then tiles all warden windows", async () => {
+		const calls: string[][] = [];
+		const inner = viewerExec("device-hub", calls);
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd.join(" ") === "xcrun simctl list devices -j") return { exitCode: 0, stdout: list, stderr: "" };
+			if (cmd[0] === "osascript" && (cmd[4] ?? "").includes("NSScreen")) {
+				calls.push([...cmd]);
+				const windows = [
+					sim("warden-iphone-17-2 – iOS 27.1", 340, 751),
+					sim("warden-iphone-17-1 – iOS 27.1", 340, 751),
+				];
+				return { exitCode: 0, stdout: JSON.stringify({ screen, windows }), stderr: "" };
+			}
+			return inner(cmd, opts);
+		};
+		const opened = await reopenSimWindows({ exec, env: {}, os: "darwin", sleep: async () => {} }, ["U2"]);
+		expect(opened).toEqual(["warden-iphone-17-2"]);
+		expect(calls.filter((c) => c[0] === "open")).toEqual([["open", "-g", "devices://device/open?id=U2"]]);
+		expect(osascripts(calls).length).toBeGreaterThanOrEqual(2);
+	});
+
+	test("WARDEN_ARRANGE=0, not macOS or no udids → nothing runs", async () => {
+		const calls: string[][] = [];
+		const exec = viewerExec("device-hub", calls);
+		expect(await reopenSimWindows({ exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin" }, ["U1"])).toEqual([]);
+		expect(await reopenSimWindows({ exec, env: {}, os: "linux" }, ["U1"])).toEqual([]);
+		expect(await reopenSimWindows({ exec, env: {}, os: "darwin" }, [])).toEqual([]);
+		expect(calls).toEqual([]);
 	});
 });

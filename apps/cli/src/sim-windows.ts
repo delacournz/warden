@@ -283,6 +283,32 @@ export async function openDeviceHubWindows(
 	return opened;
 }
 
+/**
+ * Put leased sims' windows back after something rebooted them (`warden arrange --open <udid…>`, called by
+ * the e2e session after its HID-loss reboot): ask Device Hub for their windows (`openDeviceHubWindows`:
+ * only while it runs), wait for them and tile everything. Sims `simctl` does not know are skipped.
+ * Returns the names it asked for; never throws.
+ */
+export async function reopenSimWindows(deps: AutoArrangeDeps, udids: readonly string[]): Promise<string[]> {
+	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0" || udids.length === 0) return [];
+	const list = await deps.exec(["xcrun", "simctl", "list", "devices", "-j"], { timeoutMs: IOS_TIMEOUTS.listMs });
+	const all = list.exitCode === 0 ? parseAllSims(list.stdout) : undefined;
+	if (!all?.success) return [];
+	const sims = all.data.filter((d) => udids.includes(d.udid)).map((d) => ({ udid: d.udid, name: d.name }));
+	const opened = await openDeviceHubWindows(deps, sims);
+	await autoArrangeSimWindows(
+		deps,
+		sims.map((s) => s.name),
+		opened,
+		(missing) =>
+			openDeviceHubWindows(
+				deps,
+				sims.filter((s) => missing.includes(s.name))
+			)
+	);
+	return opened;
+}
+
 /** A device this run leased: closing windows is limited to these names. */
 export type LeasedSim = { udid: string; name: string };
 
