@@ -38,6 +38,8 @@ warden install --codex    # force Codex only: hooks in $CODEX_HOME/hooks.json
 
 Agents are detected from `~/.claude` / `claude` on `PATH` and `$CODEX_HOME` (`~/.codex`) / `codex` on `PATH`; with none found only the binary is installed. Edits to `~/.claude/settings.json` and Codex `hooks.json` show a diff and ask first: `--yes` skips the prompt, and a non-TTY without `--yes` skips the step. The Claude rule `~/.claude/rules/warden.md` is written directly, and the skill is placed by the `skills` CLI (it may prompt; `--yes` is passed through). `--dry-run` only prints. Merges are idempotent and keep all other config. After a first Codex install, run `/hooks` in Codex to trust the new hook. See [Agents](/docs/guides/agents) for what gets installed.
 
+`warden install` also sets up tab completion for your shell (zsh, bash or fish, from `$SHELL`): `warden sims <tab>` lists `audit / prune / delete`, and in zsh further tabs cycle through them. The `.zshrc` / `.bashrc` line is shown and confirmed like the rest; `--no-completion` skips it. See [`warden completion`](/docs/reference/cli#warden-completion-zshbashfish).
+
 </Step>
 <Step>
 

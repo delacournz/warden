@@ -13,6 +13,7 @@ export function testProject(overrides: Partial<Project> = {}): Project {
 		buildConfiguration: "Debug",
 		cacheDirs: [],
 		origin: "config",
+		source: "repo",
 		...overrides,
 	};
 }

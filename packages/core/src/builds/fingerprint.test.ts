@@ -15,6 +15,7 @@ import {
 	releaseKey,
 } from "./fingerprint";
 import { combineKey } from "./js-inputs";
+import { PREBUILT_RN_SALT } from "./prebuilt-rn";
 
 const HASH = "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a";
 
@@ -109,6 +110,22 @@ describe("computeCacheKey", () => {
 		const h = host("a");
 		const res = await computeCacheKey(h.exec, testProject({ fingerprintCommand: "fp" }), "ios", h.readFile);
 		expect(res).toEqual({ success: true, data: { key: HASH, native: HASH } });
+	});
+
+	test("RN 0.82 iOS: the prebuilt core salts the key; opt-outs and Android keep the plain one", async () => {
+		const h = host("a");
+		const readFile = async (path: string) =>
+			path.endsWith("react-native/package.json") ? new TextEncoder().encode('{"version":"0.82.1"}') : undefined;
+		const project = testProject({ fingerprintCommand: "fp" });
+		const key = async (p = project, platform: "ios" | "android" = "ios", env = {}) => {
+			const res = await computeCacheKey(h.exec, p, platform, readFile, undefined, env);
+			if (!res.success) throw new Error("expected key");
+			return res.data.key;
+		};
+		expect(await key()).toBe(combineKey(HASH, PREBUILT_RN_SALT));
+		expect(await key(testProject({ fingerprintCommand: "fp", prebuiltReactNative: false }))).toBe(HASH);
+		expect(await key(project, "ios", { WARDEN_PREBUILT_RN: "0" })).toBe(HASH);
+		expect(await key(project, "android")).toBe(HASH);
 	});
 
 	test("native+js: the key covers the JS sources, the native hash stays separate", async () => {

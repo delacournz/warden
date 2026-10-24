@@ -12,7 +12,8 @@ import { compilerCacheEnv } from "./compiler-cache";
 import type { Project } from "./config";
 import { formatBuildFailure, parseBuildDiagnostics } from "./diagnostics";
 import { type CacheKey, computeCacheKey } from "./fingerprint";
-import { combineKey } from "./js-inputs";
+import { combineKey, readFileOrUndefined } from "./js-inputs";
+import { planPrebuiltRn } from "./prebuilt-rn";
 
 const simProducts = (configuration: BuildConfiguration) =>
 	join("Build", "Products", `${configuration}-iphonesimulator`);
@@ -212,19 +213,35 @@ async function gitToplevel(deps: LocalBuildDeps): Promise<string | undefined> {
 	}
 }
 
+/** Env that opts the iOS build into React Native's precompiled core (RN 0.81-0.83); independent of the compiler-cache switch. */
+async function prebuiltRnEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
+	const plan = await planPrebuiltRn({
+		platform: deps.platform,
+		projectRoot: deps.project.root,
+		optOut: deps.project.prebuiltReactNative === false,
+		env: deps.env,
+		readFile: readFileOrUndefined,
+	});
+	return plan.env;
+}
+
 async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
-	if (deps.compilerCache === false) return {};
+	const prebuilt = await prebuiltRnEnv(deps);
+	if (deps.compilerCache === false) return prebuilt;
 	const { platform } = deps;
 	const gitTop = platform === "ios" ? await gitToplevel(deps) : undefined;
 	const xcode = platform === "ios" ? await readXcode(deps.exec, deps.env) : undefined;
-	return compilerCacheEnv({
-		platform,
-		wardenHome: deps.wardenHome ?? resolveWardenHome(deps.env),
-		gitTop: gitTop || undefined,
-		xcodeMajor: xcode?.success ? xcode.data.major : undefined,
-		enabled: true,
-		baseEnv: deps.env,
-	});
+	return {
+		...prebuilt,
+		...compilerCacheEnv({
+			platform,
+			wardenHome: deps.wardenHome ?? resolveWardenHome(deps.env),
+			gitTop: gitTop || undefined,
+			xcodeMajor: xcode?.success ? xcode.data.major : undefined,
+			enabled: true,
+			baseEnv: deps.env,
+		}),
+	};
 }
 
 /** What a local build produced: the artifact, and the project's key after the build when the build itself moved it (17-1). */
@@ -363,7 +380,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
 	});
 	if (res.exitCode !== 0) return err(`local build failed: ${describeBuildFailure(deps, argv, res)}`);
-	const after = await computeCacheKey(deps.exec, project, platform);
+	const after = await computeCacheKey(deps.exec, project, platform, undefined, undefined, deps.env);
 	if (!after.success) return after;
 	const moved = after.data.key !== deps.hash;
 	if (moved && !(await prebuildMovedKey(deps, before, after.data))) {

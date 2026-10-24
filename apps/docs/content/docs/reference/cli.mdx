@@ -43,12 +43,18 @@ Lease iOS sims / Android emulators — reuse, boot or create — booted and read
 | `--profile <slug>` | `iphone-17` / first AVD | device profile, e.g. `iphone-17`, `pixel-10` |
 | `--runtime <runtime>` | `latest` | `latest`, `iOS-26-5`, `26.5` … |
 | `--count <n>` | `1` | how many devices |
-| `--max <n>` | cores/4, cap 4 | max warden devices of this profile |
-| `--wait <duration>` | | wait this long for a free device, e.g. `10m` |
+| `--max <n>` | cores/4, cap 4 | max warden devices of this profile (pool size; machine-wide boots are capped by [capacity](/docs/guides/capacity)) |
+| `--wait <duration>` | `30m` | how long to wait for a free device or a slot in the boot queue, e.g. `10m` |
+| `--no-wait` | | fail fast instead of queueing |
+| `--priority <interactive\|high\|normal\|low\|N>` | `WARDEN_PRIORITY`, else per command | boot queue priority; see [Capacity & queue](/docs/guides/capacity) |
 | `--ttl <duration>` | `30m` (bare `claim` by an agent: `5m`) | lease TTL without heartbeat |
 | `--label <label>` | | shown in `warden ls` |
 | `--adopt` | | allow allocating foreign (non-warden) devices |
 | `--headless` / `--no-headless` | `WARDEN_HEADLESS`, else off | iOS: close the claimed sims' Simulator.app windows instead of tiling them; `--no-headless` overrides config and env. See [Headless e2e](/docs/guides/headless) |
+
+### `warden capacity` / `warden queue`
+
+`warden capacity [--json]` prints the host budget (RAM, performance cores), what is booted (warden and foreign), per-device cost, the binding dimension and memory pressure. `warden queue [--json]` lists claims waiting for a boot slot: position, effective priority, age, owner. See [Capacity & queue](/docs/guides/capacity).
 
 ### `warden release [leaseIds...]`
 
@@ -354,7 +360,13 @@ A metric passes up to its target times 1.5 (`ok` in the JSON; a loaded machine s
 
 ### `warden install`
 
-Install warden to `~/.local/bin` plus hooks for detected agents (default: every detected agent). `--claude`, `--codex`, `-y/--yes` (apply agent-config changes without asking), `--dry-run` (show diffs, write nothing), `--shim` (running from source: link `~/.local/bin/warden` to this checkout), `--json` (diffs go to stderr).
+Install warden to `~/.local/bin` plus hooks for detected agents (default: every detected agent). `--claude`, `--codex`, `-y/--yes` (apply agent-config changes without asking), `--dry-run` (show diffs, write nothing), `--shim` (running from source: link `~/.local/bin/warden` to this checkout), `--no-completion` (skip tab completion), `--json` (diffs go to stderr).
+
+### `warden completion [zsh|bash|fish]`
+
+Print the tab-completion script for a shell (default: `$SHELL`). `warden install` sets it up for `$SHELL`: zsh / bash get `$WARDEN_HOME/completion/warden.<shell>` sourced from `.zshrc` / `.bashrc` (one line, diff + confirm), fish gets `~/.config/fish/completions/warden.fish`. By hand: `source <(warden completion zsh)` after `compinit`.
+
+Every tab asks `warden __complete -- <words…>`, which walks the same command tree as `--help`: subcommands at every depth, options after `-`, `.choices()` and `a | b` help hints as values (`warden claim <tab>` → `android ios`), files for free-form arguments. zsh: tab once lists with descriptions, tab twice picks the first, further tabs cycle (menu select, unless you set your own `menu` style). fish cycles by default. bash cycles only with readline's `bind 'TAB:menu-complete'`, `bind 'set show-all-if-ambiguous on'` and `bind 'set menu-complete-display-prefix on'`, which warden leaves to you.
 
 ### `warden skill show | install`
 

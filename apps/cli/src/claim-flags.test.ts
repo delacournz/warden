@@ -12,6 +12,7 @@ import {
 	parseClaimFlags,
 	resolveAutoProfile,
 	resolveOwner,
+	resolvePriority,
 } from "./claim-flags";
 import type { HideStart } from "./sim-windows";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "./simctl.testing";
@@ -27,10 +28,42 @@ describe("parseClaimFlags", () => {
 			success: true,
 			data: {
 				request: { platform: "ios", profile: "iphone-17", count: 1, max: 4 },
-				waitMs: 0,
+				waitMs: 30 * 60_000,
 				ttlMs: DEFAULT_TTL_MS,
+				maxDefaulted: true,
 			},
 		});
+	});
+
+	test("--no-wait is fail-fast; --wait overrides the 30m default", () => {
+		const none = parseClaimFlags("ios", { wait: false });
+		expect(none.success && none.data.waitMs).toBe(0);
+		const some = parseClaimFlags("ios", { wait: "2m" });
+		expect(some.success && some.data.waitMs).toBe(120_000);
+	});
+
+	test("--priority takes names or numbers; the command default is carried, bad input rejected", () => {
+		const named = parseClaimFlags("ios", { priority: "high" });
+		expect(named.success && named.data.priority).toBe(20);
+		const numeric = parseClaimFlags("ios", { priority: "25" });
+		expect(numeric.success && numeric.data.priority).toBe(25);
+		const fallback = parseClaimFlags("ios", {}, 16, undefined, 0);
+		expect(fallback.success && fallback.data.defaultPriority).toBe(0);
+		expect(parseClaimFlags("ios", { priority: "urgent" }).success).toBe(false);
+	});
+
+	test("resolvePriority: flag beats WARDEN_PRIORITY beats the command default beats normal", () => {
+		const flags = (v: Parameters<typeof parseClaimFlags>[1], d?: number) => {
+			const r = parseClaimFlags("ios", v, 16, undefined, d);
+			if (!r.success) throw new Error(r.error);
+			return r.data;
+		};
+		const env = { WARDEN_PRIORITY: "low" };
+		expect(resolvePriority(flags({ priority: "high" }, 0), env)).toEqual({ success: true, data: 20 });
+		expect(resolvePriority(flags({}, 20), env)).toEqual({ success: true, data: 0 });
+		expect(resolvePriority(flags({}, 20), {})).toEqual({ success: true, data: 20 });
+		expect(resolvePriority(flags({}), {})).toEqual({ success: true, data: 10 });
+		expect(resolvePriority(flags({}), { WARDEN_PRIORITY: "x" }).success).toBe(false);
 	});
 
 	test("default ttl is overridable by the caller; --ttl still wins", () => {

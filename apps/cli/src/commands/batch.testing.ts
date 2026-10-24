@@ -71,6 +71,10 @@ export function harness(
 		bun?: string | null;
 		/** where `@delacour/warden-e2e/preload` resolves (default under `/proj/node_modules`; null = not installed) */
 		preload?: string | null;
+		/** the published version of the repo's `@delacour/warden-e2e` (default: undefined = workspace sources) */
+		e2eVersion?: string;
+		/** the bundled fallback copy: where its preload is (default `/home/e2e-runtime/x/fallback-preload.mjs`; "fail" = cannot extract) */
+		bundled?: string | "fail";
 		/** how long each job's log took to drain after it exited (`ProcHandle.logDrainMs`; default: not reported) */
 		logDrainMs?: number;
 	} = {}
@@ -189,6 +193,11 @@ export function harness(
 				if (opts.preload === null) throw new Error(`Cannot find package '${specifier}'`);
 				return opts.preload ?? "/proj/node_modules/@delacour/warden-e2e/src/preload.ts";
 			},
+			e2eVersion: () => opts.e2eVersion,
+			bundledE2e: async () =>
+				opts.bundled === "fail"
+					? { success: false, error: "could not extract the bundled @delacour/warden-e2e" }
+					: { success: true, data: opts.bundled ?? "/home/e2e-runtime/x/fallback-preload.mjs" },
 			helperDir: () => "/opt/warden",
 			warmConnect: () => async (udid) => {
 				h.warmed.push(udid);

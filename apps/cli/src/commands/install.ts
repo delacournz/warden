@@ -1,7 +1,9 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { wardenHome } from "@delacour/warden-core/store";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
+import { type CompletionShell, completionScript, shellFromEnv } from "../completion-scripts";
 import type { CommandContext } from "../context";
 import { type Agent, detectAgents } from "../hooks/agents";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
@@ -36,11 +38,20 @@ export type Runtime = { kind: "compiled"; execPath: string } | { kind: "dev"; cl
 /** Outside world for `warden install` beyond `CommandContext` (prompts come from `ctx.ui`). */
 export type InstallDeps = { runtime: Runtime; skill: SkillDeps };
 
-export type StepName = "binary" | "skill" | "rule" | "settings" | "codex-hooks";
+export type StepName = "binary" | "skill" | "rule" | "settings" | "codex-hooks" | "completion";
 export type StepStatus = "written" | "unchanged" | "skipped" | "declined" | "dry-run" | "failed" | "error";
 export type StepReport = { step: StepName; status: StepStatus; path: string; detail?: string };
 
-export type InstallFlags = { claude?: true; codex?: true; yes?: true; dryRun?: true; shim?: true; json?: true };
+export type InstallFlags = {
+	claude?: true;
+	codex?: true;
+	yes?: true;
+	dryRun?: true;
+	shim?: true;
+	json?: true;
+	/** false = `--no-completion` */
+	completion?: boolean;
+};
 type Flags = InstallFlags;
 
 function report(step: StepName, status: StepStatus, path: string, detail?: string): StepReport {
@@ -263,6 +274,45 @@ async function installCodexHooks(
 	return guardedWrite(ctx, flags, "codex-hooks", path, before ?? "", formatJson(merged.data.settings, before));
 }
 
+/** fish autoloads its completions dir; zsh / bash source warden's copy from their rc file. */
+function completionPaths(
+	env: Record<string, string | undefined>,
+	home: string,
+	shell: CompletionShell
+): { script: string; rc?: string } {
+	switch (shell) {
+		case "fish":
+			return { script: join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "fish", "completions", "warden.fish") };
+		case "zsh":
+			return { script: join(wardenHome(env), "completion", "warden.zsh"), rc: join(env.ZDOTDIR ?? home, ".zshrc") };
+		case "bash":
+			return { script: join(wardenHome(env), "completion", "warden.bash"), rc: join(home, ".bashrc") };
+	}
+}
+
+/**
+ * Tab completion for `$SHELL`: the script is warden's own file (rewritten when it changes); the one
+ * `source` line appended to `.zshrc` / `.bashrc` goes through the diff + confirm like agent configs.
+ */
+async function installCompletion(
+	ctx: CommandContext,
+	flags: Flags,
+	home: string,
+	shell: CompletionShell
+): Promise<StepReport> {
+	const content = completionScript(shell);
+	const { script, rc } = completionPaths(ctx.env, home, shell);
+	const scriptChanged = readIfExists(script) !== content;
+	if (scriptChanged && !flags.dryRun) atomicWrite(script, content);
+	const scriptStatus: StepStatus = !scriptChanged ? "unchanged" : flags.dryRun ? "dry-run" : "written";
+	if (!rc) return report("completion", scriptStatus, script);
+	const before = readIfExists(rc) ?? "";
+	if (before.includes(script)) return report("completion", scriptStatus, rc);
+	const gap = before === "" || before.endsWith("\n") ? "" : "\n";
+	const after = `${before}${gap}\n# warden tab completion (added by warden install)\n[ -f "${script}" ] && source "${script}"\n`;
+	return guardedWrite(ctx, flags, "completion", rc, before, after);
+}
+
 async function step(name: StepName, path: string, fn: () => StepReport | Promise<StepReport>): Promise<StepReport> {
 	try {
 		return await fn();
@@ -313,6 +363,8 @@ async function install(
 	if (agents.includes("codex") && hooksPath && configPath) {
 		steps.push(await step("codex-hooks", hooksPath, () => installCodexHooks(ctx, flags, hooksPath, configPath)));
 	}
+	const shell = flags.completion === false ? undefined : shellFromEnv(ctx.env);
+	if (shell) steps.push(await step("completion", shell, () => installCompletion(ctx, flags, home, shell)));
 	return steps;
 }
 
@@ -332,6 +384,9 @@ function installNotes(
 	}
 	if (steps.some((s) => s.step === "codex-hooks" && s.status === "written")) {
 		notes.push("note: Codex skips new hooks until trusted — run /hooks in Codex to review and trust warden's");
+	}
+	if (steps.some((s) => s.step === "completion" && s.status === "written")) {
+		notes.push("note: open a new terminal (or `exec $SHELL`) for warden tab completion");
 	}
 	if (agents.includes("claude")) {
 		for (const p of legacyRules(join(home, ".claude"))) {
@@ -407,6 +462,7 @@ export function createInstallCommand(deps: () => InstallDeps): Command {
 				.option("-y, --yes", "apply agent-config changes without asking")
 				.option("--dry-run", "show what would change (diffs), write nothing")
 				.option("--shim", "running from source: link ~/.local/bin/warden to this checkout")
+				.option("--no-completion", "don't set up tab completion for $SHELL")
 				.option("--json", "machine-readable output (diffs go to stderr)")
 				.action(async (opts) => done(await runInstall(ctx, deps(), opts)));
 		},

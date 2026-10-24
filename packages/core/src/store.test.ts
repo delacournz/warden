@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getInstall, recordInstall } from "./builds/cache";
-import { MIGRATIONS, openStore, type Store, wardenHome } from "./store";
-import type { Owner } from "./types";
+import { MIGRATIONS, openStore, QUEUE_TTL_MS, type Store, wardenHome } from "./store";
+import type { Owner, QueueEntry } from "./types";
 
 let dir: string;
 let store: Store;
@@ -409,5 +409,81 @@ describe("gcWork", () => {
 			NOW
 		);
 		expect(store.gcWork(NOW, IDLE, dead).idleDevices).toBe(1);
+	});
+});
+
+describe("boot queue", () => {
+	const newEntry = (id: string, now: number, over: Partial<QueueEntry> = {}): QueueEntry => ({
+		id,
+		platform: "ios",
+		profile: "iphone-17",
+		units: 1,
+		priority: 10,
+		enqueuedAt: now,
+		heartbeatAt: now,
+		owner,
+		...over,
+	});
+
+	test("enqueue, list, refresh, dequeue round-trip", () => {
+		const full = newEntry("q1", 5, { label: "x", pid: 7 });
+		expect(store.enqueue(full)).toEqual(full);
+		store.enqueue(newEntry("q2", 6));
+		expect(store.listQueue()).toEqual([full, newEntry("q2", 6)]);
+		expect(store.refreshQueue("q1", 50)).toBe(true);
+		expect(store.listQueue()[0]?.heartbeatAt).toBe(50);
+		expect(store.dequeue("q1")).toBe(true);
+		expect(store.dequeue("q1")).toBe(false);
+		expect(store.refreshQueue("q1", 60)).toBe(false);
+		expect(store.listQueue().map((e) => e.id)).toEqual(["q2"]);
+	});
+
+	test("re-enqueue of the same id keeps enqueuedAt and priority", () => {
+		store.enqueue(newEntry("q1", 5));
+		const again = store.enqueue(newEntry("q1", 99, { units: 3, priority: 0 }));
+		expect(again.enqueuedAt).toBe(5);
+		expect(again.units).toBe(3);
+	});
+
+	test("reclaimStaleQueue drops dead pids and stale heartbeats, keeps live ones", () => {
+		store.enqueue(newEntry("dead", 0, { pid: 1 }));
+		store.enqueue(newEntry("live", 0, { pid: 2 }));
+		store.enqueue(newEntry("nopid-fresh", 0));
+		const now = 1000;
+		expect(store.reclaimStaleQueue(now, (pid) => pid === 2)).toEqual(["dead"]);
+		expect(store.listQueue().map((e) => e.id)).toEqual(["live", "nopid-fresh"]);
+		expect(store.reclaimStaleQueue(QUEUE_TTL_MS, () => true)).toEqual([]);
+		expect(store.reclaimStaleQueue(QUEUE_TTL_MS + 1, () => true).sort()).toEqual(["live", "nopid-fresh"]);
+	});
+
+	test("migration adds boot_queue to an existing db", () => {
+		const old = join(dir, "old-queue.db");
+		const db = new Database(old, { create: true });
+		for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql);
+		db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`);
+		db.close();
+		const migrated = openStore(old);
+		expect(migrated.listQueue()).toEqual([]);
+		migrated.enqueue(newEntry("q1", 1));
+		expect(migrated.listQueue()).toHaveLength(1);
+		migrated.close();
+	});
+
+	test("concurrent enqueues from many processes all land", async () => {
+		const dbPath = join(dir, "queue-race.db");
+		openStore(dbPath).close();
+		const script = join(import.meta.dir, "queue.race-fixture.ts");
+		const procs = Array.from({ length: 6 }, (_, i) =>
+			Bun.spawn(["bun", script, dbPath, `r${i}`], { stdout: "pipe", stderr: "inherit" })
+		);
+		expect(await Promise.all(procs.map((p) => p.exited))).toEqual([0, 0, 0, 0, 0, 0]);
+		const local = openStore(dbPath);
+		expect(
+			local
+				.listQueue()
+				.map((e) => e.id)
+				.sort()
+		).toEqual(["r0", "r1", "r2", "r3", "r4", "r5"]);
+		local.close();
 	});
 });

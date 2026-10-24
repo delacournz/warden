@@ -1,5 +1,6 @@
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-core/git-facts";
+import type { HostFacts } from "@delacour/warden-core/host";
 import { openStore, type Store } from "@delacour/warden-core/store";
 import { terminalUi, type Ui } from "./ui";
 
@@ -22,6 +23,8 @@ export type CommandContext = {
 	readStdin: () => Promise<string>;
 	/** colours, spinners, prompts */
 	ui: Ui;
+	/** RAM + cores the capacity budget is sized from; unset = read the host (`readHostFacts`) */
+	hostFacts?: () => Promise<HostFacts>;
 };
 
 export function defaultContext(argv: string[]): CommandContext {

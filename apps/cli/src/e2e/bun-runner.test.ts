@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findBun, findPreload, helperDir, runnerArgv, shardFlows, specEnv } from "./bun-runner";
+import { findBun, helperDir, runnerArgv, shardFlows, specEnv } from "./bun-runner";
 
 describe("runnerArgv", () => {
 	test("bun test with the preload, a timeout 30 s past the per-test one and the flow files", () => {
@@ -47,25 +47,6 @@ describe("findBun", () => {
 			success: false,
 			error: "bun >= 1.3 is required on PATH (or set WARDEN_BUN)",
 		});
-	});
-});
-
-describe("findPreload", () => {
-	test("resolves @delacour/warden-e2e/preload from the suite cwd", () => {
-		const seen: string[] = [];
-		const found = findPreload("/repo/app", (specifier, from) => {
-			seen.push(`${specifier} ${from}`);
-			return "/repo/node_modules/@delacour/warden-e2e/src/preload.ts";
-		});
-		expect(found).toEqual({ success: true, data: "/repo/node_modules/@delacour/warden-e2e/src/preload.ts" });
-		expect(seen).toEqual(["@delacour/warden-e2e/preload /repo/app"]);
-	});
-
-	test("an unresolvable package says how to install it", () => {
-		const found = findPreload("/repo/app", () => {
-			throw new Error("Cannot find package");
-		});
-		expect(found).toEqual({ success: false, error: "bun add -d @delacour/warden-e2e" });
 	});
 });
 

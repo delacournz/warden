@@ -10,8 +10,15 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { bunExec } from "@delacour/warden-core/exec";
 import cliPackage from "../package.json" with { type: "json" };
+import { RUNTIME_BLOB } from "../src/e2e/e2e-runtime";
 import { RELEASE_TARGETS } from "../src/npm/platforms";
-import { buildFromSource, compileArgs, STRAY_SOURCE_MAP, sourceCommit } from "../src/update/source-build";
+import {
+	buildFromSource,
+	compileArgs,
+	runtimeBlobArgs,
+	STRAY_SOURCE_MAP,
+	sourceCommit,
+} from "../src/update/source-build";
 
 const cliRoot = resolve(import.meta.dir, "..");
 const sourceDir = resolve(cliRoot, "..", "..");
@@ -41,14 +48,19 @@ if (values.channel === "local") {
 		builtAt: new Date().toISOString(),
 	};
 	const sums: string[] = [];
+	const blob = join(dist, RUNTIME_BLOB);
+	await run(runtimeBlobArgs(sourceDir, blob, cliPackage.version));
 	for (const target of RELEASE_TARGETS) {
 		const name = `warden-${target}`;
 		const outfile = join(dist, name);
-		await run(compileArgs({ entry: join(cliRoot, "src", "cli.ts"), outfile, info, target: `bun-${target}` }));
+		await run(
+			compileArgs({ entry: join(cliRoot, "src", "cli.ts"), outfile, info, target: `bun-${target}`, embed: [blob] })
+		);
 		dropStraySourceMap();
 		sums.push(`${createHash("sha256").update(readFileSync(outfile)).digest("hex")}  ${name}`);
 		console.log(`built dist/${name}`);
 	}
+	rmSync(blob, { force: true });
 	writeFileSync(join(dist, "checksums.txt"), `${sums.join("\n")}\n`);
 	console.log(`release ${info.version}: ${RELEASE_TARGETS.length} binaries + checksums.txt`);
 } else {
