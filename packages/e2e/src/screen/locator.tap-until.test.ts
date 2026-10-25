@@ -146,11 +146,13 @@ describe("tap({ until })", () => {
 	});
 
 	test("the check that comes right after the press sees the screen the press left", async () => {
-		const { driver, screen } = setup(1);
+		const { driver, host, screen } = setup(1);
 		await screen.getByTestId("title").isVisible();
 		await screen.getByTestId("next").tap({ until: screen.getByText("Plan"), ...WINDOW });
 		expect(driver.callsOf("tap")).toHaveLength(1);
 		expect(driver.callsOf("snapshot")).toHaveLength(3);
+		// at once: the press itself took the time the app needs (measured: a later first check saved nothing)
+		expect(host.clock.sleeps).toEqual([]);
 	});
 
 	test("works without the observation cache too", async () => {

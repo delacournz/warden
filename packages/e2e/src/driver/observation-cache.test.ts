@@ -156,6 +156,29 @@ describe("previous", () => {
 		expect(driver.previous?.().snapshot).toBeUndefined();
 		expect(driver.previous?.().sinceInputMs).toBeUndefined();
 	});
+
+	test("settle forgets the snapshot too, but it is a wait, not an input: nothing was pressed", async () => {
+		const raw = fakeDriver({
+			screens: [snapshotOf([])],
+			onCall: (call) => (call.method === "settle" ? { data: { quiet: false, waitedMs: 3000 } } : undefined),
+		});
+		const clock = clockAt();
+		const driver = cacheObservations(raw, { now: clock.now });
+		await driver.tap({ x: 1, y: 1 });
+		clock.advance(40);
+		await driver.observe(FRESH);
+		await driver.settle();
+		expect(driver.previous?.().snapshot).toBeUndefined();
+		expect(driver.previous?.().sinceInputMs).toBe(40);
+	});
+
+	test("a settle that reports quiet ends the last input: the app says it has landed", async () => {
+		const { driver, clock } = setup();
+		await driver.tap({ x: 1, y: 1 });
+		clock.advance(40);
+		await driver.settle();
+		expect(driver.previous?.().sinceInputMs).toBeUndefined();
+	});
 });
 
 describe("peek", () => {
