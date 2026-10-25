@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok } from "@delacour/warden-types/result";
 import { type BenchAdapter, type FrameworkId, failed, type RunContext, unsupported } from "./adapters/adapter.types";
+import { benchAppDir, exportBenchApp } from "./harness/bench-app";
 import { type Exec, type FakeRule, fakeExec } from "./harness/exec";
 import type { ExitCharge, SamplerOptions, Tick } from "./harness/sampler";
 import {
@@ -24,10 +25,29 @@ const manifest = loadManifest(PACKAGE_ROOT);
 
 let dir: string;
 let appPath: string;
-beforeEach(() => {
+
+/** Pins `appPath` as the bench app of `platform` under the temp repo root. */
+async function pin(platform: "ios" | "android", hash = "abc"): Promise<string> {
+	const dest = benchAppDir(dir, platform);
+	const pinned = await exportBenchApp({
+		from: appPath,
+		platform,
+		bundleId: "nz.co.delacour.warden.example",
+		hash,
+		source: "cache",
+		dir: dest,
+		now: () => new Date("2026-10-16T00:00:00.000Z"),
+	});
+	if (!pinned.success) throw new Error(String(pinned.error));
+	return pinned.data.appPath;
+}
+
+beforeEach(async () => {
 	dir = mkdtempSync(join(tmpdir(), "bench-orch-"));
 	appPath = join(dir, "Example.apk");
 	writeFileSync(appPath, "binary");
+	await pin("ios");
+	await pin("android");
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -46,11 +66,8 @@ function rules(): FakeRule[] {
 			match: (a) => a[1] === "claim",
 			result: { stdout: JSON.stringify({ leases: [{ leaseId: "lease-1", udid: "UDID-1", name: "iPhone 16" }] }) },
 		},
-		{
-			cmd: process.execPath,
-			match: (a) => a[1] === "app" && a[2] === "ensure",
-			result: { stdout: JSON.stringify({ appPath, hash: "abc", source: "cache", installed: true }) },
-		},
+		{ cmd: "xcrun", match: (a) => a[0] === "simctl" && a[1] === "install", result: {} },
+		{ cmd: "adb", match: (a) => a[2] === "install", result: {} },
 		{ cmd: "xcrun", match: (a) => a.includes("devices"), result: { stdout: JSON.stringify({ devices: {} }) } },
 		{ cmd: process.execPath, match: (a) => a[1] === "release", result: { stdout: "" } },
 		{ cmd: "du", result: { stdout: "1\tx\n" } },
@@ -132,13 +149,89 @@ function setup(adapters: BenchAdapter[], extra: Partial<BenchOptions> = {}, sign
 	return { exec, opts, deps, logs, results };
 }
 
+const ensureCalls = (exec: ReturnType<typeof fakeExec>) =>
+	exec.calls.filter((c) => c.cmd === process.execPath && c.args[1] === "app" && c.args[2] === "ensure");
+
 const releases = (exec: ReturnType<typeof fakeExec>) =>
 	exec.calls.filter((c) => c.cmd === process.execPath && c.args[1] === "release");
+
+describe("pinned bench app", () => {
+	const noPin = () => rmSync(join(dir, ".bench"), { recursive: true, force: true });
+	const ensureRule: FakeRule = {
+		cmd: process.execPath,
+		match: (a) => a[1] === "app" && a[2] === "ensure",
+		result: () => ({ stdout: JSON.stringify({ appPath, hash: "built1", source: "cache", installed: false }) }),
+	};
+
+	test("installs the pinned app on the claimed device and records it", async () => {
+		const t = setup([adapter("warden", [])], { runs: 1 });
+		const outcome = await runBench(t.opts, t.deps);
+		expect(outcome.success).toBe(true);
+		expect(ensureCalls(t.exec)).toHaveLength(0);
+		const install = t.exec.calls.find((c) => c.cmd === "xcrun" && c.args[1] === "install");
+		expect(install?.args).toEqual(["simctl", "install", "UDID-1", join(benchAppDir(dir, "ios"), "Example.apk")]);
+		expect(t.logs.some((l) => l.startsWith("app: pinned ") && l.includes("hash abc") && l.endsWith("reused)"))).toBe(
+			true
+		);
+		if (!outcome.success) return;
+		expect(outcome.data.run.app).toMatchObject({ hash: "abc", bytes: 6 });
+	});
+
+	test("builds once when missing; the next run spawns no app ensure", async () => {
+		noPin();
+		const t = setup([adapter("warden", [])], { runs: 1 });
+		t.deps.exec = fakeExec([ensureRule, ...rules()], { which: ["caffeinate"] });
+		const first = await runBench({ ...t.opts, out: join(dir, "out1") }, t.deps);
+		expect(first.success && first.data.run.app.hash).toBe("built1");
+		const exec = t.deps.exec as ReturnType<typeof fakeExec>;
+		expect(ensureCalls(exec)).toHaveLength(1);
+		expect(ensureCalls(exec)[0]?.args).toContain("--no-install");
+		expect(t.logs.some((l) => l.endsWith("built now)"))).toBe(true);
+		const second = await runBench({ ...t.opts, out: join(dir, "out2") }, t.deps);
+		expect(second.success).toBe(true);
+		expect(ensureCalls(exec)).toHaveLength(1);
+	});
+
+	test("a changed artifact fails before any claim", async () => {
+		writeFileSync(join(benchAppDir(dir, "ios"), "Example.apk"), "tampered");
+		const t = setup([adapter("warden", [])], { runs: 1 });
+		const outcome = await runBench(t.opts, t.deps);
+		expect(!outcome.success && String(outcome.error)).toContain("changed since it was built");
+		expect(t.exec.calls.some((c) => c.args[1] === "claim")).toBe(false);
+		expect(releases(t.exec)).toHaveLength(0);
+	});
+
+	test("--app with a bare artifact pins it as an import", async () => {
+		noPin();
+		const t = setup([adapter("warden", [])], { runs: 1, app: appPath });
+		const outcome = await runBench(t.opts, t.deps);
+		expect(outcome.success && outcome.data.run.app.hash.startsWith("import:")).toBe(true);
+		expect(ensureCalls(t.exec)).toHaveLength(0);
+	});
+
+	test("--app with a pinned dir of the other platform is refused before claiming", async () => {
+		const t = setup([adapter("warden", [])], { runs: 1, app: benchAppDir(dir, "android") });
+		const outcome = await runBench(t.opts, t.deps);
+		expect(!outcome.success && String(outcome.error)).toContain("is for android, not ios");
+		expect(t.exec.calls.some((c) => c.args[1] === "claim")).toBe(false);
+	});
+
+	test("an install failure aborts the run and releases the lease", async () => {
+		const t = setup([adapter("warden", [])], { runs: 1 });
+		t.deps.exec = fakeExec(
+			[{ cmd: "xcrun", match: (a) => a[1] === "install", result: { code: 1, stderr: "no space" } }, ...rules()],
+			{ which: ["caffeinate"] }
+		);
+		const outcome = await runBench(t.opts, t.deps);
+		expect(!outcome.success && String(outcome.error)).toContain("install app");
+		expect(releases(t.deps.exec as ReturnType<typeof fakeExec>)).toHaveLength(1);
+	});
+});
 
 describe("runBench", () => {
 	test("phase order per framework, cold flag only on rep 1, results validate", async () => {
 		const calls: Calls = [];
-		const t = setup([adapter("warden", calls), adapter("maestro", calls)]);
+		const t = setup([adapter("warden", calls), adapter("argent", calls)]);
 		const outcome = await runBench(t.opts, t.deps);
 		expect(outcome.success).toBe(true);
 		expect(calls).toEqual([
@@ -148,12 +241,12 @@ describe("runBench", () => {
 			"warden.run:warm",
 			"warden.run:warm",
 			"warden.teardown",
-			"maestro.doctor",
-			"maestro.prepare",
-			"maestro.run:cold",
-			"maestro.run:warm",
-			"maestro.run:warm",
-			"maestro.teardown",
+			"argent.doctor",
+			"argent.prepare",
+			"argent.run:cold",
+			"argent.run:warm",
+			"argent.run:warm",
+			"argent.teardown",
 		]);
 		if (!outcome.success) return;
 		const file = JSON.parse(readFileSync(join(t.opts.out ?? "", "bench-results.json"), "utf8"));
@@ -181,7 +274,7 @@ describe("runBench", () => {
 		const calls: Calls = [];
 		const seen: number[] = [];
 		const out = join(dir, "out");
-		const watcher = adapter("maestro", calls, {
+		const watcher = adapter("argent", calls, {
 			async doctor() {
 				const text = readFileSync(join(out, "bench-results.json"), "utf8");
 				seen.push((JSON.parse(text) as { frameworks: unknown[] }).frameworks.length);
@@ -196,7 +289,7 @@ describe("runBench", () => {
 	test("classification: failed run keeps partial reps, unsupported, doctor failures", async () => {
 		const calls: Calls = [];
 		let n = 0;
-		const flaky = adapter("maestro", calls, {
+		const flaky = adapter("warden", calls, {
 			async run() {
 				n++;
 				return n === 1 ? ok(rep(1)) : { success: false, error: failed("boom") };
@@ -212,21 +305,21 @@ describe("runBench", () => {
 				return { ok: false, reason: "missing", installHint: "bun add -g agent-device" };
 			},
 		});
-		const detox = adapter("detox", calls, {
+		const testerArmy = adapter("tester-army", calls, {
 			async doctor() {
-				return { ok: false, reason: "no applesimutils", installHint: "brew install applesimutils" };
+				return { ok: false, reason: "missing tool", installHint: "bun add -g e2e" };
 			},
 		});
-		const t = setup([flaky, nope, noDoctor, detox]);
+		const t = setup([flaky, nope, noDoctor, testerArmy]);
 		const outcome = await runBench(t.opts, t.deps);
 		if (!outcome.success) throw new Error(outcome.error);
 		const [a, b, c, d] = outcome.data.run.frameworks;
-		expect(a).toMatchObject({ framework: "maestro", status: "failed", phase: "run", error: "boom" });
+		expect(a).toMatchObject({ framework: "warden", status: "failed", phase: "run", error: "boom" });
 		expect(a?.status === "failed" && a.partial?.length).toBe(1);
 		expect(b).toMatchObject({ framework: "argent", status: "unsupported", reason: "RN too new", version: "1.0.0" });
 		expect(c).toMatchObject({ framework: "agent-device", status: "failed", phase: "doctor" });
-		expect(d?.status).toBe("unsupported");
-		expect(calls).toContain("maestro.teardown");
+		expect(d).toMatchObject({ framework: "tester-army", status: "failed", phase: "doctor" });
+		expect(calls).toContain("warden.teardown");
 		expect(calls).not.toContain("agent-device.prepare");
 		expect(
 			benchRunSchema.safeParse(JSON.parse(readFileSync(join(dir, "out", "bench-results.json"), "utf8"))).success
@@ -235,7 +328,7 @@ describe("runBench", () => {
 
 	test("prepare failure is phase prepare and still tears down", async () => {
 		const calls: Calls = [];
-		const bad = adapter("maestro", calls, {
+		const bad = adapter("argent", calls, {
 			async prepare() {
 				return err("no java");
 			},
@@ -244,7 +337,7 @@ describe("runBench", () => {
 		const outcome = await runBench(t.opts, t.deps);
 		if (!outcome.success) throw new Error(outcome.error);
 		expect(outcome.data.run.frameworks[0]).toMatchObject({ status: "failed", phase: "prepare", error: "no java" });
-		expect(calls).toEqual(["maestro.doctor", "maestro.teardown"]);
+		expect(calls).toEqual(["argent.doctor", "argent.teardown"]);
 	});
 
 	test("--skip-doctor skips doctor, a platform mismatch is unsupported", async () => {
@@ -306,7 +399,7 @@ describe("runBench", () => {
 		test("a framework that zeroes them does not leak that into the next framework", async () => {
 			const settings = new Map(KEYS.map((key) => [key, "1.0"]));
 			const seen: (string | undefined)[] = [];
-			const observer = adapter("maestro", [], {
+			const observer = adapter("argent", [], {
 				async run() {
 					seen.push(settings.get("window_animation_scale"));
 					return ok(rep(1));
@@ -407,12 +500,12 @@ describe("runBench", () => {
 				return ok(rep(1));
 			},
 		});
-		const t = setup([first, adapter("maestro", calls)], {}, controller.signal);
+		const t = setup([first, adapter("argent", calls)], {}, controller.signal);
 		const outcome = await runBench(t.opts, t.deps);
 		if (!outcome.success) throw new Error(outcome.error);
 		expect(outcome.data.interrupted).toBe(true);
 		expect(calls).toContain("warden.teardown");
-		expect(calls.some((c) => c.startsWith("maestro"))).toBe(false);
+		expect(calls.some((c) => c.startsWith("argent"))).toBe(false);
 		expect(outcome.data.run.frameworks[0]).toMatchObject({ status: "failed", phase: "run", error: "interrupted" });
 		expect(releases(t.exec)).toHaveLength(1);
 	});
@@ -573,7 +666,7 @@ describe("helpers", () => {
 		exec.start("/opt/bun", ["/repo/apps/cli/src/cli.ts", "ui", "snapshot"]);
 		exec.start("/opt/bun", ["test", "--preload", "p"]);
 		exec.start("/opt/sdk/platform-tools/adb", ["-s", "e"]);
-		exec.start("/opt/homebrew/bin/maestro", ["test"]);
+		exec.start("/opt/homebrew/bin/agent-device", ["test"]);
 		expect([...labels]).toEqual([
 			[1001, "warden-cli"],
 			[1002, "bun-test"],
@@ -610,8 +703,8 @@ describe("helpers", () => {
 	});
 
 	test("finalizeFrameworks leaves non-ok frameworks alone", () => {
-		const f = finalizeFrameworks([{ framework: "detox", status: "unsupported", reason: "r" }]);
-		expect(f).toEqual([{ framework: "detox", status: "unsupported", reason: "r" }]);
+		const f = finalizeFrameworks([{ framework: "tester-army", status: "unsupported", reason: "r" }]);
+		expect(f).toEqual([{ framework: "tester-army", status: "unsupported", reason: "r" }]);
 	});
 
 	test("summaryLines has a header and a row per framework", async () => {

@@ -28,8 +28,8 @@ describe("bench-results schema", () => {
 			},
 			device: { platform: "ios", udid: "U" },
 			app: { bundleId: "b", appPath: "/a.app", hash: "h", sha256: "s", bytes: 1 },
-			options: { runs: 3, retries: 0, rebootBetween: false, frameworks: ["detox"], caffeinated: true },
-			frameworks: [{ framework: "detox", status: "unsupported", reason: "RN 0.86" }],
+			options: { runs: 3, retries: 0, rebootBetween: false, frameworks: ["tester-army"], caffeinated: true },
+			frameworks: [{ framework: "tester-army", status: "unsupported", reason: "unsupported RN" }],
 		};
 		expect(benchRunSchema.safeParse(run).success).toBe(true);
 	});

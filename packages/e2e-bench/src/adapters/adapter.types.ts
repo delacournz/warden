@@ -4,8 +4,8 @@ import type { CanonicalId, Platform, RepResult, TestResult } from "../results/sc
 
 export type { CanonicalId, Platform, RepResult, TestResult };
 
-/** The six frameworks, in the order the report lists them. */
-export const FRAMEWORK_IDS = ["warden", "maestro", "argent", "agent-device", "tester-army", "detox"] as const;
+/** The four frameworks, in the order the report lists them. */
+export const FRAMEWORK_IDS = ["warden", "argent", "agent-device", "tester-army"] as const;
 export type FrameworkId = (typeof FRAMEWORK_IDS)[number];
 
 export function isFrameworkId(value: string): value is FrameworkId {
@@ -67,7 +67,7 @@ export type BenchAdapter = {
 	residuePatterns: ResiduePatterns;
 };
 
-/** `run` failed in a way that means the framework cannot drive this app at all (Detox on RN 0.86). */
+/** `run` failed in a way that means the framework cannot drive this app at all (an unsupported RN version). */
 export type UnsupportedError = { kind: "unsupported"; reason: string };
 export type RunError = { kind: "failed"; message: string };
 export type AdapterError = UnsupportedError | RunError;

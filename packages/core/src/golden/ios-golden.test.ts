@@ -351,3 +351,75 @@ describe("golden simctl timeouts (16-11)", () => {
 		expect(store.listLeases()).toEqual([]);
 	});
 });
+
+/** A host as seen from a non-GUI launchd session (EAS worker, ssh, CI): `launchctl list` has no SimDevice row. */
+function noGuiSession(host: ReturnType<typeof fakeHost>, ps: (udid: string) => string, onLaunchctl?: () => void): Exec {
+	return async (cmd, opts) => {
+		if (cmd[0] === "launchctl") {
+			host.calls.push([...cmd]);
+			onLaunchctl?.();
+			return { exitCode: 0, stdout: "123\t0\tcom.apple.some.other.job\n", stderr: "" };
+		}
+		if (cmd[0] === "ps" && cmd.some((a) => a.includes("command="))) {
+			host.calls.push([...cmd]);
+			return { exitCode: 0, stdout: ps(host.sims[0]?.udid ?? ""), stderr: "" };
+		}
+		return host.exec(cmd, opts);
+	};
+}
+
+describe("golden settle without a GUI launchd session (CPU-7.3)", () => {
+	test("booted, no launchctl row, launchd_sim found → CPU summed from ps over its descendants, settle succeeds", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		const exec = noGuiSession(host, (udid) =>
+			[
+				`  500     1  90.0 /usr/libexec/launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist`,
+				"  501   500   1.5 /sbin/launchd_sim_child",
+				"  502   501   2.5 /usr/bin/grandchild",
+				"  900     1  99.0 /usr/bin/unrelated",
+			].join("\n")
+		);
+		const logs: string[] = [];
+		const result = await ensureGolden({ ...deps(host, logs), exec, timing: { maxCpu: 100 } }, "iphone-17");
+		expect(result.success).toBe(true);
+		expect(logs.join("\n")).not.toContain("not settled");
+		expect(host.calls.some((c) => c[0] === "ps" && c.some((a) => a.includes("command=")))).toBe(true);
+	});
+
+	test("booted, no launchctl row, launchd_sim busy → ps CPU decides: never settles under the threshold", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		const exec = noGuiSession(
+			host,
+			(udid) => `  500     1  300.0 /usr/libexec/launchd_sim /x/Devices/${udid}/data/launchd_bootstrap.plist\n`
+		);
+		const logs: string[] = [];
+		const result = await ensureGolden({ ...deps(host, logs), exec }, "iphone-17");
+		expect(result.success).toBe(true);
+		expect(logs.join("\n")).toContain("not settled");
+	});
+
+	test("Shutdown → stopped while settling, wip deleted", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		const exec = noGuiSession(
+			host,
+			() => "",
+			() => {
+				for (const sim of host.sims) sim.state = "Shutdown";
+			}
+		);
+		const result = await ensureGolden({ ...deps(host), exec }, "iphone-17");
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error).toContain("stopped while settling");
+		expect(host.sims).toEqual([]);
+	});
+
+	test("booted, no launchctl row, no launchd_sim → treated as settled", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		const exec = noGuiSession(host, () => "    1     0   9.0 /sbin/launchd\n");
+		const logs: string[] = [];
+		const result = await ensureGolden({ ...deps(host, logs), exec }, "iphone-17");
+		expect(result.success).toBe(true);
+		expect(logs.join("\n")).not.toContain("not settled");
+	});
+});

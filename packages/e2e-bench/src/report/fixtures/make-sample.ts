@@ -8,6 +8,7 @@ import {
 	type CanonicalId,
 	type FrameworkResult,
 	type OkFrameworkResult,
+	type ProcessRow,
 	type RepResult,
 	type StepResult,
 	type TestResult,
@@ -38,7 +39,9 @@ const BASE_MS: Record<CanonicalId, number> = {
 };
 
 type Profile = {
-	framework: "warden" | "maestro" | "argent" | "agent-device";
+	/** fixed per framework so dropping one never reshuffles the others' numbers */
+	seed: number;
+	framework: "warden" | "argent" | "agent-device";
 	version: string;
 	testScale: number;
 	overheadMs: number;
@@ -51,6 +54,7 @@ type Profile = {
 
 const PROFILES: readonly Profile[] = [
 	{
+		seed: 1000,
 		framework: "warden",
 		version: "0.19.0",
 		testScale: 1,
@@ -61,15 +65,7 @@ const PROFILES: readonly Profile[] = [
 		untracedShare: 0.2,
 	},
 	{
-		framework: "maestro",
-		version: "2.0.9",
-		testScale: 1.5,
-		overheadMs: 19500,
-		prepareMs: 9200,
-		teardownMs: 1800,
-		withSteps: true,
-	},
-	{
+		seed: 1002,
 		framework: "argent",
 		version: "0.11.2",
 		testScale: 1.8,
@@ -79,6 +75,7 @@ const PROFILES: readonly Profile[] = [
 		withSteps: false,
 	},
 	{
+		seed: 1003,
 		framework: "agent-device",
 		version: "0.7.4",
 		testScale: 2.1,
@@ -142,7 +139,7 @@ type OkBase = Omit<OkFrameworkResult, "stats">;
 function okBase(profile: Profile, seed: number, stepLabels: Record<CanonicalId, string[]>): OkBase {
 	const rand = mulberry32(seed);
 	const reps = [1, 2, 3].map((i) => buildRep(profile, i, rand, stepLabels));
-	const heavy = profile.framework === "maestro" || profile.framework === "agent-device";
+	const heavy = profile.framework === "agent-device";
 	return {
 		framework: profile.framework,
 		status: "ok",
@@ -171,13 +168,6 @@ function okBase(profile: Profile, seed: number, stepLabels: Record<CanonicalId, 
 }
 
 function residueFor(framework: Profile["framework"]): OkBase["residue"] {
-	if (framework === "maestro") {
-		return {
-			processes: ["java (maestro)", "maestro-driver"],
-			driverApps: ["dev.mobile.maestro-driver-iosUITests.xctrunner"],
-			paths: [{ path: "~/.maestro", deltaBytes: 18_874_368 }],
-		};
-	}
 	if (framework === "agent-device") {
 		return {
 			processes: ["agent-device daemon"],
@@ -196,13 +186,6 @@ function footprintFor(framework: Profile["framework"]): OkBase["footprint"] {
 			depsBytes: 0,
 			binaryBytes: 58_720_256,
 			notes: ["bundled spec API"],
-		},
-		maestro: {
-			testSourceLoc: 336,
-			testSourceBytes: 9_800,
-			depsBytes: 0,
-			binaryBytes: 214_958_080,
-			notes: ["JVM CLI, global install"],
 		},
 		argent: { testSourceLoc: 298, testSourceBytes: 8_900, depsBytes: 0, binaryBytes: 96_468_992, notes: [] },
 		"agent-device": {
@@ -223,8 +206,8 @@ export function buildSampleRun(): BenchRun {
 		CanonicalId,
 		string[]
 	>;
-	const withStats = PROFILES.map((profile, i) => {
-		const base = okBase(profile, 1000 + i, stepLabels);
+	const withStats = PROFILES.map((profile) => {
+		const base = okBase(profile, profile.seed, stepLabels);
 		return {
 			...base,
 			stats: frameworkStats({ reps: base.reps, prepareMs: base.phases.prepareMs, teardownMs: base.phases.teardownMs }),
@@ -237,11 +220,6 @@ export function buildSampleRun(): BenchRun {
 		version: "0.20.0",
 		phase: "run",
 		error: "parity breach: unmapped tests: sign-in › accepts any email (not in manifest)",
-	};
-	const detox: FrameworkResult = {
-		framework: "detox",
-		status: "unsupported",
-		reason: "Detox 20 attach failed on RN 0.86 (Fabric idling resources hang); timed out after 120 s",
 	};
 	return {
 		schemaVersion: 1,
@@ -279,16 +257,62 @@ export function buildSampleRun(): BenchRun {
 			runs: 3,
 			retries: 0,
 			rebootBetween: false,
-			frameworks: ["warden", "maestro", "argent", "agent-device", "tester-army", "detox"],
+			frameworks: ["warden", "argent", "agent-device", "tester-army"],
 			caffeinated: true,
 		},
-		frameworks: [...ok, testerArmy, detox],
+		frameworks: [...ok, testerArmy],
 	};
+}
+
+type ProcessShape = { name: string; weight: number; rssMb: number; spawns: number };
+
+const MB = 1024 ** 2;
+
+const HOST_SHAPES: Record<string, readonly ProcessShape[]> = {
+	warden: [
+		{ name: "bun test", weight: 0.46, rssMb: 92, spawns: 1 },
+		{ name: "warden-simd", weight: 0.27, rssMb: 31, spawns: 1 },
+		{ name: "SimulatorFrameworkBridge-iOS serve", weight: 0.16, rssMb: 22, spawns: 11 },
+		{ name: "xcrun simctl launch", weight: 0.07, rssMb: 8, spawns: 9 },
+		{ name: "simctl", weight: 0.04, rssMb: 5, spawns: 9 },
+	],
+	argent: [
+		{ name: "node tool-server.cjs", weight: 0.7, rssMb: 140, spawns: 1 },
+		{ name: "bun test", weight: 0.2, rssMb: 60, spawns: 1 },
+		{ name: "xcrun simctl io", weight: 0.1, rssMb: 6, spawns: 14 },
+	],
+	"agent-device": [
+		{ name: "node daemon.js", weight: 0.55, rssMb: 310, spawns: 1 },
+		{ name: "xcodebuild", weight: 0.35, rssMb: 280, spawns: 1 },
+		{ name: "bun test", weight: 0.1, rssMb: 50, spawns: 1 },
+	],
+};
+
+const SIM_SHAPES: readonly ProcessShape[] = [
+	{ name: "backboardd", weight: 0.38, rssMb: 82, spawns: 1 },
+	{ name: "Example", weight: 0.31, rssMb: 310, spawns: 1 },
+	{ name: "SpringBoard", weight: 0.18, rssMb: 140, spawns: 1 },
+	{ name: "launchd_sim", weight: 0.13, rssMb: 41, spawns: 1 },
+];
+
+/** Per-process rows of one rep whose host (sim) CPU-seconds are `hostCpu` (`simCpu`), shapes as above. */
+function processRowsFor(framework: string, hostCpu: number, simCpu: number): ProcessRow[] {
+	const rows = (scope: "host" | "sim", shapes: readonly ProcessShape[], cpu: number): ProcessRow[] =>
+		shapes.map((s) => ({
+			name: s.name,
+			scope,
+			cpuSeconds: Math.round(cpu * s.weight * 100) / 100,
+			rssAvgBytes: s.rssMb * MB,
+			rssPeakBytes: Math.round(s.rssMb * 1.1) * MB,
+			spawnCount: s.spawns,
+			shareOfScopePct: Math.round(s.weight * 1000) / 10,
+		}));
+	return [...rows("host", HOST_SHAPES[framework] ?? [], hostCpu), ...rows("sim", SIM_SHAPES, simCpu)];
 }
 
 /**
  * `run` with per-rep resources on every ok framework (`cpuSecondsOf(framework, repIndex)` host CPU-seconds,
- * a fixed window) and a whole-framework host split by group. The committed sample has none, so the report
+ * a fixed window, realistic per-process `processes` rows) and a whole-framework host split by group. The committed sample has none, so the report
  * goldens stay the pre-CPU-seconds format; tests of the new columns use this.
  */
 export function withRepCpu(run: BenchRun, cpuSecondsOf: (framework: string, rep: number) => number): BenchRun {
@@ -306,6 +330,7 @@ export function withRepCpu(run: BenchRun, cpuSecondsOf: (framework: string, rep:
 				sim: f.resources.sim,
 				cpuSeconds,
 				rssPeakBytes: host.rssPeakBytes,
+				processes: processRowsFor(f.framework, cpuSeconds, cpuSeconds * 3),
 			};
 		}
 		f.resources.host = {

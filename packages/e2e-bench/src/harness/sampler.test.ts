@@ -41,9 +41,7 @@ describe("android sampling targets", () => {
 			"nz.co.delacour.warden.example.test",
 			"app_process / com.android.commands.uiautomator runtime",
 			"androidx.test.runner instrumentation",
-			"dev.mobile.maestro",
-			"dev.mobile.maestro.test",
-			"Dev.Mobile.Maestro",
+			"Com.Argent.AndroidDevTools",
 			"com.callstack.agentdevice.snapshothelper",
 			"app_process / com.callstack.agentdevice.snapshothelper/.SnapshotInstrumentation",
 			"SnapshotInstrumentation",
@@ -60,14 +58,13 @@ describe("android sampling targets", () => {
 			expect(isAndroidTarget(name), name).toBe(false);
 	});
 
-	test("totals count maestro, agent-device, argent and warden-uiad, not only warden's own helpers", () => {
+	test("totals count agent-device, argent and warden-uiad, not only warden's own helpers", () => {
 		const rows = parseAdbTop(fx("adb-top-helpers.txt"));
 		expect(rows).toHaveLength(13);
 		const only = (re: RegExp) => androidTotals(rows.filter((r) => re.test(r.name)));
-		expect(only(/maestro/)).toEqual({ cpuPct: 18, rssBytes: 215 * 1024 ** 2 });
 		expect(only(/agentdevice/)).toEqual({ cpuPct: 10, rssBytes: 128 * 1024 ** 2 });
 		expect(only(/warden-uiad/)).toEqual({ cpuPct: 3, rssBytes: 50 * 1024 ** 2 });
-		expect(only(/argent/)).toEqual({ cpuPct: 2, rssBytes: 64 * 1024 ** 2 });
+		expect(only(/argent/)).toEqual({ cpuPct: 20, rssBytes: 279 * 1024 ** 2 });
 		expect(androidTotals(rows)).toEqual({ cpuPct: 74, rssBytes: 887 * 1024 ** 2 });
 	});
 });
@@ -141,7 +138,7 @@ describe("startSampler", () => {
 		const sampler = startSampler({
 			exec,
 			rootPids: () => [100],
-			processPatterns: [/maestro/, /simulator-server/],
+			processPatterns: [/helper/, /simulator-server/],
 			owned: (rows) => ownerFilter(rows, { udid: "AAAA-BBBB", benchPids: () => [100, 300], ownedPaths: [] }),
 			simUdid: "AAAA-BBBB",
 			platform: "ios",
@@ -159,7 +156,7 @@ describe("startSampler", () => {
 		const { host, sim } = await sampler.stop();
 		expect(cancelled).toBe(true);
 		expect(exec.calls.filter((c) => c.cmd === "ps")).toHaveLength(2);
-		// host: pids 100,101,102 (tree) + 300 (java maestro)
+		// host: pids 100,101,102 (tree) + 300 (java helper)
 		expect(sunk[0]?.hostCpuPct).toBe(10 + 20.5 + 5 + 1);
 		expect(sunk[0]?.hostRssBytes).toBe((204800 + 102400 + 51200 + 20480) * 1024);
 		// sim: 200 (udid in cmd) + 201 + 202, but warden-simd (102) belongs to host
@@ -197,7 +194,7 @@ describe("startSampler", () => {
 		expect(sunk.every((t) => t.simCpuPct === 40)).toBe(true);
 	});
 
-	test("android: counts maestro, agent-device and warden-uiad helpers in the sim column", async () => {
+	test("android: counts agent-device and warden-uiad helpers in the sim column", async () => {
 		const exec = fakeExec([
 			{ cmd: "ps", result: { stdout: fx("ps.txt") } },
 			{ cmd: "adb", result: { stdout: fx("adb-top-helpers.txt") } },
@@ -262,7 +259,7 @@ describe("startSampler", () => {
 			"  PID  PPID    RSS  %CPU STARTED                      COMMAND",
 			"  100     1 900000  80.0 Fri Oct 16 12:20:00 2026     /Applications/Slack.app/Contents/MacOS/Slack",
 			"  101   100 400000  40.0 Fri Oct 16 12:20:01 2026     /Applications/Slack.app/Contents/Frameworks/Slack Helper",
-			"  300     1  20480   1.0 Fri Oct 16 12:07:33 2026     /opt/homebrew/bin/java -jar maestro-cli.jar",
+			"  300     1  20480   1.0 Fri Oct 16 12:07:33 2026     /opt/homebrew/bin/java -jar helper-cli.jar",
 		].join("\n");
 		let call = 0;
 		const exec = fakeExec([{ cmd: "ps", result: () => ({ stdout: ++call === 1 ? original : reused }) }]);
@@ -365,7 +362,7 @@ describe("host groups (19-7, 13-4)", () => {
 				{ pid: 100, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/opt/bun /repo/apps/cli/src/cli.ts ui snapshot" },
 				{ pid: 101, ppid: 100, rssKb: 1, time: "0:00.00", cmd: "/usr/bin/xcrun simctl spawn" },
 				{ pid: 102, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/Users/x/bin/warden-simd --udid A" },
-				{ pid: 300, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/opt/homebrew/bin/java -jar maestro.jar" },
+				{ pid: 300, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/opt/homebrew/bin/java -jar helper.jar" },
 				{ pid: 301, ppid: 300, rssKb: 1, time: "0:00.00", cmd: "/opt/sdk/platform-tools/adb -s e shell" },
 			])
 		);
@@ -625,7 +622,7 @@ describe("exit CPU of bench-spawned roots (bench-fidelity-R4)", () => {
 		d.sampler.exited(100, 1.2);
 		await d.tickAt(1000);
 		const { host, ticks, exits } = await d.sampler.stop();
-		expect(exits).toEqual([{ t: 700, cpuSec: expect.closeTo(0.7, 6), group: "bun-test" }]);
+		expect(exits).toEqual([{ t: 700, cpuSec: expect.closeTo(0.7, 6), group: "bun-test", name: "bun test" }]);
 		// 0.5 seen by the ticks (a process born since the baseline) + 0.7 at exit = the root's rusage
 		expect(host.cpuSeconds).toBeCloseTo(1.2, 6);
 		expect(host.byGroup?.["bun-test"]?.cpuSeconds).toBeCloseTo(1.2, 6);
@@ -677,7 +674,7 @@ describe("exit CPU of bench-spawned roots (bench-fidelity-R4)", () => {
 		d.setClock(600);
 		d.sampler.exited(100, 0.5);
 		const { exits } = await d.sampler.stop();
-		expect(exits).toEqual([{ t: 600, cpuSec: expect.closeTo(0.4, 6), group: "warden-cli" }]);
+		expect(exits).toEqual([{ t: 600, cpuSec: expect.closeTo(0.4, 6), group: "warden-cli", name: "warden run" }]);
 	});
 
 	test("S4: a root registered while ps ran, seen by one tick and gone, is not charged twice", async () => {

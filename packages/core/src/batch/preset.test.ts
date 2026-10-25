@@ -50,7 +50,8 @@ describe("batches in parseWardenConfig", () => {
 		});
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.batches?.["salient-e2e"]?.label).toBe("salient-e2e");
-		expect(res.data.projects?.[0]?.eas?.trigger).toBe(true);
+		const eas = res.data.projects?.[0]?.eas;
+		expect(eas === false || eas === undefined ? undefined : eas.trigger).toBe(true);
 	});
 
 	test("batches without projects is a valid config", () => {

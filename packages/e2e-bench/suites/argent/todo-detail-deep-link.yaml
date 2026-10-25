@@ -1,3 +1,6 @@
+# A deep link opened from outside the app. The iOS "Open in “warden-example”?" sheet shows once per boot and the
+# harness answers it before this framework's prepare (flow selectors could not: they read only the app's view
+# hierarchy, never SpringBoard), so only a dropped link is retried here, when the detail screen has not shown.
 steps:
   - launch: nz.co.delacour.warden.example
   - run: fragments/signed-in-ada

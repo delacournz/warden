@@ -5,6 +5,7 @@ import { gitConfig, githubUrl } from "@/lib/shared";
 import { Legend, ResourceCharts, StepChart, SuiteChart } from "./bench-chart";
 import { type BenchSummary, cleanFrameworks, isOk, label, PLATFORM_LABEL, reportSlug, SUMMARIES } from "./bench-data";
 import { runLabel } from "./bench-order";
+import { ProcessStacks } from "./bench-process-stacks";
 import { FootprintTable, ResourceTable, StartupTable, TestMatrix, VersionTable } from "./bench-tables";
 
 const BenchContext = createContext<BenchSummary | undefined>(undefined);
@@ -192,6 +193,15 @@ export function BenchResources(): ReactElement {
 		<div className="bench not-prose">
 			<ResourceCharts summary={s} />
 			<ResourceTable summary={s} />
+		</div>
+	);
+}
+
+/** Host (and simulator) CPU-seconds by process name, stacked per framework. */
+export function BenchProcesses(): ReactElement {
+	return (
+		<div className="bench not-prose">
+			<ProcessStacks summary={useSummary()} />
 		</div>
 	);
 }

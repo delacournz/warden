@@ -1,0 +1,9 @@
+bun add v1.3.14 (0d9b296a)
+Resolving dependencies
+Resolved, downloaded and extracted [4]
+Saved lockfile
+
+installed agent-device@0.21.31 with binaries:
+ - agent-device
+
+1 package installed [339.00ms]

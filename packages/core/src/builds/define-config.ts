@@ -130,7 +130,7 @@ export interface WardenVariant {
 	/** Replaces {@link WardenProject.fingerprint}. */
 	fingerprint?: WardenFingerprint | undefined;
 	/** Replaces {@link WardenProject.eas}. */
-	eas?: WardenEas | undefined;
+	eas?: WardenEas | false | undefined;
 	/** Replaces {@link WardenProject.build}. */
 	build?: WardenBuild | undefined;
 }
@@ -149,8 +149,11 @@ export interface WardenProject {
 	bundleId: WardenPerPlatform;
 	/** How the build cache key is computed. */
 	fingerprint?: WardenFingerprint | undefined;
-	/** EAS build lookup. Without it, EAS is used only when the project has an `eas.json`. */
-	eas?: WardenEas | undefined;
+	/**
+	 * EAS build lookup. Without it, EAS is used only when the project has an `eas.json`.
+	 * `false`: never consult eas-cli, even with an `eas.json` present.
+	 */
+	eas?: WardenEas | false | undefined;
 	/**
 	 * Local build command per platform, used as the last resort.
 	 *

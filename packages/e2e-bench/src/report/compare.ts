@@ -1,7 +1,13 @@
 import type { Manifest } from "../results/manifest";
-import { type BenchRun, CANONICAL_IDS, type CanonicalId, type FrameworkResult } from "../results/schema";
-import { cpuSeconds, DASH, ms, signedCpuSeconds, signedMs, signedPct } from "./format";
-import { cpuSecondsPerRep, hasWarmRep } from "./tables";
+import {
+	type BenchRun,
+	CANONICAL_IDS,
+	type CanonicalId,
+	type FrameworkResult,
+	type ProcessRow,
+} from "../results/schema";
+import { bytes, cpuSeconds, DASH, ms, signedCpuSeconds, signedMs, signedPct } from "./format";
+import { cpuSecondsPerRep, hasWarmRep, processesPerRep } from "./tables";
 
 type FrameworkKey = FrameworkResult["framework"];
 
@@ -16,6 +22,20 @@ export type Delta = { aMs: number; bMs: number; deltaMs: number; deltaPct: numbe
 
 export type TestDelta = { id: CanonicalId; delta: Delta };
 
+/** A process label's before/after in the warm-median reps' per-process tables; a side without the label reads 0. */
+export type ProcessDelta = {
+	name: string;
+	scope: "host" | "sim";
+	aCpuSeconds: number;
+	bCpuSeconds: number;
+	deltaCpuSeconds: number;
+	aRssPeakBytes: number;
+	bRssPeakBytes: number;
+};
+
+/** Rows of the per-process diff per framework and scope (largest CPU on either side first). */
+export const COMPARE_PROCESS_ROWS = 8;
+
 export type FrameworkCompare = {
 	framework: FrameworkKey;
 	aStatus: FrameworkResult["status"];
@@ -24,6 +44,8 @@ export type FrameworkCompare = {
 	suite?: Delta;
 	/** host CPU-seconds per rep, only when both runs recorded per-rep resources */
 	cpuSecondsPerRep?: CpuDelta;
+	/** top per-process rows by name, only when both runs recorded a per-process table */
+	processes?: ProcessDelta[];
 	tests: TestDelta[];
 };
 
@@ -45,6 +67,35 @@ export function delta(aMs: number, bMs: number): Delta | undefined {
 	return { aMs, bMs, deltaMs, deltaPct: Math.round((deltaMs / aMs) * 1000) / 10 };
 }
 
+/** Diffs two per-process tables by `scope` + `name`; the `other` bucket is skipped (its content differs per run). */
+export function processDeltas(a: readonly ProcessRow[], b: readonly ProcessRow[]): ProcessDelta[] {
+	const key = (r: ProcessRow): string => `${r.scope}\0${r.name}`;
+	const inA = new Map(a.filter((r) => r.name !== "other").map((r) => [key(r), r]));
+	const inB = new Map(b.filter((r) => r.name !== "other").map((r) => [key(r), r]));
+	return (["host", "sim"] as const).flatMap((scope) => {
+		const keys = [...new Set([...inA.keys(), ...inB.keys()])].filter((k) => k.startsWith(`${scope}\0`));
+		const rows = keys.map((k): ProcessDelta => {
+			const ra = inA.get(k);
+			const rb = inB.get(k);
+			const name = (ra ?? rb)?.name ?? "";
+			return {
+				name,
+				scope,
+				aCpuSeconds: ra?.cpuSeconds ?? 0,
+				bCpuSeconds: rb?.cpuSeconds ?? 0,
+				deltaCpuSeconds: (rb?.cpuSeconds ?? 0) - (ra?.cpuSeconds ?? 0),
+				aRssPeakBytes: ra?.rssPeakBytes ?? 0,
+				bRssPeakBytes: rb?.rssPeakBytes ?? 0,
+			};
+		});
+		rows.sort(
+			(x, y) =>
+				Math.max(y.aCpuSeconds, y.bCpuSeconds) - Math.max(x.aCpuSeconds, x.bCpuSeconds) || (x.name < y.name ? -1 : 1)
+		);
+		return rows.slice(0, COMPARE_PROCESS_ROWS);
+	});
+}
+
 function compareOne(a: FrameworkResult, b: FrameworkResult): FrameworkCompare {
 	const base: FrameworkCompare = { framework: a.framework, aStatus: a.status, bStatus: b.status, tests: [] };
 	if (a.status !== "ok" || b.status !== "ok") return base;
@@ -57,9 +108,12 @@ function compareOne(a: FrameworkResult, b: FrameworkResult): FrameworkCompare {
 	const cb = cpuSecondsPerRep(b);
 	const cpu = ca !== undefined && cb !== undefined ? delta(ca, cb) : undefined;
 	const allReps = !hasWarmRep(a) || !hasWarmRep(b);
+	const pa = processesPerRep(a);
+	const pb = processesPerRep(b);
 	return {
 		...base,
 		...(suite ? { suite } : {}),
+		...(pa !== undefined && pb !== undefined ? { processes: processDeltas(pa, pb) } : {}),
 		...(cpu
 			? {
 					cpuSecondsPerRep: {
@@ -141,6 +195,31 @@ function cpuSection(result: CompareResult): string[] {
 	];
 }
 
+function processSection(result: CompareResult): string[] {
+	const out: string[] = [];
+	for (const f of result.frameworks.filter((x) => x.processes !== undefined && x.processes.length > 0)) {
+		out.push(
+			"",
+			`## Where the CPU goes: ${f.framework}`,
+			"",
+			row(["Process", "Scope", "A CPU-s", "B CPU-s", "Delta", "A RSS peak", "B RSS peak"]),
+			row(["---", "---", "---", "---", "---", "---", "---"]),
+			...(f.processes ?? []).map((p) =>
+				row([
+					p.name,
+					p.scope,
+					cpuSeconds(p.aCpuSeconds),
+					cpuSeconds(p.bCpuSeconds),
+					signedCpuSeconds(p.deltaCpuSeconds),
+					bytes(p.aRssPeakBytes),
+					bytes(p.bRssPeakBytes),
+				])
+			)
+		);
+	}
+	return out;
+}
+
 function testSection(result: CompareResult, manifest: Manifest): string[] {
 	const out: string[] = [];
 	for (const f of result.frameworks.filter((x) => x.tests.length > 0)) {
@@ -170,6 +249,7 @@ export function renderCompareMarkdown(result: CompareResult, manifest: Manifest)
 		"",
 		...suiteSection(result),
 		...cpuSection(result),
+		...processSection(result),
 		...testSection(result, manifest),
 		...listSection(
 			"Status changes",

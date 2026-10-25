@@ -5,9 +5,9 @@ import { joinNative, loadManifest, nativeIndex, parseManifest } from "./manifest
 const root = join(import.meta.dir, "../..");
 
 describe("manifest", () => {
-	test("the package manifest maps all 8 ids for all 6 frameworks", () => {
+	test("the package manifest maps all 8 ids for all 4 frameworks", () => {
 		const m = loadManifest(root);
-		for (const fw of ["warden", "maestro", "argent", "agent-device", "tester-army", "detox"] as const) {
+		for (const fw of ["warden", "argent", "agent-device", "tester-army"] as const) {
 			expect(nativeIndex(m, fw).size).toBe(8);
 		}
 	});
@@ -19,7 +19,7 @@ describe("manifest", () => {
 		const m = loadManifest(root);
 		const { mapped, unmapped } = joinNative(
 			m,
-			"maestro",
+			"argent",
 			[{ nativeName: "sign-in-field-errors" }, { nativeName: "rogue" }],
 			(id, t) => ({
 				id,

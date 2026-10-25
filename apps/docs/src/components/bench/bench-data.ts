@@ -1,23 +1,14 @@
 import type { BenchSummary, SummaryFramework } from "@delacour/warden-e2e-bench/src/report/summary";
 import { orderSummaries } from "./bench-order";
+import { isSummary } from "./bench-parse";
 
 export type { BenchSummary, SummaryFramework };
 export type OkFramework = Extract<SummaryFramework, { status: "ok" }>;
-
-const SUPPORTED_VERSION = 1;
 
 const modules = import.meta.glob<unknown>("../../../content/docs/bench/data/*.json", {
 	eager: true,
 	import: "default",
 });
-
-const isSummary = (value: unknown): value is BenchSummary =>
-	typeof value === "object" &&
-	value !== null &&
-	"summaryVersion" in value &&
-	value.summaryVersion === SUPPORTED_VERSION &&
-	"frameworks" in value &&
-	Array.isArray(value.frameworks);
 
 const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1).replace(/\.json$/, "");
 
@@ -39,6 +30,7 @@ export const isOk = (f: SummaryFramework): f is OkFramework => f.status === "ok"
 
 export const PLATFORM_LABEL: Record<string, string> = { ios: "iOS", android: "Android" };
 
+/** Labels only: the framework list always comes from the dataset, so published runs that still carry `maestro` / `detox` rows keep rendering. */
 export const FRAMEWORK_LABEL: Record<string, string> = {
 	warden: "warden",
 	maestro: "Maestro",
@@ -47,6 +39,10 @@ export const FRAMEWORK_LABEL: Record<string, string> = {
 	"tester-army": "tester.army",
 	detox: "Detox",
 };
+
+/** Host CPU-seconds per rep exists on at least one framework (version 2 data); otherwise `%cpu` is all there is. */
+export const hasCpuSeconds = (s: BenchSummary): boolean =>
+	s.frameworks.some((f) => isOk(f) && f.cpuSecondsPerRep !== undefined);
 
 export const label = (fw: string): string => FRAMEWORK_LABEL[fw] ?? fw;
 

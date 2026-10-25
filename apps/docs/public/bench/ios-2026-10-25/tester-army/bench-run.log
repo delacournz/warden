@@ -1,0 +1,8 @@
+app: pinned /Users/expo/workingdir/build/.bench/app/ios/wardenexample.app (hash import:2d35643eda49, source import, built 2026-10-25T12:16:14.310Z, built now)
+using caller-leased device 3C5306E2-29B8-4814-A251-945E2183431E
+== tester-army
+deep link primed for tester-army: opened warden-example://todo/warden
+tester-army: ok
+framework    status  version     median    ratio  pass  flake  cold start  cpu-s/rep
+tester-army  ok      e2e 0.20.0  132.34 s  1.00×  100%  0%     18.69 s     17.01 s
+results: /Users/expo/workingdir/build/.bench/eas-ios-tester-army

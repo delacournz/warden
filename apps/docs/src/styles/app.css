@@ -303,6 +303,36 @@ figure.shiki {
 	background: var(--c);
 }
 
+/*
+ * Per-process CPU stacks: a process name keeps one slot of the categorical palette across every bar
+ * (`p-0`..`p-5`), and everything beyond the top six folds into the muted `p-other`. Segments are separated
+ * by a gap of the surface colour, and each carries its name and value in a native tooltip.
+ */
+.bench .p-0 {
+	--c: var(--bench-1);
+}
+.bench .p-1 {
+	--c: var(--bench-2);
+}
+.bench .p-2 {
+	--c: var(--bench-3);
+}
+.bench .p-3 {
+	--c: var(--bench-4);
+}
+.bench .p-4 {
+	--c: var(--bench-5);
+}
+.bench .p-5 {
+	--c: var(--bench-6);
+}
+.bench .p-other {
+	--c: color-mix(in srgb, var(--color-ink-2) 50%, transparent);
+}
+.bench .seg {
+	background: var(--c);
+}
+
 /* Landing FAQ: the disclosure marker is a drawn plus that turns into a minus. */
 .faq summary {
 	list-style: none;

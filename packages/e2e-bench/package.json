@@ -1,14 +1,14 @@
 {
 	"name": "@delacour/warden-e2e-bench",
 	"version": "0.1.0",
-	"description": "Benchmark harness: the example app's parity suite through warden-e2e, Maestro, Argent, agent-device, tester.army and Detox on one leased device",
+	"description": "Benchmark harness: the example app's parity suite through warden-e2e, Argent, agent-device and tester.army on one leased device",
 	"type": "module",
 	"private": true,
 	"scripts": {
 		"bench": "bun src/cli.ts",
-		"fmt": "biome format --write ./src ./suites",
-		"lint": "biome lint --write ./src ./suites",
-		"check": "biome check ./src ./suites",
+		"fmt": "biome format --write ./src ./suites ./scripts",
+		"lint": "biome lint --write ./src ./suites ./scripts",
+		"check": "biome check ./src ./suites ./scripts",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test src suites/warden/helpers"
 	},
@@ -22,9 +22,7 @@
 	"devDependencies": {
 		"@delacour/warden-tsconfig": "workspace:*",
 		"@e2e-dev/mobile": "0.12.0",
-		"detox": "20.51.3",
 		"e2e": "0.20.0",
-		"jest": "^29.7.0",
 		"typescript": "^5.9.3"
 	}
 }

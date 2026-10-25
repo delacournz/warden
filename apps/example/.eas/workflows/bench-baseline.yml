@@ -1,0 +1,279 @@
+name: Bench
+
+# e2e bench on hosted macOS workers, never on a dev Mac. Builds the pinned bench app once (Release simulator .app,
+# EXPO_PUBLIC_E2E=1, skipped when EAS has a build for the current fingerprint), then runs ONE JOB PER FRAMEWORK, each
+# on its own macos-large worker with its own simulator (packages/e2e-bench/scripts/eas-bench.sh). Every job stops
+# itself after `max_minutes` (results so far are kept, the lease released, the artifact uploaded). Numbers compare
+# only with other EAS runs of the same worker class.
+# Run: bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5
+#      bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=argent,agent-device
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        type: number
+        description: Reps per framework (rep 1 is cold, the rest warm)
+        default: 5
+      frameworks:
+        type: string
+        description: Comma-separated subset of warden,argent,agent-device,tester-army (one worker each)
+        default: warden,argent,agent-device,tester-army
+      max_minutes:
+        type: number
+        description: Hard stop per framework job, in minutes from job start
+        default: 55
+
+jobs:
+  # Fingerprint the native project, then look for an existing bench build with that hash.
+  fingerprint:
+    type: fingerprint
+
+  get_ios_build:
+    needs: [fingerprint]
+    type: get-build
+    params:
+      platform: ios
+      profile: bench
+      fingerprint_hash: ${{ needs.fingerprint.outputs.ios_fingerprint_hash }}
+
+  # Build only when no build matches the fingerprint.
+  build_ios:
+    needs: [get_ios_build]
+    if: ${{ !needs.get_ios_build.outputs.build_id }}
+    type: build
+    params:
+      platform: ios
+      profile: bench
+
+  # warden: its own worker and simulator; skipped unless named in `frameworks`.
+  bench_warden:
+    after: [get_ios_build, build_ios]
+    if: ${{ always() && contains(inputs.frameworks, 'warden') }}
+    runs_on: macos-large
+    env:
+      WARDEN_GOLDEN: '0'
+      WARDEN_SESSION_ID: eas-bench-warden
+      BENCH_FRAMEWORK: warden
+      BENCH_RUNS: ${{ inputs.runs }}
+      BENCH_MAX_MINUTES: ${{ inputs.max_minutes }}
+    steps:
+      - uses: eas/checkout
+      - name: Job start
+        run: |
+          date +%s > "$HOME/job-start"
+          echo "== warden job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun --version || (curl -fsSL https://bun.sh/install | bash)
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
+          extensions: [app]
+      - name: Host facts
+        run: |
+          xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
+          echo "app: ${{ steps.download_build.outputs.artifact_path }}"
+      - name: Bench warden
+        # Expressions are interpolated in run, not in a step env, so the app path is passed inline.
+        run: BENCH_APP="${{ steps.download_build.outputs.artifact_path }}" bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
+      - name: Release lease
+        if: ${{ always() }}
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          [ -f "$HOME/bench-lease-id" ] && bun "$(git rev-parse --show-toplevel)/apps/cli/src/cli.ts" release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+      - name: Collect results
+        if: ${{ always() }}
+        run: |
+          ROOT="$(git rev-parse --show-toplevel)"
+          DEST="$HOME/bench-results"
+          mkdir -p "$DEST"
+          { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
+          cp -R "$ROOT/.bench/eas-ios-warden/." "$DEST/" 2>/dev/null || true
+          cp "$HOME"/bench-run.log "$HOME"/fw-install.log "$HOME"/simd-build.log "$DEST/" 2>/dev/null || true
+          ls "$DEST"
+          for f in "$ROOT"/.bench/eas-ios-warden/logs/*.log "$HOME/bench-run.log" "$HOME"/.warden/simd/*.log; do
+            [ -f "$f" ] && { echo "=== $f"; tail -n 120 "$f" | cut -c1-240; }
+          done
+          true
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: eas-ios-warden
+          path: |
+            /Users/expo/bench-results/**/*
+
+  # argent: its own worker and simulator; skipped unless named in `frameworks`.
+  bench_argent:
+    after: [get_ios_build, build_ios]
+    if: ${{ always() && contains(inputs.frameworks, 'argent') }}
+    runs_on: macos-large
+    env:
+      WARDEN_GOLDEN: '0'
+      WARDEN_SESSION_ID: eas-bench-argent
+      BENCH_FRAMEWORK: argent
+      BENCH_RUNS: ${{ inputs.runs }}
+      BENCH_MAX_MINUTES: ${{ inputs.max_minutes }}
+    steps:
+      - uses: eas/checkout
+      - name: Job start
+        run: |
+          date +%s > "$HOME/job-start"
+          echo "== argent job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun --version || (curl -fsSL https://bun.sh/install | bash)
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
+          extensions: [app]
+      - name: Host facts
+        run: |
+          xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
+          echo "app: ${{ steps.download_build.outputs.artifact_path }}"
+      - name: Bench argent
+        # Expressions are interpolated in run, not in a step env, so the app path is passed inline.
+        run: BENCH_APP="${{ steps.download_build.outputs.artifact_path }}" bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
+      - name: Release lease
+        if: ${{ always() }}
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          [ -f "$HOME/bench-lease-id" ] && bun "$(git rev-parse --show-toplevel)/apps/cli/src/cli.ts" release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+      - name: Collect results
+        if: ${{ always() }}
+        run: |
+          ROOT="$(git rev-parse --show-toplevel)"
+          DEST="$HOME/bench-results"
+          mkdir -p "$DEST"
+          { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
+          cp -R "$ROOT/.bench/eas-ios-argent/." "$DEST/" 2>/dev/null || true
+          cp "$HOME"/bench-run.log "$HOME"/fw-install.log "$HOME"/simd-build.log "$DEST/" 2>/dev/null || true
+          ls "$DEST"
+          for f in "$ROOT"/.bench/eas-ios-argent/logs/*.log "$HOME/bench-run.log" "$HOME"/.warden/simd/*.log; do
+            [ -f "$f" ] && { echo "=== $f"; tail -n 120 "$f" | cut -c1-240; }
+          done
+          true
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: eas-ios-argent
+          path: |
+            /Users/expo/bench-results/**/*
+
+  # agent-device: its own worker and simulator; skipped unless named in `frameworks`.
+  bench_agent_device:
+    after: [get_ios_build, build_ios]
+    if: ${{ always() && contains(inputs.frameworks, 'agent-device') }}
+    runs_on: macos-large
+    env:
+      WARDEN_GOLDEN: '0'
+      WARDEN_SESSION_ID: eas-bench-agent-device
+      BENCH_FRAMEWORK: agent-device
+      BENCH_RUNS: ${{ inputs.runs }}
+      BENCH_MAX_MINUTES: ${{ inputs.max_minutes }}
+    steps:
+      - uses: eas/checkout
+      - name: Job start
+        run: |
+          date +%s > "$HOME/job-start"
+          echo "== agent-device job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun --version || (curl -fsSL https://bun.sh/install | bash)
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
+          extensions: [app]
+      - name: Host facts
+        run: |
+          xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
+          echo "app: ${{ steps.download_build.outputs.artifact_path }}"
+      - name: Bench agent-device
+        # Expressions are interpolated in run, not in a step env, so the app path is passed inline.
+        run: BENCH_APP="${{ steps.download_build.outputs.artifact_path }}" bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
+      - name: Release lease
+        if: ${{ always() }}
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          [ -f "$HOME/bench-lease-id" ] && bun "$(git rev-parse --show-toplevel)/apps/cli/src/cli.ts" release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+      - name: Collect results
+        if: ${{ always() }}
+        run: |
+          ROOT="$(git rev-parse --show-toplevel)"
+          DEST="$HOME/bench-results"
+          mkdir -p "$DEST"
+          { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
+          cp -R "$ROOT/.bench/eas-ios-agent-device/." "$DEST/" 2>/dev/null || true
+          cp "$HOME"/bench-run.log "$HOME"/fw-install.log "$HOME"/simd-build.log "$DEST/" 2>/dev/null || true
+          ls "$DEST"
+          for f in "$ROOT"/.bench/eas-ios-agent-device/logs/*.log "$HOME/bench-run.log" "$HOME"/.warden/simd/*.log; do
+            [ -f "$f" ] && { echo "=== $f"; tail -n 120 "$f" | cut -c1-240; }
+          done
+          true
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: eas-ios-agent-device
+          path: |
+            /Users/expo/bench-results/**/*
+
+  # tester-army: its own worker and simulator; skipped unless named in `frameworks`.
+  bench_tester_army:
+    after: [get_ios_build, build_ios]
+    if: ${{ always() && contains(inputs.frameworks, 'tester-army') }}
+    runs_on: macos-large
+    env:
+      WARDEN_GOLDEN: '0'
+      WARDEN_SESSION_ID: eas-bench-tester-army
+      BENCH_FRAMEWORK: tester-army
+      BENCH_RUNS: ${{ inputs.runs }}
+      BENCH_MAX_MINUTES: ${{ inputs.max_minutes }}
+    steps:
+      - uses: eas/checkout
+      - name: Job start
+        run: |
+          date +%s > "$HOME/job-start"
+          echo "== tester-army job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun --version || (curl -fsSL https://bun.sh/install | bash)
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
+          extensions: [app]
+      - name: Host facts
+        run: |
+          xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
+          echo "app: ${{ steps.download_build.outputs.artifact_path }}"
+      - name: Bench tester-army
+        # Expressions are interpolated in run, not in a step env, so the app path is passed inline.
+        run: BENCH_APP="${{ steps.download_build.outputs.artifact_path }}" bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
+      - name: Release lease
+        if: ${{ always() }}
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          [ -f "$HOME/bench-lease-id" ] && bun "$(git rev-parse --show-toplevel)/apps/cli/src/cli.ts" release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+      - name: Collect results
+        if: ${{ always() }}
+        run: |
+          ROOT="$(git rev-parse --show-toplevel)"
+          DEST="$HOME/bench-results"
+          mkdir -p "$DEST"
+          { date -u; sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version; } > "$DEST/host-facts.txt" 2>&1 || true
+          cp -R "$ROOT/.bench/eas-ios-tester-army/." "$DEST/" 2>/dev/null || true
+          cp "$HOME"/bench-run.log "$HOME"/fw-install.log "$HOME"/simd-build.log "$DEST/" 2>/dev/null || true
+          ls "$DEST"
+          for f in "$ROOT"/.bench/eas-ios-tester-army/logs/*.log "$HOME/bench-run.log" "$HOME"/.warden/simd/*.log; do
+            [ -f "$f" ] && { echo "=== $f"; tail -n 120 "$f" | cut -c1-240; }
+          done
+          true
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: eas-ios-tester-army
+          path: |
+            /Users/expo/bench-results/**/*

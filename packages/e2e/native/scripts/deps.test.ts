@@ -55,6 +55,19 @@ describe("parseLock", () => {
 		const text = readFileSync(join(import.meta.dir, "..", "idb.lock.json"), "utf8");
 		expect(parseLock(text).tarball).toBe("idb-libraries.macos-arm64.tar.gz");
 	});
+
+	test("accepts a hosted url and a fork commit as the source, and rejects a short ref", () => {
+		const base = `"version":"v1.7.2","tarball":"a.tar.gz","sha256":"${"a".repeat(64)}"`;
+		const lock = parseLock(
+			`{${base},"url":"https://example.test/r/a.tar.gz","source":{"repository":"https://example.test/idb.git","ref":"${"b".repeat(40)}"}}`
+		);
+		expect(lock.url).toBe("https://example.test/r/a.tar.gz");
+		expect(lock.source?.ref).toBe("b".repeat(40));
+		expect(() =>
+			parseLock(`{${base},"source":{"repository":"https://example.test/idb.git","ref":"1768a0d"}}`)
+		).toThrow();
+		expect(() => parseLock(`{${base},"url":"not a url"}`)).toThrow();
+	});
 });
 
 describe("cachePath", () => {
@@ -78,6 +91,19 @@ describe("ensureTarball", () => {
 		expect(result.path).toBe(cachePath(root, tar.sha256));
 		expect(urls).toEqual(["https://github.com/facebook/idb/releases/download/v9.9.9/libs.tar.gz"]);
 		expect(lines.join("\n")).toContain("downloaded");
+	});
+
+	test("downloads from the lock's url when it names one", async () => {
+		const tar = await fakeTarball(goodLayout);
+		const url = "https://github.com/delacournz/warden/releases/download/idb-v9.9.9-warden.1/libs.tar.gz";
+		const lock: IdbLock = { version: "v9.9.9", tarball: "libs.tar.gz", sha256: tar.sha256, url };
+		const urls: string[] = [];
+		const fetchImpl = (async (u: string | URL | Request) => {
+			urls.push(String(u));
+			return new Response(Bun.file(tar.path));
+		}) as typeof fetch;
+		await ensureTarball(lock, { home: root, fetchImpl, log: () => {} });
+		expect(urls).toEqual([url]);
 	});
 
 	test("hits the cache without touching the network", async () => {
@@ -133,6 +159,21 @@ describe("installLibraries", () => {
 		await installLibraries(lock, tar.path, dest);
 		writeFileSync(join(dest, ".warden-idb.json"), JSON.stringify({ version: "v9.9.9", source: "source" }));
 		expect(await installLibraries(lock, tar.path, dest)).toBe("installed");
+	});
+
+	test("drops the SwiftPM build dir when the package changes, keeps it when up to date", async () => {
+		const tar = await fakeTarball(goodLayout);
+		const dest = join(root, "idb-libraries");
+		const build = join(root, "ios", ".build");
+		await installLibraries({ version: "v1.0.0", tarball: "x", sha256: tar.sha256 }, tar.path, dest);
+		mkdirSync(build, { recursive: true });
+		writeFileSync(join(build, "marker"), "");
+		expect(await installLibraries({ version: "v1.0.0", tarball: "x", sha256: tar.sha256 }, tar.path, dest)).toBe(
+			"up-to-date"
+		);
+		expect(existsSync(join(build, "marker"))).toBe(true);
+		await installLibraries({ version: "v1.0.1", tarball: "x", sha256: tar.sha256 }, tar.path, dest);
+		expect(existsSync(build)).toBe(false);
 	});
 
 	test("rejects a tarball without the guest binary and keeps the previous install", async () => {
@@ -221,6 +262,47 @@ describe("buildFromSource", () => {
 		const { exec } = fakeExec("v1.6.0\n");
 		await expect(buildFromSource(lock, { exec, srcDir, dest: join(root, "d"), log: () => {} })).rejects.toThrow(
 			/v1\.6\.0.*v1\.7\.2/
+		);
+	});
+
+	const ref = "1768a0d1006ff528c2fd78f335d9e3ee2f01596d";
+	const forkLock: IdbLock = { ...lock, source: { repository: "https://github.com/UrbanChrisy/idb.git", ref } };
+
+	/** `git init` lays out the checkout; `rev-parse HEAD` answers `head`; `describe` is never asked. */
+	function fakeForkExec(head: string): { exec: Exec; calls: { cmd: string; cwd?: string }[] } {
+		const calls: { cmd: string; cwd?: string }[] = [];
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: cmd.join(" "), cwd: opts?.cwd });
+			if (cmd[0] === "git" && cmd[1] === "init") fakeCheckout(cmd[cmd.length - 1] ?? "");
+			if (cmd.includes("rev-parse")) return ok(`${head}\n`);
+			if (cmd.includes("describe")) return { exitCode: 128, stdout: "", stderr: "fatal: no tag exactly matches" };
+			return ok();
+		};
+		return { exec, calls };
+	}
+
+	test("fetches the fork commit the lock pins by sha into a fresh repository, then builds", async () => {
+		const srcDir = join(root, "src", ref);
+		const { exec, calls } = fakeForkExec(ref);
+		await buildFromSource(forkLock, { exec, srcDir, dest: join(root, "idb-libraries"), log: () => {} });
+		const partial = calls[0]?.cmd.split(" ").at(-1) ?? "";
+		expect(calls.map((c) => c.cmd).slice(0, 4)).toEqual([
+			`git init -q ${partial}`,
+			`git -C ${partial} remote add origin https://github.com/UrbanChrisy/idb.git`,
+			`git -C ${partial} fetch --depth 1 origin ${ref}`,
+			`git -C ${partial} checkout -q --detach FETCH_HEAD`,
+		]);
+		expect(calls.some((c) => c.cmd.startsWith("git clone"))).toBe(false);
+		expect(existsSync(join(srcDir, ".git"))).toBe(true);
+		expect(calls.some((c) => c.cmd === "./build.sh build libraries" && c.cwd === srcDir)).toBe(true);
+	});
+
+	test("fails when a fork checkout is at another commit than the lock pins", async () => {
+		const srcDir = join(root, "idb");
+		fakeCheckout(srcDir);
+		const { exec } = fakeForkExec("33a400490a1f53f81e070474435bef8ef10b30b4");
+		await expect(buildFromSource(forkLock, { exec, srcDir, dest: join(root, "d"), log: () => {} })).rejects.toThrow(
+			/33a40049.*1768a0d1/
 		);
 	});
 });

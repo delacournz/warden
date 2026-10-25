@@ -1,0 +1,54 @@
+name: Bench build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        type: choice
+        description: Platform to build
+        options:
+          - all
+          - ios
+          - android
+        default: all
+  push:
+    branches: ['main']
+    paths: ['apps/example/**']
+
+jobs:
+  # Fingerprint the native project once, then per platform reuse an existing bench build with that hash
+  # and build only when none matches.
+  fingerprint:
+    type: fingerprint
+
+  get_ios_build:
+    needs: [fingerprint]
+    if: ${{ inputs.platform != 'android' }}
+    type: get-build
+    params:
+      platform: ios
+      profile: bench
+      fingerprint_hash: ${{ needs.fingerprint.outputs.ios_fingerprint_hash }}
+  build_ios:
+    needs: [get_ios_build]
+    if: ${{ inputs.platform != 'android' && !needs.get_ios_build.outputs.build_id }}
+    type: build
+    params:
+      platform: ios
+      profile: bench
+
+  get_android_build:
+    needs: [fingerprint]
+    if: ${{ inputs.platform != 'ios' }}
+    type: get-build
+    params:
+      platform: android
+      profile: bench
+      fingerprint_hash: ${{ needs.fingerprint.outputs.android_fingerprint_hash }}
+  build_android:
+    needs: [get_android_build]
+    if: ${{ inputs.platform != 'ios' && !needs.get_android_build.outputs.build_id }}
+    type: build
+    params:
+      platform: android
+      profile: bench

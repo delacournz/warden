@@ -1,10 +1,50 @@
 ---
 title: Benchmark e2e frameworks
-description: Run the same 8-test suite through warden, Maestro, Argent, agent-device, tester.army and Detox on one device and compare the numbers.
+description: Run the same 8-test suite through warden, Argent, agent-device and tester.army on one device and compare the numbers.
 icon: Gauge
 ---
 
-`packages/e2e-bench` answers one question: how long does the same suite take in each framework, on the same build and the same device. It runs warden, Maestro, Argent, agent-device, tester.army and Detox one at a time and writes a Markdown and an HTML report. No LLM is involved.
+`packages/e2e-bench` answers one question: how long does the same suite take in each framework, on the same build and the same device. It runs warden, Argent, agent-device and tester.army one at a time and writes a Markdown and an HTML report. No LLM is involved.
+
+## Build the app once
+
+The benchmark installs one pinned app on every framework's run. It is built once and stored at `.bench/app/<platform>/` (the `.app` or `.apk` plus a `manifest.json` with the warden fingerprint, sha256, source and commit). Every `bench run` reuses it. `bench run` never builds, fingerprints or calls EAS: it installs the pinned artifact (`simctl install` / `adb install -r`) after claiming the device, and builds it once only when it is missing.
+
+```bash
+bun run bench app build --platform ios            # build (warden cache, then a local Expo build) and pin it
+bun run bench app build --platform ios --force    # rebuild even though one is pinned
+bun run bench app build --platform android --eas  # also look the build up on EAS
+bun run bench app status --platform ios           # hash, source, builtAt; fresh or stale, exit 1 when missing or stale
+bun run bench app clean --platform ios            # remove the pinned app
+bun run bench run --platform ios --app path/to/Example.app   # use a pinned dir or import a bare .app / .apk
+```
+
+`app build` resolves the build with `warden app ensure --variant bench` on `apps/example`. Without `--force` it reuses the pinned app without fingerprinting. `app status` compares the pinned hash with `warden app fingerprint --variant bench`.
+
+Rebuild with `--force` after changing `apps/example` or its Expo and React Native dependencies. Changes to `packages/e2e` or warden do not need a rebuild.
+
+### Build on EAS
+
+The app is the Expo project `@delacour/warden` (`extra.eas.projectId` in `app.config.ts`, GitHub base directory `apps/example`), so `bench app build --eas` also looks the `bench` profile up on EAS (`bunx eas-cli`, logged in to the `delacour` account). The `bench` variant in `apps/example/warden.config.ts` is the only place EAS is configured, and `eas.json` holds the Release simulator and APK profile. `.eas/workflows/bench-build.yml` builds both platforms on EAS: run it with `eas workflow:run .eas/workflows/bench-build.yml`, or it runs on pushes to `main` that touch `apps/example/`.
+
+### Run the baseline on EAS
+
+`.eas/workflows/bench-baseline.yml` builds the `bench` iOS app once, then runs one job per framework, each on its own EAS `macos-large` worker with its own simulator, so a measurement never touches your Mac and nothing one framework leaves behind reaches the next. Dispatch it from `apps/example`:
+
+```bash
+bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5                                  # all four frameworks
+bunx eas-cli workflow:run .eas/workflows/bench-baseline.yml -F runs=5 -F frameworks=argent,agent-device
+```
+
+Inputs: `runs` (reps, default `5`; rep 1 is cold), `frameworks` (comma list of `warden,argent,agent-device,tester-army`, default all four; a framework's job is skipped unless named) and `max_minutes` (default `55`). Each framework job runs `packages/e2e-bench/scripts/eas-bench.sh`: install deps, build `warden-simd`, install argent or agent-device with `bun add -g` when that is its framework (tester-army comes with `bun install`), claim a headless simulator, record a 60 s idle control and run `bench run` against the downloaded `.app`. A watchdog stops the bench when the job reaches `max_minutes`; the results so far are kept. On the way out the job screenshots the simulator (`sim-final.png`), lists the apps it still runs and releases the lease, even when the run fails.
+
+The workflow fingerprints the native project and reuses an existing `bench` build with the same fingerprint, so it only builds when `apps/example` changed. Each job uploads an `eas-ios-<framework>` artifact to the run page (`expo.dev/accounts/delacour/projects/warden/workflows`); `bunx eas-cli workflow:view <run-id>` prints the download URLs. Each archive unpacks to `Users/expo/bench-results`. Copy one to `.bench/eas-ios-<framework>` and re-render:
+
+```bash
+bun run bench report .bench/eas-ios-warden
+```
+
+A hosted macOS worker idles hotter than a Mac and shares its host, so EAS numbers compare only with EAS numbers from the same worker class (`macos-large`). Never compare them with local runs.
 
 ## Run it
 
@@ -13,7 +53,7 @@ From the repo root:
 ```bash
 bun run bench doctor                         # is every framework installed? prints install hints
 bun run bench run --platform ios --runs 3    # full run on a device warden claims
-bun run bench run --frameworks warden,maestro --runs 2 --udid <leased-udid>
+bun run bench run --frameworks warden,argent --runs 2 --udid <leased-udid>
 bun run bench list                           # frameworks, platforms, the 8 canonical test ids
 bun run bench report .bench/<run-id>         # re-render the reports
 bun run bench compare .bench/<run-a> .bench/<run-b>
@@ -23,9 +63,10 @@ bun run bench summary .bench/<run-id>        # slim summary.json for the docs pa
 | Flag | Default | Meaning |
 |---|---|---|
 | `--platform ios\|android` | `ios` | which leg to run |
-| `--frameworks a,b` | all six | comma list of `warden,maestro,argent,agent-device,tester-army,detox` |
+| `--frameworks a,b` | all four | comma list of `warden,argent,agent-device,tester-army` |
 | `--runs N` | `3` | reps per framework. Rep 1 is cold, the rest are warm |
 | `--retries N` | `0` | forwarded to every framework |
+| `--app PATH` | `.bench/app/<platform>` | pinned app dir, or a bare `.app` / `.apk` to import and pin |
 | `--udid X` | claim one | reuse a device you leased; nothing is claimed or released |
 | `--reboot-between` | off | reboot the device between frameworks |
 | `--out DIR` | `.bench/<timestamp>-<platform>` | output directory |
@@ -41,11 +82,9 @@ A full iOS run takes about an hour. Keep the Mac awake and use a dedicated simul
 | Framework | Needs |
 |---|---|
 | warden | `bun run --cwd packages/e2e native:build` for the iOS helper |
-| Maestro | `brew install maestro` and Java 17+ (`brew install openjdk@21`) |
 | Argent | `bun add -g @swmansion/argent` |
 | agent-device | `bun add -g agent-device` |
 | tester.army | Node `^22.22.3 \|\| >=24.8` (for example `nvm install 24`) |
-| Detox | `brew tap wix/brew && brew install applesimutils` |
 
 The harness never installs global tools. `bench doctor` prints the exact command for anything missing.
 
@@ -53,7 +92,6 @@ The harness never installs global tools. `bench doctor` prints the exact command
 |---|---|
 | `BENCH_NODE_BIN` | node bin dir used for tester.army when the default Node is too old |
 | `BENCH_TESTER_ARMY_STATE_DIR` | private agent-device state dir for tester.army |
-| `BENCH_DETOX_ANDROID` | `1` opts into the Detox Android leg (needs an instrumented build) |
 
 ## Read the report
 
@@ -75,14 +113,15 @@ artifacts/<fw>/rep-<n>/   native reporter output and resource samples
 - **Residue.** Processes, driver apps and directories left behind after teardown. A healthy run leaves none unless `--keep-drivers` is set.
 - **Footprint.** Lines and bytes of suite source, size of package-local dependencies and binaries. A rough measure of what you maintain.
 - **Resources.** Host and simulator CPU and RSS, sampled every 500 ms. The CPU headline is host CPU-seconds per warm rep (timed run only); `%cpu` is a decaying average on macOS, so do not judge a framework on it.
-- **Unsupported and failed.** Detox on React Native 0.86 usually lands here with the attach error. A native test name missing from the manifest is a parity breach and fails the framework.
+- **Unsupported and failed.** A framework that cannot drive the app lands here with its error. A native test name missing from the manifest is a parity breach and fails the framework.
 
 ## Fairness rules
 
-- Same `.app` for every framework, with its sha256 recorded.
+- Same pinned app for every framework, with its sha256 recorded.
 - Zero LLM calls.
 - Same assertions per canonical test id.
 - Same retry helpers: dropped first tap, dropped deep link, system alerts.
+- The iOS "Open in …?" sheet is answered once per boot by the harness, before every framework's prepare: iOS asks it for the first custom-scheme link opened from outside the app and not again, so without that the first framework on a shared simulator would pay for it and no other would see it, and on one simulator per framework a tool with no optional step would lose the deep-link test to it.
 - Fresh app launch per test.
 - `retries=0`.
 - Frameworks run sequentially, with daemons stopped between them.
@@ -99,11 +138,9 @@ artifacts/<fw>/rep-<n>/   native reporter output and resource samples
 | Framework | Gap |
 |---|---|
 | warden | Copied from the example app, retries written with warden's own options: `tap({ until })`, a deep-link retry, `systemAlerts: "dismiss"`. The hand-rolled helpers it replaced ran the published headline numbers; the idiomatic run is reported beside them. |
-| Maestro | Retries are `retry:` blocks that rerun the tap and the wait together. Checkbox state is read from the accessibility text. Step durations include Maestro's own polling. |
-| Argent | Retries are nested `when:` guards capped at two retaps. The checked state of a checkbox is not readable, so the remaining-count assertion covers the effect. |
-| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`. Needs a runner prepare step and a daemon. |
+| Argent | Retries are nested `when:` guards capped at two retaps; the deep-link flow retries a dropped link the same way. Flow selectors read only the app's view hierarchy, never SpringBoard, so the flow could not answer the "Open in …?" sheet itself; the harness primes it. The checked state of a checkbox is not readable, so the remaining-count assertion covers the effect. |
+| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`, so the deep-link script could not answer a sheet that may or may not show (`alert accept` polls about 2 s whatever its argument); the harness primes it. Needs a runner prepare step and a daemon. |
 | tester.army | Has its own copy of the hand-rolled helpers warden used before. Runs with a private agent-device state dir and Node 24 on `PATH`. |
-| Detox | Best effort: Detox 20.51 supports React Native up to 0.84 and the app is on 0.86. Failures to attach are reported as `unsupported`. Permissions are pre-granted instead of dismissing system alerts. Android needs an instrumented build. |
 
 ## Add a framework
 

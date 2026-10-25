@@ -4,7 +4,7 @@ import Foundation
 enum BuildInfo {
   static let protocolVersion = 1
   static let version = "0.1.0"
-  static let idb = "v1.7.2"
+  static let idb = "v1.7.7"
 }
 
 /// A JSON value. The wire format is NDJSON, so every request/response/event is one of these.

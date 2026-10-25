@@ -73,7 +73,7 @@ export default defineConfig({
     "fingerprint.command": { type: "string", description: "Command that prints the native fingerprint. `{platform}` is substituted. Default: `@expo/fingerprint`." },
     "fingerprint.include": { type: '"native" | "native+js"', description: "What the cache / install key covers. `native+js` adds a content hash of `jsInputs`, for Release builds that embed the JS bundle.", default: '"native"' },
     "fingerprint.jsInputs": { type: "string[]", description: "Required with `native+js`. Globs, relative to the project root, of the JS sources. A glob starting with `../` reaches outside the project (a workspace package the bundle embeds, e.g. `../../../packages/engine/src/**`). Only git-tracked and untracked-not-ignored files count." },
-    "eas.profile": { type: "string", description: "EAS build profile to look up builds under. Without an `eas` section, EAS is used only when the project has an `eas.json` (this profile, no trigger).", default: '"development-simulator"' },
+    "eas.profile": { type: "string", description: "EAS build profile to look up builds under. Without an `eas` section, EAS is used only when the project has an `eas.json` (this profile, no trigger). `eas: false` never consults eas-cli.", default: '"development-simulator"' },
     "eas.workflow": { type: "string", description: "EAS workflow file to trigger on a miss." },
     "eas.trigger": { type: "boolean", description: "Trigger the workflow when no EAS build matches.", default: "false" },
     build: { type: "{ ios?: string; android?: string; configuration?: \"Debug\" | \"Release\"; cache?: boolean }", description: "Local build command per platform, used as the last resort." },
