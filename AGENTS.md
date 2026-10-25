@@ -79,7 +79,7 @@ PRs into `develop` are gated on local signoff, not GitHub Actions. Branch protec
 
 - `develop` is the default + integration branch; feature PRs target it. `main` is a release pointer only `.github/workflows/promote.yml` moves, always a fast-forward to a develop commit. Never push `main`.
 - A PR that changes what `@delacour/warden` / `@delacour/warden-e2e` ship adds a changeset (`bun changeset`, pick `@delacour/warden` only; e2e follows via `fixed`). Docs/internal-only PRs need none. Agents: follow `.claude/rules/changesets.md` and the `changeset` skill (`.claude/skills/changeset`).
-- Each push to `develop` runs `version.yml`: opens/updates the "🔖 chore(release): version packages" PR (bumps, CHANGELOGs, `bun.lock`) and dispatches `ci.yml` so it gets `signoff`.
+- Each push to `develop` runs `version.yml`: opens/updates the "🔖 chore(release): vX.Y.Z" PR, titled with the next version (bumps, CHANGELOGs, `bun.lock`), and dispatches `ci.yml` so it gets `signoff`.
 - Merging the version PR triggers `promote.yml`: fast-forward `main`, push tag `v<version>`. Railway production builds `main`, staging builds `develop`.
 - The tag triggers `release.yml`: GitHub Release with binaries + npm publish via OIDC trusted publishing (`release` environment, no token, no reviewer click).
 - `bun run release <version>` (`apps/cli/scripts/release.ts`) is break-glass only, for when CI is down. It bypasses changesets.

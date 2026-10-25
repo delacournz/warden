@@ -1,6 +1,6 @@
 name: version
 
-# Keeps the "🔖 chore(release): version packages" pull request in step with `develop`.
+# Keeps the "🔖 chore(release): vX.Y.Z" pull request in step with `develop`.
 #
 # Every push to `develop` that carries pending changesets (.changeset/*.md) makes changesets/action
 # run `bun run version` (changeset version + lockfile refresh) on `changeset-release/develop` and
@@ -100,6 +100,26 @@ jobs:
       - if: steps.detect.outputs.skip == 'false'
         run: bun install --frozen-lockfile
 
+      # The PR title and its squash commit carry the version this release will ship, so a `git log`
+      # on develop reads "🔖 chore(release): v0.3.0" rather than a bare "version packages". changesets
+      # only knows that version after `changeset version` has run, so ask `changeset status` for the
+      # same answer first: it resolves the pending changesets against the current manifests without
+      # writing anything. @delacour/warden-e2e is `fixed` to @delacour/warden, so one version suffices.
+      # With nothing pending the output is empty and the action is about to close the PR, so the
+      # fallback text only ever names that closing run.
+      - id: next
+        if: steps.detect.outputs.skip == 'false'
+        run: |
+          bunx changeset status --output="$RUNNER_TEMP/changeset-status.json"
+          version=$(jq -r '.releases[] | select(.name == "@delacour/warden") | .newVersion' "$RUNNER_TEMP/changeset-status.json")
+          if [ -n "$version" ]; then
+            echo "next version: $version"
+            echo "title=🔖 chore(release): v$version" >> "$GITHUB_OUTPUT"
+          else
+            echo "no pending changesets: no version to name"
+            echo "title=🔖 chore(release): version packages" >> "$GITHUB_OUTPUT"
+          fi
+
       # `bun run version` executes repo code (changeset version + bun install --lockfile-only) in the
       # same step as the App token. That is acceptable only because this workflow runs solely on
       # pushes to `develop`, which is PR-gated and signed off: no fork or unreviewed code reaches it.
@@ -111,8 +131,8 @@ jobs:
         with:
           github-token: ${{ steps.app.outputs.token }}
           version-script: bun run version
-          commit-message: "🔖 chore(release): version packages"
-          pr-title: "🔖 chore(release): version packages"
+          commit-message: ${{ steps.next.outputs.title }}
+          pr-title: ${{ steps.next.outputs.title }}
           create-github-releases: false
           push-git-tags: false
         env:

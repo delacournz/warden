@@ -22,12 +22,41 @@ export type HelperRecord = {
 	lease?: string;
 };
 
+/** Where a finished recording goes: a spec file, or an exported function in a helpers module. */
+export type RecordingTarget =
+	| { kind: "spec"; path: string }
+	| { kind: "helper"; path: string; fn: string; prerequisite?: string };
+
+/**
+ * The recording in progress (`warden ui record start`). The steps live in the journal at `recordingFile`; this is
+ * where `record stop` writes them. `wrote` is set once stop has written the target, so a second stop after a failed
+ * verify replaces its own file instead of refusing it as foreign.
+ */
+export type RecordingPointer = {
+	name: string;
+	title?: string;
+	target: RecordingTarget;
+	/** ids module (`export const ids = { … } as const`) to merge test ids into */
+	ids?: string;
+	/** `--suite`: the `e2e.<name>` suite `record stop` verifies in */
+	suite?: string;
+	/** `--options <module#name>`: the shared `test.use` object to pass (module absolute); `"none"` = `--options none`, pass nothing. Absent = detect at stop */
+	options?: { module: string; name: string } | "none";
+	startedAt: number;
+	/** `record start --overwrite`: `stop` may replace the target without being asked again */
+	overwrite?: true;
+	wrote?: true;
+	/** route capture (dev client only): the route seen last, the one at `record start`, and consecutive failed reads (capture stops after a few) */
+	routes?: { initial?: string; last?: string; misses?: number };
+};
+
 /** `state.json`. `generation` bumps only on `snapshot`, `snapshot --settle` and `find`. */
 export type UiState = {
 	generation: number;
 	metroUrl?: string;
 	/** bundle id of the app `warden ui open` last launched (`close --app` terminates it) */
 	app?: string;
+	recording?: RecordingPointer;
 	helper?: HelperRecord;
 	/** the running `logs start` collector (`warden ui-collect`): host pid, start time and (newer warden) its `--out` dir */
 	collector?: { pid: number; startedAt: number; out?: string };
@@ -102,6 +131,30 @@ const stateSchema = z.object({
 	generation: z.number(),
 	metroUrl: z.string().optional(),
 	app: z.string().optional(),
+	recording: z
+		.object({
+			name: z.string(),
+			title: z.string().optional(),
+			target: z.discriminatedUnion("kind", [
+				z.object({ kind: z.literal("spec"), path: z.string() }),
+				z.object({
+					kind: z.literal("helper"),
+					path: z.string(),
+					fn: z.string(),
+					prerequisite: z.string().optional(),
+				}),
+			]),
+			ids: z.string().optional(),
+			suite: z.string().optional(),
+			options: z.union([z.literal("none"), z.object({ module: z.string(), name: z.string() })]).optional(),
+			startedAt: z.number(),
+			overwrite: z.literal(true).optional(),
+			wrote: z.literal(true).optional(),
+			routes: z
+				.object({ initial: z.string().optional(), last: z.string().optional(), misses: z.number().optional() })
+				.optional(),
+		})
+		.optional(),
 	helper: z
 		.object({
 			pid: z.number(),
@@ -163,7 +216,7 @@ export function writeState(ctx: Pick<CommandContext, "env" | "now">, udid: strin
 /**
  * Read-modify-write of `state.json`: re-reads the file and writes what `update` returns, all under the store's
  * `BEGIN IMMEDIATE` transaction (the cross-process mutex), so two `warden ui` processes setting different records
- * (helper, video, collector, app) never lose each other's. Every `state.json` writer goes through here.
+ * (helper, video, recording, collector, app) never lose each other's. Every `state.json` writer goes through here.
  * `update` must not block (it runs inside the transaction); returning the state it was given writes nothing.
  * Without a store in `ctx` it is a plain read-modify-write. Returns the state as it now stands.
  */

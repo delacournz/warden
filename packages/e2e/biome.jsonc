@@ -3,6 +3,6 @@
 	"extends": "//",
 	"root": false,
 	"files": {
-		"includes": ["src/**/*", "native/scripts/**/*", "native/android/scripts/**/*"]
+		"includes": ["src/**/*", "native/scripts/**/*", "native/android/scripts/**/*", "!src/authoring/codegen.golden"]
 	}
 }

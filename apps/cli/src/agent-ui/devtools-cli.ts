@@ -167,7 +167,7 @@ export async function withFacet<T>(
 	}
 }
 
-function devtoolsDeps(deps: UiDeps): DevtoolsDeps {
+export function devtoolsDeps(deps: UiDeps): DevtoolsDeps {
 	return deps.devtools ?? defaultDevtoolsDeps;
 }
 

@@ -113,9 +113,10 @@ export function uiAlert(ctx: CommandContext, deps: UiDeps, what: string, opts: A
 				}),
 			};
 		}
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "alert",
 			text: what === "accept" ? "accepted the alert" : "dismissed the alert",
+			args: { choice: what },
 			extra: { choice: what },
 		});
 	});
@@ -136,7 +137,7 @@ export function uiHardware(
 		const facade = deviceFacade(ctx, deps, device, driver.data, env.timeoutMs);
 		const pressed = await viaFacade(() => (button === "home" ? facade.home() : facade.back()));
 		if (!pressed.success) return pressed;
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: button,
 			text: `pressed ${button}`,
 		});
@@ -159,7 +160,7 @@ export function uiRotate(
 		if (!driver.success) return driver;
 		const now = fromDriver(await driver.data.orientation(wanted?.data));
 		if (!now.success) return now;
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "screen-rotate",
 			text: wanted ? `orientation ${now.data}` : `orientation is ${now.data}`,
 			...(wanted ? { args: { orientation: now.data } } : {}),
@@ -188,7 +189,7 @@ export function uiAppearance(
 		if (!driver.success) return driver;
 		const now = fromDriver(await driver.data.appearance(raw));
 		if (!now.success) return now;
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "screen-appearance",
 			text: raw === undefined ? `appearance is ${now.data}` : `appearance ${now.data}`,
 			...(raw === undefined ? {} : { args: { mode: now.data } }),
@@ -229,7 +230,7 @@ export function uiScreenshot(
 			writeFileSync(path, shot.data.png);
 		}
 		const written = shot.data.path ?? path;
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "screen-screenshot",
 			text: written,
 			extra: { path: written },

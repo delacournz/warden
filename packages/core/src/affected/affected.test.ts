@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec, type Exec } from "../exec";
@@ -164,7 +173,7 @@ describe("computeAffected", () => {
 			})
 		);
 		const res = await findSuite(bunExec, join(dir, "src"), undefined, undefined, env);
-		if (!res.success) throw new Error(res.error);
+		if (!res.success) throw new Error(res.error.message);
 		expect(res.data.source).toBe("overlay");
 		expect(res.data.configDir).toBe(overlay);
 		expect(res.data.rootDir).toBe(dir);
@@ -188,6 +197,22 @@ describe("computeAffected", () => {
 		expect(spawns.filter((s) => s === facts)).toHaveLength(1);
 		expect(spawns.filter((s) => s === "rev-parse --show-toplevel")).toHaveLength(0);
 		expect(spawns.filter((s) => s.startsWith("diff "))).toHaveLength(2);
+	});
+
+	test("findSuite names the failure: several suites carry a code and the names", async () => {
+		const { dir: many } = await makeSuiteRepo();
+		try {
+			const config = JSON.parse(readFileSync(join(many, "warden.config.json"), "utf8"));
+			config.e2e.other = config.e2e[Object.keys(config.e2e)[0] as string];
+			writeFileSync(join(many, "warden.config.json"), JSON.stringify(config));
+			const several = await findSuite(bunExec, many);
+			expect(!several.success && several.error.code).toBe("several_suites");
+			expect(!several.success && several.error.suites).toEqual(Object.keys(config.e2e));
+			const unknown = await findSuite(bunExec, many, "nope");
+			expect(!unknown.success && unknown.error.code).toBe("unknown_suite");
+		} finally {
+			rmSync(many, { recursive: true, force: true });
+		}
 	});
 
 	test("findSuite asks git once per cwd, however often it is called", async () => {

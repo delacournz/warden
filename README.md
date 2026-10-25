@@ -70,7 +70,7 @@ The binary is swapped atomically at the same path, so the next `warden` in your 
 ### Releasing
 
 1. PRs target `develop`. One that changes what `@delacour/warden` ships adds a changeset: `bun changeset`, pick `@delacour/warden`, choose patch / minor / major, write a one-line summary. `@delacour/warden-e2e` follows in lock-step. Docs-only and internal-only PRs need none.
-2. Every push to `develop` opens or updates the "🔖 chore(release): version packages" PR. It bumps the versions, writes `CHANGELOG.md` and consumes the changesets.
+2. Every push to `develop` opens or updates the "🔖 chore(release): vX.Y.Z" PR, titled with the version it will ship. It bumps the versions, writes `CHANGELOG.md` and consumes the changesets.
 3. Merge that PR. `promote.yml` fast-forwards `main` to the merge commit and pushes tag `v<version>`. Nobody pushes `main` or tags by hand.
 4. `main` is what the docs site deploys. The tag runs `.github/workflows/release.yml`, which checks the tag matches the version, runs typecheck/check/test, builds `warden-{darwin,linux}-{arm64,x64}` plus `checksums.txt` and publishes the GitHub release.
 5. The same workflow stages the npm packages (`bun run --cwd apps/cli build:npm` → `apps/cli/dist/npm/`) and publishes `@delacour/warden-<os>-<arch>`, then `@delacour/warden`, then `@delacour/warden-e2e`, with public access and provenance through npm trusted publishing (OIDC, no token). Versions already on npm are skipped, so a re-run finishes a partial publish.
@@ -251,6 +251,8 @@ With no config, warden detects a single project from `app.json` / `app.config.*`
 ### Driving a device (agents)
 
 Claim, then pass the device explicitly: `warden claim ios --json` → use the returned `udid` (Android: the serial) on every call. A bare agent claim lasts about 5 min and nothing refreshes it; only `warden dev` / `run` / `batch` / `e2e` or an explicit `warden heartbeat <leaseId>` hold a device longer. For exploration, run `warden dev ios --json` in the background (claims and holds a device + a Metro port, starts a Metro verified to serve this checkout, opens the dev client) and target the `udid` from its first stdout line. Subagents never call `release --mine`: use `release <leaseId>`, or claim with `--label x` and `release --mine --label x`. Look at and drive the device with `warden ui`, an agent CLI over the same driver the specs use: `warden ui open <bundleId> --udid <udid>` → `snapshot -i` (the screen as `@eN` lines) → `press @e3 --settle` / `fill id=email "…"` / `scroll down --until text=Done` → `wait id=todos-screen` / `is` / `get` → `close --release`. It checks the lease on every call (exit 2 on a foreign or missing one; `--claim` leases a device) and `--json` prints one `{ok, …}` document. Selectors: `id=… label=… text=… role=… value=… editable=… nth=…`. Guide: apps/docs `agents/ui`.
+
+To create an e2e spec, drive the journey between `warden ui record start <id>` and `warden ui record stop`: `record note|undo|status|cancel` shape it, `stop` writes `e2e/<id>.e2e.ts` and runs it once on the same device (`--no-verify` skips; `--helper <module#fn>` writes a reusable function instead). `snapshot -i` marks elements without a testID `[no-id]`; `fill --secure` reads `WARDEN_UI_SECRET_<NAME>`. Guide: apps/docs `guides/author-specs`.
 
 ### Claude Code
 

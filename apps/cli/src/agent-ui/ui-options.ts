@@ -4,10 +4,25 @@ import type { Command as Commander, OptionValues } from "@commander-js/extra-typ
 export const DEFAULT_UI_TIMEOUT_MS = 5000;
 
 /**
- * Options every `warden ui` subcommand takes (the plan's "global" flags; commander needs them per subcommand).
+ * Device, lease, timeout and `--json` flags shared by `warden ui` and `warden perf` subcommands.
  * Kept apart from `run.ts` so registering the subcommands (`--help`, dispatch) loads no device or lease code.
  */
+export function withDeviceOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
+	cmd: Commander<Args, Opts, Globals>
+) {
+	return withDeviceFlags(cmd).option("--json", "machine-readable output: one JSON document on stdout");
+}
+
+/** Options every `warden ui` subcommand takes (the plan's "global" flags; commander needs them per subcommand). */
 export function withUiOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
+	cmd: Commander<Args, Opts, Globals>
+) {
+	return withDeviceFlags(cmd)
+		.option("--no-record", "don't append this step to a running recording")
+		.option("--json", "machine-readable output: one JSON document on stdout");
+}
+
+function withDeviceFlags<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
 	cmd: Commander<Args, Opts, Globals>
 ) {
 	return cmd
@@ -22,6 +37,5 @@ export function withUiOptions<Args extends unknown[], Opts extends OptionValues,
 			"--force",
 			"drive the device even while a live warden process (e2e, batch, run) holds your lease on it; your own warden dev device is shared without it"
 		)
-		.option("--timeout <ms>", `deadline in milliseconds (default ${DEFAULT_UI_TIMEOUT_MS})`)
-		.option("--json", "machine-readable output: one JSON document on stdout");
+		.option("--timeout <ms>", `deadline in milliseconds (default ${DEFAULT_UI_TIMEOUT_MS})`);
 }

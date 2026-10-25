@@ -146,10 +146,11 @@ export function uiScroll(
 						point: found.entry.element.tapPoint ?? { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 },
 					}
 				: undefined;
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "scroll",
 			text: line === undefined ? `scrolled ${direction}` : `found after ${plural(swipes)}: ${line}`,
 			...(where ? { target: where } : {}),
+			args: { direction, amount: plan.data.amount, ...(until ? { until: formatSelector(until) } : {}) },
 			extra: { direction, amount: plan.data.amount, swipes },
 		});
 	});

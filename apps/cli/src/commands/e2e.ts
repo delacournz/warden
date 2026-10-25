@@ -529,7 +529,7 @@ type RunPlan = {
 };
 
 /** The spec runner, resolved before any device is leased: `bun`, the preload, the app and the spec env. */
-type SpecPlan = {
+export type SpecPlan = {
 	bun: string;
 	preload: string;
 	launch: LaunchPlan;
@@ -541,13 +541,16 @@ const specDuration = (field: string, value: string | undefined, fallback: string
 	return ms.success ? ms : err(`e2e.spec.${field}: ${ms.error}`);
 };
 
+/** What `specPlan` needs of `BatchDeps` (`warden ui record stop` resolves the same plan to verify a spec). */
+export type SpecPlanDeps = Pick<BatchDeps, "which" | "resolveModule" | "e2eVersion" | "bundledE2e" | "helperDir">;
+
 /** `bun` + preload + bundle id + timeouts of the suite's specs; every failure names what to set or install. */
-async function specPlan(
+export async function specPlan(
 	ctx: CommandContext,
-	deps: BatchDeps,
+	deps: SpecPlanDeps,
 	suite: Suite,
 	platform: Platform,
-	opts: E2eOpts
+	opts: Pick<E2eOpts, "perf"> = {}
 ): AsyncResult<SpecPlan> {
 	const bun = findBun(ctx.env, deps.which);
 	if (!bun.success) return bun;

@@ -29,6 +29,12 @@
 | 23 | `E_AX_UNAVAILABLE`: "another UiAutomation client holds <serial> (pid N: ...)" | Android allows one UiAutomation connection per device and Maestro, an `am instrument` run or a `uiautomator` command has it. The dump would only die with `Killed`, so warden names the holder and does not touch it | Stop that process (the message gives its pid and command line) or release the device; warden kills only its own stale `warden-uiad` (`app_process … nz.co.delacour.warden.uiad.Main`). `input`-based taps and keys still work meanwhile |
 | 24 | A press right after `fill` on Android is lost | The app was still taking the typed text in | The driver already waits 80 ms of quiet after text and keys; in a spec `device.settle()` before the press |
 | 25 | `gesture pinch`/`rotate`/`path` fails `E_UNSUPPORTED`, `reason: helper_outdated` (iOS) | `warden-simd` predates the gesture op | `warden ui close --udid <udid>`, or rebuild: `bun run --cwd packages/e2e native:build` |
+| 26 | `record stop` exits 1 `verify_failed` | The generated spec failed on the device (missing wait, wrong state, secret unset, FIXME) | File and journal are kept. Read `screen-at-failure.txt` in the printed `verify/<ts>/` dir, fix the app or `record undo` + redo, `record stop` again |
+| 27 | `verify_unavailable` | No suite found, several suites, or the runner could not start | `--suite <name>` (or fix `warden.config.ts`), or `--no-verify`; journal kept |
+| 28 | `target_exists` / `recording_active` / `no_recording` | Spec or helper already there; a recording already open on this device; none open | `--overwrite` or `--to <other>`; `record stop`/`cancel` first; `record start` first. `--force` is not the fix |
+| 29 | Spec says `set WARDEN_UI_SECRET_<NAME>` | A `fill --secure` step reads its secret from env | Export it for the run (suite `env`); at record time export it before `fill --secure` |
+| 30 | `record use` exits 1 `use_failed` / `helper_missing` | The helper failed on the device (its prerequisite does not hold, a missing wait); or the module / export is not where `<module#fn>` says (module is relative to the cwd) | Nothing was recorded. Read the printed `screen-at-failure.txt` under `$WARDEN_HOME/ui/<udid>/use/<ts>/`, bring the device to the helper's prerequisite, run `record use` again |
+| 31 | `record stop` config has `entries: []` and a "fill by hand" hint | Release build (route capture needs a dev client's React DevTools hook through Metro), no `routerRoot` on the suite, or 3 failed route reads in a row ended capture | Record against a dev client (`warden dev`, `ui open --metro`); set `routerRoot` in the suite; or write `entries` by hand. warden never edits `warden.config.ts` |
 
 ## Code lookup
 
@@ -37,7 +43,7 @@
 | Exit | Error codes |
 |---|---|
 | 0 | ok |
-| 1 | `failed` `usage` `target_not_found` `no_alert` `wait_target_absent` `wait_target_hidden` `wait_target_present` `wait_text_absent` `wait_not_stable` |
+| 1 | `failed` `usage` `target_not_found` `no_alert` `no_recording` `recording_active` `target_exists` `empty_recording` `verify_failed` `verify_unavailable` `wait_target_absent` `wait_target_hidden` `wait_target_present` `wait_text_absent` `wait_not_stable` |
 | 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` |
 | 3 | `engine_unavailable` `devtools_unavailable` |
 | 4 | `stale_ref` (snapshot again) |
