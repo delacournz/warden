@@ -133,12 +133,12 @@ describe("cpu-guard check", () => {
 	});
 
 	test("compares the run dir with the baseline when it exists", async () => {
-		const ok = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(9.5) });
+		const ok = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(3.9) });
 		expect(ok.code).toBe(0);
-		expect(ok.out).toContain("ok: warden cpu-s/rep 9.12 → 9.50");
+		expect(ok.out).toContain("ok: warden cpu-s/rep 3.79 → 3.90");
 		const slow = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(12) });
 		expect(slow.code).toBe(1);
-		expect(slow.out).toContain("regression: warden cpu-s/rep 9.12 → 12.00 (+31.6 %) exceeds 10 %");
+		expect(slow.out).toContain("regression: warden cpu-s/rep 3.79 → 12.00 (+216.6 %) exceeds 10 %");
 	});
 });
 
