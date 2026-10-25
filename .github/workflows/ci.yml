@@ -41,6 +41,24 @@ jobs:
             echo "signoff-sha must be a full 40-char commit SHA, got: $SHA" >&2; exit 1
           fi
 
+  # A dispatched run is bound to the ref it was started on, so the PR's Checks tab shows nothing
+  # until the final status lands and the required `signoff` row reads "waiting for status". Post it
+  # as pending straight away, pointing at this run, so the PR shows the check in progress. The
+  # `signoff` job settles it as success or failure. Never checks anything out.
+  pending:
+    needs: validate
+    runs-on: namespace-profile-linux-small
+    permissions:
+      statuses: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.signoff-sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=signoff \
+            -f "description=GitHub Actions (ci) running checks" -f "target_url=$RUN_URL" > /dev/null
+
   checks:
     needs: validate
     runs-on: namespace-profile-mac-small
@@ -127,8 +145,10 @@ jobs:
 
   # Writes the statuses, sub-contexts first and the required `signoff` umbrella last, only when every
   # applicable check passed. Skipped jobs count as passing for `needs`, so results are checked explicitly.
+  # A failed or cancelled check settles the pending `signoff` as failure, so the PR never shows a run
+  # that is still "in progress" after it ended.
   signoff:
-    needs: [checks, native-changes, native]
+    needs: [pending, checks, native-changes, native]
     if: always()
     runs-on: namespace-profile-linux-small
     permissions:
@@ -142,10 +162,16 @@ jobs:
           NATIVE_CHANGES: ${{ needs.native-changes.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [ "$CHECKS" != "success" ]; then echo "checks $CHECKS" >&2; exit 1; fi
-          if [ "$NATIVE_CHANGES" != "success" ]; then echo "native-changes $NATIVE_CHANGES" >&2; exit 1; fi
+          fail() {
+            echo "$1" >&2
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=failure -f context=signoff \
+              -f "description=GitHub Actions (ci): $1" -f "target_url=$RUN_URL" > /dev/null
+            exit 1
+          }
+          if [ "$CHECKS" != "success" ]; then fail "checks $CHECKS"; fi
+          if [ "$NATIVE_CHANGES" != "success" ]; then fail "native-changes $NATIVE_CHANGES"; fi
           # native is skipped when the commit does not touch packages/e2e/native/**.
-          if [ "$NATIVE" != "success" ] && [ "$NATIVE" != "skipped" ]; then echo "native $NATIVE" >&2; exit 1; fi
+          if [ "$NATIVE" != "success" ] && [ "$NATIVE" != "skipped" ]; then fail "native $NATIVE"; fi
 
           post() {
             gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f "context=$1" \
