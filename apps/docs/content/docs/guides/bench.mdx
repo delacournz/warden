@@ -137,8 +137,8 @@ artifacts/<fw>/rep-<n>/   native reporter output and resource samples
 | Framework | Gap |
 |---|---|
 | warden | Copied from the example app, retries written with warden's own options: `tap({ until })`, a deep-link retry, `systemAlerts: "dismiss"`. The hand-rolled helpers it replaced ran the published headline numbers; the idiomatic run is reported beside them. |
-| Argent | Retries are nested `when:` guards capped at two retaps. The checked state of a checkbox is not readable, so the remaining-count assertion covers the effect. |
-| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`. Needs a runner prepare step and a daemon. |
+| Argent | Retries are nested `when:` guards capped at two retaps; the deep-link flow answers the iOS "Open in …?" sheet with a `when: { visible: { text: Open } }` guard after each link. The checked state of a checkbox is not readable, so the remaining-count assertion covers the effect. |
+| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`. The deep-link flow follows the link with an unconditional `alert accept 8000`: agent-device reads the "Open in …?" sheet once right after the link, and on a loaded host the sheet shows later, so the line waits for it; it fails the flow when no sheet shows. Needs a runner prepare step and a daemon. |
 | tester.army | Has its own copy of the hand-rolled helpers warden used before. Runs with a private agent-device state dir and Node 24 on `PATH`. |
 
 ## Add a framework

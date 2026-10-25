@@ -177,6 +177,35 @@ describe("prepare / teardown", () => {
 		expect(exec.calls.map((c) => c.args.slice(1, 3).join(" "))).toEqual(["ui snapshot", "ui close"]);
 	});
 
+	test("prepare retries a snapshot that times out, the helper's cold start being slower than one request", async () => {
+		let snapshots = 0;
+		const exec = fakeExec(
+			[
+				{
+					cmd: process.execPath,
+					match: (a) => a[1] === "ui" && a[2] === "snapshot" && ++snapshots === 1,
+					result: {
+						code: 1,
+						stdout:
+							'{"ok":false,"error":{"code":"failed","message":"E_TIMEOUT: warden-simd `snapshot` timed out after 10000 ms"}}',
+					},
+				},
+				{ cmd: process.execPath, result: {} },
+			],
+			{ which: ["bun"] }
+		);
+		const ctx = ctxOf(exec, { env: { WARDEN_BUN: process.execPath } });
+		expect((await createWardenAdapter(depsOf({})).prepare(ctx)).success).toBe(true);
+		expect(exec.calls.filter((c) => c.args[2] === "snapshot")).toHaveLength(2);
+	});
+
+	test("prepare gives up after three snapshot failures", async () => {
+		const exec = fakeExec([{ cmd: process.execPath, result: { code: 1, stderr: "E_TIMEOUT" } }], { which: ["bun"] });
+		const ctx = ctxOf(exec, { env: { WARDEN_BUN: process.execPath } });
+		expect((await createWardenAdapter(depsOf({})).prepare(ctx)).success).toBe(false);
+		expect(exec.calls.filter((c) => c.args[2] === "snapshot")).toHaveLength(3);
+	});
+
 	test("android skips the helper", async () => {
 		const exec = fakeExec();
 		const ctx = ctxOf(exec, { platform: "android" });

@@ -119,8 +119,8 @@ Each framework expresses the same retries in its own idiom. Gaps that remain are
 | Framework | Selector | Retry and conditionals | Assertion gaps | Other |
 |---|---|---|---|---|
 | warden | `screen.getByTestId` | built-in options: `tap({ until })` (4 s a press, two re-sends), `openDeepLink` (3 links, 6 s each), `test.use({ systemAlerts: "dismiss" })`, `app.open({ wait: "quiet" })` | none | copied from `apps/example/e2e` minus devtools. The hand-rolled `tapUntil` version it replaced is what the published headline numbers (`docs/bench/*-perf.md`) ran; the idiomatic run is reported beside them |
-| argent | `{ id }` | `when:` guards instead of loops (`fragments/next-*.yaml`), nested to cap retaps at 2 | checkbox checked state is not readable; the remaining-count assertion covers the effect | `flow run` uses its own server (`argent server start/stop`) |
-| agent-device | `id="..."` | `.ad` scripts have no retry or conditional: plain `wait` / `press` | none | needs `prepare ios-runner` and a daemon; cold cost is measured |
+| argent | `{ id }` | `when:` guards instead of loops (`fragments/next-*.yaml`), nested to cap retaps at 2; a `when: { visible: { text: Open } }` guard answers the "Open in …?" sheet after each deep link | checkbox checked state is not readable; the remaining-count assertion covers the effect | `flow run` uses its own server (`argent server start/stop`) |
+| agent-device | `id="..."` | `.ad` scripts have no retry or conditional: plain `wait` / `press`; the deep link is followed by an unconditional `alert accept 8000` for the late "Open in …?" sheet | none | needs `prepare ios-runner` and a daemon; cold cost is measured |
 | tester-army | `screen.getByTestId` | its own copy of the hand-rolled `tapUntil` helpers warden used before PERF-6.3 | none | `AGENT_DEVICE_STATE_DIR` is private (`BENCH_TESTER_ARMY_STATE_DIR`) so it never shares a daemon with agent-device; needs Node 24 on `PATH` |
 
 A native test name that does not map to a canonical id is a parity breach: that framework is `failed` in phase `run`.
