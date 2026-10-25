@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parsePreference, resolveTheme, THEME_STORAGE_KEY, themeScript } from "./theme";
+import { parsePreference, resolveTheme, THEME_STORAGE_KEY, themeHeadScript, themeScript } from "./theme";
 
 describe("parsePreference", () => {
 	test("stored light / dark / system are kept", () => {
@@ -64,5 +64,15 @@ describe("themeScript", () => {
 
 	test("blocked storage still follows the OS", () => {
 		expect(runScript("throws", true)).toBe(true);
+	});
+});
+
+describe("themeHeadScript", () => {
+	test("carries the inline script", () => {
+		expect(themeHeadScript.children).toBe(themeScript);
+	});
+
+	test("opts out of Cloudflare Rocket Loader so it still runs before first paint", () => {
+		expect(themeHeadScript["data-cfasync"]).toBe("false");
 	});
 });
