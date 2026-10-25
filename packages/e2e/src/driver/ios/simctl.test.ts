@@ -5,6 +5,7 @@ import {
 	appearanceArgv,
 	automationArgv,
 	createSimctl,
+	devicectlPbcopyArgv,
 	launchArgv,
 	launchEnv,
 	parseRunning,
@@ -48,6 +49,16 @@ describe("argv builders", () => {
 		const argv = pbcopyArgv(UDID, `it's "quoted" $(rm -rf /)`);
 		expect(argv.slice(0, 3)).toEqual(["sh", "-c", 'printf %s "$1" | xcrun simctl pbcopy "$2"']);
 		expect(argv.slice(3)).toEqual(["sh", `it's "quoted" $(rm -rf /)`, UDID]);
+	});
+
+	test("devicectl pbcopy passes the text as $1 too", () => {
+		const argv = devicectlPbcopyArgv(UDID, "caf\u00e9 $(x)");
+		expect(argv.slice(0, 3)).toEqual([
+			"sh",
+			"-c",
+			'printf %s "$1" | xcrun devicectl device pasteboard copy --quiet --device "$2"',
+		]);
+		expect(argv.slice(3)).toEqual(["sh", "caf\u00e9 $(x)", UDID]);
 	});
 
 	test("appearance, screenshot, automation and status bar", () => {
@@ -159,13 +170,62 @@ describe("createSimctl", () => {
 		expect(await none.simctl.isInstalled(BUNDLE)).toEqual({ success: true, data: false });
 	});
 
-	test("clipboard round trip", async () => {
-		const h = harness([
-			["sh -c", {}],
-			["xcrun simctl pbpaste", { stdout: "hello\n" }],
-		]);
-		expect((await h.simctl.pbcopy("hello")).success).toBe(true);
-		expect(await h.simctl.pbpaste()).toEqual({ success: true, data: "hello\n" });
+	describe("pbcopy", () => {
+		const DEVICECTL = 'sh -c printf %s "$1" | xcrun devicectl device pasteboard copy';
+		const SIMCTL = 'sh -c printf %s "$1" | xcrun simctl pbcopy';
+
+		test("writes through devicectl and confirms with pbpaste", async () => {
+			const h = harness([
+				[DEVICECTL, {}],
+				["xcrun simctl pbpaste", { stdout: "caf\u00e9" }],
+			]);
+			expect(await h.simctl.pbcopy("caf\u00e9")).toEqual({ success: true, data: undefined });
+			expect(joined(h.calls).filter((line) => line.startsWith("sh -c"))).toEqual([
+				`${DEVICECTL} --quiet --device "$2" sh caf\u00e9 ${UDID}`,
+			]);
+			expect(joined(h.calls).filter((line) => line.startsWith("xcrun simctl pbpaste"))).toHaveLength(1);
+			expect(await h.simctl.pbpaste()).toEqual({ success: true, data: "caf\u00e9" });
+		});
+
+		test("falls back to simctl pbcopy when devicectl cannot (older Xcode)", async () => {
+			let copied = "";
+			const h = harness([
+				[DEVICECTL, { exitCode: 64, stderr: "Unexpected argument 'pasteboard'" }],
+				[
+					SIMCTL,
+					(call) => {
+						copied = call.cmd[4] ?? "";
+						return {};
+					},
+				],
+				["xcrun simctl pbpaste", () => ({ stdout: copied })],
+			]);
+			expect((await h.simctl.pbcopy("hello")).success).toBe(true);
+			expect(joined(h.calls).filter((line) => line.startsWith("sh -c"))).toHaveLength(2);
+		});
+
+		test("fails, naming both channels, when the simulator pasteboard keeps other text", async () => {
+			const h = harness([
+				["sh -c", {}],
+				["xcrun simctl pbpaste", { stdout: "Poole Dorset " }],
+			]);
+			const result = await h.simctl.pbcopy("caf\u00e9");
+			expect(!result.success && result.error.code).toBe("E_IO");
+			expect(!result.success && result.error.message).toMatch(/devicectl .*simctl pbcopy/);
+			// never the text or the pasteboard: typeText carries passwords
+			expect(!result.success && result.error.message).not.toContain("Poole");
+			expect(!result.success && result.error.message).not.toContain("caf");
+			expect(joined(h.calls).filter((line) => line.startsWith("sh -c"))).toHaveLength(2);
+		});
+
+		test("a pbpaste failure after the write is the failure", async () => {
+			const h = harness([
+				["sh -c", {}],
+				["xcrun simctl pbpaste", { exitCode: 1, stderr: "nope" }],
+			]);
+			const result = await h.simctl.pbcopy("x");
+			expect(result.success).toBe(false);
+		});
 	});
 
 	test("appearance reads and sets", async () => {
