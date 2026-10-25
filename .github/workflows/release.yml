@@ -130,10 +130,19 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
+      # A rerun after a failed npm publish finds the release already created: replace its assets
+      # instead of failing on create, so `gh run rerun --failed` can finish the publish.
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/warden-* dist/checksums.txt dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          assets=(dist/warden-* dist/checksums.txt dist/SHA256SUMS)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists, replacing assets"
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+          fi
 
       # Platform packages first so @delacour/warden's optionalDependencies resolve the moment it lands;
       # @delacour/warden-e2e last (exact peer dependency on @delacour/warden, same version).
