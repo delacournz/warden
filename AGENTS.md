@@ -67,6 +67,7 @@ scripts/              # repo scripts (pre-commit biome, signoff/ = local CI gate
 
 PRs into `develop` are gated on local signoff, not GitHub Actions. Branch protection requires one commit status, `signoff`, written by [basecamp/gh-signoff](https://github.com/basecamp/gh-signoff) from the authoring machine.
 
+- Agents: `.claude/rules/signoff.md` is the always-on rule (sign off after `gh pr create` and after every push to an open PR), the `signoff` skill (`.claude/skills/signoff`) is the procedure, and a `PostToolUse` hook in `.claude/settings.json` reminds after a PR is opened or a head moves.
 - One-off per machine: `gh extension install basecamp/gh-signoff`.
 - With the PR open, a clean tree and HEAD pushed: `bun run signoff` (`-- --dry-run` previews the plan). It diffs against the PR base, runs every applicable check from `scripts/signoff/signoff-checks.ts` (typecheck, check, test always; `native` when `packages/e2e/native/**` changed), writes `signoff/<check>` per pass, then the `signoff` umbrella, and posts one report comment naming the actor and runner (agents show as agents).
 - A status binds to a SHA: every push (or **Update branch**) drops it, so re-run.
