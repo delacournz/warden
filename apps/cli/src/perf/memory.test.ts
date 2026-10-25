@@ -85,7 +85,7 @@ describe("warden perf memory (iOS)", () => {
 			},
 			false
 		);
-		expect(await perfMemory(c, deps, { app: APP, record: true, json: true }, io)).toBe(1);
+		expect(await perfMemory(c, deps, { app: APP, json: true }, io)).toBe(1);
 		const err = json(c).error;
 		expect(err.code).toBe("not_profileable");
 		expect(err.hint).toContain("debug build");

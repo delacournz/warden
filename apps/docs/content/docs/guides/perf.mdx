@@ -84,7 +84,7 @@ or pass `--yes` to `start`, `record`, `stop`, `native` or `query --rerun`. Point
 
 ## Budgets in e2e
 
-Specs can record a perf session around a flow and fail on a breach, so a regression is caught where the flow already runs:
+Specs can record a perf session around a test and fail on a breach, so a regression is caught where the spec already runs:
 
 - `device.perf.start(opts)`, `device.perf.mark(label)` and `device.perf.stop()` inside a spec; `stop` returns a typed `PerfReport`. `opts` are the `warden perf start` capture flags as booleans (`js`, `react`, `native`, `metrics`, `frames`, `logs`, `all`, `relaunch`, `reset`, `maxDurationMs`). `device.perf.active` says whether a session is open.
 - `warden e2e <suite> --perf[=captures]` profiles every attempt. Bare `--perf` records metrics, frames and logs; `--perf=react,js` picks captures; `--perf=all` records everything. The report is copied to `<attempt>/perf/` (`report.json`, `report.md`, `session.json`) and `e2e-report.json` links each test's `perf` dir.
