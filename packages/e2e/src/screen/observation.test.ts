@@ -176,11 +176,43 @@ describe("assertions and actions", () => {
 	});
 });
 
+describe("a settle is a wait, not an input", () => {
+	test("an action right after a quiet settle trusts its one look: the app said the input landed", async () => {
+		const { driver, host, screen } = setup();
+		await screen.tapAt({ x: 1, y: 1 });
+		await (await host.driver()).settle();
+		await screen.getByTestId("next").tap();
+		expect(snapshots(driver)).toBe(1);
+	});
+
+	test("a settle that did not report quiet leaves the input recent: the look is checked by one more", async () => {
+		const driver = fakeDriver({
+			screens: () => snapshotOf([el("button", { id: "next", label: "Next", hittable: true })]),
+			onCall: (call) => (call.method === "settle" ? { data: { quiet: false, waitedMs: 3000 } } : undefined),
+		});
+		const host = testHost(driver, { cache: true });
+		const screen = createScreen(host);
+		await screen.tapAt({ x: 1, y: 1 });
+		await (await host.driver()).settle();
+		await screen.getByTestId("next").tap();
+		expect(snapshots(driver)).toBe(2);
+	});
+
+	test("an assertion after a tap looks at once: the press itself gave the app its time", async () => {
+		const { driver, host, screen } = setup();
+		await screen.tapAt({ x: 1, y: 1 });
+		await expectLocator(screen.getByTestId("title")).toBeVisible();
+		expect(host.clock.sleeps).toEqual([]);
+		expect(snapshots(driver)).toBe(1);
+	});
+});
+
 describe("a frame that held still across two looks", () => {
 	/** a button whose y is `ys[n]` on the n-th snapshot (the last one sticks), plus an unrelated "menu" button */
-	function moving(ys: readonly number[]) {
+	function moving(ys: readonly number[], capabilities: { cheapHitTest?: boolean } = {}) {
 		let looks = 0;
 		const driver = fakeDriver({
+			capabilities,
 			screens: () => {
 				const y = ys[Math.min(looks, ys.length - 1)] ?? 0;
 				looks += 1;
@@ -231,6 +263,43 @@ describe("a frame that held still across two looks", () => {
 		await screen.getByTestId("next").tap();
 		expect(snapshots(driver)).toBe(3);
 		expect(driver.callsOf("tap").at(-1)?.point).toEqual({ x: 174, y: 322 });
+	});
+
+	test("on a driver with a cheap hit-test, the second look is a hit-test at the element, not a snapshot", async () => {
+		const { driver, screen } = moving([600], { cheapHitTest: true });
+		await screen.tapAt({ x: 1, y: 1 });
+		await screen.getByTestId("next").tap();
+		expect(snapshots(driver)).toBe(1);
+		expect(driver.callsOf("elementAtPoint")).toHaveLength(1);
+		expect(driver.callsOf("tap").at(-1)?.point).toEqual({ x: 174, y: 622 });
+	});
+
+	test("a hit-test that does not find the element where the look had it falls back to a full second look", async () => {
+		const { driver, screen } = moving([300, 600], { cheapHitTest: true });
+		await screen.tapAt({ x: 1, y: 1 });
+		await screen.getByTestId("next").tap();
+		expect(driver.callsOf("elementAtPoint")).toHaveLength(1);
+		expect(snapshots(driver)).toBe(3);
+		expect(driver.callsOf("tap").at(-1)?.point).toEqual({ x: 174, y: 622 });
+	});
+
+	test("a look that compares with the one before never hit-tests: it already knows whether the frame moved", async () => {
+		const { driver, screen } = moving([300, 450, 600], { cheapHitTest: true });
+		await expectLocator(screen.getByTestId("next")).toBeVisible();
+		await screen.getByTestId("next").tap();
+		// the one hit-test is `aimFromKept`'s, on the assertion's snapshot; the comparing looks that follow add none
+		expect(driver.callsOf("elementAtPoint")).toHaveLength(1);
+		expect(snapshots(driver)).toBe(3);
+		expect(driver.callsOf("tap")[0]?.point).toEqual({ x: 174, y: 622 });
+	});
+
+	test("with system alerts answered the second look stays a snapshot: a hit-test cannot see an alert outside the app", async () => {
+		const { driver, host, screen } = moving([600], { cheapHitTest: true });
+		host.answerSystemAlert = async () => false;
+		await screen.tapAt({ x: 1, y: 1 });
+		await screen.getByTestId("next").tap();
+		expect(snapshots(driver)).toBe(2);
+		expect(driver.callsOf("elementAtPoint")).toHaveLength(0);
 	});
 
 	test("a frame that moves by less than half a point counts as still", async () => {

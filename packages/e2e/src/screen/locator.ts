@@ -399,8 +399,9 @@ export class Locator {
 	 * driver with a cheap hit-test first tries `aimFromKept`, which checks the kept snapshot with a hit-test instead.)
 	 * A fresh snapshot can also be of a screen still moving, so a match is taken only once its frame held still across
 	 * two looks with no input between them (Playwright's "stable"): the look a read or an `expect` kept, when there is
-	 * one, costs nothing; with none, a look less than `STABLE_INPUT_GAP_MS` after an input is checked by one more. An
-	 * element that never stops moving is taken after `MAX_STABILITY_LOOKS` extra looks.
+	 * one, costs nothing; with none, a look less than `STABLE_INPUT_GAP_MS` after an input is checked by one more: a
+	 * hit-test at the element where that is cheap (`stillByHitTest`), else a snapshot. An element that never stops
+	 * moving is taken after `MAX_STABILITY_LOOKS` extra looks.
 	 */
 	private actionable(spec: ActionSpec, timeoutMs: number): Promise<Actionable>;
 	private actionable(spec: ActionSpec, timeoutMs: number, allowReact: boolean): Promise<Actionable | ReactActionable>;
@@ -461,8 +462,25 @@ export class Locator {
 		const entry = this.exactlyOne(entries, observed);
 		const reason = blockedReason(entry, spec, observed);
 		if (reason !== undefined) return { done: false, state: { kind: "blocked", reason, snapshot: observed.snapshot } };
-		if (!anyFrame && !this.heldStill(entry, observation.earlier)) return "moving";
+		if (!anyFrame && !this.heldStill(entry, observation.earlier)) {
+			const compared = observation.earlier?.previous !== undefined;
+			if (compared || !(await this.stillByHitTest(entry, observed))) return "moving";
+		}
 		return { done: true, value: { entry, observed } };
+	}
+
+	/**
+	 * The second look of the stable-frame rule as a hit-test, where that is cheap (`capabilities.cheapHitTest`, iOS:
+	 * one element back instead of the whole tree): the element held still when the hit at its tap point is that element
+	 * (`sameElement`, as in `aimFromKept`). Only for a look with nothing to compare against (the one that followed an
+	 * input): a look that differs from the one before it is known to be moving. Never with system alerts answered: the
+	 * app-scoped hit-test may not see an alert that came up since the look, the full second look does.
+	 */
+	private async stillByHitTest(entry: NodeEntry, observed: Observed): Promise<boolean> {
+		const { driver } = observed;
+		if (driver.capabilities.cheapHitTest !== true || this.rt.host.answerSystemAlert !== undefined) return false;
+		const hit = await driver.elementAtPoint(tapPointOf(entry));
+		return hit.success && hit.data !== null && sameElement(hit.data, entry.element);
 	}
 
 	/**
@@ -553,7 +571,10 @@ export class Locator {
 	}
 
 	/**
-	 * Polls `plan.until` for `plan.windowMs`, one look at the screen per check. A locator is checked on the snapshot of
+	 * Polls `plan.until` for `plan.windowMs`, one look at the screen per check, the first one right after the press
+	 * (`driver.tap` returns once the HID press is over, ~85 ms, and an AX read queues behind the app's main thread, so
+	 * that look usually already shows the screen the press made; measured: holding it back to `pollMs` saved no read
+	 * and cost 250 ms a press). A locator is checked on the snapshot of
 	 * the poll itself, which is also compared with `pressedOn` (the hash of the screen the press aimed from): once the
 	 * screen changed the press landed, so it is never sent again (`landed`, even when `until` is late); a screen still
 	 * unchanged on `UNCHANGED_CHECKS` checks in a row from `UNCHANGED_AFTER_MS` on is pressed again at once. A function
