@@ -29,6 +29,7 @@ describe("embedded skill folder", () => {
 			"references/ui.md",
 			"references/perf.md",
 			"references/specs.md",
+			"references/authoring.md",
 			"references/suites.md",
 			"references/troubleshooting.md",
 		]);

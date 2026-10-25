@@ -55,6 +55,11 @@ function resolveRelative(from: string, specifier: string): string | undefined {
 
 const tsTranspiler = new Bun.Transpiler({ loader: "tsx" });
 
+/** The id a spec file has in `specs.<id>`: its path below `specsDir` without `.e2e.ts(x)` / `.ts(x)`. */
+export function specIdOf(file: string, specsDir: string): string {
+	return relative(specsDir, file).replace(TS_SPEC, "").replace(TS_FILE, "");
+}
+
 /** One spec file → its kind and the relative, value-level imports (that exist on disk) as `runs`. */
 export function parseSpec(file: string, specsDir: string, text: string): Spec {
 	const runs = tsTranspiler
@@ -63,7 +68,7 @@ export function parseSpec(file: string, specsDir: string, text: string): Spec {
 		.filter((spec) => spec.startsWith("."))
 		.flatMap((spec) => resolveRelative(file, spec) ?? []);
 	return {
-		id: relative(specsDir, file).replace(TS_SPEC, "").replace(TS_FILE, ""),
+		id: specIdOf(file, specsDir),
 		file,
 		kind: TS_SPEC.test(file) ? "e2e" : "fragment",
 		runs: [...new Set(runs)],

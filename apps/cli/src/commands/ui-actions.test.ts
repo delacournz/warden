@@ -109,6 +109,15 @@ describe("press / tap", () => {
 		expect(text).toContain("# settled after");
 		expect(text).toContain("# diff vs generation 1");
 	});
+
+	test("every action is appended to the recording; --no-record skips it", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		await h.run("press", "id=sign-in-submit");
+		expect(h.steps).toMatchObject([{ action: "press", target: { selector: "id=sign-in-submit", point: SIGN_IN } }]);
+		expect(h.steps[0]?.evidence?.element.identifier).toBe("sign-in-submit");
+		await h.run("press", "10", "20", "--no-record");
+		expect(h.steps).toHaveLength(1);
+	});
 });
 
 describe("longpress", () => {
@@ -163,6 +172,7 @@ describe("fill", () => {
 		expect(h.driver.callsOf("key").every((call) => call.key === "Backspace")).toBe(true);
 		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
 		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
 
 	test("a driver with select-all types over the selection: no Backspace at all", async () => {
@@ -256,6 +266,7 @@ describe("fill", () => {
 				.map((call) => call.text)
 				.join("")
 		).toBe("hunter2hunter2");
+		expect(h.steps[0]?.args).toEqual({ secure: true });
 		await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--json");
 		expect(doc(h.c).result).toMatchObject({ verified: "unconfirmed", secure: true, characters: 14 });
 		expect(h.c.stdout[0]).not.toContain("hunter2");
@@ -340,13 +351,14 @@ describe("fill on a driver with setText (Android warden-uiad)", () => {
 		expect(doc(h.c).result.verified).toBeUndefined();
 	});
 
-	test("WARDEN_ANDROID_SETTEXT=1 --secure: set, unconfirmed, the text not echoed", async () => {
+	test("WARDEN_ANDROID_SETTEXT=1 --secure: set, unconfirmed, the text neither echoed nor recorded", async () => {
 		const h = setTextHarness(true);
 		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--json")).toBe(0);
 		expect(h.driver.callsOf("setText").map((call) => call.text)).toEqual(["hunter2hunter2"]);
 		expect(h.driver.callsOf("elementAtPoint")).toEqual([]);
 		expect(doc(h.c).result).toMatchObject({ verified: "unconfirmed", secure: true, characters: 14 });
 		expect(h.c.stdout.join("\n")).not.toContain("hunter2");
+		expect(h.steps[0]?.args).toEqual({ secure: true });
 	});
 
 	test("WARDEN_ANDROID_SETTEXT=1 with an x y target: nothing known to clear, so it is typed into", async () => {

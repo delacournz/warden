@@ -14,9 +14,11 @@ import {
 } from "@delacour/warden-e2e/screen/selector";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import { recordTarget } from "./act";
 import { driverUiError, type UiDeps } from "./driver";
 import { type UiError, type UiErrorCode, uiError } from "./output";
-import { runUi, type UiOptionValues } from "./run";
+import { appendRecorded, evidenceOf, type RecordStep } from "./record";
+import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { type ElementJson, elementJson, storeSnapshot } from "./snapshot";
 
 /** `wait stable` looks at the screen this often (a quiet window is judged on a fixed beat, so no back-off). */
@@ -252,6 +254,16 @@ export function uiWait(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 		const ref = entry ? refs.byId.get(entry.element.id) : undefined;
 		const line = entry ? renderEntryLine(entry, ref === undefined ? {} : { ref }) : undefined;
 		const element: ElementJson | undefined = entry ? elementJson(entry, ref) : undefined;
+		if (plan.data.mode === "visible" && entry) {
+			await recordQuery(ctx, deps, env, device.udid, {
+				action: "wait",
+				selector: plan.data.selector,
+				entry,
+				snapshot,
+				ref,
+				args: { state: "visible", timeoutMs: env.timeoutMs },
+			});
+		}
 		const text =
 			line !== undefined
 				? `waited ${waitedMs} ms: ${line}`
@@ -264,6 +276,50 @@ export function uiWait(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 			result: { matched: true, ...(ref !== undefined ? { ref } : {}), ...(element ? { element } : {}), waitedMs },
 			text,
 		});
+	});
+}
+
+type QueryRecord = {
+	action: "wait" | "is" | "get";
+	selector: ParsedSelector;
+	entry: NodeEntry;
+	snapshot: Snapshot;
+	ref?: string | undefined;
+	args: NonNullable<RecordStep["args"]>;
+};
+
+/**
+ * Append a query that named an element to the active recording (`--no-record` skips it). The element and the
+ * snapshot it was found in go along so the recording can build a durable selector chain; `stepsFromRecord`
+ * (record-sink.ts) reads `args.state` / `args.timeoutMs` (wait), `args.state` / `args.not` (is), `args.property` /
+ * `args.expected` (get).
+ */
+async function recordQuery(
+	ctx: CommandContext,
+	deps: UiDeps,
+	env: UiRunEnv,
+	udid: string,
+	query: QueryRecord
+): Promise<void> {
+	if (!env.record) return;
+	const { frame, tapPoint } = query.entry.element;
+	const point = tapPoint ?? { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 };
+	const target = recordTarget(
+		{ kind: "selector", selector: query.selector },
+		{
+			kind: "selector",
+			point,
+			element: query.entry.element,
+			snapshot: query.snapshot,
+			...(query.ref !== undefined ? { ref: query.ref } : {}),
+		}
+	);
+	const evidence = evidenceOf(target);
+	await appendRecorded(ctx, deps, udid, {
+		action: query.action,
+		target,
+		args: query.args,
+		...(evidence ? { evidence } : {}),
 	});
 }
 
@@ -316,6 +372,15 @@ export function uiIs(ctx: CommandContext, deps: UiDeps, words: string[], opts: U
 		const entry = pickEntry(indexSnapshot(taken.data), selector.data);
 		const matched = entry !== undefined && isState(entry, state);
 		const reason = entry === undefined ? "target_absent" : matched ? undefined : `not_${state}`;
+		if (entry) {
+			await recordQuery(ctx, deps, env, device.udid, {
+				action: "is",
+				selector: selector.data,
+				entry,
+				snapshot: taken.data,
+				args: { state, ...(matched ? {} : { not: true }) },
+			});
+		}
 		return ok({
 			device: { udid: device.udid, platform: device.platform, name: device.name },
 			result: {
@@ -394,6 +459,15 @@ export function uiGet(ctx: CommandContext, deps: UiDeps, words: string[], opts: 
 			};
 		}
 		const value = propertyOf(entry, prop);
+		if (typeof value === "string") {
+			await recordQuery(ctx, deps, env, device.udid, {
+				action: "get",
+				selector: selector.data,
+				entry,
+				snapshot: taken.data,
+				args: { property: prop, expected: value },
+			});
+		}
 		return ok({
 			device: info,
 			result: {

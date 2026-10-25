@@ -189,6 +189,9 @@ describe("cold start: batch and e2e", () => {
 describe("cold start: warden ui", () => {
 	/** Implementation modules of the other subcommands: a call loads its own and none of these. */
 	const OTHERS = [
+		"/agent-ui/authoring-command.ts",
+		"/agent-ui/authoring-verify.ts",
+		"/agent-ui/record-sink.ts",
 		"/agent-ui/devtools-cli.ts",
 		"/agent-ui/bench.ts",
 		"/agent-ui/video.ts",
@@ -203,6 +206,7 @@ describe("cold start: warden ui", () => {
 			["ui", "--help"],
 			["ui", "snapshot", "--help"],
 			["ui", "press", "--help"],
+			["ui", "record", "start", "--help"],
 		]) {
 			const files = await loadedBy(args);
 			expect(loaded(files, [...OTHERS, "/packages/e2e/", "/node_modules/zod/", "/agent-ui/helper.ts"])).toEqual([]);
@@ -239,6 +243,21 @@ describe("cold start: warden ui", () => {
 				[]
 			);
 		}
+	});
+
+	test("`ui press` and `ui status` load neither the recording journal nor its verify run when nothing is recording", async () => {
+		for (const args of [
+			["ui", "press", "@e1", "--json"],
+			["ui", "status", "--json"],
+		]) {
+			expect(loaded(await loadedBy(args), ["/agent-ui/record-sink.ts", "/agent-ui/authoring-verify.ts"])).toEqual([]);
+		}
+	});
+
+	test("`ui record status` loads the authoring module, without the verify run, other subcommands or a driver", async () => {
+		const files = await loadedBy(["ui", "record", "status", "--json"]);
+		expect(has(files, "/agent-ui/authoring-command.ts")).toBe(true);
+		expect(loaded(files, [...without(OTHERS, "/agent-ui/authoring-command.ts"), ...DRIVERS])).toEqual([]);
 	});
 
 	test("the devtools subcommands load their own module and no driver", async () => {

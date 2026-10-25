@@ -109,3 +109,11 @@ export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ }
 | `WARDEN_HEADLESS` | `1` on a headless run |
 | `WARDEN_E2E_DEBUG` | `1`: log every helper operation and `simctl` call with its duration to stderr. Set it yourself |
 | `WARDEN_BUN` | read by `warden e2e`: the `bun` to run specs with (default: `bun` on `PATH`) |
+
+## Read by `warden ui record`
+
+Set these in the shell that runs `warden ui fill --secure` (and `record`) so the recorded spec holds a variable name, never the text ([Author specs by recording](/docs/e2e/author-specs#secrets)).
+
+| Variable | Value |
+|---|---|
+| `WARDEN_UI_SECRET_<NAME>` | a secret value. A `fill --secure` (or any typed text equal to a non-empty value) is recorded as `process.env.WARDEN_UI_SECRET_<NAME>`, guarded to throw when unset. Set it for the spec run too (suite `env`). With none set, a secure fill uses `WARDEN_UI_SECRET_SECURE_TEXT` and a note to set it or edit the step |

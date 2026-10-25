@@ -1654,7 +1654,7 @@ Options:
   -h, --help                   display help for command
 
 Commands:
-  status                       device, lease and helper state
+  status                       device, lease, helper and recording state
   close                        stop this device's helper (the lease stays);
                                --app also quits the app, --release frees the
                                lease
@@ -1692,6 +1692,10 @@ Commands:
                                many match)
   bench                        time snapshot, press, settle, tree and driver
                                open on this device against the speed targets
+  record                       turn a warden ui session into an e2e spec: start
+                               <name> | note | use <module#fn> | undo | status |
+                               cancel | stop. The journal is kept until a
+                               successful stop or cancel
   eval <expression>            run JavaScript in the app (Hermes) and print the
                                value
   tree                         the app's React components (testID, label, text,
@@ -1705,7 +1709,7 @@ Commands:
 $ warden ui status --help
 Usage: warden ui status [options]
 
-device, lease and helper state
+device, lease, helper and recording state
 
 Options:
   --udid <udid>          device udid (iOS) / serial (Android)
@@ -1721,6 +1725,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -1747,6 +1752,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -1774,6 +1780,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -1799,6 +1806,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -1830,6 +1838,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -1858,6 +1867,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -1886,6 +1896,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -1899,7 +1910,8 @@ Arguments:
   args                   <target> <text>: the last word is the text
 
 Options:
-  --secure               password field: skip the read-back, never echo the text
+  --secure               password field: skip the read-back, never echo or
+                         record the text
   --no-verify            skip the read-back
   --settle [ms]          wait for a quiet screen afterwards (default budget 3000
                          ms) and print what changed
@@ -1916,6 +1928,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -1944,6 +1957,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -1971,6 +1985,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2004,6 +2019,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2031,6 +2047,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2055,6 +2072,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2079,6 +2097,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2123,6 +2142,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2150,6 +2170,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2175,6 +2196,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2201,6 +2223,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2251,6 +2274,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2280,6 +2304,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2312,6 +2337,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2344,6 +2370,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2372,6 +2399,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2399,6 +2427,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2425,6 +2454,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2450,6 +2480,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2476,6 +2507,232 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui record --help
+Usage: warden ui record [options] [command]
+
+turn a warden ui session into an e2e spec: start <name> | note | use <module#fn>
+| undo | status | cancel | stop. The journal is kept until a successful stop or
+cancel
+
+Options:
+  -h, --help       display help for command
+
+Commands:
+  start <name>     start recording; stop writes <suite specsDir>/<name>.e2e.ts
+                   (e2e/<name>.e2e.ts without a suite)
+  note <text>      mark a user-visible step; the spec gets it as a comment above
+                   the next action
+  use <module#fn>  run an exported helper on this device and, when it passes,
+                   record a call to it (await fn(fixtures)); a failing helper
+                   records nothing
+  undo [n]         drop the last recorded step(s), notes included
+  status           target, step count, the last 5 steps and the lints so far
+  cancel           throw the recording away (a spec already written is left)
+  stop             write the spec (or helper), merge ids, print lints, then run
+                   the spec once on this device; exit 1 keeps the file AND the
+                   journal so you can undo, fix and stop again
+  help [command]   display help for command
+
+$ warden ui record start --help
+Usage: warden ui record start [options] <name>
+
+start recording; stop writes <suite specsDir>/<name>.e2e.ts (e2e/<name>.e2e.ts
+without a suite)
+
+Arguments:
+  name                     recording name (the spec file name unless --to)
+
+Options:
+  --to <spec>              spec file to write
+  --helper <module#fn>     write an exported function into a helpers module
+                           instead of a spec, e.g. e2e/helpers.ts#signIn
+  --prerequisite <text>    what must be true before the helper runs (its doc
+                           comment); needs --helper
+  --ids <module>           ids module to merge test ids into (export const ids =
+                           { … } as const)
+  --options <module#name>  shared test.use options to pass (e.g.
+                           e2e/helpers/steps#SPEC_OPTIONS); default: detected in
+                           the specs dir, \`none\` passes none
+  --title <title>          the generated test's title (default: the name)
+  --suite <name>           e2e.<name> suite for the default path and the verify
+                           run (needed when several exist)
+  --overwrite              replace an existing spec file, or an existing helper
+                           function (the shared --force is for a busy device)
+  --udid <udid>            device udid (iOS) / serial (Android)
+  --serial <serial>        Android serial
+  --lease <id>             use the device behind this lease id
+  --claim                  take over a stale/missing lease, or claim a device
+                           when none is held
+  --platform <platform>    platform for --claim with no device named: ios
+                           (default) | android
+  --profile <slug>         device profile for --claim with no device named
+  --runtime <runtime>      runtime for --claim with no device named
+  --force                  drive the device even while a live warden process
+                           (e2e, batch, run) holds your lease on it; your own
+                           warden dev device is shared without it
+  --timeout <ms>           deadline in milliseconds (default 5000)
+  --no-record              don't append this step to a running recording
+  --json                   machine-readable output: one JSON document on stdout
+  -h, --help               display help for command
+
+$ warden ui record note --help
+Usage: warden ui record note [options] <text>
+
+mark a user-visible step; the spec gets it as a comment above the next action
+
+Arguments:
+  text                   what the next actions do, e.g. 'enter credentials'
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui record use --help
+Usage: warden ui record use [options] <module#fn>
+
+run an exported helper on this device and, when it passes, record a call to it
+(await fn(fixtures)); a failing helper records nothing
+
+Arguments:
+  module#fn              helpers module (relative to the working directory) and
+                         its exported function
+
+Options:
+  --suite <name>         e2e.<name> suite whose spec process runs the helper
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui record undo --help
+Usage: warden ui record undo [options] [n]
+
+drop the last recorded step(s), notes included
+
+Arguments:
+  n                      how many steps (default 1)
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui record status --help
+Usage: warden ui record status [options]
+
+target, step count, the last 5 steps and the lints so far
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui record cancel --help
+Usage: warden ui record cancel [options]
+
+throw the recording away (a spec already written is left)
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui record stop --help
+Usage: warden ui record stop [options]
+
+write the spec (or helper), merge ids, print lints, then run the spec once on
+this device; exit 1 keeps the file AND the journal so you can undo, fix and stop
+again
+
+Options:
+  --no-verify            write the file without running it (always the case for
+                         --helper)
+  --suite <name>         e2e.<name> suite to verify in
+  --overwrite            replace an existing spec file, or an existing helper
+                         function (the shared --force is for a busy device)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2502,6 +2759,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
                          this owner's leased ports)
@@ -2530,6 +2788,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
                          this owner's leased ports)
@@ -2558,6 +2817,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
                          this owner's leased ports)
@@ -2587,6 +2847,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
@@ -2609,6 +2870,7 @@ Options:
                          batch, run) holds your lease on it; your own warden dev
                          device is shared without it
   --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
   --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
                          this owner's leased ports)

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type ErrorResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { CONFIG_FILE, type ConfigSource, type FoundConfig, findWardenConfig, loadProject } from "../builds/config";
 import { overlayDirUnlessRepoConfig } from "../builds/overlay";
 import type { Exec } from "../exec";
@@ -33,6 +33,19 @@ export type Suite = {
 	/** the suite's perf budgets over the top-level ones, per key (undefined: none set) */
 	perfBudgets?: NonNullable<NonNullable<E2eSuiteConfig["perf"]>["budgets"]>;
 };
+
+/** Why `findSuite` found no suite: `several_suites` is the one callers act on (name one), the rest are reported as is. */
+export type SuiteError = {
+	code: "several_suites" | "no_suites" | "unknown_suite" | "no_config" | "config";
+	message: string;
+	/** the configured suite names, for `several_suites` / `unknown_suite` */
+	suites?: string[];
+};
+
+const suiteError = (code: SuiteError["code"], message: string, suites?: string[]): ErrorResult<SuiteError> => ({
+	success: false,
+	error: { code, message, ...(suites ? { suites } : {}) },
+});
 
 export type AffectedInput = {
 	exec: Exec;
@@ -123,24 +136,32 @@ export async function findSuite(
 	name?: string,
 	git?: GitFactsCache,
 	env: Record<string, string | undefined> = process.env
-): AsyncResult<Suite> {
+): AsyncResult<Suite, SuiteError> {
 	const stopAt = (await readGitFacts(exec, cwd, git))?.toplevel;
 	const overlay = await overlayDirUnlessRepoConfig(exec, cwd, stopAt, env, git);
 	const found = findWardenConfig(cwd, stopAt, env, overlay);
-	if (!found.success) return found;
+	if (!found.success) return suiteError("config", found.error);
 	const suites = found.data?.config.e2e ?? {};
 	const names = Object.keys(suites);
 	if (names.length === 0 && name === undefined) {
-		return defaultSuite(cwd, stopAt, found.data?.config.headless, overlay);
+		const implicit = defaultSuite(cwd, stopAt, found.data?.config.headless, overlay);
+		return implicit.success ? implicit : suiteError("config", implicit.error);
 	}
-	if (!found.data) return err(`no ${CONFIG_FILE} found from ${cwd}`);
+	if (!found.data) return suiteError("no_config", `no ${CONFIG_FILE} found from ${cwd}`);
 	const pick = name ?? (names.length === 1 ? names[0] : undefined);
-	if (pick === undefined)
-		return err(
-			names.length === 0 ? `no e2e suites in ${CONFIG_FILE}` : `several e2e suites — name one (${names.join(", ")})`
-		);
+	if (pick === undefined) {
+		return names.length === 0
+			? suiteError("no_suites", `no e2e suites in ${CONFIG_FILE}`)
+			: suiteError("several_suites", `several e2e suites — name one (${names.join(", ")})`, names);
+	}
 	const config = suites[pick];
-	if (!config) return err(`no e2e suite "${pick}" in ${CONFIG_FILE} (${names.join(", ") || "none"})`);
+	if (!config) {
+		return suiteError(
+			"unknown_suite",
+			`no e2e suite "${pick}" in ${CONFIG_FILE} (${names.join(", ") || "none"})`,
+			names
+		);
+	}
 	return ok(toSuite(pick, config, found.data));
 }
 
@@ -235,7 +256,7 @@ const usesGit = (input: AffectedInput): boolean => !input.files && !input.only;
 /** Changed files → the specs each platform must run (with reasons), per `e2e.<suite>`. */
 export async function computeAffected(given: AffectedInput): AsyncResult<Affected> {
 	const suite = await findSuite(given.exec, given.cwd, given.suite, given.git, given.env);
-	if (!suite.success) return suite;
+	if (!suite.success) return err(suite.error.message);
 	// a suite nobody mapped has nothing to diff against: every spec runs
 	const everything = suite.data.implicit && !given.files && !given.only;
 	const input: AffectedInput = everything ? { ...given, only: { mode: "all" } } : given;

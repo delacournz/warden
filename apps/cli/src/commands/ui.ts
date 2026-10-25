@@ -1,3 +1,4 @@
+import { registerAuthoringCommands } from "../agent-ui/authoring-register";
 import type { CloseOptionValues } from "../agent-ui/close";
 import { registerDevtoolsCommands } from "../agent-ui/devtools-register";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
@@ -21,10 +22,12 @@ export function createUiCommand(deps: UiDeps): Command {
 		name: "ui",
 		summary: "drive a leased simulator / emulator (agents): status, snapshot, find, open, press, fill, scroll, …",
 		register: (cmd, ctx, done) => {
-			withUiOptions(cmd.command("status").description("device, lease and helper state")).action(async (opts) => {
-				const { uiStatus } = await import("../agent-ui/status");
-				done(await uiStatus(ctx, deps, opts));
-			});
+			withUiOptions(cmd.command("status").description("device, lease, helper and recording state")).action(
+				async (opts) => {
+					const { uiStatus } = await import("../agent-ui/status");
+					done(await uiStatus(ctx, deps, opts));
+				}
+			);
 			withUiOptions(
 				cmd
 					.command("close")
@@ -90,7 +93,7 @@ export function createUiCommand(deps: UiDeps): Command {
 					.command("fill")
 					.description("replace a text field's content, then read it back (use -- before text starting with -)")
 					.argument("<args...>", "<target> <text>: the last word is the text")
-					.option("--secure", "password field: skip the read-back, never echo the text")
+					.option("--secure", "password field: skip the read-back, never echo or record the text")
 					.option("--no-verify", "skip the read-back")
 					.option("--settle [ms]", SETTLE)
 			).action(async (words, opts) => {
@@ -301,6 +304,7 @@ export function createUiCommand(deps: UiDeps): Command {
 				const { uiBench } = await import("../agent-ui/bench");
 				done(await uiBench(ctx, deps, opts));
 			});
+			registerAuthoringCommands(cmd, ctx, done, deps);
 			registerDevtoolsCommands(cmd, ctx, done, deps);
 		},
 	});

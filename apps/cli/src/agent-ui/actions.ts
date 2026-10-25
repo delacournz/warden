@@ -20,10 +20,10 @@ import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import {
 	type ActionOptionValues,
-	actionTarget,
 	finishAction,
 	parseSettle,
 	pointAt,
+	recordTarget,
 	targetLabel,
 	targetOf,
 } from "./act";
@@ -82,8 +82,8 @@ export function uiPress(
 		if (!resolved.success) return resolved;
 		const tapped = fromDriver(await driver.data.tap(resolved.data.point));
 		if (!tapped.success) return tapped;
-		const where = actionTarget(target.data, resolved.data);
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		const where = recordTarget(target.data, resolved.data);
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "press",
 			text: `pressed ${targetLabel(where)}`,
 			target: where,
@@ -125,11 +125,12 @@ export function uiLongpress(
 		if (!resolved.success) return resolved;
 		const pressed = fromDriver(await driver.data.longPress(resolved.data.point, { durationMs }));
 		if (!pressed.success) return pressed;
-		const where = actionTarget(target.data, resolved.data);
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		const where = recordTarget(target.data, resolved.data);
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "gesture-longpress",
 			text: `long-pressed ${targetLabel(where)} for ${durationMs} ms`,
 			target: where,
+			args: { ms: durationMs },
 			extra: { durationMs },
 			...(resolved.data.verified === true || (opts.verify === true && target.data.kind === "selector")
 				? { verified: true }
@@ -274,13 +275,15 @@ export function uiFill(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 		});
 		if (!filled.success) return filled;
 		const verified = filled.data;
-		const where = actionTarget(target.data, resolved.data);
+		const where = recordTarget(target.data, resolved.data);
 		const shown = secure ? `${[...text].length} characters (secure)` : JSON.stringify(text);
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "fill",
 			text: `filled ${targetLabel(where)} with ${shown}${verified === "unconfirmed" ? " (unconfirmed)" : ""}`,
 			target: where,
 			...(verified !== undefined ? { verified } : {}),
+			args: secure ? { secure: true } : { text },
+			...(secure ? { secret: text } : {}),
 			extra: { characters: [...text].length, ...(secure ? { secure: true } : {}) },
 		});
 	});
@@ -299,9 +302,10 @@ export function uiType(ctx: CommandContext, deps: UiDeps, text: string, opts: Ty
 			const submitted = fromDriver(await driver.data.key("Enter"));
 			if (!submitted.success) return submitted;
 		}
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "type",
 			text: `typed ${JSON.stringify(text)}${opts.submit === true ? " and pressed Enter" : ""}`,
+			args: { text, ...(opts.submit === true ? { submit: true } : {}) },
 			extra: { characters: [...text].length, submitted: opts.submit === true },
 		});
 	});
@@ -328,15 +332,16 @@ export function uiKey(ctx: CommandContext, deps: UiDeps, name: string, opts: Act
 		if (!driver.success) return driver;
 		const pressed = fromDriver(await driver.data.key(key.data));
 		if (!pressed.success) return pressed;
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "key",
 			text: `pressed ${key.data}`,
+			args: { key: key.data },
 			extra: { key: key.data },
 		});
 	});
 }
 
-/** A direction word; `scroll` and the spec steps read it as the content's direction, `swipe` as the finger's. */
+/** A direction word; `scroll` and the recorded steps read it as the content's direction, `swipe` as the finger's. */
 export type Way = SwipeDirection;
 export const WAYS: readonly Way[] = ["up", "down", "left", "right"];
 
@@ -413,9 +418,10 @@ export function uiSwipe(ctx: CommandContext, deps: UiDeps, words: string[], opts
 		}
 		const swiped = fromDriver(await driver.data.swipe(from, to, { durationMs: SWIPE_MS, momentum: false }));
 		if (!swiped.success) return swiped;
-		return finishAction(ctx, deps, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "gesture-swipe",
 			text: `swiped ${label}`,
+			args: { from: `${from.x},${from.y}`, to: `${to.x},${to.y}` },
 			extra: { from, to },
 		});
 	});

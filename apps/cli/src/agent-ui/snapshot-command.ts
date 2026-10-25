@@ -6,6 +6,7 @@ import type { UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
 import { runUi, type UiOptionValues } from "./run";
 import { findElements, type SnapshotRequest, snapshotText, takeSnapshot } from "./snapshot";
+import { readState } from "./state";
 
 export type SnapshotOptionValues = UiOptionValues & {
 	interactive?: true;
@@ -22,8 +23,12 @@ export function positiveInt(name: string, raw: string): Result<number, UiError> 
 	return ok(Number(raw));
 }
 
-function parseRequest(opts: SnapshotOptionValues): Result<SnapshotRequest, UiError> {
-	const request: SnapshotRequest = { interactiveOnly: opts.interactive === true, all: opts.all === true };
+function parseRequest(opts: SnapshotOptionValues, recording: boolean): Result<SnapshotRequest, UiError> {
+	const request: SnapshotRequest = {
+		interactiveOnly: opts.interactive === true,
+		all: opts.all === true,
+		...(recording ? { markMissingIds: true } : {}),
+	};
 	if (opts.depth !== undefined) {
 		const depth = positiveInt("--depth", opts.depth);
 		if (!depth.success) return depth;
@@ -40,13 +45,13 @@ function parseRequest(opts: SnapshotOptionValues): Result<SnapshotRequest, UiErr
 /** `warden ui snapshot [-i] [--all] [--settle [ms]] [--depth n]`: the screen as `@eN` lines; bumps the generation. */
 export function uiSnapshot(ctx: CommandContext, deps: UiDeps, opts: SnapshotOptionValues): Promise<number> {
 	return runUi(ctx, deps, "snapshot", opts, async (device, env) => {
-		const request = parseRequest(opts);
+		const request = parseRequest(opts, readState(ctx, device.udid).recording !== undefined);
 		if (!request.success) return request;
 		const driver = await env.driver();
 		if (!driver.success) return driver;
 		const taken = await takeSnapshot(ctx, deps, driver.data, device.udid, request.data);
 		if (!taken.success) return taken;
-		const { snapshot, refs: _refs, lines: _lines, header: _header, ...rest } = taken.data;
+		const { snapshot, refs: _refs, lines: _lines, header: _header, hints: _hints, ...rest } = taken.data;
 		return ok({
 			device: { udid: device.udid, platform: device.platform, name: device.name },
 			generation: taken.data.generation,

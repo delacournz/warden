@@ -8,11 +8,12 @@ import { reportError, reportOk, type UiError, type UiExitCode, type UiSuccess, u
 import { DEFAULT_UI_TIMEOUT_MS } from "./ui-options";
 
 /** Values `withUiOptions` parses to. */
-export type UiOptionValues = UiDeviceFlags & { timeout?: string; json?: true };
+export type UiOptionValues = UiDeviceFlags & { timeout?: string; record: boolean; json?: true };
 
 /** What a subcommand's work function gets besides the device. */
 export type UiRunEnv = {
 	timeoutMs: number;
+	record: boolean;
 	deps: UiDeps;
 	/** the device's driver, opened on first use (so `status` never needs an engine) and closed when the command ends */
 	driver: () => Promise<Result<Driver, UiError>>;
@@ -56,7 +57,7 @@ export async function runUi(
 			return opened;
 		};
 		try {
-			const done = await work(device.data, { timeoutMs: timeout.data, deps, driver });
+			const done = await work(device.data, { timeoutMs: timeout.data, record: opts.record, deps, driver });
 			if (!done.success) return reportError(ctx, report, done.error, info);
 			const attachedTo = device.data.action === "attached" ? device.data.lease.id : undefined;
 			return reportOk(ctx, report, attachedTo === undefined ? done.data : { ...done.data, attachedTo });

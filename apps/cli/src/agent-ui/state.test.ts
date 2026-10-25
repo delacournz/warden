@@ -79,10 +79,10 @@ describe("ui state", () => {
 		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(101);
 	});
 
-	test("three processes each setting a different record through updateState on one WARDEN_HOME keep all three (14-6)", async () => {
+	test("four processes each setting a different record through updateState on one WARDEN_HOME keep all four (14-6)", async () => {
 		const ctx = setup();
 		const worker = join(import.meta.dir, "state.worker.testing.ts");
-		const fields = ["helper", "video", "collector"];
+		const fields = ["helper", "video", "collector", "recording"];
 		const workers = fields.map((field) =>
 			Bun.spawn([process.execPath, worker, home ?? "", "U1", "40", field], { stdout: "pipe", stderr: "inherit" })
 		);
@@ -91,6 +91,7 @@ describe("ui state", () => {
 		expect(state.helper).toEqual({ pid: 40, socket: "/s" });
 		expect(state.video).toEqual({ pid: 40, path: "/v.mp4", startedAt: 40 });
 		expect(state.collector).toEqual({ pid: 40, startedAt: 40 });
+		expect(state.recording).toEqual({ name: "f", target: { kind: "spec", path: "/f.e2e.ts" }, startedAt: 40 });
 	});
 
 	test("updateState re-reads under the store's transaction, writes what the update returns, and returns it", () => {

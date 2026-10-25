@@ -4,6 +4,7 @@ import { DEFAULT_SETTLE_QUIET_MS, settleByHash, snapshotHash } from "@delacour/w
 import { indexSnapshot, type NodeEntry } from "@delacour/warden-e2e/screen/nodes";
 import { resolve } from "@delacour/warden-e2e/screen/query";
 import { isListed, renderEntryLine, renderHeader, renderSnapshot } from "@delacour/warden-e2e/screen/render";
+import { isInteractiveRole } from "@delacour/warden-e2e/screen/roles";
 import { type ParsedSelector, selectorToQuery } from "@delacour/warden-e2e/screen/selector";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -22,6 +23,8 @@ export type SnapshotRequest = {
 	all: boolean;
 	/** `--depth n`: only the first n levels of the tree */
 	depth?: number;
+	/** with `-i` during a recording: mark interactive elements that have no testID (`[no-id]`) */
+	markMissingIds?: boolean;
 	/** `--settle [ms]`: wait for a quiet screen (budget in ms), then diff against the previous snapshot */
 	settle?: { budgetMs: number };
 };
@@ -38,7 +41,11 @@ export type ElementJson = {
 	selected?: boolean;
 	checked?: boolean;
 	frame: Rect;
+	/** an interactive element without a testID (only set while a recording is active) */
+	noId?: true;
 };
+
+export const NO_ID_MARK = "[no-id]";
 
 export type TakenSnapshot = {
 	snapshot: Snapshot;
@@ -51,6 +58,8 @@ export type TakenSnapshot = {
 	lines: string[];
 	/** structured twin of `lines` */
 	elements: ElementJson[];
+	/** advice printed after the lines (`[no-id]` marks) */
+	hints: string[];
 	total: number;
 	shown: number;
 	omitted: number;
@@ -152,6 +161,16 @@ export async function takeSnapshot(
 	});
 	const entries = indexSnapshot(view).entries;
 	const listed = (request.interactiveOnly ? entries.filter(isListed) : entries).slice(0, rendered.shown);
+	const unmarked = (entry: NodeEntry): boolean =>
+		request.markMissingIds === true &&
+		request.interactiveOnly &&
+		isInteractiveRole(entry.role) &&
+		(entry.element.identifier === undefined || entry.element.identifier === "");
+	const lines = rendered.lines.map((line, at) => {
+		const entry = listed[at];
+		return entry !== undefined && unmarked(entry) ? `${line} ${NO_ID_MARK}` : line;
+	});
+	const missing = listed.filter(unmarked).length;
 	const taken: TakenSnapshot = {
 		snapshot,
 		refs,
@@ -164,8 +183,17 @@ export async function takeSnapshot(
 			generation,
 			style: "cli",
 		}),
-		lines: rendered.lines,
-		elements: listed.map((entry) => elementJson(entry, refs.byId.get(entry.element.id))),
+		lines,
+		elements: listed.map((entry) => ({
+			...elementJson(entry, refs.byId.get(entry.element.id)),
+			...(unmarked(entry) ? { noId: true as const } : {}),
+		})),
+		hints:
+			missing === 0
+				? []
+				: [
+						`# ${missing} interactive element${missing === 1 ? "" : "s"} marked ${NO_ID_MARK}: add testID + accessible in the component, reload, \`record undo\` and redo — a text selector breaks with the copy`,
+					],
 		total: rendered.total,
 		shown: rendered.shown,
 		omitted: rendered.omitted,
@@ -194,7 +222,7 @@ export function settleLines(taken: Pick<TakenSnapshot, "settle" | "diff">): stri
 
 /** The text of `warden ui snapshot`: header, element lines, then (settle) the verdict and the diff. */
 export function snapshotText(taken: TakenSnapshot): string {
-	return [taken.header, ...taken.lines, ...settleLines(taken)].join("\n");
+	return [taken.header, ...taken.lines, ...taken.hints, ...settleLines(taken)].join("\n");
 }
 
 export type FoundElements = {

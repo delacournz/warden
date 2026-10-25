@@ -1,0 +1,151 @@
+---
+title: Author specs by recording
+description: Turn a warden ui session into a reviewed, passing e2e spec - record start, note, undo, stop with verify, lints, helpers for shared steps, secrets and the failure loop.
+icon: Clapperboard
+---
+
+An agent (or you) asked for "an e2e test for onboarding and sign in" drives the app with [`warden ui`](/docs/agents/ui) between `warden ui record start` and `record stop`. `stop` writes a `@delacour/warden-e2e` [spec](/docs/e2e/specs) and runs it once on the same leased device. There is no intermediate file and no replay engine: the spec runner is the replay.
+
+The journal lives under `$WARDEN_HOME/ui/<udid>/recording.json` and is internal. It is removed only by a successful `stop` or by `cancel`.
+
+## The loop
+
+```bash
+warden claim ios --json                                        # → UDID
+warden ui record start sign-in --ids e2e/helpers/ids.ts --udid $UDID
+warden ui open com.example.app --relaunch --udid $UDID         # the first recorded step: a fresh launch
+warden ui wait id=welcome-screen --udid $UDID                  # landmark after every navigation
+warden ui record note "open sign in" --udid $UDID              # one note per user-visible step
+warden ui press id=sign-in-open --udid $UDID
+warden ui wait id=sign-in-form --udid $UDID
+warden ui fill id=email "ada@example.com" --udid $UDID
+warden ui record stop --udid $UDID                             # write, lint, verify
+warden e2e <suite> --specs sign-in                             # the real run
+warden ui close --release --udid $UDID
+```
+
+1. **Start.** `record start <name>` names the recording and the spec: `<suite specsDir>/<name>.e2e.ts`, or `e2e/<name>.e2e.ts` with no suite in the config. It fails with `target_exists` when the file exists (`--overwrite` on `start` is remembered by `stop`). With several suites in the config pass `--suite <name>` here, also with `--to`: `record use` and the verify run on it.
+2. **Launch inside the recording.** `open <bundleId> --relaunch` after `record start` becomes `app.open({ wait: "quiet" })`, so the spec starts from a fresh app. An `open` before `record start` is not in the spec. The spec also gets `test.use({ launch: "none" })` so the runner does not launch the app a second time; see [Shared options and launch](#shared-options-and-launch).
+3. **Act on testIDs.** `snapshot -i`, then `press` / `fill` / `scroll` by `id=`. Selectors are stored, never `@eN` refs.
+4. **Wait after every navigation.** `wait id=<a testID only the new screen has>`. `wait`, `is` and `get` become `expect(...)`; a navigation followed by an action with no check is linted.
+5. **Note intent.** `record note "<text>"` becomes a comment above the next action.
+6. **Fix mistakes.** `record undo [n]` drops the last n steps (notes count); redo them. `--no-record` on any call keeps that call out of the recording.
+7. **Stop.** `record stop` writes the spec, merges testIDs into `--ids <module>`, prints the lints and runs the spec once on this device. Evidence goes to `$WARDEN_HOME/ui/<udid>/verify/<ts>/` (`results.jsonl`, `spec.log`, `screen-at-failure.txt`).
+8. **Register it.** `stop` prints the `specs.<id>` entry to paste into `warden.config.ts` (text, and `result.config` with `--json`); warden never edits the config. See [Route capture](#route-capture).
+
+## Missing testIDs
+
+While a recording is active, `snapshot -i` marks interactive elements that have no testID:
+
+```text
+@e4 [button] "Sign in" enabled hittable (24,600 345×48) [no-id]
+# 1 interactive element marked [no-id]: add testID + accessible in the component, reload, `record undo` and redo
+```
+
+Stop driving. Add `testID` and `accessible` to the component, reload, `record undo` back to before that step and redo it by `id=`. A text selector breaks with the copy; a coordinate breaks with the layout.
+
+## Lints
+
+Printed by `record stop` and `record status`.
+
+| Code | Level | Meaning |
+|---|---|---|
+| `coords_target` | error | a tap by coordinates, or `type`/`key` with no element; the spec has a `// FIXME` that throws |
+| `text_only_selector` | warn | the element is found by label/text, not `id=` |
+| `ambiguous_selector` | warn | the selector matched several elements and is pinned by `nth=` |
+| `unverified_navigation` | warn | a navigation was followed by another action with no `wait` / `is` / `get` |
+| `empty_recording` | error | nothing but notes; `stop` fails |
+
+## When verify fails
+
+`record stop` exits 1 with `verify_failed` and keeps both the written file and the journal. Read `screen-at-failure.txt` from the printed evidence directory, then either fix the app (a testID, a state the spec assumed) or `record undo` and redo the steps, and `record stop` again; the file you wrote is replaced without `--overwrite`. `record cancel` drops the journal and leaves the file. `verify_unavailable` means the run could not start (no suite, or several: pass `--suite <name>`); fix it or use `--no-verify`.
+
+## Several journeys: helpers
+
+One spec per journey. A prefix several specs repeat is recorded once as a helper:
+
+```bash
+warden ui record start onboarding --helper e2e/helpers/flows.ts#onboarding \
+  --prerequisite "fresh install, app closed" --ids e2e/helpers/ids.ts --udid $UDID
+# open --relaunch, drive onboarding to the first signed-out screen
+warden ui record stop --udid $UDID
+```
+
+This adds `/** Prerequisite: … */ export async function onboarding(…)` to the module (created if missing). An existing export is refused (`target_exists`) unless `--overwrite`. A helper is not verified: a spec that calls it is.
+
+The next journey calls it with `record use <module#fn>` (module relative to the working directory):
+
+```bash
+warden ui record start sign-in --ids e2e/helpers/ids.ts --udid $UDID
+warden ui record use e2e/helpers/flows#onboarding --udid $UDID
+warden ui wait id=sign-in-screen --udid $UDID
+# drive sign-in
+warden ui record stop --udid $UDID
+```
+
+`use` runs the helper once on this device through the same spec process `stop` verifies with. On a pass it records the call; on a failure (`use_failed`, evidence paths in `details.evidence`) nothing is recorded. The generated spec imports the helper relative to its final path and hands it the test's fixtures:
+
+```ts
+import { onboarding } from "./helpers/flows";
+
+test("sign in", async (fixtures) => {
+	const { screen } = fixtures;
+	await onboarding(fixtures);
+	await expect(screen.getByTestId(ids.signInScreen)).toBeVisible();
+	// recorded steps
+```
+
+The helper must take `TestFixtures` (the ones `--helper` writes do). After `use`, `snapshot` is fresh (earlier `@eN` refs are stale) and the route is re-read. A `use` is a navigation: follow it with a `wait`, or `unverified_navigation` fires. `stop` verifies the whole spec, helper included.
+
+## Helper routes
+
+The spec process cannot report the screens a helper drives, so `record use` combines what warden can see: the routes the helper's own recording visited (saved by `record stop` under `$WARDEN_HOME/ui/helper-routes`, never in the repo), plus the route read before and after the run. `stop` merges them into the spec's `entries`, and the "helper drives screens this recording never saw" hint disappears. A helper that was not recorded with warden, or was edited since (the saved routes are tied to a hash of the function), only contributes the two reads: `record use` says so (`routes: "reads"` in `--json`), the hint stays and names the helper, and the screens in between are yours to add. A Release build reads no routes at all.
+
+## Shared options and launch
+
+Suites often share one `test.use` object, such as `SPEC_OPTIONS = { launch: "none", systemAlerts: "dismiss" }`. `record stop` finds it with a fixed rule:
+
+1. Candidates are `export const NAME = { … }` in a `.ts`/`.tsx` file below the suite's `specsDir` that is not a spec or test file, and whose keys are only `test.use` options (`timeout`, `actionTimeout`, `assertionTimeout`, `launch`, `systemAlerts`).
+2. It is kept when an existing spec imports it and passes it to `test.use(NAME)` (or spreads it into `test.use({ ...NAME })`).
+3. Exactly one kept: the generated spec imports it and calls `test.use(NAME)`. Several: none is passed and `stop` names them. None: output is unchanged.
+
+`record start --options e2e/helpers/steps#SPEC_OPTIONS` pins one, `--options none` passes none.
+
+**Single launch.** The runner launches the app before every test unless `launch` is `"none"`. When the recording's first step is `open`, or a `record use` of a helper whose body calls `app.open(` (directly or through a function of the same module, four calls deep at most), the spec launches the app itself, so codegen writes the file-scope `test.use` that stops the runner doing it too: `test.use({ launch: "none" })`, or `test.use(SPEC_OPTIONS)` when the shared object already says so. When the shared object turns the launch off but the recording relies on the runner's, it is spread with the override: `test.use({ ...SPEC_OPTIONS, launch: "fresh" })`. There is no per-test launch option, `test.use` is it.
+
+## Why there are no tap retries
+
+Do not retry a recorded tap. A tap that looks dropped may only be slow, and sending it again double-fires anything that is not idempotent: a todo added twice, a toggle undone, a form submitted twice. Wait for what the tap causes instead: `open` records `wait: "quiet"` so the first tap is not lost, and a landmark `wait` after every navigation fails at the step that went wrong.
+
+## Route capture
+
+While recording, warden reads the app's Expo Router route after each navigating action (`press`, `open`, `back`, `key`, `alert`, `use`) and keeps it when it changed. `stop` maps the routes visited to files under the suite's `routerRoot` and prints the `specs.<id>` entry.
+
+- Dev clients only. The route comes from the React DevTools hook through Metro. A Release build has no hook: `entries: []` and a hint to fill them by hand.
+- Set `routerRoot` (e.g. `src/app`) on the suite, or there is nothing to map routes to.
+- Capture stops after 3 failed reads in a row.
+- `record stop --json`: `result.config` is `{ id, suite?, snippet, entries, routes, unresolved, captured, hints }`, `null` for a helper. `unresolved` lists routes with no file under `routerRoot`; `captured: false` means no route was read.
+- warden never edits `warden.config.ts`; paste `snippet` yourself.
+
+## Secrets
+
+`fill --secure` never stores the text. Export `WARDEN_UI_SECRET_<NAME>` while recording and the spec reads `process.env.WARDEN_UI_SECRET_<NAME>` (throwing when unset); a typed value equal to such a variable is redacted the same way. Without the variable the step reads `WARDEN_UI_SECRET_SECURE_TEXT` and carries a note. Set the variable for `warden e2e` too (suite `env`). See [Environment](/docs/reference/environment).
+
+## Options
+
+| Command | Options |
+|---|---|
+| `record start <name>` | `--to <spec>` · `--helper <module#fn>` · `--prerequisite <text>` (with `--helper`) · `--ids <module>` · `--options <module#name>` (or `none`) · `--title <title>` · `--suite <name>` · `--overwrite` |
+| `record use <module#fn>` | `--suite <name>`: runs the helper on this device, records `await fn(fixtures)` on a pass |
+| `record note <text>` · `undo [n]` · `status` · `cancel` | `status`: target, step count, last 5 steps, lints so far |
+| `record stop` | `--no-verify` · `--suite <name>` · `--overwrite` |
+
+`--overwrite` replaces a spec file or helper export. `--force` is the shared `warden ui` option for a device held by your own `warden e2e` / `batch` / `run`. Errors (all exit 1): `recording_active`, `no_recording`, `target_exists`, `empty_recording`, `verify_failed`, `verify_unavailable`, and for `record use` `helper_missing`, `use_failed`.
+
+## A good recorded spec
+
+- Every element by `id=`; no coordinates or text selectors.
+- A landmark `wait` after every navigation; the first step is `open --relaunch`.
+- Asserts outcomes (`wait` / `is` / `get`), not just taps.
+- No sleeps, no FIXME, secrets from the environment, a `record note` per user-visible step.
+- Green under `warden e2e <suite> --specs <id>`, not only the verify run.

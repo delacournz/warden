@@ -29,7 +29,7 @@ export const defaultPerfDeps: PerfDeps = {
 };
 
 /** Values `withPerfOptions` parses to. */
-export type PerfOptionValues = UiOptionValues & PerfDeviceFlags & { app?: string };
+export type PerfOptionValues = Omit<UiOptionValues, "record"> & PerfDeviceFlags & { app?: string };
 
 export type PerfRunEnv = { timeoutMs: number; deps: PerfDeps };
 
