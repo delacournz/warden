@@ -7,6 +7,7 @@ import {
 	checkResidue,
 	killMatching,
 	listDriverApps,
+	listMatchingProcesses,
 	matchesBundle,
 	type Owner,
 	ownerFilter,
@@ -155,5 +156,50 @@ describe("killMatching ownership", () => {
 			selfPid: 1,
 		});
 		expect(killed).toEqual(["600 /Users/x/.agent-device-bench/agent-device/daemon.js --state"]);
+	});
+});
+
+describe("listMatchingProcesses never matches shells", () => {
+	const udid = "AAAA-BBBB";
+	const own: Owner = { udid, benchPids: () => [], ownedPaths: [] };
+	const psOut = (...rows: string[]) =>
+		`  PID  PPID    RSS  %CPU COMMAND\n${rows.map((r, i) => `  ${900 + i}     1  1000   0.0 ${r}`).join("\n")}\n`;
+	const list = async (patterns: RegExp[], ...rows: string[]) =>
+		(await listMatchingProcesses(fakeExec([{ cmd: "ps", result: { stdout: psOut(...rows) } }]), patterns, own, 1)).map(
+			(p) => p.line
+		);
+
+	test("an owned zsh watcher mentioning the helper and udid is owned but not listed", async () => {
+		const row = `/bin/zsh -c while true; do warden-simd --udid ${udid}; done`;
+		const rows = parsePs(psOut(row));
+		expect(ownerFilter(rows, own).map((r) => r.pid)).toEqual([900]);
+		expect(await list([/warden-simd/], row)).toEqual([]);
+	});
+
+	test("a real helper binary is still listed", async () => {
+		const row = `/opt/warden/bin/warden-simd --udid ${udid}`;
+		expect(await list([/warden-simd/], row)).toEqual([`900 ${row}`]);
+	});
+
+	test("a node script helper is still listed", async () => {
+		const row = `node /x/argent/simulator-server.js ${udid}`;
+		expect(await list([/argent.*(simulator-server|tool-server)/], row)).toEqual([`900 ${row}`]);
+	});
+
+	test("sh -c wrapper is skipped while its warden-simd child is listed", async () => {
+		const out = `  PID  PPID    RSS  %CPU COMMAND\n  900     1  1000   0.0 /bin/sh -c /path/warden-simd ${udid}\n  901   900  1000   0.0 /path/warden-simd ${udid}\n`;
+		const exec = fakeExec([{ cmd: "ps", result: { stdout: out } }]);
+		const found = await listMatchingProcesses(exec, [/warden-simd/], own, 1);
+		expect(found.map((p) => p.pid)).toEqual([901]);
+	});
+
+	test("env, nohup, caffeinate and every shell are skipped", async () => {
+		const names = ["sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "env", "nohup", "caffeinate"];
+		const rows = names.map((n) => `/usr/bin/${n} warden-simd ${udid}`);
+		expect(await list([/warden-simd/], ...rows)).toEqual([]);
+	});
+
+	test("a login shell dash prefix is skipped", async () => {
+		expect(await list([/warden-simd/], `-zsh warden-simd ${udid}`)).toEqual([]);
 	});
 });
