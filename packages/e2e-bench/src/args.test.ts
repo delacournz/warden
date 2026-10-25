@@ -126,6 +126,46 @@ describe("other commands", () => {
 		expect(parseArgs(["compare", "a"])).toBe("compare needs <dirA> <dirB>");
 	});
 
+	test("compare --max-cpu-regression takes a percent with or without the sign", () => {
+		const base = { command: "compare" as const, dirA: "a", dirB: "b" };
+		expect(parseArgs(["compare", "a", "b", "--max-cpu-regression", "10%"])).toEqual({
+			...base,
+			maxCpuRegressionPct: 10,
+		});
+		expect(parseArgs(["compare", "--max-cpu-regression", "7.5", "a", "b"])).toEqual({
+			...base,
+			maxCpuRegressionPct: 7.5,
+		});
+		expect(parseArgs(["compare", "a", "b", "--max-cpu-regression", "0%"])).toEqual({ ...base, maxCpuRegressionPct: 0 });
+		expect(parseArgs(["compare", "a", "b", "--max-cpu-regression", "fast"])).toBe(
+			"--max-cpu-regression must be a percent like 10% or 10, got fast"
+		);
+		expect(parseArgs(["compare", "a", "b", "--max-cpu-regression", "-5%"])).toBe(
+			"--max-cpu-regression must be a percent like 10% or 10, got -5%"
+		);
+		expect(parseArgs(["compare", "a", "b", "--max-cpu-regression"])).toBe("--max-cpu-regression needs a value");
+		expect(parseArgs(["report", "d", "--max-cpu-regression", "10"])).toBe("unknown argument --max-cpu-regression");
+	});
+
+	test("merge takes an out dir, at least one run dir and an optional --id", () => {
+		expect(parseArgs(["merge", "out", "w1", "w2"])).toEqual({ command: "merge", outDir: "out", runDirs: ["w1", "w2"] });
+		expect(parseArgs(["merge", "out", "w1", "--id", "bench-x"])).toEqual({
+			command: "merge",
+			outDir: "out",
+			runDirs: ["w1"],
+			id: "bench-x",
+		});
+		expect(parseArgs(["merge", "out"])).toBe("merge needs <outDir> <runDir>...");
+		expect(parseArgs(["merge"])).toBe("merge needs <outDir> <runDir>...");
+		expect(parseArgs(["merge", "out", "w1", "--runs", "2"])).toBe("unknown argument --runs");
+	});
+
+	test("usage documents the guard and merge", () => {
+		expect(HELP).toContain("bench compare <A> <B> [--max-cpu-regression PCT]");
+		expect(HELP).toContain("baselines/ios-warden.json");
+		expect(HELP).toContain("bench merge <outDir> <runDir>...");
+	});
+
 	test("help and unknown", () => {
 		expect(parseArgs([])).toEqual({ command: "help" });
 		expect(parseArgs(["--help"])).toEqual({ command: "help" });

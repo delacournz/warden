@@ -26,7 +26,8 @@ export type Command =
 	| { command: "doctor"; platform: Platform }
 	| { command: "list" }
 	| { command: "report"; runDir: string }
-	| { command: "compare"; dirA: string; dirB: string }
+	| { command: "compare"; dirA: string; dirB: string; maxCpuRegressionPct?: number }
+	| { command: "merge"; outDir: string; runDirs: string[]; id?: string }
 	| { command: "summary"; runDir: string; out?: string }
 	| { command: "help" };
 
@@ -39,7 +40,16 @@ Usage:
   bench doctor [--platform] check every framework is installed and usable
   bench list                frameworks, platforms and the 8 canonical test ids
   bench report <runDir>     re-render report.md / report.html from bench-results.json
-  bench compare <A> <B>     markdown diff of two run dirs
+  bench compare <A> <B> [--max-cpu-regression PCT]
+                            markdown diff of two run dirs. With --max-cpu-regression (10% or 10) it then exits 1
+                            when warden's host CPU-seconds per rep or host RSS peak in B exceed A's by more than
+                            PCT, and 2 when warden is missing from a side. A may instead be a baseline file
+                            (packages/e2e-bench/baselines/ios-warden.json, which requires the flag): the guard
+                            runs on its numbers alone, with no markdown diff
+  bench merge <outDir> <runDir>... [--id ID]
+                            merge per-framework run dirs (one EAS worker each) into <outDir> with every
+                            framework, ratios recomputed, inputs copied to <outDir>/workers/<framework>/;
+                            exit 2 on a repeated framework or a different platform / app sha
   bench summary <runDir> [--out file]  slim summary.json for the docs comparison page
 
 Run options:
@@ -78,12 +88,20 @@ type Flags = {
 	keepDrivers?: boolean;
 	eas?: boolean;
 	app?: string;
+	maxCpuRegressionPct?: number;
+	id?: string;
 };
 
 const intOf = (flag: string, value: string, min: number): number | string => {
 	const n = Number(value);
 	return Number.isInteger(n) && n >= min ? n : `${flag} must be an integer >= ${min}, got ${value}`;
 };
+
+/** `10%`, `10` or `7.5%` as a non-negative number of percent; undefined for anything else. */
+export function percentOf(value: string): number | undefined {
+	const match = /^(\d+(?:\.\d+)?)%?$/.exec(value);
+	return match?.[1] !== undefined ? Number(match[1]) : undefined;
+}
 
 /** Value flags: each stores into `flags`; a string back is the complaint. */
 const VALUE_SETTERS: Record<string, (flags: Flags, value: string) => string | undefined> = {
@@ -128,6 +146,16 @@ const VALUE_SETTERS: Record<string, (flags: Flags, value: string) => string | un
 		flags.app = value;
 		return undefined;
 	},
+	"--max-cpu-regression": (flags, value) => {
+		const n = percentOf(value);
+		if (n === undefined) return `--max-cpu-regression must be a percent like 10% or 10, got ${value}`;
+		flags.maxCpuRegressionPct = n;
+		return undefined;
+	},
+	"--id": (flags, value) => {
+		flags.id = value;
+		return undefined;
+	},
 };
 
 /** Boolean flags take no value. */
@@ -150,9 +178,11 @@ const BOOL_SETTERS: Record<string, (flags: Flags) => void> = {
 };
 
 const SUMMARY_FLAGS = ["--out"];
+const COMPARE_FLAGS = ["--max-cpu-regression"];
+const MERGE_FLAGS = ["--id"];
 const RUN_FLAGS = Object.keys(VALUE_SETTERS)
 	.concat(Object.keys(BOOL_SETTERS))
-	.filter((flag) => flag !== "--eas");
+	.filter((flag) => flag !== "--eas" && !COMPARE_FLAGS.includes(flag) && !MERGE_FLAGS.includes(flag));
 const APP_SUBCOMMANDS = ["build", "status", "clean"] as const;
 type AppSubcommand = (typeof APP_SUBCOMMANDS)[number];
 const APP_FLAGS: Record<AppSubcommand, readonly string[]> = {
@@ -235,6 +265,27 @@ function expectPositionals(
 const NO_POSITIONALS = (name: string, positionals: readonly string[]): string | undefined =>
 	positionals.length > 0 ? `${name} takes no positional arguments, got ${positionals[0]}` : undefined;
 
+function buildCompare(flags: Flags, positionals: readonly string[]): Command | string {
+	return (
+		expectPositionals("compare", positionals, 2, "<dirA> <dirB>") ?? {
+			command: "compare",
+			dirA: positionals[0] ?? "",
+			dirB: positionals[1] ?? "",
+			...(flags.maxCpuRegressionPct !== undefined ? { maxCpuRegressionPct: flags.maxCpuRegressionPct } : {}),
+		}
+	);
+}
+
+function buildMerge(flags: Flags, positionals: readonly string[]): Command | string {
+	if (positionals.length < 2) return "merge needs <outDir> <runDir>...";
+	return {
+		command: "merge",
+		outDir: positionals[0] ?? "",
+		runDirs: positionals.slice(1),
+		...(flags.id !== undefined ? { id: flags.id } : {}),
+	};
+}
+
 /** Builds the command once the flags parsed; a string back is the complaint. */
 function build(name: string, flags: Flags, positionals: readonly string[]): Command | string {
 	switch (name) {
@@ -249,13 +300,9 @@ function build(name: string, flags: Flags, positionals: readonly string[]): Comm
 				expectPositionals("report", positionals, 1, "<runDir>") ?? { command: "report", runDir: positionals[0] ?? "" }
 			);
 		case "compare":
-			return (
-				expectPositionals("compare", positionals, 2, "<dirA> <dirB>") ?? {
-					command: "compare",
-					dirA: positionals[0] ?? "",
-					dirB: positionals[1] ?? "",
-				}
-			);
+			return buildCompare(flags, positionals);
+		case "merge":
+			return buildMerge(flags, positionals);
 		case "summary":
 			return (
 				expectPositionals("summary", positionals, 1, "<runDir>") ?? {
@@ -269,14 +316,23 @@ function build(name: string, flags: Flags, positionals: readonly string[]): Comm
 	}
 }
 
+/** The flags a command accepts (positional-only commands accept none). */
+function allowedFlags(name: string): readonly string[] {
+	const byCommand: Record<string, readonly string[]> = {
+		run: RUN_FLAGS,
+		doctor: ["--platform"],
+		summary: SUMMARY_FLAGS,
+		compare: COMPARE_FLAGS,
+		merge: MERGE_FLAGS,
+	};
+	return byCommand[name] ?? [];
+}
+
 /** Parses `bench <command> …`; a string back is the complaint (print it with the help). */
 export function parseArgs(argv: readonly string[]): Command | string {
 	const [name, ...rest] = argv;
 	if (name === undefined || name === "help" || name === "--help" || name === "-h") return { command: "help" };
 	if (name === "app") return parseApp(rest);
-	const parsed = parseFlags(
-		rest,
-		name === "run" ? RUN_FLAGS : name === "doctor" ? ["--platform"] : name === "summary" ? SUMMARY_FLAGS : []
-	);
+	const parsed = parseFlags(rest, allowedFlags(name));
 	return typeof parsed === "string" ? parsed : build(name, parsed.flags, parsed.positionals);
 }
