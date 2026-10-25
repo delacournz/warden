@@ -1,0 +1,8 @@
+Filtering the log data using "subsystem == "com.acme.shop" OR subsystem BEGINSWITH "com.acme.shop" OR process == "ShopApp""
+Timestamp                       Ty Process[PID:TID]
+2026-10-24 10:00:01.123 Df ShopApp[4321:1a2b3c] [com.acme.shop:network] GET https://api.acme.shop/v1/cart?api_key=sk_live_51Hxyz
+2026-10-24 10:00:01.130 Db ShopApp[4321:1a2b3c] [com.acme.shop:ui] layout pass took 3ms
+2026-10-24 10:00:01.512 I  ShopApp[4321:1a2b40] [com.facebook.react.log:javascript] Running "ShopApp" with {"rootTag":1}
+2026-10-24 10:00:02.004 E  ShopApp[4321:1a2b40] [com.facebook.react.log:javascript] login failed for chris@delacour.co.nz
+2026-10-24 10:00:02.500 Df ShopApp[4321:1a2b3c] plain message with no subsystem
+2026-10-24 10:00:03.001 Fa ShopApp[4321:1a2b3c] [com.acme.shop:db] corrupt store

@@ -1,0 +1,25 @@
+{
+	"name": "@delacour/warden-perf",
+	"version": "0.1.0",
+	"description": "warden perf: pure capture argv builders, parsers and analyzers for mobile app profiling",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./*": "./src/*.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@jridgewell/trace-mapping": "^0.3.31",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*",
+		"typescript": "^5.9.3"
+	}
+}

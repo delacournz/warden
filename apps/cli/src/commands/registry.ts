@@ -50,6 +50,13 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./e2e")).e2eCommand,
 	},
 	{
+		name: "perf",
+		group: "Run",
+		summary:
+			"profile an app on a warden device: sessions, marks, doctor (CPU, memory, frames, startup, JS, React, native)",
+		load: async () => (await import("./perf")).perfCommand,
+	},
+	{
 		name: "ls",
 		group: "Lease",
 		summary: "list leases (resource, state, owner, repo/worktree, age, heartbeat)",
@@ -150,6 +157,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		summary: "background console + network collector for `warden ui logs start` (internal)",
 		hidden: true,
 		load: async () => (await import("./ui-collect")).uiCollectCommand,
+	},
+	{
+		name: "perf-collect",
+		summary: "background sampler + auto-stop timer for `warden perf start` (internal)",
+		hidden: true,
+		load: async () => (await import("./perf-collect")).perfCollectCommand,
 	},
 	{
 		name: "builds",

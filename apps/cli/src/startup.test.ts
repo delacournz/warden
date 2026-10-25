@@ -58,6 +58,12 @@ describe("cold start", () => {
 		expect(commandModules(await loadedBy(["claim", "--help"]))).toEqual(["claim.ts"]);
 	});
 
+	test("commands that are not `perf` never load the perf package", async () => {
+		for (const args of [["version"], ["heartbeat", "--help"], ["claim", "--help"], ["ui", "--help"]]) {
+			expect(has(await loadedBy(args), "/packages/perf/")).toBe(false);
+		}
+	});
+
 	test("`warden --help` still loads every command (argument placeholders come from registration)", async () => {
 		expect(commandModules(await loadedBy(["--help"])).length).toBeGreaterThan(20);
 	});

@@ -1,4 +1,4 @@
 {
 	"title": "Devices & parallel",
-	"pages": ["leases", "scripts", "ports", "capacity", "golden-images", "headless", "app-builds"]
+	"pages": ["leases", "scripts", "ports", "capacity", "golden-images", "perf", "headless", "app-builds"]
 }

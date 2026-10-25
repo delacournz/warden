@@ -15,6 +15,7 @@
 	"dependencies": {
 		"@delacour/warden-core": "workspace:*",
 		"@delacour/warden-e2e": "workspace:*",
+		"@delacour/warden-perf": "workspace:*",
 		"@delacour/warden-types": "workspace:*",
 		"zod": "^4.4.3"
 	},

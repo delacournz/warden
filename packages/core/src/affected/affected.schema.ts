@@ -94,6 +94,29 @@ export const e2eDeviceLegSchema = z
 	})
 	.strict();
 
+const budget = z.number().nonnegative();
+
+/** `perf` (top level, or per `e2e.<suite>`): ceilings `device.perf.stop()` holds the report to. Each is lower-is-better. */
+export const perfConfigSchema = z
+	.object({
+		budgets: z
+			.object({
+				/** cold start, ms */
+				startupColdMs: budget.optional(),
+				/** share of janky frames, percent */
+				jankPct: budget.optional(),
+				/** the slowest React commit, ms */
+				maxCommitMs: budget.optional(),
+				/** 95th percentile app CPU, percent */
+				p95CpuPct: budget.optional(),
+				/** peak memory (PSS on Android, RSS on iOS), MB */
+				peakMemoryMb: budget.optional(),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict();
+
 /** `e2e.<suite>.spec`: how warden runs the `*.e2e.ts` specs (`bun test` + `@delacour/warden-e2e`). */
 export const e2eSpecSchema = z
 	.object({
@@ -186,6 +209,8 @@ export const e2eSuiteSchema = z
 		warmDrivers: z.boolean().optional(),
 		/** keep Simulator.app windows closed for this suite's run; `--headless` / `--no-headless` win */
 		headless: z.boolean().optional(),
+		/** perf budgets for this suite; each key replaces the top-level `perf.budgets` one */
+		perf: perfConfigSchema.optional(),
 		/** default `required` for specs that don't set it */
 		required: z.boolean().default(true),
 		specs: z.record(z.string().min(1), e2eSpecEntrySchema).default({}),

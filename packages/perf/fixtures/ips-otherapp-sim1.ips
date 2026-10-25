@@ -1,0 +1,128 @@
+{"app_name":"OtherApp","timestamp":"2026-10-24 10:01:00.00 +1300","app_version":"2.4.1","slice_uuid":"11112222-3333-4444-5555-666677778888","build_version":"7","platform":7,"bundleID":"com.acme.other","share_with_app_devs":0,"is_first_party":0,"bug_type":"309","os_version":"iPhone OS 26.0 (23A340)","roots_installed":0,"incident_id":"00112233-4455-4677-8899-AABBCCDDEEFF","name":"OtherApp"}
+{
+  "uptime": 1200000,
+  "procLaunch": "2026-10-24 10:01:00.0000 +1300",
+  "procRole": "Foreground",
+  "version": 2,
+  "userID": 501,
+  "deployVersion": 210,
+  "modelCode": "Mac16,6",
+  "coalitionID": 9120,
+  "osVersion": {
+    "train": "macOS 26.0",
+    "build": "25A354",
+    "releaseType": "User"
+  },
+  "captureTime": "2026-10-24 10:01:00.00 +1300",
+  "incident": "00112233-4455-4677-8899-AABBCCDDEEFF",
+  "pid": 5000,
+  "cpuType": "ARM-64",
+  "roleId": 1042,
+  "procName": "OtherApp",
+  "procPath": "/Users/chris/Library/Developer/CoreSimulator/Devices/11111111-2222-3333-4444-555555555555/data/Containers/Bundle/Application/7D3C1F0A-52B1-4B7E-A1B8-0C9E4D2F6A11/OtherApp.app/OtherApp",
+  "bundleInfo": {
+    "CFBundleShortVersionString": "2.4.1",
+    "CFBundleVersion": "7",
+    "CFBundleIdentifier": "com.acme.other"
+  },
+  "storeInfo": {
+    "deviceIdentifierForVendor": "6A1D7C0E-3B52-4C4E-9E55-1B2A3C4D5E6F",
+    "thirdParty": true
+  },
+  "parentProc": "launchd_sim",
+  "parentPid": 880,
+  "coalitionName": "com.acme.other",
+  "crashReporterKey": "E8A4A6C2-0B59-0F3A-8D6E-7C1F2A3B4C5D",
+  "responsiblePid": 880,
+  "responsibleProc": "launchd_sim",
+  "codeSigningID": "com.acme.other",
+  "codeSigningTeamID": "",
+  "codeSigningFlags": 570425857,
+  "codeSigningValidationCategory": 10,
+  "codeSigningTrustLevel": 4294967295,
+  "bootArgs": "",
+  "isCorpse": 1,
+  "exception": {
+    "codes": "0x0000000000000001, 0x0000000000000010",
+    "rawCodes": [
+      1,
+      16
+    ],
+    "type": "EXC_BREAKPOINT",
+    "signal": "SIGTRAP",
+    "subtype": "brk 1"
+  },
+  "termination": {
+    "flags": 0,
+    "code": 11,
+    "namespace": "SIGNAL",
+    "indicator": "Trace/BPT trap: 5",
+    "byProc": "exc handler",
+    "byPid": 5000
+  },
+  "faultingThread": 1,
+  "threads": [
+    {
+      "id": 8801,
+      "queue": "com.apple.main-thread",
+      "frames": [
+        {
+          "imageOffset": 3980,
+          "symbol": "mach_msg2_trap",
+          "symbolLocation": 8,
+          "imageIndex": 0
+        }
+      ]
+    },
+    {
+      "triggered": true,
+      "id": 8842,
+      "name": "com.facebook.react.JavaScript",
+      "frames": [
+        {
+          "imageOffset": 100,
+          "imageIndex": 2
+        }
+      ]
+    }
+  ],
+  "usedImages": [
+    {
+      "source": "P",
+      "arch": "arm64",
+      "base": 4300000000,
+      "size": 524288,
+      "uuid": "c0ffee00-1111-2222-3333-444455556666",
+      "path": "/usr/lib/system/libsystem_kernel.dylib",
+      "name": "libsystem_kernel.dylib"
+    },
+    {
+      "source": "P",
+      "arch": "arm64",
+      "base": 4310000000,
+      "size": 1048576,
+      "uuid": "dec0de00-aaaa-bbbb-cccc-ddddeeeeffff",
+      "path": "/usr/lib/libobjc.A.dylib",
+      "name": "libobjc.A.dylib"
+    },
+    {
+      "source": "P",
+      "arch": "arm64",
+      "base": 4294967296,
+      "size": 3145728,
+      "uuid": "11112222-3333-4444-5555-666677778888",
+      "path": "/Users/chris/Library/Developer/CoreSimulator/Devices/11111111-2222-3333-4444-555555555555/data/Containers/Bundle/Application/7D3C1F0A-52B1-4B7E-A1B8-0C9E4D2F6A11/OtherApp.app/OtherApp",
+      "name": "OtherApp"
+    },
+    {
+      "source": "P",
+      "arch": "arm64",
+      "base": 4320000000,
+      "size": 8388608,
+      "uuid": "babe0000-1234-5678-9abc-def012345678",
+      "path": "/Users/chris/Library/Developer/CoreSimulator/Devices/11111111-2222-3333-4444-555555555555/data/Containers/Bundle/Application/7D3C1F0A-52B1-4B7E-A1B8-0C9E4D2F6A11/OtherApp.app/Frameworks/hermes.framework/hermes",
+      "name": "hermes"
+    }
+  ],
+  "vmSummary": "ReadOnly portion of Libraries: Total=1.2G resident=0K(0%) swapped_out_or_unallocated=1.2G(100%)"
+}

@@ -1,16 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parsePs } from "@delacour/warden-perf/metrics/ps";
 import { fakeExec } from "./exec";
-import {
-	aggregateProcesses,
-	parsePs,
-	processLabel,
-	processReadings,
-	startSampler,
-	type Tick,
-	windowSummary,
-} from "./sampler";
+import { aggregateProcesses, processLabel, processReadings, startSampler, type Tick, windowSummary } from "./sampler";
 
 const fx = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
 

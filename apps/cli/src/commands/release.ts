@@ -1,7 +1,6 @@
 import { PENDING_PREFIX } from "@delacour/warden-core/claim";
 import { wardenNameProfile } from "@delacour/warden-core/inventory";
 import { describeOwner, type Lease, sameOwner } from "@delacour/warden-core/types";
-import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -16,6 +15,7 @@ import {
 	withSelectOptions,
 } from "../lease-select";
 import { emit, note, plural, reportError } from "../output";
+import { releaseAfter } from "../perf/release-after";
 import { withSpinner } from "../spinner-context";
 import { describeResource } from "./ls";
 
@@ -109,7 +109,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 	await releaseDevices(
 		ctx,
 		leases.map((l) => l.id),
-		{ after: opts.shutdown ? stopHelperAfter(ctx) : undefined }
+		{ after: releaseAfter(ctx, { helper: opts.shutdown === true }) }
 	);
 
 	for (const u of unknown) reportError(ctx, "release", `no lease for ${u}`);

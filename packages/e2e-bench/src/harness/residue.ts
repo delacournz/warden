@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
+import { type PsRow, parsePs, withDescendants } from "@delacour/warden-perf/metrics/ps";
 import type { ResiduePatterns } from "../adapters/adapter.types";
 import type { Platform, Residue } from "../results/schema";
 import type { Exec } from "./exec";
-import { type PsRow, parsePs, withDescendants } from "./sampler";
 
 export type Snapshot = { dirKb: Record<string, number> };
 

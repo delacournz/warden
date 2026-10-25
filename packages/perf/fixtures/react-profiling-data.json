@@ -1,0 +1,155 @@
+{
+  "profilingData": {
+    "rendererID": 1,
+    "timelineData": null,
+    "dataForRoots": [
+      {
+        "rootID": 1,
+        "displayName": "RootApp",
+        "initialTreeBaseDurations": [
+          [
+            1,
+            1
+          ],
+          [
+            4,
+            2
+          ]
+        ],
+        "snapshots": [
+          [
+            1,
+            {
+              "id": 1,
+              "displayName": "App",
+              "children": [
+                4
+              ],
+              "compiledWithForget": false
+            }
+          ],
+          [
+            4,
+            {
+              "id": 4,
+              "displayName": "FeedList",
+              "children": [],
+              "compiledWithForget": true
+            }
+          ]
+        ],
+        "commitData": [
+          {
+            "timestamp": 120,
+            "duration": 40,
+            "effectDuration": 0,
+            "passiveEffectDuration": 2,
+            "priorityLevel": "Normal",
+            "updaters": [
+              {
+                "id": 4,
+                "displayName": "FeedList",
+                "compiledWithForget": true
+              }
+            ],
+            "fiberActualDurations": [
+              [
+                4,
+                38
+              ],
+              [
+                10,
+                3.2
+              ],
+              [
+                11,
+                3.2
+              ]
+            ],
+            "fiberSelfDurations": [
+              [
+                4,
+                1.5
+              ],
+              [
+                10,
+                2.4
+              ],
+              [
+                11,
+                2.4
+              ]
+            ],
+            "changeDescriptions": [
+              [
+                4,
+                {
+                  "context": null,
+                  "didHooksChange": true,
+                  "isFirstMount": false,
+                  "props": null,
+                  "state": [
+                    "rows"
+                  ],
+                  "hooks": [
+                    0
+                  ]
+                }
+              ],
+              [
+                10,
+                {
+                  "context": false,
+                  "didHooksChange": false,
+                  "isFirstMount": false,
+                  "props": [
+                    "onPress",
+                    "style"
+                  ],
+                  "state": null,
+                  "hooks": null
+                }
+              ],
+              [
+                11,
+                {
+                  "context": true,
+                  "didHooksChange": false,
+                  "isFirstMount": false,
+                  "props": [],
+                  "state": null,
+                  "hooks": null
+                }
+              ]
+            ]
+          },
+          {
+            "timestamp": 300,
+            "duration": 5,
+            "effectDuration": 0,
+            "passiveEffectDuration": 0,
+            "priorityLevel": "Normal",
+            "updaters": null,
+            "fiberActualDurations": [
+              [
+                4,
+                5
+              ]
+            ],
+            "fiberSelfDurations": [
+              [
+                4,
+                5
+              ]
+            ],
+            "changeDescriptions": null
+          }
+        ]
+      }
+    ]
+  },
+  "displayNames": {
+    "10": "FeedRow",
+    "11": "ThemedText"
+  }
+}

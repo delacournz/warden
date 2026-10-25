@@ -1,0 +1,8 @@
+--------- beginning of main
+10-24 10:00:01.123  4321  4321 I ReactNativeJS: Running "main" with {"rootTag":1,"initialProps":{}}
+10-24 10:00:01.456  4321  4350 D OkHttp  : --> GET https://api.acme.shop/v1/cart?api_key=sk_live_51Hxyz (0-byte body)
+10-24 10:00:01.457  4321  4350 D OkHttp  : Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+10-24 10:00:02.001  4321  4321 W ReactNative: Require cycle: src/cart.ts -> src/store.ts -> src/cart.ts
+10-24 10:00:02.310  4321  4360 E ReactNativeJS: [TypeError: undefined is not an object (evaluating 'cart.items.length')]
+10-24 10:00:02.311  4321  4360 E unknown:React: Invalid prop `style` supplied to `View`
+10-24 10:00:03.000  4321  4321 I chatty  : uid=10231(com.acme.shop) identical 3 lines

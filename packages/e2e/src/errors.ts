@@ -10,7 +10,8 @@ export type E2eErrorCode =
 	| "INVALID_ARGUMENT"
 	| "SESSION"
 	| "DRIVER"
-	| "ASSERTION";
+	| "ASSERTION"
+	| "PERF_BUDGET";
 
 /** Plain shape of a spec error: what `e2eErr()` accepts and what a `Result` carries. */
 export type E2eErrorShape = {

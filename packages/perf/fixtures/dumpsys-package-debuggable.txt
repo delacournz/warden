@@ -1,0 +1,7 @@
+Packages:
+  Package [nz.co.delacour.warden.example] (4f2c1a):
+    userId=10201
+    pkg=Package{9b1 nz.co.delacour.warden.example}
+    versionCode=1 minSdk=24 targetSdk=35
+    flags=[ DEBUGGABLE HAS_CODE ALLOW_CLEAR_USER_DATA ALLOW_BACKUP ]
+    privateFlags=[ PRIVATE_FLAG_ACTIVITIES_RESIZE_MODE_RESIZEABLE_VIA_SDK_VERSION ]

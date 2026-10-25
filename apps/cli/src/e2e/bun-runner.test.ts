@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findBun, helperDir, runnerArgv, shardSpecs, specEnv } from "./bun-runner";
+import { findBun, helperDir, parsePerfFlag, runnerArgv, shardSpecs, specEnv } from "./bun-runner";
 
 describe("runnerArgv", () => {
 	test("bun test with the preload, a timeout 30 s past the per-test one and the spec files", () => {
@@ -105,5 +105,40 @@ describe("helperDir", () => {
 
 	test("from source: the helper's build output in the checkout", () => {
 		expect(helperDir("/repo/apps/cli/src/cli.ts", "/usr/bin/bun")).toBe("/repo/packages/e2e/native/dist");
+	});
+});
+
+describe("specEnv perf", () => {
+	const base = {
+		platform: "ios" as const,
+		bundleId: "com.x.app",
+		launchArgs: [],
+		out: "/o",
+		timeouts: { timeoutMs: 1, actionTimeoutMs: 1, assertionTimeoutMs: 1 },
+		specsDir: "/f",
+		helperDir: "/h",
+		version: "1",
+	};
+
+	test("WARDEN_BIN, WARDEN_PERF and the budgets", () => {
+		const env = specEnv({ ...base, bin: ["/bin/warden"], perf: ["react", "js"], perfBudgets: { jankPct: 5 } });
+		expect(env.WARDEN_BIN).toBe('["/bin/warden"]');
+		expect(env.WARDEN_PERF).toBe("react,js");
+		expect(env.WARDEN_PERF_BUDGETS).toBe('{"jankPct":5}');
+	});
+
+	test("absent unless asked for; empty budgets are not exported", () => {
+		const env = specEnv({ ...base, perfBudgets: {} });
+		expect(Object.keys(env).filter((k) => k.includes("PERF") || k === "WARDEN_BIN")).toEqual([]);
+	});
+});
+
+describe("parsePerfFlag", () => {
+	test("off, bare, list, unknown", () => {
+		expect(parsePerfFlag(undefined)).toEqual({ success: true, data: undefined });
+		expect(parsePerfFlag(true)).toEqual({ success: true, data: [] });
+		expect(parsePerfFlag("react, js")).toEqual({ success: true, data: ["react", "js"] });
+		expect(parsePerfFlag("all")).toEqual({ success: true, data: ["all"] });
+		expect(parsePerfFlag("bogus").success).toBe(false);
 	});
 });

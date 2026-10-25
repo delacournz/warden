@@ -1,0 +1,3 @@
+-[CartViewController total] (in ShopApp) (CartViewController.m:42)
+main (in ShopApp) (main.m:10)
+0x0000000100a41b2c

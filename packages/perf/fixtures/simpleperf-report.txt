@@ -1,0 +1,11 @@
+Cmdline: /system/bin/simpleperf record -e cpu-clock:u -p 4242 --duration 30 -o /data/local/tmp/warden-1.data
+Arch: arm64
+Event: cpu-clock:u (type 1, config 0)
+Samples: 1520
+Event count: 1520000000
+
+Overhead  Command       Shared Object                                              Symbol
+46.71%    mqt_v_js      /data/app/~~x/com.shop.app-y/lib/arm64/libhermes.so        facebook::hermes::vm::Interpreter::interpretFunction
+12.30%    RenderThread  /system/lib64/libhwui.so                                   android::uirenderer::skia::SkiaOpenGLPipeline::draw
+ 3.82%    com.shop.app  /apex/com.android.art/lib64/libart.so                      art::gc::collector::ConcurrentCopying::Copying
+ 0.41%    mqt_v_native  [unknown]                                                  [unknown]

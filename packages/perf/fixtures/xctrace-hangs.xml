@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<trace-query-result>
+<node xpath='//trace-toc[1]/run[1]/data[1]/table[2]'>
+<schema name="potential-hangs"><col><mnemonic>start</mnemonic><name>Start</name><engineering-type>start-time</engineering-type></col><col><mnemonic>duration</mnemonic><name>Duration</name><engineering-type>duration</engineering-type></col><col><mnemonic>hang-type</mnemonic><name>Hang Type</name><engineering-type>string</engineering-type></col><col><mnemonic>thread</mnemonic><name>Thread</name><engineering-type>thread</engineering-type></col></schema>
+<row><start-time id="1" fmt="00:00.100.000">100000000</start-time><duration id="2" fmt="800.00 ms">800000000</duration><string id="3" fmt="Hang">Hang</string><thread id="4" fmt="Main Thread 0x1a01 (ShopApp, pid: 4242)"><tid id="5" fmt="0x1a01">6657</tid></thread></row>
+<row><start-time id="6" fmt="00:05.000.000">5000000000</start-time><duration id="7" fmt="120.00 ms">120000000</duration><string id="8" fmt="Microhang">Microhang</string><thread ref="4"/></row>
+</node>
+</trace-query-result>
