@@ -209,6 +209,9 @@ extension WireError {
     if let error = error as? QuiescenceError { return from(quiescence: error) }
     if let error = error as? UIAutomationError { return from(automation: error) }
     if let error = error as? AXBridgeError { return from(bridge: error) }
+    if let error = error as? SimulatorApplicationLaunchError { return from(launch: error) }
+    if let error = error as? SimulatorLaunchCtlError { return from(launchCtl: error) }
+    if let error = error as? SimulatorLifecycleError { return from(lifecycle: error) }
     if error is SimulatorHIDError {
       return WireError(.hid, error.localizedDescription, detail: ["kind": "SimulatorHIDError"])
     }
@@ -270,6 +273,40 @@ extension WireError {
       return WireError(.axUnavailable, message)
     @unknown default:
       return WireError(.axUnavailable, message)
+    }
+  }
+
+  /// `launch`: an app that is not installed (or has no data container) is `E_APP_UNAVAILABLE`, like a failed
+  /// `simctl launch` of a missing app; the launch mode cases cannot come from a request this helper builds.
+  private static func from(launch error: SimulatorApplicationLaunchError) -> WireError {
+    let message = error.localizedDescription
+    switch error {
+    case let .launchingUninstalledApplication(bundleID, _), let .noDataDirectory(bundleID):
+      return WireError(.appUnavailable, message, detail: appDetail(pid: nil, bundleID: bundleID))
+    case let .applicationAlreadyRunning(bundleID, pid):
+      return WireError(.internal, message, detail: appDetail(pid: pid, bundleID: bundleID))
+    case .foregroundIfRunningIncompatibleWithWaitForDebugger:
+      return WireError(.badRequest, message)
+    @unknown default:
+      return WireError(.internal, message)
+    }
+  }
+
+  /// launchd inside the simulator: no process for the bundle is `E_APP_UNAVAILABLE`, anything else `E_IO`.
+  private static func from(launchCtl error: SimulatorLaunchCtlError) -> WireError {
+    let message = error.localizedDescription
+    switch error {
+    case .noMatchingProcesses: return WireError(.appUnavailable, message)
+    default: return WireError(.io, message)
+    }
+  }
+
+  /// `openUrl`: a URL the simulator could not open is `E_IO` (nothing handles the scheme, or the open was refused).
+  private static func from(lifecycle error: SimulatorLifecycleError) -> WireError {
+    let message = error.localizedDescription
+    switch error {
+    case .openURLFailed: return WireError(.io, message)
+    default: return WireError(.internal, message)
     }
   }
 

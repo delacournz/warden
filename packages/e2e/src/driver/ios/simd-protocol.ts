@@ -342,6 +342,19 @@ export const frontmostDataSchema = z.looseObject({
 export type FrontmostData = z.infer<typeof frontmostDataSchema>;
 
 /**
+ * `launch{bundleId, args?, env?, terminateRunning?}`: the helper starts the app in the process that already holds
+ * CoreSimulator (no `simctl` process per launch). `args` follow the executable, `env` reaches the app as given, and
+ * `terminateRunning` (default true) ends a running instance first; false brings a running app to the front instead.
+ * `pid` is the process that is running when the op answers.
+ */
+export const launchDataSchema = z.looseObject({ pid: z.number() });
+export type LaunchData = z.infer<typeof launchDataSchema>;
+
+/** `terminate{bundleId}`: `terminated: false` says nothing was running, which is the wanted state, not an error. */
+export const terminateDataSchema = z.looseObject({ terminated: z.boolean() });
+export type TerminateData = z.infer<typeof terminateDataSchema>;
+
+/**
  * `orientation`: a real read may also say `faceUp` / `faceDown` / `unknown` (flat device); `source` tells
  * whether the value was read from the device, is the last one this helper wrote, or is an assumed portrait.
  */
@@ -370,6 +383,8 @@ export const opSchemas = {
 	alertButtons: alertButtonsDataSchema,
 	frontmost: frontmostDataSchema,
 	orientation: orientationDataSchema,
+	launch: launchDataSchema,
+	terminate: terminateDataSchema,
 } as const;
 
 export type OpDataMap = {
@@ -382,6 +397,8 @@ export type OpDataMap = {
 	alertButtons: AlertButtonsData;
 	frontmost: FrontmostData;
 	orientation: OrientationData;
+	launch: LaunchData;
+	terminate: TerminateData;
 };
 
 export type OpData<Op extends string> = Op extends keyof OpDataMap ? OpDataMap[Op] : unknown;

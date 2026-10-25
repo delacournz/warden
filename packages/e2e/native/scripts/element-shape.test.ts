@@ -6,9 +6,11 @@ import {
 	alertButtonsDataSchema,
 	elementAtPointDataSchema,
 	isWireElement,
+	launchDataSchema,
 	parseLine,
 	type SnapshotData,
 	snapshotDataSchema,
+	terminateDataSchema,
 	type WireElement,
 	wireElementSchema,
 } from "../../src/driver/ios/simd-protocol";
@@ -156,5 +158,21 @@ describe("elementAtPoint capture", () => {
 
 	test("null means nothing under the point", () => {
 		expect(elementAtPointDataSchema.parse(null)).toBeNull();
+	});
+});
+
+describe("app lifecycle reply goldens", () => {
+	test("launch.reply.golden.json parses with launchDataSchema", () => {
+		const raw = load("launch.reply.golden.json");
+		const parsed = launchDataSchema.parse(raw);
+		expect(parsed.pid).toBe(4242);
+		expectNoStrippedKeys(raw, parsed);
+	});
+
+	test("terminate.reply.golden.json parses with terminateDataSchema", () => {
+		const raw = load("terminate.reply.golden.json");
+		const parsed = terminateDataSchema.parse(raw);
+		expect(parsed.terminated).toBe(true);
+		expectNoStrippedKeys(raw, parsed);
 	});
 });
