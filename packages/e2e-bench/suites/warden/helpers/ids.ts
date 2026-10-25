@@ -1,4 +1,4 @@
-/** testIDs the flows address; mirrors the `testID` props in `src/app` and `src/modules`. */
+/** testIDs the specs address; mirrors the `testID` props in `src/app` and `src/modules`. */
 export const ids = {
 	welcome: {
 		screen: "welcome-screen",

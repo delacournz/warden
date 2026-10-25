@@ -44,7 +44,7 @@ describe("warden init", () => {
 		]);
 		expect(found.data.config.e2e?.fresh).toMatchObject({
 			project: "fresh",
-			flowsDir: "e2e",
+			specsDir: "e2e",
 			isolate: "device",
 			platform: "ios",
 			count: 2,
@@ -82,7 +82,7 @@ describe("warden init", () => {
 		expect(existsSync(join(c.cwd, "warden.config.ts"))).toBe(false);
 	});
 
-	test("existing files are left alone (--force overwrites); existing flows mean no smoke flow", async () => {
+	test("existing files are left alone (--force overwrites); existing specs mean no smoke spec", async () => {
 		const c = setup(["--json"], { slug: "fresh", ios: { bundleIdentifier: "com.a" } });
 		writeFileSync(join(c.cwd, "warden.config.ts"), "export default {};\n");
 		mkdirSync(join(c.cwd, "e2e"));

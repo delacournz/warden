@@ -59,18 +59,18 @@ describe("parseWardenConfig", () => {
 
 	test("e2e suites alone are a valid config, with defaults", () => {
 		const res = parseWardenConfig({
-			e2e: { mobile: { flowsDir: "flows", flows: { a: { entries: ["x.tsx"] } } } },
+			e2e: { mobile: { specsDir: "specs", specs: { a: { entries: ["x.tsx"] } } } },
 		});
 		if (!res.success) throw new Error(res.error);
 		const suite = res.data.e2e?.mobile;
 		expect(suite?.base).toBe("main");
 		expect(suite?.unmapped).toBe("run");
 		expect(suite?.passes).toBe(1);
-		expect(suite?.flows.a).toEqual({ entries: ["x.tsx"], paths: [] });
+		expect(suite?.specs.a).toEqual({ entries: ["x.tsx"], paths: [] });
 	});
 
 	test("an e2e suite's project must exist; serveReady / serveTimeout need serve; slim is iOS-only", () => {
-		const suite = { flowsDir: "flows" };
+		const suite = { specsDir: "specs" };
 		const bad = (extra: Record<string, unknown>, projects = true) =>
 			parseWardenConfig({
 				...(projects ? { projects: [{ name: "app", bundleId: { ios: "x" } }] } : {}),
@@ -91,7 +91,7 @@ describe("parseWardenConfig", () => {
 	});
 
 	test("e2e suite run settings: metro, isolate, jobTimeoutMs and device legs, with defaults", () => {
-		const suite = { flowsDir: "flows" };
+		const suite = { specsDir: "specs" };
 		const parse = (extra: Record<string, unknown>) => parseWardenConfig({ e2e: { s: { ...suite, ...extra } } });
 		const plain = parse({});
 		if (!plain.success) throw new Error(plain.error);
@@ -100,7 +100,7 @@ describe("parseWardenConfig", () => {
 		expect(plain.data.e2e?.s?.metro).toBeUndefined();
 
 		const full = parse({
-			isolate: "flow",
+			isolate: "spec",
 			jobTimeoutMs: 120_000,
 			metro: { launchArgs: ["-Flag", "YES"], env: { E2E: "1" } },
 			devices: [
@@ -136,18 +136,14 @@ describe("parseWardenConfig", () => {
 	});
 
 	test("rejects a bad e2e suite", () => {
-		const res = parseWardenConfig({ e2e: { mobile: { flowsDir: "flows", passes: 0 } } });
+		const res = parseWardenConfig({ e2e: { mobile: { specsDir: "specs", passes: 0 } } });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("e2e.mobile.passes");
 	});
 
-	test("a leftover runner / warmRunners key fails with a migration message", () => {
+	test("a leftover warmRunners key fails with a migration message", () => {
 		const parse = (extra: Record<string, unknown>) =>
-			parseWardenConfig({ e2e: { mobile: { flowsDir: "flows", ...extra } } });
-		const runner = parse({ runner: ["bunx", "e2e", "run", "{flowPath}"] });
-		expect(runner.success).toBe(false);
-		if (!runner.success)
-			expect(runner.error).toContain("e2e.mobile.runner was removed: flows run with @delacour/warden-e2e, see spec");
+			parseWardenConfig({ e2e: { mobile: { specsDir: "specs", ...extra } } });
 		const warm = parse({ warmRunners: false });
 		expect(warm.success).toBe(false);
 		if (!warm.success) expect(warm.error).toContain("e2e.mobile.warmRunners was removed: renamed to warmDrivers");
@@ -155,7 +151,7 @@ describe("parseWardenConfig", () => {
 	});
 
 	test("e2e suite spec: bundle id, launch args and timeouts (durations validated), strict", () => {
-		const parse = (spec: unknown) => parseWardenConfig({ e2e: { mobile: { flowsDir: "flows", spec } } });
+		const parse = (spec: unknown) => parseWardenConfig({ e2e: { mobile: { specsDir: "specs", spec } } });
 		const full = parse({
 			bundleId: "com.x.app",
 			launchArgs: ["-Flag", "YES"],
@@ -291,13 +287,13 @@ describe("loadProject", () => {
 		expect(bad.success).toBe(false);
 		const missing = parseWardenConfig({
 			projects: [{ name: "a", bundleId: {} }],
-			e2e: { s: { project: "a", flowsDir: "f", app: { variant: "e2e" } } },
+			e2e: { s: { project: "a", specsDir: "f", app: { variant: "e2e" } } },
 		});
 		expect(missing.success).toBe(false);
 		if (!missing.success) expect(missing.error).toContain('no variant "e2e"');
 		const fine = parseWardenConfig({
 			projects: [{ name: "a", bundleId: {}, variants: { e2e: { build: { configuration: "Release" } } } }],
-			e2e: { s: { project: "a", flowsDir: "f", app: { variant: "e2e" } } },
+			e2e: { s: { project: "a", specsDir: "f", app: { variant: "e2e" } } },
 		});
 		expect(fine.success).toBe(true);
 	});

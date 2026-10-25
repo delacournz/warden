@@ -2,7 +2,7 @@ import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 
 /**
- * `warden sim slim`: switch off the launchd jobs inside an iOS simulator that UI flows never need,
+ * `warden sim slim`: switch off the launchd jobs inside an iOS simulator that UI specs never need,
  * to save RAM/CPU when several simulators run at once.
  *
  * A booted simulator runs ~200-250 processes under its `launchd_sim` (10-20 GB RSS measured on
@@ -75,7 +75,7 @@ export const NEVER_DISABLE: readonly RegExp[] = [
 	/kbd|InputUI|keyboard/i,
 	// Dictation availability. With these down the software keyboard re-queries it in a loop on the
 	// app's main thread (`AFDictationConnection … AvailabilityChanged`): the app pins a core and
-	// XCTest can no longer read its tree, so any flow that types hangs.
+	// XCTest can no longer read its tree, so any spec that types hangs.
 	/\.assistantd$|corespeechd/i,
 	/mobileassetd/i,
 	/searchd/i,

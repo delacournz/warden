@@ -52,7 +52,7 @@
     "e2e": "bun ../cli/src/cli.ts e2e example",
     "e2e:dev": "bun ../cli/src/cli.ts e2e example-dev",
     "e2e:affected": "bun ../cli/src/cli.ts affected example",
-    "e2e:flow": "bun ../cli/src/cli.ts e2e example --flows"
+    "e2e:spec": "bun ../cli/src/cli.ts e2e example --specs"
   },
   "private": true
 }

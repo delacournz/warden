@@ -10,7 +10,7 @@ const BUNDLE_ID = "nz.co.delacour.warden.example";
 
 /**
  * Turns off the Expo dev menu at launch, its first-run onboarding sheet and the floating action
- * button, none of which a flow should ever have to dismiss.
+ * button, none of which a spec should ever have to dismiss.
  */
 const DEV_MENU_OFF = [
 	"-EXDevMenuShowsAtLaunch",
@@ -21,10 +21,10 @@ const DEV_MENU_OFF = [
 	"NO",
 ];
 
-/** How `warden e2e` runs the flows: `bun test` with `@delacour/warden-e2e`, driving this app. */
+/** How `warden e2e` runs the specs: `bun test` with `@delacour/warden-e2e`, driving this app. */
 const SPEC = { bundleId: BUNDLE_ID } satisfies WardenE2eSpec;
 
-/** Every flow drives these screens before its own (fresh launch → welcome → sign-in). */
+/** Every spec drives these screens before its own (fresh launch → welcome → sign-in). */
 const SIGNED_IN = ["src/app/welcome.tsx", "src/app/sign-in.tsx"];
 
 /**
@@ -33,10 +33,10 @@ const SIGNED_IN = ["src/app/welcome.tsx", "src/app/sign-in.tsx"];
  */
 const IOS_NATIVE = "bunx expo prebuild --platform ios --no-install && pod install --project-directory=ios";
 
-/** Flow discovery + the flow → screen graph `warden affected` uses, shared by both suites. */
+/** Spec discovery + the spec → screen graph `warden affected` uses, shared by both suites. */
 const AFFECTED = {
 	project: "example",
-	flowsDir: "e2e",
+	specsDir: "e2e",
 	platform: "ios",
 	routerRoot: "src/app",
 	maxDepth: 3,
@@ -51,7 +51,7 @@ const AFFECTED = {
 		"src/hooks/**",
 	],
 	ignore: ["**/*.test.ts", "**/*.md", "warden.config.ts", "biome.jsonc", "tsconfig.json"],
-	flows: {
+	specs: {
 		onboarding: { entries: ["src/app/welcome.tsx"] },
 		"sign-in": { entries: SIGNED_IN },
 		todos: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
@@ -77,15 +77,15 @@ const bench = {
 /**
  * warden config for the example app: a Release simulator build (JS embedded, no Metro at test time,
  * `EXPO_PUBLIC_E2E=1` baked in) keyed on native + JS, a Debug dev-client variant keyed on native
- * only, and two e2e suites over the same `@delacour/warden-e2e` flows (`bun test` specs):
- * - `example`: the Release build, one spec process per flow;
+ * only, and two e2e suites over the same `@delacour/warden-e2e` specs (`bun test` specs):
+ * - `example`: the Release build, one spec process per spec;
  * - `example-dev`: the dev client against a Metro warden starts for the run, one spec process per device.
  * `warmDrivers: false` opts out of the simulator-driver pre-warm.
  *
  * ```bash
- * warden e2e example                 # flows this branch needs, 2 sims (--all: every flow)
- * warden e2e example-dev --all       # same flows on the dev client + warden's Metro
- * warden affected example            # which flows this branch needs
+ * warden e2e example                 # specs this branch needs, 2 sims (--all: every spec)
+ * warden e2e example-dev --all       # same specs on the dev client + warden's Metro
+ * warden affected example            # which specs this branch needs
  * warden dev ios                     # dev variant: cached Debug dev client + Metro
  * ```
  */

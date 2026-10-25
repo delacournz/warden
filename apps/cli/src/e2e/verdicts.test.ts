@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SelectedFlow } from "@delacour/warden-core/affected/select";
+import type { SelectedSpec } from "@delacour/warden-core/affected/select";
 import type { JobResult } from "@delacour/warden-core/batch/schedule";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { jsonl, result } from "../batch/results.testing";
@@ -7,43 +7,43 @@ import type { SessionResult } from "../commands/batch";
 import { judgeJob, type RunShape, verdicts } from "./verdicts";
 
 const real = (path: string) => path;
-const flow = (id: string, required = true): SelectedFlow => ({
+const spec = (id: string, required = true): SelectedSpec => ({
 	id,
-	file: `/flows/${id}.e2e.ts`,
+	file: `/specs/${id}.e2e.ts`,
 	required,
 	reasons: [],
 });
-const spec = (id: string, title: string, status: TestResult["status"] = "passed") =>
-	result(`/flows/${id}.e2e.ts`, title, status);
+const res = (id: string, title: string, status: TestResult["status"] = "passed") =>
+	result(`/specs/${id}.e2e.ts`, title, status);
 
-const [A, B, C] = [flow("a"), flow("b"), flow("c")];
+const [A, B, C] = [spec("a"), spec("b"), spec("c")];
 const verdictsOf = (judged: ReturnType<typeof judgeJob>) =>
 	Object.fromEntries([...judged].map(([id, j]) => [id, j.verdict]));
 
-describe("judgeJob (one spec process over its flows)", () => {
-	test("exit 0: a failed test fails its flow, the rest pass", () => {
-		const all = [spec("a", "t"), spec("b", "t", "failed"), spec("c", "t")];
+describe("judgeJob (one spec process over its specs)", () => {
+	test("exit 0: a failed test fails its spec, the rest pass", () => {
+		const all = [res("a", "t"), res("b", "t", "failed"), res("c", "t")];
 		expect(verdictsOf(judgeJob([A, B, C], all, 0, real))).toEqual({ a: "passed", b: "failed", c: "passed" });
 	});
 
-	test("a non-zero exit with a failed test elsewhere blames that test, not the flows that passed", () => {
-		const all = [spec("a", "t"), spec("b", "t", "failed"), spec("c", "t")];
+	test("a non-zero exit with a failed test elsewhere blames that test, not the specs that passed", () => {
+		const all = [res("a", "t"), res("b", "t", "failed"), res("c", "t")];
 		expect(verdictsOf(judgeJob([A, B, C], all, 1, real))).toEqual({ a: "passed", b: "failed", c: "passed" });
 	});
 
-	test("a non-zero exit nobody can be blamed for, every flow finished: all of them fail", () => {
-		const all = [spec("a", "t"), spec("b", "t")];
+	test("a non-zero exit nobody can be blamed for, every spec finished: all of them fail", () => {
+		const all = [res("a", "t"), res("b", "t")];
 		expect(verdictsOf(judgeJob([A, B], all, 1, real))).toEqual({ a: "failed", b: "failed" });
 	});
 
-	test("a crash: the flow running when the process died and every flow after it fail, those before it pass", () => {
-		const all = [spec("a", "t"), spec("b", "first test")];
+	test("a crash: the spec running when the process died and every spec after it fail, those before it pass", () => {
+		const all = [res("a", "t"), res("b", "first test")];
 		expect(verdictsOf(judgeJob([A, B, C], all, 1, real))).toEqual({ a: "passed", b: "failed", c: "failed" });
 	});
 
-	test("a crash after a failed test: that flow stays failed, the one running at the crash fails too", () => {
-		const all = [spec("a", "t"), spec("b", "t", "failed"), spec("c", "first test")];
-		const d = flow("d");
+	test("a crash after a failed test: that spec stays failed, the one running at the crash fails too", () => {
+		const all = [res("a", "t"), res("b", "t", "failed"), res("c", "first test")];
+		const d = spec("d");
 		expect(verdictsOf(judgeJob([A, B, C, d], all, 137, real))).toEqual({
 			a: "passed",
 			b: "failed",
@@ -52,12 +52,10 @@ describe("judgeJob (one spec process over its flows)", () => {
 		});
 	});
 
-	test("a flow with no result of its own passes on exit 0 (a spec with no tests) and fails on a non-zero exit", () => {
-		const all = [spec("a", "t"), spec("c", "t")];
+	test("a spec with no result of its own passes on exit 0 (a spec with no tests) and fails on a non-zero exit", () => {
+		const all = [res("a", "t"), res("c", "t")];
 		expect(verdictsOf(judgeJob([A, B, C], all, 0, real))).toEqual({ a: "passed", b: "passed", c: "passed" });
-		expect(
-			verdictsOf(judgeJob([A, B, C], [spec("a", "t"), spec("b", "t"), spec("c", "t", "failed")], 1, real))
-		).toEqual({
+		expect(verdictsOf(judgeJob([A, B, C], [res("a", "t"), res("b", "t"), res("c", "t", "failed")], 1, real))).toEqual({
 			a: "passed",
 			b: "passed",
 			c: "failed",
@@ -65,7 +63,7 @@ describe("judgeJob (one spec process over its flows)", () => {
 		expect(verdictsOf(judgeJob([A, B, C], all, 1, real))).toEqual({ a: "passed", b: "failed", c: "failed" });
 	});
 
-	test("no usable results.jsonl: the exit code decides every flow, and the verdict says so", () => {
+	test("no usable results.jsonl: the exit code decides every spec, and the verdict says so", () => {
 		for (const results of [undefined, []]) {
 			const ok = judgeJob([A, B], results, 0, real);
 			const bad = judgeJob([A, B], results, 1, real);
@@ -75,13 +73,13 @@ describe("judgeJob (one spec process over its flows)", () => {
 		}
 	});
 
-	test("results of files that are not this job's flows are ignored", () => {
-		const all = [spec("other", "t", "failed"), spec("a", "t")];
+	test("results of files that are not this job's specs are ignored", () => {
+		const all = [res("other", "t", "failed"), res("a", "t")];
 		expect(verdictsOf(judgeJob([A], all, 0, real))).toEqual({ a: "passed" });
 	});
 
-	test("a flow carries its own tests", () => {
-		const all = [spec("a", "one"), spec("a", "two", "failed")];
+	test("a spec carries its own tests", () => {
+		const all = [res("a", "one"), res("a", "two", "failed")];
 		const judged = judgeJob([A], all, 1, real).get("a");
 		expect(judged?.tests?.map((t) => [t.title, t.status])).toEqual([
 			[["one"], "passed"],
@@ -152,77 +150,77 @@ const io = (files: Map<string, string>, extra: { attempts?: Map<string, Set<stri
 });
 
 describe("verdicts over device shards", () => {
-	test("a crash fails the flow it hit and the flows it never reached, and says where the process died", async () => {
-		const s = session([{ exitCode: 1, results: [spec("a", "t"), spec("b", "first")] }]);
+	test("a crash fails the spec it hit and the specs it never reached, and says where the process died", async () => {
+		const s = session([{ exitCode: 1, results: [res("a", "t"), res("b", "first")] }]);
 		const out = await verdicts([A, B, C], s.session, shape, io(s.files));
-		expect(out.flows.map((f) => [f.id, f.verdict])).toEqual([
+		expect(out.specs.map((f) => [f.id, f.verdict])).toEqual([
 			["a", "passed"],
 			["b", "failed"],
 			["c", "failed"],
 		]);
 		expect(out.ok).toBe(false);
-		expect(out.flows[0]).not.toHaveProperty("log");
-		expect(out.flows[1]?.log).toBe("/logs/0-0-shard-0.log");
-		expect(out.flows[2]?.log).toBe("/logs/0-0-shard-0.log");
+		expect(out.specs[0]).not.toHaveProperty("log");
+		expect(out.specs[1]?.log).toBe("/logs/0-0-shard-0.log");
+		expect(out.specs[2]?.log).toBe("/logs/0-0-shard-0.log");
 	});
 
-	test("a retry that ran only the failed flows: each flow's verdict is from the last attempt that ran it", async () => {
+	test("a retry that ran only the failed specs: each spec's verdict is from the last attempt that ran it", async () => {
 		const s = session([
-			{ exitCode: 1, results: [spec("a", "t"), spec("b", "t", "failed"), spec("c", "t")] },
-			{ exitCode: 0, results: [spec("b", "t")] },
+			{ exitCode: 1, results: [res("a", "t"), res("b", "t", "failed"), res("c", "t")] },
+			{ exitCode: 0, results: [res("b", "t")] },
 		]);
 		const attempts = new Map([
 			["0:0", new Set(["a", "b", "c"])],
 			["0:1", new Set(["b"])],
 		]);
 		const out = await verdicts([A, B, C], s.session, shape, io(s.files, { attempts }));
-		expect(out.flows.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
+		expect(out.specs.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
 			["a", "passed", 1],
 			["b", "passed", 2],
 			["c", "passed", 1],
 		]);
 		expect(out.ok).toBe(true);
-		expect(out.flows[1]?.log).toBe("/logs/0-0-shard-0.log");
+		expect(out.specs[1]?.log).toBe("/logs/0-0-shard-0.log");
 	});
 
-	test("a flow that fails again after the retry keeps failing, with the last failure's log", async () => {
+	test("a spec that fails again after the retry keeps failing, with the last failure's log", async () => {
 		const s = session([
-			{ exitCode: 1, results: [spec("a", "t"), spec("b", "t", "failed")] },
-			{ exitCode: 1, results: [spec("b", "t", "failed")] },
+			{ exitCode: 1, results: [res("a", "t"), res("b", "t", "failed")] },
+			{ exitCode: 1, results: [res("b", "t", "failed")] },
 		]);
 		const attempts = new Map([
 			["0:0", new Set(["a", "b"])],
 			["0:1", new Set(["b"])],
 		]);
 		const out = await verdicts([A, B], s.session, shape, io(s.files, { attempts }));
-		expect(out.flows.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
+		expect(out.specs.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
 			["a", "passed", 1],
 			["b", "failed", 2],
 		]);
-		expect(out.flows[1]?.log).toBe("/logs/0-1-shard-0.log");
+		expect(out.specs[1]?.log).toBe("/logs/0-1-shard-0.log");
 		expect(out.ok).toBe(false);
 	});
 
 	test("without an attempt map every attempt is a whole-shard run, as before: the last one decides", async () => {
 		const s = session([
-			{ exitCode: 1, results: [spec("a", "t", "failed"), spec("b", "t")] },
-			{ exitCode: 0, results: [spec("a", "t"), spec("b", "t")] },
+			{ exitCode: 1, results: [res("a", "t", "failed"), res("b", "t")] },
+			{ exitCode: 0, results: [res("a", "t"), res("b", "t")] },
 		]);
 		const out = await verdicts([A, B], s.session, shape, io(s.files));
-		expect(out.flows.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
+		expect(out.specs.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
 			["a", "passed", 2],
 			["b", "passed", 2],
 		]);
 	});
 
-	test("a shard that never ran its flows: not-run", async () => {
+	test("a shard that never ran its specs: not-run", async () => {
 		const out = await verdicts(
 			[A, B],
 			{ code: 1, summary: { ok: false, stopped: true, results: [], failed: [] } },
 			shape,
 			io(new Map())
 		);
-		expect(out.flows.map((f) => f.verdict)).toEqual(["not-run", "not-run"]);
+		expect(out.specs.map((f) => f.verdict)).toEqual(["not-run", "not-run"]);
 		expect(out.ok).toBe(false);
 	});
 });
@@ -232,15 +230,15 @@ describe("verdicts: the failure screenshot", () => {
 		artifacts: { dir, files },
 	});
 
-	test("a failed test whose attempt dir holds failure.png points the flow at it (no batch shot)", async () => {
+	test("a failed test whose attempt dir holds failure.png points the spec at it (no batch shot)", async () => {
 		const s = session([
 			{
 				exitCode: 1,
-				results: [spec("a", "t"), { ...spec("b", "t", "failed"), ...shot("/art/b-1") }, spec("c", "t")],
+				results: [res("a", "t"), { ...res("b", "t", "failed"), ...shot("/art/b-1") }, res("c", "t")],
 			},
 		]);
 		const out = await verdicts([A, B, C], s.session, shape, io(s.files));
-		const byId = Object.fromEntries(out.flows.map((f) => [f.id, f]));
+		const byId = Object.fromEntries(out.specs.map((f) => [f.id, f]));
 		expect(byId.b?.verdict).toBe("failed");
 		expect(byId.b?.screenshot).toBe("/art/b-1/failure.png");
 		expect(byId.a).not.toHaveProperty("screenshot");
@@ -248,31 +246,31 @@ describe("verdicts: the failure screenshot", () => {
 	});
 
 	test("the runner's shot wins over a batch shot of the same attempt (taken after the whole shard ran)", async () => {
-		const s = session([{ exitCode: 1, results: [{ ...spec("a", "t", "failed"), ...shot("/art/a-1") }] }]);
+		const s = session([{ exitCode: 1, results: [{ ...res("a", "t", "failed"), ...shot("/art/a-1") }] }]);
 		const withBatch = { ...s.session, screenshots: new Map([["0:0", "/logs/0-0-shard-0.png"]]) };
 		const out = await verdicts([A], withBatch, ONE_SHARD, io(s.files));
-		expect(out.flows[0]?.screenshot).toBe("/art/a-1/failure.png");
+		expect(out.specs[0]?.screenshot).toBe("/art/a-1/failure.png");
 	});
 
 	test("a failed test without failure.png, or an attempt with no results, keeps the batch shot", async () => {
 		const noPng = session([
-			{ exitCode: 1, results: [{ ...spec("a", "t", "failed"), ...shot("/art/a-1", ["trace.jsonl"]) }] },
+			{ exitCode: 1, results: [{ ...res("a", "t", "failed"), ...shot("/art/a-1", ["trace.jsonl"]) }] },
 		]);
 		const crashed = session([{ exitCode: 137 }]);
 		for (const s of [noPng, crashed]) {
 			const withBatch = { ...s.session, screenshots: new Map([["0:0", "/logs/0-0-shard-0.png"]]) };
 			const out = await verdicts([A], withBatch, ONE_SHARD, io(s.files));
-			expect(out.flows[0]?.screenshot).toBe("/logs/0-0-shard-0.png");
+			expect(out.specs[0]?.screenshot).toBe("/logs/0-0-shard-0.png");
 		}
 	});
 
 	test("after a retry the latest failed attempt's runner shot is the one reported", async () => {
 		const s = session([
-			{ exitCode: 1, results: [{ ...spec("a", "t", "failed"), ...shot("/art/a-1") }] },
-			{ exitCode: 1, results: [{ ...spec("a", "t", "failed"), ...shot("/art/a-2") }] },
+			{ exitCode: 1, results: [{ ...res("a", "t", "failed"), ...shot("/art/a-1") }] },
+			{ exitCode: 1, results: [{ ...res("a", "t", "failed"), ...shot("/art/a-2") }] },
 		]);
 		const out = await verdicts([A], s.session, ONE_SHARD, io(s.files));
-		expect(out.flows[0]).toMatchObject({ attempts: 2, screenshot: "/art/a-2/failure.png" });
+		expect(out.specs[0]).toMatchObject({ attempts: 2, screenshot: "/art/a-2/failure.png" });
 	});
 });
 

@@ -6,7 +6,7 @@ export const SCHEMA_VERSION = 1;
 export const platformSchema = z.enum(["ios", "android"]);
 export type Platform = z.infer<typeof platformSchema>;
 
-/** The 8 parity tests every framework runs (the example app's flows minus `devtools`). */
+/** The 8 parity tests every framework runs (the example app's specs minus `devtools`). */
 export const CANONICAL_IDS = [
 	"onboarding/steps-to-sign-in",
 	"sign-in/field-errors",

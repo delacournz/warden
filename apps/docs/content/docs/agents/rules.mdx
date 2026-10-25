@@ -1,0 +1,73 @@
+---
+title: Agent rules
+description: Rules for agents sharing devices, subagent release rules, and the Claude Code and Codex SessionEnd hook that releases what a session leased.
+icon: Bot
+---
+
+Several agents share one Mac's devices, so each follows four rules and a hook cleans up after it. Read this page to know what an agent may touch and what happens when a session ends.
+
+```bash
+warden claim ios --json          # claim first
+warden ui close --release        # release when done
+```
+
+`warden install` wires hooks into every agent it detects: **Claude Code** (`~/.claude` or `claude` on `PATH`) and **Codex** (`$CODEX_HOME` / `~/.codex` or `codex` on `PATH`). `--claude` / `--codex` force one (or both) regardless of detection.
+
+## Rules for agents
+
+- **Claim before use.** `warden claim ios --json` (or `android`), then use the returned `udid` / `serial` for every simctl / adb / `warden ui` call. Never pick a device from `list-devices` or `simctl list` on your own.
+- **Never touch a booted device you did not claim** (it belongs to another session).
+- **Drive the device with `warden ui`** (snapshot, tap, type, wait): see [warden ui](/docs/agents/ui). It checks the lease on every call and refuses a device another session leased; run `warden claim` and switch to the returned device. For checks that must keep passing, write a [spec](/docs/e2e/specs) instead.
+- **Release when done:** `warden ui close --release`, or `warden release <leaseId>` (add `--shutdown` to stop sims warden created). Subagents never run `warden release --mine`, which frees the parent's leases too: release the lease id you hold, or claim with `--label x` and run `release --mine --label x`.
+
+## Xcode 27 MCP
+
+Xcode 27 ships an MCP server (`xcrun mcpbridge`, headless via `xcrun mcp-server`) and an exported device-interaction skill. Build, test, preview and docs tools are fine alongside warden. The `DeviceInteraction*` tools are not: they drive **any** booted simulator and skip warden's lease check, which breaks "foreign devices are read-only".
+
+- Use `DeviceInteraction*` only on a udid you got from `warden claim ios --json`, and end the session before `warden release`.
+- Drive apps with `warden ui` or a [spec](/docs/e2e/specs): taps take milliseconds there, seconds through the MCP tools.
+- Never run `xcrun mcp-server enable --unsafe-always-allow-all-agents`. `warden doctor` reports the MCP service state.
+
+## Claude Code
+
+`warden install --claude` adds the hook, skill and rule below. The hook edit to `~/.claude/settings.json` shows a diff first and applies only after you confirm or pass `--yes` (non-interactive without `--yes` skips it); `--dry-run` writes nothing. It also removes the `PreToolUse` hook (`warden hook pretool`, a device-lease hook for MCP device tools) that older versions installed; `warden hook pretool` stays a no-op so an old config keeps working.
+
+<Accordions>
+<Accordion title="SessionEnd hook">
+
+**Shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself, are shut down; one that was already running (your own Simulator.app) is released but left on.
+
+On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim with its next `warden claim`. Leases a still-running `warden e2e` / `batch` / `run` / `dev` holds (live pid, fresh heartbeat) are kept too; that run releases them when it ends. A run whose leases are released under it (`warden release`, a SessionEnd) stops with "leases were released by another process".
+
+</Accordion>
+<Accordion title="Sessions that die without SessionEnd">
+
+Killed or terminal closed: their leases go stale after their TTL (30 min; 5 min for a bare agent claim), and `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by `claim` / `run` / `batch` / `dev` (`WARDEN_AUTO_GC=0` turns this off).
+
+</Accordion>
+<Accordion title="Skill and rule">
+
+Stages the embedded skill folder in `$WARDEN_HOME/skill/warden/` and installs it with the vercel skills CLI (`bunx skills add <dir> --skill warden -g -a claude-code -y`, `npx` fallback; `--dry-run` prints the command). The CLI places it at `~/.agents/skills/warden` and symlinks `~/.claude/skills/warden`. Without bun or node the step is skipped; use `warden skill show`. The rule `~/.claude/rules/warden.md` is written directly. A leftover `~/.claude/rules/agent-device.md` or `argent.md` from the retired setup is reported by `warden install` but never deleted.
+
+</Accordion>
+</Accordions>
+
+## Codex
+
+`warden install --codex` merges the SessionEnd hook into `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`). Hooks already declared in `config.toml` `[[hooks.*]]` tables count as installed. Codex hooks use Claude's format and stdin JSON, so `warden hook session-end` serves both agents unchanged:
+
+```json title="~/.codex/hooks.json"
+{
+  "hooks": {
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "$HOME/.local/bin/warden hook session-end", "timeout": 3 }] }]
+  }
+}
+```
+
+<Callout type="warn">
+Codex **skips new or changed hooks until you trust them**: run `/hooks` in Codex once after installing.
+</Callout>
+
+- Codex caps SessionEnd hooks at 3 s and always sends reason `other`, so the `/clear` exception never applies. Anything SessionEnd can't finish in time is picked up by `warden gc` once the leases go stale.
+- For the skill in Codex, use `warden skill install` (pick the agent with `-a`). `warden skill install --from github` installs the updatable copy from the release repo instead of this binary's embedded one.
+- Codex sessions have no session id of their own: set `WARDEN_SESSION_ID`, or leases count as your shell's user leases.

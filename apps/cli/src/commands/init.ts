@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { DEFAULT_FLOWS_DIR } from "@delacour/warden-core/affected/affected.defaults";
+import { DEFAULT_SPECS_DIR } from "@delacour/warden-core/affected/affected.defaults";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type Command, defineCommand } from "../command";
@@ -9,7 +9,7 @@ import { missingPackages } from "../expo-app";
 import { emit, note, reportError, success, warn } from "../output";
 import { currentBuild } from "../update/build-info";
 import { projectStart } from "./app";
-import { type InitApp, SMOKE_FLOW_SOURCE, wardenConfigSource } from "./init.data";
+import { type InitApp, SMOKE_SPEC_SOURCE, wardenConfigSource } from "./init.data";
 
 type InitOpts = { project?: string; bundleId?: string; force?: true; dryRun?: true; json?: true };
 
@@ -21,7 +21,7 @@ const WARDEN_CONFIG_FILES = [
 	"warden.config.mjs",
 	"warden.config.json",
 ];
-const TS_FLOW = /\.e2e\.tsx?$/;
+const TS_SPEC = /\.e2e\.tsx?$/;
 
 const appJsonSchema = z.looseObject({
 	expo: z
@@ -74,8 +74,8 @@ type Plan = {
 	appJson?: string;
 };
 
-const hasFlows = (dir: string): boolean =>
-	existsSync(dir) && readdirSync(dir, { recursive: true }).some((entry) => TS_FLOW.test(String(entry)));
+const hasSpecs = (dir: string): boolean =>
+	existsSync(dir) && readdirSync(dir, { recursive: true }).some((entry) => TS_SPEC.test(String(entry)));
 
 /** What init would write for the app in `root`. */
 function plan(root: string, opts: InitOpts): Result<Plan> {
@@ -91,10 +91,10 @@ function plan(root: string, opts: InitOpts): Result<Plan> {
 	const app: InitApp = { name: expo?.slug ?? expo?.name ?? basename(root), bundleId };
 	// a config in another format is the user's: never replaced by the .ts starter
 	const foreign = WARDEN_CONFIG_FILES.find((f) => f !== "warden.config.ts" && existsSync(join(root, f)));
-	const smoke = join(DEFAULT_FLOWS_DIR, "smoke.e2e.ts");
+	const smoke = join(DEFAULT_SPECS_DIR, "smoke.e2e.ts");
 	const files = [
 		...(foreign ? [] : [{ path: "warden.config.ts", content: wardenConfigSource(app) }]),
-		...(hasFlows(join(root, DEFAULT_FLOWS_DIR)) ? [] : [{ path: smoke, content: SMOKE_FLOW_SOURCE }]),
+		...(hasSpecs(join(root, DEFAULT_SPECS_DIR)) ? [] : [{ path: smoke, content: SMOKE_SPEC_SOURCE }]),
 	].map((file) => ({ ...file, exists: existsSync(join(root, file.path)) }));
 	return ok({ app, files, ...(updated ? { appJson: `${JSON.stringify(updated, null, 2)}\n` } : {}) });
 }

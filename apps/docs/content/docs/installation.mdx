@@ -1,8 +1,16 @@
 ---
 title: Installation
-description: Install warden from npm or build it from source, wire up agent hooks, and check your setup.
+description: Install warden from npm or from source, wire up agent hooks, and check your setup.
 icon: Download
 ---
+
+Install `warden` with one command, then let `warden install` wire your coding agents. Use this page for one-shot installs, source builds, the skill alone, and CI.
+
+```bash
+npm i -g @delacour/warden && warden install
+```
+
+macOS and Linux on arm64 and x64 are supported. Windows is not. iOS needs macOS with Xcode.
 
 <Steps>
 <Step>
@@ -36,7 +44,7 @@ warden install --claude   # force Claude Code only: skill (via `skills add`) + r
 warden install --codex    # force Codex only: hooks in $CODEX_HOME/hooks.json
 ```
 
-Agents are detected from `~/.claude` / `claude` on `PATH` and `$CODEX_HOME` (`~/.codex`) / `codex` on `PATH`; with none found only the binary is installed. Edits to `~/.claude/settings.json` and Codex `hooks.json` show a diff and ask first: `--yes` skips the prompt, and a non-TTY without `--yes` skips the step. The Claude rule `~/.claude/rules/warden.md` is written directly, and the skill is placed by the `skills` CLI (it may prompt; `--yes` is passed through). `--dry-run` only prints. Merges are idempotent and keep all other config. After a first Codex install, run `/hooks` in Codex to trust the new hook. See [Agents](/docs/guides/agents) for what gets installed.
+Every agent-config change shows a diff and asks first. `--yes` skips the prompt, `--dry-run` only prints, and a non-TTY without `--yes` skips. Merges are idempotent and keep all other config. See [Set up your agent](/docs/agent-setup) for what gets installed.
 
 `warden install` also sets up tab completion for your shell (zsh, bash or fish, from `$SHELL`): `warden sims <tab>` lists `audit / prune / delete`, and in zsh further tabs cycle through them. The `.zshrc` / `.bashrc` line is shown and confirmed like the rest; `--no-completion` skips it. See [`warden completion`](/docs/reference/cli#warden-completion-zshbashfish).
 
@@ -86,7 +94,7 @@ The skill is a folder, `skills/warden/` (`SKILL.md` + `references/{ui,specs,suit
 
 ## In GitHub Actions
 
-Install from npm like anywhere else:
+The repo is public at [github.com/delacournz/warden](https://github.com/delacournz/warden). In CI, install from npm like anywhere else:
 
 ```yaml
 - run: npm i -g @delacour/warden
@@ -95,9 +103,14 @@ Install from npm like anywhere else:
 Or download the release binary (checksum-verified, no Node needed):
 
 ```yaml
-- uses: delacournz/warden/.github/actions/install-warden@main
+- uses: delacournz/warden/.github/actions/install-warden@main   # optional: with: { version: v0.1.1 }
 ```
 
-The action downloads `warden-<os>-<arch>` from the latest (or `version:`) release of `delacournz/warden`, checks `checksums.txt` and adds `warden` to `PATH`. `token` defaults to the workflow's own `github.token`, which can read the public releases; set it only for a private fork named by `repo`.
+The action downloads `warden-<os>-<arch>` from the latest (or `version:`) release, checks `checksums.txt` and adds `warden` to `PATH`. `token` defaults to the workflow's own `github.token`, which can read the public releases; set it only for a private fork named by `repo`. Runner setup is in [CI](/docs/e2e/ci).
 
 A clean macOS runner needs no setup beyond an installed iOS runtime: the profile's simulators are created on claim, cloned from a golden image built on first use (cache `~/Library/Developer/CoreSimulator/Devices` to skip that next time).
+
+<Cards>
+  <Card title="Quickstart" href="/docs/quickstart" />
+  <Card title="Set up your agent" href="/docs/agent-setup" />
+</Cards>

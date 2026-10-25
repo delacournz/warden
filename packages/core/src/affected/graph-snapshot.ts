@@ -9,7 +9,7 @@ export const graphRequestSchema = z.object({
 	platform: z.enum(["ios", "android"]),
 	repoRoot: z.string(),
 	fallbackTsconfig: z.string().optional(),
-	/** where the walk starts: every flow's entries and the router layouts above them (absolute) */
+	/** where the walk starts: every spec's entries and the router layouts above them (absolute) */
 	entries: z.array(z.string()),
 	/** the specifier cache (`openImportCache(path)`) the walk reads and updates */
 	importCachePath: z.string().optional(),

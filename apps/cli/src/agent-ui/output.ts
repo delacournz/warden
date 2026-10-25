@@ -28,7 +28,6 @@ export const UI_ERROR_EXIT = {
 	engine_unavailable: UI_EXIT.engine,
 	devtools_unavailable: UI_EXIT.engine,
 	stale_ref: UI_EXIT.staleRef,
-	replay_divergence: UI_EXIT.failed,
 	interrupted: UI_EXIT.interrupted,
 } as const satisfies Record<string, UiExitCode>;
 

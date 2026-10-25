@@ -26,20 +26,20 @@ import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
 import { type EarlyWarm, startEarlyWarm } from "../batch/early-warm";
-import { flowPoller } from "../batch/flow-poller";
-import type { FlowMark, TrackedFlow } from "../batch/flow-progress";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
 import { type ReadFrom, readFileFrom } from "../batch/results-tail";
 import { type RunnerReport, resultsReport } from "../batch/runner-report";
 import { captureScreenshot, runnerFailureShot } from "../batch/screenshot";
 import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
 import { type DeviceSetup, type DeviceSetupSpec, type EarlySlim, setupDevices, startEarlySlim } from "../batch/setup";
+import { specPoller } from "../batch/spec-poller";
+import type { SpecMark, TrackedSpec } from "../batch/spec-progress";
 import { openStampedLog } from "../batch/stamped-log";
 import {
-	addRunnerFlows,
+	addRunnerSpecs,
 	applyEvent,
-	applyFlowMarks,
 	applyRunnerReport,
+	applySpecMarks,
 	type BatchView,
 	initialView,
 	type LiveScreen,
@@ -149,7 +149,7 @@ export type BatchDeps = LeaseSessionDeps & {
 	/** write a file, creating its parent dirs */
 	writeFile: (path: string, data: string) => Promise<void>;
 	readFile: (path: string) => Promise<string>;
-	/** a file from a byte offset on: how the flow poller reads only what a `results.jsonl` gained */
+	/** a file from a byte offset on: how the spec poller reads only what a `results.jsonl` gained */
 	readFrom: ReadFrom;
 	mkdir: (dir: string) => Promise<void>;
 	newId: () => string;
@@ -458,11 +458,11 @@ function summaryJson(
 /** TUI sinks: the terminal (live grid or plain lines) and the `tui.cast` mirror. */
 type Display = {
 	event: (e: BatchEvent) => void;
-	/** flow results read off `worker`'s spec output */
-	flows: (worker: number, marks: Readonly<Record<string, FlowMark>>) => void;
-	/** finished tests, one line each (`--no-tui` only: the grid shows flows) */
+	/** spec results read off `worker`'s spec output */
+	specs: (worker: number, marks: Readonly<Record<string, SpecMark>>) => void;
+	/** finished tests, one line each (`--no-tui` only: the grid shows specs) */
 	tests: (lines: readonly string[]) => void;
-	/** the spec runner's report: the flows each device ran */
+	/** the spec runner's report: the specs each device ran */
 	report: (report: RunnerReport) => void;
 	end: () => void;
 	/** a pool that became ready after the grid started: its devices' rows (12-3) */
@@ -475,14 +475,14 @@ function display(
 	deps: BatchDeps,
 	args: BatchArgs,
 	view: { current: BatchView },
-	flows: readonly TrackedFlow[] | undefined,
+	specs: readonly TrackedSpec[] | undefined,
 	/** what the cast is sized for: the grid once every pool is in it (default: the first frame) */
 	sized: BatchView = view.current
 ): Display {
 	const { terminal } = deps;
 	const live = args.tui && terminal.isTTY;
 	const width = live ? terminal.columns : 100;
-	// the grid (header, device rows, flow lines) + the cursor row its trailing newline leaves
+	// the grid (header, device rows, spec lines) + the cursor row its trailing newline leaves
 	const height = render(sized, { width, color: false }).split("\n").length + 1;
 	const cast = args.record ? createCast({ width, height, startedAt: ctx.now() }) : undefined;
 	const sinks: Array<{ screen: LiveScreen; color: boolean; last?: string }> = [];
@@ -504,8 +504,8 @@ function display(
 		event: (e) => {
 			view.current = applyEvent(view.current, e);
 			if (e.type === "job-start") {
-				const ids = shardFlowIds(flows, e.job);
-				if (ids.length > 0) view.current = addRunnerFlows(view.current, e.worker, ids);
+				const ids = shardSpecIds(specs, e.job);
+				if (ids.length > 0) view.current = addRunnerSpecs(view.current, e.worker, ids);
 			}
 			if (!live) {
 				const text = plainLine(view.current, e);
@@ -513,9 +513,9 @@ function display(
 			}
 			frame(false);
 		},
-		flows: (worker, marks) => {
-			if (!live) announceFlows(ctx, view.current, worker, marks);
-			view.current = applyFlowMarks(view.current, worker, marks);
+		specs: (worker, marks) => {
+			if (!live) announceSpecs(ctx, view.current, worker, marks);
+			view.current = applySpecMarks(view.current, worker, marks);
 			frame(false);
 		},
 		tests: (lines) => {
@@ -533,14 +533,14 @@ function display(
 		rows: (rows) => {
 			const added = initialView(rows, 0, 0).devices;
 			const { runners } = view.current;
-			// a sharded grid tracks flows per runner: the late pool's workers need theirs (R1)
+			// a sharded grid tracks specs per runner: the late pool's workers need theirs (R1)
 			const fresh = [...new Set(added.map((d) => d.worker))].filter((w) => !runners?.some((r) => r.worker === w));
 			view.current = {
 				...view.current,
 				devices: [...view.current.devices, ...added].sort((a, b) => a.worker - b.worker),
 				...(runners
 					? {
-							runners: [...runners, ...fresh.map((worker) => ({ worker, flows: [] }))].sort(
+							runners: [...runners, ...fresh.map((worker) => ({ worker, specs: [] }))].sort(
 								(a, b) => a.worker - b.worker
 							),
 						}
@@ -551,9 +551,9 @@ function display(
 	};
 }
 
-/** The flows of the shard job `job` (`shard-0`, or `shard-0@<leg>`), for the grid row that runs it. */
-function shardFlowIds(flows: readonly TrackedFlow[] | undefined, job: string): string[] {
-	return (flows ?? [])
+/** The specs of the shard job `job` (`shard-0`, or `shard-0@<leg>`), for the grid row that runs it. */
+function shardSpecIds(specs: readonly TrackedSpec[] | undefined, job: string): string[] {
+	return (specs ?? [])
 		.filter((f) => f.job !== undefined && (job === f.job || job.startsWith(`${f.job}@`)))
 		.map((f) => f.id);
 }
@@ -561,7 +561,7 @@ function shardFlowIds(flows: readonly TrackedFlow[] | undefined, job: string): s
 /**
  * Run every pool's queue behind the grid, each as soon as its pool is ready; `ready` are the queues
  * ready when the grid starts (its first rows), the others add their rows as they come. A run with
- * `flows` also ticks them off live from the jobs' `results.jsonl`.
+ * `specs` also ticks them off live from the jobs' `results.jsonl`.
  */
 async function runGrid(
 	ctx: CommandContext,
@@ -574,18 +574,18 @@ async function runGrid(
 		total: number;
 		startedAt: number;
 		resultFiles: ResultFiles;
-		flows: readonly TrackedFlow[] | undefined;
+		specs: readonly TrackedSpec[] | undefined;
 		/** an elastic worker is about to join: its device (put in the grid), or undefined */
 		onJoin?: (worker: number) => Device | undefined;
 		onStart?: (queue: Queue, handle: BatchHandle) => void;
 	}
 ): Promise<{ summary: BatchSummary; screen: Display }> {
 	const rows = o.ready.flatMap((q) => q.rows).sort((a, b) => a.worker - b.worker);
-	const { flows } = o;
-	const sized = startView(r.devices, o.total, o.startedAt, flows);
-	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, flows) }, flows, sized);
+	const { specs } = o;
+	const sized = startView(r.devices, o.total, o.startedAt, specs);
+	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, specs) }, specs, sized);
 	const ended = new Set<string>();
-	const poller = flows ? flowPoller(deps, flows, o.resultFiles, ended, screen) : undefined;
+	const poller = specs ? specPoller(deps, specs, o.resultFiles, ended, screen) : undefined;
 	const shown = new Set(o.ready);
 	try {
 		const summary = await runPools(pending, {
@@ -607,7 +607,7 @@ async function runGrid(
 		});
 		poller?.stop();
 		await poller?.poll();
-		if (flows) await readRunnerReport(deps, o.resultFiles, flows, o.startedAt, screen);
+		if (specs) await readRunnerReport(deps, o.resultFiles, specs, o.startedAt, screen);
 		return { summary, screen };
 	} catch (error) {
 		// the grid owns the terminal: give it back before the error is reported (R4)
@@ -618,48 +618,48 @@ async function runGrid(
 	}
 }
 
-/** Hand every job's finished `results.jsonl` to the display as one report (the last attempt of a flow wins); missing files and stale results are skipped. */
+/** Hand every job's finished `results.jsonl` to the display as one report (the last attempt of a spec wins); missing files and stale results are skipped. */
 async function readRunnerReport(
 	deps: BatchDeps,
 	resultFiles: ResultFiles,
-	flows: readonly TrackedFlow[],
+	specs: readonly TrackedSpec[],
 	since: number,
 	screen: Display
 ): Promise<void> {
 	const texts = await Promise.all([...resultFiles.values()].map((path) => deps.readFile(path).catch(() => "")));
-	const report = resultsReport(texts, flows, since);
+	const report = resultsReport(texts, specs, since);
 	if (report) screen.report(report);
 }
 
-/** The grid's first frame: with sharded flows, one (empty) runner per worker that takes its shard's flows when the shard starts. */
+/** The grid's first frame: with sharded specs, one (empty) runner per worker that takes its shard's specs when the shard starts. */
 function startView(
 	rows: ReadonlyArray<{ worker: number; udid: string; name: string }>,
 	total: number,
 	startedAt: number,
-	flows: readonly TrackedFlow[] | undefined
+	specs: readonly TrackedSpec[] | undefined
 ): BatchView {
 	const view = initialView(rows, total, startedAt);
-	return flows?.some((f) => f.job !== undefined) ? withRunners(view, []) : view;
+	return specs?.some((f) => f.job !== undefined) ? withRunners(view, []) : view;
 }
 
-const tick = (mark: FlowMark) => (mark === "passed" ? "✓" : "✗");
+const tick = (mark: SpecMark) => (mark === "passed" ? "✓" : "✗");
 
-/** `--no-tui`: one line per flow the first time it is marked (or its mark changes), named by the worker's pool. */
-function announceFlows(
+/** `--no-tui`: one line per spec the first time it is marked (or its mark changes), named by the worker's pool. */
+function announceSpecs(
 	ctx: CommandContext,
 	view: BatchView,
 	worker: number,
-	marks: Readonly<Record<string, FlowMark>>
+	marks: Readonly<Record<string, SpecMark>>
 ): void {
 	const [first, ...rest] = view.devices.filter((d) => d.worker === worker);
 	const name = `${first?.name ?? "?"}${rest.length > 0 ? ` +${rest.length}` : ""}`;
-	for (const f of view.runners?.find((r) => r.worker === worker)?.flows ?? []) {
+	for (const f of view.runners?.find((r) => r.worker === worker)?.specs ?? []) {
 		const mark = marks[f.id];
 		if (mark && mark !== f.mark) ctx.err(`${name} ${tick(mark)} ${f.id}`);
 	}
 }
 
-/** `--no-tui`: after the runner's report, one line per device with the flows it ran. */
+/** `--no-tui`: after the runner's report, one line per device with the specs it ran. */
 function announceDevices(ctx: CommandContext, view: BatchView): void {
 	for (const d of view.devices)
 		if (d.ran && d.ran.length > 0) ctx.err(`${d.name}: ${d.ran.map((f) => `${tick(f.mark)} ${f.id}`).join("  ")}`);
@@ -940,8 +940,8 @@ export type SessionHooks = {
 	setup?: DeviceSetupSpec | undefined;
 	/** shut down the leased devices warden may shut down (see `shutdownReleasedDevices`) before releasing, when this says so of a finished, uninterrupted run */
 	shutdownIf?: (summary: BatchSummary) => boolean;
-	/** the flows the jobs run, tracked live from the jobs' `results.jsonl` */
-	flows?: readonly TrackedFlow[];
+	/** the specs the jobs run, tracked live from the jobs' `results.jsonl` */
+	specs?: readonly TrackedSpec[];
 	/** env added to one job's spawn (over the pool env, under the worker's own `WARDEN_UDID` / `WARDEN_WORKER` / `WARDEN_JOB…`) */
 	jobEnv?: (job: JobEnvInput) => Record<string, string>;
 	/**
@@ -1894,7 +1894,7 @@ async function supervise(
 				total,
 				startedAt,
 				resultFiles,
-				flows: hooks.flows,
+				specs: hooks.specs,
 				onStart: elastic.start,
 				onJoin: elastic.join,
 			}
@@ -2302,7 +2302,7 @@ export function createBatchCommand(deps: BatchDeps): Command {
 				.option("--jobs-from <file>", "one job per line from a file, or - for stdin")
 				.addHelpText(
 					"after",
-					"\nExamples:\n  warden batch ios --count 3 --jobs a,b,c,d -- bun e2e --flow {job} --device {udid}\n  warden batch e2e --count 2    # batches.e2e from warden.config.ts, --count overridden"
+					"\nExamples:\n  warden batch ios --count 3 --jobs a,b,c,d -- bun e2e --spec {job} --device {udid}\n  warden batch e2e --count 2    # batches.e2e from warden.config.ts, --count overridden"
 				)
 				.action(async (platform, rest, opts, command) => {
 					const passed = new Set(Object.keys(opts).filter((key) => command.getOptionValueSource(key) === "cli"));

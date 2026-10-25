@@ -183,7 +183,6 @@ describe("cold start: batch and e2e", () => {
 describe("cold start: warden ui", () => {
 	/** Implementation modules of the other subcommands: a call loads its own and none of these. */
 	const OTHERS = [
-		"/agent-ui/flows-command.ts",
 		"/agent-ui/devtools-cli.ts",
 		"/agent-ui/bench.ts",
 		"/agent-ui/video.ts",
@@ -197,7 +196,7 @@ describe("cold start: warden ui", () => {
 		for (const args of [
 			["ui", "--help"],
 			["ui", "snapshot", "--help"],
-			["ui", "record", "start", "--help"],
+			["ui", "press", "--help"],
 		]) {
 			const files = await loadedBy(args);
 			expect(loaded(files, [...OTHERS, "/packages/e2e/", "/node_modules/zod/", "/agent-ui/helper.ts"])).toEqual([]);
@@ -236,10 +235,7 @@ describe("cold start: warden ui", () => {
 		}
 	});
 
-	test("the flow and devtools subcommands load their own module, each without the other", async () => {
-		const record = await loadedBy(["ui", "record", "status", "--json"]);
-		expect(has(record, "/agent-ui/flows-command.ts")).toBe(true);
-		expect(loaded(record, [...DRIVERS, "/agent-ui/devtools-cli.ts"])).toEqual([]);
+	test("the devtools subcommands load their own module and no driver", async () => {
 		const logs = await loadedBy(["ui", "logs", "--json"]);
 		expect(has(logs, "/agent-ui/devtools-cli.ts")).toBe(true);
 		expect(loaded(logs, [...without(OTHERS, "/agent-ui/devtools-cli.ts"), ...DRIVERS])).toEqual([]);

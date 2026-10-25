@@ -4,7 +4,7 @@ description: Repo layout, conventions and commands.
 icon: GitPullRequest
 ---
 
-Bun + Turborepo monorepo, TypeScript strict, Biome for lint + format, prek git hooks (biome on commit, typecheck on push).
+Read this page before you change warden itself: it covers the repo layout, conventions and commands. warden is a Bun + Turborepo monorepo with strict TypeScript, Biome for lint and format, and prek git hooks (biome on commit, typecheck on push).
 
 <Files>
   <Folder name="apps" defaultOpen>
@@ -52,3 +52,5 @@ bun run --cwd apps/docs dev   # this site on :3210 (PORT overrides)
 ## Editing these docs
 
 Pages are MDX under `apps/docs/content/docs`; sidebar order lives in each folder's `meta.json`. Every page is also served as Markdown at `<url>.md`, and the whole site at `/llms.txt` and `/llms-full.txt`.
+
+The charts on the benchmark comparison page read `apps/docs/content/docs/bench/data/<platform>-<date>.json`. Regenerate one with `bun run bench summary packages/e2e-bench/.bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json`.

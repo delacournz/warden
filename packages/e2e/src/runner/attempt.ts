@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { isHidLost } from "../driver/ios/hid-recovery";
 import { E2eError } from "../errors";
 import { type AttemptBinding, attemptSession, type Session } from "../session";
-import { attemptDir, flowIdOf, hash6 } from "./artifacts";
+import { attemptDir, hash6, specIdOf } from "./artifacts";
 import {
 	CAPTURE_TIMEOUT_MS,
 	captureDevtoolsArtifacts,
@@ -223,7 +223,7 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 	const device = { udid: env.udid, platform: env.platform };
 	const clock = !env.logTimestamps;
 	const short = shortName(spec.file);
-	const dir = attemptDir(session.out, flowIdOf(spec.file, env.flowsDir), spec.title, hash6(spec.file, ...spec.title));
+	const dir = attemptDir(session.out, specIdOf(spec.file, env.specsDir), spec.title, hash6(spec.file, ...spec.title));
 	const print = (line: string | undefined): void => {
 		if (line !== undefined) session.log(line);
 	};

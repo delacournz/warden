@@ -1,4 +1,4 @@
-import { createFileRoute, notFound } from "@tanstack/react-router";
+import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { useFumadocsLoader } from "fumadocs-core/source/client";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
@@ -7,6 +7,7 @@ import { Suspense, use } from "react";
 import { DocsToolbar } from "@/components/docs-toolbar";
 import { useMDXComponents } from "@/components/mdx";
 import { baseOptions } from "@/lib/layout.shared";
+import { redirectSlugs } from "@/lib/redirects";
 import { docsHead } from "@/lib/seo";
 import { encodeMarkdownUrl } from "@/lib/shared";
 import { docs, source } from "@/lib/source";
@@ -28,7 +29,11 @@ const serverLoader = createServerFn({
 	.validator((slugs: string[]) => slugs)
 	.handler(async ({ data: slugs }) => {
 		const page = source.getPage(slugs);
-		if (!page) throw notFound();
+		if (!page) {
+			const moved = redirectSlugs(slugs);
+			if (moved) throw redirect({ to: "/docs/$", params: { _splat: moved.join("/") }, statusCode: 301 });
+			throw notFound();
+		}
 
 		return {
 			path: page.path,

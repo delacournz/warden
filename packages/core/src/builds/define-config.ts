@@ -279,22 +279,22 @@ export interface WardenBatchPreset {
 	cmd: string[];
 }
 
-/** `e2e.<suite>.flows.<id|glob>`: what a flow covers and whether it gates. */
-export interface WardenE2eFlow {
+/** `e2e.<suite>.specs.<id|glob>`: what a spec covers and whether it gates. */
+export interface WardenE2eSpecEntry {
 	/**
-	 * Files the flow drives (screens / routes); everything they import, transitively, selects it.
+	 * Files the spec drives (screens / routes); everything they import, transitively, selects it.
 	 *
 	 * @default []
 	 */
 	entries?: string[] | undefined;
 	/**
-	 * Extra globs that select the flow when a changed file matches.
+	 * Extra globs that select the spec when a changed file matches.
 	 *
 	 * @default []
 	 */
 	paths?: string[] | undefined;
 	/**
-	 * Platforms the flow runs on.
+	 * Platforms the spec runs on.
 	 *
 	 * @default from the id (`-ios-` / `-android-`), else both
 	 */
@@ -335,7 +335,7 @@ export interface WardenE2eMetro {
 	/** Added to Metro's env only. */
 	env?: Record<string, string> | undefined;
 	/**
-	 * Build the bundle once before the first flow, so no flow pays for (or times out on) the cold build.
+	 * Build the bundle once before the first spec, so no spec pays for (or times out on) the cold build.
 	 *
 	 * @default true
 	 */
@@ -395,7 +395,7 @@ export interface WardenE2eDeviceLeg {
 }
 
 /**
- * `e2e.<suite>`: the flows `warden affected` selects and `warden e2e` runs. Every path and glob is
+ * `e2e.<suite>`: the specs `warden affected` selects and `warden e2e` runs. Every path and glob is
  * relative to the config file.
  */
 export interface WardenE2eSuite {
@@ -404,31 +404,20 @@ export interface WardenE2eSuite {
 	 * Needed when the config has several projects and warden runs from the repo root.
 	 */
 	project?: string | undefined;
-	/** Directory of flows: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
-	flowsDir: string;
-	/**
-	 * Removed: flows run with `@delacour/warden-e2e` (`bun test`). A config that still sets it fails
-	 * validation; use `spec` for what the argv used to carry.
-	 */
-	runner?: undefined;
+	/** Directory of specs: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
+	specsDir: string;
 	/** How the specs run: the app under test, its launch arguments and the timeouts. */
 	spec?: WardenE2eSpec | undefined;
 	/**
-	 * `"device"`: one `bun test` process per device runs its share of the flows (sharded round-robin by
-	 * flow id), so a device's specs run in order in one process and the devices run in parallel.
-	 * `"flow"`: one process per flow, one worker per device: slower (each process pays bun's start,
-	 * the preload and a driver connect), but a flow can never see what the one before left behind and
-	 * the devices share the flows dynamically. With `passes` above 1 the default is `"flow"`.
+	 * `"device"`: one `bun test` process per device runs its share of the specs (sharded round-robin by
+	 * spec id), so a device's specs run in order in one process and the devices run in parallel.
+	 * `"spec"`: one process per spec, one worker per device: slower (each process pays bun's start,
+	 * the preload and a driver connect), but a spec can never see what the one before left behind and
+	 * the devices share the specs dynamically. With `passes` above 1 the default is `"spec"`.
 	 *
 	 * @default "device"
 	 */
-	isolate?: "device" | "flow" | undefined;
-	/**
-	 * The old spelling of `isolate`: `"single"` is `"device"`, `"per-flow"` is `"flow"`.
-	 *
-	 * @deprecated use `isolate`
-	 */
-	mode?: "per-flow" | "single" | undefined;
+	isolate?: "device" | "spec" | undefined;
 	/**
 	 * What happens to the devices warden booted when the gate passes. `"always"`: shut them down.
 	 * `"idle"`: leave them booted, so the next run skips the 10-30 s boot, and let `warden gc` shut
@@ -438,15 +427,15 @@ export interface WardenE2eSuite {
 	 */
 	shutdown?: "always" | "idle" | undefined;
 	/**
-	 * Per flow: a spec process still going after this many milliseconds for each flow it runs (one
-	 * flow, or a device's share of them with `isolate: "device"`) is killed (screenshot first) and
+	 * Per spec: a spec process still going after this many milliseconds for each spec it runs (one
+	 * spec, or a device's share of them with `isolate: "device"`) is killed (screenshot first) and
 	 * counts as failed.
 	 *
 	 * @default 600000 (10 min)
 	 */
 	jobTimeoutMs?: number | undefined;
 	/**
-	 * Device legs: each claims its own pool and runs the selected flows, concurrently with the others.
+	 * Device legs: each claims its own pool and runs the selected specs, concurrently with the others.
 	 * Replaces `profile` / `count`.
 	 *
 	 * @example [{ profile: "iphone-17", count: 2 }, { profile: "ipad-pro-11-inch-m5", default: false, env: { E2E_LAYOUT: "regular" } }]
@@ -471,13 +460,13 @@ export interface WardenE2eSuite {
 	 */
 	base?: string | undefined;
 	/**
-	 * Import hops from an entry that still select a flow.
+	 * Import hops from an entry that still select a spec.
 	 *
 	 * @default unlimited
 	 */
 	maxDepth?: number | undefined;
 	/**
-	 * Globs: a matching change selects every flow (lockfile, native dirs, bundler config…).
+	 * Globs: a matching change selects every spec (lockfile, native dirs, bundler config…).
 	 *
 	 * @default []
 	 * @example ["bun.lock", "apps/mobile/ios/**"]
@@ -490,19 +479,19 @@ export interface WardenE2eSuite {
 	 */
 	ignore?: string[] | undefined;
 	/**
-	 * Flow ids / globs that always run.
+	 * Spec ids / globs that always run.
 	 *
 	 * @default []
 	 */
 	always?: string[] | undefined;
 	/**
-	 * Flow-id globs: only matching flows are ever selected. Lets one `flowsDir` feed several suites.
+	 * Spec-id globs: only matching specs are ever selected. Lets one `specsDir` feed several suites.
 	 *
-	 * @default [] (all flows)
+	 * @default [] (all specs)
 	 */
 	include?: string[] | undefined;
 	/**
-	 * Flow-id globs that are never selected (e.g. flows another suite owns).
+	 * Spec-id globs that are never selected (e.g. specs another suite owns).
 	 *
 	 * @default []
 	 */
@@ -514,26 +503,26 @@ export interface WardenE2eSuite {
 	 */
 	scope?: string[] | undefined;
 	/**
-	 * A counted change that reaches no flow (no `paths` / `entries` / `runAll` match, not `ignore`d):
-	 * `"run-all"` selects every flow, so a new `src/` area never silently runs nothing; `"skip"` selects nothing.
+	 * A counted change that reaches no spec (no `paths` / `entries` / `runAll` match, not `ignore`d):
+	 * `"run-all"` selects every spec, so a new `src/` area never silently runs nothing; `"skip"` selects nothing.
 	 *
 	 * @default "skip"
 	 */
 	unmatched?: "run-all" | "skip" | undefined;
 	/**
-	 * Flows with no `entries` / `paths`: run every time, or only via `runAll` / `always`.
+	 * Specs with no `entries` / `paths`: run every time, or only via `runAll` / `always`.
 	 *
 	 * @default "run"
 	 */
 	unmapped?: "run" | "skip" | undefined;
 	/**
-	 * Consecutive green runs a flow needs on the same device.
+	 * Consecutive green runs a spec needs on the same device.
 	 *
 	 * @default 1
 	 */
 	passes?: number | undefined;
 	/**
-	 * Re-run a failed flow up to N times.
+	 * Re-run a failed spec up to N times.
 	 *
 	 * @default 0
 	 */
@@ -548,7 +537,7 @@ export interface WardenE2eSuite {
 	ports?: string[] | undefined;
 	/** Added to the serve, setup and spec env. */
 	env?: Record<string, string> | undefined;
-	/** `sh -c` once per run before the flows, in its own process group; killed at the end. `{port}` / `{metroUrl}` are substituted. `--serve` overrides. */
+	/** `sh -c` once per run before the specs, in its own process group; killed at the end. `{port}` / `{metroUrl}` are substituted. `--serve` overrides. */
 	serve?: string | undefined;
 	/** Wait for `http://…`, `tcp:PORT` or `file:PATH` (relative to the project root) before starting; `{port}` is the first leased port (`"tcp:{port}"`). Needs `serve`. */
 	serveReady?: string | undefined;
@@ -559,19 +548,19 @@ export interface WardenE2eSuite {
 	 */
 	serveTimeout?: string | undefined;
 	/**
-	 * `sh -c` once per leased device, after the app install and before that device's first flow
-	 * (`{udid}` is substituted). A non-zero exit drops that device; its flows go to the others.
+	 * `sh -c` once per leased device, after the app install and before that device's first spec
+	 * (`{udid}` is substituted). A non-zero exit drops that device; its specs go to the others.
 	 */
 	setup?: string | undefined;
 	/**
-	 * iOS only: switch off the simulator daemons flows never need on each leased device, before `setup`.
+	 * iOS only: switch off the simulator daemons specs never need on each leased device, before `setup`.
 	 * Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"`.
 	 */
 	slim?: boolean | undefined;
 	/** Removed: renamed `warmDrivers`. */
 	warmRunners?: undefined;
 	/**
-	 * iOS: before the flows, start every leased device's automation helper at once (and take one
+	 * iOS: before the specs, start every leased device's automation helper at once (and take one
 	 * snapshot), so the first spec on each device does not pay the cold start. A failed warm-up only warns.
 	 *
 	 * @default true
@@ -583,18 +572,19 @@ export interface WardenE2eSuite {
 	 */
 	headless?: boolean | undefined;
 	/**
-	 * Default `required` for flows that don't set it.
+	 * Default `required` for specs that don't set it.
 	 *
 	 * @default true
 	 */
 	required?: boolean | undefined;
 	/**
-	 * Per flow id or glob.
+	 * Per spec id or glob: what each spec covers and whether it gates. Not to be confused with
+	 * {@link WardenE2eSuite.spec}, which sets how every spec runs.
 	 *
 	 * @default {}
 	 * @example { "qa-login": { entries: ["apps/mobile/src/app/(auth)/login.tsx"] }, "store-*": { required: false } }
 	 */
-	flows?: Record<string, WardenE2eFlow> | undefined;
+	specs?: Record<string, WardenE2eSpecEntry> | undefined;
 }
 
 /**

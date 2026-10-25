@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 import { fumadocsMdx } from "fumadocs-mdx/vite";
 import { nitro } from "nitro/vite";
 import { defineConfig } from "vite";
-import { routeRules } from "./src/lib/http-cache";
+import { routeRules } from "./src/lib/http-cache.ts";
 
 /**
  * `PORT` lets `warden port claim` hand out the port; 3210 otherwise. `strictPort`

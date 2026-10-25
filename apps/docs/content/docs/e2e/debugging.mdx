@@ -1,0 +1,111 @@
+---
+title: Debugging
+description: Where a failed e2e run leaves its evidence, how to read it, and the fix for each common failure.
+icon: Bug
+---
+
+When a spec fails, read the evidence in this order: the run's stdout, `screen-at-failure.txt`, `failure.png`, `trace.jsonl`, then the logs. A missing element is fixed in the component, not with retries.
+
+```bash
+warden e2e example-dev --specs sign-in --json | jq '.specs[] | select(.verdict != "passed")'
+```
+
+## Batch directory
+
+Every run writes under a batch directory, `$WARDEN_HOME/batches/<id>` (the `--record` directory when you pass one; `WARDEN_HOME` defaults to `~/.warden`; spec processes get it as `WARDEN_BATCH_DIR`).
+
+<Files>
+  <Folder name="<batchDir>" defaultOpen>
+    <File name="e2e-report.json" />
+    <File name="metro.log" />
+    <Folder name="logs" defaultOpen>
+      <File name="<worker>-<seq>-<job>.log" />
+      <File name="warm-<worker>.log" />
+      <File name="setup-<worker>.log" />
+    </Folder>
+    <Folder name="e2e" defaultOpen>
+      <Folder name="<worker>-<seq>" defaultOpen>
+        <File name="results.jsonl" />
+        <Folder name="<spec>/<test-title>-<hash>" defaultOpen>
+          <File name="failure.png" />
+          <File name="screen-at-failure.txt" />
+          <File name="trace.jsonl" />
+          <File name="console.jsonl" />
+          <File name="network.jsonl" />
+          <Folder name="screenshots" />
+        </Folder>
+      </Folder>
+    </Folder>
+  </Folder>
+</Files>
+
+| What | Where |
+|---|---|
+| verdict per spec, and per test (`tests[]`) | stdout, and `e2e-report.json` (`--json` prints it, `--report <file>` copies it) |
+| every test's status, duration and error | `e2e/<worker>-<seq>/results.jsonl` (`WARDEN_E2E_OUT`) |
+| a failed test's evidence | `e2e/<worker>-<seq>/<spec>/<test>-<hash>/` |
+| a spec process's output | `logs/<worker>-<seq>-<job>.log` (`<job>` is `shard-<k>` under device isolation, the spec id with `isolate: "spec"`), screenshot next to it |
+| Metro's output | `metro.log` |
+| a device's driver warm-up | `logs/warm-<worker>.log` |
+| a device's `setup` command | `logs/setup-<worker>.log` |
+
+## The evidence files
+
+| File | Contents |
+|---|---|
+| `failure.png` | the device at the moment of failure |
+| `screen-at-failure.txt` | the full accessibility tree, with testIDs, labels and values. Read this first: a query that found nothing is almost always an element that is missing or not `accessible` there |
+| `trace.jsonl` | every step and every device / driver / locator-read call (`span` lines), with timings. Written for every test attempt, passed or not |
+| `console.jsonl`, `network.jsonl` | dev client only, when devtools were attached: the JS console and network requests |
+| `screenshots/` | `device.screenshot(name)` images as `NNN-name.png`, from any test |
+| `results.jsonl` | one line per finished test, skipped ones included: `file`, `title[]`, `status` (`passed`, `failed`, `skipped`, `timed-out`), `durationMs`, `startedAt`, `error` (`message`, `code`, `stack`), `artifacts`, `device` (`udid`, `platform`, `name`). With retries only the final attempt is written |
+| `e2e-report.json` | each spec's `verdict`, `attempts` and `tests[]` (`title`, `status`, `durationMs`, `error`, `artifacts`), a `device`, `log` and `screenshot` for a spec whose last attempt failed; top-level `suite`, `platform`, `base`, `isolate`, `headless`, `batchDir`, `only` and each device's `setup` |
+
+`<spec>` is the spec's path under the suite's `specsDir` without `.e2e.ts`; `<test-title>` is a slug of the describe and test titles. On a later pass the worker directory is `<worker>-<seq>-p<pass>`. A by-hand run writes under `WARDEN_E2E_OUT` (default `.warden-e2e/<timestamp>` in the current directory).
+
+A spec fails when any of its tests failed or timed out, or its process exited non-zero. When a process wrote no `results.jsonl` at all (a crash before the first test), the verdict falls back to the exit code with a warning. Under `CI`, a `test.only` left in a spec fails the run and is listed under `only`.
+
+A spec's error is an `E2eError` with a `code`: `LOCATOR_NOT_FOUND`, `LOCATOR_AMBIGUOUS`, `INVALID_LOCATOR`, `ACTION_FAILED`, `NOT_ACTIONABLE`, `TIMEOUT`, `INVALID_ARGUMENT`, `ASSERTION`, `SESSION`, `DRIVER`. A locator failure carries the screen as text.
+
+## Fix a missing testID in the component
+
+"Locator not found" means the view is not in the accessibility tree under that id. Specs read that tree, and a `testID` is only exposed when the native view is `accessible`. In a dev client, a plain `getByTestId` that finds nothing there falls back to the React tree, but only `tap()` and `boundingBox()` work on such a component; anything else fails with `NOT_ACTIONABLE`. Open `screen-at-failure.txt`, confirm the id is absent, and add `accessible` and `testID` to the component. Retries and longer timeouts only hide it. By hand, `warden ui snapshot -i` and `warden ui tree` show the same tree.
+
+## Common failures
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| First tap after launch or navigation ignored | The view is in the accessibility tree before it takes touches | `tap({ until: <what the tap opens> })` re-sends it |
+| testIDs vanish 1-6 s after sign-in; keys go nowhere | iOS "Save Password?" sheet | In the app under the e2e flag: `autoComplete="off"` and `textContentType="oneTimeCode"`. In the spec: `test.use({ systemAlerts: "dismiss" })` or `device.alert("dismiss")`. Never `defaults write` |
+| Dropped characters | Keys sent while focus was still moving to the field | Never lower `WARDEN_SIMD_PACE_MS` / `WARDEN_SIMD_HOLD_MS`. `fill` and spec `type` / `press` wait for the field to report `focused`, and `fill` verifies and retries |
+| App back at Welcome mid-test | Native crash | Read `~/Library/Logs/DiagnosticReports/<app>-*.ips` |
+| Deep link ignored | Opened while the app was settling | `device.openLink(url, { until })` |
+| `port <p> is served by <dir>, not this worktree` | Another checkout's Metro owns the port | Stop that Metro or let warden pick another port. Never start Metro by hand |
+| `device_mismatch` | Two devices on one Metro | The runner pins by `WARDEN_DEVICE_NAME`; set it by hand when running manually |
+| Tests run stale JS on a Release build | Native-only fingerprint | Use `native+js` with `jsInputs` in the project's `fingerprint` |
+| Preload exits 2 with a version message | `warden` and `@delacour/warden-e2e` are lock-step | `bun add -d @delacour/warden-e2e@<warden version>` |
+| `no driver factory configured` | `bun test` run without the preload | Add `--preload @delacour/warden-e2e/preload`, or `preload` under `[test]` in `bunfig.toml` |
+| Form submitted by `hideKeyboard` | iOS presses Enter | `device.settle()` or tap elsewhere |
+| A press right after `fill` on Android is lost | The app was still taking the typed text in | `device.settle()` before the press |
+| `E_AX_UNAVAILABLE` right after launch | Transient | Built-in 5x300 ms retry. `simctl launch` can take over 30 s under load |
+| `E_AX_UNAVAILABLE`: "another UiAutomation client holds `<serial>`" | Android allows one UiAutomation connection per device and another tool (Maestro, `am instrument`, `uiautomator`) has it | Stop the process named in the message, or release the device. warden kills only its own stale `warden-uiad` |
+| Exit 3 `engine_unavailable` | No `warden-simd` helper | `warden doctor --fetch-helper` (Intel Mac: no helper) |
+| `pinch` / `rotate` / `path` fails `E_UNSUPPORTED`, `reason: helper_outdated` (iOS) | `warden-simd` predates the gesture op | `warden ui close --udid <udid>`, or rebuild: `bun run --cwd packages/e2e native:build` |
+| Android slow or unsupported | `uiautomator dump` in use (the `warden-uiad` server is off or could not start); no launch args | Deep link instead of `--metro`; ASCII text only without the server. `WARDEN_E2E_DEBUG=1` logs `uiad:` lines; `WARDEN_ANDROID_UIAD=0` forces the dump |
+| Settle takes about 2.5 s | Two helpers on one simulator | `warden ui close --udid <udid>`, or kill the stale `warden-simd --udid <udid>` |
+| Exit 124 | A job exceeded `jobTimeoutMs` per spec and was killed | Find the hang in `trace.jsonl`; raise `jobTimeoutMs` only if the spec is genuinely long |
+
+`WARDEN_E2E_DEBUG=1` logs every helper call with its duration. `warden doctor` shows helper health; `degraded` means the accessibility guest is present but its last read failed, and the next good read clears it.
+
+## Keep a device out of the pool
+
+```bash
+warden release <leaseId> --bad "<why>"
+```
+
+A device that keeps failing is quarantined; `warden sim unquarantine <udid|serial>` clears it. A failed run leaves its devices booted so you can inspect them; `warden release --mine --shutdown` when done.
+
+<Cards>
+<Card title="Write specs" href="/docs/e2e/specs" />
+<Card title="CI" href="/docs/e2e/ci" />
+</Cards>

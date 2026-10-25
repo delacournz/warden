@@ -72,7 +72,7 @@ export type ConfigSource = "repo" | "overlay" | "auto";
 
 /** A parsed warden config and where it was found. */
 export type FoundConfig = {
-	/** the config's own dir: what a config function sees as `configDir`, and what suite `flowsDir`s resolve against */
+	/** the config's own dir: what a config function sees as `configDir`, and what suite `specsDir`s resolve against */
 	dir: string;
 	config: ParsedWardenConfig;
 	source: Exclude<ConfigSource, "auto">;

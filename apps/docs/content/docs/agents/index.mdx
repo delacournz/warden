@@ -1,0 +1,76 @@
+---
+title: The agent loop
+description: The loop a coding agent follows to claim a simulator, look at the screen, act, verify and release, and when to use warden ui or a spec.
+icon: Repeat
+---
+
+An agent that works on a mobile app follows one loop: claim a device, look, act, verify, release. Use this page to see the loop end to end and to choose between `warden ui` and a spec.
+
+```bash
+warden claim ios --json                       # claim: keep the udid
+warden ui snapshot -i --udid $UDID            # look: @eN lines
+warden ui press id=todo-add --settle --udid $UDID   # act: print what changed
+warden ui wait id=todos-screen --udid $UDID   # verify
+warden ui close --release --udid $UDID        # release
+```
+
+## The loop
+
+<Steps>
+<Step>
+
+### Claim
+
+Your agent runs `warden claim ios --json` (or `android`) and keeps the returned `udid` (Android: the serial). It passes that id on every later call. It never picks a device from `simctl list` or `adb devices`. If the host is full the claim waits in the boot queue (default `--wait 30m`); it does not retry or raise `--max` to jump the queue.
+
+</Step>
+<Step>
+
+### Look
+
+`warden ui snapshot -i` prints the interactive elements and anything with a `testID` as `@eN` lines. The refs are valid until the next snapshot.
+
+</Step>
+<Step>
+
+### Act
+
+`press`, `fill`, `scroll` and `gesture` take a ref, a selector (`id=todo-add`) or coordinates. Selectors outlive screen changes; refs do not. `--settle` waits for a quiet screen and prints what changed.
+
+</Step>
+<Step>
+
+### Verify
+
+`wait`, `is` and `get` poll the live screen. A screenshot is not verification. A failing check exits non-zero with a code and a hint.
+
+</Step>
+<Step>
+
+### Release
+
+`warden ui close --release` stops the device's helper and frees the lease. Without it a bare claim expires after 5 minutes. Every `warden ui` call heartbeats the lease, so a device you keep driving stays yours.
+
+</Step>
+</Steps>
+
+## `warden ui` or a spec
+
+| You want to | Use |
+|---|---|
+| explore, reproduce a bug, find selectors, prove a change once | [`warden ui`](/docs/agents/ui) |
+| a check that must keep passing | a [spec](/docs/e2e/specs) run by `warden e2e` |
+| keep what you just did by hand | a [spec](/docs/e2e/specs) with the same selectors |
+
+Both run on the same driver, so a selector that works in `warden ui` works in a spec.
+
+## Safety
+
+`warden ui` checks the lease on every call, inside the process. A device another session leased exits 2 (`device_foreign`); a device nobody leased exits 2 unless you pass `--claim`. Nothing else intercepts `simctl` or `adb`, so the agent must claim first. The full rules are in [Agent rules](/docs/agents/rules).
+
+<Cards>
+  <Card title="warden ui" href="/docs/agents/ui" description="Every command, selector and exit code." />
+  <Card title="warden dev" href="/docs/agents/dev" description="A dev client and Metro per worktree." />
+  <Card title="Write specs" href="/docs/e2e/specs" description="Keep a check as a test." />
+  <Card title="Agent rules" href="/docs/agents/rules" description="Sharing, subagents, hooks." />
+</Cards>

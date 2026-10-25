@@ -1,34 +1,57 @@
 ---
-title: Introduction
-description: Machine-wide leasing of iOS simulators, Android emulators, ports and native app builds.
+title: What is warden
+description: warden is a CLI and e2e framework that lets coding agents claim a simulator, drive the app, save what they verified as a test, and run the suite in parallel.
 icon: ShieldCheck
 ---
 
-Several agents, Orca worktrees, repos and humans share one Mac's simulators, emulators and dev-server ports. Without coordination, two worktrees running e2e at once grab the same sims, an agent taps on your Simulator.app, and a Metro server lands on a port another one already holds.
+`warden` is an open-source CLI plus e2e framework for iOS, Android and Expo apps. Use it when coding agents, worktrees and CI share one Mac and each needs its own simulator.
 
-`warden` is one global CLI that owns a **lease registry**. A device or port leased by one owner is never handed to another.
+```bash
+warden claim ios --json                  # your agent leases a simulator
+warden ui snapshot -i --udid $UDID       # reads the screen as text
+warden ui press id=todo-add --udid $UDID # taps, types, waits
+warden e2e                               # the saved spec runs on N leased devices
+```
+
+## The loop
+
+1. **Claim.** Your agent leases a simulator or emulator no one else holds.
+2. **Drive.** It runs the app with [`warden dev`](/docs/agents/dev) and drives it with [`warden ui`](/docs/agents/ui): snapshot, tap, type, wait.
+3. **Verify.** It checks the result with `wait` / `is` / `get`, not a screenshot.
+4. **Keep.** It writes what it verified as a `*.e2e.ts` [spec](/docs/e2e/specs) with `@delacour/warden-e2e`, using the same selectors it drove by hand.
+5. **Scale.** [`warden e2e`](/docs/e2e) runs the suite across N leased devices in parallel.
+
+Underneath, every device, port and app build on the Mac is leased machine-wide. One sqlite registry (`~/.warden/warden.db`) is shared by every agent session, worktree, repo, CI job and shell. Two claims at the same instant are serialised with `BEGIN IMMEDIATE`; there are no lockfiles. See [How warden works](/docs/concepts).
 
 ## What it does
 
-- **Leases** live in one sqlite db (`~/.warden/warden.db`, WAL). Claims run under `BEGIN IMMEDIATE`, which serialises them across processes — no lockfiles.
-- **Owners** are a Claude/Codex session, CI, or a user shell. The repo and worktree are recorded for messages.
-- **Liveness**: a lease stays alive while its pid is alive or its heartbeat is within the TTL (default 30 min; a bare `warden claim` by an agent gets 5 min, so only wrappers or `warden heartbeat` hold a device longer). Stale leases are reclaimed on every claim and by `warden gc`.
-- **Devices**: warden creates and reuses its own `warden-<profile>-N` simulators and launches `-read-only` emulators. It never allocates, shuts down or erases a device it didn't create, unless you pass `--adopt`.
-- **Builds**: Expo fingerprint → installed → local cache → EAS → local build. All worktrees of a repo share one cache.
-- **Drive and test**: `warden ui` drives a leased device by hand; `*.e2e.ts` specs run with `warden e2e`, and only the flows a change touches.
+- Leases iOS simulators, Android emulators and TCP ports to one owner at a time.
+- Drives a leased device from the command line with `warden ui`.
+- Runs `*.e2e.ts` specs on the same driver, in parallel, with failure artifacts.
+- Picks the specs a git diff needs with `warden affected`.
+- Reuses native builds across worktrees by Expo fingerprint (installed, cache, EAS, local build).
+- Queues device boots by host RAM and CPU.
+- Never shuts down, erases or installs on a device it did not create or lease.
 
-## 30-second tour
+## Who it is for
 
-```bash
-warden claim ios --json          # lease a booted, ready sim
-warden ls                        # who holds what
-warden release --mine --shutdown # done: release + stop sims warden booted
-```
+- **Developers using coding agents** (Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, OpenCode, Windsurf, Zed) who want the agent to prove its UI change on a real simulator.
+- **Teams running several agents or worktrees on one Mac**, where two sessions would otherwise grab the same simulator or Metro port.
+- **CI** that wants an e2e suite fanned out over several simulators.
+
+## Works with
+
+The skill installs into any agent the [`skills`](https://github.com/vercel-labs/skills) CLI supports. Claude Code and Codex also get a SessionEnd hook that releases what a session leased. See [Set up your agent](/docs/agent-setup).
+
+## Limits
+
+- iOS needs macOS with Xcode. Android needs the Android SDK (`adb`, `emulator`).
+- A Linux binary exists. Windows is not supported.
+- The accessibility tree exposes only accessible views: mark a view `accessible` and give it a `testID` to make it targetable.
 
 <Cards>
-  <Card title="Installation" href="/docs/installation" />
-  <Card title="Concepts" href="/docs/concepts" />
-  <Card title="Agents" href="/docs/guides/agents" />
-  <Card title="App builds" href="/docs/guides/app-builds" />
-  <Card title="CLI reference" href="/docs/reference/cli" />
+  <Card title="Quickstart" href="/docs/quickstart" description="Install, init, dev, verify, test." />
+  <Card title="Set up your agent" href="/docs/agent-setup" description="Skill, hooks, and a prompt to paste." />
+  <Card title="Agents drive devices" href="/docs/agents" description="The claim, look, act, verify loop." />
+  <Card title="e2e tests" href="/docs/e2e" description="Specs, suites, parallel runs." />
 </Cards>

@@ -12,7 +12,7 @@ export type FixtureSession = {
 	readonly out: string;
 	/** the running attempt's deadline / cancel signal; every driver call honours it */
 	readonly signal?: AbortSignal;
-	/** `<out>/<flowId>/<title-slug>-<hash6>` of the running attempt */
+	/** `<out>/<specId>/<title-slug>-<hash6>` of the running attempt */
 	readonly attemptDir?: string;
 	/** the running attempt's `trace.jsonl` */
 	readonly trace?: { write(event: TraceEvent): void };

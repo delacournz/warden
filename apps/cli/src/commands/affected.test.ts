@@ -25,7 +25,7 @@ async function run(argv: string[]): Promise<{ code: number; ctx: TestContext }> 
 }
 
 describe("warden affected", () => {
-	test("one flow id per line from the git diff", async () => {
+	test("one spec id per line from the git diff", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		const { code, ctx } = await run([]);
 		expect(code).toBe(0);
@@ -51,7 +51,7 @@ describe("warden affected", () => {
 		const { code, ctx } = await run(["mobile", "--files", "src/chat/lazy.tsx", "--explain"]);
 		expect(code).toBe(0);
 		const text = ctx.stdout.join("\n");
-		expect(text).toContain("ios  1 of 2 flow(s)");
+		expect(text).toContain("ios  1 of 2 spec(s)");
 		expect(text).toContain("● chats  required");
 		expect(text).toContain("src/app/(app)/chats.tsx → src/chat/list.tsx → src/chat/lazy.tsx");
 		expect(text).toContain("skipped: settings");
@@ -64,10 +64,10 @@ describe("warden affected", () => {
 		expect(doc.platforms[0].selected.map((f: { id: string }) => f.id)).toEqual(["chats"]);
 	});
 
-	test("--strict exits 3 when a change reaches no flow", async () => {
+	test("--strict exits 3 when a change reaches no spec", async () => {
 		const { code, ctx } = await run(["--files", "src/unused.ts", "--strict", "--explain"]);
 		expect(code).toBe(3);
-		expect(ctx.stdout.join("\n")).toContain("reached no flow: src/unused.ts");
+		expect(ctx.stdout.join("\n")).toContain("reached no spec: src/unused.ts");
 	});
 
 	test("bad platform / unknown suite → 1", async () => {

@@ -146,7 +146,7 @@ So when `warden claim ios` needs a **new** pool device, it `simctl clone`s it fr
 ```bash
 warden init --bundle-id com.example.app   # bundle id → app.json, warden.config.ts, e2e/smoke.e2e.ts
 warden dev                                # lease a sim, build / reuse the dev client, own Metro port, open the app
-warden e2e --count 3                      # the e2e/ flows on the dev client, spread over 3 leased sims
+warden e2e --count 3                      # the e2e/ specs on the dev client, spread over 3 leased sims
 ```
 
 - `warden dev [platform]` defaults to iOS. Every run leases its own Metro port (`8081:100`), so agents in different worktrees iterate side by side. Before leasing anything it checks for the bundle id and `expo-dev-client` and prints the fix.
@@ -164,7 +164,7 @@ warden run ios --count 2 --port 8091:20 --port 3208:20 [--app] -- bun run e2e
 ### Batches: `warden batch`
 
 ```bash
-ls flows | warden batch ios --count 5 --max 5 --port 8091:20 --serve "bun run metro" --serve-ready tcp:8091 --jobs-from - --retry 1 -- bun run e2e:flow {job} --device {udid}
+ls specs | warden batch ios --count 5 --max 5 --port 8091:20 --serve "bun run metro" --serve-ready tcp:8091 --jobs-from - --retry 1 -- bun run e2e:spec {job} --device {udid}
 ```
 
 `warden batch` claims N devices and runs a job queue across them, one worker per device: `{job}`, `{udid}`, `{worker}` and `{seq}` are substituted into the command, which also gets `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_JOB` and `WARDEN_JOB_SEQ`. `--serve` starts a long-lived process (Metro) first and waits for `--serve-ready`. A live grid tracks every device, and `--record <dir>` (iOS) captures each simulator, the grid and a `batch.json` timeline (`scripts/demo/compose.ts` tiles them into one video). It exits 0 only when every job passed.
@@ -179,7 +179,7 @@ export default defineConfig({
       ports: ["8091:20"], app: true, retry: 1,
       env: { E2E_SESSION_FILE: "e2e-artifacts/batch/session.json" },
       serve: "bun scripts/e2e/run-ios.ts --session", serveReady: "file:e2e-artifacts/batch/session.json", serveTimeout: "20m",
-      jobsFrom: { command: "bun scripts/e2e/select-flows.ts --list --offline" },
+      jobsFrom: { command: "bun scripts/e2e/select-specs.ts --list --offline" },
       cmd: ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
     }
   }
@@ -196,15 +196,15 @@ Flags you pass override the preset (commander defaults don't). `--jobs` / `--job
 ### Affected e2e: `warden affected` / `warden e2e`
 
 ```bash
-warden affected mobile --base origin/main --explain   # which flows this branch needs, and why
+warden affected mobile --base origin/main --explain   # which specs this branch needs, and why
 warden e2e mobile --base origin/main --count 2        # run them on leased devices; exit 1 if a required one fails
 ```
 
-An `e2e.<suite>` in `warden.config.ts` maps flow files to the screens they drive (`entries`) and globs (`paths`). Warden takes the git diff against the merge-base, walks each flow's import graph with the TypeScript resolver (tsconfig `paths`, workspace packages, per-platform `.ios` / `.android` files, type-only imports dropped), and runs only the flows a changed file reaches, with `runAll` globs (lockfile, native dirs) selecting everything. `warden e2e` runs them like `warden batch`, each `passes` times, and writes `e2e-report.json`. See the [Affected e2e guide](apps/docs/content/docs/guides/affected-e2e.mdx).
+An `e2e.<suite>` in `warden.config.ts` maps spec files to the screens they drive (`entries`) and globs (`paths`). Warden takes the git diff against the merge-base, walks each spec's import graph with the TypeScript resolver (tsconfig `paths`, workspace packages, per-platform `.ios` / `.android` files, type-only imports dropped), and runs only the specs a changed file reaches, with `runAll` globs (lockfile, native dirs) selecting everything. `warden e2e` runs them like `warden batch`, each `passes` times, and writes `e2e-report.json`. See the [Affected e2e guide](apps/docs/content/docs/e2e/affected.mdx).
 
-Dev-client suites add `metro: {}`: `warden e2e <suite>` then leases a port, starts its own Metro in the project root, waits until that port is proven to serve this checkout (another worktree's Metro on it fails the run instead of being attached to), prewarms the bundle and exports `WARDEN_METRO_URL` / `WARDEN_PORT` to the spec processes. `devices: [{ profile, count, env, default }]` runs several device legs concurrently (`--devices all`), a spec process runs per device over its share of the flows (`isolate: "flow"` runs one per flow), and `jobTimeoutMs` (default 10 min per flow) kills a hung spec process.
+Dev-client suites add `metro: {}`: `warden e2e <suite>` then leases a port, starts its own Metro in the project root, waits until that port is proven to serve this checkout (another worktree's Metro on it fails the run instead of being attached to), prewarms the bundle and exports `WARDEN_METRO_URL` / `WARDEN_PORT` to the spec processes. `devices: [{ profile, count, env, default }]` runs several device legs concurrently (`--devices all`), a spec process runs per device over its share of the specs (`isolate: "spec"` runs one per spec), and `jobTimeoutMs` (default 10 min per spec) kills a hung spec process.
 
-Flows are `*.e2e.ts` specs written with `@delacour/warden-e2e` (`bun add -d @delacour/warden-e2e`, same version as warden) and run by `bun test --preload @delacour/warden-e2e/preload` (or a `bunfig.toml` preload): `test("…", async ({ app, device, screen }) => { await expect(screen.getByTestId("x")).toBeVisible(); })`. `warden e2e` leases the devices, installs the build, sets `WARDEN_UDID` / `WARDEN_BUNDLE_ID` / `WARDEN_LAUNCH_ARGS` and friends, and judges each flow from the spec's `results.jsonl`; `spec: { bundleId, launchArgs, timeout, actionTimeout, assertionTimeout }` on the suite tunes it, `warmDrivers: false` (or `--no-warm`) skips the iOS helper pre-warm. A failed test leaves `failure.png`, `screen-at-failure.txt` and `trace.jsonl` under `<batchDir>/e2e/<worker>-<seq>/`. See the docs guide *Write e2e specs*.
+Specs are `*.e2e.ts` specs written with `@delacour/warden-e2e` (`bun add -d @delacour/warden-e2e`, same version as warden) and run by `bun test --preload @delacour/warden-e2e/preload` (or a `bunfig.toml` preload): `test("…", async ({ app, device, screen }) => { await expect(screen.getByTestId("x")).toBeVisible(); })`. `warden e2e` leases the devices, installs the build, sets `WARDEN_UDID` / `WARDEN_BUNDLE_ID` / `WARDEN_LAUNCH_ARGS` and friends, and judges each spec from the spec's `results.jsonl`; `spec: { bundleId, launchArgs, timeout, actionTimeout, assertionTimeout }` on the suite tunes it, `warmDrivers: false` (or `--no-warm`) skips the iOS helper pre-warm. A failed test leaves `failure.png`, `screen-at-failure.txt` and `trace.jsonl` under `<batchDir>/e2e/<worker>-<seq>/`. See the docs guide *Write specs* (`e2e/specs`).
 
 ### Benchmarks
 
@@ -247,7 +247,7 @@ With no config, warden detects a single project from `app.json` / `app.config.*`
 
 ### Driving a device (agents)
 
-Claim, then pass the device explicitly: `warden claim ios --json` → use the returned `udid` (Android: the serial) on every call. A bare agent claim lasts about 5 min and nothing refreshes it; only `warden dev` / `run` / `batch` / `e2e` or an explicit `warden heartbeat <leaseId>` hold a device longer. For exploration, run `warden dev ios --json` in the background (claims and holds a device + a Metro port, starts a Metro verified to serve this checkout, opens the dev client) and target the `udid` from its first stdout line. Subagents never call `release --mine`: use `release <leaseId>`, or claim with `--label x` and `release --mine --label x`. Look at and drive the device with `warden ui`, an agent CLI over the same driver the specs use: `warden ui open <bundleId> --udid <udid>` → `snapshot -i` (the screen as `@eN` lines) → `press @e3 --settle` / `fill id=email "…"` / `scroll down --until text=Done` → `wait id=todos-screen` / `is` / `get` → `record start <name>` … `record stop`, `replay`, `export --to e2e/<name>.e2e.ts` → `close --release`. It checks the lease on every call (exit 2 on a foreign or missing one; `--claim` leases a device) and `--json` prints one `{ok, …}` document. Selectors: `id=… label=… text=… role=… value=… editable=… nth=…`. Guide: apps/docs `guides/agent-ui`.
+Claim, then pass the device explicitly: `warden claim ios --json` → use the returned `udid` (Android: the serial) on every call. A bare agent claim lasts about 5 min and nothing refreshes it; only `warden dev` / `run` / `batch` / `e2e` or an explicit `warden heartbeat <leaseId>` hold a device longer. For exploration, run `warden dev ios --json` in the background (claims and holds a device + a Metro port, starts a Metro verified to serve this checkout, opens the dev client) and target the `udid` from its first stdout line. Subagents never call `release --mine`: use `release <leaseId>`, or claim with `--label x` and `release --mine --label x`. Look at and drive the device with `warden ui`, an agent CLI over the same driver the specs use: `warden ui open <bundleId> --udid <udid>` → `snapshot -i` (the screen as `@eN` lines) → `press @e3 --settle` / `fill id=email "…"` / `scroll down --until text=Done` → `wait id=todos-screen` / `is` / `get` → `close --release`. It checks the lease on every call (exit 2 on a foreign or missing one; `--claim` leases a device) and `--json` prints one `{ok, …}` document. Selectors: `id=… label=… text=… role=… value=… editable=… nth=…`. Guide: apps/docs `agents/ui`.
 
 ### Claude Code
 

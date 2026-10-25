@@ -21,7 +21,7 @@ const CONTENT = join(HERE, "../content/docs");
 const HOST = new URL(siteUrl).host;
 /** The landing headline already says the first half of `appDescription`; the card carries the rest. */
 const PITCH =
-	"warden leases every simulator, emulator and port to one owner at a time and fans your e2e flows across them.";
+	"Your coding agent gets its own simulator, keeps what it verified as an e2e test, and runs the suite on every simulator at once.";
 
 const require = createRequire(import.meta.url);
 
@@ -31,17 +31,18 @@ async function main() {
 
 	// Static cuts of the site's two faces: the site ships them as variable fonts, which crash
 	// satori's opentype parser, and satori reads WOFF but not WOFF2.
-	const font = (name: string, pkg: string, weight: 400 | 500 | 600) => ({
+	const font = (name: string, pkg: string, weight: 400 | 500 | 600 | 800) => ({
 		name,
 		data: readFileSync(require.resolve(`@fontsource/${pkg}/files/${pkg}-latin-${weight}-normal.woff`)),
 		weight,
 		style: "normal" as const,
 	});
 	const fonts = [
-		font("Onest", "onest", 400),
-		font("Onest", "onest", 500),
-		font("Onest", "onest", 600),
-		font("Red Hat Mono", "red-hat-mono", 400),
+		font("Mona Sans", "mona-sans", 400),
+		font("Mona Sans", "mona-sans", 500),
+		font("Mona Sans", "mona-sans", 600),
+		font("Mona Sans", "mona-sans", 800),
+		font("Martian Mono", "martian-mono", 400),
 	];
 
 	async function write(path: string, element: ReactElement) {

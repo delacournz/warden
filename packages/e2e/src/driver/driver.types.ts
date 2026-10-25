@@ -2,7 +2,7 @@ import type { AsyncResult } from "@delacour/warden-types/result";
 
 /**
  * The device driver contract every layer of warden-e2e builds on: the spec API (`screen`, `device`,
- * `app`), `warden ui`, flows and the devtools facet all talk to a `Driver`. Implementations:
+ * `app`), `warden ui`, specs and the devtools facet all talk to a `Driver`. Implementations:
  * `ios/ios-driver.ts` (warden-simd over NDJSON + `xcrun simctl`) and `android/android-driver.ts`
  * (persistent `adb shell` + uiautomator). `driver.testing.ts` has the scripted FakeDriver for tests.
  *

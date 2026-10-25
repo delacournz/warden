@@ -1,315 +1,239 @@
 ---
 name: warden
-description: Parallel e2e and agent work on one Mac, drawn in warden's own device-hub grammar and proved by a recorded batch run.
+description: The familiar agent dev-tool landing in one wide heavy display voice; flat paper, one ink, one orange accent.
 colors:
-  ground: "#f2f2f7"
-  surface: "#ffffff"
-  fill: "#e5e5ea"
-  ink: "#1c1c1e"
-  ink-2: "#6b6b72"
-  hairline: "#d8d8de"
+  ground: "#f5f4ef"
+  surface: "#fdfcf9"
+  fill: "#e9e7df"
+  ink: "#0d0d0c"
+  ink-2: "#64625b"
+  hairline: "#d8d5cb"
+  accent: "#ff4f1a"
+  accent-text: "#b8360a"
   lease: "#1f7a40"
   lease-ink: "#ffffff"
-  lamp: "#34c759"
-  device-body: "#1c1c1e"
-  device-bezel: "#48484a"
-  device-screen-off: "#0b0b0c"
+  ground-dark: "#0f0f0e"
+  surface-dark: "#171715"
+  fill-dark: "#25241f"
+  ink-dark: "#f3f1ea"
+  ink-2-dark: "#9c998f"
+  hairline-dark: "#302f2a"
+  accent-dark: "#ff6a3d"
+  accent-text-dark: "#ff8a63"
+  lease-dark: "#30d158"
 typography:
   display:
-    fontFamily: "Onest Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2.6rem, 6vw, 4rem)"
-    fontWeight: 600
-    lineHeight: 1.02
+    fontFamily: "Mona Sans Variable, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "hero clamp(2.6rem, 6.4vw, 5.4rem); section clamp(2.2rem, 4.6vw, 3.6rem); feature 1.9rem / 2.3rem at sm"
+    fontWeight: 800
+    lineHeight: "0.95 to 1.02"
     letterSpacing: "-0.035em"
-    fontFeature: "'ss01', 'cv11'"
-  headline:
-    fontFamily: "Onest Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "2.25rem"
-    fontWeight: 600
-    lineHeight: 1.1
-    letterSpacing: "-0.025em"
-  lede:
-    fontFamily: "Onest Variable, ui-sans-serif, system-ui, sans-serif"
+    fontVariation: "'wdth' 125, 'wght' 800"
+  card-title:
+    fontFamily: "Mona Sans Variable, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.25rem"
+    fontWeight: 720
+    lineHeight: 1.25
+    letterSpacing: "-0.02em"
+    fontVariation: "'wdth' 120, 'wght' 720"
+  tagline:
+    fontFamily: "Mona Sans Variable, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.7rem / 2.1rem at sm"
+    fontWeight: 560
+    lineHeight: 1.15
+    letterSpacing: "-0.02em"
+    fontVariation: "'wdth' 110, 'wght' 560"
+  body:
+    fontFamily: "Mona Sans Variable, ui-sans-serif, system-ui, sans-serif"
     fontSize: "1.125rem"
     fontWeight: 400
     lineHeight: 1.625
-  title:
-    fontFamily: "Onest Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1rem"
-    fontWeight: 500
-    lineHeight: 1.5
-  body:
-    fontFamily: "Onest Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.875rem"
+  readout:
+    fontFamily: "Martian Mono Variable, ui-monospace, SF Mono, Menlo, monospace"
+    fontSize: "11px"
     fontWeight: 400
-    lineHeight: 1.43
-  numeral:
-    fontFamily: "Red Hat Mono Variable, ui-monospace, SF Mono, Menlo, monospace"
-    fontSize: "1.5rem"
-    fontWeight: 500
-    letterSpacing: "-0.025em"
-    fontFeature: "'tnum'"
+    letterSpacing: "normal"
+    fontFeature: "tabular-nums"
   command:
-    fontFamily: "Red Hat Mono Variable, ui-monospace, SF Mono, Menlo, monospace"
-    fontSize: "0.875rem"
+    fontFamily: "Martian Mono Variable, ui-monospace, SF Mono, Menlo, monospace"
+    fontSize: "12.5px"
     fontWeight: 400
     lineHeight: 1.625
-    fontFeature: "'tnum'"
-  id:
-    fontFamily: "Red Hat Mono Variable, ui-monospace, SF Mono, Menlo, monospace"
-    fontSize: "0.75rem"
-    fontWeight: 400
-    fontFeature: "'tnum'"
+    fontFeature: "tabular-nums"
 rounded:
-  chip: "6px"
-  control: "8px"
-  well: "12px"
-  group: "14px"
-  stage: "22px"
+  group: "6px"
+  chip: "4px"
   pill: "9999px"
 spacing:
-  gutter: "16px"
-  gutter-sm: "24px"
-  row-y: "12px"
-  row-x: "16px"
-  grid-gap: "24px"
-  block-gap: "32px"
-  hero-top: "40px"
-  hero-top-sm: "48px"
-  section-top: "112px"
-  section-top-sm: "144px"
-  page-max: "1152px"
+  page-gutter: "16px"
+  page-gutter-sm: "24px"
+  section-gap: "112px"
+  section-gap-sm: "144px"
+  block-gap: "40px"
+  row-y: "24px"
 components:
   button-primary:
     backgroundColor: "{colors.ink}"
-    textColor: "{colors.surface}"
+    textColor: "{colors.ground}"
+    typography: "{typography.tagline}"
     rounded: "{rounded.pill}"
     padding: "10px 20px"
-    typography: "{typography.title}"
+  button-primary-hover:
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.ink}"
   button-secondary:
+    backgroundColor: "transparent"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.pill}"
+    padding: "10px 20px"
+  sheet:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.pill}"
-    padding: "10px 20px"
-  button-secondary-hover:
-    backgroundColor: "{colors.fill}"
-  button-icon:
-    textColor: "{colors.ink-2}"
-    rounded: "{rounded.control}"
-    size: "32px"
-  button-icon-hover:
-    backgroundColor: "{colors.fill}"
+    rounded: "{rounded.group}"
+  command-bar:
+    backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-  tab:
+    typography: "{typography.command}"
+    rounded: "{rounded.group}"
+    padding: "6px 6px 6px 16px"
+  manager-tab:
+    backgroundColor: "transparent"
     textColor: "{colors.ink-2}"
     rounded: "{rounded.pill}"
     padding: "4px 12px"
-    typography: "{typography.id}"
-  tab-selected:
+  manager-tab-selected:
     backgroundColor: "{colors.fill}"
     textColor: "{colors.ink}"
-  grouped-list:
-    backgroundColor: "{colors.surface}"
-    rounded: "{rounded.group}"
-  grouped-row:
+  inline-code:
+    backgroundColor: "{colors.fill}"
     textColor: "{colors.ink}"
-    padding: "12px 16px"
-  code-group:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.group}"
-    padding: "20px"
-    typography: "{typography.command}"
-  install-step:
-    backgroundColor: "{colors.surface}"
-    rounded: "{rounded.group}"
-    padding: "16px"
-  video-frame:
-    backgroundColor: "{colors.surface}"
-    rounded: "{rounded.group}"
-  stage:
-    backgroundColor: "{colors.surface}"
-    rounded: "{rounded.stage}"
-    padding: "32px"
-  copy-command:
-    backgroundColor: "{colors.ground}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.well}"
-    padding: "6px 6px 6px 16px"
-    typography: "{typography.command}"
-  tag:
-    backgroundColor: "{colors.ground}"
-    textColor: "{colors.ink-2}"
     rounded: "{rounded.chip}"
-    padding: "2px 8px"
-    typography: "{typography.id}"
+    padding: "2px 4px"
 ---
 
 # Design System: warden
 
 ## Overview
 
-**Creative North Star: "The Parallel Device Hub"**
+**Creative North Star: "One Voice, Familiar Frame"**
 
-warden's site is drawn in the system-UI grammar its readers stare at all day in Xcode and Settings: a grouped gray ground, white (or near-black) inset groups, hairline separators that start after the leading glyph, and anything a machine prints set in mono. The hub's argument is now parallelism. The first thing on the page is not a drawing of a device but a real recording: one `warden batch` run fanning 37 Salient e2e flows across five leased iPhone 17 simulators in 3m25s, with the live grid underneath. The page shows the suite being split, then explains the mechanism in the same grouped rows and mono ids the CLI uses.
+The landing follows the familiar agent dev-tool frame: a centered hero with a pill, headline, one-sentence lede, install command and two buttons; the recorded run; a centered "Works with" row of agent marks; the loop as three alternating feature blocks (copy beside a working sample); the lease rules as cards; the first prompt; use-case cards; FAQ; a closing install sheet. What makes it warden's is one display voice: Mona Sans at wdth 125 / wght 800 with tight tracking on every heading, on flat paper with one ink and one orange. Martian Mono at 11-12.5px carries whatever a machine prints.
 
-The world is ink and system gray. One saturated colour exists, green, and it means a lease or a pass. On the page chrome it is spent almost nowhere: the lamp in the warden mark, the selection tint, and the docs' mapped success state. Inside the hero recording it marks leased simulators' finished flows and the pass counter. Density is calm: generous space above every section, content in rounded groups, nothing decorative between them. Depth is tonal, never shadowed. The docs chrome (Fumadocs) is re-pointed at the same tokens, so reference pages sit in the same world.
-
-The build refuses the dark terminal hero over a feature-card grid, and it refuses adjective copy: every claim on the page is a mechanism or a measurement.
+The docs (Fumadocs) wear the same tokens so the chrome is one world. Docs pages are quiet prose on the same paper.
 
 **Key Characteristics:**
-- Grouped gray ground with inset surface groups, light and dark.
-- Hairline separators, never borders around groups.
-- A real recorded batch run is the hero image; drawn geometry covers the rest (the warden mark, the 404 slot). No stock photography, no marketing screenshots.
-- Onest for voice, Red Hat Mono for everything a machine prints (commands, ids, flags, durations, counts).
-- One colour, green, for leased or passed. Shape and text carry state; colour only confirms it.
-- Tonal layering instead of shadows.
-- One authored motion moment: the hero recording.
+- One display voice (wide, heavy) for every heading; no condensed or light display cuts.
+- Familiar, centered section rhythm: heading + one plain sentence, then content.
+- Flat everywhere: hairlines and tonal sheets, no shadows.
+- One accent, used large (the headline's last words, the parallel bar, the lamp) and nowhere small.
+- Mono is for commands, ids and readouts only, never for sentences.
+- Light and dark are the same system on warm paper / warm ink.
 
 ## Colors
 
-A system-gray neutral ladder with one green that means "leased" or "passed".
+Warm paper and warm ink with a single saturated foundry orange. Dark mode keeps the same roles on near-black with a lifted accent. Values are the Tailwind `@theme` tokens in `src/styles/app.css`; dark values override under `.dark` (class toggle, not OS).
 
 ### Primary
-- **Lease Green** (`lease`): the deep, text-safe green. Fumadocs' `success` colour. In dark mode it becomes system green (#30d158) with black text (`lease-ink` #000000). The hero recording uses the dark value for its pass labels and counter.
-- **Lamp Green** (`lamp`): the bright status-lamp green. Lights the dot in the warden mark and favicon, and tints text selection (32% mix). In dark mode it matches Lease Green (#30d158).
+- **Foundry Orange** (accent `#ff4f1a`, dark `#ff6a3d`): the hero's "coding agents.", the accelerated-run bar and time, the caret, text selection tint, the lamp in the warden mark, the closing period of the wordmark, and the primary button hover. About 3.2:1 on paper, so it is for large marks only.
+- **Orange Text** (accent-text `#b8360a`, dark `#ff8a63`): the only orange allowed at small sizes (+hook tags, FAQ hover). Passes body contrast.
 
 ### Neutral
-- **Grouped Gray** (`ground`): the page ground, and the inner fill of wells inside a group (copy command, tag, chart track). Dark: #000000.
-- **Group White** (`surface`): every inset group, code group, install step, video frame, stage and table. Dark: #1c1c1e.
-- **System Fill** (`fill`): the selected package-manager tab, hover fill for secondary and icon controls, the active sidebar row, the inline code chip. Dark: #2c2c2e.
-- **Ink** (`ink`): primary text, the hero lede, the second line of the hero headline, primary button fill, solid bars in the boot chart, the focus ring. Dark: #f5f5f7.
-- **Secondary Ink** (`ink-2`): the first line of the hero headline, section ledes, row details, captions, tags, unselected tabs, the `$ ` prompt, code comments. Dark: #98989f.
-- **Hairline** (`hairline`): row separators, section and footer rules, link underlines at rest, the scrollbar thumb. Dark: #38383a.
-
-### Device Material
-- **Device Body / Bezel / Screen Off** (`device-body`, `device-bezel`, `device-screen-off`): fixed dark hardware values inside the drawn `DeviceFrame` only, now used by the 404 slot. Never page colours.
-
-### Recorded Material
-The hero recording is composed from the dark tokens in both themes: Ground (#000000) behind the phones, Surface (#1c1c1e) for the rounded TUI panel, Ink and Secondary Ink for labels, green for passes and a red (#ff453a) reserved for failures. Two hues on screen are not page colours: the TUI's cyan progress bars (the CLI's own ANSI cyan, #64d2ff) and the Salient app's own interface (navy and yellow) inside each phone.
+- **Paper** (ground `#f5f4ef`, dark `#0f0f0e`): page and docs background.
+- **Sheet** (surface `#fdfcf9`, dark `#171715`): code plates, command bars, run chart, popovers, docs cards; one step off the ground.
+- **Fill** (`#e9e7df`, dark `#25241f`): inline-code chips, selected tab, active sidebar row, bar tracks, hover.
+- **Ink** (`#0d0d0c`, dark `#f3f1ea`): all primary text, primary button, focus ring.
+- **Ink 2** (`#64625b`, dark `#9c998f`): ledes, captions, readouts, placeholder-weight text.
+- **Hairline** (`#d8d5cb`, dark `#302f2a`): every rule, sheet border and table row divider.
+- **Lease Green** (`#1f7a40`, dark `#30d158`): docs success state only (Fumadocs `--color-fd-success`); absent from the landing.
 
 ### Named Rules
-**The One Lamp Rule.** Green appears only where something is leased or has passed. No links, headings, charts or decoration are green. If a new page element wants colour and it is not a lease or a pass, it is ink.
-
-**The Recorded Material Exception.** Colour inside a recording belongs to what was recorded: the app under test and the CLI's terminal output. The video's own overlay keeps the One Lamp Rule (green only on ✓ flow labels, ✓ counts and "37/37 passed"; everything else ink or gray). The cyan TUI bars and the app's yellow are recorded material, not page colour, and the page never lifts them into its own chrome.
-
-**The Re-pointed Chrome Rule.** Fumadocs' `--color-fd-*` tokens are mapped onto the hub palette. Docs pages never introduce their own neutrals.
+**The One Orange Rule.** Orange appears on large marks or not at all; small text that needs orange uses accent-text. Per screen it is one display word plus its echoes, never a second hue.
+**The Paper Rule.** Surfaces differ by one tonal step (ground, surface, fill) separated by hairlines. No gradients, no tinted backdrops.
 
 ## Typography
 
-**Display Font:** Onest Variable (with ui-sans-serif, system-ui)
-**Mono Font:** Red Hat Mono Variable (with ui-monospace, SF Mono, Menlo)
+**Display / Body Font:** Mona Sans Variable (`@fontsource-variable/mona-sans/wdth.css`, wdth + wght axes) with ui-sans-serif, system-ui.
+**Label / Mono Font:** Martian Mono Variable with ui-monospace, SF Mono, Menlo.
 
-**Character:** Onest is a warm, slightly geometric system-UI sans that reads like a native settings screen; Red Hat Mono is the machine's voice. The split is strict: people's sentences are Onest, anything the CLI would print is mono. Stylistic sets `ss01` and `cv11` are on globally; code, kbd, samp and pre are tabular.
+**Character:** One sans face pushed through its whole width and weight range, so contrast is carried by axis settings rather than by a second family. Mono is the machine's voice: it prints what the terminal prints.
 
 ### Hierarchy
-- **Display** (600, 2.6rem → 3.75rem → 4rem, line-height 1.02, -0.035em, balanced): the landing headline only, one sentence in two tones: "Parallelise your agent workflows" in Secondary Ink, "and e2e tests." in Ink.
-- **Headline** (600, 1.875rem → 2.25rem, -0.025em, balanced): section titles, stated as a claim ("Your whole suite, split across every simulator.").
-- **Lede** (400, 1.125rem, relaxed): the hero lede in Ink; section ledes in Secondary Ink. Capped at max-w-2xl.
-- **Title** (500, 1rem): grouped-row titles, chart row names, install step titles, button labels.
-- **Body** (400, 0.875rem): row details, notes and captions in Secondary Ink.
-- **Numeral** (mono 500, 1.5rem, tabular, tight): measured values in the boot chart and the 404.
-- **Command** (mono 400, 0.875rem, relaxed): shell commands, the preset code block, the video caption.
-- **Id** (mono 400, 0.75rem, tabular): package-manager tabs, tags, tick labels (11px), the Markdown path in the docs toolbar.
+- **Display** (wdth 125, wght 800, -0.035em): hero H1 `clamp(2.6rem,6.4vw,5.4rem)` at 0.95; section H2 `clamp(2.2rem,4.6vw,3.6rem)` at 0.98; feature H3 1.9rem / 2.3rem; closing H2 `clamp(2.2rem,5vw,4rem)`; run-chart times 2.1rem; the 404. Every heading on the landing uses it.
+- **Card title** (wdth 120, wght 720, 1.25rem, -0.02em): lease and use-case card headings.
+- **Buttons / FAQ** (wdth 110-112, wght 520-600): CTA labels and FAQ questions (1.125rem).
+- **Body** (400, 1rem-1.25rem, 1.625, capped 42-68ch): ledes and feature points in Ink 2.
+- **Readout** (Martian Mono, 11px, tabular-nums): feature labels, command chips, captions, figcaption tabs, footer, "+hook" tags.
+- **Command** (Martian Mono, 12.5px, 1.625): command bars, terminal and code samples.
+
+Headings in docs prose use wdth 112, -0.025em, balanced wrapping.
 
 ### Named Rules
-**The Machine Voice Rule.** If the CLI would print it (a command, a flag, a udid, a duration, a pass count), it is set in Red Hat Mono with tabular figures. Prose never goes mono for style.
-
-**The Measured Number Rule.** Numbers are shown as measured ("3m25s", "37/37 passed", "146–239 s", "15.6 s", "~6.5 s"), with their unit, their source, and any playback speed-up stated ("shown at 5× speed"). Nothing is rounded up and no speedup is claimed without a baseline.
+**The One Voice Rule.** Headings are wide and heavy, always. Emphasis inside a heading is the accent on its last words, never a lighter or narrower cut, italic or a new family.
+**The Machine Voice Rule.** Mono only for things a machine prints or a human types: commands, ids, readouts, file names. Sentences stay sans.
+**The Tabular Rule.** Numbers in readouts and results are tabular-nums.
 
 ## Layout
 
-A single centred column, max width 1152px, with a 16px side gutter (24px from `sm`). The hero starts close under the nav (40px, 48px from `sm`); every later section has 112px (144px from `sm`) above it. Inside a section the title block (max-w-2xl) and its content are 32px apart. Paired content uses a two-column grid from `lg` with 24px gaps (list left, code right, the right column slightly wider at 1.1fr), and every grid child carries `min-w-0` so mono lines never force overflow.
-
-The first viewport: the two-tone headline (max-w-4xl), then a row that splits the lede (left) and a 26rem install block (right) from `lg`, stacking on phones. The install block is the package-manager tabs over a copy command, with a one-line note that the npm release is pending and a link to build from source. Below, the full-width recorded batch video in a surface group, with a mono caption row: the command on the left, the measured run on the right, wrapping on phones.
-
-The story then runs: what a batch does (grouped list) beside how a repo declares a preset (code group plus the copy command); device speed (boot chart stage); lease rules and refusals (two grouped lists); agent hooks (grouped list beside a `warden run` code group); install (three steps, 1.5fr / 1fr / 1fr from `lg`) and the primary pill. The footer is one hairline-topped row of links with the credit pushed to the end from `sm`.
+One container: `max-w-6xl`, 16px gutter (24px from `sm`), centered. Sections stack with 112px (144px from `sm`) above each and 48px between a centered heading block (max-w-3xl) and its content. The hero is centered (pill, H1 max-w-5xl, lede max-w-2xl, install max-w-xl, buttons). "Works with" is a 4-column grid on mobile, 8 in one row from `sm`. Feature blocks are two columns from `lg` (64px gap), copy and sample swapping sides on the middle block, stacked below. Card grids are 1 / 3 columns (lease) and 1 / 2 (use cases). The page closes on a Sheet with the closing H2, install and two buttons. Responsive behaviour is reflow, not reduction: every section keeps all content on mobile, with no horizontal page scroll (code samples scroll inside their sheet).
 
 ## Elevation & Depth
 
-Flat. There are no drop shadows anywhere; code blocks explicitly remove Fumadocs' shadow. Depth is tonal: ground → surface group → ground-coloured well inside the group. Separation inside a group is a 1px hairline.
+Flat, with no shadows anywhere (code blocks set `box-shadow: none`). Depth is one tonal step: Sheet on Paper, Fill for state, each outlined by a 1px hairline. Focus is a 2px Ink outline with 2px offset, not a glow.
 
 ### Named Rules
-**The Tonal Nest Rule.** Groups sit on the ground; wells sit in groups and take the ground colour back. Never nest a surface in a surface, never add a shadow to lift something. A ground-coloured well placed directly on the ground (the hero and preset copy commands) reads as a bare command line with a copy button, which is intended.
+**The No-Shadow Rule.** Separation is hairline plus one tonal step. A new surface that wants a shadow wants a rule instead.
 
 ## Shapes
 
-Continuous, system-like rounding in a small set: 6px for chips (tags, inline code, chart bars and tracks), 8px for icon buttons, 12px for wells (copy command), 14px (`--radius-group`) for every grouped list, code group, install step, table, docs code block and the video frame, 22px for the boot chart stage, and full pills for every text button and tab. Groups clip their contents (`overflow: hidden`) so hairline rows and the video meet the curve cleanly.
-
-The drawn phone (`DeviceFrame`, 120×250, 24px body radius, 17px screen radius, pill island) survives as the 404's dashed uncreated slot. The warden mark reduces it to a rounded device outline plus one lit lamp circle.
+Quiet geometry: a 6px "group" radius for every sheet (code plates, command bars, run chart, video frame, docs tables and code blocks), 4px for inline code chips and the focus ring, full pill for buttons, tabs and the copy control. Bars in the run chart are square. The warden mark is a 13x20 outlined device (4.5 radius, 2px stroke in currentColor) with a filled lamp circle at its top right corner; it is the only illustration and reads at favicon size.
 
 ## Components
 
 ### Buttons
-Quiet, rounded, system pills.
-- **Shape:** full pill.
-- **Primary:** Ink fill, Surface text, 10px 20px, medium 14px ("Read the install guide", "Read the docs"). Hover drops opacity to 0.85.
-- **Secondary:** Surface fill, Ink text on the ground (404 only). Hover moves to System Fill.
-- **Icon (copy):** 32px square, 8px radius, Secondary Ink; hover System Fill and Ink. Swaps to a check for 1.6s after copying.
-- **Focus:** global 2px Ink outline, 2px offset, 4px radius.
+- **Primary:** Ink pill, Paper text, 20px x 10px, wdth 110 wght 600. Hover swaps to Foundry Orange with Ink text.
+- **Secondary:** transparent pill with a hairline border, Ink text, wght 520; hover darkens the border to Ink.
+- **Copy control:** circular 32px (or a 28px pill with "copy" in a block tab), Ink 2 to Ink, Fill on hover; swaps to a check for 1.6s.
 
-### Install Command
-The package-manager tabs over a copy command: npm (default), bun, pnpm, yarn installing `@delacour/warden` globally.
-- **Tabs:** small mono pills (4px 12px). Selected is Ink on System Fill; the rest are Secondary Ink, turning Ink on hover.
-- **Behaviour:** ARIA tabs pattern; left/right arrows move and select; the panel is the copy command for the chosen manager. The choice is remembered per browser and falls back to npm if storage fails.
-- **Where:** the hero install block and install step 1. On the hero it always carries the "npm release pending" note until the package is published.
+### Command bar and install tabs
+A Sheet with hairline border and 6px radius holds `$ command` in 12.5px mono (the `$` is unselectable Ink 2) and a copy control. Above it, one tab per package manager (npm, bun, pnpm, yarn) as pills: selected is Fill + Ink, others Ink 2. Follows the ARIA tabs pattern with arrow keys; the choice is remembered per browser. The landing install line chains `&& warden install`.
 
-### Copy Command
-A Grouped Gray well (12px) holding `$ command` in mono with a non-selectable gray prompt and the copy icon button. Wraps anywhere on phones, scrolls on one line from `sm`. The command is the label, so it is never truncated.
+### Code plate and copy block
+A Sheet figure with a mono 11px tab (file or tool name) divided by a hairline, then 12.5px mono code. The agent prompt uses the same figure with sans text and a copy button in the tab.
 
-### Grouped List
-The hub's one container, used for what a batch does, lease rules, refusals and agent hooks.
-- **Corner Style:** 14px, clipped. **Background:** Surface. **Border / Shadow:** none.
-- **Row:** 16px start inset, 18px Lucide glyph in Ink, title (medium) over detail (small, Secondary Ink), optional trailing tag, 12px vertical padding.
-- **Separator:** a hairline under each row except the last, starting after the leading glyph.
-- **Batch list:** five rows in the batch's own order (Lease → Serve → Queue → Retry → Record), each trailing the flag or placeholder that drives it (`--count`, `--serve`, `{job}`, `--retry`, `--record`).
+### Feature block
+Mono orange-text label, Display H3, verb-first points as hairline rows, a mono underlined docs link; beside it a terminal or code sheet (three Fill dots, mono tab) or the run chart.
 
-### Tag
-Mono id in Secondary Ink on a Grouped Gray chip (6px, 2px 8px). A row's trailing command, flag or placeholder.
+### Card
+A Sheet with hairline border: a mono command chip on Fill, a card-title heading, one Ink 2 sentence.
 
-### Code Group
-A 14px Surface group, 20px padding, mono 0.875rem relaxed in Ink, scrolling horizontally. Comments and the `$ ` prompt are Secondary Ink. The preset block opens with a `// warden.config.json` comment and shows the real `batches` entry; the `warden run` block wraps on phones and keeps one line from `sm`. Each is paired with a copy command or a small Secondary Ink note beneath.
+### Run chart
+Two flat bars on one time axis, width proportional to seconds: serial in Ink, parallel in Orange, each labelled in a Display number with a mono caption naming the measurement and date.
 
-### Install Step
-A 14px Surface group, 16px padding: a mono Secondary Ink step number beside a medium title, then its command.
+### Demo video
+A recorded `warden batch` run in a 6px-rounded Sheet frame: muted loop autoplay, poster and controls under reduced motion, a mono caption carrying the exact figures.
 
-### Boot Chart
-A 22px Surface stage of four measured rows on one 0–240 s axis. Tracks are Grouped Gray, 28px tall, 6px radius; measured time is a solid Ink bar, run-to-run spread is Secondary Ink at 40%. Values are right-aligned mono numerals. A hairline-topped caption carries the legend and the measurement source. No colour.
+### Lists
+Agents are a centered row of 36px marks over mono names, +hook in accent-text under the two hooked agents (marks invert in dark); the FAQ is hairline `details` rows with a drawn plus that scales to a minus (200ms).
 
-### Code and Tables (docs)
-Code blocks are Surface groups with a 1px hairline and no shadow. Tables become grouped lists: one 14px Surface group, hairline rows, a small medium Secondary Ink header. Inline code sits in a System Fill chip (6px, 0.88em). Prose links are Ink with a 1px Secondary Ink underline offset 3px, darkening on hover.
+### Docs chrome
+Fumadocs tokens are re-pointed at these colors. Sidebar active row is Fill with wght 550; prose links are Ink with an Ink 2 underline (3px offset); tables are one 6px Sheet group with hairline rows; the toggle is `.dark` on `<html>`.
 
-### Navigation
-Fumadocs' home and docs layouts, re-tokened. The nav title is the warden mark plus lowercase `warden` in semibold. The active sidebar entry is an Ink label (weight 550) on a System Fill row. The docs toolbar under each description holds copy-as-Markdown, view options, and the page's Markdown path in mono ids at the right, above a hairline.
-
-### Demo Video (signature)
-The recorded `warden batch` run, composed outside the site from per-simulator recordings and the terminal cast: five phones tiled across the top with a mono header ("warden batch ios · 5 sims · 37 flows", elapsed time, pass counter), each phone labelled with its simulator name and its current or last flow (✓ in green when passed), and the live TUI grid in a rounded panel underneath. On the page it sits edge to edge in a 14px Surface group (clipped, no padding), followed by a mono caption: `warden batch salient-e2e` in Ink on the left, the measured run in Secondary Ink on the right ("37 Salient e2e flows · 5 iPhone 17 simulators · 3m25s · 37/37 passed · shown at 5× speed"). The poster is the final frame, all flows passed. It has an accessible label describing the run.
-
-### Not Found
-The missing page is an uncreated device slot: the dashed empty `DeviceFrame` with `404` and "not created" in mono inside it, a headline, a lede, and the primary/secondary pill pair.
-
-### Device Shelf (retained, unused)
-The interactive claim/boot shelf, its green Claim and gray Release pills, and its spec wells remain in the repo but are not on any page. Treat them as unused: don't reintroduce a Claim control or a second hero figure without redesigning the first viewport around it.
-
-### Motion
-One authored moment: the hero recording. It autoplays muted, inline and looped, and loads metadata only until it plays. Under `prefers-reduced-motion` (and on the server, before hydration decides) it does not autoplay: it rests on its poster and offers native controls. Everything else is a plain hover transition on opacity or colour, plus the copy button's 1.6s check. Globally, reduced motion collapses animation and transition durations to 0.01ms.
+### Social cards
+1200x630, dark tokens only: one 12px-radius Sheet on Paper, the warden mark and name top-left, the landing card sets "Mobile testing for / coding agents." at 800 weight, 96px, the second line in the accent, URL in mono under a hairline. Docs cards set the page title at 600 weight.
 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** put every new block in a Surface group on the Grouped Gray ground, 14px radius, with hairline rows.
-- **Do** set commands, flags, ids, counts and durations in Red Hat Mono with tabular figures.
-- **Do** prove a claim with a recording or a measurement, and caption it with the exact command and measured run, including any playback speed-up.
-- **Do** state measured numbers exactly as measured, with their unit and source.
-- **Do** keep text buttons and tabs as pills: Ink primary, Surface secondary, System Fill for the selected tab.
-- **Do** give every autoplaying or animated element a reduced-motion rest state (a poster with controls, or the end state).
-- **Do** show install as a copyable command with a package-manager choice, and say plainly when a release is not yet published.
+- **Do** set every heading in the one display voice (wdth 125, wght 800) and build hierarchy by size.
+- **Do** keep orange to large marks; use accent-text `#b8360a` for any small orange.
+- **Do** separate with 1px hairlines and one tonal step; keep every sheet at 6px radius.
+- **Do** set commands, ids and readouts in mono at 11px / 12.5px with tabular-nums.
+- **Do** give every motion a reduced-motion state; the page has no authored entrance motion.
+- **Do** keep claims in captions exact and dated (37 specs, 5 simulators, 3m25s vs 13m55s, Oct 2026).
 
 ### Don't:
-- **Don't** use green on the page for anything that is not a lease or a pass: not links, not headings, not charts, not decoration.
-- **Don't** lift colours from recorded material (the TUI's cyan, the app's own palette) into page chrome.
-- **Don't** add drop shadows or borders around groups; depth is tonal and separation is a hairline.
-- **Don't** introduce a second accent hue or tinted neutrals.
-- **Don't** open a page with a dark terminal hero over a grid of feature cards, or with adjective copy.
-- **Don't** add a second authored animation competing with the hero recording.
-- **Don't** give docs chrome its own palette; map Fumadocs tokens to the hub tokens.
+- **Don't** add shadows, gradients, glow or backdrop blur.
+- **Don't** add a dark terminal hero, condensed or light display cuts, giant-word beat sections, type-specimen sliders, or a second accent hue.
+- **Don't** set sentences in mono or emphasize with italics or color.
+- **Don't** use Lease Green outside docs success states.
+- **Don't** let orange carry small text or meaning on its own.

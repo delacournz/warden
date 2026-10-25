@@ -1,7 +1,4 @@
 {
 	"title": "Benchmarks",
-	"pages": [
-		"comparison",
-		"ios-2026-10-25"
-	]
+	"pages": ["comparison", "run", "ios-2026-10-25"]
 }

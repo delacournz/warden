@@ -4,13 +4,13 @@ import { expandArgv, expandText, jobSlug, parseJobLines, parseJobList } from "./
 describe("expandArgv", () => {
 	test("substitutes {job} {udid} {worker} {seq} in every element, repeatedly", () => {
 		expect(
-			expandArgv(["run", "--flow={job}", "{udid}", "w{worker}-s{seq}", "{job}/{job}"], {
+			expandArgv(["run", "--spec={job}", "{udid}", "w{worker}-s{seq}", "{job}/{job}"], {
 				job: "qa-login",
 				udid: "U1",
 				worker: 2,
 				seq: 0,
 			})
-		).toEqual(["run", "--flow=qa-login", "U1", "w2-s0", "qa-login/qa-login"]);
+		).toEqual(["run", "--spec=qa-login", "U1", "w2-s0", "qa-login/qa-login"]);
 	});
 
 	test("run placeholders ({port} {metroUrl} {leg}) are substituted once known, kept until then", () => {
@@ -56,7 +56,7 @@ describe("parseJobLines", () => {
 
 describe("jobSlug", () => {
 	test("filesystem-safe, lowercase, bounded", () => {
-		expect(jobSlug("QA Login/Flow #2")).toBe("qa-login-flow-2");
+		expect(jobSlug("QA Login/Spec #2")).toBe("qa-login-spec-2");
 		expect(jobSlug("../../etc")).toBe("etc");
 		expect(jobSlug("***")).toBe("job");
 		expect(jobSlug("x".repeat(200))).toHaveLength(60);

@@ -21,8 +21,8 @@ export type AffectedOpts = {
 	strict?: true;
 	/** `warden e2e --all` */
 	all?: true;
-	/** `warden e2e --flows`: comma-separated ids / globs */
-	flows?: string;
+	/** `warden e2e --specs`: comma-separated ids / globs */
+	specs?: string;
 };
 
 /** Option values → `computeAffected` input; parsed imports are cached under `$WARDEN_HOME/affected`. */
@@ -31,9 +31,9 @@ export function affectedInput(
 	suite: string | undefined,
 	opts: AffectedOpts
 ): Result<AffectedInput> {
-	if (opts.all && opts.flows !== undefined) return err("--all and --flows are exclusive");
-	if ((opts.all || opts.flows !== undefined) && opts.files !== undefined)
-		return err("--all / --flows select without a diff — drop --files");
+	if (opts.all && opts.specs !== undefined) return err("--all and --specs are exclusive");
+	if ((opts.all || opts.specs !== undefined) && opts.files !== undefined)
+		return err("--all / --specs select without a diff — drop --files");
 	let platform: Platform | undefined;
 	if (opts.platform !== undefined) {
 		const parsed = parsePlatform(opts.platform);
@@ -50,16 +50,16 @@ export function affectedInput(
 		...(opts.base !== undefined ? { base: opts.base } : {}),
 		...(platform ? { platform } : {}),
 		...(opts.files !== undefined ? { files: parseJobList(opts.files) } : {}),
-		...(opts.flows !== undefined
-			? { only: { mode: "flows" as const, patterns: parseJobList(opts.flows) } }
+		...(opts.specs !== undefined
+			? { only: { mode: "specs" as const, patterns: parseJobList(opts.specs) } }
 			: opts.all
 				? { only: { mode: "all" as const } }
 				: {}),
 	});
 }
 
-/** Selected flows, `--required-only` applied. */
-export function selectedFlows(selection: Selection, requiredOnly: boolean) {
+/** Selected specs, `--required-only` applied. */
+export function selectedSpecs(selection: Selection, requiredOnly: boolean) {
 	return selection.selected.filter((f) => !requiredOnly || f.required);
 }
 
@@ -71,8 +71,8 @@ function describeReason(reason: Reason, color: ChalkInstance): string[] {
 			return [`path     ${reason.file} ${color.dim(`(${reason.pattern})`)}`];
 		case "import":
 			return [`import   ${reason.file}`, color.dim(`         ${reason.chain.join(" → ")}`)];
-		case "flow-file":
-			return [`flow     ${reason.file}`];
+		case "spec-file":
+			return [`spec     ${reason.file}`];
 		case "always":
 			return [`always   ${color.dim(reason.pattern)}`];
 		case "unmapped":
@@ -80,9 +80,9 @@ function describeReason(reason: Reason, color: ChalkInstance): string[] {
 		case "all":
 			return [`all      ${color.dim("(--all)")}`];
 		case "requested":
-			return [`flows    ${color.dim(`(--flows ${reason.pattern})`)}`];
+			return [`specs    ${color.dim(`(--specs ${reason.pattern})`)}`];
 		case "unmatched":
-			return [`unmatched ${reason.file} ${color.dim("(reached no flow — unmatched: run-all)")}`];
+			return [`unmatched ${reason.file} ${color.dim("(reached no spec — unmatched: run-all)")}`];
 	}
 }
 
@@ -93,24 +93,24 @@ function selectionSource(affected: Affected): string {
 	return `${affected.base === undefined ? "--files" : `base ${affected.base}`}${origin}`;
 }
 
-/** `--explain`: per platform, every selected flow with why, then what was skipped / unreached. */
+/** `--explain`: per platform, every selected spec with why, then what was skipped / unreached. */
 export function explain(affected: Affected, requiredOnly: boolean, color: ChalkInstance): string {
 	const lines: string[] = [];
 	const source = selectionSource(affected);
 	for (const selection of affected.selections) {
-		const flows = selectedFlows(selection, requiredOnly);
+		const specs = selectedSpecs(selection, requiredOnly);
 		const total = selection.selected.length + selection.skipped.length;
 		lines.push(
-			color.bold(`${selection.platform}  ${flows.length} of ${total} flow(s)`) +
+			color.bold(`${selection.platform}  ${specs.length} of ${total} spec(s)`) +
 				color.dim(`  (${source}, ${affected.changes.length} changed file(s))`)
 		);
-		for (const flow of flows) {
-			lines.push(`  ${color.green("●")} ${flow.id}  ${flow.required ? "required" : color.dim("optional")}`);
-			for (const reason of flow.reasons) lines.push(...describeReason(reason, color).map((l) => `      ${l}`));
+		for (const spec of specs) {
+			lines.push(`  ${color.green("●")} ${spec.id}  ${spec.required ? "required" : color.dim("optional")}`);
+			for (const reason of spec.reasons) lines.push(...describeReason(reason, color).map((l) => `      ${l}`));
 		}
 		if (selection.skipped.length > 0) lines.push(color.dim(`  skipped: ${selection.skipped.join(", ")}`));
 		if (selection.unreached.length > 0)
-			lines.push(color.yellow(`  reached no flow: ${selection.unreached.join(", ")}`));
+			lines.push(color.yellow(`  reached no spec: ${selection.unreached.join(", ")}`));
 	}
 	return lines.join("\n");
 }
@@ -121,7 +121,7 @@ function jsonDoc(affected: Affected, requiredOnly: boolean) {
 		source: affected.suite.source,
 		...(affected.base !== undefined ? { base: affected.base } : {}),
 		changes: affected.changes,
-		platforms: affected.selections.map((s) => ({ ...s, selected: selectedFlows(s, requiredOnly) })),
+		platforms: affected.selections.map((s) => ({ ...s, selected: selectedSpecs(s, requiredOnly) })),
 		warnings: affected.warnings,
 	};
 }
@@ -136,9 +136,9 @@ export async function runAffected(
 }
 
 /**
- * `warden affected [suite]`: git changes vs `--base` → the e2e flows that must run. Default output is
- * one flow id per line (ready for `jobsFrom`); `--explain` shows why; `--strict` exits 3 when a
- * changed file reached no flow.
+ * `warden affected [suite]`: git changes vs `--base` → the e2e specs that must run. Default output is
+ * one spec id per line (ready for `jobsFrom`); `--explain` shows why; `--strict` exits 3 when a
+ * changed file reached no spec.
  */
 async function affected(ctx: CommandContext, suite: string | undefined, opts: AffectedOpts): Promise<number> {
 	const { color } = ctx.ui;
@@ -154,7 +154,7 @@ async function affected(ctx: CommandContext, suite: string | undefined, opts: Af
 	if (opts.json) ctx.out(JSON.stringify(jsonDoc(data, requiredOnly), null, 2));
 	else if (opts.explain) ctx.out(explain(data, requiredOnly, color));
 	else {
-		const ids = new Set(data.selections.flatMap((s) => selectedFlows(s, requiredOnly).map((f) => f.id)));
+		const ids = new Set(data.selections.flatMap((s) => selectedSpecs(s, requiredOnly).map((f) => f.id)));
 		for (const id of ids) ctx.out(id);
 	}
 	const unreached = data.selections.some((s) => s.unreached.length > 0);
@@ -164,16 +164,16 @@ async function affected(ctx: CommandContext, suite: string | undefined, opts: Af
 export const affectedCommand = defineCommand({
 	name: "affected",
 	group: "Run",
-	summary: "list the e2e flows a change needs (git diff vs base → import graph → flows)",
+	summary: "list the e2e specs a change needs (git diff vs base → import graph → specs)",
 	register: (cmd, ctx, done) => {
 		cmd
 			.argument("[suite]", "e2e.<suite> in warden.config.ts (optional with one suite)")
 			.option("--base <ref>", "compare against merge-base with this ref (default: the suite's base, main)")
 			.option("--platform <platform>", "ios | android (default: the suite's platform, else both)")
 			.option("--files <list>", "comma-separated changed files (relative to cwd) instead of git")
-			.option("--required-only", "only flows with required: true")
-			.option("--explain", "show why each flow was selected")
-			.option("--strict", "exit 3 when a changed file reaches no flow")
+			.option("--required-only", "only specs with required: true")
+			.option("--explain", "show why each spec was selected")
+			.option("--strict", "exit 3 when a changed file reaches no spec")
 			.option("--json", "machine-readable output")
 			.addHelpText(
 				"after",

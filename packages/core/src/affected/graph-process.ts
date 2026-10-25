@@ -33,9 +33,9 @@ export function compiledBinary(main: string = Bun.main, execPath: string = proce
 	return main.startsWith("/$bunfs/") || main.startsWith("B:/~BUN/") ? execPath : undefined;
 }
 
-/** Every file a diff run may start a walk from: each flow's entries (that exist) and the router layouts above them. */
+/** Every file a diff run may start a walk from: each spec's entries (that exist) and the router layouts above them. */
 export function graphEntries(suite: E2eSuiteConfig, configDir: string, platform: Platform): string[] {
-	const entries = [...new Set(Object.values(suite.flows).flatMap((flow) => flow.entries))]
+	const entries = [...new Set(Object.values(suite.specs).flatMap((spec) => spec.entries))]
 		.map((entry) => join(configDir, entry))
 		.filter((entry) => existsSync(entry));
 	const root = suite.routerRoot ? join(configDir, suite.routerRoot) : undefined;

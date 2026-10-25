@@ -6,7 +6,7 @@ import { noteSpanDetail } from "./span-detail";
  * does not walk the screen again (`isVisible()` then `text()` was two snapshots; on Android each one is a ~1.9 s
  * `uiautomator dump`).
  *
- * It is a `Driver` wrapper, because every layer that can change the screen (`screen`, `app`, `device`, flows) shares
+ * It is a `Driver` wrapper, because every layer that can change the screen (`screen`, `app`, `device`, specs) shares
  * the one driver: whatever calls it, an input moves the *generation* on and the kept snapshot dies with the old one.
  * A snapshot is also dropped once it is older than the platform's max age, input or not (the app can change by itself).
  * Which reads may reuse one is the caller's call (`observe({ reuse })`): only the first look of a wait does, so a

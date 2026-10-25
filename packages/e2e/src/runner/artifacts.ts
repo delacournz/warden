@@ -21,9 +21,9 @@ export function hash6(...parts: string[]): string {
 	return createHash("sha1").update(parts.join("\u0000")).digest("hex").slice(0, 6);
 }
 
-/** `<out>/<flowId>/<title-slug>-<hash6>/` for one test attempt. */
-export function attemptDir(out: string, flowId: string, title: readonly string[], hash: string): string {
-	return join(out, flowId, `${slug(title.join(" "))}-${hash.slice(0, 6)}`);
+/** `<out>/<specId>/<title-slug>-<hash6>/` for one test attempt. */
+export function attemptDir(out: string, specId: string, title: readonly string[], hash: string): string {
+	return join(out, specId, `${slug(title.join(" "))}-${hash.slice(0, 6)}`);
 }
 
 /** `<dir>/screenshots/NNN-name.png` (3-digit, 1-based order). */
@@ -34,18 +34,18 @@ export function screenshotPath(dir: string, n: number, name: string): string {
 const SPEC_EXT = /\.e2e$/;
 
 /**
- * Stable per-file id: the path under `flowsDir` without extension (`auth/sign-in.e2e.ts` →
- * `auth/sign-in`), segments slugged. A file outside `flowsDir` (or no `flowsDir`) uses its basename.
+ * Stable per-file id: the path under `specsDir` without extension (`auth/sign-in.e2e.ts` →
+ * `auth/sign-in`), segments slugged. A file outside `specsDir` (or no `specsDir`) uses its basename.
  */
-export function flowIdOf(file: string, flowsDir?: string): string {
+export function specIdOf(file: string, specsDir?: string): string {
 	const strip = (name: string): string => basename(name, extname(name)).replace(SPEC_EXT, "");
-	if (flowsDir !== undefined) {
-		const rel = relative(flowsDir, file);
+	if (specsDir !== undefined) {
+		const rel = relative(specsDir, file);
 		if (rel !== "" && !rel.startsWith("..") && !rel.includes(`..${sep}`)) {
 			const parts = rel.split(sep);
 			const last = parts.pop() ?? rel;
-			return [...parts.map((p) => slug(p, "dir")), slug(strip(last), "flow")].join("/");
+			return [...parts.map((p) => slug(p, "dir")), slug(strip(last), "spec")].join("/");
 		}
 	}
-	return slug(strip(file), "flow");
+	return slug(strip(file), "spec");
 }

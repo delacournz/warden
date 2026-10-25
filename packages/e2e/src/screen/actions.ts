@@ -48,7 +48,7 @@ export function swipeVector(direction: SwipeDirection, rect: Rect, momentum: Mom
 
 /**
  * The one swipe geometry: the finger path inside `rect`, centred, covering `fraction` (0-1) of it, that scrolls the
- * content `direction` (`down` reveals what is below, so the finger travels up). Spec swipes, flow `swipe`/`scroll` steps
+ * content `direction` (`down` reveals what is below, so the finger travels up). Spec swipes, spec `swipe`/`scroll` steps
  * and `warden ui scroll` use it as is; `warden ui gesture swipe <dir>` names the finger's direction instead and flips it
  * (`fingerPath` in the CLI).
  */

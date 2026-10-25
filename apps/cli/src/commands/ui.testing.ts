@@ -11,7 +11,6 @@ import {
 import type { DriverCapabilities, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import { ok } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
-import type { RecordStep } from "../agent-ui/record";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createUiCommand } from "./ui";
@@ -35,7 +34,6 @@ export type Harness = {
 	c: TestContext;
 	clock: { t: number };
 	driver: FakeDriver;
-	steps: RecordStep[];
 	run: (...argv: string[]) => Promise<number>;
 	/** how many times a subcommand opened the driver */
 	opens: { count: number };
@@ -63,10 +61,9 @@ export function cleanupHarnesses(): void {
 	for (const c of live.splice(0)) c.cleanup();
 }
 
-/** A leased device, a fake clock that `sleep` advances, a fake driver over `screens`, and a recording sink. */
+/** A leased device, a fake clock that `sleep` advances, a fake driver over `screens`. */
 export function harness(screens: Snapshot[] | (() => Snapshot), options: HarnessOptions = {}): Harness {
 	const clock = { t: 1_000_000 };
-	const steps: RecordStep[] = [];
 	const driver: FakeDriver = fakeDriver({
 		screens,
 		...(options.selectAll ? { selectAll: true } : {}),
@@ -82,11 +79,6 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 		},
 		sleep: async (ms) => {
 			clock.t += ms;
-		},
-		record: {
-			append: async (_udid, step) => {
-				steps.push(step);
-			},
 		},
 		...(options.video ? { video: options.video } : {}),
 		...(options.pidAlive ? { pidAlive: options.pidAlive } : {}),
@@ -110,7 +102,6 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 		c,
 		clock,
 		driver,
-		steps,
 		opens,
 		run: (...argv) => {
 			c.argv = [...argv, "--udid", UDID];
