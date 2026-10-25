@@ -24,9 +24,8 @@ icon: Variable
 | `WARDEN_MAX_CACHE_SIZE` | build cache cap (e.g. `50G`, default `20G`) for `warden gc` (`--max-cache-size`), `warden builds prune` (`--max-size`) and auto-gc, which runs when the cache is over it |
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | Android SDK location (`adb`, `emulator`); without them warden falls back to `PATH` and cannot build the Android snapshot |
 | `NO_COLOR`, `FORCE_COLOR` | output colour (a non-empty `NO_COLOR` turns it off) |
-| `WARDEN_UI_SECRET_<NAME>` | text of a `warden ui fill --secure` step: set it when recording and the flow names the variable instead of storing the text; replay and the exported spec read it ([Agent UI](/docs/guides/agent-ui)) |
 | `WARDEN_ANDROID_UIAD=0` | Android: don't use the resident UiAutomation server (`warden-uiad`); snapshots, settle and input go through `uiautomator dump` and `input` ([Android driver](/docs/reference/e2e-driver#android-driver)) |
-| `WARDEN_ANDROID_SETTEXT=1` | Android: `fill` over a field that already holds text replaces it with one `warden-uiad` `setText` call instead of select-all and typing (specs, `warden ui fill`, flow replay); off by default until the server re-reads focus before setting ([Android driver](/docs/reference/e2e-driver#android-driver)) |
+| `WARDEN_ANDROID_SETTEXT=1` | Android: `fill` over a field that already holds text replaces it with one `warden-uiad` `setText` call instead of select-all and typing (specs, `warden ui fill`); off by default until the server re-reads focus before setting ([Android driver](/docs/reference/e2e-driver#android-driver)) |
 | `WARDEN_BACKGROUND=0` | turn off every detached worker (auto-gc, SessionEnd shutdown) |
 | `WARDEN_RELEASE_REPO` | GitHub repo `warden update` downloads releases from (default `delacournz/warden`) |
 | `WARDEN_SIMD`, `WARDEN_HELPER_DIR`, `WARDEN_SIMD_SOCKET`, `WARDEN_HELPER_URL` | the iOS driver helper: binary, directory, running socket, download URL ([iOS driver helper](/docs/reference/e2e-driver)) |
@@ -92,7 +91,7 @@ export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ }
 | `WARDEN_LAUNCH_ARGS` | JSON array of the launch arguments `app.open()` passes: `--initialUrl <metro url>`, `metro.launchArgs`, `spec.launchArgs` |
 | `WARDEN_E2E_OUT` | where `results.jsonl` and the per-test artifacts go: `<batchDir>/e2e/<worker>-<seq>` |
 | `WARDEN_E2E_TIMEOUT`, `WARDEN_E2E_ACTION_TIMEOUT`, `WARDEN_E2E_ASSERTION_TIMEOUT` | the `spec` timeouts in milliseconds (defaults 120000, 30000, 5000) |
-| `WARDEN_E2E_FLOWS_DIR` | the suite's `flowsDir`, used to name each spec's flow id |
+| `WARDEN_E2E_SPECS_DIR` | the suite's `specsDir`, used to name each spec's spec id |
 | `WARDEN_SIMD_SOCKET` | the pre-warmed iOS helper's socket (`warmDrivers`); unset, the driver starts a helper itself |
 | `WARDEN_SIMD`, `WARDEN_HELPER_DIR` | where the `warden-simd` binary is ([iOS driver helper](/docs/reference/e2e-driver)); `warden e2e` sets `WARDEN_HELPER_DIR` |
 | `WARDEN_SIMD_PACE_MS`, `WARDEN_SIMD_HOLD_MS`, `WARDEN_SIMD_REPEAT_GAP_MS` | read by the helper process: default keyboard pacing in ms (quiet after each key 30, key down to up 40, extra pause before a repeated key 300). A request's `paceMs` / `holdMs` / `repeatGapMs` wins. A React Native text field digests about 45-50 ms per key, so lower values lose characters |

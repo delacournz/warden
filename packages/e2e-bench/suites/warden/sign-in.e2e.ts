@@ -1,8 +1,8 @@
 import { expect, test } from "@delacour/warden-e2e";
-import { expectTodosAfterSignIn, FLOW_OPTIONS, openSignIn, submitSignIn } from "./helpers/flows";
 import { ids } from "./helpers/ids";
+import { expectTodosAfterSignIn, openSignIn, SPEC_OPTIONS, submitSignIn } from "./helpers/steps";
 
-test.use(FLOW_OPTIONS);
+test.use(SPEC_OPTIONS);
 
 test("invalid email and short password show field errors", async ({ app, screen }) => {
 	await openSignIn(app, screen);

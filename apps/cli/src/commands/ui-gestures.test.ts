@@ -137,16 +137,6 @@ describe("gesture pinch", () => {
 		});
 	});
 
-	test("records the step, with the radius only when given", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
-		await h.run("gesture", "pinch", "2");
-		await h.run("gesture", "pinch", "0.5", "--radius", "50", "--duration", "700");
-		expect(h.steps.map((step) => [step.action, step.args])).toEqual([
-			["gesture-pinch", { scale: 2, ms: 500 }],
-			["gesture-pinch", { scale: 0.5, ms: 700, radius: 50 }],
-		]);
-	});
-
 	test("--settle reports what changed", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "pinch", "2", "--settle", "--json")).toBe(0);
@@ -191,12 +181,6 @@ describe("gesture rotate", () => {
 		expect(await h.run("gesture", "rotate", "45", "--json")).toBe(1);
 		expect(doc(h.c).error.details).toMatchObject({ driver: "E_UNSUPPORTED" });
 	});
-
-	test("records the step", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
-		await h.run("gesture", "rotate", "45");
-		expect(h.steps[0]).toMatchObject({ action: "gesture-rotate", args: { degrees: 45, ms: 500 } });
-	});
 });
 
 describe("gesture path", () => {
@@ -228,10 +212,6 @@ describe("gesture path", () => {
 			await h.run("gesture", "path", "--path", "100,400 100,200", "--path", "200,400;200,200", "--duration", "800")
 		).toBe(0);
 		expect(h.driver.callsOf("gesture")[0]?.paths).toHaveLength(2);
-		expect(h.steps[0]).toMatchObject({
-			action: "gesture-path",
-			args: { paths: "100,400 100,200|200,400 200,200", ms: 800 },
-		});
 	});
 
 	test("three paths, one point, an off-screen point and no --path are usage errors", async () => {

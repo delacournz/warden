@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { attemptDir, flowIdOf, hash6, screenshotPath, slug } from "./artifacts";
+import { attemptDir, hash6, screenshotPath, slug, specIdOf } from "./artifacts";
 
 describe("slug", () => {
 	test("lowercases and collapses punctuation", () => {
@@ -28,7 +28,7 @@ describe("hash6", () => {
 });
 
 describe("attemptDir", () => {
-	test("<out>/<flowId>/<title-slug>-<hash6>", () => {
+	test("<out>/<specId>/<title-slug>-<hash6>", () => {
 		expect(attemptDir("/out", "auth/sign-in", ["Sign in", "shows an error"], "abcdef123456")).toBe(
 			"/out/auth/sign-in/sign-in-shows-an-error-abcdef"
 		);
@@ -42,13 +42,13 @@ describe("screenshotPath", () => {
 	});
 });
 
-describe("flowIdOf", () => {
-	test("relative to the flows dir, no extension", () => {
-		expect(flowIdOf("/app/e2e/sign-in.e2e.ts", "/app/e2e")).toBe("sign-in");
-		expect(flowIdOf("/app/e2e/auth/Log In.e2e.ts", "/app/e2e")).toBe("auth/log-in");
+describe("specIdOf", () => {
+	test("relative to the specs dir, no extension", () => {
+		expect(specIdOf("/app/e2e/sign-in.e2e.ts", "/app/e2e")).toBe("sign-in");
+		expect(specIdOf("/app/e2e/auth/Log In.e2e.ts", "/app/e2e")).toBe("auth/log-in");
 	});
-	test("basename when outside or without a flows dir", () => {
-		expect(flowIdOf("/other/x.e2e.ts", "/app/e2e")).toBe("x");
-		expect(flowIdOf("/other/Some_Flow.test.ts")).toBe("some-flow-test");
+	test("basename when outside or without a specs dir", () => {
+		expect(specIdOf("/other/x.e2e.ts", "/app/e2e")).toBe("x");
+		expect(specIdOf("/other/Some_Spec.test.ts")).toBe("some-spec-test");
 	});
 });

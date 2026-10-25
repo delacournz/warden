@@ -16,7 +16,7 @@ export type Harness = {
 	metro: () => Spawned | undefined;
 	/** armed `after` timers (job timeouts): call `fire` to expire one */
 	timers: Array<{ ms: number; fire: () => void; cancelled: boolean }>;
-	/** every `every` interval (heartbeats, the grid's redraw, the flow poller): call `fn` to fire one tick */
+	/** every `every` interval (heartbeats, the grid's redraw, the spec poller): call `fn` to fire one tick */
 	tickers: Array<{ ms: number; fn: () => void; stopped: boolean }>;
 	/** every Metro probe: `<port> <projectRoot>` */
 	metroProbes: string[];

@@ -1,6 +1,6 @@
 # warden ui: drive a leased device by hand
 
-For exploring, reproducing a bug, or finding selectors. Checks that must keep passing belong in a spec (`specs.md`). Every call is stateless on the command line; the last snapshot, recording and Metro URL live under `$WARDEN_HOME/ui/<udid>/`.
+For exploring, reproducing a bug, or finding selectors. Checks that must keep passing belong in a spec (`specs.md`). Every call is stateless on the command line; the last snapshot and Metro URL live under `$WARDEN_HOME/ui/<udid>/`.
 
 ## Loop
 
@@ -11,7 +11,6 @@ warden ui open com.example.app --udid $UDID   # launch (dev client: attaches); -
 warden ui snapshot -i --udid $UDID            # @eN lines
 warden ui press @e3 --settle --udid $UDID     # act; --settle prints what changed
 warden ui wait id=todos-screen --udid $UDID   # verify with wait / is / get; a screenshot is not verification
-warden ui record start add-todo --udid $UDID  # optional
 warden ui close --release --udid $UDID
 ```
 
@@ -42,7 +41,6 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--claim` | claim a device when none is held, or take over a stale/missing lease |
 | `--platform ios\|android` `--profile <slug>` `--runtime <rt>` | choose the device for a `--claim` with none named (default ios) |
 | `--timeout <ms>` | per-command deadline (default 5000) |
-| `--no-record` | keep this step out of a running recording |
 | `--force` | drive the device while your running `warden e2e` / `batch` / `run` holds it (else exit 2 `device_busy`); it disturbs that run. Not needed for your own `warden dev` |
 | `--json` | one JSON document on stdout |
 
@@ -65,13 +63,13 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 
 | Command | Args / flags | Notes |
 |---|---|---|
-| `status` | | device, lease, helper, recording |
+| `status` | | device, lease, helper |
 | `close` | `[--app [bundleId]] [--release]` | stops this device's helper; `--app` quits the app (default: the one `open` launched); `--release` frees the lease |
 | `snapshot` | `[-i] [--all] [--depth n] [--settle [ms]]` | `--settle` ends with a `-`/`+` diff and `= N unchanged` |
 | `find` | `<selector>` | matches with fresh `@eN` |
 | `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted |
 | `press` / `tap` | `<@eN\|selector\|x y> [--verify] [--settle]` | |
-| `fill` | `<target> <text> [--secure] [--no-verify] [--settle]` | `--` before text starting with `-`; reads back, retries once; `--secure` skips read-back and never echoes or records the text |
+| `fill` | `<target> <text> [--secure] [--no-verify] [--settle]` | `--` before text starting with `-`; reads back, retries once; `--secure` skips read-back and never echoes the text |
 | `type` | `<text> [--submit] [--settle]` | into whatever has focus |
 | `key` | `Enter\|Backspace\|Tab\|Space\|Escape\|Delete\|Up\|Down\|Left\|Right [--settle]` | |
 | `scroll` | `<dir> [amount=0.5] [--until <sel>] [--in <target>] [--max 10] [--settle]` | content direction: `scroll down` reveals what is below; amount 0-1; `--until` prints the fresh ref |
@@ -93,9 +91,8 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `get` | `<sel> text\|value\|label\|id\|role\|frame\|count` | `frame` = `x y w h`; `count` 0 is success |
 | `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets; stops the device's helper: unshared device only |
 | `eval` `tree` `logs` `network` `reload` | see Devtools | dev client only |
-| `record` `replay` `export` | see Flows | |
 
-`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1). Flows are format v2 (`kind: screen|gesture` + `type`); v1 files migrate on read.
+`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
 
 ## Selector grammar
 
@@ -131,30 +128,12 @@ Values: bare `id=sign-in`, quoted `label="Sign in"`, or regex `text=/^\d+ left$/
 - A collector started before a restart (`open --relaunch`, crash, rebuild) ends `lost` after a 30 s reconnect budget; it also stops after 60 s with no console or fetch activity. `logs start` again.
 - `reload` falls back to Metro's broadcast `/reload`, which reloads every device on that Metro.
 
-## Flows
-
-```bash
-warden ui record start add-todo --udid $UDID     # .warden-ui/add-todo.flow.json
-warden ui fill id=todo-input "Write docs" --udid $UDID
-warden ui record stop --udid $UDID
-warden ui replay .warden-ui/add-todo.flow.json --udid $UDID
-warden ui export .warden-ui/add-todo.flow.json --to e2e/add-todo.e2e.ts --ids e2e/helpers/ids.ts
-```
-
-| Command | Notes |
-|---|---|
-| `record start <name> [--out file]` / `stop` / `status` | stores selectors, never refs; `--no-record` skips a step |
-| `replay <file> [--from i] [--update-snapshots] [--settle [ms]]` | step mismatch = `replay_divergence`, exit 1; file rewritten only with `--update-snapshots` |
-| `export <file> --to <spec> [--ids <module>] [--force]` | `--ids` merges into `export const ids = {...}`; coordinate taps export as `FIXME` to resolve before committing; refuses to overwrite without `--force` |
-
-Secrets: `fill --secure` text is never stored. Set `WARDEN_UI_SECRET_<NAME>` while recording; the flow stores the name, replay and the exported spec read it from the environment.
-
 ## Exit codes and JSON envelope
 
 | Exit | Codes |
 |---|---|
 | 0 | ok |
-| 1 | `failed` `usage` `target_not_found` `no_alert` `wait_*` `replay_divergence` |
+| 1 | `failed` `usage` `target_not_found` `no_alert` `wait_*` |
 | 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` |
 | 3 | `engine_unavailable` `devtools_unavailable` |
 | 4 | `stale_ref` |

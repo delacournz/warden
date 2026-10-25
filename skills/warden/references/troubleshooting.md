@@ -12,7 +12,7 @@
 | 6 | `port <p> is served by <dir>, not this worktree` | A foreign Metro owns the port | Stop that Metro or let warden pick another port. Never start Metro by hand |
 | 7 | `device_mismatch` | Two devices on one Metro | The runner pins by `WARDEN_DEVICE_NAME`; set it by hand when running manually |
 | 8 | "0 of 1 elements", or `ax` fallback after relaunch | Helper's stream is reopening | Wait ~2 s; else `warden ui close --udid <udid>` restarts the helper. `warden doctor` shows `degraded` |
-| 9 | Dropped characters | Key pacing too fast, or keys sent while focus was still moving to the field (iOS: first letters lost or moved, `"Hllo"`) | Never lower `WARDEN_SIMD_PACE_MS` / `WARDEN_SIMD_HOLD_MS`. `fill` (spec, `warden ui`, flows) and spec `type` / `press` wait for the field to report `focused`; by hand, `press` the field then `is <sel> focused` before `type`. `fill` verifies and retries |
+| 9 | Dropped characters | Key pacing too fast, or keys sent while focus was still moving to the field (iOS: first letters lost or moved, `"Hllo"`) | Never lower `WARDEN_SIMD_PACE_MS` / `WARDEN_SIMD_HOLD_MS`. `fill` (spec, `warden ui`, specs) and spec `type` / `press` wait for the field to report `focused`; by hand, `press` the field then `is <sel> focused` before `type`. `fill` verifies and retries |
 | 10 | App back at Welcome mid-test | Native crash | Read `~/Library/Logs/DiagnosticReports/<app>-*.ips` |
 | 11 | Deep link ignored | Opened while the app was settling | `device.openLink(url, { until })` again (example app: `openDeepLink`) |
 | 12 | `E_AX_UNAVAILABLE` right after launch | Transient (marked retryable) | Retry the call. `simctl launch` can take >30 s under load |
@@ -37,7 +37,7 @@
 | Exit | Error codes |
 |---|---|
 | 0 | ok |
-| 1 | `failed` `usage` `target_not_found` `no_alert` `wait_target_absent` `wait_target_hidden` `wait_target_present` `wait_text_absent` `wait_not_stable` `replay_divergence` |
+| 1 | `failed` `usage` `target_not_found` `no_alert` `wait_target_absent` `wait_target_hidden` `wait_target_present` `wait_text_absent` `wait_not_stable` |
 | 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` |
 | 3 | `engine_unavailable` `devtools_unavailable` |
 | 4 | `stale_ref` (snapshot again) |
@@ -49,8 +49,8 @@ Other codes:
 |---|---|
 | `E2eError` codes | `LOCATOR_NOT_FOUND` `LOCATOR_AMBIGUOUS` `INVALID_LOCATOR` `ACTION_FAILED` `TIMEOUT` `NOT_ACTIONABLE` `INVALID_ARGUMENT` `SESSION` `DRIVER` `ASSERTION` |
 | `no driver factory configured` | `bun test` run without `--preload @delacour/warden-e2e/preload` (and no preload in `bunfig.toml`) |
-| `warden e2e` exit | 0 ok, 1 a required flow failed, 130 interrupted |
-| `warden affected --strict` | exit 3 when a changed file reaches no flow |
+| `warden e2e` exit | 0 ok, 1 a required spec failed, 130 interrupted |
+| `warden affected --strict` | exit 3 when a changed file reaches no spec |
 | `warden check` | exit 2 when another owner holds the device |
 | batch job | exit 124 = job killed for exceeding its timeout |
 

@@ -5,7 +5,7 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 import { sourceDirFromCliPath } from "../update/build-info";
 
 /**
- * The built-in spec runner: `bun test --preload @delacour/warden-e2e/preload <flow files>`. Pure
+ * The built-in spec runner: `bun test --preload @delacour/warden-e2e/preload <spec files>`. Pure
  * argv / env / lookup helpers; `commands/e2e.ts` wires them into the batch jobs.
  */
 
@@ -16,14 +16,14 @@ export type RunnerArgvOptions = {
 	bun: string;
 	/** resolved `@delacour/warden-e2e/preload` */
 	preload: string;
-	/** absolute paths of the flow files to run */
-	flowPaths: readonly string[];
+	/** absolute paths of the spec files to run */
+	specPaths: readonly string[];
 	/** the spec's per-test timeout */
 	timeoutMs: number;
 	junitPath?: string | undefined;
 };
 
-/** argv of one `bun test` process over `flowPaths`. */
+/** argv of one `bun test` process over `specPaths`. */
 export function runnerArgv(o: RunnerArgvOptions): string[] {
 	return [
 		o.bun,
@@ -33,7 +33,7 @@ export function runnerArgv(o: RunnerArgvOptions): string[] {
 		"--timeout",
 		String(o.timeoutMs + BUN_TIMEOUT_MARGIN_MS),
 		...(o.junitPath !== undefined ? ["--reporter=junit", "--reporter-outfile", o.junitPath] : []),
-		...o.flowPaths,
+		...o.specPaths,
 	];
 }
 
@@ -49,15 +49,15 @@ export function findBun(
 }
 
 /**
- * Flows → at most `n` shards, round-robin by sorted id (flow `i` goes to shard `i % n`): the same
- * flows always land together, whatever order they were selected in. No flows, no shards.
+ * Specs → at most `n` shards, round-robin by sorted id (spec `i` goes to shard `i % n`): the same
+ * specs always land together, whatever order they were selected in. No specs, no shards.
  */
-export function shardFlows<T extends { id: string }>(flows: readonly T[], n: number): T[][] {
-	const sorted = [...flows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+export function shardSpecs<T extends { id: string }>(specs: readonly T[], n: number): T[][] {
+	const sorted = [...specs].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	const count = Math.min(Math.max(1, n), sorted.length);
 	const shards: T[][] = Array.from({ length: count }, () => []);
-	sorted.forEach((flow, i) => {
-		shards[i % count]?.push(flow);
+	sorted.forEach((spec, i) => {
+		shards[i % count]?.push(spec);
 	});
 	return shards;
 }
@@ -69,7 +69,7 @@ export type SpecEnvOptions = {
 	/** where this process writes `results.jsonl` and its artifacts */
 	out: string;
 	timeouts: { timeoutMs: number; actionTimeoutMs: number; assertionTimeoutMs: number };
-	flowsDir: string;
+	specsDir: string;
 	/** where `warden-simd` lives (the spec's helper lookup) */
 	helperDir: string;
 	/** warden's own version: the spec preload refuses to run when `@delacour/warden-e2e` is not the same */
@@ -86,7 +86,7 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 		[ENV_NAMES.timeout]: String(o.timeouts.timeoutMs),
 		[ENV_NAMES.actionTimeout]: String(o.timeouts.actionTimeoutMs),
 		[ENV_NAMES.assertionTimeout]: String(o.timeouts.assertionTimeoutMs),
-		[ENV_NAMES.flowsDir]: o.flowsDir,
+		[ENV_NAMES.specsDir]: o.specsDir,
 		[ENV_NAMES.helperDir]: o.helperDir,
 		[ENV_NAMES.version]: o.version,
 	};

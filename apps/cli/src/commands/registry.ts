@@ -40,13 +40,13 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "affected",
 		group: "Run",
-		summary: "list the e2e flows a change needs (git diff vs base → import graph → flows)",
+		summary: "list the e2e specs a change needs (git diff vs base → import graph → specs)",
 		load: async () => (await import("./affected")).affectedCommand,
 	},
 	{
 		name: "e2e",
 		group: "Run",
-		summary: "run the e2e flows a change needs on leased devices; exit 1 if a required flow fails",
+		summary: "run the e2e specs a change needs on leased devices; exit 1 if a required spec fails",
 		load: async () => (await import("./e2e")).e2eCommand,
 	},
 	{

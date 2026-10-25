@@ -43,7 +43,7 @@ function depsOf(files: Record<string, string>, extra: Partial<WardenDeps> = {}):
 
 describe("wardenArgv / wardenSpecEnv", () => {
 	test("bun test argv adds the margin and the retry flag only when asked", () => {
-		expect(wardenArgv({ preload: "/p", flowPaths: ["/a", "/b"], timeoutMs: 1000, retries: 0 })).toEqual([
+		expect(wardenArgv({ preload: "/p", specPaths: ["/a", "/b"], timeoutMs: 1000, retries: 0 })).toEqual([
 			"test",
 			"--preload",
 			"/p",
@@ -52,7 +52,7 @@ describe("wardenArgv / wardenSpecEnv", () => {
 			"/a",
 			"/b",
 		]);
-		expect(wardenArgv({ preload: "/p", flowPaths: [], timeoutMs: 1000, retries: 2 })).toContain("--retry");
+		expect(wardenArgv({ preload: "/p", specPaths: [], timeoutMs: 1000, retries: 2 })).toContain("--retry");
 	});
 
 	test("env contract", () => {
@@ -61,7 +61,7 @@ describe("wardenArgv / wardenSpecEnv", () => {
 			platform: "ios",
 			bundleId: "b",
 			out: "/o",
-			flowsDir: "/f",
+			specsDir: "/f",
 			helperDir: "/h",
 			version: "0.1.0",
 		});

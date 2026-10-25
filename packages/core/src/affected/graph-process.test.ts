@@ -311,7 +311,7 @@ describe("loadImportGraph in a compiled binary (no worker script on disk)", () =
 });
 
 describe("graphEntries", () => {
-	test("every flow's entries that exist, then the router layouts above them", async () => {
+	test("every spec's entries that exist, then the router layouts above them", async () => {
 		const suite = await findSuite(bunExec, dir);
 		if (!suite.success) throw new Error(suite.error);
 		const config = { ...suite.data.config, routerRoot: "src/app" };
@@ -330,11 +330,11 @@ describe("graphEntries", () => {
 	test("an entry that does not exist is left out", async () => {
 		const suite = await findSuite(bunExec, dir);
 		if (!suite.success) throw new Error(suite.error);
-		const flows = {
-			...suite.data.config.flows,
-			ghost: { ...suite.data.config.flows.chats, entries: ["src/ghost.tsx"] },
+		const specs = {
+			...suite.data.config.specs,
+			ghost: { ...suite.data.config.specs.chats, entries: ["src/ghost.tsx"] },
 		};
-		expect(rel(graphEntries({ ...suite.data.config, flows } as typeof suite.data.config, dir, "ios"))).toEqual([
+		expect(rel(graphEntries({ ...suite.data.config, specs } as typeof suite.data.config, dir, "ios"))).toEqual([
 			"src/app/(app)/chats.tsx",
 			"src/app/(app)/settings.tsx",
 		]);

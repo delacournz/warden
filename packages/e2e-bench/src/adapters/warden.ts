@@ -15,8 +15,8 @@ import {
 } from "./adapter.types";
 import { parseWardenResults } from "./parse/warden-results";
 
-/** The suite's flow files, in the order the run executes them (same order as the manifest). */
-export const WARDEN_FLOW_FILES = [
+/** The suite's spec files, in the order the run executes them (same order as the manifest). */
+export const WARDEN_SPEC_FILES = [
 	"onboarding.e2e.ts",
 	"sign-in.e2e.ts",
 	"todos.e2e.ts",
@@ -64,7 +64,7 @@ export const defaultWardenDeps: WardenDeps = {
 /** `bun test --preload … --timeout … <files>` (what `warden e2e` runs per spec process, minus the JUnit file). */
 export function wardenArgv(o: {
 	preload: string;
-	flowPaths: readonly string[];
+	specPaths: readonly string[];
 	timeoutMs: number;
 	retries: number;
 }): string[] {
@@ -75,7 +75,7 @@ export function wardenArgv(o: {
 		"--timeout",
 		String(o.timeoutMs + BUN_TIMEOUT_MARGIN_MS),
 		...(o.retries > 0 ? ["--retry", String(o.retries)] : []),
-		...o.flowPaths,
+		...o.specPaths,
 	];
 }
 
@@ -85,7 +85,7 @@ export function wardenSpecEnv(o: {
 	platform: string;
 	bundleId: string;
 	out: string;
-	flowsDir: string;
+	specsDir: string;
 	helperDir: string;
 	version: string;
 	socketPath?: string;
@@ -97,7 +97,7 @@ export function wardenSpecEnv(o: {
 		WARDEN_LAUNCH_ARGS: "[]",
 		WARDEN_E2E_OUT: o.out,
 		WARDEN_E2E_TIMEOUT: String(SPEC_TIMEOUT_MS),
-		WARDEN_E2E_FLOWS_DIR: o.flowsDir,
+		WARDEN_E2E_SPECS_DIR: o.specsDir,
 		WARDEN_HELPER_DIR: o.helperDir,
 		WARDEN_VERSION: o.version,
 		...(o.socketPath !== undefined ? { WARDEN_SIMD_SOCKET: o.socketPath } : {}),
@@ -226,7 +226,7 @@ async function run(ctx: RunContext, deps: WardenDeps): Promise<Result<RepResult,
 			platform: ctx.platform,
 			bundleId: ctx.bundleId,
 			out,
-			flowsDir: suiteDir,
+			specsDir: suiteDir,
 			helperDir: helperDirOf(ctx),
 			version,
 			...(ctx.platform === "ios" && socket.length < MAX_SOCKET_PATH && deps.exists(socket)
@@ -236,7 +236,7 @@ async function run(ctx: RunContext, deps: WardenDeps): Promise<Result<RepResult,
 	};
 	const argv = wardenArgv({
 		preload,
-		flowPaths: WARDEN_FLOW_FILES.map((f) => join(suiteDir, f)),
+		specPaths: WARDEN_SPEC_FILES.map((f) => join(suiteDir, f)),
 		timeoutMs: SPEC_TIMEOUT_MS,
 		retries: ctx.retries,
 	});

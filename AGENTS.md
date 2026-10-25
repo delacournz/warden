@@ -16,7 +16,7 @@
 apps/
   cli/                # @delacour/warden — the `warden` binary (commands, Claude hook)
   docs/               # @delacour/warden-docs — Fumadocs + TanStack Start docs site (content/docs/*.mdx), :3210
-  example/            # @delacour/warden-example — Expo + Delacour UI demo app; `@delacour/warden-e2e` flows run via `warden e2e example`
+  example/            # @delacour/warden-example — Expo + Delacour UI demo app; `@delacour/warden-e2e` specs run via `warden e2e example`
 packages/
   core/               # @delacour/warden-core — lease store, allocation, device providers, build cache
   e2e/                # @delacour/warden-e2e — spec runner (test/expect over bun test), iOS/Android driver, warden-simd helper, devtools; see packages/e2e/AGENTS.md

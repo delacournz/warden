@@ -276,7 +276,7 @@ function launchAssetUrl(manifest: unknown): string | undefined {
 /**
  * Build the `platform` bundle once before any device asks for it (the first request is the slow
  * one). No readable manifest → `bundled: false` (nothing to warm); a bundle Metro cannot build is
- * an error carrying Metro's message, since every flow would hit it. `signal` (a Ctrl-C, a failed
+ * an error carrying Metro's message, since every spec would hit it. `signal` (a Ctrl-C, a failed
  * claim) ends either request at once, as an error (12-5).
  */
 export async function prewarmMetro(
@@ -349,7 +349,7 @@ const ADB_WAIT_MS = 30_000;
 
 /**
  * `adb reverse` the Metro port onto the device, retried once after `adb wait-for-device` (bounded):
- * a device that still cannot reach Metro is an error, since every flow on it would time out (12-7).
+ * a device that still cannot reach Metro is an error, since every spec on it would time out (12-7).
  */
 export async function reverseMetroPort(exec: Exec, serial: string, port: number): AsyncResult<void> {
 	const argv = adbReverseArgv(serial, port);

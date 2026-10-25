@@ -49,7 +49,7 @@ function describeReport(report: SlimReport, opts: SlimOpts): string {
 	return `${report.udid}: ${opts.restore ? "re-enabled" : "disabled"} ${labels.length} job(s)`;
 }
 
-/** `warden sim slim <udid>|--booted [--dry-run] [--restore]`: switch off the simulator daemons flows never use. */
+/** `warden sim slim <udid>|--booted [--dry-run] [--restore]`: switch off the simulator daemons specs never use. */
 async function slim(ctx: CommandContext, udid: string | undefined, opts: SlimOpts): Promise<number> {
 	const { color } = ctx.ui;
 	const fail = (message: string) => {
@@ -90,7 +90,7 @@ export function createSimCommand(): Command {
 			cmd
 				.command("slim")
 				.description(
-					"switch off the iOS simulator daemons UI flows never need (Siri, Health, News, Mail…) to save RAM/CPU"
+					"switch off the iOS simulator daemons UI specs never need (Siri, Health, News, Mail…) to save RAM/CPU"
 				)
 				.argument("[udid]", "simulator udid (booted, not leased by another session)")
 				.option("--booted", "every booted simulator")

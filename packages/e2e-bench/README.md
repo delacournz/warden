@@ -85,10 +85,10 @@ Each framework expresses the same retries in its own idiom. Gaps that remain are
 |---|---|---|---|---|
 | warden | `screen.getByTestId` | built-in options: `tap({ until })` (4 s a press, two re-sends), `openDeepLink` (3 links, 6 s each), `test.use({ systemAlerts: "dismiss" })`, `app.open({ wait: "quiet" })` | none | copied from `apps/example/e2e` minus devtools. The hand-rolled `tapUntil` version it replaced is what the published headline numbers (`docs/bench/*-perf.md`) ran; the idiomatic run is reported beside them |
 | maestro | `id:` | `retry:` blocks rerun the tap and the wait together (`common/tap-until.yaml`, `next-step.yaml`) | checkbox state read via accessibility text `checkbox, checked` | JVM driver; step durations include Maestro's own polling, compare per-test totals |
-| argent | `{ id }` | `when:` guards instead of loops (`fragments/next-*.yaml`), nested to cap retaps at 2 | checkbox checked state is not readable; the remaining-count assertion covers the effect | `flow run` uses its own server (`argent server start/stop`) |
+| argent | `{ id }` | `when:` guards instead of loops (`fragments/next-*.yaml`), nested to cap retaps at 2 | checkbox checked state is not readable; the remaining-count assertion covers the effect | `spec run` uses its own server (`argent server start/stop`) |
 | agent-device | `id="..."` | `.ad` scripts have no retry or conditional: plain `wait` / `press` | none | needs `prepare ios-runner` and a daemon; cold cost is measured |
 | tester-army | `screen.getByTestId` | its own copy of the hand-rolled `tapUntil` helpers warden used before PERF-6.3 | none | `AGENT_DEVICE_STATE_DIR` is private (`BENCH_TESTER_ARMY_STATE_DIR`) so it never shares a daemon with agent-device; needs Node 24 on `PATH` |
-| detox | `by.id` | `tapUntil` port in `helpers/flows.js` | none | best effort: Detox 20.51 supports RN up to 0.84, the app is 0.86. Any attach or sync failure is reported as `unsupported`. System alerts are avoided by pre-granted permissions, not dismissed. Android needs an instrumented build, so it is `unsupported` unless `BENCH_DETOX_ANDROID=1` |
+| detox | `by.id` | `tapUntil` port in `helpers/steps.js` | none | best effort: Detox 20.51 supports RN up to 0.84, the app is 0.86. Any attach or sync failure is reported as `unsupported`. System alerts are avoided by pre-granted permissions, not dismissed. Android needs an instrumented build, so it is `unsupported` unless `BENCH_DETOX_ANDROID=1` |
 
 A native test name that does not map to a canonical id is a parity breach: that framework is `failed` in phase `run`.
 
@@ -122,7 +122,7 @@ Also: Xcode with a booted-capable simulator (iOS) or an Android emulator, and `w
 3. Put the native reporter parser in `src/adapters/parse/` and a real output sample in `src/adapters/fixtures/`; test against the fixture with `fakeExec`.
 4. Register it in `src/adapters/registry.ts`.
 5. Add a `native.<id>` name for every test in `suites/manifest.json` (`bench doctor` fails a suite missing an id).
-6. Create `suites/<id>/` with all 8 tests, encoding the same retries as `apps/example/e2e/helpers/flows.ts`. Add a caveats row to this README and the docs guide.
+6. Create `suites/<id>/` with all 8 tests, encoding the same retries as `apps/example/e2e/helpers/steps.ts`. Add a caveats row to this README and the docs guide.
 
 ## Adding a canonical test
 

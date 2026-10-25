@@ -50,7 +50,7 @@ export type FixtureFactory = (ctx: FixtureContext) => BaseFixtures | Promise<Bas
 /** The running attempt: where steps, screenshots and failure files go. Read it through the session. */
 export type AttemptContext = {
 	readonly signal: AbortSignal;
-	/** `<out>/<flowId>/<title-slug>-<hash6>/` */
+	/** `<out>/<specId>/<title-slug>-<hash6>/` */
 	readonly dir: string;
 	/** spec name tagging step lines */
 	readonly short: string;

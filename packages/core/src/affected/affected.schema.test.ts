@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { e2eSuiteSchema, suiteIsolation } from "./affected.schema";
 
-const parse = (extra: Record<string, unknown> = {}) => e2eSuiteSchema.safeParse({ flowsDir: "flows", ...extra });
+const parse = (extra: Record<string, unknown> = {}) => e2eSuiteSchema.safeParse({ specsDir: "specs", ...extra });
 
 function suite(extra: Record<string, unknown> = {}) {
 	const res = parse(extra);
@@ -19,35 +19,19 @@ describe("suiteIsolation", () => {
 		expect(suiteIsolation(suite())).toBe("device");
 	});
 
-	test("isolate: flow keeps one process per flow; isolate: device is the default spelled out", () => {
-		expect(suiteIsolation(suite({ isolate: "flow" }))).toBe("flow");
+	test("isolate: spec keeps one process per spec; isolate: device is the default spelled out", () => {
+		expect(suiteIsolation(suite({ isolate: "spec" }))).toBe("spec");
 		expect(suiteIsolation(suite({ isolate: "device" }))).toBe("device");
 	});
 
-	test("mode is the old spelling: per-flow = flow, single = device", () => {
-		expect(suiteIsolation(suite({ mode: "per-flow" }))).toBe("flow");
-		expect(suiteIsolation(suite({ mode: "single" }))).toBe("device");
+	test("passes > 1 can't re-run a spec inside a shared process: the default falls back to spec", () => {
+		expect(suiteIsolation(suite({ passes: 3 }))).toBe("spec");
 	});
 
-	test("passes > 1 can't re-run a flow inside a shared process: the default falls back to flow", () => {
-		expect(suiteIsolation(suite({ passes: 3 }))).toBe("flow");
-	});
-
-	test("isolate and mode that agree are fine, ones that disagree are named", () => {
-		expect(suiteIsolation(suite({ isolate: "flow", mode: "per-flow" }))).toBe("flow");
-		expect(issues({ isolate: "flow", mode: "single" })).toEqual([
-			'mode: mode "single" means isolate "device", not "flow" (drop mode)',
-		]);
-		expect(issues({ isolate: "device", mode: "per-flow" })).toEqual([
-			'mode: mode "per-flow" means isolate "flow", not "device" (drop mode)',
-		]);
-	});
-
-	test("asking for a process per device with passes > 1 is refused, either spelling", () => {
-		const message = 'passes: passes > 1 needs isolate "flow" (one process cannot be re-run per flow)';
+	test("asking for a process per device with passes > 1 is refused", () => {
+		const message = 'passes: passes > 1 needs isolate "spec" (one process cannot be re-run per spec)';
 		expect(issues({ isolate: "device", passes: 2 })).toEqual([message]);
-		expect(issues({ mode: "single", passes: 2 })).toEqual([message]);
-		expect(issues({ isolate: "flow", passes: 2 })).toEqual([]);
+		expect(issues({ isolate: "spec", passes: 2 })).toEqual([]);
 	});
 
 	test("unknown values are refused", () => {

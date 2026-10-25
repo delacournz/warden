@@ -1,9 +1,9 @@
 import { expect, type Screen, test } from "@delacour/warden-e2e";
-import { FLOW_OPTIONS, openGestures } from "./helpers/flows";
 import { ids } from "./helpers/ids";
 import { pollUntil } from "./helpers/poll";
+import { openGestures, SPEC_OPTIONS } from "./helpers/steps";
 
-test.use(FLOW_OPTIONS);
+test.use(SPEC_OPTIONS);
 
 /** Reads a numeric readout. */
 async function readNumber(screen: Screen, testId: string): Promise<number> {

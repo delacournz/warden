@@ -2,7 +2,7 @@
 /**
  * Fake `warden batch --record` dir for developing compose.ts without sims:
  * 5 testsrc2 "phones" (portrait 1206x2622, scaled down), a synthetic TUI
- * asciicast and a batch.json with 12 flows, one failing once then passing on retry.
+ * asciicast and a batch.json with 12 specs, one failing once then passing on retry.
  *
  *   bun scripts/demo/fixture.ts <dir>
  */
@@ -11,7 +11,7 @@ import { join, resolve } from "node:path";
 import type { Batch, BatchDevice, BatchJob } from "./batch";
 
 const T0 = 1_760_000_000_000;
-const FLOWS = [
+const SPECS = [
 	"qa-login",
 	"qa-onboarding",
 	"qa-search",
@@ -25,7 +25,7 @@ const FLOWS = [
 	"qa-logout",
 	"qa-empty-state",
 ];
-/** Seconds per flow; deterministic so the fixture is reproducible. */
+/** Seconds per spec; deterministic so the fixture is reproducible. */
 const DURATIONS = [14, 22, 11, 19, 9, 16, 25, 12, 18, 10, 13, 15];
 const FLAKY = "qa-feed-scroll";
 
@@ -43,7 +43,7 @@ export function planFixture(workers = 5): Plan {
 	const free = devices.map((d) => d.videoStartedAt + 1500);
 	const seq = devices.map(() => 0);
 	const jobs: BatchJob[] = [];
-	FLOWS.forEach((job, k) => {
+	SPECS.forEach((job, k) => {
 		const w = free.indexOf(Math.min(...free));
 		const device = devices[w];
 		if (!device) throw new Error("no worker");

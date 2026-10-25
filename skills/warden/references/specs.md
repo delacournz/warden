@@ -22,9 +22,9 @@ preload = ["@delacour/warden-e2e/preload"]
 ## Layout
 
 ```
-e2e/<flow>.e2e.ts        flow id = path under flowsDir minus .e2e.ts (e2e/auth/sign-in.e2e.ts -> auth/sign-in)
+e2e/<spec>.e2e.ts        spec id = path under specsDir minus .e2e.ts (e2e/auth/sign-in.e2e.ts -> auth/sign-in)
 e2e/helpers/ids.ts       export const ids = { ... } as const   (mirrors the app's testIDs)
-e2e/helpers/flows.ts     shared steps (launch, signedIn, nextStep, openDeepLink)
+e2e/helpers/steps.ts     shared steps (launch, signedIn, nextStep, openDeepLink)
 e2e/helpers/poll.ts      pollUntil
 ```
 
@@ -46,7 +46,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 - `test.extend<Extra>({ name: async (base, use) => { await use(value) } })` returns a `test` with the extra fixture.
 - `describe(title, [{ serial }], body)`. `serial` is accepted but changes nothing (bun runs a file's tests in order).
 - `beforeEach/afterEach` receive the base fixtures; `it.beforeEach/afterEach` on a `test.extend` result receive its fixtures too and run only for its tests. `beforeAll/afterAll` receive `app`, `device`, `screen`, `platform` only.
-- The runner calls `app.open()` before every test unless `launch: "none"`. A flow starts from a fresh launch.
+- The runner calls `app.open()` before every test unless `launch: "none"`. A spec starts from a fresh launch.
 - Timeouts: test 120 s, action 30 s, assertion 5 s. Precedence: test option, then `test.use`, then env (`WARDEN_E2E_*`). In a suite, set them under `spec`.
 
 ## Fixtures
@@ -139,16 +139,16 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 
 ```ts
 import { expect, test } from "@delacour/warden-e2e";
-import { signedIn } from "./helpers/flows";
+import { signedIn } from "./helpers/steps";
 import { ids } from "./helpers/ids";
 
 test("add, complete and filter todos", async ({ device, screen }) => {
 	await signedIn(device, screen);
 	const remaining = screen.getByTestId(ids.todos.remaining);
 
-	await screen.getByTestId(ids.todos.input).fill("Write e2e flows");
+	await screen.getByTestId(ids.todos.input).fill("Write e2e specs");
 	await screen.getByTestId(ids.todos.add).tap();
-	await expect(screen.getByTestId(ids.todos.title("todo-1"))).toHaveText("Write e2e flows");
+	await expect(screen.getByTestId(ids.todos.title("todo-1"))).toHaveText("Write e2e specs");
 	await expect(remaining).toHaveText("2 left");
 
 	await screen.getByTestId(ids.todos.check("todo-1")).tap();
@@ -168,11 +168,11 @@ test("add, complete and filter todos", async ({ device, screen }) => {
 });
 ```
 
-## Helper patterns (`apps/example/e2e/helpers/flows.ts`)
+## Helper patterns (`apps/example/e2e/helpers/steps.ts`)
 
-The first press after a launch or navigation can be dropped, and a HID tap has no ack. So flows wait for the result and re-tap, with the built-in options instead of hand-written loops.
+The first press after a launch or navigation can be dropped, and a HID tap has no ack. So specs wait for the result and re-tap, with the built-in options instead of hand-written loops.
 
-Every flow file starts with `test.use(FLOW_OPTIONS)`, where `FLOW_OPTIONS = { launch: "none", systemAlerts: "dismiss" }`: the flow opens the app itself, and a system sheet that covers the app is dismissed wherever a read, tap or assertion meets one.
+Every spec file starts with `test.use(SPEC_OPTIONS)`, where `SPEC_OPTIONS = { launch: "none", systemAlerts: "dismiss" }`: the spec opens the app itself, and a system sheet that covers the app is dismissed wherever a read, tap or assertion meets one.
 
 ```ts
 export async function launch(app: Pick<App, "open">, screen: Screen): Promise<void> {
@@ -193,7 +193,7 @@ await screen.getByTestId(ids.tabs.settings).tap({ until: screen.getByTestId(ids.
 
 ## Accessibility rule
 
-Specs read the accessibility tree, not React. A `testID` shows up only when the view is `accessible`. Keep switches and checkboxes real controls so `toBeChecked` works. Fix the component, not the flow. Inspect with `warden ui snapshot -i --udid <udid>`, `warden ui tree` (dev client), or `screen-at-failure.txt`.
+Specs read the accessibility tree, not React. A `testID` shows up only when the view is `accessible`. Keep switches and checkboxes real controls so `toBeChecked` works. Fix the component, not the spec. Inspect with `warden ui snapshot -i --udid <udid>`, `warden ui tree` (dev client), or `screen-at-failure.txt`.
 
 ## By hand
 
@@ -209,19 +209,12 @@ WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=<bundleId> \
 
 ## Artifacts
 
-`<out>/<flowId>/<title-slug>-<hash6>/`. `<out>` is `WARDEN_E2E_OUT`, default `.warden-e2e/<ISO time>`. Under `warden e2e` it is `<batchDir>/e2e/<worker>-<seq>/`.
+`<out>/<specId>/<title-slug>-<hash6>/`. `<out>` is `WARDEN_E2E_OUT`, default `.warden-e2e/<ISO time>`. Under `warden e2e` it is `<batchDir>/e2e/<worker>-<seq>/`.
 
 - Always: `trace.jsonl`, `screenshots/`.
 - On failure: `failure.png`, `screen-at-failure.txt`, plus `console.jsonl` and `network.jsonl` with devtools.
 - `<out>/results.jsonl`: one line per test, status `passed | failed | skipped | timed-out`.
 - Read `screen-at-failure.txt` first: it is the full AX tree at the failure.
-
-## From a recording
-
-1. `warden ui record start <name>`, drive the app, `warden ui record stop`.
-2. `warden ui export .warden-ui/<name>.flow.json --to e2e/<name>.e2e.ts --ids e2e/helpers/ids.ts` (`--force` overwrites). New ids merge into `ids` in camelCase (`sign-in-submit` becomes `signInSubmit`).
-3. Resolve every `FIXME`. The generated code throws on them.
-4. Run it by hand, then add the flow to the suite's `flows` with `entries`.
 
 ## Not in the API
 
@@ -241,5 +234,4 @@ These do not exist. Do not write them.
 - No `WARDEN_*` exports for a suite run. `warden e2e` sets them.
 - No `test.only` left in. Under `CI` it fails the run.
 - No subpath imports.
-- Do not replay a `.flow.json` as a test. Export it.
 - No `page`, `agent-device`, `argent` or tester.army APIs.

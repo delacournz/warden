@@ -64,7 +64,7 @@ export default defineConfig(({ env }) => ({
 export default defineConfig({ projects: [{ name: "app", bundleId: {}, bundelId: {} }] });`);
 			expect(typo.join("\n")).toContain("'bundelId' does not exist in type 'WardenProject'");
 			const value = diagnose(`import { defineConfig } from "@delacour/warden/config";
-export default defineConfig(() => ({ e2e: { m: { flowsDir: "f", runner: [], unmatched: "all" } } }));`);
+export default defineConfig(() => ({ e2e: { m: { specsDir: "f", unmatched: "all" } } }));`);
 			expect(value.join("\n")).toContain('"all"');
 		},
 		TSC_TIMEOUT_MS

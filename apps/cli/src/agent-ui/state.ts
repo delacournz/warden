@@ -28,8 +28,6 @@ export type UiState = {
 	metroUrl?: string;
 	/** bundle id of the app `warden ui open` last launched (`close --app` terminates it) */
 	app?: string;
-	/** the flow being recorded (`warden ui record start`) */
-	recording?: { file: string; name: string; startedAt: number };
 	helper?: HelperRecord;
 	/** the running `logs start` collector (`warden ui-collect`): host pid, start time and (newer warden) its `--out` dir */
 	collector?: { pid: number; startedAt: number; out?: string };
@@ -102,7 +100,6 @@ const stateSchema = z.object({
 	generation: z.number(),
 	metroUrl: z.string().optional(),
 	app: z.string().optional(),
-	recording: z.object({ file: z.string(), name: z.string(), startedAt: z.number() }).optional(),
 	helper: z
 		.object({
 			pid: z.number(),
@@ -163,7 +160,7 @@ export function writeState(ctx: Pick<CommandContext, "env" | "now">, udid: strin
 /**
  * Read-modify-write of `state.json`: re-reads the file and writes what `update` returns, all under the store's
  * `BEGIN IMMEDIATE` transaction (the cross-process mutex), so two `warden ui` processes setting different records
- * (helper, video, recording, collector, app) never lose each other's. Every `state.json` writer goes through here.
+ * (helper, video, collector, app) never lose each other's. Every `state.json` writer goes through here.
  * `update` must not block (it runs inside the transaction); returning the state it was given writes nothing.
  * Without a store in `ctx` it is a plain read-modify-write. Returns the state as it now stands.
  */

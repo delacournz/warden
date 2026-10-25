@@ -79,10 +79,10 @@ describe("ui state", () => {
 		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(101);
 	});
 
-	test("four processes each setting a different record through updateState on one WARDEN_HOME keep all four (14-6)", async () => {
+	test("three processes each setting a different record through updateState on one WARDEN_HOME keep all three (14-6)", async () => {
 		const ctx = setup();
 		const worker = join(import.meta.dir, "state.worker.testing.ts");
-		const fields = ["helper", "video", "collector", "recording"];
+		const fields = ["helper", "video", "collector"];
 		const workers = fields.map((field) =>
 			Bun.spawn([process.execPath, worker, home ?? "", "U1", "40", field], { stdout: "pipe", stderr: "inherit" })
 		);
@@ -91,7 +91,6 @@ describe("ui state", () => {
 		expect(state.helper).toEqual({ pid: 40, socket: "/s" });
 		expect(state.video).toEqual({ pid: 40, path: "/v.mp4", startedAt: 40 });
 		expect(state.collector).toEqual({ pid: 40, startedAt: 40 });
-		expect(state.recording).toEqual({ file: "/f.flow.json", name: "f", startedAt: 40 });
 	});
 
 	test("updateState re-reads under the store's transaction, writes what the update returns, and returns it", () => {
@@ -161,7 +160,7 @@ describe("ui state", () => {
 		const ctx = setup();
 		writeState(ctx, "U1", { generation: 1, updatedAt: 0 });
 		const state = join(uiDir(ctx, "U1"), "state.json");
-		writeFileSync(state, JSON.stringify({ generation: 5, recording: { file: 3 } }));
+		writeFileSync(state, JSON.stringify({ generation: 5, helper: { pid: "x" } }));
 		expect(readState(ctx, "U1")).toEqual({ generation: 0, updatedAt: 0 });
 		writeFileSync(state, JSON.stringify({ generation: "5" }));
 		expect(readState(ctx, "U1")).toEqual({ generation: 0, updatedAt: 0 });

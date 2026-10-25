@@ -48,7 +48,7 @@ const PRESET_EXAMPLE = `
     "retry": 1,
     "serve": "bun scripts/e2e/run-ios.ts --session",
     "serveReady": "file:e2e-artifacts/batch/session.json",
-    "jobsFrom": { "command": "bun scripts/e2e/select-flows.ts --list" },
+    "jobsFrom": { "command": "bun scripts/e2e/select-specs.ts --list" },
     "cmd": ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
   }
 }`;
@@ -107,7 +107,7 @@ function Home(): ReactElement {
 				</section>
 
 				<Section
-					lede="Salient's 37 e2e flows take 13m55s on one simulator and 3m25s on five. A batch leases the simulators, starts your serve step once, and hands the next flow to whichever simulator frees up first. Declare it once in warden.config.json; every agent and human runs the same command."
+					lede="Salient's 37 e2e specs take 13m55s on one simulator and 3m25s on five. A batch leases the simulators, starts your serve step once, and hands the next spec to whichever simulator frees up first. Declare it once in warden.config.json; every agent and human runs the same command."
 					title="Your whole suite, split across every simulator."
 				>
 					<div className="grid grid-cols-1 gap-6 *:min-w-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -125,13 +125,13 @@ function Home(): ReactElement {
 								trailing={<Tag>--serve</Tag>}
 							/>
 							<GroupedRow
-								detail="One worker per simulator pulls the next flow, so a slow flow never holds up the rest."
+								detail="One worker per simulator pulls the next spec, so a slow spec never holds up the rest."
 								leading={<ListOrdered className="size-[18px]" />}
 								title="Queue"
 								trailing={<Tag>{"{job}"}</Tag>}
 							/>
 							<GroupedRow
-								detail="A failed flow reruns on the same simulator, with its own log."
+								detail="A failed spec reruns on the same simulator, with its own log."
 								leading={<RotateCcw className="size-[18px]" />}
 								title="Retry"
 								trailing={<Tag>--retry</Tag>}

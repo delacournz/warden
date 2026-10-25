@@ -177,14 +177,13 @@ describe("warden ui status", () => {
 		expect(await uiCommand.run(c)).toBe(0);
 		const doc = json(c);
 		expect(doc).toMatchObject({ ok: true, command: "status", durationMs: 0 });
-		expect(doc.result).toMatchObject({ helper: { running: false, pid: null, socket: null }, recording: "none" });
+		expect(doc.result).toMatchObject({ helper: { running: false, pid: null, socket: null } });
 
 		const t = setup(["status", "--udid", UDID]);
 		lease(t, UDID, mine);
 		expect(await uiCommand.run(t)).toBe(0);
 		const text = t.stdout.join("\n");
 		expect(text).toContain("helper    not started");
-		expect(text).toContain("recording none");
 	});
 
 	test("--timeout must be a positive integer; accepted otherwise", async () => {
@@ -192,7 +191,7 @@ describe("warden ui status", () => {
 		expect(await uiCommand.run(bad)).toBe(1);
 		expect(json(bad).error.code).toBe("usage");
 
-		const good = setup(["status", "--udid", UDID, "--claim", "--timeout", "250", "--no-record"]);
+		const good = setup(["status", "--udid", UDID, "--claim", "--timeout", "250"]);
 		expect(await uiCommand.run(good)).toBe(0);
 	});
 

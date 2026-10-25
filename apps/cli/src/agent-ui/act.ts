@@ -1,4 +1,4 @@
-import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
+import type { Driver, Point } from "@delacour/warden-e2e/driver/driver.types";
 import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-e2e/driver/settle";
 import { E2eError } from "@delacour/warden-e2e/errors";
 import { formatSelector } from "@delacour/warden-e2e/screen/selector";
@@ -6,14 +6,15 @@ import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
 import type { UiDeps } from "./driver";
-import { flowRecordSink } from "./flow-sink";
 import { type UiError, type UiSuccess, uiError } from "./output";
-import { attachEvidence, evidenceOf, type RecordStep, type RecordTarget } from "./record";
-import type { UiOptionValues, UiRunEnv } from "./run";
+import type { UiOptionValues } from "./run";
 import { settleLines, type TakenSnapshot, takeSnapshot } from "./snapshot";
 import { positiveInt } from "./snapshot-command";
 import { readLastSnapshot } from "./state";
 import { parseTarget, type ResolvedTarget, resolveTarget, type Target } from "./target";
+
+/** The target of an action, as `warden ui` resolved it. */
+export type ActionTarget = { ref?: string; selector?: string; point: Point };
 
 /** Options of every action that can wait for the screen to settle afterwards. */
 export type ActionOptionValues = UiOptionValues & {
@@ -33,12 +34,8 @@ export type ActionDone = {
 	action: string;
 	/** one line for humans */
 	text: string;
-	target?: RecordTarget;
+	target?: ActionTarget;
 	verified?: boolean | "unconfirmed";
-	/** the action's own arguments: appended to the recording (never put a secret here) */
-	args?: RecordStep["args"];
-	/** text typed into a secure field: the recording only names it (`WARDEN_UI_SECRET_*`), never stores it */
-	secret?: string;
 	/** more `--json` fields (`direction`, `swipes`, `path`, …) */
 	extra?: Record<string, unknown>;
 };
@@ -53,13 +50,11 @@ function settledJson(taken: TakenSnapshot): Record<string, unknown> {
 
 /**
  * Wrap up an action: `--settle` waits for a quiet screen and diffs it against the stored snapshot (a new
- * generation, so `@eN` refs from before are replaced), the step is appended to the active recording
- * (unless `--no-record`), and the result is shaped for text and `--json`.
+ * generation, so `@eN` refs from before are replaced), and the result is shaped for text and `--json`.
  */
 export async function finishAction(
 	ctx: CommandContext,
 	deps: UiDeps,
-	env: UiRunEnv,
 	device: UiDevice,
 	driver: Driver,
 	settleBudget: number | undefined,
@@ -74,17 +69,6 @@ export async function finishAction(
 		});
 		if (!snap.success) return snap;
 		taken = snap.data;
-	}
-	if (env.record) {
-		const evidence = done.target ? evidenceOf(done.target) : undefined;
-		await (deps.record ?? flowRecordSink(ctx)).append(device.udid, {
-			action: done.action,
-			...(done.target ? { target: done.target } : {}),
-			...(done.args ? { args: done.args } : {}),
-			...(evidence ? { evidence } : {}),
-			...(settleBudget !== undefined ? { settle: { timeoutMs: settleBudget } } : {}),
-			...(done.secret !== undefined ? { secret: done.secret } : {}),
-		});
 	}
 	const result: Record<string, unknown> = {
 		action: done.action,
@@ -123,19 +107,16 @@ export async function pointAt(
 }
 
 /** How a resolved target is reported: `ref`, the selector text, the screen point. */
-export function recordTarget(target: Target, resolved: ResolvedTarget): RecordTarget {
-	const where: RecordTarget = {
+export function actionTarget(target: Target, resolved: ResolvedTarget): ActionTarget {
+	return {
 		...(resolved.ref !== undefined ? { ref: resolved.ref } : {}),
 		...(target.kind === "selector" ? { selector: formatSelector(target.selector) } : {}),
 		point: resolved.point,
 	};
-	return resolved.element && resolved.snapshot
-		? attachEvidence(where, { element: resolved.element, snapshot: resolved.snapshot })
-		: where;
 }
 
 /** `@e3`, `id=email` or `(120,340)`: a target in one line of text. */
-export function targetLabel(target: RecordTarget): string {
+export function targetLabel(target: ActionTarget): string {
 	return target.ref ?? target.selector ?? `(${Math.round(target.point.x)},${Math.round(target.point.y)})`;
 }
 

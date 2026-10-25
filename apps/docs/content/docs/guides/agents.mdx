@@ -10,7 +10,7 @@ icon: Bot
 
 - **Claim before use.** `warden claim ios --json` (or `android`), then use the returned `udid` / `serial` for every simctl / adb / `warden ui` call. Never pick a device from `list-devices` or `simctl list` on your own.
 - **Never touch a booted device you did not claim** — it belongs to another session.
-- **Drive the device with `warden ui`** (snapshot, tap, type, wait, record): see [Drive a device](/docs/guides/agent-ui). It checks the lease on every call and refuses a device another session leased; run `warden claim` and switch to the returned device. For checks that must keep passing, write a [spec](/docs/guides/specs) instead.
+- **Drive the device with `warden ui`** (snapshot, tap, type, wait): see [Drive a device](/docs/guides/agent-ui). It checks the lease on every call and refuses a device another session leased; run `warden claim` and switch to the returned device. For checks that must keep passing, write a [spec](/docs/guides/specs) instead.
 - **Release when done:** `warden ui close --release`, or `warden release <leaseId>` (add `--shutdown` to stop sims warden created). Subagents never run `warden release --mine`, which frees the parent's leases too: release the lease id you hold, or claim with `--label x` and run `release --mine --label x`.
 
 ## Xcode 27 MCP

@@ -4,7 +4,7 @@ description: The @delacour/warden-e2e spec API - test, describe and hooks, scree
 icon: FlaskConical
 ---
 
-`@delacour/warden-e2e` is warden's own mobile test runner. A flow is a `*.e2e.ts` file run by `bun test`; [`warden e2e`](/docs/guides/run-e2e) leases the simulators, installs the build, starts Metro and runs the specs against them. The package drives iOS simulators and Android emulators directly (see [iOS driver helper](/docs/reference/e2e-driver)), so there is no daemon and no other test runner to install.
+`@delacour/warden-e2e` is warden's own mobile test runner. A spec is a `*.e2e.ts` file run by `bun test`; [`warden e2e`](/docs/guides/run-e2e) leases the simulators, installs the build, starts Metro and runs the specs against them. The package drives iOS simulators and Android emulators directly (see [iOS driver helper](/docs/reference/e2e-driver)), so there is no daemon and no other test runner to install.
 
 ```bash
 bun add -d @delacour/warden-e2e
@@ -20,7 +20,7 @@ bun add -d @delacour/warden-e2e
 import { expect, test } from "@delacour/warden-e2e";
 
 test("add a todo", async ({ device, screen }) => {
-  await screen.getByTestId("todo-input").fill("Write e2e flows");
+  await screen.getByTestId("todo-input").fill("Write e2e specs");
   await screen.getByTestId("todo-add").tap();
   await expect(screen.getByTestId("todos-remaining")).toHaveText("2 left");
 });
@@ -105,7 +105,7 @@ Multi-touch lives on `screen.gesture`:
 A scale or degrees out of range, a `paths` count other than 1-2, or a path with no point or a non-finite coordinate throws `E2eError` `INVALID_ARGUMENT`, as does a gesture the device cannot do: `pinch` and `rotate` need `capabilities.pinch`, a path needs as many `capabilities.maxPointers` as it has fingers (Android without `warden-uiad`: no pinch or rotate, 1-finger paths only on API 26+). Skip such a test with `test({ platforms: ["ios"] })`.
 
 <Callout>
-Specs read the accessibility tree. A `testID` is only exposed when the native view is `accessible`, so mark every view a flow taps or asserts as accessible. In a dev client, a plain `getByTestId` that finds nothing in the accessibility tree falls back to the React tree, but only `tap()` and `boundingBox()` work on such a component; anything else fails with `NOT_ACTIONABLE`.
+Specs read the accessibility tree. A `testID` is only exposed when the native view is `accessible`, so mark every view a spec taps or asserts as accessible. In a dev client, a plain `getByTestId` that finds nothing in the accessibility tree falls back to the React tree, but only `tap()` and `boundingBox()` work on such a component; anything else fails with `NOT_ACTIONABLE`.
 </Callout>
 
 ## locator: actions and reads
@@ -167,7 +167,7 @@ Every read, action and `expect` looks at the screen. The runner keeps the last l
 
 `open({ url?, args?, env?, wait? })` · `close()` · `restart()` · `reinstall()` · `clearData()` · `isRunning()`
 
-`open` always starts the app fresh: it terminates a running instance first (iOS: `simctl launch --terminate-running-process`; Android: `am start -W -S` on the launcher activity, which also waits for the first frame, or `am force-stop` then `monkey` when the launcher cannot be resolved), so a device an aborted run left mid-flow does not leak into the next test. It launches with the suite's launch arguments (`--initialUrl <metro url>` for a dev client) plus `args`, and `env` adds environment variables to the launched process; `url` is opened once the app is launched. Android cannot take launch arguments: the suite's are dropped with one log line, while an explicit `args` still fails the launch, and `env` is unsupported there. `wait: "none"` (the default) returns when the launch call does, before the app is on screen. `wait: "quiet"` then also waits for the first screen and for it to stop moving. A launch screen is idle while the app loads, so open reads the screen after 100 ms, 200 ms, then every 400 ms (fewer full reads while the app starts) until it shows content (a visible control, or any element with a testID; a storyboard or splash has neither), for at most 3 s, then settles (`device.settle()` with 250 ms of quiet, at most 3 s). It is best effort: a first screen with no control and no testID waits out the 3 s, an app that is not quiet in time is returned as it is, and a driver that cannot settle skips the settle. `wait: { until: locator, timeout? }` waits for that locator to be visible (a `TIMEOUT` after `timeout`, default the assertion timeout, like `toBeVisible()`), then settles once, so the next tap lands on a mounted screen; it replaces `open()` followed by `toBeVisible()`: `await app.open({ wait: { until: screen.getByTestId("welcome.screen") } })`. `restart()` is the same relaunch (one stop, not two); `close()` only stops. `launch: "none"` skips the runner's own `open()` and leaves the app as it is. `clearData` wipes the app's data and the keychain; `reinstall` uninstalls the app when it is installed and installs the build again from `WARDEN_APP_PATH` (`INVALID_ARGUMENT` when that is not set).
+`open` always starts the app fresh: it terminates a running instance first (iOS: `simctl launch --terminate-running-process`; Android: `am start -W -S` on the launcher activity, which also waits for the first frame, or `am force-stop` then `monkey` when the launcher cannot be resolved), so a device an aborted run left mid-spec does not leak into the next test. It launches with the suite's launch arguments (`--initialUrl <metro url>` for a dev client) plus `args`, and `env` adds environment variables to the launched process; `url` is opened once the app is launched. Android cannot take launch arguments: the suite's are dropped with one log line, while an explicit `args` still fails the launch, and `env` is unsupported there. `wait: "none"` (the default) returns when the launch call does, before the app is on screen. `wait: "quiet"` then also waits for the first screen and for it to stop moving. A launch screen is idle while the app loads, so open reads the screen after 100 ms, 200 ms, then every 400 ms (fewer full reads while the app starts) until it shows content (a visible control, or any element with a testID; a storyboard or splash has neither), for at most 3 s, then settles (`device.settle()` with 250 ms of quiet, at most 3 s). It is best effort: a first screen with no control and no testID waits out the 3 s, an app that is not quiet in time is returned as it is, and a driver that cannot settle skips the settle. `wait: { until: locator, timeout? }` waits for that locator to be visible (a `TIMEOUT` after `timeout`, default the assertion timeout, like `toBeVisible()`), then settles once, so the next tap lands on a mounted screen; it replaces `open()` followed by `toBeVisible()`: `await app.open({ wait: { until: screen.getByTestId("welcome.screen") } })`. `restart()` is the same relaunch (one stop, not two); `close()` only stops. `launch: "none"` skips the runner's own `open()` and leaves the app as it is. `clearData` wipes the app's data and the keychain; `reinstall` uninstalls the app when it is installed and installs the build again from `WARDEN_APP_PATH` (`INVALID_ARGUMENT` when that is not set).
 
 `device` is the simulator or emulator:
 
@@ -205,7 +205,7 @@ Every failure a spec sees is an `E2eError` (`instanceof` works) with a `code`: `
 Every test attempt writes `trace.jsonl`; when a test fails, the runner adds the rest of its evidence next to the results:
 
 ```text
-<out>/<flow>/<test-title>-<hash>/
+<out>/<spec>/<test-title>-<hash>/
   failure.png            the device at the moment of failure
   screen-at-failure.txt  the full accessibility tree, with testIDs, labels and values
   trace.jsonl            every step and every device / driver / locator-read call (`span` lines), with timings (every test, passed or not)
@@ -214,7 +214,7 @@ Every test attempt writes `trace.jsonl`; when a test fails, the runner adds the 
   screenshots/           device.screenshot() images (any test)
 ```
 
-Read `screen-at-failure.txt` first: a query that found nothing is almost always an element that is missing or not `accessible` there. `<flow>` is the spec's path under the suite's `flowsDir` without `.e2e.ts`, `<test-title>` a slug of the describe and test titles. Under `warden e2e`, `<out>` is `<batchDir>/e2e/<worker>-<seq>/` (`<worker>-<seq>-p<pass>` on a later pass) and every test (skipped ones too; with `retry`, only the final attempt) also appends one line to `results.jsonl` there with `file`, `title`, `status` (`passed`, `failed`, `skipped` or `timed-out`), `durationMs`, `startedAt`, `error`, `artifacts` and `device`; see [Run e2e](/docs/guides/run-e2e#where-to-look-when-it-fails).
+Read `screen-at-failure.txt` first: a query that found nothing is almost always an element that is missing or not `accessible` there. `<spec>` is the spec's path under the suite's `specsDir` without `.e2e.ts`, `<test-title>` a slug of the describe and test titles. Under `warden e2e`, `<out>` is `<batchDir>/e2e/<worker>-<seq>/` (`<worker>-<seq>-p<pass>` on a later pass) and every test (skipped ones too; with `retry`, only the final attempt) also appends one line to `results.jsonl` there with `file`, `title`, `status` (`passed`, `failed`, `skipped` or `timed-out`), `durationMs`, `startedAt`, `error`, `artifacts` and `device`; see [Run e2e](/docs/guides/run-e2e#where-to-look-when-it-fails).
 
 ## Run a spec by hand
 

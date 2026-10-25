@@ -34,7 +34,7 @@ import type { WardenConfig } from "@delacour/warden/config";
 export default { batches: { smoke: { platform: "ios", cmd: ["true"] } } } satisfies WardenConfig;
 ```
 
-The section types are exported too: `WardenConfig`, `WardenProject`, `WardenBatchPreset`, `WardenE2eSuite`, `WardenE2eFlow`, `WardenE2eMetro`, `WardenE2eSpec`, `WardenE2eDeviceLeg`, `WardenAppOption`.
+The section types are exported too: `WardenConfig`, `WardenProject`, `WardenBatchPreset`, `WardenE2eSuite`, `WardenE2eSpecEntry`, `WardenE2eMetro`, `WardenE2eSpec`, `WardenE2eDeviceLeg`, `WardenAppOption`.
 
 ## Top level
 
@@ -103,7 +103,7 @@ export default defineConfig({
       serve: "bun scripts/e2e/run-ios.ts --session",
       serveReady: "file:e2e-artifacts/batch/session.json",
       serveTimeout: "20m",
-      jobsFrom: { command: "bun scripts/e2e/select-flows.ts --list --offline" },
+      jobsFrom: { command: "bun scripts/e2e/select-specs.ts --list --offline" },
       cmd: ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
     }
   }
@@ -142,7 +142,7 @@ The preset's cwd is its project's root, or the config file's directory when ther
 
 ## e2e
 
-`e2e` maps a suite name to the flows [`warden affected`](/docs/reference/cli#warden-affected-suite) selects and [`warden e2e`](/docs/reference/cli#warden-e2e-suite) runs. See [Affected e2e](/docs/guides/affected-e2e) for how selection works. Every path and glob is relative to the config file.
+`e2e` maps a suite name to the specs [`warden affected`](/docs/reference/cli#warden-affected-suite) selects and [`warden e2e`](/docs/reference/cli#warden-e2e-suite) runs. See [Affected e2e](/docs/guides/affected-e2e) for how selection works. Every path and glob is relative to the config file.
 
 ```ts title="warden.config.ts"
 import { defineConfig } from "@delacour/warden/config";
@@ -150,13 +150,13 @@ import { defineConfig } from "@delacour/warden/config";
 export default defineConfig({
   e2e: {
     mobile: {
-      flowsDir: "flows",
+      specsDir: "specs",
       spec: { bundleId: "com.example.mobile" },
       platform: "ios",
       routerRoot: "apps/mobile/src/app",
       maxDepth: 3,
       runAll: ["bun.lock", "apps/mobile/ios/**"],
-      flows: {
+      specs: {
         "qa-login": { entries: ["apps/mobile/src/app/(auth)/login.tsx"] },
         "store-*": { required: false }
       }
@@ -168,44 +168,42 @@ export default defineConfig({
 <TypeTable
   type={{
     project: { type: "string", description: "`projects[].name`: the specs, `serve` and `setup` run in its root, relative `serveReady` `file:` paths resolve against it, and `app` installs that project's build. Needed when the config has several projects and warden runs from the repo root." },
-    flowsDir: { type: "string", description: "Required. Directory of flows: `*.e2e.ts(x)` specs (other `.ts` files there are helpers; a helper change selects every flow importing it). Searched recursively; dot dirs, `node_modules` and `__baselines__` skipped." },
+    specsDir: { type: "string", description: "Required. Directory of specs: `*.e2e.ts(x)` specs (other `.ts` files there are helpers; a helper change selects every spec importing it). Searched recursively; dot dirs, `node_modules` and `__baselines__` skipped." },
     spec: { type: "{ bundleId?; launchArgs?; timeout?; actionTimeout?; assertionTimeout? }", description: "How `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`, see [Write e2e specs](/docs/guides/specs)). `bundleId`: the app under test (default: the suite project's `bundleId` for the platform). `launchArgs`: passed by `app.open()` after `--initialUrl <metro url>` and `metro.launchArgs`. `timeout` (default `\"2m\"`): per test. `actionTimeout` (default `\"30s\"`): per tap, fill or wait for an element. `assertionTimeout` (default `\"5s\"`): polling timeout of `expect(locator)`. The specs run in the suite's `project` root, else the config file's directory." },
-    runner: { type: "removed", description: "Setting it fails validation: `e2e.<suite>.runner was removed: flows run with @delacour/warden-e2e, see spec`. Move the app, launch arguments and timeouts into `spec`; there is no runner argv or `{…}` placeholder substitution any more." },
-    isolate: { type: '"device" | "flow"', description: "`device`: one `bun test` process per device runs its share of the flows (sharded round-robin by flow id), so a device's specs run in order in one process and the devices run in parallel; start-up is paid once per device. Every flow still gets its own verdict from `results.jsonl`, and a retry reruns only the flows that did not pass. `flow`: one process per flow, one worker per device: slower (each process pays bun's start, the preload and a driver connect), but a flow never sees what the one before left behind, and the devices share the flows dynamically. `device` is not allowed with `passes` > 1.", default: '"device" ("flow" when `passes` > 1)' },
-    mode: { type: '"per-flow" | "single"', description: "The old spelling of `isolate`: `single` is `device`, `per-flow` is `flow`. Deprecated.", default: "unset" },
+    isolate: { type: '"device" | "spec"', description: "`device`: one `bun test` process per device runs its share of the specs (sharded round-robin by spec id), so a device's specs run in order in one process and the devices run in parallel; start-up is paid once per device. Every spec still gets its own verdict from `results.jsonl`, and a retry reruns only the specs that did not pass. `spec`: one process per spec, one worker per device: slower (each process pays bun's start, the preload and a driver connect), but a spec never sees what the one before left behind, and the devices share the specs dynamically. `device` is not allowed with `passes` > 1.", default: '"device" ("spec" when `passes` > 1)' },
     shutdown: { type: '"always" | "idle"', description: "What a passed gate does to the devices warden created or booted for the run. `always`: shut them down before releasing. `idle`: leave them booted so the next run skips the 10-30 s boot, and let `warden gc` shut them down once they have been idle for 20 min. A failed run always leaves them up. `--no-shutdown` wins.", default: '"idle" locally, "always" when `CI` is set' },
-    jobTimeoutMs: { type: "number", description: "Per flow: a spec process still going after this many milliseconds for each flow it runs (one flow, or a device's share with `isolate: \"device\"`) is screenshotted, killed (SIGTERM, SIGKILL 5 s later, whole process group) and counted as failed (exit 124). `--job-timeout` overrides.", default: "600000" },
-    devices: { type: "{ profile; count?; env?; default? }[]", description: "Device legs, replacing `profile` / `count`: each claims its own pool (`count`, default 1) and runs the selected flows concurrently with the others, with its `env` added and only its own devices in `WARDEN_UDIDS`. `default: false` legs run only with `--devices all` or `--devices <profile>`. `profile` is required and names the leg (`{leg}`, `WARDEN_LEG`)." },
+    jobTimeoutMs: { type: "number", description: "Per spec: a spec process still going after this many milliseconds for each spec it runs (one spec, or a device's share with `isolate: \"device\"`) is screenshotted, killed (SIGTERM, SIGKILL 5 s later, whole process group) and counted as failed (exit 124). `--job-timeout` overrides.", default: "600000" },
+    devices: { type: "{ profile; count?; env?; default? }[]", description: "Device legs, replacing `profile` / `count`: each claims its own pool (`count`, default 1) and runs the selected specs concurrently with the others, with its `env` added and only its own devices in `WARDEN_UDIDS`. `default: false` legs run only with `--devices all` or `--devices <profile>`. `profile` is required and names the leg (`{leg}`, `WARDEN_LEG`)." },
     metro: { type: "{ enabled?; port?; launchArgs?; open?; env?; prewarm?; readyTimeout? }", description: "Dev-client suites: warden starts one Metro for the run; see below." },
     platform: { type: '"ios" | "android"', description: "Default platform. Without it `warden affected` reports both and `warden e2e` needs `--platform`." },
     base: { type: "string", description: "Ref changes are measured against (merge-base with HEAD).", default: '"main"' },
     tsconfig: { type: "string", description: "tsconfig for files with no `tsconfig.json` between them and the config file." },
     routerRoot: { type: "string", description: "File-based router directory: `_layout` files above an entry count as entries." },
-    maxDepth: { type: "number", description: "Import hops from an entry that still select a flow.", default: "unlimited" },
-    include: { type: "string[]", description: "Flow-id globs: only matching flows are ever selected (default: all). Lets one `flowsDir` feed several suites, e.g. `[\"online/**\"]`." },
-    exclude: { type: "string[]", description: "Flow-id globs that are never selected, e.g. `[\"online/**\"]`." },
+    maxDepth: { type: "number", description: "Import hops from an entry that still select a spec.", default: "unlimited" },
+    include: { type: "string[]", description: "Spec-id globs: only matching specs are ever selected (default: all). Lets one `specsDir` feed several suites, e.g. `[\"online/**\"]`." },
+    exclude: { type: "string[]", description: "Spec-id globs that are never selected, e.g. `[\"online/**\"]`." },
     scope: { type: "string[]", description: "Changed-file globs: only matching changes count at all (default: every change)." },
-    unmatched: { type: '"run-all" | "skip"', description: "A counted change that reaches no flow (no `paths` / `entries` / `runAll` match, not `ignore`d): `run-all` selects every flow — a new `src/` area never silently runs nothing — `skip` selects nothing.", default: '"skip"' },
-    runAll: { type: "string[]", description: "Globs: a matching change selects every flow." },
+    unmatched: { type: '"run-all" | "skip"', description: "A counted change that reaches no spec (no `paths` / `entries` / `runAll` match, not `ignore`d): `run-all` selects every spec — a new `src/` area never silently runs nothing — `skip` selects nothing.", default: '"skip"' },
+    runAll: { type: "string[]", description: "Globs: a matching change selects every spec." },
     ignore: { type: "string[]", description: "Globs: matching changes are ignored." },
-    always: { type: "string[]", description: "Flow ids / globs that always run." },
-    unmapped: { type: '"run" | "skip"', description: "Flows with no `entries` / `paths`: run every time, or only via `runAll` / `always`.", default: '"run"' },
-    required: { type: "boolean", description: "Default `required` for flows.", default: "true" },
-    passes: { type: "number", description: "Consecutive green runs a flow needs.", default: "1" },
-    retry: { type: "number", description: "Re-run a failed flow up to N times.", default: "0" },
+    always: { type: "string[]", description: "Spec ids / globs that always run." },
+    unmapped: { type: '"run" | "skip"', description: "Specs with no `entries` / `paths`: run every time, or only via `runAll` / `always`.", default: '"run"' },
+    required: { type: "boolean", description: "Default `required` for specs.", default: "true" },
+    passes: { type: "number", description: "Consecutive green runs a spec needs.", default: "1" },
+    retry: { type: "number", description: "Re-run a failed spec up to N times.", default: "0" },
     count: { type: "number", description: "Devices to claim (not with `devices`)." },
     profile: { type: "string", description: "Device profile (not with `devices`)." },
     app: { type: "boolean | { installMode?: 'clean' | 'reinstall'; resetKeychain?: boolean; variant?: string }", description: "Ensure the app on every device first. `{ installMode: \"clean\" | \"reinstall\" }` resets the installed app first (`--install-mode`), `resetKeychain: true` also resets the iOS sim keychain (`--reset-keychain`); `{ clean: true }` is a deprecated alias of reinstall. `{ variant }` installs that `projects[].variants` build (must exist on the suite's project)." },
     ports: { type: "string[]", description: "Ports leased for the run (`<from>[:<span>]`, like `--port`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every spec process." },
     env: { type: "Record<string, string>", description: "Added to the serve, setup and spec env." },
-    serve: { type: "string", description: "`sh -c` once per run before the flows, in its own process group; killed at the end. `{port}` / `{metroUrl}` are substituted. `--serve` overrides." },
+    serve: { type: "string", description: "`sh -c` once per run before the specs, in its own process group; killed at the end. `{port}` / `{metroUrl}` are substituted. `--serve` overrides." },
     serveReady: { type: "string", description: "Wait for `http://…`, `tcp:PORT` or `file:PATH` (relative to the project root) before starting; `{port}` is the first leased port (`tcp:{port}`). Needs `serve`." },
     serveTimeout: { type: "string", description: "Give up waiting for `serveReady` after this long (`30s`, `10m`).", default: '"10m"' },
-    setup: { type: "string", description: "`sh -c` once per leased device, after the app install and before that device's first flow (`{udid}` is substituted). Env: `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH`, plus `env`. Output goes to `logs/setup-<worker>.log`. A non-zero exit drops that device and its flows go to the others; none left fails the run." },
-    slim: { type: "boolean", description: "iOS: switch off the simulator daemons flows never need on each leased device, before `setup` (`warden sim slim`). A failure only warns. Skipped with a note on an Android run; fails config validation on a suite fixed to `platform: \"android\"`." },
+    setup: { type: "string", description: "`sh -c` once per leased device, after the app install and before that device's first spec (`{udid}` is substituted). Env: `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH`, plus `env`. Output goes to `logs/setup-<worker>.log`. A non-zero exit drops that device and its specs go to the others; none left fails the run." },
+    slim: { type: "boolean", description: "iOS: switch off the simulator daemons specs never need on each leased device, before `setup` (`warden sim slim`). A failure only warns. Skipped with a note on an Android run; fails config validation on a suite fixed to `platform: \"android\"`." },
     warmDrivers: { type: "boolean", default: "true", description: "iOS: the moment each device is leased (alongside the app install, Metro and `setup`), start its `warden-simd` helper and take one accessibility snapshot, so the first spec on each device does not pay the cold start. Jobs get its socket as `WARDEN_SIMD_SOCKET`; the log is `logs/warm-<worker>.log`. A failed or timed-out (2 min) warm-up only warns. `false` (or `--no-warm`) turns it off. The option's previous name fails validation with a pointer here." },
-    headless: { type: "boolean", description: "iOS: close the Simulator.app windows of this suite's devices, at claim and again before the first flow, so the run shows nothing even with Simulator.app open (see [Headless e2e](/docs/guides/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both. Android is always headless.", default: "top-level `headless`" },
-    flows: { type: "Record<string, Flow>", description: "Per flow id or glob; see below." },
+    headless: { type: "boolean", description: "iOS: close the Simulator.app windows of this suite's devices, at claim and again before the first spec, so the run shows nothing even with Simulator.app open (see [Headless e2e](/docs/guides/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both. Android is always headless.", default: "top-level `headless`" },
+    specs: { type: "Record<string, SpecEntry>", description: "Per spec id or glob: what each spec covers and whether it gates; see below. Not to be confused with `spec` above, which sets how every spec runs." },
   }}
 />
 
@@ -215,22 +213,22 @@ export default defineConfig({
   type={{
     enabled: { type: "boolean", description: "Start Metro for the run.", default: "true" },
     port: { type: "string", description: "Where the Metro port is leased from (`<from>[:<span>]`). It is leased before the suite's `ports`, so it is `WARDEN_PORT`, `WARDEN_PORT_0` and `{port}`.", default: '"8081:100"' },
-    launchArgs: { type: "string[]", description: "Extra launch arguments when warden opens the app on each device before its first flow (iOS: after `--initialUrl <metroUrl>`).", default: "[]" },
+    launchArgs: { type: "string[]", description: "Extra launch arguments when warden opens the app on each device before its first spec (iOS: after `--initialUrl <metroUrl>`).", default: "[]" },
     open: { type: "boolean", description: "Open the app on each device once Metro is ready. `false` for a spec that installs the app itself and launches it against `WARDEN_METRO_URL`.", default: "true" },
     env: { type: "Record<string, string>", description: "Added to Metro's env only." },
-    prewarm: { type: "boolean", description: "Build the bundle once before the first flow; a bundle that does not build fails the run right there.", default: "true" },
+    prewarm: { type: "boolean", description: "Build the bundle once before the first spec; a bundle that does not build fails the run right there.", default: "true" },
     readyTimeout: { type: "string", description: "Give up waiting for Metro after this long.", default: '"2m"' },
   }}
 />
 
 Metro runs `bunx expo start --dev-client --port <p>` in the project root with `CI=1`, logging to `<batch dir>/metro.log`. It counts as ready only once `/status` on that port is proven to serve this checkout (the `X-React-Native-Project-Root` header, else the listening process's cwd); another worktree's Metro on the port fails the run with `port <p> is served by <dir>, not this worktree`. Spec processes get `WARDEN_METRO_URL`; `serve` gets `{metroUrl}`.
 
-`flows.<id|glob>`:
+`specs.<id|glob>`:
 
 <TypeTable
   type={{
-    entries: { type: "string[]", description: "Files the flow drives; their imports, transitively, select it." },
-    paths: { type: "string[]", description: "Globs that select the flow." },
+    entries: { type: "string[]", description: "Files the spec drives; their imports, transitively, select it." },
+    paths: { type: "string[]", description: "Globs that select the spec." },
     platforms: { type: '("ios" | "android")[]', description: "Default: from the id (`-ios-`), else both." },
     required: { type: "boolean", description: "A failure fails `warden e2e`; `false` = reported only." },
     maxDepth: { type: "number", description: "Overrides the suite's `maxDepth`." },

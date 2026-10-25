@@ -46,7 +46,7 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 
 - Bundle id / package: `nz.co.delacour.warden.example`, scheme `warden-example`, Metro port `8095`.
 - `src/components/ui`, `src/lib`, `src/hooks`, `src/styles` are copied in by `bunx delacour@latest add … --ref main`. Biome skips them, so they stay byte-identical to the registry. Check with `bunx delacour@latest diff --ref main`, and update with `add <name> --ref main --overwrite`.
-- State is in-memory (`src/modules/*/contexts`), so every launch starts signed out with the seeded todos (`welcome`, `warden`). The flows depend on that.
+- State is in-memory (`src/modules/*/contexts`), so every launch starts signed out with the seeded todos (`welcome`, `warden`). The specs depend on that.
 - `EXPO_PUBLIC_E2E=1` (baked into the warden Release build) sets `DelacourProvider isMotionCalm`.
 
 ### Screens
@@ -62,38 +62,38 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 
 ### e2e
 
-Flows are `bun test` specs driven by `@delacour/warden-e2e`; `warden e2e` leases the sims, installs the build and runs them.
+Specs are `bun test` specs driven by `@delacour/warden-e2e`; `warden e2e` leases the sims, installs the build and runs them.
 
-- Flows are `e2e/*.e2e.ts`; helpers are in `e2e/helpers` (`ids.ts` mirrors the testIDs).
-- Use `test` and `expect` from `@delacour/warden-e2e`: `test("…", async ({ app, device, screen }) => …)`. Flows are deterministic: queries (`screen.getByTestId/ByText/ByRole/…`), actions (`tap`, `fill`, `press`, `swipe`) and polling assertions (`expect(locator).toBeVisible/toHaveText/toBeChecked/toHaveCount/…`, 5 s default, `{ timeout }` to override). There is no `agent.*`.
-- Every flow file starts with `test.use(FLOW_OPTIONS)` (`e2e/helpers/flows.ts`: `launch: "none"`, `systemAlerts: "dismiss"`). The flow opens the app fresh itself, so flows start signed out on the welcome screen: start one with `launch` / `openSignIn` / `signedIn`, which call `app.open({ wait: "quiet" })` (in front and still) and wait for the first screen. `systemAlerts: "dismiss"` clears a system prompt left over from a previous run wherever a read, tap or assertion meets one. After submitting sign-in, `expectTodosAfterSignIn` waits for the todos screen.
+- Specs are `e2e/*.e2e.ts`; helpers are in `e2e/helpers` (`ids.ts` mirrors the testIDs).
+- Use `test` and `expect` from `@delacour/warden-e2e`: `test("…", async ({ app, device, screen }) => …)`. Specs are deterministic: queries (`screen.getByTestId/ByText/ByRole/…`), actions (`tap`, `fill`, `press`, `swipe`) and polling assertions (`expect(locator).toBeVisible/toHaveText/toBeChecked/toHaveCount/…`, 5 s default, `{ timeout }` to override). There is no `agent.*`.
+- Every spec file starts with `test.use(SPEC_OPTIONS)` (`e2e/helpers/steps.ts`: `launch: "none"`, `systemAlerts: "dismiss"`). The spec opens the app fresh itself, so specs start signed out on the welcome screen: start one with `launch` / `openSignIn` / `signedIn`, which call `app.open({ wait: "quiet" })` (in front and still) and wait for the first screen. `systemAlerts: "dismiss"` clears a system prompt left over from a previous run wherever a read, tap or assertion meets one. After submitting sign-in, `expectTodosAfterSignIn` waits for the todos screen.
 - The first Next press on the welcome screen goes through `nextStep` (`tap({ until })` on the step title): the button is in the AX tree before it takes touches (replace animation into `/welcome`, RNGH handler attaches after mount) and a HID tap has no ack, so a dropped press is re-sent (4 s a press, two re-sends). Same family as the first tab and row presses after sign-in: `tap({ until: <the screen it opens> })`.
 - Deep links: `device.openLink(url)` answers iOS's "Open in warden-example?" sheet itself; `openDeepLink` opens it again (3 links, 6 s each) when the target screen did not show.
 - `Badge` / `Chip` text: assert on the container (`expect(locator).toHaveText("2 left")`); `locator.text()` falls back to the descendant text when iOS leaves the container's own label empty.
 - `warden.config.ts` defines:
   - project `example`: a Release build keyed on native + JS;
   - variant `dev`: the Debug dev client, keyed on native only;
-  - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the flow → screen `entries` that `warden affected` uses;
-  - suite `example-dev`: the same flows on the dev client. warden starts and verifies its own Metro (`metro`, which also sets `--initialUrl` and turns the Expo dev menu off), and one spec process per device runs its share of the flows (the default `isolate: "device"`);
+  - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the spec → screen `entries` that `warden affected` uses;
+  - suite `example-dev`: the same specs on the dev client. warden starts and verifies its own Metro (`metro`, which also sets `--initialUrl` and turns the Expo dev menu off), and one spec process per device runs its share of the specs (the default `isolate: "device"`);
   - both suites set `spec.bundleId`, the app the specs drive (`app.open()` launches it with `WARDEN_LAUNCH_ARGS`).
 
 ```bash
-bun run e2e --all                    # warden e2e example (this checkout's warden); drop --all for the flows this branch needs
+bun run e2e --all                    # warden e2e example (this checkout's warden); drop --all for the specs this branch needs
 bun run e2e:dev -- --all             # warden e2e example-dev: dev client + warden's Metro
-bun run e2e:affected -- --explain    # which flows this branch needs
-bun run e2e:flow todos               # one flow
+bun run e2e:affected -- --explain    # which specs this branch needs
+bun run e2e:spec todos               # one spec
 WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=nz.co.delacour.warden.example bun test --preload @delacour/warden-e2e/preload e2e/todos.e2e.ts   # by hand, on an installed build
 ```
 
 Never start Metro or export device env vars for a suite: `warden e2e <suite>` does both. By hand, the build must already be installed on the sim (`WARDEN_UDID`); add `WARDEN_PLATFORM=android` for an emulator and `WARDEN_METRO_URL` for a dev client.
 
-Failure output is written per test under `<batchDir>/e2e/<worker>-<seq>/<flow>/<title>-<hash>/` (`failure.png`, `screen-at-failure.txt`, `trace.jsonl`, `console.jsonl` / `network.jsonl` with a dev client) and indexed in `results.jsonl`; `warden e2e` prints the path of each failing flow. `screen-at-failure.txt` is the full accessibility tree, so read it first.
+Failure output is written per test under `<batchDir>/e2e/<worker>-<seq>/<spec>/<title>-<hash>/` (`failure.png`, `screen-at-failure.txt`, `trace.jsonl`, `console.jsonl` / `network.jsonl` with a dev client) and indexed in `results.jsonl`; `warden e2e` prints the path of each failing spec. `screen-at-failure.txt` is the full accessibility tree, so read it first.
 
 ### Accessibility
 
-Flows read the accessibility (AX) tree, not the React tree: a `testID` is only exposed when the view is `accessible`. Mark every view a flow taps or asserts `accessible` (add `accessibilityLabel` / `role` where it helps), and keep switches and checkboxes real controls so `toBeChecked` reads their state. When a `testID` query finds nothing, compare against `screen-at-failure.txt` before adding retries or waits. To look yourself, run `warden ui snapshot -i --udid <udid>` on the leased sim: a tap target missing there is not `accessible` or has no `testID`; `warden ui tree` shows the React side. Fix it in the component (mark it `accessible`), not in the flow.
+Specs read the accessibility (AX) tree, not the React tree: a `testID` is only exposed when the view is `accessible`. Mark every view a spec taps or asserts `accessible` (add `accessibilityLabel` / `role` where it helps), and keep switches and checkboxes real controls so `toBeChecked` reads their state. When a `testID` query finds nothing, compare against `screen-at-failure.txt` before adding retries or waits. To look yourself, run `warden ui snapshot -i --udid <udid>` on the leased sim: a tap target missing there is not `accessible` or has no `testID`; `warden ui tree` shows the React side. Fix it in the component (mark it `accessible`), not in the spec.
 
 ### Simulator-only crash and sheets
 
-- `react-native-pulsar` (haptics) is patched (`patches/react-native-pulsar@1.7.0.patch`, a root `patchedDependencies` entry): on `TARGET_OS_SIMULATOR` its native module no longer creates the `Pulsar` object. That object starts an AVAudioEngine whose AURemoteIO RPC times out at random on a simulator, aborting the app (SIGABRT on thread `com.pulsar.audio`, crash reports `wardenexample-*.ips`) and sending a running flow back to the welcome screen. JS needs no gate: every call is a no-op on a simulator, which has no haptics anyway. A real device is unaffected. Gating the JS `import` alone does not help, the native module starts at launch. Drop the patch when upstream (software-mansion/pulsar) stops starting the engine on a simulator. Changing it changes the native fingerprint, so the next `warden e2e` rebuilds.
-- The sign-in fields opt out of iOS credential AutoFill in e2e builds (`NO_AUTOFILL` in `src/app/sign-in.tsx`: `autoComplete="off"`, `textContentType="oneTimeCode"`; `EXPO_PUBLIC_E2E=1`). Without it iOS raised a "Save Password?" sheet (hosted by SafariViewService, cold-launched) anywhere from 1 to 6 s after sign-in. A flow that typed meanwhile (`fill(todo-input)`) sent its keys to no focused field and the dev client reloaded its JS, back to the welcome screen: the `example-dev` `todos` flake (about 40% of runs, never on Release). Do not remove it, and do not wait for the sheet: it is gone.
+- `react-native-pulsar` (haptics) is patched (`patches/react-native-pulsar@1.7.0.patch`, a root `patchedDependencies` entry): on `TARGET_OS_SIMULATOR` its native module no longer creates the `Pulsar` object. That object starts an AVAudioEngine whose AURemoteIO RPC times out at random on a simulator, aborting the app (SIGABRT on thread `com.pulsar.audio`, crash reports `wardenexample-*.ips`) and sending a running spec back to the welcome screen. JS needs no gate: every call is a no-op on a simulator, which has no haptics anyway. A real device is unaffected. Gating the JS `import` alone does not help, the native module starts at launch. Drop the patch when upstream (software-mansion/pulsar) stops starting the engine on a simulator. Changing it changes the native fingerprint, so the next `warden e2e` rebuilds.
+- The sign-in fields opt out of iOS credential AutoFill in e2e builds (`NO_AUTOFILL` in `src/app/sign-in.tsx`: `autoComplete="off"`, `textContentType="oneTimeCode"`; `EXPO_PUBLIC_E2E=1`). Without it iOS raised a "Save Password?" sheet (hosted by SafariViewService, cold-launched) anywhere from 1 to 6 s after sign-in. A spec that typed meanwhile (`fill(todo-input)`) sent its keys to no focused field and the dev client reloaded its JS, back to the welcome screen: the `example-dev` `todos` flake (about 40% of runs, never on Release). Do not remove it, and do not wait for the sheet: it is gone.

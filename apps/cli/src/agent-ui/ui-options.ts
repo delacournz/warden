@@ -23,6 +23,5 @@ export function withUiOptions<Args extends unknown[], Opts extends OptionValues,
 			"drive the device even while a live warden process (e2e, batch, run) holds your lease on it; your own warden dev device is shared without it"
 		)
 		.option("--timeout <ms>", `deadline in milliseconds (default ${DEFAULT_UI_TIMEOUT_MS})`)
-		.option("--no-record", "don't append this step to a running flow recording")
 		.option("--json", "machine-readable output: one JSON document on stdout");
 }
