@@ -83,6 +83,13 @@ jobs:
         with:
           bun-version-file: package.json
 
+      # The changesets CLI bin runs on node (`#!/usr/bin/env node`) and needs Node 22+
+      # (module.enableCompileCache); the runner image ships Node 20. Same pin as release.yml.
+      - if: steps.detect.outputs.skip == 'false'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
       - if: steps.detect.outputs.skip == 'false'
         uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
         with:
