@@ -28,6 +28,14 @@ export const UI_ERROR_EXIT = {
 	engine_unavailable: UI_EXIT.engine,
 	devtools_unavailable: UI_EXIT.engine,
 	stale_ref: UI_EXIT.staleRef,
+	no_recording: UI_EXIT.failed,
+	recording_active: UI_EXIT.failed,
+	target_exists: UI_EXIT.failed,
+	empty_recording: UI_EXIT.failed,
+	verify_failed: UI_EXIT.failed,
+	helper_missing: UI_EXIT.failed,
+	use_failed: UI_EXIT.failed,
+	verify_unavailable: UI_EXIT.failed,
 	interrupted: UI_EXIT.interrupted,
 } as const satisfies Record<string, UiExitCode>;
 

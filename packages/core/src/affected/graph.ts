@@ -7,7 +7,8 @@ import { type ImportCache, openImportCache } from "./cache";
 
 /** Files whose imports are followed; anything else (images, fonts, json…) is a leaf. */
 const CODE_EXT = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
-const LAYOUT_EXT = [".tsx", ".ts", ".jsx", ".js"];
+/** Extensions of a file-based route or layout, in the order they are tried. */
+export const LAYOUT_EXT = [".tsx", ".ts", ".jsx", ".js"];
 
 export type GraphOptions = {
 	platform: Platform;

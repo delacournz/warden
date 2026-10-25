@@ -12,6 +12,7 @@ warden's own mobile e2e stack (plan: `docs/plans/wdn-e2e.md`). No lease / build 
 | `screen/` | locator query model, roles, text matching, actions, polling, text render + selector parser (shared with `warden ui`), `field.ts` (fill/clear/confirm a text field) |
 | `expect/` | `expect` wrapper + locator matchers |
 | `devtools/` | Metro inspector discovery, Hermes CDP, console/network/React tree. Metro's inspector proxy 401s a debugger upgrade without an `Origin`: `openCdp` sends `http://127.0.0.1:<port>` (`localhost` is accepted, then the socket is dropped with 1006). `reloadJs` = `expo.reloadAppAsync` → `DevSettings` → `POST /reload` (only if neither exists); `Page.reload` freezes bridgeless hosts, `DevSettings.reload` is a no-op under expo-dev-launcher; no epoch change = `reload_failed` |
+| `authoring/` | agent-authored specs: the recording journal a `warden ui` session appends to (`recording.schema.ts`, `journal.ts` atomic + locked append/undo/delete, `target.ts` element → durable selector chain, `secrets.ts` `WARDEN_UI_SECRET_<NAME>`), `lint.ts`, `status.ts`, and `codegen.ts` (recording → `*.e2e.ts` spec, or a documented helper function merged into a helpers module; ids module merge). Goldens in `codegen.golden/` (`UPDATE_GOLDEN=1 bun test`), excluded from biome |
 | `native/` | `warden-simd` Swift package on idb's library package (`native/ios`), scripts (`deps`, `build`, `smoke`, `smoke-android`, `screen-cost`, `fake-simd`, `fake-adb`); `native/android` = `warden-uiad` Java + `scripts/{build,record,smoke}.ts` |
 
 ## Publishing

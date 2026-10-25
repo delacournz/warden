@@ -26,6 +26,10 @@ warden ui close --release --udid $UDID                  # 6. stop the helper and
 5. **Verify** with `wait`, `is` and `get`. A bare screenshot is not verification.
 6. **Close.** `close --release` stops this device's helper and releases the lease. Leave the device alone only if another step of your task needs it.
 
+## Record a session as a spec
+
+Between `warden ui record start <name>` and `record stop`, every action and query is journaled (`--no-record` skips one call) and `stop` writes a [spec](/docs/guides/specs) and runs it once on the same device. While recording, `snapshot -i` marks interactive elements with no testID `[no-id]`, and `status` shows the recording. `record use <module#fn>` runs a helper on the device and records a call to it. Full workflow, route capture, lints and helpers: [Author specs by recording](/docs/guides/author-specs).
+
 ## Reading the screen
 
 ```text
@@ -179,6 +183,7 @@ What differs from iOS:
 | `--claim` | take a device when none is leased (`--platform ios\|android`, `--profile`, `--runtime` choose it), or take over a stale lease |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`) holds your lease on it. Without it every subcommand but `status` exits 2 (`device_busy`) naming the owner, pid and label. Not needed for your own `warden dev` device (see [Lease rules](#lease-rules)) |
+| `--no-record` | while a [recording](/docs/guides/author-specs) is active, do not append this call to it |
 | `--json` | the envelope above |
 
 `status` prints the device, your lease on it, and the helper. `close` stops this device's helper; `--app [bundleId]` also quits the app (default: the one `open` launched) and `--release` frees the lease.

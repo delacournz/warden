@@ -12,6 +12,7 @@ Several agents and humans share this machine's simulators and emulators; warden 
 - **Claim before use.** `warden claim ios --json` (or `android`) → use the returned `udid` / `serial` on every call. Never pick a device from `simctl list`, `adb devices` or a tool's device list.
 - **Never touch a booted device you did not claim.** No shutdown, erase, install, tap. Nothing intercepts simctl/adb for you any more (no PreToolUse hook): the lease check lives in `warden ui`, `warden check`, `sim slim` only.
 - **Drive by hand with `warden ui` only.** argent, agent-device, tester.army `e2e`/`@e2e-dev/mobile` are retired; do not call their tools or skills even if installed. Raw `simctl`/`adb` only for what `warden ui` cannot do, and only on your leased udid.
+- **New e2e test = record it.** Drive the journey with `warden ui` between `warden ui record start <id>` and `record stop`; warden writes the `*.e2e.ts` and runs it once. Procedure: `references/authoring.md`.
 - **Anything that must keep passing is a spec** (`*.e2e.ts`, `@delacour/warden-e2e`) run by `warden e2e <suite>`. Never start Metro or export `WARDEN_*` by hand for a suite.
 - **Xcode 27 MCP is not a device path.** `xcrun mcpbridge` / `xcrun mcp-server` are fine for build, test, previews and docs. Its `DeviceInteraction*` tools (and Apple's exported device-interaction skill) drive any booted sim and bypass leases: use them only on a udid you `warden claim`ed, end the session (`DeviceInteractionEndSession`) before `warden release`, and never run `mcp-server enable --unsafe-always-allow-all-agents`.
 - **A claim may block in the boot queue** (host RAM/CPU full; default `--wait 30m`). Don't retry, loop or raise `--max` to jump it: `--max` doesn't. See position with `warden queue`, budget with `warden capacity`. Use `--no-wait` only when you want fail-fast.
@@ -24,6 +25,7 @@ Open the reference file for details before acting; this file only routes.
 | You want to | Read |
 |---|---|
 | explore / verify an app by hand (snapshot, tap, type, wait) | [references/ui.md](references/ui.md) |
+| create / write / record an e2e test for a journey ("an e2e test for onboarding and sign in") | [references/authoring.md](references/authoring.md) |
 | write or fix a `*.e2e.ts` spec, helpers, testIDs, read failure artifacts | [references/specs.md](references/specs.md) |
 | run specs (`warden e2e`, `affected`), suite config, batch dir, `run`/`batch` scripts | [references/suites.md](references/suites.md) |
 | an error code, a dropped tap, a sheet, a stale helper, Metro refused | [references/troubleshooting.md](references/troubleshooting.md) |
@@ -36,6 +38,7 @@ Open the reference file for details before acting; this file only routes.
 | set a new Expo app up for warden | `warden init --bundle-id <id>` → bundle id into `app.json`, `warden.config.ts`, `e2e/smoke.e2e.ts`; names packages to install (`expo-dev-client`, `@delacour/warden-e2e`), installs nothing |
 | run the app in this worktree (replaces `expo run:ios`) | `warden dev ios --json` (platform defaults to ios) → first stdout line `{ udid, port, metroUrl, leaseIds }`; checks bundle id + `expo-dev-client` first; owns Metro on a leased port, refuses another checkout's Metro, opens the dev client; Ctrl-C releases |
 | dev build on a device | `warden app ensure ios --udid <udid> --json [--variant dev\|e2e]` |
+| record a `warden ui` session into a spec | `warden ui record start <id> [--helper <module#fn>]` → drive → `record note\|use <module#fn>\|undo\|status\|cancel` → `record stop [--no-verify]` (verifies on the same device) |
 | the specs a change needs | `warden affected [suite] --base main --explain [--strict] [--json]` |
 | run them on leased devices | `warden e2e [suite] [--base main\|--all\|--specs a,b] [--count N] [--dry-run] [--devices all] [--no-shutdown] [--no-warm] [--headless] [--report f]` |
 | N devices + ports for a script | `warden run ios --count N --port 8091:20 [--app] -- <cmd>` |

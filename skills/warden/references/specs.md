@@ -1,6 +1,6 @@
 # Specs: `*.e2e.ts` with `@delacour/warden-e2e`
 
-Read this to write or fix a spec. A spec is a `bun test` file. `warden e2e` runs it on leased devices (see `suites.md`). To explore the UI first, use `warden ui` (see `ui.md`).
+Read this to write or fix a spec. A spec is a `bun test` file. `warden e2e` runs it on leased devices (see `suites.md`). To explore the UI first, use `warden ui` (see `ui.md`). To create a spec from a driven session, use `warden ui record` (see `authoring.md`); it writes the file and you review it against this page.
 
 ## Install and preload
 

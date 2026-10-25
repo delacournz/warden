@@ -1,6 +1,6 @@
 # warden ui: drive a leased device by hand
 
-For exploring, reproducing a bug, or finding selectors. Checks that must keep passing belong in a spec (`specs.md`). Every call is stateless on the command line; the last snapshot and Metro URL live under `$WARDEN_HOME/ui/<udid>/`.
+For exploring, reproducing a bug, or finding selectors. Checks that must keep passing belong in a spec (`specs.md`); to create one from a session use `warden ui record` (`authoring.md`). Every call is stateless on the command line; the last snapshot and Metro URL live under `$WARDEN_HOME/ui/<udid>/`.
 
 ## Loop
 
@@ -46,6 +46,8 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 
 Actions also take `--settle [ms]`: wait for a quiet screen (budget 3000 ms), then print what changed.
 
+Every subcommand also takes `--no-record`: while a `record` is active, this call is not appended to it. `--overwrite` (record start/stop) replaces a file; `--force` is only the busy-device option.
+
 ## Snapshot line and generations
 
 ```text
@@ -55,6 +57,7 @@ generation 4 · axbridge · 393×852@3x · 5 of 41 elements
 
 Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`.
 
+- While a recording is active, `snapshot -i` appends `[no-id]` to interactive elements with no testID (`noId: true` in `--json`) and a hint. Add `testID` + `accessible` in the component, reload, `record undo`, redo by `id=`.
 - `-i` = interactive elements plus anything with a testID. Cap 200 lines (`--all` removes it). `--depth n` = first n levels.
 - The generation bumps on `snapshot`, `find`, any `--settle`, a matching `wait`, and `scroll --until`. Older refs then fail: exit 4 `stale_ref`, snapshot again.
 - A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot (same id, else role + name, else position). Prefer `id=` selectors for anything you touch twice.
@@ -89,6 +92,13 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `wait` | `<sel>` / `absent <sel>` / `text "..."` / `stable [ms=250]` | polls 100 ms for 1 s, then 250 ms, up to `--timeout` |
 | `is` | `<sel> visible\|hittable\|enabled\|checked\|selected\|focused` | exit 0 true, 1 false (JSON still `ok:true`) |
 | `get` | `<sel> text\|value\|label\|id\|role\|frame\|count` | `frame` = `x y w h`; `count` 0 is success |
+| `record start` | `<name> [--to <spec> \| --helper <module#fn> [--prerequisite <text>]] [--ids <module>] [--title <t>] [--suite <n>] [--overwrite]` | from now on every action is journaled; see `authoring.md` |
+| `record note` | `"<text>"` | user-visible step; comment above the next action |
+| `record use` | `<module#fn> [--suite <n>]` | run an exported helper on this device; on a pass record `await fn(fixtures)`, on failure record nothing (`use_failed`); see `authoring.md` |
+| `record undo` | `[n=1]` | drop the last n steps (notes count) |
+| `record status` | | target, step count, last 5 steps, lints so far |
+| `record cancel` | | drop the journal; a spec already written stays |
+| `record stop` | `[--no-verify] [--suite <n>] [--overwrite]` | write spec/helper, merge ids, print lints, run the spec once on this device (helpers are not run); exit 1 keeps file and journal |
 | `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets; stops the device's helper: unshared device only |
 | `eval` `tree` `logs` `network` `reload` | see Devtools | dev client only |
 
@@ -133,7 +143,7 @@ Values: bare `id=sign-in`, quoted `label="Sign in"`, or regex `text=/^\d+ left$/
 | Exit | Codes |
 |---|---|
 | 0 | ok |
-| 1 | `failed` `usage` `target_not_found` `no_alert` `wait_*` |
+| 1 | `failed` `usage` `target_not_found` `no_alert` `wait_*` `no_recording` `recording_active` `target_exists` `empty_recording` `verify_failed` `verify_unavailable` |
 | 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` |
 | 3 | `engine_unavailable` `devtools_unavailable` |
 | 4 | `stale_ref` |

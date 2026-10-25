@@ -6,6 +6,7 @@
 		"run-e2e",
 		"headless",
 		"specs",
+		"author-specs",
 		"e2e",
 		"affected-e2e",
 		"bench",
