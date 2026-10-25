@@ -110,6 +110,30 @@ The lock now pins v1.7.7's official library package and the fork is gone. Same l
 Against the EAS baseline (`packages/e2e-bench/baselines/ios-warden.json`, 3.79 CPU-s/rep) the guard reads -24 %, so the baseline stays as the ceiling; it was taken on a hosted worker and is not refreshed from this machine.
 
 
+## Read volume (2026-10-25, evening, this Mac)
+
+Per warm rep the runner makes 183 `driver.snapshot`, 41 `driver.elementAtPoint` and 8 `settle` calls here (`.bench/snap-before`, warden only, 3 reps, pinned app, 100 % pass, suite median 53.58 s, host 3.09 CPU-s/rep: `warden-simd` 1.30–1.42, `bun test` 0.48, bun exit charge 0.58–1.15). The EAS worker's 221 reads per rep (`warden-after`, rep 3) are polling on a slower host: there the look taken 0–1 ms after a tap missed and the next poll caught the change; here it passes at once, because `driver.tap` only returns after the ~85 ms HID press and an AX read queues behind the app's main thread.
+
+Tried, measured, reverted (`.bench/snap-after`): holding the first `tap({ until })` check to `pollMs` after the press and the first `expect` look to 100 ms after an input. 177 snapshots per rep (-6), host CPU unchanged (3.07), suite median 61.33 s (+7.7 s, every test +0.5 to +1.4 s). Not a lever on a fast host; `packages/e2e/AGENTS.md` ("Reads after an input") records it.
+
+Kept (`.bench/snap-after2`): `settle` is a wait, not an input (a quiet one ends the last input), and the stable-frame second look of an action is one hit-test on iOS when no system alerts are answered. Bench suite (which sets `systemAlerts`, so the hit-test path is off): 182–183 snapshots per rep, host 2.85 CPU-s/rep, suite median 53.98 s, 100 % pass; against the EAS baseline the guard reads -24.9 % CPU and -42 % RSS. Read volume is worth at most ~0.3 of the ~3 CPU-s per rep on the host; what is left is the `bun test` exit charge (0.6–1.15 s/rep), the simulator-side guest recycling and, for specs with `systemAlerts`, whether an app-scoped hit-test can see a SpringBoard sheet (plan WDN-CPU2).
+
+## The spec process and the "exit charge" (2026-10-25, evening, this Mac)
+
+Instrumented run (`.bench/cpu2-prof`, warden only, 2 reps; `WARDEN_BUN` pointed at a wrapper that adds a timing preload logging `process.cpuUsage()`, keeps the child's rusage and takes a 30 s `sample` mid-rep):
+
+| | |
+|---|---|
+| `bun test` CPU at the first `beforeAll` (preload + driver open) | 0.09 s |
+| `bun test` CPU over the 54 s of tests | 0.44 s (≈ 2 ms per accessibility read) |
+| `bun test` CPU total at `afterAll` | 0.52–0.53 s (= the sampler's `bun test` row) |
+| `sample` of the process during a rep | 99.9 % of thread samples waiting (`__ulock_wait2`, `__psynch_cvwait`, `kevent64`) |
+| `bun test --preload <warden preload>` on an empty spec | 0.03 s |
+
+So the "bun test (exit charge)" row (0.58–1.15 CPU-s per rep) is not bun's startup or exit: it is the CPU of short-lived children of `bun test` that no 500 ms tick saw, booked to the root at its exit. Those children are the `xcrun simctl` invocations the iOS driver makes: `simctl launch --terminate-running-process` costs 0.13–0.16 CPU-s each (CoreSimulator loads in every invocation; `xcrun` itself 0.00, `plutil` 0.00), `terminate` 0.12, `openurl` 0.11, measured on a booted sim. One launch per `app.open` (8 per rep) plus `openurl` and the open-time probes come to about 1.2 CPU-s per rep: ~40 % of warden's host CPU, more than `warden-simd`'s 1.4 s, split between the visible `simctl` row and the exit charge. The spec process itself (zod on every reply, `snapshotHash`, transpile) is not worth touching.
+
+Fix (plan WDN-CPU2, CPU2-4.2): launch, terminate and open-url through the resident helper, which already links FBSimulatorControl and has CoreSimulator loaded, with `simctl` as the fallback for an older helper. Expected: host ≈ 3.0 → ≈ 1.9 CPU-s per rep and 100–250 ms less wall per launch.
+
 ## Result of launching through the helper (2026-10-25)
 
 `app.launch`, `app.terminate` and `app.openUrl` now run as ops inside the resident `warden-simd` (`launch{bundleId, args?, env?, terminateRunning?}` → `{pid}`, `terminate{bundleId}` → `{terminated}`, `openUrl{url}`), on the simulator framework the helper already links. Before, every `app.open` spawned one `xcrun simctl` per launch, and each of those processes loaded CoreSimulator from scratch: that was the `simctl` rows and most of the `bun test (exit charge)` row, since a short-lived child's CPU is charged to the parent on exit. Install, uninstall, `isRunning` and `clearData` stay on `simctl`; a helper that predates the ops answers `E_UNSUPPORTED` once and the driver falls back to `simctl` for the session. Same local setup (this Mac, pinned app, warden only, 3 reps, host loaded by another agent's sim + `warden dev` during both runs):

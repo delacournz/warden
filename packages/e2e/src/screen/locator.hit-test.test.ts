@@ -104,12 +104,13 @@ describe("assert-then-tap with a cheap hit-test", () => {
 		expect(count(driver, "snapshot")).toBe(2);
 	});
 
-	test("an input since the kept snapshot means a fresh look", async () => {
+	test("an input since the kept snapshot means a fresh look, checked by a hit-test of its own", async () => {
 		const { driver, screen } = setup();
 		await visible(screen);
 		await screen.tapAt({ x: 1, y: 1 });
 		await screen.getByTestId("next").tap();
-		expect(count(driver, "elementAtPoint")).toBe(0);
+		expect(count(driver, "snapshot")).toBe(2);
+		expect(count(driver, "elementAtPoint")).toBe(1);
 	});
 
 	test("with nothing kept the tap takes its own snapshot and no hit-test", async () => {

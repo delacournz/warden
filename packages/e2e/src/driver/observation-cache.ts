@@ -10,7 +10,9 @@ import { noteSpanDetail } from "./span-detail";
  * the one driver: whatever calls it, an input moves the *generation* on and the kept snapshot dies with the old one.
  * A snapshot is also dropped once it is older than the platform's max age, input or not (the app can change by itself).
  * Which reads may reuse one is the caller's call (`observe({ reuse })`): only the first look of a wait does, so a
- * poll never spins on a tree that stopped being true.
+ * poll never spins on a tree that stopped being true. A `settle` is a wait, not an input: the kept snapshot predates
+ * it and is dropped, but nothing was pressed, so `previous().sinceInputMs` still counts from the last real input; one
+ * that reports `quiet` is the app's word that the input has landed, and then no input is recent at all.
  */
 
 /** How old a kept snapshot may be and still answer a read. iOS reads cost ~100-300 ms; an Android dump takes ~1.9 s. */
@@ -84,6 +86,9 @@ const READS: ReadonlySet<string> = new Set([
 	"peek",
 ]);
 
+/** Calls that wait for the screen without touching it: what is kept predates them, but they are not input. */
+const WAITS: ReadonlySet<string> = new Set(["settle"]);
+
 /** Look when called with no argument, change something when given one (`orientation()` vs `orientation("landscapeLeft")`). */
 const READS_WITHOUT_ARGUMENT: ReadonlySet<string> = new Set(["orientation", "appearance", "clipboard"]);
 
@@ -99,6 +104,13 @@ type Call = (...args: unknown[]) => unknown;
 
 function isCall(value: unknown): value is Call {
 	return typeof value === "function";
+}
+
+/** A settle result that says the screen went quiet (`{ success: true, data: { quiet: true } }`). */
+function reportsQuiet(result: unknown): boolean {
+	if (typeof result !== "object" || result === null || !("success" in result) || result.success !== true) return false;
+	const data: unknown = "data" in result ? result.data : undefined;
+	return typeof data === "object" && data !== null && "quiet" in data && data.quiet === true;
 }
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
@@ -189,22 +201,35 @@ export function cacheObservations<D extends Driver>(driver: D, options: Observat
 		};
 	};
 
-	/** `fn`, with the kept snapshot dropped before it starts and after it ends, however it ends. */
-	const asInput = (fn: Call, target: object): Call => {
+	/** `fn`, with `edge` run before it starts and after it ends, however it ends. */
+	const edged = (fn: Call, target: object, edge: () => void): Call => {
 		return (...args) => {
-			inputEdge();
+			edge();
 			let result: unknown;
 			try {
 				result = Reflect.apply(fn, target, args);
 			} catch (error) {
-				inputEdge();
+				edge();
 				throw error;
 			}
 			if (!isThenable(result)) {
-				inputEdge();
+				edge();
 				return result;
 			}
-			return Promise.resolve(result).finally(inputEdge);
+			return Promise.resolve(result).finally(edge);
+		};
+	};
+
+	/** `fn`, with the kept snapshot dropped before it starts and after it ends, and the input time noted. */
+	const asInput = (fn: Call, target: object): Call => edged(fn, target, inputEdge);
+
+	/** `fn`, with the kept snapshot dropped before it starts and after it ends; no input happened, and a quiet answer ends the last one. */
+	const asWait = (fn: Call, target: object): Call => {
+		const waited = edged(fn, target, moveOn);
+		return async (...args) => {
+			const result: unknown = await waited(...args);
+			if (reportsQuiet(result)) lastInputAt = undefined;
+			return result;
 		};
 	};
 
@@ -212,6 +237,7 @@ export function cacheObservations<D extends Driver>(driver: D, options: Observat
 	const wrapMember = (name: string, value: unknown, target: object): unknown => {
 		if (name === "app" && typeof value === "object" && value !== null) return wrap(value, {});
 		if (!isCall(value) || READS.has(name)) return value;
+		if (WAITS.has(name)) return asWait(value, target);
 		const input = asInput(value, target);
 		if (!READS_WITHOUT_ARGUMENT.has(name)) return input;
 		return (...args: unknown[]): unknown =>
