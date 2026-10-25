@@ -1,6 +1,6 @@
 name: ci
 
-# Pull requests into main are gated on local signoff, not on this workflow: `bun run signoff` runs
+# Pull requests into develop are gated on local signoff, not on this workflow: `bun run signoff` runs
 # the checks on the authoring machine and writes the `signoff` commit status branch protection
 # requires (scripts/signoff/, AGENTS.md § Signoff). Running the same checks again on billed macOS
 # runners for every push was the cost this replaced.
@@ -66,7 +66,7 @@ jobs:
       - run: bun run check
       - run: bun run test
 
-  # Paths filter for the native job: does this commit touch packages/e2e/native/** against main?
+  # Paths filter for the native job: does this commit touch packages/e2e/native/** against develop?
   native-changes:
     needs: validate
     runs-on: namespace-profile-linux-small
@@ -79,7 +79,7 @@ jobs:
           SHA: ${{ inputs.signoff-sha }}
         run: |
           # An unreadable compare runs native rather than skipping it.
-          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$SHA" --jq '.files[].filename' 2>/dev/null || echo "packages/e2e/native/")
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/develop...$SHA" --jq '.files[].filename' 2>/dev/null || echo "packages/e2e/native/")
           if echo "$files" | grep -q '^packages/e2e/native/'; then
             echo "native=true" >> "$GITHUB_OUTPUT"
           else

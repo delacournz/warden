@@ -1,5 +1,5 @@
 /**
- * What a pull request has to pass before it can merge into `main`, and which of it a given diff
+ * What a pull request has to pass before it can merge into `develop`, and which of it a given diff
  * actually needs.
  *
  * Pull requests are gated on commit statuses written from the authoring machine by
@@ -14,7 +14,7 @@
  *                     they run on every pull request.
  *   `always: false` — `native` (warden-simd), `cpu-guard`. Path-gated, so most pull requests never run them.
  *
- * Only the umbrella `signoff` context is required by `main`'s branch protection (`gh signoff
+ * Only the umbrella `signoff` context is required by `develop`'s branch protection (`gh signoff
  * install`). The sub-contexts are written for the checks panel but gate nothing on their own:
  * `signoff.ts` withholds the umbrella unless every check the diff made applicable ran and passed, so
  * a path-gated or always-on check still blocks the merge — transitively. A required context that
@@ -130,7 +130,7 @@ export const ALWAYS_CONTEXTS: readonly string[] = SIGNOFF_CHECKS.filter((check) 
 	(check) => check.context
 );
 
-/** Exactly what `main`'s branch protection must require — see the header. */
+/** Exactly what `develop`'s branch protection must require — see the header. */
 export const REQUIRED_CONTEXTS: readonly string[] = [UMBRELLA_CONTEXT];
 
 export type PlannedCheck = {

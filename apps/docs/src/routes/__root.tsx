@@ -2,7 +2,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-r
 import { RootProvider } from "fumadocs-ui/provider/tanstack";
 import { socialImageMeta } from "@/lib/seo";
 import { appDescription, appName, defaultOgImage } from "@/lib/shared";
-import { themeScript } from "@/lib/theme";
+import { themeHeadScript } from "@/lib/theme";
 import appCss from "@/styles/app.css?url";
 
 export const Route = createRootRoute({
@@ -22,7 +22,7 @@ export const Route = createRootRoute({
 			{ rel: "stylesheet", href: appCss },
 			{ rel: "icon", href: "/favicon.svg", type: "image/svg+xml", sizes: "any" },
 		],
-		scripts: [{ children: themeScript }],
+		scripts: [themeHeadScript],
 	}),
 	component: RootComponent,
 });
