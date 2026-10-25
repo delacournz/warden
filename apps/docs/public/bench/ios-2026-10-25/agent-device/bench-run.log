@@ -1,0 +1,8 @@
+app: pinned /Users/expo/workingdir/build/.bench/app/ios/wardenexample.app (hash import:2d35643eda49, source import, built 2026-10-25T12:16:02.972Z, built now)
+using caller-leased device F7838A8B-4109-4937-804E-B7DD9CCE79E2
+== agent-device
+deep link primed for agent-device: opened warden-example://todo/warden
+agent-device: ok
+framework     status  version               median   ratio  pass  flake  cold start  cpu-s/rep
+agent-device  ok      agent-device 0.21.31  91.77 s  1.00×  100%  0%     18.41 s     10.30 s
+results: /Users/expo/workingdir/build/.bench/eas-ios-agent-device

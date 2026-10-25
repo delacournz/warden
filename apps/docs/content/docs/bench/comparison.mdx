@@ -7,7 +7,7 @@ icon: ChartBar
 {/* Data: content/docs/bench/data/<platform>-<date>.json. Regenerate with
     bun run bench summary .bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json */}
 
-Every framework runs the same 8 parity tests against the same `.app` on the same leased device, one after the other, with no LLM involved. See [Benchmark e2e frameworks](/docs/guides/bench) to run it yourself.
+Every framework runs the same 8 parity tests against the same `.app`, with no LLM involved. The 2026-10-16 runs went one framework after another on one leased device on a Mac; from 2026-10-25 every run happens on EAS Workflows, one `macos-large` worker and one fresh simulator per framework (see [iOS run 2026-10-25 on EAS](/docs/bench/ios-2026-10-25) for how, and for every artifact). See [Benchmark e2e frameworks](/docs/guides/bench) to run it yourself.
 
 <BenchProvider>
 
@@ -67,8 +67,9 @@ Residue is what is left on the machine after teardown. Footprint is how much sui
 - Zero LLM calls.
 - Same assertions per canonical test id.
 - Same retry helpers: dropped first tap, dropped deep link, system alerts.
+- The iOS "Open in …?" sheet is answered once per boot by the harness before every framework's prepare (iOS asks it for the first custom-scheme link after a boot, not again).
 - Fresh app launch per test, `retries=0`.
-- Frameworks run sequentially, with daemons stopped between them.
+- Frameworks run sequentially with daemons stopped between them, or, on EAS, each on its own worker and simulator.
 - `caffeinate -dims` held for the run, host otherwise idle, load average recorded.
 - Warm medians exclude rep 1.
 - Machine-readable reporters only.
@@ -79,8 +80,8 @@ Residue is what is left on the machine after teardown. Footprint is how much sui
 | Framework | Gap |
 |---|---|
 | warden | Copied from the example app, retries written with warden's own options: `tap({ until })`, a deep-link retry, `systemAlerts: "dismiss"`. The hand-rolled helpers it replaced ran the published headline numbers; the idiomatic run is reported beside them. |
-| Argent | Retries are nested `when:` guards capped at two retaps. A checkbox's checked state is not readable, so the remaining-count assertion covers the effect. |
-| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`. Needs a runner prepare step and a daemon. |
+| Argent | Retries are nested `when:` guards capped at two retaps. Flow selectors read only the app's view hierarchy, never SpringBoard, so the flow cannot answer the "Open in …?" sheet itself. A checkbox's checked state is not readable, so the remaining-count assertion covers the effect. |
+| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`, so the deep-link script cannot answer a sheet that may or may not show. Needs a runner prepare step and a daemon. |
 | tester.army | Has its own copy of the hand-rolled helpers warden used before. Runs with a private agent-device state dir and Node 24 on `PATH`. |
 
-Each run is a snapshot on one machine with few warm repetitions: read the ratios as a guide, not a verdict. The full Markdown report for each run is in `docs/bench/` in the repo.
+Each run is a snapshot on one machine class with few warm repetitions: read the ratios as a guide, not a verdict. The full Markdown report for each run is in `docs/bench/` in the repo; the EAS runs also publish every worker's artifact on their run page.

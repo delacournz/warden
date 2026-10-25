@@ -1,4 +1,7 @@
 {
 	"title": "Benchmarks",
-	"pages": ["comparison"]
+	"pages": [
+		"comparison",
+		"ios-2026-10-25"
+	]
 }

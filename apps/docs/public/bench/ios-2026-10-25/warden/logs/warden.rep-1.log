@@ -1,0 +1,291 @@
+2026-10-25T12:35:58.135Z bun test v1.3.14 (0d9b296a)
+2026-10-25T12:35:58.143Z 
+2026-10-25T12:35:58.143Z suites/warden/onboarding.e2e.ts:
+2026-10-25T12:35:58.186Z [12:35:58.186] ▶ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/onboarding.e2e.ts › onboarding steps through to sign-in
+2026-10-25T12:36:00.410Z [12:36:00.409]   ▸ onboarding › locator expect getByTestId("welcome-screen").toBeVisible()
+2026-10-25T12:36:00.449Z [12:36:00.449]   ▪ onboarding › locator expect getByTestId("welcome-screen").toBeVisible() passed 40ms
+2026-10-25T12:36:00.449Z [12:36:00.449]   ▸ onboarding › locator expect getByTestId("welcome-title").toHaveText("Welcome")
+2026-10-25T12:36:00.449Z [12:36:00.449]   ▪ onboarding › locator expect getByTestId("welcome-title").toHaveText("Welcome") passed 0ms
+2026-10-25T12:36:00.450Z [12:36:00.450]   ▸ onboarding › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:36:00.803Z [12:36:00.803]   ▪ onboarding › locator tap getByTestId("welcome-next") until check passed 353ms
+2026-10-25T12:36:00.803Z [12:36:00.803]   ▸ onboarding › locator expect getByTestId("welcome-title").toHaveText("Plan")
+2026-10-25T12:36:00.804Z [12:36:00.803]   ▪ onboarding › locator expect getByTestId("welcome-title").toHaveText("Plan") passed 0ms
+2026-10-25T12:36:00.804Z [12:36:00.804]   ▸ onboarding › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:36:01.162Z [12:36:01.161]   ▪ onboarding › locator tap getByTestId("welcome-next") until check passed 357ms
+2026-10-25T12:36:01.162Z [12:36:01.162]   ▸ onboarding › locator expect getByTestId("welcome-title").toHaveText("Test")
+2026-10-25T12:36:01.162Z [12:36:01.162]   ▪ onboarding › locator expect getByTestId("welcome-title").toHaveText("Test") passed 0ms
+2026-10-25T12:36:01.162Z [12:36:01.162]   ▸ onboarding › locator tap getByTestId("welcome-get-started")
+2026-10-25T12:36:01.194Z [12:36:01.193]   ▪ onboarding › locator tap getByTestId("welcome-get-started") passed 31ms
+2026-10-25T12:36:01.194Z [12:36:01.193]   ▸ onboarding › locator expect getByTestId("sign-in-screen").toBeVisible()
+2026-10-25T12:36:01.426Z [12:36:01.426]   ▪ onboarding › locator expect getByTestId("sign-in-screen").toBeVisible() passed 233ms
+2026-10-25T12:36:01.426Z [12:36:01.426] ■ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/onboarding.e2e.ts › onboarding steps through to sign-in passed 3.24s on 07FBA7CD-…
+2026-10-25T12:36:01.428Z (pass) onboarding steps through to sign-in [3241.26ms]
+2026-10-25T12:36:01.429Z 
+2026-10-25T12:36:01.429Z suites/warden/sign-in.e2e.ts:
+2026-10-25T12:36:01.437Z [12:36:01.436] ▶ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/sign-in.e2e.ts › invalid email and short password show field errors
+2026-10-25T12:36:03.736Z [12:36:03.736]   ▸ sign-in › locator expect getByTestId("welcome-screen").toBeVisible()
+2026-10-25T12:36:03.773Z [12:36:03.773]   ▪ sign-in › locator expect getByTestId("welcome-screen").toBeVisible() passed 37ms
+2026-10-25T12:36:03.773Z [12:36:03.773]   ▸ sign-in › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:36:04.129Z [12:36:04.129]   ▪ sign-in › locator tap getByTestId("welcome-next") until check passed 356ms
+2026-10-25T12:36:04.130Z [12:36:04.129]   ▸ sign-in › locator expect getByTestId("welcome-title").toHaveText("Plan")
+2026-10-25T12:36:04.130Z [12:36:04.130]   ▪ sign-in › locator expect getByTestId("welcome-title").toHaveText("Plan") passed 1ms
+2026-10-25T12:36:04.130Z [12:36:04.130]   ▸ sign-in › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:36:04.487Z [12:36:04.487]   ▪ sign-in › locator tap getByTestId("welcome-next") until check passed 357ms
+2026-10-25T12:36:04.487Z [12:36:04.487]   ▸ sign-in › locator expect getByTestId("welcome-title").toHaveText("Test")
+2026-10-25T12:36:04.488Z [12:36:04.487]   ▪ sign-in › locator expect getByTestId("welcome-title").toHaveText("Test") passed 0ms
+2026-10-25T12:36:04.488Z [12:36:04.488]   ▸ sign-in › locator tap getByTestId("welcome-get-started")
+2026-10-25T12:36:04.518Z [12:36:04.518]   ▪ sign-in › locator tap getByTestId("welcome-get-started") passed 30ms
+2026-10-25T12:36:04.519Z [12:36:04.518]   ▸ sign-in › locator expect getByTestId("sign-in-screen").toBeVisible()
+2026-10-25T12:36:04.740Z [12:36:04.740]   ▪ sign-in › locator expect getByTestId("sign-in-screen").toBeVisible() passed 222ms
+2026-10-25T12:36:04.740Z [12:36:04.740]   ▸ sign-in › locator fill getByTestId("sign-in-email")
+2026-10-25T12:36:08.185Z [12:36:08.185]   ▪ sign-in › locator fill getByTestId("sign-in-email") passed 3445ms
+2026-10-25T12:36:08.186Z [12:36:08.185]   ▸ sign-in › locator fill getByTestId("sign-in-password")
+2026-10-25T12:36:11.211Z [12:36:11.211]   ▪ sign-in › locator fill getByTestId("sign-in-password") passed 3026ms
+2026-10-25T12:36:11.212Z [12:36:11.211]   ▸ sign-in › locator tap getByTestId("sign-in-submit")
+2026-10-25T12:36:11.356Z [12:36:11.355]   ▪ sign-in › locator tap getByTestId("sign-in-submit") passed 144ms
+2026-10-25T12:36:11.356Z [12:36:11.355]   ▸ sign-in › locator expect getByTestId("sign-in-email-error").toHaveText("Enter a valid email address.")
+2026-10-25T12:36:11.602Z [12:36:11.602]   ▪ sign-in › locator expect getByTestId("sign-in-email-error").toHaveText("Enter a valid email address.") passed 247ms
+2026-10-25T12:36:11.602Z [12:36:11.602]   ▸ sign-in › locator fill getByTestId("sign-in-email")
+2026-10-25T12:36:15.344Z [12:36:15.343]   ▪ sign-in › locator fill getByTestId("sign-in-email") passed 3741ms
+2026-10-25T12:36:15.344Z [12:36:15.343]   ▸ sign-in › locator fill getByTestId("sign-in-password")
+2026-10-25T12:36:18.933Z [12:36:18.932]   ▪ sign-in › locator fill getByTestId("sign-in-password") passed 3589ms
+2026-10-25T12:36:18.933Z [12:36:18.933]   ▸ sign-in › locator tap getByTestId("sign-in-submit")
+2026-10-25T12:36:19.090Z [12:36:19.090]   ▪ sign-in › locator tap getByTestId("sign-in-submit") passed 157ms
+2026-10-25T12:36:19.090Z [12:36:19.090]   ▸ sign-in › locator expect getByTestId("sign-in-password-error").toHaveText("Password must be at least 8 characters.")
+2026-10-25T12:36:19.346Z [12:36:19.346]   ▪ sign-in › locator expect getByTestId("sign-in-password-error").toHaveText("Password must be at least 8 characters.") passed 256ms
+2026-10-25T12:36:19.346Z [12:36:19.346] ■ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/sign-in.e2e.ts › invalid email and short password show field errors passed 17.91s on 07FBA7CD-…
+2026-10-25T12:36:19.347Z (pass) invalid email and short password show field errors [17909.93ms]
+2026-10-25T12:36:19.347Z [12:36:19.346] ▶ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/sign-in.e2e.ts › a locked account shows the form alert
+2026-10-25T12:36:21.567Z [12:36:21.566]   ▸ sign-in › locator expect getByTestId("welcome-screen").toBeVisible()
+2026-10-25T12:36:21.598Z [12:36:21.598]   ▪ sign-in › locator expect getByTestId("welcome-screen").toBeVisible() passed 32ms
+2026-10-25T12:36:21.598Z [12:36:21.598]   ▸ sign-in › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:36:21.957Z [12:36:21.956]   ▪ sign-in › locator tap getByTestId("welcome-next") until check passed 358ms
+2026-10-25T12:36:21.957Z [12:36:21.957]   ▸ sign-in › locator expect getByTestId("welcome-title").toHaveText("Plan")
+2026-10-25T12:36:21.957Z [12:36:21.957]   ▪ sign-in › locator expect getByTestId("welcome-title").toHaveText("Plan") passed 0ms
+2026-10-25T12:36:21.957Z [12:36:21.957]   ▸ sign-in › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:36:22.310Z [12:36:22.310]   ▪ sign-in › locator tap getByTestId("welcome-next") until check passed 353ms
+2026-10-25T12:36:22.311Z [12:36:22.310]   ▸ sign-in › locator expect getByTestId("welcome-title").toHaveText("Test")
+2026-10-25T12:36:22.311Z [12:36:22.311]   ▪ sign-in › locator expect getByTestId("welcome-title").toHaveText("Test") passed 1ms
+2026-10-25T12:36:22.311Z [12:36:22.311]   ▸ sign-in › locator tap getByTestId("welcome-get-started")
+2026-10-25T12:36:22.343Z [12:36:22.343]   ▪ sign-in › locator tap getByTestId("welcome-get-started") passed 32ms
+2026-10-25T12:36:22.343Z [12:36:22.343]   ▸ sign-in › locator expect getByTestId("sign-in-screen").toBeVisible()
+2026-10-25T12:36:22.568Z [12:36:22.568]   ▪ sign-in › locator expect getByTestId("sign-in-screen").toBeVisible() passed 225ms
+2026-10-25T12:36:22.569Z [12:36:22.568]   ▸ sign-in › locator fill getByTestId("sign-in-email")
+2026-10-25T12:36:26.997Z [12:36:26.997]   ▪ sign-in › locator fill getByTestId("sign-in-email") passed 4429ms
+2026-10-25T12:36:26.998Z [12:36:26.997]   ▸ sign-in › locator fill getByTestId("sign-in-password")
+2026-10-25T12:36:29.998Z [12:36:29.997]   ▪ sign-in › locator fill getByTestId("sign-in-password") passed 3000ms
+2026-10-25T12:36:29.998Z [12:36:29.997]   ▸ sign-in › locator tap getByTestId("sign-in-submit")
+2026-10-25T12:36:30.151Z [12:36:30.151]   ▪ sign-in › locator tap getByTestId("sign-in-submit") passed 154ms
+2026-10-25T12:36:30.152Z [12:36:30.152]   ▸ sign-in › locator expect getByTestId("sign-in-error").toBeVisible()
+2026-10-25T12:36:30.402Z [12:36:30.401]   ▪ sign-in › locator expect getByTestId("sign-in-error").toBeVisible() passed 249ms
+2026-10-25T12:36:30.402Z [12:36:30.401]   ▸ sign-in › locator expect getByText("This account is locked. Try another email.").toBeVisible()
+2026-10-25T12:36:30.402Z [12:36:30.402]   ▪ sign-in › locator expect getByText("This account is locked. Try another email.").toBeVisible() passed 1ms
+2026-10-25T12:36:30.402Z [12:36:30.402] ■ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/sign-in.e2e.ts › a locked account shows the form alert passed 11.06s on 07FBA7CD-…
+2026-10-25T12:36:30.402Z [12:36:30.402] ▶ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/sign-in.e2e.ts › valid credentials land on todos
+2026-10-25T12:36:30.402Z (pass) a locked account shows the form alert [11055.57ms]
+2026-10-25T12:36:32.597Z [12:36:32.592]   ▸ sign-in › locator expect getByTestId("welcome-screen").toBeVisible()
+2026-10-25T12:36:32.628Z [12:36:32.628]   ▪ sign-in › locator expect getByTestId("welcome-screen").toBeVisible() passed 36ms
+2026-10-25T12:36:32.629Z [12:36:32.628]   ▸ sign-in › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:36:32.996Z [12:36:32.996]   ▪ sign-in › locator tap getByTestId("welcome-next") until check passed 368ms
+2026-10-25T12:36:32.997Z [12:36:32.996]   ▸ sign-in › locator expect getByTestId("welcome-title").toHaveText("Plan")
+2026-10-25T12:36:32.997Z [12:36:32.997]   ▪ sign-in › locator expect getByTestId("welcome-title").toHaveText("Plan") passed 1ms
+2026-10-25T12:36:32.997Z [12:36:32.997]   ▸ sign-in › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:36:33.356Z [12:36:33.355]   ▪ sign-in › locator tap getByTestId("welcome-next") until check passed 358ms
+2026-10-25T12:36:33.356Z [12:36:33.356]   ▸ sign-in › locator expect getByTestId("welcome-title").toHaveText("Test")
+2026-10-25T12:36:33.356Z [12:36:33.356]   ▪ sign-in › locator expect getByTestId("welcome-title").toHaveText("Test") passed 0ms
+2026-10-25T12:36:33.356Z [12:36:33.356]   ▸ sign-in › locator tap getByTestId("welcome-get-started")
+2026-10-25T12:36:33.386Z [12:36:33.386]   ▪ sign-in › locator tap getByTestId("welcome-get-started") passed 30ms
+2026-10-25T12:36:33.386Z [12:36:33.386]   ▸ sign-in › locator expect getByTestId("sign-in-screen").toBeVisible()
+2026-10-25T12:36:33.603Z [12:36:33.603]   ▪ sign-in › locator expect getByTestId("sign-in-screen").toBeVisible() passed 217ms
+2026-10-25T12:36:33.603Z [12:36:33.603]   ▸ sign-in › locator fill getByTestId("sign-in-email")
+2026-10-25T12:36:38.034Z [12:36:38.034]   ▪ sign-in › locator fill getByTestId("sign-in-email") passed 4431ms
+2026-10-25T12:36:38.034Z [12:36:38.034]   ▸ sign-in › locator fill getByTestId("sign-in-password")
+2026-10-25T12:36:40.538Z [12:36:40.537]   ▪ sign-in › locator fill getByTestId("sign-in-password") passed 2503ms
+2026-10-25T12:36:40.540Z [12:36:40.538]   ▸ sign-in › locator tap getByTestId("sign-in-submit")
+2026-10-25T12:36:40.709Z [12:36:40.709]   ▪ sign-in › locator tap getByTestId("sign-in-submit") passed 171ms
+2026-10-25T12:36:40.709Z [12:36:40.709]   ▸ sign-in › locator expect getByTestId("todos-screen").toBeVisible()
+2026-10-25T12:36:41.338Z [12:36:41.338]   ▪ sign-in › locator expect getByTestId("todos-screen").toBeVisible() passed 629ms
+2026-10-25T12:36:41.338Z [12:36:41.338]   ▸ sign-in › locator expect getByTestId("todos-remaining").toHaveText("1 left")
+2026-10-25T12:36:41.339Z [12:36:41.339]   ▪ sign-in › locator expect getByTestId("todos-remaining").toHaveText("1 left") passed 1ms
+2026-10-25T12:36:41.339Z [12:36:41.339] ■ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/sign-in.e2e.ts › valid credentials land on todos passed 10.94s on 07FBA7CD-…
+2026-10-25T12:36:41.339Z (pass) valid credentials land on todos [10936.86ms]
+2026-10-25T12:36:41.339Z 
+2026-10-25T12:36:41.339Z suites/warden/todos.e2e.ts:
+2026-10-25T12:36:41.340Z [12:36:41.340] ▶ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/todos.e2e.ts › add, complete and filter todos
+2026-10-25T12:36:43.693Z [12:36:43.692]   ▸ todos › locator expect getByTestId("welcome-screen").toBeVisible()
+2026-10-25T12:36:43.737Z [12:36:43.737]   ▪ todos › locator expect getByTestId("welcome-screen").toBeVisible() passed 45ms
+2026-10-25T12:36:43.737Z [12:36:43.737]   ▸ todos › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:36:44.083Z [12:36:44.082]   ▪ todos › locator tap getByTestId("welcome-next") until check passed 345ms
+2026-10-25T12:36:44.083Z [12:36:44.083]   ▸ todos › locator expect getByTestId("welcome-title").toHaveText("Plan")
+2026-10-25T12:36:44.083Z [12:36:44.083]   ▪ todos › locator expect getByTestId("welcome-title").toHaveText("Plan") passed 0ms
+2026-10-25T12:36:44.083Z [12:36:44.083]   ▸ todos › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:36:44.442Z [12:36:44.442]   ▪ todos › locator tap getByTestId("welcome-next") until check passed 359ms
+2026-10-25T12:36:44.443Z [12:36:44.442]   ▸ todos › locator expect getByTestId("welcome-title").toHaveText("Test")
+2026-10-25T12:36:44.443Z [12:36:44.443]   ▪ todos › locator expect getByTestId("welcome-title").toHaveText("Test") passed 1ms
+2026-10-25T12:36:44.443Z [12:36:44.443]   ▸ todos › locator tap getByTestId("welcome-get-started")
+2026-10-25T12:36:44.476Z [12:36:44.475]   ▪ todos › locator tap getByTestId("welcome-get-started") passed 32ms
+2026-10-25T12:36:44.476Z [12:36:44.476]   ▸ todos › locator expect getByTestId("sign-in-screen").toBeVisible()
+2026-10-25T12:36:44.698Z [12:36:44.698]   ▪ todos › locator expect getByTestId("sign-in-screen").toBeVisible() passed 222ms
+2026-10-25T12:36:44.699Z [12:36:44.698]   ▸ todos › locator fill getByTestId("sign-in-email")
+2026-10-25T12:36:49.208Z [12:36:49.208]   ▪ todos › locator fill getByTestId("sign-in-email") passed 4510ms
+2026-10-25T12:36:49.209Z [12:36:49.208]   ▸ todos › locator fill getByTestId("sign-in-password")
+2026-10-25T12:36:52.252Z [12:36:52.251]   ▪ todos › locator fill getByTestId("sign-in-password") passed 3043ms
+2026-10-25T12:36:52.252Z [12:36:52.252]   ▸ todos › locator tap getByTestId("sign-in-submit")
+2026-10-25T12:36:52.401Z [12:36:52.400]   ▪ todos › locator tap getByTestId("sign-in-submit") passed 148ms
+2026-10-25T12:36:52.401Z [12:36:52.401]   ▸ todos › locator expect getByTestId("todos-screen").toBeVisible()
+2026-10-25T12:36:53.019Z [12:36:53.019]   ▪ todos › locator expect getByTestId("todos-screen").toBeVisible() passed 618ms
+2026-10-25T12:36:53.019Z [12:36:53.019]   ▸ todos › locator fill getByTestId("todo-input")
+2026-10-25T12:36:57.416Z [12:36:57.416]   ▪ todos › locator fill getByTestId("todo-input") passed 4397ms
+2026-10-25T12:36:57.416Z [12:36:57.416]   ▸ todos › locator tap getByTestId("todo-add")
+2026-10-25T12:36:57.631Z [12:36:57.631]   ▪ todos › locator tap getByTestId("todo-add") passed 215ms
+2026-10-25T12:36:57.631Z [12:36:57.631]   ▸ todos › locator expect getByTestId("todo-title-todo-1").toHaveText("Write e2e flows")
+2026-10-25T12:36:57.965Z [12:36:57.964]   ▪ todos › locator expect getByTestId("todo-title-todo-1").toHaveText("Write e2e flows") passed 333ms
+2026-10-25T12:36:57.965Z [12:36:57.965]   ▸ todos › locator expect getByTestId("todos-remaining").toHaveText("2 left")
+2026-10-25T12:36:57.965Z [12:36:57.965]   ▪ todos › locator expect getByTestId("todos-remaining").toHaveText("2 left") passed 0ms
+2026-10-25T12:36:57.965Z [12:36:57.965]   ▸ todos › locator tap getByTestId("todo-check-todo-1")
+2026-10-25T12:36:58.079Z [12:36:58.079]   ▪ todos › locator tap getByTestId("todo-check-todo-1") passed 114ms
+2026-10-25T12:36:58.079Z [12:36:58.079]   ▸ todos › locator expect getByTestId("todo-check-todo-1").toBeChecked()
+2026-10-25T12:36:58.428Z [12:36:58.427]   ▪ todos › locator expect getByTestId("todo-check-todo-1").toBeChecked() passed 348ms
+2026-10-25T12:36:58.428Z [12:36:58.428]   ▸ todos › locator expect getByTestId("todos-remaining").toHaveText("1 left")
+2026-10-25T12:36:58.428Z [12:36:58.428]   ▪ todos › locator expect getByTestId("todos-remaining").toHaveText("1 left") passed 0ms
+2026-10-25T12:36:58.428Z [12:36:58.428]   ▸ todos › locator tap getByTestId("todos-filter-active")
+2026-10-25T12:36:58.544Z [12:36:58.544]   ▪ todos › locator tap getByTestId("todos-filter-active") passed 116ms
+2026-10-25T12:36:58.544Z [12:36:58.544]   ▸ todos › locator expect getByTestId("todo-row-welcome").toBeVisible()
+2026-10-25T12:36:58.657Z [12:36:58.657]   ▪ todos › locator expect getByTestId("todo-row-welcome").toBeVisible() passed 113ms
+2026-10-25T12:36:58.658Z [12:36:58.657]   ▸ todos › locator expect getByTestId("todo-row-todo-1").toBeHidden()
+2026-10-25T12:36:58.866Z [12:36:58.866]   ▪ todos › locator expect getByTestId("todo-row-todo-1").toBeHidden() passed 209ms
+2026-10-25T12:36:58.867Z [12:36:58.866]   ▸ todos › locator tap getByTestId("todo-check-welcome")
+2026-10-25T12:36:58.967Z [12:36:58.966]   ▪ todos › locator tap getByTestId("todo-check-welcome") passed 100ms
+2026-10-25T12:36:58.967Z [12:36:58.967]   ▸ todos › locator expect getByTestId("todos-empty").toBeVisible()
+2026-10-25T12:36:59.274Z [12:36:59.273]   ▪ todos › locator expect getByTestId("todos-empty").toBeVisible() passed 306ms
+2026-10-25T12:36:59.274Z [12:36:59.274]   ▸ todos › locator tap getByTestId("todos-filter-done")
+2026-10-25T12:36:59.377Z [12:36:59.377]   ▪ todos › locator tap getByTestId("todos-filter-done") passed 103ms
+2026-10-25T12:36:59.378Z [12:36:59.378]   ▸ todos › locator expect getByTestId("todo-row-todo-1").toBeVisible()
+2026-10-25T12:36:59.704Z [12:36:59.704]   ▪ todos › locator expect getByTestId("todo-row-todo-1").toBeVisible() passed 326ms
+2026-10-25T12:36:59.705Z [12:36:59.704]   ▸ todos › locator expect getByTestId("todos-remaining").toHaveText("0 left")
+2026-10-25T12:36:59.705Z [12:36:59.705]   ▪ todos › locator expect getByTestId("todos-remaining").toHaveText("0 left") passed 1ms
+2026-10-25T12:36:59.705Z [12:36:59.705] ■ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/todos.e2e.ts › add, complete and filter todos passed 18.36s on 07FBA7CD-…
+2026-10-25T12:36:59.705Z (pass) add, complete and filter todos [18364.91ms]
+2026-10-25T12:36:59.705Z 
+2026-10-25T12:36:59.706Z suites/warden/todo-detail.e2e.ts:
+2026-10-25T12:36:59.707Z [12:36:59.707] ▶ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/todo-detail.e2e.ts › open a todo, mark it done, then delete it
+2026-10-25T12:37:01.988Z [12:37:01.988]   ▸ todo-detail › locator expect getByTestId("welcome-screen").toBeVisible()
+2026-10-25T12:37:02.022Z [12:37:02.021]   ▪ todo-detail › locator expect getByTestId("welcome-screen").toBeVisible() passed 33ms
+2026-10-25T12:37:02.022Z [12:37:02.022]   ▸ todo-detail › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:37:02.395Z [12:37:02.394]   ▪ todo-detail › locator tap getByTestId("welcome-next") until check passed 372ms
+2026-10-25T12:37:02.395Z [12:37:02.395]   ▸ todo-detail › locator expect getByTestId("welcome-title").toHaveText("Plan")
+2026-10-25T12:37:02.395Z [12:37:02.395]   ▪ todo-detail › locator expect getByTestId("welcome-title").toHaveText("Plan") passed 0ms
+2026-10-25T12:37:02.395Z [12:37:02.395]   ▸ todo-detail › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:37:02.756Z [12:37:02.756]   ▪ todo-detail › locator tap getByTestId("welcome-next") until check passed 361ms
+2026-10-25T12:37:02.756Z [12:37:02.756]   ▸ todo-detail › locator expect getByTestId("welcome-title").toHaveText("Test")
+2026-10-25T12:37:02.756Z [12:37:02.756]   ▪ todo-detail › locator expect getByTestId("welcome-title").toHaveText("Test") passed 0ms
+2026-10-25T12:37:02.757Z [12:37:02.756]   ▸ todo-detail › locator tap getByTestId("welcome-get-started")
+2026-10-25T12:37:02.787Z [12:37:02.786]   ▪ todo-detail › locator tap getByTestId("welcome-get-started") passed 30ms
+2026-10-25T12:37:02.787Z [12:37:02.787]   ▸ todo-detail › locator expect getByTestId("sign-in-screen").toBeVisible()
+2026-10-25T12:37:03.007Z [12:37:03.007]   ▪ todo-detail › locator expect getByTestId("sign-in-screen").toBeVisible() passed 220ms
+2026-10-25T12:37:03.007Z [12:37:03.007]   ▸ todo-detail › locator fill getByTestId("sign-in-email")
+2026-10-25T12:37:07.140Z [12:37:07.139]   ▪ todo-detail › locator fill getByTestId("sign-in-email") passed 4132ms
+2026-10-25T12:37:07.140Z [12:37:07.140]   ▸ todo-detail › locator fill getByTestId("sign-in-password")
+2026-10-25T12:37:09.939Z [12:37:09.939]   ▪ todo-detail › locator fill getByTestId("sign-in-password") passed 2799ms
+2026-10-25T12:37:09.940Z [12:37:09.939]   ▸ todo-detail › locator tap getByTestId("sign-in-submit")
+2026-10-25T12:37:10.081Z [12:37:10.081]   ▪ todo-detail › locator tap getByTestId("sign-in-submit") passed 142ms
+2026-10-25T12:37:10.081Z [12:37:10.081]   ▸ todo-detail › locator expect getByTestId("todos-screen").toBeVisible()
+2026-10-25T12:37:10.702Z [12:37:10.701]   ▪ todo-detail › locator expect getByTestId("todos-screen").toBeVisible() passed 620ms
+2026-10-25T12:37:10.702Z [12:37:10.702]   ▸ todo-detail › locator tap getByTestId("todo-title-welcome") until getByTestId("todo-detail-title")
+2026-10-25T12:37:11.279Z [12:37:11.279]   ▪ todo-detail › locator tap getByTestId("todo-title-welcome") until getByTestId("todo-detail-title") passed 577ms
+2026-10-25T12:37:11.280Z [12:37:11.279]   ▸ todo-detail › locator expect getByTestId("todo-detail-title").toHaveText("Explore the example app")
+2026-10-25T12:37:11.280Z [12:37:11.280]   ▪ todo-detail › locator expect getByTestId("todo-detail-title").toHaveText("Explore the example app") passed 1ms
+2026-10-25T12:37:11.280Z [12:37:11.280]   ▸ todo-detail › locator expect getByTestId("todo-detail-status").toHaveText("Active")
+2026-10-25T12:37:11.280Z [12:37:11.280]   ▪ todo-detail › locator expect getByTestId("todo-detail-status").toHaveText("Active") passed 0ms
+2026-10-25T12:37:11.280Z [12:37:11.280]   ▸ todo-detail › locator tap getByTestId("todo-detail-toggle")
+2026-10-25T12:37:11.413Z [12:37:11.413]   ▪ todo-detail › locator tap getByTestId("todo-detail-toggle") passed 133ms
+2026-10-25T12:37:11.414Z [12:37:11.413]   ▸ todo-detail › locator expect getByTestId("todo-detail-status").toHaveText("Done")
+2026-10-25T12:37:11.690Z [12:37:11.690]   ▪ todo-detail › locator expect getByTestId("todo-detail-status").toHaveText("Done") passed 277ms
+2026-10-25T12:37:11.691Z [12:37:11.690]   ▸ todo-detail › locator tap getByTestId("todo-detail-delete")
+2026-10-25T12:37:11.731Z [12:37:11.730]   ▪ todo-detail › locator tap getByTestId("todo-detail-delete") passed 40ms
+2026-10-25T12:37:11.731Z [12:37:11.730]   ▸ todo-detail › locator expect getByTestId("todos-screen").toBeVisible()
+2026-10-25T12:37:11.964Z [12:37:11.964]   ▪ todo-detail › locator expect getByTestId("todos-screen").toBeVisible() passed 234ms
+2026-10-25T12:37:11.965Z [12:37:11.965]   ▸ todo-detail › locator expect getByTestId("todo-row-welcome").toHaveCount(0)
+2026-10-25T12:37:11.965Z [12:37:11.965]   ▪ todo-detail › locator expect getByTestId("todo-row-welcome").toHaveCount(0) passed 0ms
+2026-10-25T12:37:11.965Z [12:37:11.965] ■ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/todo-detail.e2e.ts › open a todo, mark it done, then delete it passed 12.26s on 07FBA7CD-…
+2026-10-25T12:37:11.965Z (pass) open a todo, mark it done, then delete it [12258.25ms]
+2026-10-25T12:37:11.965Z [12:37:11.965] ▶ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/todo-detail.e2e.ts › deep link opens a todo by id
+2026-10-25T12:37:14.253Z [12:37:14.252]   ▸ todo-detail › locator expect getByTestId("welcome-screen").toBeVisible()
+2026-10-25T12:37:14.299Z [12:37:14.299]   ▪ todo-detail › locator expect getByTestId("welcome-screen").toBeVisible() passed 47ms
+2026-10-25T12:37:14.300Z [12:37:14.299]   ▸ todo-detail › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:37:14.649Z [12:37:14.649]   ▪ todo-detail › locator tap getByTestId("welcome-next") until check passed 350ms
+2026-10-25T12:37:14.650Z [12:37:14.649]   ▸ todo-detail › locator expect getByTestId("welcome-title").toHaveText("Plan")
+2026-10-25T12:37:14.650Z [12:37:14.650]   ▪ todo-detail › locator expect getByTestId("welcome-title").toHaveText("Plan") passed 1ms
+2026-10-25T12:37:14.650Z [12:37:14.650]   ▸ todo-detail › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:37:15.002Z [12:37:15.002]   ▪ todo-detail › locator tap getByTestId("welcome-next") until check passed 352ms
+2026-10-25T12:37:15.002Z [12:37:15.002]   ▸ todo-detail › locator expect getByTestId("welcome-title").toHaveText("Test")
+2026-10-25T12:37:15.002Z [12:37:15.002]   ▪ todo-detail › locator expect getByTestId("welcome-title").toHaveText("Test") passed 0ms
+2026-10-25T12:37:15.002Z [12:37:15.002]   ▸ todo-detail › locator tap getByTestId("welcome-get-started")
+2026-10-25T12:37:15.035Z [12:37:15.034]   ▪ todo-detail › locator tap getByTestId("welcome-get-started") passed 32ms
+2026-10-25T12:37:15.035Z [12:37:15.035]   ▸ todo-detail › locator expect getByTestId("sign-in-screen").toBeVisible()
+2026-10-25T12:37:15.256Z [12:37:15.256]   ▪ todo-detail › locator expect getByTestId("sign-in-screen").toBeVisible() passed 221ms
+2026-10-25T12:37:15.256Z [12:37:15.256]   ▸ todo-detail › locator fill getByTestId("sign-in-email")
+2026-10-25T12:37:19.364Z [12:37:19.363]   ▪ todo-detail › locator fill getByTestId("sign-in-email") passed 4107ms
+2026-10-25T12:37:19.365Z [12:37:19.364]   ▸ todo-detail › locator fill getByTestId("sign-in-password")
+2026-10-25T12:37:21.951Z [12:37:21.950]   ▪ todo-detail › locator fill getByTestId("sign-in-password") passed 2586ms
+2026-10-25T12:37:21.953Z [12:37:21.951]   ▸ todo-detail › locator tap getByTestId("sign-in-submit")
+2026-10-25T12:37:22.125Z [12:37:22.124]   ▪ todo-detail › locator tap getByTestId("sign-in-submit") passed 173ms
+2026-10-25T12:37:22.125Z [12:37:22.125]   ▸ todo-detail › locator expect getByTestId("todos-screen").toBeVisible()
+2026-10-25T12:37:22.751Z [12:37:22.751]   ▪ todo-detail › locator expect getByTestId("todos-screen").toBeVisible() passed 626ms
+2026-10-25T12:37:23.421Z [12:37:23.421]   ▸ todo-detail › locator expect getByTestId("todo-detail-title").toHaveText("Run the e2e suite with warden")
+2026-10-25T12:37:23.422Z [12:37:23.421]   ▪ todo-detail › locator expect getByTestId("todo-detail-title").toHaveText("Run the e2e suite with warden") passed 0ms
+2026-10-25T12:37:23.422Z [12:37:23.422]   ▸ todo-detail › locator expect getByTestId("todo-detail-status").toHaveText("Done")
+2026-10-25T12:37:23.422Z [12:37:23.422]   ▪ todo-detail › locator expect getByTestId("todo-detail-status").toHaveText("Done") passed 0ms
+2026-10-25T12:37:23.422Z [12:37:23.422] ■ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/todo-detail.e2e.ts › deep link opens a todo by id passed 11.46s on 07FBA7CD-…
+2026-10-25T12:37:23.422Z (pass) deep link opens a todo by id [11457.32ms]
+2026-10-25T12:37:23.423Z 
+2026-10-25T12:37:23.423Z suites/warden/settings.e2e.ts:
+2026-10-25T12:37:23.424Z [12:37:23.424] ▶ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/settings.e2e.ts › settings shows the account, toggles switches and signs out
+2026-10-25T12:37:25.654Z [12:37:25.654]   ▸ settings › locator expect getByTestId("welcome-screen").toBeVisible()
+2026-10-25T12:37:25.687Z [12:37:25.686]   ▪ settings › locator expect getByTestId("welcome-screen").toBeVisible() passed 32ms
+2026-10-25T12:37:25.687Z [12:37:25.687]   ▸ settings › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:37:26.062Z [12:37:26.062]   ▪ settings › locator tap getByTestId("welcome-next") until check passed 375ms
+2026-10-25T12:37:26.063Z [12:37:26.062]   ▸ settings › locator expect getByTestId("welcome-title").toHaveText("Plan")
+2026-10-25T12:37:26.063Z [12:37:26.063]   ▪ settings › locator expect getByTestId("welcome-title").toHaveText("Plan") passed 1ms
+2026-10-25T12:37:26.063Z [12:37:26.063]   ▸ settings › locator tap getByTestId("welcome-next") until check
+2026-10-25T12:37:26.425Z [12:37:26.425]   ▪ settings › locator tap getByTestId("welcome-next") until check passed 362ms
+2026-10-25T12:37:26.425Z [12:37:26.425]   ▸ settings › locator expect getByTestId("welcome-title").toHaveText("Test")
+2026-10-25T12:37:26.426Z [12:37:26.425]   ▪ settings › locator expect getByTestId("welcome-title").toHaveText("Test") passed 0ms
+2026-10-25T12:37:26.426Z [12:37:26.426]   ▸ settings › locator tap getByTestId("welcome-get-started")
+2026-10-25T12:37:26.456Z [12:37:26.456]   ▪ settings › locator tap getByTestId("welcome-get-started") passed 30ms
+2026-10-25T12:37:26.456Z [12:37:26.456]   ▸ settings › locator expect getByTestId("sign-in-screen").toBeVisible()
+2026-10-25T12:37:26.678Z [12:37:26.678]   ▪ settings › locator expect getByTestId("sign-in-screen").toBeVisible() passed 222ms
+2026-10-25T12:37:26.678Z [12:37:26.678]   ▸ settings › locator fill getByTestId("sign-in-email")
+2026-10-25T12:37:31.353Z [12:37:31.353]   ▪ settings › locator fill getByTestId("sign-in-email") passed 4675ms
+2026-10-25T12:37:31.354Z [12:37:31.353]   ▸ settings › locator fill getByTestId("sign-in-password")
+2026-10-25T12:37:33.974Z [12:37:33.974]   ▪ settings › locator fill getByTestId("sign-in-password") passed 2621ms
+2026-10-25T12:37:33.975Z [12:37:33.974]   ▸ settings › locator tap getByTestId("sign-in-submit")
+2026-10-25T12:37:34.129Z [12:37:34.129]   ▪ settings › locator tap getByTestId("sign-in-submit") passed 155ms
+2026-10-25T12:37:34.129Z [12:37:34.129]   ▸ settings › locator expect getByTestId("todos-screen").toBeVisible()
+2026-10-25T12:37:34.774Z [12:37:34.774]   ▪ settings › locator expect getByTestId("todos-screen").toBeVisible() passed 645ms
+2026-10-25T12:37:34.775Z [12:37:34.774]   ▸ settings › locator tap getByTestId("tab-settings") until getByTestId("settings-email")
+2026-10-25T12:37:35.327Z [12:37:35.327]   ▪ settings › locator tap getByTestId("tab-settings") until getByTestId("settings-email") passed 553ms
+2026-10-25T12:37:35.327Z [12:37:35.327]   ▸ settings › locator expect getByTestId("settings-email").toHaveText("grace@example.com")
+2026-10-25T12:37:35.327Z [12:37:35.327]   ▪ settings › locator expect getByTestId("settings-email").toHaveText("grace@example.com") passed 0ms
+2026-10-25T12:37:35.328Z [12:37:35.327]   ▸ settings › locator expect getByTestId("settings-notifications").toBeChecked()
+2026-10-25T12:37:35.328Z [12:37:35.328]   ▪ settings › locator expect getByTestId("settings-notifications").toBeChecked() passed 1ms
+2026-10-25T12:37:35.328Z [12:37:35.328]   ▸ settings › locator tap getByTestId("settings-notifications")
+2026-10-25T12:37:35.401Z [12:37:35.400]   ▪ settings › locator tap getByTestId("settings-notifications") passed 72ms
+2026-10-25T12:37:35.401Z [12:37:35.401]   ▸ settings › locator expect getByTestId("settings-notifications").toBeChecked({ checked: false })
+2026-10-25T12:37:35.655Z [12:37:35.654]   ▪ settings › locator expect getByTestId("settings-notifications").toBeChecked({ checked: false }) passed 253ms
+2026-10-25T12:37:35.655Z [12:37:35.655]   ▸ settings › locator tap getByTestId("settings-dark-mode")
+2026-10-25T12:37:35.729Z [12:37:35.728]   ▪ settings › locator tap getByTestId("settings-dark-mode") passed 73ms
+2026-10-25T12:37:35.729Z [12:37:35.729]   ▸ settings › locator expect getByTestId("settings-dark-mode").toBeChecked()
+2026-10-25T12:37:35.979Z [12:37:35.979]   ▪ settings › locator expect getByTestId("settings-dark-mode").toBeChecked() passed 250ms
+2026-10-25T12:37:35.979Z [12:37:35.979]   ▸ settings › locator tap getByTestId("settings-dark-mode")
+2026-10-25T12:37:36.052Z [12:37:36.051]   ▪ settings › locator tap getByTestId("settings-dark-mode") passed 72ms
+2026-10-25T12:37:36.052Z [12:37:36.052]   ▸ settings › locator tap getByTestId("settings-sign-out")
+2026-10-25T12:37:36.206Z [12:37:36.206]   ▪ settings › locator tap getByTestId("settings-sign-out") passed 154ms
+2026-10-25T12:37:36.207Z [12:37:36.206]   ▸ settings › locator expect getByTestId("welcome-screen").toBeVisible()
+2026-10-25T12:37:36.446Z [12:37:36.446]   ▪ settings › locator expect getByTestId("welcome-screen").toBeVisible() passed 240ms
+2026-10-25T12:37:36.446Z [12:37:36.446] ■ test |ios| /Users/expo/workingdir/build/packages/e2e-bench/suites/warden/settings.e2e.ts › settings shows the account, toggles switches and signs out passed 13.02s on 07FBA7CD-…
+2026-10-25T12:37:36.446Z (pass) settings shows the account, toggles switches and signs out [13022.53ms]
+2026-10-25T12:37:36.448Z 
+2026-10-25T12:37:36.448Z  8 pass
+2026-10-25T12:37:36.448Z  0 fail
+2026-10-25T12:37:36.448Z Ran 8 tests across 5 files. [98.31s]
