@@ -1,5 +1,13 @@
 # @delacour/warden
 
+## 0.3.1
+
+### Patch Changes
+
+- [#74](https://github.com/delacournz/warden/pull/74) [`6b3ffea`](https://github.com/delacournz/warden/commit/6b3ffea079bcfc3ce73278b2d3f328899f449e46) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `bun run release <version>` asks npm about every package before writing the version or building: a version already published for all of them is reported and skipped without touching the tree, and packages that already have it are listed as skipped up front.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes
