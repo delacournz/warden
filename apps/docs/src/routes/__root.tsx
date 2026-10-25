@@ -1,5 +1,9 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { RootProvider } from "fumadocs-ui/provider/tanstack";
+import { useEffect } from "react";
+import { TrackedSearchDialog } from "@/components/search-dialog";
+import { startPosthog } from "@/lib/analytics/posthog";
+import { installClickTracking } from "@/lib/analytics/track";
 import { socialImageMeta } from "@/lib/seo";
 import { appDescription, appName, defaultOgImage } from "@/lib/shared";
 import { themeHeadScript } from "@/lib/theme";
@@ -51,8 +55,16 @@ function DirectionContract() {
  * Theming is `@/lib/theme`: an inline head script sets `.dark` before first
  * paint. Fumadocs' own provider (next-themes) is switched off; its script
  * lands in `<body>`, late enough to flash the light ground.
+ *
+ * Search is Fumadocs' own dialog rebuilt so the query can be counted, see
+ * `search-dialog.tsx`, and one delegated listener counts outbound links,
+ * downloads and code copies on every route. PostHog starts on mount, on the
+ * client only; it has no tag in `<head>`, see `src/lib/analytics/posthog.ts`.
  */
 function RootComponent() {
+	useEffect(() => startPosthog(), []);
+	useEffect(() => installClickTracking(), []);
+
 	return (
 		<html lang="en" suppressHydrationWarning>
 			<head>
@@ -60,7 +72,7 @@ function RootComponent() {
 			</head>
 			<body className="flex min-h-screen flex-col bg-ground">
 				<DirectionContract />
-				<RootProvider theme={{ enabled: false }}>
+				<RootProvider search={{ SearchDialog: TrackedSearchDialog }} theme={{ enabled: false }}>
 					<Outlet />
 				</RootProvider>
 				<Scripts />

@@ -39,6 +39,10 @@ scripts/              # repo scripts (pre-commit biome, signoff/ = local CI gate
 - Versions of `@delacour/warden` / `@delacour/warden-e2e` are owned by changesets (`.changeset/`); never edit `version` by hand.
 - Side effects (`exec`, clock, pid liveness, stdin, spawn) are injected; tests use temp `WARDEN_HOME`.
 
+## Docs analytics (apps/docs)
+
+PostHog only, off unless `VITE_POSTHOG_TOKEN` (`phc_…`) and `VITE_POSTHOG_HOST` (`https://i.delacour.co.nz`) are set at **build** time; Railway sets them per environment (prod `warden.delacour.co.nz`, staging `warden.staging.delacour.co.nz`, each its own PostHog project). Dev and CI set neither and render no analytics. `turbo.jsonc` lists `VITE_*` on `build` (strict env mode) and a test holds it to that. Cookieless always, nothing stored on the device, so there is no consent banner; autocapture, replay, surveys, heatmaps and remote config are off in code (`apps/docs/src/lib/analytics/posthog.ts`). Events: `$pageview`, `outbound`, `download`, `copy`, `search` from the browser, and `agent-fetch` from the server for `/llms*.txt` and `.md` reads (`src/lib/analytics/server.ts`, called from `start.ts`). Only counted hosts report, so a prod build on `localhost` sends nothing.
+
 ## File Naming
 
 | Type | Pattern |
