@@ -48,6 +48,11 @@ const STOP_ROW_WAIT_MS = 1000;
 /** how long a helper with no client and no op in flight lives on (`--idle-timeout`); `$WARDEN_SIMD_IDLE_TIMEOUT` overrides */
 const DEFAULT_IDLE_TIMEOUT = "10m";
 export const IDLE_TIMEOUT_ENV = "WARDEN_SIMD_IDLE_TIMEOUT";
+/**
+ * how long one request to the helper may take before the client gives up (`E_TIMEOUT`); unset, the client's 10 s. A
+ * duration (`60s`). The first `snapshot` on a cold hosted simulator injects the in-sim bridge and can outlast 10 s.
+ */
+export const REQUEST_TIMEOUT_ENV = "WARDEN_SIMD_TIMEOUT";
 /** how long a fresh spawn may take to print its ready line before the socket poll takes over (an older helper never does) */
 const SIGNAL_WAIT_MS = 1500;
 /** sun_path is 104 bytes on macOS; stay clear of it */
@@ -69,8 +74,11 @@ export type StartSignal = { up: Promise<StartOutcome>; detach: () => void };
 export type SpawnResult = { pid: number; signal?: StartSignal };
 
 /** Everything impure about the helper lifecycle; tests replace pieces (clock, spawn, connect, kill). */
+/** per-connection client options `ensureHelper` resolves from `requestTimeout` / `$WARDEN_SIMD_TIMEOUT` */
+export type ConnectOptions = { defaultTimeoutMs?: number };
+
 export type HelperDeps = {
-	connect: (socketPath: string) => Promise<Result<SimdClient, DriverError>>;
+	connect: (socketPath: string, options?: ConnectOptions) => Promise<Result<SimdClient, DriverError>>;
 	/** start the helper detached from this process (survives our exit); `signal` tells when its socket is up */
 	spawnDetached: (spec: SpawnSpec) => SpawnResult;
 	pidAlive: PidAlive;
@@ -173,8 +181,12 @@ function isUpLine(line: string): boolean {
 }
 
 export const defaultHelperDeps: HelperDeps = {
-	connect: async (socketPath) =>
-		(await import("@delacour/warden-e2e/driver/ios/simd-client")).connectSimd({ socketPath, readyTimeoutMs: 2000 }),
+	connect: async (socketPath, options) =>
+		(await import("@delacour/warden-e2e/driver/ios/simd-client")).connectSimd({
+			socketPath,
+			readyTimeoutMs: 2000,
+			...(options?.defaultTimeoutMs !== undefined ? { defaultTimeoutMs: options.defaultTimeoutMs } : {}),
+		}),
 	spawnDetached: ({ cmd, logPath, signalMs }) => {
 		const log = openSync(logPath, "a");
 		try {
@@ -245,6 +257,8 @@ export type EnsureHelperOptions = {
 	socketPath?: string;
 	/** `10m`-style; the helper exits after this long without a client. Default `$WARDEN_SIMD_IDLE_TIMEOUT`, else 10 min */
 	idleTimeout?: string;
+	/** `60s`-style; how long one request to the helper may take. Default `$WARDEN_SIMD_TIMEOUT`, else the client's 10 s */
+	requestTimeout?: string;
 	/** hand back the client that proved the helper is up instead of closing it, so the driver does not connect again */
 	keepClient?: boolean;
 	deps?: HelperDeps;
@@ -319,6 +333,14 @@ function releaseSpawnRow(host: Required<Pick<HelperHost, "store">> & HelperHost,
 		const current = parseRow(store.getMeta(rowKey(udid)));
 		if (current === undefined || current.pid === deps.pid) store.deleteMeta(rowKey(udid));
 	});
+}
+
+/** `undefined` leaves the client's default; the value is a duration, and a bad one is a usage error up front. */
+function requestTimeoutMs(value: string | undefined): Result<number | undefined, UiError> {
+	if (value === undefined || value === "") return ok(undefined);
+	const ms = parseDuration(value);
+	if (!ms.success) return { success: false, error: uiError("usage", `${REQUEST_TIMEOUT_ENV}: ${ms.error}`) };
+	return ok(Math.max(1, ms.data));
 }
 
 function idleSeconds(idleTimeout: string): Result<number, UiError> {
@@ -476,6 +498,8 @@ type Attempt = {
 	logPath: string;
 	opts: EnsureHelperOptions;
 	deps: HelperDeps;
+	/** what every `connect` of this attempt passes on to the client */
+	connectOptions?: ConnectOptions;
 	spawned?: SpawnResult;
 	/** we hold the spawn row (replacing a stale helper or spawning) */
 	held: boolean;
@@ -543,7 +567,7 @@ async function onSilence(a: Attempt): Promise<Step> {
 		a.held = true;
 		// the previous holder may have finished between our failed connect and our claim: look again before replacing its socket
 		if (a.deps.socketExists?.(a.socketPath) !== false) {
-			const again = await a.deps.connect(a.socketPath);
+			const again = await a.deps.connect(a.socketPath, a.connectOptions);
 			if (again.success) {
 				await again.data.close();
 				return RETRY;
@@ -587,7 +611,7 @@ function diedBeforeReady(a: Attempt): Step {
 async function attempt(a: Attempt): Promise<Step> {
 	// no socket file: nothing can answer, so skip the probe and go straight to the spawn arbitration
 	if (a.spawned === undefined && a.deps.socketExists?.(a.socketPath) === false) return onSilence(a);
-	const attached = await a.deps.connect(a.socketPath);
+	const attached = await a.deps.connect(a.socketPath, a.connectOptions);
 	if (attached.success) return onAnswer(a, attached.data);
 	if (a.spawned === undefined) {
 		const busy = busyPid(a, attached.error);
@@ -608,6 +632,37 @@ function abandonSpawn(a: Attempt, spawned: SpawnResult): void {
 }
 
 /**
+ * The state one `ensureHelper` call threads through its steps: paths (the simd dir and the socket's parent exist
+ * afterwards), the deps, and the client options every `connect` passes on (`requestTimeout`, else
+ * `$WARDEN_SIMD_TIMEOUT`; a bad duration is a usage error before anything is touched).
+ */
+function attemptFor(
+	host: HelperHost & Required<Pick<HelperHost, "store">>,
+	udid: string,
+	opts: EnsureHelperOptions
+): Result<Attempt, UiError> {
+	const deps = opts.deps ?? defaultHelperDeps;
+	const timeout = requestTimeoutMs(opts.requestTimeout ?? host.env[REQUEST_TIMEOUT_ENV]);
+	if (!timeout.success) return timeout;
+	const socketPath = opts.socketPath ?? socketPathFor(host, udid);
+	mkdirSync(dirname(socketPath), { recursive: true });
+	mkdirSync(simdDir(host), { recursive: true });
+	const logPath = join(simdDir(host), `${udid}.log`);
+	return ok({
+		host,
+		udid,
+		socketPath,
+		logPath,
+		opts,
+		deps,
+		...(timeout.data !== undefined ? { connectOptions: { defaultTimeoutMs: timeout.data } } : {}),
+		held: false,
+		replaced: false,
+		started: deps.now(),
+	});
+}
+
+/**
  * Make sure a `warden-simd` daemon answers on the device's socket, spawning one if not, and prove it with one
  * connected, handshaken client. Callers race safely: the `simd_spawn:<udid>` row (taken under `store.transaction`)
  * lets exactly one spawn (or replace a stale helper) while the rest keep polling the socket; a spawner that dies
@@ -625,13 +680,10 @@ export async function ensureHelper(
 	udid: string,
 	opts: EnsureHelperOptions = {}
 ): Promise<Result<HelperInfo, UiError>> {
-	const deps = opts.deps ?? defaultHelperDeps;
-	const socketPath = opts.socketPath ?? socketPathFor(host, udid);
-	mkdirSync(dirname(socketPath), { recursive: true });
-	mkdirSync(simdDir(host), { recursive: true });
-	const logPath = join(simdDir(host), `${udid}.log`);
-	const started = deps.now();
-	const a: Attempt = { host, udid, socketPath, logPath, opts, deps, held: false, replaced: false, started };
+	const made = attemptFor(host, udid, opts);
+	if (!made.success) return made;
+	const a = made.data;
+	const { deps, socketPath, logPath, started } = a;
 	try {
 		for (;;) {
 			const step = await attempt(a);

@@ -97,6 +97,7 @@ export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ }
 | `WARDEN_SIMD`, `WARDEN_HELPER_DIR` | where the `warden-simd` binary is ([iOS driver helper](/docs/reference/e2e-driver)); `warden e2e` sets `WARDEN_HELPER_DIR` |
 | `WARDEN_SIMD_PACE_MS`, `WARDEN_SIMD_HOLD_MS`, `WARDEN_SIMD_REPEAT_GAP_MS` | read by the helper process: default keyboard pacing in ms (quiet after each key 30, key down to up 40, extra pause before a repeated key 300). A request's `paceMs` / `holdMs` / `repeatGapMs` wins. A React Native text field digests about 45-50 ms per key, so lower values lose characters |
 | `WARDEN_SIMD_IDLE_TIMEOUT` | how long a `warden-simd` that `warden` starts keeps running with no client and no request: a duration, `10m` by default ([iOS driver helper](/docs/reference/e2e-driver)) |
+| `WARDEN_SIMD_TIMEOUT` | how long one request to a `warden-simd` that `warden ui` connects to may take before the client reports `E_TIMEOUT`: a duration, the client's 10 s by default. The first `snapshot` of a cold simulator on a hosted worker can need more ([iOS driver helper](/docs/reference/e2e-driver)) |
 | `WARDEN_SIMD_STREAM_IDLE_S` | read by the helper process: close the quiescence stream after this many seconds without a `settle`. Unset or `0` keeps it open for the helper's life ([iOS driver helper](/docs/reference/e2e-driver)) |
 | `WARDEN_SIMD_TRACE` | `1`: the helper logs one debug event per quiescence sample (same as `warden-simd --trace`). Set it yourself |
 | `WARDEN_HEADLESS` | `1` on a headless run |

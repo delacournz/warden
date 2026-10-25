@@ -157,6 +157,8 @@ async function doctor(ctx: RunContext, deps: WardenDeps): Promise<Doctor> {
 /** Snapshot attempts in `prepare`: the first one also injects the in-sim bridge, which on a cold hosted worker can
  * outlast one request's 10 s budget, and prepare time is outside the headline. */
 const PREPARE_SNAPSHOT_ATTEMPTS = 3;
+/** The per-request budget of those warm-up snapshots (`WARDEN_SIMD_TIMEOUT`): the suite itself runs on the default. */
+const PREPARE_SNAPSHOT_TIMEOUT = "60s";
 
 /** Starts the resident helper the way `warden e2e` does (a snapshot makes the in-sim bridge resident). */
 async function prepare(ctx: RunContext): Promise<Result<void>> {
@@ -164,7 +166,7 @@ async function prepare(ctx: RunContext): Promise<Result<void>> {
 	let last: Result<void> = ok(undefined);
 	for (let attempt = 1; attempt <= PREPARE_SNAPSHOT_ATTEMPTS; attempt++) {
 		const ran = await runOk(ctx.exec, bunOf(ctx), [cliOf(ctx), "ui", "snapshot", "--udid", ctx.udid, "--json"], {
-			env: { ...ctx.env, WARDEN_HELPER_DIR: helperDirOf(ctx) },
+			env: { ...ctx.env, WARDEN_HELPER_DIR: helperDirOf(ctx), WARDEN_SIMD_TIMEOUT: PREPARE_SNAPSHOT_TIMEOUT },
 			onLine: (_s, line) => ctx.log(line),
 		});
 		if (ran.success) return ok(undefined);

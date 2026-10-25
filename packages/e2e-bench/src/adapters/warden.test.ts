@@ -196,7 +196,9 @@ describe("prepare / teardown", () => {
 		);
 		const ctx = ctxOf(exec, { env: { WARDEN_BUN: process.execPath } });
 		expect((await createWardenAdapter(depsOf({})).prepare(ctx)).success).toBe(true);
-		expect(exec.calls.filter((c) => c.args[2] === "snapshot")).toHaveLength(2);
+		const snapshotCalls = exec.calls.filter((c) => c.args[2] === "snapshot");
+		expect(snapshotCalls).toHaveLength(2);
+		expect(snapshotCalls.map((c) => c.options?.env?.WARDEN_SIMD_TIMEOUT)).toEqual(["60s", "60s"]);
 	});
 
 	test("prepare gives up after three snapshot failures", async () => {
