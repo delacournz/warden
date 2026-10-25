@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { duration, portSpec } from "../batch/preset.schema";
+import { duration, portSpec, slimConfigSchema } from "../batch/preset.schema";
 import { appOptionSchema } from "../builds/app-option.schema";
 import { DEFAULT_JOB_TIMEOUT_MS, DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "../config.defaults";
 import { validateProfile } from "../sims/slim.profile";
@@ -135,12 +135,6 @@ export const e2eSpecSchema = z
 	.strict();
 
 /** A key the suite no longer takes: any value fails with a message naming the key's path and its replacement. */
-/** `slim`: on/off, or the categories (`except`, ids) and single labels (`keep`) to leave running. */
-const slimConfigSchema = z.union([
-	z.boolean(),
-	z.object({ except: z.array(z.string()).optional(), keep: z.array(z.string()).optional() }).strict(),
-]);
-
 const removedKey = (key: string, hint: string) =>
 	z.undefined({ error: (iss) => `e2e.${String(iss.path?.[1])}.${key} was removed: ${hint}` }).optional();
 

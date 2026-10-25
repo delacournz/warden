@@ -33,4 +33,11 @@ describe("roomFor", () => {
 		expect(roomFor(inv, "ios", { budget: mem, config: {} })).toBe(1);
 		expect(roomFor(inv, "ios", { budget: mem, config: {} }, new Set(["a"]))).toBe(2);
 	});
+
+	test("slimNew=false counts new sims stock, so less fits", () => {
+		const mem = { memMb: 2560, cpu: 100, maxUnits: Number.POSITIVE_INFINITY };
+		const slim = roomFor([], "ios", { budget: mem, config: {} });
+		const stock = roomFor([], "ios", { budget: mem, config: {} }, new Set(), false);
+		expect(stock).toBeLessThan(slim);
+	});
 });

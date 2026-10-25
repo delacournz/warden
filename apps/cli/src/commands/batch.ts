@@ -1042,11 +1042,12 @@ const recordedSlim =
 	};
 
 /**
- * A device the store records as slimmed and this claim did not boot keeps its daemons off (the disable
- * persists across its reboots), so its slim is not even probed (12-4). One the claim booted is.
+ * A device the store records as slimmed keeps its daemons off (the disable persists across its reboots),
+ * so its slim is not even probed (12-4). That includes one this claim booted: the provider slims what it
+ * boots (offline before the first boot, else live once ready) and records it, so the early slim only
+ * handles what the provider could not.
  */
 function alreadySlimmed(ctx: CommandContext, claimed: ClaimedDevice): boolean {
-	if (bootedByClaim({ claimed: [claimed] }).length > 0) return false;
 	return ctx
 		.store()
 		.listDevices("ios")
@@ -2066,7 +2067,12 @@ async function batch(
 		config: preset?.headless,
 		env: ctx.env,
 	});
-	const args = parseBatchArgs(platform, { ...merged.opts, headless }, ctx.cwd, merged.base);
+	const args = parseBatchArgs(
+		platform,
+		{ ...merged.opts, headless, ...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}) },
+		ctx.cwd,
+		merged.base
+	);
 	if (!args.success) return fail(args.error);
 	const jobs = await loadJobs(ctx, deps, args.data);
 	if (!jobs.success) return fail(jobs.error);

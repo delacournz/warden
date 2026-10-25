@@ -481,7 +481,7 @@ describe("claim spawn counts (iOS provider)", () => {
 			}
 			return ok_();
 		};
-		const provider = createIosProvider({ exec, store, env: {}, now: () => NOW, owner });
+		const provider = createIosProvider({ exec, store, env: {}, now: () => NOW, owner }, { slim: false });
 		return { spawns, provider };
 	}
 
@@ -1070,5 +1070,61 @@ describe("claim capacity queue", () => {
 		const result = await claimDevices(input(provider));
 		expect(result.success).toBe(true);
 		expect(store.listQueue()).toEqual([]);
+	});
+});
+
+describe("claimDevices slim hooks (SLIM-2)", () => {
+	function hooked(devices: InventoryDevice[], opts: { bootReady?: boolean } = {}): FakeProvider {
+		const p = fakeProvider(devices);
+		p.prepareBoot = async (id) => void p.calls.push(`prepareBoot ${id}`);
+		p.afterReady = async (id) => void p.calls.push(`afterReady ${id}`);
+		p.probe = async (id) => {
+			p.calls.push(`probe ${id}`);
+			return ok(undefined);
+		};
+		if (opts.bootReady) {
+			p.bootReady = async (id): Promise<BootReady> => {
+				p.calls.push(`bootReady ${id}`);
+				const d = p.devices.find((x) => x.id === id);
+				if (d) d.state = "booted";
+				return { kind: "ready" };
+			};
+			p.probeBooted = async (id) => {
+				p.calls.push(`probe ${id}`);
+				return ok(undefined);
+			};
+		}
+		return p;
+	}
+
+	test("create: create -> prepareBoot -> bootReady -> afterReady -> probe", async () => {
+		const provider = hooked([], { bootReady: true });
+		const result = await claimDevices(input(provider));
+		expect(result.success).toBe(true);
+		expect(provider.calls).toEqual([
+			"create warden-iphone-17-1 iphone-17 -",
+			"prepareBoot NEW1",
+			"bootReady NEW1",
+			"afterReady NEW1",
+			"probe NEW1",
+		]);
+	});
+
+	test("shutdown reuse: prepareBoot -> bootReady -> afterReady -> probe", async () => {
+		const provider = hooked([sim("1")], { bootReady: true });
+		await claimDevices(input(provider));
+		expect(provider.calls).toEqual(["prepareBoot 1", "bootReady 1", "afterReady 1", "probe 1"]);
+	});
+
+	test("without bootReady: prepareBoot -> boot -> waitReady -> afterReady -> probe", async () => {
+		const provider = hooked([sim("1")]);
+		await claimDevices(input(provider));
+		expect(provider.calls).toEqual(["prepareBoot 1", "boot 1", "ready 1", "afterReady 1", "probe 1"]);
+	});
+
+	test("an already-booted device gets neither hook", async () => {
+		const provider = hooked([sim("1", { state: "booted" })], { bootReady: true });
+		await claimDevices(input(provider));
+		expect(provider.calls.filter((c) => c.startsWith("prepareBoot") || c.startsWith("afterReady"))).toEqual([]);
 	});
 });

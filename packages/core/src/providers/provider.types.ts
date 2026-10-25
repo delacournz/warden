@@ -32,6 +32,13 @@ export interface DeviceProvider {
 	bootReady?(id: string, timeoutMs: number): Promise<BootReady>;
 	/** Probe for a device `bootReady` just booted and saw ready. Absent = `probe`. */
 	probeBooted?(id: string): AsyncResult<void>;
+	/**
+	 * Best effort, called for a device this claim is about to boot from shutdown (after a create, or a
+	 * shutdown reuse), never for an already-booted one. A failure is logged by the provider, never fatal.
+	 */
+	prepareBoot?(id: string): Promise<void>;
+	/** Called once the device is ready, before the health probe. Best effort. */
+	afterReady?(id: string): Promise<void>;
 }
 
 /** `bootReady`: a boot failure is an error; a device that booted but never got ready is unhealthy. */

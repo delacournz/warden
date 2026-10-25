@@ -49,7 +49,7 @@ export function hostBudget(host: HostFacts, config: CapacityConfig): Budget {
 	};
 }
 
-/** Memory an iOS sim takes once `sim slim` has run (calibrate with `warden sim measure`; simslim measured ~0.9-1.1 GB, warden keeps a few more daemons). */
+/** Memory an iOS sim takes once `sim slim` has run (calibrate with `warden sim measure`; a fully slim sim measures ~0.9-1.1 GB, warden keeps a few more daemons). */
 export const SLIM_IOS_MEM_MB = 1280;
 
 /** Stock cost of a platform, or the slim cost of an iOS sim (`opts.slim`; Android has no slim form). Config overrides win. */

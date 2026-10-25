@@ -57,6 +57,8 @@ export type ClaimInput = {
 	priority?: number;
 	/** queue row id (default: a fresh id per `claimDevices` call) */
 	queueId?: string;
+	/** new iOS sims count as slim for capacity (default true); `--no-slim` / `slim: false` sets false */
+	slim?: boolean;
 	/** polled once per round: true ends the claim with `CLAIM_ABORTED` (nothing stays leased or queued) */
 	abort?: () => boolean;
 };
@@ -219,7 +221,7 @@ function reserve(
 const bootedState = (d: InventoryDevice): boolean => d.state === "booted" || d.state === "booting";
 
 /** Cost of everything booted or booting on the host (foreign included) plus creates not yet visible in it. */
-function hostUsage(cap: CapacityRound, leases: Lease[], slimmed: ReadonlySet<string>): Cost {
+function hostUsage(cap: CapacityRound, leases: Lease[], slimmed: ReadonlySet<string>, slimCreates: boolean): Cost {
 	const live = cap.hostInventory.filter(bootedState);
 	const names = new Set(live.map((d) => d.name));
 	const pending = leases.flatMap((l) =>
@@ -227,10 +229,10 @@ function hostUsage(cap: CapacityRound, leases: Lease[], slimmed: ReadonlySet<str
 			? [l.resource.platform]
 			: []
 	);
-	// a create still pending counts slim: slim is default-on for new iOS sims. TODO(SLIM-2): honour --no-slim / slim: false here
+	// a create still pending counts slim unless the claim opted out (slim is default-on for new iOS sims)
 	return totalCost([...live.map((d) => d.platform), ...pending], cap.deps.config, [
 		...live.map((d) => d.platform === "ios" && slimmed.has(d.id)),
-		...pending.map(() => true),
+		...pending.map(() => slimCreates),
 	]);
 }
 
@@ -264,14 +266,14 @@ function admit(
 	}
 	const { config, budget } = cap.deps;
 	const slimmed = slimmedIds(store);
-	// a create is slim under the default-on policy; a boot of an existing device is slim when its record says so.
-	// TODO(SLIM-2): honour --no-slim / slim: false for creates
+	// a create is slim under the default-on policy unless opted out; a boot of an existing device is slim when its record says so.
+	const slimCreates = input.slim !== false;
 	const bootSteps = steps.filter((s) => s.action !== "reuse");
 	const need = totalCost(
 		Array<Platform>(boots).fill(request.platform),
 		config,
 		bootSteps.map((s) =>
-			request.platform === "ios" ? (s.action === "create" ? true : slimmed.has(s.device.id)) : false
+			request.platform === "ios" ? (s.action === "create" ? slimCreates : slimmed.has(s.device.id)) : false
 		)
 	);
 	store.enqueue({
@@ -290,7 +292,7 @@ function admit(
 	const entries = store.listQueue();
 	const position = queuePosition(entries, cap.queueId, now) ?? 1;
 	const head = position === 1;
-	const usage = hostUsage(cap, leases, slimmed);
+	const usage = hostUsage(cap, leases, slimmed, slimCreates);
 	const fit = fits(usage, need, budget);
 	const held = cap.pressure !== "normal";
 	if (head && fit.fits && !held) return undefined;
@@ -508,15 +510,19 @@ async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 		device = item.device;
 	}
 	let readyBoot = false;
+	let bootedNow = false;
 	if (item.action !== "reuse" || device.state === "shutdown") {
+		await provider.prepareBoot?.(device.id);
 		const booted = await bootDevice(input, device, lease.id);
 		if ("failed" in booted) return booted.failed;
 		lease = { ...lease, bootedByOwner: true };
+		bootedNow = true;
 		readyBoot = booted.booted === "ready";
+		if (readyBoot) await provider.afterReady?.(device.id);
 	}
 	const realised = readyBoot
 		? await probeBooted(input, item, device, lease)
-		: await checkReady(input, item, device, lease);
+		: await checkReady(input, item, device, lease, bootedNow);
 	if (!realised.unhealthy?.skipOnly || lease.bootedByOwner !== true) return realised;
 	return { ...realised, unhealthy: { ...realised.unhealthy, bootedByClaim: true } };
 }
@@ -536,7 +542,13 @@ async function probeBooted(
 }
 
 /** The warm check, else wait until ready, then the full probe. */
-async function checkReady(input: ClaimInput, item: Reserved, device: InventoryDevice, lease: Lease): Promise<Realised> {
+async function checkReady(
+	input: ClaimInput,
+	item: Reserved,
+	device: InventoryDevice,
+	lease: Lease,
+	bootedNow = false
+): Promise<Realised> {
 	const { provider } = input;
 	if (await isWarm(provider, item, device)) {
 		return { ok: ok({ lease, device, action: item.action }), leaseId: lease.id };
@@ -548,6 +560,7 @@ async function checkReady(input: ClaimInput, item: Reserved, device: InventoryDe
 		const reason = `not ready within ${Math.round(readyMs / 1000)}s: ${ready.error}`;
 		return { ok: ready, leaseId: lease.id, unhealthy: { device, reason } };
 	}
+	if (bootedNow) await provider.afterReady?.(device.id);
 	const unhealthy = await probeHealth(input, device, provider.probe?.bind(provider));
 	if (unhealthy) return { ok: err(unhealthy.reason), leaseId: lease.id, unhealthy };
 	return { ok: ok({ lease, device: { ...device, state: "booted" }, action: item.action }), leaseId: lease.id };

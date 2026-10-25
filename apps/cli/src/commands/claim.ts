@@ -1,13 +1,12 @@
-import type { ClaimedDevice } from "@delacour/warden-core/claim";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration } from "@delacour/warden-core/duration";
 import { resolveHeadless } from "@delacour/warden-core/headless";
-import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import { maybeAutoGc } from "../autogc";
 import {
 	type ClaimFlagValues,
 	claimedJson,
 	claimWithFlags,
+	hintSlimmed,
 	leasePidFor,
 	parseClaimFlags,
 	resolveOwner,
@@ -20,35 +19,6 @@ import { emit, heading, reportError, table, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type ClaimOpts = ClaimFlagValues & { json?: true };
-
-/**
- * A plain claim must not hand out a device an e2e/batch run left slimmed: re-enable its disabled
- * jobs and clear the record. Only devices the store records as slimmed (`slimmedAt`) are touched —
- * `slim` and the wrapper claims (`e2e`, `batch`, `run`) set it — so a claim of a never-slimmed device
- * costs no `launchctl` spawn at all. `enable` only takes effect on the device's next boot; jobs already
- * booted out stay down until then (said so on stderr).
- */
-async function restoreSlimmed(ctx: CommandContext, claimed: ClaimedDevice[]): Promise<void> {
-	const slimmed = new Set(
-		ctx
-			.store()
-			.listDevices("ios")
-			.filter((record) => record.slimmedAt !== undefined)
-			.map((record) => record.id)
-	);
-	for (const { device } of claimed) {
-		if (device.platform !== "ios" || !slimmed.has(device.id)) continue;
-		const res = await slimSimulator(ctx.exec, device.id, { restore: true });
-		if (!res.success) continue;
-		ctx.store().setSlimmed("ios", device.id, undefined);
-		if (res.data.length > 0) {
-			warn(
-				ctx,
-				`warden claim: ${device.name} was slimmed — re-enabled ${res.data.length} slimmed job(s); fully effective after its next reboot`
-			);
-		}
-	}
-}
 
 /** Lease, then boot / create as needed; a spinner covers the (possibly minutes-long) boot. */
 async function claim(ctx: CommandContext, platformArg: string | undefined, opts: ClaimOpts): Promise<number> {
@@ -89,13 +59,13 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		reportError(ctx, "claim", outcome.error);
 		return 1;
 	}
+	if (opts.slim === false) hintSlimmed(ctx, outcome.data);
 	if (shortLived) {
 		warn(
 			ctx,
 			`lease expires in ${formatDuration(flags.data.ttlMs)}; hold it with: warden dev … / warden run … / warden heartbeat`
 		);
 	}
-	await restoreSlimmed(ctx, outcome.data.claimed);
 	const leases = claimedJson(outcome.data);
 	emit(
 		ctx,

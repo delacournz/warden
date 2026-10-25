@@ -14,7 +14,8 @@ export function roomFor(
 	inventory: readonly InventoryDevice[],
 	platform: Platform,
 	deps: Pick<CapacityDeps, "budget" | "config">,
-	slimmed: ReadonlySet<string> = new Set()
+	slimmed: ReadonlySet<string> = new Set(),
+	slimNew = true
 ): number {
 	const { budget, config } = deps;
 	const live = inventory.filter(booted);
@@ -23,8 +24,8 @@ export function roomFor(
 		config,
 		live.map((d) => d.platform === "ios" && slimmed.has(d.id))
 	);
-	// new devices count slim: slim is default-on for iOS sims. TODO(SLIM-2): honour --no-slim
-	const slim = platform === "ios";
+	// new devices count slim unless the caller opted out: slim is default-on for iOS sims
+	const slim = platform === "ios" && slimNew;
 	const cost = deviceCost(platform, config as CapacityConfig, { slim });
 	let n = 0;
 	for (;;) {
@@ -39,8 +40,8 @@ export function roomFor(
 }
 
 /** `roomFor` over the live host inventory. */
-export async function roomNow(deps: CapacityDeps, platform: Platform): AsyncResult<number> {
+export async function roomNow(deps: CapacityDeps, platform: Platform, slimNew = true): AsyncResult<number> {
 	const inventory = await deps.hostInventory();
 	if (!inventory.success) return inventory;
-	return ok(roomFor(inventory.data, platform, deps));
+	return ok(roomFor(inventory.data, platform, deps, new Set(), slimNew));
 }

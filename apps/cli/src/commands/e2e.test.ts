@@ -1916,7 +1916,7 @@ describe("warden e2e", () => {
 		expect(reportOf(h.files, c).setup).toEqual([{ worker: 0, udid: "U1", ok: true, slim: { jobs: 0 } }]);
 	});
 
-	test("a device recorded as slimmed that the claim booted is slimmed again (12-4)", async () => {
+	test("a device recorded as slimmed is not slimmed again even when the claim booted it (the provider did it)", async () => {
 		await resuite({ slim: true });
 		const sim = fakeSimctl([wardenSim(1, "Shutdown")]);
 		const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
@@ -1927,7 +1927,7 @@ describe("warden e2e", () => {
 		ctx.db.setSlimmed("ios", "U1", 5);
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
-		expect(h.slimmed).toEqual(["U1"]);
+		expect(h.slimmed).toEqual([]);
 	});
 
 	test("the slim starts when the device is leased, alongside its app install (12-4)", async () => {

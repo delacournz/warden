@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
+import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-core/sims/slim.profile";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
@@ -194,30 +195,63 @@ describe("warden claim → arrange", () => {
 		expect(off.scripts().some((s) => s.includes("AXCloseButton"))).toBe(false);
 	});
 
-	test("a device left slimmed is restored on a plain claim, and the record cleared", async () => {
+	const printed = (labels: Iterable<string>): string =>
+		`disabled services = {\n${[...labels].map((l) => `\t"${l}" => disabled`).join("\n")}\n}\n`;
+
+	const slimSpawns = (calls: string[][]): boolean =>
+		calls.some((x) => x.includes("print-disabled") || x.includes("disable") || x.includes("enable"));
+
+	test("a recorded, already-booted sim that was never slimmed is slimmed live and recorded", async () => {
 		const calls: string[][] = [];
 		const exec = fakeSimctl([wardenSim(2, "Booted")], calls, [
-			["xcrun simctl spawn U2 launchctl print-disabled", { stdout: '\t"com.apple.healthd" => disabled\n' }],
+			["xcrun simctl spawn U2 launchctl print-disabled", { stdout: printed(desiredLabels(DEFAULT_SLIM_PROFILE)) }],
 		]);
 		const c = setup(["ios"], exec);
 		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);
-		c.db.setSlimmed("ios", "U2", 5);
 		expect(await claimCommand.run(c)).toBe(0);
-		expect(calls.map((x) => x.join(" "))).toContain("xcrun simctl spawn U2 launchctl enable system/com.apple.healthd");
-		expect(c.db.listDevices()[0]?.slimmedAt).toBeUndefined();
-		expect(c.stderr.join("\n")).toContain("re-enabled 1 slimmed job(s)");
+		expect(calls.some((x) => x.includes("print-disabled"))).toBe(true);
+		expect(c.db.listDevices()[0]?.slimmedAt).toBeDefined();
 	});
 
-	test("a device that was never slimmed costs no print-disabled spawn", async () => {
+	test("an already-slimmed sim costs no launchctl spawn and is not restored", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], fakeSimctl([wardenSim(2, "Booted")], calls));
 		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);
+		c.db.setSlimmed("ios", "U2", 5);
 		expect(await claimCommand.run(c)).toBe(0);
-		expect(calls.some((x) => x.includes("print-disabled"))).toBe(false);
-		expect(c.stderr.join("\n")).not.toContain("slimmed");
+		expect(slimSpawns(calls)).toBe(false);
+		expect(c.db.listDevices()[0]?.slimmedAt).toBe(5);
 	});
 
-	test("a sim the store has no record of is left alone too", async () => {
+	test("--no-slim on a slimmed sim prints the restore hint and spawns nothing", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios", "--no-slim"], fakeSimctl([wardenSim(2, "Booted")], calls));
+		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);
+		c.db.setSlimmed("ios", "U2", 5);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(slimSpawns(calls)).toBe(false);
+		expect(c.stderr.join("\n")).toContain(
+			"warden claim: warden-iphone-17-2 is slimmed; warden sim slim U2 --restore re-enables its daemons"
+		);
+	});
+
+	test("--no-slim and WARDEN_SLIM=0 never slim a booted sim", async () => {
+		for (const [argv, env] of [
+			[["ios", "--no-slim"], {}],
+			[["ios"], { WARDEN_SLIM: "0" }],
+		] as const) {
+			const calls: string[][] = [];
+			const c = setup([...argv], fakeSimctl([wardenSim(2, "Booted")], calls));
+			c.env = { ...c.env, ...env };
+			c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);
+			expect(await claimCommand.run(c)).toBe(0);
+			expect(slimSpawns(calls)).toBe(false);
+			expect(c.db.listDevices()[0]?.slimmedAt).toBeUndefined();
+			c.cleanup();
+		}
+	});
+
+	test("a sim the store has no record of is left alone", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], fakeSimctl([wardenSim(2, "Booted")], calls));
 		expect(await claimCommand.run(c)).toBe(0);

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { Exec, ExecResult } from "@delacour/warden-core/exec";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { type TestContext, testContext } from "../testing";
 import { createSimCommand } from "./sim";
 
 let ctx: TestContext | undefined;
@@ -17,19 +18,61 @@ const BOOTED = simctlDevicesJson({
 	],
 });
 
+/**
+ * A launchctl that remembers its own writes per simulator: `disable` / `unload -w` add to the disabled
+ * set, `enable` / `load -w` remove, `bootout` unloads, and `print-disabled` / `list` read them back.
+ * U1 starts with healthd loaded and running. Everything else `simctl` is scripted by prefix.
+ */
+function statefulExec(calls: string[][]): Exec {
+	const disabled = new Map<string, Set<string>>();
+	const loaded = new Map<string, Set<string>>([["U1", new Set(["com.apple.healthd"])]]);
+	const sets = (map: Map<string, Set<string>>, udid: string) => {
+		const set = map.get(udid) ?? new Set<string>();
+		map.set(udid, set);
+		return set;
+	};
+	const label = (arg: string) =>
+		arg
+			.replace(/^system\//, "")
+			.replace(/^.*\//, "")
+			.replace(/\.plist$/, "");
+	const done = (stdout = ""): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
+	const read = (udid: string, verb: string): ExecResult | undefined => {
+		if (verb === "print-disabled")
+			return done([...sets(disabled, udid)].map((l) => `\t\t"${l}" => disabled`).join("\n"));
+		if (verb === "list")
+			return done(["PID\tStatus\tLabel", ...[...sets(loaded, udid)].map((l) => `9\t0\t${l}`)].join("\n"));
+		return undefined;
+	};
+	const effects: Record<string, (udid: string, t: string) => void> = {
+		disable: (u, t) => sets(disabled, u).add(t),
+		enable: (u, t) => sets(disabled, u).delete(t),
+		load: (u, t) => sets(disabled, u).delete(t),
+		bootout: (u, t) => sets(loaded, u).delete(t),
+		unload: (u, t) => {
+			sets(disabled, u).add(t);
+			sets(loaded, u).delete(t);
+		},
+	};
+	const launchctl = (udid: string, verb: string, targets: string[]): ExecResult => {
+		const out = read(udid, verb);
+		if (out) return out;
+		for (const t of targets) effects[verb]?.(udid, t);
+		return done();
+	};
+	return async (cmd) => {
+		calls.push([...cmd]);
+		const joined = cmd.join(" ");
+		if (joined.startsWith("xcrun simctl list devices")) return done(BOOTED);
+		if (!joined.startsWith("xcrun simctl spawn"))
+			return { exitCode: 127, stdout: "", stderr: `no handler for ${joined}` };
+		const [verb, ...args] = cmd.slice(5);
+		return launchctl(cmd[3] as string, verb as string, args.filter((a) => a !== "-w").map(label));
+	};
+}
+
 function setup(argv: string[], calls: string[][] = []): TestContext {
-	const exec = fakeExec(
-		[
-			["xcrun simctl list devices", { stdout: BOOTED }],
-			["xcrun simctl spawn U1 launchctl print-disabled", { stdout: "" }],
-			["xcrun simctl spawn U3 launchctl print-disabled", { stdout: "" }],
-			["xcrun simctl spawn U1 launchctl list", { stdout: "PID\tStatus\tLabel\n9\t0\tcom.apple.healthd\n" }],
-			["xcrun simctl spawn U3 launchctl list", { stdout: "PID\tStatus\tLabel\n" }],
-			["xcrun simctl spawn", {}],
-		],
-		calls
-	);
-	ctx = testContext(argv, { exec });
+	ctx = testContext(argv, { exec: statefulExec(calls) });
 	return ctx;
 }
 

@@ -466,7 +466,14 @@ async function runPlan(
 	const needsApp = appFlagsWithoutApp(suite, merged);
 	if (needsApp !== undefined) return err(needsApp);
 	const batchOpts = { ...merged, ...(config.metro?.enabled ? { port: [config.metro.port, ...merged.port] } : {}) };
-	const legOpts = (leg: E2eDeviceLeg) => ({ ...batchOpts, profile: leg.profile, count: String(leg.count) });
+	const slimFlag = passed.has("slim") ? opts.slim : undefined;
+	const legOpts = (leg: E2eDeviceLeg) => ({
+		...batchOpts,
+		profile: leg.profile,
+		count: String(leg.count),
+		slim: slimFlag,
+		...(suite.slim !== undefined ? { slimConfig: suite.slim } : {}),
+	});
 	const [first] = picked.data ?? [];
 	const args = parseBatchArgs(platform, first ? legOpts(first) : batchOpts, ctx.cwd, {
 		jobs: { kind: "list", jobs: specs.map((f) => f.id) },

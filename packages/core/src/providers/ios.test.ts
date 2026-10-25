@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
+import { DEFAULT_SLIM_PROFILE, desiredLabels } from "../sims/slim.profile";
 import { openStore, type Store } from "../store";
 import { createIosProvider, deleteSim, parseSimctlDevices, parseSimctlDeviceTypes, parseSimctlRuntimes } from "./ios";
 import { SIMCTL_DEVICES_JSON, SIMCTL_DEVICETYPES_JSON, SIMCTL_RUNTIMES_JSON, simctlDevicesJson } from "./ios.fixture";
@@ -39,7 +40,7 @@ function provider(exec: Exec): DeviceProvider {
 	return createIosProvider({
 		exec,
 		store,
-		env: {},
+		env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
 		now: () => 42,
 		owner: { kind: "agent", sessionId: "s1", cwd: "/" },
 	});
@@ -190,7 +191,13 @@ describe("createIosProvider", () => {
 		const calls: Call[] = [];
 		const clones: string[][] = [];
 		const p = createIosProvider(
-			{ exec: fake([], calls), store, env: {}, now: () => 42, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{
+				exec: fake([], calls),
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+			},
 			{
 				clone: async (name, profile, runtime) => {
 					clones.push([name, profile, runtime ?? "-"]);
@@ -226,7 +233,7 @@ describe("createIosProvider", () => {
 					["xcrun simctl create", { stdout: "FRESH\n" }],
 				]),
 				store,
-				env: {},
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
 				now: () => 42,
 				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
 				log: (line) => logs.push(line),
@@ -322,7 +329,13 @@ describe("createIosProvider", () => {
 		};
 		const slept: number[] = [];
 		const p = createIosProvider(
-			{ exec, store, env: {}, now: () => 42, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+			},
 			{ sleep: async (ms) => void slept.push(ms) }
 		);
 		expect(await p.boot("U1")).toEqual({ success: true, data: undefined });
@@ -338,7 +351,13 @@ describe("createIosProvider", () => {
 		});
 		let slept = 0;
 		const p = createIosProvider(
-			{ exec, store, env: {}, now: () => 42, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+			},
 			{
 				sleep: async (ms) => {
 					slept += ms;
@@ -419,7 +438,7 @@ describe("createIosProvider timeouts (16-11)", () => {
 			{
 				exec: hung,
 				store,
-				env: {},
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
 				now: () => 42,
 				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
 				timer: (ms) => {
@@ -446,7 +465,13 @@ describe("createIosProvider timeouts (16-11)", () => {
 describe("createIosProvider bootReady (16-15)", () => {
 	function bootProvider(exec: Exec) {
 		return createIosProvider(
-			{ exec, store, env: {}, now: () => 42, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+			},
 			{ sleep: async () => {} }
 		);
 	}
@@ -510,7 +535,13 @@ describe("createIosProvider bootReady (16-15)", () => {
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
 		const p = createIosProvider(
-			{ exec, store, env: {}, now: () => clock, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => clock,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+			},
 			{ sleep: async () => {} }
 		);
 		expect(await run(p, "U1")).toEqual({ kind: "ready" });
@@ -530,7 +561,13 @@ describe("createIosProvider bootReady (16-15)", () => {
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
 		const p = createIosProvider(
-			{ exec, store, env: {}, now: () => clock, owner: { kind: "agent", sessionId: "s1", cwd: "/" } },
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => clock,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+			},
 			{ sleep: async () => {} }
 		);
 		const result = await run(p, "U1");
@@ -579,5 +616,129 @@ describe("deleteSim", () => {
 		]);
 		const result = await deleteSim(exec, "U1");
 		expect(result.success).toBe(false);
+	});
+});
+
+describe("createIosProvider slim (SLIM-2)", () => {
+	const owner = { kind: "agent", sessionId: "s1", cwd: "/" } as const;
+	const printed = (labels: Iterable<string>): string =>
+		`disabled services = {\n${[...labels].map((l) => `\t"${l}" => disabled`).join("\n")}\n}\n`;
+
+	function slimProvider(exec: Exec, options: Parameters<typeof createIosProvider>[1] = {}): DeviceProvider {
+		return createIosProvider(
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner,
+				log: (line) => logs.push(line),
+			},
+			{
+				clone: async () => ({ success: true, data: { udid: "CLONED", runtime: runtimeOfClone } }),
+				sleep: async () => {},
+				...options,
+			}
+		);
+	}
+	let logs: string[];
+	let runtimeOfClone: string;
+	beforeEach(() => {
+		logs = [];
+		runtimeOfClone = "iOS-26-5";
+	});
+
+	const storeFile = () => join(dir, "com.apple.CoreSimulator.SimDevice.CLONED", "disabled.plist");
+
+	test("create writes the override store right after the clone, with zero simctl calls", async () => {
+		const calls: Call[] = [];
+		const p = slimProvider(fake([], calls));
+		await p.create("warden-iphone-17-9", "iphone-17");
+		expect(existsSync(storeFile())).toBe(true);
+		expect(calls).toEqual([]);
+	});
+
+	test("an older runtime is not written offline", async () => {
+		runtimeOfClone = "iOS-18-4";
+		const p = slimProvider(fake([]));
+		await p.create("warden-iphone-17-9", "iphone-17");
+		expect(existsSync(storeFile())).toBe(false);
+	});
+
+	test("slim: false writes nothing and afterReady does nothing", async () => {
+		const calls: Call[] = [];
+		const p = slimProvider(fake([], calls), { slim: false });
+		await p.create("warden-iphone-17-9", "iphone-17");
+		await p.afterReady?.("CLONED");
+		expect(existsSync(storeFile())).toBe(false);
+		expect(calls).toEqual([]);
+		expect(store.listDevices("ios")[0]?.slimmedAt).toBeUndefined();
+	});
+
+	test("golden sims are never slimmed", async () => {
+		store.recordDevice(
+			{ platform: "ios", id: "G1", name: "warden-golden-iphone-17-abc", profile: "iphone-17", runtime: "iOS-26-5" },
+			1
+		);
+		const calls: Call[] = [];
+		const p = slimProvider(fake([], calls));
+		await p.prepareBoot?.("G1");
+		await p.afterReady?.("G1");
+		expect(calls).toEqual([]);
+	});
+
+	test("afterReady with every override in place records slimmedAt and spawns only print-disabled", async () => {
+		const calls: Call[] = [];
+		const p = slimProvider(
+			fake(
+				[
+					[
+						"xcrun simctl spawn CLONED launchctl print-disabled system",
+						{ stdout: printed(desiredLabels(DEFAULT_SLIM_PROFILE)) },
+					],
+				],
+				calls
+			)
+		);
+		await p.create("warden-iphone-17-9", "iphone-17");
+		await p.afterReady?.("CLONED");
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual(["xcrun simctl spawn CLONED launchctl print-disabled system"]);
+		expect(store.listDevices("ios")[0]?.slimmedAt).toBe(42);
+		expect(logs).toEqual([]);
+	});
+
+	test("afterReady with missing overrides logs and slims live, then records slimmedAt", async () => {
+		const desired = [...desiredLabels(DEFAULT_SLIM_PROFILE)].sort();
+		const calls: string[] = [];
+		let enabledAll = false;
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined.endsWith("print-disabled system")) {
+				return { exitCode: 0, stdout: printed(enabledAll ? desired : desired.slice(3)), stderr: "" };
+			}
+			if (joined.includes(" disable ")) enabledAll = true;
+			return { exitCode: 0, stdout: "PID\tStatus\tLabel\n", stderr: "" };
+		};
+		const p = slimProvider(exec);
+		await p.create("warden-iphone-17-9", "iphone-17");
+		await p.afterReady?.("CLONED");
+		const total = desired.length;
+		expect(logs).toContain(`CLONED came up with ${total - 3}/${total} overrides, fixing live`);
+		expect(calls.some((c) => c.includes(" disable "))).toBe(true);
+		expect(store.listDevices("ios")[0]?.slimmedAt).toBe(42);
+	});
+
+	test("a failed live fallback does not record slimmedAt", async () => {
+		const p = slimProvider(
+			fake([
+				["xcrun simctl spawn CLONED launchctl print-disabled system", { stdout: printed([]) }],
+				["xcrun simctl spawn CLONED launchctl list", { exitCode: 1, stderr: "nope" }],
+			])
+		);
+		await p.create("warden-iphone-17-9", "iphone-17");
+		await p.afterReady?.("CLONED");
+		expect(store.listDevices("ios")[0]?.slimmedAt).toBeUndefined();
+		expect(logs.some((l) => l.includes("live slim failed"))).toBe(true);
 	});
 });

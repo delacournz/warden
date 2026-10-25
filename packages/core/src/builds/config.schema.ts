@@ -5,7 +5,8 @@
 
 import { z } from "zod";
 import { e2eSuiteSchema, perfConfigSchema } from "../affected/affected.schema";
-import { batchPresetSchema, RESERVED_PRESET_NAMES } from "../batch/preset.schema";
+import { batchPresetSchema, RESERVED_PRESET_NAMES, slimConfigSchema } from "../batch/preset.schema";
+import { validateProfile } from "../sims/slim.profile";
 import type { AppOption } from "./app-option.schema";
 import { DEFAULT_EAS_PROFILE } from "./builds.defaults";
 
@@ -109,6 +110,13 @@ function refineSuites(
 	}
 }
 
+/** top-level `slim`: the suite's schema plus a category / label check, since there is no suite refine to do it */
+const topLevelSlimSchema = slimConfigSchema.superRefine((slim, issue) => {
+	if (typeof slim !== "object") return;
+	const checked = validateProfile({ except: slim.except ?? [], keep: slim.keep ?? [] });
+	if (!checked.success) issue.addIssue({ code: "custom", message: checked.error });
+});
+
 export const wardenConfigSchema = z
 	.object({
 		projects: z.array(projectConfigSchema).min(1).optional(),
@@ -118,6 +126,8 @@ export const wardenConfigSchema = z
 		e2e: z.record(z.string().min(1), e2eSuiteSchema).optional(),
 		/** default for every `e2e` suite and `batches` preset that doesn't set `headless` */
 		headless: z.boolean().optional(),
+		/** iOS simulator daemon slimming for every device warden creates; `e2e` suites and `batches` presets override it */
+		slim: topLevelSlimSchema.optional(),
 		/** perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key) */
 		perf: perfConfigSchema.optional(),
 		/** Android emulator settings */
