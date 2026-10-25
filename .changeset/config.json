@@ -18,6 +18,7 @@
 		"@delacour/warden-demo",
 		"@delacour/warden-signoff",
 		"@delacour/warden-smoke",
-		"@delacour/warden-release"
+		"@delacour/warden-release",
+		"@delacour/warden-perf"
 	]
 }
