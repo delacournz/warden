@@ -53,7 +53,7 @@ export function makeFixtureRepo(): { dir: string; write: (path: string, text: st
 	return { dir, write };
 }
 
-/** Two flows + a `mobile` suite mapping them to screens, committed on `main`, checked out on `feature`. */
+/** Two specs + a `mobile` suite mapping them to screens, committed on `main`, checked out on `feature`. */
 export async function makeSuiteRepo(
 	suite: Record<string, unknown> = {},
 	/** extra top-level `warden.config.json` keys (e.g. `projects`) */
@@ -61,8 +61,8 @@ export async function makeSuiteRepo(
 ): Promise<{ dir: string; write: (path: string, text: string) => void }> {
 	const repo = makeFixtureRepo();
 	const { dir, write } = repo;
-	write("flows/chats.e2e.ts", "export {};\n");
-	write("flows/settings.e2e.ts", "export {};\n");
+	write("specs/chats.e2e.ts", "export {};\n");
+	write("specs/settings.e2e.ts", "export {};\n");
 	write(".gitignore", "node_modules\n");
 	write(
 		"warden.config.json",
@@ -70,10 +70,10 @@ export async function makeSuiteRepo(
 			...config,
 			e2e: {
 				mobile: {
-					flowsDir: "flows",
+					specsDir: "specs",
 					platform: "ios",
 					spec: { bundleId: "com.x" },
-					flows: {
+					specs: {
 						chats: { entries: ["src/app/(app)/chats.tsx"] },
 						settings: { entries: ["src/app/(app)/settings.tsx"], required: false },
 					},

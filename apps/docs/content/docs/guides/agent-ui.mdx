@@ -1,12 +1,12 @@
 ---
 title: Drive a device (warden ui)
-description: warden ui - the agent CLI for looking at and driving a leased iOS simulator or Android emulator - snapshot, @refs, selectors, actions, waits, devtools, recorded flows, exit codes, the --json envelope and lease rules.
+description: warden ui - the agent CLI for looking at and driving a leased iOS simulator or Android emulator - snapshot, @refs, selectors, actions, waits, devtools, exit codes, the --json envelope and lease rules.
 icon: Smartphone
 ---
 
-`warden ui` is how an agent looks at a device and drives it: read the screen as text, tap, type, scroll, wait, read the app's console and React tree, and record what it did as a flow that replays and exports to a spec. It runs on the same driver as [`@delacour/warden-e2e`](/docs/guides/specs) (see [iOS driver helper](/docs/reference/e2e-driver)), so there is nothing to install on the device and no daemon to manage. For checks that must keep passing, write a [spec](/docs/guides/specs); use `warden ui` to explore, reproduce a bug, or to get the selectors for a spec.
+`warden ui` is how an agent looks at a device and drives it: read the screen as text, tap, type, scroll, wait, read the app's console and React tree. It runs on the same driver as [`@delacour/warden-e2e`](/docs/guides/specs) (see [iOS driver helper](/docs/reference/e2e-driver)), so there is nothing to install on the device and no daemon to manage. For checks that must keep passing, write a [spec](/docs/guides/specs); use `warden ui` to explore, reproduce a bug, or to get the selectors for a spec.
 
-Every call is stateless on the command line: the last snapshot, the recording and the Metro URL live under `$WARDEN_HOME/ui/<udid>/`.
+Every call is stateless on the command line: the last snapshot and the Metro URL live under `$WARDEN_HOME/ui/<udid>/`.
 
 ## The agent loop
 
@@ -16,8 +16,7 @@ warden ui open com.example.app --udid $UDID             # 2. launch (add --metro
 warden ui snapshot -i --udid $UDID                      # 3. what is on screen, as @eN lines
 warden ui press @e3 --settle --udid $UDID               # 4. act; --settle prints what changed
 warden ui wait id=todos-screen --udid $UDID             # 5. verify with wait / is / get, not a screenshot
-warden ui record start add-todo --udid $UDID            # 6. optional: record, then replay and export
-warden ui close --release --udid $UDID                  # 7. stop the helper and release the lease
+warden ui close --release --udid $UDID                  # 6. stop the helper and release the lease
 ```
 
 1. **Claim.** `warden claim ios --json` (or `android`); keep the returned `udid` (Android: the serial). Pass it on every call as `--udid <udid>` (`--serial` / `--lease <id>` also work), or export `WARDEN_UDID` once. With none of those, `warden ui` uses the single device you already lease.
@@ -25,8 +24,7 @@ warden ui close --release --udid $UDID                  # 7. stop the helper and
 3. **Snapshot.** `snapshot -i` lists only interactive elements and anything with a `testID`. The `@eN` refs it prints are valid until the next `snapshot`, `find` or `--settle`.
 4. **Act on a ref or a selector.** Prefer `id=` selectors for anything you will touch twice: refs go stale when the screen changes.
 5. **Verify** with `wait`, `is` and `get`. A bare screenshot is not verification.
-6. **Record** when the sequence is worth keeping (see [Flows](#flows)).
-7. **Close.** `close --release` stops this device's helper and releases the lease. Leave the device alone only if another step of your task needs it.
+6. **Close.** `close --release` stops this device's helper and releases the lease. Leave the device alone only if another step of your task needs it.
 
 ## Reading the screen
 
@@ -80,7 +78,7 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 |---|---|
 | `open <bundleId\|url> [--relaunch] [--metro <url>] [--args …]` | launch the app, or open a URL (on iOS the "Open in …?" sheet is accepted). A bundle id that is already running is attached to, not restarted (`attached to <id>`, `--json` `attached: true`); `--relaunch` starts it fresh. `--metro` starts the dev client on that Metro and remembers it for the devtools commands |
 | `press <target>` (alias `tap`) | tap. `--verify` re-checks an `@eN` first |
-| `fill <target> <text>` | focus the field, empty it, type, then read it back (retried once). `--secure` skips the read-back and never echoes or records the text; `--no-verify` skips only the read-back. Use `--` before text that starts with `-` |
+| `fill <target> <text>` | focus the field, empty it, type, then read it back (retried once). `--secure` skips the read-back and never echoes the text; `--no-verify` skips only the read-back. Use `--` before text that starts with `-` |
 | `type <text> [--submit]` | type into whatever has focus; `--submit` then presses Enter |
 | `key <name>` | `Enter` `Backspace` `Tab` `Space` `Escape` `Delete` `Up` `Down` `Left` `Right` |
 | `scroll <up\|down\|left\|right> [amount]` | scroll the content that way (`down` reveals what is below). `amount` is the share of the region one swipe travels (0-1, default 0.5). `--in <target>` scrolls inside an element; `--until <selector>` swipes until the selector is on screen (at most `--max` swipes, default 10) and prints its fresh ref |
@@ -113,7 +111,7 @@ These poll the live screen every 100 ms for the first second, then every 250 ms 
 | `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` | prints `true` / `false`; exit 0 when true, 1 when false or nothing matches: usable in a shell `if` (`--json`: `{ matched, state, element?, waitedMs, reason? }`) |
 | `get <selector> text\|value\|label\|id\|role\|frame\|count` | print one bare value (`frame` as `x y w h`; `count`: how many match, `0` is a success); no match is `target_not_found` |
 
-A `wait` that runs out fails (exit 1) with `wait_target_absent` (never in the tree), `wait_target_hidden` (in the tree, not visible), `wait_target_present` (`absent`: still visible), `wait_text_absent` or `wait_not_stable`. `--json` failures carry `details: { matched: false, waitedMs, reason }`. Into an active flow, `wait <selector>` (as a visible check), `is` and `get` (a text property) are recorded; `wait absent|text|stable` are not.
+A `wait` that runs out fails (exit 1) with `wait_target_absent` (never in the tree), `wait_target_hidden` (in the tree, not visible), `wait_target_present` (`absent`: still visible), `wait_text_absent` or `wait_not_stable`. `--json` failures carry `details: { matched: false, waitedMs, reason }`. Into an active spec, `wait <selector>` (as a visible check), `is` and `get` (a text property) are recorded; `wait absent|text|stable` are not.
 
 ## The app's console, network and React tree
 
@@ -136,37 +134,12 @@ Two things to know:
 - A collector started before the app was restarted (`open --relaunch`, a crash, a rebuild) gives up after a 30 s reconnect budget and ends as `lost`. Run `logs start` again after the restart.
 - The collector also stops by itself after 60 s without a console line or `fetch` call. Run `logs start` again before the next action.
 
-## Flows
-
-A **flow** is a recorded sequence of `warden ui` actions saved as `.warden-ui/<name>.flow.json`. It stores resolved selectors, never `@eN` refs, so it replays on a later run.
-
-```bash
-warden ui record start add-todo --udid $UDID    # every action is appended until record stop
-warden ui fill id=todo-input "Write docs" --udid $UDID
-warden ui press id=todo-add --settle --udid $UDID
-warden ui record stop --udid $UDID              # "stopped add-todo: 2 steps"
-warden ui replay .warden-ui/add-todo.flow.json --udid $UDID
-warden ui export .warden-ui/add-todo.flow.json --to e2e/add-todo.e2e.ts --ids e2e/ids.ts
-```
-
-| Command | Effect |
-|---|---|
-| `record start <name> [--out file]` · `record stop` · `record status` | begin, end or inspect the recording. `--no-record` on any action keeps that one step out |
-| `replay <file> [--from i] [--update-snapshots] [--settle [ms]]` | re-run the flow on the device. Each step is resolved on a fresh snapshot and checked against where it was recorded. A step that no longer matches fails with `replay_divergence` (exit 1, with the step number and the screen). A changed screen alone is a drift warning. The file is rewritten only with `--update-snapshots` |
-| `export <file> --to <spec> [--ids <module>] [--force]` | write the flow as an `*.e2e.ts` spec for `@delacour/warden-e2e`. `--ids` merges the test ids into an `export const ids = { … }` module. Taps by coordinates export as a `FIXME` to resolve before you commit |
-
-Flows are format v2. Steps store `{ kind: "gesture", type: "swipe" | "longpress" | "pinch" | "rotate" | "path", … }` and `{ kind: "screen", type: "rotate" | "appearance" | "screenshot", … }`; every other kind is unchanged. v1 files still load and are migrated on read; writes are always v2, so an older warden cannot read a flow a newer one saved. `pinch`, `rotate` and `path` steps record, replay and export.
-
-A `scroll` or a direction `gesture swipe` step in a flow: `scroll` names the **content's** direction, like the spec `screen.swipe` (`down` reveals what is below). `warden ui gesture swipe <dir>` names the finger's direction instead, so it is recorded as a from/to path.
-
-`fill --secure` text is never stored. Set `WARDEN_UI_SECRET_<NAME>` to the value when you record, and the flow names the variable instead; replay and the exported spec read it from the environment.
-
 ## Exit codes and `--json`
 
 | Exit | Meaning | Error codes |
 |---|---|---|
 | 0 | ok | |
-| 1 | failed or bad usage | `failed`, `usage`, `target_not_found`, `no_alert`, `wait_target_absent`, `wait_target_hidden`, `wait_target_present`, `wait_text_absent`, `wait_not_stable`, `replay_divergence` |
+| 1 | failed or bad usage | `failed`, `usage`, `target_not_found`, `no_alert`, `wait_target_absent`, `wait_target_hidden`, `wait_target_present`, `wait_text_absent`, `wait_not_stable` |
 | 2 | lease problem | `device_foreign`, `device_busy`, `device_not_leased`, `no_device_leased`, `ambiguous_device`, `lease_not_found` |
 | 3 | engine unavailable | `engine_unavailable` (the iOS helper or `adb` cannot be reached), `devtools_unavailable` (no dev client or Metro) |
 | 4 | stale ref | `stale_ref`: take a new snapshot |
@@ -181,7 +154,7 @@ A `scroll` or a direction `gesture swipe` step in a flow: `scroll` names the **c
 
 Gesture results: `gesture pinch` and `gesture rotate` return `{ "action": "gesture-pinch" | "gesture-rotate", "target"?, "scale" | "degrees", "center", "radius", "durationMs" }`; `gesture path` returns `{ "action": "gesture-path", "fingers", "paths", "durationMs" }`. `command` is the full name, e.g. `"gesture pinch"` or `"screen rotate"`.
 
-`generation` appears when the call took a snapshot; `warnings` only when there are any (a screen that did not settle in its budget, replay drift). A failure may also carry `device` and `error.details`. `is` answers `false` with `ok: true` and exit 1. Without `--json`, results go to stdout and errors and warnings to stderr.
+`generation` appears when the call took a snapshot; `warnings` only when there are any (a screen that did not settle in its budget). A failure may also carry `device` and `error.details`. `is` answers `false` with `ok: true` and exit 1. Without `--json`, results go to stdout and errors and warnings to stderr.
 
 ## Android
 
@@ -205,11 +178,10 @@ What differs from iOS:
 | `--udid <udid>` · `--serial <serial>` · `--lease <id>` | the device. Otherwise `WARDEN_UDID`, a single `WARDEN_UDIDS` entry, then your only device lease |
 | `--claim` | take a device when none is leased (`--platform ios\|android`, `--profile`, `--runtime` choose it), or take over a stale lease |
 | `--timeout <ms>` | per-command deadline (default 5000) |
-| `--no-record` | do not append this step to a running recording |
 | `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`) holds your lease on it. Without it every subcommand but `status` exits 2 (`device_busy`) naming the owner, pid and label. Not needed for your own `warden dev` device (see [Lease rules](#lease-rules)) |
 | `--json` | the envelope above |
 
-`status` prints the device, your lease on it, the helper and the recording. `close` stops this device's helper; `--app [bundleId]` also quits the app (default: the one `open` launched) and `--release` frees the lease.
+`status` prints the device, your lease on it, and the helper. `close` stops this device's helper; `--app [bundleId]` also quits the app (default: the one `open` launched) and `--release` frees the lease.
 
 ## Lease rules
 

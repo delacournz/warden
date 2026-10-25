@@ -1,14 +1,14 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import type { Platform } from "../types";
-import type { E2eFlowConfig } from "./affected.schema";
+import type { E2eSpecEntryConfig } from "./affected.schema";
 
 /**
- * A flow file under `flowsDir`. `id` = its path below `flowsDir` without the extension (`qa/login`).
- * `*.e2e.ts(x)` files are `e2e` flows, any other `.ts(x)` is a `fragment` (a helper); `runs` are the
- * relative imports, so a helper change selects every flow that imports it.
+ * A spec file under `specsDir`. `id` = its path below `specsDir` without the extension (`qa/login`).
+ * `*.e2e.ts(x)` files are `e2e` specs, any other `.ts(x)` is a `fragment` (a helper); `runs` are the
+ * relative imports, so a helper change selects every spec that imports it.
  */
-export type Flow = {
+export type Spec = {
 	id: string;
 	file: string;
 	kind: "e2e" | "fragment";
@@ -16,9 +16,9 @@ export type Flow = {
 	runs: string[];
 };
 
-export type FlowScan = { flows: Flow[]; warnings: string[] };
+export type SpecScan = { specs: Spec[]; warnings: string[] };
 
-const TS_FLOW = /\.e2e\.tsx?$/;
+const TS_SPEC = /\.e2e\.tsx?$/;
 const TS_FILE = /(?<!\.d)\.tsx?$/;
 const TS_EXTENSIONS = [".ts", ".tsx"];
 const SKIP_DIR = /^(\.|__baselines__$|node_modules$)/;
@@ -55,41 +55,41 @@ function resolveRelative(from: string, specifier: string): string | undefined {
 
 const tsTranspiler = new Bun.Transpiler({ loader: "tsx" });
 
-/** One flow file → its kind and the relative, value-level imports (that exist on disk) as `runs`. */
-export function parseFlow(file: string, flowsDir: string, text: string): Flow {
+/** One spec file → its kind and the relative, value-level imports (that exist on disk) as `runs`. */
+export function parseSpec(file: string, specsDir: string, text: string): Spec {
 	const runs = tsTranspiler
 		.scanImports(text)
 		.map((i) => i.path)
 		.filter((spec) => spec.startsWith("."))
 		.flatMap((spec) => resolveRelative(file, spec) ?? []);
 	return {
-		id: relative(flowsDir, file).replace(TS_FLOW, "").replace(TS_FILE, ""),
+		id: relative(specsDir, file).replace(TS_SPEC, "").replace(TS_FILE, ""),
 		file,
-		kind: TS_FLOW.test(file) ? "e2e" : "fragment",
+		kind: TS_SPEC.test(file) ? "e2e" : "fragment",
 		runs: [...new Set(runs)],
 	};
 }
 
-/** All `.ts(x)` files below `flowsDir` (skipping dot dirs and screenshot baselines), sorted by id. */
-export function scanFlows(flowsDir: string): FlowScan {
+/** All `.ts(x)` files below `specsDir` (skipping dot dirs and screenshot baselines), sorted by id. */
+export function scanSpecs(specsDir: string): SpecScan {
 	const files: string[] = [];
-	walk(flowsDir, files);
-	const flows: Flow[] = [];
+	walk(specsDir, files);
+	const specs: Spec[] = [];
 	const warnings: string[] = [];
 	for (const file of files.sort()) {
 		try {
-			flows.push(parseFlow(file, flowsDir, readFileSync(file, "utf8")));
+			specs.push(parseSpec(file, specsDir, readFileSync(file, "utf8")));
 		} catch (error) {
-			warnings.push(`${relative(flowsDir, file)}: ${error instanceof Error ? error.message : String(error)}`);
+			warnings.push(`${relative(specsDir, file)}: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
-	return { flows, warnings };
+	return { specs, warnings };
 }
 
 const PLATFORM_TOKEN = /(?:^|[-_/.])(ios|android)(?:[-_/.]|$)/;
 
-/** A flow's config: exact id first, then every matching glob in order; lists are merged. */
-export type FlowSettings = {
+/** A spec's config: exact id first, then every matching glob in order; lists are merged. */
+export type SpecSettings = {
 	entries: string[];
 	paths: string[];
 	platforms?: Platform[];
@@ -97,11 +97,11 @@ export type FlowSettings = {
 	maxDepth?: number;
 };
 
-export function flowSettings(id: string, flows: Record<string, E2eFlowConfig>): FlowSettings {
-	const matches = Object.entries(flows)
+export function specSettings(id: string, specs: Record<string, E2eSpecEntryConfig>): SpecSettings {
+	const matches = Object.entries(specs)
 		.filter(([key]) => key === id || new Bun.Glob(key).match(id))
 		.sort(([a], [b]) => Number(b === id) - Number(a === id));
-	const settings: FlowSettings = { entries: [], paths: [] };
+	const settings: SpecSettings = { entries: [], paths: [] };
 	for (const [, cfg] of matches) {
 		settings.entries.push(...cfg.entries);
 		settings.paths.push(...cfg.paths);
@@ -112,10 +112,10 @@ export function flowSettings(id: string, flows: Record<string, E2eFlowConfig>): 
 	return settings;
 }
 
-/** Platforms a flow runs on: config, else an `ios`/`android` token in its id, else both. */
-export function flowPlatforms(flow: Flow, settings: FlowSettings): Platform[] {
+/** Platforms a spec runs on: config, else an `ios`/`android` token in its id, else both. */
+export function specPlatforms(spec: Spec, settings: SpecSettings): Platform[] {
 	if (settings.platforms) return settings.platforms;
-	const token = PLATFORM_TOKEN.exec(flow.id)?.[1];
+	const token = PLATFORM_TOKEN.exec(spec.id)?.[1];
 	if (token === "ios" || token === "android") return [token];
 	return ["ios", "android"];
 }

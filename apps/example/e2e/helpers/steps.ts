@@ -5,12 +5,12 @@ import { ids } from "./ids";
 const SIGN_IN_TIMEOUT_MS = 15_000;
 
 /**
- * What every flow file passes to `test.use`. `launch: "none"` leaves the opening to the flow (`launch()` below, which
+ * What every spec file passes to `test.use`. `launch: "none"` leaves the opening to the spec (`launch()` below, which
  * waits for the app to be in front and still, so the runner's own bare `app.open()` would be a second launch).
  * `systemAlerts: "dismiss"` answers a system sheet that covers the app (the "Open in “warden-example”?" sheet from a
- * deep link survives a reinstall) wherever a read, tap or assertion meets one, so no flow polls for sheets itself.
+ * deep link survives a reinstall) wherever a read, tap or assertion meets one, so no spec polls for sheets itself.
  */
-export const FLOW_OPTIONS = { launch: "none", systemAlerts: "dismiss" } as const;
+export const SPEC_OPTIONS = { launch: "none", systemAlerts: "dismiss" } as const;
 
 /**
  * Opens the app fresh and waits for the welcome screen. `wait: "quiet"` returns once the app is in front and its screen
@@ -46,7 +46,7 @@ export async function submitSignIn(screen: Screen, email: string, password: stri
  * that still covers the app (a leftover sheet) is dismissed by `systemAlerts` while waiting.
  *
  * Why it matters: that sheet is hosted by SafariViewService, cold-launched, and showed up between 1 and 6 s after
- * the todos screen. A flow that typed meanwhile sent its keys to no focused field, and the dev client reloaded its
+ * the todos screen. A spec that typed meanwhile sent its keys to no focused field, and the dev client reloaded its
  * JS about 0.5 s into the typing (back to the welcome screen); the reload trigger is inferred from that timing.
  */
 export async function expectTodosAfterSignIn(screen: Screen): Promise<void> {
@@ -97,6 +97,16 @@ export async function openDeepLink(
 		await device.openLink(url, { until: ready, waitMs: DEEP_LINK_WAIT_MS });
 		if (await ready.isVisible()) return;
 	}
+}
+
+/** Fresh launch, then the gesture playground through its deep link (it has no sign-in gate). */
+export async function openGestures(
+	app: Pick<App, "open">,
+	device: Pick<Device, "openLink">,
+	screen: Screen
+): Promise<void> {
+	await launch(app, screen);
+	await openDeepLink(device, screen, "warden-example://gestures", ids.gestures.screen);
 }
 
 /** Fresh launch, signed in as `email`, on the todos tab. */

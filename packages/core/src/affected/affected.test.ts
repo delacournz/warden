@@ -132,7 +132,7 @@ describe("computeAffected", () => {
 		}
 	});
 
-	test("overlay config: flows resolve in the overlay, project root and git diff stay in the checkout", async () => {
+	test("overlay config: specs resolve in the overlay, project root and git diff stay in the checkout", async () => {
 		const home = mkdtempSync(join(tmpdir(), "warden-affected-home-"));
 		cleanup.push(home);
 		const env = { WARDEN_HOME: home };
@@ -145,7 +145,7 @@ describe("computeAffected", () => {
 			join(overlay, "warden.config.json"),
 			JSON.stringify({
 				projects: [{ name: "app", bundleId: { ios: "com.x.app" } }],
-				e2e: { priv: { project: "app", flowsDir: "e2e" } },
+				e2e: { priv: { project: "app", specsDir: "e2e" } },
 			})
 		);
 		const res = await findSuite(bunExec, join(dir, "src"), undefined, undefined, env);
@@ -198,7 +198,7 @@ describe("computeAffected without e2e suites (an Expo app with an e2e/ dir)", ()
 	});
 	afterEach(() => rmSync(app, { recursive: true, force: true }));
 
-	test("the default suite: every flow in e2e/, a spec process per device of a 2-sim pool, the dev client on warden's Metro", async () => {
+	test("the default suite: every spec in e2e/, a spec process per device of a 2-sim pool, the dev client on warden's Metro", async () => {
 		mkdirSync(join(app, "e2e/helpers"), { recursive: true });
 		writeFileSync(join(app, "e2e/a.e2e.ts"), "export {};\n");
 		writeFileSync(join(app, "e2e/b.e2e.ts"), "export {};\n");
@@ -208,7 +208,7 @@ describe("computeAffected without e2e suites (an Expo app with an e2e/ dir)", ()
 		const { suite } = res.data;
 		expect(suite).toMatchObject({ name: "fresh", implicit: true, configDir: app, cwd: app, projectRoot: app });
 		expect(suite.config).toMatchObject({
-			flowsDir: "e2e",
+			specsDir: "e2e",
 			isolate: "device",
 			platform: "ios",
 			count: 2,
@@ -220,7 +220,7 @@ describe("computeAffected without e2e suites (an Expo app with an e2e/ dir)", ()
 		expect(res.data.selections[0]?.selected.map((f) => f.id)).toEqual(["a", "b"]);
 	});
 
-	test("the default suite is iOS unless asked: platform android runs the same flows on Android", async () => {
+	test("the default suite is iOS unless asked: platform android runs the same specs on Android", async () => {
 		mkdirSync(join(app, "e2e"));
 		writeFileSync(join(app, "e2e/a.e2e.ts"), "export {};\n");
 		const res = await computeAffected({ exec: bunExec, cwd: app, platform: "android" });

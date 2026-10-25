@@ -42,7 +42,7 @@ describe("buildTimeline", () => {
 		expect(tl.castOffset).toBe(-10);
 	});
 
-	test("labels: running flow, then ✓/✗ until the worker's next attempt; last one never ends", () => {
+	test("labels: running spec, then ✓/✗ until the worker's next attempt; last one never ends", () => {
 		const w1 = tl.labels.filter((l) => l.worker === "1");
 		expect(w1.map((l) => [l.text, l.tone])).toEqual([
 			["qa-b", "ink"],

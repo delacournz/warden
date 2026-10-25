@@ -23,9 +23,9 @@ Open the reference file for details before acting; this file only routes.
 
 | You want to | Read |
 |---|---|
-| explore / verify an app by hand (snapshot, tap, type, wait, record) | [references/ui.md](references/ui.md) |
+| explore / verify an app by hand (snapshot, tap, type, wait) | [references/ui.md](references/ui.md) |
 | write or fix a `*.e2e.ts` spec, helpers, testIDs, read failure artifacts | [references/specs.md](references/specs.md) |
-| run flows (`warden e2e`, `affected`), suite config, batch dir, `run`/`batch` scripts | [references/suites.md](references/suites.md) |
+| run specs (`warden e2e`, `affected`), suite config, batch dir, `run`/`batch` scripts | [references/suites.md](references/suites.md) |
 | an error code, a dropped tap, a sheet, a stale helper, Metro refused | [references/troubleshooting.md](references/troubleshooting.md) |
 
 ## Quick reference
@@ -36,8 +36,8 @@ Open the reference file for details before acting; this file only routes.
 | set a new Expo app up for warden | `warden init --bundle-id <id>` → bundle id into `app.json`, `warden.config.ts`, `e2e/smoke.e2e.ts`; names packages to install (`expo-dev-client`, `@delacour/warden-e2e`), installs nothing |
 | run the app in this worktree (replaces `expo run:ios`) | `warden dev ios --json` (platform defaults to ios) → first stdout line `{ udid, port, metroUrl, leaseIds }`; checks bundle id + `expo-dev-client` first; owns Metro on a leased port, refuses another checkout's Metro, opens the dev client; Ctrl-C releases |
 | dev build on a device | `warden app ensure ios --udid <udid> --json [--variant dev\|e2e]` |
-| the flows a change needs | `warden affected [suite] --base main --explain [--strict] [--json]` |
-| run them on leased devices | `warden e2e [suite] [--base main\|--all\|--flows a,b] [--count N] [--dry-run] [--devices all] [--no-shutdown] [--no-warm] [--headless] [--report f]` |
+| the specs a change needs | `warden affected [suite] --base main --explain [--strict] [--json]` |
+| run them on leased devices | `warden e2e [suite] [--base main\|--all\|--specs a,b] [--count N] [--dry-run] [--devices all] [--no-shutdown] [--no-warm] [--headless] [--report f]` |
 | N devices + ports for a script | `warden run ios --count N --port 8091:20 [--app] -- <cmd>` |
 | independent jobs over N devices | `warden batch ios\|<preset> --count N --jobs-from <file\|-> -- <cmd {job} {udid}>` |
 | a free port | `warden port claim --json` (`--from 8091 --span 20`) |

@@ -18,7 +18,7 @@ export const ENV_NAMES = {
 	timeout: "WARDEN_E2E_TIMEOUT",
 	actionTimeout: "WARDEN_E2E_ACTION_TIMEOUT",
 	assertionTimeout: "WARDEN_E2E_ASSERTION_TIMEOUT",
-	flowsDir: "WARDEN_E2E_FLOWS_DIR",
+	specsDir: "WARDEN_E2E_SPECS_DIR",
 	helperDir: "WARDEN_HELPER_DIR",
 	simd: "WARDEN_SIMD",
 	simdSocket: "WARDEN_SIMD_SOCKET",
@@ -70,7 +70,7 @@ const schema = z.object({
 	timeout: millis.default(DEFAULT_TIMEOUT_MS),
 	actionTimeout: millis.default(DEFAULT_ACTION_TIMEOUT_MS),
 	assertionTimeout: millis.default(DEFAULT_ASSERTION_TIMEOUT_MS),
-	flowsDir: z.string().optional(),
+	specsDir: z.string().optional(),
 	helperDir: z.string().optional(),
 	simd: z.string().optional(),
 	simdSocket: z.string().optional(),
@@ -93,7 +93,7 @@ export type E2eEnv = {
 	timeoutMs: number;
 	actionTimeoutMs: number;
 	assertionTimeoutMs: number;
-	flowsDir?: string;
+	specsDir?: string;
 	helperDir?: string;
 	simd?: string;
 	simdSocket?: string;
@@ -127,7 +127,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 			deviceName: v.deviceName,
 			appPath: v.appPath,
 			metroUrl: v.metroUrl,
-			flowsDir: v.flowsDir,
+			specsDir: v.specsDir,
 			helperDir: v.helperDir,
 			simd: v.simd,
 			simdSocket: v.simdSocket,

@@ -6,19 +6,19 @@ import { overlayDirUnlessRepoConfig } from "../builds/overlay";
 import type { Exec } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
 import type { Platform } from "../types";
-import { DEFAULT_E2E_COUNT, DEFAULT_FLOWS_DIR, DEV_MENU_OFF_ARGS } from "./affected.defaults";
+import { DEFAULT_E2E_COUNT, DEFAULT_SPECS_DIR, DEV_MENU_OFF_ARGS } from "./affected.defaults";
 import { type E2eSuiteConfig, e2eSuiteSchema } from "./affected.schema";
-import { scanFlows } from "./flows";
 import { type ChangedFile, changedFiles } from "./git";
 import { resolveTypescript, typescriptMissing, typescriptVersionProblem } from "./graph";
 import { graphEntries, type LoadedGraph, loadImportGraph } from "./graph-process";
-import { type SelectInput, type Selection, selectFlows } from "./select";
+import { type SelectInput, type Selection, selectSpecs } from "./select";
+import { scanSpecs } from "./specs";
 
 export type Suite = {
 	name: string;
 	config: E2eSuiteConfig;
 	configDir: string;
-	/** where the config came from (`overlay`: `configDir` is under `~/.warden`, flows resolve there) */
+	/** where the config came from (`overlay`: `configDir` is under `~/.warden`, specs resolve there) */
 	source: ConfigSource;
 	/** the checkout the suite is for: what `git diff` runs in (`configDir` itself unless the config is an overlay) */
 	rootDir: string;
@@ -26,7 +26,7 @@ export type Suite = {
 	cwd: string;
 	/** root of `project` (what `app` installs) */
 	projectRoot?: string;
-	/** the default suite of an app that configures none: every flow runs, no git diff */
+	/** the default suite of an app that configures none: every spec runs, no git diff */
 	implicit?: true;
 	/** the suite's `headless`, else the top-level one (undefined: neither sets it) */
 	headless?: boolean;
@@ -43,7 +43,7 @@ export type AffectedInput = {
 	platform?: Platform;
 	/** use these (relative to cwd) instead of `git diff` */
 	files?: readonly string[];
-	/** no diff at all: every flow, or exactly the named ones (see `SelectInput.only`) */
+	/** no diff at all: every spec, or exactly the named ones (see `SelectInput.only`) */
 	only?: SelectInput["only"];
 	/** where the analysed project's TypeScript compiler is, undefined: none. Default: `resolveTypescript` */
 	typescript?: (repoRoot: string) => string | undefined;
@@ -66,7 +66,7 @@ export type Affected = {
 };
 
 /**
- * The suite of an Expo app that configures none: every `*.e2e.ts` flow under `e2e/`, one
+ * The suite of an Expo app that configures none: every `*.e2e.ts` spec under `e2e/`, one
  * `@delacour/warden-e2e` spec process per device, against the dev client (the `dev` variant when the
  * project has one) on a Metro warden owns.
  */
@@ -86,12 +86,12 @@ function defaultSuite(
 	});
 	if (!project.success) return project;
 	const { name, root, variant } = project.data;
-	if (!existsSync(join(root, DEFAULT_FLOWS_DIR)))
+	if (!existsSync(join(root, DEFAULT_SPECS_DIR)))
 		return err(
-			`no e2e suites in ${CONFIG_FILE} and no ${DEFAULT_FLOWS_DIR}/ flows in ${root} — run \`warden init\` to scaffold them`
+			`no e2e suites in ${CONFIG_FILE} and no ${DEFAULT_SPECS_DIR}/ specs in ${root} — run \`warden init\` to scaffold them`
 		);
 	const config = e2eSuiteSchema.parse({
-		flowsDir: DEFAULT_FLOWS_DIR,
+		specsDir: DEFAULT_SPECS_DIR,
 		isolate: "device",
 		platform: "ios",
 		count: DEFAULT_E2E_COUNT,
@@ -210,7 +210,7 @@ async function importGraphFor(
 }
 
 /**
- * Whether a run walks imports (some flow has entries and something changed); an error when it must but the project
+ * Whether a run walks imports (some spec has entries and something changed); an error when it must but the project
  * at `configDir` has no TypeScript compiler for the walk (`resolveTypescript`), or its package.json says it is too old.
  */
 function graphNeeded(
@@ -218,7 +218,7 @@ function graphNeeded(
 	{ config, configDir }: Suite,
 	changes: readonly ChangedFile[]
 ): Result<boolean> {
-	if (!(Object.values(config.flows).some((f) => f.entries.length > 0) && changes.length > 0)) return ok(false);
+	if (!(Object.values(config.specs).some((f) => f.entries.length > 0) && changes.length > 0)) return ok(false);
 	const path = (input.typescript ?? resolveTypescript)(configDir);
 	if (path === undefined) return err(typescriptMissing(configDir));
 	const problem = typescriptVersionProblem(path);
@@ -228,18 +228,18 @@ function graphNeeded(
 /** false when `files` / `only` replace the git diff (so there is no base to report). */
 const usesGit = (input: AffectedInput): boolean => !input.files && !input.only;
 
-/** Changed files → the flows each platform must run (with reasons), per `e2e.<suite>`. */
+/** Changed files → the specs each platform must run (with reasons), per `e2e.<suite>`. */
 export async function computeAffected(given: AffectedInput): AsyncResult<Affected> {
 	const suite = await findSuite(given.exec, given.cwd, given.suite, given.git, given.env);
 	if (!suite.success) return suite;
-	// a suite nobody mapped has nothing to diff against: every flow runs
+	// a suite nobody mapped has nothing to diff against: every spec runs
 	const everything = suite.data.implicit && !given.files && !given.only;
 	const input: AffectedInput = everything ? { ...given, only: { mode: "all" } } : given;
 	const { config, configDir } = suite.data;
 	const base = input.base ?? config.base;
 	const changes = await loadChanges(input, suite.data, base);
 	if (!changes.success) return changes;
-	const scan = scanFlows(join(configDir, config.flowsDir));
+	const scan = scanSpecs(join(configDir, config.specsDir));
 	const graphNeed = graphNeeded(input, suite.data, changes.data);
 	if (!graphNeed.success) return graphNeed;
 	const needsGraph = graphNeed.data;
@@ -253,12 +253,12 @@ export async function computeAffected(given: AffectedInput): AsyncResult<Affecte
 		const loaded = graph.data;
 		if (loaded?.warning !== undefined) warnings.push(loaded.warning);
 		selections.push(
-			selectFlows({
+			selectSpecs({
 				suite: config,
 				configDir,
 				platform,
 				changes: changes.data,
-				flows: scan.flows,
+				specs: scan.specs,
 				...(loaded ? { imports: loaded.graph.imports } : {}),
 				...(input.only ? { only: input.only } : {}),
 			})

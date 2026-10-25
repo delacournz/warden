@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { flowTracker, resultsMarks, testLine } from "./flow-progress";
 import { jsonl, result } from "./results.testing";
+import { resultsMarks, specTracker, testLine } from "./spec-progress";
 
-const flows = ["onboarding", "settings", "sign-in", "todos"].map((id) => ({ id, path: `/app/e2e/${id}.e2e.ts` }));
+const specs = ["onboarding", "settings", "sign-in", "todos"].map((id) => ({ id, path: `/app/e2e/${id}.e2e.ts` }));
 const file = (id: string) => `/app/e2e/${id}.e2e.ts`;
 const identity = (path: string) => path;
-const marks = (text: string, final = false) => resultsMarks(text, flows, { final, real: identity });
+const marks = (text: string, final = false) => resultsMarks(text, specs, { final, real: identity });
 
 describe("resultsMarks", () => {
-	test("a flow is passed once a later result belongs to another file; the last flow waits for the process to end", () => {
+	test("a spec is passed once a later result belongs to another file; the last spec waits for the process to end", () => {
 		const text = jsonl(
 			result(file("onboarding"), "welcome"),
 			result(file("onboarding"), "skip"),
@@ -18,7 +18,7 @@ describe("resultsMarks", () => {
 		expect(marks(text, true)).toEqual({ onboarding: "passed", settings: "passed" });
 	});
 
-	test("a failed or timed-out test fails its flow at once; a later pass does not undo it", () => {
+	test("a failed or timed-out test fails its spec at once; a later pass does not undo it", () => {
 		const text = jsonl(
 			result(file("sign-in"), "valid", "passed"),
 			result(file("sign-in"), "invalid", "failed"),
@@ -43,12 +43,12 @@ describe("resultsMarks", () => {
 	test("a result's file is compared after symlinks are resolved", () => {
 		const text = jsonl(result("/private/app/e2e/todos.e2e.ts", "t"));
 		const real = (path: string) => path.replace(/^\/private/, "");
-		expect(resultsMarks(text, flows, { final: true, real })).toEqual({ todos: "passed" });
+		expect(resultsMarks(text, specs, { final: true, real })).toEqual({ todos: "passed" });
 	});
 });
 
-describe("flowTracker", () => {
-	const track = (real = identity) => flowTracker(flows, real);
+describe("specTracker", () => {
+	const track = (real = identity) => specTracker(specs, real);
 
 	test("results added in pieces give the marks of the whole text at every step", () => {
 		const all = [
@@ -68,10 +68,10 @@ describe("flowTracker", () => {
 		});
 	});
 
-	test("flowOf names the tracked flow of a result, nothing for another file", () => {
+	test("specOf names the tracked spec of a result, nothing for another file", () => {
 		const tracker = track();
-		expect(tracker.flowOf(result(file("todos"), "t"))?.id).toBe("todos");
-		expect(tracker.flowOf(result("/app/e2e/other.e2e.ts", "t"))).toBeUndefined();
+		expect(tracker.specOf(result(file("todos"), "t"))?.id).toBe("todos");
+		expect(tracker.specOf(result("/app/e2e/other.e2e.ts", "t"))).toBeUndefined();
 	});
 
 	test("reset forgets every result", () => {
@@ -99,7 +99,7 @@ describe("flowTracker", () => {
 });
 
 describe("testLine", () => {
-	test("✓ / ✗ <flow> › <describe> › <title> (N.NNs)", () => {
+	test("✓ / ✗ <spec> › <describe> › <title> (N.NNs)", () => {
 		expect(testLine("todos", result(file("todos"), "add", "passed", { title: ["list", "add"] }))).toBe(
 			"✓ todos › list › add (1.25s)"
 		);

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
 	applyEvent,
-	applyFlowMarks,
 	applyRunnerReport,
+	applySpecMarks,
 	type BatchView,
 	frameBytes,
 	initialView,
@@ -137,11 +137,11 @@ describe("segmented bars", () => {
 	});
 });
 
-describe("single runner (one job runs every flow on a pool of devices)", () => {
-	const flows = ["onboarding", "settings", "sign-in", "todos"];
+describe("single runner (one job runs every spec on a pool of devices)", () => {
+	const specs = ["onboarding", "settings", "sign-in", "todos"];
 	const single = () => {
 		const rows = DEVICES.map((d) => ({ ...d, worker: 0 }));
-		let view = withRunners(initialView(rows, 1, 0), flows);
+		let view = withRunners(initialView(rows, 1, 0), specs);
 		view = applyEvent(view, {
 			type: "job-start",
 			at: 0,
@@ -151,18 +151,18 @@ describe("single runner (one job runs every flow on a pool of devices)", () => {
 			seq: 0,
 			attempt: 0,
 		});
-		return applyFlowMarks(view, 0, { onboarding: "passed", "sign-in": "failed" });
+		return applySpecMarks(view, 0, { onboarding: "passed", "sign-in": "failed" });
 	};
 
-	test("one row per device; the header counts and segments flows (a running cell per busy device); flow line once, under the pool's last row", () => {
+	test("one row per device; the header counts and segments specs (a running cell per busy device); spec line once, under the pool's last row", () => {
 		const lines = render({ ...single(), now: 70_000 }, { width: 100, color: false }).split("\n");
-		const [head, row0, row1, flowLine] = lines;
+		const [head, row0, row1, specLine] = lines;
 		expect(head).toContain("█▸×▸");
 		expect(head).toContain("2/4");
 		expect(head).toContain("✓1 ✗1");
 		expect(row0).toContain("warden-iphone-17-1");
 		expect(row0).toContain("▶ example-dev");
-		expect(flowLine).toBe("    ✓ onboarding  · settings  ✗ sign-in  · todos");
+		expect(specLine).toBe("    ✓ onboarding  · settings  ✗ sign-in  · todos");
 		expect(row1).toContain("warden-iphone-17-2");
 		expect(row1).toContain("▶ example-dev");
 		expect(lines).toHaveLength(4);
@@ -173,7 +173,7 @@ describe("single runner (one job runs every flow on a pool of devices)", () => {
 		expect(row0?.endsWith("▸")).toBe(true);
 	});
 
-	test("the report fills each device's bar and counts with the flows it ran, and settles the flows", () => {
+	test("the report fills each device's bar and counts with the specs it ran, and settles the specs", () => {
 		let view = applyEvent(single(), {
 			type: "job-end",
 			job: "example-dev",
@@ -187,7 +187,7 @@ describe("single runner (one job runs every flow on a pool of devices)", () => {
 			willRetry: false,
 		});
 		view = applyRunnerReport(view, {
-			flows: { onboarding: "passed", settings: "passed", "sign-in": "failed", todos: "passed" },
+			specs: { onboarding: "passed", settings: "passed", "sign-in": "failed", todos: "passed" },
 			devices: {
 				U0: [
 					{ id: "onboarding", mark: "passed" },
@@ -208,12 +208,12 @@ describe("single runner (one job runs every flow on a pool of devices)", () => {
 		expect(row1?.endsWith("██")).toBe(true);
 	});
 
-	test("marks replace earlier ones; unknown flow ids are ignored", () => {
-		const view = applyFlowMarks(single(), 0, { "sign-in": "passed", ghost: "failed" });
+	test("marks replace earlier ones; unknown spec ids are ignored", () => {
+		const view = applySpecMarks(single(), 0, { "sign-in": "passed", ghost: "failed" });
 		expect(render(view, { width: 100, color: false })).toContain("✓ onboarding  · settings  ✓ sign-in  · todos");
 	});
 
-	test("the flow line wraps to the width", () => {
+	test("the spec line wraps to the width", () => {
 		const lines = render(single(), { width: 30, color: false }).split("\n");
 		for (const line of lines) expect(line.length).toBeLessThan(30);
 		expect(lines.join(" ")).toContain("✗ sign-in");
@@ -226,7 +226,7 @@ describe("single runner (one job runs every flow on a pool of devices)", () => {
 		).toBe("[1/1] warden-iphone-17-1 +1 ▶ example-dev");
 	});
 
-	test("without runners the grid has no flow lines", () => {
+	test("without runners the grid has no spec lines", () => {
 		expect(render(midRun(), { width: 80, color: false }).split("\n")).toHaveLength(3);
 	});
 });

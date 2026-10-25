@@ -1,8 +1,8 @@
 import { expect, test } from "@delacour/warden-e2e";
-import { FLOW_OPTIONS, launch, nextStep } from "./helpers/flows";
 import { ids } from "./helpers/ids";
+import { launch, nextStep, SPEC_OPTIONS } from "./helpers/steps";
 
-test.use(FLOW_OPTIONS);
+test.use(SPEC_OPTIONS);
 
 test("onboarding steps through to sign-in", async ({ app, screen }) => {
 	await launch(app, screen);

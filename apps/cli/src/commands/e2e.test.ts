@@ -14,11 +14,11 @@ let dir: string;
 let write: (path: string, text: string) => void;
 let ctx: TestContext | undefined;
 
-/** the suites below were written for one spec process per flow; the device-isolation tests opt in */
-const FLOW_ISOLATION = { isolate: "flow" };
+/** the suites below were written for one spec process per spec; the device-isolation tests opt in */
+const SPEC_ISOLATION = { isolate: "spec" };
 
 beforeEach(async () => {
-	({ dir, write } = await makeSuiteRepo(FLOW_ISOLATION));
+	({ dir, write } = await makeSuiteRepo(SPEC_ISOLATION));
 });
 afterEach(() => {
 	ctx?.cleanup();
@@ -26,10 +26,10 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
-/** Swap the fixture for one whose suite has `overrides` (one spec process per flow unless they say otherwise). */
+/** Swap the fixture for one whose suite has `overrides` (one spec process per spec unless they say otherwise). */
 async function resuite(overrides: Record<string, unknown>, config: Record<string, unknown> = {}): Promise<void> {
 	rmSync(dir, { recursive: true, force: true });
-	({ dir, write } = await makeSuiteRepo({ ...FLOW_ISOLATION, ...overrides }, config));
+	({ dir, write } = await makeSuiteRepo({ ...SPEC_ISOLATION, ...overrides }, config));
 }
 
 /** Swap the fixture for a suite that says nothing about `isolate`, plus `overrides`. */
@@ -60,15 +60,15 @@ const bunTest = (...files: string[]) => [BUN, "test", "--preload", PRELOAD, "--t
 /** Where a spawned job's spec process writes `results.jsonl`. */
 const resultsPath = (env: Record<string, string | undefined>) => join(env.WARDEN_E2E_OUT ?? "", "results.jsonl");
 
-/** `result()` for a spec file of the suite's flows dir. */
-const spec = (flow: string, title: string, status: TestResult["status"] = "passed", extra: Partial<TestResult> = {}) =>
-	result(join(dir, `flows/${flow}.e2e.ts`), title, status, extra);
+/** `result()` for a spec file of the suite's specs dir. */
+const spec = (spec: string, title: string, status: TestResult["status"] = "passed", extra: Partial<TestResult> = {}) =>
+	result(join(dir, `specs/${spec}.e2e.ts`), title, status, extra);
 
 const reportOf = (files: Map<string, string>, c: TestContext): E2eReport =>
 	JSON.parse(files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "e2e-report.json")) ?? "{}");
 
 describe("warden e2e", () => {
-	test("runs the affected flows with bun test, in the config dir; report + gate pass", async () => {
+	test("runs the affected specs with bun test, in the config dir; report + gate pass", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
@@ -77,19 +77,19 @@ describe("warden e2e", () => {
 		const jobs = h.jobs();
 		expect(jobs.map((j) => j.opts.env.WARDEN_JOB).sort()).toEqual(["chats", "settings"]);
 		const chats = jobs.find((j) => j.opts.env.WARDEN_JOB === "chats");
-		expect(chats?.cmd).toEqual(bunTest(join(dir, "flows/chats.e2e.ts")));
+		expect(chats?.cmd).toEqual(bunTest(join(dir, "specs/chats.e2e.ts")));
 		expect(chats?.opts.cwd).toBe(dir);
 		const report = reportOf(h.files, c);
 		expect(report).toMatchObject({ suite: "mobile", platform: "ios", base: "main", ok: true });
-		expect(report.flows.map((f) => [f.id, f.verdict, f.required])).toEqual([
+		expect(report.specs.map((f) => [f.id, f.verdict, f.required])).toEqual([
 			["chats", "passed", true],
 			["settings", "passed", false],
 		]);
 		expect(c.db.listLeases()).toEqual([]);
-		expect(c.stderr.join("\n")).toContain("2/2 flow(s) passed — gate passed");
+		expect(c.stderr.join("\n")).toContain("2/2 spec(s) passed — gate passed");
 	});
 
-	test("an optional flow failing doesn't fail the gate; a required one does", async () => {
+	test("an optional spec failing doesn't fail the gate; a required one does", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup([]);
@@ -103,39 +103,39 @@ describe("warden e2e", () => {
 		expect(c.stderr.join("\n")).toContain("gate failed");
 	});
 
-	test("a failed flow's report entry carries its failure screenshot; passed flows carry none", async () => {
+	test("a failed spec's report entry carries its failure screenshot; passed specs carry none", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
 		const h = harness({ exitCodes: { chats: 1 } });
 		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
 		const report = reportOf(h.files, c);
-		const chats = report.flows.find((f) => f.id === "chats");
+		const chats = report.specs.find((f) => f.id === "chats");
 		const chatsRun = h.jobs().find((j) => j.opts.env.WARDEN_JOB === "chats");
 		expect(chats?.screenshot).toBe(chatsRun?.opts.log.replace(/\.log$/, ".png"));
 		expect(h.shots).toHaveLength(1);
-		expect(report.flows.find((f) => f.id === "settings")).not.toHaveProperty("screenshot");
+		expect(report.specs.find((f) => f.id === "settings")).not.toHaveProperty("screenshot");
 	});
 
-	test("a failed flow is summarised with its device, log and screenshot", async () => {
+	test("a failed spec is summarised with its device, log and screenshot", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
 		const h = harness({ exitCodes: { chats: 1 } });
 		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
 		const run = h.jobs().find((j) => j.opts.env.WARDEN_JOB === "chats");
-		const chats = reportOf(h.files, c).flows.find((f) => f.id === "chats");
+		const chats = reportOf(h.files, c).specs.find((f) => f.id === "chats");
 		expect(chats?.device?.udid).toBe(run?.opts.env.WARDEN_UDID);
 		expect(chats?.device?.name).toMatch(/^warden-iphone-17-/);
 		expect(chats?.log).toBe(run?.opts.log);
-		expect(reportOf(h.files, c).flows.find((f) => f.id === "settings")).not.toHaveProperty("log");
+		expect(reportOf(h.files, c).specs.find((f) => f.id === "settings")).not.toHaveProperty("log");
 		const summary = c.stderr.find((l) => l.includes("chats failed")) ?? "";
 		expect(summary).toContain(`${chats?.device?.name}`);
 		expect(summary).toContain(`log ${run?.opts.log}`);
 		expect(summary).toContain(`screenshot ${chats?.screenshot}`);
 	});
 
-	test("count 1 runs the flows serially on a single device", async () => {
+	test("count 1 runs the specs serially on a single device", async () => {
 		await resuite({ count: 1 });
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
@@ -146,7 +146,7 @@ describe("warden e2e", () => {
 		expect(h.jobs()).toHaveLength(2);
 	});
 
-	test("suite passes (2) → every flow runs twice on its device", async () => {
+	test("suite passes (2) → every spec runs twice on its device", async () => {
 		await resuite({ passes: 2 });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
 		const h = harness();
@@ -159,7 +159,7 @@ describe("warden e2e", () => {
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		expect(h.jobs()).toEqual([]);
-		expect(c.stderr.join("\n")).toContain("no affected flows");
+		expect(c.stderr.join("\n")).toContain("no affected specs");
 
 		c.argv = ["--files", "src/chat/lazy.tsx", "--dry-run"];
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
@@ -167,7 +167,7 @@ describe("warden e2e", () => {
 		expect(c.stderr.join("\n")).toContain("● chats");
 	});
 
-	test("no suite configured: an Expo app's e2e/ flows are the default suite", async () => {
+	test("no suite configured: an Expo app's e2e/ specs are the default suite", async () => {
 		const c = setup(["--dry-run", "--json"]);
 		const app = join(c.env.WARDEN_HOME ?? "", "fresh");
 		mkdirSync(join(app, "e2e"), { recursive: true });
@@ -178,7 +178,7 @@ describe("warden e2e", () => {
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		const report: E2eReport = JSON.parse(c.stdout.join("\n"));
 		expect(report).toMatchObject({ suite: "fresh", platform: "ios", ok: true });
-		expect(report.flows.map((f) => f.id)).toEqual(["smoke"]);
+		expect(report.specs.map((f) => f.id)).toEqual(["smoke"]);
 	});
 
 	test("suite app: { installMode, resetKeychain } reaches the ensure step on every device", async () => {
@@ -425,7 +425,7 @@ describe("warden e2e", () => {
 			expect(calls.filter((cmd) => cmd.includes("launch"))).toEqual([]);
 		});
 
-		test("a foreign Metro on the leased port: the run never starts a flow and names the other checkout", async () => {
+		test("a foreign Metro on the leased port: the run never starts a spec and names the other checkout", async () => {
 			await resuite(suite, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness({ metroOwner: { kind: "foreign", root: "/other/worktree/app" } });
@@ -436,7 +436,7 @@ describe("warden e2e", () => {
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("a bundle that does not build fails the run before any flow", async () => {
+		test("a bundle that does not build fails the run before any spec", async () => {
 			await resuite(suite, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness({ prewarm: "fail" });
@@ -474,7 +474,7 @@ describe("warden e2e", () => {
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("the install fails → the early Metro is stopped, no flow runs, nothing stays leased", async () => {
+		test("the install fails → the early Metro is stopped, no spec runs, nothing stays leased", async () => {
 			await resuite({ ...suite, app: true }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
@@ -503,7 +503,7 @@ describe("warden e2e", () => {
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("Metro turns out foreign while the app installs → exit 1 naming the other checkout, no flow", async () => {
+		test("Metro turns out foreign while the app installs → exit 1 naming the other checkout, no spec", async () => {
 			await resuite({ ...suite, app: true }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
@@ -600,7 +600,7 @@ describe("warden e2e", () => {
 	});
 
 	describe("jobTimeoutMs", () => {
-		test("a spec process still going after the timeout is shot, killed, and its flow fails with exit 124", async () => {
+		test("a spec process still going after the timeout is shot, killed, and its spec fails with exit 124", async () => {
 			await resuite({ jobTimeoutMs: 90_000 });
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness({ manual: true });
@@ -619,7 +619,7 @@ describe("warden e2e", () => {
 			expect(await running).toBe(1);
 			expect(c.stderr.join("\n")).toContain("chats still running on");
 			const report = reportOf(h.files, c);
-			expect(report.flows.find((f) => f.id === "chats")).toMatchObject({ verdict: "failed", attempts: 1 });
+			expect(report.specs.find((f) => f.id === "chats")).toMatchObject({ verdict: "failed", attempts: 1 });
 			const batch = JSON.parse(h.files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "batch.json")) ?? "{}");
 			expect(batch.jobs[0].exitCode).toBe(124);
 		});
@@ -655,7 +655,7 @@ describe("warden e2e", () => {
 				PRELOAD,
 				"--timeout",
 				"210000",
-				join(dir, "flows/chats.e2e.ts"),
+				join(dir, "specs/chats.e2e.ts"),
 			]);
 			expect(job?.opts.env).toMatchObject({
 				WARDEN_PLATFORM: "ios",
@@ -665,10 +665,10 @@ describe("warden e2e", () => {
 				WARDEN_E2E_TIMEOUT: "180000",
 				WARDEN_E2E_ACTION_TIMEOUT: "20000",
 				WARDEN_E2E_ASSERTION_TIMEOUT: "2000",
-				WARDEN_E2E_FLOWS_DIR: join(dir, "flows"),
+				WARDEN_E2E_SPECS_DIR: join(dir, "specs"),
 				WARDEN_HELPER_DIR: "/opt/warden",
 			});
-			for (const gone of ["WARDEN_AGENT_SESSION", "WARDEN_FLOWS", "WARDEN_FLOW_PATHS"])
+			for (const gone of ["WARDEN_AGENT_SESSION", "WARDEN_SPECS", "WARDEN_SPEC_PATHS"])
 				expect(job?.opts.env[gone]).toBeUndefined();
 		});
 
@@ -756,13 +756,7 @@ describe("warden e2e", () => {
 			expect(await createE2eCommand(harness({ bun: null, preload: null }).deps).run(c)).toBe(0);
 		});
 
-		test("a leftover runner / warmRunners key is a migration error", async () => {
-			await resuite({ runner: ["bunx", "e2e", "run", "{flowPath}"] });
-			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
-			expect(c.stderr.join("\n")).toContain(
-				"e2e.mobile.runner was removed: flows run with @delacour/warden-e2e, see spec"
-			);
+		test("a leftover warmRunners key is a migration error", async () => {
 			await resuite({ warmRunners: false });
 			const w = setup(["--files", "src/chat/lazy.tsx"]);
 			expect(await createE2eCommand(harness().deps).run(w)).toBe(1);
@@ -771,34 +765,34 @@ describe("warden e2e", () => {
 	});
 
 	describe("isolate: device", () => {
-		const flowFiles = () => ["chats", "settings"].map((id) => join(dir, `flows/${id}.e2e.ts`));
+		const specFiles = () => ["chats", "settings"].map((id) => join(dir, `specs/${id}.e2e.ts`));
 		const shardOf = (job: Spawned | undefined) => job?.opts.env.WARDEN_JOB;
 
-		test("one bun test process per device over its round-robin shard of the flows", async () => {
+		test("one bun test process per device over its round-robin shard of the specs", async () => {
 			await resuite({ isolate: "device", count: 2 });
 			const c = setup(["--all"]);
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			const jobs = h.jobs().sort((a, b) => (shardOf(a) ?? "").localeCompare(shardOf(b) ?? ""));
 			expect(jobs.map(shardOf)).toEqual(["shard-0", "shard-1"]);
-			expect(jobs[0]?.cmd).toEqual(bunTest(join(dir, "flows/chats.e2e.ts")));
-			expect(jobs[1]?.cmd).toEqual(bunTest(join(dir, "flows/settings.e2e.ts")));
+			expect(jobs[0]?.cmd).toEqual(bunTest(join(dir, "specs/chats.e2e.ts")));
+			expect(jobs[1]?.cmd).toEqual(bunTest(join(dir, "specs/settings.e2e.ts")));
 			expect(new Set(jobs.map((j) => j.opts.env.WARDEN_UDID)).size).toBe(2);
-			for (const j of jobs) expect(j.opts.env.WARDEN_FLOWS).toBeUndefined();
+			for (const j of jobs) expect(j.opts.env.WARDEN_SPECS).toBeUndefined();
 			expect(c.db.listLeases()).toEqual([]);
 			const report = reportOf(h.files, c);
-			expect(report).toMatchObject({ ok: true, isolate: "device", mode: "single" });
-			expect(report.flows.map((f) => [f.id, f.verdict])).toEqual([
+			expect(report).toMatchObject({ ok: true, isolate: "device" });
+			expect(report.specs.map((f) => [f.id, f.verdict])).toEqual([
 				["chats", "passed"],
 				["settings", "passed"],
 			]);
 		});
 
-		test("one device runs every flow in one process; shards never outnumber flows", async () => {
+		test("one device runs every spec in one process; shards never outnumber specs", async () => {
 			await resuite({ isolate: "device", count: 1 });
 			const one = harness();
 			expect(await createE2eCommand(one.deps).run(setup(["--all"]))).toBe(0);
-			expect(one.jobs().map((j) => j.cmd)).toEqual([bunTest(...flowFiles())]);
+			expect(one.jobs().map((j) => j.cmd)).toEqual([bunTest(...specFiles())]);
 			expect(one.jobs().map(shardOf)).toEqual(["shard-0"]);
 
 			await resuite({ isolate: "device", count: 5 });
@@ -807,18 +801,18 @@ describe("warden e2e", () => {
 			expect(many.jobs()).toHaveLength(2);
 		});
 
-		test("a failing shard fails only its flows", async () => {
+		test("a failing shard fails only its specs", async () => {
 			await resuite({ isolate: "device", count: 2 });
 			const c = setup(["--all"]);
 			const h = harness({ exitCodes: { "shard-1": 1 } });
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
-			expect(reportOf(h.files, c).flows.map((f) => [f.id, f.verdict])).toEqual([
+			expect(reportOf(h.files, c).specs.map((f) => [f.id, f.verdict])).toEqual([
 				["chats", "passed"],
 				["settings", "failed"],
 			]);
 		});
 
-		test("live flow progress: the grid lists a device's shard and marks each flow as its results.jsonl reports it", async () => {
+		test("live spec progress: the grid lists a device's shard and marks each spec as its results.jsonl reports it", async () => {
 			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
 			const h = harness({ manual: true, isTTY: true });
@@ -853,11 +847,11 @@ describe("warden e2e", () => {
 			const c = setup(["--all"]);
 			const h = harness({ exitCodeFor: () => 1 });
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
-			expect(reportOf(h.files, c).flows.map((f) => f.verdict)).toEqual(["failed", "failed"]);
+			expect(reportOf(h.files, c).specs.map((f) => f.verdict)).toEqual(["failed", "failed"]);
 			expect(c.stderr.join("\n")).toContain("shard-0: no results.jsonl — verdict from exit code 1");
 		});
 
-		test("per-flow verdicts from results.jsonl: a failing test fails its flow only, the exit code blames the rest", async () => {
+		test("per-spec verdicts from results.jsonl: a failing test fails its spec only, the exit code blames the rest", async () => {
 			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
 			const h: Harness = harness({
@@ -874,11 +868,11 @@ describe("warden e2e", () => {
 			});
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			const report = reportOf(h.files, c);
-			expect(report.flows.map((f) => [f.id, f.verdict])).toEqual([
+			expect(report.specs.map((f) => [f.id, f.verdict])).toEqual([
 				["chats", "passed"],
 				["settings", "failed"],
 			]);
-			expect(report.flows[1]?.tests?.[0]).toMatchObject({
+			expect(report.specs[1]?.tests?.[0]).toMatchObject({
 				title: ["toggle"],
 				status: "failed",
 				error: "no such element",
@@ -906,8 +900,8 @@ describe("warden e2e", () => {
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			expect(h.shots).toEqual([]);
 			const report = reportOf(h.files, c);
-			expect(report.flows.find((f) => f.id === "settings")?.screenshot).toBe("/art/settings-1/failure.png");
-			expect(report.flows.find((f) => f.id === "chats")).not.toHaveProperty("screenshot");
+			expect(report.specs.find((f) => f.id === "settings")?.screenshot).toBe("/art/settings-1/failure.png");
+			expect(report.specs.find((f) => f.id === "chats")).not.toHaveProperty("screenshot");
 		});
 
 		test("a failed test without failure.png still gets the batch screenshot", async () => {
@@ -936,7 +930,7 @@ describe("warden e2e", () => {
 			return h;
 		};
 
-		test("e2e-report.json carries each flow's tests (title path, status, duration, error, artifacts) and headless", async () => {
+		test("e2e-report.json carries each spec's tests (title path, status, duration, error, artifacts) and headless", async () => {
 			const h = writing(
 				() =>
 					jsonl(
@@ -952,8 +946,8 @@ describe("warden e2e", () => {
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
 			const report = reportOf(h.files, c);
 			expect(report.headless).toBe(false);
-			expect(report.flows[0]?.verdict).toBe("failed");
-			expect(report.flows[0]?.tests).toEqual([
+			expect(report.specs[0]?.verdict).toBe("failed");
+			expect(report.specs[0]?.tests).toEqual([
 				{ title: ["list", "opens"], status: "passed", durationMs: 2100 },
 				{
 					title: ["sends"],
@@ -972,15 +966,15 @@ describe("warden e2e", () => {
 			const h = writing(() => jsonl(spec("chats", "opens")));
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
-			expect(reportOf(h.files, c).flows[0]?.tests).toHaveLength(1);
+			expect(reportOf(h.files, c).specs[0]?.tests).toHaveLength(1);
 			expect(c.stderr.join("\n")).not.toContain("no results.jsonl");
 		});
 
-		test("a timed-out test fails the flow even when the process exited 0", async () => {
+		test("a timed-out test fails the spec even when the process exited 0", async () => {
 			const h = writing(() => jsonl(spec("chats", "slow", "timed-out")));
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
-			expect(reportOf(h.files, c).flows[0]).toMatchObject({ verdict: "failed", tests: [{ status: "timed-out" }] });
+			expect(reportOf(h.files, c).specs[0]).toMatchObject({ verdict: "failed", tests: [{ status: "timed-out" }] });
 		});
 
 		test("no results file: the exit code decides, with a warning", async () => {
@@ -988,7 +982,7 @@ describe("warden e2e", () => {
 			const pass = harness();
 			expect(await createE2eCommand(pass.deps).run(c)).toBe(0);
 			expect(c.stderr.join("\n")).toContain("chats: no results.jsonl — verdict from exit code 0");
-			expect(reportOf(pass.files, c).flows[0]).not.toHaveProperty("tests");
+			expect(reportOf(pass.files, c).specs[0]).not.toHaveProperty("tests");
 			const fail = harness({ exitCodes: { chats: 1 } });
 			expect(await createE2eCommand(fail.deps).run(c)).toBe(1);
 		});
@@ -999,9 +993,9 @@ describe("warden e2e", () => {
 			expect(await createE2eCommand(junk.deps).run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain("chats: no results.jsonl — verdict from exit code 1");
 
-			const cut = writing(() => `${jsonl(spec("chats", "opens"))}{"file":"${join(dir, "flows/chats.e2e.ts")}","ti`);
+			const cut = writing(() => `${jsonl(spec("chats", "opens"))}{"file":"${join(dir, "specs/chats.e2e.ts")}","ti`);
 			expect(await createE2eCommand(cut.deps).run(c)).toBe(0);
-			expect(reportOf(cut.files, c).flows[0]?.tests).toHaveLength(1);
+			expect(reportOf(cut.files, c).specs[0]?.tests).toHaveLength(1);
 		});
 
 		test("test.only left in a spec fails the run under CI, even when everything passed; locally it does not", async () => {
@@ -1010,15 +1004,15 @@ describe("warden e2e", () => {
 			c.env = { ...c.env, CI: "true" };
 			const h = writing(build);
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
-			expect(c.stderr.join("\n")).toContain(`test.only left in ${join(dir, "flows/chats.e2e.ts")}`);
-			expect(reportOf(h.files, c)).toMatchObject({ ok: false, only: [join(dir, "flows/chats.e2e.ts")] });
-			expect(reportOf(h.files, c).flows[0]?.verdict).toBe("passed");
+			expect(c.stderr.join("\n")).toContain(`test.only left in ${join(dir, "specs/chats.e2e.ts")}`);
+			expect(reportOf(h.files, c)).toMatchObject({ ok: false, only: [join(dir, "specs/chats.e2e.ts")] });
+			expect(reportOf(h.files, c).specs[0]?.verdict).toBe("passed");
 
 			c.env = { ...c.env, CI: "" };
 			expect(await createE2eCommand(writing(build).deps).run(c)).toBe(0);
 		});
 
-		test("--no-tui: a line per finished test as results arrive, then a line per finished flow", async () => {
+		test("--no-tui: a line per finished test as results arrive, then a line per finished spec", async () => {
 			await resuite({ isolate: "device" });
 			const c = setup(["--all", "--no-tui"]);
 			const h = harness({ manual: true });
@@ -1037,7 +1031,7 @@ describe("warden e2e", () => {
 			expect(text).toContain("warden-iphone-17-1 ✓ chats");
 		});
 
-		test("per-flow mode prints the same test lines", async () => {
+		test("per-spec mode prints the same test lines", async () => {
 			const h = writing(() => jsonl(spec("chats", "opens")));
 			const c = setup(["--files", "src/chat/lazy.tsx", "--no-tui"]);
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
@@ -1066,21 +1060,21 @@ describe("warden e2e", () => {
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			expect(h.jobs().map((j) => [j.cmd, j.opts.env.WARDEN_UDID, j.opts.env.WARDEN_LEG])).toEqual([
-				[bunTest(join(dir, "flows/chats.e2e.ts")), "U1", "iphone-17"],
+				[bunTest(join(dir, "specs/chats.e2e.ts")), "U1", "iphone-17"],
 			]);
-			expect(reportOf(h.files, c).flows.map((f) => [f.id, f.leg, f.verdict])).toEqual([
+			expect(reportOf(h.files, c).specs.map((f) => [f.id, f.leg, f.verdict])).toEqual([
 				["chats", "iphone-17", "passed"],
 			]);
 		});
 
-		test("--devices all: every leg claims its own pool and runs every flow, with its env and only its devices", async () => {
+		test("--devices all: every leg claims its own pool and runs every spec, with its env and only its devices", async () => {
 			await resuite({ devices });
 			const c = legSetup(["--files", "src/chat/lazy.tsx", "--devices", "all"]);
 			const h = harness({ exitCodeFor: (env) => (env.WARDEN_LEG === "ipad" ? 1 : 0) });
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
 			const byLeg = new Map(h.jobs().map((j) => [j.opts.env.WARDEN_LEG, j]));
 			expect([...byLeg.keys()].sort()).toEqual(["ipad", "iphone-17"]);
-			expect(byLeg.get("ipad")?.cmd).toEqual(bunTest(join(dir, "flows/chats.e2e.ts")));
+			expect(byLeg.get("ipad")?.cmd).toEqual(bunTest(join(dir, "specs/chats.e2e.ts")));
 			expect(byLeg.get("ipad")?.opts.env).toMatchObject({
 				WARDEN_UDID: "P1",
 				WARDEN_UDIDS: "P1",
@@ -1092,7 +1086,7 @@ describe("warden e2e", () => {
 			expect(byLeg.get("iphone-17")?.opts.env.E2E_LAYOUT).toBeUndefined();
 			const report = reportOf(h.files, c);
 			expect(report.ok).toBe(false);
-			expect(report.flows.map((f) => [f.id, f.leg, f.verdict])).toEqual([
+			expect(report.specs.map((f) => [f.id, f.leg, f.verdict])).toEqual([
 				["chats", "iphone-17", "passed"],
 				["chats", "ipad", "failed"],
 			]);
@@ -1388,14 +1382,14 @@ describe("warden e2e", () => {
 			return { c, h };
 		};
 
-		test("legs, isolate device: a late leg's flows show in the --no-tui lines (batch-pipeline R1)", async () => {
+		test("legs, isolate device: a late leg's specs show in the --no-tui lines (batch-pipeline R1)", async () => {
 			const { c } = await lateLeg(["--no-tui"], false);
 			const text = c.stderr.join("\n");
 			expect(text).toContain("warden-iphone-17-1 ✓ chats");
 			expect(text).toContain("warden-ipad-1 ✓ chats");
 		});
 
-		test("legs, isolate device: a late leg's flows count in the grid header's totals (batch-pipeline R1)", async () => {
+		test("legs, isolate device: a late leg's specs count in the grid header's totals (batch-pipeline R1)", async () => {
 			const { h } = await lateLeg([], true);
 			const screen = Bun.stripANSI(h.terminal.join(""));
 			expect(screen).toContain("  2/2  ");
@@ -1532,35 +1526,27 @@ describe("warden e2e", () => {
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			expect(jobNames(h).sort()).toEqual(["shard-0", "shard-1"]);
-			expect(reportOf(h.files, c)).toMatchObject({ ok: true, isolate: "device", mode: "single" });
+			expect(reportOf(h.files, c)).toMatchObject({ ok: true, isolate: "device" });
 		});
 
-		test("isolate: flow keeps one process per flow", async () => {
-			await resuiteDefault({ isolate: "flow", count: 2 });
+		test("isolate: spec keeps one process per spec", async () => {
+			await resuiteDefault({ isolate: "spec", count: 2 });
 			const c = setup(["--all"]);
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			expect(jobNames(h).sort()).toEqual(["chats", "settings"]);
 			const report = reportOf(h.files, c);
-			expect(report.isolate).toBe("flow");
-			expect(report).not.toHaveProperty("mode");
+			expect(report.isolate).toBe("spec");
 		});
 
-		test("the old mode: per-flow still means a process per flow", async () => {
-			await resuiteDefault({ mode: "per-flow", count: 2 });
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(setup(["--all"]))).toBe(0);
-			expect(jobNames(h).sort()).toEqual(["chats", "settings"]);
-		});
-
-		test("passes > 1 needs a process per flow, so the default falls back to it", async () => {
+		test("passes > 1 needs a process per spec, so the default falls back to it", async () => {
 			await resuiteDefault({ passes: 2 });
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
 			expect(jobNames(h)).toEqual(["chats", "chats"]);
 		});
 
-		test("a CLI --passes 2 also falls back to a process per flow; each pass writes its own out dir (12-10)", async () => {
+		test("a CLI --passes 2 also falls back to a process per spec; each pass writes its own out dir (12-10)", async () => {
 			await resuiteDefault();
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(setup(["--files", "src/chat/lazy.tsx", "--passes", "2"]))).toBe(0);
@@ -1575,34 +1561,34 @@ describe("warden e2e", () => {
 			const h = harness();
 			const c = setup(["--files", "src/chat/lazy.tsx", "--passes", "2"]);
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
-			expect(c.stderr.join("\n")).toContain('--passes 2 needs isolate "flow"');
+			expect(c.stderr.join("\n")).toContain('--passes 2 needs isolate "spec"');
 			expect(h.jobs()).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("flows run in id order in a device's one process", async () => {
+		test("specs run in id order in a device's one process", async () => {
 			await resuiteDefault({ count: 1 });
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(setup(["--all"]))).toBe(0);
 			expect(h.jobs().map((j) => j.cmd)).toEqual([
-				bunTest(join(dir, "flows/chats.e2e.ts"), join(dir, "flows/settings.e2e.ts")),
+				bunTest(join(dir, "specs/chats.e2e.ts"), join(dir, "specs/settings.e2e.ts")),
 			]);
 		});
 
-		test("jobTimeoutMs is per flow: a device's process gets it once for each flow it runs", async () => {
+		test("jobTimeoutMs is per spec: a device's process gets it once for each spec it runs", async () => {
 			await resuiteDefault({ count: 1, jobTimeoutMs: 60_000 });
 			const device = harness();
 			expect(await createE2eCommand(device.deps).run(setup(["--all"]))).toBe(0);
 			expect(device.timers.map((t) => t.ms)).toContain(120_000);
 			expect(device.timers.map((t) => t.ms)).not.toContain(60_000);
 
-			await resuiteDefault({ isolate: "flow", count: 1, jobTimeoutMs: 60_000 });
-			const flow = harness();
-			expect(await createE2eCommand(flow.deps).run(setup(["--all"]))).toBe(0);
-			expect(flow.timers.map((t) => t.ms)).toContain(60_000);
+			await resuiteDefault({ isolate: "spec", count: 1, jobTimeoutMs: 60_000 });
+			const spec = harness();
+			expect(await createE2eCommand(spec.deps).run(setup(["--all"]))).toBe(0);
+			expect(spec.timers.map((t) => t.ms)).toContain(60_000);
 		});
 
-		test("--job-timeout is per flow too", async () => {
+		test("--job-timeout is per spec too", async () => {
 			await resuiteDefault({ count: 1 });
 			const h = harness();
 			expect(await createE2eCommand(h.deps).run(setup(["--all", "--job-timeout", "30s"]))).toBe(0);
@@ -1611,16 +1597,16 @@ describe("warden e2e", () => {
 
 		describe("retries", () => {
 			const bothRequired = {
-				flows: {
+				specs: {
 					chats: { entries: ["src/app/(app)/chats.tsx"] },
 					settings: { entries: ["src/app/(app)/settings.tsx"] },
 				},
 			};
 			const attempt = (env: Record<string, string | undefined>) => Number(env.WARDEN_JOB_SEQ);
-			const chatsFile = () => join(dir, "flows/chats.e2e.ts");
-			const settingsFile = () => join(dir, "flows/settings.e2e.ts");
+			const chatsFile = () => join(dir, "specs/chats.e2e.ts");
+			const settingsFile = () => join(dir, "specs/settings.e2e.ts");
 
-			test("a device's retry reruns only the flows that failed", async () => {
+			test("a device's retry reruns only the specs that failed", async () => {
 				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
 				const c = setup(["--all"]);
 				const h: Harness = harness({
@@ -1639,17 +1625,17 @@ describe("warden e2e", () => {
 				expect(h.jobs().map((j) => j.cmd)).toEqual([bunTest(chatsFile(), settingsFile()), bunTest(settingsFile())]);
 				const report = reportOf(h.files, c);
 				expect(report.ok).toBe(true);
-				expect(report.flows.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
+				expect(report.specs.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
 					["chats", "passed", 1],
 					["settings", "passed", 2],
 				]);
 			});
 
-			test("after a crash the retry runs the flow it died in and the flows it never reached", async () => {
+			test("after a crash the retry runs the spec it died in and the specs it never reached", async () => {
 				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
-				write("flows/profile.e2e.ts", "export {};\n");
+				write("specs/profile.e2e.ts", "export {};\n");
 				const c = setup(["--all"]);
-				const profileFile = join(dir, "flows/profile.e2e.ts");
+				const profileFile = join(dir, "specs/profile.e2e.ts");
 				const h: Harness = harness({
 					exitCodeFor: (env) => {
 						const first = attempt(env) === 0;
@@ -1667,14 +1653,14 @@ describe("warden e2e", () => {
 					bunTest(chatsFile(), profileFile, settingsFile()),
 					bunTest(profileFile, settingsFile()),
 				]);
-				expect(reportOf(h.files, c).flows.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
+				expect(reportOf(h.files, c).specs.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
 					["chats", "passed", 1],
 					["profile", "passed", 2],
 					["settings", "passed", 2],
 				]);
 			});
 
-			test("the end-of-run grid shows the last attempt: a flow that failed and then passed on its retry is green", async () => {
+			test("the end-of-run grid shows the last attempt: a spec that failed and then passed on its retry is green", async () => {
 				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
 				const c = setup(["--all"]);
 				// results older than the run are ignored by the grid's report
@@ -1698,7 +1684,7 @@ describe("warden e2e", () => {
 				expect(frame).not.toContain("✗ settings");
 			});
 
-			test("a flow that still fails after its retry fails the gate; the one that passed keeps its pass", async () => {
+			test("a spec that still fails after its retry fails the gate; the one that passed keeps its pass", async () => {
 				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
 				const c = setup(["--all"]);
 				const h: Harness = harness({
@@ -1714,14 +1700,14 @@ describe("warden e2e", () => {
 				});
 				expect(await createE2eCommand(h.deps).run(c)).toBe(1);
 				expect(h.jobs()).toHaveLength(2);
-				expect(reportOf(h.files, c).flows.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
+				expect(reportOf(h.files, c).specs.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
 					["chats", "passed", 1],
 					["settings", "failed", 2],
 				]);
 			});
 
-			test("a process per flow retries just that flow, as before", async () => {
-				await resuite({ isolate: "flow", count: 1, retry: 1 });
+			test("a process per spec retries just that spec, as before", async () => {
+				await resuite({ isolate: "spec", count: 1, retry: 1 });
 				const h = harness({ exitCodes: { chats: 1 } });
 				expect(await createE2eCommand(h.deps).run(setup(["--all"]))).toBe(1);
 				expect(h.jobs().map((j) => [j.opts.env.WARDEN_JOB, j.cmd.at(-1)])).toEqual([
@@ -1785,7 +1771,7 @@ describe("warden e2e", () => {
 		});
 	});
 
-	test("suite setup runs once per device after the app install and before any flow, with the lease env", async () => {
+	test("suite setup runs once per device after the app install and before any spec, with the lease env", async () => {
 		await resuite({
 			setup: "defaults write {udid} Key http://localhost:$WARDEN_PORT_0",
 			ports: ["8091:5"],
@@ -1832,7 +1818,7 @@ describe("warden e2e", () => {
 		expect(report.setup?.[0]?.log).toMatch(/setup-0\.log$/);
 	});
 
-	test("a device whose setup fails is dropped; its flows run on the rest", async () => {
+	test("a device whose setup fails is dropped; its specs run on the rest", async () => {
 		await resuite({ setup: "prep {udid}" });
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
@@ -1967,7 +1953,7 @@ describe("warden e2e", () => {
 		expect(h.slimmed).toEqual([]);
 	});
 
-	test("--all runs every flow with no diff; include / exclude narrow it", async () => {
+	test("--all runs every spec with no diff; include / exclude narrow it", async () => {
 		const c = setup(["--all"]);
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
@@ -1977,7 +1963,7 @@ describe("warden e2e", () => {
 				.map((j) => j.opts.env.WARDEN_JOB)
 				.sort()
 		).toEqual(["chats", "settings"]);
-		expect(c.stderr.join("\n")).toContain("2/2 flow(s) passed");
+		expect(c.stderr.join("\n")).toContain("2/2 spec(s) passed");
 
 		await resuite({ exclude: ["settings"] });
 		const c2 = setup(["--all"]);
@@ -1986,17 +1972,17 @@ describe("warden e2e", () => {
 		expect(h2.jobs().map((j) => j.opts.env.WARDEN_JOB)).toEqual(["chats"]);
 	});
 
-	test("--flows runs exactly the named flows; an unknown one fails", async () => {
-		const c = setup(["--flows", "settings"]);
+	test("--specs runs exactly the named specs; an unknown one fails", async () => {
+		const c = setup(["--specs", "settings"]);
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		expect(h.jobs().map((j) => j.opts.env.WARDEN_JOB)).toEqual(["settings"]);
 
-		const bad = setup(["--flows", "nope"]);
+		const bad = setup(["--specs", "nope"]);
 		expect(await createE2eCommand(harness().deps).run(bad)).toBe(1);
-		expect(bad.stderr.join("\n")).toContain('"nope" matches no flow');
+		expect(bad.stderr.join("\n")).toContain('"nope" matches no spec');
 
-		const both = setup(["--all", "--flows", "chats"]);
+		const both = setup(["--all", "--specs", "chats"]);
 		expect(await createE2eCommand(harness().deps).run(both)).toBe(1);
 		expect(both.stderr.join("\n")).toContain("exclusive");
 	});

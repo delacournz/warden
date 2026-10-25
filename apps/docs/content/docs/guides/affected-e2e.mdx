@@ -1,48 +1,48 @@
 ---
 title: Affected e2e
-description: Run only the e2e flows a change needs, picked from the git diff and the TypeScript import graph, and gate on the required ones.
+description: Run only the e2e specs a change needs, picked from the git diff and the TypeScript import graph, and gate on the required ones.
 icon: GitBranch
 ---
 
-A full e2e suite is slow; most changes touch a few screens. `warden affected` works out which flows a branch needs, and `warden e2e` runs just those on leased devices and fails when a required one fails.
+A full e2e suite is slow; most changes touch a few screens. `warden affected` works out which specs a branch needs, and `warden e2e` runs just those on leased devices and fails when a required one fails.
 
 ```bash
 warden affected mobile --base origin/main --explain   # what would run, and why
-warden e2e mobile --base origin/main --count 2        # run it: exit 0 = every required flow passed
+warden e2e mobile --base origin/main --count 2        # run it: exit 0 = every required spec passed
 ```
 
-Flows stay in your repo's own `*.e2e.ts` files, written with [`@delacour/warden-e2e`](/docs/guides/specs), and the relative imports of a flow count as helpers; warden picks them, leases devices, runs them with `bun test` and reports.
+Specs stay in your repo's own `*.e2e.ts` files, written with [`@delacour/warden-e2e`](/docs/guides/specs), and the relative imports of a spec count as helpers; warden picks them, leases devices, runs them with `bun test` and reports.
 
-## How flows are picked
+## How specs are picked
 
 1. **Changed files.** Everything that differs from `merge-base(<base>, HEAD)`: commits on the branch, staged and unstaged edits, untracked files, both sides of a rename. `--files a,b` skips git.
-2. **`runAll`.** A changed file matching one of the suite's `runAll` globs (lockfile, native project, bundler config — you list them, there are no defaults) selects every flow and skips the import walk. `ignore` globs drop a change before any step; `scope` keeps only matching changes.
-3. **`paths`.** Globs on a flow select it when a changed file matches.
-4. **Import graph.** Each flow lists its `entries` — the screens or routes it drives. Warden follows their imports, resolved the way the TypeScript compiler does (each file's nearest `tsconfig.json`: `paths`, `baseUrl`, `extends`, `customConditions`; workspace packages followed to their source). A changed file anywhere in that graph selects the flow.
-   - **Per platform.** React Native platform files resolve per platform (`x.ios.tsx` → `x.native.tsx` → `x.tsx`), so an `.android.tsx` change only selects Android flows.
+2. **`runAll`.** A changed file matching one of the suite's `runAll` globs (lockfile, native project, bundler config — you list them, there are no defaults) selects every spec and skips the import walk. `ignore` globs drop a change before any step; `scope` keeps only matching changes.
+3. **`paths`.** Globs on a spec select it when a changed file matches.
+4. **Import graph.** Each spec lists its `entries` — the screens or routes it drives. Warden follows their imports, resolved the way the TypeScript compiler does (each file's nearest `tsconfig.json`: `paths`, `baseUrl`, `extends`, `customConditions`; workspace packages followed to their source). A changed file anywhere in that graph selects the spec.
+   - **Per platform.** React Native platform files resolve per platform (`x.ios.tsx` → `x.native.tsx` → `x.tsx`), so an `.android.tsx` change only selects Android specs.
    - **Runtime imports only.** `import type` / `export type` are dropped, as the bundler drops them.
    - **Router layouts.** With `routerRoot`, every `_layout` above an entry counts as an entry too (file-based routers render them around the route).
    - **`maxDepth`** limits how many import hops from an entry still count. Apps with hub modules (a session context, a shared API client) otherwise reach almost everything from every screen; `3` is a good start.
-   - **Needs TypeScript 5.0 or later.** The graph is walked with a TypeScript compiler: warden's own when it runs from source, else (the compiled `warden` binary, which does not carry one) the analysed project's, found as `node_modules/typescript` from the config's directory upward. Add `typescript` as a devDependency; without it (or with one older than 5.0) a run that needs the graph exits 1 and says so. `warden e2e --all` / `--flows` and runs with no changes do not need it. Yarn Plug'n'Play installs have no `node_modules`, so they are not supported (use `nodeLinker: node-modules`).
-5. **Flow files.** A changed flow selects itself; a changed helper (any other `.ts` file in the flows directory) selects every flow that imports it.
-6. **`always`** flows run every time, and so do flows with no `entries` / `paths` unless `unmapped` is `"skip"`.
+   - **Needs TypeScript 5.0 or later.** The graph is walked with a TypeScript compiler: warden's own when it runs from source, else (the compiled `warden` binary, which does not carry one) the analysed project's, found as `node_modules/typescript` from the config's directory upward. Add `typescript` as a devDependency; without it (or with one older than 5.0) a run that needs the graph exits 1 and says so. `warden e2e --all` / `--specs` and runs with no changes do not need it. Yarn Plug'n'Play installs have no `node_modules`, so they are not supported (use `nodeLinker: node-modules`).
+5. **Spec files.** A changed spec selects itself; a changed helper (any other `.ts` file in the specs directory) selects every spec that imports it.
+6. **`always`** specs run every time, and so do specs with no `entries` / `paths` unless `unmapped` is `"skip"`.
 
-A flow runs on the platforms named in its config, else the `ios` / `android` token in its id (`store-ios-02-chats`), else both.
+A spec runs on the platforms named in its config, else the `ios` / `android` token in its id (`store-ios-02-chats`), else both.
 
-`--explain` prints the reason for each flow, including the shortest import chain:
+`--explain` prints the reason for each spec, including the shortest import chain:
 
 ```text
-ios  2 of 11 flow(s)  (base origin/main, 3 changed file(s))
+ios  2 of 11 spec(s)  (base origin/main, 3 changed file(s))
   ● qa-chat-attachment  required
       import   src/modules/chats/composer.tsx
                src/app/(app)/chats/[chat_id].tsx → src/modules/chats/thread.tsx → src/modules/chats/composer.tsx
   ● store-ios-03-chat-thread  optional
       import   src/modules/chats/composer.tsx
   skipped: qa-offline-banner, store-ios-01-my-day, …
-  reached no flow: src/modules/voice/voice-auth.ts
+  reached no spec: src/modules/voice/voice-auth.ts
 ```
 
-"Reached no flow" lists changed files no flow covers — gaps in the map. `--strict` exits 3 when there are any; `unmatched: "run-all"` instead makes such a change select every flow. Without `--platform` and a suite `platform`, `warden affected` covers both platforms (one id list, the union); `warden e2e` needs exactly one. With no `e2e` suites configured, every flow is selected (no git diff).
+"Reached no spec" lists changed files no spec covers — gaps in the map. `--strict` exits 3 when there are any; `unmatched: "run-all"` instead makes such a change select every spec. Without `--platform` and a suite `platform`, `warden affected` covers both platforms (one id list, the union); `warden e2e` needs exactly one. With no `e2e` suites configured, every spec is selected (no git diff).
 
 ## Configuring a suite
 
@@ -52,7 +52,7 @@ import { defineConfig } from "@delacour/warden/config";
 export default defineConfig({
   e2e: {
     mobile: {
-      flowsDir: "flows",
+      specsDir: "specs",
       spec: { bundleId: "com.example.mobile" },
       platform: "ios",
       tsconfig: "apps/mobile/tsconfig.json",
@@ -62,7 +62,7 @@ export default defineConfig({
       ignore: ["**/*.md", "**/*.test.ts"],
       passes: 2,
       count: 2,
-      flows: {
+      specs: {
         "qa-chat-attachment": { entries: ["apps/mobile/src/app/(app)/chats/[chat_id].tsx"] },
         "qa-offline-*": { entries: ["apps/mobile/src/app/+native-intent.ts"], paths: ["apps/mobile/src/modules/linking/**"] },
         "store-*": { required: false }
@@ -72,16 +72,16 @@ export default defineConfig({
 });
 ```
 
-A flow's id is its path under `flowsDir` without the extension. Keys in `flows` are ids or globs; a flow's exact key and every matching glob merge (`entries` / `paths` add up, the exact key's `required` / `platforms` / `maxDepth` win). All paths are relative to the config file. See the [field reference](/docs/reference/configuration#e2e).
+A spec's id is its path under `specsDir` without the extension. Keys in `specs` are ids or globs; a spec's exact key and every matching glob merge (`entries` / `paths` add up, the exact key's `required` / `platforms` / `maxDepth` win). All paths are relative to the config file. See the [field reference](/docs/reference/configuration#e2e).
 
 ## Running and gating
 
 `warden e2e` is [`warden batch`](/docs/guides/e2e#batches-one-job-per-device) with the job list coming from the selection. Every batch and claim flag works (`--count`, `--serve`, `--serve-ready`, `--app`, `--record` …); the suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` fill in anything you don't pass, and `project` (a `projects[].name`) sets where the specs and serve run and which app is installed — the same semantics as a [batch preset](/docs/guides/e2e#saving-a-batch-as-a-preset).
 
-- One `bun test` process per device runs its share of the flows (`isolate: "device"`, the default unless `passes` is above 1, which defaults to `isolate: "flow"`; sharded round-robin by flow id), in the suite's `project` root, with `WARDEN_UDID`, `WARDEN_BUNDLE_ID` and the rest of the [spec environment](/docs/reference/environment#set-for-spec-processes). `isolate: "flow"` runs each flow as its own process instead.
-- `passes: 2` makes a flow pass only after two consecutive green runs on the same device (`WARDEN_PASS` = 0, 1), which catches flows that only pass from a lucky start state.
-- `required: false` flows are reported but never fail the gate. `--required-only` runs just the required ones.
-- `e2e-report.json` (in the batch dir, and at `--report <file>`) lists every flow with its reasons, attempts and verdict, a `tests[]` entry per test (status, duration, error, artifact directory, from the spec's `results.jsonl`), plus a `device`, `log` and `screenshot` (png) for a flow whose last attempt failed, and top-level `suite`, `platform`, `base`, `isolate`, `headless`, `batchDir`, `only` and `setup`. Exit codes: 0 gate passed (or nothing affected), 1 a required flow failed or setup error, 130 interrupted. `--json` prints it.
+- One `bun test` process per device runs its share of the specs (`isolate: "device"`, the default unless `passes` is above 1, which defaults to `isolate: "spec"`; sharded round-robin by spec id), in the suite's `project` root, with `WARDEN_UDID`, `WARDEN_BUNDLE_ID` and the rest of the [spec environment](/docs/reference/environment#set-for-spec-processes). `isolate: "spec"` runs each spec as its own process instead.
+- `passes: 2` makes a spec pass only after two consecutive green runs on the same device (`WARDEN_PASS` = 0, 1), which catches specs that only pass from a lucky start state.
+- `required: false` specs are reported but never fail the gate. `--required-only` runs just the required ones.
+- `e2e-report.json` (in the batch dir, and at `--report <file>`) lists every spec with its reasons, attempts and verdict, a `tests[]` entry per test (status, duration, error, artifact directory, from the spec's `results.jsonl`), plus a `device`, `log` and `screenshot` (png) for a spec whose last attempt failed, and top-level `suite`, `platform`, `base`, `isolate`, `headless`, `batchDir`, `only` and `setup`. Exit codes: 0 gate passed (or nothing affected), 1 a required spec failed or setup error, 130 interrupted. `--json` prints it.
 - Leases are released when the run ends. Under CI a passed gate also shuts down the sims / emulators warden created (or booted for the run). Locally they stay booted, so the next run skips the 10-30 s boot, and `warden gc` shuts them down once they have sat idle (20 min). A failed run always leaves them booted so you can inspect them (`warden release --mine --shutdown` when done). `e2e.<suite>.shutdown: "always" | "idle"` overrides the CI / local default and `--no-shutdown` keeps them up after a pass whatever it says.
 - Nothing affected → exit 0 without claiming a device. `--dry-run` selects and explains, then stops.
 
@@ -96,7 +96,7 @@ The same command runs locally or in a pre-push hook. Parsed imports are cached u
 
 ### Feeding a batch preset
 
-`warden affected` prints one flow id per line, so it also works as a preset's job source:
+`warden affected` prints one spec id per line, so it also works as a preset's job source:
 
 ```ts
 jobsFrom: { command: "warden affected mobile --platform ios --base origin/main" }
@@ -104,7 +104,7 @@ jobsFrom: { command: "warden affected mobile --platform ios --base origin/main" 
 
 ## Per-device setup
 
-`setup` runs a shell command once on every leased device, after the app install and before that device's first flow. Typical uses: point the installed app at the suite's local API, or answer a first-launch system alert.
+`setup` runs a shell command once on every leased device, after the app install and before that device's first spec. Typical uses: point the installed app at the suite's local API, or answer a first-launch system alert.
 
 ```ts title="warden.config.ts"
 import { defineConfig } from "@delacour/warden/config";
@@ -120,6 +120,6 @@ export default defineConfig({
 });
 ```
 
-The command gets `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>` / `WARDEN_PORTS`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH` and the suite `env`, and runs in the suite's `project` root. Each device's output is `logs/setup-<worker>.log`, next to the job logs. A device whose setup exits non-zero is dropped from the pool (its flows go to the remaining devices); if none is left the run fails and names the setup logs. `e2e-report.json` records every device under `setup` (`worker`, `udid`, `ok`, `exitCode`, `log`).
+The command gets `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>` / `WARDEN_PORTS`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH` and the suite `env`, and runs in the suite's `project` root. Each device's output is `logs/setup-<worker>.log`, next to the job logs. A device whose setup exits non-zero is dropped from the pool (its specs go to the remaining devices); if none is left the run fails and names the setup logs. `e2e-report.json` records every device under `setup` (`worker`, `udid`, `ok`, `exitCode`, `log`).
 
-`slim: true` (iOS) runs [`warden sim slim`](/docs/reference/cli#warden-sim-slim-udid) on each device first, to save RAM and CPU when several simulators run together. A slim failure only warns; the device still runs flows. The result is recorded under `setup[].slim` in `e2e-report.json`. A suite that runs on both platforms keeps `slim: true`: an Android run skips it with a note (`slim is iOS-only; skipped on android`) and never slims its emulators. Only a suite fixed to `platform: "android"` fails config validation with it.
+`slim: true` (iOS) runs [`warden sim slim`](/docs/reference/cli#warden-sim-slim-udid) on each device first, to save RAM and CPU when several simulators run together. A slim failure only warns; the device still runs specs. The result is recorded under `setup[].slim` in `e2e-report.json`. A suite that runs on both platforms keeps `slim: true`: an Android run skips it with a note (`slim is iOS-only; skipped on android`) and never slims its emulators. Only a suite fixed to `platform: "android"` fails config validation with it.

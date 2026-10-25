@@ -42,13 +42,13 @@ const metroPort = Number(process.env.WARDEN_PORT_0);
 
 ## Batches: one job per device
 
-When the work is a list of independent jobs — test flows, screenshot scenes — `warden batch` does the scheduling. It claims N devices, gives each one a worker, and hands the next job to whichever device frees up first:
+When the work is a list of independent jobs — test specs, screenshot scenes — `warden batch` does the scheduling. It claims N devices, gives each one a worker, and hands the next job to whichever device frees up first:
 
 ```bash
-ls flows | warden batch ios --count 5 --max 5 --port 8091:20 \
+ls specs | warden batch ios --count 5 --max 5 --port 8091:20 \
   --serve "bun run metro" --serve-ready tcp:8091 \
   --jobs-from - --retry 1 \
-  -- bun run e2e:flow {job} --device {udid}
+  -- bun run e2e:spec {job} --device {udid}
 ```
 
 Each job gets the `warden run` variables plus:
@@ -90,7 +90,7 @@ export default defineConfig({
       serve: "bun scripts/e2e/run-ios.ts --session",
       serveReady: "file:e2e-artifacts/batch/session.json",
       serveTimeout: "20m",
-      jobsFrom: { command: "bun scripts/e2e/select-flows.ts --list --offline" },
+      jobsFrom: { command: "bun scripts/e2e/select-specs.ts --list --offline" },
       cmd: ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"]
     }
   }
@@ -98,17 +98,17 @@ export default defineConfig({
 ```
 
 ```bash
-warden batch salient-e2e                       # 5 sims, the offline flows
-warden batch salient-e2e --count 2 --jobs qa-login   # same setup, 2 sims, one flow
+warden batch salient-e2e                       # 5 sims, the offline specs
+warden batch salient-e2e --count 2 --jobs qa-login   # same setup, 2 sims, one spec
 ```
 
 With `project` set, serve, the jobs and `jobsFrom.command` run in that project's root, relative paths (`serveReady` `file:`, `record`, `logs`, a `jobsFrom` file) resolve against it, and `app` installs that project's build. `env` is added to the serve and job env. Flags you pass override the preset, and `-- <cmd>` overrides `cmd`.
 
-To queue only the flows a change needs, see [Affected e2e](/docs/guides/affected-e2e).
+To queue only the specs a change needs, see [Affected e2e](/docs/guides/affected-e2e).
 
 ### Dev-client suites: `warden e2e` owns Metro
 
-A Release build embeds its JS and needs no bundler. A dev-client build does, and "whatever answers on the port" is not good enough: with several worktrees, that can be another checkout's Metro, and the flows then test the wrong code. Give the suite a `metro` block and warden runs the bundler itself:
+A Release build embeds its JS and needs no bundler. A dev-client build does, and "whatever answers on the port" is not good enough: with several worktrees, that can be another checkout's Metro, and the specs then test the wrong code. Give the suite a `metro` block and warden runs the bundler itself:
 
 ```ts title="warden.config.ts"
 export default defineConfig({
@@ -116,7 +116,7 @@ export default defineConfig({
   e2e: {
     mobile: {
       project: "app",
-      flowsDir: "e2e",
+      specsDir: "e2e",
       platform: "ios",
       app: { variant: "dev" },
       metro: { launchArgs: ["-E2E", "YES"] },
@@ -135,22 +135,22 @@ warden e2e mobile                 # from a cold shell, no env: 2 iPhones
 warden e2e mobile --devices all   # the iPad leg too, concurrently
 ```
 
-One command does the whole run: claim the devices of every leg, install the build, lease a port and start Metro on it in the project root, wait until that port is verified to serve **this** checkout, build the bundle once, open the app on each device with `--initialUrl`, run the specs ([`@delacour/warden-e2e`](/docs/guides/specs) under `bun test`), stop Metro, release. A spec reads `WARDEN_METRO_URL` and `WARDEN_UDID` (its own device) and never has to guess a port or start a bundler. If the leased port is answered by another worktree's Metro, the run stops with `port <p> is served by <dir>, not this worktree` before any flow.
+One command does the whole run: claim the devices of every leg, install the build, lease a port and start Metro on it in the project root, wait until that port is verified to serve **this** checkout, build the bundle once, open the app on each device with `--initialUrl`, run the specs ([`@delacour/warden-e2e`](/docs/guides/specs) under `bun test`), stop Metro, release. A spec reads `WARDEN_METRO_URL` and `WARDEN_UDID` (its own device) and never has to guess a port or start a bundler. If the leased port is answered by another worktree's Metro, the run stops with `port <p> is served by <dir>, not this worktree` before any spec.
 
 ### Isolation
 
-By default (`isolate: "device"`) one `bun test` process runs per device: the selected flows are sharded over the leg's devices round-robin by flow id, so the same flows always land together and a device's specs run in order in one process. That saves bun's start, the preload and the driver connect (150-250 ms) on every flow after a device's first. Under device isolation the batch jobs are named `shard-<k>` (`WARDEN_JOB`, `logs/<worker>-<seq>-shard-<k>.log`). Every flow still gets its own verdict, read from that process's `results.jsonl`, and its own per-test artifact directory.
+By default (`isolate: "device"`) one `bun test` process runs per device: the selected specs are sharded over the leg's devices round-robin by spec id, so the same specs always land together and a device's specs run in order in one process. That saves bun's start, the preload and the driver connect (150-250 ms) on every spec after a device's first. Under device isolation the batch jobs are named `shard-<k>` (`WARDEN_JOB`, `logs/<worker>-<seq>-shard-<k>.log`). Every spec still gets its own verdict, read from that process's `results.jsonl`, and its own per-test artifact directory.
 
-- **A crash** (the process is killed, or exits without finishing): flows whose tests passed before it keep their pass; the flow that was running and every flow it never reached fail, with the process log.
-- **Retries** (`retry`, `--retry`) rerun only the flows that did not pass, in a fresh process. A flow's verdict is the one from the last attempt that ran it, and `attempts` in `e2e-report.json` counts the attempts that ran it.
-- **`jobTimeoutMs` is per flow**: a process gets it once for each flow it runs.
-- **Load is split up front**, by flow id, not as devices free up. A suite whose flows differ a lot in length, on several devices, can keep one device busy after the others finish.
+- **A crash** (the process is killed, or exits without finishing): specs whose tests passed before it keep their pass; the spec that was running and every spec it never reached fail, with the process log.
+- **Retries** (`retry`, `--retry`) rerun only the specs that did not pass, in a fresh process. A spec's verdict is the one from the last attempt that ran it, and `attempts` in `e2e-report.json` counts the attempts that ran it.
+- **`jobTimeoutMs` is per spec**: a process gets it once for each spec it runs.
+- **Load is split up front**, by spec id, not as devices free up. A suite whose specs differ a lot in length, on several devices, can keep one device busy after the others finish.
 
-`isolate: "flow"` keeps one process per flow and one worker per device: each flow starts from a fresh process and the devices share the flows dynamically, at the cost of the start-up above. A suite with `passes` above 1 defaults to this (a flow's passes are re-runs of that flow); `passes` above 1 with `isolate: "device"` is a config error, and so is `--passes N` on a suite that sets `isolate: "device"`. `mode: "single"` / `"per-flow"` is the old spelling of `isolate: "device"` / `"flow"`.
+`isolate: "spec"` keeps one process per spec and one worker per device: each spec starts from a fresh process and the devices share the specs dynamically, at the cost of the start-up above. A suite with `passes` above 1 defaults to this (a spec's passes are re-runs of that spec); `passes` above 1 with `isolate: "device"` is a config error, and so is `--passes N` on a suite that sets `isolate: "device"`.
 
 ### Failure screenshots
 
-When a job exits non-zero, warden screenshots its device right away (iOS `simctl io screenshot`, Android `adb exec-out screencap -p`) into the logs directory, named after the job's log (`0-2-login.log` → `0-2-login.png`; with `passes`, `….pass1.png`). Each failed retry attempt gets its own. The absolute path is the `screenshot` field on that job in `batch.json`, and on the flow in `e2e-report.json`. For `warden e2e` flows the report prefers the spec runner's own `failure.png` of the failed test (the device at the failing step) over this after-the-fact shot. It is best effort with a 5 s cap: if the device can't be captured the field is simply absent and the batch carries on.
+When a job exits non-zero, warden screenshots its device right away (iOS `simctl io screenshot`, Android `adb exec-out screencap -p`) into the logs directory, named after the job's log (`0-2-login.log` → `0-2-login.png`; with `passes`, `….pass1.png`). Each failed retry attempt gets its own. The absolute path is the `screenshot` field on that job in `batch.json`, and on the spec in `e2e-report.json`. For `warden e2e` specs the report prefers the spec runner's own `failure.png` of the failed test (the device at the failing step) over this after-the-fact shot. It is best effort with a 5 s cap: if the device can't be captured the field is simply absent and the batch carries on.
 
 ### Recording a run
 

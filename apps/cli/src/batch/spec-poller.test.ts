@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { type FlowSink, flowPoller } from "./flow-poller";
-import type { FlowMark, TrackedFlow } from "./flow-progress";
 import { jsonl, memoryReadFrom, result } from "./results.testing";
 import { parseResultLine, type ReadFrom } from "./results-tail";
+import { type SpecSink, specPoller } from "./spec-poller";
+import type { SpecMark, TrackedSpec } from "./spec-progress";
 
-const flows: TrackedFlow[] = ["onboarding", "settings", "todos"].map((id) => ({ id, path: `/app/e2e/${id}.e2e.ts` }));
+const specs: TrackedSpec[] = ["onboarding", "settings", "todos"].map((id) => ({ id, path: `/app/e2e/${id}.e2e.ts` }));
 const file = (id: string) => `/app/e2e/${id}.e2e.ts`;
 const OUT = "/out/1-0/results.jsonl";
 
@@ -14,10 +14,10 @@ function rig(initial: Record<string, string> = {}) {
 	const resultFiles = new Map<string, string>([["1:0", OUT]]);
 	const ended = new Set<string>();
 	const parsed: string[] = [];
-	const marks: Array<{ worker: number; marks: Record<string, FlowMark> }> = [];
+	const marks: Array<{ worker: number; marks: Record<string, SpecMark> }> = [];
 	const lines: string[] = [];
-	const sink: FlowSink = {
-		flows: (worker, m) => marks.push({ worker, marks: { ...m } }),
+	const sink: SpecSink = {
+		specs: (worker, m) => marks.push({ worker, marks: { ...m } }),
 		tests: (l) => lines.push(...l),
 	};
 	let reads = 0;
@@ -28,7 +28,7 @@ function rig(initial: Record<string, string> = {}) {
 		reads++;
 		return memory(path, offset);
 	};
-	const poller = flowPoller(
+	const poller = specPoller(
 		{
 			every: (_ms, fn) => {
 				fire = fn;
@@ -42,7 +42,7 @@ function rig(initial: Record<string, string> = {}) {
 				return parseResultLine(line);
 			},
 		},
-		flows,
+		specs,
 		resultFiles,
 		ended,
 		sink
@@ -65,7 +65,7 @@ function rig(initial: Record<string, string> = {}) {
 	};
 }
 
-describe("flowPoller", () => {
+describe("specPoller", () => {
 	test("parses each result line exactly once however many ticks pass", async () => {
 		const r = rig();
 		let text = "";
@@ -112,7 +112,7 @@ describe("flowPoller", () => {
 		expect(r.marks).toHaveLength(2);
 	});
 
-	test("an ended job's flows are all marked once, its file is read a last time, and then it is left alone", async () => {
+	test("an ended job's specs are all marked once, its file is read a last time, and then it is left alone", async () => {
 		const r = rig({ [OUT]: jsonl(result(file("todos"), "add"), result(file("todos"), "remove", "failed")) });
 		await r.tick();
 		expect(r.marks.at(-1)).toEqual({ worker: 1, marks: { todos: "failed" } });
@@ -179,7 +179,7 @@ describe("flowPoller", () => {
 		});
 		const lines: string[] = [];
 		let fire: () => void = () => {};
-		const poller = flowPoller(
+		const poller = specPoller(
 			{
 				every: (_ms, fn) => {
 					fire = fn;
@@ -191,10 +191,10 @@ describe("flowPoller", () => {
 					return read;
 				},
 			},
-			flows,
+			specs,
 			new Map([["1:0", OUT]]),
 			new Set(),
-			{ flows: () => {}, tests: (l) => lines.push(...l) }
+			{ specs: () => {}, tests: (l) => lines.push(...l) }
 		);
 		fire();
 		await Bun.sleep(0);

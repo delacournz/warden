@@ -3,8 +3,8 @@ import type { Device } from "@delacour/warden-e2e";
 import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import { createScreen } from "@delacour/warden-e2e/screen/screen";
 import { staticDriver, testHost } from "@delacour/warden-e2e/screen/screen.testing";
-import { expectTodosAfterSignIn, FLOW_OPTIONS, launch, nextStep, openDeepLink } from "./flows";
 import { ids } from "./ids";
+import { expectTodosAfterSignIn, launch, nextStep, openDeepLink, SPEC_OPTIONS } from "./steps";
 
 const OPTIONS = { windowMs: 40, pollMs: 5 };
 
@@ -32,9 +32,9 @@ function setup(landingTap: number): { driver: FakeDriver; screen: ReturnType<typ
 	return { driver, screen: createScreen(testHost(driver, { cache: true })) };
 }
 
-describe("FLOW_OPTIONS", () => {
-	test("the flow opens the app itself and system sheets are dismissed", () => {
-		expect(FLOW_OPTIONS).toEqual({ launch: "none", systemAlerts: "dismiss" });
+describe("SPEC_OPTIONS", () => {
+	test("the spec opens the app itself and system sheets are dismissed", () => {
+		expect(SPEC_OPTIONS).toEqual({ launch: "none", systemAlerts: "dismiss" });
 	});
 });
 

@@ -6,7 +6,6 @@ import type { BenchDeps } from "./bench";
 import type { UiDevice } from "./device";
 import type { DevtoolsDeps } from "./devtools-cli";
 import { type UiError, uiError } from "./output";
-import type { RecordSink } from "./record";
 import type { VideoDeps } from "./video";
 
 /** Everything `warden ui` subcommands reach the outside world through; tests inject a `fakeDriver` and a fake clock. */
@@ -14,8 +13,6 @@ export type UiDeps = {
 	/** open a driver for a leased device (the caller closes it) */
 	driver: (ctx: CommandContext, device: UiDevice) => Promise<Result<Driver, UiError>>;
 	sleep: (ms: number) => Promise<void>;
-	/** the active flow recording's sink (default: nothing is recorded) */
-	record?: RecordSink;
 	/** how `video start|stop` runs the recorder process (default: real processes) */
 	video?: VideoDeps;
 	/** how the devtools subcommands (eval, tree, logs, network, reload) reach Metro and spawn the collector */

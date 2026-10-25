@@ -725,7 +725,7 @@ describe("warden batch", () => {
 			serve: "bun scripts/e2e/run-ios.ts --session",
 			serveReady: "file:e2e-artifacts/batch/session.json",
 			serveTimeout: "20m",
-			jobsFrom: { command: "bun scripts/e2e/select-flows.ts --list --offline" },
+			jobsFrom: { command: "bun scripts/e2e/select-specs.ts --list --offline" },
 			cmd: ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"],
 		};
 
@@ -749,7 +749,7 @@ describe("warden batch", () => {
 
 		test("salient preset: project cwd, {command} jobs, preset env + app env in serve and jobs, label on every lease", async () => {
 			const c = setup(["salient-e2e", "--count", "2"]);
-			c.env = { ...c.env, E2E_FLOWS: "qa-a,qa-b", E2E_CHANGED_FROM: "main" };
+			c.env = { ...c.env, E2E_SPECS: "qa-a,qa-b", E2E_CHANGED_FROM: "main" };
 			const root = join(c.cwd, "apps/salient/app");
 			mkdirSync(root, { recursive: true });
 			writeConfig(c.cwd, {
@@ -771,11 +771,11 @@ describe("warden batch", () => {
 			};
 			expect(await createBatchCommand(h.deps).run(c)).toBe(1);
 			expect(sh).toHaveLength(1);
-			expect(sh[0]?.cmd).toEqual(["sh", "-c", "bun scripts/e2e/select-flows.ts --list --offline"]);
+			expect(sh[0]?.cmd).toEqual(["sh", "-c", "bun scripts/e2e/select-specs.ts --list --offline"]);
 			expect(sh[0]?.opts?.cwd).toBe(root);
 			expect(sh[0]?.opts?.env).toMatchObject({
 				E2E_SESSION_FILE: "e2e-artifacts/batch/session.json",
-				E2E_FLOWS: "qa-a,qa-b",
+				E2E_SPECS: "qa-a,qa-b",
 				E2E_CHANGED_FROM: "main",
 				HOME: c.env.HOME,
 			});

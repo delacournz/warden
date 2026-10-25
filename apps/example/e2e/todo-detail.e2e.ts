@@ -1,8 +1,8 @@
 import { expect, test } from "@delacour/warden-e2e";
-import { FLOW_OPTIONS, openDeepLink, signedIn } from "./helpers/flows";
 import { ids } from "./helpers/ids";
+import { openDeepLink, SPEC_OPTIONS, signedIn } from "./helpers/steps";
 
-test.use(FLOW_OPTIONS);
+test.use(SPEC_OPTIONS);
 
 test("open a todo, mark it done, then delete it", async ({ app, screen }) => {
 	await signedIn(app, screen);

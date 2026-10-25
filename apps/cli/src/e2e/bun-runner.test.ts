@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { findBun, helperDir, runnerArgv, shardFlows, specEnv } from "./bun-runner";
+import { findBun, helperDir, runnerArgv, shardSpecs, specEnv } from "./bun-runner";
 
 describe("runnerArgv", () => {
-	test("bun test with the preload, a timeout 30 s past the per-test one and the flow files", () => {
+	test("bun test with the preload, a timeout 30 s past the per-test one and the spec files", () => {
 		expect(
 			runnerArgv({
 				bun: "/bin/bun",
 				preload: "/p/preload.ts",
-				flowPaths: ["/f/a.e2e.ts", "/f/b.e2e.ts"],
+				specPaths: ["/f/a.e2e.ts", "/f/b.e2e.ts"],
 				timeoutMs: 120_000,
 			})
 		).toEqual(["/bin/bun", "test", "--preload", "/p/preload.ts", "--timeout", "150000", "/f/a.e2e.ts", "/f/b.e2e.ts"]);
@@ -18,7 +18,7 @@ describe("runnerArgv", () => {
 			runnerArgv({
 				bun: "bun",
 				preload: "/p",
-				flowPaths: ["/f/a.e2e.ts"],
+				specPaths: ["/f/a.e2e.ts"],
 				timeoutMs: 1_000,
 				junitPath: "/o/junit.xml",
 			})
@@ -50,23 +50,23 @@ describe("findBun", () => {
 	});
 });
 
-describe("shardFlows", () => {
-	const flows = ["e", "b", "d", "a", "c"].map((id) => ({ id }));
+describe("shardSpecs", () => {
+	const specs = ["e", "b", "d", "a", "c"].map((id) => ({ id }));
 	const ids = (shards: Array<Array<{ id: string }>>) => shards.map((s) => s.map((f) => f.id));
 
-	test("round-robin by sorted id: flow i goes to shard i % n", () => {
-		expect(ids(shardFlows(flows, 2))).toEqual([
+	test("round-robin by sorted id: spec i goes to shard i % n", () => {
+		expect(ids(shardSpecs(specs, 2))).toEqual([
 			["a", "c", "e"],
 			["b", "d"],
 		]);
-		expect(ids(shardFlows(flows, 3))).toEqual([["a", "d"], ["b", "e"], ["c"]]);
+		expect(ids(shardSpecs(specs, 3))).toEqual([["a", "d"], ["b", "e"], ["c"]]);
 	});
 
-	test("never more shards than flows, never fewer than one", () => {
-		expect(shardFlows(flows.slice(0, 2), 5)).toHaveLength(2);
-		expect(ids(shardFlows(flows, 1))).toEqual([["a", "b", "c", "d", "e"]]);
-		expect(shardFlows(flows, 0)).toHaveLength(1);
-		expect(shardFlows([], 3)).toEqual([]);
+	test("never more shards than specs, never fewer than one", () => {
+		expect(shardSpecs(specs.slice(0, 2), 5)).toHaveLength(2);
+		expect(ids(shardSpecs(specs, 1))).toEqual([["a", "b", "c", "d", "e"]]);
+		expect(shardSpecs(specs, 0)).toHaveLength(1);
+		expect(shardSpecs([], 3)).toEqual([]);
 	});
 });
 
@@ -79,7 +79,7 @@ describe("specEnv", () => {
 				launchArgs: ["--initialUrl", "http://127.0.0.1:8081"],
 				out: "/b/e2e/0-1",
 				timeouts: { timeoutMs: 120_000, actionTimeoutMs: 30_000, assertionTimeoutMs: 5_000 },
-				flowsDir: "/repo/flows",
+				specsDir: "/repo/specs",
 				helperDir: "/bin",
 				version: "0.3.0",
 			})
@@ -91,7 +91,7 @@ describe("specEnv", () => {
 			WARDEN_E2E_TIMEOUT: "120000",
 			WARDEN_E2E_ACTION_TIMEOUT: "30000",
 			WARDEN_E2E_ASSERTION_TIMEOUT: "5000",
-			WARDEN_E2E_FLOWS_DIR: "/repo/flows",
+			WARDEN_E2E_SPECS_DIR: "/repo/specs",
 			WARDEN_HELPER_DIR: "/bin",
 			WARDEN_VERSION: "0.3.0",
 		});

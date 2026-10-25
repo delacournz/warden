@@ -90,10 +90,9 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 			const facade = deviceFacade(ctx, deps, device, driver.data, env.timeoutMs);
 			const opened = await viaFacade(() => facade.openLink(what));
 			if (!opened.success) return opened;
-			return finishAction(ctx, deps, env, device, driver.data, settle.data, {
+			return finishAction(ctx, deps, device, driver.data, settle.data, {
 				action: "open",
 				text: `opened ${what}`,
-				args: { url: what },
 				extra: { url: what },
 			});
 		}
@@ -106,17 +105,12 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 			app: what,
 			...(opts.metro !== undefined ? { metroUrl: opts.metro } : {}),
 		}));
-		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, device, driver.data, settle.data, {
 			action: "open",
 			text: [
 				`${launchVerb(opts.relaunch === true, attached)} ${what}${opts.metro ? ` (metro ${opts.metro})` : ""}${attached ? " (already running: attached, state kept; --relaunch starts it fresh)" : ""}`,
 				...(device.action === "attached" ? [sharedNote(device.lease)] : []),
 			].join("\n"),
-			args: {
-				bundleId: what,
-				relaunch: opts.relaunch === true,
-				...(opts.metro !== undefined ? { metro: opts.metro } : {}),
-			},
 			extra: {
 				bundleId: what,
 				relaunch: opts.relaunch === true,

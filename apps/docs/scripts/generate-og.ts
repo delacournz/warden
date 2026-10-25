@@ -21,7 +21,7 @@ const CONTENT = join(HERE, "../content/docs");
 const HOST = new URL(siteUrl).host;
 /** The landing headline already says the first half of `appDescription`; the card carries the rest. */
 const PITCH =
-	"warden leases every simulator, emulator and port to one owner at a time and fans your e2e flows across them.";
+	"warden leases every simulator, emulator and port to one owner at a time and fans your e2e specs across them.";
 
 const require = createRequire(import.meta.url);
 

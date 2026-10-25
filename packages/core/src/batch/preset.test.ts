@@ -30,7 +30,7 @@ const salientPreset = {
 	serve: "bun scripts/e2e/run-ios.ts --session",
 	serveReady: "file:e2e-artifacts/batch/session.json",
 	serveTimeout: "20m",
-	jobsFrom: { command: "bun scripts/e2e/select-flows.ts --list --offline" },
+	jobsFrom: { command: "bun scripts/e2e/select-specs.ts --list --offline" },
 	cmd: ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"],
 };
 
@@ -183,7 +183,7 @@ describe("findBatchPreset", () => {
 			serve: "bun scripts/e2e/run-ios.ts --session",
 			serveReady: `file:${join(root, "e2e-artifacts/batch/session.json")}`,
 			serveTimeout: "20m",
-			jobs: { kind: "command", command: "bun scripts/e2e/select-flows.ts --list --offline" },
+			jobs: { kind: "command", command: "bun scripts/e2e/select-specs.ts --list --offline" },
 			cmd: ["bun", "scripts/e2e/run-ios.ts", "--attach", "{job}", "--device", "{udid}"],
 		});
 	});

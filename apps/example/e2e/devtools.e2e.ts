@@ -1,14 +1,14 @@
 import { type Device, expect, test } from "@delacour/warden-e2e";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
-import { FLOW_OPTIONS, launch } from "./helpers/flows";
 import { ids } from "./helpers/ids";
 import { pollUntil } from "./helpers/poll";
+import { launch, SPEC_OPTIONS } from "./helpers/steps";
 
-test.use(FLOW_OPTIONS);
+test.use(SPEC_OPTIONS);
 
 /**
  * `device.devtools` talks to the app's JS runtime through Metro, so it only exists on the dev client
- * (`example-dev`). The Release suite has no `WARDEN_METRO_URL`: the flow is skipped there.
+ * (`example-dev`). The Release suite has no `WARDEN_METRO_URL`: the spec is skipped there.
  */
 const devtoolsTest = test.skipIf(process.env[ENV_NAMES.metroUrl] === undefined);
 
@@ -20,7 +20,7 @@ function devtoolsOf(device: Device): NonNullable<Device["devtools"]> {
 }
 
 /**
- * One flow, one launch (like the other flows): evaluate, console capture, the React tree, fetch capture,
+ * One spec, one launch (like the other specs): evaluate, console capture, the React tree, fetch capture,
  * then a JS reload back to the first screen.
  */
 devtoolsTest(

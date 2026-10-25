@@ -17,7 +17,7 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 | `claim.ts` | `claimDevices`: txn(reclaim → allocate → lease, pending placeholders for creates) then boot/create outside txn; all-or-nothing |
 | `ports.ts` | `parsePortSpec`, `isPortFree` (bind probe), `claimPorts` (probe outside txn, lease inside), `releasePorts` |
 | `duration.ts` / `config.defaults.ts` | `10m`-style durations; TTL 30m, idle 20m, heartbeat 30s, default profiles |
-| `affected/*.ts` | `warden affected` / `e2e` selection: `affected.schema` (zod `e2e.<suite>` config incl. `metro`, `devices`, `spec`), `git`, `graph*` (import graph via TS resolver, process / worker / snapshot), `flows`, `select`, `cache` |
+| `affected/*.ts` | `warden affected` / `e2e` selection: `affected.schema` (zod `e2e.<suite>` config incl. `metro`, `devices`, `spec`), `git`, `graph*` (import graph via TS resolver, process / worker / snapshot), `specs`, `select`, `cache` |
 | `batch/*.ts` | `warden batch` presets + scheduling: `preset(.schema)`, `expand` (job / command templating), `schedule` |
 | `providers/*.ts` | `DeviceProvider` impls (`ios`, `android`) on simctl / adb / emulator, `health` (iOS post-boot probe); Android console ports leased 5554–5584; android `waitReady` applies post-boot Play Protect verifier settings |
 | `builds/*.ts` | app build cache: `config` (zod `warden.config.{ts,json}` loader), `define-config` (public documented types + `defineConfig`, published as `@delacour/warden/config`), `project-key`, `fingerprint`, `cache`, `eas`, `local`, `install`, `compiler-cache`, `js-inputs`, `lock` (build lease), `resolve` (5-step resolver), `prune`, `ensure` |

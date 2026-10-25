@@ -6,7 +6,7 @@ import { commitGeneration, type UiState, updateState, writeLastSnapshot } from "
 /**
  * A second `warden ui` process for the state tests. `bun state.worker.testing.ts <home> <udid> <count>` takes `count`
  * generations through its own store connection, storing a snapshot each time, and prints them as JSON.
- * `… <count> <field>` instead sets one `state.json` record (`helper` | `video` | `collector` | `recording`) `count`
+ * `… <count> <field>` instead sets one `state.json` record (`helper` | `video` | `collector`) `count`
  * times through `updateState`, the n-th time with pid / startedAt `n`, and prints `count`.
  */
 const [home = "", udid = "", count = "0", field] = process.argv.slice(2);
@@ -21,8 +21,6 @@ function withField(state: UiState, name: string, n: number): UiState {
 			return { ...state, video: { pid: n, path: "/v.mp4", startedAt: n } };
 		case "collector":
 			return { ...state, collector: { pid: n, startedAt: n } };
-		case "recording":
-			return { ...state, recording: { file: "/f.flow.json", name: "f", startedAt: n } };
 		default:
 			throw new Error(`unknown field ${name}`);
 	}

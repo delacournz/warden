@@ -1,6 +1,6 @@
 import {
 	DEFAULT_E2E_COUNT,
-	DEFAULT_FLOWS_DIR,
+	DEFAULT_SPECS_DIR,
 	DEV_MENU_OFF_ARGS,
 } from "@delacour/warden-core/affected/affected.defaults";
 
@@ -19,7 +19,7 @@ export function wardenConfigSource(app: InitApp): string {
 	return `/**
  * warden config.
  * - \`warden dev\`: the dev client on a leased simulator, on a Metro port of its own.
- * - \`warden e2e\`: the \`*.e2e.ts\` specs in ${DEFAULT_FLOWS_DIR}/ (\`@delacour/warden-e2e\`) on the dev client, one
+ * - \`warden e2e\`: the \`*.e2e.ts\` specs in ${DEFAULT_SPECS_DIR}/ (\`@delacour/warden-e2e\`) on the dev client, one
  *   \`bun test\` process per leased simulator (\`--count N\`).
  * For autocompletion: \`bun add -d @delacour/warden\` and wrap this in \`defineConfig\` from "@delacour/warden/config".
  */
@@ -28,7 +28,7 @@ export default {
 	e2e: {
 		[${name}]: {
 			project: ${name},
-			flowsDir: ${str(DEFAULT_FLOWS_DIR)},
+			specsDir: ${str(DEFAULT_SPECS_DIR)},
 			platform: "ios",
 			isolate: "device",
 			count: ${DEFAULT_E2E_COUNT},
@@ -42,9 +42,9 @@ export default {
 }
 
 /** A first spec: the app opens. */
-export const SMOKE_FLOW_SOURCE = `import { test } from "@delacour/warden-e2e";
+export const SMOKE_SPEC_SOURCE = `import { test } from "@delacour/warden-e2e";
 
-// the flow opens the app itself; a system prompt over the app is dismissed wherever a step meets one
+// the spec opens the app itself; a system prompt over the app is dismissed wherever a step meets one
 test.use({ launch: "none", systemAlerts: "dismiss" });
 
 test("the app opens", async ({ app }) => {

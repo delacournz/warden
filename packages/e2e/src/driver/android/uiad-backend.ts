@@ -7,7 +7,7 @@ import { isBusy, type UiadClient } from "./uiad-client";
 import { launchUiad, type PushDex, uiadBuildId } from "./uiad-device";
 
 /**
- * The driver's hold on `warden-uiad`: started when the first call that can use it arrives (a flow that only opens
+ * The driver's hold on `warden-uiad`: started when the first call that can use it arrives (a spec that only opens
  * links never pays for it), reused for every call after, and given up on, for this driver, when it cannot be made to
  * work. "Given up" means the driver goes on with `uiautomator dump` and `input`: the server is an accelerator, never a
  * requirement. The one failure that is not answered with a fallback is a busy UiAutomation slot, because the dump needs

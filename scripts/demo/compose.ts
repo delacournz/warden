@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Demo compositor: turns a `warden batch --record <dir>` record dir into the
- * landing-page video. Five phone recordings side by side, per-phone flow
+ * landing-page video. Five phone recordings side by side, per-phone spec
  * labels, a pass counter and warden's own TUI underneath, speed-ramped to
  * ~45 s with a hold on the final all-green frame.
  *
@@ -212,9 +212,9 @@ export function buildFiltergraph(tl: Timeline, opts: FiltergraphOptions): Filter
 		draws.push(`drawtext=${parts.join(":")}`);
 	};
 
-	const flows = tl.total === 1 ? "flow" : "flows";
+	const specs = tl.total === 1 ? "spec" : "specs";
 	const sims = n === 1 ? "sim" : "sims";
-	draw(`warden batch ios · ${n} ${sims} · ${tl.total} ${flows}`, {
+	draw(`warden batch ios · ${n} ${sims} · ${tl.total} ${specs}`, {
 		size: layout.headerSize,
 		tone: "ink",
 		x: `${layout.margin}`,

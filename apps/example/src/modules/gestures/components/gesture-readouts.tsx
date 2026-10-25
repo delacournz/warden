@@ -12,7 +12,7 @@ type GestureReadoutsProps = {
 
 type ReadoutCellProps = { label: string; value: string; testID: string };
 
-/** One "label value" cell; only the value carries the testID, so a flow reads exactly the number. */
+/** One "label value" cell; only the value carries the testID, so a spec reads exactly the number. */
 function ReadoutCell({ label, value, testID }: ReadoutCellProps): ReactElement {
 	return (
 		<View className="w-1/2 flex-row items-baseline gap-2">

@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 /**
- * CPU the batch's flow poller spends following a growing `results.jsonl`, before and after PERF-5.1.
- *   bun scripts/bench-flow-poller.ts [--lines 5000] [--ticks 100] [--rounds 3]
+ * CPU the batch's spec poller spends following a growing `results.jsonl`, before and after PERF-5.1.
+ *   bun scripts/bench-spec-poller.ts [--lines 5000] [--ticks 100] [--rounds 3]
  *
  * The file grows by `lines / ticks` results between polls (one poll a second in a real run, so 100
  * ticks is a 100 s run) and each poll's CPU time (user + system) is summed. `legacy` is the poller
  * as it was: re-read the whole file, parse it twice (marks, then the new lines), resolve every
- * result's path again. `incremental` is `flowPoller`. Both read a real file.
+ * result's path again. `incremental` is `specPoller`. Both read a real file.
  */
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -14,9 +14,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { readResults, type TestResult } from "@delacour/warden-e2e/runner/results";
-import { flowPoller } from "../src/batch/flow-poller";
-import { type FlowMark, failing, flowOf, realPath, type TrackedFlow, testLine } from "../src/batch/flow-progress";
 import { readFileFrom } from "../src/batch/results-tail";
+import { specPoller } from "../src/batch/spec-poller";
+import { failing, realPath, type SpecMark, specOf, type TrackedSpec, testLine } from "../src/batch/spec-progress";
 
 const { values } = parseArgs({
 	options: {
@@ -29,24 +29,24 @@ const { values } = parseArgs({
 const LINES = Number(values.lines);
 const TICKS = Number(values.ticks);
 const ROUNDS = Number(values.rounds);
-const FLOW_COUNT = 8;
+const SPEC_COUNT = 8;
 
 type Run = { cpuMs: number; polls: number; lines: number; fileBytes: number };
 
 /** the spec files the results name: real files, so path resolution costs what it does in a run */
-function makeFlows(dir: string): TrackedFlow[] {
-	return Array.from({ length: FLOW_COUNT }, (_, i) => {
-		const path = join(dir, `flow-${i}.e2e.ts`);
+function makeSpecs(dir: string): TrackedSpec[] {
+	return Array.from({ length: SPEC_COUNT }, (_, i) => {
+		const path = join(dir, `spec-${i}.e2e.ts`);
 		writeFileSync(path, "");
-		return { id: `flow-${i}`, path };
+		return { id: `spec-${i}`, path };
 	});
 }
 
-/** result `n` of the run: tests run flow by flow, as bun runs them */
-function resultLine(flows: readonly TrackedFlow[], n: number): string {
-	const flow = flows[Math.floor((n / LINES) * FLOW_COUNT)] ?? flows[0];
+/** result `n` of the run: tests run spec by spec, as bun runs them */
+function resultLine(specs: readonly TrackedSpec[], n: number): string {
+	const spec = specs[Math.floor((n / LINES) * SPEC_COUNT)] ?? specs[0];
 	const result: TestResult = {
-		file: flow?.path ?? "",
+		file: spec?.path ?? "",
 		title: ["sign in", `case ${n}`],
 		status: n % 97 === 0 ? "failed" : "passed",
 		durationMs: 1000 + (n % 700),
@@ -57,11 +57,11 @@ function resultLine(flows: readonly TrackedFlow[], n: number): string {
 	return `${JSON.stringify(result)}\n`;
 }
 
-/** `resultsMarks` before PERF-5.1: parse the text, resolve every result's file against every flow */
-function legacyMarks(jsonl: string, flows: readonly TrackedFlow[], final: boolean): Record<string, FlowMark> {
+/** `resultsMarks` before PERF-5.1: parse the text, resolve every result's file against every spec */
+function legacyMarks(jsonl: string, specs: readonly TrackedSpec[], final: boolean): Record<string, SpecMark> {
 	const results = readResults(jsonl);
-	const owners = results.map((r) => flowOf(r, flows, realPath)?.id);
-	const marks: Record<string, FlowMark> = {};
+	const owners = results.map((r) => specOf(r, specs, realPath)?.id);
+	const marks: Record<string, SpecMark> = {};
 	const last = new Map<string, number>();
 	results.forEach((result, i) => {
 		const id = owners[i];
@@ -81,22 +81,22 @@ const cpuMs = (since: NodeJS.CpuUsage) => {
 	return (used.user + used.system) / 1000;
 };
 
-async function runLegacy(path: string, flows: readonly TrackedFlow[]): Promise<Run> {
+async function runLegacy(path: string, specs: readonly TrackedSpec[]): Promise<Run> {
 	let printed = 0;
 	let lines = 0;
 	let polls = 0;
 	let cpu = 0;
 	for (let tick = 0; tick < TICKS; tick++) {
-		appendTick(path, flows, tick);
+		appendTick(path, specs, tick);
 		const since = process.cpuUsage();
 		const text = await readFile(path, "utf8").catch(() => "");
-		legacyMarks(text, flows, tick === TICKS - 1);
+		legacyMarks(text, specs, tick === TICKS - 1);
 		const results = readResults(text);
 		const fresh = results.slice(printed);
 		printed = results.length;
 		for (const result of fresh) {
-			const flow = flowOf(result, flows);
-			if (flow) lines += testLine(flow.id, result).length > 0 ? 1 : 0;
+			const spec = specOf(result, specs);
+			if (spec) lines += testLine(spec.id, result).length > 0 ? 1 : 0;
 		}
 		cpu += cpuMs(since);
 		polls++;
@@ -104,17 +104,17 @@ async function runLegacy(path: string, flows: readonly TrackedFlow[]): Promise<R
 	return { cpuMs: cpu, polls, lines, fileBytes: Bun.file(path).size };
 }
 
-async function runIncremental(path: string, flows: readonly TrackedFlow[]): Promise<Run> {
+async function runIncremental(path: string, specs: readonly TrackedSpec[]): Promise<Run> {
 	let lines = 0;
 	let polls = 0;
 	let cpu = 0;
 	const ended = new Set<string>();
-	const poller = flowPoller({ every: () => () => {}, readFrom: readFileFrom }, flows, new Map([["1:0", path]]), ended, {
-		flows: () => {},
+	const poller = specPoller({ every: () => () => {}, readFrom: readFileFrom }, specs, new Map([["1:0", path]]), ended, {
+		specs: () => {},
 		tests: (l) => (lines += l.length),
 	});
 	for (let tick = 0; tick < TICKS; tick++) {
-		appendTick(path, flows, tick);
+		appendTick(path, specs, tick);
 		if (tick === TICKS - 1) ended.add("1:0");
 		const since = process.cpuUsage();
 		await poller.poll();
@@ -124,18 +124,18 @@ async function runIncremental(path: string, flows: readonly TrackedFlow[]): Prom
 	return { cpuMs: cpu, polls, lines, fileBytes: Bun.file(path).size };
 }
 
-function appendTick(path: string, flows: readonly TrackedFlow[], tick: number): void {
+function appendTick(path: string, specs: readonly TrackedSpec[], tick: number): void {
 	const per = LINES / TICKS;
 	let chunk = "";
-	for (let i = 0; i < per; i++) chunk += resultLine(flows, tick * per + i);
+	for (let i = 0; i < per; i++) chunk += resultLine(specs, tick * per + i);
 	appendFileSync(path, chunk);
 }
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0;
 
-const root = mkdtempSync(join(tmpdir(), "bench-flow-poller-"));
+const root = mkdtempSync(join(tmpdir(), "bench-spec-poller-"));
 try {
-	const flows = makeFlows(root);
+	const specs = makeSpecs(root);
 	const legacy: Run[] = [];
 	const incremental: Run[] = [];
 	for (let round = 0; round < ROUNDS; round++) {
@@ -147,7 +147,7 @@ try {
 			mkdirSync(dir);
 			const path = join(dir, "results.jsonl");
 			writeFileSync(path, "");
-			into.push(await run(path, flows));
+			into.push(await run(path, specs));
 		}
 	}
 	const before = median(legacy.map((r) => r.cpuMs));

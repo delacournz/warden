@@ -21,11 +21,11 @@ The site targets a public open-source audience discovering warden, while also se
 
 ## Product Purpose
 
-`warden` is a CLI that parallelises agent workflows and e2e tests on one machine. It hands out exclusive, machine-wide leases on iOS simulators, Android emulators, TCP ports and native app builds, and `warden batch` fans a job list (e2e flows, scenes) across N leased devices with one worker per device. Success: an e2e suite that ran serially finishes in a fraction of the time on the same Mac, and parallel agents and runs never drive each other's devices.
+`warden` is a CLI that parallelises agent workflows and e2e tests on one machine. It hands out exclusive, machine-wide leases on iOS simulators, Android emulators, TCP ports and native app builds, and `warden batch` fans a job list (e2e specs, scenes) across N leased devices with one worker per device. Success: an e2e suite that ran serially finishes in a fraction of the time on the same Mac, and parallel agents and runs never drive each other's devices.
 
 ## Positioning
 
-Parallel e2e and agent work without collisions, coordinated at the machine level, not the project level: one sqlite lease registry (`~/.warden/warden.db`, `BEGIN IMMEDIATE` as the cross-process mutex) shared by every agent session, worktree, repo, CI job and user shell on the Mac. `warden batch` adds the scheduler on top: a job queue across leased devices, a long-lived serve step (Metro), retries, a live per-device grid and recordings. `warden ui` enforces the leases in-process on every agent call; a SessionEnd hook cleans up after each session. It never touches devices it didn't create or lease. Tool-agnostic in public: the flow runner is configured, not named.
+Parallel e2e and agent work without collisions, coordinated at the machine level, not the project level: one sqlite lease registry (`~/.warden/warden.db`, `BEGIN IMMEDIATE` as the cross-process mutex) shared by every agent session, worktree, repo, CI job and user shell on the Mac. `warden batch` adds the scheduler on top: a job queue across leased devices, a long-lived serve step (Metro), retries, a live per-device grid and recordings. `warden ui` enforces the leases in-process on every agent call; a SessionEnd hook cleans up after each session. It never touches devices it didn't create or lease. Tool-agnostic in public: the spec runner is configured, not named.
 
 ## Operating Context
 
@@ -47,12 +47,12 @@ Parallel e2e and agent work without collisions, coordinated at the machine level
 - Name is lowercase `warden`, set as code/CLI.
 - Own identity, independent of the Delacour studio brand; Delacour appears at most as a credit and as the npm scope.
 - Voice: terse, factual, operational — the README's register. Measurements stated precisely.
-- Never name the underlying flow runner / simulator-control tool in public copy, code comments, commits or PRs.
+- Never name the underlying spec runner / simulator-control tool in public copy, code comments, commits or PRs.
 
 ## Evidence on Hand
 
-- Parallel e2e run (salient, Oct 2026): 37 offline e2e flows of the Salient app across 5 leased iPhone 17 simulators in 3m25s wall time, 37/37 passing (one on retry), recorded as the landing-page video. The app may be named.
-- Serial baseline (same 37 flows, same preset, `--count 1`, Oct 2026): 13m55s (835 s) of job time on one simulator, 36/37 passing (`qa-double-play` failed twice in the long serial run). Parallel vs serial job time: 3m25s vs 13m55s, a 4.1× speedup. Both times are the job phase after the serve step is ready; state it as "4×" or the two times, never rounded up.
+- Parallel e2e run (salient, Oct 2026): 37 offline e2e specs of the Salient app across 5 leased iPhone 17 simulators in 3m25s wall time, 37/37 passing (one on retry), recorded as the landing-page video. The app may be named.
+- Serial baseline (same 37 specs, same preset, `--count 1`, Oct 2026): 13m55s (835 s) of job time on one simulator, 36/37 passing (`qa-double-play` failed twice in the long serial run). Parallel vs serial job time: 3m25s vs 13m55s, a 4.1× speedup. Both times are the job phase after the serve step is ready; state it as "4×" or the two times, never rounded up.
 - Golden-image measurements (README / SAL-GOLDEN): fresh create + first boot 146–239 s; clone of settled golden + boot 3.7 s + 11.9 s; 3 clones booted in parallel ~20 s; second boot of an existing pool device ~6.5 s.
 - Real CLI help output and command surface (`apps/cli`).
 - No testimonials, users, logos, stars or benchmarks beyond the above. Do not fabricate any.

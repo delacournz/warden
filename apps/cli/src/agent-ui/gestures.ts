@@ -12,12 +12,13 @@ import {
 } from "@delacour/warden-e2e/screen/actions";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import type { ActionTarget } from "./act";
 import {
 	type ActionOptionValues,
+	actionTarget,
 	finishAction,
 	parseSettle,
 	pointAt,
-	recordTarget,
 	targetLabel,
 	targetOf,
 } from "./act";
@@ -25,7 +26,6 @@ import { currentScreen } from "./actions";
 import type { UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
-import type { RecordTarget } from "./record";
 import { runUi } from "./run";
 import { positiveInt } from "./snapshot-command";
 
@@ -109,12 +109,7 @@ export function parsePaths(raw: readonly string[], screen: ScreenInfo): Result<P
 	return ok(paths);
 }
 
-/** `x,y x,y|x,y x,y`: the recorded form of the paths. */
-function pathsText(paths: readonly (readonly Point[])[]): string {
-	return paths.map((path) => path.map((point) => `${point.x},${point.y}`).join(" ")).join("|");
-}
-
-export type GestureRegion = { rect: Rect; screen: ScreenInfo; center: Point; target?: RecordTarget };
+export type GestureRegion = { rect: Rect; screen: ScreenInfo; center: Point; target?: ActionTarget };
 
 /**
  * Where a two-finger gesture works: an element's visible frame (centre = the middle of what is on screen), or the
@@ -137,7 +132,7 @@ export async function gestureRegion(
 	if (!target.success) return target;
 	const resolved = await pointAt(ctx, driver, udid, target.data, verify);
 	if (!resolved.success) return resolved;
-	const where = recordTarget(target.data, resolved.data);
+	const where = actionTarget(target.data, resolved.data);
 	if (!resolved.data.element) {
 		return ok({ rect: whole, screen: screen.data, center: resolved.data.point, target: where });
 	}
@@ -217,16 +212,11 @@ function runTwoFinger(
 		);
 		if (!driven.success) return driven;
 		const around = target ? targetLabel(target) : `(${Math.round(center.x)},${Math.round(center.y)})`;
-		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, device, driver.data, settle.data, {
 			action: kind === "pinch" ? "gesture-pinch" : "gesture-rotate",
 			text: kind === "pinch" ? `pinched ${around} by ${amount}` : `rotated ${around} by ${amount} degrees`,
 			...(target ? { target } : {}),
 			...(opts.verify === true && target?.ref !== undefined ? { verified: true } : {}),
-			args: {
-				[key]: amount,
-				ms: durationMs,
-				...(parsed.data.radius !== undefined ? { radius: parsed.data.radius } : {}),
-			},
 			extra: { [key]: amount, center, radius: Math.round(radius * 100) / 100, durationMs },
 		});
 	});
@@ -275,10 +265,9 @@ export function uiGesturePath(ctx: CommandContext, deps: UiDeps, opts: GesturePa
 		);
 		if (!driven.success) return driven;
 		const fingers = paths.data.length;
-		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
+		return finishAction(ctx, deps, device, driver.data, settle.data, {
 			action: "gesture-path",
 			text: `${fingers}-finger path over ${duration.data} ms`,
-			args: { paths: pathsText(paths.data), ms: duration.data },
 			extra: { fingers, paths: paths.data, durationMs: duration.data },
 		});
 	});

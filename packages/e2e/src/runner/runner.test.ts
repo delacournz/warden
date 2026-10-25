@@ -39,7 +39,7 @@ async function runSpec(names: string | string[], env: Record<string, string> = {
 		WARDEN_UDID: "FAKE-UDID-0123456789",
 		WARDEN_BUNDLE_ID: "com.acme.app",
 		WARDEN_E2E_OUT: out,
-		WARDEN_E2E_FLOWS_DIR: FIXTURES,
+		WARDEN_E2E_SPECS_DIR: FIXTURES,
 		WARDEN_LOG_TIMESTAMPS: "1",
 		FIXTURE_LOG: logPath,
 		...env,

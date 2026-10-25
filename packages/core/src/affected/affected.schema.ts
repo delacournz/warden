@@ -6,14 +6,14 @@ import { DEFAULT_JOB_TIMEOUT_MS, DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TI
 const path = z.string().min(1);
 const platform = z.enum(["ios", "android"]);
 
-/** `e2e.<suite>.flows.<id|glob>`: what a flow covers and whether it gates. */
-export const e2eFlowSchema = z
+/** `e2e.<suite>.specs.<id|glob>`: what a spec covers and whether it gates. */
+export const e2eSpecEntrySchema = z
 	.object({
-		/** files the flow drives (screens / routes); everything they import, transitively, selects the flow */
+		/** files the spec drives (screens / routes); everything they import, transitively, selects the spec */
 		entries: z.array(path).default([]),
-		/** extra globs that select the flow when a changed file matches */
+		/** extra globs that select the spec when a changed file matches */
 		paths: z.array(path).default([]),
-		/** default: inferred from the flow id (`-ios-` / `-android-`), else both */
+		/** default: inferred from the spec id (`-ios-` / `-android-`), else both */
 		platforms: z.array(platform).min(1).optional(),
 		/** overrides the suite's `maxDepth` */
 		maxDepth: z.number().int().min(0).optional(),
@@ -22,50 +22,32 @@ export const e2eFlowSchema = z
 	})
 	.strict();
 
-/** How a suite's spec processes are laid out: one per device running its share of the flows, or one per flow. */
-export type E2eIsolation = "device" | "flow";
+/** How a suite's spec processes are laid out: one per device running its share of the specs, or one per spec. */
+export type E2eIsolation = "device" | "spec";
 
 type RunSettings = {
 	isolate?: E2eIsolation | undefined;
-	/** the old spelling of `isolate` */
-	mode?: "per-flow" | "single" | undefined;
 	passes: number;
 	count?: number | undefined;
 	profile?: string | undefined;
 	devices?: Array<{ profile: string; default: boolean }> | undefined;
 };
 
-const MODE_ISOLATION = { "per-flow": "flow", single: "device" } as const satisfies Record<
-	NonNullable<RunSettings["mode"]>,
-	E2eIsolation
->;
-
-/** What the suite asked for, by either spelling (`isolate`, else the old `mode`); undefined = left to the default. */
-function askedIsolation(suite: Pick<RunSettings, "isolate" | "mode">): E2eIsolation | undefined {
-	return suite.isolate ?? (suite.mode === undefined ? undefined : MODE_ISOLATION[suite.mode]);
-}
-
 /**
- * The isolation a suite runs with: what it asked for (`isolate`, else the old `mode`), else one
- * process per device, except that `passes` > 1 needs a process per flow (a flow's passes are
- * re-runs of that flow).
+ * The isolation a suite runs with: what it asked for (`isolate`), else one
+ * process per device, except that `passes` > 1 needs a process per spec (a spec's passes are
+ * re-runs of that spec).
  */
-export function suiteIsolation(suite: Pick<RunSettings, "isolate" | "mode" | "passes">): E2eIsolation {
-	return askedIsolation(suite) ?? (suite.passes > 1 ? "flow" : "device");
+export function suiteIsolation(suite: Pick<RunSettings, "isolate" | "passes">): E2eIsolation {
+	return suite.isolate ?? (suite.passes > 1 ? "spec" : "device");
 }
 
-/** What `isolate` / `mode` and `devices` rule out. */
+/** What `isolate` and `devices` rule out. */
 function runIssues(suite: RunSettings): Array<{ message: string; path: string[] }> {
 	const issues: Array<{ message: string; path: string[] }> = [];
-	const asked = askedIsolation(suite);
-	if (suite.isolate !== undefined && suite.mode !== undefined && MODE_ISOLATION[suite.mode] !== suite.isolate)
+	if (suite.isolate === "device" && suite.passes > 1)
 		issues.push({
-			message: `mode "${suite.mode}" means isolate "${MODE_ISOLATION[suite.mode]}", not "${suite.isolate}" (drop mode)`,
-			path: ["mode"],
-		});
-	else if (asked === "device" && suite.passes > 1)
-		issues.push({
-			message: 'passes > 1 needs isolate "flow" (one process cannot be re-run per flow)',
+			message: 'passes > 1 needs isolate "spec" (one process cannot be re-run per spec)',
 			path: ["passes"],
 		});
 	const { devices } = suite;
@@ -94,7 +76,7 @@ export const e2eMetroSchema = z
 		open: z.boolean().default(true),
 		/** added to Metro's env only */
 		env: z.record(z.string(), z.string()).optional(),
-		/** build the bundle once before the first flow */
+		/** build the bundle once before the first spec */
 		prewarm: z.boolean().default(true),
 		readyTimeout: duration.default(DEFAULT_METRO_READY_TIMEOUT),
 	})
@@ -133,25 +115,21 @@ const removedKey = (key: string, hint: string) =>
 	z.undefined({ error: (iss) => `e2e.${String(iss.path?.[1])}.${key} was removed: ${hint}` }).optional();
 
 /**
- * `e2e.<suite>` in `warden.config.ts`: flows under `flowsDir`, how they map to source, how to run one.
+ * `e2e.<suite>` in `warden.config.ts`: specs under `specsDir`, how they map to source, how to run one.
  * Paths and globs are relative to the config file's directory.
  */
 export const e2eSuiteSchema = z
 	.object({
 		/** `projects[].name`: specs / serve / setup run in its root and `app` installs it (default: the config file's dir) */
 		project: z.string().min(1).optional(),
-		flowsDir: path,
-		/** removed: flows run with `@delacour/warden-e2e` (`bun test`), tuned by `spec` */
-		runner: removedKey("runner", "flows run with @delacour/warden-e2e, see spec"),
+		specsDir: path,
 		/** the spec runner's settings: app under test, launch args, timeouts */
 		spec: e2eSpecSchema.optional(),
-		/** device (default): one `bun test` process per device runs its shard of the flows (round-robin by flow id). flow: one process per flow, one worker per device */
-		isolate: z.enum(["device", "flow"]).optional(),
-		/** the old spelling of `isolate`: per-flow = flow, single = device */
-		mode: z.enum(["per-flow", "single"]).optional(),
+		/** device (default): one `bun test` process per device runs its shard of the specs (round-robin by spec id). spec: one process per spec, one worker per device */
+		isolate: z.enum(["device", "spec"]).optional(),
 		/** `always`: shut down the devices warden booted once the gate passes. `idle`: leave them booted for the next run and let `warden gc` reap them when idle. Default: `idle` locally, `always` under CI. `--no-shutdown` wins */
 		shutdown: z.enum(["always", "idle"]).optional(),
-		/** per flow: a spec process still going after this long for each flow it runs is killed and counts as failed */
+		/** per spec: a spec process still going after this long for each spec it runs is killed and counts as failed */
 		jobTimeoutMs: z.number().int().min(1_000).default(DEFAULT_JOB_TIMEOUT_MS),
 		/** device legs, each with its own pool, run concurrently (replaces `profile` / `count`) */
 		devices: z.array(e2eDeviceLegSchema).min(1).optional(),
@@ -164,25 +142,25 @@ export const e2eSuiteSchema = z
 		platform: platform.optional(),
 		/** git ref changes are measured against (merge-base with HEAD) */
 		base: z.string().min(1).default("main"),
-		/** only import chains of at most this many hops from an entry select a flow (default: any length) */
+		/** only import chains of at most this many hops from an entry select a spec (default: any length) */
 		maxDepth: z.number().int().min(0).optional(),
-		/** a change matching one of these selects every flow (lockfile, native dirs, bundler config…) */
+		/** a change matching one of these selects every spec (lockfile, native dirs, bundler config…) */
 		runAll: z.array(path).default([]),
 		/** changes matching these never select anything (docs, unit tests…) */
 		ignore: z.array(path).default([]),
-		/** flow ids / globs that always run */
+		/** spec ids / globs that always run */
 		always: z.array(path).default([]),
-		/** flow-id globs: only flows matching one of these are ever selected (default: all) */
+		/** spec-id globs: only specs matching one of these are ever selected (default: all) */
 		include: z.array(path).default([]),
-		/** flow-id globs that are never selected (e.g. flows another suite owns) */
+		/** spec-id globs that are never selected (e.g. specs another suite owns) */
 		exclude: z.array(path).default([]),
 		/** changed-file globs: only matching changes count at all (default: every change) */
 		scope: z.array(path).default([]),
-		/** a counted change that reaches no flow (no `paths` / `entries` / `runAll` match, not `ignore`d): `run-all` selects every flow, `skip` selects nothing */
+		/** a counted change that reaches no spec (no `paths` / `entries` / `runAll` match, not `ignore`d): `run-all` selects every spec, `skip` selects nothing */
 		unmatched: z.enum(["run-all", "skip"]).default("skip"),
-		/** a flow without entries/paths: run it every time, or only via runAll / always */
+		/** a spec without entries/paths: run it every time, or only via runAll / always */
 		unmapped: z.enum(["run", "skip"]).default("run"),
-		/** a flow passes only after this many consecutive green runs on the same device */
+		/** a spec passes only after this many consecutive green runs on the same device */
 		passes: z.number().int().min(1).default(1),
 		retry: z.number().int().min(0).default(0),
 		count: z.number().int().min(1).optional(),
@@ -193,24 +171,24 @@ export const e2eSuiteSchema = z
 		ports: z.array(portSpec).optional(),
 		/** added to the serve, setup and spec env */
 		env: z.record(z.string(), z.string()).optional(),
-		/** `sh -c` once per run before the flows (own process group), killed at the end; `--serve` overrides */
+		/** `sh -c` once per run before the specs (own process group), killed at the end; `--serve` overrides */
 		serve: z.string().min(1).optional(),
 		/** wait for `http://…`, `tcp:PORT` or `file:PATH` before starting; `--serve-ready` overrides */
 		serveReady: z.string().min(1).optional(),
 		serveTimeout: duration.optional(),
-		/** `sh -c` once per leased device, after the app install and before its first flow; `{udid}` is substituted. A non-zero exit drops that device from the run */
+		/** `sh -c` once per leased device, after the app install and before its first spec; `{udid}` is substituted. A non-zero exit drops that device from the run */
 		setup: z.string().min(1).optional(),
-		/** iOS: switch off the simulator daemons flows never need on each device, before `setup` */
+		/** iOS: switch off the simulator daemons specs never need on each device, before `setup` */
 		slim: z.boolean().optional(),
 		/** removed: renamed `warmDrivers` */
 		warmRunners: removedKey("warmRunners", "renamed to warmDrivers"),
-		/** iOS: start every device's automation helper in parallel before the flows (default on; `false` = off) */
+		/** iOS: start every device's automation helper in parallel before the specs (default on; `false` = off) */
 		warmDrivers: z.boolean().optional(),
 		/** keep Simulator.app windows closed for this suite's run; `--headless` / `--no-headless` win */
 		headless: z.boolean().optional(),
-		/** default `required` for flows that don't set it */
+		/** default `required` for specs that don't set it */
 		required: z.boolean().default(true),
-		flows: z.record(z.string().min(1), e2eFlowSchema).default({}),
+		specs: z.record(z.string().min(1), e2eSpecEntrySchema).default({}),
 	})
 	.strict()
 	.superRefine((suite, issue) => {
@@ -226,5 +204,5 @@ export const e2eSuiteSchema = z
 export type E2eSpecConfig = z.infer<typeof e2eSpecSchema>;
 export type E2eMetroConfig = z.infer<typeof e2eMetroSchema>;
 export type E2eDeviceLeg = z.infer<typeof e2eDeviceLegSchema>;
-export type E2eFlowConfig = z.infer<typeof e2eFlowSchema>;
+export type E2eSpecEntryConfig = z.infer<typeof e2eSpecEntrySchema>;
 export type E2eSuiteConfig = z.infer<typeof e2eSuiteSchema>;

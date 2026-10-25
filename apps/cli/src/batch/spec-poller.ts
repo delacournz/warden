@@ -1,16 +1,16 @@
-import { type FlowMark, type FlowTracker, flowTracker, type TrackedFlow, testLine } from "./flow-progress";
 import { createResultsTail, type ParseLine, type ReadFrom, type ResultsTail } from "./results-tail";
+import { type SpecMark, type SpecTracker, specTracker, type TrackedSpec, testLine } from "./spec-progress";
 
 /** how often the jobs' `results.jsonl` are looked at for new tests */
-export const FLOW_POLL_MS = 1_000;
+export const SPEC_POLL_MS = 1_000;
 
 /** Where the poller reports: the grid's marks for a worker's runner, and finished tests as log lines. */
-export type FlowSink = {
-	flows: (worker: number, marks: Readonly<Record<string, FlowMark>>) => void;
+export type SpecSink = {
+	specs: (worker: number, marks: Readonly<Record<string, SpecMark>>) => void;
 	tests: (lines: readonly string[]) => void;
 };
 
-export type FlowPollerDeps = {
+export type SpecPollerDeps = {
 	/** run `fn` every `ms` until the returned stop is called */
 	every: (ms: number, fn: () => void) => () => void;
 	readFrom: ReadFrom;
@@ -19,11 +19,11 @@ export type FlowPollerDeps = {
 };
 
 /** What the poller knows of one job attempt's results file. */
-type Followed = { path: string; tail: ResultsTail; tracker: FlowTracker; finalSent: boolean };
+type Followed = { path: string; tail: ResultsTail; tracker: SpecTracker; finalSent: boolean };
 
 /**
  * Follow the `results.jsonl` of every job started so far (`resultFiles` fills as jobs start; a key
- * is `<worker>:<seq>`): hand the flows they report finished to the sink (a job's flows count as
+ * is `<worker>:<seq>`): hand the specs they report finished to the sink (a job's specs count as
  * passed once it has `ended`) and each new test as one line.
  *
  * Each file is read from the byte after the last complete line it gave, so a line is parsed once
@@ -34,12 +34,12 @@ type Followed = { path: string; tail: ResultsTail; tracker: FlowTracker; finalSe
  * `poll` looks once (also called after the run, so the last results land; it waits for a look that
  * is already under way and then makes its own); `stop` ends the timer.
  */
-export function flowPoller(
-	deps: FlowPollerDeps,
-	flows: readonly TrackedFlow[],
+export function specPoller(
+	deps: SpecPollerDeps,
+	specs: readonly TrackedSpec[],
 	resultFiles: ReadonlyMap<string, string>,
 	ended: ReadonlySet<string>,
-	sink: FlowSink
+	sink: SpecSink
 ): { poll: () => Promise<void>; stop: () => void } {
 	const followed = new Map<string, Followed>();
 	const settled = new Set<string>();
@@ -50,7 +50,7 @@ export function flowPoller(
 		const entry: Followed = {
 			path,
 			tail: createResultsTail(path, deps.readFrom, deps.parse),
-			tracker: flowTracker(flows),
+			tracker: specTracker(specs),
 			finalSent: false,
 		};
 		followed.set(key, entry);
@@ -63,12 +63,12 @@ export function flowPoller(
 		if (reset) entry.tracker.reset();
 		entry.tracker.add(results);
 		if (results.length > 0 || reset || (final && !entry.finalSent)) {
-			sink.flows(Number(key.split(":")[0]), entry.tracker.marks(final));
+			sink.specs(Number(key.split(":")[0]), entry.tracker.marks(final));
 			entry.finalSent = final;
 		}
 		const lines = results.flatMap((result) => {
-			const flow = entry.tracker.flowOf(result);
-			return flow ? [testLine(flow.id, result)] : [];
+			const spec = entry.tracker.specOf(result);
+			return spec ? [testLine(spec.id, result)] : [];
 		});
 		if (lines.length > 0) sink.tests(lines);
 		if (final) settled.add(key);
@@ -84,7 +84,7 @@ export function flowPoller(
 		});
 		await underway;
 	};
-	const stop = deps.every(FLOW_POLL_MS, () => {
+	const stop = deps.every(SPEC_POLL_MS, () => {
 		if (!underway) void poll();
 	});
 	return { poll, stop };

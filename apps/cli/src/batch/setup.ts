@@ -2,11 +2,11 @@ import { join } from "node:path";
 import type { BatchWorker } from "@delacour/warden-core/batch/schedule";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 
-/** What `warden e2e` runs on each leased device before its first flow. */
+/** What `warden e2e` runs on each leased device before its first spec. */
 export type DeviceSetupSpec = {
 	/** `sh -c`, `{udid}` substituted */
 	command?: string;
-	/** iOS: switch off the simulator daemons flows never need, before `command` */
+	/** iOS: switch off the simulator daemons specs never need, before `command` */
 	slim?: boolean;
 };
 
@@ -43,7 +43,7 @@ export type SetupRun = {
 	track?: (proc: Proc) => () => void;
 };
 
-/** Slim one device when asked; never throws (a device that can't be slimmed still runs flows). */
+/** Slim one device when asked; never throws (a device that can't be slimmed still runs specs). */
 async function slimDevice(run: SetupRun, udid: string): Promise<DeviceSetup["slim"]> {
 	if (!run.spec.slim || !run.slim) return undefined;
 	try {
