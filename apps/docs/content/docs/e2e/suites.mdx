@@ -42,7 +42,7 @@ No device to pick, no port to export, no bundler to start first. warden claims t
 - `isolate`: `"device"` (default): one `bun test` process per device runs its share of the specs, sharded round-robin by spec id. `"spec"`: one process per spec, devices share the specs dynamically; each spec starts fresh. `device` is not allowed with `passes` > 1, which defaults to `spec`.
 - `jobTimeoutMs` (default 600000): per spec. A spec process still going after that long for each spec it runs is screenshotted, killed (SIGTERM, SIGKILL 5 s later, whole process group) and counted failed (exit 124).
 - `retry`, `passes`: rerun a failed spec up to N times; require N consecutive green runs on the same device (`WARDEN_PASS` = 0, 1).
-- `serve`, `serveReady`, `serveTimeout`, `ports`, `env`, `setup`, `slim`: a local API, per-device setup and spare ports; see [Affected e2e](/docs/e2e/affected#per-device-setup) and the [field reference](/docs/reference/configuration#e2e).
+- `serve`, `serveReady`, `serveTimeout`, `ports`, `env`, `setup`, `slim`: a local API, per-device setup, simulator slimming (on by default) and spare ports; see [Affected e2e](/docs/e2e/affected#per-device-setup) and the [field reference](/docs/reference/configuration#e2e).
 
 The first run of a native fingerprint builds the app (minutes); later runs reuse the cache.
 

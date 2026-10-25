@@ -13,9 +13,11 @@ Weighted units, not a flat count: an Android emulator costs about twice an iOS s
 ```
 budget.mem = totalMem - headroom        headroom = max(8 GB, 25% of totalMem)
 budget.cpu = perfCores x 0.6            leaves room for Metro, xcodebuild, gradle
-iOS sim    = 2 GB, 1 cpu unit
+iOS sim    = 2 GB, 1 cpu unit      (slim iOS sim: 1.25 GB)
 Android    = 4 GB, 2 cpu units
 ```
+
+A slim iOS sim (the default for warden-created ones) counts at the slim figure, 1792 MB; `cost.ios.slimMemMb` overrides it, and `warden sim measure` shows what a sim really uses.
 
 A boot fits when summed memory and cpu of everything booted, plus the request, stay inside both budgets (and under `capacity.max` if set). On macOS `perfCores` is the performance cluster (`hw.perflevel0.physicalcpu`); elsewhere all cores.
 

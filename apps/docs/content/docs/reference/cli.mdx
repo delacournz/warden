@@ -22,7 +22,8 @@ This is the exhaustive list of `warden` commands and flags; use it to look up an
 | pre-build the golden image | `warden golden ensure --profile iphone-17` |
 | who holds what | `warden ls` |
 | every sim / emulator + who leases it | `warden devices` (alias `warden list`) |
-| lighten a booted sim (fewer daemons) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` |
+| lighten a booted sim (fewer daemons) | `warden sim slim <udid>\|--booted [--dry-run] [--restore] [--except <ids>] [--keep <labels>]` |
+| slim categories / a sim's real memory | `warden sim profiles` · `warden sim measure [udid\|--booted]` |
 | tidy Simulator.app windows | `warden arrange` |
 | look at / drive a leased device | `warden ui snapshot -i --udid <udid>` · `warden ui press @e3 --settle` ([guide](/docs/agents/ui)) |
 | record a session as a spec | `warden ui record start <id>` → drive → `warden ui record stop` ([guide](/docs/e2e/author-specs)) |
@@ -64,6 +65,7 @@ Lease iOS sims / Android emulators — reuse, boot or create — booted and read
 | `--ttl <duration>` | `30m` (bare `claim` by an agent: `5m`) | lease TTL without heartbeat |
 | `--label <label>` | | shown in `warden ls` |
 | `--adopt` | | allow allocating foreign (non-warden) devices |
+| `--slim` / `--no-slim` | config `slim`, `WARDEN_SLIM=0`, else on | iOS: boot and keep the claimed sims slim (see [`warden sim slim`](#warden-sim-slim-udid)); `--no-slim` leaves every daemon running. Ignored on Android. Also on `run`, `dev`, `batch` and `e2e` |
 | `--headless` / `--no-headless` | `WARDEN_HEADLESS`, else off | iOS: close the claimed sims' Simulator.app windows instead of tiling them; `--no-headless` overrides config and env. See [Headless e2e](/docs/devices/headless) |
 
 ### `warden capacity` / `warden queue`
@@ -184,7 +186,7 @@ List leases: resource, state, owner, repo/worktree, age, heartbeat.
 
 ### `warden devices [platform]` (alias `list`)
 
-Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases.
+Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases. `--mem` adds each booted iOS sim's real memory in MB (summed `phys_footprint` of its process tree, see [`warden sim measure`](#warden-sim-measure-udid)); `--json` is machine-readable.
 
 ### Device health: `release --bad`, `sim unquarantine`
 
@@ -197,15 +199,61 @@ After booting or reusing an iOS sim, `warden claim` checks that `simctl spawn <u
 
 ### `warden sim slim [udid]`
 
-iOS. Switches off the launchd jobs inside a booted simulator that UI specs never need — Siri, Apple Intelligence, Health, News, Mail, Photos analysis, Game Center, Wallet and friends (a conservative denylist; SpringBoard, installd, XCTest, the accessibility tree and the keyboard are never touched). A booted simulator runs 200+ such processes; with several simulators side by side, that is the RAM and CPU a spec suite is starved of.
+iOS. Switches off the launchd jobs inside a simulator that UI specs never need — Siri, Apple Intelligence, Health, News, Mail, Photos analysis, Wallet and friends. SpringBoard, installd, XCTest, the accessibility tree and the keyboard are never touched. A booted simulator runs 200+ such processes; with several simulators side by side, that is the RAM and CPU a spec suite is starved of.
+
+**On by default.** Every iOS simulator warden creates or leases is slim: `warden claim`, `run`, `dev`, `batch` and `e2e` slim their devices unless told not to. warden writes the disabled-job overrides into the simulator right after it is cloned and before its first boot, so the daemons never start and there are no per-daemon spawns. Once the sim is ready the overrides are read back, and any job that still runs is booted out live. A booted simulator warden never slimmed is slimmed live after the claim. Opt out per run with `--no-slim`, per suite or preset with `slim: false`, for the whole repo with a top-level `slim: false`, or for the machine with `WARDEN_SLIM=0`. Precedence: flag, then suite / preset `slim`, then top-level `slim`, then `WARDEN_SLIM`, then on. Android is unaffected.
 
 | Flag | |
 |---|---|
 | `--booted` | every booted simulator instead of one `<udid>` |
 | `--dry-run` | list the jobs, change nothing |
 | `--restore` | re-enable them (fully effective on the next boot) |
+| `--except <ids>` | comma list of categories to leave running, e.g. `store,web` (ids from `warden sim profiles`) |
+| `--keep <labels>` | comma list of single `com.apple.*` launchd labels to leave running |
+| `--json` | machine-readable output |
 
-Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. Siri's `assistantd` and `corespeechd` are deliberately left running: the software keyboard asks them about dictation, and with them down an app that shows the keyboard spins its main thread until XCTest can no longer read it. A simulator slimmed by an older warden gets them re-enabled on the next `slim` or `--restore` (effective after its next boot). The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. `slim` and `--restore` record the state per device; a plain `warden claim` re-enables a device left slimmed (jobs already booted out stay down until its next reboot). In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/e2e/affected#per-device-setup).
+Idempotent. A simulator leased by another session is refused. A plain `warden claim` does not undo slimming; `warden sim slim --restore` does (jobs already booted out stay down until the sim reboots). `gamed` and `nanotimekitcompaniond` are no longer disabled; a sim an older warden slimmed gets them re-enabled on its next slim.
+
+Siri's `assistantd`, `sharingd` and `gamed` are never disabled: the software keyboard asks them about dictation, and with them down an app that shows the keyboard spins its main thread until XCTest can no longer read it.
+
+#### What a slim simulator loses
+
+The default profile switches off every category below. Leave one running with `--except <id>` (or `slim: { except: ["<id>"] }` in config) when a spec needs it.
+
+| Category | Switches off | Keep it (`except`) for |
+|---|---|---|
+| `widgets` | widgets, posters, live activities | widget and Live Activity specs |
+| `siri` | Siri, speech, Apple Intelligence | |
+| `search` | Spotlight search | Spotlight indexing and search |
+| `icloud` | iCloud, accounts, sync | iCloud sign-in and sync |
+| `store` | App Store, push, media services | push notifications, StoreKit purchases |
+| `pim` | Mail, calendar, reminders, contacts | Contacts / Calendar pickers |
+| `web` | Safari sync, web push, universal links | universal links, web push |
+| `family` | Family Sharing, Screen Time | |
+| `health` | Health, fitness, Home | HealthKit, HomeKit |
+| `photos` | Photos and media analysis | the photo picker |
+| `apps` | News, Weather, Maps, Tips, games | |
+| `messaging` | iMessage, FaceTime, telephony | |
+| `connectivity` | nearby devices, CarPlay, sharing | |
+| `telemetry` | analytics, ads, diagnostics | |
+| `other` | Wallet, identity, miscellaneous | |
+
+`warden sim profiles [--json]` prints the live list with the label count of each. The most common choices are `store` (push, StoreKit), `web` (universal links), `search` (Spotlight), `pim` (Contacts / Calendar pickers) and `photos` (the photo picker).
+
+```ts
+export default {
+  slim: { except: ["store"] },
+  e2e: { checkout: { slim: { except: ["store", "web"], keep: ["com.apple.chronod"] } } }
+} satisfies WardenConfig;
+```
+
+### `warden sim profiles`
+
+Lists the slim categories: id, name and label count. `--json` is machine-readable. The ids are what `sim slim --except` and config `slim.except` take; an unknown id fails with a message naming it.
+
+### `warden sim measure [udid]`
+
+iOS. The real memory cost of a booted simulator: the summed `phys_footprint` of its process tree, plus its 10 heaviest processes. `--booted` measures every booted simulator; `--json` is machine-readable. Use it to compare a slim and a non-slim sim, or to tune `cost.ios.slimMemMb` in [capacity](/docs/devices/capacity#cost-model).
 
 ### `warden sims audit | prune | delete`
 

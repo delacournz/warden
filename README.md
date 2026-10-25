@@ -88,7 +88,8 @@ warden capacity [--json]                         # host budget (RAM + perf cores
 warden queue [--json]                            # claims waiting for a boot slot: position, priority, age
 warden release --mine [--label x] [--shutdown]   # or <leaseId…> | --udid X | --session S; --label = only --mine leases with that label; --shutdown = warden-created or self-booted sims
 warden release <leaseId> --bad [reason]          # release + quarantine the device (claims skip it); clear: warden sim unquarantine <udid>
-warden sim slim <udid> [--restore]               # slim state is recorded; a plain `warden claim` re-enables what a run left slimmed
+warden sim slim <udid> [--restore] [--except <ids>] # iOS sims warden creates are slim by default (--no-slim / WARDEN_SLIM=0 opts out); a plain `warden claim` no longer restores, --restore does
+warden sim profiles | warden sim measure [udid]     # slim categories for --except; a sim's real memory (also: warden devices --mem)
 warden ls                                        # leases: resource, state, owner, repo/worktree, age, heartbeat
 warden clone <udid|name> [--name x]              # duplicate a shut-down sim into the pool (seconds, no first boot)
 warden golden ensure|ls|prune [--all]            # golden iOS images / Android snapshots new devices start from

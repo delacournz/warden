@@ -77,7 +77,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `count`, `profile` | claim defaults | single pool |
 | `metro` | none | `{ enabled = true, port = "8081:100", launchArgs = [], open = true, env, prewarm = true, readyTimeout = "2m" }`. warden starts one Metro for the run and points the dev client at it |
 | `headless` | off | keep Simulator.app windows closed |
-| `slim` | off | iOS only: switch off simulator daemons specs never need, before `setup`. `true`, `false`, or `{ except?: string[]; keep?: string[] }`: `except` keeps whole categories running (ids from `warden sim profiles`, e.g. `store` for push/StoreKit, `web` for universal links), `keep` keeps single `com.apple.*` labels. Unknown ids fail config load. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
+| `slim` | on | iOS only: simulator daemons specs never need are off from first boot. `false` leaves them running; `true` is the default profile; `{ except?: string[]; keep?: string[] }`: `except` keeps whole categories running (ids from `warden sim profiles`, e.g. `store` for push/StoreKit, `web` for universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker), `keep` keeps single `com.apple.*` labels. Unknown ids fail config load. `--no-slim` / `WARDEN_SLIM=0` opt out. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
 | `warmDrivers` | on | iOS: start every device's driver helper before the specs |
 
 ### App, ports, serve, setup
@@ -198,5 +198,5 @@ A failed run leaves sims booted (so does a passed local one, until `warden gc` r
 ## Headless, slim, warm, versions
 
 - Headless: `--headless` on claim/run/batch/e2e, `headless: true` in a suite, or `WARDEN_HEADLESS=1`. `warden dev` honors only an explicit `--headless`. warden never launches Simulator.app and closes the windows of devices it leased. That needs Accessibility permission for the terminal, and a failure only warns. Xcode 27's Device Hub: headless opens none of its windows and never launches it; a non-headless claim opens one window per sim it booted (only while Device Hub already runs) and tiles them (`warden arrange [--open <udid…>]`). Don't quit Device Hub mid-run (it shuts every booted sim down) and don't tap a leased sim in it (it can swallow warden's input until the sim reboots). Android is always headless.
-- `slim: true` trims simulator daemons per device (iOS). `warmDrivers` (default on, `--no-warm` to skip) starts one `warden-simd` per device after setup, found through `WARDEN_SIMD_SOCKET`.
+- Slim is on by default for warden-created iOS sims (`--no-slim`, `slim: false` or `WARDEN_SLIM=0` to opt out; also a top-level `slim` in `warden.config.ts`). A spec needing a trimmed service sets `slim: { except: ["store"] }`. `warmDrivers` (default on, `--no-warm` to skip) starts one `warden-simd` per device after setup, found through `WARDEN_SIMD_SOCKET`.
 - `@delacour/warden-e2e` must equal the warden version. After upgrading warden: `bun add -d @delacour/warden-e2e@<version>`.

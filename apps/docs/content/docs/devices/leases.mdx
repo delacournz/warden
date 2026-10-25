@@ -57,7 +57,11 @@ warden devices [ios|android]   # every simulator / emulator, booted or not, plus
 warden check --udid <udid>     # exit 0 if free or yours, 2 if another owner holds it
 ```
 
-`warden devices` shows warden ownership and leases, and labels goldens `golden`, plus `quarantined` and `slim` next to the warden column. `warden check --session <id>` checks against that agent session instead of the caller. `warden capacity` and `warden queue` show the host budget and waiting claims ([Capacity & queue](/docs/devices/capacity)).
+`warden devices` shows warden ownership and leases, and labels goldens `golden`, plus `quarantined` and `slim` next to the warden column; `--mem` adds each booted iOS sim's real memory. `warden check --session <id>` checks against that agent session instead of the caller. `warden capacity` and `warden queue` show the host budget and waiting claims ([Capacity & queue](/docs/devices/capacity)).
+
+## Slim simulators
+
+Every iOS simulator warden creates boots slim: the daemons specs never need (Siri, Health, News, Mail…) are disabled before the first boot, so clones start light. A claim never undoes it. Opt out with `warden claim ios --no-slim`, `slim: false` in config, or `WARDEN_SLIM=0`; keep some daemons with `slim: { except: [...] }`. See [`warden sim slim`](/docs/reference/cli#warden-sim-slim-udid) and [what a slim simulator loses](/docs/reference/cli#what-a-slim-simulator-loses).
 
 ## Release
 
