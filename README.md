@@ -69,10 +69,13 @@ The binary is swapped atomically at the same path, so the next `warden` in your 
 
 ### Releasing
 
-1. Bump `version` in `apps/cli/package.json` and commit.
-2. `git tag v<version> && git push origin v<version>`.
-3. `.github/workflows/release.yml` checks that the tag matches the version, runs typecheck/check/test, builds `warden-{darwin,linux}-{arm64,x64}` plus `checksums.txt` (`bun run --cwd apps/cli build:release`) and publishes the GitHub release.
-4. The same workflow stages the npm packages (`bun run --cwd apps/cli build:npm` → `apps/cli/dist/npm/`) and publishes `@delacour/warden-<os>-<arch>` then `@delacour/warden` with public access. It needs an `NPM_TOKEN` secret that can publish to the `@delacour` scope. Versions already on npm are skipped, so a re-run finishes a partial publish. While the repo is private, the packages publish with `NPM_TOKEN`, without provenance and without repository / homepage / bugs links (`build:npm --repo-links` or `WARDEN_NPM_REPO_LINKS=1` adds them). Once the repo is public, the workflow adds the links and `--provenance` on its own, and publishing should move to npm trusted publishing (OIDC) so `NPM_TOKEN` can be retired.
+1. PRs target `develop`. One that changes what `@delacour/warden` ships adds a changeset: `bun changeset`, pick `@delacour/warden`, choose patch / minor / major, write a one-line summary. `@delacour/warden-e2e` follows in lock-step. Docs-only and internal-only PRs need none.
+2. Every push to `develop` opens or updates the "🔖 chore(release): version packages" PR. It bumps the versions, writes `CHANGELOG.md` and consumes the changesets.
+3. Merge that PR. `promote.yml` fast-forwards `main` to the merge commit and pushes tag `v<version>`. Nobody pushes `main` or tags by hand.
+4. `main` is what the docs site deploys. The tag runs `.github/workflows/release.yml`, which checks the tag matches the version, runs typecheck/check/test, builds `warden-{darwin,linux}-{arm64,x64}` plus `checksums.txt` and publishes the GitHub release.
+5. The same workflow stages the npm packages (`bun run --cwd apps/cli build:npm` → `apps/cli/dist/npm/`) and publishes `@delacour/warden-<os>-<arch>`, then `@delacour/warden`, then `@delacour/warden-e2e`, with public access and provenance through npm trusted publishing (OIDC, no token). Versions already on npm are skipped, so a re-run finishes a partial publish.
+
+Never edit `version` by hand. `bun run release <version>` is a break-glass for when CI is down: it bypasses changesets and the version PR.
 
 ## Usage
 

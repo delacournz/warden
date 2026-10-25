@@ -1,0 +1,23 @@
+{
+	"$schema": "https://unpkg.com/@changesets/config@4.0.1/schema.json",
+	"changelog": ["@changesets/changelog-github", { "repo": "delacournz/warden" }],
+	"commit": false,
+	"access": "public",
+	"baseBranch": "develop",
+	"updateInternalDependencies": "patch",
+	"privatePackages": { "version": true, "tag": false },
+	"fixed": [["@delacour/warden", "@delacour/warden-e2e"]],
+	"ignore": [
+		"@delacour/warden-docs",
+		"@delacour/warden-example",
+		"@delacour/warden-core",
+		"@delacour/warden-e2e-bench",
+		"@delacour/warden-biome-config",
+		"@delacour/warden-tsconfig",
+		"@delacour/warden-types",
+		"@delacour/warden-demo",
+		"@delacour/warden-signoff",
+		"@delacour/warden-smoke",
+		"@delacour/warden-release"
+	]
+}

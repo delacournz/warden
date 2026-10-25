@@ -49,6 +49,12 @@ bun run --cwd apps/docs dev   # this site on :3210 (PORT overrides)
 - Errors are `Result` / `AsyncResult` discriminated unions from `@delacour/warden-types/result`. No `any`, no barrel exports.
 - TDD: failing test first, colocated `{name}.test.ts`, `bun test <path>`.
 
+## Pull requests and changesets
+
+Open PRs against `develop`; they squash-merge and need the `signoff` status (`bun run signoff`). `main` is a release pointer that only `promote.yml` moves.
+
+A PR that changes what `@delacour/warden` or `@delacour/warden-e2e` ship needs a changeset. Run `bun changeset`, pick `@delacour/warden` only (e2e follows in lock-step), choose patch, minor or major, and write a one-line summary for the changelog. Docs-only and internal-only PRs need none. changeset-bot comments on PRs that lack one. Never edit `version` by hand; see [releasing](/docs/updating#releasing).
+
 ## Editing these docs
 
 Pages are MDX under `apps/docs/content/docs`; sidebar order lives in each folder's `meta.json`. Every page is also served as Markdown at `<url>.md`, and the whole site at `/llms.txt` and `/llms-full.txt`.
