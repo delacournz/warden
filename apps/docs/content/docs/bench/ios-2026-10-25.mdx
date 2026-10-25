@@ -274,3 +274,26 @@ Worker job `bench_tester_army`, e2e 0.20.0, bundling agent-device 0.21.25. [Down
 - The simulator as the job left it, after teardown:
 
 ![The tester.army worker's simulator at exit](/bench/ios-2026-10-25/tester-army/sim-final.png)
+
+## Follow-up: warden after the helper fix
+
+The profile in [`docs/bench/cpu-profile-2026-10-25.md`](https://github.com/delacournz/warden/blob/main/docs/bench/cpu-profile-2026-10-25.md) put 74 % of `warden-simd`'s CPU in idb's generic `Codable` decode of every accessibility frame. The helper now links idb with a single-pass frame decoder (fork commit [`1768a0d`](https://github.com/UrbanChrisy/idb/commit/1768a0d1006ff528c2fd78f335d9e3ee2f01596d) on v1.7.2, library package [`idb-v1.7.2-warden.1`](https://github.com/delacournz/warden/releases/tag/idb-v1.7.2-warden.1)). Same workflow, same worker type and simulator, warden only, 5 runs: run [`01a1739d`](https://expo.dev/accounts/delacour/projects/warden/workflows/01a1739d-2f5f-70bb-9c22-715197980e70) at commit `a87b04cc`. The bench app was rebuilt by EAS for this run (sha256 `c283eae41c7a`, same source as the run above), so the comparison page keeps the four-framework run above as its dataset and this run stands beside it.
+
+| warden, per rep (warm) | Run above (`01a172f5`) | After (`01a1739d`) | Delta |
+| --- | --- | --- | --- |
+| Host CPU-seconds | 9.12 s | 3.79 s | -5.33 s (-58 %) |
+| of which `warden-simd` | 7.03 s | 1.83 s | -5.20 s (-74 %) |
+| Host RSS peak | 184.9 MB | 177.6 MB | -7.3 MB |
+| Suite median | 97.04 s | 91.89 s | -5.15 s (-5 %) |
+| Pass rate / flakes | 100 % / 0 | 100 % / 0 | |
+
+The simulator's own CPU over the whole job (every process under `launchd_sim`, prepare and all five reps) read higher on this worker (821 CPU-s against 564 CPU-s) while both simulators idled alike before the run (idle control in the artifacts); the host is now out of the way, so the in-simulator readers are the next thing to profile.
+
+Worker job `bench_warden`. [Download the whole artifact](/bench/ios-2026-10-25/warden-after/warden.tar.gz) (the EAS `eas-ios-warden` archive, unpacks to `Users/expo/bench-results`).
+
+- [report.html](/bench/ios-2026-10-25/warden-after/report.html) and [report.md](/bench/ios-2026-10-25/warden-after/report.md)
+- [bench-results.json](/bench/ios-2026-10-25/warden-after/bench-results.json) and [summary.json](/bench/ios-2026-10-25/warden-after/summary.json)
+- [host-facts.txt](/bench/ios-2026-10-25/warden-after/host-facts.txt), harness and framework logs under [`logs/`](/bench/ios-2026-10-25/warden-after/logs/bench.log)
+- The simulator as the job left it, after teardown:
+
+![The warden worker's simulator at exit, after the helper fix](/bench/ios-2026-10-25/warden-after/sim-final.png)
