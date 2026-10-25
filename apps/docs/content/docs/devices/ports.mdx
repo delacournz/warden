@@ -4,6 +4,8 @@ description: Lease TCP ports from a range, bind-probed and never handed out twic
 icon: Network
 ---
 
+`warden port claim` leases TCP ports from a range so dev servers, Metro and test servers never collide across agents; use it whenever a script needs a port of its own.
+
 ```bash
 warden port claim --from 8091 --span 20 --json
 warden port release --mine

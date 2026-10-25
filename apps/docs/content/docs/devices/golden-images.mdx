@@ -4,6 +4,12 @@ description: Clone new simulators from a settled golden for ~16 s boots.
 icon: Layers
 ---
 
+A golden image is a settled simulator warden clones new pool devices from, so a claim that needs a new iOS sim boots in seconds instead of minutes; you only touch it to pre-build one or prune old ones.
+
+```bash
+warden golden ensure --profile iphone-17
+```
+
 A brand-new simulator's first boot takes 1–10 min, and about 80% of that is the one-time data migration. Measured:
 
 | Scenario | Time |

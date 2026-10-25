@@ -1,0 +1,59 @@
+---
+title: CI
+description: Run warden e2e in GitHub Actions on a macOS runner, install warden with the install action or npm, and gate a pull request on the affected specs.
+icon: Workflow
+---
+
+Use this page to run `warden e2e` on a macOS GitHub Actions runner; it covers installing warden, the run command, headless behavior and cleanup.
+
+```yaml title=".github/workflows/e2e.yml"
+jobs:
+  e2e:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - uses: delacournz/warden/.github/actions/install-warden@main
+      - run: warden e2e mobile --base origin/main --count 2 --report e2e-report.json
+```
+
+`fetch-depth: 0` gives warden the history it needs for the merge-base against `--base`. The same command runs locally or in a pre-push hook.
+
+## Install warden
+
+Two routes:
+
+- **npm:** `npm i -g @delacour/warden`, or `bunx @delacour/warden`. It is a node shim plus one prebuilt binary per platform (macOS and Linux, `arm64` and `x64`); an install with `--omit=optional` leaves the shim without a binary.
+- **Install action:** `delacournz/warden/.github/actions/install-warden` downloads the release binary for the runner (`warden-darwin-arm64` …), checks it against `checksums.txt`, installs it to `~/.local/bin/warden` and puts that on `PATH`. Inputs: `token` (default: the workflow's `github.token`, which can read the public releases), `version` (a tag such as `v0.1.0`; default `latest`) and `repo` (default `delacournz/warden`).
+
+A private fork in `repo` needs a `token` with Contents: read on that repo.
+
+`@delacour/warden-e2e` is a dev dependency of your app at the same version as warden; `bun install` brings it in. A mismatch makes the preload exit 2.
+
+## What the runner needs
+
+- macOS for iOS simulators, with Xcode and the iOS runtime installed; Android needs the SDK. There is no Windows support.
+- bun 1.3 or newer on `PATH` (or `WARDEN_BUN`).
+- No prior state. The `--profile` is created on claim, cloned from a golden image that is built on first use (about a minute or two); cache `~/Library/Developer/CoreSimulator/Devices` between runs to keep it ([Golden images](/docs/devices/golden-images)). If cloning fails it falls back to `simctl create`.
+
+## Gate a pull request
+
+`warden e2e <suite> --base origin/main` runs only the specs the diff needs ([Affected](/docs/e2e/affected)). It exits 0 when every required spec passed or nothing was affected (no device claimed), and 1 when a required one failed. Parsed imports are cached under `$WARDEN_HOME/affected`. The compiled `warden` binary carries no TypeScript compiler, so add `typescript` 5.0 or later as a dev dependency of the app.
+
+Keep the evidence when a run fails:
+
+```yaml
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: warden-e2e
+          path: |
+            e2e-report.json
+            ~/.warden/batches
+```
+
+## Headless and cleanup
+
+Simulators boot without a window. On a CI runner nothing else is open, so no flag is needed; `--headless` guarantees it when Simulator.app is running ([Headless](/docs/devices/headless)). Under `CI`, a passed gate shuts down the simulators and emulators warden created for the run, and a failed run leaves them booted. `--no-shutdown` keeps them up. A leftover `test.only` fails the run under `CI`.

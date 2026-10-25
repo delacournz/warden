@@ -1,0 +1,76 @@
+---
+title: warden dev
+description: Run the app in a worktree on a leased simulator with its own Metro port, installing the cached dev build instead of rebuilding.
+icon: Play
+---
+
+`warden dev` replaces `expo run:ios` in a worktree: it claims a device, installs the dev build cached for your native fingerprint, starts Metro on a leased port and opens the dev client. Use it whenever you or your agent need the app running.
+
+```bash
+warden dev                  # ios by default
+warden dev android          # an emulator
+warden dev ios -- --clear   # extra args go to `expo start`
+warden dev ios --json       # one line { udid, port, metroUrl, leaseIds } once Metro is ready
+```
+
+## What it does
+
+1. Checks the bundle id and `expo-dev-client`.
+2. Claims a device and leases a Metro port (default range `8081:100`).
+3. Installs the build for this fingerprint: installed, cache, EAS, then local build.
+4. Starts Metro on the leased port.
+5. Opens the dev client once the port is verified to serve this checkout.
+
+`warden dev` owns its Metro. A Metro left running by another worktree is refused, never attached to. It holds the device and the port until Metro exits; Ctrl-C releases both. The `--json` line is printed first, so an agent can read the `udid` and `metroUrl` and pass them to `warden ui open <bundleId> --metro <metroUrl>`.
+
+Metro gets `WARDEN_WORKTREE` (the checkout directory name) and `WARDEN_BRANCH` (absent on a detached HEAD) in its environment, so `app.config.ts` can name the dev server after the worktree. Native builds never see them, so the fingerprint is unchanged.
+
+## Why not `expo run:*`
+
+`expo run:ios` rebuilds natively in every worktree: Xcode's DerivedData is keyed by the checkout's path, so a fresh worktree compiles every pod again even when the native code is identical. warden caches the built app by native fingerprint, shared by every worktree of the repo.
+
+- Same fingerprint as any earlier build (any worktree, EAS or local): no prebuild, no Xcode, seconds to a running app.
+- A native change: one local build, cached for every other worktree.
+- Two worktrees missing the same hash at once share one build (build lock).
+
+## Options
+
+| Flag | Effect |
+|---|---|
+| `--profile <slug>` · `--runtime <runtime>` | device profile (`iphone-17`, `pixel-10`) and runtime (`latest`, `26.5`) |
+| `--udid <udid>` · `--lease <id>` | use this device instead of claiming one |
+| `--port <from:span>` | Metro port range to lease from (default `8081:100`) |
+| `--project <dir>` · `--bundle-id <id>` | project directory (default cwd); override the bundle id / package |
+| `--variant <name>` | `projects[].variants` build (default `dev` when the project has one) |
+| `--scheme <scheme>` | dev-client URL scheme (default `exp+<slug>`) |
+| `--ready-timeout <duration>` | wait this long for Metro (default `2m`) |
+| `--no-eas` · `--no-build` | skip EAS downloads; do not build locally on a cache miss |
+| `--install-mode clean\|reinstall` | `clean`: fresh app data each run without reinstalling an unchanged build; `reinstall`: uninstall + install each run. `--reset-keychain` also resets the simulator keychain |
+| `--no-open` | start Metro and take the leases only |
+| `--wait <duration>` · `--no-wait` · `--priority <p>` | boot-queue behaviour (default `--wait 30m`) |
+| `--headless` · `--no-headless` | close or keep the Simulator.app windows |
+| `--count <n>` · `--max <n>` · `--ttl <duration>` · `--label <label>` · `--adopt` | as for `warden claim` |
+
+## Variants
+
+A dev client and an e2e build can sit side by side in `warden.config.ts`:
+
+```ts title="warden.config.ts"
+projects: [{
+  name: "app",
+  bundleId: { ios: "com.example.app" },
+  build: { configuration: "Release" },                                  // e2e: JS embedded
+  fingerprint: { include: "native+js", jsInputs: ["src/**"] },
+  variants: {
+    dev: { build: { configuration: "Debug" }, fingerprint: { include: "native" } }, // dev client: JS from Metro
+  },
+}]
+```
+
+`warden dev` picks `dev` when it exists. A variant's keys replace the project's own wholesale. Compiler caches, prebuilt React Native and the cache order are in [App builds](/docs/devices/app-builds).
+
+<Cards>
+  <Card title="warden ui" href="/docs/agents/ui" description="Drive the app once it is running." />
+  <Card title="App builds" href="/docs/devices/app-builds" description="Fingerprints, cache, variants." />
+  <Card title="Ports" href="/docs/devices/ports" />
+</Cards>

@@ -16,14 +16,14 @@ export function CopyCommand({ command }: { command: string }): ReactElement {
 	};
 
 	return (
-		<div className="flex min-w-0 items-center gap-2 rounded-xl bg-ground py-1.5 ps-4 pe-1.5">
-			<code className="min-w-0 flex-1 whitespace-pre-wrap font-mono [overflow-wrap:anywhere] text-ink text-sm sm:overflow-x-auto sm:whitespace-nowrap">
+		<div className="flex min-w-0 items-center gap-2 rounded-[var(--radius-group)] border border-hairline bg-surface py-1.5 ps-4 pe-1.5">
+			<code className="min-w-0 flex-1 whitespace-pre-wrap font-mono text-[12.5px] [overflow-wrap:anywhere] text-ink sm:overflow-x-auto sm:whitespace-nowrap">
 				<span className="select-none text-ink-2">$ </span>
 				{command}
 			</code>
 			<button
 				aria-label={copied ? "Copied" : `Copy ${command}`}
-				className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-2 transition-colors hover:bg-fill hover:text-ink"
+				className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-2 transition-colors hover:bg-fill hover:text-ink"
 				onClick={copy}
 				type="button"
 			>

@@ -1,39 +1,46 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import { HomeLayout } from "fumadocs-ui/layouts/home";
 import type { ReactElement } from "react";
-import { DeviceFrame } from "@/components/device";
 import { baseOptions } from "@/lib/layout.shared";
 
-/** The missing page as a device slot warden never created: dashed outline, no lease, and two ways on. */
+/**
+ * The missing page in the display voice: a giant 404 in the heaviest, widest
+ * setting with the accent on the final glyph, a mono readout under a hairline
+ * naming the path that missed, then one headline, one lede and the pill pair.
+ */
 export function NotFound(): ReactElement {
+	const { pathname } = useLocation();
 	return (
 		<HomeLayout {...baseOptions()} className="bg-ground">
-			<main className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-start gap-10 px-4 py-20 sm:flex-row sm:items-center sm:gap-16 sm:px-6">
-				<div className="relative w-28 shrink-0 sm:w-40">
-					<DeviceFrame className="h-auto w-full" phase="empty" />
-					<p className="absolute inset-0 flex flex-col items-center justify-center gap-1 font-mono text-ink-2">
-						<span className="font-medium text-3xl text-ink tabular-nums sm:text-4xl">404</span>
-						<span className="text-xs">not created</span>
-					</p>
-				</div>
-				<div className="flex flex-col gap-5">
-					<h1 className="font-semibold text-4xl text-ink sm:text-5xl">No page at this address.</h1>
-					<p className="max-w-md text-ink-2 text-lg">
-						It may have moved, or it never existed. The docs and the CLI reference are where most links mean to go.
+			<main className="mx-auto flex w-full max-w-5xl flex-1 flex-col justify-center gap-8 px-4 py-16 sm:px-6 sm:py-24">
+				<p
+					aria-hidden="true"
+					className="text-[clamp(7rem,32vw,20rem)] text-ink leading-[0.85] tracking-[-0.04em] [font-variation-settings:'wdth'_125,'wght'_880]"
+				>
+					40<span className="text-accent">4</span>
+				</p>
+				<p className="break-all border-hairline border-t pt-3 font-mono text-[11px] text-ink-2">
+					warden: no page at <span className="text-ink">{pathname}</span>
+				</p>
+				<div className="flex flex-col gap-4">
+					<h1 className="text-balance text-[1.9rem] text-ink leading-[1.02] tracking-[-0.035em] [font-variation-settings:'wdth'_125,'wght'_800] sm:text-[2.4rem]">
+						No page at this address.
+					</h1>
+					<p className="max-w-[60ch] text-ink-2 text-lg leading-relaxed">
+						It may have moved, or it never existed. The docs are where most links mean to go.
 					</p>
 					<div className="flex flex-wrap gap-3">
 						<Link
 							className="rounded-full bg-ink px-5 py-2.5 font-medium text-sm text-surface transition-opacity hover:opacity-85"
 							to="/docs/$"
 						>
-							Read the docs
+							Go to docs
 						</Link>
 						<Link
 							className="rounded-full bg-surface px-5 py-2.5 font-medium text-ink text-sm transition-colors hover:bg-fill"
-							params={{ _splat: "reference/cli" }}
-							to="/docs/$"
+							to="/"
 						>
-							CLI reference
+							Home
 						</Link>
 					</div>
 				</div>

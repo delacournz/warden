@@ -12,7 +12,7 @@
  * status written from here.
  *
  * The gate is not weaker for being local. `basecamp/gh-signoff` writes
- * `POST /repos/:owner/:repo/statuses/<sha>` with `context: signoff[/<check>]`, and `main`'s branch
+ * `POST /repos/:owner/:repo/statuses/<sha>` with `context: signoff[/<check>]`, and `develop`'s branch
  * protection (`gh signoff install`) requires the umbrella — see `REQUIRED_CONTEXTS` in
  * ./signoff-checks.ts and AGENTS.md § Signoff. Statuses bind to a SHA, so pushing another commit
  * (or pressing **Update branch**) drops the signoff and this has to run again. Which checks are
@@ -589,12 +589,12 @@ function parseArgs(argv: readonly string[]): Args {
 }
 
 /**
- * The branch this work merges into: the PR's own base when there is one, `main` otherwise.
+ * The branch this work merges into: the PR's own base when there is one, `develop` otherwise.
  */
 async function resolveBase(explicit: string | null): Promise<string> {
 	if (explicit) return explicit;
 	const base = await capture(["gh", "pr", "view", "--json", "baseRefName", "--jq", ".baseRefName"]);
-	return base || "main";
+	return base || "develop";
 }
 
 /**

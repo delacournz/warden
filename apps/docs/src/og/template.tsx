@@ -6,20 +6,20 @@ import { clamp } from "./pages";
  * styles only — every element with more than one child must set `display: "flex"`. Consumed by
  * `scripts/generate-og.ts` (build time), not by the app.
  *
- * The cards are the site's own grammar (DESIGN.md) in its dark tokens, matching the favicon: one
- * surface group on the ground, a hairline above the footer, Onest for sentences, Red Hat Mono for
- * what a machine prints (the URL), and green only on the mark's lease lamp.
+ * The cards are the site's grammar (DESIGN.md) in its dark tokens: one sheet on the
+ * ground, a hairline above the footer, Mona Sans for sentences, Martian Mono for what a machine
+ * prints (the URL), and the accent on the mark's lamp and the headline's last words.
  */
 
-const GROUND = "#000000";
-const SURFACE = "#1c1c1e";
-const INK = "#f5f5f7";
-const INK_2 = "#98989f";
-const HAIRLINE = "#38383a";
-const LAMP = "#30d158";
+const GROUND = "#0f0f0e";
+const SURFACE = "#171715";
+const INK = "#f3f1ea";
+const INK_2 = "#9c998f";
+const HAIRLINE = "#302f2a";
+const LAMP = "#ff6a3d";
 
-const SANS = "Onest";
-const MONO = "Red Hat Mono";
+const SANS = "Mona Sans";
+const MONO = "Martian Mono";
 
 const root = {
 	width: "1200px",
@@ -37,7 +37,7 @@ const group = {
 	flexDirection: "column" as const,
 	justifyContent: "space-between",
 	padding: "52px 60px 44px",
-	borderRadius: 40,
+	borderRadius: 12,
 	backgroundColor: SURFACE,
 };
 
@@ -82,7 +82,7 @@ function lede(text: string): ReactElement {
 	return <div style={{ fontSize: 31, lineHeight: 1.4, color: INK_2, maxWidth: "940px" }}>{clamp(text, 150)}</div>;
 }
 
-/** Landing card: the page's two-tone headline over the one-sentence pitch. */
+/** Landing card: the hero headline in the display voice, "coding agents." in the accent, over the one-sentence pitch. */
 export function renderDefaultCard({ host, pitch }: { host: string; pitch: string }): ReactElement {
 	return (
 		<Card url={host}>
@@ -90,14 +90,14 @@ export function renderDefaultCard({ host, pitch }: { host: string; pitch: string
 				style={{
 					display: "flex",
 					flexDirection: "column",
-					fontWeight: 600,
-					fontSize: 70,
-					lineHeight: 1.04,
-					letterSpacing: "-0.035em",
+					fontWeight: 800,
+					fontSize: 96,
+					lineHeight: 0.98,
+					letterSpacing: "-0.04em",
 				}}
 			>
-				<div style={{ color: INK_2 }}>Parallelise your agent workflows</div>
-				<div>and e2e tests.</div>
+				<span>Mobile testing for</span>
+				<span style={{ color: LAMP }}>coding agents.</span>
 			</div>
 			{lede(pitch)}
 		</Card>

@@ -92,7 +92,7 @@ Specs can record a perf session around a test and fail on a breach, so a regress
 - A spec overrides both for itself with `device.perf.stop({ budgets: { jankPct: 2 } })`.
 - A breach fails the test with a `PERF_BUDGET` error naming metric, value and budget (kind `perf_budget` in `e2e-report.json`). A metric whose capture did not run cannot breach.
 
-See [Write specs](/docs/guides/specs) and [Run e2e](/docs/guides/run-e2e). Budgets measured on a simulator are for catching regressions between runs, not for absolute targets.
+See [Write specs](/docs/e2e/specs) and [Run e2e](/docs/e2e/suites). Budgets measured on a simulator are for catching regressions between runs, not for absolute targets.
 
 ## Sessions and artifacts
 

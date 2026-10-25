@@ -1,0 +1,88 @@
+---
+title: Your first test
+description: From an Expo app with no warden setup to a passing smoke spec, by hand and then with warden e2e.
+icon: Play
+---
+
+You use this page once per app: it scaffolds the config and a smoke spec, then runs them. Prerequisites: warden installed ([Installation](/docs/installation)), bun 1.3 or newer on `PATH` (or `WARDEN_BUN`), and an Expo app.
+
+```bash
+warden init --bundle-id com.example.app
+bun add -d @delacour/warden-e2e@<warden version>
+warden e2e
+```
+
+<Steps>
+<Step>
+### Scaffold
+
+```bash
+warden init --bundle-id com.example.app
+```
+
+`--bundle-id` is only needed when the app has none yet; it is written to `app.json`. `init` writes `warden.config.ts` (a project and an `e2e` suite named after the app: `specsDir: "e2e"`, `platform: "ios"`, `isolate: "device"`, `app: true`, a `metro` block that turns the Expo dev menu off) and `e2e/smoke.e2e.ts`. Existing files are kept (`--force` overwrites), and an app that already has specs gets no smoke spec. `--dry-run` prints the plan. It also prints the install commands for anything missing, such as `expo-dev-client`.
+</Step>
+<Step>
+### Install the spec package
+
+```bash
+bun add -d @delacour/warden-e2e@<warden version>
+```
+
+Same version as `warden --version`: the spec preload refuses any other.
+</Step>
+<Step>
+### Read the smoke spec
+
+```ts title="e2e/smoke.e2e.ts"
+import { test } from "@delacour/warden-e2e";
+
+test.use({ launch: "none", systemAlerts: "dismiss" });
+
+test("the app opens", async ({ app }) => {
+	await app.open({ wait: "quiet" });
+});
+```
+
+`launch: "none"` skips the runner's own fresh `app.open()`, so the test opens the app itself. `systemAlerts: "dismiss"` answers a system prompt that appears over the app. Replace the comment `init` leaves with a real assertion:
+
+```ts
+import { expect, test } from "@delacour/warden-e2e";
+
+test("home shows", async ({ app, screen }) => {
+	await app.open({ wait: { until: screen.getByTestId("home") } });
+	await expect(screen.getByTestId("home")).toBeVisible();
+});
+```
+
+The `home` view needs `testID="home"` and `accessible` in the component.
+</Step>
+<Step>
+### Run it by hand (optional)
+
+Claim a simulator, install your build on it, and point the spec at it:
+
+```bash
+warden claim ios --json                       # -> udid
+WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=com.example.app \
+  bun test --preload @delacour/warden-e2e/preload e2e/smoke.e2e.ts
+warden release <leaseId>
+```
+
+`WARDEN_UDID` switches the runner on; without it the preload does nothing. Add `WARDEN_METRO_URL` for a dev client. A bare claim lasts 5 minutes. Details: [Write specs](/docs/e2e/specs#run-a-spec-by-hand).
+</Step>
+<Step>
+### Run it with warden
+
+```bash
+warden e2e --count 3
+```
+
+With one suite in the config the name is optional. warden leases 3 simulators, installs the dev client, starts Metro and spreads the specs over the devices. The first run of a native fingerprint builds the app (minutes); later runs reuse the cache. A project without `@delacour/warden-e2e` fails before any device is claimed.
+</Step>
+</Steps>
+
+<Cards>
+<Card title="Write specs" href="/docs/e2e/specs" description="Locators, actions, matchers, app and device." />
+<Card title="Suites" href="/docs/e2e/suites" description="Configure devices, Metro and timeouts." />
+</Cards>

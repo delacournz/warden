@@ -4,11 +4,13 @@ description: How warden runs simulators without a window, and the --headless swi
 icon: EyeOff
 ---
 
+Headless mode keeps simulator windows closed during a run, even with Simulator.app open; use it when you don't want windows popping up or tiling over your screen.
+
 ```bash
 warden e2e <suite> --headless
 ```
 
-A headless run shows no simulator window, even with Simulator.app open, and never moves your own windows.
+A headless run shows no simulator window and never moves your own windows.
 
 ## How headless e2e works
 
@@ -77,4 +79,4 @@ open "devices://device/open?id=<udid>"     # Xcode 27: Device Hub shows that sim
 
 A headless run closes Simulator.app windows only at claim time and before the first job. Windows you open later stay open until you close them (⌘W). On Xcode 27, look but don't touch (see [Device Hub](#xcode-27-device-hub)).
 
-More: [Run e2e](/docs/guides/run-e2e), [configuration](/docs/reference/configuration), [environment](/docs/reference/environment).
+More: [Run e2e suites](/docs/e2e/suites), [configuration](/docs/reference/configuration), [environment](/docs/reference/environment).

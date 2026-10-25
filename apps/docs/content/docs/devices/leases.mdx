@@ -1,0 +1,103 @@
+---
+title: Claim & release devices
+description: Claim a simulator or emulator, keep it alive, see who holds what, and release it.
+icon: KeyRound
+---
+
+`warden claim` leases a booted, ready simulator or emulator that nothing else on the Mac can take until you release it; use it whenever you need a device outside `warden ui`, `warden dev` or `warden e2e`, which claim for you.
+
+```bash
+warden claim ios --json        # → { udid, leaseId, … }
+warden ui snapshot -i --udid <udid>
+warden release --mine          # or: warden release <leaseId> --shutdown
+```
+
+Pass the returned udid / serial on every later call. Never pick a device from `simctl list` or `adb devices`: you may take another agent's.
+
+## Claim
+
+`warden claim [ios|android]` reuses a free warden device, boots a stopped one or creates one, then waits until it is booted and ready. `platform` is asked for when omitted in a terminal.
+
+```bash
+warden claim ios --count 2 --profile iphone-17 --label qa --ttl 1h
+warden claim android --profile pixel-10 --no-wait
+```
+
+| Flag | Default | |
+|---|---|---|
+| `--profile <slug>` | `iphone-17` / first AVD | device profile, e.g. `iphone-17`, `pixel-10` |
+| `--runtime <runtime>` | `latest` | `latest`, `iOS-26-5`, `26.5` … |
+| `--count <n>` | `1` | how many devices |
+| `--label <label>` | | shown in `warden ls`; lets a subagent release only its own leases |
+| `--ttl <duration>` | `30m` (bare `claim` by an agent: `5m`) | lease TTL without heartbeat |
+| `--wait <duration>` | `30m` | how long to wait for a free device or a slot in the [boot queue](/docs/devices/capacity) |
+| `--no-wait` | | fail at once instead of queueing |
+| `--priority <interactive\|high\|normal\|low\|N>` | `WARDEN_PRIORITY`, else per command | boot queue priority |
+| `--max <n>` | what the machine's capacity allows | max warden devices of this profile (pool size) |
+| `--headless` / `--no-headless` | `WARDEN_HEADLESS`, else off | iOS: close the claimed sims' Simulator.app windows instead of tiling them; see [Headless](/docs/devices/headless) |
+| `--adopt` | | allow allocating foreign (non-warden) devices |
+
+A new iOS device is cloned from a [golden image](/docs/devices/golden-images) when one exists. Without `--adopt`, a booted device warden did not create is foreign: never allocated, shut down, erased or installed on.
+
+## Keep it alive
+
+A bare agent `warden claim` expires after 5 min and nothing refreshes it. `warden run`, `dev`, `batch` and `e2e` heartbeat every 30 s on their own. Otherwise:
+
+```bash
+warden heartbeat <leaseId>     # or --mine, --udid <udid…>, --label <l>, --session <id>
+```
+
+A lease is alive while its pid is alive or its heartbeat is within the TTL. See [Liveness](/docs/concepts#liveness).
+
+## See who holds what
+
+```bash
+warden ls                      # leases: resource, state, owner, repo/worktree, age, heartbeat
+warden devices [ios|android]   # every simulator / emulator, booted or not, plus AVDs (alias: list)
+warden check --udid <udid>     # exit 0 if free or yours, 2 if another owner holds it
+```
+
+`warden devices` shows warden ownership and leases, and labels goldens `golden`, plus `quarantined` and `slim` next to the warden column. `warden check --session <id>` checks against that agent session instead of the caller. `warden capacity` and `warden queue` show the host budget and waiting claims ([Capacity & queue](/docs/devices/capacity)).
+
+## Release
+
+```bash
+warden release <leaseId…>
+warden release --udid <udid…>
+warden release --mine --label qa --shutdown
+warden release <leaseId> --bad "wedged SpringBoard"
+```
+
+| Flag | |
+|---|---|
+| `--mine` | every lease held by this owner |
+| `--label <label>` | with `--mine`: only leases with that label (what subagents should use) |
+| `--session <id>` | every lease held by this agent session |
+| `--shutdown` | also shut down devices warden created, or that the lease owner booted itself |
+| `--bad [reason]` | also quarantine the released devices (warden devices only) |
+
+A sim that was already running when it was picked up is released but left on. Subagents never run a bare `warden release --mine`: release by id, or `--mine --label <x>`.
+
+## Device health and quarantine
+
+After booting or reusing an iOS sim, `warden claim` checks that `simctl spawn <udid> launchctl print system` answers within 5 s and that SpringBoard is running. A sim this claim just booted only needs SpringBoard running.
+
+- A device that fails is quarantined (recorded with a reason starting `claim:`, shut down if warden created it) and the claim picks another; after 2 retries it fails with a clear error.
+- A probe that times out while the 1-min load average is at or above the core count is asked once more after 5 s. A second timeout only skips the device for that round: a busy host is not a hung sim. It is not quarantined, and a sim this claim booted is shut down again. If it was the only candidate, the claim fails with `host overloaded (load X ≥ N cores); retry later`.
+- A claim's quarantine expires after 24 h, but only while the pool has room under `--max`. A quarantine set by `release --bad` never expires.
+- Quarantined devices are never allocated and free their pool slot. `warden sim unquarantine <udid|serial>` clears it.
+- A foreign device that fails is skipped, never touched. Android has no probe yet.
+
+## Reclaim
+
+```bash
+warden gc                      # stale leases, idle warden devices (20m), build cache
+```
+
+`warden gc` reclaims stale leases (pid dead and heartbeat expired) and shuts down unleased warden devices idle for `--idle` (default `20m`). It never deletes devices; `warden sims prune` frees sim disk. It then prunes the build cache down to `--max-cache-size`. Background auto-gc runs it with `--quiet`. Details: [CLI reference](/docs/reference/cli#warden-gc).
+
+<Cards>
+  <Card title="Scripts & batches" href="/docs/devices/scripts" description="Claim for a command, release on exit." />
+  <Card title="Capacity & queue" href="/docs/devices/capacity" description="Why a claim waits." />
+  <Card title="How warden works" href="/docs/concepts" description="Owners, liveness, which devices." />
+</Cards>
