@@ -3,9 +3,11 @@
  * `bun native/scripts/deps.ts [--from-source]` — materialise `native/idb-libraries/`, the library package
  * `native/ios/Package.swift` links against.
  *
- * Default: download the pinned release tarball (`idb.lock.json`) into `~/Library/Caches/warden-idb/<sha256>.tar.gz`,
- * verify its sha256, extract. `--from-source`: build the same layout with idb's own `build.sh` from a shallow clone of
- * the pinned tag in `~/Library/Caches/warden-idb/src/<tag>`, or from `WARDEN_IDB_SRC` (a patched checkout).
+ * Default: download the pinned tarball (`idb.lock.json`: idb's release asset for `version`, or `url` when the lock
+ * names one) into `~/Library/Caches/warden-idb/<sha256>.tar.gz`, verify its sha256, extract. `--from-source`: build
+ * the same layout with idb's own `build.sh` from a shallow clone of what the lock pins (the tag, or `source`: a commit
+ * on a fork carrying patches) in `~/Library/Caches/warden-idb/src/<tag|sha>`, or from `WARDEN_IDB_SRC` (a checkout
+ * at that commit). A hosted `url` is built from `source` by `apps/example/.eas/workflows/idb-libraries.yml`.
  * Idempotent: `idb-libraries/.warden-idb.json` records what is installed.
  *
  * No git submodule on purpose: `git worktree remove` refuses any worktree with a populated submodule.
@@ -22,6 +24,18 @@ const lockSchema = z.object({
 	version: z.string().regex(/^v\d+\.\d+\.\d+$/, "version must be an idb release tag like v1.7.2"),
 	tarball: z.string().min(1),
 	sha256: z.string().regex(/^[0-9a-f]{64}$/, "sha256 must be 64 lowercase hex chars"),
+	/** Where `tarball` is downloaded from; default: idb's own release asset for `version`. */
+	url: z.string().url().optional(),
+	/**
+	 * The checkout `--from-source` builds and the tarball at `url` was built from, when it is not the release
+	 * tag itself: a commit on a fork that carries patches on top of `version`.
+	 */
+	source: z
+		.object({
+			repository: z.string().url(),
+			ref: z.string().regex(/^[0-9a-f]{40}$/, "ref must be a full commit sha"),
+		})
+		.optional(),
 });
 
 export type IdbLock = z.infer<typeof lockSchema>;
@@ -46,9 +60,9 @@ export function cachePath(home: string, sha256: string): string {
 	return join(home, "Library", "Caches", "warden-idb", `${sha256}.tar.gz`);
 }
 
-/** Where `--from-source` keeps its shallow idb checkout for `version`, shared by every worktree. */
-export function sourcePath(home: string, version: string): string {
-	return join(home, "Library", "Caches", "warden-idb", "src", version);
+/** Where `--from-source` keeps its shallow idb checkout for `pin` (the tag, or the fork sha), shared by every worktree. */
+export function sourcePath(home: string, pin: string): string {
+	return join(home, "Library", "Caches", "warden-idb", "src", pin);
 }
 
 export async function sha256OfFile(path: string): Promise<string> {
@@ -73,7 +87,7 @@ export async function ensureTarball(
 		deps.log(`cache entry ${path} is corrupt, re-downloading`);
 		await rm(path, { force: true });
 	}
-	const url = `https://github.com/facebook/idb/releases/download/${lock.version}/${lock.tarball}`;
+	const url = lock.url ?? `https://github.com/facebook/idb/releases/download/${lock.version}/${lock.tarball}`;
 	deps.log(`downloading ${url}`);
 	const response = await deps.fetchImpl(url);
 	if (!response.ok) throw new Error(`download failed: ${url} -> HTTP ${response.status}`);
@@ -153,15 +167,27 @@ async function run(exec: Exec, cmd: readonly string[], cwd?: string): Promise<st
 	return result.stdout;
 }
 
-/** Shallow-clone idb at `version` into `srcDir` unless a checkout is already there; a failed clone leaves nothing. */
-async function ensureCheckout(exec: Exec, srcDir: string, version: string, log: (line: string) => void): Promise<void> {
+/**
+ * Shallow-clone idb into `srcDir` unless a checkout is already there; a failed clone leaves nothing. The lock tag
+ * from idb itself, or `lock.source`'s commit from its repository (a sha cannot be `--branch`ed, so the fetch is by
+ * sha into an empty repository).
+ */
+async function ensureCheckout(exec: Exec, srcDir: string, lock: IdbLock, log: (line: string) => void): Promise<void> {
 	if (existsSync(join(srcDir, ".git"))) return;
-	log(`cloning idb ${version} (shallow) -> ${srcDir}`);
 	await mkdir(dirname(srcDir), { recursive: true });
 	const partial = `${srcDir}.partial-${process.pid}`;
 	await rm(partial, { recursive: true, force: true });
 	try {
-		await run(exec, ["git", "clone", "--depth", "1", "--branch", version, IDB_REPO, partial]);
+		if (lock.source) {
+			log(`cloning ${lock.source.repository} at ${lock.source.ref} (shallow) -> ${srcDir}`);
+			await run(exec, ["git", "init", "-q", partial]);
+			await run(exec, ["git", "-C", partial, "remote", "add", "origin", lock.source.repository]);
+			await run(exec, ["git", "-C", partial, "fetch", "--depth", "1", "origin", lock.source.ref]);
+			await run(exec, ["git", "-C", partial, "checkout", "-q", "--detach", "FETCH_HEAD"]);
+		} else {
+			log(`cloning idb ${lock.version} (shallow) -> ${srcDir}`);
+			await run(exec, ["git", "clone", "--depth", "1", "--branch", lock.version, IDB_REPO, partial]);
+		}
 	} catch (error) {
 		await rm(partial, { recursive: true, force: true });
 		throw error;
@@ -181,10 +207,18 @@ async function checkoutTag(exec: Exec, idbDir: string, version: string): Promise
 	return result.stdout.trim();
 }
 
-/** Build the library package from an idb checkout at the lock tag (cloned on demand) with idb's `build.sh`. */
-export async function buildFromSource(lock: IdbLock, deps: SourceDeps): Promise<void> {
-	const { exec, srcDir, dest, log } = deps;
-	await ensureCheckout(exec, srcDir, lock.version, log);
+/** Fails unless the checkout's HEAD is what the lock pins: `source.ref` when set, else the release tag. */
+async function verifyCheckout(exec: Exec, srcDir: string, lock: IdbLock): Promise<void> {
+	if (lock.source) {
+		const head = (await run(exec, ["git", "-C", srcDir, "rev-parse", "HEAD"])).trim();
+		if (head !== lock.source.ref) {
+			throw new Error(
+				`idb checkout ${srcDir} is at ${head} but idb.lock.json pins ${lock.source.ref} of ${lock.source.repository}: ` +
+					`run \`git -C ${srcDir} fetch --depth 1 ${lock.source.repository} ${lock.source.ref} && git -C ${srcDir} checkout --detach FETCH_HEAD\` or update the lock`
+			);
+		}
+		return;
+	}
 	const tag = await checkoutTag(exec, srcDir, lock.version);
 	if (tag !== lock.version) {
 		throw new Error(
@@ -192,6 +226,13 @@ export async function buildFromSource(lock: IdbLock, deps: SourceDeps): Promise<
 				`run \`git -C ${srcDir} fetch --depth 1 origin tag ${lock.version} && git -C ${srcDir} checkout ${lock.version}\` or update the lock`
 		);
 	}
+}
+
+/** Build the library package from an idb checkout at what the lock pins (cloned on demand) with idb's `build.sh`. */
+export async function buildFromSource(lock: IdbLock, deps: SourceDeps): Promise<void> {
+	const { exec, srcDir, dest, log } = deps;
+	await ensureCheckout(exec, srcDir, lock, log);
+	await verifyCheckout(exec, srcDir, lock);
 	log(`building idb libraries ${lock.version} from source in ${srcDir} (this takes a while)`);
 	await run(exec, ["./build.sh", "build", "libraries"], srcDir);
 	await run(exec, ["./build.sh", "build", "library-package"], srcDir);
@@ -214,7 +255,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 	const dest = join(NATIVE_DIR, "idb-libraries");
 	const home = process.env.HOME ?? homedir();
 	if (argv.includes("--from-source")) {
-		const srcDir = process.env.WARDEN_IDB_SRC || sourcePath(home, lock.version);
+		const srcDir = process.env.WARDEN_IDB_SRC || sourcePath(home, lock.source?.ref ?? lock.version);
 		await buildFromSource(lock, { exec: bunExec, srcDir, dest, log });
 		log(`built ${lock.version} from source -> ${dest}`);
 		return 0;

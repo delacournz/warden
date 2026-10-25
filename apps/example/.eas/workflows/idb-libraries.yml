@@ -1,0 +1,61 @@
+name: idb libraries
+
+# Builds idb's library package (what `packages/e2e/native/idb.lock.json` pins and `warden-simd` links) from a
+# commit of a fork that carries patches on top of the release tag, on the same macOS/Xcode image the bench runs on.
+# The artifact is `idb-libraries.macos-arm64.tar.gz` + its sha256; attach it to a GitHub release of this repo and
+# point the lock's `url` / `sha256` / `source` at it. Upstream builds the release asset the same way (`build.sh
+# build libraries` then `library-package`, tarred from Build/LibraryPackage).
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        type: string
+        description: git URL of the idb checkout to build
+        default: https://github.com/UrbanChrisy/idb.git
+      ref:
+        type: string
+        description: full commit sha to build (fetched by sha, so a deleted branch does not matter)
+        required: true
+
+jobs:
+  build_libraries:
+    runs_on: macos-large
+    steps:
+      - uses: eas/checkout
+      - name: Host facts
+        run: |
+          xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize
+          brew --version | head -1
+      - name: Build library package
+        # Expressions are interpolated in run, so the inputs are read here.
+        run: |
+          set -euo pipefail
+          brew list xcodegen > /dev/null 2>&1 || brew install xcodegen
+          brew list xcbeautify > /dev/null 2>&1 || brew install xcbeautify
+          SRC="$HOME/idb"
+          git init -q "$SRC"
+          git -C "$SRC" remote add origin "${{ inputs.repository }}"
+          git -C "$SRC" fetch --depth 1 origin "${{ inputs.ref }}"
+          git -C "$SRC" checkout -q --detach FETCH_HEAD
+          cd "$SRC"
+          echo "== building $(git rev-parse HEAD) from ${{ inputs.repository }} $(date +%T)"
+          ./build.sh build libraries
+          ./build.sh build library-package
+          OUT="$HOME/idb-libraries-out"
+          mkdir -p "$OUT"
+          tar -C Build/LibraryPackage -czf "$OUT/idb-libraries.macos-arm64.tar.gz" .
+          ( cd "$OUT" && shasum -a 256 idb-libraries.macos-arm64.tar.gz | tee idb-libraries.macos-arm64.tar.gz.sha256 )
+          { echo "repository: ${{ inputs.repository }}"; echo "ref: $(git rev-parse HEAD)"; xcodebuild -version; sw_vers; date -u; } > "$OUT/provenance.txt"
+          ls -la "$OUT"
+      - name: Upload xcodebuild logs on failure
+        if: ${{ failure() }}
+        run: |
+          mkdir -p "$HOME/idb-libraries-out"
+          cp "$HOME"/idb/Build/Logs/xcodebuild/*.log "$HOME/idb-libraries-out/" 2>/dev/null || true
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: idb-libraries
+          path: |
+            /Users/expo/idb-libraries-out/**/*
