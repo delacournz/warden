@@ -1,0 +1,98 @@
+name: promote
+
+# Turns a merged version PR into a release: fast-forward `main` to it, then tag it.
+#
+# `main` is a release pointer, not a branch anyone works on. It only ever moves here, always to a
+# `develop` commit that is a fast-forward of itself, so `main` is exactly "the last versioned commit".
+# Railway production builds `main`, and the tag push starts release.yml (GitHub Release + npm), so
+# docs and packages ship together from one commit.
+#
+# Pushes to `develop` that are not the version commit are no-ops here (the common case).
+#
+# This job executes no repo code (no install, no scripts): it holds the App token that bypasses the
+# `main` and `v*` rulesets, so it only reads git objects and runs git. Both the `main` push and the
+# tag are made with the App token because the tag push must start release.yml, and a push made with
+# GITHUB_TOKEN would not.
+on:
+  push:
+    branches: [develop]
+
+permissions: {}
+
+# Serialise, never cancel: a half-finished promote (main pushed, tag not yet) must be allowed to
+# finish, and a re-run is safe because every step below is idempotent.
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: namespace-profile-linux-small
+    permissions:
+      contents: read
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # The App token is used for the checkout so the persisted credential can push to `main` and the
+      # tag. fetch-depth 0 brings every tag and origin/main for the ancestry and tag checks.
+      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+
+      # Is HEAD the merged version PR? All three must hold:
+      #   1. apps/cli version differs from the pre-push tip (the version commit bumped it),
+      #   2. no changeset is left (changeset version consumed them all),
+      #   3. tag v<version> does not exist yet (a re-run after success must not re-release).
+      - id: detect
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base="$BEFORE"
+          if ! echo "$base" | grep -Eq '^[0-9a-f]{40}$' || echo "$base" | grep -Eq '^0{40}$' || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="HEAD^"
+          fi
+          new=$(jq -r .version apps/cli/package.json)
+          old=$(git show "$base:apps/cli/package.json" 2>/dev/null | jq -r .version || echo "")
+          pending=$(find .changeset -maxdepth 1 -name '*.md' ! -name README.md | wc -l | tr -d ' ')
+          if [ -z "$old" ] || [ "$old" = "$new" ]; then
+            echo "apps/cli version unchanged by this push ($new): not a version commit"; echo "release=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$pending" != "0" ]; then
+            echo "$pending changeset(s) still pending: not the version commit"; echo "release=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$new" > /dev/null 2>&1; then
+            echo "tag v$new already exists: already released"; echo "release=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "version commit: $old -> $new"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+
+      # Fast-forward only. If main is not an ancestor of this commit something moved it by hand;
+      # fail loudly instead of forcing, because a force would rewind what Railway serves.
+      - name: Fast-forward main
+        if: steps.detect.outputs.release == 'true'
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "origin/main is not an ancestor of $(git rev-parse HEAD): refusing a non-fast-forward promote" >&2
+            exit 1
+          fi
+          git push origin HEAD:refs/heads/main
+
+      # main first so Railway production and the tag land together. Annotated tag; its push starts
+      # release.yml, which refuses any tag that is not reachable from main.
+      - name: Tag release
+        if: steps.detect.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.detect.outputs.version }}
+        run: |
+          git config user.name "delacour-release[bot]"
+          git config user.email "delacour-release[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
