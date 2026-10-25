@@ -4,7 +4,7 @@ name: release
 #
 # Nobody pushes this tag by hand. The flow is:
 #
-#   changeset PR ─▶ develop ─▶ version.yml opens the "🔖 chore(release): version packages" PR
+#   changeset PR ─▶ develop ─▶ version.yml opens the "🔖 chore(release): vX.Y.Z" PR
 #   merge it ─▶ develop @ V ─▶ promote.yml fast-forwards `main` to V, then pushes the annotated tag vX.Y.Z
 #   tag push ─▶ this workflow (Railway production builds `main` at the same commit)
 #

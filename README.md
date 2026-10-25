@@ -70,7 +70,7 @@ The binary is swapped atomically at the same path, so the next `warden` in your 
 ### Releasing
 
 1. PRs target `develop`. One that changes what `@delacour/warden` ships adds a changeset: `bun changeset`, pick `@delacour/warden`, choose patch / minor / major, write a one-line summary. `@delacour/warden-e2e` follows in lock-step. Docs-only and internal-only PRs need none.
-2. Every push to `develop` opens or updates the "🔖 chore(release): version packages" PR. It bumps the versions, writes `CHANGELOG.md` and consumes the changesets.
+2. Every push to `develop` opens or updates the "🔖 chore(release): vX.Y.Z" PR, titled with the version it will ship. It bumps the versions, writes `CHANGELOG.md` and consumes the changesets.
 3. Merge that PR. `promote.yml` fast-forwards `main` to the merge commit and pushes tag `v<version>`. Nobody pushes `main` or tags by hand.
 4. `main` is what the docs site deploys. The tag runs `.github/workflows/release.yml`, which checks the tag matches the version, runs typecheck/check/test, builds `warden-{darwin,linux}-{arm64,x64}` plus `checksums.txt` and publishes the GitHub release.
 5. The same workflow stages the npm packages (`bun run --cwd apps/cli build:npm` → `apps/cli/dist/npm/`) and publishes `@delacour/warden-<os>-<arch>`, then `@delacour/warden`, then `@delacour/warden-e2e`, with public access and provenance through npm trusted publishing (OIDC, no token). Versions already on npm are skipped, so a re-run finishes a partial publish.
