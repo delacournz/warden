@@ -12,7 +12,7 @@ warden's own mobile e2e stack (plan: `docs/plans/wdn-e2e.md`). No lease / build 
 | `screen/` | locator query model, roles, text matching, actions, polling, text render + selector parser (shared with `warden ui`), `field.ts` (fill/clear/confirm a text field) |
 | `expect/` | `expect` wrapper + locator matchers |
 | `devtools/` | Metro inspector discovery, Hermes CDP, console/network/React tree. Metro's inspector proxy 401s a debugger upgrade without an `Origin`: `openCdp` sends `http://127.0.0.1:<port>` (`localhost` is accepted, then the socket is dropped with 1006). `reloadJs` = `expo.reloadAppAsync` → `DevSettings` → `POST /reload` (only if neither exists); `Page.reload` freezes bridgeless hosts, `DevSettings.reload` is a no-op under expo-dev-launcher; no epoch change = `reload_failed` |
-| `native/` | `warden-simd` Swift package on idb's library package (`native/ios`), scripts (`deps`, `build`, `smoke`, `smoke-android`, `screen-cost`, `fake-simd`, `fake-adb`); `native/android` = `warden-uiad` Java + `scripts/{build,record,smoke}.ts` |
+| `native/` | `warden-simd` Swift package on idb's library package (`native/ios`; `native/idb.lock.json` pins the idb tag, and, while a patch is not upstream, the fork commit it is built from (`source`) plus the tarball hosted on this repo's releases (`url`), built by `apps/example/.eas/workflows/idb-libraries.yml`), scripts (`deps`, `build`, `smoke`, `smoke-android`, `screen-cost`, `fake-simd`, `fake-adb`); `native/android` = `warden-uiad` Java + `scripts/{build,record,smoke}.ts` |
 
 ## Publishing
 Published as `@delacour/warden-e2e` (manifest from `apps/cli/src/npm/manifests.ts`, staged by `build:npm`) in lock-step with `@delacour/warden`; this `package.json` stays `private`.

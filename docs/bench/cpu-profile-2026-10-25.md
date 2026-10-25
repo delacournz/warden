@@ -76,3 +76,19 @@ Side finding, wall time not CPU: 17 `driver.typeText` calls took 19.12 s of the 
 3. The helper's own encoding (`JSON.encode(to:)`, `NDJSON.encodeLine`, 0.2 s per rep) is the next line and not worth touching before 1 and 2.
 
 Profiles, traces and the idb sources read for this are kept outside the repo; re-create with the setup above.
+
+## Result of fix 1 (2026-10-25)
+
+`BridgeResponse.decode` now parses a frame with one `JSONSerialization` pass and builds `result.values` with `BridgeJSONValue(foundationValue:)`; `BridgeResult` gained explicit `CodingKeys` so both paths name the same fields. The patch sits on idb v1.7.2 as commit [`1768a0d`](https://github.com/UrbanChrisy/idb/commit/1768a0d1006ff528c2fd78f335d9e3ee2f01596d) (branch `bridge-response-decode-once`, with a test that decodes every value shape through both paths and checks they agree). idb's library package built from it (macOS 26.5.2, Xcode 26.6, EAS run `01a17397`) is attached to the release [`idb-v1.7.2-warden.1`](https://github.com/delacournz/warden/releases/tag/idb-v1.7.2-warden.1), and `packages/e2e/native/idb.lock.json` pins that commit (`source`) and tarball (`url`, `sha256`), so every `native:deps` (CI, signoff, EAS, release) links the patched package.
+
+Same setup as above (this Mac, pinned app, warden only, 3 reps, rep 1 cold; host loaded, so wall times are not comparable with the EAS numbers):
+
+| Per rep (warm) | Before (`.bench/cpu-prof-2026-10-25`) | After (`.bench/cpu-32a-after`) | Delta |
+| --- | --- | --- | --- |
+| `warden-simd` CPU-s | 6.25 s | 1.68 s | -4.57 s (-73 %) |
+| `warden-simd` share of host CPU | 80.3 % | 49.2 % | |
+| `warden-simd` RSS peak | 28.6 MB | 28.6 MB | 0 |
+| Suite median | 63.64 s | 59.20 s | -4.44 s (-7 %) |
+| Pass rate | 100 % | 100 % | |
+
+The 4.3 CPU-s the profile attributed to `BridgeJSONValue.init(from:)` is gone; what remains in the helper (1.68 s) is the `JSONSerialization` parse, the re-encode for `AXBridgeTreeReader` and the helper's own NDJSON encoding (fix 3). The headline before/after on EAS `macos-large` is in the comparison page's data (`apps/docs/content/docs/bench/data/`).
