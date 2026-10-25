@@ -140,6 +140,9 @@ jobs:
 
       # signoff binds to a SHA, and the App's push moved the PR head, so ask ci.yml to sign the new
       # head off. Skipped when there were no changesets (no PR, or the PR was just closed).
+      # Dispatched on the PR's own branch, not develop: a run is attached to the commit of the ref it
+      # started on, and only a run attached to the PR head shows in the PR's Checks tab while it is in
+      # progress. The branch is the App's fresh copy of develop, so the workflow file is the same.
       - name: Sign off the version PR head
         if: steps.detect.outputs.skip == 'false' && steps.changesets.outputs.has-changesets == 'true'
         env:
@@ -147,5 +150,6 @@ jobs:
           PR: ${{ steps.changesets.outputs.pr-number }}
         run: |
           sha=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
-          echo "dispatching ci.yml on version PR #$PR @ $sha"
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref develop -f "signoff-sha=$sha"
+          ref=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)
+          echo "dispatching ci.yml on version PR #$PR ($ref @ $sha)"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$ref" -f "signoff-sha=$sha"
