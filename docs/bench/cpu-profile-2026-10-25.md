@@ -94,3 +94,18 @@ Same setup as above (this Mac, pinned app, warden only, 3 reps, rep 1 cold; host
 The 4.3 CPU-s the profile attributed to `BridgeJSONValue.init(from:)` is gone; what remains in the helper (1.68 s) is the `JSONSerialization` parse, the re-encode for `AXBridgeTreeReader` and the helper's own NDJSON encoding (fix 3). Headline, on EAS `macos-large` with the same workflow (warden only, 5 runs, run `01a1739d` at `a87b04cc` against run six `01a172f5`): host 9.12 → 3.79 CPU-s/rep (-58 %), `warden-simd` 7.03 → 1.83 s (-74 %), RSS peak 184.9 → 177.6 MB, suite median 97.04 → 91.89 s, 100 % pass both; published on the run page `apps/docs/content/docs/bench/ios-2026-10-25.mdx` with the artifact under `apps/docs/public/bench/ios-2026-10-25/warden-after/`. The simulator's own CPU over the whole job read higher on that worker (821 against 564 CPU-s, idle controls alike), so the in-simulator side is the next profile (H1, H3).
 
 **Upstream status (2026-10-25):** Upstream already carries the same fix: facebook/idb #982 and #983 (typed `BridgeAnswer` models, `BridgeJSONValue` removed) shipped in v1.7.7 on 2026-10-22, so PR facebook/idb#991 from the fork was closed as obsolete; the follow-up is to bump the lock to v1.7.7 and drop the fork patch. warden-simd only calls `simulator.uiAutomation(backend: .accessibility)` in FBSimulatorControl, so the bump is a lock change plus a rebuild, not a port.
+
+## Result of moving to idb v1.7.7 (2026-10-25)
+
+The lock now pins v1.7.7's official library package and the fork is gone. Same local setup as above (this Mac, pinned app, warden only, 3 reps, host loaded):
+
+| Per rep (warm) | Fork on v1.7.2 (`.bench/cpu-32a-after`) | v1.7.7 (`.bench/cpu-177`) | Delta |
+|---|---|---|---|
+| Host CPU-s | 3.46 | 2.87 | -17 % |
+| of which `warden-simd` | 1.68 | 1.36 | -0.31 s |
+| `warden-simd` RSS peak | 28.6 MB | 30.9 MB | +2.3 MB |
+| Suite median | 59.20 s | 55.90 s | -5.6 % |
+| Pass rate | 100 % | 100 % | |
+
+Against the EAS baseline (`packages/e2e-bench/baselines/ios-warden.json`, 3.79 CPU-s/rep) the guard reads -24 %, so the baseline stays as the ceiling; it was taken on a hosted worker and is not refreshed from this machine.
+

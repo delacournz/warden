@@ -1,10 +1,5 @@
 {
-	"version": "v1.7.2",
-	"source": {
-		"repository": "https://github.com/UrbanChrisy/idb.git",
-		"ref": "1768a0d1006ff528c2fd78f335d9e3ee2f01596d"
-	},
+	"version": "v1.7.7",
 	"tarball": "idb-libraries.macos-arm64.tar.gz",
-	"url": "https://github.com/delacournz/warden/releases/download/idb-v1.7.2-warden.1/idb-libraries.macos-arm64.tar.gz",
-	"sha256": "111b3da436b41d4d63eaa1b4ae2b2168673cb62d5ebc3e9052fe0ac678b9f25a"
+	"sha256": "be92d3888c4a1be264aac28b87cbacd593b23763dd5ffcaf607169fe87caf8b4"
 }
