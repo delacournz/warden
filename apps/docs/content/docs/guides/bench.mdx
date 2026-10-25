@@ -121,6 +121,7 @@ artifacts/<fw>/rep-<n>/   native reporter output and resource samples
 - Zero LLM calls.
 - Same assertions per canonical test id.
 - Same retry helpers: dropped first tap, dropped deep link, system alerts.
+- The iOS "Open in …?" sheet is answered once per boot by the harness, before every framework's prepare: iOS asks it for the first custom-scheme link opened from outside the app and not again, so without that the first framework on a shared simulator would pay for it and no other would see it, and on one simulator per framework a tool with no optional step would lose the deep-link test to it.
 - Fresh app launch per test.
 - `retries=0`.
 - Frameworks run sequentially, with daemons stopped between them.
@@ -137,8 +138,8 @@ artifacts/<fw>/rep-<n>/   native reporter output and resource samples
 | Framework | Gap |
 |---|---|
 | warden | Copied from the example app, retries written with warden's own options: `tap({ until })`, a deep-link retry, `systemAlerts: "dismiss"`. The hand-rolled helpers it replaced ran the published headline numbers; the idiomatic run is reported beside them. |
-| Argent | Retries are nested `when:` guards capped at two retaps. Flow selectors read only the app's view hierarchy, never SpringBoard, so the deep-link flow waits for the iOS "Open in …?" sheet with the raw accessibility tool `await-ui-element` (15 s) and taps Open by normalized coordinate with `gesture-tap`; the wait fails the flow when no sheet shows. The checked state of a checkbox is not readable, so the remaining-count assertion covers the effect. |
-| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`. The deep-link flow follows the link with `alert wait 15000` then `alert accept 10000`: `alert accept` on its own polls for about 2 s whatever its argument, and on a loaded host the "Open in …?" sheet shows later, so the wait holds for it first; the pair fails the flow when no sheet shows. Needs a runner prepare step and a daemon. |
+| Argent | Retries are nested `when:` guards capped at two retaps; the deep-link flow retries a dropped link the same way. Flow selectors read only the app's view hierarchy, never SpringBoard, so the flow could not answer the "Open in …?" sheet itself; the harness primes it. The checked state of a checkbox is not readable, so the remaining-count assertion covers the effect. |
+| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`, so the deep-link script could not answer a sheet that may or may not show (`alert accept` polls about 2 s whatever its argument); the harness primes it. Needs a runner prepare step and a daemon. |
 | tester.army | Has its own copy of the hand-rolled helpers warden used before. Runs with a private agent-device state dir and Node 24 on `PATH`. |
 
 ## Add a framework

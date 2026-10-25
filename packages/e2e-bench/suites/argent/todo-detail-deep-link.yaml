@@ -1,36 +1,21 @@
-# A deep link opened from outside the app raises the iOS "Open in “warden-example”?" sheet, a SpringBoard sheet that
-# shows up to seconds late on a loaded host. Flow selectors (`when`, `await`, `tap: { text }`) read only the app's own
-# view hierarchy, so they never see it: the raw accessibility tool `await-ui-element` waits for it (the whole screen,
-# system dialogs included) and `gesture-tap` answers it by normalized coordinate, the only tap a flow can aim outside
-# the app (the Open button of the iPhone 17 sheet: x 0.68, y 0.54). The link is retried when the detail screen has not
-# shown, the way the other suites retry a dropped deep link.
+# A deep link opened from outside the app. The iOS "Open in “warden-example”?" sheet shows once per boot and the
+# harness answers it before this framework's prepare (flow selectors could not: they read only the app's view
+# hierarchy, never SpringBoard), so only a dropped link is retried here, when the detail screen has not shown.
 steps:
   - launch: nz.co.delacour.warden.example
   - run: fragments/signed-in-ada
   - tool: open-url
     args: { url: "warden-example://todo/warden" }
-  - tool: await-ui-element
-    args: { condition: visible, selector: { text: Open }, timeoutMs: 15000 }
-  - tool: gesture-tap
-    args: { x: 0.68, y: 0.54 }
   - await: { idle: true, timeout: 6000 }
   - when: { hidden: { id: todo-detail-title } }
     steps:
       - tool: open-url
         args: { url: "warden-example://todo/warden" }
-      - tool: await-ui-element
-        args: { condition: visible, selector: { text: Open }, timeoutMs: 15000 }
-      - tool: gesture-tap
-        args: { x: 0.68, y: 0.54 }
       - await: { idle: true, timeout: 6000 }
       - when: { hidden: { id: todo-detail-title } }
         steps:
           - tool: open-url
             args: { url: "warden-example://todo/warden" }
-          - tool: await-ui-element
-            args: { condition: visible, selector: { text: Open }, timeoutMs: 15000 }
-          - tool: gesture-tap
-            args: { x: 0.68, y: 0.54 }
   - await: { visible: { id: todo-detail-title } }
   - assert: { text: { in: { id: todo-detail-title }, equals: Run the e2e suite with warden } }
   - assert: { text: { in: { id: todo-detail-status }, equals: Done } }

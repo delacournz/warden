@@ -14,6 +14,7 @@ import {
 	verifyBenchApp,
 } from "./harness/bench-app";
 import { BUNDLE_ID } from "./harness/bundle";
+import { primeDeepLink } from "./harness/deep-link";
 import { type ClaimedDevice, claimDevice, deviceInfo, heartbeatDevice, releaseDevice } from "./harness/device";
 import type { Child, Exec, ExecOptions } from "./harness/exec";
 import { hostInfo } from "./harness/host";
@@ -361,6 +362,15 @@ async function runFramework(
 			phase: "prepare",
 			error: `isolation: ${isolated.error}`,
 		};
+	const primed = await primeDeepLink({
+		exec: deps.exec,
+		platform: opts.platform,
+		udid: device.udid,
+		bundleId: BUNDLE_ID,
+		repoRoot: deps.repoRoot,
+		cliPath: deps.cliPath,
+	});
+	if (opts.platform === "ios") s.log(`deep link primed for ${adapter.id}: ${primed.detail}`);
 	return measure(fc, doctor.version);
 }
 

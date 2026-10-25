@@ -14,7 +14,5 @@ type "password1"
 press "id=\"sign-in-submit\""
 wait "id=\"todos-screen\"" 15000
 open nz.co.delacour.warden.example warden-example://todo/warden
-alert wait 15000
-alert accept 10000
-wait "id=\"todo-detail-title\" text=\"Run the e2e suite with warden\"" 15000
+wait "id=\"todo-detail-title\" text=\"Run the e2e suite with warden\"" 6000
 wait "text=\"Done\"" 4000
