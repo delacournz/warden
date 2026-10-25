@@ -6,7 +6,9 @@
  *
  * Writes that version into the cli and e2e package.jsons, commits it on the current branch,
  * then builds and `npm publish`es the platform packages, `@delacour/warden`, and
- * `@delacour/warden-e2e` (platform packages first). A version already on npm is skipped.
+ * `@delacour/warden-e2e` (platform packages first). A version already on npm is skipped: per package
+ * while publishing, and up front for the whole release, before anything is written or built, when
+ * every package already has it.
  * Accounts with publish 2FA are asked for a one-time password after the build, so it has not
  * expired. `--otp` skips that prompt. A rejected code is asked for again.
  */
@@ -15,7 +17,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { $ } from "bun";
-import { RELEASE_TARGETS } from "../src/npm/platforms";
+import { E2E_PACKAGE, NPM_PACKAGE, platformPackageName, RELEASE_TARGETS } from "../src/npm/platforms";
 import { parseVersion } from "../src/update/version";
 
 /** Source manifests whose `version` is the published lock-step version. Generated npm manifests copy the cli one. */
@@ -70,6 +72,20 @@ export function publishPackageDirs(npmDir: string): string[] {
 		join(npmDir, "warden"),
 		join(npmDir, "warden-e2e"),
 	];
+}
+
+/** Every published package name, in publish order (see `publishPackageDirs`). */
+export function releasePackageNames(): string[] {
+	return [...RELEASE_TARGETS.map((target) => platformPackageName(target)), NPM_PACKAGE, E2E_PACKAGE];
+}
+
+export type ReleasePlan = { kind: "done" } | { kind: "publish"; pending: string[]; skipped: string[] };
+
+/** Split `names` by whether npm already has them at the release version. `done` when nothing is left to publish. */
+export function releasePlan(names: readonly string[], published: ReadonlySet<string>): ReleasePlan {
+	const skipped = names.filter((name) => published.has(name));
+	const pending = names.filter((name) => !published.has(name));
+	return pending.length === 0 ? { kind: "done" } : { kind: "publish", pending, skipped };
 }
 
 type ReleaseArgs = { version: string; otp?: string };
@@ -195,6 +211,21 @@ async function publishUntilAccepted(root: string, dir: string, code: string | un
 	}
 }
 
+async function isPublished(root: string, spec: string): Promise<boolean> {
+	const view = await $`npm view ${spec} version`.cwd(root).quiet().nothrow();
+	return view.exitCode === 0;
+}
+
+/** Asks npm about every package before touching the tree, so a fully published version is a no-op. */
+async function planRelease(root: string, version: string): Promise<ReleasePlan> {
+	const names = releasePackageNames();
+	const published = new Set<string>();
+	for (const name of names) {
+		if (await isPublished(root, `${name}@${version}`)) published.add(name);
+	}
+	return releasePlan(names, published);
+}
+
 async function publishAll(root: string, version: string, otp: string | undefined): Promise<void> {
 	let code = otp;
 	for (const dir of publishPackageDirs(join(root, "apps", "cli", "dist", "npm"))) {
@@ -203,8 +234,7 @@ async function publishAll(root: string, version: string, otp: string | undefined
 			throw new Error(`${manifest.name} is staged at ${manifest.version}, expected ${version}`);
 		}
 		const spec = `${manifest.name}@${manifest.version}`;
-		const view = await $`npm view ${spec} version`.cwd(root).quiet().nothrow();
-		if (view.exitCode === 0) {
+		if (await isPublished(root, spec)) {
 			console.log(`${spec} already published, skipping`);
 			continue;
 		}
@@ -219,6 +249,12 @@ async function main(): Promise<void> {
 	const who = await $`npm whoami`.cwd(root).quiet().nothrow();
 	if (who.exitCode !== 0) throw new Error("npm whoami failed; run `npm login` before releasing");
 	console.log(`publishing as ${who.stdout.toString().trim()}`);
+	const plan = await planRelease(root, version);
+	if (plan.kind === "done") {
+		console.log(`${version} is already on npm for every package, nothing to do`);
+		return;
+	}
+	for (const name of plan.skipped) console.log(`${name}@${version} already published, will skip`);
 	await assertReleasable(root, version);
 	applyVersion(root, version);
 	await commitVersion(root, version);

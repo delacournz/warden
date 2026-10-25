@@ -7,6 +7,8 @@ import {
 	isNpmOtpError,
 	npmOtp,
 	publishPackageDirs,
+	releasePackageNames,
+	releasePlan,
 	releaseVersion,
 	VERSION_FILES,
 	withPackageVersion,
@@ -98,5 +100,37 @@ describe("publish layout", () => {
 		]);
 		expect(dirs.at(-2)).toBe(join("/dist/npm", "warden"));
 		expect(dirs.at(-1)).toBe(join("/dist/npm", "warden-e2e"));
+	});
+});
+
+describe("releasePlan", () => {
+	test("lists every package in publish order", () => {
+		expect(releasePackageNames()).toEqual([
+			"@delacour/warden-darwin-arm64",
+			"@delacour/warden-darwin-x64",
+			"@delacour/warden-linux-arm64",
+			"@delacour/warden-linux-x64",
+			"@delacour/warden",
+			"@delacour/warden-e2e",
+		]);
+	});
+
+	test("is done when every package is already on npm", () => {
+		const names = ["@delacour/warden-darwin-arm64", "@delacour/warden"];
+		expect(releasePlan(names, new Set(names))).toEqual({ kind: "done" });
+	});
+
+	test("publishes everything when nothing is on npm", () => {
+		const names = ["@delacour/warden-darwin-arm64", "@delacour/warden"];
+		expect(releasePlan(names, new Set())).toEqual({ kind: "publish", pending: names, skipped: [] });
+	});
+
+	test("skips the packages already on npm and keeps the rest in order", () => {
+		const names = ["@delacour/warden-darwin-arm64", "@delacour/warden-darwin-x64", "@delacour/warden"];
+		expect(releasePlan(names, new Set(["@delacour/warden-darwin-x64"]))).toEqual({
+			kind: "publish",
+			pending: ["@delacour/warden-darwin-arm64", "@delacour/warden"],
+			skipped: ["@delacour/warden-darwin-x64"],
+		});
 	});
 });
