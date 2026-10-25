@@ -1,0 +1,5 @@
+--------- beginning of main
+10-24 12:00:01.204  1503  1530 I ActivityTaskManager: Displayed com.acme.shop/.MainActivity for user 0: +1s834ms
+10-24 12:00:03.011  1503  1530 I ActivityTaskManager: Fully drawn com.acme.shop/.MainActivity: +3s641ms
+10-24 12:00:09.500  1503  1530 I ActivityTaskManager: Fully drawn com.other.app/.HomeActivity: +620ms
+10-24 12:00:15.870  1503  1530 I ActivityTaskManager: Fully drawn com.acme.shop/.MainActivity: +1m2s5ms (total +1m2s130ms)

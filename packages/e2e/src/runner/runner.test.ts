@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readResults, type TestResult } from "./results";
@@ -398,5 +398,63 @@ describe("reporter", () => {
 		const run = await runSpec("report", { WARDEN_LOG_TIMESTAMPS: "0" });
 		const first = run.stdout.split("\n").find((l) => l.includes("▶ test"));
 		expect(first).toMatch(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\] ▶ test \|ios\|/);
+	});
+});
+
+describe("--perf (WARDEN_PERF)", () => {
+	/** A `warden` stand-in: logs its argv and answers `perf start|stop` with a report whose jank is 12%. */
+	function fakeWarden(): { bin: string; calls: string } {
+		const dir = mkdtempSync(join(tmpdir(), "wdn-fake-warden-"));
+		dirs.push(dir);
+		const calls = join(dir, "calls.log");
+		const report = join(dir, "report.json");
+		const doc = {
+			version: 1,
+			sessionId: "s1",
+			durationMs: 5,
+			banners: [],
+			summary: [],
+			findings: [],
+			marks: [],
+			next: [],
+			metrics: { topFunctions: [], jankPct: 12 },
+		};
+		writeFileSync(report, JSON.stringify(doc));
+		const script = join(dir, "warden.sh");
+		writeFileSync(
+			script,
+			`#!/bin/sh
+echo "$@" >> ${calls}
+if [ "$2" = "start" ]; then echo '{"ok":true,"command":"perf start","result":{"sessionId":"s1"}}'; fi
+if [ "$2" = "stop" ]; then echo '{"ok":true,"command":"perf stop","result":{"sessionId":"s1","dir":"${dir}","reportPath":"${report}","report":${JSON.stringify(doc)}}}'; fi
+`
+		);
+		chmodSync(script, 0o755);
+		return { bin: JSON.stringify([script]), calls };
+	}
+
+	test("wraps each attempt in a session, stops it after the body, lists perf/ files", async () => {
+		const { bin, calls } = fakeWarden();
+		const run = await runSpec("perf", { WARDEN_BIN: bin, WARDEN_PERF: "react,metrics" });
+		expect(run.exitCode).toBe(0);
+		const text = readFileSync(calls, "utf8");
+		expect(text).toContain("perf start --json --udid FAKE-UDID-0123456789 --react --metrics");
+		expect(text.match(/perf stop/g)?.length).toBe(2);
+		expect(run.log).toEqual(["active true", "active false"]);
+		expect(byTitle(run, "runs under a perf session").artifacts?.files).toContain("perf/report.json");
+	});
+
+	test("a budget breach fails the attempt with PERF_BUDGET", async () => {
+		const { bin } = fakeWarden();
+		const run = await runSpec("perf", {
+			WARDEN_BIN: bin,
+			WARDEN_PERF: "metrics",
+			WARDEN_PERF_BUDGETS: '{"jankPct":5}',
+		});
+		expect(run.exitCode).toBe(1);
+		const failed = byTitle(run, "runs under a perf session");
+		expect(failed.status).toBe("failed");
+		expect(failed.error?.code).toBe("PERF_BUDGET");
+		expect(failed.error?.message).toContain("jankPct: 12 > budget 5");
 	});
 });

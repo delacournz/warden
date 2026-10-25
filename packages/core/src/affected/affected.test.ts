@@ -132,6 +132,21 @@ describe("computeAffected", () => {
 		}
 	});
 
+	test("suite.perfBudgets: the top-level budgets, each key replaced by the suite's own", async () => {
+		const merged = await makeSuiteRepo(
+			{ perf: { budgets: { jankPct: 2 } } },
+			{ perf: { budgets: { jankPct: 9, startupColdMs: 2000 } } }
+		);
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b] = await Promise.all([merged, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.perfBudgets).toEqual({ jankPct: 2, startupColdMs: 2000 });
+			expect(b?.success && b.data.perfBudgets).toBeUndefined();
+		} finally {
+			for (const r of [merged, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+	});
+
 	test("overlay config: specs resolve in the overlay, project root and git diff stay in the checkout", async () => {
 		const home = mkdtempSync(join(tmpdir(), "warden-affected-home-"));
 		cleanup.push(home);

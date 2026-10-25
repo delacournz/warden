@@ -1,0 +1,6 @@
+  PID  PPID    RSS  %CPU      TIME STARTED                      COMMAND
+    1     0   2800   0.0   0:01.52 Sat Oct 24 09:00:01 2026     launchd_sim /Users/chris/Library/Developer/CoreSimulator/Devices/U1/data/var/run/launchd_bootstrap.plist
+  310     1  41280   0.3   0:08.40 Sat Oct 24 09:00:12 2026     /Library/Developer/CoreSimulator/Volumes/iOS_23A340/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.0.simruntime/Contents/Resources/RuntimeRoot/usr/libexec/backboardd
+  845     1 312400  12.4   1:12.34 Sat Oct 24 09:14:55 2026     /Users/chris/Library/Developer/CoreSimulator/Devices/U1/data/Containers/Bundle/Application/AAAA-1111/Example.app/Example
+  846   845  18020   0.1   0:00.42 Sat Oct 24 09:14:56 2026     /Users/chris/Library/Developer/CoreSimulator/Devices/U1/data/Containers/Bundle/Application/AAAA-1111/Example.app/PlugIns/Share.appex/Share
+  901     1  66000   1.8   0:20.01 Sat Oct 24 09:15:30 2026     /Users/chris/Library/Developer/CoreSimulator/Devices/U1/data/Containers/Bundle/Application/BBBB-2222/Other.app/Other

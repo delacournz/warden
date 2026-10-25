@@ -14,6 +14,8 @@ export type FixtureSession = {
 	readonly signal?: AbortSignal;
 	/** `<out>/<specId>/<title-slug>-<hash6>` of the running attempt */
 	readonly attemptDir?: string;
+	/** the running attempt's recorded files (`device.perf` adds its `perf/` ones) */
+	readonly attempt?: { readonly files: Set<string> };
 	/** the running attempt's `trace.jsonl` */
 	readonly trace?: { write(event: TraceEvent): void };
 	/** one reported step (`▸`/`▪` lines, `trace.jsonl`) that gives up when the attempt deadline aborts; absent = just run it */

@@ -53,6 +53,7 @@ const AFFECTED = {
 		"todo-detail": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/todo/[id].tsx"] },
 		settings: { entries: [...SIGNED_IN, "src/app/(tabs)/settings.tsx"] },
 		devtools: { entries: ["src/app/welcome.tsx"] },
+		perf: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
 		gestures: { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
@@ -68,6 +69,7 @@ const AFFECTED = {
  * ```bash
  * warden e2e example                 # specs this branch needs, 2 sims (--all: every spec)
  * warden e2e example-dev --all       # same specs on the dev client + warden's Metro
+ * warden e2e example --specs perf --perf  # profile every attempt too (reports under each attempt's perf/)
  * warden affected example            # which specs this branch needs
  * warden dev ios                     # dev variant: cached Debug dev client + Metro
  * ```
@@ -94,6 +96,7 @@ export default {
 			},
 		},
 	],
+	perf: { budgets: { jankPct: 5, maxCommitMs: 100, p95CpuPct: 90, peakMemoryMb: 600 } },
 	e2e: {
 		example: {
 			count: 2,

@@ -1,0 +1,3 @@
+"at_ns","dur_ns","jank_type","layer","total_frames"
+3200000000,412000000,"App Deadline Missed","TX - com.shop.app/.MainActivity#0",600
+5100000000,48000000,"App Deadline Missed, Buffer Stuffing","TX - com.shop.app/.MainActivity#0",600

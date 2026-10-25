@@ -1,0 +1,5 @@
+ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)
+Display #0 (activities from top to bottom):
+  Task id #14
+    mResumedActivity: ActivityRecord{1f3a2b u0 nz.co.delacour.warden.example/.MainActivity t14}
+    mLastPausedActivity: ActivityRecord{77aa u0 com.android.launcher3/.Launcher t1}

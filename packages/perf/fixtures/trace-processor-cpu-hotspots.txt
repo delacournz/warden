@@ -1,0 +1,5 @@
+"thread","function","dso","samples"
+"mqt_v_js","facebook::hermes::vm::Interpreter::interpretFunction","/data/app/~~x/com.shop.app-y/lib/arm64/libhermes.so",700
+"RenderThread","android::uirenderer::skia::SkiaOpenGLPipeline::draw","/system/lib64/libhwui.so",184
+"com.shop.app","art::gc::collector::ConcurrentCopying::Copying","/apex/com.android.art/lib64/libart.so",57
+"mqt_v_native","[unknown]","",[NULL]

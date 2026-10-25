@@ -74,6 +74,12 @@ export type SpecEnvOptions = {
 	helperDir: string;
 	/** warden's own version: the spec preload refuses to run when `@delacour/warden-e2e` is not the same */
 	version: string;
+	/** argv that re-runs this warden: `device.perf` shells out to it (`WARDEN_BIN`) */
+	bin?: readonly string[] | undefined;
+	/** `warden e2e --perf`: the captures every attempt records (`WARDEN_PERF`) */
+	perf?: readonly string[] | undefined;
+	/** the suite's `perf.budgets` (`WARDEN_PERF_BUDGETS`) */
+	perfBudgets?: Readonly<Record<string, number>> | undefined;
 };
 
 /** The env contract of one spec process (the per-device `WARDEN_UDID` etc. come from batch). */
@@ -89,6 +95,11 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 		[ENV_NAMES.specsDir]: o.specsDir,
 		[ENV_NAMES.helperDir]: o.helperDir,
 		[ENV_NAMES.version]: o.version,
+		...(o.bin === undefined ? {} : { [ENV_NAMES.bin]: JSON.stringify(o.bin) }),
+		...(o.perf === undefined ? {} : { [ENV_NAMES.perf]: o.perf.join(",") }),
+		...(o.perfBudgets === undefined || Object.keys(o.perfBudgets).length === 0
+			? {}
+			: { [ENV_NAMES.perfBudgets]: JSON.stringify(o.perfBudgets) }),
 	};
 }
 
@@ -99,4 +110,22 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 export function helperDir(main: string, execPath: string): string {
 	const compiled = main.startsWith("/$bunfs/") || main.startsWith("B:/~BUN/");
 	return compiled ? dirname(execPath) : join(sourceDirFromCliPath(main), "packages/e2e/native/dist");
+}
+
+const PERF_CAPTURES = ["all", "js", "react", "native", "metrics", "frames", "logs"] as const;
+
+/**
+ * `--perf` / `--perf=react,js`: the captures each attempt records. Bare `--perf` is warden's default set (metrics,
+ * frames, logs: cheap, observe-only). `all` is every capture.
+ */
+export function parsePerfFlag(raw: string | boolean | undefined): Result<string[] | undefined> {
+	if (raw === undefined || raw === false) return ok(undefined);
+	if (raw === true || raw.trim() === "") return ok([]);
+	const names = raw
+		.split(",")
+		.map((n) => n.trim())
+		.filter((n) => n !== "");
+	const unknown = names.find((n) => !(PERF_CAPTURES as readonly string[]).includes(n));
+	if (unknown !== undefined) return err(`--perf: unknown capture "${unknown}" (${PERF_CAPTURES.join(", ")})`);
+	return ok(names);
 }

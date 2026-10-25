@@ -145,3 +145,21 @@ describe("WARDEN_VERSION", () => {
 		expect(plain.success && plain.data && "wardenVersion" in plain.data).toBe(false);
 	});
 });
+
+describe("perf env", () => {
+	test("WARDEN_BIN, WARDEN_PERF and WARDEN_PERF_BUDGETS", () => {
+		const r = readEnv({
+			...base,
+			WARDEN_BIN: '["bun","/x/cli.ts"]',
+			WARDEN_PERF: "react, js",
+			WARDEN_PERF_BUDGETS: '{"jankPct":5}',
+		});
+		expect(r).toMatchObject({
+			success: true,
+			data: { wardenBin: ["bun", "/x/cli.ts"], perf: ["react", "js"], perfBudgets: '{"jankPct":5}' },
+		});
+		expect(readEnv({ ...base, WARDEN_BIN: "/bin/warden" })).toMatchObject({ data: { wardenBin: ["/bin/warden"] } });
+		const plain = readEnv(base);
+		expect(plain.success && plain.data && "perf" in plain.data).toBe(false);
+	});
+});

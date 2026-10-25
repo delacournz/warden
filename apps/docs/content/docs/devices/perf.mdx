@@ -1,0 +1,120 @@
+---
+title: Profile an app (warden perf)
+description: warden perf - CPU, memory, frames, startup, JS, React and native profiling of an app on a warden simulator or emulator, as one combined session with a ranked report, drill-down queries, before/after diffs and e2e budgets.
+icon: Gauge
+---
+
+`warden perf` measures an app running on a warden-managed iOS simulator or Android emulator and answers "why is it slow" with ranked findings, not raw traces. Each capturer works on its own (`metrics`, `frames`, `js`, ...); `start` / `stop` / `record` run several as **one session** whose `report` lines them up on a single timeline, so a hang, the React commit that caused it and the `warden perf mark` you dropped before it appear together. Flags are in the [CLI reference](/docs/reference/cli#warden-perf).
+
+## What it measures
+
+| Signal | iOS simulator | Android emulator |
+|---|---|---|
+| CPU %, memory over time (`metrics`) | `ps` on the app executable, RSS | `top` + `dumpsys meminfo` (PSS, RSS) |
+| Frames, jank (`frames`) | not available (no frame API); use hangs | `dumpsys gfxinfo framestats` |
+| Startup (`startup`) | wall time of launch (lower bound), or `xctrace` App Launch | `am start -W` (+ `reportFullyDrawn`) |
+| JS CPU (`js`) | Hermes sampling profile over Metro, source-mapped to `file:line` | same |
+| React renders (`react`) | commits, hot components, ranked findings with a fix | same |
+| Native CPU and hangs (`native`) | `xctrace` Time Profiler + Hangs (`--leaks` adds Leaks) | Perfetto trace (or `simpleperf`), analysed with `trace_processor` |
+| Memory snapshots (`memory --snapshot`, `heap`) | `.memgraph` + leak count; Hermes `.heapsnapshot` | `.hprof`; Hermes `.heapsnapshot` |
+| Logs, crashes (`logs`, `crashes`) | `log stream`, `.ips` reports, optional dSYM symbolication | `logcat`, dropbox crashes and ANRs |
+
+## Quick start
+
+```bash
+warden claim ios --json                                  # a device; use its udid below
+warden dev ios --json                                    # a dev client (JS and React need Metro)
+warden perf doctor --udid $UDID                          # what is missing, one line per check
+warden perf record --all --duration 15s --udid $UDID &   # capture while you drive the app
+warden ui press @e3 --udid $UDID                         # ... scroll, tap, navigate
+warden perf mark "scroll feed" --udid $UDID              # label the moment; findings are tagged with it
+wait
+warden perf report                                       # merged, ranked findings and next: hints
+warden perf query latest commits --by component          # drill in
+# fix the code, then measure the same thing again
+warden perf record --all --duration 15s --relaunch --udid $UDID
+warden perf diff <before-id> latest                      # metric by metric
+warden ui close --release --udid $UDID
+```
+
+`report` prints a capped summary; `--full` prints the whole `report.md`, `--json` prints `report.json`. Findings are sorted by severity then cost, and each carries evidence, a suggested fix and a `next:` command.
+
+## The agent fix loop
+
+1. `perf doctor` once per device.
+2. Record the scenario that feels slow (`record` for a fixed time, or `start` ... `perf mark` ... `stop` when you need to drive in between).
+3. `perf report`, then `perf query <id> ...` on the worst finding: `commits --by component|window|index|cascade`, `cpu --window 3s-4s [--tree]`, `stacks hang|callers <fn>|thread|leaks`, `frames --worst`.
+4. Change the code. Run `perf record --relaunch` (or `--reset` to wipe app data first) so startup and the early JS / React work are inside the capture.
+5. `perf diff <before> <after>`. Add `--fail-on regress` to exit 1 when a metric got worse past `--threshold` (default 10%).
+
+Lease rules:
+
+- **Observing** (metrics, attach-only traces, `js`, `react`, `logs`, `crashes`, plain `frames` / `memory`) works on any warden device and never takes a lease.
+- **Mutating** (`--relaunch`, `--reset`, `startup`, `memory --snapshot`, `heap snapshot`, `frames --reset`, `native --leaks`) needs your own lease. Pass `--claim` to take a free device; `perf start` takes a short `warden perf` lease and `stop` gives it back.
+- A device held by someone else with a live process is refused (`device_foreign` / `device_busy`). `--allow-mutate-foreign` only helps when no live warden process holds the lease.
+- One session per device (`session_active` names it). `warden release` and `warden ui close --release` stop a running session first.
+- Several candidate devices exit 2 with `ambiguous_device`: pass `--udid`, `--serial` or `--lease`.
+
+## One-shots
+
+| You want | Run |
+|---|---|
+| live CPU / memory sparklines | `warden perf metrics --watch` |
+| memory right now, or a heap snapshot | `warden perf memory [--snapshot --claim]` |
+| fps, janky %, worst jank windows (Android) | `warden perf frames [--reset]` |
+| cold / warm start, median and p90 | `warden perf startup --cold --runs 5 --claim` |
+| JS hotspots | `warden perf js --duration 10s` |
+| JS heap snapshot, and a diff of two | `warden perf heap snapshot --claim`, `warden perf heap diff a b` |
+| React commits and findings | `warden perf react --duration 10s` |
+| native CPU, hangs, leaks | `warden perf native [--leaks]` |
+| device logs (redacted) | `warden perf logs --level W --since 5m` |
+| crashes and ANRs | `warden perf crashes --since 1h` |
+
+Run `warden perf doctor` first: it also tells you whether an Android app is debuggable or `<profileable android:shell="true"/>`, which native profiling needs (`not_profileable` otherwise).
+
+## trace_processor download
+
+Android native analysis runs PerfettoSQL through Perfetto's `trace_processor_shell` (about 14 MB, sha256-verified, cached in `$WARDEN_HOME/tools/`). warden asks before downloading on a terminal; without a terminal it exits 3 with `tool_missing`. Say yes up front:
+
+```bash
+warden perf tools install trace-processor --yes
+```
+
+or pass `--yes` to `start`, `record`, `stop`, `native` or `query --rerun`. Point at your own copy with `WARDEN_TRACE_PROCESSOR=/path/to/trace_processor_shell`. Without it the trace is still kept and the analysis is skipped with a warning.
+
+## Budgets in e2e
+
+Specs can record a perf session around a test and fail on a breach, so a regression is caught where the spec already runs:
+
+- `device.perf.start(opts)`, `device.perf.mark(label)` and `device.perf.stop()` inside a spec; `stop` returns a typed `PerfReport`. `opts` are the `warden perf start` capture flags as booleans (`js`, `react`, `native`, `metrics`, `frames`, `logs`, `all`, `relaunch`, `reset`, `maxDurationMs`). `device.perf.active` says whether a session is open.
+- `warden e2e <suite> --perf[=captures]` profiles every attempt. Bare `--perf` records metrics, frames and logs; `--perf=react,js` picks captures; `--perf=all` records everything. The report is copied to `<attempt>/perf/` (`report.json`, `report.md`, `session.json`) and `e2e-report.json` links each test's `perf` dir.
+- Budgets live in `warden.config.ts`: `perf: { budgets: { startupColdMs, jankPct, maxCommitMs, p95CpuPct, peakMemoryMb } }` (cold start ms, janky frames %, slowest React commit ms, p95 CPU %, peak memory MB; all lower is better). A suite's `perf.budgets` replaces the top-level one per key.
+- A spec overrides both for itself with `device.perf.stop({ budgets: { jankPct: 2 } })`.
+- A breach fails the test with a `PERF_BUDGET` error naming metric, value and budget (kind `perf_budget` in `e2e-report.json`). A metric whose capture did not run cannot breach.
+
+See [Write specs](/docs/e2e/specs) and [Run e2e](/docs/e2e/suites). Budgets measured on a simulator are for catching regressions between runs, not for absolute targets.
+
+## Sessions and artifacts
+
+Sessions live in `$WARDEN_HOME/perf/<id>/` (`id` is `<yyyymmdd-hhmmss>-<hash6>`, UTC). `warden perf ls` lists them; `report.md` and `report.json` are written by `stop`.
+
+| File | From | Open with |
+|---|---|---|
+| `session.json`, `plan.json`, `marks` | session bookkeeping | any editor |
+| `report.md`, `report.json` | `stop` / `report --rebuild` | any editor; agents read `report.json` |
+| `js/cpu.cpuprofile`, `js/hotspots.json` | `js` | Chrome DevTools (Performance, Load profile) or speedscope |
+| `js/heap-<ts>.heapsnapshot` | `heap snapshot` | Chrome DevTools, Memory tab |
+| `react/commits.json`, `react/findings.json` | `react` | any editor |
+| `native/ios.trace` | `native` on iOS | Instruments |
+| `native/android.perfetto-trace` | `native` on Android | Perfetto UI (ui.perfetto.dev) |
+| `native/*.hprof` | `memory --snapshot` on Android | Android Studio Profiler (Load) |
+| `native/*.memgraph` | `memory --snapshot` on iOS | Xcode Memory Graph debugger |
+| `metrics/`, `frames.json`, `logs/device.log`, `crashes/` | the matching capturers | any editor |
+
+## Caveats
+
+- **Simulator and emulator numbers run on host CPU and GPU.** Trust relative changes and diffs, not absolutes. Every report carries a banner saying so. Final sign-off belongs on a physical device.
+- **Dev builds inflate JS and React costs** (`__DEV__`, unminified bundle, DevTools hook). The React profiler needs a dev or profiling build; confirm hot spots on a release or profileable build and use those for native work. Release builds have no Metro, so `js` exits 3 (`devtools_unavailable`).
+- **Overhead.** Hermes sampling and Perfetto callstacks cost CPU. Keep sessions short: a session stops itself at `--max-duration` (default 30 s, hard cap 5 m, longer values are clamped with a warning). A dead or overdue session is swept the next time one starts.
+- **Privacy.** Logs are redacted (bearer tokens, API keys, JWTs, passwords, emails become `[redacted]`). Heap snapshots, `.hprof`, `.memgraph` and traces contain app memory and are never uploaded; do not attach them to a ticket without checking.
+- A JS reload during a capture loses the JS profile.

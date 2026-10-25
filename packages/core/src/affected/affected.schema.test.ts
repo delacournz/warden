@@ -47,3 +47,15 @@ describe("e2e.<suite>.shutdown", () => {
 		expect(issues({ shutdown: "never" })).not.toEqual([]);
 	});
 });
+
+describe("perf budgets", () => {
+	test("nonnegative numbers under known keys", () => {
+		expect(suite({ perf: { budgets: { jankPct: 5, peakMemoryMb: 300 } } }).perf?.budgets).toEqual({
+			jankPct: 5,
+			peakMemoryMb: 300,
+		});
+		expect(issues({ perf: { budgets: { jankPct: -1 } } })).not.toEqual([]);
+		expect(issues({ perf: { budgets: { bogus: 1 } } })).not.toEqual([]);
+		expect(issues({ perf: { extra: 1 } })).not.toEqual([]);
+	});
+});

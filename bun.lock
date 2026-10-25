@@ -28,6 +28,7 @@
         "@commander-js/extra-typings": "^15.0.0",
         "@delacour/warden-core": "workspace:*",
         "@delacour/warden-e2e": "workspace:*",
+        "@delacour/warden-perf": "workspace:*",
         "@delacour/warden-types": "workspace:*",
         "chalk": "^6.0.1",
         "commander": "^15.0.0",
@@ -150,6 +151,7 @@
       "dependencies": {
         "@delacour/warden-core": "workspace:*",
         "@delacour/warden-e2e": "workspace:*",
+        "@delacour/warden-perf": "workspace:*",
         "@delacour/warden-types": "workspace:*",
         "zod": "^4.4.3",
       },
@@ -159,6 +161,18 @@
         "detox": "20.51.3",
         "e2e": "0.20.0",
         "jest": "^29.7.0",
+        "typescript": "^5.9.3",
+      },
+    },
+    "packages/perf": {
+      "name": "@delacour/warden-perf",
+      "version": "0.1.0",
+      "dependencies": {
+        "@jridgewell/trace-mapping": "^0.3.31",
+        "zod": "^4.4.3",
+      },
+      "devDependencies": {
+        "@delacour/warden-tsconfig": "workspace:*",
         "typescript": "^5.9.3",
       },
     },
@@ -475,6 +489,8 @@
     "@delacour/warden-e2e-bench": ["@delacour/warden-e2e-bench@workspace:packages/e2e-bench"],
 
     "@delacour/warden-example": ["@delacour/warden-example@workspace:apps/example"],
+
+    "@delacour/warden-perf": ["@delacour/warden-perf@workspace:packages/perf"],
 
     "@delacour/warden-release": ["@delacour/warden-release@workspace:scripts/release"],
 

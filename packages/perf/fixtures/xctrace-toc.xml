@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<trace-toc>
+	<run number="1">
+		<info>
+			<target>
+				<device platform="iOS Simulator" name="iPhone 17" uuid="A1B2C3D4-0000-4000-8000-000000000001"/>
+				<process type="attached" name="ShopApp" pid="4242"/>
+			</target>
+			<summary>
+				<start-date>2026-10-24T01:02:03.000+00:00</start-date>
+				<end-date>2026-10-24T01:02:13.250+00:00</end-date>
+				<duration>10.25</duration>
+				<template-name>Time Profiler</template-name>
+			</summary>
+		</info>
+		<data>
+			<table schema="time-profile" target-pid="ALL"/>
+			<table schema="potential-hangs"/>
+			<table schema="leaks"/>
+			<table schema="tick" frequency="1000000"/>
+		</data>
+	</run>
+</trace-toc>

@@ -1,0 +1,6 @@
+Packages:
+  Package [com.acme.shop] (a1b2c3):
+    userId=10230
+    versionCode=42 minSdk=24 targetSdk=35
+    flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ALLOW_BACKUP ]
+    privateFlags=[ PRIVATE_FLAG_ACTIVITIES_RESIZE_MODE_RESIZEABLE_VIA_SDK_VERSION ]
