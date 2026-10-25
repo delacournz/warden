@@ -14,6 +14,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 FW="${BENCH_FRAMEWORK:?}"
 APP="${BENCH_APP:?}"
+[ -e "$APP" ] || { echo "bench app not found: $APP (BENCH_APP must be the downloaded .app)"; exit 2; }
 RUNS="${BENCH_RUNS:-5}"
 MAX_MINUTES="${BENCH_MAX_MINUTES:-55}"
 OUT="$ROOT/.bench/eas-ios-$FW"
@@ -87,7 +88,7 @@ trap release EXIT
 log "lease=$LEASE udid=$UDID"
 
 log "install app"
-xcrun simctl install "$UDID" "$APP"
+xcrun simctl install "$UDID" "$APP" || { echo "simctl install failed"; exit 1; }
 
 log "wait for load < ncpu"
 NCPU=$(sysctl -n hw.ncpu)
@@ -110,11 +111,21 @@ log "bench run, watchdog in ${LEFT}s"
 if [ "$LEFT" -le 60 ]; then echo "no time left for the bench run"; exit 3; fi
 bun packages/e2e-bench/src/cli.ts run --platform ios --frameworks "$FW" --runs "$RUNS" --udid "$UDID" --app "$APP" --out "$OUT" $FORCE > "$HOME/bench-run.log" 2>&1 &
 BPID=$!
-( sleep "$LEFT"; echo "!! watchdog: ${MAX_MINUTES} min reached, stopping the bench (results so far are kept)"; kill -TERM "$BPID" 2>/dev/null; sleep 60; kill -KILL "$BPID" 2>/dev/null ) &
+# The watchdog's sleep must not inherit the step's stdout: an orphaned sleep holding that pipe keeps the EAS step
+# open until it ends. The subshell kills its sleep on TERM, and it is torn down children-first below.
+(
+  trap 'kill "$SLEEP_PID" 2>/dev/null; exit 0' TERM
+  sleep "$LEFT" </dev/null >/dev/null 2>&1 & SLEEP_PID=$!
+  wait "$SLEEP_PID" || exit 0
+  echo "!! watchdog: ${MAX_MINUTES} min reached, stopping the bench (results so far are kept)"
+  kill -TERM "$BPID" 2>/dev/null
+  sleep 60 </dev/null >/dev/null 2>&1
+  kill -KILL "$BPID" 2>/dev/null
+) &
 WDPID=$!
 progress $BPID "bench $FW" "$HOME/bench-run.log"
 wait $BPID; CODE=$?
-kill "$WDPID" 2>/dev/null; pkill -P "$WDPID" 2>/dev/null
+pkill -TERM -P "$WDPID" 2>/dev/null; kill -TERM "$WDPID" 2>/dev/null; wait "$WDPID" 2>/dev/null || true
 cp "$HOME/bench-run.log" "$OUT/" 2>/dev/null || true
 log "bench exited $CODE"
 tail -n 30 "$HOME/bench-run.log"

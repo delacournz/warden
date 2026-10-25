@@ -75,14 +75,13 @@ jobs:
           xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
           echo "app: ${{ steps.download_build.outputs.artifact_path }}"
       - name: Bench warden
-        env:
-          BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
-        run: bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
+        # Expressions are interpolated in run, not in a step env, so the app path is passed inline.
+        run: BENCH_APP="${{ steps.download_build.outputs.artifact_path }}" bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
       - name: Release lease
         if: ${{ always() }}
         run: |
           export PATH="$HOME/.bun/bin:$PATH"
-          [ -f "$HOME/bench-lease-id" ] && bun apps/cli/src/cli.ts release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+          [ -f "$HOME/bench-lease-id" ] && bun "$(git rev-parse --show-toplevel)/apps/cli/src/cli.ts" release "$(cat "$HOME/bench-lease-id")" --shutdown || true
       - name: Collect results
         if: ${{ always() }}
         run: |
@@ -134,14 +133,13 @@ jobs:
           xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
           echo "app: ${{ steps.download_build.outputs.artifact_path }}"
       - name: Bench argent
-        env:
-          BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
-        run: bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
+        # Expressions are interpolated in run, not in a step env, so the app path is passed inline.
+        run: BENCH_APP="${{ steps.download_build.outputs.artifact_path }}" bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
       - name: Release lease
         if: ${{ always() }}
         run: |
           export PATH="$HOME/.bun/bin:$PATH"
-          [ -f "$HOME/bench-lease-id" ] && bun apps/cli/src/cli.ts release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+          [ -f "$HOME/bench-lease-id" ] && bun "$(git rev-parse --show-toplevel)/apps/cli/src/cli.ts" release "$(cat "$HOME/bench-lease-id")" --shutdown || true
       - name: Collect results
         if: ${{ always() }}
         run: |
@@ -193,14 +191,13 @@ jobs:
           xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
           echo "app: ${{ steps.download_build.outputs.artifact_path }}"
       - name: Bench agent-device
-        env:
-          BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
-        run: bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
+        # Expressions are interpolated in run, not in a step env, so the app path is passed inline.
+        run: BENCH_APP="${{ steps.download_build.outputs.artifact_path }}" bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
       - name: Release lease
         if: ${{ always() }}
         run: |
           export PATH="$HOME/.bun/bin:$PATH"
-          [ -f "$HOME/bench-lease-id" ] && bun apps/cli/src/cli.ts release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+          [ -f "$HOME/bench-lease-id" ] && bun "$(git rev-parse --show-toplevel)/apps/cli/src/cli.ts" release "$(cat "$HOME/bench-lease-id")" --shutdown || true
       - name: Collect results
         if: ${{ always() }}
         run: |
@@ -252,14 +249,13 @@ jobs:
           xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
           echo "app: ${{ steps.download_build.outputs.artifact_path }}"
       - name: Bench tester-army
-        env:
-          BENCH_APP: ${{ steps.download_build.outputs.artifact_path }}
-        run: bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
+        # Expressions are interpolated in run, not in a step env, so the app path is passed inline.
+        run: BENCH_APP="${{ steps.download_build.outputs.artifact_path }}" bash "$(git rev-parse --show-toplevel)/packages/e2e-bench/scripts/eas-bench.sh"
       - name: Release lease
         if: ${{ always() }}
         run: |
           export PATH="$HOME/.bun/bin:$PATH"
-          [ -f "$HOME/bench-lease-id" ] && bun apps/cli/src/cli.ts release "$(cat "$HOME/bench-lease-id")" --shutdown || true
+          [ -f "$HOME/bench-lease-id" ] && bun "$(git rev-parse --show-toplevel)/apps/cli/src/cli.ts" release "$(cat "$HOME/bench-lease-id")" --shutdown || true
       - name: Collect results
         if: ${{ always() }}
         run: |
