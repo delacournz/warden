@@ -25,8 +25,14 @@ on:
 permissions:
   contents: read
 
+# One run per branch, newest wins. A signoff binds to a SHA, so once a branch moves on (a second
+# merge into develop re-pushes the version PR head seconds after the first; a maintainer dispatches
+# again after a push) the older run's result is already stale: cancel it instead of paying for two.
+# The cancelled run's `signoff` job still settles its pending status as failure, so the old SHA
+# never shows "in progress". Keyed on the ref, not the SHA: two dispatches on one branch with
+# different heads must share a group for the newer to cancel the older.
 concurrency:
-  group: ci-${{ inputs.signoff-sha }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
