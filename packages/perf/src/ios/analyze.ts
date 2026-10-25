@@ -79,6 +79,43 @@ function chainOf(frames: readonly StackFrame[]): string {
 	return kept.reverse().join(" > ");
 }
 
+type HotMap = Map<
+	string,
+	{ thread: string; frame: string; binary: string; cls: FrameClass; samples: number; ns: number }
+>;
+
+/** Add a sample's blamed frame to the per-(thread, frame) self-time table. */
+function addHotspot(
+	hot: HotMap,
+	thread: string,
+	dom: NonNullable<ReturnType<typeof dominantFrame>>,
+	weightNs: number
+): void {
+	const key = `${thread}\u0000${dom.frame.name}`;
+	const row = hot.get(key);
+	if (row === undefined) {
+		hot.set(key, {
+			thread,
+			frame: dom.frame.name,
+			binary: dom.frame.binary,
+			cls: dom.cls,
+			samples: 1,
+			ns: weightNs,
+		});
+		return;
+	}
+	row.samples++;
+	row.ns += weightNs;
+}
+
+/** Count a main-thread sample inside a hang window's bucket: blamed function and call chain. */
+function addToBucket(bucket: Bucket, sample: NativeSample, dom: ReturnType<typeof dominantFrame>): void {
+	bucket.samples++;
+	bump(bucket.functions, dom?.frame.name ?? sample.frames[0]?.name ?? "?");
+	const chain = chainOf(sample.frames);
+	if (chain !== "") bump(bucket.chains, chain);
+}
+
 export type SampleAccumulator = { add: (sample: NativeSample) => void; stats: () => SampleStats };
 
 /**
@@ -90,10 +127,7 @@ export function createAccumulator(opts: { pid?: number; windows?: readonly HangW
 	const buckets = new Map<number, Bucket>(
 		windows.map((w) => [w.id, { samples: 0, functions: new Map(), chains: new Map() }])
 	);
-	const hot = new Map<
-		string,
-		{ thread: string; frame: string; binary: string; cls: FrameClass; samples: number; ns: number }
-	>();
+	const hot: HotMap = new Map();
 	const threads: Counter = new Map();
 	let sampleCount = 0;
 	let totalNs = 0;
@@ -123,32 +157,11 @@ export function createAccumulator(opts: { pid?: number; windows?: readonly HangW
 			bump(threads, thread);
 			const dom = dominantFrame(sample.frames);
 			if (dom === undefined) systemSamples++;
-			else {
-				const key = `${thread}\u0000${dom.frame.name}`;
-				const row = hot.get(key);
-				if (row === undefined)
-					hot.set(key, {
-						thread,
-						frame: dom.frame.name,
-						binary: dom.frame.binary,
-						cls: dom.cls,
-						samples: 1,
-						ns: sample.weightNs,
-					});
-				else {
-					row.samples++;
-					row.ns += sample.weightNs;
-				}
-			}
+			else addHotspot(hot, thread, dom, sample.weightNs);
 			if (thread === "Main Thread" && windows.length > 0) {
 				const w = windowAt(sample.timeNs);
 				const bucket = w === undefined ? undefined : buckets.get(w.id);
-				if (bucket !== undefined) {
-					bucket.samples++;
-					bump(bucket.functions, dom?.frame.name ?? sample.frames[0]?.name ?? "?");
-					const chain = chainOf(sample.frames);
-					if (chain !== "") bump(bucket.chains, chain);
-				}
+				if (bucket !== undefined) addToBucket(bucket, sample, dom);
 			}
 		},
 		stats: () => ({
@@ -423,33 +436,43 @@ export function reportFindings(report: NativeReport, traceHint: string): Finding
 	return out;
 }
 
-/** The `report.md` section: threads, hotspots, hangs with their stacks, leaks. */
-export function reportSection(report: NativeReport): ReportSection {
-	const lines: string[] = [];
-	lines.push(
-		`${report.sampleCount} samples${report.pid === undefined ? "" : ` of pid ${report.pid}`}${report.traceDurationMs === undefined ? "" : ` over ${(report.traceDurationMs / 1000).toFixed(1)}s`}; ${report.systemPct}% in system code only`
-	);
+/** The summary line plus the threads line of the native section. */
+function headerLines(report: NativeReport): string[] {
+	const lines: string[] = [
+		`${report.sampleCount} samples${report.pid === undefined ? "" : ` of pid ${report.pid}`}${report.traceDurationMs === undefined ? "" : ` over ${(report.traceDurationMs / 1000).toFixed(1)}s`}; ${report.systemPct}% in system code only`,
+	];
 	if (report.threads.length > 0)
 		lines.push(`threads: ${report.threads.map((t) => `${t.thread} ${t.pct}%`).join(", ")}`);
-	if (report.hotspots.length > 0) {
-		lines.push("", "hotspots (self time):");
-		for (const h of report.hotspots) lines.push(`- ${h.selfPct}% ${h.frame} [${h.thread}] ${h.ms}ms`);
-	} else lines.push("", "no frame over 3% of samples");
-	if (report.hangs.length > 0) {
-		lines.push("", "hangs:");
-		for (const h of report.hangs) {
-			lines.push(
-				`- ${h.durationMs}ms ${h.kind.toLowerCase()} at +${(h.atMs / 1000).toFixed(1)}s (${h.samples} samples)`
-			);
-			if (h.topFunctions.length > 0)
-				lines.push(`  top: ${h.topFunctions.map((f) => `${f.name} (${f.samples})`).join(", ")}`);
-			for (const c of h.chains) lines.push(`  chain: ${c.chain} (${c.samples})`);
-		}
-	}
-	if (report.leaks.length > 0) {
-		lines.push("", "leaks:");
-		for (const l of report.leaks) lines.push(`- ${l.count}x ${l.type} ${kb(l.bytes)} via ${l.frame}`);
-	}
+	return lines;
+}
+
+/** The hotspots block, or the "no frame over 3%" note. */
+function hotspotLines(report: NativeReport): string[] {
+	if (report.hotspots.length === 0) return ["", "no frame over 3% of samples"];
+	return [
+		"",
+		"hotspots (self time):",
+		...report.hotspots.map((h) => `- ${h.selfPct}% ${h.frame} [${h.thread}] ${h.ms}ms`),
+	];
+}
+
+/** One hang with its top functions and call chains. */
+function hangLines(h: NativeReport["hangs"][number]): string[] {
+	const lines = [
+		`- ${h.durationMs}ms ${h.kind.toLowerCase()} at +${(h.atMs / 1000).toFixed(1)}s (${h.samples} samples)`,
+	];
+	if (h.topFunctions.length > 0)
+		lines.push(`  top: ${h.topFunctions.map((f) => `${f.name} (${f.samples})`).join(", ")}`);
+	for (const c of h.chains) lines.push(`  chain: ${c.chain} (${c.samples})`);
+	return lines;
+}
+
+/** The `report.md` section: threads, hotspots, hangs with their stacks, leaks. */
+export function reportSection(report: NativeReport): ReportSection {
+	const lines: string[] = [...headerLines(report), ...hotspotLines(report)];
+	if (report.hangs.length > 0) lines.push("", "hangs:", ...report.hangs.flatMap(hangLines));
+	if (report.leaks.length > 0)
+		lines.push("", "leaks:", ...report.leaks.map((l) => `- ${l.count}x ${l.type} ${kb(l.bytes)} via ${l.frame}`));
 	for (const w of report.warnings) lines.push("", `! ${w}`);
 	return { title: "Native (iOS, xctrace)", lines };
 }

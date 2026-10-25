@@ -810,29 +810,46 @@ async function stopRecorded(
 		};
 	}
 	const ours = record !== undefined && mayBeRecorded(deps, record.pid, marks);
-	const running = found !== undefined || ours;
-	if (!running) {
+	if (found === undefined && !ours) {
 		forgetRecorded(host, udid, record);
 		return { stopped: false, how: "none" };
 	}
-	const gone = () =>
-		found === undefined ||
-		fileIdentity(socketPath) !== found ||
-		(record !== undefined && (!ours || !deps.pidAlive(record.pid)));
+	const how = await shutDownHelper(deps, { socketPath, found, record, marks, ours });
+	if (found !== undefined && fileIdentity(socketPath) === found) unlinkQuietly(socketPath);
+	forgetRecorded(host, udid, record);
+	return { stopped: true, how };
+}
+
+/** What `stopRecorded` knows about the helper it is stopping. */
+type StopTarget = {
+	socketPath: string;
+	found: ReturnType<typeof fileIdentity>;
+	record: HelperRecord | undefined;
+	marks: ReturnType<typeof helperMarks>;
+	/** the recorded pid still reads as this device's helper */
+	ours: boolean;
+};
+
+/** The helper is gone once its socket is gone or replaced, or its recorded process is no longer ours / alive. */
+function helperGone(deps: HelperDeps, target: StopTarget): boolean {
+	const { socketPath, found, record, ours } = target;
+	if (found === undefined || fileIdentity(socketPath) !== found) return true;
+	return record !== undefined && (!ours || !deps.pidAlive(record.pid));
+}
+
+/** Ask the helper to shut down, then SIGTERM it if it is still there after the wait; says which one worked. */
+async function shutDownHelper(deps: HelperDeps, target: StopTarget): Promise<StopOutcome["how"]> {
+	const { socketPath, found, record, marks } = target;
+	const gone = () => helperGone(deps, target);
 	const attached = found !== undefined ? await deps.connect(socketPath) : undefined;
 	if (attached?.success) {
 		await attached.data.request("shutdown", {}, { timeoutMs: SHUTDOWN_REQUEST_MS });
 		await attached.data.close();
 	}
-	let how: StopOutcome["how"] = "shutdown";
-	if (!(await waitUntil(gone, SHUTDOWN_WAIT_MS - (attached?.success ? SHUTDOWN_REQUEST_MS : 0), deps))) {
-		how = "sigterm";
-		if (record !== undefined && safeToSignal(deps, record.pid, marks)) deps.kill(record.pid, "SIGTERM");
-		await waitUntil(gone, KILL_WAIT_MS, deps);
-	}
-	if (found !== undefined && fileIdentity(socketPath) === found) unlinkQuietly(socketPath);
-	forgetRecorded(host, udid, record);
-	return { stopped: true, how };
+	if (await waitUntil(gone, SHUTDOWN_WAIT_MS - (attached?.success ? SHUTDOWN_REQUEST_MS : 0), deps)) return "shutdown";
+	if (record !== undefined && safeToSignal(deps, record.pid, marks)) deps.kill(record.pid, "SIGTERM");
+	await waitUntil(gone, KILL_WAIT_MS, deps);
+	return "sigterm";
 }
 
 /** Drop `record` from `state.json`, but only while it is still the recorded helper (a newer one is kept). */

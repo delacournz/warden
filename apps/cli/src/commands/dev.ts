@@ -360,6 +360,101 @@ async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Ru
 	}
 }
 
+/** Mutable state shared by the early Metro start, the signal handler and the claim. */
+type DevRun = { aborted: { now: boolean }; launch: MetroLaunchHandle | undefined; metroFailed: boolean };
+
+/** The env an early Metro gets: a session child's, minus what is not leased yet (the device, while it is still being claimed). */
+function earlyMetroEnv(ctx: CommandContext, port: number, deviceId: string | undefined, headless: boolean) {
+	const env = childEnv(ctx.env, { claimed: [], reclaimed: [] }, [{ leaseId: "", port }]);
+	delete env.WARDEN_LEASE_IDS;
+	if (deviceId !== undefined) {
+		env.WARDEN_UDIDS = deviceId;
+		env.WARDEN_UDID_0 = deviceId;
+	}
+	setHeadlessEnv(env, headless);
+	return env;
+}
+
+/** Metro started the moment its port is leased, while the device is still being claimed. */
+function earlyMetro(
+	ctx: CommandContext,
+	deps: DevDeps,
+	opts: DevOpts,
+	projectRoot: string,
+	readyTimeoutMs: number,
+	run: DevRun
+): EarlyMetro {
+	const json = opts.json === true;
+	return {
+		start: (port, deviceId) => {
+			const handle = launchMetro(
+				{
+					probe: deps.probe,
+					now: ctx.now,
+					sleep: deps.sleep,
+					spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, json ? "stderr" : "inherit"),
+					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
+					git: (root) => readGitFactsSync(root, { cache: ctx.git }),
+				},
+				{
+					projectRoot,
+					port,
+					env: earlyMetroEnv(ctx, port, deviceId, opts.headless === true),
+					args: splitCommand(ctx.argv).cmd,
+					readyTimeoutMs,
+					aborted: () => run.aborted.now,
+				}
+			);
+			run.launch = handle;
+			void handle.pending.then((result) => {
+				if (!result.success) run.metroFailed = true;
+			});
+		},
+		aborted: () => run.aborted.now || run.metroFailed,
+	};
+}
+
+/** Stop Metro after a failed dev-build session; a claim given up because Metro itself failed reports Metro's error. */
+async function sessionFailureMessage(error: string, launch: MetroLaunchHandle | undefined): Promise<string> {
+	await launch?.stop();
+	const metro = error === INTERRUPTED ? await launch?.pending : undefined;
+	return metro !== undefined && !metro.success ? metro.error : error;
+}
+
+/** The project the dev build is for: the `--bundle-id` override applies to this platform, an unset `--variant` is optional. */
+function devProjectContext(ctx: CommandContext, platform: Platform, opts: DevOpts, start: string, variant: string) {
+	return projectContextFor(ctx, {
+		start,
+		...(opts.bundleId !== undefined ? { bundleId: { [platform]: opts.bundleId } } : {}),
+		variant,
+		...(opts.variant === undefined ? { variantOptional: true } : {}),
+	});
+}
+
+/** Why the dev session cannot go on (Metro never started, the deep-link scheme did not resolve), after releasing what it holds; undefined when ready. */
+async function unreadyReason(
+	session: Session,
+	launch: MetroLaunchHandle | undefined,
+	scheme: SchemeOf | undefined
+): Promise<string | undefined> {
+	if (launch === undefined) {
+		await session.release();
+		return "Metro was not started";
+	}
+	const resolved = scheme ? await scheme() : undefined;
+	if (resolved && !resolved.success) {
+		await launch.stop();
+		await session.release();
+		return resolved.error;
+	}
+	return undefined;
+}
+
+/** Only Android's deep link needs the dev-client scheme, and only when the client is opened. */
+function needsScheme(opts: DevOpts, platform: Platform): boolean {
+	return opts.open && platform === "android";
+}
+
 /**
  * `warden dev [platform] [-- <expo start args>]` (platform defaults to ios): the worktree-friendly `expo run:*`. Installs the dev
  * build matching the native fingerprint (installed → shared cache → EAS → local build, `dev` variant
@@ -384,65 +479,23 @@ async function dev(
 	const start = projectStart(ctx, opts.project);
 	if (!start.success) return fail(start.error);
 	const variant = opts.variant ?? "dev";
-	const project = await projectContextFor(ctx, {
-		start: start.data,
-		...(opts.bundleId !== undefined ? { bundleId: { [platform.data]: opts.bundleId } } : {}),
-		variant,
-		...(opts.variant === undefined ? { variantOptional: true } : {}),
-	});
+	const project = await devProjectContext(ctx, platform.data, opts, start.data, variant);
 	if (!project.success) return fail(project.error);
 	const ready = preflight(project.data.project, platform.data);
 	if (!ready.success) return fail(ready.error);
 	// only Android's deep link needs it, so it is read next to the claim + install, and never for iOS or --no-open
 	const scheme = lazyScheme(ctx, project.data.project, opts.scheme);
-	const schemeNeeded = opts.open && platform.data === "android";
+	const schemeNeeded = needsScheme(opts, platform.data);
 	if (schemeNeeded) void scheme();
 	const app = ensureOptions(start.data, variant, opts);
 	if (!app.success) return fail(app.error);
 
-	const json = opts.json === true;
-	const aborted = { now: false };
-	let launch: MetroLaunchHandle | undefined;
-	let metroFailed = false;
-	const early: EarlyMetro = {
-		start: (port, deviceId) => {
-			// the env a session child gets, minus what is not leased yet (the device, when it is still being claimed)
-			const env = childEnv(ctx.env, { claimed: [], reclaimed: [] }, [{ leaseId: "", port }]);
-			delete env.WARDEN_LEASE_IDS;
-			if (deviceId !== undefined) {
-				env.WARDEN_UDIDS = deviceId;
-				env.WARDEN_UDID_0 = deviceId;
-			}
-			setHeadlessEnv(env, opts.headless === true);
-			const handle = launchMetro(
-				{
-					probe: deps.probe,
-					now: ctx.now,
-					sleep: deps.sleep,
-					spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, json ? "stderr" : "inherit"),
-					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
-					git: (root) => readGitFactsSync(root, { cache: ctx.git }),
-				},
-				{
-					projectRoot: project.data.project.root,
-					port,
-					env,
-					args: splitCommand(ctx.argv).cmd,
-					readyTimeoutMs: timeout.data,
-					aborted: () => aborted.now,
-				}
-			);
-			launch = handle;
-			void handle.pending.then((result) => {
-				if (!result.success) metroFailed = true;
-			});
-		},
-		aborted: () => aborted.now || metroFailed,
-	};
+	const run: DevRun = { aborted: { now: false }, launch: undefined, metroFailed: false };
+	const early = earlyMetro(ctx, deps, opts, project.data.project.root, timeout.data, run);
 	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
 		deps.onSignal(signal, () => {
-			aborted.now = true;
-			void launch?.stop();
+			run.aborted.now = true;
+			void run.launch?.stop();
 		})
 	);
 	if (!opts.json) heading(ctx, "dev", `${platform.data} · ${project.data.project.name}`);
@@ -455,29 +508,18 @@ async function dev(
 	// after the claim: its own lease keeps the background gc off the device it just took (16-1)
 	maybeAutoGc(ctx);
 	for (const off of offSignals) off();
-	if (!session.success) {
-		await launch?.stop();
-		// a claim given up because Metro itself failed: Metro's error is the cause
-		const metro = session.error === INTERRUPTED ? await launch?.pending : undefined;
-		return fail(metro !== undefined && !metro.success ? metro.error : session.error);
-	}
-	if (launch === undefined) {
-		await session.data.release();
-		return fail("Metro was not started");
-	}
-	const resolved = schemeNeeded ? await scheme() : undefined;
-	if (resolved && !resolved.success) {
-		await launch.stop();
-		await session.data.release();
-		return fail(resolved.error);
-	}
+	if (!session.success) return fail(await sessionFailureMessage(session.error, run.launch));
+	const { launch } = run;
+	const unready = await unreadyReason(session.data, launch, schemeNeeded ? scheme : undefined);
+	if (unready !== undefined) return fail(unready);
+	if (launch === undefined) return fail("Metro was not started");
 	return runMetro(ctx, deps, opts, {
 		session: session.data,
 		platform: platform.data,
 		project: project.data.project,
 		scheme,
 		launch,
-		aborted,
+		aborted: run.aborted,
 	});
 }
 

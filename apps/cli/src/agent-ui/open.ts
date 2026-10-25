@@ -1,13 +1,14 @@
 import { androidTools } from "@delacour/warden-core/providers/android";
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
+import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { adbReverseArgv, devClientLaunchArgs } from "../metro";
 import { type ActionOptionValues, finishAction, parseSettle } from "./act";
 import { deviceFacade, viaFacade } from "./controls";
 import { sharedNote, type UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
-import { uiError } from "./output";
-import { runUi } from "./run";
+import { type UiError, type UiSuccess, uiError } from "./output";
+import { runUi, type UiRunEnv } from "./run";
 import { updateState } from "./state";
 
 export type OpenOptionValues = ActionOptionValues & {
@@ -75,7 +76,7 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 		const settle = parseSettle(opts.settle);
 		if (!settle.success) return settle;
 		const isUrl = URL_SCHEME.test(what);
-		if (isUrl && (opts.metro !== undefined || opts.relaunch === true || (opts.args?.length ?? 0) > 0)) {
+		if (isUrl && hasLaunchOptions(opts)) {
 			return {
 				success: false,
 				error: uiError("usage", "--metro, --relaunch and --args apply to a bundle id, not a URL", {
@@ -85,44 +86,77 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 		}
 		const driver = await env.driver();
 		if (!driver.success) return driver;
+		const open = isUrl ? openUrl : openBundle;
+		return open({ ctx, deps, env, device, driver: driver.data, settle: settle.data, what, opts });
+	});
+}
 
-		if (isUrl) {
-			const facade = deviceFacade(ctx, deps, device, driver.data, env.timeoutMs);
-			const opened = await viaFacade(() => facade.openLink(what));
-			if (!opened.success) return opened;
-			return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-				action: "open",
-				text: `opened ${what}`,
-				args: { url: what },
-				extra: { url: what },
-			});
-		}
+/** Whether any flag that only a bundle-id launch understands is set. */
+function hasLaunchOptions(opts: OpenOptionValues): boolean {
+	return opts.metro !== undefined || opts.relaunch === true || (opts.args?.length ?? 0) > 0;
+}
 
-		const launched = await launchBundle(ctx, driver.data, device, what, opts);
-		if (!launched.success) return launched;
-		const attached = launched.data.attached;
-		updateState(ctx, device.udid, (state) => ({
-			...state,
-			app: what,
+/** Everything one `warden ui open` needs once the device, driver and settle budget are resolved. */
+type OpenRun = {
+	ctx: CommandContext;
+	deps: UiDeps;
+	env: UiRunEnv;
+	device: UiDevice;
+	driver: Driver;
+	settle: number | undefined;
+	what: string;
+	opts: OpenOptionValues;
+};
+
+/** `open <url>`: hand the link to the system (accepting iOS's "Open in …?" sheet). */
+async function openUrl(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
+	const { ctx, deps, env, device, driver, settle, what } = run;
+	const facade = deviceFacade(ctx, deps, device, driver, env.timeoutMs);
+	const opened = await viaFacade(() => facade.openLink(what));
+	if (!opened.success) return opened;
+	return finishAction(ctx, deps, env, device, driver, settle, {
+		action: "open",
+		text: `opened ${what}`,
+		args: { url: what },
+		extra: { url: what },
+	});
+}
+
+/** The one-line summary of a bundle launch, with the attach hint and the shared-device note when they apply. */
+function bundleText(run: OpenRun, attached: boolean): string {
+	const { what, opts, device } = run;
+	const metro = opts.metro ? ` (metro ${opts.metro})` : "";
+	const hint = attached ? " (already running: attached, state kept; --relaunch starts it fresh)" : "";
+	return [
+		`${launchVerb(opts.relaunch === true, attached)} ${what}${metro}${hint}`,
+		...(device.action === "attached" ? [sharedNote(device.lease)] : []),
+	].join("\n");
+}
+
+/** `open <bundleId>`: launch (or attach to) the app and remember it, and the Metro URL, in `state.json`. */
+async function openBundle(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
+	const { ctx, deps, env, device, driver, settle, what, opts } = run;
+	const launched = await launchBundle(ctx, driver, device, what, opts);
+	if (!launched.success) return launched;
+	const attached = launched.data.attached;
+	updateState(ctx, device.udid, (state) => ({
+		...state,
+		app: what,
+		...(opts.metro !== undefined ? { metroUrl: opts.metro } : {}),
+	}));
+	return finishAction(ctx, deps, env, device, driver, settle, {
+		action: "open",
+		text: bundleText(run, attached),
+		args: {
+			bundleId: what,
+			relaunch: opts.relaunch === true,
+			...(opts.metro !== undefined ? { metro: opts.metro } : {}),
+		},
+		extra: {
+			bundleId: what,
+			relaunch: opts.relaunch === true,
+			attached,
 			...(opts.metro !== undefined ? { metroUrl: opts.metro } : {}),
-		}));
-		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-			action: "open",
-			text: [
-				`${launchVerb(opts.relaunch === true, attached)} ${what}${opts.metro ? ` (metro ${opts.metro})` : ""}${attached ? " (already running: attached, state kept; --relaunch starts it fresh)" : ""}`,
-				...(device.action === "attached" ? [sharedNote(device.lease)] : []),
-			].join("\n"),
-			args: {
-				bundleId: what,
-				relaunch: opts.relaunch === true,
-				...(opts.metro !== undefined ? { metro: opts.metro } : {}),
-			},
-			extra: {
-				bundleId: what,
-				relaunch: opts.relaunch === true,
-				attached,
-				...(opts.metro !== undefined ? { metroUrl: opts.metro } : {}),
-			},
-		});
+		},
 	});
 }

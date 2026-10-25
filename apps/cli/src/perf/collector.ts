@@ -130,6 +130,61 @@ async function attach(e: Env) {
 	}
 }
 
+type Cdp = Parameters<typeof startReactCapture>[0];
+
+/** Start the React profile over `cdp`; returns the host wall clock when it began, or undefined when it failed. */
+async function startReact(
+	e: Env,
+	cdp: Cdp,
+	owner: Awaited<ReturnType<typeof reactOwner>>
+): Promise<number | undefined> {
+	const started = await startReactCapture(cdp, { owner });
+	if (!started.success) {
+		e.deps.log(`react: ${started.error.message}`);
+		e.set("react", { state: "failed" });
+		return undefined;
+	}
+	e.set("react", { state: "running", out: join(e.dir, "react") });
+	return e.ctx.now();
+}
+
+/** Run the Hermes CPU capture for `durationMs` and record its final state. */
+async function runJs(e: Env, cdp: Cdp, metro: string | undefined, jsDir: string, durationMs: number): Promise<void> {
+	const captured = await runJsCapture(cdp, {
+		dir: jsDir,
+		metroUrl: metro,
+		fetchMap: e.deps.js.fetchMap,
+		projectRoot: e.plan.cwd,
+		durationMs,
+		sleep: e.deps.js.sleep,
+		now: e.ctx.now,
+		signal: e.signal,
+		onStarted: () => e.set("js", { state: "running", out: jsDir }),
+	});
+	if (!captured.success) e.deps.log(`js: ${captured.error.message}`);
+	e.set("js", { state: captured.success ? "stopped" : "failed" });
+}
+
+/** Stop the React profile started at `hostWallMs` and record its final state. */
+async function stopReact(
+	e: Env,
+	cdp: Cdp,
+	owner: Awaited<ReturnType<typeof reactOwner>>,
+	jsDir: string,
+	hostWallMs: number
+): Promise<void> {
+	const stopped = await stopReactCapture(cdp, {
+		dir: join(e.dir, "react"),
+		jsDir,
+		cwd: e.plan.cwd,
+		sessionId: e.id,
+		owner,
+		hostWallMs,
+	});
+	if (!stopped.success) e.deps.log(`react: ${stopped.error.message}`);
+	e.set("react", { state: stopped.success ? "stopped" : "failed" });
+}
+
 async function cdpTask(e: Env): Promise<void> {
 	const { plan } = e;
 	const kinds = [...(plan.js ? (["js"] as const) : []), ...(plan.react ? (["react"] as const) : [])];
@@ -145,46 +200,10 @@ async function cdpTask(e: Env): Promise<void> {
 	const owner = await reactOwner(e.ctx);
 	const remaining = () => Math.max(1, e.startMs + e.maxDurationMs - e.ctx.now());
 	try {
-		let reactHostMs: number | undefined;
-		if (plan.react) {
-			const started = await startReactCapture(cdp, { owner });
-			if (started.success) {
-				reactHostMs = e.ctx.now();
-				e.set("react", { state: "running", out: join(e.dir, "react") });
-			} else {
-				e.deps.log(`react: ${started.error.message}`);
-				e.set("react", { state: "failed" });
-			}
-		}
-		if (plan.js) {
-			const captured = await runJsCapture(cdp, {
-				dir: jsDir,
-				metroUrl: metro,
-				fetchMap: e.deps.js.fetchMap,
-				projectRoot: plan.cwd,
-				durationMs: remaining(),
-				sleep: e.deps.js.sleep,
-				now: e.ctx.now,
-				signal: e.signal,
-				onStarted: () => e.set("js", { state: "running", out: jsDir }),
-			});
-			if (!captured.success) e.deps.log(`js: ${captured.error.message}`);
-			e.set("js", { state: captured.success ? "stopped" : "failed" });
-		} else {
-			await e.deps.sleep(remaining(), e.signal);
-		}
-		if (reactHostMs !== undefined) {
-			const stopped = await stopReactCapture(cdp, {
-				dir: join(e.dir, "react"),
-				jsDir,
-				cwd: plan.cwd,
-				sessionId: e.id,
-				owner,
-				hostWallMs: reactHostMs,
-			});
-			if (!stopped.success) e.deps.log(`react: ${stopped.error.message}`);
-			e.set("react", { state: stopped.success ? "stopped" : "failed" });
-		}
+		const reactHostMs = plan.react ? await startReact(e, cdp, owner) : undefined;
+		if (plan.js) await runJs(e, cdp, metro, jsDir, remaining());
+		else await e.deps.sleep(remaining(), e.signal);
+		if (reactHostMs !== undefined) await stopReact(e, cdp, owner, jsDir, reactHostMs);
 	} finally {
 		cdp.close();
 	}

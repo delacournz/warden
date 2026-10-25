@@ -215,6 +215,83 @@ function render(crashes: readonly CrashOut[]): string {
 
 export type CrashRead = { crashes: CrashOut[]; notes: string[] };
 
+type ReadOpts = { sinceMs?: number; crashDir?: string; dsym?: string; timeoutMs: number };
+type IpsReport = ReturnType<typeof readIpsReports>["reports"][number];
+
+/** Copy one raw `.ips` report into `crashDir` and point `out.file` at the copy; a failure becomes a note. */
+function copyReport(r: IpsReport, crashDir: string, out: CrashOut, notes: string[]): void {
+	try {
+		mkdirSync(crashDir, { recursive: true });
+		copyFileSync(r.file, join(crashDir, basename(r.file)));
+		out.file = join(crashDir, basename(r.file));
+	} catch {
+		notes.push(`could not copy ${r.file} into the session`);
+	}
+}
+
+/** Resolve the app frames of one iOS report through `opts.dsym`, when given. */
+async function symbolicateReport(
+	ctx: CommandContext,
+	r: IpsReport,
+	out: CrashOut,
+	opts: ReadOpts,
+	notes: string[]
+): Promise<void> {
+	if (opts.dsym === undefined) return;
+	const sym = await symbolicate(ctx, opts.dsym, r.text, opts.timeoutMs);
+	if (sym.success) out.symbolicated = sym.data;
+	else notes.push(sym.error.message);
+}
+
+/** iOS: the host's `.ips` reports for this simulator, newest first, optionally copied and symbolicated. */
+async function readIosCrashes(
+	ctx: CommandContext,
+	udid: string,
+	appId: string,
+	opts: ReadOpts,
+	crashDeps: CrashDeps,
+	notes: string[]
+): Promise<CrashOut[]> {
+	const bundle = await iosAppBundle(ctx, udid, appId);
+	const found = readIpsReports(crashDeps.reportsDir(ctx), {
+		bundleId: appId,
+		udid,
+		...(bundle.success ? { executable: bundle.data.executable } : {}),
+		...(opts.sinceMs !== undefined ? { sinceMs: ctx.now() - opts.sinceMs } : {}),
+	});
+	if (found.note) notes.push(found.note);
+	const crashes: CrashOut[] = [];
+	for (const r of found.reports.slice(0, MAX_CRASHES)) {
+		const out = iosOut(r);
+		if (opts.crashDir !== undefined) copyReport(r, opts.crashDir, out, notes);
+		await symbolicateReport(ctx, r, out, opts, notes);
+		crashes.push(out);
+	}
+	return crashes;
+}
+
+/** Android: the crash log buffer and the dropbox; raw logs are written into `crashDir` when given. */
+async function readAndroidCrashList(
+	ctx: CommandContext,
+	udid: string,
+	appId: string,
+	opts: ReadOpts,
+	notes: string[]
+): Promise<CrashOut[]> {
+	const found = await androidCrashes(ctx, udid, appId, opts.sinceMs, opts.timeoutMs);
+	notes.push(...found.notes);
+	const { crashDir } = opts;
+	if (crashDir !== undefined) {
+		try {
+			mkdirSync(crashDir, { recursive: true });
+			for (const [name, text] of found.raw) writeFileSync(join(crashDir, name), redact(text));
+		} catch {
+			notes.push("could not write raw crash logs into the session");
+		}
+	}
+	return found.crashes.slice(0, MAX_CRASHES).map(androidOut);
+}
+
 /**
  * The app's crashes and ANRs, newest first (up to `MAX_CRASHES`). iOS reads the host's `.ips` reports for this
  * simulator; Android reads the crash log buffer and the dropbox. Raw reports are copied into `crashDir` when given.
@@ -223,54 +300,51 @@ export async function readCrashes(
 	ctx: CommandContext,
 	target: { udid: string; platform: "ios" | "android" },
 	appId: string,
-	opts: { sinceMs?: number; crashDir?: string; dsym?: string; timeoutMs: number },
+	opts: ReadOpts,
 	crashDeps: CrashDeps = defaultCrashDeps
 ): Promise<CrashRead> {
 	const notes: string[] = [];
-	const { crashDir } = opts;
-	let crashes: CrashOut[];
-	if (target.platform === "ios") {
-		const bundle = await iosAppBundle(ctx, target.udid, appId);
-		const found = readIpsReports(crashDeps.reportsDir(ctx), {
-			bundleId: appId,
-			udid: target.udid,
-			...(bundle.success ? { executable: bundle.data.executable } : {}),
-			...(opts.sinceMs !== undefined ? { sinceMs: ctx.now() - opts.sinceMs } : {}),
-		});
-		if (found.note) notes.push(found.note);
-		crashes = [];
-		for (const r of found.reports.slice(0, MAX_CRASHES)) {
-			const out = iosOut(r);
-			if (crashDir !== undefined) {
-				try {
-					mkdirSync(crashDir, { recursive: true });
-					copyFileSync(r.file, join(crashDir, basename(r.file)));
-					out.file = join(crashDir, basename(r.file));
-				} catch {
-					notes.push(`could not copy ${r.file} into the session`);
-				}
-			}
-			if (opts.dsym !== undefined) {
-				const sym = await symbolicate(ctx, opts.dsym, r.text, opts.timeoutMs);
-				if (sym.success) out.symbolicated = sym.data;
-				else notes.push(sym.error.message);
-			}
-			crashes.push(out);
-		}
-	} else {
-		const found = await androidCrashes(ctx, target.udid, appId, opts.sinceMs, opts.timeoutMs);
-		notes.push(...found.notes);
-		crashes = found.crashes.slice(0, MAX_CRASHES).map(androidOut);
-		if (crashDir !== undefined) {
-			try {
-				mkdirSync(crashDir, { recursive: true });
-				for (const [name, text] of found.raw) writeFileSync(join(crashDir, name), redact(text));
-			} catch {
-				notes.push("could not write raw crash logs into the session");
-			}
-		}
-	}
+	const crashes =
+		target.platform === "ios"
+			? await readIosCrashes(ctx, target.udid, appId, opts, crashDeps, notes)
+			: await readAndroidCrashList(ctx, target.udid, appId, opts, notes);
 	return { crashes, notes };
+}
+
+type CrashFlagError = { success: false; error: ReturnType<typeof uiError> };
+const crashUsage = (message: string): CrashFlagError => ({ success: false, error: uiError("usage", message) });
+
+/** Validate `--since` / `--symbolicate` / `--dsym` against the device platform; returns the parsed `--since` in ms. */
+function checkCrashFlags(
+	opts: PerfCrashesOptions,
+	platform: "ios" | "android"
+): CrashFlagError | { success: true; data: number | undefined } {
+	let sinceMs: number | undefined;
+	if (opts.since !== undefined) {
+		const since = parseDuration(opts.since);
+		if (!since.success) return crashUsage(`--since: ${since.error}`);
+		sinceMs = since.data;
+	}
+	if (opts.symbolicate === true && opts.dsym === undefined)
+		return crashUsage("--symbolicate needs --dsym <path to the .dSYM>");
+	if (opts.symbolicate === true && platform !== "ios")
+		return crashUsage("--symbolicate supports iOS reports only (Android stacks are already symbolic)");
+	return { success: true, data: sinceMs };
+}
+
+/** The `readCrashes` options for one `perf crashes` call; absent values are left out. */
+function readOptsFor(
+	opts: PerfCrashesOptions,
+	sinceMs: number | undefined,
+	crashDir: string | undefined,
+	timeoutMs: number
+): ReadOpts {
+	return {
+		...(sinceMs !== undefined ? { sinceMs } : {}),
+		...(crashDir !== undefined ? { crashDir } : {}),
+		...(opts.symbolicate === true && opts.dsym !== undefined ? { dsym: opts.dsym } : {}),
+		timeoutMs,
+	};
 }
 
 /**
@@ -284,17 +358,9 @@ export async function perfCrashes(
 	crashDeps: CrashDeps = defaultCrashDeps
 ): Promise<number> {
 	return runPerf(ctx, deps, "crashes", "observe", opts, async (target, env) => {
-		const usage = (message: string) => ({ success: false as const, error: uiError("usage", message) });
-		let sinceMs: number | undefined;
-		if (opts.since !== undefined) {
-			const since = parseDuration(opts.since);
-			if (!since.success) return usage(`--since: ${since.error}`);
-			sinceMs = since.data;
-		}
-		if (opts.symbolicate === true && opts.dsym === undefined)
-			return usage("--symbolicate needs --dsym <path to the .dSYM>");
-		if (opts.symbolicate === true && target.platform !== "ios")
-			return usage("--symbolicate supports iOS reports only (Android stacks are already symbolic)");
+		const checked = checkCrashFlags(opts, target.platform);
+		if (!checked.success) return checked;
+		const sinceMs = checked.data;
 		const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 		if (!app.success) return app;
 		const session = activeSessionFor(ctx, deps.session, target.udid);
@@ -303,23 +369,17 @@ export async function perfCrashes(
 			ctx,
 			target,
 			app.data.id,
-			{
-				...(sinceMs !== undefined ? { sinceMs } : {}),
-				...(crashDir !== undefined ? { crashDir } : {}),
-				...(opts.symbolicate === true && opts.dsym !== undefined ? { dsym: opts.dsym } : {}),
-				timeoutMs: env.timeoutMs,
-			},
+			readOptsFor(opts, sinceMs, crashDir, env.timeoutMs),
 			crashDeps
 		);
 		const findings: Finding[] = crashFindings(crashes);
 		const text = crashes.length === 0 ? ctx.ui.color.dim(`no crashes for ${app.data.id}`) : render(crashes);
+		const warnings = notes.filter((n) => n !== TOMBSTONE_NOTE);
 		return ok({
 			device: { udid: target.udid, platform: target.platform, name: target.name },
 			result: { app: app.data.id, count: crashes.length, crashes, findings, notes },
 			text,
-			...(notes.filter((n) => n !== TOMBSTONE_NOTE).length > 0
-				? { warnings: notes.filter((n) => n !== TOMBSTONE_NOTE) }
-				: {}),
+			...(warnings.length > 0 ? { warnings } : {}),
 		});
 	});
 }

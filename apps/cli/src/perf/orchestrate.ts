@@ -187,6 +187,249 @@ function writeLaunchStartup(
 	writeFileAtomic(join(sessionDir(ctx, id), "metrics", "startup.json"), `${JSON.stringify(doc, null, 2)}\n`);
 }
 
+type ResolvedApp = Extract<Awaited<ReturnType<typeof resolveApp>>, { success: true }>["data"];
+
+/** Everything the post-session start steps share. */
+type StartRun = {
+	ctx: CommandContext;
+	deps: PerfDeps;
+	kit: SessionKit;
+	target: PerfTarget;
+	working: PerfTarget;
+	appId: string;
+	opts: StartOptions;
+	caps: CapturerChoice;
+	capMs: number;
+	id: string;
+	warnings: string[];
+};
+
+/** Parse `--max-duration`; `undefined` data when the flag is absent. */
+function requestedMaxDuration(raw: string | undefined): Result<number | undefined, UiError> {
+	if (raw === undefined) return ok(undefined);
+	const ms = parseDuration(raw);
+	if (ms === undefined) {
+		return {
+			success: false,
+			error: uiError("usage", `--max-duration must be a duration like 30s or 2m, got "${raw}"`),
+		};
+	}
+	return ok(ms);
+}
+
+/** Drop or warn about capturers the platform cannot run (simpleperf and frames on iOS). */
+function adjustForPlatform(caps: CapturerChoice, platform: PerfTarget["platform"], warnings: string[]): void {
+	if (caps.native?.flavor === "simpleperf" && platform === "ios")
+		warnings.push("--native=simpleperf is Android only: iOS records with xctrace");
+	if (caps.frames && platform === "ios") {
+		warnings.push("frames: the iOS simulator has no frame API; hangs come from --native");
+		caps.frames = false;
+	}
+}
+
+/** A foreign-device error gets the `--relaunch` hint; any other error passes through. */
+function relaunchDeviceError(e: UiError): UiError {
+	if (e.code !== "device_foreign") return e;
+	return uiError("device_foreign", e.message, {
+		hint: "--relaunch / --reset restart the app, so they need a device you hold or a free one; claim another with warden claim",
+	});
+}
+
+/** `--relaunch` mutates the app, so resolve a device the caller holds (or a free one to lease); else observe as-is. */
+async function leaseForRelaunch(
+	ctx: CommandContext,
+	deps: PerfDeps,
+	opts: StartOptions,
+	target: PerfTarget
+): Promise<Result<{ working: PerfTarget; tookLease: boolean }, UiError>> {
+	if (opts.relaunch !== true) return ok({ working: target, tookLease: false });
+	const resolved = await resolvePerfDevice(
+		ctx,
+		{ ...opts, lease: undefined, serial: undefined, udid: target.udid, claim: true },
+		"mutate",
+		deps.device
+	);
+	if (!resolved.success) return { success: false, error: relaunchDeviceError(resolved.error) };
+	const working = resolved.data;
+	return ok({
+		working,
+		tookLease: working.lease !== undefined && !target.ownedByCaller && target.holder === undefined,
+	});
+}
+
+/** Open the session record; when that fails, give back a lease `start` took. */
+async function openSession(
+	ctx: CommandContext,
+	deps: PerfDeps,
+	input: {
+		target: PerfTarget;
+		working: PerfTarget;
+		app: ResolvedApp;
+		capMs: number;
+		offset: number | undefined;
+		tookLease: boolean;
+	}
+): Promise<Result<PerfSession, UiError>> {
+	const { target, working, offset } = input;
+	const created = createSession(ctx, deps.session, {
+		device: {
+			udid: target.udid,
+			platform: target.platform,
+			...(target.name === undefined ? {} : { name: target.name }),
+		},
+		target: {
+			udid: target.udid,
+			...(working.holder === undefined ? {} : { holder: working.holder }),
+			ownedByCaller: working.ownedByCaller,
+		},
+		app: input.app,
+		maxDurationMs: input.capMs,
+		...(offset === undefined ? {} : { deviceWallMs: ctx.now() + offset }),
+	});
+	if (!created.success && input.tookLease && working.lease !== undefined)
+		await releaseDevices(ctx, [working.lease.id], { touch: false });
+	return created;
+}
+
+/** Locate Metro for JS / React; without one, mark both capturers failed, turn them off and warn. */
+async function findMetro(
+	ctx: CommandContext,
+	deps: PerfDeps,
+	target: PerfTarget,
+	caps: CapturerChoice,
+	id: string,
+	warnings: string[]
+): Promise<string | undefined> {
+	if (!caps.js && !caps.react) return undefined;
+	const metroUrl = await deps.host.metro(ctx, target.udid).catch(() => undefined);
+	if (metroUrl !== undefined) return metroUrl;
+	warnings.push("js/react: no Metro found for this device (release build, or no dev client running)");
+	if (caps.js) failCapturer(ctx, id, "js");
+	if (caps.react) failCapturer(ctx, id, "react");
+	caps.js = false;
+	caps.react = false;
+	return undefined;
+}
+
+/** The plan the detached collector reads back. */
+function buildPlan(
+	ctx: CommandContext,
+	opts: StartOptions,
+	appId: string,
+	caps: CapturerChoice,
+	metroUrl: string | undefined,
+	leaseId: string | undefined
+): PerfPlan {
+	return {
+		version: 1,
+		app: appId,
+		cwd: ctx.cwd,
+		metrics: caps.metrics,
+		frames: caps.frames,
+		logs: caps.logs,
+		js: caps.js,
+		react: caps.react,
+		...(caps.native === undefined ? {} : { native: caps.native }),
+		relaunch: opts.relaunch === true,
+		...(metroUrl === undefined ? {} : { metroUrl }),
+		...(leaseId === undefined ? {} : { leaseId }),
+	};
+}
+
+/** Spawn the detached collector and record it as a capturer of the session. */
+function spawnCollector(run: StartRun): void {
+	const { ctx, kit, id } = run;
+	const { pid } = kit.io.spawnDetached({
+		argv: [...kit.io.self(), "perf-collect", "--session", id],
+		logPath: join(sessionDir(ctx, id), "collector.log"),
+	});
+	updateSession(ctx, id, (s) => ({
+		...s,
+		capturers: [
+			...s.capturers.filter((c) => c.kind !== "collector"),
+			{ kind: "collector", pid, startedAtIso: iso(ctx), state: "running" },
+		],
+	}));
+}
+
+/** Start the native recorder when asked; a failure is a warning plus a failed capturer, not an abort. */
+async function startNativeNow(run: StartRun): Promise<void> {
+	const { ctx, deps, kit, caps, id } = run;
+	if (caps.native === undefined) return;
+	const started = await startNative(
+		ctx,
+		deps,
+		kit.io,
+		kit.profilers,
+		run.working,
+		{
+			app: run.appId,
+			leaks: false,
+			...(caps.native.flavor === "" ? {} : { flavor: caps.native.flavor }),
+			maxDurationMs: run.capMs,
+		},
+		readSession(ctx, id)
+	);
+	if (started.success) return;
+	run.warnings.push(`native: ${started.error.message}`);
+	failCapturer(ctx, id, "native");
+}
+
+/** The `StartFailure` for a failed cold launch. */
+function launchFailure(launch: Extract<LaunchResult, { kind: "failed" }>): StartFailure {
+	return new StartFailure(
+		uiError(launch.reason === "no_launcher" ? "app_not_found" : "failed", launch.message, {
+			...(launch.hint === undefined ? {} : { hint: launch.hint }),
+		})
+	);
+}
+
+/** Terminate the app (and wipe its data on `--reset`) ahead of a cold launch. */
+async function terminateForRelaunch(run: StartRun): Promise<void> {
+	const { ctx, target, appId } = run;
+	const device = { platform: target.platform, id: target.udid };
+	const stopped = await terminateApp(ctx, device, appId);
+	if (!stopped.success) throw new StartFailure(stopped.error);
+	if (run.opts.reset !== true) return;
+	const wiped = await resetAppData(ctx, device, appId);
+	if (!wiped.success) throw new StartFailure(wiped.error);
+}
+
+/** `--relaunch`: terminate, optionally reset, arm Android recorders, cold-launch, time it, arm the iOS recorder. */
+async function relaunchApp(run: StartRun): Promise<LaunchResult> {
+	const { ctx, target, appId } = run;
+	await terminateForRelaunch(run);
+	if (target.platform === "android") {
+		await startNativeNow(run);
+		if (run.caps.frames) await resetFrameCounters(ctx, target.udid, appId);
+	}
+	const launch = await launchApp(ctx, { platform: target.platform, id: target.udid }, appId, { cold: true });
+	if (launch.kind === "failed") throw launchFailure(launch);
+	writeLaunchStartup(ctx, run.id, target, appId, launch);
+	if (target.platform === "ios") await startNativeNow(run);
+	return launch;
+}
+
+/** Spawn the collector, relaunch / arm the native recorder, wait for the captures to arm and report the outcome. */
+async function armSession(run: StartRun, plan: PerfPlan, session: PerfSession): Promise<Result<StartOutcome, UiError>> {
+	const { ctx, kit, id, warnings } = run;
+	spawnCollector(run);
+	let launch: LaunchResult | undefined;
+	if (run.opts.relaunch === true) launch = await relaunchApp(run);
+	else await startNativeNow(run);
+	const pending = await awaitArmed(ctx, kit.io, id, plan);
+	if (pending.length > 0)
+		warnings.push(`${pending.join(", ")}: still arming (see warden perf ls; the collector keeps trying)`);
+	const fresh = readSession(ctx, id) ?? session;
+	return ok({
+		session: fresh,
+		plan,
+		warnings,
+		...(launch === undefined ? {} : { launch }),
+		...(plan.leaseId === undefined ? {} : { leaseId: plan.leaseId }),
+	});
+}
+
 /**
  * Begin a perf session on `target`: sweep stale sessions, open the session (one per device), record the clock anchor,
  * arm what can be armed before the app starts (the Android recorder, logs), relaunch or reset the app when asked,
@@ -206,182 +449,49 @@ export async function startPerf(
 	const opts: StartOptions = input.reset === true && input.relaunch !== true ? { ...input, relaunch: true } : input;
 	const choice = chooseCapturers(opts);
 	if (!choice.success) return choice;
-	let requestedMs: number | undefined;
-	if (opts.maxDuration !== undefined) {
-		requestedMs = parseDuration(opts.maxDuration);
-		if (requestedMs === undefined) {
-			return {
-				success: false,
-				error: uiError("usage", `--max-duration must be a duration like 30s or 2m, got "${opts.maxDuration}"`),
-			};
-		}
-	}
-	const cap = clampMaxDuration(requestedMs);
+	const requested = requestedMaxDuration(opts.maxDuration);
+	if (!requested.success) return requested;
+	const cap = clampMaxDuration(requested.data);
 	const warnings: string[] = cap.warning === undefined ? [] : [cap.warning];
 	const caps = choice.data;
-	if (caps.native !== undefined && caps.native.flavor === "simpleperf" && target.platform === "ios")
-		warnings.push("--native=simpleperf is Android only: iOS records with xctrace");
-	if (caps.frames && target.platform === "ios") {
-		warnings.push("frames: the iOS simulator has no frame API; hangs come from --native");
-		caps.frames = false;
-	}
+	adjustForPlatform(caps, target.platform, warnings);
 
 	sweepSessions(ctx, deps.session);
 	const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 	if (!app.success) return app;
 
-	const mutate = opts.relaunch === true;
-	let working = target;
-	let tookLease = false;
-	if (mutate) {
-		const resolved = await resolvePerfDevice(
-			ctx,
-			{ ...opts, lease: undefined, serial: undefined, udid: target.udid, claim: true },
-			"mutate",
-			deps.device
-		);
-		if (!resolved.success) {
-			const e = resolved.error;
-			return {
-				success: false,
-				error:
-					e.code === "device_foreign"
-						? uiError("device_foreign", e.message, {
-								hint: "--relaunch / --reset restart the app, so they need a device you hold or a free one; claim another with warden claim",
-							})
-						: e,
-			};
-		}
-		working = resolved.data;
-		tookLease = working.lease !== undefined && !target.ownedByCaller && target.holder === undefined;
-	}
+	const leased = await leaseForRelaunch(ctx, deps, opts, target);
+	if (!leased.success) return leased;
+	const { working, tookLease } = leased.data;
 
 	const offset = await readClockOffsetMs(ctx, { platform: target.platform, id: target.udid });
-	const created = createSession(ctx, deps.session, {
-		device: {
-			udid: target.udid,
-			platform: target.platform,
-			...(target.name === undefined ? {} : { name: target.name }),
-		},
-		target: {
-			udid: target.udid,
-			...(working.holder === undefined ? {} : { holder: working.holder }),
-			ownedByCaller: working.ownedByCaller,
-		},
-		app: app.data,
-		maxDurationMs: cap.ms,
-		...(offset === undefined ? {} : { deviceWallMs: ctx.now() + offset }),
-	});
-	if (!created.success) {
-		if (tookLease && working.lease !== undefined) await releaseDevices(ctx, [working.lease.id], { touch: false });
-		return created;
-	}
+	const created = await openSession(ctx, deps, { target, working, app: app.data, capMs: cap.ms, offset, tookLease });
+	if (!created.success) return created;
 	const session = created.data;
 	const id = session.id;
 	if (offset === undefined && target.platform === "android")
 		warnings.push("could not read the device clock: JS and React times are aligned by the host clock only");
 
-	let metroUrl: string | undefined;
-	if (caps.js || caps.react) {
-		metroUrl = await deps.host.metro(ctx, target.udid).catch(() => undefined);
-		if (metroUrl === undefined) {
-			warnings.push("js/react: no Metro found for this device (release build, or no dev client running)");
-			if (caps.js) failCapturer(ctx, id, "js");
-			if (caps.react) failCapturer(ctx, id, "react");
-			caps.js = false;
-			caps.react = false;
-		}
-	}
-	const plan: PerfPlan = {
-		version: 1,
-		app: app.data.id,
-		cwd: ctx.cwd,
-		metrics: caps.metrics,
-		frames: caps.frames,
-		logs: caps.logs,
-		js: caps.js,
-		react: caps.react,
-		...(caps.native === undefined ? {} : { native: caps.native }),
-		relaunch: opts.relaunch === true,
-		...(metroUrl === undefined ? {} : { metroUrl }),
-		...(tookLease && working.lease !== undefined ? { leaseId: working.lease.id } : {}),
-	};
+	const metroUrl = await findMetro(ctx, deps, target, caps, id, warnings);
+	const leaseId = tookLease ? working.lease?.id : undefined;
+	const plan = buildPlan(ctx, opts, app.data.id, caps, metroUrl, leaseId);
 	writePlan(ctx, id, plan);
 
+	const run: StartRun = {
+		ctx,
+		deps,
+		kit,
+		target,
+		working,
+		appId: app.data.id,
+		opts,
+		caps,
+		capMs: cap.ms,
+		id,
+		warnings,
+	};
 	try {
-		const dir = sessionDir(ctx, id);
-		const { pid } = kit.io.spawnDetached({
-			argv: [...kit.io.self(), "perf-collect", "--session", id],
-			logPath: join(dir, "collector.log"),
-		});
-		updateSession(ctx, id, (s) => ({
-			...s,
-			capturers: [
-				...s.capturers.filter((c) => c.kind !== "collector"),
-				{ kind: "collector", pid, startedAtIso: iso(ctx), state: "running" },
-			],
-		}));
-
-		const startNativeNow = async (): Promise<void> => {
-			if (caps.native === undefined) return;
-			const current = readSession(ctx, id);
-			const started = await startNative(
-				ctx,
-				deps,
-				kit.io,
-				kit.profilers,
-				working,
-				{
-					app: app.data.id,
-					leaks: false,
-					...(caps.native.flavor === "" ? {} : { flavor: caps.native.flavor }),
-					maxDurationMs: cap.ms,
-				},
-				current
-			);
-			if (!started.success) {
-				warnings.push(`native: ${started.error.message}`);
-				failCapturer(ctx, id, "native");
-			}
-		};
-
-		let launch: LaunchResult | undefined;
-		if (opts.relaunch === true) {
-			const device = { platform: target.platform, id: target.udid };
-			const stopped = await terminateApp(ctx, device, app.data.id);
-			if (!stopped.success) throw new StartFailure(stopped.error);
-			if (opts.reset === true) {
-				const wiped = await resetAppData(ctx, device, app.data.id);
-				if (!wiped.success) throw new StartFailure(wiped.error);
-			}
-			if (target.platform === "android") {
-				await startNativeNow();
-				if (caps.frames) await resetFrameCounters(ctx, target.udid, app.data.id);
-			}
-			launch = await launchApp(ctx, device, app.data.id, { cold: true });
-			if (launch.kind === "failed") {
-				throw new StartFailure(
-					uiError(launch.reason === "no_launcher" ? "app_not_found" : "failed", launch.message, {
-						...(launch.hint === undefined ? {} : { hint: launch.hint }),
-					})
-				);
-			}
-			writeLaunchStartup(ctx, id, target, app.data.id, launch);
-			if (target.platform === "ios") await startNativeNow();
-		} else {
-			await startNativeNow();
-		}
-		const pending = await awaitArmed(ctx, kit.io, id, plan);
-		if (pending.length > 0)
-			warnings.push(`${pending.join(", ")}: still arming (see warden perf ls; the collector keeps trying)`);
-		const fresh = readSession(ctx, id) ?? session;
-		return ok({
-			session: fresh,
-			plan,
-			warnings,
-			...(launch === undefined ? {} : { launch }),
-			...(plan.leaseId === undefined ? {} : { leaseId: plan.leaseId }),
-		});
+		return await armSession(run, plan, session);
 	} catch (error) {
 		signalCollector(deps.session, readSession(ctx, id) ?? session);
 		await abortStart(ctx, deps, id);
@@ -441,6 +551,57 @@ function crashLine(c: CrashOut): string {
 	return `${c.kind.toUpperCase()} ${c.process}: ${c.summary}${c.firstAppFrame === undefined ? "" : ` at ${c.firstAppFrame}`}`;
 }
 
+/** Stop the session's native recorder when one is still running; failures become warnings. */
+async function stopNativeStep(
+	ctx: CommandContext,
+	deps: PerfDeps,
+	kit: SessionKit,
+	id: string,
+	target: PerfTarget,
+	opts: StopOptions,
+	warnings: string[]
+): Promise<void> {
+	const recorded = readHandleFile(sessionNativeDir(ctx, id));
+	if (recorded?.status !== "running") return;
+	const stopped = await stopNative(ctx, deps, kit.io, kit.profilers, target, {
+		analyze: opts.analyze !== false,
+		sessionId: id,
+		...(opts.yes === true ? { yes: true } : {}),
+	});
+	if (!stopped.success) {
+		warnings.push(`native: ${stopped.error.message}`);
+		return;
+	}
+	warnings.push(...stopped.data.warnings);
+	if (stopped.data.analysis !== undefined)
+		writeNativeSummary(ctx, id, nativeSummaryOf(target.platform, stopped.data.analysis, recorded.handle.startWallMs));
+}
+
+/** Read the session's crashes, copy the raw reports into it and write the crash summary; failures become warnings. */
+async function crashStep(
+	ctx: CommandContext,
+	target: PerfTarget,
+	appId: string,
+	first: PerfSession,
+	warnings: string[]
+): Promise<void> {
+	const id = first.id;
+	try {
+		const read = await readCrashes(ctx, target, appId, {
+			sinceMs: Math.max(1, ctx.now() - first.startedAt.wallMs),
+			crashDir: join(sessionDir(ctx, id), "crashes"),
+			timeoutMs: 20_000,
+		});
+		mkdirSync(join(sessionDir(ctx, id), "crashes"), { recursive: true });
+		writeFileAtomic(
+			join(sessionDir(ctx, id), CRASH_SUMMARY),
+			`${JSON.stringify({ count: read.crashes.length, lines: read.crashes.map(crashLine), findings: crashFindings(read.crashes), notes: read.notes }, null, 2)}\n`
+		);
+	} catch (error) {
+		warnings.push(`crashes: ${errorMessage(error)}`);
+	}
+}
+
 /**
  * The stop path shared by `perf stop`, the collector's auto-stop and the release hook. Idempotent: every step checks
  * whether it already ran. Order, reverse of start: signal the collector (it aborts the captures it hosts and flushes
@@ -465,44 +626,14 @@ export async function finalizeSession(
 	if (opts.fromCollector !== true && first.status === "running" && !(await waitCollectorExit(deps, kit.io, first)))
 		warnings.push("the collector did not exit in time: some captures may be incomplete");
 
-	const nativeRunning = readHandleFile(sessionNativeDir(ctx, id))?.status === "running";
-	if (nativeRunning) {
-		const startWallMs = readHandleFile(sessionNativeDir(ctx, id))?.handle.startWallMs;
-		const stopped = await stopNative(ctx, deps, kit.io, kit.profilers, target, {
-			analyze: opts.analyze !== false,
-			sessionId: id,
-			...(opts.yes === true ? { yes: true } : {}),
-		});
-		if (!stopped.success) {
-			warnings.push(`native: ${stopped.error.message}`);
-		} else {
-			warnings.push(...stopped.data.warnings);
-			if (stopped.data.analysis !== undefined)
-				writeNativeSummary(ctx, id, nativeSummaryOf(target.platform, stopped.data.analysis, startWallMs));
-		}
-	}
+	await stopNativeStep(ctx, deps, kit, id, target, opts, warnings);
 
 	if (plan?.frames === true && appId !== undefined && target.platform === "android") {
 		const frames = await captureSessionFrames(ctx, target.udid, appId, first);
 		if (!frames.success) warnings.push(`frames: ${frames.error.message}`);
 	}
 
-	if (appId !== undefined && opts.analyze !== false) {
-		try {
-			const read = await readCrashes(ctx, target, appId, {
-				sinceMs: Math.max(1, ctx.now() - first.startedAt.wallMs),
-				crashDir: join(sessionDir(ctx, id), "crashes"),
-				timeoutMs: 20_000,
-			});
-			mkdirSync(join(sessionDir(ctx, id), "crashes"), { recursive: true });
-			writeFileAtomic(
-				join(sessionDir(ctx, id), CRASH_SUMMARY),
-				`${JSON.stringify({ count: read.crashes.length, lines: read.crashes.map(crashLine), findings: crashFindings(read.crashes), notes: read.notes }, null, 2)}\n`
-			);
-		} catch (error) {
-			warnings.push(`crashes: ${errorMessage(error)}`);
-		}
-	}
+	if (appId !== undefined && opts.analyze !== false) await crashStep(ctx, target, appId, first, warnings);
 
 	const stopped =
 		first.status === "running" ? stopSession(ctx, deps.session, id, opts.reason, { signalCollector: false }) : first;

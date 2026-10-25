@@ -67,6 +67,27 @@ const spec = (spec: string, title: string, status: TestResult["status"] = "passe
 const reportOf = (files: Map<string, string>, c: TestContext): E2eReport =>
 	JSON.parse(files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "e2e-report.json")) ?? "{}");
 
+/** Fake `osascript` reply: one warden window on a screen; a screen read (the `NSScreen` probe) is logged to `reads`. */
+function windowListReply(script: string, reads: string[]): Awaited<ReturnType<Exec>> {
+	if (script.includes("NSScreen")) reads.push("read");
+	const windows = [{ title: "warden-iphone-17-1 – iOS 26.5", width: 400, height: 800 }];
+	const screen = { x: 0, y: 0, width: 900, height: 900 };
+	return { exitCode: 0, stdout: JSON.stringify({ screen, windows }), stderr: "" };
+}
+
+/** An exec for the late-window test: real git, window reads logged, the dev-client launch held until `launch` resolves. */
+function lateWindowExec(sim: Exec, launch: Promise<void>, reads: string[]): Exec {
+	return async (cmd, opts) => {
+		if (cmd[0] === "git") return bunExec(cmd, opts);
+		if (cmd[0] === "osascript") return windowListReply(cmd[4] ?? "", reads);
+		if (cmd[0] === "xcrun" && cmd[2] === "launch") {
+			reads.push("launch:start");
+			await launch;
+		}
+		return sim(cmd, opts);
+	};
+}
+
 describe("warden e2e", () => {
 	test("runs the affected specs with bun test, in the config dir; report + gate pass", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
@@ -363,20 +384,7 @@ describe("warden e2e", () => {
 			const sim = fakeSimctl([wardenSim(1, "Shutdown")]);
 			const launch = Promise.withResolvers<void>();
 			const reads: string[] = [];
-			const exec: Exec = async (cmd, opts) => {
-				if (cmd[0] === "git") return bunExec(cmd, opts);
-				if (cmd[0] === "osascript") {
-					if ((cmd[4] ?? "").includes("NSScreen")) reads.push("read");
-					const windows = [{ title: "warden-iphone-17-1 – iOS 26.5", width: 400, height: 800 }];
-					const screen = { x: 0, y: 0, width: 900, height: 900 };
-					return { exitCode: 0, stdout: JSON.stringify({ screen, windows }), stderr: "" };
-				}
-				if (cmd[0] === "xcrun" && cmd[2] === "launch") {
-					reads.push("launch:start");
-					await launch.promise;
-				}
-				return sim(cmd, opts);
-			};
+			const exec = lateWindowExec(sim, launch.promise, reads);
 			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;

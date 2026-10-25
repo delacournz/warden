@@ -74,6 +74,14 @@ function judge(spec: MetricSpec, before: number, after: number, thresholdPct: nu
 /** Functions whose self share moved by at least this many percentage points are listed. */
 const FUNCTION_MIN_POINTS = 2;
 
+/** Verdict for a function whose self share went from `x` to `x + delta` percent. */
+function functionVerdict(x: number, delta: number, thresholdPct: number): FunctionDelta["verdict"] {
+	const relative = x === 0 ? Number.POSITIVE_INFINITY : (Math.abs(delta) / x) * 100;
+	if (relative < thresholdPct) return "same";
+	if (delta <= 0) return "improve";
+	return x === 0 ? "new" : "regress";
+}
+
 function diffFunctions(a: ReportMetrics, b: ReportMetrics, thresholdPct: number): FunctionDelta[] {
 	const before = new Map(a.topFunctions.map((f) => [f.name, f.selfPct]));
 	const after = new Map(b.topFunctions.map((f) => [f.name, f.selfPct]));
@@ -84,10 +92,7 @@ function diffFunctions(a: ReportMetrics, b: ReportMetrics, thresholdPct: number)
 		const y = after.get(name) ?? 0;
 		const delta = round(y - x);
 		if (Math.abs(delta) < FUNCTION_MIN_POINTS) continue;
-		const relative = x === 0 ? Number.POSITIVE_INFINITY : (Math.abs(delta) / x) * 100;
-		const verdict: FunctionDelta["verdict"] =
-			relative < thresholdPct ? "same" : delta > 0 ? (x === 0 ? "new" : "regress") : "improve";
-		out.push({ kind: "function", name, before: x, after: y, delta, verdict });
+		out.push({ kind: "function", name, before: x, after: y, delta, verdict: functionVerdict(x, delta, thresholdPct) });
 	}
 	return out.sort((p, q) => Math.abs(q.delta) - Math.abs(p.delta)).slice(0, 10);
 }
@@ -130,25 +135,30 @@ export function diffReports(
 
 const UNIT: Record<MetricSpec["unit"], string> = { ms: "ms", "%": "%", KB: "KB", count: "" };
 
+/** The trailing verdict label, empty when nothing moved. */
+const verdictLabel = (verdict: MetricDelta["verdict"] | FunctionDelta["verdict"]): string =>
+	verdict === "same" ? "" : verdict.toUpperCase();
+
+/** One metric row of the text diff. */
+function metricLine(m: MetricDelta): string {
+	const u = UNIT[m.unit];
+	const sign = m.delta > 0 ? "+" : "";
+	const pct = m.pct === undefined ? "" : ` (${m.pct > 0 ? "+" : ""}${m.pct}%)`;
+	return `${m.label.padEnd(18)} ${m.before}${u} -> ${m.after}${u}  ${sign}${m.delta}${u}${pct}  ${verdictLabel(m.verdict)}`.trimEnd();
+}
+
+/** One function row of the text diff. */
+function functionLine(f: FunctionDelta): string {
+	const sign = f.delta > 0 ? "+" : "";
+	return `fn ${f.name}  ${f.before}% -> ${f.after}% self  ${sign}${f.delta}pt  ${verdictLabel(f.verdict)}`.trimEnd();
+}
+
 /** `startup cold p50  1200ms -> 1500ms  +300ms (+25%)  REGRESS` */
 export function diffLines(diff: ReportDiff): string[] {
-	const lines = [`diff ${diff.a} -> ${diff.b} (threshold ${diff.thresholdPct}%)`];
-	for (const m of diff.metrics) {
-		const u = UNIT[m.unit];
-		const sign = m.delta > 0 ? "+" : "";
-		const pct = m.pct === undefined ? "" : ` (${m.pct > 0 ? "+" : ""}${m.pct}%)`;
-		lines.push(
-			`${m.label.padEnd(18)} ${m.before}${u} -> ${m.after}${u}  ${sign}${m.delta}${u}${pct}  ${m.verdict === "same" ? "" : m.verdict.toUpperCase()}`.trimEnd()
-		);
-	}
-	for (const f of diff.functions) {
-		const sign = f.delta > 0 ? "+" : "";
-		lines.push(
-			`fn ${f.name}  ${f.before}% -> ${f.after}% self  ${sign}${f.delta}pt  ${f.verdict === "same" ? "" : f.verdict.toUpperCase()}`.trimEnd()
-		);
-	}
-	lines.push(
-		`${diff.regressions} regression${diff.regressions === 1 ? "" : "s"}, ${diff.improvements} improvement${diff.improvements === 1 ? "" : "s"}`
-	);
-	return lines;
+	return [
+		`diff ${diff.a} -> ${diff.b} (threshold ${diff.thresholdPct}%)`,
+		...diff.metrics.map(metricLine),
+		...diff.functions.map(functionLine),
+		`${diff.regressions} regression${diff.regressions === 1 ? "" : "s"}, ${diff.improvements} improvement${diff.improvements === 1 ? "" : "s"}`,
+	];
 }

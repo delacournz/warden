@@ -289,25 +289,28 @@ describe("Device Hub windows after a claim (Xcode 27)", () => {
 	let dctx: TestContext | undefined;
 	afterEach(() => dctx?.cleanup());
 
+	/** Fake `osascript` reply: the screen + one warden window for the NSScreen probe, empty for anything else */
+	function osascriptResult(script: string): { exitCode: number; stdout: string; stderr: string } {
+		if (!script.includes("NSScreen")) return { exitCode: 0, stdout: "", stderr: "" };
+		const screen = { x: 0, y: 25, width: 1440, height: 875 };
+		const windows = [{ title: "warden-iphone-17-1 – iOS 27.1", width: 340, height: 751 }];
+		return { exitCode: 0, stdout: JSON.stringify({ screen, windows }), stderr: "" };
+	}
+
+	/** The fake reply for the process / viewer commands a claim issues, or undefined to fall through to simctl */
+	function viewerReply(cmd: readonly string[], running: "DeviceHub" | "none"): Awaited<ReturnType<Exec>> | undefined {
+		if (cmd[0] === "pgrep") return { exitCode: cmd[2] === running ? 0 : 1, stdout: "", stderr: "" };
+		if (cmd[0] === "open") return { exitCode: 0, stdout: "", stderr: "" };
+		if (cmd[0] === "osascript") return osascriptResult(cmd[4] ?? "");
+		return undefined;
+	}
+
 	/** `pgrep` finds only `running`; every other call goes to simctl; records `open`/`osascript` */
 	function viewer(running: "DeviceHub" | "none", calls: string[][]): Exec {
 		const simctl = fakeSimctl([wardenSim(1, "Shutdown")], calls);
 		return async (cmd, opts) => {
 			if (cmd[0] === "open" || cmd[0] === "osascript") calls.push([...cmd]);
-			if (cmd[0] === "pgrep") return { exitCode: cmd[2] === running ? 0 : 1, stdout: "", stderr: "" };
-			if (cmd[0] === "open") return { exitCode: 0, stdout: "", stderr: "" };
-			if (cmd[0] === "osascript") {
-				const screen = { x: 0, y: 25, width: 1440, height: 875 };
-				const windows = (cmd[4] ?? "").includes("NSScreen")
-					? [{ title: "warden-iphone-17-1 – iOS 27.1", width: 340, height: 751 }]
-					: [];
-				return {
-					exitCode: 0,
-					stdout: (cmd[4] ?? "").includes("NSScreen") ? JSON.stringify({ screen, windows }) : "",
-					stderr: "",
-				};
-			}
-			return simctl(cmd, opts);
+			return viewerReply(cmd, running) ?? simctl(cmd, opts);
 		};
 	}
 

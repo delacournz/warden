@@ -80,6 +80,20 @@ function formatPreview(object: RemoteObject): string | undefined {
 	return `${name}{${body}${more}}`;
 }
 
+/** An object value: null, serialized value, error description, else its preview or class name. */
+function formatObject(object: RemoteObject): string {
+	if (object.subtype === "null") return "null";
+	if (object.value !== undefined) return JSON.stringify(object.value);
+	if (object.subtype === "error") return object.description ?? "Error";
+	return formatPreview(object) ?? object.description ?? object.className ?? "Object";
+}
+
+/** A function value: its first line, cut at `MAX_FUNCTION_TEXT`. */
+function formatFunction(object: RemoteObject): string {
+	const first = (object.description ?? "function").split("\n")[0] ?? "function";
+	return first.length > MAX_FUNCTION_TEXT ? `${first.slice(0, MAX_FUNCTION_TEXT)}…` : first;
+}
+
 /** One value as a person reads it in a log: top-level strings raw, nested ones quoted. */
 function formatValue(object: RemoteObject): string {
 	switch (object.type) {
@@ -91,19 +105,19 @@ function formatValue(object: RemoteObject): string {
 		case "boolean":
 		case "bigint":
 			return object.unserializableValue ?? object.description ?? String(object.value);
-		case "function": {
-			const first = (object.description ?? "function").split("\n")[0] ?? "function";
-			return first.length > MAX_FUNCTION_TEXT ? `${first.slice(0, MAX_FUNCTION_TEXT)}…` : first;
-		}
-		case "object": {
-			if (object.subtype === "null") return "null";
-			if (object.value !== undefined) return JSON.stringify(object.value);
-			if (object.subtype === "error") return object.description ?? "Error";
-			return formatPreview(object) ?? object.description ?? object.className ?? "Object";
-		}
+		case "function":
+			return formatFunction(object);
+		case "object":
+			return formatObject(object);
 		default:
 			return object.description ?? `[${object.type}]`;
 	}
+}
+
+/** A `%d` / `%i` / `%f` substitution: the argument as a number, integers truncated, NaN spelled out. */
+function formatNumeric(spec: string, arg: RemoteObject): string {
+	const n = Number(arg.value ?? arg.description);
+	return Number.isNaN(n) ? "NaN" : String(spec === "f" ? n : Math.trunc(n));
 }
 
 /** `%s %d %i %f %o %O %j %c %%` against the arguments that follow the format string. */
@@ -115,10 +129,7 @@ function applyFormat(format: string, rest: readonly RemoteObject[]): { text: str
 		if (arg === undefined) return whole;
 		used++;
 		if (spec === "c") return "";
-		if (spec === "d" || spec === "i" || spec === "f") {
-			const n = Number(arg.value ?? arg.description);
-			return Number.isNaN(n) ? "NaN" : String(spec === "f" ? n : Math.trunc(n));
-		}
+		if (spec === "d" || spec === "i" || spec === "f") return formatNumeric(spec, arg);
 		return formatValue(arg);
 	});
 	return { text, used };

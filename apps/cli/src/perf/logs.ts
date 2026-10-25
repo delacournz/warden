@@ -207,6 +207,56 @@ export async function runLogCapture(
 
 type OneShot = { entries: LogEntry[]; truncated: boolean };
 
+/** The failed `exec` as a `failed` error naming the tool and the last line of its output. */
+function execFailure(what: string, res: { exitCode: number; stdout: string; stderr: string }): UiError {
+	return uiError("failed", `${what} failed: ${(res.stderr || res.stdout).trim().split("\n").pop() ?? res.exitCode}`);
+}
+
+/** Android: the app's pid-scoped logcat tail. */
+async function androidLogcat(
+	ctx: CommandContext,
+	device: DeviceRef,
+	appId: string,
+	tail: number,
+	timeoutMs: number
+): Promise<Result<string, UiError>> {
+	const pid = await appPid(ctx, { platform: "android", id: device.udid }, appId);
+	if (pid === undefined) {
+		return {
+			success: false,
+			error: uiError("app_not_found", `${appId} is not running on ${device.udid}`, {
+				hint: "launch the app, or check `warden perf crashes` for why it died",
+			}),
+		};
+	}
+	const res = await ctx.exec([...adb(ctx, device.udid), ...logcatArgv(pid, { tail })], { timeoutMs });
+	if (res.exitCode !== 0) return { success: false, error: execFailure("logcat", res) };
+	return ok(res.stdout);
+}
+
+/** iOS: `log show` for the app over the `--since` window (default `DEFAULT_IOS_WINDOW_S`). */
+async function iosLogShow(
+	ctx: CommandContext,
+	device: DeviceRef,
+	appId: string,
+	sinceDurationMs: number | undefined,
+	timeoutMs: number
+): Promise<Result<string, UiError>> {
+	const bundle = await iosAppBundle(ctx, device.udid, appId);
+	if (!bundle.success) return bundle;
+	const window = sinceDurationMs === undefined ? DEFAULT_IOS_WINDOW_S : Math.max(1, Math.ceil(sinceDurationMs / 1000));
+	const argv = [
+		"xcrun",
+		"simctl",
+		"spawn",
+		device.udid,
+		...iosShowArgv(iosPredicate(appId, bundle.data.executable), `${window}s`),
+	];
+	const res = await ctx.exec(argv, { timeoutMs });
+	if (res.exitCode !== 0) return { success: false, error: execFailure("log show", res) };
+	return ok(res.stdout);
+}
+
 async function readOnce(
 	ctx: CommandContext,
 	device: DeviceRef,
@@ -220,55 +270,13 @@ async function readOnce(
 		flags.filter.minLevel !== undefined || flags.filter.grep !== undefined || flags.sinceDurationMs !== undefined;
 	const filter: LogFilter = { ...flags.filter };
 	if (flags.sinceDurationMs !== undefined) filter.sinceMs = naiveNow - flags.sinceDurationMs;
-	let stdout: string;
-	if (device.platform === "android") {
-		const pid = await appPid(ctx, { platform: "android", id: device.udid }, app.id);
-		if (pid === undefined) {
-			return {
-				success: false,
-				error: uiError("app_not_found", `${app.id} is not running on ${device.udid}`, {
-					hint: "launch the app, or check `warden perf crashes` for why it died",
-				}),
-			};
-		}
-		const res = await ctx.exec(
-			[...adb(ctx, device.udid), ...logcatArgv(pid, { tail: filtered ? FILTERED_TAIL : flags.lines })],
-			{ timeoutMs }
-		);
-		if (res.exitCode !== 0)
-			return {
-				success: false,
-				error: uiError(
-					"failed",
-					`logcat failed: ${(res.stderr || res.stdout).trim().split("\n").pop() ?? res.exitCode}`
-				),
-			};
-		stdout = res.stdout;
-	} else {
-		const bundle = await iosAppBundle(ctx, device.udid, app.id);
-		if (!bundle.success) return bundle;
-		const window =
-			flags.sinceDurationMs === undefined ? DEFAULT_IOS_WINDOW_S : Math.max(1, Math.ceil(flags.sinceDurationMs / 1000));
-		const argv = [
-			"xcrun",
-			"simctl",
-			"spawn",
-			device.udid,
-			...iosShowArgv(iosPredicate(app.id, bundle.data.executable), `${window}s`),
-		];
-		const res = await ctx.exec(argv, { timeoutMs });
-		if (res.exitCode !== 0)
-			return {
-				success: false,
-				error: uiError(
-					"failed",
-					`log show failed: ${(res.stderr || res.stdout).trim().split("\n").pop() ?? res.exitCode}`
-				),
-			};
-		stdout = res.stdout;
-		delete filter.sinceMs;
-	}
-	const all = redact(stdout)
+	const isAndroid = device.platform === "android";
+	const out = isAndroid
+		? await androidLogcat(ctx, device, app.id, filtered ? FILTERED_TAIL : flags.lines, timeoutMs)
+		: await iosLogShow(ctx, device, app.id, flags.sinceDurationMs, timeoutMs);
+	if (!out.success) return out;
+	if (!isAndroid) delete filter.sinceMs;
+	const all = redact(out.data)
 		.split("\n")
 		.flatMap((line) => parseLogLine(device.platform, line, year) ?? [])
 		.filter((entry) => matchesFilter(entry, filter));

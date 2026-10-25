@@ -31,6 +31,41 @@ const FLAKY = "qa-feed-scroll";
 
 type Plan = { batch: Batch; videoSeconds: number[] };
 
+type SchedulerState = {
+	job: string;
+	k: number;
+	devices: BatchDevice[];
+	/** epoch ms each worker is next free */
+	free: number[];
+	/** next sequence number per worker */
+	seq: number[];
+	jobs: BatchJob[];
+};
+
+/** Put one spec (and its retry, when flaky) on the earliest-free worker. */
+function scheduleSpec({ job, k, devices, free, seq, jobs }: SchedulerState): void {
+	const w = free.indexOf(Math.min(...free));
+	const device = devices[w];
+	if (!device) throw new Error("no worker");
+	const attempts = job === FLAKY ? 2 : 1;
+	for (let attempt = 0; attempt < attempts; attempt++) {
+		const startedAt = (free[w] ?? 0) + 400;
+		const endedAt = startedAt + (DURATIONS[k] ?? 10) * 1000 * (attempt === 0 && attempts > 1 ? 0.6 : 1);
+		jobs.push({
+			job,
+			worker: device.worker,
+			udid: device.udid,
+			seq: seq[w] ?? 0,
+			attempt,
+			startedAt,
+			endedAt,
+			exitCode: attempt < attempts - 1 ? 1 : 0,
+		});
+		seq[w] = (seq[w] ?? 0) + 1;
+		free[w] = endedAt;
+	}
+}
+
 /** Simulate the shared-queue scheduler (a free worker pulls the next job; retries stay on the worker). */
 export function planFixture(workers = 5): Plan {
 	const devices: BatchDevice[] = Array.from({ length: workers }, (_, i) => ({
@@ -43,28 +78,7 @@ export function planFixture(workers = 5): Plan {
 	const free = devices.map((d) => d.videoStartedAt + 1500);
 	const seq = devices.map(() => 0);
 	const jobs: BatchJob[] = [];
-	SPECS.forEach((job, k) => {
-		const w = free.indexOf(Math.min(...free));
-		const device = devices[w];
-		if (!device) throw new Error("no worker");
-		const attempts = job === FLAKY ? 2 : 1;
-		for (let attempt = 0; attempt < attempts; attempt++) {
-			const startedAt = (free[w] ?? 0) + 400;
-			const endedAt = startedAt + (DURATIONS[k] ?? 10) * 1000 * (attempt === 0 && attempts > 1 ? 0.6 : 1);
-			jobs.push({
-				job,
-				worker: device.worker,
-				udid: device.udid,
-				seq: seq[w] ?? 0,
-				attempt,
-				startedAt,
-				endedAt,
-				exitCode: attempt < attempts - 1 ? 1 : 0,
-			});
-			seq[w] = (seq[w] ?? 0) + 1;
-			free[w] = endedAt;
-		}
-	});
+	for (const [k, job] of SPECS.entries()) scheduleSpec({ job, k, devices, free, seq, jobs });
 	const end = Math.max(...jobs.map((j) => j.endedAt));
 	const batch: Batch = { batchId: "fixture", startedAt: T0, endedAt: end + 2000, ok: true, devices, jobs };
 	return { batch, videoSeconds: devices.map((d) => Math.ceil((end + 1500 - d.videoStartedAt) / 1000)) };

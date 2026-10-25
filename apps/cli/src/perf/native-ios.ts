@@ -129,6 +129,67 @@ async function startRecorder(
 	return ok(pid);
 }
 
+type Prepared = { recordTarget: RecordTarget; launchAfterArm: boolean; appPid?: number };
+
+/** `--leaks`: terminate the app so the profiler can cold-launch it (or arm all-processes when the host deadlocks). */
+async function prepareLeaks(
+	ctx: CommandContext,
+	udid: string,
+	app: string,
+	deadlock: boolean
+): Promise<Result<Prepared, UiError>> {
+	const device = { platform: "ios" as const, id: udid };
+	const bundle = await iosAppBundle(ctx, udid, app);
+	if (!bundle.success) return bundle;
+	const stopped = await terminateApp(ctx, device, app);
+	if (!stopped.success) return stopped;
+	if (deadlock) return ok({ recordTarget: { kind: "all-processes" }, launchAfterArm: true });
+	return ok({
+		recordTarget: { kind: "launch", udid, appPath: bundle.data.appPath, env: { MallocStackLogging: "1" } },
+		launchAfterArm: false,
+	});
+}
+
+/** Default: attach to the running app (or arm all-processes when the host deadlocks). */
+async function prepareAttach(
+	ctx: CommandContext,
+	udid: string,
+	app: string,
+	deadlock: boolean
+): Promise<Result<Prepared, UiError>> {
+	const pid = await appPid(ctx, { platform: "ios" as const, id: udid }, app);
+	if (pid === undefined) {
+		return fail(
+			uiError("app_not_found", `${app} is not running on ${udid}`, {
+				hint: "launch the app first (warden ui open <bundleId>), or pass --leaks to cold-launch it under the profiler",
+			})
+		);
+	}
+	const recordTarget: RecordTarget = deadlock ? { kind: "all-processes" } : { kind: "attach", udid, pid };
+	return ok({ recordTarget, launchAfterArm: false, appPid: pid });
+}
+
+/** All-processes leaks mode: launch the app once the recorder is armed; returns its pid, killing the recorder on failure. */
+async function launchAfterArming(
+	ctx: CommandContext,
+	io: NativeIo,
+	udid: string,
+	app: string,
+	recorderPid: number
+): Promise<Result<number, UiError>> {
+	await io.sleep(ARM_MS);
+	const launched = await ctx.exec(["xcrun", "simctl", "launch", udid, app], {
+		timeoutMs: 60_000,
+		env: { SIMCTL_CHILD_MallocStackLogging: "1" },
+	});
+	const appPidNow = launched.exitCode === 0 ? parseSimctlLaunch(launched.stdout) : undefined;
+	if (appPidNow === undefined) {
+		io.kill(recorderPid, "SIGKILL");
+		return failed(`simctl launch ${app} failed: ${(launched.stderr || launched.stdout).trim()}`);
+	}
+	return ok(appPidNow);
+}
+
 async function start(
 	ctx: CommandContext,
 	io: NativeIo,
@@ -136,48 +197,21 @@ async function start(
 	input: NativeStartInput
 ): Promise<Result<NativeHandle, UiError>> {
 	const { target, app, dir } = input;
-	const device = { platform: "ios" as const, id: target.udid };
 	const deadlock = await deviceDeadlock(ctx);
 	const chosen = await chooseInstruments(ctx, input.leaks);
 	if (!chosen.success) return chosen;
 	const out = join(dir, TRACE_FILE);
 	const state: Record<string, string | number | boolean> = { allProcesses: deadlock, leaks: input.leaks };
-	let recordTarget: RecordTarget;
-	let launchAfterArm = false;
-
-	if (input.leaks) {
-		const bundle = await iosAppBundle(ctx, target.udid, app);
-		if (!bundle.success) return bundle;
-		const stopped = await terminateApp(ctx, device, app);
-		if (!stopped.success) return stopped;
-		if (deadlock) {
-			recordTarget = { kind: "all-processes" };
-			launchAfterArm = true;
-		} else {
-			recordTarget = {
-				kind: "launch",
-				udid: target.udid,
-				appPath: bundle.data.appPath,
-				env: { MallocStackLogging: "1" },
-			};
-		}
-	} else {
-		const pid = await appPid(ctx, device, app);
-		if (pid === undefined) {
-			return fail(
-				uiError("app_not_found", `${app} is not running on ${target.udid}`, {
-					hint: "launch the app first (warden ui open <bundleId>), or pass --leaks to cold-launch it under the profiler",
-				})
-			);
-		}
-		state.appPid = pid;
-		recordTarget = deadlock ? { kind: "all-processes" } : { kind: "attach", udid: target.udid, pid };
-	}
+	const prepared = await (input.leaks
+		? prepareLeaks(ctx, target.udid, app, deadlock)
+		: prepareAttach(ctx, target.udid, app, deadlock));
+	if (!prepared.success) return prepared;
+	if (prepared.data.appPid !== undefined) state.appPid = prepared.data.appPid;
 
 	const argv = recordArgv({
 		output: out,
 		instruments: chosen.data.instruments,
-		target: recordTarget,
+		target: prepared.data.recordTarget,
 		timeLimitMs: input.maxDurationMs,
 	});
 	const startedAtIso = new Date(ctx.now()).toISOString();
@@ -185,18 +219,10 @@ async function start(
 	const pid = await startRecorder(io, argv, dir, fs, out);
 	if (!pid.success) return pid;
 
-	if (launchAfterArm) {
-		await io.sleep(ARM_MS);
-		const launched = await ctx.exec(["xcrun", "simctl", "launch", target.udid, app], {
-			timeoutMs: 60_000,
-			env: { SIMCTL_CHILD_MallocStackLogging: "1" },
-		});
-		const appPidNow = launched.exitCode === 0 ? parseSimctlLaunch(launched.stdout) : undefined;
-		if (appPidNow === undefined) {
-			io.kill(pid.data, "SIGKILL");
-			return failed(`simctl launch ${app} failed: ${(launched.stderr || launched.stdout).trim()}`);
-		}
-		state.appPid = appPidNow;
+	if (prepared.data.launchAfterArm) {
+		const launched = await launchAfterArming(ctx, io, target.udid, app, pid.data);
+		if (!launched.success) return launched;
+		state.appPid = launched.data;
 	}
 	return ok({ pid: pid.data, out, startedAtIso, startWallMs, state });
 }

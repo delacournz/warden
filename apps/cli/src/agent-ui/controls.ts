@@ -8,9 +8,9 @@ import type { CommandContext } from "../context";
 import { type ActionOptionValues, finishAction, fromE2eError, parseSettle } from "./act";
 import type { UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
-import { type UiError, uiError } from "./output";
+import { type UiError, type UiSuccess, uiError } from "./output";
 import { uiDir } from "./paths";
-import { runUi } from "./run";
+import { runUi, type UiRunEnv } from "./run";
 import { readState } from "./state";
 
 /** `createDevice` over a `warden ui` driver: alerts, `openLink`, home/back, driven by the command's clock. */
@@ -72,12 +72,70 @@ function nameOf(button: { label?: string; text?: string; value?: string }): stri
 	return button.label ?? button.text ?? button.value ?? "?";
 }
 
+type AlertAction = "accept" | "dismiss" | "get";
+
+/** Whether `what` is one of the alert subcommands. */
+function isAlertAction(what: string): what is AlertAction {
+	return what === "accept" || what === "dismiss" || what === "get";
+}
+
+/** The human text of `alert get`: the title and message, then one line per button. */
+function alertText(alert: { title: string | null; message: string | null } | null, buttons: string[]): string {
+	if (alert === null) return "no alert showing";
+	return [
+		`alert${alert.title ? ` ${JSON.stringify(alert.title)}` : ""}${alert.message ? ` — ${alert.message}` : ""}`,
+		...buttons.map((name) => `  [${name}]`),
+	].join("\n");
+}
+
+/** `alert get`: read the alert on top without touching it. */
+async function readAlert(device: UiDevice, driver: Driver): Promise<Result<UiSuccess, UiError>> {
+	const info = fromDriver(await driver.alert());
+	if (!info.success) return info;
+	const buttons = (info.data?.buttons ?? []).map(nameOf);
+	const alert = info.data ? { title: info.data.title ?? null, message: info.data.message ?? null, buttons } : null;
+	return ok({
+		device: { udid: device.udid, platform: device.platform, name: device.name },
+		result: { action: "alert", present: alert !== null, alert, buttons },
+		text: alertText(alert, buttons),
+	});
+}
+
+/** `alert accept|dismiss`: answer the alert on top; `no_alert` when none is showing. */
+async function answerAlert(
+	ctx: CommandContext,
+	deps: UiDeps,
+	device: UiDevice,
+	env: UiRunEnv,
+	driver: Driver,
+	settleBudget: number | undefined,
+	what: "accept" | "dismiss"
+): Promise<Result<UiSuccess, UiError>> {
+	const facade = deviceFacade(ctx, deps, device, driver, env.timeoutMs);
+	const handled = await viaFacade(() => facade.alert(what));
+	if (!handled.success) return handled;
+	if (!handled.data) {
+		return {
+			success: false,
+			error: uiError("no_alert", `no alert is showing to ${what}`, {
+				hint: "`warden ui alert get` reads it (an empty buttons list means none)",
+			}),
+		};
+	}
+	return finishAction(ctx, deps, env, device, driver, settleBudget, {
+		action: "alert",
+		text: what === "accept" ? "accepted the alert" : "dismissed the alert",
+		args: { choice: what },
+		extra: { choice: what },
+	});
+}
+
 /** `warden ui alert accept|dismiss|get`: answer the system alert / sheet on top, or read it. */
 export function uiAlert(ctx: CommandContext, deps: UiDeps, what: string, opts: ActionOptionValues): Promise<number> {
 	return runUi(ctx, deps, "alert", opts, async (device, env) => {
 		const settle = parseSettle(opts.settle);
 		if (!settle.success) return settle;
-		if (what !== "accept" && what !== "dismiss" && what !== "get") {
+		if (!isAlertAction(what)) {
 			return {
 				success: false,
 				error: uiError("usage", `unknown alert action "${what}"`, { hint: "accept, dismiss or get" }),
@@ -85,40 +143,8 @@ export function uiAlert(ctx: CommandContext, deps: UiDeps, what: string, opts: A
 		}
 		const driver = await env.driver();
 		if (!driver.success) return driver;
-		if (what === "get") {
-			const info = fromDriver(await driver.data.alert());
-			if (!info.success) return info;
-			const buttons = (info.data?.buttons ?? []).map(nameOf);
-			const alert = info.data ? { title: info.data.title ?? null, message: info.data.message ?? null, buttons } : null;
-			return ok({
-				device: { udid: device.udid, platform: device.platform, name: device.name },
-				result: { action: "alert", present: alert !== null, alert, buttons },
-				text:
-					alert === null
-						? "no alert showing"
-						: [
-								`alert${alert.title ? ` ${JSON.stringify(alert.title)}` : ""}${alert.message ? ` — ${alert.message}` : ""}`,
-								...buttons.map((name) => `  [${name}]`),
-							].join("\n"),
-			});
-		}
-		const facade = deviceFacade(ctx, deps, device, driver.data, env.timeoutMs);
-		const handled = await viaFacade(() => facade.alert(what));
-		if (!handled.success) return handled;
-		if (!handled.data) {
-			return {
-				success: false,
-				error: uiError("no_alert", `no alert is showing to ${what}`, {
-					hint: "`warden ui alert get` reads it (an empty buttons list means none)",
-				}),
-			};
-		}
-		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-			action: "alert",
-			text: what === "accept" ? "accepted the alert" : "dismissed the alert",
-			args: { choice: what },
-			extra: { choice: what },
-		});
+		if (what === "get") return readAlert(device, driver.data);
+		return answerAlert(ctx, deps, device, env, driver.data, settle.data, what);
 	});
 }
 

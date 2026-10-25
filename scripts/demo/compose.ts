@@ -464,13 +464,58 @@ const aggTheme = [
 	palette.ink,
 ].join(",");
 
-async function compose(o: ComposeOptions): Promise<void> {
+/** Fail early, with an install hint, when a required binary or label font is missing; returns the font. */
+function requireTools(): string {
 	for (const bin of ["ffmpeg", "ffprobe"]) {
 		if (!Bun.which(bin)) throw new Error(`${bin} not found — brew install ffmpeg`);
 	}
 	if (!Bun.which("agg")) throw new Error("agg not found — brew install agg");
 	const font = fontCandidates.find((f) => existsSync(f));
 	if (!font) throw new Error(`no label font found (tried ${fontCandidates.join(", ")})`);
+	return font;
+}
+
+/** Render the recorded TUI asciicast to a gif with agg. */
+async function renderTuiGif(cast: string, gif: string): Promise<void> {
+	console.error("agg: rendering tui.cast");
+	await run(
+		[
+			"agg",
+			"-q",
+			"--theme",
+			aggTheme,
+			"--font-size",
+			"20",
+			"--idle-time-limit",
+			"86400",
+			"--last-frame-duration",
+			"1",
+			"--no-loop",
+			cast,
+			gif,
+		],
+		"agg"
+	);
+}
+
+/** Encode `inter` to mp4, raising the crf until it fits `maxBytes` (or the crf ladder ends). */
+async function encodeMp4(inter: string, mp4: string, maxBytes: number): Promise<void> {
+	let crf = 26;
+	for (;;) {
+		await run(["ffmpeg", ...mp4Args(inter, mp4, crf)], "ffmpeg mp4");
+		const bytes = (await stat(mp4)).size;
+		console.error(`mp4: crf ${crf} → ${(bytes / 1e6).toFixed(2)} MB`);
+		const next = nextCrf(bytes, crf, maxBytes);
+		if (next === null) {
+			if (bytes > maxBytes) console.error(`warning: demo.mp4 is over ${maxBytes / 1e6} MB at crf ${crf}`);
+			return;
+		}
+		crf = next;
+	}
+}
+
+async function compose(o: ComposeOptions): Promise<void> {
+	const font = requireTools();
 
 	const recordDir = resolve(o.recordDir);
 	const outDir = resolve(o.outDir);
@@ -485,25 +530,7 @@ async function compose(o: ComposeOptions): Promise<void> {
 	const workDir = await mkdtemp(join(tmpdir(), "warden-demo-"));
 	try {
 		const gif = join(workDir, "tui.gif");
-		console.error("agg: rendering tui.cast");
-		await run(
-			[
-				"agg",
-				"-q",
-				"--theme",
-				aggTheme,
-				"--font-size",
-				"20",
-				"--idle-time-limit",
-				"86400",
-				"--last-frame-duration",
-				"1",
-				"--no-loop",
-				cast,
-				gif,
-			],
-			"agg"
-		);
+		await renderTuiGif(cast, gif);
 		const phone = await probeSize(videos[0] ?? "");
 		const termSize = await probeSize(gif);
 		const layout = computeLayout({
@@ -526,18 +553,7 @@ async function compose(o: ComposeOptions): Promise<void> {
 		await run(["ffmpeg", ...fg.args], "ffmpeg compose");
 
 		const mp4 = join(outDir, "demo.mp4");
-		let crf = 26;
-		for (;;) {
-			await run(["ffmpeg", ...mp4Args(inter, mp4, crf)], "ffmpeg mp4");
-			const bytes = (await stat(mp4)).size;
-			console.error(`mp4: crf ${crf} → ${(bytes / 1e6).toFixed(2)} MB`);
-			const next = nextCrf(bytes, crf, o.maxBytes);
-			if (next === null) {
-				if (bytes > o.maxBytes) console.error(`warning: demo.mp4 is over ${o.maxBytes / 1e6} MB at crf ${crf}`);
-				break;
-			}
-			crf = next;
-		}
+		await encodeMp4(inter, mp4, o.maxBytes);
 		const webm = join(outDir, "demo.webm");
 		await run(["ffmpeg", ...webmArgs(inter, webm)], "ffmpeg webm");
 		console.error(`webm: ${((await stat(webm)).size / 1e6).toFixed(2)} MB`);

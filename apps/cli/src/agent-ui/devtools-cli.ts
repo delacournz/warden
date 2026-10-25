@@ -222,23 +222,44 @@ export function uiTree(ctx: CommandContext, deps: UiDeps, opts: TreeOptionValues
 		const max = opts.max === undefined ? ok(undefined) : positiveInt("--max", opts.max);
 		if (!max.success) return max;
 		const pixelRatio = await pixelRatioFor(device, env);
-		return withFacet(ctx, devtoolsDeps(deps), device, env, opts, async (facet) => {
-			const fetched = await facet.tree({
-				all: opts.all === true,
-				...(max.data === undefined ? {} : { max: max.data }),
-				...(opts.screen === undefined ? {} : { screen: opts.screen }),
-				pixelRatio,
-			});
-			if (!fetched.success) return { success: false, error: devtoolsUiError(fetched.error) };
-			const tree = fetched.data;
-			const header = `# ${tree.screen === undefined ? "screen unknown" : `screen ${tree.screen}`} · ${tree.components.length} components${tree.truncated ? " (truncated)" : ""}`;
-			return ok({
-				device: infoOf(device),
-				result: tree,
-				text: [header, ...formatTree(tree, { all: opts.all === true })].join("\n"),
-				warnings: tree.truncated ? ["more components exist; raise --max"] : [],
-			});
-		});
+		return withFacet(ctx, devtoolsDeps(deps), device, env, opts, (facet) =>
+			fetchTree(facet, device, opts, max.data, pixelRatio)
+		);
+	});
+}
+
+/** What a `warden ui` subcommand hands back on success. */
+type UiPayload = { device: ReturnType<typeof infoOf>; result: unknown; text: string; warnings?: string[] };
+
+type ComponentTree = Extract<Awaited<ReturnType<DevtoolsFacet["tree"]>>, { success: true }>["data"];
+
+/** The `# screen … · n components` line above a `warden ui tree` listing. */
+function treeHeader(tree: ComponentTree): string {
+	const screen = tree.screen === undefined ? "screen unknown" : `screen ${tree.screen}`;
+	return `# ${screen} · ${tree.components.length} components${tree.truncated ? " (truncated)" : ""}`;
+}
+
+/** Fetch the component tree from the facet and shape it as a `warden ui tree` payload. */
+async function fetchTree(
+	facet: DevtoolsFacet,
+	device: UiDevice,
+	opts: TreeOptionValues,
+	max: number | undefined,
+	pixelRatio: number
+): Promise<Result<UiPayload, UiError>> {
+	const fetched = await facet.tree({
+		all: opts.all === true,
+		...(max === undefined ? {} : { max }),
+		...(opts.screen === undefined ? {} : { screen: opts.screen }),
+		pixelRatio,
+	});
+	if (!fetched.success) return { success: false, error: devtoolsUiError(fetched.error) };
+	const tree = fetched.data;
+	return ok({
+		device: infoOf(device),
+		result: tree,
+		text: [treeHeader(tree), ...formatTree(tree, { all: opts.all === true })].join("\n"),
+		warnings: tree.truncated ? ["more components exist; raise --max"] : [],
 	});
 }
 
@@ -365,47 +386,57 @@ function stopCollector(ctx: CommandContext, deps: UiDeps, device: UiDevice) {
 export function uiLogs(ctx: CommandContext, deps: UiDeps, words: string[], opts: LogsOptionValues): Promise<number> {
 	return runUi(ctx, deps, "logs", opts, async (device) => {
 		const [action, ...rest] = words;
-		const file = join(uiDir(ctx, device.udid), CONSOLE_FILE);
 		if (action === "start") return startCollector(ctx, deps, device, opts);
 		if (action === "stop") return stopCollector(ctx, deps, device);
-		if (action === "mark") {
-			const label = rest.join(" ").trim();
-			if (label === "") return { success: false, error: uiError("usage", "logs mark needs a label") };
-			const line: ConsoleLine = { ts: ctx.now(), level: "info", kind: "note", text: label };
-			mkdirSync(uiDir(ctx, device.udid), { recursive: true });
-			appendFileSync(file, `${JSON.stringify(line)}\n`);
-			return ok({ device: infoOf(device), result: { action: "logs", mark: label }, text: `marked "${label}"` });
-		}
-		if (action === "clear") {
-			for (const name of [CONSOLE_FILE, NETWORK_FILE]) {
-				const path = join(uiDir(ctx, device.udid), name);
-				if (existsSync(path)) writeFileSync(path, "");
-			}
-			return ok({
-				device: infoOf(device),
-				result: { action: "logs", cleared: true },
-				text: "cleared console and network logs",
-			});
-		}
-		const count = action === undefined ? ok(DEFAULT_TAIL) : positiveInt("n", action);
-		if (!count.success) {
-			return {
-				success: false,
-				error: uiError("usage", `unknown logs action "${action}"`, {
-					hint: "logs [n] | start | stop | mark <label> | clear",
-				}),
-			};
-		}
-		if (!existsSync(file)) {
-			return { success: false, error: uiError("usage", "no console log yet", { hint: COLLECT_HINT }) };
-		}
-		const all = readJsonl<ConsoleLine>(file);
-		const lines = all.slice(-count.data);
-		return ok({
-			device: infoOf(device),
-			result: { file, total: all.length, lines },
-			text: lines.map(consoleLine).join("\n"),
-		});
+		if (action === "mark") return logsMark(ctx, device, rest.join(" ").trim());
+		if (action === "clear") return logsClear(ctx, device);
+		return logsTail(ctx, device, action);
+	});
+}
+
+/** `warden ui logs mark <label>`: append a note line to the console log. */
+function logsMark(ctx: CommandContext, device: UiDevice, label: string): Result<UiPayload, UiError> {
+	if (label === "") return { success: false, error: uiError("usage", "logs mark needs a label") };
+	const line: ConsoleLine = { ts: ctx.now(), level: "info", kind: "note", text: label };
+	mkdirSync(uiDir(ctx, device.udid), { recursive: true });
+	appendFileSync(join(uiDir(ctx, device.udid), CONSOLE_FILE), `${JSON.stringify(line)}\n`);
+	return ok({ device: infoOf(device), result: { action: "logs", mark: label }, text: `marked "${label}"` });
+}
+
+/** `warden ui logs clear`: truncate whichever of the console and network logs exist. */
+function logsClear(ctx: CommandContext, device: UiDevice): Result<UiPayload, UiError> {
+	for (const name of [CONSOLE_FILE, NETWORK_FILE]) {
+		const path = join(uiDir(ctx, device.udid), name);
+		if (existsSync(path)) writeFileSync(path, "");
+	}
+	return ok({
+		device: infoOf(device),
+		result: { action: "logs", cleared: true },
+		text: "cleared console and network logs",
+	});
+}
+
+/** `warden ui logs [n]`: the last `n` console lines; any other word is an unknown action. */
+function logsTail(ctx: CommandContext, device: UiDevice, action: string | undefined): Result<UiPayload, UiError> {
+	const count = action === undefined ? ok(DEFAULT_TAIL) : positiveInt("n", action);
+	if (!count.success) {
+		return {
+			success: false,
+			error: uiError("usage", `unknown logs action "${action}"`, {
+				hint: "logs [n] | start | stop | mark <label> | clear",
+			}),
+		};
+	}
+	const file = join(uiDir(ctx, device.udid), CONSOLE_FILE);
+	if (!existsSync(file)) {
+		return { success: false, error: uiError("usage", "no console log yet", { hint: COLLECT_HINT }) };
+	}
+	const all = readJsonl<ConsoleLine>(file);
+	const lines = all.slice(-count.data);
+	return ok({
+		device: infoOf(device),
+		result: { file, total: all.length, lines },
+		text: lines.map(consoleLine).join("\n"),
 	});
 }
 
@@ -444,14 +475,8 @@ export function uiNetwork(
 	opts: NetworkOptionValues
 ): Promise<number> {
 	return runUi(ctx, deps, "network", opts, async (device) => {
-		const include = new Set((opts.include ?? "").split(",").filter((part) => part !== ""));
-		const unknown = [...include].filter((part) => !(INCLUDES as readonly string[]).includes(part));
-		if (unknown.length > 0) {
-			return {
-				success: false,
-				error: uiError("usage", `unknown --include ${unknown.join(",")}`, { hint: "headers,body" }),
-			};
-		}
+		const include = parseInclude(opts.include);
+		if (!include.success) return include;
 		const count = countArg === undefined ? ok(DEFAULT_TAIL) : positiveInt("n", countArg);
 		if (!count.success) return count;
 		const id = opts.id === undefined ? ok(undefined) : positiveInt("--id", opts.id);
@@ -461,21 +486,37 @@ export function uiNetwork(
 			return { success: false, error: uiError("usage", "no network log yet", { hint: COLLECT_HINT }) };
 		}
 		const all = readJsonl<NetworkEntry>(file);
-		if (id.data !== undefined) {
-			const entry = all.find((candidate) => candidate.id === id.data);
-			if (!entry) {
-				return {
-					success: false,
-					error: uiError("target_not_found", `no network entry #${id.data}`, { hint: "`warden ui network` lists ids" }),
-				};
-			}
-			return ok({ device: infoOf(device), result: { entry }, text: networkDetail(entry, new Set(INCLUDES)) });
-		}
+		if (id.data !== undefined) return networkById(device, all, id.data);
 		const entries = all.slice(-count.data);
 		return ok({
 			device: infoOf(device),
 			result: { file, total: all.length, entries },
-			text: entries.map((entry) => networkDetail(entry, include)).join("\n"),
+			text: entries.map((entry) => networkDetail(entry, include.data)).join("\n"),
 		});
 	});
+}
+
+/** The `--include` list as a set, or a usage error naming the unknown parts. */
+function parseInclude(raw: string | undefined): Result<Set<string>, UiError> {
+	const include = new Set((raw ?? "").split(",").filter((part) => part !== ""));
+	const unknown = [...include].filter((part) => !(INCLUDES as readonly string[]).includes(part));
+	if (unknown.length > 0) {
+		return {
+			success: false,
+			error: uiError("usage", `unknown --include ${unknown.join(",")}`, { hint: "headers,body" }),
+		};
+	}
+	return ok(include);
+}
+
+/** `warden ui network --id <id>`: one entry with headers and bodies. */
+function networkById(device: UiDevice, all: NetworkEntry[], id: number): Result<UiPayload, UiError> {
+	const entry = all.find((candidate) => candidate.id === id);
+	if (!entry) {
+		return {
+			success: false,
+			error: uiError("target_not_found", `no network entry #${id}`, { hint: "`warden ui network` lists ids" }),
+		};
+	}
+	return ok({ device: infoOf(device), result: { entry }, text: networkDetail(entry, new Set(INCLUDES)) });
 }

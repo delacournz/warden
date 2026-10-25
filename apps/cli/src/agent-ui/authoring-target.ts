@@ -39,6 +39,28 @@ export function importPath(from: string, idsFile: string): string {
 	return rel.startsWith(".") ? rel : `./${rel}`;
 }
 
+/** End of the quoted string starting at `at` (its closing quote, or the source length when unterminated). */
+function skipString(source: string, at: number, quote: string): number {
+	let end = at + 1;
+	for (; end < source.length && source.charAt(end) !== quote; end += 1) {
+		if (source.charAt(end) === "\\") end += 1;
+	}
+	return end;
+}
+
+/** Last index of the comment or string starting at `at`; `at` itself when none starts there; -1 when unterminated. */
+function skipLiteral(source: string, at: number): number {
+	const ch = source.charAt(at);
+	const next = source.charAt(at + 1);
+	if (ch === "/" && next === "/") return source.indexOf("\n", at);
+	if (ch === "/" && next === "*") {
+		const end = source.indexOf("*/", at + 2);
+		return end === -1 ? -1 : end + 1;
+	}
+	if (ch === '"' || ch === "'" || ch === "`") return skipString(source, at, ch);
+	return at;
+}
+
 /** Index of the bracket closing the one at `open`, skipping strings and comments; -1 when unbalanced. */
 function closingIndex(source: string, open: number): number {
 	const pairs: Record<string, string> = { "(": ")", "{": "}" };
@@ -47,22 +69,15 @@ function closingIndex(source: string, open: number): number {
 	if (closer === undefined) return -1;
 	let depth = 0;
 	for (let at = open; at < source.length; at += 1) {
+		const skipped = skipLiteral(source, at);
+		if (skipped === -1) return -1;
+		if (skipped !== at) {
+			at = skipped;
+			continue;
+		}
 		const ch = source.charAt(at);
-		if (ch === "/" && source.charAt(at + 1) === "/") {
-			const eol = source.indexOf("\n", at);
-			if (eol === -1) return -1;
-			at = eol;
-		} else if (ch === "/" && source.charAt(at + 1) === "*") {
-			const end = source.indexOf("*/", at + 2);
-			if (end === -1) return -1;
-			at = end + 1;
-		} else if (ch === '"' || ch === "'" || ch === "`") {
-			for (at += 1; at < source.length && source.charAt(at) !== ch; at += 1) {
-				if (source.charAt(at) === "\\") at += 1;
-			}
-		} else if (ch === opener) {
-			depth += 1;
-		} else if (ch === closer) {
+		if (ch === opener) depth += 1;
+		else if (ch === closer) {
 			depth -= 1;
 			if (depth === 0) return at;
 		}

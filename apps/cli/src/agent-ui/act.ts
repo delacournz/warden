@@ -50,6 +50,56 @@ function settledJson(taken: TakenSnapshot): Record<string, unknown> {
 	};
 }
 
+/** `--settle`: wait for a quiet screen and take the diffed snapshot, or nothing when no budget was asked for. */
+async function settleAfter(
+	ctx: CommandContext,
+	deps: UiDeps,
+	driver: Driver,
+	udid: string,
+	settleBudget: number | undefined
+): Promise<Result<TakenSnapshot | undefined, UiError>> {
+	if (settleBudget === undefined) return ok(undefined);
+	const snap = await takeSnapshot(ctx, deps, driver, udid, {
+		interactiveOnly: true,
+		all: false,
+		settle: { budgetMs: settleBudget },
+	});
+	return snap.success ? ok(snap.data) : snap;
+}
+
+/** Append the finished action to the active recording. */
+async function recordAction(
+	ctx: CommandContext,
+	deps: UiDeps,
+	env: UiRunEnv,
+	device: UiDevice,
+	settleBudget: number | undefined,
+	done: ActionDone
+): Promise<void> {
+	const evidence = done.target ? evidenceOf(done.target) : undefined;
+	const route = await routeAfter(ctx, deps, env, device, done.action);
+	await appendRecorded(ctx, deps, device.udid, {
+		action: done.action,
+		...(done.target ? { target: done.target } : {}),
+		...(done.args ? { args: done.args } : {}),
+		...(evidence ? { evidence } : {}),
+		...(settleBudget !== undefined ? { settle: { timeoutMs: settleBudget } } : {}),
+		...(done.secret !== undefined ? { secret: done.secret } : {}),
+		...(route !== undefined ? { route } : {}),
+	});
+}
+
+/** The `--json` result object of a finished action. */
+function actionResult(done: ActionDone, taken: TakenSnapshot | undefined): Record<string, unknown> {
+	return {
+		action: done.action,
+		...(done.target ? { target: done.target } : {}),
+		...(taken ? { settled: settledJson(taken) } : {}),
+		...(done.verified !== undefined ? { verified: done.verified } : {}),
+		...done.extra,
+	};
+}
+
 /**
  * Wrap up an action: `--settle` waits for a quiet screen and diffs it against the stored snapshot (a new
  * generation, so `@eN` refs from before are replaced), the step is appended to the active recording
@@ -64,41 +114,15 @@ export async function finishAction(
 	settleBudget: number | undefined,
 	done: ActionDone
 ): Promise<Result<UiSuccess, UiError>> {
-	let taken: TakenSnapshot | undefined;
-	if (settleBudget !== undefined) {
-		const snap = await takeSnapshot(ctx, deps, driver, device.udid, {
-			interactiveOnly: true,
-			all: false,
-			settle: { budgetMs: settleBudget },
-		});
-		if (!snap.success) return snap;
-		taken = snap.data;
-	}
-	if (env.record) {
-		const evidence = done.target ? evidenceOf(done.target) : undefined;
-		const route = await routeAfter(ctx, deps, env, device, done.action);
-		await appendRecorded(ctx, deps, device.udid, {
-			action: done.action,
-			...(done.target ? { target: done.target } : {}),
-			...(done.args ? { args: done.args } : {}),
-			...(evidence ? { evidence } : {}),
-			...(settleBudget !== undefined ? { settle: { timeoutMs: settleBudget } } : {}),
-			...(done.secret !== undefined ? { secret: done.secret } : {}),
-			...(route !== undefined ? { route } : {}),
-		});
-	}
-	const result: Record<string, unknown> = {
-		action: done.action,
-		...(done.target ? { target: done.target } : {}),
-		...(taken ? { settled: settledJson(taken) } : {}),
-		...(done.verified !== undefined ? { verified: done.verified } : {}),
-		...done.extra,
-	};
+	const settled = await settleAfter(ctx, deps, driver, device.udid, settleBudget);
+	if (!settled.success) return settled;
+	const taken = settled.data;
+	if (env.record) await recordAction(ctx, deps, env, device, settleBudget, done);
 	const warnings = taken?.settle && !taken.settle.quiet ? ["screen did not settle within the budget"] : [];
 	return ok({
 		device: { udid: device.udid, platform: device.platform, name: device.name },
 		...(taken ? { generation: taken.generation } : {}),
-		result,
+		result: actionResult(done, taken),
 		text: [done.text, ...(taken ? settleLines(taken) : [])].join("\n"),
 		warnings,
 	});

@@ -201,47 +201,64 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 		});
 	}
 
+	const closedError = (): DevtoolsResult<Attached> => devtoolsErr("cdp_closed", "devtools session is closed");
+
+	/** Makes `attached` the live socket and tells the `reconnected` listeners. */
+	function adopt(attached: Attached): void {
+		attach(attached);
+		log(`devtools: reconnected to ${attached.target.id}`);
+		for (const handler of [...eventHandlers.reconnected]) handler(attached.target);
+	}
+
+	/** Adopts a fresh socket, unless the session was closed while it was being established (then it is closed again). */
+	function adoptIfOpen(attached: Attached): DevtoolsResult<Attached> {
+		if (phase() === "closed") {
+			attached.cdp.close();
+			return closedError();
+		}
+		adopt(attached);
+		return ok(attached);
+	}
+
+	/** Moves to `lost` with `error` and tells the `lost` listeners, unless the session is closed. */
+	function markLost(error: DevtoolsError): void {
+		if (phase() === "closed") return;
+		state = { kind: "lost", error };
+		for (const handler of [...eventHandlers.lost]) handler(error);
+	}
+
+	/** Closes the dead socket, then re-establishes with backoff until the attempt count or time budget runs out. */
+	async function reconnectLoop(previous: Attached): Promise<DevtoolsResult<Attached>> {
+		previous.cdp.close();
+		let last: DevtoolsError = { code: "devtools_unavailable", message: "reconnect failed" };
+		// the budget runs out on the clock or on the time slept, whichever is first (an injected sleep may not
+		// move the clock)
+		const startedAt = now();
+		let slept = 0;
+		const leftMs = (): number => budgetMs - Math.max(now() - startedAt, slept);
+		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+			if (phase() === "closed") return closedError();
+			const result = await establish();
+			if (result.success) return adoptIfOpen(result.data);
+			last = result.error;
+			const left = leftMs();
+			const cap = Number.isFinite(maxAttempts) ? `/${maxAttempts}` : "";
+			log(`devtools: reconnect attempt ${attempt}${cap} failed: ${last.message}`);
+			if (attempt >= maxAttempts || left <= 0) break;
+			const pause = Math.min(backoffAfter(attempt), left);
+			slept += pause;
+			await sleep(pause);
+		}
+		markLost(last);
+		return { success: false, error: last };
+	}
+
 	function reconnect(reason: string): Promise<DevtoolsResult<Attached>> {
 		if (state.kind === "reconnecting") return state.done;
-		if (state.kind !== "up") return Promise.resolve(devtoolsErr("cdp_closed", "devtools session is closed"));
+		if (state.kind !== "up") return Promise.resolve(closedError());
 		const previous = state.attached;
 		log(`devtools: ${reason}, reconnecting`);
-		const done = (async (): Promise<DevtoolsResult<Attached>> => {
-			previous.cdp.close();
-			let last: DevtoolsError = { code: "devtools_unavailable", message: "reconnect failed" };
-			// the budget runs out on the clock or on the time slept, whichever is first (an injected sleep may not
-			// move the clock)
-			const startedAt = now();
-			let slept = 0;
-			const leftMs = (): number => budgetMs - Math.max(now() - startedAt, slept);
-			for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-				if (phase() === "closed") return devtoolsErr("cdp_closed", "devtools session is closed");
-				const result = await establish();
-				if (result.success) {
-					if (phase() === "closed") {
-						result.data.cdp.close();
-						return devtoolsErr("cdp_closed", "devtools session is closed");
-					}
-					attach(result.data);
-					log(`devtools: reconnected to ${result.data.target.id}`);
-					for (const handler of [...eventHandlers.reconnected]) handler(result.data.target);
-					return result;
-				}
-				last = result.error;
-				const left = leftMs();
-				const cap = Number.isFinite(maxAttempts) ? `/${maxAttempts}` : "";
-				log(`devtools: reconnect attempt ${attempt}${cap} failed: ${last.message}`);
-				if (attempt >= maxAttempts || left <= 0) break;
-				const pause = Math.min(backoffAfter(attempt), left);
-				slept += pause;
-				await sleep(pause);
-			}
-			if (phase() !== "closed") {
-				state = { kind: "lost", error: last };
-				for (const handler of [...eventHandlers.lost]) handler(last);
-			}
-			return { success: false, error: last };
-		})();
+		const done = reconnectLoop(previous);
 		state = { kind: "reconnecting", done };
 		epoch++;
 		for (const wake of [...epochWaiters]) wake();
@@ -258,15 +275,13 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 			const result = await establish();
 			if (phase() === "closed") {
 				if (result.success) result.data.cdp.close();
-				return devtoolsErr("cdp_closed", "devtools session is closed");
+				return closedError();
 			}
 			if (!result.success) {
 				state = { kind: "lost", error: result.error };
 				return result;
 			}
-			attach(result.data);
-			log(`devtools: reconnected to ${result.data.target.id}`);
-			for (const handler of [...eventHandlers.reconnected]) handler(result.data.target);
+			adopt(result.data);
 			return result;
 		})();
 		state = { kind: "reconnecting", done };
@@ -279,6 +294,55 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 		if (state.kind === "reconnecting") return state.done;
 		if (state.kind === "lost") return revive();
 		return devtoolsErr("cdp_closed", "devtools session is closed");
+	}
+
+	/** Triggers the reload: nothing to do for `expo` / `devsettings` (the probe scheduled it), a POST for `http`. */
+	async function requestReload(method: ReloadMethod, baseUrl: string): Promise<DevtoolsResult<never> | undefined> {
+		if (method !== "http") {
+			log(`devtools: reload via ${method}`);
+			return undefined;
+		}
+		log("devtools: reload via http");
+		try {
+			const res = await o.fetch(`${baseUrl.replace(/\/+$/, "")}/reload`, { method: "POST" });
+			if (!res.ok) {
+				return devtoolsErr("devtools_unavailable", `reload failed: POST /reload answered ${res.status}`);
+			}
+		} catch (error) {
+			return devtoolsErr("devtools_unavailable", `reload failed: POST /reload threw ${String(error)}`);
+		}
+		return undefined;
+	}
+
+	/** After a reload request: an error when the JS context never restarted or the reconnect it caused failed. */
+	async function awaitReload(
+		method: ReloadMethod,
+		startedAt: number,
+		waitMs: number
+	): Promise<DevtoolsResult<never> | undefined> {
+		if (epoch === startedAt) await waitForEpochChange(waitMs);
+		if (epoch === startedAt && state.kind === "up") {
+			log(`devtools: reload via ${method} not observed after ${waitMs} ms`);
+			return devtoolsErr(
+				"reload_failed",
+				`reload via ${method} acknowledged but the JS context did not restart within ${waitMs} ms`
+			);
+		}
+		if (state.kind !== "reconnecting") return undefined;
+		const back = await state.done;
+		return back.success ? undefined : back;
+	}
+
+	/** Resolves when the session next reconnects or closes, or after `waitMs`, whichever is first. */
+	function waitForEpochChange(waitMs: number): Promise<void> {
+		return new Promise<void>((resolve) => {
+			const wake = () => {
+				epochWaiters.delete(wake);
+				resolve();
+			};
+			epochWaiters.add(wake);
+			void sleep(waitMs).then(wake);
+		});
 	}
 
 	const first = await establish();
@@ -319,41 +383,8 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 				return devtoolsErr(probe.error.code, `reload probe failed: ${probe.error.message}`);
 			}
 			const method: ReloadMethod = readReloadMethod(probe.data) ?? "http";
-			if (method === "http") {
-				log("devtools: reload via http");
-				try {
-					const res = await o.fetch(`${metroUrl.replace(/\/+$/, "")}/reload`, { method: "POST" });
-					if (!res.ok) {
-						return devtoolsErr("devtools_unavailable", `reload failed: POST /reload answered ${res.status}`);
-					}
-				} catch (error) {
-					return devtoolsErr("devtools_unavailable", `reload failed: POST /reload threw ${String(error)}`);
-				}
-			} else {
-				log(`devtools: reload via ${method}`);
-			}
-			if (epoch === startedAt) {
-				await new Promise<void>((resolve) => {
-					const wake = () => {
-						epochWaiters.delete(wake);
-						resolve();
-					};
-					epochWaiters.add(wake);
-					void sleep(waitMs).then(wake);
-				});
-			}
-			if (epoch === startedAt && state.kind === "up") {
-				log(`devtools: reload via ${method} not observed after ${waitMs} ms`);
-				return devtoolsErr(
-					"reload_failed",
-					`reload via ${method} acknowledged but the JS context did not restart within ${waitMs} ms`
-				);
-			}
-			if (state.kind === "reconnecting") {
-				const back = await state.done;
-				if (!back.success) return back;
-			}
-			return ok({ method });
+			const failure = (await requestReload(method, metroUrl)) ?? (await awaitReload(method, startedAt, waitMs));
+			return failure ?? ok({ method });
 		},
 		get target() {
 			if (state.kind === "up") return state.attached.target;

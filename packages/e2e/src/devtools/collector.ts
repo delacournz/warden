@@ -118,8 +118,8 @@ export type CollectorArgs = {
 
 const VALUE_FLAGS = ["--metro", "--out", "--idle-ms", "--device-name", "--logical-device-id", "--app-id"] as const;
 
-/** `--metro <url> --out <dir> [--idle-ms n] [--device-name s] [--logical-device-id s] [--app-id s] [--include-bodies]` */
-export function parseCollectorArgv(argv: readonly string[]): Result<CollectorArgs> {
+/** Splits argv into value flags and the `--include-bodies` switch; unknown flags and missing values are errors. */
+function scanCollectorFlags(argv: readonly string[]): Result<{ values: Map<string, string>; includeBodies: boolean }> {
 	const values = new Map<string, string>();
 	let includeBodies = false;
 	for (let i = 0; i < argv.length; i++) {
@@ -135,6 +135,26 @@ export function parseCollectorArgv(argv: readonly string[]): Result<CollectorArg
 		values.set(flag, value);
 		i++;
 	}
+	return ok({ values, includeBodies });
+}
+
+/** The device filter named by `--device-name`, `--logical-device-id` and `--app-id`. */
+function deviceOf(values: ReadonlyMap<string, string>): DevtoolsDevice {
+	const device: DevtoolsDevice = {};
+	const deviceName = values.get("--device-name");
+	const logicalDeviceId = values.get("--logical-device-id");
+	const appId = values.get("--app-id");
+	if (deviceName) device.deviceName = deviceName;
+	if (logicalDeviceId) device.logicalDeviceId = logicalDeviceId;
+	if (appId) device.appId = appId;
+	return device;
+}
+
+/** `--metro <url> --out <dir> [--idle-ms n] [--device-name s] [--logical-device-id s] [--app-id s] [--include-bodies]` */
+export function parseCollectorArgv(argv: readonly string[]): Result<CollectorArgs> {
+	const scanned = scanCollectorFlags(argv);
+	if (!scanned.success) return scanned;
+	const { values, includeBodies } = scanned.data;
 	const metroUrl = values.get("--metro");
 	const out = values.get("--out");
 	if (!metroUrl) return { success: false, error: "--metro <url> is required" };
@@ -143,14 +163,7 @@ export function parseCollectorArgv(argv: readonly string[]): Result<CollectorArg
 	const idleMs = idleText === undefined ? DEFAULT_IDLE_MS : Number(idleText);
 	if (!Number.isInteger(idleMs) || idleMs <= 0)
 		return { success: false, error: "--idle-ms must be a positive whole number" };
-	const device: DevtoolsDevice = {};
-	const deviceName = values.get("--device-name");
-	const logicalDeviceId = values.get("--logical-device-id");
-	const appId = values.get("--app-id");
-	if (deviceName) device.deviceName = deviceName;
-	if (logicalDeviceId) device.logicalDeviceId = logicalDeviceId;
-	if (appId) device.appId = appId;
-	return ok({ metroUrl, out, idleMs, device, includeBodies });
+	return ok({ metroUrl, out, idleMs, device: deviceOf(values), includeBodies });
 }
 
 export type RunCollectorDeps = {

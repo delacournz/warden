@@ -95,6 +95,42 @@ type Server = {
 
 type StartResult = { ok: true; server: Server } | { ok: false; fatal: Bag; ms: number };
 
+type Wire = {
+	pending: Map<string, (reply: Reply) => void>;
+	events: Bag[];
+	onEvent?: (event: Bag) => void;
+};
+
+/** Routes one NDJSON line from the server: an event is recorded, a reply resolves its pending request. */
+function routeWireLine(wire: Wire, line: string): void {
+	if (!line.trim()) return;
+	const json = JSON.parse(line) as Json;
+	if (!isBag(json)) return;
+	if (typeof json.event === "string") {
+		wire.events.push(json);
+		wire.onEvent?.(json);
+		return;
+	}
+	if (typeof json.id !== "string") return;
+	const resolveReply = wire.pending.get(json.id);
+	wire.pending.delete(json.id);
+	if (json.ok === true && isBag(json.data)) resolveReply?.({ ok: true, data: json.data });
+	else resolveReply?.({ ok: false, error: bagOf(json, "error") ?? {} });
+}
+
+/** Resolves with the first `ready`/`fatal` event, or undefined when the process exits first. */
+function awaitStartEvent(wire: Wire, exited: Promise<unknown>): Promise<Bag | undefined> {
+	return new Promise<Bag | undefined>((resolveEvent) => {
+		const isStart = (event: Bag): boolean => event.event === "ready" || event.event === "fatal";
+		wire.onEvent = (event) => {
+			if (isStart(event)) resolveEvent(event);
+		};
+		const early = wire.events.find(isStart);
+		if (early) resolveEvent(early);
+		void exited.then(() => resolveEvent(undefined));
+	});
+}
+
 async function startServer(): Promise<StartResult> {
 	const t0 = performance.now();
 	const proc = Bun.spawn(
@@ -105,9 +141,7 @@ async function startServer(): Promise<StartResult> {
 			stderr: "pipe",
 		}
 	);
-	const pending = new Map<string, (reply: Reply) => void>();
-	let onEvent: ((event: Bag) => void) | undefined;
-	const events: Bag[] = [];
+	const wire: Wire = { pending: new Map(), events: [] };
 	const decoder = new TextDecoder();
 	let buffer = "";
 	void (async () => {
@@ -115,33 +149,12 @@ async function startServer(): Promise<StartResult> {
 			buffer += decoder.decode(chunk, { stream: true });
 			const lines = buffer.split("\n");
 			buffer = lines.pop() ?? "";
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				const json = JSON.parse(line) as Json;
-				if (!isBag(json)) continue;
-				if (typeof json.event === "string") {
-					events.push(json);
-					onEvent?.(json);
-				} else if (typeof json.id === "string") {
-					const resolveReply = pending.get(json.id);
-					pending.delete(json.id);
-					if (json.ok === true && isBag(json.data)) resolveReply?.({ ok: true, data: json.data });
-					else resolveReply?.({ ok: false, error: bagOf(json, "error") ?? {} });
-				}
-			}
+			for (const line of lines) routeWireLine(wire, line);
 		}
 	})();
-	const first = await new Promise<Bag | undefined>((resolveEvent) => {
-		const isStart = (event: Bag): boolean => event.event === "ready" || event.event === "fatal";
-		onEvent = (event) => {
-			if (isStart(event)) resolveEvent(event);
-		};
-		const early = events.find(isStart);
-		if (early) resolveEvent(early);
-		void proc.exited.then(() => resolveEvent(undefined));
-	});
+	const first = await awaitStartEvent(wire, proc.exited);
 	const ms = performance.now() - t0;
-	if (!first || first.event !== "ready") {
+	if (first?.event !== "ready") {
 		const stderr = await new Response(proc.stderr).text();
 		proc.kill();
 		return { ok: false, fatal: first ?? { event: "exit", stderr: stderr.slice(0, 400) }, ms };
@@ -155,9 +168,10 @@ async function startServer(): Promise<StartResult> {
 			const id = String(++seq);
 			const sent = performance.now();
 			const reply = new Promise<Reply>((resolveReply) => {
-				pending.set(id, resolveReply);
+				wire.pending.set(id, resolveReply);
 				setTimeout(() => {
-					if (pending.delete(id)) resolveReply({ ok: false, error: { code: "E_TIMEOUT", message: `${op} timed out` } });
+					if (wire.pending.delete(id))
+						resolveReply({ ok: false, error: { code: "E_TIMEOUT", message: `${op} timed out` } });
 				}, timeoutMs);
 			});
 			proc.stdin.write(`${JSON.stringify({ id, op, ...params })}\n`);
@@ -356,6 +370,51 @@ async function missingRows(drive: Drive, todos: number): Promise<string[]> {
 	return missing;
 }
 
+/** Signs in through the welcome flow; false as soon as any step fails. */
+async function signIn(drive: Drive): Promise<boolean> {
+	return (
+		(await tapId(drive, "welcome-next", "welcome next 1")) &&
+		(await tapId(drive, "welcome-next", "welcome next 2")) &&
+		(await tapId(drive, "welcome-get-started", "get started")) &&
+		(await fillId(drive, "sign-in-email", "ada@example.com", "email")) &&
+		(await fillId(drive, "sign-in-password", "password1", "password")) &&
+		(await tapId(drive, "sign-in-submit", "submit"))
+	);
+}
+
+/** Adds `todos` rows, then logs (and counts as a failure) whether the first row reached the tree. */
+async function addTodos(drive: Drive, todos: number): Promise<void> {
+	for (let i = 0; i < todos; i++) {
+		await fillId(drive, "todo-input", `todo number ${i + 1}`, `todo ${i + 1}`);
+		await tapId(drive, "todo-add", `add ${i + 1}`);
+	}
+	await drive.server.request("settle", { quietMs: 250, timeoutMs: 3000 });
+	const missing = await missingRows(drive, todos);
+	const offScreen = missing.length === 0 ? "none" : missing.join(", ");
+	drive.log.push(`typed rows not in the tree (rows below the fold are not visible to the user): ${offScreen}`);
+	if (missing.includes("todo number 1")) failures++;
+}
+
+/** Types a unicode string through setText and logs whether it echoed back exactly. */
+async function checkUnicodeRoundTrip(drive: Drive): Promise<void> {
+	const unicode = 'héllo 世界 🎉 "q" \\n';
+	if (!(await tapId(drive, "todo-input", "unicode focus"))) return;
+	const typed = await drive.server.request("setText", { text: unicode });
+	const echoed = typed.ok ? text(typed.data, "text") : undefined;
+	drive.log.push(`unicode setText round trip: ${echoed === unicode ? "exact" : `MISMATCH ${JSON.stringify(echoed)}`}`);
+	if (echoed !== unicode) failures++;
+	await drive.server.request("setText", { text: "" });
+}
+
+/** Logs the cost of one screenshot request. */
+async function logScreenshotCost(drive: Drive): Promise<void> {
+	const shot = await drive.server.request("screenshot");
+	if (!shot.ok) return;
+	drive.log.push(
+		`screenshot: grab ${num(shot.data, "grabMs")} ms + encode ${num(shot.data, "encodeMs")} ms, rtt ${Math.round(shot.rttMs)} ms, ${String(shot.data.png).length} base64 chars`
+	);
+}
+
 /** Fresh launch to the todos screen with `todos` rows, through the server. Returns the log lines. */
 async function walkToTodos(todos: number): Promise<string[]> {
 	await sh(`am force-stop ${pkg}`);
@@ -364,38 +423,10 @@ async function walkToTodos(todos: number): Promise<string[]> {
 	if (!started.ok) return [`walk: server did not start: ${JSON.stringify(started.fatal)}`];
 	const drive: Drive = { server: started.server, log: [] };
 	try {
-		const ok =
-			(await tapId(drive, "welcome-next", "welcome next 1")) &&
-			(await tapId(drive, "welcome-next", "welcome next 2")) &&
-			(await tapId(drive, "welcome-get-started", "get started")) &&
-			(await fillId(drive, "sign-in-email", "ada@example.com", "email")) &&
-			(await fillId(drive, "sign-in-password", "password1", "password")) &&
-			(await tapId(drive, "sign-in-submit", "submit"));
-		if (ok && (await waitFor(drive, "todos-screen"))) {
-			for (let i = 0; i < todos; i++) {
-				await fillId(drive, "todo-input", `todo number ${i + 1}`, `todo ${i + 1}`);
-				await tapId(drive, "todo-add", `add ${i + 1}`);
-			}
-			await drive.server.request("settle", { quietMs: 250, timeoutMs: 3000 });
-			const missing = await missingRows(drive, todos);
-			const offScreen = missing.length === 0 ? "none" : missing.join(", ");
-			drive.log.push(`typed rows not in the tree (rows below the fold are not visible to the user): ${offScreen}`);
-			if (missing.includes("todo number 1")) failures++;
-			const unicode = 'héllo 世界 🎉 "q" \\n';
-			if (await tapId(drive, "todo-input", "unicode focus")) {
-				const typed = await drive.server.request("setText", { text: unicode });
-				const echoed = typed.ok ? text(typed.data, "text") : undefined;
-				drive.log.push(
-					`unicode setText round trip: ${echoed === unicode ? "exact" : `MISMATCH ${JSON.stringify(echoed)}`}`
-				);
-				if (echoed !== unicode) failures++;
-				await drive.server.request("setText", { text: "" });
-			}
-			const shot = await drive.server.request("screenshot");
-			if (shot.ok)
-				drive.log.push(
-					`screenshot: grab ${num(shot.data, "grabMs")} ms + encode ${num(shot.data, "encodeMs")} ms, rtt ${Math.round(shot.rttMs)} ms, ${String(shot.data.png).length} base64 chars`
-				);
+		if ((await signIn(drive)) && (await waitFor(drive, "todos-screen"))) {
+			await addTodos(drive, todos);
+			await checkUnicodeRoundTrip(drive);
+			await logScreenshotCost(drive);
 		} else drive.log.push("walk: todos screen never appeared");
 	} finally {
 		await drive.server.close();

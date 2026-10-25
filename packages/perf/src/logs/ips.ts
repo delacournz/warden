@@ -96,33 +96,55 @@ function leaf(path: string | undefined, fallback: string): string {
 	return path?.split("/").pop() || fallback;
 }
 
+type IpsHeader = z.infer<typeof headerSchema>;
+type IpsBody = z.infer<typeof bodySchema>;
+type IpsThread = IpsBody["threads"][number];
+
+/** The faulting thread, else the first one flagged `triggered`. */
+function crashedThread(body: IpsBody): IpsThread | undefined {
+	return body.threads[body.faultingThread ?? -1] ?? body.threads.find((t) => t.triggered === true);
+}
+
+/** One raw thread frame resolved against the report's image table. */
+function resolveFrame(f: IpsThread["frames"][number], body: IpsBody): IpsFrame {
+	const image = f.imageIndex === undefined ? undefined : body.usedImages[f.imageIndex];
+	const path = image?.path ?? "";
+	return {
+		image: image?.name ?? leaf(image?.path, "?"),
+		...(f.symbol !== undefined ? { symbol: f.symbol } : {}),
+		imageOffset: f.imageOffset,
+		...(f.symbolLocation !== undefined ? { symbolLocation: f.symbolLocation } : {}),
+		app: path.includes(".app/"),
+		...(image?.uuid !== undefined ? { imageUuid: image.uuid } : {}),
+		...(image !== undefined ? { imageBase: image.base } : {}),
+		...(image?.arch !== undefined ? { arch: image.arch } : {}),
+	};
+}
+
+/** The exception and termination fields of a report that are present. */
+function exceptionFields(body: IpsBody): Pick<IpsCrash, "exceptionType" | "signal" | "subtype" | "termination"> {
+	return {
+		...(body.exception?.type !== undefined ? { exceptionType: body.exception.type } : {}),
+		...(body.exception?.signal !== undefined ? { signal: body.exception.signal } : {}),
+		...(body.exception?.subtype ? { subtype: body.exception.subtype } : {}),
+		...(body.termination?.indicator !== undefined ? { termination: body.termination.indicator } : {}),
+	};
+}
+
 /** An `.ips` crash report: line 1 is a JSON header, the rest the JSON body. */
 export function parseIps(text: string): { success: true; data: IpsCrash } | { success: false; error: string } {
 	const newline = text.indexOf("\n");
 	if (newline < 0) return { success: false, error: "not an .ips report (no body)" };
-	let header: z.infer<typeof headerSchema>;
-	let body: z.infer<typeof bodySchema>;
+	let header: IpsHeader;
+	let body: IpsBody;
 	try {
 		header = headerSchema.parse(JSON.parse(text.slice(0, newline)));
 		body = bodySchema.parse(JSON.parse(text.slice(newline + 1)));
 	} catch (error) {
 		return { success: false, error: `not an .ips report: ${error instanceof Error ? error.message : String(error)}` };
 	}
-	const thread = body.threads[body.faultingThread ?? -1] ?? body.threads.find((t) => t.triggered === true);
-	const frames: IpsFrame[] = (thread?.frames ?? []).map((f) => {
-		const image = f.imageIndex === undefined ? undefined : body.usedImages[f.imageIndex];
-		const path = image?.path ?? "";
-		return {
-			image: image?.name ?? leaf(image?.path, "?"),
-			...(f.symbol !== undefined ? { symbol: f.symbol } : {}),
-			imageOffset: f.imageOffset,
-			...(f.symbolLocation !== undefined ? { symbolLocation: f.symbolLocation } : {}),
-			app: path.includes(".app/"),
-			...(image?.uuid !== undefined ? { imageUuid: image.uuid } : {}),
-			...(image !== undefined ? { imageBase: image.base } : {}),
-			...(image?.arch !== undefined ? { arch: image.arch } : {}),
-		};
-	});
+	const thread = crashedThread(body);
+	const frames: IpsFrame[] = (thread?.frames ?? []).map((f) => resolveFrame(f, body));
 	const processName = body.procName ?? header.app_name ?? header.name ?? "?";
 	const atMs = header.timestamp === undefined ? undefined : parseIpsTimestamp(header.timestamp);
 	const firstApp = frames.find((f) => f.app);
@@ -135,10 +157,7 @@ export function parseIps(text: string): { success: true; data: IpsCrash } | { su
 			processName,
 			...(body.pid !== undefined ? { pid: body.pid } : {}),
 			...(atMs !== undefined ? { atMs } : {}),
-			...(body.exception?.type !== undefined ? { exceptionType: body.exception.type } : {}),
-			...(body.exception?.signal !== undefined ? { signal: body.exception.signal } : {}),
-			...(body.exception?.subtype ? { subtype: body.exception.subtype } : {}),
-			...(body.termination?.indicator !== undefined ? { termination: body.termination.indicator } : {}),
+			...exceptionFields(body),
 			...(thread?.name !== undefined ? { crashedThread: thread.name } : {}),
 			frames: frames.slice(0, MAX_FRAMES),
 			...(firstApp !== undefined ? { firstAppFrame: firstApp } : {}),

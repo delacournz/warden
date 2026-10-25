@@ -22,9 +22,11 @@ import {
 	SWIPE_MS,
 	type Way,
 } from "./actions";
+import type { UiDevice } from "./device";
 import { driverUiError, fromDriver, type UiDeps } from "./driver";
-import { type UiError, uiError } from "./output";
-import { runUi } from "./run";
+import { type UiError, type UiSuccess, uiError } from "./output";
+import type { RecordTarget } from "./record";
+import { runUi, type UiRunEnv } from "./run";
 import { storeSnapshot } from "./snapshot";
 import { positiveInt } from "./snapshot-command";
 
@@ -113,45 +115,70 @@ export function uiScroll(
 	amountRaw: string | undefined,
 	opts: ScrollOptionValues
 ): Promise<number> {
-	return runUi(ctx, deps, "scroll", opts, async (device, env) => {
-		const settle = parseSettle(opts.settle);
-		if (!settle.success) return settle;
-		const plan = parseRequest(direction, amountRaw, opts);
-		if (!plan.success) return plan;
-		const driver = await env.driver();
-		if (!driver.success) return driver;
-		const area = await regionOf(ctx, driver.data, device.udid, opts.in);
-		if (!area.success) return area;
+	return runUi(ctx, deps, "scroll", opts, (device, env) =>
+		runScroll(ctx, deps, { direction, amountRaw, opts }, device, env)
+	);
+}
 
-		const ran = await scrollLoop(ctx, deps, driver.data, device.udid, plan.data, area.data);
-		if (!ran.success) return ran;
-		const { swipes, found } = ran.data;
-		const { until } = plan.data;
-		if (until && !found) {
-			return {
-				success: false,
-				error: uiError("target_not_found", `${formatSelector(until)} not on screen after ${plural(swipes)}`, {
-					hint: "raise --max, scroll the other way, or check the selector with `warden ui find`",
-					details: { swipes },
-				}),
-			};
-		}
-		const frame = found?.entry.element.frame;
-		const line = found ? renderEntryLine(found.entry, found.ref === undefined ? {} : { ref: found.ref }) : undefined;
-		const where =
-			found && frame && until
-				? {
-						...(found.ref !== undefined ? { ref: found.ref } : {}),
-						selector: formatSelector(until),
-						point: found.entry.element.tapPoint ?? { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 },
-					}
-				: undefined;
-		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-			action: "scroll",
-			text: line === undefined ? `scrolled ${direction}` : `found after ${plural(swipes)}: ${line}`,
-			...(where ? { target: where } : {}),
-			args: { direction, amount: plan.data.amount, ...(until ? { until: formatSelector(until) } : {}) },
-			extra: { direction, amount: plan.data.amount, swipes },
-		});
+/** The words of one `warden ui scroll`. */
+type ScrollInput = { direction: string; amountRaw: string | undefined; opts: ScrollOptionValues };
+
+/** The element `--until` found, as the target the recording stores (the selector and a point to land on). */
+function foundTarget(found: Found | undefined, until: ParsedSelector | undefined): RecordTarget | undefined {
+	if (!found || !until) return undefined;
+	const { entry, ref } = found;
+	const { frame, tapPoint } = entry.element;
+	return {
+		...(ref !== undefined ? { ref } : {}),
+		selector: formatSelector(until),
+		point: tapPoint ?? { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 },
+	};
+}
+
+/** What `scroll` prints: the plain direction, or where `--until` found its element. */
+function scrollText(input: ScrollInput, found: Found | undefined, swipes: number): string {
+	if (!found) return `scrolled ${input.direction}`;
+	const line = renderEntryLine(found.entry, found.ref === undefined ? {} : { ref: found.ref });
+	return `found after ${plural(swipes)}: ${line}`;
+}
+
+/** One `scroll` on a claimed device: parse, find the region, swipe (until the selector shows), finish. */
+async function runScroll(
+	ctx: CommandContext,
+	deps: UiDeps,
+	input: ScrollInput,
+	device: UiDevice,
+	env: UiRunEnv
+): Promise<Result<UiSuccess, UiError>> {
+	const { direction, amountRaw, opts } = input;
+	const settle = parseSettle(opts.settle);
+	if (!settle.success) return settle;
+	const plan = parseRequest(direction, amountRaw, opts);
+	if (!plan.success) return plan;
+	const driver = await env.driver();
+	if (!driver.success) return driver;
+	const area = await regionOf(ctx, driver.data, device.udid, opts.in);
+	if (!area.success) return area;
+
+	const ran = await scrollLoop(ctx, deps, driver.data, device.udid, plan.data, area.data);
+	if (!ran.success) return ran;
+	const { swipes, found } = ran.data;
+	const { until } = plan.data;
+	if (until && !found) {
+		return {
+			success: false,
+			error: uiError("target_not_found", `${formatSelector(until)} not on screen after ${plural(swipes)}`, {
+				hint: "raise --max, scroll the other way, or check the selector with `warden ui find`",
+				details: { swipes },
+			}),
+		};
+	}
+	const where = foundTarget(found, until);
+	return finishAction(ctx, deps, env, device, driver.data, settle.data, {
+		action: "scroll",
+		text: scrollText(input, found, swipes),
+		...(where ? { target: where } : {}),
+		args: { direction, amount: plan.data.amount, ...(until ? { until: formatSelector(until) } : {}) },
+		extra: { direction, amount: plan.data.amount, swipes },
 	});
 }

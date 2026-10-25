@@ -80,7 +80,7 @@ export async function startNative(
 	opts: StartNativeOptions,
 	session: PerfSession | undefined = activeSessionFor(ctx, deps.session, target.udid)
 ): Promise<Result<NativeRun, UiError>> {
-	if (session !== undefined && session.capturers.some((c) => c.kind === "native" && c.state === "running")) {
+	if (session?.capturers.some((c) => c.kind === "native" && c.state === "running")) {
 		return {
 			success: false,
 			error: uiError("session_active", `session ${session.id} already has a native recording`, {
@@ -324,6 +324,50 @@ async function reanalyze(
 	}
 }
 
+/** `stop`: end the running recording, then shape the success report. */
+async function stopAndReport(
+	ctx: CommandContext,
+	deps: PerfDeps,
+	io: NativeIo,
+	profilers: NativeProfilers,
+	target: PerfTarget,
+	analyze: boolean,
+	yes: boolean | undefined
+): Promise<Result<UiSuccess, UiError>> {
+	const stopped = await stopNative(ctx, deps, io, profilers, target, { analyze, yes });
+	if (!stopped.success) return stopped;
+	return ok(nativeSuccess(ctx, target, stopped.data));
+}
+
+/** `start`: the detached recording's report, with the follow-up `stop` hint. */
+function startedReport(ctx: CommandContext, target: PerfTarget, app: string, run: NativeRun): UiSuccess {
+	const rel = displayPath(ctx, run.handle.out);
+	return {
+		device: { udid: target.udid, platform: target.platform, name: target.name },
+		result: {
+			action: "start",
+			state: "recording",
+			app,
+			dir: run.dir,
+			trace: run.handle.out,
+			...(run.sessionId === undefined ? {} : { sessionId: run.sessionId }),
+			pid: run.handle.pid ?? null,
+		},
+		text: `recording ${app} to ${rel}\nnext:\n  warden perf native stop`,
+		warnings: [],
+	};
+}
+
+/** True for no action or a known one (`start` | `stop`). */
+function isNativeAction(action: string | undefined): action is "start" | "stop" | undefined {
+	return action === undefined || action === "start" || action === "stop";
+}
+
+/** The `startNative` options a `perf native` call carries, minus the duration cap. */
+function startOptions(opts: PerfNativeOptions, app: string): Omit<StartNativeOptions, "maxDurationMs"> {
+	return { app, leaks: opts.leaks === true, ...(opts.flavor === undefined ? {} : { flavor: opts.flavor }) };
+}
+
 /**
  * `warden perf native [start|stop] [--duration 10s] [--leaks] [--analyze <trace>]`: native CPU, hangs and (iOS
  * `--leaks`) leaks from the platform's profiler: iOS `xctrace` Time Profiler + Hangs, Android perfetto / simpleperf.
@@ -343,57 +387,31 @@ export function perfNative(
 	const label = action === undefined ? "native" : `native ${action}`;
 	const mode = action !== "stop" && opts.leaks === true ? "mutate" : "observe";
 	return runPerf(ctx, deps, label, mode, opts, async (target) => {
-		if (action !== undefined && action !== "start" && action !== "stop") {
+		if (!isNativeAction(action)) {
 			return { success: false, error: uiError("usage", `unknown native action "${action}"`, { hint: "start | stop" }) };
 		}
 		const analyze = opts.skipAnalysis !== true;
-		if (action === "stop") {
-			const stopped = await stopNative(ctx, deps, io, profilers, target, { analyze, yes: opts.yes });
-			if (!stopped.success) return stopped;
-			return ok(nativeSuccess(ctx, target, stopped.data));
-		}
+		if (action === "stop") return stopAndReport(ctx, deps, io, profilers, target, analyze, opts.yes);
 		const duration = planDuration(opts);
 		if (!duration.success) return duration;
 		const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 		if (!app.success) return app;
 		const session = activeSessionFor(ctx, deps.session, target.udid);
+		const maxDurationMs =
+			action === "start" ? (session?.maxDurationMs ?? HARD_MAX_DURATION_MS) : duration.data + LIMIT_SLACK_MS;
 		const started = await startNative(
 			ctx,
 			deps,
 			io,
 			profilers,
 			target,
-			{
-				app: app.data.id,
-				leaks: opts.leaks === true,
-				...(opts.flavor === undefined ? {} : { flavor: opts.flavor }),
-				maxDurationMs:
-					action === "start" ? (session?.maxDurationMs ?? HARD_MAX_DURATION_MS) : duration.data + LIMIT_SLACK_MS,
-			},
+			{ ...startOptions(opts, app.data.id), maxDurationMs },
 			session
 		);
 		if (!started.success) return started;
-		if (action === "start") {
-			const rel = displayPath(ctx, started.data.handle.out);
-			return ok({
-				device: { udid: target.udid, platform: target.platform, name: target.name },
-				result: {
-					action: "start",
-					state: "recording",
-					app: app.data.id,
-					dir: started.data.dir,
-					trace: started.data.handle.out,
-					...(started.data.sessionId === undefined ? {} : { sessionId: started.data.sessionId }),
-					pid: started.data.handle.pid ?? null,
-				},
-				text: `recording ${app.data.id} to ${rel}\nnext:\n  warden perf native stop`,
-				warnings: [],
-			});
-		}
+		if (action === "start") return ok(startedReport(ctx, target, app.data.id, started.data));
 		await io.sleep(duration.data);
-		const stopped = await stopNative(ctx, deps, io, profilers, target, { analyze, yes: opts.yes });
-		if (!stopped.success) return stopped;
-		return ok(nativeSuccess(ctx, target, stopped.data));
+		return stopAndReport(ctx, deps, io, profilers, target, analyze, opts.yes);
 	});
 }
 

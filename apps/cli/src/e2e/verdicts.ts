@@ -127,6 +127,13 @@ export type Judged = {
 	shot?: string;
 };
 
+/** Without any usable result the exit code decides every spec. */
+function exitCodeVerdicts(jobSpecs: readonly SelectedSpec[], exitCode: number): Map<string, Judged> {
+	const judged = new Map<string, Judged>();
+	for (const spec of jobSpecs) judged.set(spec.id, { verdict: exitCode === 0 ? "passed" : "failed", fellBack: true });
+	return judged;
+}
+
 /**
  * Each spec's verdict from one attempt of its job (a spec process over `jobSpecs`: one spec, or a
  * device's shard). A failed or timed-out test fails its spec. Without any usable result the exit
@@ -144,24 +151,20 @@ export function judgeJob(
 	real: (path: string) => string
 ): Map<string, Judged> {
 	const judged = new Map<string, Judged>();
-	if (all === undefined || all.length === 0) {
-		for (const spec of jobSpecs) judged.set(spec.id, { verdict: exitCode === 0 ? "passed" : "failed", fellBack: true });
-		return judged;
-	}
+	if (all === undefined || all.length === 0) return exitCodeVerdicts(jobSpecs, exitCode);
 	const tracked = jobSpecs.map((f) => ({ id: f.id, path: f.file }));
-	const bySpec = new Map<string, TestResult[]>();
-	for (const r of all) {
-		const owner = specOf(r, tracked, real);
-		if (owner) bySpec.set(owner.id, [...(bySpec.get(owner.id) ?? []), r]);
-	}
+	const bySpec = resultsBySpec(all, tracked, real);
 	const lastResult = all.at(-1);
 	const lastSpec = lastResult ? specOf(lastResult, tracked, real)?.id : undefined;
-	const blamed = all.some(failing);
-	const stoppedEarly = jobSpecs.some((f) => !bySpec.has(f.id));
+	const blame: Blame = {
+		exitCode,
+		lastSpec,
+		blamed: all.some(failing),
+		stoppedEarly: jobSpecs.some((f) => !bySpec.has(f.id)),
+	};
 	for (const spec of jobSpecs) {
 		const mine = bySpec.get(spec.id) ?? [];
-		const failed =
-			mine.some(failing) || (exitCode !== 0 && (mine.length === 0 || (stoppedEarly ? spec.id === lastSpec : !blamed)));
+		const failed = specFailed(spec.id, mine, blame);
 		const shot = failed ? runnerFailureShot(mine) : undefined;
 		judged.set(spec.id, {
 			verdict: failed ? "failed" : "passed",
@@ -171,6 +174,39 @@ export function judgeJob(
 		});
 	}
 	return judged;
+}
+
+/** Facts about a whole job's results that decide which of its specs a non-zero exit is blamed on. */
+type Blame = {
+	exitCode: number;
+	/** the spec whose result came last */
+	lastSpec: string | undefined;
+	/** some test failed somewhere in the job */
+	blamed: boolean;
+	/** some spec has no result at all */
+	stoppedEarly: boolean;
+};
+
+/** Each result under the spec it belongs to (results of no tracked spec are dropped). */
+function resultsBySpec(
+	all: readonly TestResult[],
+	tracked: Parameters<typeof specOf>[1],
+	real: (path: string) => string
+): Map<string, TestResult[]> {
+	const bySpec = new Map<string, TestResult[]>();
+	for (const r of all) {
+		const owner = specOf(r, tracked, real);
+		if (owner) bySpec.set(owner.id, [...(bySpec.get(owner.id) ?? []), r]);
+	}
+	return bySpec;
+}
+
+/** Whether one spec fails: a failing test of its own, or a non-zero exit blamed on it. */
+function specFailed(id: string, mine: readonly TestResult[], blame: Blame): boolean {
+	if (mine.some(failing)) return true;
+	if (blame.exitCode === 0) return false;
+	if (mine.length === 0) return true;
+	return blame.stoppedEarly ? id === blame.lastSpec : !blame.blamed;
 }
 
 type Run = {

@@ -107,6 +107,34 @@ function textOf(data: unknown): string | undefined {
 	return undefined;
 }
 
+/** The `{ requestId, … }` payload a `Runtime.bindingCalled` event carries, or undefined when it is not one of ours. */
+function taggedBindingPayload(params: unknown): { requestId: string; payload: unknown } | undefined {
+	const call = bindingCalledSchema.safeParse(params);
+	if (!call.success) return undefined;
+	let payload: unknown;
+	try {
+		payload = JSON.parse(call.data.payload);
+	} catch {
+		payload = undefined;
+	}
+	const tagged = bindingPayloadSchema.safeParse(payload);
+	return tagged.success ? { requestId: tagged.data.requestId, payload } : undefined;
+}
+
+/** One socket frame parsed as a CDP envelope, or undefined when it is not text, JSON or an envelope. */
+function parseEnvelope(data: unknown): z.infer<typeof envelopeSchema> | undefined {
+	const text = textOf(data);
+	if (text === undefined) return undefined;
+	let json: unknown;
+	try {
+		json = JSON.parse(text);
+	} catch {
+		return undefined;
+	}
+	const message = envelopeSchema.safeParse(json);
+	return message.success ? message.data : undefined;
+}
+
 /**
  * The `Origin` Metro's inspector proxy requires: it rejects a debugger upgrade with no Origin (the 401 a bare
  * `new WebSocket(url)` gets) and accepts its own base URL or a local hostname. Always the 127.0.0.1 origin of the
@@ -179,34 +207,17 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 
 	const dispatch = (method: string, params: unknown) => {
 		if (method === "Runtime.bindingCalled") {
-			const call = bindingCalledSchema.safeParse(params);
-			if (call.success) {
-				let payload: unknown;
-				try {
-					payload = JSON.parse(call.data.payload);
-				} catch {
-					payload = undefined;
-				}
-				const tagged = bindingPayloadSchema.safeParse(payload);
-				if (tagged.success) bindings.get(tagged.data.requestId)?.settle(ok(payload));
-			}
+			const tagged = taggedBindingPayload(params);
+			if (tagged) bindings.get(tagged.requestId)?.settle(ok(tagged.payload));
 		}
 		for (const handler of [...anyHandlers]) handler(method, params);
 		for (const handler of [...(listeners.get(method) ?? [])]) handler(params);
 	};
 
 	ws.addEventListener("message", (event) => {
-		const text = textOf(event.data);
-		if (text === undefined) return;
-		let json: unknown;
-		try {
-			json = JSON.parse(text);
-		} catch {
-			return;
-		}
-		const message = envelopeSchema.safeParse(json);
-		if (!message.success) return;
-		const { id, error, result, method, params } = message.data;
+		const message = parseEnvelope(event.data);
+		if (!message) return;
+		const { id, error, result, method, params } = message;
 		if (id !== undefined) {
 			const request = pending.get(id);
 			if (!request) return;
