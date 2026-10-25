@@ -8,10 +8,12 @@ import {
 	planRestore,
 	planSlim,
 	SLIM_CONCURRENCY,
-	SLIM_DENYLIST,
 	SLIM_RETIRED,
 	slimSimulator,
 } from "./slim";
+import { DEFAULT_SLIM_PROFILE, desiredLabels } from "./slim.profile";
+
+const DENYLIST = [...desiredLabels(DEFAULT_SLIM_PROFILE)];
 
 const LIST = [
 	"PID\tStatus\tLabel",
@@ -32,14 +34,14 @@ const DISABLED = [
 	"",
 ].join("\n");
 
-describe("SLIM_DENYLIST", () => {
+describe("default profile labels", () => {
 	test("every label is an Apple launchd label, listed once", () => {
-		for (const label of SLIM_DENYLIST) expect(label).toMatch(/^com\.apple\.[\w.]+$/);
-		expect(new Set(SLIM_DENYLIST).size).toBe(SLIM_DENYLIST.length);
+		for (const label of DENYLIST) expect(label).toMatch(/^com\.apple\.[\w.-]+$/);
+		expect(new Set(DENYLIST).size).toBe(DENYLIST.length);
 	});
 
 	test("never touches what SpringBoard, installs, the e2e driver's AX tree or typing need", () => {
-		for (const label of SLIM_DENYLIST) {
+		for (const label of DENYLIST) {
 			for (const pattern of NEVER_DISABLE) expect(pattern.test(label)).toBe(false);
 		}
 	});
@@ -59,7 +61,7 @@ describe("warden-simd's HID + AX bridge services", () => {
 		];
 		for (const label of needed) {
 			expect(NEVER_DISABLE.some((pattern) => pattern.test(label))).toBe(true);
-			expect(SLIM_DENYLIST).not.toContain(label);
+			expect(DENYLIST).not.toContain(label);
 		}
 	});
 });
@@ -67,7 +69,7 @@ describe("warden-simd's HID + AX bridge services", () => {
 describe("dictation daemons (the keyboard hangs the app without them)", () => {
 	test("are never disabled, and a sim an older denylist slimmed gets them back", () => {
 		for (const label of ["com.apple.assistantd", "com.apple.corespeechd"]) {
-			expect(SLIM_DENYLIST).not.toContain(label);
+			expect(DENYLIST).not.toContain(label);
 			expect(SLIM_RETIRED).toContain(label);
 			expect(NEVER_DISABLE.some((pattern) => pattern.test(label))).toBe(true);
 		}
@@ -78,6 +80,26 @@ describe("dictation daemons (the keyboard hangs the app without them)", () => {
 		]);
 		expect(planHeal(disabled)).toEqual(["com.apple.assistantd"]);
 		expect(planRestore(disabled)).toEqual(["com.apple.newsd", "com.apple.assistantd"]);
+	});
+});
+
+describe("retired labels", () => {
+	test("gamed and nanotimekitcompaniond are never disabled and get re-enabled on a sim an older slim hit", () => {
+		for (const label of ["com.apple.gamed", "com.apple.nanotimekitcompaniond"]) {
+			expect(DENYLIST).not.toContain(label);
+			expect(SLIM_RETIRED).toContain(label);
+		}
+		const disabled = new Map([
+			["com.apple.gamed", true],
+			["com.apple.nanotimekitcompaniond", true],
+		]);
+		expect(planHeal(disabled)).toEqual(["com.apple.gamed", "com.apple.nanotimekitcompaniond"]);
+		expect(planRestore(disabled)).toEqual(["com.apple.gamed", "com.apple.nanotimekitcompaniond"]);
+	});
+
+	test("chronod is no longer protected", () => {
+		expect(NEVER_DISABLE.some((pattern) => pattern.test("com.apple.chronod"))).toBe(false);
+		expect(DENYLIST).toContain("com.apple.chronod");
 	});
 });
 
@@ -133,6 +155,17 @@ describe("slimSimulator", () => {
 		expect(spawned(dry).some((c) => c.startsWith("disable"))).toBe(false);
 	});
 
+	test("a profile's excepted category is left alone", async () => {
+		const calls: string[][] = [];
+		const res = await slimSimulator(fake(calls), "U1", {
+			profile: { except: ["health"], keep: ["com.apple.remindd"] },
+		});
+		expect(res.success && res.data).not.toContain("com.apple.healthd");
+		expect(res.success && res.data).not.toContain("com.apple.remindd");
+		expect(spawned(calls)).not.toContain("disable system/com.apple.healthd");
+		expect(spawned(calls)).toContain("disable system/com.apple.photoanalysisd");
+	});
+
 	test("restore re-enables only the disabled denylisted jobs", async () => {
 		const calls: string[][] = [];
 		const res = await slimSimulator(fake(calls), "U1", { restore: true });
@@ -148,8 +181,8 @@ describe("slimSimulator", () => {
 	});
 
 	describe("concurrency", () => {
-		const everything = SLIM_DENYLIST.map((label) => `\t"${label}" => disabled`).join("\n");
-		const running = `PID\tStatus\tLabel\n${SLIM_DENYLIST.map((label, i) => `${100 + i}\t0\t${label}`).join("\n")}`;
+		const everything = DENYLIST.map((label) => `\t"${label}" => disabled`).join("\n");
+		const running = `PID\tStatus\tLabel\n${DENYLIST.map((label, i) => `${100 + i}\t0\t${label}`).join("\n")}`;
 
 		/** Exec that records how many `launchctl enable|disable|bootout` are in flight at once. */
 		function gauge(failOn?: string) {
@@ -172,8 +205,8 @@ describe("slimSimulator", () => {
 		test("slimming runs the per-job spawns in parallel, never more than SLIM_CONCURRENCY at once", async () => {
 			const { exec, stats } = gauge();
 			const res = await slimSimulator(exec, "U1");
-			expect(res.success && res.data).toEqual([...SLIM_DENYLIST]);
-			expect(stats.started).toHaveLength(SLIM_DENYLIST.length * 2);
+			expect(res.success && res.data).toEqual([...DENYLIST]);
+			expect(stats.started).toHaveLength(DENYLIST.length * 2);
 			expect(stats.peak).toBeGreaterThan(1);
 			expect(stats.peak).toBeLessThanOrEqual(SLIM_CONCURRENCY);
 		});
@@ -181,14 +214,14 @@ describe("slimSimulator", () => {
 		test("restoring is bounded the same way and re-enables everything", async () => {
 			const { exec, stats } = gauge();
 			const res = await slimSimulator(exec, "U1", { restore: true });
-			expect(res.success && res.data).toEqual([...SLIM_DENYLIST]);
-			expect(stats.started).toHaveLength(SLIM_DENYLIST.length);
+			expect(res.success && res.data).toEqual([...DENYLIST]);
+			expect(stats.started).toHaveLength(DENYLIST.length);
 			expect(stats.peak).toBeGreaterThan(1);
 			expect(stats.peak).toBeLessThanOrEqual(SLIM_CONCURRENCY);
 		});
 
 		test("a failing disable stops new jobs from starting and is the error returned", async () => {
-			const first = SLIM_DENYLIST[0] as string;
+			const first = DENYLIST[0] as string;
 			const { exec, stats } = gauge(`disable system/${first}`);
 			const res = await slimSimulator(exec, "U1");
 			expect(res.success).toBe(false);
@@ -196,8 +229,8 @@ describe("slimSimulator", () => {
 			expect(stats.started.filter((s) => s.startsWith("disable")).length).toBeLessThanOrEqual(SLIM_CONCURRENCY);
 		});
 
-		test("a fresh sim: every label is disabled, only the loaded ones are booted out (2 + 36 + 10 spawns, 16-12)", async () => {
-			const loaded = SLIM_DENYLIST.slice(0, 10);
+		test("a fresh sim: every label is disabled, only the loaded ones are booted out (2 + N + 10 spawns, 16-12)", async () => {
+			const loaded = DENYLIST.slice(0, 10);
 			const calls: string[][] = [];
 			const exec: Exec = async (cmd) => {
 				calls.push([...cmd]);
@@ -209,8 +242,8 @@ describe("slimSimulator", () => {
 				return { exitCode: 0, stdout, stderr: "" };
 			};
 			const res = await slimSimulator(exec, "U1");
-			expect(res.success && res.data).toEqual([...SLIM_DENYLIST]);
-			expect(calls).toHaveLength(2 + SLIM_DENYLIST.length + loaded.length);
+			expect(res.success && res.data).toEqual([...DENYLIST]);
+			expect(calls).toHaveLength(2 + DENYLIST.length + loaded.length);
 			const bootedOut = calls.filter((c) => c[5] === "bootout").map((c) => c[6]);
 			expect(bootedOut.sort()).toEqual(loaded.map((label) => `system/${label}`).sort());
 		});
@@ -218,7 +251,7 @@ describe("slimSimulator", () => {
 		test("each job is disabled before it is booted out", async () => {
 			const { exec, stats } = gauge();
 			await slimSimulator(exec, "U1");
-			for (const label of SLIM_DENYLIST) {
+			for (const label of DENYLIST) {
 				expect(stats.started.indexOf(`disable system/${label}`)).toBeLessThan(
 					stats.started.indexOf(`bootout system/${label}`)
 				);

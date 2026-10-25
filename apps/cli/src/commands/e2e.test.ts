@@ -1874,6 +1874,37 @@ describe("warden e2e", () => {
 		expect(c.db.listDevices().find((d) => d.id === "U1")?.slimmedAt).toBe(c.now());
 	});
 
+	test("slim: true slims with the default profile; an object passes its except / keep through", async () => {
+		await resuite({ slim: true });
+		const plain = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
+		const first = harness();
+		expect(await createE2eCommand(first.deps).run(plain)).toBe(0);
+		expect(first.slimProfiles).toEqual([{ except: [], keep: [] }]);
+
+		await resuite({ slim: { except: ["store"], keep: ["com.apple.swcd"] } });
+		const custom = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
+		const second = harness();
+		expect(await createE2eCommand(second.deps).run(custom)).toBe(0);
+		expect(second.slimProfiles).toEqual([{ except: ["store"], keep: ["com.apple.swcd"] }]);
+	});
+
+	test("slim: false does not slim", async () => {
+		await resuite({ slim: false });
+		const c = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.slimmed).toEqual([]);
+	});
+
+	test("a slim profile naming an unknown category is a config error before any device is leased", async () => {
+		await resuite({ slim: { except: ["nope"] } });
+		const c = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).not.toBe(0);
+		expect(c.stderr.join("\n")).toContain("nope");
+		expect(h.slimmed).toEqual([]);
+	});
+
 	test("a device recorded as slimmed that the claim did not boot is not probed again (12-4)", async () => {
 		await resuite({ slim: true });
 		const c = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);

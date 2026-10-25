@@ -219,7 +219,7 @@ function reserve(
 const bootedState = (d: InventoryDevice): boolean => d.state === "booted" || d.state === "booting";
 
 /** Cost of everything booted or booting on the host (foreign included) plus creates not yet visible in it. */
-function hostUsage(cap: CapacityRound, leases: Lease[]): Cost {
+function hostUsage(cap: CapacityRound, leases: Lease[], slimmed: ReadonlySet<string>): Cost {
 	const live = cap.hostInventory.filter(bootedState);
 	const names = new Set(live.map((d) => d.name));
 	const pending = leases.flatMap((l) =>
@@ -227,7 +227,21 @@ function hostUsage(cap: CapacityRound, leases: Lease[]): Cost {
 			? [l.resource.platform]
 			: []
 	);
-	return totalCost([...live.map((d) => d.platform), ...pending], cap.deps.config);
+	// a create still pending counts slim: slim is default-on for new iOS sims. TODO(SLIM-2): honour --no-slim / slim: false here
+	return totalCost([...live.map((d) => d.platform), ...pending], cap.deps.config, [
+		...live.map((d) => d.platform === "ios" && slimmed.has(d.id)),
+		...pending.map(() => true),
+	]);
+}
+
+/** Ids of iOS devices whose store record says `sim slim` ran. */
+function slimmedIds(store: Store): Set<string> {
+	return new Set(
+		store
+			.listDevices("ios")
+			.filter((r) => r.slimmedAt !== undefined)
+			.map((r) => r.id)
+	);
 }
 
 /**
@@ -249,7 +263,17 @@ function admit(
 		return undefined;
 	}
 	const { config, budget } = cap.deps;
-	const need = totalCost(Array<Platform>(boots).fill(request.platform), config);
+	const slimmed = slimmedIds(store);
+	// a create is slim under the default-on policy; a boot of an existing device is slim when its record says so.
+	// TODO(SLIM-2): honour --no-slim / slim: false for creates
+	const bootSteps = steps.filter((s) => s.action !== "reuse");
+	const need = totalCost(
+		Array<Platform>(boots).fill(request.platform),
+		config,
+		bootSteps.map((s) =>
+			request.platform === "ios" ? (s.action === "create" ? true : slimmed.has(s.device.id)) : false
+		)
+	);
 	store.enqueue({
 		id: cap.queueId,
 		platform: request.platform,
@@ -266,7 +290,7 @@ function admit(
 	const entries = store.listQueue();
 	const position = queuePosition(entries, cap.queueId, now) ?? 1;
 	const head = position === 1;
-	const usage = hostUsage(cap, leases);
+	const usage = hostUsage(cap, leases, slimmed);
 	const fit = fits(usage, need, budget);
 	const held = cap.pressure !== "normal";
 	if (head && fit.fits && !held) return undefined;
@@ -298,6 +322,7 @@ function pickEvictions(
 	const held = new Set(leases.filter((l) => isLeaseAlive(l, now, input.pidAlive)).map((l) => resourceKey(l.resource)));
 	const planned = new Set(steps.flatMap((s) => (s.action === "create" ? [] : [s.device.id])));
 	const records = store.listDevices();
+	const slimmed = slimmedIds(store);
 	const lastUsed = new Map(records.map((r) => [`${r.platform}:${r.id}`, r.lastUsedAt]));
 	const used = (d: InventoryDevice) => lastUsed.get(`${d.platform}:${d.id}`) ?? 0;
 	const idle = markWardenDevices(cap.hostInventory, records)
@@ -315,7 +340,7 @@ function pickEvictions(
 	const picked: InventoryDevice[] = [];
 	let left = usage;
 	for (const device of idle) {
-		const cost = deviceCost(device.platform, cap.deps.config);
+		const cost = deviceCost(device.platform, cap.deps.config, { slim: slimmed.has(device.id) });
 		left = addCost(left, { memMb: -cost.memMb, cpu: -cost.cpu });
 		picked.push(device);
 		if (fits(left, need, cap.deps.budget).fits) {

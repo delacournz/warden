@@ -77,7 +77,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `count`, `profile` | claim defaults | single pool |
 | `metro` | none | `{ enabled = true, port = "8081:100", launchArgs = [], open = true, env, prewarm = true, readyTimeout = "2m" }`. warden starts one Metro for the run and points the dev client at it |
 | `headless` | off | keep Simulator.app windows closed |
-| `slim` | off | iOS only: switch off simulator daemons specs never need, before `setup`. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
+| `slim` | off | iOS only: switch off simulator daemons specs never need, before `setup`. `true`, `false`, or `{ except?: string[]; keep?: string[] }`: `except` keeps whole categories running (ids from `warden sim profiles`, e.g. `store` for push/StoreKit, `web` for universal links), `keep` keeps single `com.apple.*` labels. Unknown ids fail config load. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
 | `warmDrivers` | on | iOS: start every device's driver helper before the specs |
 
 ### App, ports, serve, setup

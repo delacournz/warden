@@ -10,7 +10,7 @@ export type CapacityConfig = {
 	max?: number;
 	/** RAM held back for the OS, Metro, xcodebuild, gradle (default: max(8 GB, 25% of total)) */
 	headroomGb?: number;
-	cost?: Partial<Record<Platform, Partial<Cost>>>;
+	cost?: Partial<Record<Platform, Partial<Cost> & { slimMemMb?: number }>>;
 };
 
 export type Budget = { memMb: number; cpu: number; maxUnits: number };
@@ -49,15 +49,29 @@ export function hostBudget(host: HostFacts, config: CapacityConfig): Budget {
 	};
 }
 
-export function deviceCost(platform: Platform, config: CapacityConfig): Cost {
-	return { ...DEFAULT_COSTS[platform], ...config.cost?.[platform] };
+/** Memory an iOS sim takes once `sim slim` has run (calibrate with `warden sim measure`; simslim measured ~0.9-1.1 GB, warden keeps a few more daemons). */
+export const SLIM_IOS_MEM_MB = 1280;
+
+/** Stock cost of a platform, or the slim cost of an iOS sim (`opts.slim`; Android has no slim form). Config overrides win. */
+export function deviceCost(platform: Platform, config: CapacityConfig, opts?: { slim?: boolean }): Cost {
+	const { slimMemMb, ...override } = config.cost?.[platform] ?? {};
+	const slim = opts?.slim === true && platform === "ios";
+	const memMb = slim ? (slimMemMb ?? SLIM_IOS_MEM_MB) : (override.memMb ?? DEFAULT_COSTS[platform].memMb);
+	return { ...DEFAULT_COSTS[platform], ...override, memMb };
 }
 
 export const addCost = (a: Cost, b: Cost): Cost => ({ memMb: a.memMb + b.memMb, cpu: a.cpu + b.cpu });
 
-/** Summed cost of booting these devices. */
-export function totalCost(platforms: readonly Platform[], config: CapacityConfig): Cost {
-	return platforms.reduce((sum, platform) => addCost(sum, deviceCost(platform, config)), ZERO_COST);
+/** Summed cost of booting these devices; `slimFlags[i]` says whether `platforms[i]` is a slimmed iOS sim. */
+export function totalCost(
+	platforms: readonly Platform[],
+	config: CapacityConfig,
+	slimFlags?: readonly boolean[]
+): Cost {
+	return platforms.reduce(
+		(sum, platform, i) => addCost(sum, deviceCost(platform, config, { slim: slimFlags?.[i] === true })),
+		ZERO_COST
+	);
 }
 
 /** Does `usage + request` stay inside `budget`? When not, `binding` is the dimension over by the largest share. */

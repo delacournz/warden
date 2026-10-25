@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_COSTS, deviceCost, explain, fits, hostBudget, maxConcurrent, totalCost, ZERO_COST } from "./capacity";
+import {
+	DEFAULT_COSTS,
+	deviceCost,
+	explain,
+	fits,
+	hostBudget,
+	maxConcurrent,
+	SLIM_IOS_MEM_MB,
+	totalCost,
+	ZERO_COST,
+} from "./capacity";
 import type { HostFacts } from "./host";
 
 const GB = 1024 ** 3;
@@ -139,5 +149,35 @@ describe("explain", () => {
 
 	test("fits case says so", () => {
 		expect(explain(fits(ZERO_COST, deviceCost("ios", {}), budget), ZERO_COST, budget)).toContain("fits");
+	});
+});
+
+describe("slim cost", () => {
+	test("slim ios sim costs SLIM_IOS_MEM_MB, stock stays 2048", () => {
+		expect(DEFAULT_COSTS.ios.memMb).toBe(2048);
+		expect(deviceCost("ios", {}, { slim: true })).toEqual({ memMb: SLIM_IOS_MEM_MB, cpu: 1 });
+		expect(deviceCost("ios", {}, { slim: false }).memMb).toBe(2048);
+	});
+
+	test("android ignores slim", () => {
+		expect(deviceCost("android", {}, { slim: true })).toEqual({ memMb: 4096, cpu: 2 });
+	});
+
+	test("cost.ios.slimMemMb overrides the slim figure only", () => {
+		const config = { cost: { ios: { slimMemMb: 900 } } };
+		expect(deviceCost("ios", config, { slim: true }).memMb).toBe(900);
+		expect(deviceCost("ios", config).memMb).toBe(2048);
+	});
+
+	test("cost.ios.memMb overrides stock, not slim", () => {
+		const config = { cost: { ios: { memMb: 3000 } } };
+		expect(deviceCost("ios", config).memMb).toBe(3000);
+		expect(deviceCost("ios", config, { slim: true }).memMb).toBe(SLIM_IOS_MEM_MB);
+	});
+
+	test("totalCost applies per-device slim flags", () => {
+		const total = totalCost(["ios", "ios", "android"], {}, [true, false, true]);
+		expect(total.memMb).toBe(SLIM_IOS_MEM_MB + 2048 + 4096);
+		expect(totalCost(["ios", "ios"], {}).memMb).toBe(4096);
 	});
 });

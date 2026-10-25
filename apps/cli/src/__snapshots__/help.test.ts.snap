@@ -47,7 +47,8 @@ Devices:
   devices|list [platform]       list every simulator / emulator (booted or not,
                                 plus Android AVDs) with warden ownership +
                                 leases
-  sim                           per-simulator tweaks: slim | unquarantine
+  sim                           per-simulator tweaks: slim | profiles | measure
+                                | unquarantine
   sims                          simulator + runtime disk audit (default), prune
                                 idle warden sims, delete (multi-select)
   arrange                       tile warden simulator windows in name order
@@ -1282,6 +1283,7 @@ Arguments:
   platform    ios | android (default: both)
 
 Options:
+  --mem       add each booted iOS sim's real memory (summed phys_footprint, MB)
   --json      machine-readable output
   -h, --help  display help for command"
 `;
@@ -1290,7 +1292,7 @@ exports[`help output warden sim --help (and nested subcommands) 1`] = `
 "$ warden sim --help
 Usage: warden sim [options] [command]
 
-per-simulator tweaks: slim | unquarantine
+per-simulator tweaks: slim | profiles | measure | unquarantine
 
 Options:
   -h, --help         display help for command
@@ -1298,8 +1300,12 @@ Options:
 Commands:
   slim [udid]        switch off the iOS simulator daemons UI specs never need
                      (Siri, Health, News, Mail…) to save RAM/CPU
+  profiles           list the slim categories (id, name, label count) that \`sim
+                     slim --except\` takes
   unquarantine <id>  clear the quarantine on a device (set by \`release --bad\` or
                      a failed claim health probe)
+  measure [udid]     real memory cost of a booted simulator: summed
+                     phys_footprint of its process tree, top 10 processes
   help [command]     display help for command
 
 $ warden sim slim --help
@@ -1309,12 +1315,25 @@ switch off the iOS simulator daemons UI specs never need (Siri, Health, News,
 Mail…) to save RAM/CPU
 
 Arguments:
-  udid        simulator udid (booted, not leased by another session)
+  udid             simulator udid (booted, not leased by another session)
 
 Options:
-  --booted    every booted simulator
-  --dry-run   list the jobs, change nothing
-  --restore   re-enable them (fully effective on the next boot)
+  --booted         every booted simulator
+  --dry-run        list the jobs, change nothing
+  --restore        re-enable them (fully effective on the next boot)
+  --except <ids>   comma list of categories to leave running (see \`warden sim
+                   profiles\`)
+  --keep <labels>  comma list of single com.apple.* launchd labels to leave
+                   running
+  --json           machine-readable output
+  -h, --help       display help for command
+
+$ warden sim profiles --help
+Usage: warden sim profiles [options]
+
+list the slim categories (id, name, label count) that \`sim slim --except\` takes
+
+Options:
   --json      machine-readable output
   -h, --help  display help for command
 
@@ -1328,6 +1347,20 @@ Arguments:
   id          simulator udid / emulator serial
 
 Options:
+  -h, --help  display help for command
+
+$ warden sim measure --help
+Usage: warden sim measure [options] [udid]
+
+real memory cost of a booted simulator: summed phys_footprint of its process
+tree, top 10 processes
+
+Arguments:
+  udid        simulator udid
+
+Options:
+  --booted    every booted simulator
+  --json      machine-readable output
   -h, --help  display help for command"
 `;
 

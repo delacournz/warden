@@ -13,17 +13,26 @@ const booted = (d: InventoryDevice): boolean => d.state === "booted" || d.state 
 export function roomFor(
 	inventory: readonly InventoryDevice[],
 	platform: Platform,
-	deps: Pick<CapacityDeps, "budget" | "config">
+	deps: Pick<CapacityDeps, "budget" | "config">,
+	slimmed: ReadonlySet<string> = new Set()
 ): number {
 	const { budget, config } = deps;
+	const live = inventory.filter(booted);
 	const usage = totalCost(
-		inventory.filter(booted).map((d) => d.platform),
-		config
+		live.map((d) => d.platform),
+		config,
+		live.map((d) => d.platform === "ios" && slimmed.has(d.id))
 	);
-	const cost = deviceCost(platform, config as CapacityConfig);
+	// new devices count slim: slim is default-on for iOS sims. TODO(SLIM-2): honour --no-slim
+	const slim = platform === "ios";
+	const cost = deviceCost(platform, config as CapacityConfig, { slim });
 	let n = 0;
 	for (;;) {
-		const next = fits(usage, totalCost(Array<Platform>(n + 1).fill(platform), config), budget);
+		const next = fits(
+			usage,
+			totalCost(Array<Platform>(n + 1).fill(platform), config, Array<boolean>(n + 1).fill(slim)),
+			budget
+		);
 		if (!next.fits || cost.cpu + cost.memMb === 0) return n;
 		n++;
 	}

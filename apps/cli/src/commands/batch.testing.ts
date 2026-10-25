@@ -1,3 +1,4 @@
+import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { memoryReadFrom } from "../batch/results.testing";
 import type { ReadySpec } from "../batch/serve";
 import type { MetroOwner } from "../metro";
@@ -31,6 +32,8 @@ export type Harness = {
 	shots: string[];
 	/** every `slim` request: the udid */
 	slimmed: string[];
+	/** the profile of every `slim` request (undefined: none given), in the same order as `slimmed` */
+	slimProfiles: (SlimProfile | undefined)[];
 	/** every warm-up `connect`: the udid */
 	warmed: string[];
 	/** every warm helper stopped: the udid */
@@ -93,6 +96,7 @@ export function harness(
 		terminal: [],
 		shots: [],
 		slimmed: [],
+		slimProfiles: [],
 		warmed: [],
 		warmClosed: [],
 		warmStopped: [],
@@ -147,8 +151,9 @@ export function harness(
 				if (opts.screenshot === "throw") throw new Error("no device");
 				return opts.screenshot !== "fail";
 			},
-			slim: async (udid) => {
+			slim: async (udid, profile) => {
 				h.slimmed.push(udid);
+				h.slimProfiles.push(profile);
 				h.events.push(`slim:${udid}`);
 				return opts.slim === "fail" ? { success: false, error: "not booted" } : { success: true, data: ["a", "b"] };
 			},

@@ -577,8 +577,10 @@ export interface WardenE2eSuite {
 	/**
 	 * iOS only: switch off the simulator daemons specs never need on each leased device, before `setup`.
 	 * Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"`.
+	 * An object keeps parts running: `except` lists category ids (see `warden sim profiles`), `keep`
+	 * lists single `com.apple.*` launchd labels. `false` turns it off.
 	 */
-	slim?: boolean | undefined;
+	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
 	/** Removed: renamed `warmDrivers`. */
 	warmRunners?: undefined;
 	/**

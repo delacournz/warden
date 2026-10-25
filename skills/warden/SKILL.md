@@ -49,7 +49,7 @@ Open the reference file for details before acting; this file only routes.
 | is this device free or mine | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a bare lease alive | `warden heartbeat <leaseId…>` (prefer a wrapper) |
 | device misbehaving | `warden release <leaseId> --bad "<why>"` (undo: `warden sim unquarantine <udid>`) |
-| fewer daemons on a sim | `warden sim slim <udid>\|--booted [--dry-run\|--restore]` |
+| fewer daemons on a sim | `warden sim slim <udid>\|--booted [--dry-run\|--restore] [--except <ids>] [--keep <labels>]`; categories: `warden sim profiles` |
 | clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` · `warden sims` (`prune --dry-run`, then `--yes`) |
 | reclaim dead leases | `warden gc` (auto every 10 min; never deletes, never touches foreign devices) |
 | setup / helper problems | `warden doctor [--fetch-helper]` |

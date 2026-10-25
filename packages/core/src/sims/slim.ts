@@ -1,5 +1,6 @@
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
+import { DEFAULT_SLIM_PROFILE, desiredLabels, managedSet, type SlimProfile, slimmableSet } from "./slim.profile";
 
 /**
  * `warden sim slim`: switch off the launchd jobs inside an iOS simulator that UI specs never need,
@@ -7,53 +8,8 @@ import { type Exec, execError } from "../exec";
  *
  * A booted simulator runs ~200-250 processes under its `launchd_sim` (10-20 GB RSS measured on
  * iOS 26.5), most of them Siri, Apple Intelligence, Health, News, Mail and Photos daemons plus the
- * widgets and posters they feed. Every label here was checked present on an iOS 26.5 iPhone sim.
+ * widgets and posters they feed. What may be switched off is the category allowlist in `slim.profile.ts`.
  */
-
-/** Jobs the slimmer switches off. Deliberately conservative: nothing an app under test, the e2e driver or the keyboard uses. */
-export const SLIM_DENYLIST: readonly string[] = [
-	// Siri + speech (not `assistantd` / `corespeechd`: the keyboard asks them about dictation, see NEVER_DISABLE)
-	"com.apple.assistant_cdmd",
-	"com.apple.siriinferenced",
-	"com.apple.siriactionsd",
-	"com.apple.siriknowledged",
-	"com.apple.sirittsd",
-	"com.apple.siri.context.service",
-	// Apple Intelligence
-	"com.apple.intelligenceplatformd",
-	"com.apple.intelligencetasksd",
-	"com.apple.intelligenceflowd",
-	"com.apple.intelligencecontextd",
-	"com.apple.callintelligenced",
-	// Health + fitness
-	"com.apple.healthd",
-	"com.apple.healthappd",
-	"com.apple.healthrecordsd",
-	"com.apple.healtheventsd",
-	"com.apple.fitcore",
-	"com.apple.fitcore.session",
-	"com.apple.fitnessintelligenced",
-	"com.apple.activitysharingd",
-	// News, Mail, Reminders, Photos, Game Center, Home, Wallet
-	"com.apple.newsd",
-	"com.apple.nanonewscd",
-	"com.apple.email.maild",
-	"com.apple.icloudmailagent",
-	"com.apple.remindd",
-	"com.apple.photoanalysisd",
-	"com.apple.gamed",
-	"com.apple.homed",
-	"com.apple.passd",
-	"com.apple.finhealthd",
-	// Screen Time, media + App Store, watch companion, Spotlight knowledge
-	"com.apple.ScreenTimeAgent",
-	"com.apple.FamilyControlsAgent",
-	"com.apple.itunescloudd",
-	"com.apple.appstored",
-	"com.apple.nanotimekitcompaniond",
-	"com.apple.spotlightknowledged",
-	"com.apple.spotlightknowledged.updater",
-];
 
 /**
  * Labels that must stay up whatever the denylist grows into: the home screen, app install/launch,
@@ -80,7 +36,6 @@ export const NEVER_DISABLE: readonly RegExp[] = [
 	/mobileassetd/i,
 	/searchd/i,
 	/networkd|mDNSResponder|nsurlsession/i,
-	/chronod/i,
 ];
 
 export type LaunchJob = { label: string; pid: number | null };
@@ -105,34 +60,46 @@ export function parsePrintDisabled(stdout: string): Map<string, boolean> {
 }
 
 /**
- * Denylisted labels not yet disabled, plus any disabled one still running. A label need not be
+ * Wanted labels (`desired`, default profile) not yet disabled, plus any disabled one still running. A label need not be
  * loaded to be disabled — some (`siri.context.service`) only load on demand, and disabling them
  * up front is what keeps them from starting after the next boot.
  */
-export function planSlim(jobs: LaunchJob[], disabled: Map<string, boolean>): string[] {
+export function planSlim(
+	jobs: LaunchJob[],
+	disabled: Map<string, boolean>,
+	desired: ReadonlySet<string> = desiredLabels(DEFAULT_SLIM_PROFILE)
+): string[] {
 	const running = new Set(jobs.filter((job) => job.pid !== null).map((job) => job.label));
-	return SLIM_DENYLIST.filter((label) => disabled.get(label) !== true || running.has(label));
+	return [...desired].filter((label) => disabled.get(label) !== true || running.has(label));
 }
 
 /**
  * Labels an earlier denylist disabled and this one must not: a sim slimmed back then still has
- * them off, so slimming re-enables them and `--restore` counts them too.
+ * them off, so slimming re-enables them and `--restore` counts them too. `gamed` (a ~10 s XCUITest
+ * launch delay) and `nanotimekitcompaniond` (breaks boot) joined `assistantd` / `corespeechd`.
  */
-export const SLIM_RETIRED: readonly string[] = ["com.apple.assistantd", "com.apple.corespeechd"];
+export const SLIM_RETIRED: readonly string[] = [
+	"com.apple.assistantd",
+	"com.apple.corespeechd",
+	"com.apple.gamed",
+	"com.apple.nanotimekitcompaniond",
+];
 
 /** Retired labels still disabled on this sim — what a slim re-enables before it disables anything. */
 export function planHeal(disabled: Map<string, boolean>): string[] {
 	return SLIM_RETIRED.filter((label) => disabled.get(label) === true);
 }
 
-/** Denylisted (and retired) labels currently disabled — what `--restore` re-enables. */
+/** Managed (and retired) labels currently disabled — what `--restore` re-enables. */
 export function planRestore(disabled: Map<string, boolean>): string[] {
-	return [...SLIM_DENYLIST, ...SLIM_RETIRED].filter((label) => disabled.get(label) === true);
+	const everything = new Set([...slimmableSet(), ...managedSet(), ...SLIM_RETIRED]);
+	return [...everything].filter((label) => disabled.get(label) === true);
 }
 
 const launchctl = (udid: string, ...args: string[]) => ["xcrun", "simctl", "spawn", udid, "launchctl", ...args];
 
-export type SlimOptions = { dryRun?: boolean; restore?: boolean };
+/** `profile`: which categories / labels stay on (default: slim every category). */
+export type SlimOptions = { dryRun?: boolean; restore?: boolean; profile?: SlimProfile };
 
 /** How many `simctl spawn … launchctl` run at once: ~80 spawns serially took seconds, and launchd handles them in parallel. */
 export const SLIM_CONCURRENCY = 8;
@@ -167,7 +134,7 @@ async function launchctlOk(exec: Exec, udid: string, ...args: string[]): AsyncRe
 }
 
 /**
- * Disable (or with `restore`, re-enable) the denylisted jobs on one booted simulator; resolves to
+ * Disable (or with `restore`, re-enable) the profile's jobs on one booted simulator; resolves to
  * the labels touched. Each job is `launchctl disable`d inside the simulator, which that device
  * remembers across its own reboots, then `bootout`ed (when loaded) so it stops now. The disabled state is kept
  * outside the device's `data/`, so a `simctl clone` of a slimmed image boots with nothing disabled.
@@ -192,9 +159,9 @@ export async function slimSimulator(exec: Exec, udid: string, options: SlimOptio
 	const listed = await exec(listCmd);
 	if (listed.exitCode !== 0) return err(execError(listCmd, listed));
 	const jobs = parseLaunchctlList(listed.stdout);
-	const labels = planSlim(jobs, disabled);
+	const labels = planSlim(jobs, disabled, desiredLabels(options.profile ?? DEFAULT_SLIM_PROFILE));
 	if (options.dryRun) return ok(labels);
-	// a label launchd has not loaded has nothing to boot out: on a fresh sim most of the denylist (16-12)
+	// a label launchd has not loaded has nothing to boot out: on a fresh sim most of the allowlist (16-12)
 	const loaded = new Set(jobs.map((job) => job.label));
 	// best effort, and only effective on the device's next boot
 	await eachBounded(planHeal(disabled), SLIM_CONCURRENCY, async (label) => {

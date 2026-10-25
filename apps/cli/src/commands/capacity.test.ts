@@ -16,6 +16,7 @@ describe("warden capacity", () => {
 		const out = JSON.parse(ctx.stdout.join("\n"));
 		expect(out.enabled).toBe(true);
 		expect(out.budget.maxUnits).toBe(4);
+		expect(out.slimCost).toEqual({ ios: { memMb: 1280, cpu: 1 } });
 		expect(out.cost).toEqual({ ios: { memMb: 2048, cpu: 1 }, android: { memMb: 4096, cpu: 2 } });
 		expect(out.usage.ios).toMatchObject({ booted: 1, warden: 1, foreign: 0, units: 1 });
 		expect(out.usage.android.booted).toBe(0);

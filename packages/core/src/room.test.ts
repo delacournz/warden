@@ -20,4 +20,17 @@ describe("roomFor", () => {
 	test("a full host has no room", () => {
 		expect(roomFor([dev("a", "ios", "booted")], "ios", { budget: budget(1), config: {} })).toBe(0);
 	});
+
+	test("new iOS sims count slim, so memory binds later", () => {
+		const mem = { memMb: 2560, cpu: 100, maxUnits: Number.POSITIVE_INFINITY };
+		expect(roomFor([], "ios", { budget: mem, config: {} })).toBe(2);
+		expect(roomFor([], "android", { budget: mem, config: {} })).toBe(0);
+	});
+
+	test("a slimmed booted sim costs less than a stock one", () => {
+		const mem = { memMb: 4096, cpu: 100, maxUnits: Number.POSITIVE_INFINITY };
+		const inv = [dev("a", "ios", "booted")];
+		expect(roomFor(inv, "ios", { budget: mem, config: {} })).toBe(1);
+		expect(roomFor(inv, "ios", { budget: mem, config: {} }, new Set(["a"]))).toBe(2);
+	});
 });

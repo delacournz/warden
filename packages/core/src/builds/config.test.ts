@@ -88,6 +88,13 @@ describe("parseWardenConfig", () => {
 		expect(bad({ ports: ["nope"] }).success).toBe(false);
 		expect(bad({ slim: true, platform: "android" }).success).toBe(false);
 		expect(bad({ slim: true, platform: "ios", setup: "echo {udid}" }).success).toBe(true);
+		expect(bad({ slim: { except: ["store"] }, platform: "android" }).success).toBe(false);
+		expect(bad({ slim: false, platform: "android" }).success).toBe(true);
+		expect(bad({ slim: { except: ["store"], keep: ["com.apple.swcd"] }, platform: "ios" }).success).toBe(true);
+		const unknown = bad({ slim: { except: ["nope"] } });
+		expect(unknown.success).toBe(false);
+		if (!unknown.success) expect(unknown.error).toContain("nope");
+		expect(bad({ slim: { bogus: 1 } }).success).toBe(false);
 	});
 
 	test("e2e suite run settings: metro, isolate, jobTimeoutMs and device legs, with defaults", () => {

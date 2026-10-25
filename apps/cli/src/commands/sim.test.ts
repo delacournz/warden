@@ -50,6 +50,24 @@ describe("warden sim slim", () => {
 		expect(touched).toEqual(new Set(["U1", "U3"]));
 	});
 
+	test("--except / --keep leave categories and labels running; bad ids are a usage error", async () => {
+		const calls: string[][] = [];
+		const c = setup(["slim", "U1", "--except", "health, store", "--keep", "com.apple.swcd"], calls);
+		expect(await createSimCommand().run(c)).toBe(0);
+		const disabled = calls.filter((x) => x.includes("disable")).map((x) => x[x.indexOf("disable") + 1]);
+		expect(disabled).toContain("system/com.apple.newsd");
+		expect(disabled).not.toContain("system/com.apple.healthd");
+		expect(disabled).not.toContain("system/com.apple.apsd");
+		expect(disabled).not.toContain("system/com.apple.swcd");
+
+		const bad = setup(["slim", "U1", "--except", "nope"]);
+		expect(await createSimCommand().run(bad)).toBe(1);
+		expect(bad.stderr.join("\n")).toContain("nope");
+		const badLabel = setup(["slim", "U1", "--keep", "com.apple.searchd"]);
+		expect(await createSimCommand().run(badLabel)).toBe(1);
+		expect(badLabel.stderr.join("\n")).toContain("com.apple.searchd");
+	});
+
 	test("--restore re-enables; neither udid nor --booted is a usage error", async () => {
 		const c = setup(["slim", "U1", "--restore"]);
 		expect(await createSimCommand().run(c)).toBe(0);
@@ -86,6 +104,22 @@ describe("warden sim slim", () => {
 		c.argv = ["slim", "U1", "--restore"];
 		expect(await createSimCommand().run(c)).toBe(0);
 		expect(c.db.listDevices()[0]?.slimmedAt).toBeUndefined();
+	});
+});
+
+describe("warden sim profiles", () => {
+	test("lists the 15 categories with label counts; --json is machine-readable", async () => {
+		const c = setup(["profiles"]);
+		expect(await createSimCommand().run(c)).toBe(0);
+		const text = c.stdout.join("\n");
+		expect(text).toMatch(/widgets\s+4 labels/);
+		expect(text.split("\n")).toHaveLength(15);
+
+		const json = setup(["profiles", "--json"]);
+		expect(await createSimCommand().run(json)).toBe(0);
+		const rows = JSON.parse(json.stdout.join("\n")) as { id: string; labelCount: number }[];
+		expect(rows).toHaveLength(15);
+		expect(rows[0]).toMatchObject({ id: "widgets", labelCount: 4 });
 	});
 });
 

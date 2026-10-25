@@ -1,6 +1,7 @@
 import { markWardenDevices } from "@delacour/warden-core/inventory";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { listAvds } from "@delacour/warden-core/providers/android";
+import { measureSims } from "@delacour/warden-core/sims/slim.measure";
 import { describeOwner, type Lease, ownerLocation, type Platform } from "@delacour/warden-core/types";
 import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
@@ -10,6 +11,7 @@ import { emit, plural, reportError, table, warn } from "../output";
 import { providerFor } from "../providers";
 
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
+const BYTES_PER_MB = 1024 ** 2;
 
 export type DeviceRow = {
 	platform: Platform;
@@ -25,6 +27,8 @@ export type DeviceRow = {
 	quarantined?: { reason?: string };
 	/** simulator daemons switched off by `sim slim` */
 	slimmed?: true;
+	/** real memory (summed phys_footprint of the sim's process tree), only with `--mem` */
+	footprintMb?: number;
 	lease?: { id: string; owner: string; where?: string };
 };
 
@@ -93,8 +97,27 @@ function wardenCell(color: ChalkInstance, r: DeviceRow, none: string): string {
 	return [color.green("yes"), ...flags].join(" ");
 }
 
+/** One `ps` + `top` snapshot for every booted iOS sim, written onto its row as `footprintMb`. */
+async function addFootprints(ctx: CommandContext, rows: DeviceRow[]): Promise<void> {
+	const booted = rows.filter((r) => r.platform === "ios" && r.state === "booted" && r.id !== undefined);
+	const results = await measureSims(
+		ctx.exec,
+		booted.flatMap((r) => (r.id !== undefined ? [r.id] : []))
+	);
+	for (const row of booted) {
+		const res = row.id !== undefined ? results.get(row.id) : undefined;
+		if (res?.success) row.footprintMb = Math.round(res.data.footprintBytes / BYTES_PER_MB);
+		else if (res) warn(ctx, `${row.id}: ${res.error}`);
+	}
+}
+
 /** List every simulator / emulator on the machine, running or not, with warden ownership and leases. */
-async function devices(ctx: CommandContext, filter: string | undefined, json: boolean): Promise<number> {
+async function devices(
+	ctx: CommandContext,
+	filter: string | undefined,
+	opts: { json: boolean; mem: boolean }
+): Promise<number> {
+	const { json, mem } = opts;
 	const { color } = ctx.ui;
 	if (filter !== undefined && filter !== "ios" && filter !== "android") {
 		reportError(ctx, "devices", `unknown platform "${filter}" (ios|android)`);
@@ -111,11 +134,12 @@ async function devices(ctx: CommandContext, filter: string | undefined, json: bo
 	const rows: DeviceRow[] = [];
 	for (const platform of platforms) rows.push(...(await platformRows(ctx, platform, leases)));
 	rows.sort(compareRows);
+	if (mem) await addFootprints(ctx, rows);
 
 	const none = color.dim("-");
 	const text = table(
 		ctx,
-		["PLATFORM", "NAME", "ID", "STATE", "RUNTIME", "WARDEN"],
+		["PLATFORM", "NAME", "ID", "STATE", "RUNTIME", "WARDEN", ...(mem ? ["MB"] : [])],
 		rows.map((r) => [
 			color.dim(r.platform),
 			r.warden || r.golden ? color.bold(r.name) : r.name,
@@ -123,6 +147,7 @@ async function devices(ctx: CommandContext, filter: string | undefined, json: bo
 			stateCell(color, r),
 			r.runtime ?? none,
 			wardenCell(color, r, none),
+			...(mem ? [r.footprintMb !== undefined ? String(r.footprintMb) : none] : []),
 		]),
 		[
 			{ column: 1, min: 18 },
@@ -146,7 +171,10 @@ export const devicesCommand = defineCommand({
 	register: (cmd, ctx, done) => {
 		cmd
 			.argument("[platform]", "ios | android (default: both)")
+			.option("--mem", "add each booted iOS sim's real memory (summed phys_footprint, MB)")
 			.option("--json", "machine-readable output")
-			.action(async (platform, opts) => done(await devices(ctx, platform, opts.json === true)));
+			.action(async (platform, opts) =>
+				done(await devices(ctx, platform, { json: opts.json === true, mem: opts.mem === true }))
+			);
 	},
 });
