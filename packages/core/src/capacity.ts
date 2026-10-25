@@ -23,9 +23,9 @@ export type FitResult =
 
 export const ZERO_COST: Cost = { memMb: 0, cpu: 0 };
 
-/** An Android emulator costs about twice an iOS sim; CAP-7 calibrates these against real RSS. */
+/** Stock figures from `warden sim measure` phys_footprint: an unslimmed iOS 26.5 sim idles at ~4.3 GB; an Android emulator is budgeted the same. */
 export const DEFAULT_COSTS: Record<Platform, Cost> = {
-	ios: { memMb: 2048, cpu: 1 },
+	ios: { memMb: 4096, cpu: 1 },
 	android: { memMb: 4096, cpu: 2 },
 };
 

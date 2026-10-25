@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SLIM_IOS_MEM_MB } from "./capacity";
+import { DEFAULT_COSTS, SLIM_IOS_MEM_MB } from "./capacity";
 import { roomFor } from "./room";
 import type { InventoryDevice } from "./types";
 
@@ -31,8 +31,8 @@ describe("roomFor", () => {
 	});
 
 	test("a slimmed booted sim costs less than a stock one", () => {
-		// three slim slots: a stock booted sim leaves room for one more slim sim, a slimmed one for two
-		const mem = memBudget(SLIM_IOS_MEM_MB * 3);
+		// a stock booted sim leaves room for one more slim sim; marking it slim frees a second slim slot
+		const mem = memBudget(DEFAULT_COSTS.ios.memMb + SLIM_IOS_MEM_MB);
 		const inv = [dev("a", "ios", "booted")];
 		expect(roomFor(inv, "ios", { budget: mem, config: {} })).toBe(1);
 		expect(roomFor(inv, "ios", { budget: mem, config: {} }, new Set(["a"]))).toBe(2);

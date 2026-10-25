@@ -52,7 +52,7 @@ describe("hostBudget", () => {
 
 describe("deviceCost", () => {
 	test("defaults: android costs twice an ios sim", () => {
-		expect(deviceCost("ios", {})).toEqual({ memMb: 2048, cpu: 1 });
+		expect(deviceCost("ios", {})).toEqual({ memMb: 4096, cpu: 1 });
 		expect(deviceCost("android", {})).toEqual({ memMb: 4096, cpu: 2 });
 		expect(DEFAULT_COSTS.ios.cpu).toBe(1);
 	});
@@ -60,14 +60,14 @@ describe("deviceCost", () => {
 	test("override merges per platform and field", () => {
 		const config = { cost: { android: { memMb: 6000 } } };
 		expect(deviceCost("android", config)).toEqual({ memMb: 6000, cpu: 2 });
-		expect(deviceCost("ios", config)).toEqual({ memMb: 2048, cpu: 1 });
+		expect(deviceCost("ios", config)).toEqual({ memMb: 4096, cpu: 1 });
 	});
 });
 
 describe("maxConcurrent", () => {
 	test.each([
 		// gb, perfCores, ios, android
-		[16, 8, 4, 2], // mem binds: 8 GB / 2 GB, 8 GB / 4 GB
+		[16, 8, 2, 2], // mem binds: 8 GB / 4 GB either way
 		[24, 8, 4, 2], // cpu binds: 4.8 units
 		[48, 10, 6, 3], // this Mac: cpu binds
 		[48, 14, 8, 4],
@@ -153,10 +153,10 @@ describe("explain", () => {
 });
 
 describe("slim cost", () => {
-	test("slim ios sim costs SLIM_IOS_MEM_MB, stock stays 2048", () => {
-		expect(DEFAULT_COSTS.ios.memMb).toBe(2048);
+	test("slim ios sim costs SLIM_IOS_MEM_MB, stock stays 4096", () => {
+		expect(DEFAULT_COSTS.ios.memMb).toBe(4096);
 		expect(deviceCost("ios", {}, { slim: true })).toEqual({ memMb: SLIM_IOS_MEM_MB, cpu: 1 });
-		expect(deviceCost("ios", {}, { slim: false }).memMb).toBe(2048);
+		expect(deviceCost("ios", {}, { slim: false }).memMb).toBe(4096);
 	});
 
 	test("android ignores slim", () => {
@@ -166,7 +166,7 @@ describe("slim cost", () => {
 	test("cost.ios.slimMemMb overrides the slim figure only", () => {
 		const config = { cost: { ios: { slimMemMb: 900 } } };
 		expect(deviceCost("ios", config, { slim: true }).memMb).toBe(900);
-		expect(deviceCost("ios", config).memMb).toBe(2048);
+		expect(deviceCost("ios", config).memMb).toBe(4096);
 	});
 
 	test("cost.ios.memMb overrides stock, not slim", () => {
@@ -177,7 +177,7 @@ describe("slim cost", () => {
 
 	test("totalCost applies per-device slim flags", () => {
 		const total = totalCost(["ios", "ios", "android"], {}, [true, false, true]);
-		expect(total.memMb).toBe(SLIM_IOS_MEM_MB + 2048 + 4096);
-		expect(totalCost(["ios", "ios"], {}).memMb).toBe(4096);
+		expect(total.memMb).toBe(SLIM_IOS_MEM_MB + 4096 + 4096);
+		expect(totalCost(["ios", "ios"], {}).memMb).toBe(8192);
 	});
 });
