@@ -1,6 +1,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { RootProvider } from "fumadocs-ui/provider/tanstack";
 import { useEffect } from "react";
+import { ConsentBanner } from "@/components/consent-banner";
 import { TrackedSearchDialog } from "@/components/search-dialog";
 import { startPosthog } from "@/lib/analytics/posthog";
 import { installClickTracking } from "@/lib/analytics/track";
@@ -60,6 +61,7 @@ function DirectionContract() {
  * `search-dialog.tsx`, and one delegated listener counts outbound links,
  * downloads and code copies on every route. PostHog starts on mount, on the
  * client only; it has no tag in `<head>`, see `src/lib/analytics/posthog.ts`.
+ * The consent banner asks once whether it may set a cookie and record.
  */
 function RootComponent() {
 	useEffect(() => startPosthog(), []);
@@ -74,6 +76,7 @@ function RootComponent() {
 				<DirectionContract />
 				<RootProvider search={{ SearchDialog: TrackedSearchDialog }} theme={{ enabled: false }}>
 					<Outlet />
+					<ConsentBanner />
 				</RootProvider>
 				<Scripts />
 			</body>

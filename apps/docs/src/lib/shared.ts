@@ -6,6 +6,9 @@ export const appDescription =
 
 export const docsRoute = "/docs";
 
+/** The privacy policy; the cookie banner and the footer link to it. */
+export const privacyRoute = "/privacy";
+
 /** The production origin. Social cards need absolute URLs; previews share production's artwork. */
 export const siteUrl = "https://warden.delacour.co.nz";
 

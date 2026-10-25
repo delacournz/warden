@@ -5,8 +5,10 @@ import { CopyBlock } from "@/components/copy-block";
 import { InstallCommand } from "@/components/install-command";
 import { DemoVideo } from "@/components/landing/demo-video";
 import { WardenIcon } from "@/components/warden-icon";
+import { ANALYTICS } from "@/lib/analytics/config";
+import { CONSENT_OPEN_EVENT } from "@/lib/analytics/consent";
 import { baseOptions } from "@/lib/layout.shared";
-import { appDescription, appName, githubUrl } from "@/lib/shared";
+import { appDescription, appName, githubUrl, privacyRoute } from "@/lib/shared";
 
 export const Route = createFileRoute("/")({
 	component: Home,
@@ -314,6 +316,18 @@ function Home(): ReactElement {
 					<a className="hover:text-ink" href={githubUrl} rel="noreferrer noopener" target="_blank">
 						github
 					</a>
+					<Link className="hover:text-ink" to={privacyRoute}>
+						privacy
+					</Link>
+					{ANALYTICS.posthog.kind === "on" ? (
+						<button
+							className="hover:text-ink"
+							onClick={() => window.dispatchEvent(new Event(CONSENT_OPEN_EVENT))}
+							type="button"
+						>
+							cookie settings
+						</button>
+					) : null}
 					<a className="hover:text-ink sm:ms-auto" href="https://delacour.co.nz" rel="noopener" target="_blank">
 						built by Delacour · MIT
 					</a>
