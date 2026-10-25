@@ -2,10 +2,11 @@
 /**
  * Hand-run smoke test of the iOS driver against a real, booted simulator (never part of `bun test`):
  *
- *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--out <dir>] [--fills <n>]
+ *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--scheme warden-example] [--out <dir>] [--fills <n>]
  *     [--focus-types <n> [--focus-mode cold|switch|same] [--other-field <testID>] [--raw-tap]] [--kill-bridge] [--kill-helper]
  *
- * open → health → launch → settle → snapshot → tap first button → fill a textfield (if present; `--fills <n>` then
+ * open → health → launch → lifecycle leg (relaunch with args+env, keep-running launch, terminate twice, open a link of the
+ * app's scheme; see `lifecycleLeg`) → settle → snapshot → tap first button → fill a textfield (if present; `--fills <n>` then
  * fills it n more times through the spec `fill` clear path and counts the lost characters; `--focus-types <n>` taps and
  * types into it n times, see `focusTypeLoop`) →
  * swipe → screenshot → settle → terminate → close. Prints the duration of each step; exits 1 when a
@@ -25,6 +26,7 @@ import { focusClearType, tapToFocus } from "../../src/screen/field";
 import { entryOfElement, indexSnapshot, type NodeEntry } from "../../src/screen/nodes";
 
 const DEFAULT_BUNDLE = "nz.co.delacour.warden.example";
+const DEFAULT_SCHEME = "warden-example";
 const TYPED = "Hello, World 123!";
 
 function arg(name: string): string | undefined {
@@ -37,7 +39,10 @@ if (!udid) {
 	process.stderr.write("usage: bun native/scripts/smoke.ts --udid <udid> [--bundle <id>] [--out <dir>]\n");
 	process.exit(2);
 }
+/** `udid`, narrowed for the functions below (the guard above does not narrow inside them). */
+const device: string = udid;
 const bundle = arg("bundle") ?? DEFAULT_BUNDLE;
+const scheme = arg("scheme") ?? DEFAULT_SCHEME;
 const out = arg("out") ?? mkdtempSync(join(tmpdir(), "warden-smoke-"));
 mkdirSync(out, { recursive: true });
 
@@ -298,6 +303,105 @@ async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 	await gestureSteps(driver, { x: width / 2, y: height / 2 });
 }
 
+/** `launchctl list` inside the simulator: the pid of the bundle's app job, undefined while it is not running. */
+async function pidOf(bundleId: string): Promise<number | undefined> {
+	const res = await bunExec(["xcrun", "simctl", "spawn", device, "launchctl", "list"], { timeoutMs: 15_000 });
+	const row = new RegExp(`^(\\d+)\\s+\\S+\\s+UIKitApplication:${bundleId.replace(/\./g, "\\.")}\\[`, "m").exec(
+		res.stdout
+	);
+	return row?.[1] === undefined ? undefined : Number(row[1]);
+}
+
+/** `launchctl procinfo <pid>` inside the simulator: the process's arguments and environment, among other blocks. */
+async function procinfo(pid: number): Promise<string> {
+	const argv = ["xcrun", "simctl", "spawn", device, "launchctl", "procinfo", String(pid)];
+	const res = await bunExec(argv, { timeoutMs: 15_000 });
+	return `${res.stdout}\n${res.stderr}`;
+}
+
+function check(name: string, ok: boolean, note: string): void {
+	if (!ok) failures += 1;
+	process.stdout.write(`${ok ? "ok   " : "FAIL "} ${name.padEnd(22)}           ${note}\n`);
+}
+
+/** Polls `read` every 200 ms until it answers a value or `timeoutMs` passes. */
+async function pollFor<T>(timeoutMs: number, read: () => Promise<T | undefined>): Promise<T | undefined> {
+	const deadline = performance.now() + timeoutMs;
+	while (performance.now() < deadline) {
+		const value = await read();
+		if (value !== undefined) return value;
+		await Bun.sleep(200);
+	}
+	return undefined;
+}
+
+/** The "Open in …?" sheet iOS shows for a custom-scheme link from outside the app, answered with its Open button. */
+async function answerOpenSheet(driver: Driver): Promise<"opened" | "no sheet"> {
+	const sheet = await pollFor(3000, async () => {
+		const alert = await driver.alert();
+		return alert.success && alert.data !== null && alert.data.buttons.length > 0 ? alert.data : undefined;
+	});
+	if (!sheet) return "no sheet";
+	const open =
+		sheet.buttons.find((button) => /^open$/i.test(button.label ?? "")) ?? sheet.buttons[sheet.buttons.length - 1];
+	if (open) await driver.tap(centre(open));
+	return "opened";
+}
+
+/**
+ * App lifecycle through the helper (`launch` / `terminate` / `openUrl` ops): a relaunch with args and env replaces
+ * the running process and both reach it (read back with `launchctl procinfo`), `relaunch: false` keeps the process,
+ * `terminate` ends it and is a success when nothing runs, and a link of the app's scheme (`--scheme`, default
+ * `warden-example`) brings the app to the front again, through the "Open in …?" sheet when iOS shows one. Leaves the app
+ * freshly launched for the rest of the smoke.
+ */
+async function lifecycleLeg(driver: Driver): Promise<void> {
+	const first = await pidOf(bundle);
+	check("pid after launch", first !== undefined, `pid=${first ?? "none"}`);
+	await step("launch (args+env)", () =>
+		driver.app.launch(bundle, { args: ["--warden-smoke-arg"], env: { WARDEN_SMOKE_ENV: "smoke-1" } })
+	);
+	const second = await pidOf(bundle);
+	check(
+		"relaunch replaces pid",
+		second !== undefined && second !== first,
+		`pid ${first ?? "none"} -> ${second ?? "none"}`
+	);
+	if (second !== undefined) {
+		const info = await procinfo(second);
+		check("launch arg reaches app", info.includes("--warden-smoke-arg"), "launchctl procinfo lists it");
+		check(
+			"launch env reaches app",
+			info.includes("WARDEN_SMOKE_ENV") && info.includes("smoke-1"),
+			"launchctl procinfo lists it"
+		);
+	}
+	await step("launch (keep running)", () => driver.app.launch(bundle, { relaunch: false }));
+	const third = await pidOf(bundle);
+	check(
+		"relaunch:false keeps pid",
+		third !== undefined && third === second,
+		`pid ${second ?? "none"} -> ${third ?? "none"}`
+	);
+	await step("terminate", () => driver.app.terminate(bundle));
+	check("terminated", (await pidOf(bundle)) === undefined, "no launchd job left");
+	await step("terminate (not running)", () => driver.app.terminate(bundle));
+	await step("openUrl (app scheme)", () => driver.app.openUrl(`${scheme}://smoke`));
+	const sheet = await answerOpenSheet(driver);
+	const front = canProbeFrontmost(driver)
+		? await pollFor(8000, async () => {
+				const probe = await driver.isFrontmost(bundle);
+				return probe.success && probe.data ? true : undefined;
+			})
+		: undefined;
+	check(
+		"app in front after link",
+		front === true || (await pidOf(bundle)) !== undefined,
+		`${sheet}; frontmost=${front ?? "unknown"}`
+	);
+	await step("launch (again)", () => driver.app.launch(bundle));
+}
+
 /** pinch, rotate and 1- and 2-finger paths around `middle` (GES-2/3): each should land without an error. */
 async function gestureSteps(driver: Driver, middle: { x: number; y: number }): Promise<void> {
 	await step("pinch", () => driver.pinch(middle, 1.5, { durationMs: 400 }));
@@ -451,6 +555,7 @@ const health = await step(
 	(h) => `${h.version} hid=${h.transport} ax=${h.bridge ?? "?"} ${h.screen.width}x${h.screen.height}@${h.screen.scale}`
 );
 await step("launch", () => driver.app.launch(bundle));
+await lifecycleLeg(driver);
 await step(
 	"settle",
 	() => driver.settle({ timeoutMs: 10_000 }),

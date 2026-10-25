@@ -7,12 +7,14 @@ import {
 	encodeRequest,
 	frontmostDataSchema,
 	healthDataSchema,
+	launchDataSchema,
 	mapWireError,
 	parseLine,
 	protocolVersion,
 	rebindDataSchema,
 	settleDataSchema,
 	snapshotDataSchema,
+	terminateDataSchema,
 } from "./simd-protocol";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
@@ -181,6 +183,17 @@ describe("data schemas", () => {
 		});
 		expect(frontmostDataSchema.parse({ frontmost: false, extra: 1 }).frontmost).toBe(false);
 		expect(frontmostDataSchema.safeParse({ pid: 1 }).success).toBe(false);
+	});
+
+	test("launch: the pid of the started app, extra keys allowed, null is not an answer", () => {
+		expect(launchDataSchema.parse({ pid: 4242, extra: 1 })).toMatchObject({ pid: 4242 });
+		expect(launchDataSchema.safeParse({}).success).toBe(false);
+		expect(launchDataSchema.safeParse(null).success).toBe(false);
+	});
+
+	test("terminate: whether anything was running", () => {
+		expect(terminateDataSchema.parse({ terminated: false })).toEqual({ terminated: false });
+		expect(terminateDataSchema.safeParse({}).success).toBe(false);
 	});
 
 	test("alertButtons: null, an alert, and a modal with no readable buttons yet", () => {

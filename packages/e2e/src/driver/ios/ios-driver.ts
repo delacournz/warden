@@ -32,10 +32,11 @@ import type { SimdSpawn } from "./simd-transport";
 import { typeTextBudgetMs } from "./type-budget";
 
 /**
- * The iOS `Driver`: input and AX through `warden-simd` (socket when `WARDEN_SIMD_SOCKET` is set, else a
- * helper spawned on stdio), app lifecycle / clipboard / appearance through `xcrun simctl`. Fallbacks:
- * `typeText` pastes what the HID keyboard map cannot type, `settle` polls snapshot hashes when the
- * helper has no native quiescence, `screenshot` uses `simctl io` when the helper cannot.
+ * The iOS `Driver`: input, AX and app launch / terminate / openUrl through `warden-simd` (socket when
+ * `WARDEN_SIMD_SOCKET` is set, else a helper spawned on stdio); install / uninstall / isRunning / clearData,
+ * clipboard and appearance through `xcrun simctl`. Fallbacks: `typeText` pastes what the HID keyboard map
+ * cannot type, `settle` polls snapshot hashes when the helper has no native quiescence, `screenshot` uses
+ * `simctl io` when the helper cannot, and a helper built before the app ops leaves app lifecycle to `simctl`.
  */
 
 export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir">;
@@ -84,6 +85,10 @@ const REBIND_TIMEOUT_MS = 3_000;
 const GESTURE_MARGIN_MS = 5_000;
 /** `frontmost` is one launchd lookup; a helper that has not answered in this long is busy, and the caller carries on without. */
 const FRONTMOST_TIMEOUT_MS = 3_000;
+/** The helper's `launch` waits for the app to start, bounded like `simctl launch` was. */
+const LAUNCH_TIMEOUT_MS = 30_000;
+/** `terminate` / `openUrl` through the helper. */
+const APP_OP_TIMEOUT_MS = 15_000;
 
 /** USB HID keyboard-page usage ids for the keys `Driver.key` offers. */
 export const KEY_USAGE: Readonly<Record<KeyName, number>> = {
@@ -196,6 +201,15 @@ function decodeBase64(png: string): Uint8Array {
 	return new Uint8Array(Buffer.from(png, "base64"));
 }
 
+/** A helper built before an op answers `E_UNSUPPORTED`, or the dispatcher's `E_BAD_REQUEST unknown op`. */
+function predatesOp(error: DriverError): boolean {
+	return (
+		error.code === "E_UNSUPPORTED" || (error.code === "E_BAD_REQUEST" && /unknown (input )?op/.test(error.message))
+	);
+}
+
+type AppOp = "launch" | "terminate" | "openUrl";
+
 export function createIosDriver(
 	swap: SwappableClient,
 	simctl: Simctl,
@@ -216,6 +230,8 @@ export function createIosDriver(
 	let settleUnsupported = !nativeSettle;
 	let rebindUnsupported = false;
 	let gestureUnsupported = false;
+	/** set once the helper did not know an app lifecycle op: it predates them, and `simctl` does app lifecycle */
+	let appOpsOutdated = false;
 
 	const capabilities: DriverCapabilities = {
 		pinch: true,
@@ -310,6 +326,47 @@ export function createIosDriver(
 		}
 		return result;
 	};
+
+	/**
+	 * `launch` / `terminate` / `openUrl` through the helper, whose process already holds CoreSimulator: every `xcrun
+	 * simctl` start loads it again (~0.13 CPU-s on the host, one per `app.open`). `undefined` means this helper predates
+	 * the ops: remembered after the first such answer (logged once), and the caller runs the `simctl` equivalent. Any
+	 * other failure is the answer, like a failed `simctl` was.
+	 */
+	async function appOp<Op extends AppOp>(
+		op: Op,
+		p: Params,
+		timeoutMs: number
+	): Promise<Result<OpData<Op>, DriverError> | undefined> {
+		if (appOpsOutdated) {
+			noteSpanDetail("via", "simctl");
+			return undefined;
+		}
+		const result = await request(op, p, { timeoutMs });
+		if (!result.success && predatesOp(result.error)) {
+			appOpsOutdated = true;
+			noteSpanDetail("via", "simctl");
+			noteSpanDetail("reason", "helper_outdated");
+			opts.log?.(
+				`[ios] this warden-simd predates the \`${op}\` op (${result.error.code}: ${result.error.message}); app lifecycle goes through simctl until the helper is restarted (warden ui close --udid ${udid}) or rebuilt (bun run --cwd packages/e2e native:build)`
+			);
+			return undefined;
+		}
+		noteSpanDetail("via", "simd");
+		return result;
+	}
+
+	/** The outcome of an app op: `fallback` when this helper predates it, else the helper's answer with `note` on its data. */
+	async function appOutcome<Data>(
+		viaHelper: Result<Data, DriverError> | undefined,
+		fallback: () => DriverResult<void>,
+		note: (data: Data) => void
+	): DriverResult<void> {
+		if (viaHelper === undefined) return fallback();
+		if (!viaHelper.success) return viaHelper;
+		note(viaHelper.data);
+		return okVoid;
+	}
 
 	const fetchSnapshot = async (o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }) => {
 		const result = await request("snapshot", params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend }));
@@ -572,7 +629,16 @@ export function createIosDriver(
 		},
 		app: {
 			launch: async (bundleId, o) => {
-				const launched = await simctl.launch(bundleId, o);
+				const viaHelper = await appOp(
+					"launch",
+					params({ bundleId, args: o?.args && [...o.args], env: o?.env, terminateRunning: o?.relaunch !== false }),
+					LAUNCH_TIMEOUT_MS
+				);
+				const launched = await appOutcome(
+					viaHelper,
+					() => simctl.launch(bundleId, o),
+					(data) => noteSpanDetail("pid", data.pid)
+				);
 				if (launched.success) {
 					launchedBundle = bundleId;
 					if (await rebind(bundleId)) launchedBundle = undefined;
@@ -580,11 +646,23 @@ export function createIosDriver(
 				return launched;
 			},
 			terminate: async (bundleId) => {
-				const terminated = await simctl.terminate(bundleId);
+				const viaHelper = await appOp("terminate", { bundleId }, APP_OP_TIMEOUT_MS);
+				const terminated = await appOutcome(
+					viaHelper,
+					() => simctl.terminate(bundleId),
+					(data) => noteSpanDetail("terminated", data.terminated)
+				);
 				if (terminated.success && launchedBundle === bundleId) launchedBundle = undefined;
 				return terminated;
 			},
-			openUrl: (url) => simctl.openUrl(url),
+			openUrl: async (url) => {
+				const viaHelper = await appOp("openUrl", { url }, APP_OP_TIMEOUT_MS);
+				return appOutcome(
+					viaHelper,
+					() => simctl.openUrl(url),
+					() => undefined
+				);
+			},
 			install: (path) => simctl.install(path),
 			uninstall: (bundleId) => simctl.uninstall(bundleId),
 			isInstalled: (bundleId) => simctl.isInstalled(bundleId),

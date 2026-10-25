@@ -32,6 +32,17 @@ const snapshotData = { backend: "axbridge", screen: SCREEN, truncated: false, el
 
 type Handler = (request: FakeSimdRequest) => FakeSimdReply | Promise<FakeSimdReply>;
 
+/** A helper that knows the app lifecycle ops; everything else answers `null`. */
+const lifecycle: Handler = (request) => {
+	if (request.op === "launch") return { data: { pid: 4242 } };
+	if (request.op === "terminate") return { data: { terminated: true } };
+	if (request.op === "openUrl") return { data: {} };
+	return { data: null };
+};
+
+/** A helper built before the app lifecycle ops: the dispatcher's unknown-op answer. */
+const unknownOp = (op: string): FakeSimdReply => ({ error: { code: "E_BAD_REQUEST", message: `unknown op "${op}"` } });
+
 let opened: Driver[] = [];
 afterEach(async () => {
 	await Promise.all(opened.map((driver) => driver.close()));
@@ -807,10 +818,8 @@ describe("settle", () => {
 	});
 
 	test("the first settle after app.launch names the launched bundle, later ones do not", async () => {
-		const { driver, helper } = await open(
-			(request) => (request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null }),
-			{},
-			[["xcrun simctl launch", {}]]
+		const { driver, helper } = await open((request) =>
+			request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : lifecycle(request)
 		);
 		await unwrapped(driver.settle());
 		await unwrapped(driver.app.launch(BUNDLE));
@@ -824,17 +833,13 @@ describe("settle", () => {
 
 	test("a frontmost_mismatch settle keeps asking for the launched bundle", async () => {
 		let answers = 0;
-		const { driver, helper } = await open(
-			(request) => {
-				if (request.op !== "settle") return { data: null };
-				answers += 1;
-				return {
-					data: { quiet: answers > 1, waitedMs: 5, ...(answers === 1 ? { reason: "frontmost_mismatch" } : {}) },
-				};
-			},
-			{},
-			[["xcrun simctl launch", {}]]
-		);
+		const { driver, helper } = await open((request) => {
+			if (request.op !== "settle") return lifecycle(request);
+			answers += 1;
+			return {
+				data: { quiet: answers > 1, waitedMs: 5, ...(answers === 1 ? { reason: "frontmost_mismatch" } : {}) },
+			};
+		});
 		await unwrapped(driver.app.launch(BUNDLE));
 		expect((await unwrapped(driver.settle())).quiet).toBe(false);
 		expect((await unwrapped(driver.settle())).quiet).toBe(true);
@@ -844,65 +849,54 @@ describe("settle", () => {
 	});
 
 	test("app.launch asks the helper to rebind its stream to the launched bundle, and the next settle need not name it", async () => {
-		const { driver, helper } = await open(
-			(request) => {
-				if (request.op === "rebind") return { data: { bound: true, waitedMs: 700, pid: 4242, restarts: 0 } };
-				return request.op === "settle" ? { data: { quiet: true, waitedMs: 5, via: "stream" } } : { data: null };
-			},
-			{},
-			[["xcrun simctl launch", {}]]
-		);
+		const { driver, helper } = await open((request) => {
+			if (request.op === "rebind") return { data: { bound: true, waitedMs: 700, pid: 4242, restarts: 0 } };
+			return request.op === "settle" ? { data: { quiet: true, waitedMs: 5, via: "stream" } } : lifecycle(request);
+		});
 		const notes: SpanDetail = {};
 		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
 		expect(helper.of("rebind")).toHaveLength(1);
 		expect(helper.of("rebind")[0]).toMatchObject({ bundleId: BUNDLE, rebindTimeoutMs: 3000, timeoutMs: 5000 });
-		expect(notes).toEqual({ rebind: "bound", rebindMs: 700 });
+		expect(notes).toEqual({ via: "simd", pid: 4242, rebind: "bound", rebindMs: 700 });
 		await unwrapped(driver.settle());
 		expect(helper.of("settle")[0]).not.toHaveProperty("bundleId");
 	});
 
 	test("a rebind that recycled the helper's guests says so on the launch span", async () => {
-		const { driver } = await open(
-			(request) =>
-				request.op === "rebind"
-					? { data: { bound: true, waitedMs: 1500, pid: 4242, restarts: 1, recycled: true } }
-					: { data: null },
-			{},
-			[["xcrun simctl launch", {}]]
+		const { driver } = await open((request) =>
+			request.op === "rebind"
+				? { data: { bound: true, waitedMs: 1500, pid: 4242, restarts: 1, recycled: true } }
+				: lifecycle(request)
 		);
 		const notes: SpanDetail = {};
 		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
-		expect(notes).toEqual({ rebind: "bound", rebindMs: 1500, rebindRestarts: 1, rebindRecycled: true });
+		expect(notes).toEqual({
+			via: "simd",
+			pid: 4242,
+			rebind: "bound",
+			rebindMs: 1500,
+			rebindRestarts: 1,
+			rebindRecycled: true,
+		});
 	});
 
 	test("an unbound rebind leaves the next settle naming the launched bundle", async () => {
-		const { driver, helper } = await open(
-			(request) => {
-				if (request.op === "rebind") return { data: { bound: false, waitedMs: 3000, reason: "timeout", restarts: 1 } };
-				return request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null };
-			},
-			{},
-			[["xcrun simctl launch", {}]]
-		);
+		const { driver, helper } = await open((request) => {
+			if (request.op === "rebind") return { data: { bound: false, waitedMs: 3000, reason: "timeout", restarts: 1 } };
+			return request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : lifecycle(request);
+		});
 		const notes: SpanDetail = {};
 		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
-		expect(notes).toEqual({ rebind: "timeout", rebindMs: 3000, rebindRestarts: 1 });
+		expect(notes).toEqual({ via: "simd", pid: 4242, rebind: "timeout", rebindMs: 3000, rebindRestarts: 1 });
 		await unwrapped(driver.settle());
 		expect(helper.of("settle")[0]).toMatchObject({ bundleId: BUNDLE });
 	});
 
 	test("a failing rebind never fails the launch, and an unsupported one is not asked again", async () => {
-		const { driver, helper, logs } = await open(
-			(request) => {
-				if (request.op === "rebind") return { error: { code: "E_BAD_REQUEST", message: 'unknown op "rebind"' } };
-				return { data: null };
-			},
-			{},
-			[
-				["xcrun simctl launch", {}],
-				["xcrun simctl launch", {}],
-			]
-		);
+		const { driver, helper, logs } = await open((request) => {
+			if (request.op === "rebind") return { error: { code: "E_BAD_REQUEST", message: 'unknown op "rebind"' } };
+			return lifecycle(request);
+		});
 		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
 		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
 		expect(helper.of("rebind")).toHaveLength(1);
@@ -910,13 +904,8 @@ describe("settle", () => {
 	});
 
 	test("a rebind that times out or errors is logged and the launch still succeeds", async () => {
-		const { driver, helper } = await open(
-			(request) => (request.op === "rebind" ? { error: { code: "E_INTERNAL", message: "boom" } } : { data: null }),
-			{},
-			[
-				["xcrun simctl launch", {}],
-				["xcrun simctl launch", {}],
-			]
+		const { driver, helper } = await open((request) =>
+			request.op === "rebind" ? { error: { code: "E_INTERNAL", message: "boom" } } : lifecycle(request)
 		);
 		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
 		expect((await driver.app.launch(BUNDLE)).success).toBe(true);
@@ -924,13 +913,8 @@ describe("settle", () => {
 	});
 
 	test("terminating the launched bundle stops naming it", async () => {
-		const { driver, helper } = await open(
-			(request) => (request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : { data: null }),
-			{},
-			[
-				["xcrun simctl launch", {}],
-				["xcrun simctl terminate", {}],
-			]
+		const { driver, helper } = await open((request) =>
+			request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : lifecycle(request)
 		);
 		await unwrapped(driver.app.launch(BUNDLE));
 		await unwrapped(driver.app.terminate(BUNDLE));
@@ -1054,15 +1038,139 @@ describe("screenshot", () => {
 	});
 });
 
+describe("app lifecycle through the helper", () => {
+	test("launch sends bundle, args, env and terminateRunning to the helper; no simctl process is started", async () => {
+		const { driver, helper, calls } = await open(lifecycle);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE, { args: ["--x"], env: { A: "1" } })));
+		expect(helper.of("launch")[0]).toMatchObject({
+			bundleId: BUNDLE,
+			args: ["--x"],
+			env: { A: "1" },
+			terminateRunning: true,
+			timeoutMs: 30_000,
+		});
+		expect(notes).toMatchObject({ via: "simd", pid: 4242 });
+		expect(joined(calls).some((line) => line.includes("simctl launch"))).toBe(false);
+	});
+
+	test("relaunch: false keeps a running instance; absent options are not sent", async () => {
+		const { driver, helper } = await open(lifecycle);
+		await unwrapped(driver.app.launch(BUNDLE));
+		await unwrapped(driver.app.launch(BUNDLE, { relaunch: false }));
+		const [first, second] = helper.of("launch");
+		expect(first).toMatchObject({ bundleId: BUNDLE, terminateRunning: true });
+		expect(first).not.toHaveProperty("args");
+		expect(first).not.toHaveProperty("env");
+		expect(second).toMatchObject({ terminateRunning: false });
+	});
+
+	test("terminate and openUrl go to the helper", async () => {
+		const { driver, helper, calls } = await open(lifecycle);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.app.terminate(BUNDLE)));
+		await unwrapped(driver.app.openUrl("myapp://home"));
+		expect(helper.of("terminate")[0]).toMatchObject({ bundleId: BUNDLE });
+		expect(helper.of("openUrl")[0]).toMatchObject({ url: "myapp://home" });
+		expect(notes).toEqual({ via: "simd", terminated: true });
+		expect(joined(calls).some((line) => /simctl (terminate|openurl)/.test(line))).toBe(false);
+	});
+
+	test("terminating an app that was not running is a success", async () => {
+		const { driver } = await open((request) =>
+			request.op === "terminate" ? { data: { terminated: false } } : lifecycle(request)
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.app.terminate(BUNDLE)));
+		expect(notes).toEqual({ via: "simd", terminated: false });
+	});
+
+	test("a helper that predates the ops is asked once; simctl does launch, terminate and openUrl from then on", async () => {
+		const { driver, helper, calls, logs } = await open(
+			(request) => (["launch", "terminate", "openUrl"].includes(request.op) ? unknownOp(request.op) : { data: null }),
+			{},
+			[
+				["xcrun simctl launch", {}],
+				["xcrun simctl terminate", {}],
+				["xcrun simctl openurl", {}],
+			]
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () =>
+			unwrapped(driver.app.launch(BUNDLE, { args: ["--x"], env: { A: "1" }, relaunch: false }))
+		);
+		expect(notes).toMatchObject({ via: "simctl", reason: "helper_outdated" });
+		await unwrapped(driver.app.openUrl("myapp://home"));
+		await unwrapped(driver.app.terminate(BUNDLE));
+		await unwrapped(driver.app.launch(BUNDLE));
+		expect(helper.of("launch")).toHaveLength(1);
+		expect(helper.of("openUrl")).toHaveLength(0);
+		expect(helper.of("terminate")).toHaveLength(0);
+		const lines = joined(calls);
+		expect(lines).toContain(`xcrun simctl launch ${UDID} ${BUNDLE} --x`);
+		expect(lines).toContain(`xcrun simctl launch --terminate-running-process ${UDID} ${BUNDLE}`);
+		expect(calls.find((call) => call.cmd.includes("launch"))?.opts?.env).toEqual({ SIMCTL_CHILD_A: "1" });
+		expect(lines).toContain(`xcrun simctl openurl ${UDID} myapp://home`);
+		expect(lines).toContain(`xcrun simctl terminate ${UDID} ${BUNDLE}`);
+		expect(logs.filter((line) => line.includes("predates the `launch` op"))).toHaveLength(1);
+	});
+
+	test("E_UNSUPPORTED from the helper falls back the same way", async () => {
+		const { driver, helper, calls } = await open(
+			(request) =>
+				request.op === "openUrl" ? { error: { code: "E_UNSUPPORTED", message: "no url opener" } } : lifecycle(request),
+			{},
+			[["xcrun simctl openurl", {}]]
+		);
+		await unwrapped(driver.app.openUrl("myapp://a"));
+		await unwrapped(driver.app.openUrl("myapp://b"));
+		expect(helper.of("openUrl")).toHaveLength(1);
+		expect(joined(calls).filter((line) => line.includes("simctl openurl"))).toHaveLength(2);
+	});
+
+	test("a real failure from the helper is the answer: no simctl, and the helper is asked again next time", async () => {
+		const { driver, helper, calls } = await open((request) =>
+			request.op === "launch"
+				? { error: { code: "E_APP_UNAVAILABLE", message: `${BUNDLE} is not installed` } }
+				: lifecycle(request)
+		);
+		const first = await driver.app.launch(BUNDLE);
+		expect(!first.success && first.error.code).toBe("E_APP_UNAVAILABLE");
+		await driver.app.launch(BUNDLE);
+		expect(helper.of("launch")).toHaveLength(2);
+		expect(joined(calls).some((line) => line.includes("simctl launch"))).toBe(false);
+	});
+
+	test("an E_BAD_REQUEST about the request itself passes through", async () => {
+		const { driver, helper } = await open((request) =>
+			request.op === "openUrl"
+				? { error: { code: "E_BAD_REQUEST", message: '"url" is not a URL' } }
+				: lifecycle(request)
+		);
+		const result = await driver.app.openUrl("not a url");
+		expect(!result.success && result.error).toMatchObject({ code: "E_BAD_REQUEST" });
+		await driver.app.openUrl("still not");
+		expect(helper.of("openUrl")).toHaveLength(2);
+	});
+
+	test("a failed launch through the helper leaves the next settle unnamed", async () => {
+		const { driver, helper } = await open((request) => {
+			if (request.op === "launch") return { error: { code: "E_IO", message: "launchd refused" } };
+			return request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : lifecycle(request);
+		});
+		await driver.app.launch(BUNDLE);
+		await unwrapped(driver.settle());
+		expect(helper.of("settle")[0]).not.toHaveProperty("bundleId");
+		expect(helper.of("rebind")).toHaveLength(0);
+	});
+});
+
 describe("simctl-backed methods", () => {
-	test("appearance, clipboard and app commands", async () => {
-		const { driver, calls } = await open(() => ({ data: null }), {}, [
+	test("appearance, clipboard and the app commands that stay on simctl", async () => {
+		const { driver, calls } = await open(lifecycle, {}, [
 			["xcrun simctl ui UDID-1 appearance", { stdout: "light\n" }],
 			["sh -c", {}],
 			["xcrun simctl pbpaste", { stdout: "copied" }],
-			["xcrun simctl launch", {}],
-			["xcrun simctl terminate", {}],
-			["xcrun simctl openurl", {}],
 			["xcrun simctl install", {}],
 			["xcrun simctl get_app_container", { stdout: "/app\n" }],
 			["xcrun simctl uninstall", {}],
@@ -1072,20 +1180,14 @@ describe("simctl-backed methods", () => {
 		expect(await unwrapped(driver.appearance("dark"))).toBe("dark");
 		expect(await unwrapped(driver.clipboard("copied"))).toBe("copied");
 		expect(await unwrapped(driver.clipboard())).toBe("copied");
-		await unwrapped(driver.app.launch(BUNDLE, { args: ["--x"], env: { A: "1" }, relaunch: false }));
 		expect(await unwrapped(driver.app.isInstalled(BUNDLE))).toBe(true);
 		expect(await unwrapped(driver.app.isRunning(BUNDLE))).toBe(true);
-		await unwrapped(driver.app.openUrl("myapp://home"));
 		await unwrapped(driver.app.install("/b/App.app"));
-		await unwrapped(driver.app.terminate(BUNDLE));
 		await unwrapped(driver.app.uninstall(BUNDLE));
 		const lines = joined(calls);
-		expect(lines).toContain(`xcrun simctl launch ${UDID} ${BUNDLE} --x`);
-		expect(lines).toContain(`xcrun simctl openurl ${UDID} myapp://home`);
 		expect(lines).toContain(`xcrun simctl install ${UDID} /b/App.app`);
-		expect(lines).toContain(`xcrun simctl terminate ${UDID} ${BUNDLE}`);
 		expect(lines).toContain(`xcrun simctl uninstall ${UDID} ${BUNDLE}`);
-		expect(calls.find((call) => call.cmd.includes("launch"))?.opts?.env).toEqual({ SIMCTL_CHILD_A: "1" });
+		expect(lines).toContain(`xcrun simctl spawn ${UDID} launchctl list`);
 	});
 
 	test("clearData uses core's resetAppData (missing app is E_APP_UNAVAILABLE)", async () => {
@@ -1270,7 +1372,10 @@ describe("latency log (WARDEN_E2E_DEBUG)", () => {
 	test("debug logs each helper op and simctl call with its duration", async () => {
 		let t = 0;
 		const { driver, logs } = await open(
-			(request) => (request.op === "tap" ? { error: { code: "E_HID", message: "x" } } : { data: null }),
+			(request) => {
+				if (request.op === "tap") return { error: { code: "E_HID", message: "x" } };
+				return request.op === "terminate" ? unknownOp("terminate") : { data: null };
+			},
 			{
 				debug: true,
 				now: () => {

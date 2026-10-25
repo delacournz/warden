@@ -133,3 +133,24 @@ Instrumented run (`.bench/cpu2-prof`, warden only, 2 reps; `WARDEN_BUN` pointed 
 So the "bun test (exit charge)" row (0.58–1.15 CPU-s per rep) is not bun's startup or exit: it is the CPU of short-lived children of `bun test` that no 500 ms tick saw, booked to the root at its exit. Those children are the `xcrun simctl` invocations the iOS driver makes: `simctl launch --terminate-running-process` costs 0.13–0.16 CPU-s each (CoreSimulator loads in every invocation; `xcrun` itself 0.00, `plutil` 0.00), `terminate` 0.12, `openurl` 0.11, measured on a booted sim. One launch per `app.open` (8 per rep) plus `openurl` and the open-time probes come to about 1.2 CPU-s per rep: ~40 % of warden's host CPU, more than `warden-simd`'s 1.4 s, split between the visible `simctl` row and the exit charge. The spec process itself (zod on every reply, `snapshotHash`, transpile) is not worth touching.
 
 Fix (plan WDN-CPU2, CPU2-4.2): launch, terminate and open-url through the resident helper, which already links FBSimulatorControl and has CoreSimulator loaded, with `simctl` as the fallback for an older helper. Expected: host ≈ 3.0 → ≈ 1.9 CPU-s per rep and 100–250 ms less wall per launch.
+
+## Result of launching through the helper (2026-10-25)
+
+`app.launch`, `app.terminate` and `app.openUrl` now run as ops inside the resident `warden-simd` (`launch{bundleId, args?, env?, terminateRunning?}` → `{pid}`, `terminate{bundleId}` → `{terminated}`, `openUrl{url}`), on the simulator framework the helper already links. Before, every `app.open` spawned one `xcrun simctl` per launch, and each of those processes loaded CoreSimulator from scratch: that was the `simctl` rows and most of the `bun test (exit charge)` row, since a short-lived child's CPU is charged to the parent on exit. Install, uninstall, `isRunning` and `clearData` stay on `simctl`; a helper that predates the ops answers `E_UNSUPPORTED` once and the driver falls back to `simctl` for the session. Same local setup (this Mac, pinned app, warden only, 3 reps, host loaded by another agent's sim + `warden dev` during both runs):
+
+| Per rep (warm) | Before (`.bench/cpu2-4-before`) | After (`.bench/cpu2-4-after`) | Delta |
+|---|---|---|---|
+| Host CPU-s | 3.40 | 2.09 | -38.7 % |
+| of which `warden-simd` | 1.57 | 1.48 | -0.09 s |
+| `simctl` + `(simctl)` | 0.57 | 0.05 | -0.52 s |
+| `bun test (exit charge)` | 0.63 | 0.06 | -0.57 s |
+| `warden-simd` RSS peak | 30.8 MB | 37.2 MB | +6.4 MB |
+| `driver.app.launch` median / p90 | 1895 / 2184 ms | 1768 / 1981 ms | -127 / -203 ms |
+| Suite median | 63.23 s | 55.21 s | -12.7 % |
+| Pass rate | 95.8 % | 100 % | |
+
+Every `driver.app.launch` span in the after run carries `via: simd` and the app's `pid`. The sampler saw 5 host `simctl` starts over the before run and 1 after (it ticks, so it never counted all eight per rep; the CPU rows are the measure). The sim side also dropped (`iOS` 22.75 → 19.83 s, `(launchctl)` 0.72 → 0.23 s, `dtpasteboardd` 0.32 → 0): the simulator no longer services a fresh CoreSimulator client per launch. Against the EAS baseline (3.79 CPU-s/rep) the guard reads -45 %.
+
+Parity, from the smoke's lifecycle leg on a claimed sim: launch args and env reach the app (both visible in `launchctl procinfo` of the launched pid), `relaunch` replaces the pid, `relaunch: false` keeps it, terminating twice is ok both times, and `openUrl` of the app's scheme link brings it to the front. One thing could not be shown here: on a fresh boot neither the helper's open nor `xcrun simctl openurl` raised the "Open in …?" sheet on this Mac, whether the app was running or not, so the bench's once-per-boot sheet priming is a no-op on this machine either way. The first hosted run decides whether the sheet behaves differently there.
+
+Next on the host is what remains in the helper itself (1.48 s/rep, the AX read path) and the `bun test` runner (0.42 s); the sim side (CPU2-2) is now the larger share again.
