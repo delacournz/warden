@@ -27,7 +27,7 @@ import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
 import { connectSimd, type RequestOptions, type SimdClient, spawnSimd } from "./simd-client";
-import type { AlertButtonsData, OpData, SettleData } from "./simd-protocol";
+import type { AlertButtonsData, HealthData, OpData, RebindData, SettleData } from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
 import { typeTextBudgetMs } from "./type-budget";
 
@@ -154,6 +154,27 @@ function nativeDetail(data: SettleData): SettleDetail {
 	if (reason !== undefined) noteSpanDetail("reason", reason);
 	if (frontmostPid !== undefined) noteSpanDetail("frontmostPid", frontmostPid);
 	return detail;
+}
+
+/** Leaves the helper's rebind verdict on the current span. */
+function noteRebind(data: RebindData): void {
+	noteSpanDetail("rebind", data.bound ? "bound" : (data.reason ?? "unbound"));
+	noteSpanDetail("rebindMs", data.waitedMs);
+	if (data.restarts !== undefined && data.restarts > 0) noteSpanDetail("rebindRestarts", data.restarts);
+	if (data.recycled === true) noteSpanDetail("rebindRecycled", true);
+}
+
+/** The `detail` of a `health` reply: only the helper fields that are present. */
+function healthDetail(d: HealthData): Record<string, unknown> {
+	return {
+		axDefault: d.ax.default,
+		...(d.ax.bridge === "degraded" ? { axBridge: "degraded" } : {}),
+		...(d.ax.lastError ? { axLastError: d.ax.lastError } : {}),
+		...(d.ax.error !== undefined ? { axError: d.ax.error } : {}),
+		...(d.socket ? { socket: d.socket } : {}),
+		...(d.xcode ? { xcode: d.xcode } : {}),
+		...(d.state ? { state: d.state } : {}),
+	};
 }
 
 /** Carries a `DriverError` out of a `settleByHash` poll callback. */
@@ -370,41 +391,46 @@ export function createIosDriver(
 			opts.log?.(`[ios] rebind after launch failed (${reply.error.code}): ${reply.error.message}`);
 			return false;
 		}
-		noteSpanDetail("rebind", reply.data.bound ? "bound" : (reply.data.reason ?? "unbound"));
-		noteSpanDetail("rebindMs", reply.data.waitedMs);
-		if (reply.data.restarts !== undefined && reply.data.restarts > 0)
-			noteSpanDetail("rebindRestarts", reply.data.restarts);
-		if (reply.data.recycled === true) noteSpanDetail("rebindRecycled", true);
+		noteRebind(reply.data);
 		return reply.data.bound;
+	}
+
+	/**
+	 * The helper's own settle, or undefined when it is unsupported (the caller falls back to polling snapshot hashes).
+	 * The helper's budget is `settleTimeoutMs`; the envelope `timeoutMs` is only our padded transport timer.
+	 */
+	async function settleViaHelper(quietMs: number, timeoutMs: number): Promise<DriverResult<SettleDetail> | undefined> {
+		const expected = launchedBundle;
+		const native = await request(
+			"settle",
+			{ quietMs, settleTimeoutMs: timeoutMs, ...(expected === undefined ? {} : { bundleId: expected }) },
+			{ timeoutMs: timeoutMs + SETTLE_MARGIN_MS }
+		);
+		if (native.success) {
+			// a mismatch means the app never came to the front: keep asking for it on the next settle
+			if (expected !== undefined && native.data.reason !== "frontmost_mismatch") launchedBundle = undefined;
+			return { success: true, data: nativeDetail(native.data) };
+		}
+		// settle is best effort: a loaded machine answering after the padded timer means "not quiet", not a failure
+		if (native.error.code === "E_TIMEOUT") {
+			noteSpanDetail("reason", "helper_timeout");
+			return {
+				success: true,
+				data: { quiet: false, waitedMs: timeoutMs + SETTLE_MARGIN_MS, reason: "helper_timeout" },
+			};
+		}
+		if (native.error.code !== "E_UNSUPPORTED") return native;
+		settleUnsupported = true;
+		opts.log?.("[ios] native settle unsupported, polling snapshot hashes");
+		return undefined;
 	}
 
 	async function settle(o: { quietMs?: number; timeoutMs?: number } = {}): DriverResult<SettleDetail> {
 		const quietMs = o.quietMs ?? DEFAULT_QUIET_MS;
 		const timeoutMs = o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS;
 		if (!settleUnsupported) {
-			// the helper's budget is `settleTimeoutMs`; the envelope `timeoutMs` is only our padded transport timer
-			const expected = launchedBundle;
-			const native = await request(
-				"settle",
-				{ quietMs, settleTimeoutMs: timeoutMs, ...(expected === undefined ? {} : { bundleId: expected }) },
-				{ timeoutMs: timeoutMs + SETTLE_MARGIN_MS }
-			);
-			if (native.success) {
-				// a mismatch means the app never came to the front: keep asking for it on the next settle
-				if (expected !== undefined && native.data.reason !== "frontmost_mismatch") launchedBundle = undefined;
-				return { success: true, data: nativeDetail(native.data) };
-			}
-			// settle is best effort: a loaded machine answering after the padded timer means "not quiet", not a failure
-			if (native.error.code === "E_TIMEOUT") {
-				noteSpanDetail("reason", "helper_timeout");
-				return {
-					success: true,
-					data: { quiet: false, waitedMs: timeoutMs + SETTLE_MARGIN_MS, reason: "helper_timeout" },
-				};
-			}
-			if (native.error.code !== "E_UNSUPPORTED") return native;
-			settleUnsupported = true;
-			opts.log?.("[ios] native settle unsupported, polling snapshot hashes");
+			const native = await settleViaHelper(quietMs, timeoutMs);
+			if (native) return native;
 		}
 		return hashSettle({ quietMs, timeoutMs });
 	}
@@ -463,15 +489,7 @@ export function createIosDriver(
 				transport: d.hid.transport,
 				bridge: d.ax.bridge === "degraded" ? "available" : d.ax.bridge,
 				screen: d.screen,
-				detail: {
-					axDefault: d.ax.default,
-					...(d.ax.bridge === "degraded" ? { axBridge: "degraded" } : {}),
-					...(d.ax.lastError ? { axLastError: d.ax.lastError } : {}),
-					...(d.ax.error !== undefined ? { axError: d.ax.error } : {}),
-					...(d.socket ? { socket: d.socket } : {}),
-					...(d.xcode ? { xcode: d.xcode } : {}),
-					...(d.state ? { state: d.state } : {}),
-				},
+				detail: healthDetail(d),
 			},
 		};
 	}

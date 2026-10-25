@@ -61,6 +61,64 @@ function optionCandidates(cmd: CommandUnknownOpts, current: string, used: Readon
 		});
 }
 
+const NOTHING: Completion = { candidates: [], files: false };
+
+/** Where the finished words leave the cursor: the command reached, an option awaiting its value, the positional index. */
+type Walk = {
+	cmd: CommandUnknownOpts;
+	pending: Option | undefined;
+	positional: number;
+	used: Set<Option>;
+	/** a leaf-less command given a stray word: nothing can follow */
+	dead: boolean;
+};
+
+/** Step the walk over one finished word: a pending option's value, an option, a subcommand or a positional. */
+function stepWalk(walk: Walk, word: string): void {
+	if (walk.pending) {
+		walk.pending = undefined;
+		return;
+	}
+	if (word.startsWith("-") && word !== "-" && word !== "--") {
+		const opt = findOption(walk.cmd, word);
+		if (!opt) return;
+		walk.used.add(opt);
+		if (takesValue(opt) && !word.includes("=")) walk.pending = opt;
+		return;
+	}
+	const sub = findSubcommand(walk.cmd, word);
+	if (sub) {
+		walk.cmd = sub;
+		walk.positional = 0;
+		walk.used = new Set();
+		return;
+	}
+	if (subcommands(walk.cmd).length > 0 && walk.cmd.registeredArguments.length === 0) {
+		walk.dead = true;
+		return;
+	}
+	walk.positional++;
+}
+
+/** Candidates for a word starting with `-`: `--opt=` values, else the options. */
+function completeDashed(cmd: CommandUnknownOpts, current: string, used: ReadonlySet<Option>): Completion {
+	const eq = current.indexOf("=");
+	if (eq <= 0) return { candidates: optionCandidates(cmd, current, used), files: false };
+	const opt = findOption(cmd, current);
+	return { candidates: choices((opt && valueChoices(opt)) ?? [], current.slice(0, eq + 1), current), files: false };
+}
+
+/** Candidates for the next positional argument (or options on a fresh word) once no subcommand matches. */
+function completePositional(walk: Walk, current: string): Completion {
+	const { cmd } = walk;
+	const args = cmd.registeredArguments;
+	const arg = args[walk.positional] ?? (args.at(-1)?.variadic ? args.at(-1) : undefined);
+	const values = arg && valueChoices(arg);
+	if (values) return { candidates: choices(values, "", current), files: false };
+	if (arg) return { candidates: [], files: true };
+	return { candidates: current === "" ? optionCandidates(cmd, current, walk.used) : [], files: false };
+}
+
 /**
  * What can follow `warden <words…>`: `words` are the arguments after `warden`, the last one being the word
  * under the cursor ("" for a fresh word). Walks the same commander tree `--help` prints, so subcommands,
@@ -68,58 +126,24 @@ function optionCandidates(cmd: CommandUnknownOpts, current: string, used: Readon
  */
 export function complete(root: CommandUnknownOpts, words: readonly string[]): Completion {
 	const current = words.at(-1) ?? "";
-	let cmd = root;
-	let pending: Option | undefined;
-	let positional = 0;
-	let used = new Set<Option>();
+	const walk: Walk = { cmd: root, pending: undefined, positional: 0, used: new Set(), dead: false };
 	for (const word of words.slice(0, -1)) {
-		if (pending) {
-			pending = undefined;
-			continue;
-		}
-		if (word.startsWith("-") && word !== "-" && word !== "--") {
-			const opt = findOption(cmd, word);
-			if (!opt) continue;
-			used.add(opt);
-			if (takesValue(opt) && !word.includes("=")) pending = opt;
-			continue;
-		}
-		const sub = findSubcommand(cmd, word);
-		if (sub) {
-			cmd = sub;
-			positional = 0;
-			used = new Set();
-			continue;
-		}
-		if (subcommands(cmd).length > 0 && cmd.registeredArguments.length === 0) return { candidates: [], files: false };
-		positional++;
+		stepWalk(walk, word);
+		if (walk.dead) return NOTHING;
 	}
 
-	if (pending) {
-		const values = valueChoices(pending);
+	if (walk.pending) {
+		const values = valueChoices(walk.pending);
 		return values ? { candidates: choices(values, "", current), files: false } : { candidates: [], files: true };
 	}
-	if (current.startsWith("-")) {
-		const eq = current.indexOf("=");
-		if (eq > 0) {
-			const opt = findOption(cmd, current);
-			return { candidates: choices((opt && valueChoices(opt)) ?? [], current.slice(0, eq + 1), current), files: false };
-		}
-		return { candidates: optionCandidates(cmd, current, used), files: false };
-	}
+	if (current.startsWith("-")) return completeDashed(walk.cmd, current, walk.used);
 
-	const subs = subcommands(cmd)
+	const subs = subcommands(walk.cmd)
 		.filter((sub) => sub.name().startsWith(current))
 		.map((sub): Candidate => ({ kind: "command", value: sub.name(), description: oneLine(sub.description()) }));
 	if (subs.length > 0) return { candidates: subs, files: false };
-	if (subcommands(cmd).length > 0) return { candidates: [], files: false };
-
-	const args = cmd.registeredArguments;
-	const arg = args[positional] ?? (args.at(-1)?.variadic ? args.at(-1) : undefined);
-	const values = arg && valueChoices(arg);
-	if (values) return { candidates: choices(values, "", current), files: false };
-	if (arg) return { candidates: [], files: true };
-	return { candidates: current === "" ? optionCandidates(cmd, current, used) : [], files: false };
+	if (subcommands(walk.cmd).length > 0) return NOTHING;
+	return completePositional(walk, current);
 }
 
 /** `warden __complete` output: one `kind<TAB>value<TAB>description` line per candidate, then `files` if wanted. */

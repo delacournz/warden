@@ -253,6 +253,33 @@ function graphNeeded(
 /** false when `files` / `only` replace the git diff (so there is no base to report). */
 const usesGit = (input: AffectedInput): boolean => !input.files && !input.only;
 
+/** The specs one platform must run, with the import graph's warning when it loaded with one. */
+async function selectForPlatform(o: {
+	input: AffectedInput;
+	suite: Suite;
+	platform: Platform;
+	needsGraph: boolean;
+	importCachePath: string | undefined;
+	changes: readonly ChangedFile[];
+	specs: SelectInput["specs"];
+}): AsyncResult<{ selection: Selection; warning: string | undefined }> {
+	const { input, suite, platform } = o;
+	const graph = await importGraphFor(o.needsGraph, input, suite, platform, o.importCachePath);
+	if (!graph.success) return graph;
+	const loaded = graph.data;
+	const selection = selectSpecs({
+		suite: suite.config,
+		configDir: suite.configDir,
+		platform,
+		changes: o.changes,
+		specs: o.specs,
+		...(loaded ? { imports: loaded.graph.imports } : {}),
+		...(input.only ? { only: input.only } : {}),
+	});
+	loaded?.graph.save();
+	return ok({ selection, warning: loaded?.warning });
+}
+
 /** Changed files → the specs each platform must run (with reasons), per `e2e.<suite>`. */
 export async function computeAffected(given: AffectedInput): AsyncResult<Affected> {
 	const suite = await findSuite(given.exec, given.cwd, given.suite, given.git, given.env);
@@ -273,22 +300,18 @@ export async function computeAffected(given: AffectedInput): AsyncResult<Affecte
 	const selections: Selection[] = [];
 	const warnings = [...scan.warnings];
 	for (const platform of platformsOf(input, suite.data)) {
-		const graph = await importGraphFor(needsGraph, input, suite.data, platform, importCachePath);
-		if (!graph.success) return graph;
-		const loaded = graph.data;
-		if (loaded?.warning !== undefined) warnings.push(loaded.warning);
-		selections.push(
-			selectSpecs({
-				suite: config,
-				configDir,
-				platform,
-				changes: changes.data,
-				specs: scan.specs,
-				...(loaded ? { imports: loaded.graph.imports } : {}),
-				...(input.only ? { only: input.only } : {}),
-			})
-		);
-		loaded?.graph.save();
+		const picked = await selectForPlatform({
+			input,
+			suite: suite.data,
+			platform,
+			needsGraph,
+			importCachePath,
+			changes: changes.data,
+			specs: scan.specs,
+		});
+		if (!picked.success) return picked;
+		if (picked.data.warning !== undefined) warnings.push(picked.data.warning);
+		selections.push(picked.data.selection);
 	}
 	return ok({
 		suite: suite.data,

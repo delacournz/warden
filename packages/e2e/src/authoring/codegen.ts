@@ -313,6 +313,61 @@ function interaction(step: RecordedStep, gen: Gen): string[] | undefined {
 	}
 }
 
+/** A swipe: by `path` through `screen.gesture.swipe({ from, to })`, else by direction on a locator or the screen. */
+function swipeGesture(step: Extract<GestureStep, { type: "swipe" }>, gen: Gen): string[] {
+	if (step.by === "path") {
+		gen.uses.screen = true;
+		const { from, to, durationMs } = step;
+		const duration = durationMs === undefined ? "" : `, durationMs: ${durationMs}`;
+		return [`await screen.gesture.swipe({ from: ${point(from.x, from.y)}, to: ${point(to.x, to.y)}${duration} });`];
+	}
+	const { direction, momentum, target } = step;
+	const opts = options([
+		["direction", direction],
+		["momentum", momentum],
+	]);
+	if (target?.kind === "selector") return [`await ${locatorOf(target, gen)}.swipe(${opts});`];
+	gen.uses.screen = true;
+	return [
+		...(target ? [`// FIXME: swipe target was recorded by coordinates (${target.warning})`] : []),
+		`await screen.gesture.swipe(${opts});`,
+	];
+}
+
+/** A pinch or rotate: a locator call when the target is a selector, else `screen.gesture.*` with a FIXME for a point. */
+function pinchRotateGesture(step: Extract<GestureStep, { type: "pinch" | "rotate" }>, gen: Gen): string[] {
+	const amount = step.type === "pinch" ? step.scale : step.degrees;
+	const opts = options([
+		["durationMs", step.durationMs],
+		["radius", step.radius],
+	]);
+	const { target } = step;
+	if (target?.kind === "selector") {
+		return [`await ${locatorOf(target, gen)}.${call(step.type, String(amount), opts)};`];
+	}
+	gen.uses.screen = true;
+	const key = step.type === "pinch" ? "scale" : "degrees";
+	const fields = [
+		`${key}: ${amount}`,
+		...(target ? [`center: ${point(target.x, target.y)}`] : []),
+		...(step.durationMs === undefined ? [] : [`durationMs: ${step.durationMs}`]),
+		...(step.radius === undefined ? [] : [`radius: ${step.radius}`]),
+	];
+	const spec = `{ ${fields.join(", ")} }`;
+	return [
+		...(target ? [`// FIXME: ${step.type} target was recorded by coordinates (${target.warning})`] : []),
+		`await screen.gesture.${step.type}(${spec});`,
+	];
+}
+
+/** A multi-finger path gesture through `screen.gesture.path`. */
+function pathGesture(step: Extract<GestureStep, { type: "path" }>, gen: Gen): string[] {
+	gen.uses.screen = true;
+	const paths = step.paths.map((path) => `[${path.map((p) => point(p.x, p.y)).join(", ")}]`).join(", ");
+	const spec = `{ ${[`paths: [${paths}]`, ...(step.durationMs === undefined ? [] : [`durationMs: ${step.durationMs}`])].join(", ")} }`;
+	return [`await screen.gesture.path(${spec});`];
+}
+
 /** `screen.gesture.swipe` takes `{ from, to }` or `{ direction }`, like `screen.swipe`; pinch/rotate on a locator or the screen. */
 function gesture(step: GestureStep, gen: Gen): string[] {
 	switch (step.type) {
@@ -320,56 +375,13 @@ function gesture(step: GestureStep, gen: Gen): string[] {
 			return located(step.target, gen, "long press at a point", (l) => [
 				`await ${l}.${call("longPress", options([["durationMs", step.durationMs]]))};`,
 			]);
-		case "swipe": {
-			if (step.by === "path") {
-				gen.uses.screen = true;
-				const { from, to, durationMs } = step;
-				const duration = durationMs === undefined ? "" : `, durationMs: ${durationMs}`;
-				return [`await screen.gesture.swipe({ from: ${point(from.x, from.y)}, to: ${point(to.x, to.y)}${duration} });`];
-			}
-			const { direction, momentum, target } = step;
-			const opts = options([
-				["direction", direction],
-				["momentum", momentum],
-			]);
-			if (target?.kind === "selector") return [`await ${locatorOf(target, gen)}.swipe(${opts});`];
-			gen.uses.screen = true;
-			return [
-				...(target ? [`// FIXME: swipe target was recorded by coordinates (${target.warning})`] : []),
-				`await screen.gesture.swipe(${opts});`,
-			];
-		}
+		case "swipe":
+			return swipeGesture(step, gen);
 		case "pinch":
-		case "rotate": {
-			const amount = step.type === "pinch" ? step.scale : step.degrees;
-			const opts = options([
-				["durationMs", step.durationMs],
-				["radius", step.radius],
-			]);
-			const { target } = step;
-			if (target?.kind === "selector") {
-				return [`await ${locatorOf(target, gen)}.${call(step.type, String(amount), opts)};`];
-			}
-			gen.uses.screen = true;
-			const key = step.type === "pinch" ? "scale" : "degrees";
-			const fields = [
-				`${key}: ${amount}`,
-				...(target ? [`center: ${point(target.x, target.y)}`] : []),
-				...(step.durationMs === undefined ? [] : [`durationMs: ${step.durationMs}`]),
-				...(step.radius === undefined ? [] : [`radius: ${step.radius}`]),
-			];
-			const spec = `{ ${fields.join(", ")} }`;
-			return [
-				...(target ? [`// FIXME: ${step.type} target was recorded by coordinates (${target.warning})`] : []),
-				`await screen.gesture.${step.type}(${spec});`,
-			];
-		}
-		case "path": {
-			gen.uses.screen = true;
-			const paths = step.paths.map((path) => `[${path.map((p) => point(p.x, p.y)).join(", ")}]`).join(", ");
-			const spec = `{ ${[`paths: [${paths}]`, ...(step.durationMs === undefined ? [] : [`durationMs: ${step.durationMs}`])].join(", ")} }`;
-			return [`await screen.gesture.path(${spec});`];
-		}
+		case "rotate":
+			return pinchRotateGesture(step, gen);
+		case "path":
+			return pathGesture(step, gen);
 	}
 }
 
@@ -634,6 +646,18 @@ const byName = (a: string, b: string): number => {
 	return x < y ? -1 : x > y ? 1 : 0;
 };
 
+/** The non-framework imports a spec needs: the ids import, recorded helpers, and the shared spec options. */
+function specImports(gen: Gen, options: CodegenOptions, usesOptions: boolean): Map<string, string[]> {
+	const imports = new Map<string, string[]>();
+	if (gen.uses.ids && options.idsImport) imports.set(options.idsImport, ["ids"]);
+	for (const [specifier, names] of gen.helpers) imports.set(specifier, [...(imports.get(specifier) ?? []), ...names]);
+	if (usesOptions && options.specOptions !== undefined) {
+		const specifier = moduleSpecifier(options.specOptions.module, options.file);
+		imports.set(specifier, [...(imports.get(specifier) ?? []), options.specOptions.name].sort(byName));
+	}
+	return imports;
+}
+
 /** The `*.e2e.ts` source for a recording: one `test(...)` using the `app` / `device` / `screen` fixtures it needs. */
 export function generateSpec(recording: Recording, options: CodegenOptions = {}): SpecResult {
 	const compiled = compile(recording, options.ids ?? {}, options.file);
@@ -645,14 +669,8 @@ export function generateSpec(recording: Recording, options: CodegenOptions = {})
 		out.push(`// New test ids to add to ${options.idsImport}: ${gen.registry.newKeys.join(", ")}`);
 	}
 	out.push(`import { ${[...(gen.uses.expect ? ["expect"] : []), "test"].join(", ")} } from ${lit(importFrom)};`);
-	const imports = new Map<string, string[]>();
-	if (gen.uses.ids && options.idsImport) imports.set(options.idsImport, ["ids"]);
-	for (const [specifier, names] of gen.helpers) imports.set(specifier, [...(imports.get(specifier) ?? []), ...names]);
 	const useStatement = useLine(options);
-	if (useStatement !== undefined && options.specOptions !== undefined) {
-		const specifier = moduleSpecifier(options.specOptions.module, options.file);
-		imports.set(specifier, [...(imports.get(specifier) ?? []), options.specOptions.name].sort(byName));
-	}
+	const imports = specImports(gen, options, useStatement !== undefined);
 	for (const [specifier, names] of [...imports].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
 		out.push(`import { ${names.join(", ")} } from ${lit(specifier)};`);
 	out.push("");
@@ -756,6 +774,22 @@ function locateExport(existing: string | undefined, options: HelperOptions): Res
 	return ok(site);
 }
 
+/** Adds the framework imports and every recorded helper's import, skipping helpers from the module being written. */
+function withHelperImports(
+	source: string,
+	importFrom: string,
+	names: readonly string[],
+	compiled: Compiled,
+	file: string | undefined
+): string {
+	let next = names.length > 0 ? withImport(source, importFrom, names) : source;
+	for (const [specifier, fns] of compiled.gen.helpers) {
+		if (file !== undefined && specifier === moduleSpecifier(file, file)) continue;
+		next = withImport(next, specifier, fns);
+	}
+	return next;
+}
+
 /**
  * The helpers module with the recording added as an exported function: `existing` is the module as it is on disk
  * (omit to create one). An existing export of the same name is refused unless `force`, which replaces it in place.
@@ -779,11 +813,7 @@ export function generateHelper(recording: Recording, options: HelperOptions): Re
 	if (site.kind === "function") source = source.slice(0, site.start) + fn + source.slice(site.end);
 	const needsType = compiled.fixtures.length > 0 || compiled.wholeFixtures;
 	const names = needsType ? imports : imports.filter((name) => name !== "type TestFixtures");
-	if (names.length > 0) source = withImport(source, importFrom, names);
-	for (const [specifier, fns] of compiled.gen.helpers) {
-		if (options.file !== undefined && specifier === moduleSpecifier(options.file, options.file)) continue;
-		source = withImport(source, specifier, fns);
-	}
+	source = withHelperImports(source, importFrom, names, compiled, options.file);
 	const withIds = compiled.gen.uses.ids ? addIds(source, compiled.gen.registry, idsImport) : ok(source);
 	if (!withIds.success) return withIds;
 	source = withIds.data;

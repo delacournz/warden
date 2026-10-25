@@ -60,29 +60,36 @@ export async function confirmFieldValue<E>(request: ConfirmRequest<E>): Promise<
 	const { now, sleep } = request;
 	const start = now();
 	const cap = request.maxMs === undefined ? Number.POSITIVE_INFINITY : start + request.maxMs;
-	let deadline = Math.min(start + request.budgetMs, cap);
-	let held = "(gone)";
-	let streak = 0;
+	const reads = request.reads ?? CONFIRM_READS;
+	let poll: PollState = { deadline: Math.min(start + request.budgetMs, cap), held: "(gone)", streak: 0 };
 	for (;;) {
 		const read = await request.read();
 		if (!read.ok) return { status: "failed", error: read.error };
-		const { reading } = read;
-		if (reading.kind === "unreadable") {
-			streak = 0;
-			held = reading.note;
-		} else if (reading.value === request.text) {
-			streak += 1;
-			if (streak >= (request.reads ?? CONFIRM_READS)) return { status: "confirmed" };
-			held = reading.value;
-			deadline = Math.max(deadline, Math.min(now() + 2 * FIELD_POLL_MS, cap));
-		} else {
-			streak = 0;
-			if (reading.value !== held) deadline = Math.max(deadline, Math.min(now() + FIELD_PROGRESS_MS, cap));
-			held = reading.value;
-		}
-		if (now() >= deadline) return { status: "mismatch", held };
+		poll = foldReading(poll, read.reading, { text: request.text, now: now(), cap, reads });
+		if (poll.streak > 0 && poll.streak >= reads) return { status: "confirmed" };
+		if (now() >= poll.deadline) return { status: "mismatch", held: poll.held };
 		await sleep(FIELD_POLL_MS);
 	}
+}
+
+type PollState = { deadline: number; held: string; streak: number };
+
+/** Folds one reading into the poll: the matching streak, what the field held, and the deadline (extended on progress). */
+function foldReading(
+	poll: PollState,
+	reading: FieldReading,
+	at: { text: string; now: number; cap: number; reads: number }
+): PollState {
+	if (reading.kind === "unreadable") return { ...poll, streak: 0, held: reading.note };
+	if (reading.value === at.text) {
+		const streak = poll.streak + 1;
+		if (streak >= at.reads) return { ...poll, streak };
+		const deadline = Math.max(poll.deadline, Math.min(at.now + 2 * FIELD_POLL_MS, at.cap));
+		return { deadline, held: reading.value, streak };
+	}
+	const progressed = reading.value !== poll.held;
+	const deadline = progressed ? Math.max(poll.deadline, Math.min(at.now + FIELD_PROGRESS_MS, at.cap)) : poll.deadline;
+	return { deadline, held: reading.value, streak: 0 };
 }
 
 /** What the field behind `wanted` shows right now by a hit-test at its centre (about 10 ms, unlike a full snapshot), or undefined when that cannot tell. */

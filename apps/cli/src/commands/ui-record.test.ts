@@ -55,7 +55,7 @@ type Harness = {
 	doc: () => {
 		ok: boolean;
 		result: Record<string, unknown>;
-		error: { code: string; message: string; hint?: string; details?: Record<string, any> };
+		error: { code: string; message: string; hint?: string; details?: Record<string, unknown> };
 	};
 	/** every spec the verify stub was asked to run */
 	verified: VerifyInput[];
@@ -63,6 +63,15 @@ type Harness = {
 	journal: () => string;
 	read: (path: string) => string;
 };
+
+/** `details.verify.outDir` of a verify_failed error, typed for `join`. */
+function verifyOutDir(details: Record<string, unknown> | undefined): string {
+	const verify = details?.verify;
+	if (typeof verify !== "object" || verify === null || typeof (verify as { outDir?: unknown }).outDir !== "string") {
+		throw new Error("expected details.verify.outDir");
+	}
+	return (verify as { outDir: string }).outDir;
+}
 
 const passing = (input: VerifyInput): VerifyReport => ({
 	passed: true,
@@ -408,7 +417,7 @@ describe("record stop", () => {
 		const file = join(h.c.cwd, "specs", "sign-in.e2e.ts");
 		expect(error.code).toBe("verify_failed");
 		expect(error.details).toMatchObject({ file, verify: { status: "failed", exitCode: 1 } });
-		expect(error.details?.evidence).toContain(join(error.details?.verify.outDir, "attempt-1", "screen-at-failure.txt"));
+		expect(error.details?.evidence).toContain(join(verifyOutDir(error.details), "attempt-1", "screen-at-failure.txt"));
 		expect(existsSync(file)).toBe(true);
 		expect(existsSync(recordingFile(h.c, UDID))).toBe(true);
 		expect(readState(h.c, UDID).recording?.wrote).toBe(true);
@@ -689,7 +698,7 @@ describe("record use", () => {
 		expect(await h.run("record", "use", "e2e/helpers#signIn", "--json")).toBe(1);
 		const { error } = h.doc();
 		expect(error.code).toBe("use_failed");
-		expect(error.details?.evidence).toContain(join(error.details?.verify.outDir, "attempt-1", "screen-at-failure.txt"));
+		expect(error.details?.evidence).toContain(join(verifyOutDir(error.details), "attempt-1", "screen-at-failure.txt"));
 		expect(recordingSchema.parse(JSON.parse(h.journal())).steps).toEqual([]);
 	});
 

@@ -19,6 +19,7 @@ import { entryOfElement, indexSnapshot, type NodeEntry } from "@delacour/warden-
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import {
+	type ActionDone,
 	type ActionOptionValues,
 	finishAction,
 	parseSettle,
@@ -29,6 +30,7 @@ import {
 } from "./act";
 import { driverUiError, fromDriver, type UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
+import type { RecordTarget } from "./record";
 import { runUi } from "./run";
 import { findInFresh, parseTarget, type ResolvedTarget } from "./target";
 
@@ -201,6 +203,34 @@ type FillPlan = {
 	maxMs: number;
 };
 
+/** The error of a fill that did not take on the retry. */
+function fillMismatch(text: string, held: string): UiError {
+	return uiError(
+		"failed",
+		`fill did not take: expected ${JSON.stringify(text)} but the field holds ${JSON.stringify(held)}`,
+		{ details: { expected: text, held } }
+	);
+}
+
+/** One focus + clear + type pass (first attempt selects all where the driver can, the retry backspaces); read back when `readable`. */
+async function fillAttempt(
+	ctx: CommandContext,
+	deps: UiDeps,
+	driver: Driver,
+	resolved: ResolvedTarget,
+	plan: FillPlan,
+	attempt: number
+): Promise<Result<FillRun | undefined, UiError>> {
+	const { entry, text } = plan;
+	const method: ClearMethod = attempt === 1 ? "auto" : "counted";
+	const typed = fromDriver(
+		await focusClearType(driver, deps.sleep, caretPoint(resolved), entry, text, method, ctx.env)
+	);
+	if (!typed.success) return typed;
+	if (!(plan.verify && !plan.secure && entry !== undefined)) return ok(undefined);
+	return readBack(ctx, deps, driver, entry, text, { budgetMs: plan.budgetMs, maxMs: plan.maxMs });
+}
+
 /**
  * Focus, empty and type; with `verify` read the field back and retry once, backspacing one key per character that
  * time (the first attempt selects all where the driver can). Resolves to what `fill` reports as `verified`.
@@ -212,30 +242,47 @@ async function typeAndConfirm(
 	resolved: ResolvedTarget,
 	plan: FillPlan
 ): Promise<Result<boolean | "unconfirmed" | undefined, UiError>> {
-	const { entry, text } = plan;
-	const readable = plan.verify && !plan.secure && entry !== undefined;
-	for (let attempt = 1; attempt <= (readable ? 2 : 1); attempt += 1) {
-		const method: ClearMethod = attempt === 1 ? "auto" : "counted";
-		const typed = fromDriver(
-			await focusClearType(driver, deps.sleep, caretPoint(resolved), entry, text, method, ctx.env)
-		);
-		if (!typed.success) return typed;
-		if (!readable) break;
-		const back = await readBack(ctx, deps, driver, entry, text, { budgetMs: plan.budgetMs, maxMs: plan.maxMs });
-		if (!back.success) return back;
-		if (back.data.ok) return ok(true);
-		if (attempt === 2) {
-			return {
-				success: false,
-				error: uiError(
-					"failed",
-					`fill did not take: expected ${JSON.stringify(text)} but the field holds ${JSON.stringify(back.data.held)}`,
-					{ details: { expected: text, held: back.data.held } }
-				),
-			};
-		}
+	const readable = plan.verify && !plan.secure && plan.entry !== undefined;
+	const attempts = readable ? 2 : 1;
+	for (let attempt = 1; attempt <= attempts; attempt += 1) {
+		const run = await fillAttempt(ctx, deps, driver, resolved, plan, attempt);
+		if (!run.success) return run;
+		if (run.data === undefined) break;
+		if (run.data.ok) return ok(true);
+		if (attempt === attempts) return { success: false, error: fillMismatch(plan.text, run.data.held) };
 	}
 	return ok(plan.verify ? "unconfirmed" : undefined);
+}
+
+/** The target words and the text of `fill <target…> <text>`. */
+function parseFillWords(words: readonly string[]): Result<{ targetWords: string[]; text: string }, UiError> {
+	const text = words[words.length - 1];
+	if (words.length < 2 || text === undefined) {
+		return {
+			success: false,
+			error: uiError("usage", "fill needs a target and the text", { hint: "warden ui fill <target> <text>" }),
+		};
+	}
+	return ok({ targetWords: words.slice(0, -1), text });
+}
+
+/** What `fill` reports once the field holds (or may hold) the text. */
+function fillDone(
+	where: RecordTarget,
+	text: string,
+	secure: boolean,
+	verified: boolean | "unconfirmed" | undefined
+): ActionDone {
+	const shown = secure ? `${[...text].length} characters (secure)` : JSON.stringify(text);
+	return {
+		action: "fill",
+		text: `filled ${targetLabel(where)} with ${shown}${verified === "unconfirmed" ? " (unconfirmed)" : ""}`,
+		target: where,
+		...(verified !== undefined ? { verified } : {}),
+		args: secure ? { secure: true } : { text },
+		...(secure ? { secret: text } : {}),
+		extra: { characters: [...text].length, ...(secure ? { secure: true } : {}) },
+	};
 }
 
 /**
@@ -247,14 +294,10 @@ export function uiFill(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 	return runUi(ctx, deps, "fill", opts, async (device, env) => {
 		const settle = parseSettle(opts.settle);
 		if (!settle.success) return settle;
-		const text = words[words.length - 1];
-		if (words.length < 2 || text === undefined) {
-			return {
-				success: false,
-				error: uiError("usage", "fill needs a target and the text", { hint: "warden ui fill <target> <text>" }),
-			};
-		}
-		const target = targetOf(words.slice(0, -1));
+		const parsed = parseFillWords(words);
+		if (!parsed.success) return parsed;
+		const { text } = parsed.data;
+		const target = targetOf(parsed.data.targetWords);
 		if (!target.success) return target;
 		const driver = await env.driver();
 		if (!driver.success) return driver;
@@ -274,18 +317,8 @@ export function uiFill(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 			maxMs: env.timeoutMs,
 		});
 		if (!filled.success) return filled;
-		const verified = filled.data;
 		const where = recordTarget(target.data, resolved.data);
-		const shown = secure ? `${[...text].length} characters (secure)` : JSON.stringify(text);
-		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-			action: "fill",
-			text: `filled ${targetLabel(where)} with ${shown}${verified === "unconfirmed" ? " (unconfirmed)" : ""}`,
-			target: where,
-			...(verified !== undefined ? { verified } : {}),
-			args: secure ? { secure: true } : { text },
-			...(secure ? { secret: text } : {}),
-			extra: { characters: [...text].length, ...(secure ? { secure: true } : {}) },
-		});
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, fillDone(where, text, secure, filled.data));
 	});
 }
 
@@ -385,6 +418,36 @@ export async function regionOf(
 	return ok({ rect: visibleRect(resolved.data.element.frame, screen.data), screen: screen.data });
 }
 
+/** The finger path of `swipe`: a direction inside the `--from` region, or four coordinates. */
+async function swipePath(
+	ctx: CommandContext,
+	driver: Driver,
+	udid: string,
+	words: readonly string[],
+	regionFrom: string | undefined
+): Promise<Result<{ from: Point; to: Point; label: string }, UiError>> {
+	const [first] = words;
+	if (words.length === 1 && isWay(first)) {
+		const region = await regionOf(ctx, driver, udid, regionFrom);
+		if (!region.success) return region;
+		return ok({ ...fingerPath(first, region.data.rect, DEFAULT_SCROLL_AMOUNT), label: first });
+	}
+	if (words.length === 4 && words.every((word) => /^-?\d+(?:\.\d+)?$/.test(word))) {
+		const [x1, y1, x2, y2] = words.map(Number);
+		return ok({
+			from: { x: x1 ?? 0, y: y1 ?? 0 },
+			to: { x: x2 ?? 0, y: y2 ?? 0 },
+			label: `(${x1},${y1}) to (${x2},${y2})`,
+		});
+	}
+	return {
+		success: false,
+		error: uiError("usage", "swipe needs a direction or four coordinates", {
+			hint: "warden ui gesture swipe <up|down|left|right> | warden ui gesture swipe x1 y1 x2 y2",
+		}),
+	};
+}
+
 /**
  * `warden ui gesture swipe <up|down|left|right | x1 y1 x2 y2> [--from <target>]`: a raw finger swipe. The word is the way
  * the finger moves (`swipe up` moves content up, revealing what is below); `--from` swipes inside that element.
@@ -395,27 +458,9 @@ export function uiSwipe(ctx: CommandContext, deps: UiDeps, words: string[], opts
 		if (!settle.success) return settle;
 		const driver = await env.driver();
 		if (!driver.success) return driver;
-		let from: Point;
-		let to: Point;
-		let label: string;
-		if (words.length === 1 && isWay(words[0])) {
-			const region = await regionOf(ctx, driver.data, device.udid, opts.from);
-			if (!region.success) return region;
-			({ from, to } = fingerPath(words[0], region.data.rect, DEFAULT_SCROLL_AMOUNT));
-			label = words[0];
-		} else if (words.length === 4 && words.every((word) => /^-?\d+(?:\.\d+)?$/.test(word))) {
-			const [x1, y1, x2, y2] = words.map(Number);
-			from = { x: x1 ?? 0, y: y1 ?? 0 };
-			to = { x: x2 ?? 0, y: y2 ?? 0 };
-			label = `(${x1},${y1}) to (${x2},${y2})`;
-		} else {
-			return {
-				success: false,
-				error: uiError("usage", "swipe needs a direction or four coordinates", {
-					hint: "warden ui gesture swipe <up|down|left|right> | warden ui gesture swipe x1 y1 x2 y2",
-				}),
-			};
-		}
+		const path = await swipePath(ctx, driver.data, device.udid, words, opts.from);
+		if (!path.success) return path;
+		const { from, to, label } = path.data;
 		const swiped = fromDriver(await driver.data.swipe(from, to, { durationMs: SWIPE_MS, momentum: false }));
 		if (!swiped.success) return swiped;
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {

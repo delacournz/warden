@@ -74,6 +74,20 @@ const usable = (e: Element) => e.enabled && e.hidden !== true && e.frame.width >
 
 const NAVIGATE = /get-started|next|skip/i;
 
+/** Dismisses a system alert if one is up, else taps the next onboarding control; false when there is nothing to tap. */
+async function advanceOnboarding(driver: Driver, flat: readonly Element[]): Promise<boolean> {
+	const alert = await driver.alert();
+	const button = alert.success ? alert.data?.buttons[0] : undefined;
+	if (button) {
+		await step(`tap alert "${button.label ?? button.id}"`, () => driver.tap(centre(button)));
+		return true;
+	}
+	const next = flat.find((e) => e.identifier && NAVIGATE.test(e.identifier) && usable(e));
+	if (!next) return false;
+	await step(`tap ${next.identifier}`, () => driver.tap(centre(next)));
+	return true;
+}
+
 /** Dismiss a system alert if one is up, else hop forward through onboarding until a text field shows. */
 async function reachTextfield(driver: Driver): Promise<Element | undefined> {
 	let empty = 0;
@@ -82,21 +96,13 @@ async function reachTextfield(driver: Driver): Promise<Element | undefined> {
 		if (!snap.success) return undefined;
 		const field = snap.data.flat.find((e) => e.role === "textfield" && usable(e));
 		if (field) return field;
-		const alert = await driver.alert();
-		const button = alert.success ? alert.data?.buttons[0] : undefined;
-		if (button) {
-			await step(`tap alert "${button.label ?? button.id}"`, () => driver.tap(centre(button)));
-		} else {
-			const next = snap.data.flat.find((e) => e.identifier && NAVIGATE.test(e.identifier) && usable(e));
-			if (!next) {
-				// `settle` right after `launch` can still describe the previous frontmost app (the splash / SpringBoard
-				// is quiet), so a screen with nothing to tap yet is polled for a few seconds before giving up
-				if (empty++ >= 10) return undefined;
-				hop -= 1;
-				await Bun.sleep(500);
-				continue;
-			}
-			await step(`tap ${next.identifier}`, () => driver.tap(centre(next)));
+		if (!(await advanceOnboarding(driver, snap.data.flat))) {
+			// `settle` right after `launch` can still describe the previous frontmost app (the splash / SpringBoard
+			// is quiet), so a screen with nothing to tap yet is polled for a few seconds before giving up
+			if (empty++ >= 10) return undefined;
+			hop -= 1;
+			await Bun.sleep(500);
+			continue;
 		}
 		await step(
 			"settle",
@@ -177,6 +183,52 @@ async function findField(driver: Driver, identifier: string, timeoutMs = 5000): 
 	return undefined;
 }
 
+type FocusMode = "cold" | "switch" | "same";
+
+/** Puts the app in the starting state for one focus-type run, per `mode`. */
+async function prepareFocusRun(driver: Driver, mode: FocusMode, identifier: string, other: string): Promise<void> {
+	if (mode === "cold") {
+		await driver.app.terminate(bundle);
+		await driver.app.launch(bundle);
+		await driver.settle({ timeoutMs: 10_000 });
+		await reachTextfield(driver);
+		return;
+	}
+	const field = await findField(driver, identifier);
+	if (field) {
+		await tapToFocus(driver, Bun.sleep, centre(field.element), field);
+		if (canSelectAll(driver)) await driver.selectAll();
+		await driver.key("Backspace");
+	}
+	const away = mode === "switch" ? await findField(driver, other) : undefined;
+	if (away) await tapToFocus(driver, Bun.sleep, centre(away.element), away);
+	await driver.settle();
+}
+
+type FocusTypeRun = { lost: boolean; focusMs: number; typeMs: number };
+
+/** One tap-then-type run on `identifier`: how long each took and whether the text read back exactly. */
+async function focusTypeOnce(driver: Driver, identifier: string, raw: boolean, run: number): Promise<FocusTypeRun> {
+	const field = await findField(driver, identifier);
+	if (!field) {
+		process.stdout.write(`FAIL  focus-type #${run + 1}: ${identifier} not found\n`);
+		return { lost: true, focusMs: 0, typeMs: 0 };
+	}
+	const tapStarted = performance.now();
+	const point = centre(field.element);
+	const tapped = raw ? await driver.tap(point) : await tapToFocus(driver, Bun.sleep, point, field);
+	const started = performance.now();
+	const focusMs = started - tapStarted;
+	const typed = tapped.success ? await driver.typeText(TYPED) : tapped;
+	const typeMs = performance.now() - started;
+	const back = typed.success ? await readBack(driver, identifier, (value) => value === TYPED) : undefined;
+	if (back?.value === TYPED) return { lost: false, focusMs, typeMs };
+	process.stdout.write(
+		`FAIL  focus-type #${run + 1} -> ${JSON.stringify(back?.value)} ${typed.success ? "" : typed.error.code}\n`
+	);
+	return { lost: true, focusMs, typeMs };
+}
+
 /**
  * `--focus-types <n>`: tap the field, then type into it, n times, reading each result back; the tap is `tapToFocus`
  * (waits until the field reports focus), or a bare `tap` with `--raw-tap` (what lost "e" of "Hello" in 5 of 400 runs).
@@ -185,48 +237,17 @@ async function findField(driver: Driver, identifier: string, timeoutMs = 5000): 
  */
 async function focusTypeLoop(driver: Driver, identifier: string, other: string, count: number): Promise<void> {
 	const modeArg = arg("focus-mode");
-	const mode = modeArg === "switch" || modeArg === "same" ? modeArg : "cold";
+	const mode: FocusMode = modeArg === "switch" || modeArg === "same" ? modeArg : "cold";
 	const raw = process.argv.includes("--raw-tap");
 	let lost = 0;
 	let typeMs = 0;
 	let focusMs = 0;
 	for (let run = 0; run < count; run += 1) {
-		if (mode === "cold") {
-			await driver.app.terminate(bundle);
-			await driver.app.launch(bundle);
-			await driver.settle({ timeoutMs: 10_000 });
-			await reachTextfield(driver);
-		} else {
-			const field = await findField(driver, identifier);
-			if (field) {
-				await tapToFocus(driver, Bun.sleep, centre(field.element), field);
-				if (canSelectAll(driver)) await driver.selectAll();
-				await driver.key("Backspace");
-			}
-			const away = mode === "switch" ? await findField(driver, other) : undefined;
-			if (away) await tapToFocus(driver, Bun.sleep, centre(away.element), away);
-			await driver.settle();
-		}
-		const field = await findField(driver, identifier);
-		if (!field) {
-			lost += 1;
-			process.stdout.write(`FAIL  focus-type #${run + 1}: ${identifier} not found\n`);
-			continue;
-		}
-		const tapStarted = performance.now();
-		const point = centre(field.element);
-		const tapped = raw ? await driver.tap(point) : await tapToFocus(driver, Bun.sleep, point, field);
-		const started = performance.now();
-		focusMs += started - tapStarted;
-		const typed = tapped.success ? await driver.typeText(TYPED) : tapped;
-		typeMs += performance.now() - started;
-		const back = typed.success ? await readBack(driver, identifier, (value) => value === TYPED) : undefined;
-		if (back?.value !== TYPED) {
-			lost += 1;
-			process.stdout.write(
-				`FAIL  focus-type #${run + 1} -> ${JSON.stringify(back?.value)} ${typed.success ? "" : typed.error.code}\n`
-			);
-		}
+		await prepareFocusRun(driver, mode, identifier, other);
+		const result = await focusTypeOnce(driver, identifier, raw, run);
+		if (result.lost) lost += 1;
+		focusMs += result.focusMs;
+		typeMs += result.typeMs;
 	}
 	if (lost > 0) failures += 1;
 	const runs = Math.max(1, count);
@@ -235,36 +256,40 @@ async function focusTypeLoop(driver: Driver, identifier: string, other: string, 
 	);
 }
 
+/** Prints one `ok|FAIL read back` line and counts a failure when `ok` is false. */
+function reportReadBack(label: string, ok: boolean, read: { value?: string; ms: number }): void {
+	if (!ok) failures += 1;
+	process.stdout.write(
+		`${ok ? "ok   " : "FAIL "} ${label} ${String(read.ms).padStart(5)} ms  ${JSON.stringify(read.value)}\n`
+	);
+}
+
+/** Types ASCII then unicode text into `field`, reads each back, then runs the optional fill and focus-type loops. */
+async function typeIntoField(driver: Driver, field: Element): Promise<void> {
+	const entry = entryOfElement(field, { platform: driver.platform });
+	await step(`focus ${field.identifier ?? "textfield"}`, () => tapToFocus(driver, Bun.sleep, centre(field), entry));
+	await step("typeText", () => driver.typeText(TYPED));
+	await step(
+		"settle",
+		() => driver.settle(),
+		(s) => `quiet=${s.quiet} waited=${s.waitedMs} ms`
+	);
+	const typed = await readBack(driver, field.identifier, (v) => v.includes(TYPED));
+	reportReadBack("read back value    ", typed.value?.includes(TYPED) === true, typed);
+	await step("typeText (unicode)", () => driver.typeText("caf\u00e9"));
+	const pasted = await readBack(driver, field.identifier, (v) => v.endsWith("caf\u00e9"));
+	reportReadBack("read back (paste) ", pasted.value?.endsWith("caf\u00e9") === true, pasted);
+	const fills = Number(arg("fills") ?? 0);
+	if (fills > 0) await fillLoop(driver, field.identifier, fills);
+	const focusTypes = Number(arg("focus-types") ?? 0);
+	if (focusTypes > 0 && field.identifier)
+		await focusTypeLoop(driver, field.identifier, arg("other-field") ?? "sign-in-password", focusTypes);
+}
+
 async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 	const field = await reachTextfield(driver);
-	if (field) {
-		const entry = entryOfElement(field, { platform: driver.platform });
-		await step(`focus ${field.identifier ?? "textfield"}`, () => tapToFocus(driver, Bun.sleep, centre(field), entry));
-		await step("typeText", () => driver.typeText(TYPED));
-		await step(
-			"settle",
-			() => driver.settle(),
-			(s) => `quiet=${s.quiet} waited=${s.waitedMs} ms`
-		);
-		const typed = await readBack(driver, field.identifier, (v) => v.includes(TYPED));
-		const typedOk = typed.value?.includes(TYPED) === true;
-		if (!typedOk) failures += 1;
-		process.stdout.write(
-			`${typedOk ? "ok   " : "FAIL "} read back value     ${String(typed.ms).padStart(5)} ms  ${JSON.stringify(typed.value)}\n`
-		);
-		await step("typeText (unicode)", () => driver.typeText("caf\u00e9"));
-		const pasted = await readBack(driver, field.identifier, (v) => v.endsWith("caf\u00e9"));
-		const pastedOk = pasted.value?.endsWith("caf\u00e9") === true;
-		if (!pastedOk) failures += 1;
-		process.stdout.write(
-			`${pastedOk ? "ok   " : "FAIL "} read back (paste)  ${String(pasted.ms).padStart(5)} ms  ${JSON.stringify(pasted.value)}\n`
-		);
-		const fills = Number(arg("fills") ?? 0);
-		if (fills > 0) await fillLoop(driver, field.identifier, fills);
-		const focusTypes = Number(arg("focus-types") ?? 0);
-		if (focusTypes > 0 && field.identifier)
-			await focusTypeLoop(driver, field.identifier, arg("other-field") ?? "sign-in-password", focusTypes);
-	} else process.stdout.write("skip  fill                     no textfield reachable\n");
+	if (field) await typeIntoField(driver, field);
+	else process.stdout.write("skip  fill                     no textfield reachable\n");
 
 	const { width, height } = snapshot.screen;
 	await step("swipe up", () =>

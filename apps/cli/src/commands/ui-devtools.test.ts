@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fakePage, startFakeMetro } from "@delacour/warden-e2e/devtools/devtools.testing";
+import { type FakeReply, fakePage, startFakeMetro } from "@delacour/warden-e2e/devtools/devtools.testing";
 import type { ConsoleLine, NetworkEntry } from "@delacour/warden-e2e/devtools/devtools.types";
 import { openDevtoolsFacet } from "@delacour/warden-e2e/devtools/facet";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
@@ -45,6 +45,34 @@ type Harness = {
 	devtools: DevtoolsDeps;
 };
 
+/** `Runtime.evaluate` answer for a scripted expression, or undefined to fall through to the fake page; `onReload` fires for a reload. */
+function scriptedEvaluate(expression: string, onReload: () => void): FakeReply | undefined {
+	if (expression.includes("reloadAppAsync")) {
+		onReload();
+		return { result: { result: { type: "string", value: "expo" } } };
+	}
+	if (expression.includes("__warden_tree_results")) {
+		const value = expression.includes("delete") ? TREE_ANSWER : "started";
+		return { result: { result: { type: "string", value } } };
+	}
+	if (expression === "boom()") {
+		return {
+			result: {
+				result: { type: "object" },
+				exceptionDetails: { text: "Uncaught", exception: { description: "ReferenceError: boom is not defined" } },
+			},
+		};
+	}
+	return SCRIPTED_VALUES[expression];
+}
+
+/** Fixed answers for the plain-value expressions the tests evaluate. */
+const SCRIPTED_VALUES: Record<string, FakeReply> = {
+	"typeof __warden_cb": { result: { result: { type: "string", value: "undefined" } } },
+	"1 + 1": { result: { result: { type: "number", value: 2 } } },
+	"({ a: 1 })": { result: { result: { type: "object", value: { a: 1 } } } },
+};
+
 /** A leased device, a fake Metro with scripted evaluate answers (the reload probe answers `expo` and clears the JS context like a real reload), and a fake collector spawner. */
 function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}) {
 	const page = fakePage();
@@ -54,25 +82,10 @@ function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}
 			if (request.method === "Runtime.evaluate") {
 				const expression = String(request.params.expression);
 				evaluated.push(expression);
-				if (expression.includes("reloadAppAsync")) {
-					queueMicrotask(() => fake.emit("Runtime.executionContextsCleared"));
-					return { result: { result: { type: "string", value: "expo" } } };
-				}
-				if (expression === "typeof __warden_cb") return { result: { result: { type: "string", value: "undefined" } } };
-				if (expression.includes("__warden_tree_results")) {
-					const value = expression.includes("delete") ? TREE_ANSWER : "started";
-					return { result: { result: { type: "string", value } } };
-				}
-				if (expression === "1 + 1") return { result: { result: { type: "number", value: 2 } } };
-				if (expression === "({ a: 1 })") return { result: { result: { type: "object", value: { a: 1 } } } };
-				if (expression === "boom()") {
-					return {
-						result: {
-							result: { type: "object" },
-							exceptionDetails: { text: "Uncaught", exception: { description: "ReferenceError: boom is not defined" } },
-						},
-					};
-				}
+				const answer = scriptedEvaluate(expression, () =>
+					queueMicrotask(() => fake.emit("Runtime.executionContextsCleared"))
+				);
+				if (answer) return answer;
 			}
 			return page.respond(request, connection);
 		},

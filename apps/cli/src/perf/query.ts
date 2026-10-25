@@ -91,97 +91,195 @@ function nativeReportOf(dir: string): { platform: "ios" | "android"; report: unk
 	return undefined;
 }
 
+/** One iOS hang as lines: the headline, its top functions and its call chains. */
+function iosHangLines(h: Record<string, unknown>): string[] {
+	return [
+		`${Math.round(num(h.durationMs) ?? 0)}ms @ ${sec(num(h.atMs) ?? 0)} (trace time) ${str(h.kind) ?? ""}`.trimEnd(),
+		...arr(h.topFunctions)
+			.slice(0, 5)
+			.flatMap((f) => (isRecord(f) ? [`  fn ${str(f.name) ?? "?"}  ${num(f.samples) ?? 0} samples`] : [])),
+		...arr(h.chains)
+			.slice(0, 3)
+			.flatMap((c) => (isRecord(c) ? [`  chain ${str(c.chain) ?? "?"}  ${num(c.samples) ?? 0}`] : [])),
+	];
+}
+
+/** One Android hang as a line: duration, time, jank type and the main-thread state split. */
+function androidHangLine(h: Record<string, unknown>): string {
+	const main = isRecord(h.main) ? h.main : {};
+	const split = Object.entries(main)
+		.filter(([, v]) => typeof v === "number" && v > 0)
+		.map(([k, v]) => `${k} ${Math.round(Number(v))}ms`)
+		.join(", ");
+	return `${Math.round(num(h.durMs) ?? 0)}ms @ ${sec(num(h.atMs) ?? 0)} ${str(h.jankType) ?? ""}  main: ${split || "n/a"}`;
+}
+
 /** The hangs of a native analysis JSON as lines: iOS with top functions and call chains, Android with the main-thread state split. */
 export function hangLines(platform: "ios" | "android", report: unknown): string[] {
 	if (!isRecord(report)) return [];
-	const lines: string[] = [];
-	if (platform === "ios") {
-		for (const h of arr(report.hangs)) {
-			if (!isRecord(h)) continue;
-			lines.push(
-				`${Math.round(num(h.durationMs) ?? 0)}ms @ ${sec(num(h.atMs) ?? 0)} (trace time) ${str(h.kind) ?? ""}`.trimEnd()
-			);
-			for (const f of arr(h.topFunctions).slice(0, 5)) {
-				if (isRecord(f)) lines.push(`  fn ${str(f.name) ?? "?"}  ${num(f.samples) ?? 0} samples`);
-			}
-			for (const c of arr(h.chains).slice(0, 3)) {
-				if (isRecord(c)) lines.push(`  chain ${str(c.chain) ?? "?"}  ${num(c.samples) ?? 0}`);
-			}
-		}
-		return lines;
-	}
+	if (platform === "ios") return arr(report.hangs).flatMap((h) => (isRecord(h) ? iosHangLines(h) : []));
 	const root = report.hangs;
-	for (const h of isRecord(root) ? arr(root.hangs) : []) {
-		if (!isRecord(h)) continue;
-		const main = isRecord(h.main) ? h.main : {};
-		const split = Object.entries(main)
-			.filter(([, v]) => typeof v === "number" && v > 0)
-			.map(([k, v]) => `${k} ${Math.round(Number(v))}ms`)
-			.join(", ");
-		lines.push(
-			`${Math.round(num(h.durMs) ?? 0)}ms @ ${sec(num(h.atMs) ?? 0)} ${str(h.jankType) ?? ""}  main: ${split || "n/a"}`
-		);
-	}
-	return lines;
+	return (isRecord(root) ? arr(root.hangs) : []).flatMap((h) => (isRecord(h) ? [androidHangLine(h)] : []));
 }
+
+type CommitsFile = NonNullable<ReturnType<typeof readCommitsFile>>;
+type CommitsQuery = {
+	commits: CommitsFile["commits"];
+	opts: PerfQueryOptions;
+	rest: readonly string[];
+	limit: number | undefined;
+};
+
+/** `commits --by component`: renders per component. */
+function commitsComponentAnswer({ commits, limit }: CommitsQuery): Result<Answer, UiError> {
+	const rows = commitsByComponent(commits, limit);
+	return ok({
+		result: { by: "component", rows },
+		lines: rows.map(
+			(r) =>
+				`${r.name}  renders ${r.renders} (mounts ${r.mounts})  self ${r.sumSelfMs}ms  max ${r.maxSelfMs}ms  in ${r.commits} commits${r.memo ? "  memo" : ""}`
+		),
+	});
+}
+
+/** `commits --by window`: commits bucketed by `--size` (default 1s). */
+function commitsWindowAnswer({ commits, opts, limit }: CommitsQuery): Result<Answer, UiError> {
+	const size = opts.size === undefined ? 1000 : parseDuration(opts.size);
+	if (size === undefined)
+		return { success: false, error: uiError("usage", `--size must be a duration, got "${opts.size}"`) };
+	const rows = commitsByWindow(commits, size, limit);
+	return ok({
+		result: { by: "window", windowMs: size, rows },
+		lines: rows.map(
+			(r) =>
+				`${sec(r.fromMs)}-${sec(r.toMs)}  ${r.commits} commits  ${r.renderMs}ms  worst ${r.worstMs}ms  ${r.top.join(", ")}`
+		),
+	});
+}
+
+/** `commits --by index [n]`: commits in depth, optionally just one. */
+function commitsIndexAnswer({ commits, opts, rest, limit }: CommitsQuery): Result<Answer, UiError> {
+	const raw = opts.index ?? rest[0];
+	const only = raw === undefined ? undefined : Number(raw);
+	if (only !== undefined && !Number.isInteger(only))
+		return { success: false, error: uiError("usage", `commit index must be an integer, got "${raw}"`) };
+	const rows = commitsByIndex(commits, {
+		...(only === undefined ? {} : { only }),
+		...(limit === undefined ? {} : { limit }),
+	});
+	if (rows.length === 0) return { success: false, error: uiError("failed", `no commit #${only} in this session`) };
+	return ok({
+		result: { by: "index", rows },
+		lines: rows.flatMap((r) => [
+			`#${r.index} @${sec(r.startMs)}  ${r.durationMs}ms  ${r.fibers} fibers${r.updaters.length > 0 ? `  updated by ${r.updaters.join(", ")}` : ""}`,
+			...r.top.map((t) => `  ${t.name}  ${t.selfMs}ms  (${t.cause})`),
+		]),
+	});
+}
+
+/** `commits --by cascade`: origins whose commits re-rendered fibers through a parent or context. */
+function commitsCascadeAnswer({ commits, limit }: CommitsQuery): Result<Answer, UiError> {
+	const rows = commitsCascade(commits, limit);
+	return ok({
+		result: { by: "cascade", rows },
+		lines: rows.map(
+			(r) =>
+				`${r.origin}  ${r.commits} commits  ${r.cascadeFibers}/${r.fibers} fibers re-rendered by a parent or context  ${r.renderMs}ms`
+		),
+	});
+}
+
+const COMMIT_ANSWERS = new Map<string, (q: CommitsQuery) => Result<Answer, UiError>>([
+	["component", commitsComponentAnswer],
+	["window", commitsWindowAnswer],
+	["index", commitsIndexAnswer],
+	["cascade", commitsCascadeAnswer],
+]);
 
 function commitsAnswer(dir: string, opts: PerfQueryOptions, rest: readonly string[]): Result<Answer, UiError> {
 	const file = readCommitsFile(dir);
 	if (file === undefined) return missing("React profile", "record with --react: warden perf record --react");
 	const limit = opts.limit === undefined ? undefined : Number(opts.limit);
 	const by = opts.by ?? "component";
-	if (by === "component") {
-		const rows = commitsByComponent(file.commits, limit);
-		return ok({
-			result: { by, rows },
-			lines: rows.map(
-				(r) =>
-					`${r.name}  renders ${r.renders} (mounts ${r.mounts})  self ${r.sumSelfMs}ms  max ${r.maxSelfMs}ms  in ${r.commits} commits${r.memo ? "  memo" : ""}`
-			),
-		});
+	const answer = COMMIT_ANSWERS.get(by);
+	if (answer === undefined)
+		return { success: false, error: uiError("usage", `--by must be component, window, index or cascade, got "${by}"`) };
+	return answer({ commits: file.commits, opts, rest, limit });
+}
+
+type NativeReport = NonNullable<ReturnType<typeof nativeReportOf>>;
+
+/** `cpu --tree`: the JS call tree. */
+function cpuTreeAnswer(profile: CpuProfile, label: NamedFrame): Result<Answer, UiError> {
+	const rows = cpuTree(profile, label);
+	return ok({
+		result: { mode: "tree", rows },
+		lines: rows.map((r) => `${"  ".repeat(r.depth - 1)}${r.name}  ${r.totalPct}% (${r.totalMs}ms, self ${r.selfMs}ms)`),
+	});
+}
+
+/** `cpu --window a-b`: JS self time inside a window of the session timeline. */
+function cpuWindowAnswer(
+	profile: CpuProfile,
+	label: NamedFrame,
+	hotspots: unknown,
+	session: PerfSession,
+	rawWindow: string | undefined,
+	limit: number
+): Result<Answer, UiError> {
+	const window = parseWindow(rawWindow ?? "");
+	if (window === undefined)
+		return { success: false, error: uiError("usage", `--window must look like 2s-5s, got "${rawWindow}"`) };
+	const anchor = isRecord(hotspots) && isRecord(hotspots.anchor) ? num(hotspots.anchor.hostWallMs) : undefined;
+	if (anchor === undefined) return missing("clock anchor for the JS profile", "re-record with --js");
+	const rows = cpuWindow(profile, label, { ...window, profileStartMs: anchor - session.startedAt.wallMs }, limit);
+	return ok({
+		result: { mode: "window", window, rows },
+		lines: [
+			`JS self time ${sec(window.fromMs)}-${sec(window.toMs)}`,
+			...rows.map((r) => `${r.name}  ${r.selfMs}ms  ${r.selfPct}%`),
+		],
+	});
+}
+
+/** The native hotspots of an analysis JSON as name / self-percent rows, per platform shape. */
+function nativeTopRows(
+	platform: "ios" | "android",
+	report: Record<string, unknown>
+): Array<{ name: string; selfPct: number }> {
+	if (platform === "ios") {
+		return arr(report.hotspots).flatMap((h) =>
+			isRecord(h) ? [{ name: `${str(h.frame) ?? "?"} (${str(h.thread) ?? ""})`, selfPct: num(h.selfPct) ?? 0 }] : []
+		);
 	}
-	if (by === "window") {
-		const size = opts.size === undefined ? 1000 : parseDuration(opts.size);
-		if (size === undefined)
-			return { success: false, error: uiError("usage", `--size must be a duration, got "${opts.size}"`) };
-		const rows = commitsByWindow(file.commits, size, limit);
-		return ok({
-			result: { by, windowMs: size, rows },
-			lines: rows.map(
-				(r) =>
-					`${sec(r.fromMs)}-${sec(r.toMs)}  ${r.commits} commits  ${r.renderMs}ms  worst ${r.worstMs}ms  ${r.top.join(", ")}`
-			),
-		});
+	if (isRecord(report.cpu)) {
+		return arr(report.cpu.functions).flatMap((f) =>
+			isRecord(f) ? [{ name: `${str(f.function) ?? "?"} (${str(f.thread) ?? ""})`, selfPct: num(f.selfPct) ?? 0 }] : []
+		);
 	}
-	if (by === "index") {
-		const raw = opts.index ?? rest[0];
-		const only = raw === undefined ? undefined : Number(raw);
-		if (only !== undefined && !Number.isInteger(only))
-			return { success: false, error: uiError("usage", `commit index must be an integer, got "${raw}"`) };
-		const rows = commitsByIndex(file.commits, {
-			...(only === undefined ? {} : { only }),
-			...(limit === undefined ? {} : { limit }),
-		});
-		if (rows.length === 0) return { success: false, error: uiError("failed", `no commit #${only} in this session`) };
-		return ok({
-			result: { by, rows },
-			lines: rows.flatMap((r) => [
-				`#${r.index} @${sec(r.startMs)}  ${r.durationMs}ms  ${r.fibers} fibers${r.updaters.length > 0 ? `  updated by ${r.updaters.join(", ")}` : ""}`,
-				...r.top.map((t) => `  ${t.name}  ${t.selfMs}ms  (${t.cause})`),
-			]),
-		});
+	return arr(report.top).flatMap((r) =>
+		isRecord(r) ? [{ name: str(r.symbol) ?? "?", selfPct: num(r.percent) ?? 0 }] : []
+	);
+}
+
+/** `cpu` / `cpu --top`: the hottest JS functions and native symbols. */
+function cpuTopAnswer(hotspots: unknown, native: NativeReport | undefined, limit: number): Result<Answer, UiError> {
+	const lines: string[] = [];
+	const result: Record<string, unknown> = { mode: "top" };
+	if (isRecord(hotspots) && Array.isArray(hotspots.topSelf)) {
+		const top = (hotspots as unknown as Hotspots).topSelf.slice(0, limit);
+		result.js = top;
+		lines.push(
+			"JS self time:",
+			...top.map((f) => `  ${f.name}  ${f.selfPct}%  ${f.mapped ? `${f.file}:${f.line}` : f.file}`)
+		);
 	}
-	if (by === "cascade") {
-		const rows = commitsCascade(file.commits, limit);
-		return ok({
-			result: { by, rows },
-			lines: rows.map(
-				(r) =>
-					`${r.origin}  ${r.commits} commits  ${r.cascadeFibers}/${r.fibers} fibers re-rendered by a parent or context  ${r.renderMs}ms`
-			),
-		});
+	if (native !== undefined && isRecord(native.report)) {
+		const top = nativeTopRows(native.platform, native.report).slice(0, limit);
+		result.native = top;
+		lines.push("native self time:", ...top.map((r) => `  ${r.name}  ${r.selfPct.toFixed(1)}%`));
 	}
-	return { success: false, error: uiError("usage", `--by must be component, window, index or cascade, got "${by}"`) };
+	return ok({ result, lines });
 }
 
 function cpuAnswer(dir: string, session: PerfSession, opts: PerfQueryOptions): Result<Answer, UiError> {
@@ -194,61 +292,135 @@ function cpuAnswer(dir: string, session: PerfSession, opts: PerfQueryOptions): R
 	const label: NamedFrame = loadCpuCorrelation(join(dir, "js"))?.label ?? anonymous;
 	if (opts.tree === true || opts.window !== undefined) {
 		if (profile === undefined) return missing("JS CPU profile", "record with --js: warden perf record --js");
-		if (opts.tree === true) {
-			const rows = cpuTree(profile, label);
-			return ok({
-				result: { mode: "tree", rows },
-				lines: rows.map(
-					(r) => `${"  ".repeat(r.depth - 1)}${r.name}  ${r.totalPct}% (${r.totalMs}ms, self ${r.selfMs}ms)`
-				),
-			});
-		}
-		const window = parseWindow(opts.window ?? "");
-		if (window === undefined)
-			return { success: false, error: uiError("usage", `--window must look like 2s-5s, got "${opts.window}"`) };
-		const anchor = isRecord(hotspots) && isRecord(hotspots.anchor) ? num(hotspots.anchor.hostWallMs) : undefined;
-		if (anchor === undefined) return missing("clock anchor for the JS profile", "re-record with --js");
-		const rows = cpuWindow(profile, label, { ...window, profileStartMs: anchor - session.startedAt.wallMs }, limit);
-		return ok({
-			result: { mode: "window", window, rows },
-			lines: [
-				`JS self time ${sec(window.fromMs)}-${sec(window.toMs)}`,
-				...rows.map((r) => `${r.name}  ${r.selfMs}ms  ${r.selfPct}%`),
-			],
-		});
+		if (opts.tree === true) return cpuTreeAnswer(profile, label);
+		return cpuWindowAnswer(profile, label, hotspots, session, opts.window, limit);
 	}
+	return cpuTopAnswer(hotspots, native, limit);
+}
+
+/** Re-run the Perfetto SQL over the session's Android trace, optionally inside `--window`; returns the fresh report. */
+async function rerunHangs(
+	ctx: CommandContext,
+	deps: PerfDeps,
+	session: PerfSession,
+	opts: PerfQueryOptions,
+	profilers: NativeProfilers
+): Promise<Result<unknown, UiError>> {
+	const window = opts.window === undefined ? undefined : parseWindow(opts.window);
+	if (opts.window !== undefined && window === undefined)
+		return { success: false, error: uiError("usage", `--window must look like 2s-5s, got "${opts.window}"`) };
+	const profiler = await profilers.android();
+	const trace = join(sessionNativeDir(ctx, session.id), "android.perfetto-trace");
+	const analysis = await profiler.analyze(ctx, deps, {
+		target: {
+			udid: session.device.udid,
+			platform: "android",
+			ownedByCaller: false,
+			source: "flag",
+			mode: "observe",
+		},
+		app: session.app?.id ?? "",
+		dir: sessionNativeDir(ctx, session.id),
+		trace,
+		...(window === undefined ? {} : { windowMs: { startMs: window.fromMs, endMs: window.toMs } }),
+		...(opts.yes === true ? { yes: true } : {}),
+	});
+	if (!analysis.success) return analysis;
+	return ok(analysis.data.report);
+}
+
+/** `stacks hang`: the native hangs, optionally re-run from the Android trace. */
+async function hangStackAnswer(
+	ctx: CommandContext,
+	deps: PerfDeps,
+	session: PerfSession,
+	opts: PerfQueryOptions,
+	native: NativeReport | undefined,
+	profilers: NativeProfilers
+): Promise<Result<Answer, UiError>> {
+	if (native === undefined) return missing("native profile", "record with --native: warden perf record --native");
+	let report = native.report;
+	if (opts.rerun === true) {
+		if (native.platform !== "android")
+			return { success: false, error: uiError("usage", "--rerun re-runs the Perfetto SQL: Android sessions only") };
+		const rerun = await rerunHangs(ctx, deps, session, opts, profilers);
+		if (!rerun.success) return rerun;
+		report = rerun.data;
+	}
+	const lines = hangLines(native.platform, report);
+	return ok({
+		result: { sub: "hang", platform: native.platform, report: isRecord(report) ? report.hangs : null },
+		lines: lines.length > 0 ? lines : ["no hangs"],
+	});
+}
+
+/** The iOS hang call chains that pass through `fn`, as `chain  samples` strings. */
+function nativeChainsThrough(report: Record<string, unknown>, fn: string): string[] {
+	return arr(report.hangs)
+		.flatMap((h) => (isRecord(h) ? arr(h.chains) : []))
+		.flatMap((c) =>
+			isRecord(c) && str(c.chain)?.toLowerCase().includes(fn.toLowerCase())
+				? [`${str(c.chain)}  ${num(c.samples) ?? 0}`]
+				: []
+		);
+}
+
+/** `stacks callers <fn>`: who calls `fn` in the JS profile, and which iOS hang chains go through it. */
+function callersStackAnswer(
+	dir: string,
+	native: NativeReport | undefined,
+	fn: string | undefined
+): Result<Answer, UiError> {
+	if (fn === undefined) return { success: false, error: uiError("usage", "stacks callers needs a function name") };
+	const profile = readProfile(dir);
 	const lines: string[] = [];
-	const result: Record<string, unknown> = { mode: "top" };
-	if (isRecord(hotspots) && Array.isArray(hotspots.topSelf)) {
-		const top = (hotspots as unknown as Hotspots).topSelf.slice(0, limit);
-		result.js = top;
+	const result: Record<string, unknown> = { sub: "callers", fn };
+	if (profile !== undefined) {
+		const rows = jsCallers(profile, loadCpuCorrelation(join(dir, "js"))?.label ?? anonymous, fn);
+		result.js = rows;
 		lines.push(
-			"JS self time:",
-			...top.map((f) => `  ${f.name}  ${f.selfPct}%  ${f.mapped ? `${f.file}:${f.line}` : f.file}`)
+			`JS callers of ${fn}:`,
+			...(rows.length === 0 ? ["  none"] : rows.map((r) => `  ${r.caller}  ${r.ms}ms  ${r.pct}%`))
 		);
 	}
-	if (native !== undefined && isRecord(native.report)) {
-		const rows: Array<{ name: string; selfPct: number }> = [];
-		if (native.platform === "ios") {
-			for (const h of arr(native.report.hotspots)) {
-				if (isRecord(h))
-					rows.push({ name: `${str(h.frame) ?? "?"} (${str(h.thread) ?? ""})`, selfPct: num(h.selfPct) ?? 0 });
-			}
-		} else if (isRecord(native.report.cpu)) {
-			for (const f of arr(native.report.cpu.functions)) {
-				if (isRecord(f))
-					rows.push({ name: `${str(f.function) ?? "?"} (${str(f.thread) ?? ""})`, selfPct: num(f.selfPct) ?? 0 });
-			}
-		} else {
-			for (const r of arr(native.report.top)) {
-				if (isRecord(r)) rows.push({ name: str(r.symbol) ?? "?", selfPct: num(r.percent) ?? 0 });
-			}
-		}
-		const top = rows.slice(0, limit);
-		result.native = top;
-		lines.push("native self time:", ...top.map((r) => `  ${r.name}  ${r.selfPct.toFixed(1)}%`));
+	if (native?.platform === "ios" && isRecord(native.report)) {
+		const chains = nativeChainsThrough(native.report, fn);
+		result.native = chains;
+		if (chains.length > 0) lines.push(`native chains through ${fn}:`, ...chains.map((c) => `  ${c}`));
 	}
+	if (profile === undefined && native === undefined) return missing("CPU profile", "record with --js or --native");
 	return ok({ result, lines });
+}
+
+/** One thread of a native analysis as a line: Perfetto percent, or the Android scheduler state split. */
+function threadLine(t: unknown): string[] {
+	if (!isRecord(t)) return [];
+	const name = str(t.thread) ?? "?";
+	if (num(t.pct) !== undefined) return [`${name}  ${num(t.pct)}%`];
+	return [
+		`${name}  running ${Math.round(num(t.runningMs) ?? 0)}ms  runnable ${Math.round(num(t.runnableMs) ?? 0)}ms  io ${Math.round(num(t.ioMs) ?? 0)}ms  sleeping ${Math.round(num(t.sleepingMs) ?? 0)}ms`,
+	];
+}
+
+/** `stacks thread`: per-thread CPU of the native profile. */
+function threadStackAnswer(native: NativeReport | undefined): Result<Answer, UiError> {
+	if (native === undefined || !isRecord(native.report)) return missing("native profile", "record with --native");
+	const rows = arr(native.report.threads);
+	const lines = rows.flatMap(threadLine);
+	return ok({ result: { sub: "thread", threads: rows }, lines: lines.length > 0 ? lines : ["no thread data"] });
+}
+
+/** `stacks leaks`: the iOS leaks of the native profile. */
+function leaksStackAnswer(native: NativeReport | undefined): Result<Answer, UiError> {
+	if (native === undefined || !isRecord(native.report))
+		return missing("native profile", "record with --native --leaks (iOS)");
+	const leaks = arr(native.report.leaks);
+	const lines = leaks.flatMap((l) =>
+		isRecord(l)
+			? [`${str(l.type) ?? "?"}  ${num(l.count) ?? 0}x  ${num(l.bytes) ?? 0} bytes  at ${str(l.frame) ?? "?"}`]
+			: []
+	);
+	return ok({ result: { sub: "leaks", leaks }, lines: lines.length > 0 ? lines : ["no leaks recorded"] });
 }
 
 async function stacksAnswer(
@@ -262,93 +434,17 @@ async function stacksAnswer(
 ): Promise<Result<Answer, UiError>> {
 	const sub = rest[0] ?? "hang";
 	const native = nativeReportOf(dir);
-	if (sub === "hang") {
-		if (native === undefined) return missing("native profile", "record with --native: warden perf record --native");
-		let report = native.report;
-		if (opts.rerun === true) {
-			if (native.platform !== "android")
-				return { success: false, error: uiError("usage", "--rerun re-runs the Perfetto SQL: Android sessions only") };
-			const window = opts.window === undefined ? undefined : parseWindow(opts.window);
-			if (opts.window !== undefined && window === undefined)
-				return { success: false, error: uiError("usage", `--window must look like 2s-5s, got "${opts.window}"`) };
-			const profiler = await profilers.android();
-			const trace = join(sessionNativeDir(ctx, session.id), "android.perfetto-trace");
-			const analysis = await profiler.analyze(ctx, deps, {
-				target: {
-					udid: session.device.udid,
-					platform: "android",
-					ownedByCaller: false,
-					source: "flag",
-					mode: "observe",
-				},
-				app: session.app?.id ?? "",
-				dir: sessionNativeDir(ctx, session.id),
-				trace,
-				...(window === undefined ? {} : { windowMs: { startMs: window.fromMs, endMs: window.toMs } }),
-				...(opts.yes === true ? { yes: true } : {}),
-			});
-			if (!analysis.success) return analysis;
-			report = analysis.data.report;
-		}
-		const lines = hangLines(native.platform, report);
-		return ok({
-			result: { sub, platform: native.platform, report: isRecord(report) ? report.hangs : null },
-			lines: lines.length > 0 ? lines : ["no hangs"],
-		});
-	}
-	if (sub === "callers") {
-		const fn = rest[1];
-		if (fn === undefined) return { success: false, error: uiError("usage", "stacks callers needs a function name") };
-		const profile = readProfile(dir);
-		const lines: string[] = [];
-		const result: Record<string, unknown> = { sub, fn };
-		if (profile !== undefined) {
-			const rows = jsCallers(profile, loadCpuCorrelation(join(dir, "js"))?.label ?? anonymous, fn);
-			result.js = rows;
-			lines.push(
-				`JS callers of ${fn}:`,
-				...(rows.length === 0 ? ["  none"] : rows.map((r) => `  ${r.caller}  ${r.ms}ms  ${r.pct}%`))
-			);
-		}
-		if (native?.platform === "ios" && isRecord(native.report)) {
-			const chains = arr(native.report.hangs)
-				.flatMap((h) => (isRecord(h) ? arr(h.chains) : []))
-				.flatMap((c) =>
-					isRecord(c) && str(c.chain)?.toLowerCase().includes(fn.toLowerCase())
-						? [`${str(c.chain)}  ${num(c.samples) ?? 0}`]
-						: []
-				);
-			result.native = chains;
-			if (chains.length > 0) lines.push(`native chains through ${fn}:`, ...chains.map((c) => `  ${c}`));
-		}
-		if (profile === undefined && native === undefined) return missing("CPU profile", "record with --js or --native");
-		return ok({ result, lines });
-	}
-	if (sub === "thread") {
-		if (native === undefined || !isRecord(native.report)) return missing("native profile", "record with --native");
-		const rows = arr(native.report.threads);
-		const lines = rows.flatMap((t) => {
-			if (!isRecord(t)) return [];
-			const name = str(t.thread) ?? "?";
-			if (num(t.pct) !== undefined) return [`${name}  ${num(t.pct)}%`];
-			return [
-				`${name}  running ${Math.round(num(t.runningMs) ?? 0)}ms  runnable ${Math.round(num(t.runnableMs) ?? 0)}ms  io ${Math.round(num(t.ioMs) ?? 0)}ms  sleeping ${Math.round(num(t.sleepingMs) ?? 0)}ms`,
-			];
-		});
-		return ok({ result: { sub, threads: rows }, lines: lines.length > 0 ? lines : ["no thread data"] });
-	}
-	if (sub === "leaks") {
-		if (native === undefined || !isRecord(native.report))
-			return missing("native profile", "record with --native --leaks (iOS)");
-		const leaks = arr(native.report.leaks);
-		const lines = leaks.flatMap((l) =>
-			isRecord(l)
-				? [`${str(l.type) ?? "?"}  ${num(l.count) ?? 0}x  ${num(l.bytes) ?? 0} bytes  at ${str(l.frame) ?? "?"}`]
-				: []
-		);
-		return ok({ result: { sub, leaks }, lines: lines.length > 0 ? lines : ["no leaks recorded"] });
-	}
+	if (sub === "hang") return hangStackAnswer(ctx, deps, session, opts, native, profilers);
+	if (sub === "callers") return callersStackAnswer(dir, native, rest[1]);
+	if (sub === "thread") return threadStackAnswer(native);
+	if (sub === "leaks") return leaksStackAnswer(native);
 	return { success: false, error: uiError("usage", `stacks <hang|callers <fn>|thread|leaks>, got "${sub}"`) };
+}
+
+/** One jank window of the frame stats as a line. */
+function frameWindowLine(w: Record<string, unknown>): string {
+	const mark = str(w.mark) === undefined ? "" : `  after "${str(w.mark)}"`;
+	return `  ${sec(num(w.startOffsetMs) ?? 0)}..${sec(num(w.endOffsetMs) ?? 0)}  ${num(w.missedDeadlineFrameCount) ?? 0} frames over budget, worst ${num(w.worstFrameMs) ?? 0}ms${mark}`;
 }
 
 function framesAnswer(dir: string, opts: PerfQueryOptions): Result<Answer, UiError> {
@@ -362,14 +458,9 @@ function framesAnswer(dir: string, opts: PerfQueryOptions): Result<Answer, UiErr
 		const windows = arr(frames.worstWindows);
 		result.windows = windows;
 		lines.push(
-			`${num(frames.fps) ?? 0} fps, ${num(frames.jankPct) ?? 0}% janky, ${num(frames.frozenFrames) ?? 0} frozen`
+			`${num(frames.fps) ?? 0} fps, ${num(frames.jankPct) ?? 0}% janky, ${num(frames.frozenFrames) ?? 0} frozen`,
+			...windows.flatMap((w) => (isRecord(w) ? [frameWindowLine(w)] : []))
 		);
-		for (const w of windows) {
-			if (!isRecord(w)) continue;
-			lines.push(
-				`  ${sec(num(w.startOffsetMs) ?? 0)}..${sec(num(w.endOffsetMs) ?? 0)}  ${num(w.missedDeadlineFrameCount) ?? 0} frames over budget, worst ${num(w.worstFrameMs) ?? 0}ms${str(w.mark) === undefined ? "" : `  after "${str(w.mark)}"`}`
-			);
-		}
 	}
 	if (native !== undefined) {
 		const hangs = hangLines(native.platform, native.report).filter((l) => !l.startsWith(" "));

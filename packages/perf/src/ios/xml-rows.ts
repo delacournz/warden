@@ -86,60 +86,80 @@ export function createRowParser(handlers: RowParserHandlers): RowParser {
 		if (!STRUCTURAL.has(node.tag)) node.kids.length = 0;
 	}
 
+	/** Character data: mnemonic names while reading a schema, node text inside a row. */
+	function onText(text: string): void {
+		const top = stack[stack.length - 1];
+		if (top === undefined) return;
+		if (collecting !== undefined && top.node.tag === "mnemonic") collecting.push(text.trim());
+		else if (top.inRow && !STRUCTURAL.has(top.node.tag)) top.node.text += decode(text);
+	}
+
+	/** A closing tag: finish the row or schema, else the node. */
+	function onClose(tag: string): void {
+		const open = stack.pop();
+		if (open === undefined) return;
+		if (tag === "row") {
+			if (cells !== undefined) handlers.onRow(cells, schemaName, columns);
+			cells = undefined;
+		} else if (tag === "schema") {
+			columns = collecting ?? [];
+			collecting = undefined;
+			handlers.onSchema(schemaName, columns);
+		} else closeNode(open);
+	}
+
+	/** An opening `<row>`; a self-closing one is an empty row. */
+	function openRow(attrs: Record<string, string>, selfClosing: boolean): void {
+		cells = [];
+		if (!selfClosing) {
+			stack.push({ node: { tag: "row", attrs, text: "", kids: [] }, inRow: true });
+			return;
+		}
+		handlers.onRow([], schemaName, columns);
+		cells = undefined;
+	}
+
+	/** An opening `<schema>`; a self-closing one has no columns. */
+	function openSchema(attrs: Record<string, string>, selfClosing: boolean): void {
+		schemaName = attrs.name ?? "";
+		collecting = [];
+		if (!selfClosing) {
+			stack.push({ node: { tag: "schema", attrs, text: "", kids: [] }, inRow: false });
+			return;
+		}
+		columns = [];
+		collecting = undefined;
+		handlers.onSchema(schemaName, columns);
+	}
+
+	/** Any other opening tag: a node, closed at once when self-closing. */
+	function openNode(tag: string, attrs: Record<string, string>, selfClosing: boolean): void {
+		const top = stack[stack.length - 1];
+		const inRow = cells !== undefined;
+		const node: XmlNode = { tag, attrs, text: "", kids: [] };
+		if (selfClosing) closeNode({ node, inRow });
+		else stack.push({ node, inRow: inRow && (top === undefined || top.inRow) });
+	}
+
+	/** An opening tag, dispatched on its name. */
+	function onOpen(tag: string, attrs: Record<string, string>, selfClosing: boolean): void {
+		if (tag === "row") openRow(attrs, selfClosing);
+		else if (tag === "schema") openSchema(attrs, selfClosing);
+		else openNode(tag, attrs, selfClosing);
+	}
+
 	function consume(piece: string): void {
 		TOKEN.lastIndex = 0;
 		for (let m = TOKEN.exec(piece); m !== null; m = TOKEN.exec(piece)) {
 			const text = m[5];
 			if (text !== undefined) {
-				const top = stack[stack.length - 1];
-				if (top === undefined) continue;
-				if (collecting !== undefined && top.node.tag === "mnemonic") collecting.push(text.trim());
-				else if (top.inRow && !STRUCTURAL.has(top.node.tag)) top.node.text += decode(text);
+				onText(text);
 				continue;
 			}
 			const tag = m[2];
 			if (tag === undefined) continue;
-			if (m[1] === "/") {
-				const open = stack.pop();
-				if (open === undefined) continue;
-				if (tag === "row") {
-					if (cells !== undefined) handlers.onRow(cells, schemaName, columns);
-					cells = undefined;
-				} else if (tag === "schema") {
-					columns = collecting ?? [];
-					collecting = undefined;
-					handlers.onSchema(schemaName, columns);
-				} else closeNode(open);
-				continue;
-			}
-			const selfClosing = m[4] === "/";
-			const attrs = parseAttrs(m[3] ?? "");
-			if (tag === "row") {
-				cells = [];
-				if (!selfClosing) stack.push({ node: { tag, attrs, text: "", kids: [] }, inRow: true });
-				else {
-					handlers.onRow([], schemaName, columns);
-					cells = undefined;
-				}
-				continue;
-			}
-			if (tag === "schema") {
-				schemaName = attrs.name ?? "";
-				collecting = [];
-				if (selfClosing) {
-					columns = [];
-					collecting = undefined;
-					handlers.onSchema(schemaName, columns);
-				} else stack.push({ node: { tag, attrs, text: "", kids: [] }, inRow: false });
-				continue;
-			}
-			const top = stack[stack.length - 1];
-			const inRow = cells !== undefined;
-			const node: XmlNode = { tag, attrs, text: "", kids: [] };
-			if (selfClosing) {
-				const open: Open = { node, inRow };
-				closeNode(open);
-			} else stack.push({ node, inRow: inRow && (top === undefined || top.inRow) });
+			if (m[1] === "/") onClose(tag);
+			else onOpen(tag, parseAttrs(m[3] ?? ""), m[4] === "/");
 		}
 	}
 

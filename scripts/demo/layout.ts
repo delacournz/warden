@@ -140,6 +140,30 @@ export function coverage(px: number, py: number, r: Rect, radius: number): numbe
 
 type Shape = { rect: Rect; radius: number; color: string; hole?: { rect: Rect; radius: number } };
 
+/** Source-over one shape onto an RGBA buffer, anti-aliased through its rounded rect (and hole). */
+function paintShape(buf: Uint8Array, width: number, height: number, s: Shape): void {
+	const [r, g, b] = rgb(s.color);
+	const x0 = Math.max(0, Math.floor(s.rect.x));
+	const y0 = Math.max(0, Math.floor(s.rect.y));
+	const x1 = Math.min(width, Math.ceil(s.rect.x + s.rect.w));
+	const y1 = Math.min(height, Math.ceil(s.rect.y + s.rect.h));
+	for (let y = y0; y < y1; y++) {
+		for (let x = x0; x < x1; x++) {
+			let a = coverage(x, y, s.rect, s.radius);
+			if (s.hole) a *= 1 - coverage(x, y, s.hole.rect, s.hole.radius);
+			if (a <= 0) continue;
+			const i = (y * width + x) * 4;
+			const da = (buf[i + 3] ?? 0) / 255;
+			const oa = a + da * (1 - a);
+			const mix = (src: number, dst: number) => Math.round((src * a + dst * da * (1 - a)) / oa);
+			buf[i] = mix(r, buf[i] ?? 0);
+			buf[i + 1] = mix(g, buf[i + 1] ?? 0);
+			buf[i + 2] = mix(b, buf[i + 2] ?? 0);
+			buf[i + 3] = Math.round(oa * 255);
+		}
+	}
+}
+
 /** Paint shapes (source-over) onto an RGBA buffer, optionally over an opaque ground. */
 function paint(width: number, height: number, shapes: Shape[], ground?: string): Uint8Array {
 	const buf = new Uint8Array(width * height * 4);
@@ -147,28 +171,7 @@ function paint(width: number, height: number, shapes: Shape[], ground?: string):
 		const [r, g, b] = rgb(ground);
 		for (let i = 0; i < buf.length; i += 4) buf.set([r, g, b, 255], i);
 	}
-	for (const s of shapes) {
-		const [r, g, b] = rgb(s.color);
-		const x0 = Math.max(0, Math.floor(s.rect.x));
-		const y0 = Math.max(0, Math.floor(s.rect.y));
-		const x1 = Math.min(width, Math.ceil(s.rect.x + s.rect.w));
-		const y1 = Math.min(height, Math.ceil(s.rect.y + s.rect.h));
-		for (let y = y0; y < y1; y++) {
-			for (let x = x0; x < x1; x++) {
-				let a = coverage(x, y, s.rect, s.radius);
-				if (s.hole) a *= 1 - coverage(x, y, s.hole.rect, s.hole.radius);
-				if (a <= 0) continue;
-				const i = (y * width + x) * 4;
-				const da = (buf[i + 3] ?? 0) / 255;
-				const oa = a + da * (1 - a);
-				const mix = (src: number, dst: number) => Math.round((src * a + dst * da * (1 - a)) / oa);
-				buf[i] = mix(r, buf[i] ?? 0);
-				buf[i + 1] = mix(g, buf[i + 1] ?? 0);
-				buf[i + 2] = mix(b, buf[i + 2] ?? 0);
-				buf[i + 3] = Math.round(oa * 255);
-			}
-		}
-	}
+	for (const s of shapes) paintShape(buf, width, height, s);
 	return buf;
 }
 

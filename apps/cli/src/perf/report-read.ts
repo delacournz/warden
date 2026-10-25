@@ -56,54 +56,81 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 /** `native/summary.json`: what the merger needs of a native analysis, written when the recorder stops. */
 export type NativeSummaryFile = NativeInput & { version: 1; files: Record<string, string> };
 
+type TopFunction = { name: string; selfPct: number };
+type RawBrief = { traceStartWallMs: number | undefined; hangs: NativeHangBrief[]; topFunctions: TopFunction[] };
+
+/** Map each record in `items` through `row`, skipping non-records. */
+function recordRows<T>(items: unknown[], row: (r: Record<string, unknown>) => T[]): T[] {
+	return items.flatMap((i) => (isRecord(i) ? row(i) : []));
+}
+
+/** A hang from `h.atMs` + `h[durKey]`; none when either is missing. */
+function hangRow(h: Record<string, unknown>, durKey: string, kindKey: string): NativeHangBrief[] {
+	const atMs = num(h.atMs);
+	const durationMs = num(h[durKey]);
+	return atMs !== undefined && durationMs !== undefined ? [{ atMs, durationMs, kind: str(h[kindKey]) ?? "hang" }] : [];
+}
+
+/** A top function from `h[nameKey]` + `h[pctKey]`; none when either is missing. */
+function topRow(h: Record<string, unknown>, nameKey: string, pctKey: string): TopFunction[] {
+	const name = str(h[nameKey]);
+	const selfPct = num(h[pctKey]);
+	return name !== undefined && selfPct !== undefined ? [{ name, selfPct }] : [];
+}
+
+/** iOS `NativeReport`: hangs plus hotspot frames. */
+function iosBrief(report: Record<string, unknown>, handleStartWallMs: number | undefined): RawBrief {
+	return {
+		traceStartWallMs: num(report.traceStartWallMs) ?? handleStartWallMs,
+		hangs: recordRows(arr(report.hangs), (h) => hangRow(h, "durationMs", "kind")),
+		topFunctions: recordRows(arr(report.hotspots), (h) => topRow(h, "frame", "selfPct")),
+	};
+}
+
+/** Android simpleperf: only top symbols, no hangs. */
+function simpleperfBrief(report: Record<string, unknown>, handleStartWallMs: number | undefined): RawBrief {
+	return {
+		traceStartWallMs: handleStartWallMs,
+		hangs: [],
+		topFunctions: recordRows(arr(report.top), (r) => topRow(r, "symbol", "percent")),
+	};
+}
+
+/** Android perfetto: jank hangs plus CPU functions. */
+function perfettoBrief(report: Record<string, unknown>, handleStartWallMs: number | undefined): RawBrief {
+	const hangRoot = report.hangs;
+	const cpu = report.cpu;
+	return {
+		traceStartWallMs: handleStartWallMs,
+		hangs: recordRows(isRecord(hangRoot) ? arr(hangRoot.hangs) : [], (h) => hangRow(h, "durMs", "jankType")),
+		topFunctions: recordRows(isRecord(cpu) ? arr(cpu.functions) : [], (f) => topRow(f, "function", "selfPct")),
+	};
+}
+
+/** Pick the brief reader for a platform's analysis shape. */
+function briefOf(
+	platform: "ios" | "android",
+	report: Record<string, unknown>,
+	handleStartWallMs: number | undefined
+): RawBrief {
+	if (platform === "ios") return iosBrief(report, handleStartWallMs);
+	if (report.mode === "simpleperf") return simpleperfBrief(report, handleStartWallMs);
+	return perfettoBrief(report, handleStartWallMs);
+}
+
 /** Pull the hangs and top functions out of a platform's analysis JSON (iOS `NativeReport`, Android perfetto or simpleperf). */
 export function nativeBrief(
 	platform: "ios" | "android",
 	report: unknown,
 	handleStartWallMs?: number
 ): { traceStartWallMs?: number; hangs: NativeHangBrief[]; topFunctions: Array<{ name: string; selfPct: number }> } {
-	const hangs: NativeHangBrief[] = [];
-	const topFunctions: Array<{ name: string; selfPct: number }> = [];
-	let traceStartWallMs = handleStartWallMs;
-	if (isRecord(report)) {
-		if (platform === "ios") {
-			traceStartWallMs = num(report.traceStartWallMs) ?? traceStartWallMs;
-			for (const h of arr(report.hangs)) {
-				if (!isRecord(h)) continue;
-				const atMs = num(h.atMs);
-				const durationMs = num(h.durationMs);
-				if (atMs !== undefined && durationMs !== undefined)
-					hangs.push({ atMs, durationMs, kind: str(h.kind) ?? "hang" });
-			}
-			for (const h of arr(report.hotspots)) {
-				if (isRecord(h) && str(h.frame) !== undefined && num(h.selfPct) !== undefined)
-					topFunctions.push({ name: str(h.frame) ?? "", selfPct: num(h.selfPct) ?? 0 });
-			}
-		} else if (report.mode === "simpleperf") {
-			for (const r of arr(report.top)) {
-				if (isRecord(r) && str(r.symbol) !== undefined && num(r.percent) !== undefined)
-					topFunctions.push({ name: str(r.symbol) ?? "", selfPct: num(r.percent) ?? 0 });
-			}
-		} else {
-			const hangRoot = report.hangs;
-			for (const h of isRecord(hangRoot) ? arr(hangRoot.hangs) : []) {
-				if (!isRecord(h)) continue;
-				const atMs = num(h.atMs);
-				const durationMs = num(h.durMs);
-				if (atMs !== undefined && durationMs !== undefined)
-					hangs.push({ atMs, durationMs, kind: str(h.jankType) ?? "hang" });
-			}
-			const cpu = report.cpu;
-			for (const f of isRecord(cpu) ? arr(cpu.functions) : []) {
-				if (isRecord(f) && str(f.function) !== undefined && num(f.selfPct) !== undefined)
-					topFunctions.push({ name: str(f.function) ?? "", selfPct: num(f.selfPct) ?? 0 });
-			}
-		}
-	}
+	const brief: RawBrief = isRecord(report)
+		? briefOf(platform, report, handleStartWallMs)
+		: { traceStartWallMs: handleStartWallMs, hangs: [], topFunctions: [] };
 	return {
-		...(traceStartWallMs === undefined ? {} : { traceStartWallMs }),
-		hangs,
-		topFunctions: topFunctions.slice(0, 10),
+		...(brief.traceStartWallMs === undefined ? {} : { traceStartWallMs: brief.traceStartWallMs }),
+		hangs: brief.hangs,
+		topFunctions: brief.topFunctions.slice(0, 10),
 	};
 }
 

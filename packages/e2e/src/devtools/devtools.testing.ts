@@ -76,6 +76,24 @@ function defaultReply(request: FakeCdpRequest): FakeReply {
 	return { result: {} };
 }
 
+/** Records the upgrade request and accepts it as a socket, or answers the 401 / 400 Metro would. */
+function upgradeInspector(
+	req: Request,
+	url: URL,
+	srv: Server<SocketData>,
+	upgrades: string[],
+	upgradeOrigins: (string | null)[]
+): Response | undefined {
+	upgrades.push(`${url.pathname}${url.search}`);
+	const origin = req.headers.get("origin");
+	upgradeOrigins.push(origin);
+	// Like Metro's inspector proxy (`verifyClient`): a missing or non-local Origin is a 401 at the upgrade.
+	if (!isLocalOrigin(origin)) return new Response("Unauthorized", { status: 401 });
+	return srv.upgrade(req, { data: { connection: undefined } })
+		? undefined
+		: new Response("upgrade failed", { status: 400 });
+}
+
 export function startFakeMetro(options: FakeMetroOptions = {}): FakeMetro {
 	const requests: FakeCdpRequest[] = [];
 	const connections: FakeConnection[] = [];
@@ -95,16 +113,7 @@ export function startFakeMetro(options: FakeMetroOptions = {}): FakeMetro {
 		reusePort: false,
 		fetch(req, srv) {
 			const url = new URL(req.url);
-			if (url.pathname === "/inspector/debug") {
-				upgrades.push(`${url.pathname}${url.search}`);
-				const origin = req.headers.get("origin");
-				upgradeOrigins.push(origin);
-				// Like Metro's inspector proxy (`verifyClient`): a missing or non-local Origin is a 401 at the upgrade.
-				if (!isLocalOrigin(origin)) return new Response("Unauthorized", { status: 401 });
-				return srv.upgrade(req, { data: { connection: undefined } })
-					? undefined
-					: new Response("upgrade failed", { status: 400 });
-			}
+			if (url.pathname === "/inspector/debug") return upgradeInspector(req, url, srv, upgrades, upgradeOrigins);
 			if (url.pathname === "/status")
 				return new Response(options.notMetro ? "<html></html>" : "packager-status:running");
 			if (url.pathname === "/json/list" || url.pathname === "/json") {

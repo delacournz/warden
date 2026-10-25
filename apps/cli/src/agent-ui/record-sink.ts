@@ -97,153 +97,210 @@ function twoFinger(
 const DIRECTIONS: readonly Direction[] = ["up", "down", "left", "right"];
 const asDirection = (raw: string | undefined): Direction | undefined => DIRECTIONS.find((d) => d === raw);
 
+type Base = { at: number; snapshotHash?: string; settle?: { timeoutMs: number }; route?: string };
+
+/** What a step builder reads: the action's arguments, the common step fields, the grounded target, the secret env and the clock. */
+type StepInput = {
+	step: RecordStep;
+	args: RecordStep["args"];
+	base: Base;
+	target: Target | undefined;
+	env: Env;
+	at: number;
+};
+
+type StepBuilder = (input: StepInput) => NewStep[];
+
+/** `press` / `tap`: a press on the grounded target. */
+const pressSteps: StepBuilder = ({ base, target }) => (target ? [{ kind: "press", ...base, target }] : []);
+
+/** `gesture-longpress`: a long press on the target, with the held time when recorded. */
+const longpressSteps: StepBuilder = ({ args, base, target }) => {
+	const durationMs = num(args, "ms");
+	return target
+		? [{ kind: "gesture", type: "longpress", ...base, target, ...(durationMs !== undefined ? { durationMs } : {}) }]
+		: [];
+};
+
+/** `gesture-pinch`: needs the scale. */
+const pinchSteps: StepBuilder = ({ args, base, target }) => {
+	const scale = num(args, "scale");
+	return scale === undefined ? [] : [{ kind: "gesture", type: "pinch", ...base, scale, ...twoFinger(args, target) }];
+};
+
+/** `gesture-rotate`: needs the degrees. */
+const rotateSteps: StepBuilder = ({ args, base, target }) => {
+	const degrees = num(args, "degrees");
+	return degrees === undefined
+		? []
+		: [{ kind: "gesture", type: "rotate", ...base, degrees, ...twoFinger(args, target) }];
+};
+
+/** `gesture-path`: needs well-formed paths. */
+const pathSteps: StepBuilder = ({ args, base }) => {
+	const paths = parsePaths(str(args, "paths"));
+	const durationMs = num(args, "ms");
+	return paths
+		? [{ kind: "gesture", type: "path", ...base, paths, ...(durationMs !== undefined ? { durationMs } : {}) }]
+		: [];
+};
+
+/** `fill`: the text (secrets replaced) into the target. */
+const fillSteps: StepBuilder = ({ step, base, target, env }) => {
+	if (!target) return [];
+	const { text, note } = plainText(step, env);
+	return [{ kind: "fill", ...base, target, text, ...(note ? { note } : {}) }];
+};
+
+/** `type`: the text, then Enter when it was submitted. */
+const typeSteps: StepBuilder = ({ step, args, base, env, at }) => {
+	const { text } = plainText(step, env);
+	const typed: NewStep = { kind: "type", ...base, text };
+	return args?.submit === true ? [typed, { kind: "key", at, key: "Enter" }] : [typed];
+};
+
+/** `key`: one of the keys a spec can press. */
+const keySteps: StepBuilder = ({ args, base }) => {
+	const key = str(args, "key");
+	return key === undefined ? [] : keyStep(base, key);
+};
+
+/** `gesture-swipe`: needs both end points. */
+const swipeSteps: StepBuilder = ({ args, base }) => {
+	const from = parsePoint(str(args, "from"));
+	const to = parsePoint(str(args, "to"));
+	return from && to ? [{ kind: "gesture", type: "swipe", ...base, by: "path", from, to }] : [];
+};
+
+/** `scroll`: a direction, and the target when it scrolled until something showed. */
+const scrollSteps: StepBuilder = ({ args, base, target }) => {
+	const direction = asDirection(str(args, "direction"));
+	return [
+		{
+			kind: "scroll",
+			...base,
+			...(direction ? { direction } : {}),
+			...(str(args, "until") && target ? { until: target } : {}),
+		},
+	];
+};
+
+/** `open`: a URL, or an app (with its Metro URL). */
+const openSteps: StepBuilder = ({ args, base }) => {
+	const url = str(args, "url");
+	const app = str(args, "bundleId");
+	const metro = str(args, "metro");
+	if (url !== undefined) return [{ kind: "open", ...base, url }];
+	return app === undefined ? [] : [{ kind: "open", ...base, app, ...(metro ? { metro } : {}) }];
+};
+
+/** `alert`: accept or dismiss. */
+const alertSteps: StepBuilder = ({ args, base }) => {
+	const choice = str(args, "choice");
+	return choice === "accept" || choice === "dismiss" ? [{ kind: "alert", ...base, action: choice }] : [];
+};
+
+/** `home` / `back`: the system buttons. */
+const buttonSteps =
+	(kind: "home" | "back"): StepBuilder =>
+	({ base }) => [{ kind, ...base }];
+
+/** `screen-rotate`: one of the known orientations. */
+const screenRotateSteps: StepBuilder = ({ args, base }) => {
+	const orientation = str(args, "orientation");
+	const known = ["portrait", "portraitUpsideDown", "landscapeLeft", "landscapeRight"] as const;
+	const found = known.find((candidate) => candidate === orientation);
+	return found ? [{ kind: "screen", type: "rotate", ...base, orientation: found }] : [];
+};
+
+/** `screen-appearance`: light or dark. */
+const appearanceSteps: StepBuilder = ({ args, base }) => {
+	const mode = str(args, "mode");
+	return mode === "light" || mode === "dark" ? [{ kind: "screen", type: "appearance", ...base, mode }] : [];
+};
+
+/** `screen-screenshot`: a screenshot step. */
+const screenshotSteps: StepBuilder = ({ base }) => [{ kind: "screen", type: "screenshot", ...base }];
+
+/** `wait`: on the target, with the awaited state and timeout when recorded. */
+const waitSteps: StepBuilder = ({ args, base, target }) => {
+	const state = str(args, "state");
+	const timeoutMs = num(args, "timeoutMs");
+	const states = ["visible", "hidden", "attached", "detached"] as const;
+	const found = states.find((candidate) => candidate === state);
+	return target
+		? [
+				{
+					kind: "wait",
+					...base,
+					target,
+					...(found ? { state: found } : {}),
+					...(timeoutMs !== undefined ? { timeoutMs } : {}),
+				},
+			]
+		: [];
+};
+
+/** `is`: an assertion on the target's state. */
+const isSteps: StepBuilder = ({ args, base, target }) => {
+	const state = str(args, "state");
+	const known = ["visible", "hidden", "enabled", "disabled", "checked", "unchecked"] as const;
+	const found = known.find((candidate) => candidate === state);
+	return target && found
+		? [{ kind: "is", ...base, target, state: found, ...(args?.not === true ? { not: true } : {}) }]
+		: [];
+};
+
+/** `get`: an assertion on the target's text or value. */
+const getSteps: StepBuilder = ({ args, base, target }) => {
+	const property = str(args, "property");
+	const expected = str(args, "expected");
+	return target && (property === "text" || property === "value") && expected !== undefined
+		? [{ kind: "get", ...base, target, property, expected }]
+		: [];
+};
+
+/** The builder for each recordable action; an action missing here is one a spec cannot express. */
+const STEP_BUILDERS: ReadonlyMap<string, StepBuilder> = new Map<string, StepBuilder>([
+	["press", pressSteps],
+	["tap", pressSteps],
+	["gesture-longpress", longpressSteps],
+	["gesture-pinch", pinchSteps],
+	["gesture-rotate", rotateSteps],
+	["gesture-path", pathSteps],
+	["fill", fillSteps],
+	["type", typeSteps],
+	["key", keySteps],
+	["gesture-swipe", swipeSteps],
+	["scroll", scrollSteps],
+	["open", openSteps],
+	["alert", alertSteps],
+	["home", buttonSteps("home")],
+	["back", buttonSteps("back")],
+	["screen-rotate", screenRotateSteps],
+	["screen-appearance", appearanceSteps],
+	["screen-screenshot", screenshotSteps],
+	["wait", waitSteps],
+	["is", isSteps],
+	["get", getSteps],
+]);
+
 /** One action → the recorded steps it stands for (none for actions a spec cannot express). Pure given the grounded target. */
 export function stepsFromRecord(step: RecordStep, grounded: Grounded, env: Env, at: number): NewStep[] {
-	const { args } = step;
-	const base = {
+	const base: Base = {
 		at,
 		...(grounded.hash !== undefined ? { snapshotHash: grounded.hash } : {}),
 		...(step.settle ? { settle: step.settle } : {}),
 		...(step.route !== undefined ? { route: step.route } : {}),
 	};
-	const { target } = grounded;
-	switch (step.action) {
-		case "press":
-		case "tap":
-			return target ? [{ kind: "press", ...base, target }] : [];
-		case "gesture-longpress": {
-			const durationMs = num(args, "ms");
-			return target
-				? [{ kind: "gesture", type: "longpress", ...base, target, ...(durationMs !== undefined ? { durationMs } : {}) }]
-				: [];
-		}
-		case "gesture-pinch": {
-			const scale = num(args, "scale");
-			return scale === undefined
-				? []
-				: [{ kind: "gesture", type: "pinch", ...base, scale, ...twoFinger(args, target) }];
-		}
-		case "gesture-rotate": {
-			const degrees = num(args, "degrees");
-			return degrees === undefined
-				? []
-				: [{ kind: "gesture", type: "rotate", ...base, degrees, ...twoFinger(args, target) }];
-		}
-		case "gesture-path": {
-			const paths = parsePaths(str(args, "paths"));
-			const durationMs = num(args, "ms");
-			return paths
-				? [{ kind: "gesture", type: "path", ...base, paths, ...(durationMs !== undefined ? { durationMs } : {}) }]
-				: [];
-		}
-		case "fill": {
-			if (!target) return [];
-			const { text, note } = plainText(step, env);
-			return [{ kind: "fill", ...base, target, text, ...(note ? { note } : {}) }];
-		}
-		case "type": {
-			const { text } = plainText(step, env);
-			const typed: NewStep = { kind: "type", ...base, text };
-			return args?.submit === true ? [typed, { kind: "key", at, key: "Enter" }] : [typed];
-		}
-		case "key": {
-			const key = str(args, "key");
-			return key === undefined ? [] : keyStep(base, key);
-		}
-		case "gesture-swipe": {
-			const from = parsePoint(str(args, "from"));
-			const to = parsePoint(str(args, "to"));
-			return from && to ? [{ kind: "gesture", type: "swipe", ...base, by: "path", from, to }] : [];
-		}
-		case "scroll": {
-			const direction = asDirection(str(args, "direction"));
-			return [
-				{
-					kind: "scroll",
-					...base,
-					...(direction ? { direction } : {}),
-					...(str(args, "until") && target ? { until: target } : {}),
-				},
-			];
-		}
-		default:
-			return deviceSteps(step, base, grounded);
-	}
+	const build = STEP_BUILDERS.get(step.action);
+	return build ? build({ step, args: step.args, base, target: grounded.target, env, at }) : [];
 }
-
-type Base = { at: number; snapshotHash?: string; settle?: { timeoutMs: number }; route?: string };
 
 function keyStep(base: Base, key: string): NewStep[] {
 	const names = ["Enter", "Backspace", "Tab", "Space", "Escape", "Delete", "Up", "Down", "Left", "Right"] as const;
 	const name = names.find((candidate) => candidate === key);
 	return name ? [{ kind: "key", ...base, key: name }] : [];
-}
-
-function deviceSteps(step: RecordStep, base: Base, grounded: Grounded): NewStep[] {
-	const { args } = step;
-	const { target } = grounded;
-	switch (step.action) {
-		case "open": {
-			const url = str(args, "url");
-			const app = str(args, "bundleId");
-			const metro = str(args, "metro");
-			if (url !== undefined) return [{ kind: "open", ...base, url }];
-			return app === undefined ? [] : [{ kind: "open", ...base, app, ...(metro ? { metro } : {}) }];
-		}
-		case "alert": {
-			const choice = str(args, "choice");
-			return choice === "accept" || choice === "dismiss" ? [{ kind: "alert", ...base, action: choice }] : [];
-		}
-		case "home":
-		case "back":
-			return [{ kind: step.action, ...base }];
-		case "screen-rotate": {
-			const orientation = str(args, "orientation");
-			const known = ["portrait", "portraitUpsideDown", "landscapeLeft", "landscapeRight"] as const;
-			const found = known.find((candidate) => candidate === orientation);
-			return found ? [{ kind: "screen", type: "rotate", ...base, orientation: found }] : [];
-		}
-		case "screen-appearance": {
-			const mode = str(args, "mode");
-			return mode === "light" || mode === "dark" ? [{ kind: "screen", type: "appearance", ...base, mode }] : [];
-		}
-		case "screen-screenshot":
-			return [{ kind: "screen", type: "screenshot", ...base }];
-		case "wait": {
-			const state = str(args, "state");
-			const timeoutMs = num(args, "timeoutMs");
-			const states = ["visible", "hidden", "attached", "detached"] as const;
-			const found = states.find((candidate) => candidate === state);
-			return target
-				? [
-						{
-							kind: "wait",
-							...base,
-							target,
-							...(found ? { state: found } : {}),
-							...(timeoutMs !== undefined ? { timeoutMs } : {}),
-						},
-					]
-				: [];
-		}
-		case "is": {
-			const state = str(args, "state");
-			const known = ["visible", "hidden", "enabled", "disabled", "checked", "unchecked"] as const;
-			const found = known.find((candidate) => candidate === state);
-			return target && found
-				? [{ kind: "is", ...base, target, state: found, ...(args?.not === true ? { not: true } : {}) }]
-				: [];
-		}
-		case "get": {
-			const property = str(args, "property");
-			const expected = str(args, "expected");
-			return target && (property === "text" || property === "value") && expected !== undefined
-				? [{ kind: "get", ...base, target, property, expected }]
-				: [];
-		}
-		default:
-			return [];
-	}
 }
 
 /** The sink `appendRecorded` uses when `UiDeps.record` is not set: appends to the device's journal while a recording is active. */

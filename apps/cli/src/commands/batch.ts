@@ -99,6 +99,7 @@ import {
 import { emit, note, reportError, warn } from "../output";
 import { hideSimWindows } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
+import type { Spinner } from "../ui";
 import { currentBuild } from "../update/build-info";
 
 export type KillSignal = ForwardedSignal | "SIGKILL";
@@ -2079,6 +2080,108 @@ async function closeWarm(warm: EarlyWarm | undefined): Promise<void> {
 	await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
 }
 
+/** What the session's signal handler and claim callbacks share: the Metro launched mid-claim and whether the claim ended. */
+type SessionRun = { launch: MetroLaunch | undefined; claimDone: boolean };
+
+/** The early warm-up of an iOS run: each leg's devices are warmed the moment they are leased, overlapping the install and Metro. */
+function startSessionWarm(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	hooks: SessionHooks,
+	lease: BatchArgs,
+	extra: number,
+	logDir: string,
+	signal: AbortSignal
+): EarlyWarm | undefined {
+	if (!hooks.warmDrivers || lease.flags.request.platform !== "ios") return undefined;
+	return startEarlyWarm({
+		connect: hooks.warmDrivers,
+		legCounts: [
+			...(lease.legs?.map((leg) => leg.flags) ?? [lease.flags]).map((flags) => flags.request.count),
+			...Array<number>(extra).fill(1),
+		],
+		logDir,
+		now: ctx.now,
+		after: deps.after,
+		writeFile: deps.writeFile,
+		signal,
+	});
+}
+
+/** The `onLeased` callback fanning a leased outcome to progress, warm-up and slim; undefined when none is active. */
+function sessionOnLeased(
+	progress: ((outcome: ClaimOutcome) => void) | undefined,
+	warm: EarlyWarm | undefined,
+	slim: EarlySlim<ClaimedDevice> | undefined
+): ((outcome: ClaimOutcome, leg: number) => void) | undefined {
+	if (!progress && !warm && !slim) return undefined;
+	return (outcome, leg) => {
+		progress?.(outcome);
+		warm?.leased(outcome, leg);
+		slim?.leased(outcome);
+	};
+}
+
+/** The `onPorts` callback launching the run's Metro the moment its port is leased; undefined without a `metro` plan. */
+function sessionOnPorts(
+	ctx: CommandContext,
+	sctx: CommandContext,
+	deps: BatchDeps,
+	lease: BatchArgs,
+	run: SessionRun,
+	batchDir: string,
+	controller: AbortController
+): ((ports: RunPort[]) => void) | undefined {
+	const plan = lease.metro;
+	if (!plan) return undefined;
+	const { platform } = lease.flags.request;
+	return (ports) => {
+		const port = ports[0]?.port;
+		if (port === undefined) return;
+		const launch = launchRunMetro(sctx, deps, plan, {
+			port,
+			platform,
+			log: join(batchDir, "metro.log"),
+			env: { ...ctx.env, ...lease.env, WARDEN_BATCH_DIR: batchDir, WARDEN_PORT: String(port) },
+			interrupted: () => controller.signal.aborted,
+			signal: controller.signal,
+		});
+		run.launch = launch;
+		// up before the claim is done: say so above the claim spinner (the overlap is the point)
+		void launch.pending.then((result) => {
+			if (result.success && !run.claimDone) launch.announce(sctx.err);
+		});
+	};
+}
+
+/** Settle the claim spinner for a finished claim: failed, app ready, or leased. */
+function settleClaimSpinner(spinner: Spinner, lease: BatchArgs, result: Awaited<ReturnType<typeof claimAll>>): void {
+	if (!result.success) spinner.fail(lease.app ? "claim / app install failed" : "claim failed");
+	else if (lease.app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
+	else spinner.succeed(leasedText(result.data.outcome));
+}
+
+/** Report and clean up after a claim that failed or was interrupted; returns the exit code. */
+async function abortClaim(
+	ctx: CommandContext,
+	name: string,
+	claimed: Awaited<ReturnType<typeof claimAll>>,
+	run: SessionRun,
+	interrupted: boolean,
+	quiesce: () => Promise<void>
+): Promise<SessionResult> {
+	await quiesce();
+	if (claimed.success) await claimed.data.release();
+	const { launch } = run;
+	await launch?.stop();
+	const metro = launch ? await launch.pending : undefined;
+	const claimError = claimed.success || claimed.error === INTERRUPTED ? undefined : claimed.error;
+	const metroError = launch && metro && !metro.success ? `${metro.error} (log: ${launch.log})` : undefined;
+	const reason = claimError ?? (interrupted ? INTERRUPTED : (metroError ?? INTERRUPTED));
+	reportError(ctx, name, reason);
+	return { code: interrupted ? 130 : 1 };
+}
+
 /**
  * Claim (at most one device per job, under a spinner) → supervise → release. With a `metro` plan the
  * run's Metro is launched the moment its port is leased, so it starts and prewarms while the devices
@@ -2109,24 +2212,8 @@ export async function runSession(
 	const logDir = lease.logs ?? join(batchDir, "logs");
 	const controller = new AbortController();
 	const interrupted = () => controller.signal.aborted;
-	let launch: MetroLaunch | undefined;
-	let claimDone = false;
-	// each leg's devices are warmed the moment they are leased, so it overlaps the install and Metro
-	const warm =
-		hooks.warmDrivers && platform === "ios"
-			? startEarlyWarm({
-					connect: hooks.warmDrivers,
-					legCounts: [
-						...(lease.legs?.map((leg) => leg.flags) ?? [lease.flags]).map((flags) => flags.request.count),
-						...Array<number>(elastic.extra).fill(1),
-					],
-					logDir,
-					now: ctx.now,
-					after: deps.after,
-					writeFile: deps.writeFile,
-					signal: controller.signal,
-				})
-			: undefined;
+	const run: SessionRun = { launch: undefined, claimDone: false };
+	const warm = startSessionWarm(ctx, deps, hooks, lease, elastic.extra, logDir, controller.signal);
 	// each device is slimmed the moment it is leased, alongside its app install and warm-up (12-4)
 	const slim =
 		hooks.setup?.slim && platform === "ios"
@@ -2141,73 +2228,35 @@ export async function runSession(
 	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
 		deps.onSignal(signal, () => {
 			controller.abort();
-			void launch?.stop();
+			void run.launch?.stop();
 		})
 	);
 	const claimed = await withSpinner(ctx, `claiming ${wanted} ${platform} device(s)…`, async (sctx, spinner) => {
 		const legFlags = lease.legs?.map((leg) => leg.flags);
 		const progress = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
-		const onLeased =
-			progress || warm || slim
-				? (outcome: ClaimOutcome, leg: number) => {
-						progress?.(outcome);
-						warm?.leased(outcome, leg);
-						slim?.leased(outcome);
-					}
-				: undefined;
-		const plan = lease.metro;
-		const onPorts = plan
-			? (ports: RunPort[]) => {
-					const port = ports[0]?.port;
-					if (port === undefined) return;
-					launch = launchRunMetro(sctx, deps, plan, {
-						port,
-						platform,
-						log: join(batchDir, "metro.log"),
-						env: { ...ctx.env, ...lease.env, WARDEN_BATCH_DIR: batchDir, WARDEN_PORT: String(port) },
-						interrupted,
-						signal: controller.signal,
-					});
-					// up before the claim is done: say so above the claim spinner (the overlap is the point)
-					void launch.pending.then((result) => {
-						if (result.success && !claimDone) launch?.announce(sctx.err);
-					});
-				}
-			: undefined;
-		const aborted = () => interrupted() || launch?.state === "failed";
-		const args = {
+		const onLeased = sessionOnLeased(progress, warm, slim);
+		const onPorts = sessionOnPorts(ctx, sctx, deps, lease, run, batchDir, controller);
+		const claimArgs = {
 			...lease,
 			...(legFlags ? { legFlags } : {}),
 			...(onLeased ? { onLeased } : {}),
 			...(onPorts ? { onPorts } : {}),
-			aborted,
+			aborted: () => interrupted() || run.launch?.state === "failed",
 			// a device the headless hide could not boot again is dropped, as one that cannot reach Metro is (12-7, R5)
 			dropLost: true,
 			// a failed leg releases the others at once: their early slim and warm-up end first (R3)
 			...(warm || slim ? { beforeRelease: quiesce } : {}),
 		};
-		const result = await claimAll(sctx, deps, owner, args, name);
-		claimDone = true;
+		const result = await claimAll(sctx, deps, owner, claimArgs, name);
+		run.claimDone = true;
 		// after claimAll: the run's own leases keep the background gc off its devices (12-2, 16-1)
 		maybeAutoGc(ctx);
-		if (!result.success) spinner.fail(lease.app ? "claim / app install failed" : "claim failed");
-		else if (lease.app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
-		else spinner.succeed(leasedText(result.data.outcome));
+		settleClaimSpinner(spinner, lease, result);
 		return result;
 	});
 	// before supervise re-subscribes (holdLeases), so the two never share a handler slot
 	for (const off of offSignals) off();
-	if (!claimed.success || interrupted()) {
-		await quiesce();
-		if (claimed.success) await claimed.data.release();
-		await launch?.stop();
-		const metro = launch ? await launch.pending : undefined;
-		const claimError = claimed.success || claimed.error === INTERRUPTED ? undefined : claimed.error;
-		const metroError = launch && metro && !metro.success ? `${metro.error} (log: ${launch.log})` : undefined;
-		const reason = claimError ?? (interrupted() ? INTERRUPTED : (metroError ?? INTERRUPTED));
-		reportError(ctx, name, reason);
-		return { code: interrupted() ? 130 : 1 };
-	}
+	if (!claimed.success || interrupted()) return abortClaim(ctx, name, claimed, run, interrupted(), quiesce);
 	return supervise(
 		ctx,
 		deps,
@@ -2221,7 +2270,7 @@ export async function runSession(
 			batchDir,
 			logDir,
 			controller,
-			metro: launch,
+			metro: run.launch,
 			warm,
 			slim,
 			elastic: elastic.setup,

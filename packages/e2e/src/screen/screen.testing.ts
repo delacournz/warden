@@ -86,6 +86,44 @@ export function fieldFixture(
 		focusIn: -1,
 	};
 	const lagReads = options.lagReads ?? 0;
+
+	/** A `typeText` call: replaces a selection, then drops, tail-drops or appends per the fixture's flakiness. */
+	const typeText = (text: string): void => {
+		state.typeCalls += 1;
+		if (state.selected) {
+			state.value = "";
+			state.selected = false;
+		}
+		if (state.drops > 0) state.drops -= 1;
+		else if (state.tailDrops > 0) {
+			state.tailDrops -= 1;
+			state.value += text.slice(0, Math.max(0, text.length - (options.dropTail ?? 0)));
+		} else if (state.typeCalls !== options.dropCall) state.value += text;
+		state.lag = lagReads;
+	};
+
+	/** A tap: drops any selection and, unless the field never reports focus, schedules focus. */
+	const tap = (): void => {
+		state.selected = false;
+		if (state.focused !== true && options.neverFocuses !== true) state.focusIn = options.focusReads ?? 0;
+	};
+
+	/** `setText` (Android): replaces the whole value. */
+	const setText = (text: string): void => {
+		state.value = text;
+		state.selected = false;
+		state.lag = lagReads;
+	};
+
+	/** A Backspace: ignored while `dropKeys` last, else clears a selection or the last character. */
+	const backspace = (): void => {
+		if (state.keyDrops > 0) state.keyDrops -= 1;
+		else if (state.selected) state.value = "";
+		else state.value = state.value.slice(0, -1);
+		state.selected = false;
+		state.lag = lagReads;
+	};
+
 	const driver = fakeDriver({
 		screens: () => {
 			state.reads += 1;
@@ -113,33 +151,16 @@ export function fieldFixture(
 		},
 		onCall(call) {
 			if (call.method === "tap") {
-				state.selected = false;
-				if (state.focused !== true && options.neverFocuses !== true) state.focusIn = options.focusReads ?? 0;
+				tap();
 			} else if (call.method === "setText") {
 				if (options.setText === "refused") return failWith("E_UNSUPPORTED", "setText needs the warden-uiad server");
-				state.value = call.text;
-				state.selected = false;
-				state.lag = lagReads;
+				setText(call.text);
 			} else if (call.method === "selectAll") {
 				state.selected = options.selectAllRefused !== true;
 			} else if (call.method === "typeText") {
-				state.typeCalls += 1;
-				if (state.selected) {
-					state.value = "";
-					state.selected = false;
-				}
-				if (state.drops > 0) state.drops -= 1;
-				else if (state.tailDrops > 0) {
-					state.tailDrops -= 1;
-					state.value += call.text.slice(0, Math.max(0, call.text.length - (options.dropTail ?? 0)));
-				} else if (state.typeCalls !== options.dropCall) state.value += call.text;
-				state.lag = lagReads;
+				typeText(call.text);
 			} else if (call.method === "key" && call.key === "Backspace") {
-				if (state.keyDrops > 0) state.keyDrops -= 1;
-				else if (state.selected) state.value = "";
-				else state.value = state.value.slice(0, -1);
-				state.selected = false;
-				state.lag = lagReads;
+				backspace();
 			}
 			return undefined;
 		},

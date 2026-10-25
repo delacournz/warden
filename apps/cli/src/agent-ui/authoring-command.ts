@@ -126,6 +126,70 @@ async function defaultSpecPath(
 	return ok(join(ctx.cwd, "e2e", `${slug}.e2e.ts`));
 }
 
+/** `--helper <module>#<fn>`: where the helper goes; an export of that name is replaced only with `--overwrite`. */
+function resolveHelperTarget(
+	ctx: CommandContext,
+	rawHelper: string,
+	opts: RecordStartOptionValues
+): Result<Resolved, UiError> {
+	const ref: Result<HelperRef> = parseHelperRef(rawHelper);
+	if (!ref.success) return failed("usage", ref.error);
+	const path = resolve(ctx.cwd, ref.data.module);
+	const existing = readIfExists(path);
+	if (existing !== undefined && exportsName(existing, ref.data.fn) && opts.overwrite !== true) {
+		return failed("target_exists", `${ref.data.module} already exports ${ref.data.fn}`, {
+			hint: "pick another function name, or pass --overwrite to replace it",
+		});
+	}
+	return ok({
+		target: {
+			kind: "helper",
+			path,
+			fn: ref.data.fn,
+			...(opts.prerequisite !== undefined ? { prerequisite: opts.prerequisite } : {}),
+		},
+		...(opts.suite !== undefined ? { suite: opts.suite } : {}),
+	});
+}
+
+/** `--to` without `--suite` is refused when several suites exist: `record use` and the verify run need one. */
+async function checkSuiteChosen(
+	ctx: CommandContext,
+	authoring: AuthoringDeps,
+	opts: RecordStartOptionValues
+): Promise<Result<undefined, UiError>> {
+	if (opts.to === undefined || opts.suite !== undefined) return ok(undefined);
+	const found = await (authoring.findSuite ?? defaultFindSuite)(ctx, undefined);
+	if (!found.success && found.error.code === "several_suites") {
+		return failed("usage", found.error.message, {
+			hint: "pass --suite <name> now: `record use` and the verify run on that suite",
+		});
+	}
+	return ok(undefined);
+}
+
+/** The spec a recording writes: `--to`, else the suite's default path; an existing file is replaced only with `--overwrite`. */
+async function resolveSpecTarget(
+	ctx: CommandContext,
+	authoring: AuthoringDeps,
+	name: string,
+	opts: RecordStartOptionValues
+): Promise<Result<Resolved, UiError>> {
+	const chosen = await checkSuiteChosen(ctx, authoring, opts);
+	if (!chosen.success) return chosen;
+	const path =
+		opts.to !== undefined
+			? ok(resolve(ctx.cwd, opts.to))
+			: await defaultSpecPath(ctx, authoring, slugOf(name), opts.suite);
+	if (!path.success) return path;
+	if (existsSync(path.data) && opts.overwrite !== true) {
+		return failed("target_exists", `${path.data} already exists`, {
+			hint: "pass --overwrite to replace it, or --to <other spec>",
+		});
+	}
+	return ok({ target: { kind: "spec", path: path.data }, ...(opts.suite !== undefined ? { suite: opts.suite } : {}) });
+}
+
 async function resolveTarget(
 	ctx: CommandContext,
 	authoring: AuthoringDeps,
@@ -140,45 +204,8 @@ async function resolveTarget(
 	if (opts.prerequisite !== undefined && opts.helper === undefined) {
 		return failed("usage", "--prerequisite only applies to --helper");
 	}
-	if (opts.helper !== undefined) {
-		const ref: Result<HelperRef> = parseHelperRef(opts.helper);
-		if (!ref.success) return failed("usage", ref.error);
-		const path = resolve(ctx.cwd, ref.data.module);
-		const existing = existsSync(path) ? readFileSync(path, "utf8") : undefined;
-		if (existing !== undefined && exportsName(existing, ref.data.fn) && opts.overwrite !== true) {
-			return failed("target_exists", `${ref.data.module} already exports ${ref.data.fn}`, {
-				hint: "pick another function name, or pass --overwrite to replace it",
-			});
-		}
-		return ok({
-			target: {
-				kind: "helper",
-				path,
-				fn: ref.data.fn,
-				...(opts.prerequisite !== undefined ? { prerequisite: opts.prerequisite } : {}),
-			},
-			...(opts.suite !== undefined ? { suite: opts.suite } : {}),
-		});
-	}
-	if (opts.to !== undefined && opts.suite === undefined) {
-		const found = await (authoring.findSuite ?? defaultFindSuite)(ctx, undefined);
-		if (!found.success && found.error.code === "several_suites") {
-			return failed("usage", found.error.message, {
-				hint: "pass --suite <name> now: `record use` and the verify run on that suite",
-			});
-		}
-	}
-	const path =
-		opts.to !== undefined
-			? ok(resolve(ctx.cwd, opts.to))
-			: await defaultSpecPath(ctx, authoring, slugOf(name), opts.suite);
-	if (!path.success) return path;
-	if (existsSync(path.data) && opts.overwrite !== true) {
-		return failed("target_exists", `${path.data} already exists`, {
-			hint: "pass --overwrite to replace it, or --to <other spec>",
-		});
-	}
-	return ok({ target: { kind: "spec", path: path.data }, ...(opts.suite !== undefined ? { suite: opts.suite } : {}) });
+	if (opts.helper !== undefined) return resolveHelperTarget(ctx, opts.helper, opts);
+	return resolveSpecTarget(ctx, authoring, name, opts);
 }
 
 /** `--options <module#name>` as the pointer keeps it (absolute module); `none` switches the shared options off. */
@@ -194,6 +221,94 @@ function pinnedOptions(ctx: CommandContext, raw: string | undefined): Result<Rec
 	return ok({ module: ref.data.module, name: ref.data.name });
 }
 
+/** `record start` needs a usable name and no recording already running on the device. */
+function checkStartable(name: string, state: ReturnType<typeof readState>): Result<undefined, UiError> {
+	if (slugOf(name) === "") {
+		return failed("usage", "record start needs a name", { hint: 'warden ui record start "sign in"' });
+	}
+	if (state.recording) {
+		return failed("recording_active", `already recording "${state.recording.name}"`, {
+			hint: "`warden ui record stop` writes it, `record cancel` throws it away",
+		});
+	}
+	return ok(undefined);
+}
+
+/** A fresh journal for the recording; one left here belongs to a recording that died before it could be stopped. */
+function startJournal(
+	ctx: CommandContext,
+	device: UiDevice,
+	state: ReturnType<typeof readState>,
+	screen: { width: number; height: number; scale: number },
+	name: string,
+	title: string | undefined
+): Result<string, UiError> {
+	const journal = recordingFile(ctx, device.udid);
+	if (existsSync(journal)) deleteJournal(journal);
+	const { width, height, scale } = screen;
+	const created = createJournal(journal, {
+		name,
+		...(title ? { title } : {}),
+		createdAt: ctx.now(),
+		recordedOn: {
+			platform: device.platform,
+			device: device.name ?? device.udid,
+			screen: { width, height, scale },
+			...(state.app !== undefined ? { app: state.app } : {}),
+			...(state.metroUrl !== undefined ? { metro: state.metroUrl } : {}),
+		},
+	});
+	return created.success ? ok(journal) : journalFailure(created.error);
+}
+
+/** The pointer `state.json` keeps while the recording runs. */
+function startedPointer(
+	ctx: CommandContext,
+	name: string,
+	title: string | undefined,
+	resolved: Resolved,
+	ids: string | undefined,
+	options: RecordingPointer["options"],
+	overwrite: boolean
+): RecordingPointer {
+	return {
+		name,
+		...(title ? { title } : {}),
+		target: resolved.target,
+		...(ids !== undefined ? { ids } : {}),
+		...(resolved.suite !== undefined ? { suite: resolved.suite } : {}),
+		...(options !== undefined ? { options } : {}),
+		...(overwrite ? { overwrite: true as const } : {}),
+		startedAt: ctx.now(),
+	};
+}
+
+/** What `record start` reports. */
+function startedSuccess(
+	device: UiDevice,
+	name: string,
+	target: RecordingPointer["target"],
+	ids: string | undefined,
+	journal: string
+): UiSuccess {
+	return {
+		device: deviceOf(device),
+		result: {
+			outcome: "started",
+			name,
+			kind: target.kind,
+			target: target.path,
+			...(target.kind === "helper" ? { fn: target.fn } : {}),
+			...(ids !== undefined ? { ids } : {}),
+			journal,
+		},
+		text: [
+			`recording "${name}" → ${targetPath(target)}`,
+			"every warden ui action is appended; `record note` marks a step, `record undo` drops one, `record stop` writes it (--no-record skips one action)",
+		].join("\n"),
+	};
+}
+
 /**
  * `warden ui record start <name>`: from now on every `warden ui` action (and `record note`) is appended to the device's
  * journal. `record stop` turns it into the spec (`--to`, default `<suite specsDir>/<name>.e2e.ts`) or, with
@@ -207,15 +322,9 @@ export function uiRecordStart(
 ): Promise<number> {
 	return runUi(ctx, deps, "record start", opts, async (device, env) => {
 		const recordingName = name.trim();
-		if (slugOf(recordingName) === "") {
-			return failed("usage", "record start needs a name", { hint: 'warden ui record start "sign in"' });
-		}
 		const state = readState(ctx, device.udid);
-		if (state.recording) {
-			return failed("recording_active", `already recording "${state.recording.name}"`, {
-				hint: "`warden ui record stop` writes it, `record cancel` throws it away",
-			});
-		}
+		const startable = checkStartable(recordingName, state);
+		if (!startable.success) return startable;
 		const resolved = await resolveTarget(ctx, deps.authoring ?? {}, recordingName, opts);
 		if (!resolved.success) return resolved;
 		const sharedOptions = pinnedOptions(ctx, opts.options);
@@ -225,57 +334,18 @@ export function uiRecordStart(
 		const health = fromDriver(await driver.data.health());
 		if (!health.success) return health;
 
-		const journal = recordingFile(ctx, device.udid);
-		// no pointer in state.json: a journal here belongs to a recording that died before it could be stopped
-		if (existsSync(journal)) deleteJournal(journal);
-		const { width, height, scale } = health.data.screen;
 		const title = opts.title?.trim();
-		const created = createJournal(journal, {
-			name: recordingName,
-			...(title ? { title } : {}),
-			createdAt: ctx.now(),
-			recordedOn: {
-				platform: device.platform,
-				device: device.name ?? device.udid,
-				screen: { width, height, scale },
-				...(state.app !== undefined ? { app: state.app } : {}),
-				...(state.metroUrl !== undefined ? { metro: state.metroUrl } : {}),
-			},
-		});
-		if (!created.success) return journalFailure(created.error);
+		const journal = startJournal(ctx, device, state, health.data.screen, recordingName, title);
+		if (!journal.success) return journal;
 		const ids = opts.ids === undefined ? undefined : resolve(ctx.cwd, opts.ids);
+		const overwrite = opts.overwrite === true;
 		updateState(ctx, device.udid, (current) => ({
 			...current,
-			recording: {
-				name: recordingName,
-				...(title ? { title } : {}),
-				target: resolved.data.target,
-				...(ids !== undefined ? { ids } : {}),
-				...(resolved.data.suite !== undefined ? { suite: resolved.data.suite } : {}),
-				...(sharedOptions.data !== undefined ? { options: sharedOptions.data } : {}),
-				...(opts.overwrite === true ? { overwrite: true as const } : {}),
-				startedAt: ctx.now(),
-			},
+			recording: startedPointer(ctx, recordingName, title, resolved.data, ids, sharedOptions.data, overwrite),
 		}));
 		const { startRoute } = await import("./route-capture");
 		await startRoute(ctx, deps, env, device);
-		const { target } = resolved.data;
-		return ok({
-			device: deviceOf(device),
-			result: {
-				outcome: "started",
-				name: recordingName,
-				kind: target.kind,
-				target: target.path,
-				...(target.kind === "helper" ? { fn: target.fn } : {}),
-				...(ids !== undefined ? { ids } : {}),
-				journal,
-			},
-			text: [
-				`recording "${recordingName}" → ${targetPath(target)}`,
-				"every warden ui action is appended; `record note` marks a step, `record undo` drops one, `record stop` writes it (--no-record skips one action)",
-			].join("\n"),
-		});
+		return ok(startedSuccess(device, recordingName, resolved.data.target, ids, journal.data));
 	});
 }
 
@@ -307,6 +377,19 @@ export function uiRecordNote(ctx: CommandContext, deps: UiDeps, text: string, op
 	});
 }
 
+/** What `record undo` reports: the dropped steps and how many are left. */
+function undoneSuccess(device: UiDevice, removed: readonly RecordedStep[], steps: number | null): UiSuccess {
+	const summaries = removed.map((step) => ({ i: step.i, summary: summarizeStep(step) }));
+	return {
+		device: deviceOf(device),
+		result: { outcome: "undone", removed: summaries, steps },
+		text: [
+			`removed ${summaries.length} step${summaries.length === 1 ? "" : "s"}${steps === null ? "" : `, ${steps} left`}`,
+			...summaries.map((step) => `  - ${step.i} ${step.summary}`),
+		].join("\n"),
+	};
+}
+
 /** `warden ui record undo [n]`: drop the last `n` steps (default 1; notes count) from the journal. */
 export function uiRecordUndo(
 	ctx: CommandContext,
@@ -327,16 +410,7 @@ export function uiRecordUndo(
 			);
 		}
 		const left = readJournal(active.data.journal);
-		const steps = left.success ? left.data.steps.length : null;
-		const summaries = removed.data.map((step) => ({ i: step.i, summary: summarizeStep(step) }));
-		return ok({
-			device: deviceOf(device),
-			result: { outcome: "undone", removed: summaries, steps },
-			text: [
-				`removed ${summaries.length} step${summaries.length === 1 ? "" : "s"}${steps === null ? "" : `, ${steps} left`}`,
-				...summaries.map((step) => `  - ${step.i} ${step.summary}`),
-			].join("\n"),
-		});
+		return ok(undoneSuccess(device, removed.data, left.success ? left.data.steps.length : null));
 	});
 }
 
@@ -458,6 +532,60 @@ async function specShapeFor(
 	return lookup.kind === "ambiguous" ? { launch, ambiguous: lookup.names } : { launch };
 }
 
+type Generated = { source: string; ids: Record<string, string>; replaced: boolean };
+
+/** Generate the spec or helper source for `recording`; nothing is written here. */
+function generateTarget(
+	pointer: RecordingPointer,
+	recording: Recording,
+	replace: boolean,
+	shape: SpecShape,
+	known: Record<string, string>,
+	idsImport: string | undefined
+): Result<Generated, UiError> {
+	const { target } = pointer;
+	if (target.kind === "spec") {
+		const generated = generateSpec(recording, {
+			ids: known,
+			file: target.path,
+			launch: shape.launch,
+			...(shape.specOptions !== undefined ? { specOptions: shape.specOptions } : {}),
+			...(idsImport !== undefined ? { idsImport, idsMerged: true } : {}),
+		});
+		return ok({ source: generated.source, ids: generated.ids, replaced: false });
+	}
+	const generated = generateHelper(recording, {
+		name: target.fn,
+		ids: known,
+		file: target.path,
+		existing: readIfExists(target.path),
+		force: replace,
+		...(target.prerequisite !== undefined ? { prerequisite: target.prerequisite } : {}),
+		...(idsImport !== undefined ? { idsImport } : {}),
+	});
+	if (!generated.success) {
+		return failed(generated.error.code === "helper_exists" ? "target_exists" : "failed", generated.error.message, {
+			details: { code: generated.error.code },
+			hint: generated.error.code === "helper_exists" ? "pass --overwrite to replace it" : "pick another function name",
+		});
+	}
+	const { source, ids, replaced } = generated.data;
+	return ok({ source, ids, replaced });
+}
+
+/** The ids module text to write: the recording's ids merged into what exists; undefined when nothing changes. */
+function mergedIdsText(
+	idsPath: string,
+	existing: string | undefined,
+	ids: Record<string, string>
+): Result<string | undefined, UiError> {
+	const merged = mergeIdsModule(existing, ids);
+	if (!merged.success) {
+		return failed("failed", `${idsPath}: ${merged.error.message}`, { details: { code: merged.error.code } });
+	}
+	return ok(merged.data !== existing ? merged.data : undefined);
+}
+
 /** Generate the spec or helper for `recording` and write it (and the merged ids module); nothing is written when generation fails. */
 function writeTarget(
 	pointer: RecordingPointer,
@@ -469,57 +597,25 @@ function writeTarget(
 	const idsExisting = pointer.ids === undefined ? undefined : readIfExists(pointer.ids);
 	const known = idsExisting === undefined ? {} : parseIdsModule(idsExisting);
 	const idsImport = pointer.ids === undefined ? undefined : importPath(target.path, pointer.ids);
-	const replace = overwrite || pointer.wrote === true;
 
-	let source: string;
-	let ids: Record<string, string>;
-	let replaced = false;
-	if (target.kind === "spec") {
-		const generated = generateSpec(recording, {
-			ids: known,
-			file: target.path,
-			launch: shape.launch,
-			...(shape.specOptions !== undefined ? { specOptions: shape.specOptions } : {}),
-			...(idsImport !== undefined ? { idsImport, idsMerged: true } : {}),
-		});
-		source = generated.source;
-		ids = generated.ids;
-	} else {
-		const generated = generateHelper(recording, {
-			name: target.fn,
-			ids: known,
-			file: target.path,
-			existing: readIfExists(target.path),
-			force: replace,
-			...(target.prerequisite !== undefined ? { prerequisite: target.prerequisite } : {}),
-			...(idsImport !== undefined ? { idsImport } : {}),
-		});
-		if (!generated.success) {
-			return failed(generated.error.code === "helper_exists" ? "target_exists" : "failed", generated.error.message, {
-				details: { code: generated.error.code },
-				hint:
-					generated.error.code === "helper_exists" ? "pass --overwrite to replace it" : "pick another function name",
-			});
-		}
-		({ source, ids, replaced } = generated.data);
-	}
-	let idsWrite: { text: string } | undefined;
+	const generated = generateTarget(pointer, recording, overwrite || pointer.wrote === true, shape, known, idsImport);
+	if (!generated.success) return generated;
+	const { source, ids, replaced } = generated.data;
+	let idsText: string | undefined;
 	if (pointer.ids !== undefined) {
-		const merged = mergeIdsModule(idsExisting, ids);
-		if (!merged.success) {
-			return failed("failed", `${pointer.ids}: ${merged.error.message}`, { details: { code: merged.error.code } });
-		}
-		if (merged.data !== idsExisting) idsWrite = { text: merged.data };
+		const merged = mergedIdsText(pointer.ids, idsExisting, ids);
+		if (!merged.success) return merged;
+		idsText = merged.data;
 	}
 	write(target.path, source);
-	if (pointer.ids !== undefined && idsWrite) write(pointer.ids, idsWrite.text);
+	if (pointer.ids !== undefined && idsText !== undefined) write(pointer.ids, idsText);
 	const added = Object.fromEntries(Object.entries(ids).filter(([key]) => !(key in known)));
 	return ok({
 		file: target.path,
 		...(target.kind === "helper" ? { fn: target.fn } : {}),
 		replaced,
 		source,
-		ids: pointer.ids === undefined ? null : { file: pointer.ids, added: idsWrite ? added : {} },
+		ids: pointer.ids === undefined ? null : { file: pointer.ids, added: idsText !== undefined ? added : {} },
 	});
 }
 
@@ -611,6 +707,152 @@ function configLines(config: SpecConfig, suite: string | undefined): string[] {
 
 const fixmesIn = (source: string): number => (source.match(/^\s*\/\/ FIXME:/gm) ?? []).length;
 
+/** `stop` replaces an existing spec only with `--overwrite` (now or at `start`), or when this recording already wrote it. */
+function checkTargetFree(pointer: RecordingPointer, overwrite: boolean): Result<undefined, UiError> {
+	const { target } = pointer;
+	const taken = target.kind === "spec" && existsSync(target.path) && pointer.wrote !== true && !overwrite;
+	if (!taken) return ok(undefined);
+	return failed("target_exists", `${target.path} already exists`, { hint: "pass --overwrite to replace it" });
+}
+
+/** The `test.use` shape of a spec target; a helper is always launched fresh. */
+async function shapeForTarget(
+	ctx: CommandContext,
+	deps: UiDeps,
+	pointer: RecordingPointer,
+	recording: Recording,
+	suiteName: string | undefined
+): Promise<SpecShape> {
+	const { target } = pointer;
+	if (target.kind !== "spec") return { launch: "fresh" };
+	return specShapeFor(ctx, deps.authoring ?? {}, pointer, recording, target.path, suiteName);
+}
+
+/** The `specs.<id>` proposal of a spec target; null for a helper. */
+async function configForTarget(
+	ctx: CommandContext,
+	deps: UiDeps,
+	env: UiRunEnv,
+	device: UiDevice,
+	pointer: RecordingPointer,
+	recording: Recording,
+	suiteName: string | undefined
+): Promise<SpecConfig | null> {
+	const { target } = pointer;
+	if (target.kind !== "spec") return null;
+	return configFor(ctx, deps, env, device, pointer, recording, target.path, suiteName);
+}
+
+/** Remember in the pointer that this recording has written its target. */
+function markWrote(ctx: CommandContext, udid: string): void {
+	updateState(ctx, udid, (current) =>
+		current.recording ? { ...current, recording: { ...current.recording, wrote: true } } : current
+	);
+}
+
+/** Everything `stop` knows once the target is written. */
+type StopOutcome = {
+	pointer: RecordingPointer;
+	recording: Recording;
+	written: Written;
+	lints: readonly LintFinding[];
+	fixmes: number;
+	config: SpecConfig | null;
+	shape: SpecShape;
+};
+
+/** The `--json` fields of a stopped recording, minus the outcome and the verify verdict. */
+function stopSummary(outcome: StopOutcome): Record<string, unknown> {
+	const { pointer, recording, written, lints, fixmes, config, shape } = outcome;
+	return {
+		kind: pointer.target.kind,
+		name: recording.name,
+		file: written.file,
+		...(written.fn !== undefined ? { fn: written.fn, replaced: written.replaced } : {}),
+		steps: recording.steps.length,
+		ids: written.ids,
+		lints,
+		fixmes,
+		config,
+		...(pointer.target.kind === "spec"
+			? {
+					options: shape.specOptions ? { module: shape.specOptions.module, name: shape.specOptions.name } : null,
+					launch: shape.launch,
+				}
+			: {}),
+	};
+}
+
+/** The lines about the ids module `stop` touched. */
+function idsLines(ids: Written["ids"]): string[] {
+	if (!ids || Object.keys(ids.added).length === 0) return [];
+	return [`updated ${ids.file}`, ...Object.entries(ids.added).map(([key, id]) => `  + ${key}: ${JSON.stringify(id)}`)];
+}
+
+/** The text of a stopped recording, before the verify lines. */
+function wroteLines(ctx: CommandContext, outcome: StopOutcome): string[] {
+	const { pointer, recording, written, lints, fixmes, config, shape } = outcome;
+	const steps = recording.steps.length;
+	const fn = written.fn !== undefined ? ` (${written.fn}${written.replaced ? ", replaced" : ""})` : "";
+	return [
+		`wrote ${written.file}${fn}: ${steps} step${steps === 1 ? "" : "s"}`,
+		...idsLines(written.ids),
+		...(fixmes > 0 ? [`${fixmes} FIXME to resolve before committing`] : []),
+		...shapeLines(shape, pointer.target.path),
+		...lintLines(lints, ctx.ui.color),
+		...(config ? configLines(config, config.suite) : []),
+	];
+}
+
+/** Ends the recording once it is written (and verified): drops the journal and the pointer, shapes the result. */
+function makeFinish(
+	ctx: CommandContext,
+	device: UiDevice,
+	journal: string,
+	summary: Record<string, unknown>,
+	wrote: string[]
+): Finish {
+	return (verify, lines, outcome) => {
+		deleteJournal(journal);
+		updateState(ctx, device.udid, ({ recording: _done, ...rest }) => rest);
+		return {
+			device: deviceOf(device),
+			result: { outcome, ...summary, verify },
+			text: [...wrote, ...lines].join("\n"),
+		};
+	};
+}
+
+/** A helper is not a spec and `--no-verify` skips the run: the finished result then, else undefined. */
+function skippedVerify(kind: "spec" | "helper", opts: RecordStopOptionValues, finish: Finish): UiSuccess | undefined {
+	if (kind === "helper") {
+		return finish(
+			{ status: "skipped", reason: "helper" },
+			[
+				"verify skipped: a helper is not a spec — run a spec that calls it (`warden e2e <suite> --specs <id>`) to check it",
+			],
+			"written"
+		);
+	}
+	if (opts.verify === false) {
+		return finish({ status: "skipped", reason: "flag" }, ["verify skipped (--no-verify)"], "written");
+	}
+	return undefined;
+}
+
+/** The journal `stop` turns into a file: read, linted, and not empty. */
+function readStoppable(journal: string): Result<{ recording: Recording; lints: LintFinding[] }, UiError> {
+	const read = readJournal(journal);
+	if (!read.success) return journalFailure(read.error, "`warden ui record cancel` clears it");
+	const lints = lintRecording(read.data);
+	if (lints.some((lint) => lint.code === "empty_recording")) {
+		return failed("empty_recording", "the recording has no steps", {
+			hint: "drive the app with warden ui actions after `record start`, or `record cancel`",
+		});
+	}
+	return ok({ recording: read.data, lints });
+}
+
 /**
  * `warden ui record stop`: write the spec (or helper), merge the ids module, print the lints and, unless `--no-verify`
  * (or a helper), run the spec once on this device. A failed verify exits 1 and keeps both the file and the journal:
@@ -621,99 +863,33 @@ export function uiRecordStop(ctx: CommandContext, deps: UiDeps, opts: RecordStop
 		const active = activeRecording(ctx, device.udid);
 		if (!active.success) return active;
 		const { pointer, journal } = active.data;
-		const read = readJournal(journal);
-		if (!read.success) return journalFailure(read.error, "`warden ui record cancel` clears it");
-		const recording = read.data;
-		const lints = lintRecording(recording);
-		if (lints.some((lint) => lint.code === "empty_recording")) {
-			return failed("empty_recording", "the recording has no steps", {
-				hint: "drive the app with warden ui actions after `record start`, or `record cancel`",
-			});
-		}
-		const { target } = pointer;
-		if (
-			target.kind === "spec" &&
-			existsSync(target.path) &&
-			pointer.wrote !== true &&
-			opts.overwrite !== true &&
-			pointer.overwrite !== true
-		) {
-			return failed("target_exists", `${target.path} already exists`, { hint: "pass --overwrite to replace it" });
-		}
-		const shape: SpecShape =
-			target.kind === "spec"
-				? await specShapeFor(ctx, deps.authoring ?? {}, pointer, recording, target.path, opts.suite ?? pointer.suite)
-				: { launch: "fresh" };
-		const written = writeTarget(pointer, recording, opts.overwrite === true || pointer.overwrite === true, shape);
+		const stoppable = readStoppable(journal);
+		if (!stoppable.success) return stoppable;
+		const { recording, lints } = stoppable.data;
+		const overwrite = opts.overwrite === true || pointer.overwrite === true;
+		const free = checkTargetFree(pointer, overwrite);
+		if (!free.success) return free;
+		const suiteName = opts.suite ?? pointer.suite;
+		const shape = await shapeForTarget(ctx, deps, pointer, recording, suiteName);
+		const written = writeTarget(pointer, recording, overwrite, shape);
 		if (!written.success) return written;
-		updateState(ctx, device.udid, (current) =>
-			current.recording ? { ...current, recording: { ...current.recording, wrote: true } } : current
-		);
-		const steps = recording.steps.length;
-		const fixmes = fixmesIn(written.data.source);
-		const config =
-			target.kind === "spec"
-				? await configFor(ctx, deps, env, device, pointer, recording, target.path, opts.suite ?? pointer.suite)
-				: null;
-		if (target.kind === "helper") await rememberHelperRoutes(ctx, deps, env, device, pointer, recording);
-		const summary = {
-			kind: target.kind,
-			name: recording.name,
-			file: written.data.file,
-			...(written.data.fn !== undefined ? { fn: written.data.fn, replaced: written.data.replaced } : {}),
-			steps,
-			ids: written.data.ids,
+		markWrote(ctx, device.udid);
+		const config = await configForTarget(ctx, deps, env, device, pointer, recording, suiteName);
+		if (pointer.target.kind === "helper") await rememberHelperRoutes(ctx, deps, env, device, pointer, recording);
+		const outcome: StopOutcome = {
+			pointer,
+			recording,
+			written: written.data,
 			lints,
-			fixmes,
+			fixmes: fixmesIn(written.data.source),
 			config,
-			...(target.kind === "spec"
-				? {
-						options: shape.specOptions ? { module: shape.specOptions.module, name: shape.specOptions.name } : null,
-						launch: shape.launch,
-					}
-				: {}),
+			shape,
 		};
-		const { color } = ctx.ui;
-		const wrote = [
-			`wrote ${written.data.file}${written.data.fn !== undefined ? ` (${written.data.fn}${written.data.replaced ? ", replaced" : ""})` : ""}: ${steps} step${steps === 1 ? "" : "s"}`,
-			...(written.data.ids
-				? Object.keys(written.data.ids.added).length > 0
-					? [
-							`updated ${written.data.ids.file}`,
-							...Object.entries(written.data.ids.added).map(([key, id]) => `  + ${key}: ${JSON.stringify(id)}`),
-						]
-					: []
-				: []),
-			...(fixmes > 0 ? [`${fixmes} FIXME to resolve before committing`] : []),
-			...shapeLines(shape, target.path),
-			...lintLines(lints, color),
-			...(config ? configLines(config, config.suite) : []),
-		];
-
-		const finish = (verify: Record<string, unknown>, lines: string[], outcome: "verified" | "written"): UiSuccess => {
-			deleteJournal(journal);
-			updateState(ctx, device.udid, ({ recording: _done, ...rest }) => rest);
-			return {
-				device: deviceOf(device),
-				result: { outcome, ...summary, verify },
-				text: [...wrote, ...lines].join("\n"),
-			};
-		};
-
-		if (target.kind === "helper") {
-			return ok(
-				finish(
-					{ status: "skipped", reason: "helper" },
-					[
-						"verify skipped: a helper is not a spec — run a spec that calls it (`warden e2e <suite> --specs <id>`) to check it",
-					],
-					"written"
-				)
-			);
-		}
-		if (opts.verify === false) {
-			return ok(finish({ status: "skipped", reason: "flag" }, ["verify skipped (--no-verify)"], "written"));
-		}
+		const summary = stopSummary(outcome);
+		const wrote = wroteLines(ctx, outcome);
+		const finish = makeFinish(ctx, device, journal, summary, wrote);
+		const skipped = skippedVerify(pointer.target.kind, opts, finish);
+		if (skipped) return ok(skipped);
 		return verifyWritten(ctx, deps, device, pointer, opts, summary, wrote, finish);
 	});
 }
@@ -842,6 +1018,170 @@ function useSpec(recording: Recording, step: RecordedStep, shape: SpecShape, fil
 	).source;
 }
 
+/** The helper a `record use` names, checked: its file exists, exports the function, and is not the helper being recorded. */
+function resolveUsedHelper(
+	ctx: CommandContext,
+	pointer: RecordingPointer,
+	ref: string
+): Result<{ module: string; fn: string }, UiError> {
+	const parsed = parseHelperRef(ref);
+	if (!parsed.success) return failed("usage", parsed.error.replace("--helper", "record use"));
+	const requested = resolve(ctx.cwd, parsed.data.module);
+	const module = helperFile(requested);
+	const { fn } = parsed.data;
+	if (module === undefined) {
+		return failed("helper_missing", `${requested} does not exist`, {
+			hint: "give the helpers module as <path>#<fn>, relative to the working directory",
+		});
+	}
+	if (!exportsHelper(readFileSync(module, "utf8"), fn)) {
+		return failed("helper_missing", `${module} does not export ${fn}`, {
+			hint: "export it, or record it first with `record start <name> --helper <module>#<fn>`",
+		});
+	}
+	if (pointer.target.path === module && pointer.target.kind === "helper" && pointer.target.fn === fn) {
+		return failed("usage", `${fn} is the helper being recorded`);
+	}
+	return ok({ module, fn });
+}
+
+/** One run of the generated spec that calls a helper, as `describeRun` reads it. */
+type UseRun = { report: VerifyReport; verify: Record<string, unknown>; evidence: string[] };
+
+/** Run the helper once on the device through a throwaway one-test spec; nothing is recorded here. */
+async function runUseSpec(
+	ctx: CommandContext,
+	deps: UiDeps,
+	device: UiDevice,
+	pointer: RecordingPointer,
+	recording: Recording,
+	helper: { module: string; fn: string },
+	suiteName: string | undefined
+): Promise<Result<UseRun, UiError>> {
+	const authoring = deps.authoring ?? {};
+	const suite = await (authoring.findSuite ?? defaultFindSuite)(ctx, suiteName);
+	if (!suite.success) {
+		return failed("verify_unavailable", `cannot run the helper: ${suite.error.message}`, {
+			hint: "fix the suite config or pass --suite <name>",
+		});
+	}
+	const stamp = String(ctx.now());
+	const outDir = join(uiDir(ctx, device.udid), "use", stamp);
+	const specDir = join(suite.data.cwd, "node_modules", ".cache", "warden-use", stamp);
+	const specPath = join(specDir, "use.e2e.ts");
+	const useStep: RecordedStep = { i: 0, at: ctx.now(), kind: "use", module: helper.module, fn: helper.fn };
+	const shape = await specShapeFor(ctx, authoring, pointer, { ...recording, steps: [useStep] }, specPath, suiteName);
+	write(specPath, useSpec(recording, useStep, shape, specPath));
+	const status = helperStatus(ctx, device.udid);
+	const input: VerifyInput = {
+		udid: device.udid,
+		platform: device.platform,
+		deviceName: device.name,
+		specPath,
+		suite: suite.data,
+		outDir,
+		metroUrl: readState(ctx, device.udid).metroUrl,
+		simdSocket: status.running ? (status.socket ?? undefined) : undefined,
+	};
+	let ran: Result<VerifyReport, string>;
+	try {
+		ran = await (authoring.verify ?? defaultVerify)(ctx, input);
+	} catch (error) {
+		ran = { success: false, error: errorMessage(error) };
+	} finally {
+		rmSync(specDir, { recursive: true, force: true });
+	}
+	if (!ran.success) {
+		return failed("verify_unavailable", `cannot run the helper: ${ran.error}`, {
+			hint: "nothing was recorded; fix it and run `record use` again",
+		});
+	}
+	return ok({ report: ran.data, ...describeRun(ran.data) });
+}
+
+/** A helper that failed on the device records nothing. */
+function useFailed(
+	ctx: CommandContext,
+	json: boolean,
+	run: UseRun,
+	helper: { module: string; fn: string }
+): { success: false; error: UiError } {
+	const { report, verify, evidence } = run;
+	if (!json) printFailures(ctx, report, evidence);
+	return failed("use_failed", `${helper.fn} failed on the device (exit ${report.exitCode})`, {
+		hint: "read screen-at-failure.txt, fix the helper or the app, then run `record use` again; nothing was recorded",
+		details: { module: helper.module, fn: helper.fn, verify, evidence },
+	});
+}
+
+/** Take a fresh snapshot once the screen the helper left behind has settled. */
+async function snapshotAfterUse(ctx: CommandContext, deps: UiDeps, env: UiRunEnv, device: UiDevice): Promise<void> {
+	const { takeSnapshot } = await import("./snapshot");
+	const driver = await env.driver();
+	if (!driver.success) return;
+	await takeSnapshot(ctx, deps, driver.data, device.udid, {
+		interactiveOnly: true,
+		all: false,
+		settle: { budgetMs: USE_SETTLE_MS },
+	});
+}
+
+/** The `routes:` line of a recorded `use`. */
+function useRoutesLine(visited: readonly string[], partial: boolean): string {
+	if (visited.length === 0) return "routes: none read (not a dev client)";
+	const source = partial
+		? " (only the reads before and after the run: the helper has no recording of its own)"
+		: " (from its recording)";
+	return `routes: ${visited.join(", ")}${source}`;
+}
+
+/** Append the passed `use` to the journal, with the routes the helper visited. */
+async function recordUse(
+	ctx: CommandContext,
+	deps: UiDeps,
+	env: UiRunEnv,
+	device: UiDevice,
+	journal: string,
+	helper: { module: string; fn: string },
+	verify: Record<string, unknown>
+): Promise<Result<UiSuccess, UiError>> {
+	const { module, fn } = helper;
+	const before = readState(ctx, device.udid).recording?.routes?.last;
+	const { routeAfter } = await import("./record");
+	const route = await routeAfter(ctx, deps, env, device, "use");
+	const after = readState(ctx, device.udid).recording?.routes?.last;
+	const recorded = loadHelperRoutes(ctx, module, fn);
+	const visited = visitedRoutes(before, recorded ?? [], after);
+	const partial = recorded === undefined || recorded.length === 0;
+	const appended = await appendStep(journal, {
+		kind: "use",
+		at: ctx.now(),
+		module,
+		fn,
+		...(route !== undefined ? { route } : {}),
+		visited,
+		...(partial ? { partial: true as const } : {}),
+	});
+	if (!appended.success) return journalFailure(appended.error);
+	return ok({
+		device: deviceOf(device),
+		result: {
+			outcome: "used",
+			step: appended.data.i,
+			module,
+			fn,
+			...(route !== undefined ? { route } : {}),
+			visited,
+			routes: partial ? "reads" : "recording",
+			verify,
+		},
+		text: [
+			`${fn} passed on ${device.udid}; recorded as step ${appended.data.i} (await ${fn}(fixtures)). Next: \`wait\` for a testID of the screen it leaves you on`,
+			useRoutesLine(visited, partial),
+		].join("\n"),
+	});
+}
+
 /**
  * `warden ui record use <module#fn>`: run the helper once on this device (a generated one-test spec through the same
  * spec process `record stop` verifies with), and only when it passes append a `use` step. The spec then calls
@@ -858,125 +1198,15 @@ export function uiRecordUse(
 		const active = activeRecording(ctx, device.udid);
 		if (!active.success) return active;
 		const { pointer, journal } = active.data;
-		const parsed = parseHelperRef(ref);
-		if (!parsed.success) return failed("usage", parsed.error.replace("--helper", "record use"));
-		const requested = resolve(ctx.cwd, parsed.data.module);
-		const module = helperFile(requested);
-		const { fn } = parsed.data;
-		if (module === undefined) {
-			return failed("helper_missing", `${requested} does not exist`, {
-				hint: "give the helpers module as <path>#<fn>, relative to the working directory",
-			});
-		}
-		if (!exportsHelper(readFileSync(module, "utf8"), fn)) {
-			return failed("helper_missing", `${module} does not export ${fn}`, {
-				hint: "export it, or record it first with `record start <name> --helper <module>#<fn>`",
-			});
-		}
-		if (pointer.target.path === module && pointer.target.kind === "helper" && pointer.target.fn === fn) {
-			return failed("usage", `${fn} is the helper being recorded`);
-		}
+		const helper = resolveUsedHelper(ctx, pointer, ref);
+		if (!helper.success) return helper;
 		const read = readJournal(journal);
 		if (!read.success) return journalFailure(read.error, "`warden ui record cancel` clears it");
-		const authoring = deps.authoring ?? {};
-		const suite = await (authoring.findSuite ?? defaultFindSuite)(ctx, opts.suite ?? pointer.suite);
-		if (!suite.success) {
-			return failed("verify_unavailable", `cannot run the helper: ${suite.error.message}`, {
-				hint: "fix the suite config or pass --suite <name>",
-			});
-		}
-		const stamp = String(ctx.now());
-		const outDir = join(uiDir(ctx, device.udid), "use", stamp);
-		const specDir = join(suite.data.cwd, "node_modules", ".cache", "warden-use", stamp);
-		const specPath = join(specDir, "use.e2e.ts");
-		const useStep: RecordedStep = { i: 0, at: ctx.now(), kind: "use", module, fn };
-		const shape = await specShapeFor(
-			ctx,
-			authoring,
-			pointer,
-			{ ...read.data, steps: [useStep] },
-			specPath,
-			opts.suite ?? pointer.suite
-		);
-		write(specPath, useSpec(read.data, useStep, shape, specPath));
-		const helper = helperStatus(ctx, device.udid);
-		const input: VerifyInput = {
-			udid: device.udid,
-			platform: device.platform,
-			deviceName: device.name,
-			specPath,
-			suite: suite.data,
-			outDir,
-			metroUrl: readState(ctx, device.udid).metroUrl,
-			simdSocket: helper.running ? (helper.socket ?? undefined) : undefined,
-		};
-		let ran: Result<VerifyReport, string>;
-		try {
-			ran = await (authoring.verify ?? defaultVerify)(ctx, input);
-		} catch (error) {
-			ran = { success: false, error: errorMessage(error) };
-		} finally {
-			rmSync(specDir, { recursive: true, force: true });
-		}
-		if (!ran.success) {
-			return failed("verify_unavailable", `cannot run the helper: ${ran.error}`, {
-				hint: "nothing was recorded; fix it and run `record use` again",
-			});
-		}
-		const report = ran.data;
-		const { verify, evidence } = describeRun(report);
-		if (!report.passed) {
-			if (opts.json !== true) printFailures(ctx, report, evidence);
-			return failed("use_failed", `${fn} failed on the device (exit ${report.exitCode})`, {
-				hint: "read screen-at-failure.txt, fix the helper or the app, then run `record use` again; nothing was recorded",
-				details: { module, fn, verify, evidence },
-			});
-		}
-		const { takeSnapshot } = await import("./snapshot");
-		const driver = await env.driver();
-		if (driver.success) {
-			await takeSnapshot(ctx, deps, driver.data, device.udid, {
-				interactiveOnly: true,
-				all: false,
-				settle: { budgetMs: USE_SETTLE_MS },
-			});
-		}
-		const before = readState(ctx, device.udid).recording?.routes?.last;
-		const { routeAfter } = await import("./record");
-		const route = await routeAfter(ctx, deps, env, device, "use");
-		const after = readState(ctx, device.udid).recording?.routes?.last;
-		const recorded = loadHelperRoutes(ctx, module, fn);
-		const visited = visitedRoutes(before, recorded ?? [], after);
-		const partial = recorded === undefined || recorded.length === 0;
-		const appended = await appendStep(journal, {
-			kind: "use",
-			at: ctx.now(),
-			module,
-			fn,
-			...(route !== undefined ? { route } : {}),
-			visited,
-			...(partial ? { partial: true as const } : {}),
-		});
-		if (!appended.success) return journalFailure(appended.error);
-		return ok({
-			device: deviceOf(device),
-			result: {
-				outcome: "used",
-				step: appended.data.i,
-				module,
-				fn,
-				...(route !== undefined ? { route } : {}),
-				visited,
-				routes: partial ? "reads" : "recording",
-				verify,
-			},
-			text: [
-				`${fn} passed on ${device.udid}; recorded as step ${appended.data.i} (await ${fn}(fixtures)). Next: \`wait\` for a testID of the screen it leaves you on`,
-				visited.length === 0
-					? "routes: none read (not a dev client)"
-					: `routes: ${visited.join(", ")}${partial ? " (only the reads before and after the run: the helper has no recording of its own)" : " (from its recording)"}`,
-			].join("\n"),
-		});
+		const run = await runUseSpec(ctx, deps, device, pointer, read.data, helper.data, opts.suite ?? pointer.suite);
+		if (!run.success) return run;
+		if (!run.data.report.passed) return useFailed(ctx, opts.json === true, run.data, helper.data);
+		await snapshotAfterUse(ctx, deps, env, device);
+		return recordUse(ctx, deps, env, device, journal, helper.data, run.data.verify);
 	});
 }
 

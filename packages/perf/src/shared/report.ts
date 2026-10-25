@@ -370,6 +370,37 @@ function summaryOf(input: ReportInput, durationMs: number, findings: readonly Fi
 	return lines;
 }
 
+/** The React section with the jank-to-commit overlaps joined on. */
+function reactSectionJson(
+	react: NonNullable<ReportInput["react"]>,
+	correlations: readonly Correlation[]
+): ReportSectionJson {
+	const section = reactSection(react.analysis);
+	const joined = correlations.filter((c) => c.kind === "jank-commit").map((c) => `overlap: ${c.text}`);
+	return {
+		id: "react",
+		...section,
+		lines: [...section.lines, ...(joined.length > 0 ? ["", ...joined] : [])],
+	};
+}
+
+/** Every section a session produced, in report order. */
+function buildSections(input: ReportInput, correlations: readonly Correlation[]): ReportSectionJson[] {
+	const { session } = input;
+	const sections: ReportSectionJson[] = [];
+	if (input.startup !== undefined) sections.push(startupSection(input.startup));
+	if (input.frames !== undefined) sections.push(framesSection(input.frames, session.marks));
+	if (input.js !== undefined) sections.push({ id: "js-cpu", ...hotspotsSection(input.js) });
+	if (input.react !== undefined) sections.push(reactSectionJson(input.react, correlations));
+	if (input.native !== undefined) sections.push({ id: "native-cpu", ...input.native.section });
+	const hangs = hangsSection(input, correlations);
+	if (hangs !== undefined) sections.push(hangs);
+	if (input.metrics !== undefined) sections.push(memorySection(input.metrics));
+	const logs = logsSection(input.logs, input.crashes);
+	if (logs !== undefined) sections.push(logs);
+	return sections;
+}
+
 /** Merge every capturer's output onto the session timeline: summary, ranked findings, sections, correlations, diff metrics, next hints. Pure. */
 export function buildReport(input: ReportInput): PerfReportJson {
 	const { session } = input;
@@ -384,25 +415,7 @@ export function buildReport(input: ReportInput): PerfReportJson {
 		...growthFindings(input),
 		...(input.crashes?.findings ?? []),
 	]);
-	const sections: ReportSectionJson[] = [];
-	if (input.startup !== undefined) sections.push(startupSection(input.startup));
-	if (input.frames !== undefined) sections.push(framesSection(input.frames, session.marks));
-	if (input.js !== undefined) sections.push({ id: "js-cpu", ...hotspotsSection(input.js) });
-	if (input.react !== undefined) {
-		const section = reactSection(input.react.analysis);
-		const joined = correlations.filter((c) => c.kind === "jank-commit").map((c) => `overlap: ${c.text}`);
-		sections.push({
-			id: "react",
-			...section,
-			lines: [...section.lines, ...(joined.length > 0 ? ["", ...joined] : [])],
-		});
-	}
-	if (input.native !== undefined) sections.push({ id: "native-cpu", ...input.native.section });
-	const hangs = hangsSection(input, correlations);
-	if (hangs !== undefined) sections.push(hangs);
-	if (input.metrics !== undefined) sections.push(memorySection(input.metrics));
-	const logs = logsSection(input.logs, input.crashes);
-	if (logs !== undefined) sections.push(logs);
+	const sections = buildSections(input, correlations);
 	const dev = input.js?.dev === true || input.react?.analysis.dev === true;
 	return {
 		version: 1,

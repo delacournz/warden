@@ -227,6 +227,21 @@ const SETTLE_MS = 500;
 /** a deep link Device Hub dropped (seen once, right after it was relaunched) is asked for again at this attempt */
 const REOPEN_AT = 3;
 
+/** Window arranging is macOS only and off with `WARDEN_ARRANGE=0`. */
+function arrangeDisabled(deps: Pick<AutoArrangeDeps, "env" | "os">): boolean {
+	return (deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0";
+}
+
+/** Hand the opened windows still absent from `arranged` to `reopen`, once. */
+async function reopenMissing(
+	reopen: (missing: readonly string[]) => Promise<unknown>,
+	opened: readonly string[],
+	arranged: readonly string[]
+): Promise<void> {
+	const missing = opened.filter((name) => !arranged.includes(name));
+	if (missing.length > 0) await reopen(missing);
+}
+
 /**
  * After a claim: best-effort arrange (macOS, unless `WARDEN_ARRANGE=0`). A freshly booted sim's
  * window can lag the boot, so while the viewer is showing windows but not yet every device in
@@ -243,7 +258,7 @@ export async function autoArrangeSimWindows(
 	opened: readonly string[] = [],
 	reopen?: (missing: readonly string[]) => Promise<unknown>
 ): Promise<void> {
-	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0") return;
+	if (arrangeDisabled(deps)) return;
 	const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
 	for (let attempt = 1; ; attempt++) {
 		const result = await arrangeSimWindows(deps.exec);
@@ -251,10 +266,7 @@ export async function autoArrangeSimWindows(
 		const { arranged } = result.data;
 		if (arranged.length === 0 && opened.length === 0) return;
 		if (claimed.every((name) => arranged.includes(name)) || attempt >= SETTLE_TRIES) return;
-		if (attempt === REOPEN_AT && reopen) {
-			const missing = opened.filter((name) => !arranged.includes(name));
-			if (missing.length > 0) await reopen(missing);
-		}
+		if (attempt === REOPEN_AT && reopen) await reopenMissing(reopen, opened, arranged);
 		await sleep(SETTLE_MS);
 	}
 }
@@ -273,7 +285,7 @@ export async function openDeviceHubWindows(
 	deps: Pick<AutoArrangeDeps, "exec" | "env" | "os">,
 	sims: readonly { udid: string; name: string }[]
 ): Promise<string[]> {
-	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0" || sims.length === 0) return [];
+	if (arrangeDisabled(deps) || sims.length === 0) return [];
 	if ((await detectSimViewer(deps.exec)).kind !== "device-hub") return [];
 	const opened: string[] = [];
 	for (const sim of sims) {
@@ -290,7 +302,7 @@ export async function openDeviceHubWindows(
  * Returns the names it asked for; never throws.
  */
 export async function reopenSimWindows(deps: AutoArrangeDeps, udids: readonly string[]): Promise<string[]> {
-	if ((deps.os ?? process.platform) !== "darwin" || deps.env.WARDEN_ARRANGE === "0" || udids.length === 0) return [];
+	if (arrangeDisabled(deps) || udids.length === 0) return [];
 	const list = await deps.exec(["xcrun", "simctl", "list", "devices", "-j"], { timeoutMs: IOS_TIMEOUTS.listMs });
 	const all = list.exitCode === 0 ? parseAllSims(list.stdout) : undefined;
 	if (!all?.success) return [];

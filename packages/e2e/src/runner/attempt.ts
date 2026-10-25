@@ -257,35 +257,13 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 	);
 	session.enterAttempt(ctx);
 
-	let deadlineHit = false;
-	const timer = setTimeout(() => {
-		deadlineHit = true;
-		controller.abort(new E2eError("TIMEOUT", `test timed out after ${use.timeoutMs}ms`));
-	}, use.timeoutMs);
-	const deadline = new Promise<never>((_, reject) => {
-		controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
-	});
-	deadline.catch(() => undefined);
-
 	const teardowns: Array<{ name: string; run: () => Promise<void> }> = [];
 	const state: { bag?: Bag } = {};
-	let failed = false;
-	let failure: unknown;
-
-	try {
-		await Promise.race([setUpAndRun(bound, spec, use, controller.signal, state, teardowns), deadline]);
-	} catch (error) {
-		failed = true;
-		failure = error;
-	} finally {
-		clearTimeout(timer);
-	}
-
-	if (!failed && ctx.softFailures.length > 0) {
-		failed = true;
-		failure = softFailureError(ctx.softFailures);
-	}
-	if (failed) await captureFailureArtifacts(session, ctx, budget, startedAt);
+	let outcome = await raceDeadline(controller, use.timeoutMs, () =>
+		setUpAndRun(bound, spec, use, controller.signal, state, teardowns)
+	);
+	outcome = failIf(outcome, ctx.softFailures.length > 0, () => softFailureError(ctx.softFailures));
+	if (outcome.failed) await captureFailureArtifacts(session, ctx, budget, startedAt);
 
 	const cleanupErrors = await runCleanup(session, spec, ctx, state.bag, teardowns, budget, (context) => {
 		binding = { context, finished: false };
@@ -298,21 +276,72 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 	session.leaveAttempt(ctx);
 	trace.flush();
 
-	if (!failed && cleanupErrors.length > 0) {
-		failed = true;
-		failure = cleanupErrors[0];
-	}
+	outcome = failIf(outcome, cleanupErrors.length > 0, () => cleanupErrors[0]);
 
-	for (const shot of listScreenshots(dir)) files.add(shot);
-	const outcome: Outcome = failed ? { failed: true, error: failure, timedOut: deadlineHit } : { failed: false };
-	const result = buildResult(spec, ctx, { startedAt, device }, outcome);
+	return concludeAttempt(session, spec, ctx, { startedAt, device }, outcome, print, clock);
+}
+
+type BodyOutcome = { failed: boolean; failure: unknown; deadlineHit: boolean };
+
+/** Runs `run` against the test deadline: aborts `controller` when it passes, and reports how the body ended. */
+async function raceDeadline(
+	controller: AbortController,
+	timeoutMs: number,
+	run: () => Promise<void>
+): Promise<BodyOutcome> {
+	let deadlineHit = false;
+	const timer = setTimeout(() => {
+		deadlineHit = true;
+		controller.abort(new E2eError("TIMEOUT", `test timed out after ${timeoutMs}ms`));
+	}, timeoutMs);
+	const deadline = new Promise<never>((_, reject) => {
+		controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
+	});
+	deadline.catch(() => undefined);
+	try {
+		await Promise.race([run(), deadline]);
+		return { failed: false, failure: undefined, deadlineHit };
+	} catch (error) {
+		return { failed: true, failure: error, deadlineHit };
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/** Turns a passing outcome into a failed one with `failure()` when `present`; a failure already there is kept. */
+function failIf(outcome: BodyOutcome, present: boolean, failure: () => unknown): BodyOutcome {
+	return outcome.failed || !present ? outcome : { ...outcome, failed: true, failure: failure() };
+}
+
+/** Writes the result line, recovers from a lost HID connection, records the result and rethrows the test's error. */
+async function concludeAttempt<F extends object>(
+	session: Session,
+	spec: AttemptSpec<F>,
+	ctx: AttemptContext,
+	run: { startedAt: number; device: TestResult["device"] },
+	outcome: BodyOutcome,
+	print: (line: string | undefined) => void,
+	clock: boolean
+): Promise<"again" | undefined> {
+	for (const shot of listScreenshots(ctx.dir)) ctx.files.add(shot);
+	const result = buildResult(
+		spec,
+		ctx,
+		run,
+		outcome.failed ? { failed: true, error: outcome.failure, timedOut: outcome.deadlineHit } : { failed: false }
+	);
 	print(formatConsoleLine({ type: "test-end", result }, { clock }));
-	if (failed && session.recoverHid !== undefined && isHidLost(failure) && (await session.recoverHid())) {
+	if (
+		outcome.failed &&
+		session.recoverHid !== undefined &&
+		isHidLost(outcome.failure) &&
+		(await session.recoverHid())
+	) {
 		return "again";
 	}
-	if (!failed || spec.final) session.results.append(result);
+	if (!outcome.failed || spec.final) session.results.append(result);
 
-	if (failed) throw failure instanceof Error ? failure : new Error(String(failure));
+	if (outcome.failed) throw outcome.failure instanceof Error ? outcome.failure : new Error(String(outcome.failure));
 	return undefined;
 }
 

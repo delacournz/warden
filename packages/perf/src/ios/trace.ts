@@ -5,13 +5,11 @@ import {
 	hangWindows,
 	leakFromRow,
 	type NativeReport,
-	type RawHang,
-	type RawLeak,
 	sampleFromRow,
 } from "./analyze";
 import { HANG_SCHEMAS, LEAK_SCHEMAS, parseToc, pickSchema, SAMPLE_SCHEMAS, type TraceRun } from "./export";
 import { exportTableArgv, exportTocArgv } from "./xctrace-argv";
-import { createRowParser } from "./xml-rows";
+import { createRowParser, type XmlNode } from "./xml-rows";
 
 export type TraceError = { code: "export_failed" | "no_samples" | "empty_trace"; message: string; hint?: string };
 
@@ -70,6 +68,24 @@ async function streamTable(
 	return undefined;
 }
 
+type TableContext = { deps: TraceDeps; trace: string; run: number; workDir: string; warnings: string[] };
+
+/** Stream one optional table and keep every row `toItem` accepts; an export failure becomes a warning. */
+async function collectRows<T>(
+	ctx: TableContext,
+	schema: string | undefined,
+	toItem: (cells: readonly XmlNode[], columns: readonly string[]) => T | undefined
+): Promise<T[]> {
+	const items: T[] = [];
+	if (schema === undefined) return items;
+	const e = await streamTable(ctx.deps, ctx.trace, schema, ctx.run, ctx.workDir, (cells, columns) => {
+		const item = toItem(cells, columns);
+		if (item !== undefined) items.push(item);
+	});
+	if (e !== undefined) ctx.warnings.push(e.message);
+	return items;
+}
+
 /**
  * Read a recorded `.trace`: `--toc` to find the tables, then hangs, leaks and the CPU samples streamed one table at a
  * time. Hangs go first so the sample pass can collect each hang's main-thread stacks without keeping any sample.
@@ -91,26 +107,9 @@ export async function analyzeTrace(
 	const run: TraceRun | undefined = runs.find((r) => r.number === (opts.run ?? 1)) ?? runs[0];
 	if (run === undefined) return fail("empty_trace", "the trace has no runs");
 	const warnings: string[] = [];
-
-	const hangs: RawHang[] = [];
-	const hangSchema = pickSchema(run, HANG_SCHEMAS, "hang");
-	if (hangSchema !== undefined) {
-		const e = await streamTable(deps, trace, hangSchema, run.number, opts.workDir, (cells, columns) => {
-			const h = hangFromRow(cells, columns);
-			if (h !== undefined) hangs.push(h);
-		});
-		if (e !== undefined) warnings.push(e.message);
-	}
-
-	const leaks: RawLeak[] = [];
-	const leakSchema = pickSchema(run, LEAK_SCHEMAS, "leak");
-	if (leakSchema !== undefined) {
-		const e = await streamTable(deps, trace, leakSchema, run.number, opts.workDir, (cells, columns) => {
-			const l = leakFromRow(cells, columns);
-			if (l !== undefined) leaks.push(l);
-		});
-		if (e !== undefined) warnings.push(e.message);
-	}
+	const table = { deps, trace, run: run.number, workDir: opts.workDir, warnings };
+	const hangs = await collectRows(table, pickSchema(run, HANG_SCHEMAS, "hang"), hangFromRow);
+	const leaks = await collectRows(table, pickSchema(run, LEAK_SCHEMAS, "leak"), leakFromRow);
 
 	const sampleSchema = pickSchema(run, SAMPLE_SCHEMAS);
 	if (sampleSchema === undefined) {

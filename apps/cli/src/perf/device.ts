@@ -243,6 +243,38 @@ function leaseForMutation(
 	);
 }
 
+/** The device named by flags / env, or else picked by the fallback chain (`pick`). */
+async function pickNamed(
+	ctx: CommandContext,
+	flags: PerfDeviceFlags,
+	owner: ReturnType<typeof resolveOwner>,
+	deps: PerfDeviceDeps
+): Promise<Result<Named, UiError>> {
+	const explicit = named(ctx, flags);
+	if (!explicit.success) return explicit;
+	const platformFlag = flags.platform === undefined ? undefined : parsePlatform(flags.platform);
+	if (platformFlag && !platformFlag.success) return fail(uiError("usage", platformFlag.error));
+	if (explicit.data !== undefined) return ok(explicit.data);
+	return pick(ctx, deps, owner, flags, platformFlag?.data);
+}
+
+/** The warden-known device matching a picked id, if any. */
+function findKnownDevice(ctx: CommandContext, picked: Named) {
+	const platform = picked.platform ?? platformOf(ctx, picked.id);
+	return platform === undefined
+		? undefined
+		: knownDevices(ctx).find((d) => d.platform === platform && d.id === picked.id);
+}
+
+/** The `device_unknown` error for an id warden does not know, with a hint for raw device ids. */
+function deviceUnknownError(id: string): UiError {
+	const hint =
+		deviceTarget(id).kind === "device"
+			? "warden perf only attaches to devices warden created or leased; see warden devices"
+			: undefined;
+	return uiError("device_unknown", `${id} is not a device warden knows`, hint === undefined ? {} : { hint });
+}
+
 /**
  * The device a `warden perf` call acts on. Order: `--udid|--serial|--lease` → `WARDEN_UDID` → `WARDEN_UDIDS` (if one)
  * → the caller's own single device lease → the only booted device warden knows (several: `ambiguous_device`, listed).
@@ -256,31 +288,10 @@ export async function resolvePerfDevice(
 	deps: PerfDeviceDeps = defaultPerfDeviceDeps
 ): Promise<Result<PerfTarget, UiError>> {
 	const owner = resolveOwner(ctx);
-	const explicit = named(ctx, flags);
-	if (!explicit.success) return explicit;
-	const platformFlag = flags.platform === undefined ? undefined : parsePlatform(flags.platform);
-	if (platformFlag && !platformFlag.success) return fail(uiError("usage", platformFlag.error));
-	let picked: Named;
-	if (explicit.data !== undefined) {
-		picked = explicit.data;
-	} else {
-		const found = await pick(ctx, deps, owner, flags, platformFlag?.data);
-		if (!found.success) return found;
-		picked = found.data;
-	}
-	const platform = picked.platform ?? platformOf(ctx, picked.id);
-	const device =
-		platform === undefined ? undefined : knownDevices(ctx).find((d) => d.platform === platform && d.id === picked.id);
-	if (device === undefined) {
-		const shape = deviceTarget(picked.id);
-		const hint =
-			shape.kind === "device"
-				? "warden perf only attaches to devices warden created or leased; see warden devices"
-				: undefined;
-		return fail(
-			uiError("device_unknown", `${picked.id} is not a device warden knows`, hint === undefined ? {} : { hint })
-		);
-	}
+	const picked = await pickNamed(ctx, flags, owner, deps);
+	if (!picked.success) return picked;
+	const device = findKnownDevice(ctx, picked.data);
+	if (device === undefined) return fail(deviceUnknownError(picked.data.id));
 	const lease = liveLease(ctx, deps, device.platform, device.id);
 	const holder = holderOf(lease, owner);
 	const base = {
@@ -288,7 +299,7 @@ export async function resolvePerfDevice(
 		platform: device.platform,
 		name: device.name,
 		...(holder !== undefined ? { holder } : {}),
-		source: picked.source,
+		source: picked.data.source,
 		mode,
 	} as const;
 	if (mode === "observe") {

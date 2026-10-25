@@ -8,8 +8,8 @@ import type { UiDevice } from "./device";
 import { defaultDevtoolsDeps, devtoolsUiError, withFacet } from "./devtools-cli";
 import { driverUiError, type UiDeps } from "./driver";
 import { socketPathFor, stopHelper } from "./helper";
-import type { UiError } from "./output";
-import { runUi, type UiOptionValues } from "./run";
+import type { UiError, UiSuccess } from "./output";
+import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { takeSnapshot } from "./snapshot";
 import { positiveInt } from "./snapshot-command";
 import { readState } from "./state";
@@ -230,6 +230,154 @@ function viaUi<T>(result: Result<T, Parameters<typeof driverUiError>[0]>): Resul
 	return result.success ? ok(result.data) : { success: false, error: driverUiError(result.error) };
 }
 
+/** What one bench run shares between its metric steps. */
+type BenchSession = {
+	ctx: CommandContext;
+	deps: UiDeps;
+	opts: BenchOptionValues;
+	device: UiDevice;
+	env: UiRunEnv;
+	runs: number;
+	hooks: BenchDeps;
+	clock: Clock;
+	targets: Partial<Record<BenchMetricName, BenchTarget>>;
+	result: BenchResult;
+};
+
+/** Summarize `samples` against the metric's target and keep them in the result. */
+function recordMetric(session: BenchSession, name: BenchMetricName, samples: number[]): void {
+	session.result[name] = summarize(samples, session.targets[name]);
+}
+
+/** iOS: stop the helper, then time connect + first snapshot, `runs` times. */
+async function benchColdStart(session: BenchSession): Promise<Result<undefined, UiError>> {
+	const { ctx, deps, device, hooks, clock } = session;
+	const stop = hooks.stopHelper ?? ((c: CommandContext, udid: string) => stopHelper(c, udid));
+	const cold: number[] = [];
+	for (let i = 0; i < capped("helperColdToSnapshot", session.runs); i += 1) {
+		await stop(ctx, device.udid);
+		const start = clock();
+		const opened = await deps.driver(ctx, device);
+		if (!opened.success) return opened;
+		const taken = await opened.data.snapshot({ interactiveOnly: true });
+		cold.push(clock() - start);
+		await opened.data.close().catch(() => undefined);
+		if (!taken.success) return { success: false, error: driverUiError(taken.error) };
+	}
+	recordMetric(session, "helperColdToSnapshot", cold);
+	return ok(undefined);
+}
+
+/** Warm snapshot and HID tap timings on the open driver. */
+async function benchWarm(session: BenchSession, driver: Driver, point: Point): Promise<Result<undefined, UiError>> {
+	const { clock, runs } = session;
+	const warm = await sample(clock, runs, async () => viaUi(await driver.snapshot({ interactiveOnly: true })));
+	if (!warm.success) return warm;
+	recordMetric(session, "snapshotWarm", warm.data);
+
+	const press = await sample(clock, runs, async () => viaUi(await driver.tap(point)));
+	if (!press.success) return press;
+	recordMetric(session, "pressHid", press.data);
+	return ok(undefined);
+}
+
+/** iOS: tap, then wait for a quiet screen. */
+async function benchPressSettle(
+	session: BenchSession,
+	driver: Driver,
+	point: Point
+): Promise<Result<undefined, UiError>> {
+	const { ctx, deps, device, clock } = session;
+	const settle = await sample(clock, capped("pressSettle", session.runs), async () => {
+		const tapped = viaUi(await driver.tap(point));
+		if (!tapped.success) return tapped;
+		return takeSnapshot(ctx, deps, driver, device.udid, {
+			interactiveOnly: true,
+			all: false,
+			settle: { budgetMs: DEFAULT_SETTLE_TIMEOUT_MS },
+		});
+	});
+	if (!settle.success) return settle;
+	recordMetric(session, "pressSettle", settle.data);
+	return ok(undefined);
+}
+
+/** iOS: the dev client's component tree; skipped (not failed) when devtools is unreachable. */
+async function benchTree(session: BenchSession): Promise<void> {
+	const { ctx, deps, device, env, opts, clock, runs, targets } = session;
+	const tree = await withFacet(ctx, deps.devtools ?? defaultDevtoolsDeps, device, env, opts, async (facet) => {
+		const fetchTree = async () => {
+			const fetched = await facet.tree({ pixelRatio: 1 });
+			return fetched.success ? ok(undefined) : { success: false as const, error: devtoolsUiError(fetched.error) };
+		};
+		const probe = await fetchTree();
+		return probe.success ? sample(clock, runs, fetchTree) : probe;
+	});
+	session.result.tree = tree.success
+		? summarize(tree.data, targets.tree)
+		: skipped("devtools_unavailable", targets.tree, tree.error.message);
+}
+
+/** iOS: connecting a second client to the resident helper socket. */
+async function benchOpenSecond(session: BenchSession): Promise<Result<undefined, UiError>> {
+	const { ctx, device, hooks, clock } = session;
+	const socketPath = readState(ctx, device.udid).helper?.socket ?? socketPathFor(ctx, device.udid);
+	const openSecond = hooks.openSecond ?? defaultOpenSecond;
+	const second = await sample(clock, capped("openDriver", session.runs), async () => {
+		const client = await openSecond(ctx, device, socketPath);
+		if (client.success) await client.data.close().catch(() => undefined);
+		return client;
+	});
+	if (!second.success) return second;
+	recordMetric(session, "openDriver", second.data);
+	return ok(undefined);
+}
+
+/** The iOS-only metrics that follow the warm ones. */
+async function benchIosRest(session: BenchSession, driver: Driver, point: Point): Promise<Result<undefined, UiError>> {
+	const settled = await benchPressSettle(session, driver, point);
+	if (!settled.success) return settled;
+	await benchTree(session);
+	return benchOpenSecond(session);
+}
+
+/** The bench's report: the JSON result, the table, and a warning for every metric over target × tolerance. */
+function benchReport(session: BenchSession): UiSuccess {
+	const { device, runs, result } = session;
+	const over = BENCH_METRICS.filter((name) => {
+		const metric = result[name];
+		return metric !== undefined && !("skipped" in metric) && metric.ok === false;
+	});
+	return {
+		device: { udid: device.udid, platform: device.platform, name: device.name },
+		result: { runs, passed: benchPassed(result), metrics: result },
+		text: [`# ${device.udid} (${device.platform}) · ${runs} runs`, renderBenchTable(result)].join("\n"),
+		warnings: over.length > 0 ? [`over target x${BENCH_TOLERANCE}: ${over.join(", ")}`] : [],
+	};
+}
+
+/** Every metric in order against the open driver. */
+async function benchAll(session: BenchSession): Promise<Result<UiSuccess, UiError>> {
+	const ios = session.device.platform === "ios";
+	if (ios) {
+		const cold = await benchColdStart(session);
+		if (!cold.success) return cold;
+	}
+	const opened = await session.env.driver();
+	if (!opened.success) return opened;
+	const driver = opened.data;
+	const first = viaUi(await driver.snapshot({ interactiveOnly: true }));
+	if (!first.success) return first;
+	const point = centre(first.data.screen.width, first.data.screen.height);
+	const warm = await benchWarm(session, driver, point);
+	if (!warm.success) return warm;
+	if (ios) {
+		const rest = await benchIosRest(session, driver, point);
+		if (!rest.success) return rest;
+	}
+	return ok(benchReport(session));
+}
+
 /**
  * `warden ui bench [--runs n]`: time the agent-loop primitives on the leased device and compare them with
  * `BENCH_TARGETS`. The cold-start metric stops the device's helper first, so run it on a device nobody else
@@ -239,93 +387,18 @@ export function uiBench(ctx: CommandContext, deps: UiDeps, opts: BenchOptionValu
 	return runUi(ctx, deps, "bench", opts, async (device, env) => {
 		const runsParsed = opts.runs === undefined ? ok(DEFAULT_BENCH_RUNS) : positiveInt("--runs", opts.runs);
 		if (!runsParsed.success) return runsParsed;
-		const runs = runsParsed.data;
 		const hooks = deps.bench ?? {};
-		const clock: Clock = hooks.clock ?? (() => performance.now());
-		const targets = BENCH_TARGETS[device.platform];
-		const ios = device.platform === "ios";
-		const result: BenchResult = {};
-		const record = (name: BenchMetricName, samples: number[]) => {
-			result[name] = summarize(samples, targets[name]);
-		};
-
-		if (ios) {
-			const stop = hooks.stopHelper ?? ((c: CommandContext, udid: string) => stopHelper(c, udid));
-			const cold: number[] = [];
-			for (let i = 0; i < capped("helperColdToSnapshot", runs); i += 1) {
-				await stop(ctx, device.udid);
-				const start = clock();
-				const opened = await deps.driver(ctx, device);
-				if (!opened.success) return opened;
-				const taken = await opened.data.snapshot({ interactiveOnly: true });
-				cold.push(clock() - start);
-				await opened.data.close().catch(() => undefined);
-				if (!taken.success) return { success: false, error: driverUiError(taken.error) };
-			}
-			record("helperColdToSnapshot", cold);
-		}
-
-		const opened = await env.driver();
-		if (!opened.success) return opened;
-		const driver = opened.data;
-
-		const first = viaUi(await driver.snapshot({ interactiveOnly: true }));
-		if (!first.success) return first;
-		const point = centre(first.data.screen.width, first.data.screen.height);
-
-		const warm = await sample(clock, runs, async () => viaUi(await driver.snapshot({ interactiveOnly: true })));
-		if (!warm.success) return warm;
-		record("snapshotWarm", warm.data);
-
-		const press = await sample(clock, runs, async () => viaUi(await driver.tap(point)));
-		if (!press.success) return press;
-		record("pressHid", press.data);
-
-		if (ios) {
-			const settle = await sample(clock, capped("pressSettle", runs), async () => {
-				const tapped = viaUi(await driver.tap(point));
-				if (!tapped.success) return tapped;
-				return takeSnapshot(ctx, deps, driver, device.udid, {
-					interactiveOnly: true,
-					all: false,
-					settle: { budgetMs: DEFAULT_SETTLE_TIMEOUT_MS },
-				});
-			});
-			if (!settle.success) return settle;
-			record("pressSettle", settle.data);
-
-			const tree = await withFacet(ctx, deps.devtools ?? defaultDevtoolsDeps, device, env, opts, async (facet) => {
-				const fetchTree = async () => {
-					const fetched = await facet.tree({ pixelRatio: 1 });
-					return fetched.success ? ok(undefined) : { success: false as const, error: devtoolsUiError(fetched.error) };
-				};
-				const probe = await fetchTree();
-				return probe.success ? sample(clock, runs, fetchTree) : probe;
-			});
-			result.tree = tree.success
-				? summarize(tree.data, targets.tree)
-				: skipped("devtools_unavailable", targets.tree, tree.error.message);
-
-			const socketPath = readState(ctx, device.udid).helper?.socket ?? socketPathFor(ctx, device.udid);
-			const openSecond = hooks.openSecond ?? defaultOpenSecond;
-			const second = await sample(clock, capped("openDriver", runs), async () => {
-				const client = await openSecond(ctx, device, socketPath);
-				if (client.success) await client.data.close().catch(() => undefined);
-				return client;
-			});
-			if (!second.success) return second;
-			record("openDriver", second.data);
-		}
-
-		const over = BENCH_METRICS.filter((name) => {
-			const metric = result[name];
-			return metric !== undefined && !("skipped" in metric) && metric.ok === false;
-		});
-		return ok({
-			device: { udid: device.udid, platform: device.platform, name: device.name },
-			result: { runs, passed: benchPassed(result), metrics: result },
-			text: [`# ${device.udid} (${device.platform}) · ${runs} runs`, renderBenchTable(result)].join("\n"),
-			warnings: over.length > 0 ? [`over target x${BENCH_TOLERANCE}: ${over.join(", ")}`] : [],
+		return benchAll({
+			ctx,
+			deps,
+			opts,
+			device,
+			env,
+			runs: runsParsed.data,
+			hooks,
+			clock: hooks.clock ?? (() => performance.now()),
+			targets: BENCH_TARGETS[device.platform],
+			result: {},
 		});
 	});
 }

@@ -1,13 +1,13 @@
 import type { Lease } from "@delacour/warden-core/types";
-import { ok } from "@delacour/warden-types/result";
+import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
 import { releaseAfter } from "../perf/release-after";
 import type { UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { stopHelper } from "./helper";
-import { uiError } from "./output";
-import { runUi, type UiOptionValues } from "./run";
+import { type UiError, uiError } from "./output";
+import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { readState } from "./state";
 
 export type CloseOptionValues = UiOptionValues & {
@@ -33,6 +33,34 @@ async function endHelper(
 	return { stopped: true, how: "release" };
 }
 
+/** `--app`: terminate the app (the given bundle id, else the one `open` launched); its bundle id, or null without `--app`. */
+async function terminateApp(
+	ctx: CommandContext,
+	env: UiRunEnv,
+	device: UiDevice,
+	app: CloseOptionValues["app"]
+): Promise<Result<string | null, UiError>> {
+	if (app === undefined) return ok(null);
+	const bundleId = typeof app === "string" ? app : readState(ctx, device.udid).app;
+	if (bundleId === undefined) {
+		return {
+			success: false,
+			error: uiError("usage", "no app to close", { hint: "pass --app <bundleId> (or `warden ui open` one first)" }),
+		};
+	}
+	const driver = await env.driver();
+	if (!driver.success) return driver;
+	const done = fromDriver(await driver.data.app.terminate(bundleId));
+	await driver.data.close();
+	return done.success ? ok(bundleId) : done;
+}
+
+/** What helper line `close` reports, if any. */
+function helperLine(helper: { stopped: boolean; how: string; warning?: string }): string | undefined {
+	if (helper.stopped) return `helper stopped (${helper.how})`;
+	return helper.warning === undefined ? "helper was not running" : undefined;
+}
+
 /**
  * `warden ui close [--app] [--release]`: end this device's `warden ui` session. Stops the helper daemon
  * (≤ ~2.3 s even if it ignores `shutdown`) — closing is the explicit way to end a resident helper, which a plain
@@ -41,33 +69,16 @@ async function endHelper(
  */
 export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValues): Promise<number> {
 	return runUi(ctx, deps, "close", opts, async (device, env) => {
-		let terminated: string | null = null;
-		if (opts.app !== undefined) {
-			const bundleId = typeof opts.app === "string" ? opts.app : readState(ctx, device.udid).app;
-			if (bundleId === undefined) {
-				return {
-					success: false,
-					error: uiError("usage", "no app to close", { hint: "pass --app <bundleId> (or `warden ui open` one first)" }),
-				};
-			}
-			const driver = await env.driver();
-			if (!driver.success) return driver;
-			const done = fromDriver(await driver.data.app.terminate(bundleId));
-			await driver.data.close();
-			if (!done.success) return done;
-			terminated = bundleId;
-		}
+		const terminatedResult = await terminateApp(ctx, env, device, opts.app);
+		if (!terminatedResult.success) return terminatedResult;
+		const terminated = terminatedResult.data;
 
 		const keep = opts.release === true && device.action === "attached";
 		const released = opts.release === true && !keep;
 		const helper = await endHelper(ctx, device, released);
 		const text = [
 			terminated === null ? undefined : `terminated ${terminated}`,
-			helper.stopped
-				? `helper stopped (${helper.how})`
-				: helper.warning === undefined
-					? "helper was not running"
-					: undefined,
+			helperLine(helper),
 			released ? `released ${device.lease.id}` : undefined,
 		]
 			.filter((line): line is string => line !== undefined)
