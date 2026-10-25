@@ -84,7 +84,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "sim",
 		group: "Devices",
-		summary: "per-simulator tweaks: slim | unquarantine",
+		summary: "per-simulator tweaks: slim | profiles | measure | unquarantine",
 		load: async () => (await import("./sim")).simCommand,
 	},
 	{

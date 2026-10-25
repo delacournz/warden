@@ -48,6 +48,8 @@ export type BatchPreset = {
 	logs?: string;
 	/** the preset's `headless`, else the top-level one (undefined: neither sets it) */
 	headless?: boolean;
+	/** the preset's `slim`, else the top-level one (undefined: neither sets it) */
+	slim?: NonNullable<BatchPresetConfig["slim"]>;
 	cmd: string[];
 };
 
@@ -71,7 +73,8 @@ function resolvePreset(
 	preset: BatchPresetConfig,
 	cwd: string,
 	projectRoot?: string,
-	defaultHeadless?: boolean
+	defaultHeadless?: boolean,
+	defaultSlim?: BatchPresetConfig["slim"]
 ): BatchPreset {
 	const {
 		headless: ownHeadless,
@@ -88,6 +91,7 @@ function resolvePreset(
 	const { app, installMode, resetKeychain, variant } = appSwitches(appOption);
 	const jobs = jobsSource(preset, cwd);
 	const headless = ownHeadless ?? defaultHeadless;
+	const slim = preset.slim ?? defaultSlim;
 	return {
 		...rest,
 		name,
@@ -103,6 +107,7 @@ function resolvePreset(
 		...(logs !== undefined ? { logs: absolute(cwd, logs) } : {}),
 		...(jobs ? { jobs } : {}),
 		...(headless !== undefined ? { headless } : {}),
+		...(slim !== undefined ? { slim } : {}),
 	};
 }
 
@@ -131,6 +136,6 @@ export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: 
 	const projectRoot = project ? resolve(dir, project.root) : undefined;
 	return ok({
 		names,
-		preset: resolvePreset(input.name, preset, projectRoot ?? dir, projectRoot, config.headless),
+		preset: resolvePreset(input.name, preset, projectRoot ?? dir, projectRoot, config.headless, config.slim),
 	});
 }

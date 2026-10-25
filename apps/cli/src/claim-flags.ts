@@ -5,10 +5,14 @@ import { maxConcurrent } from "@delacour/warden-core/capacity";
 import { type ClaimedDevice, type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
+import { isGoldenName } from "@delacour/warden-core/golden/golden";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-core/owner";
 import { listAvds } from "@delacour/warden-core/providers/android";
 import { PRIORITY, parsePriority } from "@delacour/warden-core/queue";
+import { slimSimulator } from "@delacour/warden-core/sims/slim";
+import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
+import { resolveSlim, type SlimSetting } from "@delacour/warden-core/slim-policy";
 import type { DeviceRequest, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
@@ -45,6 +49,11 @@ export function withClaimOptions<Args extends unknown[], Opts extends OptionValu
 		.option("--adopt", "allow allocating foreign (non-warden) devices")
 		.option("--headless", "iOS: close the claimed sims' Simulator.app windows (no window, even with Simulator open)")
 		.option("--no-headless", "show the windows even when config / WARDEN_HEADLESS say headless")
+		.option("--slim", "iOS: slim the simulator daemons (default; ignored on android)")
+		.option(
+			"--no-slim",
+			"iOS: leave the simulator daemons running (config slim / WARDEN_SLIM=0 also turn slimming off)"
+		)
 		.option("--json", "machine-readable output");
 }
 
@@ -71,7 +80,16 @@ export type ClaimFlagValues = {
 	adopt?: boolean;
 	/** the run's resolved headless (callers apply `resolveHeadless` first) */
 	headless?: boolean;
+	/** `--slim` / `--no-slim` (undefined = not passed) */
+	slim?: boolean | undefined;
+	/** `e2e.<suite>.slim` / preset `slim`, already picked by the caller */
+	slimConfig?: SlimSetting | undefined;
+	/** top-level config `slim` */
+	slimTopLevel?: SlimSetting | undefined;
 };
+
+/** The layers `resolveSlim` merges for a claim. */
+export type SlimLayers = { flag?: boolean; config?: SlimSetting; topLevel?: SlimSetting };
 
 export type ClaimFlags = {
 	request: DeviceRequest;
@@ -87,6 +105,8 @@ export type ClaimFlags = {
 	label?: string;
 	/** iOS: close the claimed sims' Simulator.app windows instead of tiling them */
 	headless?: true;
+	/** iOS daemon slimming layers (flag > suite / preset > top-level config > `WARDEN_SLIM` > on); android ignores them */
+	slim?: SlimLayers;
 };
 
 /** Claim queue wait when `--wait` is not given. */
@@ -164,6 +184,11 @@ function withOptionalFlags(flags: ClaimFlags, values: ClaimFlagValues): ClaimFla
 	if (values.max === undefined) flags.maxDefaulted = true;
 	if (values.label !== undefined) flags.label = values.label;
 	if (values.headless) flags.headless = true;
+	const slim: SlimLayers = {};
+	if (values.slim !== undefined) slim.flag = values.slim;
+	if (values.slimConfig !== undefined) slim.config = values.slimConfig;
+	if (values.slimTopLevel !== undefined) slim.topLevel = values.slimTopLevel;
+	if (Object.keys(slim).length > 0) flags.slim = slim;
 	return flags;
 }
 
@@ -231,6 +256,14 @@ export function bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDe
 	return outcome.claimed.filter((c) => c.action !== "reuse" || c.lease.bootedByOwner === true);
 }
 
+/** Android `auto` profile → the first AVD; every other request as is. */
+async function resolveRequest(ctx: CommandContext, request: DeviceRequest): AsyncResult<DeviceRequest> {
+	if (request.platform !== "android" || request.profile !== "auto") return ok(request);
+	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
+	const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
+	return profile.success ? ok({ ...request, profile: profile.data }) : profile;
+}
+
 /** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */
 export async function claimWithFlags(
 	ctx: CommandContext,
@@ -239,13 +272,9 @@ export async function claimWithFlags(
 	pid: number | undefined,
 	options: ClaimHideOptions = {}
 ): AsyncResult<ClaimOutcome> {
-	let request = flags.request;
-	if (request.platform === "android" && request.profile === "auto") {
-		const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
-		const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
-		if (!profile.success) return profile;
-		request = { ...request, profile: profile.data };
-	}
+	const resolved = await resolveRequest(ctx, flags.request);
+	if (!resolved.success) return resolved;
+	let request = resolved.data;
 	const priority = resolvePriority(flags, ctx.env);
 	if (!priority.success) return priority;
 	const capacity = await buildCapacityDeps(ctx, owner);
@@ -253,9 +282,12 @@ export async function claimWithFlags(
 		const room = maxConcurrent(request.platform, capacity.budget, capacity.config);
 		request = { ...request, max: Math.max(request.max, room) };
 	}
+	const slim = resolveSlim({ ...flags.slim, env: ctx.env });
+	if (!slim.success) return slim;
 	const outcome = await claimDevices({
 		store: ctx.store(),
-		provider: providerFor(request.platform, ctx, owner),
+		provider: providerFor(request.platform, ctx, owner, request.platform === "ios" ? { slim: slim.data } : {}),
+		...(request.platform === "ios" ? { slim: slim.data !== false } : {}),
 		owner,
 		request,
 		ttlMs: flags.ttlMs,
@@ -269,8 +301,47 @@ export async function claimWithFlags(
 		...(capacity ? { capacity } : {}),
 		log: (line) => ctx.err(`warden: ${line}`),
 	});
-	if (outcome.success && request.platform === "ios") await settleIosWindows(ctx, outcome.data, flags, options);
+	if (outcome.success && request.platform === "ios") {
+		await slimReusedBooted(ctx, outcome.data, slim.data);
+		await settleIosWindows(ctx, outcome.data, flags, options);
+	}
 	return outcome;
+}
+
+/**
+ * Sims this claim found already booted (so the provider never saw them boot) and that warden knows
+ * but never slimmed: slim them live now. Best effort; devices warden has no record of (foreign) are left alone.
+ */
+async function slimReusedBooted(ctx: CommandContext, outcome: ClaimOutcome, slim: SlimProfile | false): Promise<void> {
+	if (slim === false) return;
+	const booted = new Set(bootedByClaim(outcome).map((c) => c.device.id));
+	const records = new Map(
+		ctx
+			.store()
+			.listDevices("ios")
+			.map((r) => [r.id, r])
+	);
+	for (const { device } of outcome.claimed) {
+		const record = records.get(device.id);
+		if (booted.has(device.id) || !record || record.slimmedAt !== undefined || isGoldenName(record.name)) continue;
+		const res = await slimSimulator(ctx.exec, device.id, { profile: slim });
+		if (res.success) ctx.store().setSlimmed("ios", device.id, ctx.now());
+		else ctx.err(ctx.ui.color.yellow(`warden: ${device.name} could not be slimmed: ${res.error}`));
+	}
+}
+
+/** Call for a `--no-slim` claim (outside any spinner): a claimed sim that is slimmed gets the restore hint. */
+export function hintSlimmed(ctx: CommandContext, outcome: ClaimOutcome): void {
+	const records = new Map(
+		ctx
+			.store()
+			.listDevices("ios")
+			.map((r) => [r.id, r])
+	);
+	for (const { device } of outcome.claimed) {
+		if (records.get(device.id)?.slimmedAt === undefined) continue;
+		ctx.err(`warden claim: ${device.name} is slimmed; warden sim slim ${device.id} --restore re-enables its daemons`);
+	}
 }
 
 /** After an iOS claim: headless closes the sims' windows (handing the rest to `onHide` when given); otherwise tile them. */

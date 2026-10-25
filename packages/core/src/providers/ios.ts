@@ -2,6 +2,10 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { profileSlug } from "../allocate";
 import { type Exec, type ExecResult, execError } from "../exec";
 import { isGoldenName } from "../golden/golden";
+import { disabledStoreRoot } from "../sims/disabled-store";
+import { slimSimulator } from "../sims/slim";
+import { prepareOfflineSlim, runtimeSupportsPersistentOverrides, verifyOfflineSlim } from "../sims/slim.offline";
+import { DEFAULT_SLIM_PROFILE, desiredLabels, type SlimProfile } from "../sims/slim.profile";
 import type { DeviceState, InventoryDevice } from "../types";
 import { execWithin, probeIosHealth, probeIosWarm, realTimer, type TimedExec, type Timer } from "./health";
 import type { BootReady, DeviceProvider, ProviderDeps } from "./provider.types";
@@ -323,6 +327,12 @@ export type IosProviderOptions = {
 	clone?: IosCloneStrategy;
 	/** waits between `boot` attempts on a sim still `Shutting Down` (default: real timers) */
 	sleep?: (ms: number) => Promise<void>;
+	/**
+	 * Daemon slimming for sims this provider boots: the profile (default `DEFAULT_SLIM_PROFILE`), or
+	 * `false` for none. Written offline before first boot when the runtime honours it (iOS >= 18.5),
+	 * verified once the sim is ready, with a live fallback for what did not take.
+	 */
+	slim?: SlimProfile | false;
 };
 
 /** How often, and how long, `boot` retries a sim that is still `Shutting Down`. */
@@ -356,8 +366,60 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		deps.store.recordDevice({ platform: "ios", id, name, profile, runtime }, deps.now());
 		return { platform: "ios", id, name, state: "shutdown", wardenCreated: true, profile, runtime };
 	};
+	const slim = options.slim === undefined ? DEFAULT_SLIM_PROFILE : options.slim;
+	const note = (line: string): void => deps.log?.(line);
+	/** Store record of a device this provider may slim: warden's own, never a golden. */
+	const slimTarget = (id: string): { name: string; runtime: string | undefined } | undefined => {
+		const rec = deps.store.listDevices("ios").find((d) => d.id === id);
+		if (!rec || isGoldenName(rec.name)) return undefined;
+		return { name: rec.name, runtime: rec.runtime };
+	};
+	/** The device's runtime: its store record, else the live inventory. */
+	const runtimeOf = async (id: string, recorded: string | undefined): Promise<string | undefined> => {
+		if (recorded !== undefined) return recorded;
+		const inv = await simctl(runner, ["list", "devices", "available", "-j"], IOS_TIMEOUTS.listMs);
+		const parsed = inv.success ? parseSimctlDevices(inv.data) : inv;
+		return parsed.success ? parsed.data.find((d) => d.id === id)?.runtime : undefined;
+	};
+	const prepareBoot = async (id: string): Promise<void> => {
+		const target = slim === false ? undefined : slimTarget(id);
+		if (slim === false || !target) return;
+		const runtime = await runtimeOf(id, target.runtime);
+		if (runtime === undefined || !runtimeSupportsPersistentOverrides(runtime)) return;
+		const prepared = await prepareOfflineSlim(id, slim, { root: disabledStoreRoot(deps.env) });
+		if (!prepared.success) note(`${target.name} offline slim skipped (${prepared.error})`);
+	};
+	const afterReady = async (id: string): Promise<void> => {
+		if (slim === false) return;
+		const target = slimTarget(id);
+		if (!target) return;
+		const verified = await verifyOfflineSlim(exec, id, slim, { sleep });
+		if (!verified.success) {
+			note(`${target.name} slim verify failed (${verified.error})`);
+			return;
+		}
+		const { missing } = verified.data;
+		if (missing.length > 0) {
+			const total = desiredLabels(slim).size;
+			note(`${id} came up with ${total - missing.length}/${total} overrides, fixing live`);
+			const fixed = await slimSimulator(exec, id, { profile: slim });
+			if (!fixed.success) {
+				note(`${target.name} live slim failed (${fixed.error})`);
+				return;
+			}
+		}
+		deps.store.setSlimmed("ios", id, deps.now());
+	};
+	const recordCreated = async (device: InventoryDevice): Promise<InventoryDevice> => {
+		await prepareBoot(device.id);
+		return device;
+	};
 	return {
 		platform: "ios",
+
+		prepareBoot,
+
+		afterReady,
 
 		async inventory() {
 			const out = await simctl(runner, ["list", "devices", "available", "-j"], IOS_TIMEOUTS.listMs);
@@ -367,7 +429,9 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		async create(name, profile, runtime) {
 			if (options.clone) {
 				const cloned = await options.clone(name, profile, runtime);
-				if (cloned.success) return ok(record(cloned.data.udid, name, profile, cloned.data.runtime));
+				if (cloned.success) {
+					return ok(await recordCreated(record(cloned.data.udid, name, profile, cloned.data.runtime)));
+				}
 				deps.log?.(`clone failed (${cloned.error}) — creating ${name} fresh (slow first boot)`);
 			}
 			const target = await lookupCreateTarget(exec, profile, runtime, deps.timer);

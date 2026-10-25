@@ -18,6 +18,7 @@ import { resolveHeadless } from "@delacour/warden-core/headless";
 import { isPortFree } from "@delacour/warden-core/ports";
 import { PRIORITY } from "@delacour/warden-core/queue";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
+import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
@@ -145,8 +146,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	 * could not (and must stay within a few seconds): a failure shot never fails or stalls the batch.
 	 */
 	screenshot: (platform: Platform, udid: string, path: string) => Promise<boolean>;
-	/** `slim: true`: switch off the unneeded daemons on one iOS simulator (resolves to the jobs touched) */
-	slim: (udid: string) => AsyncResult<string[]>;
+	/** `slim`: switch off the unneeded daemons on one iOS simulator (resolves to the jobs touched); `profile` keeps categories / labels running */
+	slim: (udid: string, profile?: SlimProfile) => AsyncResult<string[]>;
 	/** write a file, creating its parent dirs */
 	writeFile: (path: string, data: string) => Promise<void>;
 	readFile: (path: string) => Promise<string>;
@@ -1006,7 +1007,7 @@ async function prepareDevices(
 	cwd: string,
 	logDir: string,
 	running: Set<ProcHandle>,
-	slim: (udid: string) => AsyncResult<string[]>
+	slim: (udid: string, profile?: SlimProfile) => AsyncResult<string[]>
 ): Promise<{ live: Device[]; setups?: DeviceSetup[] }> {
 	if (!spec) return { live: devices };
 	const setups = await setupDevices({
@@ -1031,21 +1032,22 @@ async function prepareDevices(
 	return { live: devices.filter((d) => setups.find((s) => s.worker === d.worker)?.ok), setups };
 }
 
-/** `deps.slim`, recorded so a later plain `warden claim` knows to restore the device. */
+/** `deps.slim`, recorded so a later plain `warden claim` knows to restore the device; `fixed` is the suite's profile, used unless the caller passes one. */
 const recordedSlim =
-	(ctx: CommandContext, deps: BatchDeps) =>
-	async (udid: string): AsyncResult<string[]> => {
-		const res = await deps.slim(udid);
+	(ctx: CommandContext, deps: BatchDeps, fixed?: SlimProfile) =>
+	async (udid: string, profile?: SlimProfile): AsyncResult<string[]> => {
+		const res = await deps.slim(udid, profile ?? fixed);
 		if (res.success) ctx.store().setSlimmed("ios", udid, ctx.now());
 		return res;
 	};
 
 /**
- * A device the store records as slimmed and this claim did not boot keeps its daemons off (the disable
- * persists across its reboots), so its slim is not even probed (12-4). One the claim booted is.
+ * A device the store records as slimmed keeps its daemons off (the disable persists across its reboots),
+ * so its slim is not even probed (12-4). That includes one this claim booted: the provider slims what it
+ * boots (offline before the first boot, else live once ready) and records it, so the early slim only
+ * handles what the provider could not.
  */
 function alreadySlimmed(ctx: CommandContext, claimed: ClaimedDevice): boolean {
-	if (bootedByClaim({ claimed: [claimed] }).length > 0) return false;
 	return ctx
 		.store()
 		.listDevices("ios")
@@ -1434,7 +1436,7 @@ async function preparePool(
 	o: {
 		env: Record<string, string | undefined>;
 		metro: { plan: MetroPlan; up: Metro } | undefined;
-		slim: (udid: string) => AsyncResult<string[]>;
+		slim: (udid: string, profile?: SlimProfile) => AsyncResult<string[]>;
 		warm: EarlyWarm | undefined;
 		closed: Set<WarmHelper>;
 	}
@@ -2065,7 +2067,12 @@ async function batch(
 		config: preset?.headless,
 		env: ctx.env,
 	});
-	const args = parseBatchArgs(platform, { ...merged.opts, headless }, ctx.cwd, merged.base);
+	const args = parseBatchArgs(
+		platform,
+		{ ...merged.opts, headless, ...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}) },
+		ctx.cwd,
+		merged.base
+	);
 	if (!args.success) return fail(args.error);
 	const jobs = await loadJobs(ctx, deps, args.data);
 	if (!jobs.success) return fail(jobs.error);
@@ -2217,7 +2224,10 @@ export async function runSession(
 	// each device is slimmed the moment it is leased, alongside its app install and warm-up (12-4)
 	const slim =
 		hooks.setup?.slim && platform === "ios"
-			? startEarlySlim<ClaimedDevice>({ slim: recordedSlim(ctx, deps), skip: (c) => alreadySlimmed(ctx, c) })
+			? startEarlySlim<ClaimedDevice>({
+					slim: recordedSlim(ctx, deps, typeof hooks.setup.slim === "object" ? hooks.setup.slim : undefined),
+					skip: (c) => alreadySlimmed(ctx, c),
+				})
 			: undefined;
 	// the early warm-up closed and the early slim done, once (before a failed claim releases the devices)
 	let quiet: Promise<void> | undefined;
@@ -2409,7 +2419,7 @@ export const defaultBatchDeps: BatchDeps = {
 	sleep: (ms) => Bun.sleep(ms),
 	record: (udid, path) => startSimRecording(udid, path, Date.now),
 	screenshot: captureScreenshot,
-	slim: (udid) => slimSimulator(bunExec, udid),
+	slim: (udid, profile) => slimSimulator(bunExec, udid, profile ? { profile } : {}),
 	writeFile: async (path, data) => {
 		await mkdir(dirname(path), { recursive: true });
 		await writeFile(path, data);

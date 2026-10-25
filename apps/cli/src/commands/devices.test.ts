@@ -175,4 +175,45 @@ describe("warden devices", () => {
 		expect(text.split("\n")[0]).toMatch(/^PLATFORM\s+NAME\s+ID\s+STATE\s+RUNTIME\s+WARDEN$/);
 		expect(text).toMatch(/warden-iphone-17-1\s+U1\s+leased · agent s2/);
 	});
+
+	test("--mem measures booted iOS sims with one ps/top snapshot and adds footprintMb / an MB column", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["ios", "--mem", "--json"], {
+			exec: fakeExec(
+				[
+					["xcrun simctl list devices available -j", { stdout: IOS }],
+					["pgrep -f U1/data", { stdout: "100\n" }],
+					["ps", { stdout: "  PID  PPID COMM\n 100 1 /x/launchd_sim\n 101 100 /x/backboardd\n" }],
+					["top", { stdout: "PID MEM\n100 2M\n101 168M+\n" }],
+				],
+				calls
+			),
+		});
+		expect(await devicesCommand.run(ctx)).toBe(0);
+		const rows = JSON.parse(ctx.stdout.join("\n"));
+		expect(rows.find((r: { id: string }) => r.id === "U1").footprintMb).toBe(170);
+		expect(rows.find((r: { id: string }) => r.id === "U2").footprintMb).toBeUndefined();
+		expect(calls.filter((c) => c[0] === "ps" || c[0] === "top").length).toBe(2);
+		ctx.cleanup();
+
+		ctx = testContext(["ios", "--mem"], {
+			exec: fakeExec([
+				["xcrun simctl list devices available -j", { stdout: IOS }],
+				["pgrep -f U1/data", { stdout: "100\n" }],
+				["ps", { stdout: "  PID  PPID COMM\n 100 1 /x/launchd_sim\n" }],
+				["top", { stdout: "PID MEM\n100 2M\n" }],
+			]),
+		});
+		expect(await devicesCommand.run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toContain("MB");
+	});
+
+	test("without --mem nothing is measured", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["ios", "--json"], {
+			exec: fakeExec([["xcrun simctl list devices available -j", { stdout: IOS }]], calls),
+		});
+		await devicesCommand.run(ctx);
+		expect(calls.some((c) => c[0] === "pgrep")).toBe(false);
+	});
 });

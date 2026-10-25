@@ -18,14 +18,21 @@ type PlatformUsage = { booted: number; warden: number; foreign: number; memMb: n
 
 const MB_PER_GB = 1024;
 
-function usageOf(devices: readonly InventoryDevice[], platform: Platform, cost: Cost): PlatformUsage {
+/** `slimmed` = iOS ids whose store record says `sim slim` ran; those cost the slim figure. */
+function usageOf(
+	devices: readonly InventoryDevice[],
+	platform: Platform,
+	cost: Cost,
+	slimCost: Cost,
+	slimmed: ReadonlySet<string>
+): PlatformUsage {
 	const booted = devices.filter((d) => d.platform === platform && (d.state === "booted" || d.state === "booting"));
 	const warden = booted.filter((d) => d.wardenCreated || d.golden === true).length;
 	return {
 		booted: booted.length,
 		warden,
 		foreign: booted.length - warden,
-		memMb: booted.length * cost.memMb,
+		memMb: booted.reduce((sum, d) => sum + (slimmed.has(d.id) ? slimCost : cost).memMb, 0),
 		units: booted.length * cost.cpu,
 	};
 }
@@ -40,13 +47,24 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	const devices = inventory.success ? inventory.data : [];
 	const pressure = await pressureOf(ctx)();
 	const costs = Object.fromEntries(CAPACITY_PLATFORMS.map((p) => [p, deviceCost(p, config)])) as Record<Platform, Cost>;
-	const usage = Object.fromEntries(CAPACITY_PLATFORMS.map((p) => [p, usageOf(devices, p, costs[p])])) as Record<
-		Platform,
-		PlatformUsage
-	>;
+	const slimCosts = Object.fromEntries(
+		CAPACITY_PLATFORMS.map((p) => [p, deviceCost(p, config, { slim: true })])
+	) as Record<Platform, Cost>;
+	const slimmed = new Set(
+		ctx
+			.store()
+			.listDevices("ios")
+			.filter((r) => r.slimmedAt !== undefined)
+			.map((r) => r.id)
+	);
+	const usage = Object.fromEntries(
+		CAPACITY_PLATFORMS.map((p) => [p, usageOf(devices, p, costs[p], slimCosts[p], slimmed)])
+	) as Record<Platform, PlatformUsage>;
+	const live = devices.filter((d) => d.state === "booted" || d.state === "booting");
 	const used = totalCost(
-		devices.filter((d) => d.state === "booted" || d.state === "booting").map((d) => d.platform),
-		config
+		live.map((d) => d.platform),
+		config,
+		live.map((d) => d.platform === "ios" && slimmed.has(d.id))
 	);
 	const concurrent = Object.fromEntries(CAPACITY_PLATFORMS.map((p) => [p, maxConcurrent(p, budget, config)])) as Record<
 		Platform,
@@ -71,6 +89,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 		},
 		config,
 		cost: costs,
+		slimCost: { ios: slimCosts.ios },
 		usage: { total: { memMb: Math.round(used.memMb), units: used.cpu }, ...usage },
 		maxConcurrent: concurrent,
 		pressure: pressure.success ? pressure.data : "unknown",
@@ -81,7 +100,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	const rows = CAPACITY_PLATFORMS.map((p) => [
 		p,
 		`${usage[p].booted} (${usage[p].warden} warden, ${usage[p].foreign} foreign)`,
-		`${costs[p].memMb} MB / ${costs[p].cpu} cpu`,
+		`${costs[p].memMb} MB${p === "ios" ? ` (slim ${slimCosts.ios.memMb} MB)` : ""} / ${costs[p].cpu} cpu`,
 		String(concurrent[p]),
 	]);
 	const text = [

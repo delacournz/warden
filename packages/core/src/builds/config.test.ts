@@ -88,6 +88,23 @@ describe("parseWardenConfig", () => {
 		expect(bad({ ports: ["nope"] }).success).toBe(false);
 		expect(bad({ slim: true, platform: "android" }).success).toBe(false);
 		expect(bad({ slim: true, platform: "ios", setup: "echo {udid}" }).success).toBe(true);
+		expect(bad({ slim: { except: ["store"] }, platform: "android" }).success).toBe(false);
+		expect(bad({ slim: false, platform: "android" }).success).toBe(true);
+		expect(bad({ slim: { except: ["store"], keep: ["com.apple.swcd"] }, platform: "ios" }).success).toBe(true);
+		const unknown = bad({ slim: { except: ["nope"] } });
+		expect(unknown.success).toBe(false);
+		if (!unknown.success) expect(unknown.error).toContain("nope");
+		expect(bad({ slim: { bogus: 1 } }).success).toBe(false);
+	});
+
+	test("top-level slim: boolean or a validated profile", () => {
+		const withSlim = (slim: unknown) => parseWardenConfig({ slim, e2e: { s: { specsDir: "specs" } } });
+		expect(withSlim(false).success).toBe(true);
+		expect(withSlim({ except: ["store"], keep: ["com.apple.swcd"] }).success).toBe(true);
+		const unknown = withSlim({ except: ["nope"] });
+		expect(unknown.success).toBe(false);
+		if (!unknown.success) expect(unknown.error).toContain("nope");
+		expect(withSlim({ bogus: 1 }).success).toBe(false);
 	});
 
 	test("e2e suite run settings: metro, isolate, jobTimeoutMs and device legs, with defaults", () => {

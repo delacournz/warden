@@ -10,7 +10,7 @@ export type CapacityConfig = {
 	max?: number;
 	/** RAM held back for the OS, Metro, xcodebuild, gradle (default: max(8 GB, 25% of total)) */
 	headroomGb?: number;
-	cost?: Partial<Record<Platform, Partial<Cost>>>;
+	cost?: Partial<Record<Platform, Partial<Cost> & { slimMemMb?: number }>>;
 };
 
 export type Budget = { memMb: number; cpu: number; maxUnits: number };
@@ -23,9 +23,9 @@ export type FitResult =
 
 export const ZERO_COST: Cost = { memMb: 0, cpu: 0 };
 
-/** An Android emulator costs about twice an iOS sim; CAP-7 calibrates these against real RSS. */
+/** Stock figures from `warden sim measure` phys_footprint: an unslimmed iOS 26.5 sim idles at ~4.3 GB; an Android emulator is budgeted the same. */
 export const DEFAULT_COSTS: Record<Platform, Cost> = {
-	ios: { memMb: 2048, cpu: 1 },
+	ios: { memMb: 4096, cpu: 1 },
 	android: { memMb: 4096, cpu: 2 },
 };
 
@@ -49,15 +49,29 @@ export function hostBudget(host: HostFacts, config: CapacityConfig): Budget {
 	};
 }
 
-export function deviceCost(platform: Platform, config: CapacityConfig): Cost {
-	return { ...DEFAULT_COSTS[platform], ...config.cost?.[platform] };
+/** Memory an iOS sim takes once slimmed: `warden sim measure` on iOS 26.5 read 1.6 GB settled for a sim booted slim and 1.95 GB for one slimmed live, against 4.3 GB stock. */
+export const SLIM_IOS_MEM_MB = 1792;
+
+/** Stock cost of a platform, or the slim cost of an iOS sim (`opts.slim`; Android has no slim form). Config overrides win. */
+export function deviceCost(platform: Platform, config: CapacityConfig, opts?: { slim?: boolean }): Cost {
+	const { slimMemMb, ...override } = config.cost?.[platform] ?? {};
+	const slim = opts?.slim === true && platform === "ios";
+	const memMb = slim ? (slimMemMb ?? SLIM_IOS_MEM_MB) : (override.memMb ?? DEFAULT_COSTS[platform].memMb);
+	return { ...DEFAULT_COSTS[platform], ...override, memMb };
 }
 
 export const addCost = (a: Cost, b: Cost): Cost => ({ memMb: a.memMb + b.memMb, cpu: a.cpu + b.cpu });
 
-/** Summed cost of booting these devices. */
-export function totalCost(platforms: readonly Platform[], config: CapacityConfig): Cost {
-	return platforms.reduce((sum, platform) => addCost(sum, deviceCost(platform, config)), ZERO_COST);
+/** Summed cost of booting these devices; `slimFlags[i]` says whether `platforms[i]` is a slimmed iOS sim. */
+export function totalCost(
+	platforms: readonly Platform[],
+	config: CapacityConfig,
+	slimFlags?: readonly boolean[]
+): Cost {
+	return platforms.reduce(
+		(sum, platform, i) => addCost(sum, deviceCost(platform, config, { slim: slimFlags?.[i] === true })),
+		ZERO_COST
+	);
 }
 
 /** Does `usage + request` stay inside `budget`? When not, `binding` is the dimension over by the largest share. */

@@ -16,6 +16,7 @@ import {
 } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { resolveHeadless } from "@delacour/warden-core/headless";
+import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "@delacour/warden-core/sims/slim.profile";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { selfCommand } from "../autogc";
@@ -123,7 +124,13 @@ function onePlatform(affected: Affected): Result<Selection> {
 
 /** `slim` applies to iOS simulators only: true when the suite asks for it and this run is on iOS. */
 function slimsDevices(suite: E2eSuiteConfig, platform: Platform): boolean {
-	return suite.slim === true && platform === "ios";
+	return suite.slim !== undefined && suite.slim !== false && platform === "ios";
+}
+
+/** The suite's `slim` as a profile: `true` slims every category, an object keeps its `except` / `keep` running. */
+function slimProfile(slim: NonNullable<E2eSuiteConfig["slim"]>): SlimProfile {
+	if (typeof slim !== "object") return DEFAULT_SLIM_PROFILE;
+	return { except: slim.except ?? [], keep: slim.keep ?? [] };
 }
 
 /** The per-device prep a suite asks for (`slim` on iOS, then `setup`); undefined when there is none on this platform. */
@@ -132,7 +139,7 @@ function deviceSetup(suite: E2eSuiteConfig, platform: Platform): DeviceSetupSpec
 	if (suite.setup === undefined && !slim) return undefined;
 	return {
 		...(suite.setup !== undefined ? { command: suite.setup } : {}),
-		...(slim ? { slim: true } : {}),
+		...(slim && suite.slim !== undefined ? { slim: slimProfile(suite.slim) } : {}),
 	};
 }
 
@@ -369,6 +376,10 @@ async function preparedRun(
 	passed: ReadonlySet<string>
 ): AsyncResult<RunPlan & { spec: SpecPlan }> {
 	if (suite.config.slim && platform !== "ios") note(ctx, `warden e2e: slim is iOS-only; skipped on ${platform}`);
+	if (slimsDevices(suite.config, platform) && suite.config.slim !== undefined) {
+		const slim = validateProfile(slimProfile(suite.config.slim));
+		if (!slim.success) return err(`suite "${suite.name}": slim: ${slim.error}`);
+	}
 	const spec = await specPlan(ctx, deps, suite, platform, opts);
 	if (!spec.success) return spec;
 	const run = await runPlan(ctx, suite, platform, specs, spec.data, opts, passed);
@@ -455,7 +466,14 @@ async function runPlan(
 	const needsApp = appFlagsWithoutApp(suite, merged);
 	if (needsApp !== undefined) return err(needsApp);
 	const batchOpts = { ...merged, ...(config.metro?.enabled ? { port: [config.metro.port, ...merged.port] } : {}) };
-	const legOpts = (leg: E2eDeviceLeg) => ({ ...batchOpts, profile: leg.profile, count: String(leg.count) });
+	const slimFlag = passed.has("slim") ? opts.slim : undefined;
+	const legOpts = (leg: E2eDeviceLeg) => ({
+		...batchOpts,
+		profile: leg.profile,
+		count: String(leg.count),
+		slim: slimFlag,
+		...(suite.slim !== undefined ? { slimConfig: suite.slim } : {}),
+	});
 	const [first] = picked.data ?? [];
 	const args = parseBatchArgs(platform, first ? legOpts(first) : batchOpts, ctx.cwd, {
 		jobs: { kind: "list", jobs: specs.map((f) => f.id) },

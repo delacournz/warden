@@ -269,6 +269,12 @@ export interface WardenBatchPreset {
 	 * `--headless` / `--no-headless` override both.
 	 */
 	headless?: boolean | undefined;
+	/**
+	 * iOS: slim the simulator daemons of this run's devices (on by default). `false` turns it off; an object keeps
+	 * parts running (`except`: category ids, `keep`: single `com.apple.*` labels). Overrides the top-level `slim`;
+	 * `--slim` / `--no-slim` override both.
+	 */
+	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
 	/** Per-job log dir. */
 	logs?: string | undefined;
 	/**
@@ -577,8 +583,10 @@ export interface WardenE2eSuite {
 	/**
 	 * iOS only: switch off the simulator daemons specs never need on each leased device, before `setup`.
 	 * Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"`.
+	 * An object keeps parts running: `except` lists category ids (see `warden sim profiles`), `keep`
+	 * lists single `com.apple.*` launchd labels. `false` turns it off.
 	 */
-	slim?: boolean | undefined;
+	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
 	/** Removed: renamed `warmDrivers`. */
 	warmRunners?: undefined;
 	/**
@@ -625,6 +633,15 @@ export interface WardenConfig {
 	 * those that don't set `headless`). `warden dev` ignores it. `WARDEN_HEADLESS=1` is the fallback below it.
 	 */
 	headless?: boolean | undefined;
+	/**
+	 * iOS: switch off the simulator daemons specs never need on every simulator warden creates (claim, run, dev,
+	 * e2e, batch). On by default. `false` turns it off; an object keeps parts running (`except`: category ids, see
+	 * `warden sim profiles`; `keep`: single `com.apple.*` launchd labels). An `e2e` suite's `slim` overrides it,
+	 * `--slim` / `--no-slim` override both, `WARDEN_SLIM=0` is the fallback below it.
+	 *
+	 * @default true
+	 */
+	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
 	/** Perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key). */
 	perf?: WardenPerfConfig | undefined;
 	/** Android emulator settings. */

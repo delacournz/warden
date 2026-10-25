@@ -49,7 +49,9 @@ Open the reference file for details before acting; this file only routes.
 | is this device free or mine | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a bare lease alive | `warden heartbeat <leaseId…>` (prefer a wrapper) |
 | device misbehaving | `warden release <leaseId> --bad "<why>"` (undo: `warden sim unquarantine <udid>`) |
-| fewer daemons on a sim | `warden sim slim <udid>\|--booted [--dry-run\|--restore]` |
+| fewer daemons on a sim | iOS sims warden creates are slim by default (`--no-slim` / `slim: false` / `WARDEN_SLIM=0` opt out; a plain `claim` never restores). By hand: `warden sim slim <udid>\|--booted [--dry-run\|--restore] [--except <ids>] [--keep <labels>]` |
+| slim categories (`--except` ids) | `warden sim profiles`; common: `store` push/StoreKit, `web` universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker |
+| a sim's real memory | `warden sim measure [udid\|--booted]` · `warden devices --mem` |
 | clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` · `warden sims` (`prune --dry-run`, then `--yes`) |
 | reclaim dead leases | `warden gc` (auto every 10 min; never deletes, never touches foreign devices) |
 | setup / helper problems | `warden doctor [--fetch-helper]` |

@@ -130,6 +130,24 @@ describe("findBatchPreset", () => {
 		expect(b.data.preset?.headless).toBe(false);
 	});
 
+	test("slim: the preset's own wins over the top-level default; unset everywhere → undefined", () => {
+		write(JSON_CONFIG_FILE, {
+			slim: { except: ["store"] },
+			batches: {
+				a: { platform: "ios", cmd: ["x"] },
+				b: { platform: "ios", slim: false, cmd: ["x"] },
+			},
+		});
+		const a = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		const b = findBatchPreset({ start: dir, stopAt: dir, name: "b" });
+		if (!a.success || !b.success) throw new Error("config");
+		expect(a.data.preset?.slim).toEqual({ except: ["store"] });
+		expect(b.data.preset?.slim).toBe(false);
+		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", cmd: ["x"] } } });
+		const none = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		expect(none.success && none.data.preset?.slim).toBeUndefined();
+	});
+
 	test("headless unset everywhere → undefined", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", cmd: ["x"] } } });
 		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });

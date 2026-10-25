@@ -30,6 +30,8 @@ export type Suite = {
 	implicit?: true;
 	/** the suite's `headless`, else the top-level one (undefined: neither sets it) */
 	headless?: boolean;
+	/** the suite's `slim`, else the top-level one (undefined: neither sets it) */
+	slim?: NonNullable<E2eSuiteConfig["slim"]>;
 	/** the suite's perf budgets over the top-level ones, per key (undefined: none set) */
 	perfBudgets?: NonNullable<NonNullable<E2eSuiteConfig["perf"]>["budgets"]>;
 };
@@ -89,7 +91,8 @@ function defaultSuite(
 	cwd: string,
 	stopAt: string | undefined,
 	headless: boolean | undefined,
-	overlayDir: string | undefined
+	overlayDir: string | undefined,
+	slim?: NonNullable<E2eSuiteConfig["slim"]>
 ): Result<Suite> {
 	const project = loadProject({
 		start: cwd,
@@ -123,6 +126,7 @@ function defaultSuite(
 		projectRoot: root,
 		implicit: true,
 		...(headless !== undefined ? { headless } : {}),
+		...(slim !== undefined ? { slim } : {}),
 	});
 }
 
@@ -144,7 +148,7 @@ export async function findSuite(
 	const suites = found.data?.config.e2e ?? {};
 	const names = Object.keys(suites);
 	if (names.length === 0 && name === undefined) {
-		const implicit = defaultSuite(cwd, stopAt, found.data?.config.headless, overlay);
+		const implicit = defaultSuite(cwd, stopAt, found.data?.config.headless, overlay, found.data?.config.slim);
 		return implicit.success ? implicit : suiteError("config", implicit.error);
 	}
 	if (!found.data) return suiteError("no_config", `no ${CONFIG_FILE} found from ${cwd}`);
@@ -171,6 +175,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 	const project = top.projects?.find((p) => p.name === config.project);
 	const projectRoot = project ? resolve(rootDir, project.root) : undefined;
 	const headless = config.headless ?? top.headless;
+	const slim = config.slim ?? top.slim;
 	const budgets = { ...top.perf?.budgets, ...config.perf?.budgets };
 	return {
 		name,
@@ -181,6 +186,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 		cwd: projectRoot ?? rootDir,
 		...(projectRoot ? { projectRoot } : {}),
 		...(headless !== undefined ? { headless } : {}),
+		...(slim !== undefined ? { slim } : {}),
 		...(Object.keys(budgets).length > 0 ? { perfBudgets: budgets } : {}),
 	};
 }

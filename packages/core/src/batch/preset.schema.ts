@@ -3,6 +3,12 @@ import { appOptionSchema } from "../builds/app-option.schema";
 import { parseDuration } from "../duration";
 import { parsePortSpec } from "../ports";
 
+/** `slim`: on/off, or the categories (`except`, ids) and single labels (`keep`) to leave running. */
+export const slimConfigSchema = z.union([
+	z.boolean(),
+	z.object({ except: z.array(z.string()).optional(), keep: z.array(z.string()).optional() }).strict(),
+]);
+
 export const duration = z
 	.string()
 	.min(1)
@@ -34,6 +40,8 @@ export const batchPresetSchema = z
 		app: appOptionSchema.optional(),
 		/** keep Simulator.app windows closed for this run; `--headless` / `--no-headless` win */
 		headless: z.boolean().optional(),
+		/** iOS: slim the simulator daemons of this run's devices (default on); `--slim` / `--no-slim` win */
+		slim: slimConfigSchema.optional(),
 		retry: z.number().int().min(0).optional(),
 		passes: z.number().int().min(1).optional(),
 		/** added to the serve + job env */

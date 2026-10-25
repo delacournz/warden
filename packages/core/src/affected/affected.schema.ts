@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { duration, portSpec } from "../batch/preset.schema";
+import { duration, portSpec, slimConfigSchema } from "../batch/preset.schema";
 import { appOptionSchema } from "../builds/app-option.schema";
 import { DEFAULT_JOB_TIMEOUT_MS, DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "../config.defaults";
+import { validateProfile } from "../sims/slim.profile";
 
 const path = z.string().min(1);
 const platform = z.enum(["ios", "android"]);
@@ -201,8 +202,8 @@ export const e2eSuiteSchema = z
 		serveTimeout: duration.optional(),
 		/** `sh -c` once per leased device, after the app install and before its first spec; `{udid}` is substituted. A non-zero exit drops that device from the run */
 		setup: z.string().min(1).optional(),
-		/** iOS: switch off the simulator daemons specs never need on each device, before `setup` */
-		slim: z.boolean().optional(),
+		/** iOS: switch off the simulator daemons specs never need on each device, before `setup`. An object keeps categories (`except`, ids) or single labels (`keep`) on */
+		slim: slimConfigSchema.optional(),
 		/** removed: renamed `warmDrivers` */
 		warmRunners: removedKey("warmRunners", "renamed to warmDrivers"),
 		/** iOS: start every device's automation helper in parallel before the specs (default on; `false` = off) */
@@ -221,8 +222,12 @@ export const e2eSuiteSchema = z
 			issue.addIssue({ code: "custom", message: "serveReady needs serve", path: ["serveReady"] });
 		if (suite.serveTimeout !== undefined && suite.serve === undefined)
 			issue.addIssue({ code: "custom", message: "serveTimeout needs serve", path: ["serveTimeout"] });
-		if (suite.slim === true && suite.platform === "android")
+		if (suite.slim !== undefined && suite.slim !== false && suite.platform === "android")
 			issue.addIssue({ code: "custom", message: "slim is iOS-only", path: ["slim"] });
+		if (typeof suite.slim === "object") {
+			const checked = validateProfile({ except: suite.slim.except ?? [], keep: suite.slim.keep ?? [] });
+			if (!checked.success) issue.addIssue({ code: "custom", message: checked.error, path: ["slim"] });
+		}
 		for (const message of runIssues(suite)) issue.addIssue({ code: "custom", ...message });
 	});
 
@@ -230,4 +235,5 @@ export type E2eSpecConfig = z.infer<typeof e2eSpecSchema>;
 export type E2eMetroConfig = z.infer<typeof e2eMetroSchema>;
 export type E2eDeviceLeg = z.infer<typeof e2eDeviceLegSchema>;
 export type E2eSpecEntryConfig = z.infer<typeof e2eSpecEntrySchema>;
+export type E2eSlimConfig = z.infer<typeof slimConfigSchema>;
 export type E2eSuiteConfig = z.infer<typeof e2eSuiteSchema>;

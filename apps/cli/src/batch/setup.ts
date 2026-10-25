@@ -1,13 +1,14 @@
 import { join } from "node:path";
 import type { BatchWorker } from "@delacour/warden-core/batch/schedule";
+import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 
 /** What `warden e2e` runs on each leased device before its first spec. */
 export type DeviceSetupSpec = {
 	/** `sh -c`, `{udid}` substituted */
 	command?: string;
-	/** iOS: switch off the simulator daemons specs never need, before `command` */
-	slim?: boolean;
+	/** iOS: switch off the simulator daemons specs never need, before `command`; a profile keeps categories / labels running */
+	slim?: boolean | SlimProfile;
 };
 
 /** One device's setup outcome (`e2e-report.json` → `setup`). */
@@ -37,8 +38,8 @@ export type SetupRun = {
 		cmd: string[],
 		opts: { env: Record<string, string | undefined>; log: string; cwd: string; setup: true }
 	) => Proc;
-	/** `spec.slim`: slim one device */
-	slim?: (udid: string) => AsyncResult<string[]>;
+	/** `spec.slim`: slim one device (with `spec.slim`'s profile when it is one) */
+	slim?: (udid: string, profile?: SlimProfile) => AsyncResult<string[]>;
 	/** tracked so SIGINT can stop a running setup */
 	track?: (proc: Proc) => () => void;
 };
@@ -47,7 +48,7 @@ export type SetupRun = {
 async function slimDevice(run: SetupRun, udid: string): Promise<DeviceSetup["slim"]> {
 	if (!run.spec.slim || !run.slim) return undefined;
 	try {
-		const res = await run.slim(udid);
+		const res = await run.slim(udid, typeof run.spec.slim === "object" ? run.spec.slim : undefined);
 		return res.success ? { jobs: res.data.length } : { error: res.error };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
