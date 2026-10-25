@@ -681,19 +681,41 @@ describe("typeText", () => {
 		expect(joined(calls).some((line) => line.includes("pbcopy"))).toBe(false);
 	});
 
-	test("E_UNSUPPORTED_TEXT pastes the rest through the simulator clipboard", async () => {
+	test("E_UNSUPPORTED_TEXT pastes the rest once the simulator pasteboard holds it", async () => {
 		const { driver, helper, calls } = await open(
 			(request) =>
 				request.op === "typeText"
 					? { error: { code: "E_UNSUPPORTED_TEXT", message: "no HID usage for é", detail: { rest: "é and more" } } }
 					: { data: null },
 			{},
-			[["sh -c", {}]]
+			[
+				["sh -c", {}],
+				["xcrun simctl pbpaste", { stdout: "é and more" }],
+			]
 		);
 		await unwrapped(driver.typeText("café and more"));
 		const copy = calls.find((call) => call.cmd[0] === "sh");
+		expect(copy?.cmd[2]).toContain("xcrun devicectl device pasteboard copy");
 		expect(copy?.cmd.slice(3)).toEqual(["sh", "é and more", UDID]);
+		expect(joined(calls).some((line) => line.startsWith("xcrun simctl pbpaste"))).toBe(true);
 		expect(helper.requests.map((request) => request.op)).toEqual(["typeText", "paste"]);
+	});
+
+	test("E_UNSUPPORTED_TEXT never pastes what the simulator pasteboard did not take", async () => {
+		const { driver, helper } = await open(
+			(request) =>
+				request.op === "typeText"
+					? { error: { code: "E_UNSUPPORTED_TEXT", message: "no HID usage for é", detail: { rest: "é" } } }
+					: { data: null },
+			{},
+			[
+				["sh -c", {}],
+				["xcrun simctl pbpaste", { stdout: "whatever the Mac had" }],
+			]
+		);
+		const result = await driver.typeText("café");
+		expect(!result.success && result.error.code).toBe("E_IO");
+		expect(helper.of("paste")).toHaveLength(0);
 	});
 
 	test("E_UNSUPPORTED_TEXT without a rest is returned, not guessed", async () => {
@@ -1037,7 +1059,7 @@ describe("simctl-backed methods", () => {
 		const { driver, calls } = await open(() => ({ data: null }), {}, [
 			["xcrun simctl ui UDID-1 appearance", { stdout: "light\n" }],
 			["sh -c", {}],
-			["xcrun simctl pbpaste", { stdout: "clip" }],
+			["xcrun simctl pbpaste", { stdout: "copied" }],
 			["xcrun simctl launch", {}],
 			["xcrun simctl terminate", {}],
 			["xcrun simctl openurl", {}],
@@ -1049,7 +1071,7 @@ describe("simctl-backed methods", () => {
 		expect(await unwrapped(driver.appearance())).toBe("light");
 		expect(await unwrapped(driver.appearance("dark"))).toBe("dark");
 		expect(await unwrapped(driver.clipboard("copied"))).toBe("copied");
-		expect(await unwrapped(driver.clipboard())).toBe("clip");
+		expect(await unwrapped(driver.clipboard())).toBe("copied");
 		await unwrapped(driver.app.launch(BUNDLE, { args: ["--x"], env: { A: "1" }, relaunch: false }));
 		expect(await unwrapped(driver.app.isInstalled(BUNDLE))).toBe(true);
 		expect(await unwrapped(driver.app.isRunning(BUNDLE))).toBe(true);
