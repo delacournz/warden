@@ -8,7 +8,7 @@
  * the same layout with idb's own `build.sh` from a shallow clone of what the lock pins (the tag, or `source`: a commit
  * on a fork carrying patches) in `~/Library/Caches/warden-idb/src/<tag|sha>`, or from `WARDEN_IDB_SRC` (a checkout
  * at that commit). A hosted `url` is built from `source` by `apps/example/.eas/workflows/idb-libraries.yml`.
- * Idempotent: `idb-libraries/.warden-idb.json` records what is installed.
+ * Idempotent: `idb-libraries/.warden-idb.json` records what is installed. A new package also drops `ios/.build`.
  *
  * No git submodule on purpose: `git worktree remove` refuses any worktree with a populated submodule.
  */
@@ -117,6 +117,15 @@ function layoutProblem(dir: string): string | undefined {
 	return missing.length > 0 ? `library package is missing ${missing.join(", ")}` : undefined;
 }
 
+/**
+ * The SwiftPM scratch dir of `native/ios`, next to `dest`. It caches the modules swift compiled from the package's
+ * `.swiftinterface` files; after a different package lands, `swift build` keeps resolving the old ones and fails on
+ * types the new interfaces reference, so it goes whenever the package changes.
+ */
+export function buildDirFor(dest: string): string {
+	return join(dirname(dest), "ios", ".build");
+}
+
 /** Validate `staged`, then swap it in for `dest` (the previous install survives a bad `staged`). */
 async function swapIn(staged: string, dest: string, stamp: Stamp): Promise<void> {
 	const problem = layoutProblem(staged);
@@ -127,6 +136,7 @@ async function swapIn(staged: string, dest: string, stamp: Stamp): Promise<void>
 	await writeFile(join(staged, STAMP_FILE), `${JSON.stringify(stamp, null, 2)}\n`);
 	await rm(dest, { recursive: true, force: true });
 	await rename(staged, dest);
+	await rm(buildDirFor(dest), { recursive: true, force: true });
 }
 
 /** Extract `tarball` into `dest` unless the stamp already says this exact release is installed. */

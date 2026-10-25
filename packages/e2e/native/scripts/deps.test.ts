@@ -161,6 +161,21 @@ describe("installLibraries", () => {
 		expect(await installLibraries(lock, tar.path, dest)).toBe("installed");
 	});
 
+	test("drops the SwiftPM build dir when the package changes, keeps it when up to date", async () => {
+		const tar = await fakeTarball(goodLayout);
+		const dest = join(root, "idb-libraries");
+		const build = join(root, "ios", ".build");
+		await installLibraries({ version: "v1.0.0", tarball: "x", sha256: tar.sha256 }, tar.path, dest);
+		mkdirSync(build, { recursive: true });
+		writeFileSync(join(build, "marker"), "");
+		expect(await installLibraries({ version: "v1.0.0", tarball: "x", sha256: tar.sha256 }, tar.path, dest)).toBe(
+			"up-to-date"
+		);
+		expect(existsSync(join(build, "marker"))).toBe(true);
+		await installLibraries({ version: "v1.0.1", tarball: "x", sha256: tar.sha256 }, tar.path, dest);
+		expect(existsSync(build)).toBe(false);
+	});
+
 	test("rejects a tarball without the guest binary and keeps the previous install", async () => {
 		const good = await fakeTarball(goodLayout);
 		const dest = join(root, "idb-libraries");
