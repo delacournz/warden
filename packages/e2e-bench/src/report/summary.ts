@@ -5,14 +5,19 @@ import {
 	type Dist,
 	type FrameworkResult,
 	frameworkIdSchema,
+	type ProcessRow,
 	phaseSchema,
 	platformSchema,
+	processRowSchema,
 	type Series,
 } from "../results/schema";
-import { perTestMatrix, type SummaryRow, summaryRows } from "./tables";
+import { perTestMatrix, processesPerRep, type SummaryRow, summaryRows } from "./tables";
 
-/** Bump when the shape changes; the docs page rejects files it does not know. */
-export const SUMMARY_VERSION = 1;
+/**
+ * Bump when the shape changes; the docs page rejects files it does not know. 2 adds the optional per-framework
+ * `processes` (warm-median rep's per-process table); a version 1 file has none and still parses.
+ */
+export const SUMMARY_VERSION = 2;
 
 const ERROR_MAX = 300;
 
@@ -36,8 +41,18 @@ const seriesSummarySchema = z.object({
 	cpuRatePct: z.number().optional(),
 });
 
+/**
+ * Frameworks the bench no longer runs (Maestro and Detox, removed 2026-10-24, WDN-CPU 1) still appear in
+ * summaries published before that, so a summary is read with them; a new run never writes them.
+ */
+export const RETIRED_FRAMEWORK_IDS = ["maestro", "detox"] as const;
+const summaryFrameworkIdSchema = z.union([frameworkIdSchema, z.enum(RETIRED_FRAMEWORK_IDS)]);
+
+const processSummarySchema = processRowSchema;
+export type ProcessSummary = z.infer<typeof processSummarySchema>;
+
 const okFrameworkSchema = z.object({
-	framework: frameworkIdSchema,
+	framework: summaryFrameworkIdSchema,
 	status: z.literal("ok"),
 	version: z.string(),
 	suite: distSummarySchema,
@@ -54,6 +69,8 @@ const okFrameworkSchema = z.object({
 	stepLatency: distSummarySchema.optional(),
 	/** host CPU-seconds per rep (warm median of the timed runs): the CPU headline; optional, see `seriesSummarySchema` */
 	cpuSecondsPerRep: z.number().optional(),
+	/** the warm-median rep's per-process table (summary version 2; absent in version 1 files and old runs) */
+	processes: z.array(processSummarySchema).optional(),
 	resources: z.object({ host: seriesSummarySchema, sim: seriesSummarySchema }),
 	residue: z.object({ processes: z.number().int(), driverApps: z.number().int(), paths: z.number().int() }),
 	footprint: z.object({
@@ -67,14 +84,14 @@ const okFrameworkSchema = z.object({
 const summaryFrameworkSchema = z.discriminatedUnion("status", [
 	okFrameworkSchema,
 	z.object({
-		framework: frameworkIdSchema,
+		framework: summaryFrameworkIdSchema,
 		status: z.literal("failed"),
 		version: z.string(),
 		phase: phaseSchema,
 		error: z.string(),
 	}),
 	z.object({
-		framework: frameworkIdSchema,
+		framework: summaryFrameworkIdSchema,
 		status: z.literal("unsupported"),
 		version: z.string().optional(),
 		reason: z.string(),
@@ -86,7 +103,7 @@ const summaryTestSchema = z.object({
 	id: z.string(),
 	title: z.string(),
 	cells: z.partialRecord(
-		frameworkIdSchema,
+		summaryFrameworkIdSchema,
 		z.object({
 			medianMs: z.number(),
 			ratio: z.number().optional(),
@@ -99,7 +116,7 @@ const summaryTestSchema = z.object({
 
 /** The slim, versioned JSON the docs comparison page renders (`bench summary`, also `summary.json` next to report.md). */
 export const benchSummarySchema = z.object({
-	summaryVersion: z.literal(SUMMARY_VERSION),
+	summaryVersion: z.union([z.literal(1), z.literal(SUMMARY_VERSION)]),
 	runId: z.string(),
 	/** `YYYY-MM-DD` of the run start (UTC) */
 	date: z.string(),
@@ -152,6 +169,20 @@ const seriesSummary = (s: Series) => ({
 	...opt("cpuRatePct", roundOpt(s.cpuRatePct, 1)),
 });
 
+/** The per-process rows rounded like the rest of the summary; undefined when the run has none. */
+function processesSummary(rows: readonly ProcessRow[] | undefined): ProcessSummary[] | undefined {
+	if (rows === undefined || rows.length === 0) return undefined;
+	return rows.map((r) => ({
+		name: r.name,
+		scope: r.scope,
+		cpuSeconds: round(r.cpuSeconds, 2),
+		rssAvgBytes: round(r.rssAvgBytes),
+		rssPeakBytes: round(r.rssPeakBytes),
+		spawnCount: r.spawnCount,
+		shareOfScopePct: round(r.shareOfScopePct, 1),
+	}));
+}
+
 function frameworkSummary(f: FrameworkResult, row: SummaryRow | undefined): SummaryFramework {
 	const failing = row?.failing ?? false;
 	const fastest = row?.fastest ?? false;
@@ -185,6 +216,7 @@ function frameworkSummary(f: FrameworkResult, row: SummaryRow | undefined): Summ
 		flakeRate: round(s.flakeRate, 3),
 		...(s.stepLatency !== undefined ? { stepLatency: distSummary(s.stepLatency) } : {}),
 		...opt("cpuSecondsPerRep", roundOpt(row?.cpuSecondsPerRep, 2)),
+		...opt("processes", processesSummary(processesPerRep(f))),
 		resources: { host: seriesSummary(f.resources.host), sim: seriesSummary(f.resources.sim) },
 		residue: {
 			processes: f.residue.processes.length,

@@ -12,6 +12,7 @@ See @AGENTS.md for full documentation.
 
 ```bash
 bun run dev       # Dev server(s)
+bun run dev:web   # Docs site only (:3210)
 bun run typecheck # Type check
 bun run build     # Production build
 bun run check     # Biome lint + format

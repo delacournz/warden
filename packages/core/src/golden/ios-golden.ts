@@ -185,16 +185,57 @@ async function waitMigrated(deps: GoldenDeps, udid: string, runtimeBuild: string
 	return ok(undefined);
 }
 
-/** Summed %CPU of every process under this simulator's `launchd_sim`; undefined when not running. */
+/** Summed %CPU of `rootPids` and all their descendants. */
+function treeCpu(rows: Array<{ pid: number; ppid: number; pcpu: number }>, rootPids: number[]): number {
+	const inTree = new Set(rootPids);
+	let grew = true;
+	while (grew) {
+		grew = false;
+		for (const row of rows) {
+			if (!inTree.has(row.pid) && inTree.has(row.ppid)) {
+				inTree.add(row.pid);
+				grew = true;
+			}
+		}
+	}
+	return rows.filter((row) => inTree.has(row.pid)).reduce((sum, row) => sum + row.pcpu, 0);
+}
+
+/** No GUI launchd session (EAS worker, ssh, CI): find the sim's `launchd_sim` by udid in the process table instead. */
+async function simCpuFromPs(deps: GoldenDeps, udid: string): Promise<number | undefined> {
+	const ps = await run(deps, ["ps", "-axo", "pid=,ppid=,pcpu=,command="]);
+	if (!ps.success) return undefined;
+	const rows = ps.data.split("\n").flatMap((line) => {
+		const m = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(.*)$/.exec(line);
+		return m ? [{ pid: Number(m[1]), ppid: Number(m[2]), pcpu: Number(m[3]), command: m[4] ?? "" }] : [];
+	});
+	const roots = rows.filter((row) => row.command.includes("launchd_sim") && row.command.includes(udid));
+	return treeCpu(
+		rows,
+		roots.map((row) => row.pid)
+	);
+}
+
+/**
+ * Summed %CPU of every process under this simulator's `launchd_sim`; undefined when the device is not
+ * running. Probe order: `launchctl list` row (GUI session) → if absent, `simctl list` confirms the device
+ * is booted (Shutdown or missing = stopped) → CPU from `ps` by the udid on `launchd_sim`'s command line.
+ * A booted device with no `launchd_sim` visible reads as 0 % (settled): nothing to wait for.
+ */
 async function simCpu(deps: GoldenDeps, udid: string): Promise<number | undefined> {
 	const list = await run(deps, ["launchctl", "list"]);
-	if (!list.success) return undefined;
-	const row = list.data
-		.split("\n")
-		.map((line) => line.split("\t"))
-		.find((cols) => cols[2] === `com.apple.CoreSimulator.SimDevice.${udid}`);
+	const row = list.success
+		? list.data
+				.split("\n")
+				.map((line) => line.split("\t"))
+				.find((cols) => cols[2] === `com.apple.CoreSimulator.SimDevice.${udid}`)
+		: undefined;
 	const pid = Number(row?.[0]);
-	if (!Number.isInteger(pid) || pid <= 0) return undefined;
+	if (!Number.isInteger(pid) || pid <= 0) {
+		const sims = await allSims(deps);
+		if (!sims.success || sims.data.find((sim) => sim.udid === udid)?.state !== "Booted") return undefined;
+		return (await simCpuFromPs(deps, udid)) ?? 0;
+	}
 	const ps = await run(deps, ["ps", "-axo", "ppid=,pcpu="]);
 	if (!ps.success) return undefined;
 	let cpu = 0;

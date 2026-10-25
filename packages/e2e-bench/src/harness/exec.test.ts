@@ -55,11 +55,11 @@ describe("realExec", () => {
 
 describe("fakeExec", () => {
 	test("answers from rules and records calls", async () => {
-		const exec = fakeExec([{ cmd: "maestro", match: (a) => a[0] === "--version", result: { stdout: "2.8.0\n" } }]);
-		const r = await exec.run("maestro", ["--version"]);
+		const exec = fakeExec([{ cmd: "tool", match: (a) => a[0] === "--version", result: { stdout: "2.8.0\n" } }]);
+		const r = await exec.run("tool", ["--version"]);
 		expect(r.stdout).toBe("2.8.0\n");
 		expect(exec.calls).toHaveLength(1);
-		expect(exec.which("maestro")).toBe("/fake/bin/maestro");
+		expect(exec.which("tool")).toBe("/fake/bin/tool");
 		expect(exec.which("nope")).toBeUndefined();
 		const miss = await exec.run("nope", []);
 		expect(miss.code).toBe(127);

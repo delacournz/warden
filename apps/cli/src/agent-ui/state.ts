@@ -62,6 +62,8 @@ export type UiState = {
 	collector?: { pid: number; startedAt: number; out?: string };
 	/** the running `video start` recorder: host pid, output file, and (Android) the file on the device */
 	video?: { pid: number; path: string; remote?: string; startedAt: number };
+	/** the device's active `warden perf` session: one per device, whoever owns the lease */
+	perf?: { sessionId: string };
 	updatedAt: number;
 };
 
@@ -167,6 +169,7 @@ const stateSchema = z.object({
 	video: z
 		.object({ pid: z.number(), path: z.string(), remote: z.string().optional(), startedAt: z.number() })
 		.optional(),
+	perf: z.object({ sessionId: z.string() }).optional(),
 	updatedAt: z.number().optional(),
 });
 

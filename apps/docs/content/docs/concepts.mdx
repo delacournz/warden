@@ -1,12 +1,18 @@
 ---
-title: Concepts
+title: How warden works
 description: Leases, owners, liveness, and which devices warden will touch.
 icon: BookOpen
 ---
 
+warden keeps one machine-wide registry of who holds which simulator, emulator and port. Read this page to know why a claim waits, why a lease expired, or why warden refuses to touch a device.
+
+```bash
+warden ls    # who holds what: resource, state, owner, repo/worktree, age, heartbeat
+```
+
 ## Leases
 
-A lease is an exclusive claim on one **resource** — a device (iOS sim or Android emulator, by udid / serial), a TCP port, or a build lock (one fingerprint being fetched or built; see [App builds](/docs/guides/app-builds)). Every lease has an id, an owner, an optional label, `acquiredAt`, `heartbeatAt`, a TTL and, where known, a pid.
+A lease is an exclusive claim on one **resource**: a device (iOS sim or Android emulator, by udid / serial), a TCP port, or a build lock (one fingerprint being fetched or built; see [App builds](/docs/devices/app-builds)). Every lease has an id, an owner, an optional label, `acquiredAt`, `heartbeatAt`, a TTL and, where known, a pid.
 
 All leases live in one sqlite database, `~/.warden/warden.db`, in WAL mode. Every claim runs inside `BEGIN IMMEDIATE`, which is the cross-process mutex: two processes claiming at the same instant are serialised, and the second sees the first's lease.
 
@@ -26,17 +32,22 @@ The repo and worktree are recorded with the lease, so `warden ls` and a blocked 
 
 ## Liveness
 
-A lease is alive while **its pid is alive or its heartbeat is within the TTL** (default 30 min; 5 min for a bare `warden claim` by an agent). Stale leases — pid dead *and* heartbeat expired — are reclaimed on every claim and by `warden gc`. Leases held by `warden run` / `dev` / `batch` / `e2e` record their heartbeat period: once that process is gone (killed, crashed), its leases go stale after three missed heartbeats (90 s) instead of the TTL.
+A lease is alive while **its pid is alive or its heartbeat is within the TTL** (default 30 min; 5 min for a bare `warden claim` by an agent). Stale leases (pid dead *and* heartbeat expired) are reclaimed on every claim and by `warden gc`. Leases held by `warden run` / `dev` / `batch` / `e2e` record their heartbeat period: once that process is gone (killed, crashed), its leases go stale after three missed heartbeats (90 s) instead of the TTL.
 
 A bare agent `warden claim` prints a hint and expires in 5 min; nothing refreshes it automatically. `warden dev`, `run`, `batch` and `e2e` heartbeat every 30 s and hold their devices; otherwise keep a lease alive with `warden heartbeat <leaseId>` (or `--mine`). `warden gc` shuts a stale lease's sim down only 10+ min after the lease went stale, and never while a non-Apple app is running on it.
 
 ## Which devices warden touches
 
 - warden creates and reuses its own **`warden-<profile>-N`** simulators in the default CoreSimulator set, and launches Android emulators with `-read-only`.
-- A booted device with no lease that warden didn't create is **foreign** — your Simulator.app, another tool's sim. It is never allocated unless you pass `--adopt`, and never shut down, erased or installed on.
-- The pool grows on demand up to `--max` devices per profile (default: cores / 4, at least 1 and capped at 4, but never below `--count`). How many may be booted at once is set by host RAM and CPU: a claim that does not fit waits in a priority queue, `--wait 30m` by default. See [Capacity & queue](/docs/guides/capacity).
+- A booted device with no lease that warden didn't create is **foreign**: your Simulator.app, another tool's sim. It is never allocated unless you pass `--adopt`, and never shut down, erased or installed on.
+- The pool grows on demand up to `--max` devices per profile (default: cores / 4, at least 1 and capped at 4, but never below `--count`). How many may be booted at once is set by host RAM and CPU: a claim that does not fit waits in a priority queue, `--wait 30m` by default. See [Capacity & queue](/docs/devices/capacity).
 - `warden gc` shuts down idle warden devices after 20 min (`--idle` changes it). It never deletes them. It also prunes the app-build cache to `--max-cache-size` (default 20G; `$WARDEN_MAX_CACHE_SIZE`; builds used in the last 30 min stay). `claim` / `run` start it in the background at most every 10 min; `WARDEN_AUTO_GC=0` turns that off.
 
 ## Shutdown policy
 
 Only sims warden **created**, or that the lease owner **booted itself** (they were off when it first touched them), are shut down on release. A sim that was already running when it was picked up is released but left on.
+
+<Cards>
+  <Card title="Leases" href="/docs/devices/leases" description="claim, release, ls, check, heartbeat." />
+  <Card title="Agent rules" href="/docs/agents/rules" description="What agents may and may not touch." />
+</Cards>

@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseJunit } from "./junit";
 
-const fixture = (name: string) => readFileSync(join(import.meta.dir, "../fixtures/maestro", name), "utf8");
+const fixture = (name: string) => readFileSync(join(import.meta.dir, "../fixtures/junit", name), "utf8");
 
 describe("parseJunit", () => {
-	test("reads a real maestro run: names, seconds to ms, status", () => {
+	test("reads a real run: names, seconds to ms, status", () => {
 		const r = parseJunit(fixture("junit-pass.xml"));
 		expect(r.success).toBe(true);
 		if (!r.success) return;

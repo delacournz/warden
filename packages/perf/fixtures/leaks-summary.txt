@@ -1,0 +1,12 @@
+Process 845: 218344 nodes malloced for 61822 KB
+Process 845: 3 leaks for 224 total leaked bytes.
+
+Leak: 0x600003c4a1c0  size=96  zone: DefaultMallocZone_0x1048d8000   NSMutableArray  ObjC  CoreFoundation
+	Call stack: [thread 0x1fe9e8080]: | start | UIApplicationMain | -[UIApplication _run]
+Leak: 0x600003c4a220  size=64  zone: DefaultMallocZone_0x1048d8000   NSMutableArray  ObjC  CoreFoundation
+	Call stack: [thread 0x1fe9e8080]: | start | UIApplicationMain | -[UIApplication _run]
+Leak: 0x6000012f4880  size=64  zone: DefaultMallocZone_0x1048d8000   malloc<64>  mallocedaddress
+	Call stack: [thread 0x16d8f3000]: | thread_start | _pthread_start | RCTCxxBridge _runLoop
+
+Binary Images:
+       0x1047e0000 -        0x104fcffff +Example (1.0 - 1) <A1B2C3D4-0000-3333-4444-555566667777> /Users/chris/Library/Developer/CoreSimulator/Devices/U1/data/Containers/Bundle/Application/AAAA-1111/Example.app/Example

@@ -17,8 +17,6 @@ describe("benchSummary", () => {
 		expect(summary.frameworks.map((f) => f.framework)).toEqual(run.frameworks.map((f) => f.framework));
 		const failed = summary.frameworks.find((f) => f.status === "failed");
 		expect(failed?.status === "failed" && failed.error.length).toBeLessThanOrEqual(301);
-		const unsupported = summary.frameworks.find((f) => f.status === "unsupported");
-		expect(unsupported?.status === "unsupported" && unsupported.reason.length).toBeGreaterThan(0);
 	});
 	test("exactly one fastest framework, marked like the report table", () => {
 		const fastest = summary.frameworks.flatMap((f) => (f.status === "ok" && f.fastest ? [f.framework] : []));
@@ -59,5 +57,24 @@ describe("benchSummary CPU-seconds (19-6)", () => {
 		if (warden?.status !== "ok") throw new Error("expected ok");
 		expect("cpuSecondsPerRep" in warden).toBe(false);
 		expect("cpuSeconds" in warden.resources.host).toBe(false);
+	});
+});
+
+describe("benchSummarySchema and retired frameworks", () => {
+	test("still reads a published summary that carries a maestro or detox row", () => {
+		const summary = benchSummary(run, manifest);
+		const retired = {
+			...summary,
+			frameworks: [
+				...summary.frameworks,
+				{ framework: "maestro", status: "unsupported", version: "2.0.0", reason: "removed 2026-10-24" },
+				{ framework: "detox", status: "failed", version: "20.51.3", phase: "run", error: "RN 0.86 unsupported" },
+			],
+		};
+		expect(benchSummarySchema.safeParse(retired).success).toBe(true);
+		expect(
+			benchSummarySchema.safeParse({ ...summary, frameworks: [{ ...summary.frameworks[0], framework: "appium" }] })
+				.success
+		).toBe(false);
 	});
 });

@@ -1,5 +1,5 @@
 /**
- * What a pull request has to pass before it can merge into `main`, and which of it a given diff
+ * What a pull request has to pass before it can merge into `develop`, and which of it a given diff
  * actually needs.
  *
  * Pull requests are gated on commit statuses written from the authoring machine by
@@ -12,9 +12,9 @@
  *
  *   `always: true`  — typecheck / check / test. Nothing can change without them being relevant, so
  *                     they run on every pull request.
- *   `always: false` — `native` (warden-simd). Path-gated, so most pull requests never run it.
+ *   `always: false` — `native` (warden-simd), `cpu-guard`. Path-gated, so most pull requests never run them.
  *
- * Only the umbrella `signoff` context is required by `main`'s branch protection (`gh signoff
+ * Only the umbrella `signoff` context is required by `develop`'s branch protection (`gh signoff
  * install`). The sub-contexts are written for the checks panel but gate nothing on their own:
  * `signoff.ts` withholds the umbrella unless every check the diff made applicable ran and passed, so
  * a path-gated or always-on check still blocks the merge — transitively. A required context that
@@ -36,6 +36,11 @@ export type SignoffCheck = {
 	paths: readonly string[];
 	/** The workflow that still runs this check on `workflow_dispatch`, for the escape hatch. */
 	workflow: string;
+	/**
+	 * `false` for a check that needs something only the authoring machine has (a bench run dir), so `ci.yml`
+	 * cannot reproduce it and does not post its context. Omitted means `ci.yml` posts it too (drift test).
+	 */
+	mirroredInCi?: false;
 	run: readonly SignoffCommand[];
 	/**
 	 * Resources this check holds for its whole run; `signoff.ts` never runs two checks naming the
@@ -43,6 +48,27 @@ export type SignoffCheck = {
 	 */
 	locks?: readonly string[];
 };
+
+/** Where the committed warden CPU baseline lives, repo-relative. */
+export const CPU_BASELINE = "packages/e2e-bench/baselines/ios-warden.json";
+
+/** The env var naming the bench run dir (or baseline-shaped file) the CPU guard compares against the baseline. */
+export const BENCH_RUN_DIR_ENV = "WARDEN_BENCH_RUN_DIR";
+
+/** The largest warden CPU-seconds-per-rep / RSS-peak growth over the baseline that still passes, in percent. */
+export const CPU_GUARD_MAX_REGRESSION = "10%";
+
+/**
+ * Compares, never benchmarks: when the env var names no existing path the check prints a skip line and passes,
+ * because a run dir exists only on a machine that ran the bench. It is a script so `signoff.ts` stays generic.
+ */
+const CPU_GUARD_SCRIPT = [
+	`dir="\${${BENCH_RUN_DIR_ENV}:-}"`,
+	`if [ -n "$dir" ] && [ -e "$dir" ]; then`,
+	`exec bun run bench compare ${CPU_BASELINE} "$dir" --max-cpu-regression ${CPU_GUARD_MAX_REGRESSION}`,
+	`fi`,
+	`echo "skipped: no run dir (set ${BENCH_RUN_DIR_ENV} to a bench run dir to compare it with ${CPU_BASELINE})"`,
+].join("\n");
 
 /** The bare context branch protection requires. Emitted last, and only when everything passed. */
 export const UMBRELLA_CONTEXT = "signoff";
@@ -88,6 +114,15 @@ export const SIGNOFF_CHECKS: readonly SignoffCheck[] = [
 		// SwiftPM holds an exclusive lock on its build dir; never two Swift builds at once.
 		locks: ["swiftpm"],
 	},
+	{
+		context: "cpu-guard",
+		label: "warden CPU guard (bench compare vs baseline)",
+		always: false,
+		paths: ["packages/e2e/**", "apps/cli/src/agent-ui/**"],
+		workflow: "ci.yml",
+		mirroredInCi: false,
+		run: [{ argv: ["sh", "-c", CPU_GUARD_SCRIPT] }],
+	},
 ];
 
 /** The always-on contexts, in declaration order. */
@@ -95,7 +130,7 @@ export const ALWAYS_CONTEXTS: readonly string[] = SIGNOFF_CHECKS.filter((check) 
 	(check) => check.context
 );
 
-/** Exactly what `main`'s branch protection must require — see the header. */
+/** Exactly what `develop`'s branch protection must require — see the header. */
 export const REQUIRED_CONTEXTS: readonly string[] = [UMBRELLA_CONTEXT];
 
 export type PlannedCheck = {

@@ -1,0 +1,82 @@
+---
+title: Headless e2e
+description: How warden runs simulators without a window, and the --headless switch that guarantees it even with Simulator.app open.
+icon: EyeOff
+---
+
+Headless mode keeps simulator windows closed during a run, even with Simulator.app open; use it when you don't want windows popping up or tiling over your screen.
+
+```bash
+warden e2e <suite> --headless
+```
+
+A headless run shows no simulator window and never moves your own windows.
+
+## How headless e2e works
+
+1. **Boot.** warden boots iOS simulators with `xcrun simctl bootstatus <udid> -b` (which boots a shut-down sim; `simctl boot` is the fallback). Simulator.app is only a *viewer*: the simulated iOS (launchd_sim, SpringBoard, your app) runs inside CoreSimulator whether or not a window exists. warden never launches Simulator.app. Android emulators start with `emulator -no-window -read-only`, so they are always headless.
+2. **Render.** The app draws into the device's own framebuffer. `simctl io screenshot` and the driver's accessibility snapshots read that, so screenshots and failure evidence need no window.
+3. **Drive.** `warden e2e` runs the specs with `bun test` and `@delacour/warden-e2e`, whose iOS driver talks to `warden-simd` ([iOS driver helper](/docs/reference/e2e-driver)). The helper sends touches and keys to the simulator through CoreSimulator and reads the accessibility tree through a guest that runs inside it, so no Simulator.app window is needed and there is no runner app to install on the sim. Links and installs go through `simctl`. Nothing touches a window.
+4. **Where windows come from.** If Simulator.app is already open, it attaches a window to every booted device, warden's included. Without `--headless`, every iOS claim then tiles those windows (`warden arrange`, off with `WARDEN_ARRANGE=0`). A reused sim that you already had open keeps its window.
+5. **Watching a run.** `open -a Simulator` (Xcode ≤ 26) attaches windows to the booted sims without touching leases; on Xcode 27 see [Device Hub](#xcode-27-device-hub). ⌘W closes a window. Quitting Simulator.app does not always keep the devices booted.
+
+## What `--headless` does
+
+- After the claim, warden closes the Simulator.app windows of the devices **this run leased**, instead of tiling them. A window is matched by its device name (the title before ` – iOS …`). Windows of other devices are never touched, and a reused sim that was open before has its window closed too.
+- `warden e2e` / `warden batch` close them again just before the first job, after Metro, `serve` and `setup` are up, because a window can attach late (a slow boot, or Simulator.app opened in the meantime).
+- By default Simulator.app shuts a device down when you close its window. For the close only, warden switches on Simulator's "keep running" setting (`defaults write com.apple.iphonesimulator DetachOnWindowClose -bool true`). The window detaches and the device stays booted. Afterwards warden puts the setting back exactly as it was: unset, `false` or `true`.
+- If a device still shuts down, warden waits for it to finish shutting down, boots it again without a window (`simctl boot` + `bootstatus -b`), closes any window Simulator.app reattached, and prints a warning.
+- Simulator.app is never launched. When it isn't running, there is nothing to do.
+- Headless never fails a run. A missing Accessibility permission or an osascript error is a yellow warning.
+- Serve, setup and spec processes get `WARDEN_HEADLESS=1`, so your own tools can honour it. On a run that isn't headless, `WARDEN_HEADLESS` is removed from their env.
+- `e2e-report.json` and `batch.json` record `"headless": true | false`.
+- Android: no change, because emulators already run with `-no-window`.
+
+Closing windows uses System Events, so your terminal needs Accessibility access (System Settings → Privacy & Security → Accessibility), the same as `warden arrange`.
+
+## Xcode 27: Device Hub
+
+Xcode 27 removed Simulator.app. Its viewer is **Device Hub** (`Xcode.app/Contents/Applications/DeviceHub.app`, bundle id `com.apple.dt.Devices`). Unlike Simulator.app it opens no window when a sim boots, so warden asks for them.
+
+- warden looks for the running viewer's process: `Simulator` first, then `DeviceHub`. It doesn't go by the Xcode version, so a Mac with Xcode 26 and 27 side by side still gets Simulator.app windows tiled or closed.
+- **Not headless, Device Hub already running:** every sim the claim booted gets its own Device Hub window (`open -g devices://device/open?id=<udid>`, your frontmost app stays in front), then the windows are tiled like Simulator.app's: name order, left to right, overlapping when the row is wider than the screen. Device Hub windows can't be resized either. Sims that were already running keep whatever window you gave them. `warden arrange` tiles on demand; `warden arrange --open <udid…>` also reopens those sims' windows.
+- **Device Hub not running:** warden never launches it (opening a `devices://` link would), so there are no windows, exactly as with Xcode 26 and Simulator.app closed.
+- **Headless:** warden opens no Device Hub window, never launches it and writes no `DetachOnWindowClose`. Device Hub opens none by itself, so there is nothing to close.
+- **Don't quit Device Hub during a run, headless or not.** A normal quit shuts down every booted simulator, including ones you never opened there. Killing it leaves them booted but a sim it had open can drop warden's input (`E_HID`). `warden e2e` handles either once: it reboots the sim, reopens its window and tiles again when the run isn't headless, then reruns the test.
+- Booting is unchanged: `simctl boot` brings a device up without a window on every Xcode, and the e2e driver never needs one.
+- Don't tap or type into a leased sim from Device Hub during a run. Device Hub reportedly takes over the device's touch input after you interact with it there, and other input (warden's taps included) can be dropped until the sim reboots, even after Device Hub quits.
+
+## Turning it on
+
+| Where | Applies to |
+|---|---|
+| `--headless` / `--no-headless` | `claim`, `run`, `batch`, `e2e`; `dev` takes `--headless` only |
+| `e2e.<suite>.headless` | that suite |
+| `batches.<name>.headless` | that preset |
+| top-level `headless` | every suite and preset that doesn't set its own |
+| `WARDEN_HEADLESS=1` | every `claim`, `run`, `batch`, `e2e` that nothing above decides |
+
+The first one that is set wins: CLI flag, then suite / preset, then top-level, then `WARDEN_HEADLESS`. Otherwise headless is off.
+
+```ts title="warden.config.ts"
+export default defineConfig({
+  headless: true,            // every suite and preset
+  e2e: {
+    mobile: { /* … */ },     // headless (top-level)
+    demo: { headless: false, /* … */ }, // keeps its windows
+  },
+});
+```
+
+`warden dev` is headless only with an explicit `--headless`. It ignores the top-level `headless` and `WARDEN_HEADLESS`, since dev is usually something you watch.
+
+## Watching a headless run
+
+```bash
+open -a Simulator                          # Xcode ≤ 26: windows appear for the booted sims; leases are untouched
+open "devices://device/open?id=<udid>"     # Xcode 27: Device Hub shows that sim
+```
+
+A headless run closes Simulator.app windows only at claim time and before the first job. Windows you open later stay open until you close them (⌘W). On Xcode 27, look but don't touch (see [Device Hub](#xcode-27-device-hub)).
+
+More: [Run e2e suites](/docs/e2e/suites), [configuration](/docs/reference/configuration), [environment](/docs/reference/environment).

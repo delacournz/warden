@@ -1,4 +1,0 @@
-appId: nz.co.delacour.warden.example
-name: onboarding-steps-to-sign-in
----
-- runFlow: common/open-sign-in.yaml

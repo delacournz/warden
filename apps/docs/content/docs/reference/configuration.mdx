@@ -4,7 +4,7 @@ description: Optional per-repo config for app builds, saved batches and affected
 icon: Settings
 ---
 
-Optional, at the repo root. Without it, warden detects a single Expo project from `app.json` / `app.config.*`.
+`warden.config.ts` declares projects, app builds, saved batches and e2e suites for a repo; add one when you outgrow the defaults. Optional, at the repo root. Without it, warden detects a single Expo project from `app.json` / `app.config.*`.
 
 ## Setup
 
@@ -42,8 +42,9 @@ Besides `projects`, `batches` and `e2e`, the top level takes:
 
 <TypeTable
   type={{
-    headless: { type: "boolean", description: "iOS: close the Simulator.app windows of every device an `e2e` suite or `batches` preset leases. The default for those that don't set their own `headless`. `--headless` / `--no-headless` override it; `WARDEN_HEADLESS=1` applies only when it's unset. `warden dev` ignores it. See [Headless e2e](/docs/guides/headless).", default: "false" },
-    "android.snapshot": { type: "boolean", description: "The only key of the `android` section. Android: launch claimed emulators from warden's quick-boot snapshot of the AVD when it exists; `warden gc` builds it once per AVD from one writable cold boot while the AVD is idle (never under `CI`), and `false` means warden never boots your AVD writable (see [Golden images](/docs/guides/golden-images#android-wardens-quick-boot-snapshot)). `WARDEN_ANDROID_SNAPSHOT=0` / `=1` override it.", default: "true" },
+    headless: { type: "boolean", description: "iOS: close the Simulator.app windows of every device an `e2e` suite or `batches` preset leases. The default for those that don't set their own `headless`. `--headless` / `--no-headless` override it; `WARDEN_HEADLESS=1` applies only when it's unset. `warden dev` ignores it. See [Headless e2e](/docs/devices/headless).", default: "false" },
+    "perf.budgets": { type: "{ startupColdMs?, jankPct?, maxCommitMs?, p95CpuPct?, peakMemoryMb? }", description: "Ceilings `device.perf.stop()` (and `warden e2e --perf`) hold a perf report to, lower is better: cold start (ms), janky frames (%), the slowest React commit (ms), 95th percentile CPU (%), peak memory (MB). A breach fails the test with a `perf_budget` error naming metric, value, budget and the report. A metric whose capture did not run has no number and cannot breach. A suite's own `perf.budgets` replace these per key; `device.perf.stop({ budgets })` replaces both for one spec." },
+    "android.snapshot": { type: "boolean", description: "The only key of the `android` section. Android: launch claimed emulators from warden's quick-boot snapshot of the AVD when it exists; `warden gc` builds it once per AVD from one writable cold boot while the AVD is idle (never under `CI`), and `false` means warden never boots your AVD writable (see [Golden images](/docs/devices/golden-images#android-wardens-quick-boot-snapshot)). `WARDEN_ANDROID_SNAPSHOT=0` / `=1` override it.", default: "true" },
   }}
 />
 
@@ -72,7 +73,7 @@ export default defineConfig({
     "fingerprint.command": { type: "string", description: "Command that prints the native fingerprint. `{platform}` is substituted. Default: `@expo/fingerprint`." },
     "fingerprint.include": { type: '"native" | "native+js"', description: "What the cache / install key covers. `native+js` adds a content hash of `jsInputs`, for Release builds that embed the JS bundle.", default: '"native"' },
     "fingerprint.jsInputs": { type: "string[]", description: "Required with `native+js`. Globs, relative to the project root, of the JS sources. A glob starting with `../` reaches outside the project (a workspace package the bundle embeds, e.g. `../../../packages/engine/src/**`). Only git-tracked and untracked-not-ignored files count." },
-    "eas.profile": { type: "string", description: "EAS build profile to look up builds under. Without an `eas` section, EAS is used only when the project has an `eas.json` (this profile, no trigger).", default: '"development-simulator"' },
+    "eas.profile": { type: "string", description: "EAS build profile to look up builds under. Without an `eas` section, EAS is used only when the project has an `eas.json` (this profile, no trigger). `eas: false` never consults eas-cli.", default: '"development-simulator"' },
     "eas.workflow": { type: "string", description: "EAS workflow file to trigger on a miss." },
     "eas.trigger": { type: "boolean", description: "Trigger the workflow when no EAS build matches.", default: "false" },
     build: { type: "{ ios?: string; android?: string; configuration?: \"Debug\" | \"Release\"; cache?: boolean }", description: "Local build command per platform, used as the last resort." },
@@ -136,13 +137,13 @@ The preset's cwd is its project's root, or the config file's directory when ther
     jobsFrom: { type: "string | { command: string }", description: "A file of jobs (one per line; the string `-` reads stdin), or a `sh -c` command whose stdout lines are the jobs (nonzero exit fails the batch)." },
     record: { type: "string", description: "iOS: record every simulator and the TUI into this dir." },
     logs: { type: "string", description: "Per-job log dir." },
-    headless: { type: "boolean", description: "iOS: close this run's Simulator.app windows (see [Headless e2e](/docs/guides/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both.", default: "top-level `headless`" },
+    headless: { type: "boolean", description: "iOS: close this run's Simulator.app windows (see [Headless e2e](/docs/devices/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both.", default: "top-level `headless`" },
   }}
 />
 
 ## e2e
 
-`e2e` maps a suite name to the specs [`warden affected`](/docs/reference/cli#warden-affected-suite) selects and [`warden e2e`](/docs/reference/cli#warden-e2e-suite) runs. See [Affected e2e](/docs/guides/affected-e2e) for how selection works. Every path and glob is relative to the config file.
+`e2e` maps a suite name to the specs [`warden affected`](/docs/reference/cli#warden-affected-suite) selects and [`warden e2e`](/docs/reference/cli#warden-e2e-suite) runs. See [Affected e2e](/docs/e2e/affected) for how selection works. Every path and glob is relative to the config file.
 
 ```ts title="warden.config.ts"
 import { defineConfig } from "@delacour/warden/config";
@@ -169,7 +170,7 @@ export default defineConfig({
   type={{
     project: { type: "string", description: "`projects[].name`: the specs, `serve` and `setup` run in its root, relative `serveReady` `file:` paths resolve against it, and `app` installs that project's build. Needed when the config has several projects and warden runs from the repo root." },
     specsDir: { type: "string", description: "Required. Directory of specs: `*.e2e.ts(x)` specs (other `.ts` files there are helpers; a helper change selects every spec importing it). Searched recursively; dot dirs, `node_modules` and `__baselines__` skipped." },
-    spec: { type: "{ bundleId?; launchArgs?; timeout?; actionTimeout?; assertionTimeout? }", description: "How `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`, see [Write e2e specs](/docs/guides/specs)). `bundleId`: the app under test (default: the suite project's `bundleId` for the platform). `launchArgs`: passed by `app.open()` after `--initialUrl <metro url>` and `metro.launchArgs`. `timeout` (default `\"2m\"`): per test. `actionTimeout` (default `\"30s\"`): per tap, fill or wait for an element. `assertionTimeout` (default `\"5s\"`): polling timeout of `expect(locator)`. The specs run in the suite's `project` root, else the config file's directory." },
+    spec: { type: "{ bundleId?; launchArgs?; timeout?; actionTimeout?; assertionTimeout? }", description: "How `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`, see [Write e2e specs](/docs/e2e/specs)). `bundleId`: the app under test (default: the suite project's `bundleId` for the platform). `launchArgs`: passed by `app.open()` after `--initialUrl <metro url>` and `metro.launchArgs`. `timeout` (default `\"2m\"`): per test. `actionTimeout` (default `\"30s\"`): per tap, fill or wait for an element. `assertionTimeout` (default `\"5s\"`): polling timeout of `expect(locator)`. The specs run in the suite's `project` root, else the config file's directory." },
     isolate: { type: '"device" | "spec"', description: "`device`: one `bun test` process per device runs its share of the specs (sharded round-robin by spec id), so a device's specs run in order in one process and the devices run in parallel; start-up is paid once per device. Every spec still gets its own verdict from `results.jsonl`, and a retry reruns only the specs that did not pass. `spec`: one process per spec, one worker per device: slower (each process pays bun's start, the preload and a driver connect), but a spec never sees what the one before left behind, and the devices share the specs dynamically. `device` is not allowed with `passes` > 1.", default: '"device" ("spec" when `passes` > 1)' },
     shutdown: { type: '"always" | "idle"', description: "What a passed gate does to the devices warden created or booted for the run. `always`: shut them down before releasing. `idle`: leave them booted so the next run skips the 10-30 s boot, and let `warden gc` shut them down once they have been idle for 20 min. A failed run always leaves them up. `--no-shutdown` wins.", default: '"idle" locally, "always" when `CI` is set' },
     jobTimeoutMs: { type: "number", description: "Per spec: a spec process still going after this many milliseconds for each spec it runs (one spec, or a device's share with `isolate: \"device\"`) is screenshotted, killed (SIGTERM, SIGKILL 5 s later, whole process group) and counted as failed (exit 124). `--job-timeout` overrides.", default: "600000" },
@@ -202,7 +203,8 @@ export default defineConfig({
     setup: { type: "string", description: "`sh -c` once per leased device, after the app install and before that device's first spec (`{udid}` is substituted). Env: `WARDEN_UDID`, `WARDEN_WORKER`, `WARDEN_PORT_<i>`, `WARDEN_APP_PATH` / `WARDEN_APP_HASH`, plus `env`. Output goes to `logs/setup-<worker>.log`. A non-zero exit drops that device and its specs go to the others; none left fails the run." },
     slim: { type: "boolean", description: "iOS: switch off the simulator daemons specs never need on each leased device, before `setup` (`warden sim slim`). A failure only warns. Skipped with a note on an Android run; fails config validation on a suite fixed to `platform: \"android\"`." },
     warmDrivers: { type: "boolean", default: "true", description: "iOS: the moment each device is leased (alongside the app install, Metro and `setup`), start its `warden-simd` helper and take one accessibility snapshot, so the first spec on each device does not pay the cold start. Jobs get its socket as `WARDEN_SIMD_SOCKET`; the log is `logs/warm-<worker>.log`. A failed or timed-out (2 min) warm-up only warns. `false` (or `--no-warm`) turns it off. The option's previous name fails validation with a pointer here." },
-    headless: { type: "boolean", description: "iOS: close the Simulator.app windows of this suite's devices, at claim and again before the first spec, so the run shows nothing even with Simulator.app open (see [Headless e2e](/docs/guides/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both. Android is always headless.", default: "top-level `headless`" },
+    headless: { type: "boolean", description: "iOS: close the Simulator.app windows of this suite's devices, at claim and again before the first spec, so the run shows nothing even with Simulator.app open (see [Headless e2e](/docs/devices/headless)). Overrides the top-level `headless`; `--headless` / `--no-headless` override both. Android is always headless.", default: "top-level `headless`" },
+    "perf.budgets": { type: "{ startupColdMs?, jankPct?, maxCommitMs?, p95CpuPct?, peakMemoryMb? }", description: "Perf budgets for this suite; each key replaces the top-level `perf.budgets` one (see above)." },
     specs: { type: "Record<string, SpecEntry>", description: "Per spec id or glob: what each spec covers and whether it gates; see below. Not to be confused with `spec` above, which sets how every spec runs." },
   }}
 />

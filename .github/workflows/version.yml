@@ -1,0 +1,131 @@
+name: version
+
+# Keeps the "🔖 chore(release): version packages" pull request in step with `develop`.
+#
+# Every push to `develop` that carries pending changesets (.changeset/*.md) makes changesets/action
+# run `bun run version` (changeset version + lockfile refresh) on `changeset-release/develop` and
+# open or update one PR into `develop`. Merging that PR is the release decision: promote.yml sees the
+# version commit land, fast-forwards `main` to it and tags it, which starts release.yml.
+#
+#   feature PR ─▶ develop ─▶ version.yml ─▶ version PR ─▶ develop ─▶ promote.yml ─▶ main + vX.Y.Z ─▶ release.yml
+#
+# The PR is created with a GitHub App token, not GITHUB_TOKEN. Events caused by GITHUB_TOKEN never
+# start other workflows, so the version PR would sit without checks. The App is also what makes the
+# push-actor loop guard below possible: its pushes are attributed to `delacour-release[bot]`.
+#
+# The PR still needs the required `signoff` status to merge, and nobody authors it from a machine
+# that can run `bun run signoff`. So after every create/update this dispatches ci.yml on the PR head,
+# which runs the checks on Namespace runners and writes the same statuses a local run would.
+on:
+  push:
+    branches: [develop]
+
+permissions: {}
+
+# One version PR, one writer. Queue rather than cancel: a cancelled run could stop between pushing
+# the branch and opening the PR. GitHub keeps only the newest queued run, which is all that matters
+# because changesets/action always works from the current tip of develop.
+concurrency:
+  group: version-pr
+  cancel-in-progress: false
+
+jobs:
+  version-pr:
+    # Loop guard 1: never react to the App's own pushes (it writes only changeset-release/* and tags,
+    # but a stray write to develop must not start a second version run).
+    if: github.actor != 'delacour-release[bot]'
+    runs-on: namespace-profile-linux-small
+    # Repo writes use the App token. The workflow token checks out and dispatches ci.yml (the App
+    # has no `actions` permission), hence actions: write.
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Loop guard 2: HEAD is itself the merged version PR (changesets consumed, version bumped by this
+      # push). Running changesets/action there finds nothing to do, so skip it. promote.yml uses the
+      # same test to decide whether to release. Reads git objects only, runs no repo code.
+      - id: detect
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base="$BEFORE"
+          if ! echo "$base" | grep -Eq '^[0-9a-f]{40}$' || echo "$base" | grep -Eq '^0{40}$' || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="HEAD^"
+          fi
+          new=$(jq -r .version apps/cli/package.json)
+          old=$(git show "$base:apps/cli/package.json" 2>/dev/null | jq -r .version || echo "")
+          pending=$(find .changeset -maxdepth 1 -name '*.md' ! -name README.md | wc -l | tr -d ' ')
+          if [ -n "$old" ] && [ "$old" != "$new" ] && [ "$pending" = "0" ]; then
+            echo "HEAD is the version commit ($old -> $new, no pending changesets): nothing to version"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Scoped to this repo only (the default) and to what the job needs: push the version branch,
+      # open the PR. The token is revoked when the job ends.
+      - id: app
+        if: steps.detect.outputs.skip == 'false'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - if: steps.detect.outputs.skip == 'false'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      # The changesets CLI bin runs on node (`#!/usr/bin/env node`) and needs Node 22+
+      # (module.enableCompileCache); the runner image ships Node 20. Same pin as release.yml.
+      - if: steps.detect.outputs.skip == 'false'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - if: steps.detect.outputs.skip == 'false'
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
+        with:
+          cache: bun
+
+      # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
+      # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
+      - if: steps.detect.outputs.skip == 'false'
+        run: bun install --frozen-lockfile
+
+      # `bun run version` executes repo code (changeset version + bun install --lockfile-only) in the
+      # same step as the App token. That is acceptable only because this workflow runs solely on
+      # pushes to `develop`, which is PR-gated and signed off: no fork or unreviewed code reaches it.
+      # The branch is changeset-release/<ref name> = changeset-release/develop. Commits go through
+      # the GitHub API (verified, attributed to the App), so no git identity is configured.
+      - id: changesets
+        if: steps.detect.outputs.skip == 'false'
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          version-script: bun run version
+          commit-message: "🔖 chore(release): version packages"
+          pr-title: "🔖 chore(release): version packages"
+          create-github-releases: false
+          push-git-tags: false
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+
+      # signoff binds to a SHA, and the App's push moved the PR head, so ask ci.yml to sign the new
+      # head off. Skipped when there were no changesets (no PR, or the PR was just closed).
+      - name: Sign off the version PR head
+        if: steps.detect.outputs.skip == 'false' && steps.changesets.outputs.has-changesets == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.changesets.outputs.pr-number }}
+        run: |
+          sha=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+          echo "dispatching ci.yml on version PR #$PR @ $sha"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref develop -f "signoff-sha=$sha"

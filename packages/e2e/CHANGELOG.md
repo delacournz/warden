@@ -1,0 +1,9 @@
+# @delacour/warden-e2e
+
+## 0.2.0
+
+No changes in this release.
+
+## 0.1.2
+
+No changes in this release.

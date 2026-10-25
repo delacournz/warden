@@ -37,6 +37,13 @@ export const UI_ERROR_EXIT = {
 	use_failed: UI_EXIT.failed,
 	verify_unavailable: UI_EXIT.failed,
 	interrupted: UI_EXIT.interrupted,
+	device_unknown: UI_EXIT.lease,
+	session_active: UI_EXIT.failed,
+	session_not_found: UI_EXIT.failed,
+	app_not_found: UI_EXIT.failed,
+	unsupported: UI_EXIT.failed,
+	not_profileable: UI_EXIT.failed,
+	tool_missing: UI_EXIT.engine,
 } as const satisfies Record<string, UiExitCode>;
 
 export type UiErrorCode = keyof typeof UI_ERROR_EXIT;
@@ -92,6 +99,8 @@ export type UiReport = {
 	command: string;
 	json: boolean;
 	startedAt: number;
+	/** what follows `warden ` in text-mode errors and warnings (default `ui <command>`; `warden perf` sets `perf <command>`) */
+	label?: string;
 };
 
 export type UiSuccess = {
@@ -124,7 +133,7 @@ export function reportOk(ctx: CommandContext, report: UiReport, success: UiSucce
 		return success.exit ?? UI_EXIT.ok;
 	}
 	if (success.text.length > 0) ctx.out(success.text);
-	for (const w of success.warnings ?? []) ctx.err(ctx.ui.color.yellow(`warden ui: ${w}`));
+	for (const w of success.warnings ?? []) ctx.err(ctx.ui.color.yellow(`warden ${report.label ?? "ui"}: ${w}`));
 	return success.exit ?? UI_EXIT.ok;
 }
 
@@ -134,7 +143,7 @@ export function reportError(ctx: CommandContext, report: UiReport, error: UiErro
 		const doc: UiJson = { ok: false, command: report.command, ...(device ? { device } : {}), error };
 		ctx.out(JSON.stringify(doc));
 	} else {
-		ctx.err(ctx.ui.color.red(`warden ui ${report.command}: ${errorText(error)}`));
+		ctx.err(ctx.ui.color.red(`warden ${report.label ?? `ui ${report.command}`}: ${errorText(error)}`));
 	}
 	return exitCodeFor(error);
 }

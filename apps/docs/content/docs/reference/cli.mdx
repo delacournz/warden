@@ -4,6 +4,8 @@ description: Every warden command and flag. All commands accept --json.
 icon: Terminal
 ---
 
+This is the exhaustive list of `warden` commands and flags; use it to look up an option, and `warden <command> --help` for the version you have installed.
+
 ## Quick reference
 
 | Need | Command |
@@ -22,14 +24,25 @@ icon: Terminal
 | every sim / emulator + who leases it | `warden devices` (alias `warden list`) |
 | lighten a booted sim (fewer daemons) | `warden sim slim <udid>\|--booted [--dry-run] [--restore]` |
 | tidy Simulator.app windows | `warden arrange` |
-| look at / drive a leased device | `warden ui snapshot -i --udid <udid>` · `warden ui press @e3 --settle` ([guide](/docs/guides/agent-ui)) |
-| record a session as a spec | `warden ui record start <id>` → drive → `warden ui record stop` ([guide](/docs/guides/author-specs)) |
+| look at / drive a leased device | `warden ui snapshot -i --udid <udid>` · `warden ui press @e3 --settle` ([guide](/docs/agents/ui)) |
+| record a session as a spec | `warden ui record start <id>` → drive → `warden ui record stop` ([guide](/docs/e2e/author-specs)) |
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a long lease alive | `warden heartbeat --mine` |
 | reclaim dead leases | `warden gc` |
 | sim + runtime disk usage, what can go | `warden sims` · `warden sims prune --dry-run` |
 | pick sims to delete (any owner) | `warden sims delete` (`--suggested -y` off a terminal) |
 | is the agent loop fast enough? | `warden ui bench [--runs n] [--json]` |
+| what profiling needs on this host / device | `warden perf doctor` |
+| app CPU / memory now, or live | `warden perf metrics [--watch]` |
+| JS hotspots (source-mapped) | `warden perf js --duration 10s` |
+| cold start time | `warden perf startup --cold --runs 5 --claim` |
+| why does this screen re-render? | `warden perf react --duration 10s` |
+| native CPU / hangs / leaks | `warden perf native --duration 10s` |
+| the boot queue and host budget | `warden capacity` · `warden queue` |
+| a dev client per worktree | `warden dev` ([guide](/docs/agents/dev)) |
+| set an Expo app up for warden | `warden init` |
+| install warden + agent hooks, tab completion | `warden install` · `warden completion zsh` |
+| the agent skill | `warden skill show` · `warden skill install` |
 | setup problems | `warden doctor` |
 | update warden | `warden update` (`--check` to only look) |
 
@@ -44,18 +57,18 @@ Lease iOS sims / Android emulators — reuse, boot or create — booted and read
 | `--profile <slug>` | `iphone-17` / first AVD | device profile, e.g. `iphone-17`, `pixel-10` |
 | `--runtime <runtime>` | `latest` | `latest`, `iOS-26-5`, `26.5` … |
 | `--count <n>` | `1` | how many devices |
-| `--max <n>` | cores/4, cap 4 | max warden devices of this profile (pool size; machine-wide boots are capped by [capacity](/docs/guides/capacity)) |
+| `--max <n>` | what the machine's capacity allows | max warden devices of this profile (pool size; machine-wide boots are capped by [capacity](/docs/devices/capacity)) |
 | `--wait <duration>` | `30m` | how long to wait for a free device or a slot in the boot queue, e.g. `10m` |
 | `--no-wait` | | fail fast instead of queueing |
-| `--priority <interactive\|high\|normal\|low\|N>` | `WARDEN_PRIORITY`, else per command | boot queue priority; see [Capacity & queue](/docs/guides/capacity) |
+| `--priority <interactive\|high\|normal\|low\|N>` | `WARDEN_PRIORITY`, else per command | boot queue priority; see [Capacity & queue](/docs/devices/capacity) |
 | `--ttl <duration>` | `30m` (bare `claim` by an agent: `5m`) | lease TTL without heartbeat |
 | `--label <label>` | | shown in `warden ls` |
 | `--adopt` | | allow allocating foreign (non-warden) devices |
-| `--headless` / `--no-headless` | `WARDEN_HEADLESS`, else off | iOS: close the claimed sims' Simulator.app windows instead of tiling them; `--no-headless` overrides config and env. See [Headless e2e](/docs/guides/headless) |
+| `--headless` / `--no-headless` | `WARDEN_HEADLESS`, else off | iOS: close the claimed sims' Simulator.app windows instead of tiling them; `--no-headless` overrides config and env. See [Headless e2e](/docs/devices/headless) |
 
 ### `warden capacity` / `warden queue`
 
-`warden capacity [--json]` prints the host budget (RAM, performance cores), what is booted (warden and foreign), per-device cost, the binding dimension and memory pressure. `warden queue [--json]` lists claims waiting for a boot slot: position, effective priority, age, owner. See [Capacity & queue](/docs/guides/capacity).
+`warden capacity [--json]` prints the host budget (RAM, performance cores), what is booted (warden and foreign), per-device cost, the binding dimension and memory pressure. `warden queue [--json]` lists claims waiting for a boot slot: position, effective priority, age, owner. See [Capacity & queue](/docs/devices/capacity).
 
 ### `warden release [leaseIds...]`
 
@@ -70,6 +83,7 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--port <from:span>` | lease a port for the child (`WARDEN_PORT_<i>`); repeatable |
 | `--app` | install the project's app on each device first |
 | `--project <dir>` | `--app`: project directory (default: cwd) |
+| `--variant <name>` | `--app`: install this `projects[].variants` build (`dev`, `e2e`…) |
 | `--bundle-id <id>` | `--app`: override the bundle id / package |
 | `--variant <name>` | `--app`: install this `projects[].variants` build (`dev`, `e2e`…) |
 | `--no-eas` / `--no-build` | `--app`: skip EAS downloads / local builds |
@@ -77,7 +91,7 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--reset-keychain` | `--install-mode`: also reset the iOS simulator's keychain (not cleared by uninstall either) |
 | `--clean` | deprecated alias of `--install-mode reinstall` |
 
-See [e2e scripts](/docs/guides/e2e).
+See [e2e scripts](/docs/devices/scripts).
 
 ### `warden batch [platform|preset] [-- <cmd...>]`
 
@@ -116,7 +130,7 @@ warden batch salient-e2e --count 2 --jobs qa-login -- bun e2e {job} --device {ud
 
 An operand that is neither `ios`, `android` nor a preset fails with the list of presets.
 
-Exits 0 only when every job passed. See [Batches](/docs/guides/e2e#batches-one-job-per-device).
+Exits 0 only when every job passed. See [Batches](/docs/devices/scripts#batches-one-job-per-device).
 
 ### `warden affected [suite]`
 
@@ -132,7 +146,7 @@ List the specs of `e2e.<suite>` (optional with one suite) that the changes since
 | `--strict` | exit 3 when a changed file reaches no spec |
 | `--json` | `{ suite, base?, changes, platforms: [{ platform, selected (each spec with its reasons), skipped, unreached, warnings }], warnings }` |
 
-Following `entries` through the import graph needs TypeScript 5.0 or later: the compiled binary uses the project's own, the nearest `node_modules/typescript` from the config's directory upward (Yarn Plug'n'Play is not supported); without one the run exits 1 naming that path. See [Affected e2e](/docs/guides/affected-e2e).
+Following `entries` through the import graph needs TypeScript 5.0 or later: the compiled binary uses the project's own, the nearest `node_modules/typescript` from the config's directory upward (Yarn Plug'n'Play is not supported); without one the run exits 1 naming that path. See [Affected e2e](/docs/e2e/affected).
 
 ### `warden e2e [suite]`
 
@@ -151,9 +165,18 @@ With no `e2e` suite configured (and none named), the Expo app around the cwd get
 | `--devices <legs>` | which `devices` legs run: `default` (the default), `all`, or profile names (comma-separated) |
 | `--job-timeout <duration>` | overrides the suite's `jobTimeoutMs` (default 10 min) |
 | `--no-shutdown` | keep the devices running after the gate passes (the default locally; under CI they are shut down. Suite `shutdown` sets it, the flag wins) |
+| `--perf[=captures]` | profile every attempt: a [perf session](/docs/devices/perf) wraps each test and its report is copied to the attempt's `perf/` dir (`report.json`, `report.md`, `session.json`). Bare `--perf` records metrics, frames and logs; `--perf=react,js` picks captures (`js`, `react`, `native`, `metrics`, `frames`, `logs`, or `all`). `perf.budgets` apply, and a breach fails the test with a `PERF_BUDGET` error (kind `perf_budget` in `e2e-report.json`); `e2e-report.json` links each test's `perf` dir |
 | `--no-warm` | skip the iOS driver-helper warm-up (the suite's `warmDrivers: false`) |
 
-The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. With [`metro`](/docs/reference/configuration#e2e) warden starts and verifies its own Metro before any spec and stops it last. With `devices`, every picked leg claims its own pool and runs the specs concurrently (`--profile` / `--count` replace the legs with one claim); the report then has one verdict per spec and leg. By default (`isolate: "device"`) one spec process per device runs its share of the specs (round-robin by spec id) and every spec still gets its own verdict; `--retry` reruns only the specs that did not pass, and `--job-timeout` / `jobTimeoutMs` is per spec. With `isolate: "spec"` every spec is its own process. While it runs, the grid (or, with `--no-tui`, one line per finished test, `✓ todos › adds a todo (3.21s)` / `✗ …`) ticks specs and tests off as the spec processes append to their `results.jsonl`. The grid's header bar has one cell per spec (one per job with `isolate: "spec"`): green passed, red failed, cyan running, dim pending; each device row has its own bar of the jobs it ran. With `isolate: "device"` every leased device gets a row, cyan while its spec process works; when the run ends warden reads each process's `results.jsonl` and fills the device's bar with the specs it ran there. Specs run in id order (sorted file path), so `count: 1` is a stable serial run. `headless` (suite, else top-level) closes the leased sims' windows at claim and again before the first spec, unless `--no-headless`; `e2e-report.json` records `"headless"` and `"isolate"`. Nothing affected → exit 0 without claiming. Every failed spec is named at the end with its device, spec log and failure screenshot (also `device`, `log`, `screenshot` and a `tests[]` entry per test on the spec in `e2e-report.json`), then each failing test with the first line of its error and its artifact directory. Before the specs, an iOS suite warms the leased devices' driver helpers (`warmDrivers`, on by default) so the first spec does not pay the cold start. Leases are always released at the end. Under CI (`CI` set to anything but empty, `0` or `false`), or with `shutdown: "always"`, a passed gate shuts down the devices warden created (or booted for the run) before releasing them; locally (`shutdown: "idle"`, the default) they stay booted for the next run and `warden gc` shuts them down once idle. A failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
+The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. With [`metro`](/docs/reference/configuration#e2e) warden starts and verifies its own Metro before any spec and stops it last. With `devices`, every picked leg claims its own pool and runs the specs concurrently (`--profile` / `--count` replace the legs with one claim); the report then has one verdict per spec and leg. By default (`isolate: "device"`) one spec process per device runs its share of the specs (round-robin by spec id) and every spec still gets its own verdict; `--retry` reruns only the specs that did not pass, and `--job-timeout` / `jobTimeoutMs` is per spec. With `isolate: "spec"` every spec is its own process. 
+
+While it runs, the grid (or, with `--no-tui`, one line per finished test, `✓ todos › adds a todo (3.21s)` / `✗ …`) ticks specs and tests off as the spec processes append to their `results.jsonl`. The grid's header bar has one cell per spec (one per job with `isolate: "spec"`): green passed, red failed, cyan running, dim pending; each device row has its own bar of the jobs it ran. With `isolate: "device"` every leased device gets a row, cyan while its spec process works; when the run ends warden reads each process's `results.jsonl` and fills the device's bar with the specs it ran there. Specs run in id order (sorted file path), so `count: 1` is a stable serial run. `headless` (suite, else top-level) closes the leased sims' windows at claim and again before the first spec, unless `--no-headless`; `e2e-report.json` records `"headless"` and `"isolate"`. 
+
+Nothing affected → exit 0 without claiming. Every failed spec is named at the end with its device, spec log and failure screenshot (also `device`, `log`, `screenshot` and a `tests[]` entry per test on the spec in `e2e-report.json`), then each failing test with the first line of its error and its artifact directory. 
+
+Before the specs, an iOS suite warms the leased devices' driver helpers (`warmDrivers`, on by default) so the first spec does not pay the cold start. Leases are always released at the end. 
+
+Under CI (`CI` set to anything but empty, `0` or `false`), or with `shutdown: "always"`, a passed gate shuts down the devices warden created (or booted for the run) before releasing them; locally (`shutdown: "idle"`, the default) they stay booted for the next run and `warden gc` shuts them down once idle. A failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
 
 ### `warden ls`
 
@@ -182,7 +205,7 @@ iOS. Switches off the launchd jobs inside a booted simulator that UI specs never
 | `--dry-run` | list the jobs, change nothing |
 | `--restore` | re-enable them (fully effective on the next boot) |
 
-Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. Siri's `assistantd` and `corespeechd` are deliberately left running: the software keyboard asks them about dictation, and with them down an app that shows the keyboard spins its main thread until XCTest can no longer read it. A simulator slimmed by an older warden gets them re-enabled on the next `slim` or `--restore` (effective after its next boot). The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. `slim` and `--restore` record the state per device; a plain `warden claim` re-enables a device left slimmed (jobs already booted out stay down until its next reboot). In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/guides/affected-e2e#per-device-setup).
+Each job is `launchctl disable`d inside the simulator (remembered across its reboots) and booted out so it stops now. Idempotent. Siri's `assistantd` and `corespeechd` are deliberately left running: the software keyboard asks them about dictation, and with them down an app that shows the keyboard spins its main thread until XCTest can no longer read it. A simulator slimmed by an older warden gets them re-enabled on the next `slim` or `--restore` (effective after its next boot). The disabled state is not copied by `warden clone`, so slim every device you use. A simulator leased by another session is refused. `slim` and `--restore` record the state per device; a plain `warden claim` re-enables a device left slimmed (jobs already booted out stay down until its next reboot). In an e2e suite, `"slim": true` does this on every leased device before `setup` — see [Affected e2e](/docs/e2e/affected#per-device-setup).
 
 ### `warden sims audit | prune | delete`
 
@@ -240,7 +263,7 @@ Permanently deletes simulators. With no udids it opens a multi-select menu (spac
 
 ### `warden arrange`
 
-macOS only. Lines up the open Simulator.app (Xcode 27: Device Hub) windows of warden sims in name order (`warden-iphone-17-2` before `-10`), left to right from the top-left of the main screen. Simulator and Device Hub windows can't be resized, so a row wider than the screen overlaps evenly, with every title bar left visible; windows wrap to a second row only if the screen is tall enough. Other simulators are left where they are, and neither viewer is ever launched. Every iOS claim (`claim`, `run`, `batch`, `e2e`) runs this automatically unless it is [headless](/docs/guides/headless); set `WARDEN_ARRANGE=0` to turn that off. Moving windows uses System Events, so your terminal needs Accessibility access (System Settings → Privacy & Security → Accessibility). Xcode 27 replaced Simulator.app with Device Hub, which opens no window when a sim boots: a non-headless claim asks for one per sim it booted (only while Device Hub already runs), then tiles them. `--open <udid…>` does that for those sims on demand (the e2e session uses it after a HID-loss reboot). `--json`: `"viewer"` is `device-hub` / `simulator` / `none`, or `{ "opened": [...] }` with `--open`. See [Device Hub](/docs/guides/headless#xcode-27-device-hub).
+macOS only. Lines up the open Simulator.app (Xcode 27: Device Hub) windows of warden sims in name order (`warden-iphone-17-2` before `-10`), left to right from the top-left of the main screen. Simulator and Device Hub windows can't be resized, so a row wider than the screen overlaps evenly, with every title bar left visible; windows wrap to a second row only if the screen is tall enough. Other simulators are left where they are, and neither viewer is ever launched. Every iOS claim (`claim`, `run`, `batch`, `e2e`) runs this automatically unless it is [headless](/docs/devices/headless); set `WARDEN_ARRANGE=0` to turn that off. Moving windows uses System Events, so your terminal needs Accessibility access (System Settings → Privacy & Security → Accessibility). Xcode 27 replaced Simulator.app with Device Hub, which opens no window when a sim boots: a non-headless claim asks for one per sim it booted (only while Device Hub already runs), then tiles them. `--open <udid…>` does that for those sims on demand (the e2e session uses it after a HID-loss reboot). `--json`: `"viewer"` is `device-hub` / `simulator` / `none`, or `{ "opened": [...] }` with `--open`. See [Device Hub](/docs/devices/headless#xcode-27-device-hub).
 
 ### `warden clone <source>`
 
@@ -248,7 +271,7 @@ Duplicate a shut-down iOS simulator (udid or name) into warden's pool. `--name` 
 
 ### `warden golden ensure | ls | prune`
 
-Golden iOS images / Android snapshots new devices start from. All three take `--platform ios|android` (default `ios`). `ensure [--profile] [--runtime]` builds once or reuses (profile default `iphone-17`; Android: first AVD); `ls` lists them; `prune` deletes stale goldens (`--all` every golden, `-y` skips the prompt before `--all`). See [Golden images](/docs/guides/golden-images).
+Golden iOS images / Android snapshots new devices start from. All three take `--platform ios|android` (default `ios`). `ensure [--profile] [--runtime]` builds once or reuses (profile default `iphone-17`; Android: first AVD); `ls` lists them; `prune` deletes stale goldens (`--all` every golden, `-y` skips the prompt before `--all`). See [Golden images](/docs/devices/golden-images).
 
 ### `warden check`
 
@@ -266,7 +289,7 @@ Reclaim stale leases and shut down unleased warden devices idle for `--idle` (de
 
 ### `warden port claim`
 
-`--from` (8091), `--span` (20), `--count` (1), `--ttl` (30m), `--label`. Prints one port per line. See [Ports](/docs/guides/ports).
+`--from` (8091), `--span` (20), `--count` (1), `--ttl` (30m), `--label`. Prints one port per line. See [Ports](/docs/devices/ports).
 
 ### `warden port ls`
 
@@ -284,7 +307,7 @@ Print the project's native fingerprint (both platforms by default). `--project`,
 
 ### `warden app ensure [platform]`
 
-Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--install-mode clean|reinstall` resets the installed app first (`clean`: fresh data, no reinstall of an unchanged build; `reinstall`: uninstall + install), `--reset-keychain` also resets the iOS sim keychain, `--clean` is a deprecated alias of `--install-mode reinstall`; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`. See [App builds](/docs/guides/app-builds).
+Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--install-mode clean|reinstall` resets the installed app first (`clean`: fresh data, no reinstall of an unchanged build; `reinstall`: uninstall + install), `--reset-keychain` also resets the iOS sim keychain, `--clean` is a deprecated alias of `--install-mode reinstall`; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`. See [App builds](/docs/devices/app-builds).
 
 ### `warden dev [platform] [-- <expo start args>]`
 
@@ -307,13 +330,14 @@ Set an Expo app up for `warden dev` / `warden e2e`, in the app's root (`--projec
 
 ### `warden ui <subcommand>`
 
-The agent CLI over the e2e driver: read the screen, act on it, wait. Full guide: [Drive a device](/docs/guides/agent-ui). Every subcommand takes the options below, and every call checks the device lease (exit 2 on a foreign or missing lease).
+The agent CLI over the e2e driver: read the screen, act on it, wait. Full guide: [Drive a device](/docs/agents/ui). Every subcommand takes the options below, and every call checks the device lease (exit 2 on a foreign or missing lease).
 
 | Option | Effect |
 |---|---|
 | `--udid <udid>` · `--serial <serial>` · `--lease <id>` | the device (else `WARDEN_UDID`, a single `WARDEN_UDIDS`, your only device lease) |
 | `--claim` | take a device when none is leased, or take over a stale lease; `--platform ios\|android`, `--profile <slug>`, `--runtime <runtime>` pick it |
 | `--timeout <ms>` | per-command deadline (default 5000) |
+
 | `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`) holds your lease on it; without it the call exits 2 (`device_busy`) naming the owner, pid and label. Your own `warden dev` device needs no `--force`: the call shares it (`"attachedTo": "<leaseId>"` in `--json`; `close --release` keeps that lease). Another owner's live lease still refuses |
 | `--no-record` | while a `record` is active, do not append this call to it |
 | `--json` | one JSON document on stdout: `{ok, command, device, generation?, durationMs, result, warnings?}` or `{ok:false, command, error:{code, message, hint?}}` |
@@ -337,11 +361,14 @@ Exit codes: 0 ok · 1 failed or usage (also the `record` errors `no_recording`, 
 | `gesture swipe <dir\|x1 y1 x2 y2>` · `gesture longpress <target> [ms]` | `swipe --from <target>`; `longpress`: `--verify`, `--settle [ms]` |
 | `gesture pinch [target] <scale>` · `gesture rotate [target] <degrees>` | two fingers around the target or the screen centre; `--duration <ms>` (default 500), `--radius <px>`, `--verify`, `--settle [ms]`; `scale` above 1 zooms in (0.1 to 10, not 1), positive `degrees` is clockwise (negative works; not 0, at most 720) |
 | `gesture path --path 'x,y x,y …' [--path …]` | 1-2 fingers (each path at least 2 points) that go down and lift together; `--duration <ms>` (default 600), `--settle [ms]`; coordinates in points (iOS) or px (Android). Two fingers on Android need `warden-uiad` |
-| `record start <name>` | `--to <spec>`, `--helper <module#fn>` `--prerequisite <text>`, `--ids <module>`, `--options <module#name>` (shared `test.use` options, or `none`), `--title <title>`, `--suite <name>`, `--overwrite`. Journals every later action; `stop` writes `<specsDir>/<name>.e2e.ts` (or the helper). [Guide](/docs/guides/author-specs) |
+| `record start <name>` | `--to <spec>`, `--helper <module#fn>` `--prerequisite <text>`, `--ids <module>`, `--options <module#name>` (shared `test.use` options, or `none`), `--title <title>`, `--suite <name>`, `--overwrite`. Journals every later action; `stop` writes `<specsDir>/<name>.e2e.ts` (or the helper). [Guide](/docs/e2e/author-specs) |
 | `record use <module#fn>` | `--suite <name>`. Runs the exported helper once on this device (a generated one-test spec through the spec process `stop` verifies with); on a pass appends a `use` step, which the spec calls as `await fn(fixtures)` imported relative to its path. Exit 1 `helper_missing` (module or export not found), `use_failed` (helper failed; `details.evidence`), `verify_unavailable` (no suite), `no_recording`; nothing is recorded on failure |
 | `record note <text>` · `record undo [n]` · `record status` · `record cancel` | `note`: a comment above the next action; `undo`: drop the last n steps (notes count); `status`: target, step count, last 5 steps, lints; `cancel`: drop the journal (a written spec stays) |
 | `record stop` | `--no-verify`, `--suite <name>`, `--overwrite`. Writes the spec or helper, merges ids, prints lints and the `specs.<id>` entry for `warden.config.ts` (`--json`: `result.config` `{ id, suite?, snippet, entries, routes, unresolved, captured, hints }`, `null` for a helper; routes are read on dev clients only, need the suite's `routerRoot`, and capture stops after 3 failed reads), then runs the spec once on this device (helpers are not run). Exit 1 (`verify_failed`, `verify_unavailable`, `target_exists`) keeps the journal; `--force` is the busy-device option, not this one |
 | `eval <expr>` · `tree` · `logs` · `network` · `reload` | dev client only (`--metro <url>`): `eval --await`; `tree --all --max <n> --screen <name>`; `logs [n]\|start [--bodies]\|stop\|mark <label>\|clear`; `network [n]` (default 50) `--include headers,body --id <id>`; `eval`, `tree`, `logs` and `reload` take `--metro <url>` (default: `WARDEN_METRO_URL`, `state.json`, then this owner's leased ports) |
+
+
+The old top-level `rotate`, `appearance`, `screenshot`, `video`, `swipe` and `longpress` are removed (unknown command, no aliases).
 
 The old top-level `rotate`, `appearance`, `screenshot`, `video`, `swipe` and `longpress` are removed (unknown command, no aliases).
 
@@ -359,6 +386,292 @@ The old top-level `rotate`, `appearance`, `screenshot`, `video`, `swipe` and `lo
 | `openDriver` | a second driver client opened on the resident helper socket, as a spec does (iOS) | < 500 ms |
 
 A metric passes up to its target times 1.5 (`ok` in the JSON; a loaded machine shows up as `slow`, past the tolerance as `FAIL`). `--json` prints the usual `warden ui` envelope with `result.metrics` as `{ name: { p50, p95, samples, targetMs?, targetP95Ms?, ok? } }` in milliseconds (or `{ skipped, samples: 0 }`), plus `result.passed`. `warden ui bench` itself exits 0; `bun run smoke:ui-bench` (`scripts/smoke/ui-bench.ts`) claims a device, opens the example app, runs it and exits 1 when anything is over target x1.5.
+
+## Profile an app
+
+### `warden perf`
+
+Profile an app on a warden simulator / emulator. Sessions live in `$WARDEN_HOME/perf/<id>/` (`session.json` plus what each capturer writes); `id` is `<yyyymmdd-hhmmss>-<hash6>` in UTC. Simulator and emulator numbers run on host CPU and GPU: compare relative, not absolute. Dev builds (`__DEV__`) inflate JS and React costs. One-shot and start/stop subcommands (`metrics`, `memory`, `frames`, `startup`, `js`, `heap`, `react`, `native`, `logs`, `crashes`, `tools`) work on their own; `start`, `stop` and `record` run several of them as one session whose `report` merges them, and `query` and `diff` read what it left behind.
+
+Device-bound subcommands take the `warden ui` options (`--udid`, `--serial`, `--lease`, `--claim`, `--platform`, `--timeout`, `--json`) plus:
+
+| Option | Effect |
+|---|---|
+| `--app <id>` | bundle id (iOS) / package (Android). Default: the foreground app (iOS: the one running non-Apple app), then the app in `warden.config.ts` |
+| `--allow-mutate-foreign` | let a mutating step act on a device someone else holds. Refused (`device_busy`) while a live warden process (`e2e`, `batch`, `run`, `dev`) holds the lease |
+
+Which device: `--udid\|--serial\|--lease`, `WARDEN_UDID`, a single `WARDEN_UDIDS`, your only device lease, then the only booted device warden knows (created by warden, or leased). Several candidates exit 2 with `ambiguous_device` and list them (udid, name, holder, foreground app). A device warden does not know exits 2 with `device_unknown`: perf never attaches to foreign devices.
+
+Observe-only work (metrics, attach-only traces, Metro / Hermes profiling, logs, crashes, frame reads) runs on any warden device and never takes or heartbeats a lease. Mutating work (kill / launch, heap dumps, `gfxinfo reset`) needs your own lease (`--claim` takes a free device) or `--allow-mutate-foreign`; otherwise it exits 2 with `device_foreign` / `device_not_leased`.
+
+One active session per device, whoever holds the lease (`session_active` names the first). A session stops itself after 30 s (`--max-duration`, hard max 5 m, longer is clamped with a warning); a dead collector's or overdue session is swept the next time a session starts.
+
+| Subcommand | Notes |
+|---|---|
+| `ls` | recorded sessions, newest first (id, device, app, status `running\|stopped\|aborted\|overdue`, age, cap, marks); `--device <udid>` filters, `--devices` lists the warden devices a session could attach to; `--json` |
+| `mark <label...>` | annotate the device's running session (`session_not_found`, exit 1, when none): commits, hangs and jank are tagged with the last mark before them |
+| `doctor` | read-only checks, one line each: `xctrace` (macOS; fails when missing), `xcode` (warns on 26.4+, where `xctrace --device` deadlocks), `adb`, `device-tools` (`perfetto` and `simpleperf` on an Android device), `trace-processor` (cached under `$WARDEN_HOME/tools`), `metro`, `app` (Android: debuggable or `<profileable android:shell="true"/>`). Exit 1 only on a `fail`; with no resolvable device the device checks are `skip` |
+
+Errors carry `{code, message, hint?}`; the codes added for perf are `device_unknown`, `session_active`, `session_not_found`, `app_not_found`, `unsupported`, `not_profileable` (exit 1) and `tool_missing` (exit 3) (plus the `warden ui` lease codes). `--json` prints the `warden ui` envelope (`command` is `perf <sub>`); `ls` and `doctor` print their own document (`{sessions}` / `{devices}` / `{ok, device?, checks}`).
+
+#### `warden perf metrics`
+
+CPU % and memory of the app over time. Observe-only: works on any warden device and never takes a lease.
+
+```bash
+warden perf metrics [--interval 1s] [--duration 3s] [--watch] [--app <id>]
+```
+
+- iOS simulator: `ps` matched on the app's executable; CPU % is the delta of cumulative CPU time between samples (not the decaying `%cpu`), memory is RSS.
+- Android: `top -n 1 -b -p <pid>` for CPU and `dumpsys meminfo <package>` for PSS and RSS.
+- The first sample is the CPU baseline. Output is min/avg/p95/max per metric plus the memory trend; a steadily rising series (at least 6 samples over 5s, +1 MB, +50 KB/s) adds a `memory-growth` leak hint.
+- Samples go to the running session's `metrics/samples.jsonl` (timed from the session start), else a one-shot directory under `$WARDEN_HOME/perf`.
+- `--watch` redraws CPU, memory (and fps when available) as unicode sparklines with current/avg/max on stderr. Piped, or with `--json`, it prints one NDJSON line per sample on stdout, then the result envelope. Ctrl-C prints the summary and exits 130. Without `--duration` it stops after 5 minutes.
+- `--interval` is at least 200ms. Numbers from simulators and emulators are for comparing relative changes, not absolute values.
+
+#### `warden perf memory`
+
+Where the app's memory sits right now, or a heap snapshot.
+
+```bash
+warden perf memory [--snapshot] [--app <id>]
+```
+
+- Without `--snapshot` (observe-only): Android prints TOTAL PSS/RSS and the top 5 `dumpsys meminfo` categories; iOS prints the physical footprint (and peak) and top regions from `vmmap --summary`.
+- With `--snapshot` (pauses the app; needs your own lease, so pass `--claim`):
+  - iOS: `leaks --outputGraph` writes a `.memgraph` (open it in Xcode's Memory Graph debugger) and the command reports the leak count, bytes and leaked types.
+  - Android: `am dumpheap` writes an `.hprof`, which is pulled and removed from the device. It is raw only; open it in Android Studio (Profiler, Load). The app must be debuggable or profileable.
+- Artifacts go to the running session's `native/` directory, else a one-shot directory under `$WARDEN_HOME/perf`.
+
+#### `warden perf frames`
+
+fps, janky %, dropped and frozen frames and the worst jank windows for the app on an Android device,
+read from `dumpsys gfxinfo <pkg> framestats`.
+
+```bash
+warden perf frames [--app <pkg>] [--reset] [--json]
+```
+
+- Reports `fps` and `refreshHz`. The frame deadline is the median vsync gap, clamped to 4-50ms.
+- Reports `jankPct` (the OS "Janky frames" summary since the last reset), `droppedFrames`, `frozenFrames`
+  (frames over 700ms) and `worstFrameMs`.
+- `worstWindows`: the 3 worst jank clusters. Clusters split on gaps over 500ms. Each window has
+  `startOffsetMs`, `endOffsetMs`, `missedDeadlineFrameCount` and `worstFrameMs`.
+- With a running session (`warden perf start`), offsets are measured from the session start and each window
+  carries the last `warden perf mark` before it. The report is also written to the session's `frames.json`.
+- A `jank` finding is emitted at 2% or more janky frames, or any frozen frame.
+- A plain read is observe-only. It takes no lease and changes nothing on the device.
+- `--reset` clears the OS frame counters after reading, so the next read is a fresh window. This mutates
+  the device and needs your own lease (`--claim` or a lease you hold).
+- Window offsets come from the OS's last ~120 frames (about 2s at 60Hz). The jank % and totals cover
+  everything since the last reset. For a long scenario, run `perf start` with marks and read at the end of the interaction.
+- iOS simulator: returns `status: "unsupported"` with a hint. The simulator has no frame API. Use hangs from
+  `warden perf start --native` instead.
+
+#### `warden perf startup`
+
+Cold or warm app start time, median and p90 over several launches.
+
+```bash
+warden perf startup [--cold] [--warm] [--runs <n>] [--method approx|xctrace] [--app <id>] [--claim]
+```
+
+Kills and relaunches the app, so it needs your own device lease (or `--claim` on a free device). Without a lease it fails with `device_foreign` and never touches the app.
+
+| Flag | Meaning |
+|---|---|
+| `--cold` | Stop the app before each start (default). |
+| `--warm` | Send the app to the background first, then start it. With both flags, cold runs first. |
+| `--runs <n>` | Launches to time, 1-20 (default 5). |
+| `--method <m>` | iOS only: `approx` (default) or `xctrace` (App Launch template, cold only, spike). |
+
+- **Android:** `am start -W` (`-S` for cold). Time is `TotalTime`, the time to the first frame. If the app calls `reportFullyDrawn()`, the fully-drawn time is reported too.
+- **iOS simulator:** `approx` is the wall time of `simctl launch --terminate-running-process`. It is a lower bound (time to process spawn); compare relative, not absolute. `xctrace` records the App Launch template and reads the launch periods from the trace.
+- **React Native:** when Metro is reachable, the app's `performance` marks are read after the last launch and listed. A missing Metro is noted in `startup.json`, not an error.
+- **Output:** median, p90, min and max per kind. A `startup` finding is raised when the cold median is over 2s (warn) or 5s (critical). The full result is written to `metrics/startup.json` in the active session, or in a one-shot dir under `$WARDEN_HOME/perf/`.
+
+#### `warden perf js`
+
+Hermes JS CPU profile of the running dev client, source-mapped to `file:line` hotspots. Observe only: it never leases the device.
+
+```bash
+warden perf js [--duration 10s] [--sampling-interval 100] [--metro <url>] [--app <id>] [--json]
+```
+
+- Samples for `--duration` (default 10s, max 5m) at `--sampling-interval` microseconds (default 100).
+- Writes `js/cpu.cpuprofile` (opens in Chrome DevTools or speedscope) and `js/hotspots.json` into the running session, otherwise a one-shot directory under `$WARDEN_HOME/perf`.
+- Source maps are fetched from Metro only (64MiB cap). The report lists top self and total time per function with `file:line`, groups `node_modules` frames by package, reports idle share separately, and raises `js-hotspot` findings for functions above 10% of active time.
+- Dev builds (`__DEV__`) get a banner: unminified JS and the DevTools hook inflate costs, so confirm on a release or profileable build.
+- A JS reload during the capture loses the profile. Release builds have no Metro, so the command exits 3 (`devtools_unavailable`).
+- If a running session already profiles JS, the command fails with `session_active`.
+
+#### `warden perf heap`
+
+Hermes heap snapshots of the running dev client.
+
+```bash
+warden perf heap snapshot [--metro <url>] [--app <id>] [--claim] [--json]
+warden perf heap diff <before> <after> [--json]
+```
+
+- `snapshot` freezes the JS thread while it runs, so it needs your lease on the device (or `--claim`). It streams `js/heap-<ts>.heapsnapshot` (opens in Chrome DevTools, Memory tab) and prints the top 15 constructors by self size and by count. Retained sizes are not computed; open the file for them.
+- `diff` compares two snapshot files: per-constructor count and self-size deltas, largest change first. It only reads files.
+- If the runtime lacks the needed Profiler or HeapProfiler method, the command exits 3 with `unsupported: ...` and a hint.
+
+#### `warden perf logs`
+
+The app's device logs, secrets redacted. An observe op: needs no lease, and works on any warden device.
+
+```bash
+warden perf logs --app com.acme.shop --level W --since 5m
+warden perf logs --follow --json --grep "api|cart"
+```
+
+| Flag | Meaning |
+|------|---------|
+| `-f, --follow` | Stream live: text lines, or one JSON entry per line with `--json`. Ctrl-C exits 130. |
+| `--level <V\|D\|I\|W\|E\|F>` | Minimum level (words like `error`, `warn` work too). |
+| `--grep <regex>` | Keep lines whose tag or message matches (case-insensitive). |
+| `--since <duration>` | Only lines from the last `30s`, `5m`, `1h`. |
+| `-n, --lines <n>` | Lines to show, newest last (default 200). |
+
+- **Android:** `logcat -v threadtime --pid <pid>`. While following, the pid is re-resolved every 2s and the stream restarts when the app does. `--since` is measured against the device clock.
+- **iOS simulator:** `log stream|show --style compact` with a predicate matching the app's subsystem, sub-subsystems and executable. A one-shot read looks back 5m unless `--since` is given.
+- **Redaction:** `Authorization`/`Bearer` tokens, `api_key=`, JWTs, `password=` and emails become `[redacted]` before anything is printed or written.
+- **In a session:** the collector writes the same redacted stream to `logs/device.log`.
+
+#### `warden perf crashes`
+
+Crashes and ANRs of the app, newest first (up to 10), with `crash` / `anr` findings. An observe op.
+
+```bash
+warden perf crashes --since 1h
+warden perf crashes --symbolicate --dsym build/ShopApp.app.dSYM
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--since <duration>` | Only crashes from the last `30s`, `5m`, `1h`. |
+| `--symbolicate` | iOS only: resolve app frames through a dSYM (needs `--dsym`). |
+| `--dsym <path>` | The `.dSYM` (or DWARF file) of the build that crashed. |
+
+- **iOS:** reads `~/Library/Logs/DiagnosticReports/*.ips` for this app on this simulator. Each crash shows exception type, signal, crashed thread, top 10 frames and the first app frame. `--symbolicate` matches the dSYM by `dwarfdump --uuid`, then runs `atos` with the image's load address; a dSYM from another build is reported as a warning and the crash is still listed.
+- **Android:** `logcat -b crash -d` plus `dumpsys dropbox --print data_app_crash` and `data_app_anr`, de-duplicated. Native tombstones are not read.
+- **In a session:** raw reports are copied into the session's `crashes/` directory.
+
+#### `warden perf react`
+
+React render profile of the running dev client (observe-only; never takes the lease): which commits were hot, which components cost the most, and ranked findings with a fix.
+
+```bash
+warden perf react [--duration 10s]      # record, then analyse
+warden perf react start                 # begin and return (profile lives in the app)
+warden perf react stop                  # end, analyse, write
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--duration <time>` | how long to record (default 10s, max 5m) |
+| `--metro <url>` | Metro to attach through (default: the one serving the device) |
+| `--take-over` | take over (or stop) a React profile another agent started |
+
+Output goes to `react/commits.json` (every commit: durations, per-fiber actual/self time, change descriptions) and `react/findings.json` (hot commits, ranked components, findings) in the running session, else a one-shot dir under `$WARDEN_HOME/perf`.
+
+- **Hot commits:** under 16ms is fine, 16-50ms warm, over 50ms hot; heat is the cube root of duration over the slowest commit.
+- **Findings** (`kind`): `slow-commit`, `slow-render`, `memo-defeated` (memoized but props change identity), `context-cascade`, `parent-cascade`, `render-storm`, `eager-mount`, `effect-chain`. Each has `costMs`, `evidence`, `fix`, `next`. Components under 2ms or 3% of render time are not reported; animation and transition components are tagged and not blamed.
+- **Where:** components are located by the runtime's `_debugSource` when it exposes one, else by grepping the project for `function Name` / `const Name =` / `class Name`.
+- **JS correlation:** with a `js/cpu.cpuprofile` from the same session (`perf start --js --react`), each hot commit lists the JS functions that ran inside it.
+- **Errors:** `rn_too_old` (React Native below 0.74), `release_build` (no DevTools hook or `__DEV__` false), `devtools_backend_missing` (no `react-devtools-core` in the bundle), `session_active` (another agent holds the profile; `--take-over`).
+
+Dev builds inflate React costs: confirm on a profileable build. The simulator banner applies.
+
+#### `warden perf native`
+
+```bash
+warden perf native [start|stop] [--duration 10s] [--leaks] [--analyze <trace>] [--skip-analysis] [--flavor perfetto|simpleperf] [--yes]
+```
+
+Native CPU, hangs and (iOS) leaks from the platform profiler. iOS simulators use `xcrun xctrace record` with the Time Profiler template plus the `Hangs` instrument; `--leaks` adds `Leaks` and `Allocations`. The trace lands in `native/ios.trace` of the device's running perf session, or of a one-shot dir under `$WARDEN_HOME/perf/native-<id>/`. With no action it records for `--duration` (default 10s, max 5m), stops and analyzes; `start` begins a detached recording, `stop` ends it (SIGINT, waits for the trace to be finalised, SIGKILL only on timeout) and exports it.
+
+- Attach-only recording is observe-only: it works on any warden device and never takes or heartbeats a lease. On Xcode 26.4+ (where `xctrace record --device` deadlocks) it records `--all-processes` and filters the rows by the app's pid.
+- `--leaks` is a mutation: it terminates the app and cold-launches it with `MallocStackLogging=1` under the profiler, so it needs your own lease (`--claim`).
+- The analysis names the dominant frame of each sample (first app or third-party frame, else a React Native frame such as `RCT*`, Yoga, Hermes, JSI; system-only samples are skipped), groups threads (Main Thread, JS Thread, Shadow Thread) and reports frames over 3% of samples (over 15% is critical). Each hang lists its duration, the top 5 functions and top 3 call chains on the main thread during it. Leaks are grouped by type and responsible frame with bytes and counts.
+- `--analyze <trace>` re-analyzes an existing `.trace` without a device. `--skip-analysis` on `stop` leaves the export for later. `--yes` (Android) downloads `trace_processor` without asking.
+- Simulator numbers are for comparing runs, not absolutes. Open the trace in Instruments for the full picture.
+Android:
+
+- Default is a Perfetto trace of the app: 100 Hz callstack sampling scoped to the package, scheduler/binder ftrace, atrace (`view gfx wm am input dalvik` + the app), SurfaceFlinger frame timeline and 1 s process stats. The config goes to `perfetto` on stdin; the trace is pulled to `native/android.perfetto-trace` and removed from the device. The trace stops at `--max-duration` at the latest.
+- `--flavor simpleperf` (in a session: `perf start --native=simpleperf`) samples the running app pid with `simpleperf record -e cpu-clock:u` and reports the top functions from the on-device `simpleperf report` (`native/simpleperf.data`, `native/simpleperf.data.report.txt`). It needs no trace_processor.
+- Analysis runs PerfettoSQL through a pinned `trace_processor_shell` (`$WARDEN_HOME/tools/trace_processor_shell-<version>`, or `WARDEN_TRACE_PROCESSOR`): CPU hotspots (critical over 15% of samples, warn 3-15%), missed-deadline frames with the main-thread state split (running / runnable / sleeping / io) and GC overlap, per-thread time, RSS growth. Raw SQL is written to `native/queries/`.
+- The trace is always kept: if trace_processor is missing the analysis is skipped with a warning naming the install command.
+- Zero samples fail with `not_profileable`: the app must be debuggable or `<profileable android:shell="true"/>` in its manifest.
+- Observe-only: attaching never leases or restarts the device or app.
+
+#### `warden perf start | stop | record`
+
+```bash
+warden perf start [--js] [--react] [--native [flavor]] [--metrics] [--frames] [--logs] [--all]
+                  [--relaunch] [--reset] [--max-duration 30s] [--yes] [--join]
+warden perf stop [--no-analyze] [--yes]
+warden perf record [--duration 10s] [same capture flags as start] [--no-analyze]
+```
+
+One combined session. `start` sweeps overdue sessions, opens the session, writes `plan.json`, records a clock anchor (`{wallMs, deviceWallMs}`; Android reads `adb shell date +%s%N` and halves the round trip) and spawns one detached `warden perf-collect --session <id>` that hosts metrics, logs, the JS and React capture (one Hermes socket) and the auto-stop timer. With no capture flag you get metrics, frames and logs; `--all` adds JS, React and native.
+
+- `--relaunch` terminates the app, arms what can be armed before launch (Android perfetto), launches, waits for the Metro target and then arms JS and React. iOS native is armed right after launch (it needs the pid). `--reset` clears app data first and implies `--relaunch`. Both mutate the device, so they need your lease; a free warden device gets a short `warden perf` lease that `stop` releases. A live foreign lease fails with `device_foreign`.
+- `--native [flavor]` is `perfetto` (default) or `simpleperf` on Android; give the flavor attached, `--native=simpleperf`, so it is not read as a positional argument.
+- `--max-duration` is capped; at the cap the collector runs the same stop path as `perf stop`.
+- `--join` attaches read-only to a running session.
+- `stop` ends the capturers in reverse order, gives back a lease `start` took and writes `report.md` + `report.json` under the session dir. `--no-analyze` keeps native traces unanalyzed.
+- `record` is `start`, wait `--duration` (default 10s, max 5m), `stop`. `--no-analyze` stops without building the report. Ctrl-C stops early, still reports and exits 130.
+- `warden release` and `warden ui close --release` stop a running session on the released device.
+
+#### `warden perf report`
+
+```bash
+warden perf report [id|latest] [--full] [--rebuild] [--json]
+```
+
+Prints the merged report: Summary, Startup, Frames, JS CPU, React, Native CPU, Hangs, Memory, Logs/Crashes and `next:` hints. Findings are sorted by severity then cost; overlaps are correlated (`hang 412ms @ 3.2s overlaps commit #14 (FlatList, 180ms) <- mark 'scroll feed'`). `--json` is `report.json` (`PerfReportJson`). Output is capped; `--full` lifts the cap, `--rebuild` regenerates from the session files.
+
+#### `warden perf query`
+
+```bash
+warden perf query <id> commits [--by component|window|index|cascade] [--size 1s] [--index N] [--limit N]
+warden perf query <id> commits --by index <n>
+warden perf query <id> cpu [--top | --tree | --window 2s-5s] [--limit N]
+warden perf query <id> stacks hang | callers <fn> | thread | leaks [--rerun --yes] [--limit N]
+warden perf query <id> frames [--worst]
+```
+
+`<id>` is a session id, a unique prefix or `latest`. Reads the session's files; no device needed.
+
+| Topic | Options |
+|---|---|
+| `commits` | `--by component` (default) \| `window` \| `index` \| `cascade`. `--by window` takes `--size <time>` (bucket, default 1s). `--by index` takes the commit as a positional `<n>` or `--index <n>`: one commit in depth |
+| `cpu` | `--top` (the hottest functions, default), `--tree` (call tree), `--window <a-b>` (self time between two points on the session timeline, e.g. `2s-5s`) |
+| `stacks` | `hang`, `callers <fn>`, `thread`, `leaks`; `--rerun` re-runs the Perfetto SQL (Android), `--yes` downloads `trace_processor` for it |
+| `frames` | `--worst`: the worst jank windows and hangs |
+
+`--limit <n>` caps the rows of `commits` and `cpu` (`cpu` defaults to 15). `--json` prints the `warden ui` envelope.
+
+#### `warden perf diff`
+
+```bash
+warden perf diff <a> <b> [--fail-on regress] [--threshold 10%] [--json]
+```
+
+Reads two sessions' reports, so it takes no device options.
+
+Compares two reports metric by metric (lower is better, except fps) with a relative threshold plus absolute floors, and lists function self-time deltas. With `--fail-on regress` exits 1 when any metric regressed.
+
+#### `warden perf tools`
+
+```bash
+warden perf tools install trace-processor [--yes] [--json]
+```
+
+Downloads the pinned Perfetto `trace_processor_shell` (about 14 MB; sha256-verified, installed atomically) into `$WARDEN_HOME/tools/`. On a terminal it asks first; without a terminal it fails with `tool_missing` (exit 3) unless `--yes` is given. A progress bar (bytes, percent, MB/s) is drawn on stderr only, so `--json` stdout stays one document. Re-running reports `already installed`.
 
 ## Setup
 
@@ -380,7 +693,7 @@ Every tab asks `warden __complete -- <words…>`, which walks the same command t
 
 ### `warden hook session-end`
 
-The SessionEnd hook entrypoint: shuts down what the session booted and releases its leases. Called by Claude Code / Codex, not by hand. `warden hook pretool` still exists as a silent no-op, so a PreToolUse hook written by an older warden keeps working; `warden install` removes that hook.
+The SessionEnd hook entrypoint: shuts down what the session booted and releases its leases. Called by Claude Code / Codex, not by hand. There is no PreToolUse hook any more: `warden install` removes the `PreToolUse` hook an older warden wrote, and a hidden `warden hook pretool` no-op keeps a PreToolUse hook written by an older warden from erroring.
 
 ### `warden doctor`
 

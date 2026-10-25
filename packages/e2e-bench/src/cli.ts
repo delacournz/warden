@@ -4,10 +4,13 @@ import { join, resolve } from "node:path";
 import type { BenchAdapter, RunContext } from "./adapters/adapter.types";
 import { ADAPTERS } from "./adapters/registry";
 import { type Command, HELP, parseArgs } from "./args";
+import { benchAppDir, benchAppStatus, cleanBenchApp, ensureBenchApp } from "./harness/bench-app";
 import { realExec } from "./harness/exec";
 import { type BenchDeps, runBench, writeReports } from "./orchestrator";
 import { compareRuns, renderCompareMarkdown } from "./report/compare";
+import { checkRegression, type GuardOutcome, loadGuardSide } from "./report/guard";
 import { renderHtml } from "./report/html";
+import { mergeRunDirs } from "./report/merge";
 import { benchSummary } from "./report/summary";
 import { loadManifest } from "./results/manifest";
 import { CANONICAL_IDS, type Platform } from "./results/schema";
@@ -51,7 +54,7 @@ function doctorContext(platform: Platform, adapter: BenchAdapter): RunContext {
 	};
 }
 
-/** Doctor table; exit 1 when a framework other than detox (best effort) is not ok. */
+/** Doctor table; exit 1 when a framework is not ok. */
 async function doctor(platform: Platform): Promise<number> {
 	const rows: string[][] = [["framework", "status", "version", "notes / hint"]];
 	let code = 0;
@@ -66,7 +69,7 @@ async function doctor(platform: Platform): Promise<number> {
 			continue;
 		}
 		rows.push([adapter.id, "missing", "-", `${d.reason} -> ${d.installHint}`]);
-		if (adapter.id !== "detox") code = 1;
+		code = 1;
 	}
 	console.log(table(rows));
 	return code;
@@ -105,14 +108,113 @@ function summary(runDir: string, out: string | undefined): number {
 	return 0;
 }
 
-function compare(dirA: string, dirB: string): number {
-	const a = readBenchResults(dirA);
-	const b = readBenchResults(dirB);
+/** Prints the lines of a guard outcome and maps it to an exit code: 0 ok, 1 regressed, 2 a side lacks warden. */
+function guardExit(outcome: GuardOutcome): number {
+	if (outcome.kind === "missing") {
+		console.error(`bench: ${outcome.message}`);
+		return 2;
+	}
+	for (const line of outcome.lines) console.log(line);
+	if (outcome.kind === "ok") return 0;
+	for (const line of outcome.violations) console.error(line);
+	return 1;
+}
+
+/**
+ * Markdown diff of two run dirs. With `maxCpuRegressionPct` it then runs the warden CPU guard (exit 1 on a
+ * regression, 2 when warden is missing); either side may then be a baseline file, which has no diff to print.
+ */
+function compare(dirA: string, dirB: string, maxCpuRegressionPct: number | undefined): number {
+	const a = loadGuardSide(dirA);
+	const b = loadGuardSide(dirB);
 	if (!a.success || !b.success) {
 		console.error(!a.success ? a.error : !b.success ? b.error : "");
 		return 1;
 	}
-	console.log(renderCompareMarkdown(compareRuns(a.data, b.data), loadManifest(PACKAGE_ROOT)));
+	if (a.data.run !== undefined && b.data.run !== undefined) {
+		console.log(renderCompareMarkdown(compareRuns(a.data.run, b.data.run), loadManifest(PACKAGE_ROOT)));
+	} else if (maxCpuRegressionPct === undefined) {
+		console.error("bench: a baseline file has no run to diff; pass --max-cpu-regression to guard against it");
+		return 2;
+	} else {
+		console.log(
+			`# e2e framework benchmark — guard\n\n- **A:** \`${a.data.side.id}\`\n- **B:** \`${b.data.side.id}\`\n`
+		);
+	}
+	return maxCpuRegressionPct === undefined
+		? 0
+		: guardExit(checkRegression(a.data.side, b.data.side, maxCpuRegressionPct));
+}
+
+/** Merges per-framework run dirs into `outDir` and renders its reports; exit 2 when the inputs conflict. */
+function merge(outDir: string, runDirs: readonly string[], id: string | undefined): number {
+	const merged = mergeRunDirs(resolve(outDir), runDirs, id !== undefined ? { id } : {});
+	if (!merged.success) {
+		console.error(`bench: ${merged.error}`);
+		return 2;
+	}
+	writeReports(resolve(outDir), merged.data, { manifest: loadManifest(PACKAGE_ROOT), renderHtml });
+	console.log(
+		`merged ${merged.data.frameworks.map((f) => f.framework).join(", ")} into ${resolve(outDir)} (${merged.data.id})`
+	);
+	return 0;
+}
+
+/** Builds (or fetches) the example app once and pins it under `.bench/app/<platform>`. */
+async function appBuild(platform: Platform, force: boolean, eas: boolean): Promise<number> {
+	const built = await ensureBenchApp(realExec, {
+		platform,
+		repoRoot: REPO_ROOT,
+		cliPath: CLI_PATH,
+		force,
+		eas,
+		now: () => new Date(),
+		log: (line) => console.log(line),
+	});
+	if (!built.success) {
+		console.error(`bench: ${built.error}`);
+		return 1;
+	}
+	const { manifest, appPath, reused } = built.data;
+	console.log(`pinned ${appPath} (hash ${manifest.hash}, source ${manifest.source}, ${reused ? "reused" : "built"})`);
+	return 0;
+}
+
+/** Pinned hash vs the project's current fingerprint; exit 1 when missing or stale. */
+async function appStatus(platform: Platform): Promise<number> {
+	const status = await benchAppStatus(realExec, { platform, repoRoot: REPO_ROOT, cliPath: CLI_PATH });
+	if (!status.success) {
+		console.error(`bench: ${status.error}`);
+		return 1;
+	}
+	if (status.data.state === "missing") {
+		console.log(
+			`no bench app at ${benchAppDir(REPO_ROOT, platform)} — run \`bun run bench app build --platform ${platform}\``
+		);
+		return 1;
+	}
+	const { state, manifest, appPath, currentHash } = status.data;
+	console.log(
+		table([
+			["state", state],
+			["platform", manifest.platform],
+			["path", appPath],
+			["hash", manifest.hash],
+			["current", currentHash ?? "-"],
+			["source", manifest.source],
+			["built", manifest.builtAt],
+			["commit", manifest.commit ?? "-"],
+			["sha256", manifest.sha256],
+			["bytes", String(manifest.bytes)],
+		])
+	);
+	return state === "stale" ? 1 : 0;
+}
+
+function appClean(platform: Platform): number {
+	const dir = benchAppDir(REPO_ROOT, platform);
+	cleanBenchApp(dir);
+	console.log(`removed ${dir}`);
 	return 0;
 }
 
@@ -166,6 +268,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 			return 0;
 		case "run":
 			return run(cmd);
+		case "app-build":
+			return appBuild(cmd.platform, cmd.force, cmd.eas);
+		case "app-status":
+			return appStatus(cmd.platform);
+		case "app-clean":
+			return appClean(cmd.platform);
 		case "doctor":
 			return doctor(cmd.platform);
 		case "list":
@@ -173,7 +281,9 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 		case "report":
 			return report(cmd.runDir);
 		case "compare":
-			return compare(cmd.dirA, cmd.dirB);
+			return compare(cmd.dirA, cmd.dirB, cmd.maxCpuRegressionPct);
+		case "merge":
+			return merge(cmd.outDir, cmd.runDirs, cmd.id);
 		case "summary":
 			return summary(cmd.runDir, cmd.out);
 	}

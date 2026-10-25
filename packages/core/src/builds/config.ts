@@ -136,7 +136,10 @@ function fromConfig(entry: ParsedProjectConfig, configDir: string, env: Record<s
 		project.jsInputs = entry.fingerprint.jsInputs;
 	}
 	const eas =
-		entry.eas ?? (existsSync(join(root, "eas.json")) ? { profile: DEFAULT_EAS_PROFILE, trigger: false } : undefined);
+		entry.eas === false
+			? undefined
+			: (entry.eas ??
+				(existsSync(join(root, "eas.json")) ? { profile: DEFAULT_EAS_PROFILE, trigger: false } : undefined));
 	if (eas) project.eas = eas;
 	return project;
 }

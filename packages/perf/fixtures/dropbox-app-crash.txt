@@ -1,0 +1,31 @@
+Drop box contents: 2 entries
+Max entries: 1000
+Low priority tags: {data_app_wtf=null, keymaster=null, system_server_wtf=null, system_app_strictmode=null, system_app_wtf=null, system_server_strictmode=null, data_app_strictmode=null, netstats_error=null}
+
+========================================
+2026-10-24 10:03:00 data_app_crash (text, 1210 bytes)
+Process: com.acme.shop
+PID: 4321
+Flags: 0x38e83e46
+Package: com.acme.shop v7 (2.4.1)
+Foreground: Yes
+Process-Runtime: 184233
+Build: google/sdk_gphone64_arm64/emu64a:15/AE3A.240806.043/12273592:userdebug/dev-keys
+
+java.lang.NullPointerException: Attempt to invoke virtual method 'int java.util.List.size()' on a null object reference
+	at com.acme.shop.cart.CartAdapter.getItemCount(CartAdapter.java:42)
+	at androidx.recyclerview.widget.RecyclerView.onMeasure(RecyclerView.java:3891)
+	at android.view.View.measure(View.java:30174)
+
+========================================
+2026-10-24 09:58:12 data_app_crash (text, 640 bytes)
+Process: com.other.app
+PID: 999
+Flags: 0x38e83e46
+Package: com.other.app v1 (1.0)
+Foreground: No
+Build: google/sdk_gphone64_arm64/emu64a:15/AE3A.240806.043/12273592:userdebug/dev-keys
+
+java.lang.IllegalStateException: boom
+	at com.other.app.Main.run(Main.java:7)
+

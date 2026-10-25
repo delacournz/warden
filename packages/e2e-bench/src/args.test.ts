@@ -6,7 +6,7 @@ describe("parseArgs run", () => {
 		expect(parseArgs(["run"])).toEqual({
 			command: "run",
 			platform: "ios",
-			frameworks: ["warden", "maestro", "argent", "agent-device", "tester-army", "detox"],
+			frameworks: ["warden", "argent", "agent-device", "tester-army"],
 			runs: 3,
 			retries: 0,
 			rebootBetween: false,
@@ -22,7 +22,7 @@ describe("parseArgs run", () => {
 			"--platform",
 			"android",
 			"--frameworks",
-			"detox,warden",
+			"argent,warden",
 			"--runs",
 			"5",
 			"--retries",
@@ -37,11 +37,13 @@ describe("parseArgs run", () => {
 			"--keep-drivers",
 			"--node-bin",
 			"/n/bin/node",
+			"--app",
+			".bench/app/android",
 		]);
 		expect(r).toEqual({
 			command: "run",
 			platform: "android",
-			frameworks: ["warden", "detox"],
+			frameworks: ["warden", "argent"],
 			runs: 5,
 			retries: 1,
 			udid: "emulator-5554",
@@ -51,6 +53,7 @@ describe("parseArgs run", () => {
 			force: true,
 			keepDrivers: true,
 			nodeBin: "/n/bin/node",
+			app: ".bench/app/android",
 		});
 	});
 
@@ -60,7 +63,7 @@ describe("parseArgs run", () => {
 		[["run", "--retries", "-1"], "--retries must be an integer >= 0, got -1"],
 		[
 			["run", "--frameworks", "warden,nope"],
-			"--frameworks: unknown nope; known: warden,maestro,argent,agent-device,tester-army,detox",
+			"--frameworks: unknown nope; known: warden,argent,agent-device,tester-army",
 		],
 		[["run", "--udid"], "--udid needs a value"],
 		[["run", "--udid", "--force"], "--udid needs a value"],
@@ -68,6 +71,39 @@ describe("parseArgs run", () => {
 		[["run", "extra"], "run takes no positional arguments, got extra"],
 	])("complaint for %j", (argv, complaint) => {
 		expect(parseArgs(argv)).toBe(complaint);
+	});
+});
+
+describe("parseArgs app", () => {
+	test("build, status, clean", () => {
+		expect(parseArgs(["app", "build"])).toEqual({ command: "app-build", platform: "ios", force: false, eas: false });
+		expect(parseArgs(["app", "build", "--platform", "android", "--force", "--eas"])).toEqual({
+			command: "app-build",
+			platform: "android",
+			force: true,
+			eas: true,
+		});
+		expect(parseArgs(["app", "status", "--platform", "android"])).toEqual({
+			command: "app-status",
+			platform: "android",
+		});
+		expect(parseArgs(["app", "clean"])).toEqual({ command: "app-clean", platform: "ios" });
+	});
+
+	test.each([
+		[["app"], "app needs a subcommand: build|status|clean"],
+		[["app", "nope"], "app needs a subcommand: build|status|clean"],
+		[["app", "status", "--force"], "unknown argument --force"],
+		[["app", "build", "--runs", "2"], "unknown argument --runs"],
+		[["app", "clean", "x"], "app clean takes no positional arguments, got x"],
+		[["run", "--eas"], "unknown argument --eas"],
+	])("complaint for %j", (argv, complaint) => {
+		expect(parseArgs(argv)).toBe(complaint);
+	});
+
+	test("help documents app", () => {
+		expect(HELP).toContain("bench app build");
+		expect(HELP).toContain("--app PATH");
 	});
 });
 
@@ -88,6 +124,46 @@ describe("other commands", () => {
 		expect(parseArgs(["summary", "d", "--platform", "ios"])).toBe("unknown argument --platform");
 		expect(parseArgs(["compare", "a", "b"])).toEqual({ command: "compare", dirA: "a", dirB: "b" });
 		expect(parseArgs(["compare", "a"])).toBe("compare needs <dirA> <dirB>");
+	});
+
+	test("compare --max-cpu-regression takes a percent with or without the sign", () => {
+		const base = { command: "compare" as const, dirA: "a", dirB: "b" };
+		expect(parseArgs(["compare", "a", "b", "--max-cpu-regression", "10%"])).toEqual({
+			...base,
+			maxCpuRegressionPct: 10,
+		});
+		expect(parseArgs(["compare", "--max-cpu-regression", "7.5", "a", "b"])).toEqual({
+			...base,
+			maxCpuRegressionPct: 7.5,
+		});
+		expect(parseArgs(["compare", "a", "b", "--max-cpu-regression", "0%"])).toEqual({ ...base, maxCpuRegressionPct: 0 });
+		expect(parseArgs(["compare", "a", "b", "--max-cpu-regression", "fast"])).toBe(
+			"--max-cpu-regression must be a percent like 10% or 10, got fast"
+		);
+		expect(parseArgs(["compare", "a", "b", "--max-cpu-regression", "-5%"])).toBe(
+			"--max-cpu-regression must be a percent like 10% or 10, got -5%"
+		);
+		expect(parseArgs(["compare", "a", "b", "--max-cpu-regression"])).toBe("--max-cpu-regression needs a value");
+		expect(parseArgs(["report", "d", "--max-cpu-regression", "10"])).toBe("unknown argument --max-cpu-regression");
+	});
+
+	test("merge takes an out dir, at least one run dir and an optional --id", () => {
+		expect(parseArgs(["merge", "out", "w1", "w2"])).toEqual({ command: "merge", outDir: "out", runDirs: ["w1", "w2"] });
+		expect(parseArgs(["merge", "out", "w1", "--id", "bench-x"])).toEqual({
+			command: "merge",
+			outDir: "out",
+			runDirs: ["w1"],
+			id: "bench-x",
+		});
+		expect(parseArgs(["merge", "out"])).toBe("merge needs <outDir> <runDir>...");
+		expect(parseArgs(["merge"])).toBe("merge needs <outDir> <runDir>...");
+		expect(parseArgs(["merge", "out", "w1", "--runs", "2"])).toBe("unknown argument --runs");
+	});
+
+	test("usage documents the guard and merge", () => {
+		expect(HELP).toContain("bench compare <A> <B> [--max-cpu-regression PCT]");
+		expect(HELP).toContain("baselines/ios-warden.json");
+		expect(HELP).toContain("bench merge <outDir> <runDir>...");
 	});
 
 	test("help and unknown", () => {

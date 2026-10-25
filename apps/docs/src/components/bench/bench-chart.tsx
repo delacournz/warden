@@ -1,7 +1,7 @@
 import { bytes, ms, ratio } from "@delacour/warden-e2e-bench/src/report/format";
 import { type BarGroup, type BoxGroup, barChart, boxChart, tickMs } from "@delacour/warden-e2e-bench/src/report/svg";
 import type { ReactElement } from "react";
-import { type BenchSummary, isOk, label, type OkFramework } from "./bench-data";
+import { type BenchSummary, hasCpuSeconds, isOk, label, type OkFramework } from "./bench-data";
 
 /**
  * Renders SVG built by the bench package's pure chart functions. The markup is generated from committed,
@@ -105,6 +105,14 @@ type ResourceMetric = {
 	tick: (v: number) => string;
 };
 
+const CPU_SECONDS_METRIC: ResourceMetric = {
+	id: "cpu-s",
+	title: "Host CPU-seconds per rep",
+	pick: (f) => f.cpuSecondsPerRep ?? 0,
+	text: (v) => `${v.toFixed(1)} s`,
+	tick: (v) => `${v} s`,
+};
+
 const RESOURCE_METRICS: readonly ResourceMetric[] = [
 	{
 		id: "cpu",
@@ -122,12 +130,17 @@ const RESOURCE_METRICS: readonly ResourceMetric[] = [
 	},
 ];
 
-/** One bar per framework per metric, each on its own chart (never two scales on one axis). */
+/**
+ * One bar per framework per metric, each on its own chart (never two scales on one axis). Leads with host
+ * CPU-seconds per rep; runs without it (version 1) show the sampled `%cpu` chart instead.
+ */
 export function ResourceCharts({ summary }: { summary: BenchSummary }): ReactElement {
 	const oks = summary.frameworks.filter(isOk);
+	const withSeconds = hasCpuSeconds(summary);
+	const metrics = withSeconds ? [CPU_SECONDS_METRIC, ...RESOURCE_METRICS.slice(1)] : RESOURCE_METRICS;
 	return (
 		<>
-			{RESOURCE_METRICS.map((m) => {
+			{metrics.map((m) => {
 				const groups: BarGroup[] = [
 					{
 						label: m.title,
@@ -150,7 +163,11 @@ export function ResourceCharts({ summary }: { summary: BenchSummary }): ReactEle
 				});
 				return (
 					<Svg
-						caption="Sampled every 500 ms while the suite runs. Host means the framework's own processes, summed per process, so shared pages can be counted twice."
+						caption={
+							m.id === "cpu-s"
+								? "CPU time the framework's own processes used during one timed run (warm median), from per-process deltas of ps time. Host means the framework's own processes."
+								: "Sampled every 500 ms while the suite runs. Host means the framework's own processes, summed per process, so shared pages can be counted twice."
+						}
 						key={m.id}
 						svg={svg}
 					/>

@@ -1,151 +1,17 @@
 import { basename } from "node:path";
-import type { GroupSeries, HostGroup, Platform, RepResources, Series } from "../results/schema";
+import {
+	type AdbTopRow,
+	type CpuReadings,
+	cpuDeltas,
+	PS_ARGS,
+	PS_ENV,
+	type PsRow,
+	parseAdbTop,
+	parsePs,
+	withDescendants,
+} from "@delacour/warden-perf/metrics/ps";
+import type { GroupSeries, HostGroup, Platform, ProcessRow, RepResources, Series } from "../results/schema";
 import type { Exec } from "./exec";
-
-export type PsRow = {
-	pid: number;
-	ppid: number;
-	rssKb: number;
-	cpuPct: number;
-	/** cumulative CPU time (user + system) in seconds, from the `time` column when ps was asked for it */
-	cpuTimeSec?: number;
-	/** `lstart` (`Fri Oct 16 12:07:31 2026`) when ps was asked for it; identifies the process behind a pid */
-	startedAt?: string;
-	command: string;
-};
-
-const PS_ROW = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(.*)$/;
-const LSTART = String.raw`[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}`;
-const PS_ROW_STARTED = new RegExp(String.raw`^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(${LSTART})\s+(.*)$`);
-const CPU_TIME = String.raw`(?:\d+-)?\d+(?::\d+)+(?:\.\d+)?`;
-const PS_ROW_TIMED = new RegExp(String.raw`^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(${CPU_TIME})\s+(${LSTART})\s+(.*)$`);
-/** A data line of the `time` + `lstart` layout whatever its `time` token looks like (only the columns are trusted). */
-const PS_ROW_TIMED_ANY = new RegExp(String.raw`^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(\S+)\s+(${LSTART})\s+(.*)$`);
-/** The header of `ps -o …,time,lstart,command` (`TIME` and `STARTED` columns). */
-const TIMED_HEADER = /^\s*PID\b.*\bTIME\b.*\bSTARTED\b/;
-
-/**
- * The sampler's ps invocation: `time` (cumulative CPU time, the only rate-safe CPU figure: `%cpu` is a
- * decaying average on macOS) and `lstart` sit before `command` so the command stays the last, free-form column.
- */
-export const PS_ARGS: readonly string[] = ["-axo", "pid,ppid,rss,%cpu,time,lstart,command"];
-
-/**
- * The sampler's ps environment: `lstart` is local time, so a DST change mid-run would shift every start
- * time and make every pid look new (whole lifetimes charged, every root dropped); UTC never shifts.
- * The C locale keeps the `lstart` names English and the decimal point a dot, as the regexes expect.
- */
-export const PS_ENV: Readonly<Record<string, string>> = { TZ: "UTC", LC_ALL: "C" };
-
-/**
- * `ps time` to seconds: macOS prints `M:SS.ss` (10 ms resolution, minutes unbounded), procps
- * `[DD-]HH:MM:SS` (whole seconds: on a Linux host a 500 ms tick's delta is 0 or 1 s, only sums mean
- * anything). Undefined for anything else.
- */
-export function parseCpuTime(text: string): number | undefined {
-	const m = /^(?:(\d+)-)?(\d+(?::\d+)+(?:\.\d+)?)$/.exec(text.trim());
-	if (m === null || m[2] === undefined) return undefined;
-	const days = Number(m[1] ?? 0);
-	const seconds = m[2].split(":").reduce((acc, part) => acc * 60 + Number(part), 0);
-	return days * 86_400 + seconds;
-}
-
-/**
- * Parses `ps -axo pid,ppid,rss,%cpu,command`, the same with an `lstart` column before `command` (then
- * `startedAt` is set), or with `time` and `lstart` (then `cpuTimeSec` is set too). The header and
- * unparsable lines are skipped. When the header names `TIME` and `STARTED`, every data line is read in
- * that layout only: a `time` value `parseCpuTime` does not know leaves `cpuTimeSec` unset but keeps the
- * row's start time and command (the legacy regexes would read the time and start into the command).
- */
-export function parsePs(text: string): PsRow[] {
-	const lines = text.split("\n");
-	if (lines.some((l) => TIMED_HEADER.test(l))) return lines.flatMap((l) => parseTimedLayoutRow(l) ?? []);
-	const rows: PsRow[] = [];
-	for (const line of lines) {
-		const timed = parseTimedRow(line);
-		if (timed !== undefined) {
-			rows.push(timed);
-			continue;
-		}
-		const started = PS_ROW_STARTED.exec(line);
-		if (started !== null) {
-			rows.push({
-				pid: Number(started[1]),
-				ppid: Number(started[2]),
-				rssKb: Number(started[3]),
-				cpuPct: Number(started[4]),
-				startedAt: started[5] ?? "",
-				command: started[6] ?? "",
-			});
-			continue;
-		}
-		const m = PS_ROW.exec(line);
-		if (m === null) continue;
-		rows.push({
-			pid: Number(m[1]),
-			ppid: Number(m[2]),
-			rssKb: Number(m[3]),
-			cpuPct: Number(m[4]),
-			command: m[5] ?? "",
-		});
-	}
-	return rows;
-}
-
-/** A row of `ps -axo pid,ppid,rss,%cpu,time,lstart,command`, else undefined. */
-function parseTimedRow(line: string): PsRow | undefined {
-	const m = PS_ROW_TIMED.exec(line);
-	const cpuTimeSec = m === null ? undefined : parseCpuTime(m[5] ?? "");
-	if (m === null || cpuTimeSec === undefined) return undefined;
-	return {
-		pid: Number(m[1]),
-		ppid: Number(m[2]),
-		rssKb: Number(m[3]),
-		cpuPct: Number(m[4]),
-		cpuTimeSec,
-		startedAt: m[6] ?? "",
-		command: m[7] ?? "",
-	};
-}
-
-/** A data line of the `time` + `lstart` layout; `cpuTimeSec` only when the `time` token parses. */
-function parseTimedLayoutRow(line: string): PsRow | undefined {
-	const m = PS_ROW_TIMED_ANY.exec(line);
-	if (m === null) return undefined;
-	const cpuTimeSec = parseCpuTime(m[5] ?? "");
-	return {
-		pid: Number(m[1]),
-		ppid: Number(m[2]),
-		rssKb: Number(m[3]),
-		cpuPct: Number(m[4]),
-		...(cpuTimeSec !== undefined ? { cpuTimeSec } : {}),
-		startedAt: m[6] ?? "",
-		command: m[7] ?? "",
-	};
-}
-
-export type AdbTopRow = { pid: number; rssBytes: number; cpuPct: number; name: string };
-
-const TOP_ROW = /^\s*(\d+)\s+\S+\s+\S+\s+\S+\s+\S+\s+(\S+)\s+\S+\s+\S\s+([\d.]+)\s+[\d.]+\s+\S+\s+(.*)$/;
-const UNITS: Record<string, number> = { K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 };
-
-/** `250M` → bytes; a bare number is kilobytes (toybox top prints RES in K when no suffix). */
-function parseSize(text: string): number {
-	const m = /^([\d.]+)([KMGT]?)$/.exec(text);
-	if (m === null) return 0;
-	return Math.round(Number(m[1]) * (UNITS[m[2] ?? ""] ?? 1024));
-}
-
-/** Parses `adb shell top -n 1 -b` process rows (toybox layout: PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ ARGS). */
-export function parseAdbTop(text: string): AdbTopRow[] {
-	const rows: AdbTopRow[] = [];
-	for (const line of text.split("\n")) {
-		const m = TOP_ROW.exec(line);
-		if (m === null) continue;
-		rows.push({ pid: Number(m[1]), rssBytes: parseSize(m[2] ?? ""), cpuPct: Number(m[3]), name: m[4] ?? "" });
-	}
-	return rows;
-}
 
 /**
  * What counts as "the sim" on Android: the app under test and every framework's on-device helper, matched
@@ -154,7 +20,6 @@ export function parseAdbTop(text: string): AdbTopRow[] {
  * - `nz.co.delacour.warden.example`: the app and its `.test` instrumentation apk
  * - `uiautomator`: warden's `uiautomator dump`, argent's and agent-device's fallbacks
  * - `instrumentation`: androidx.test runners, agent-device's `SnapshotInstrumentation`
- * - `dev.mobile.maestro`: Maestro's driver app and its `.test` apk
  * - `com.callstack.agentdevice`: agent-device's snapshot helper (also what tester-army drives)
  * - `com.argent.`: argent's `androiddevtools` helper
  * - `warden-uiad`: warden's resident uiautomator server, an `app_process` that renames itself
@@ -164,7 +29,6 @@ const ANDROID_TARGET = new RegExp(
 		String.raw`nz\.co\.delacour\.warden\.example`,
 		"uiautomator",
 		"instrumentation",
-		String.raw`dev\.mobile\.maestro`,
 		String.raw`com\.callstack\.agentdevice`,
 		String.raw`com\.argent\.`,
 		"warden[-_.]?uiad",
@@ -187,21 +51,6 @@ export function androidTotals(rows: readonly AdbTopRow[]): { cpuPct: number; rss
 		rssBytes += r.rssBytes;
 	}
 	return { cpuPct, rssBytes };
-}
-
-/** `seeds` plus every transitive child (by ppid). */
-export function withDescendants(rows: readonly PsRow[], seeds: ReadonlySet<number>): Set<number> {
-	const children = new Map<number, number[]>();
-	for (const r of rows) children.set(r.ppid, [...(children.get(r.ppid) ?? []), r.pid]);
-	const out = new Set<number>();
-	const stack = [...seeds];
-	while (stack.length > 0) {
-		const pid = stack.pop();
-		if (pid === undefined || out.has(pid)) continue;
-		out.add(pid);
-		stack.push(...(children.get(pid) ?? []));
-	}
-	return out;
 }
 
 type Reading = { cpuPct: number; rssBytes: number; cpuSec: number };
@@ -228,33 +77,6 @@ function total(
 		byGroup[g] = { cpuSec: prev.cpuSec + d, rssBytes: prev.rssBytes + r.rssKb * 1024 };
 	}
 	return { cpuPct, rssBytes: rssKb * 1024, cpuSec, byGroup };
-}
-
-/** The last cumulative CPU reading per pid (every process of the snapshot, so a process joining the set later is charged only its delta). */
-export type CpuReadings = Map<number, { startedAt?: string; sec: number }>;
-
-/**
- * CPU seconds each process used since the previous snapshot, and `prev` replaced by this snapshot's readings.
- * On the `baseline` snapshot every delta is 0 (what a process used before the sampler started is not the
- * framework's). A pid missing from the previous snapshot, a pid whose start time changed (reused), or a
- * reading that went down is a process born since then: all its CPU time is charged. A process that died
- * since the previous snapshot drops out; its CPU up to its last reading was charged to the earlier ticks
- * (what it used after that, and processes that live entirely between two ticks, are not seen here; for
- * the children the bench runs, the sampler's `ExitCharge` adds it back from their rusage at exit).
- */
-export function cpuDeltas(rows: readonly PsRow[], prev: CpuReadings, baseline: boolean): Map<number, number> {
-	const out = new Map<number, number>();
-	const next: CpuReadings = new Map();
-	for (const r of rows) {
-		if (r.cpuTimeSec === undefined) continue;
-		next.set(r.pid, { ...(r.startedAt !== undefined ? { startedAt: r.startedAt } : {}), sec: r.cpuTimeSec });
-		const before = prev.get(r.pid);
-		const same = before !== undefined && before.startedAt === r.startedAt && r.cpuTimeSec >= before.sec;
-		out.set(r.pid, baseline ? 0 : same ? r.cpuTimeSec - before.sec : r.cpuTimeSec);
-	}
-	prev.clear();
-	for (const [pid, reading] of next) prev.set(pid, reading);
-	return out;
 }
 
 const BUN_CLI = /(^|\/)apps\/cli\/src\/cli\.ts$/;
@@ -369,6 +191,88 @@ export function simPids(rows: readonly PsRow[], udid: string, exclude: ReadonlyS
 
 export type TickGroup = { cpuSec: number; rssBytes: number };
 
+/** One process in one tick: its CPU seconds since the previous tick (`cpuDeltas`) and RSS at this tick. */
+export type TickProcess = {
+	pid: number;
+	/** `processLabel` of its argv */
+	name: string;
+	scope: "host" | "sim";
+	cpuSec: number;
+	rssBytes: number;
+};
+
+/** The `skip`th word that is not a flag; undefined when there is none. */
+const positional = (words: readonly string[], skip = 0): string | undefined =>
+	words.filter((w) => !w.startsWith("-")).at(skip);
+
+/**
+ * A stable, human label for a process from its argv, so the per-process table groups every instance of a
+ * tool under one row: `warden-simd`, `bun test`, `bun cli.ts`, `node runner.js`, `warden e2e`,
+ * `SimulatorFrameworkBridge-iOS serve`, `xcrun simctl launch`, and for everything else the basename of
+ * `argv0` (`simctl`, `backboardd`, `SpringBoard`, the app's executable, `launchd_sim`). `args` is the command
+ * line after `argv0`. Never includes udids or flags, which differ per run.
+ */
+export function processLabel(argv0: string, args: string): string {
+	const name = basename(argv0.trim());
+	if (name === "") return "unknown";
+	const words = args
+		.trim()
+		.split(/\s+/)
+		.filter((w) => w !== "");
+	if (name === "bun" || name.startsWith("bun-")) return bunLabel(words);
+	if (name === "node") return withArg("node", positional(words), basename);
+	if (name === "warden") return withArg("warden", positional(words));
+	if (name === "SimulatorFrameworkBridge-iOS") return words.includes("serve") ? `${name} serve` : name;
+	if (name === "xcrun") return xcrunLabel(words);
+	return name;
+}
+
+/** `prefix` alone, or `prefix <arg>` (`map`ped) when there is one. */
+const withArg = (prefix: string, arg: string | undefined, map: (a: string) => string = (a) => a): string =>
+	arg === undefined ? prefix : `${prefix} ${map(arg)}`;
+
+function bunLabel(words: readonly string[]): string {
+	const head = positional(words);
+	if (head === "test") return "bun test";
+	return withArg("bun", head === "run" ? positional(words, 1) : head, basename);
+}
+
+function xcrunLabel(words: readonly string[]): string {
+	const at = words.indexOf("simctl");
+	if (at >= 0) return withArg("xcrun simctl", positional(words.slice(at + 1)));
+	return withArg("xcrun", positional(words));
+}
+
+/** Splits a ps command into `argv0` and the rest, and labels it. */
+function labelOfCommand(command: string): string {
+	const m = /^(\S*)\s*(.*)$/s.exec(command);
+	return processLabel(m?.[1] ?? "", m?.[2] ?? "");
+}
+
+/** A process with no CPU this tick and less RSS than this is left out of the tick (keeps `resources.ndjson` small). */
+export const MIN_IDLE_RSS_BYTES = 1024 * 1024;
+
+/**
+ * The per-process readings of `pids` for one tick: every process that used CPU since the previous tick or
+ * holds at least `MIN_IDLE_RSS_BYTES`.
+ */
+export function processReadings(
+	rows: readonly PsRow[],
+	pids: ReadonlySet<number>,
+	deltas: ReadonlyMap<number, number>,
+	scope: "host" | "sim"
+): TickProcess[] {
+	const out: TickProcess[] = [];
+	for (const r of rows) {
+		if (!pids.has(r.pid)) continue;
+		const cpuSec = deltas.get(r.pid) ?? 0;
+		const rssBytes = r.rssKb * 1024;
+		if (!(cpuSec > 0 || rssBytes >= MIN_IDLE_RSS_BYTES)) continue;
+		out.push({ pid: r.pid, name: labelOfCommand(r.command), scope, cpuSec, rssBytes });
+	}
+	return out;
+}
+
 export type Tick = {
 	/** ms since the sampler started, taken when `ps` returned */
 	t: number;
@@ -382,6 +286,8 @@ export type Tick = {
 	simCpuSec?: number;
 	/** host CPU seconds and RSS per group */
 	hostByGroup?: Partial<Record<HostGroup, TickGroup>>;
+	/** per-process CPU seconds and RSS of the host and (iOS) sim sets; absent in older files and without a `time` column */
+	processes?: TickProcess[];
 };
 
 type Point = { t: number; cpu: number; rss: number; cpuSec?: number; groups?: Partial<Record<HostGroup, TickGroup>> };
@@ -393,13 +299,19 @@ type Point = { t: number; cpu: number; rss: number; cpuSec?: number; groups?: Pa
  * ticks gave it (`hostGroupOf` on its row, else its spawn label). The whole charge is booked there, even when
  * descendants of another group (a `bun test` under a `warden` CLI root) used some of it.
  */
-export type ExitCharge = { t: number; cpuSec: number; group: HostGroup };
+export type ExitCharge = {
+	t: number;
+	cpuSec: number;
+	group: HostGroup;
+	/** the root's `processLabel` when a tick saw its row (else the per-process table falls back to `group`) */
+	name?: string;
+};
 
 const exitsIn = (exits: readonly ExitCharge[], from: number, to: number): ExitCharge[] =>
 	exits.filter((x) => x.t > from && x.t <= to);
 
 /** The part of tick `i`'s interval (previous tick, this tick] inside [from, to], as a fraction of the interval. */
-function overlap(points: readonly Point[], i: number, from: number, to: number): number {
+function overlap(points: readonly { t: number }[], i: number, from: number, to: number): number {
 	const cur = points[i];
 	const prev = points[i - 1];
 	if (cur === undefined || prev === undefined || cur.t <= prev.t) return 0;
@@ -494,6 +406,94 @@ export function summarize(ticks: readonly Tick[], exits: readonly ExitCharge[] =
 	};
 }
 
+/** Rows kept per scope by `aggregateProcesses`; the rest are summed into an `other` row. */
+export const TOP_PROCESSES = 12;
+
+type ProcessAcc = { name: string; scope: "host" | "sim"; cpu: number; rss: number[]; pids: Set<number> };
+
+/**
+ * The per-process table of the window [from, to]: ticks' per-process readings summed by `processLabel` and
+ * scope. CPU is prorated per tick interval like `series` (a tick's delta covers the time since the previous
+ * tick); RSS is the label's per-tick sum over the ticks inside the window (0 where it had no process), so
+ * `rssAvgBytes` of all rows adds up to the scope's average; `spawnCount` is the distinct pids seen in those
+ * ticks. Exit charges in the window (CPU no tick saw) are separate host rows `"<label> (exit charge)"`
+ * (label = the root's `processLabel`, else its group), so the host rows sum to the window's `cpuSeconds`.
+ * Rows are sorted by CPU, the top `TOP_PROCESSES` per scope are kept and the rest summed into `other`. Empty
+ * when no tick carries per-process readings (older files, no `time` column).
+ */
+export function aggregateProcesses(
+	ticks: readonly Tick[],
+	from: number,
+	to: number,
+	exits: readonly ExitCharge[] = []
+): ProcessRow[] {
+	if (!ticks.some((t) => t.processes !== undefined)) return [];
+	const fractions = ticks.map((_, i) => overlap(ticks, i, from, to));
+	const slots = ticks.map((t) => t.t >= from && t.t <= to);
+	const n = slots.filter(Boolean).length;
+	const accs = new Map<string, ProcessAcc>();
+	const acc = (name: string, scope: "host" | "sim"): ProcessAcc => {
+		const key = `${scope}\0${name}`;
+		const found = accs.get(key);
+		if (found !== undefined) return found;
+		const fresh: ProcessAcc = { name, scope, cpu: 0, rss: new Array<number>(n).fill(0), pids: new Set() };
+		accs.set(key, fresh);
+		return fresh;
+	};
+	let slot = -1;
+	ticks.forEach((tick, i) => {
+		const inside = slots[i] === true;
+		if (inside) slot += 1;
+		for (const p of tick.processes ?? []) {
+			const a = acc(p.name, p.scope);
+			a.cpu += p.cpuSec * (fractions[i] ?? 0);
+			if (!inside) continue;
+			a.rss[slot] = (a.rss[slot] ?? 0) + p.rssBytes;
+			a.pids.add(p.pid);
+		}
+	});
+	for (const x of exitsIn(exits, from, to)) acc(`${x.name ?? x.group} (exit charge)`, "host").cpu += x.cpuSec;
+	return (["host", "sim"] as const).flatMap((scope) => scopeRows([...accs.values()].filter((a) => a.scope === scope)));
+}
+
+const sum = (values: readonly number[]): number => values.reduce((a, v) => a + v, 0);
+
+/** One scope's accumulators as sorted rows: top `TOP_PROCESSES` and an `other` row, with each one's share. */
+function scopeRows(all: readonly ProcessAcc[]): ProcessRow[] {
+	const sorted = [...all].sort(
+		(a, b) => b.cpu - a.cpu || sum(b.rss) - sum(a.rss) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+	);
+	const total = sum(sorted.map((a) => a.cpu));
+	const share = (cpu: number): number => (total > 0 ? (cpu / total) * 100 : 0);
+	const row = (a: ProcessAcc): ProcessRow => ({
+		name: a.name,
+		scope: a.scope,
+		cpuSeconds: a.cpu,
+		rssAvgBytes: a.rss.length > 0 ? sum(a.rss) / a.rss.length : 0,
+		rssPeakBytes: a.rss.length > 0 ? Math.max(...a.rss) : 0,
+		spawnCount: a.pids.size,
+		shareOfScopePct: share(a.cpu),
+	});
+	const top = sorted.slice(0, TOP_PROCESSES).map(row);
+	const rest = sorted.slice(TOP_PROCESSES);
+	const first = rest[0];
+	if (first === undefined) return top;
+	const perTick = first.rss.map((_, i) => sum(rest.map((a) => a.rss[i] ?? 0)));
+	const cpu = sum(rest.map((a) => a.cpu));
+	return [
+		...top,
+		{
+			name: "other",
+			scope: first.scope,
+			cpuSeconds: cpu,
+			rssAvgBytes: perTick.length > 0 ? sum(perTick) / perTick.length : 0,
+			rssPeakBytes: perTick.length > 0 ? Math.max(...perTick) : 0,
+			spawnCount: sum(rest.map((a) => a.pids.size)),
+			shareOfScopePct: share(cpu),
+		},
+	];
+}
+
 /**
  * The resources of one window of the sampler clock (a rep's timed `run`); headline = host CPU seconds,
  * absent when no tick had a CPU time (ps without a usable `time` column), never 0.
@@ -505,12 +505,14 @@ export function windowSummary(
 	exits: readonly ExitCharge[] = []
 ): RepResources {
 	const host = series(hostPoints(ticks), startMs, endMs, exits);
+	const processes = aggregateProcesses(ticks, startMs, endMs, exits);
 	return {
 		window: { startMs, endMs },
 		host,
 		sim: series(simPoints(ticks), startMs, endMs),
 		...(host.cpuSeconds !== undefined ? { cpuSeconds: host.cpuSeconds } : {}),
 		rssPeakBytes: host.rssPeakBytes,
+		...(processes.length > 0 ? { processes } : {}),
 	};
 }
 
@@ -541,7 +543,7 @@ function defaultSetInterval(fn: () => Promise<void>, ms: number): () => void {
 	return () => clearInterval(handle);
 }
 
-type SimReading = { cpuPct: number; rssBytes: number; cpuSec?: number };
+type SimReading = { cpuPct: number; rssBytes: number; cpuSec?: number; processes?: TickProcess[] };
 
 async function readAdb(exec: Exec, serial: string): Promise<SimReading | undefined> {
 	const r = await exec.run("adb", ["-s", serial, "shell", "top", "-n", "1", "-b"], { timeoutMs: 5_000 });
@@ -550,7 +552,13 @@ async function readAdb(exec: Exec, serial: string): Promise<SimReading | undefin
 }
 
 /** One tick from the host and sim readings; CPU seconds only when ps had a `time` column (Android sim: never). */
-function toTick(t: number, h: ReturnType<typeof total>, sim: SimReading, timed: boolean): Tick {
+function toTick(
+	t: number,
+	h: ReturnType<typeof total>,
+	sim: SimReading,
+	timed: boolean,
+	hostProcesses: readonly TickProcess[]
+): Tick {
 	return {
 		t,
 		hostCpuPct: h.cpuPct,
@@ -559,6 +567,7 @@ function toTick(t: number, h: ReturnType<typeof total>, sim: SimReading, timed: 
 		simRssBytes: sim.rssBytes,
 		...(timed ? { hostCpuSec: h.cpuSec, hostByGroup: h.byGroup } : {}),
 		...(timed && sim.cpuSec !== undefined ? { simCpuSec: sim.cpuSec } : {}),
+		...(timed ? { processes: [...hostProcesses, ...(sim.processes ?? [])] } : {}),
 	};
 }
 
@@ -590,6 +599,7 @@ export function startSampler(options: SamplerOptions): {
 	const trees: TreeReadings = new Map();
 	const exits: ExitCharge[] = [];
 	const rootGroups = new Map<number, HostGroup>();
+	const rootNames = new Map<number, string>();
 	const start = now();
 	let count = 0;
 	let lastAdb: SimReading = { cpuPct: 0, rssBytes: 0 };
@@ -610,7 +620,10 @@ export function startSampler(options: SamplerOptions): {
 		index: number
 	): Promise<SimReading> => {
 		if (options.simUdid === undefined) return { cpuPct: 0, rssBytes: 0 };
-		if (options.platform === "ios") return total(rows, simPids(rows, options.simUdid, host), deltas);
+		if (options.platform === "ios") {
+			const pids = simPids(rows, options.simUdid, host);
+			return { ...total(rows, pids, deltas), processes: processReadings(rows, pids, deltas, "sim") };
+		}
 		if (index % adbEvery === 0) lastAdb = (await readAdb(options.exec, options.simUdid)) ?? lastAdb;
 		return lastAdb;
 	};
@@ -636,10 +649,13 @@ export function startSampler(options: SamplerOptions): {
 		const labels = options.rootLabels?.() ?? new Map<number, HostGroup>();
 		for (const pid of live) {
 			const row = byPid.get(pid);
-			if (row !== undefined) rootGroups.set(pid, hostGroupOf(row, byPid, labels));
+			if (row === undefined) continue;
+			rootGroups.set(pid, hostGroupOf(row, byPid, labels));
+			rootNames.set(pid, labelOfCommand(row.command));
 		}
 		const h = total(rows, host, deltas, (r) => hostGroupOf(r, byPid, labels));
-		const out = toTick(t, h, await readSim(rows, host, deltas, index), timed);
+		const hostProcesses = processReadings(rows, host, deltas, "host");
+		const out = toTick(t, h, await readSim(rows, host, deltas, index), timed, hostProcesses);
 		ticks.push(out);
 		options.sink(out);
 	};
@@ -654,8 +670,10 @@ export function startSampler(options: SamplerOptions): {
 		trees.delete(pid);
 		const group = rootGroups.get(pid) ?? options.rootLabels?.().get(pid) ?? "other";
 		rootGroups.delete(pid);
+		const name = rootNames.get(pid);
+		rootNames.delete(pid);
 		const unseen = cpuSec - seen;
-		if (unseen > 0) exits.push({ t, cpuSec: unseen, group });
+		if (unseen > 0) exits.push({ t, cpuSec: unseen, group, ...(name !== undefined ? { name } : {}) });
 	};
 
 	return {

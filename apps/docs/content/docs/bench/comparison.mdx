@@ -1,13 +1,13 @@
 ---
 title: Framework comparison
-description: The same 8-test suite on one build and one device in warden, Maestro, Argent, agent-device, tester.army and Detox. Suite time, per-test medians, cold start, resources and footprint.
+description: The same 8-test suite on one build and one device in warden, Argent, agent-device and tester.army. Suite time, per-test medians, cold start, resources and footprint.
 icon: ChartBar
 ---
 
 {/* Data: content/docs/bench/data/<platform>-<date>.json. Regenerate with
     bun run bench summary .bench/<run> --out apps/docs/content/docs/bench/data/<platform>-<date>.json */}
 
-Every framework runs the same 8 parity tests against the same `.app` on the same leased device, one after the other, with no LLM involved. See [Benchmark e2e frameworks](/docs/guides/bench) to run it yourself.
+Every framework runs the same 8 parity tests against the same `.app`, with no LLM involved. Every run happens on EAS Workflows, one `macos-large` worker and one fresh simulator per framework (see [iOS run 2026-10-25 on EAS](/docs/bench/ios-2026-10-25) for how, and for every artifact). See [Benchmark e2e frameworks](/docs/bench/run) to run it yourself.
 
 <BenchProvider>
 
@@ -33,13 +33,21 @@ Warm median per canonical test. Compare these before the step numbers.
 
 Cold-start cost is the first run minus the warm median, plus the time spent in prepare: what installing a runner app or starting a daemon costs, not steady-state speed. Overhead is suite wall time minus the sum of test durations.
 
-A negative cold-start cost is not a duration. It means the cold first run finished faster than the warm median (run-to-run noise on a framework with little startup cost, for example warden on Android 2026-10-16: -1.97 s), so the table shows "none (rep 1 not slower, ...)" and leaves it out of the fastest-cell highlight.
+A negative cold-start cost is not a duration. It means the cold first run finished faster than the warm median (run-to-run noise on a framework with little startup cost), so the table shows "none (rep 1 not slower, ...)" and leaves it out of the fastest-cell highlight.
 
 <BenchStartup />
 
 ## Resources
 
+CPU is judged in CPU-seconds per rep: the CPU time the framework's own processes used during one timed run (warm median), from per-process deltas of `ps time`. The sampled `%cpu` is shown last as a secondary number. Memory is the framework's own processes, sampled every 500 ms.
+
 <BenchResources />
+
+### Where the CPU goes
+
+The same CPU-seconds split by process name, from the warm-median rep. A name keeps its colour in every bar, the six biggest names are shown and the rest are folded into other. The sampler ticks every 500 ms, so a process that lives between two ticks only shows up through the exit charge booked when its parent reaps it.
+
+<BenchProcesses />
 
 ## Residue and footprint
 
@@ -59,8 +67,9 @@ Residue is what is left on the machine after teardown. Footprint is how much sui
 - Zero LLM calls.
 - Same assertions per canonical test id.
 - Same retry helpers: dropped first tap, dropped deep link, system alerts.
+- The iOS "Open in …?" sheet is answered once per boot by the harness before every framework's prepare (iOS asks it for the first custom-scheme link after a boot, not again).
 - Fresh app launch per test, `retries=0`.
-- Frameworks run sequentially, with daemons stopped between them.
+- Frameworks run sequentially with daemons stopped between them, or, on EAS, each on its own worker and simulator.
 - `caffeinate -dims` held for the run, host otherwise idle, load average recorded.
 - Warm medians exclude rep 1.
 - Machine-readable reporters only.
@@ -71,10 +80,8 @@ Residue is what is left on the machine after teardown. Footprint is how much sui
 | Framework | Gap |
 |---|---|
 | warden | Copied from the example app, retries written with warden's own options: `tap({ until })`, a deep-link retry, `systemAlerts: "dismiss"`. The hand-rolled helpers it replaced ran the published headline numbers; the idiomatic run is reported beside them. |
-| Maestro | Retries are `retry:` blocks that rerun the tap and the wait together. Checkbox state is read from the accessibility text. Step durations include Maestro's own polling. |
-| Argent | Retries are nested `when:` guards capped at two retaps. A checkbox's checked state is not readable, so the remaining-count assertion covers the effect. |
-| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`. Needs a runner prepare step and a daemon. |
+| Argent | Retries are nested `when:` guards capped at two retaps. Flow selectors read only the app's view hierarchy, never SpringBoard, so the flow cannot answer the "Open in …?" sheet itself. A checkbox's checked state is not readable, so the remaining-count assertion covers the effect. |
+| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`, so the deep-link script cannot answer a sheet that may or may not show. Needs a runner prepare step and a daemon. |
 | tester.army | Has its own copy of the hand-rolled helpers warden used before. Runs with a private agent-device state dir and Node 24 on `PATH`. |
-| Detox | Best effort. Detox 20.51 supports React Native up to 0.84 and the app is on 0.86. Needs `applesimutils` on iOS and an instrumented build on Android. |
 
-Each run is a snapshot on one machine with few warm repetitions: read the ratios as a guide, not a verdict. The full Markdown report for each run is in `docs/bench/` in the repo.
+Each run is a snapshot on one machine class with few warm repetitions: read the ratios as a guide, not a verdict. The full Markdown report for each run is in `docs/bench/` in the repo; the EAS runs also publish every worker's artifact on their run page.

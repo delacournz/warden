@@ -15,7 +15,7 @@ describe("sample fixture", () => {
 		const text = readFileSync(join(import.meta.dir, "fixtures/bench-results.sample.json"), "utf8");
 		const parsed = benchRunSchema.parse(JSON.parse(text));
 		expect(parsed).toEqual(JSON.parse(JSON.stringify(run)));
-		expect(parsed.frameworks.map((f) => f.status)).toEqual(["ok", "ok", "ok", "ok", "failed", "unsupported"]);
+		expect(parsed.frameworks.map((f) => f.status)).toEqual(["ok", "ok", "ok", "failed"]);
 	});
 });
 
@@ -31,7 +31,18 @@ describe("renderMarkdown", () => {
 	});
 	test("failed and unsupported frameworks are explained, missing cells are dashes", () => {
 		expect(md).toContain("failed in phase `run`. parity breach");
-		expect(md).toContain("**detox:** unsupported.");
+		const unsupported = renderMarkdown(
+			{
+				...run,
+				frameworks: run.frameworks.map((f) =>
+					f.framework === "tester-army"
+						? { framework: "tester-army" as const, status: "unsupported" as const, reason: "RN too new" }
+						: f
+				),
+			},
+			manifest
+		);
+		expect(unsupported).toContain("**tester-army:** unsupported. RN too new");
 	});
 	test("untraced time: a section for frameworks whose trace reports it, none otherwise", () => {
 		expect(md).toContain("## Untraced time");

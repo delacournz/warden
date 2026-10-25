@@ -1,4 +1,9 @@
-import type { WardenConfig, WardenE2eSpec, WardenE2eSuite } from "@delacour/warden-core/builds/define-config";
+import type {
+	WardenConfig,
+	WardenE2eSpec,
+	WardenE2eSuite,
+	WardenVariant,
+} from "@delacour/warden-core/builds/define-config";
 
 /** The example app's bundle id (iOS bundle identifier and Android package). */
 const BUNDLE_ID = "nz.co.delacour.warden.example";
@@ -53,9 +58,22 @@ const AFFECTED = {
 		"todo-detail": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/todo/[id].tsx"] },
 		settings: { entries: [...SIGNED_IN, "src/app/(tabs)/settings.tsx"] },
 		devtools: { entries: ["src/app/welcome.tsx"] },
+		perf: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
 		gestures: { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
+
+/**
+ * The benchmark's pinned app (`bun run bench app build`): the project's own Release `EXPO_PUBLIC_E2E=1`
+ * build, keyed on native + JS (`build` and `fingerprint` are inherited). The root project sets
+ * `eas: false` because `eas.json` exists only for the `bench` profile: `warden e2e example` and
+ * `warden dev` must never call eas-cli. This variant is the only place a profile and workflow are
+ * named, and `bench app build --eas` is the only caller that asks for them. `trigger: false`: warden
+ * never starts the workflow itself. The workflow lives in `.eas/workflows/bench-build.yml`.
+ */
+const bench = {
+	eas: { profile: "bench", workflow: ".eas/workflows/bench-build.yml", trigger: false },
+} satisfies WardenVariant;
 
 /**
  * warden config for the example app: a Release simulator build (JS embedded, no Metro at test time,
@@ -68,6 +86,7 @@ const AFFECTED = {
  * ```bash
  * warden e2e example                 # specs this branch needs, 2 sims (--all: every spec)
  * warden e2e example-dev --all       # same specs on the dev client + warden's Metro
+ * warden e2e example --specs perf --perf  # profile every attempt too (reports under each attempt's perf/)
  * warden affected example            # which specs this branch needs
  * warden dev ios                     # dev variant: cached Debug dev client + Metro
  * ```
@@ -77,6 +96,7 @@ export default {
 		{
 			name: "example",
 			bundleId: { ios: BUNDLE_ID, android: BUNDLE_ID },
+			eas: false,
 			build: {
 				configuration: "Release",
 				ios: `${IOS_NATIVE} && EXPO_PUBLIC_E2E=1 bunx expo run:ios --configuration Release --no-install --no-bundler`,
@@ -91,9 +111,11 @@ export default {
 					build: { configuration: "Debug", ios: `${IOS_NATIVE} && bunx expo run:ios --no-install --no-bundler` },
 					fingerprint: { include: "native" },
 				},
+				bench,
 			},
 		},
 	],
+	perf: { budgets: { jankPct: 5, maxCommitMs: 100, p95CpuPct: 90, peakMemoryMb: 600 } },
 	e2e: {
 		example: {
 			count: 2,

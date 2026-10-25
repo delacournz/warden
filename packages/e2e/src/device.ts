@@ -37,6 +37,8 @@ import { settled, toE2eError, unwrap } from "./driver/unwrap";
 import type { E2eEnv } from "./env";
 import { E2eError } from "./errors";
 import { type Clock, type FixtureSession, systemClock } from "./fixture-session";
+import { parseBudgets } from "./perf/budgets";
+import { createDevicePerf, type DevicePerf, type PerfExec, spawnWarden } from "./perf/device-perf";
 import { screenshotPath } from "./runner/artifacts";
 import type { Locator } from "./screen/locator";
 import { renderHeader, renderSnapshot } from "./screen/render";
@@ -109,6 +111,11 @@ export type Device = {
 	 * `WARDEN_METRO_URL` (a release build). The first access starts attaching, so console capture begins there.
 	 */
 	readonly devtools: DeviceDevtools | undefined;
+	/**
+	 * Perf profiling of the app (`warden perf` over the CLI that started the run): `start`, `mark`, then `stop` for the
+	 * typed report. The report is copied under the attempt's `perf/`; budgets from `warden.config.ts` fail `stop`.
+	 */
+	readonly perf: DevicePerf;
 };
 
 export type DeviceDeps = {
@@ -116,6 +123,8 @@ export type DeviceDeps = {
 	driver: Driver;
 	env: E2eEnv;
 	clock?: Clock;
+	/** runs `warden …` for `device.perf`; default spawns `WARDEN_BIN` */
+	perfExec?: PerfExec;
 };
 
 function nextShotNumber(dir: string, issued: ReadonlyMap<string, number>): number {
@@ -172,7 +181,7 @@ function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): 
 	return target;
 }
 
-export function createDevice({ session, driver, env, clock = systemClock }: DeviceDeps): Device {
+export function createDevice({ session, driver, env, clock = systemClock, perfExec }: DeviceDeps): Device {
 	const issued = new Map<string, number>();
 	// the signal is read per call: the runner swaps it for every attempt
 	const signal = (): AbortSignal | undefined => session.signal;
@@ -217,10 +226,22 @@ export function createDevice({ session, driver, env, clock = systemClock }: Devi
 		return devtools;
 	};
 
+	const perf = createDevicePerf({
+		exec: perfExec ?? spawnWarden(env.wardenBin),
+		udid: env.udid,
+		budgets: parseBudgets(env.perfBudgets),
+		attemptDir: () => session.attemptDir,
+		addFile: (relative) => session.attempt?.files.add(relative),
+		...(env.wardenBin === undefined && perfExec === undefined
+			? { unavailable: "WARDEN_BIN is not set (run the spec with `warden e2e`)" }
+			: {}),
+	});
+
 	const device: Device = {
 		get devtools() {
 			return lazyDevtools();
 		},
+		perf,
 
 		async alert(action) {
 			// the bridge also sees what the app itself shows (Keychain "Save Password?"), so it answers "none" alone

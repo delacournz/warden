@@ -27,6 +27,7 @@ describe("embedded skill folder", () => {
 		expect([...SKILL_PATHS]).toEqual([
 			"SKILL.md",
 			"references/ui.md",
+			"references/perf.md",
 			"references/specs.md",
 			"references/authoring.md",
 			"references/suites.md",

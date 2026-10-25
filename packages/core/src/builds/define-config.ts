@@ -130,7 +130,7 @@ export interface WardenVariant {
 	/** Replaces {@link WardenProject.fingerprint}. */
 	fingerprint?: WardenFingerprint | undefined;
 	/** Replaces {@link WardenProject.eas}. */
-	eas?: WardenEas | undefined;
+	eas?: WardenEas | false | undefined;
 	/** Replaces {@link WardenProject.build}. */
 	build?: WardenBuild | undefined;
 }
@@ -149,8 +149,11 @@ export interface WardenProject {
 	bundleId: WardenPerPlatform;
 	/** How the build cache key is computed. */
 	fingerprint?: WardenFingerprint | undefined;
-	/** EAS build lookup. Without it, EAS is used only when the project has an `eas.json`. */
-	eas?: WardenEas | undefined;
+	/**
+	 * EAS build lookup. Without it, EAS is used only when the project has an `eas.json`.
+	 * `false`: never consult eas-cli, even with an `eas.json` present.
+	 */
+	eas?: WardenEas | false | undefined;
 	/**
 	 * Local build command per platform, used as the last resort.
 	 *
@@ -345,6 +348,26 @@ export interface WardenE2eMetro {
 	readyTimeout?: string | undefined;
 }
 
+/** Ceilings `device.perf.stop()` holds a perf report to; a breach fails the test with `PERF_BUDGET`. All lower-is-better. */
+export interface WardenPerfBudgets {
+	/** Cold start, ms. */
+	startupColdMs?: number | undefined;
+	/** Share of janky frames, percent. */
+	jankPct?: number | undefined;
+	/** The slowest React commit, ms. */
+	maxCommitMs?: number | undefined;
+	/** 95th percentile app CPU, percent. */
+	p95CpuPct?: number | undefined;
+	/** Peak memory (PSS on Android, RSS on iOS), MB. */
+	peakMemoryMb?: number | undefined;
+}
+
+/** `perf` (top level, or `e2e.<suite>.perf`): profiling settings for specs that use `device.perf`. */
+export interface WardenPerfConfig {
+	/** Budgets; a metric the report has no number for (its capture did not run) cannot breach. */
+	budgets?: WardenPerfBudgets | undefined;
+}
+
 /** `e2e.<suite>.spec`: how `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`). */
 export interface WardenE2eSpec {
 	/** The app under test. Default: the suite project's `bundleId` for the platform. */
@@ -401,6 +424,8 @@ export interface WardenE2eSuite {
 	 * Needed when the config has several projects and warden runs from the repo root.
 	 */
 	project?: string | undefined;
+	/** Perf budgets for this suite; each key replaces the top-level `perf.budgets` one. */
+	perf?: WardenPerfConfig | undefined;
 	/** Directory of specs: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	specsDir: string;
 	/** How the specs run: the app under test, its launch arguments and the timeouts. */
@@ -600,6 +625,8 @@ export interface WardenConfig {
 	 * those that don't set `headless`). `warden dev` ignores it. `WARDEN_HEADLESS=1` is the fallback below it.
 	 */
 	headless?: boolean | undefined;
+	/** Perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key). */
+	perf?: WardenPerfConfig | undefined;
 	/** Android emulator settings. */
 	android?: WardenAndroidSettings | undefined;
 }

@@ -50,6 +50,9 @@ final class ErrorMappingTests: XCTestCase {
     XCTAssertEqual(WireError.from(AXBridgeError.applicationNotResponding(pid: nil)).code, .appNotResponding)
     XCTAssertTrue(WireError.from(AXBridgeError.applicationNotResponding(pid: nil)).retryable)
     XCTAssertEqual(WireError.from(AXBridgeError.assertionFailed("x")).code, .noElement)
+    let silent = WireError.from(AXBridgeError.guestNotAnswering(after: 10))
+    XCTAssertEqual(silent.code, .timeout)
+    XCTAssertEqual(silent.detail?["afterSeconds"], .double(10))
   }
 
   func testUIAutomationErrors() {

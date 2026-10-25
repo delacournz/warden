@@ -2,13 +2,13 @@ import type { Lease } from "@delacour/warden-core/types";
 import { ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
+import { releaseAfter } from "../perf/release-after";
 import type { UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { stopHelper } from "./helper";
 import { uiError } from "./output";
 import { runUi, type UiOptionValues } from "./run";
 import { readState } from "./state";
-import { stopHelperAfter } from "./stop-helper-after";
 
 export type CloseOptionValues = UiOptionValues & {
 	/** `--app` alone = true (the app `open` launched), `--app com.x.y` = that bundle id */
@@ -29,7 +29,7 @@ async function endHelper(
 	release: boolean
 ): Promise<{ stopped: boolean; how: string; warning?: string }> {
 	if (!release) return stopHelper(ctx, device.udid);
-	await releaseDevices(ctx, [device.lease.id], { after: stopHelperAfter(ctx) });
+	await releaseDevices(ctx, [device.lease.id], { after: releaseAfter(ctx, { helper: true }) });
 	return { stopped: true, how: "release" };
 }
 

@@ -1,0 +1,9 @@
+  PID  PPID    RSS  %CPU       TIME STARTED                      COMMAND
+    1     0  12816   1.5    1:00.00 Thu Oct  1 08:00:00 2026     /sbin/launchd
+  100     1 204800  10.0    0:10.00 Fri Oct 16 12:07:30 2026     /Users/x/.bun/bin/bun test --preload /repo/preload.ts suites/warden
+  102   100  51200   5.0    0:02.00 Fri Oct 16 12:07:32 2026     /Users/x/bin/warden-simd --udid AAAA-BBBB
+  103   102  20480   1.0    0:01.00 Fri Oct 16 12:07:33 2026     /Applications/Xcode.app/Contents/Developer/Library/PrivateFrameworks/CoreSimulator.framework/Resources/SimulatorFrameworkBridge-iOS serve --udid AAAA-BBBB
+  200     1  40960   3.0    0:20.00 Fri Oct 16 12:00:00 2026     /Applications/Xcode.app/launchd_sim /Users/x/Library/Developer/CoreSimulator/Devices/AAAA-BBBB/data/var/run/launchd_bootstrap.plist
+  201   200  81920   7.5    2:00.00 Fri Oct 16 12:00:01 2026     /Users/x/Library/Developer/CoreSimulator/Volumes/iOS/RuntimeRoot/usr/libexec/backboardd
+  202   200  90000   6.0    1:00.00 Fri Oct 16 12:00:02 2026     /Users/x/Library/Developer/CoreSimulator/Volumes/iOS/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard
+  203   200  30720   2.0    0:30.00 Fri Oct 16 12:07:20 2026     /Users/x/Library/Developer/CoreSimulator/Devices/AAAA-BBBB/data/Containers/Bundle/Application/A/Example.app/Example

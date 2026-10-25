@@ -40,7 +40,7 @@ describe("barChart", () => {
 				label: "A",
 				bars: [
 					{ series: "warden", value: 100, label: "100", whiskerTo: 120, marker: 150, best: true },
-					{ series: "maestro", value: 200, label: "200" },
+					{ series: "argent", value: 200, label: "200" },
 				],
 			},
 			{ label: "empty", bars: [] },
@@ -67,7 +67,7 @@ describe("barChart", () => {
 						label: "A",
 						bars: [
 							{ series: "warden", value: 100, label: "100", whiskerTo: 120, marker: 150, best: true },
-							{ series: "maestro", value: 200, label: "200" },
+							{ series: "argent", value: 200, label: "200" },
 						],
 					},
 					{ label: "empty", bars: [] },

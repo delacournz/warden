@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
+import { type PsRow, parsePs, withDescendants } from "@delacour/warden-perf/metrics/ps";
 import type { ResiduePatterns } from "../adapters/adapter.types";
 import type { Platform, Residue } from "../results/schema";
 import type { Exec } from "./exec";
-import { type PsRow, parsePs, withDescendants } from "./sampler";
 
 export type Snapshot = { dirKb: Record<string, number> };
 
@@ -70,6 +70,33 @@ export function ownerFilter(rows: readonly PsRow[], owner: Owner): PsRow[] {
 }
 
 /**
+ * Executables the bench never kills, whatever their arguments say. Helpers are binaries or interpreter
+ * scripts, never shells: a developer's `zsh -c '... warden-simd <udid> ...'` watcher mentions a helper and
+ * the udid, so it is owned and would match, and killing it takes the developer's shell with it. `env`,
+ * `nohup` and `caffeinate` only wrap a command (usually a shell), so they get the same protection.
+ */
+export const NEVER_KILLED_EXECUTABLES: ReadonlySet<string> = new Set([
+	"sh",
+	"bash",
+	"zsh",
+	"fish",
+	"dash",
+	"ksh",
+	"tcsh",
+	"csh",
+	"env",
+	"nohup",
+	"caffeinate",
+]);
+
+/** Basename of the first token of a ps command, without a login-shell `-` prefix (`-zsh` is `zsh`). */
+function executableName(command: string): string {
+	const first = command.trim().split(/\s+/)[0] ?? "";
+	const base = first.slice(first.lastIndexOf("/") + 1);
+	return base.startsWith("-") ? base.slice(1) : base;
+}
+
+/**
  * Owned processes matching any pattern as `pid command`, never including this process or its ancestors
  * (the bench's own command line can mention a framework name). Patterns only filter inside the owned set.
  */
@@ -90,7 +117,12 @@ export async function listMatchingProcesses(
 		pid = byPid.get(pid)?.ppid;
 	}
 	return ownerFilter(rows, owner)
-		.filter((row) => !protectedPids.has(row.pid) && patterns.some((p) => p.test(row.command)))
+		.filter(
+			(row) =>
+				!protectedPids.has(row.pid) &&
+				!NEVER_KILLED_EXECUTABLES.has(executableName(row.command)) &&
+				patterns.some((p) => p.test(row.command))
+		)
 		.map((row) => ({ pid: row.pid, line: `${row.pid} ${row.command}` }));
 }
 

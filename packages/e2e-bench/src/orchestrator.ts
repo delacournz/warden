@@ -1,11 +1,20 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { BenchAdapter, FrameworkId, RunContext } from "./adapters/adapter.types";
-import { DETOX_BEST_EFFORT } from "./adapters/detox";
 import { dismissAnr, hideErrorDialogs } from "./harness/anr";
-import { appFingerprint, type EnsuredApp, ensureApp, terminateApp } from "./harness/app";
+import { installApp, terminateApp } from "./harness/app";
+import {
+	type BenchApp,
+	benchAppDir,
+	ensureBenchApp,
+	importBenchApp,
+	readBenchApp,
+	verifyBenchApp,
+} from "./harness/bench-app";
+import { BUNDLE_ID } from "./harness/bundle";
+import { primeDeepLink } from "./harness/deep-link";
 import { type ClaimedDevice, claimDevice, deviceInfo, heartbeatDevice, releaseDevice } from "./harness/device";
 import type { Child, Exec, ExecOptions } from "./harness/exec";
 import { hostInfo } from "./harness/host";
@@ -40,8 +49,6 @@ import {
 import { frameworkStats, withRatios } from "./results/stats";
 import { writeBenchResults, writeFileAtomic } from "./results/write";
 
-export const BUNDLE_ID = "nz.co.delacour.warden.example";
-
 export type BenchOptions = {
 	platform: Platform;
 	frameworks: readonly FrameworkId[];
@@ -55,6 +62,8 @@ export type BenchOptions = {
 	force: boolean;
 	keepDrivers: boolean;
 	nodeBin?: string;
+	/** a pinned bench app dir (with `manifest.json`) or a bare `.app` / `.apk` to pin; default: the pinned app */
+	app?: string;
 };
 
 export type BenchDeps = {
@@ -88,7 +97,7 @@ type Session = {
 	deps: BenchDeps;
 	runDir: string;
 	device: ClaimedDevice;
-	app: EnsuredApp;
+	app: BenchApp;
 	/** exec that records every child pid for the sampler */
 	exec: Exec;
 	pids: Set<number>;
@@ -285,10 +294,13 @@ async function doctorPhase(fc: FrameworkCtx): Promise<DoctorOutcome> {
 	const d = await adapter.doctor(ctx);
 	if (d.ok) return { kind: "ok", version: d.version };
 	const reason = `${d.reason} (${d.installHint})`;
-	const result: FrameworkResult =
-		adapter.id === "detox" && DETOX_BEST_EFFORT
-			? { framework: adapter.id, status: "unsupported", reason }
-			: { framework: adapter.id, status: "failed", version: "unknown", phase: "doctor", error: reason };
+	const result: FrameworkResult = {
+		framework: adapter.id,
+		status: "failed",
+		version: "unknown",
+		phase: "doctor",
+		error: reason,
+	};
 	return { kind: "stop", result };
 }
 
@@ -350,6 +362,15 @@ async function runFramework(
 			phase: "prepare",
 			error: `isolation: ${isolated.error}`,
 		};
+	const primed = await primeDeepLink({
+		exec: deps.exec,
+		platform: opts.platform,
+		udid: device.udid,
+		bundleId: BUNDLE_ID,
+		repoRoot: deps.repoRoot,
+		cliPath: deps.cliPath,
+	});
+	if (opts.platform === "ios") s.log(`deep link primed for ${adapter.id}: ${primed.detail}`);
 	return measure(fc, doctor.version);
 }
 
@@ -516,10 +537,55 @@ type Prepared = {
 	host: Host;
 	device: ClaimedDevice;
 	info: { name?: string; runtime?: string };
-	app: EnsuredApp;
-	sha256: string;
-	bytes: number;
+	app: BenchApp;
 };
+
+/** `--app`: a pinned dir is used as is, a bare `.app` / `.apk` is pinned first. */
+async function appFromPath(
+	opts: BenchOptions,
+	deps: BenchDeps,
+	path: string
+): AsyncResult<BenchApp & { reused: boolean }> {
+	const dir = resolve(path);
+	if (existsSync(join(dir, "manifest.json"))) {
+		const read = readBenchApp(dir);
+		if (!read.success) return read;
+		return read.data.manifest.platform === opts.platform
+			? ok({ ...read.data, reused: true })
+			: err(`bench app at ${dir} is for ${read.data.manifest.platform}, not ${opts.platform}`);
+	}
+	const imported = await importBenchApp({
+		path: dir,
+		platform: opts.platform,
+		dir: benchAppDir(deps.repoRoot, opts.platform),
+		now: deps.now,
+	});
+	return imported.success ? ok({ ...imported.data, reused: false }) : imported;
+}
+
+/** The pinned bench app, verified; built or pinned first when missing or passed with `--app`. */
+async function resolveApp(opts: BenchOptions, deps: BenchDeps): AsyncResult<BenchApp> {
+	const found =
+		opts.app !== undefined
+			? await appFromPath(opts, deps, opts.app)
+			: await ensureBenchApp(deps.exec, {
+					platform: opts.platform,
+					repoRoot: deps.repoRoot,
+					cliPath: deps.cliPath,
+					force: false,
+					eas: false,
+					now: deps.now,
+					log: deps.log,
+				});
+	if (!found.success) return found;
+	const verified = verifyBenchApp(found.data);
+	if (!verified.success) return verified;
+	const { manifest, appPath, reused } = found.data;
+	deps.log(
+		`app: pinned ${appPath} (hash ${manifest.hash}, source ${manifest.source}, built ${manifest.builtAt}, ${reused ? "reused" : "built now"})`
+	);
+	return ok({ manifest, appPath });
+}
 
 /** Host, device, app: everything before the first framework. Errors abort the run. */
 async function prepareRun(
@@ -533,6 +599,8 @@ async function prepareRun(
 		return err(
 			`host load ${host.data.loadAvgAtStart.toFixed(2)} exceeds ${host.data.cores} cores; wait for idle or pass --force`
 		);
+	const app = await resolveApp(opts, deps);
+	if (!app.success) return app;
 	const device = await claimDevice(deps.exec, {
 		platform: opts.platform,
 		cliPath: deps.cliPath,
@@ -550,24 +618,9 @@ async function prepareRun(
 		if (!scales.success) deps.log(`animation scales: ${scales.error}`);
 	}
 	const info = await deviceInfo(deps.exec, opts.platform, device.data.udid);
-	const app = await ensureApp(deps.exec, {
-		platform: opts.platform,
-		cliPath: deps.cliPath,
-		udid: device.data.udid,
-		repoRoot: deps.repoRoot,
-		log: deps.log,
-	});
-	if (!app.success) return app;
-	const print = appFingerprint(app.data.appPath);
-	if (!print.success) return err(`app fingerprint: ${print.error}`);
-	return ok({
-		host: host.data,
-		device: device.data,
-		info: info.success ? info.data : {},
-		app: app.data,
-		sha256: print.data.sha256,
-		bytes: print.data.bytes,
-	});
+	const installed = await installApp(deps.exec, opts.platform, device.data.udid, app.data.appPath);
+	if (!installed.success) return err(`install app: ${installed.error}`);
+	return ok({ host: host.data, device: device.data, info: info.success ? info.data : {}, app: app.data });
 }
 
 function skeleton(opts: BenchOptions, deps: BenchDeps, runId: string, p: Prepared, caffeinated: boolean): BenchRun {
@@ -583,7 +636,13 @@ function skeleton(opts: BenchOptions, deps: BenchDeps, runId: string, p: Prepare
 			...(p.info.runtime !== undefined ? { runtime: p.info.runtime } : {}),
 			...(p.device.leaseId !== undefined ? { leaseId: p.device.leaseId } : {}),
 		},
-		app: { bundleId: BUNDLE_ID, appPath: p.app.appPath, hash: p.app.hash, sha256: p.sha256, bytes: p.bytes },
+		app: {
+			bundleId: BUNDLE_ID,
+			appPath: p.app.appPath,
+			hash: p.app.manifest.hash,
+			sha256: p.app.manifest.sha256,
+			bytes: p.app.manifest.bytes,
+		},
 		options: {
 			runs: opts.runs,
 			retries: opts.retries,
@@ -622,7 +681,7 @@ async function runAll(s: Session, run: BenchRun): Promise<boolean> {
 }
 
 /**
- * The whole benchmark: host + load check, caffeinate, claim, app ensure, then every framework in order
+ * The whole benchmark: host + load check, caffeinate, claim, pinned app install, then every framework in order
  * with results written after each one. Always releases the lease it claimed (exactly once) and stops
  * caffeinate, including after a signal or an error.
  */

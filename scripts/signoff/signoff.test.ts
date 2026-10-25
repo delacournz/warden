@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	type CheckOutcome,
@@ -49,7 +50,12 @@ describe("planChecks", () => {
 	});
 
 	test("a TypeScript change outside native/ does not run the native check", () => {
-		expect(applicable(["packages/e2e/src/driver.ts", "apps/cli/src/cli.ts"])).toEqual([...ALWAYS_CONTEXTS]);
+		const plan = planChecks(["packages/e2e/src/driver.ts", "apps/cli/src/cli.ts"]);
+		expect(plan.find((entry) => entry.check.context === "native")?.applicable).toBe(false);
+	});
+
+	test("unrelated source runs only the always-on checks", () => {
+		expect(applicable(["apps/cli/src/cli.ts", "packages/core/src/store.ts"])).toEqual([...ALWAYS_CONTEXTS]);
 	});
 
 	test("a markdown file alongside real source does not mask the real source", () => {
@@ -61,6 +67,78 @@ describe("planChecks", () => {
 		expect(native?.applicable).toBe(false);
 		expect(native?.reason).toContain("packages/e2e/native/**");
 		expect(native?.filtered).toBe(false);
+	});
+});
+
+describe("cpu-guard check", () => {
+	test("runs for packages/e2e and agent-ui changes only", () => {
+		expect(applicable(["packages/e2e/src/driver.ts"])).toContain("cpu-guard");
+		expect(applicable(["apps/cli/src/agent-ui/act.ts"])).toContain("cpu-guard");
+		expect(applicable(["apps/cli/src/cli.ts"])).not.toContain("cpu-guard");
+		expect(applicable(["packages/e2e-bench/src/cli.ts"])).not.toContain("cpu-guard");
+	});
+
+	test("a markdown-only change under packages/e2e does not run it", () => {
+		expect(applicable(["packages/e2e/AGENTS.md"])).not.toContain("cpu-guard");
+	});
+
+	test("is path-gated, never required and not mirrored in ci.yml", async () => {
+		const check = SIGNOFF_CHECKS.find((c) => c.context === "cpu-guard");
+		expect(check?.always).toBe(false);
+		expect(check?.mirroredInCi).toBe(false);
+		expect(REQUIRED_CONTEXTS).not.toContain(`${UMBRELLA_CONTEXT}/cpu-guard`);
+		expect(JSON.stringify(await ciWorkflow())).not.toContain("cpu-guard");
+	});
+
+	const guardArgv = SIGNOFF_CHECKS.find((c) => c.context === "cpu-guard")?.run[0]?.argv ?? [];
+
+	async function runGuard(env: Record<string, string>): Promise<{ code: number; out: string }> {
+		const child = Bun.spawn([...guardArgv], {
+			cwd: ROOT,
+			env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ...env },
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const [out, err, code] = await Promise.all([
+			new Response(child.stdout).text(),
+			new Response(child.stderr).text(),
+			child.exited,
+		]);
+		return { code, out: out + err };
+	}
+
+	/** A baseline-shaped file standing in for a run dir (the guard accepts either side). */
+	function candidate(cpu: number): string {
+		const dir = mkdtempSync(join(tmpdir(), "cpu-guard-"));
+		const file = join(dir, "candidate.json");
+		const frameworks = [{ framework: "warden", cpuSecondsPerRep: cpu, rssPeakBytes: 184_721_408 }];
+		writeFileSync(
+			file,
+			JSON.stringify({ baselineVersion: 1, id: "cand", startedAt: "2026-10-26T00:00:00Z", platform: "ios", frameworks })
+		);
+		return file;
+	}
+
+	test("passes with a skip line when the run dir is unset or absent", async () => {
+		const envs: Record<string, string>[] = [
+			{},
+			{ WARDEN_BENCH_RUN_DIR: "" },
+			{ WARDEN_BENCH_RUN_DIR: "/nonexistent/bench-run" },
+		];
+		for (const env of envs) {
+			const result = await runGuard(env);
+			expect(result.code).toBe(0);
+			expect(result.out).toContain("skipped: no run dir");
+		}
+	});
+
+	test("compares the run dir with the baseline when it exists", async () => {
+		const ok = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(3.9) });
+		expect(ok.code).toBe(0);
+		expect(ok.out).toContain("ok: warden cpu-s/rep 3.79 → 3.90");
+		const slow = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(12) });
+		expect(slow.code).toBe(1);
+		expect(slow.out).toContain("regression: warden cpu-s/rep 3.79 → 12.00 (+216.6 %) exceeds 10 %");
 	});
 });
 
@@ -404,7 +482,9 @@ describe("drift guard", () => {
 			.flatMap((job) => job.steps ?? [])
 			.map((step) => step.run ?? "")
 			.join("\n");
-		for (const check of SIGNOFF_CHECKS) expect(scripts).toContain(`post ${UMBRELLA_CONTEXT}/${check.context}`);
+		for (const check of SIGNOFF_CHECKS.filter((c) => c.mirroredInCi !== false)) {
+			expect(scripts).toContain(`post ${UMBRELLA_CONTEXT}/${check.context}`);
+		}
 		expect(scripts).toMatch(new RegExp(`^post ${UMBRELLA_CONTEXT}$`, "m"));
 	});
 

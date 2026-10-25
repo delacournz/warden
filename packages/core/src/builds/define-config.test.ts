@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { z } from "zod";
-import type { e2eSpecEntrySchema, e2eSuiteSchema } from "../affected/affected.schema";
+import type { e2eSpecEntrySchema, e2eSuiteSchema, perfConfigSchema } from "../affected/affected.schema";
 import type { batchPresetSchema } from "../batch/preset.schema";
 import type { appOptionSchema } from "./app-option.schema";
 import type { projectConfigSchema, wardenConfigSchema } from "./config.schema";
@@ -11,6 +11,7 @@ import {
 	type WardenConfig,
 	type WardenE2eSpecEntry,
 	type WardenE2eSuite,
+	type WardenPerfConfig,
 	type WardenProject,
 } from "./define-config";
 
@@ -22,6 +23,7 @@ export type Conformance = [
 	Assert<Equals<WardenProject, z.input<typeof projectConfigSchema>>>,
 	Assert<Equals<WardenBatchPreset, z.input<typeof batchPresetSchema>>>,
 	Assert<Equals<WardenE2eSpecEntry, z.input<typeof e2eSpecEntrySchema>>>,
+	Assert<Equals<WardenPerfConfig, z.input<typeof perfConfigSchema>>>,
 	Assert<Equals<WardenE2eSuite, z.input<typeof e2eSuiteSchema>>>,
 	Assert<Equals<WardenConfig, z.input<typeof wardenConfigSchema>>>,
 ];

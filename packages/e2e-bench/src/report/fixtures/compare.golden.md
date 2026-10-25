@@ -8,8 +8,6 @@
 | Framework | A | B | Delta | Delta % |
 | --- | --- | --- | --- | --- |
 | warden | 61.41 s | 67.55 s | +6.14 s | +10.0% |
-| maestro | 96.76 s | 106.43 s | +9.68 s | +10.0% |
-| argent | 112.67 s | 123.94 s | +11.27 s | +10.0% |
 | agent-device | 133.78 s | 147.16 s | +13.38 s | +10.0% |
 | tester-army | — | — | — | — |
 
@@ -25,32 +23,6 @@
 | open a todo, mark it done, then delete it | 9.32 s | 10.25 s | +932 ms | +10.0% |
 | deep link opens a todo by id | 6.03 s | 6.64 s | +603 ms | +10.0% |
 | settings shows the account, toggles switches and signs out | 5.20 s | 5.72 s | +520 ms | +10.0% |
-
-## Per-test: maestro
-
-| Test | A | B | Delta | Delta % |
-| --- | --- | --- | --- | --- |
-| onboarding steps through to sign-in | 9.21 s | 10.13 s | +921 ms | +10.0% |
-| invalid email and short password show field errors | 7.64 s | 8.40 s | +764 ms | +10.0% |
-| a locked account shows the form alert | 6.45 s | 7.09 s | +645 ms | +10.0% |
-| valid credentials land on todos | 10.58 s | 11.64 s | +1.06 s | +10.0% |
-| add, complete and filter todos | 12.64 s | 13.91 s | +1.26 s | +10.0% |
-| open a todo, mark it done, then delete it | 13.72 s | 15.09 s | +1.37 s | +10.0% |
-| deep link opens a todo by id | 9.15 s | 10.06 s | +915 ms | +10.0% |
-| settings shows the account, toggles switches and signs out | 7.72 s | 8.49 s | +772 ms | +10.0% |
-
-## Per-test: argent
-
-| Test | A | B | Delta | Delta % |
-| --- | --- | --- | --- | --- |
-| onboarding steps through to sign-in | 10.98 s | 12.08 s | +1.10 s | +10.0% |
-| invalid email and short password show field errors | 9.15 s | 10.06 s | +915 ms | +10.0% |
-| a locked account shows the form alert | 7.69 s | 8.46 s | +769 ms | +10.0% |
-| valid credentials land on todos | 12.55 s | 13.80 s | +1.25 s | +10.0% |
-| add, complete and filter todos | 15.36 s | 16.89 s | +1.54 s | +10.0% |
-| open a todo, mark it done, then delete it | 16.69 s | 18.36 s | +1.67 s | +10.0% |
-| deep link opens a todo by id | 10.92 s | 12.01 s | +1.09 s | +10.0% |
-| settings shows the account, toggles switches and signs out | 9.26 s | 10.19 s | +926 ms | +10.0% |
 
 ## Per-test: agent-device
 
@@ -71,7 +43,7 @@
 
 ## Only in A
 
-- detox
+- argent
 
 ## Only in B
 

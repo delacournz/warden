@@ -28,6 +28,7 @@ Open the reference file for details before acting; this file only routes.
 | create / write / record an e2e test for a journey ("an e2e test for onboarding and sign in") | [references/authoring.md](references/authoring.md) |
 | write or fix a `*.e2e.ts` spec, helpers, testIDs, read failure artifacts | [references/specs.md](references/specs.md) |
 | run specs (`warden e2e`, `affected`), suite config, batch dir, `run`/`batch` scripts | [references/suites.md](references/suites.md) |
+| profile an app: CPU, memory, frames, startup, JS, React, native; before/after diffs | [references/perf.md](references/perf.md) |
 | an error code, a dropped tap, a sheet, a stale helper, Metro refused | [references/troubleshooting.md](references/troubleshooting.md) |
 
 ## Quick reference

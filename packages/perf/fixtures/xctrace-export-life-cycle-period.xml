@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<trace-query-result>
+<node xpath='//trace-toc[1]/run[1]/data[1]/table[1]'>
+<schema name="life-cycle-period">
+<col><mnemonic>start</mnemonic><name>Start</name><engineering-type>start-time</engineering-type></col>
+<col><mnemonic>duration</mnemonic><name>Duration</name><engineering-type>duration</engineering-type></col>
+<col><mnemonic>period-name</mnemonic><name>Period</name><engineering-type>string</engineering-type></col>
+</schema>
+<row><start-time id="1" fmt="00:00.000.000">0</start-time><duration id="2" fmt="1.62 s">1620000000</duration><string id="3" fmt="Total App Launch">Total App Launch</string></row>
+<row><start-time ref="1"/><duration id="4" fmt="410.00 ms">410000000</duration><string id="5" fmt="Process Creation">Process Creation</string></row>
+<row><start-time id="6" fmt="00:00.410.000">410000000</start-time><duration id="7" fmt="1.21 s">1210000000</duration><string id="8" fmt="Initial Frame Rendering">Initial Frame Rendering</string></row>
+</node>
+</trace-query-result>

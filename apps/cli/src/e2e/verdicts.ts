@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { SelectedSpec } from "@delacour/warden-core/affected/select";
 import type { BatchSummary, JobResult } from "@delacour/warden-core/batch/schedule";
 import { readResults, type TestResult, type TestStatus } from "@delacour/warden-e2e/runner/results";
@@ -15,6 +16,10 @@ export type TestVerdict = {
 	error?: string;
 	/** the attempt dir: `failure.png`, `screen-at-failure.txt`, `trace.jsonl`… */
 	artifacts?: string;
+	/** `device.perf` / `--perf` wrote a report: `<artifacts>/perf` (`report.json`, `report.md`, `session.json`) */
+	perf?: string;
+	/** the test failed because a perf metric was over its budget (`error` lists metric, value, budget and the report) */
+	kind?: "perf_budget";
 };
 
 /** One spec's outcome in `e2e-report.json`. */
@@ -86,12 +91,17 @@ function lastFailure(
 	};
 }
 
+export const PERF_ARTIFACT_DIR = "perf";
+const PERF_REPORT_FILE = `${PERF_ARTIFACT_DIR}/report.json`;
+
 const testVerdict = (t: TestResult): TestVerdict => ({
 	title: t.title,
 	status: t.status,
 	durationMs: t.durationMs,
 	...(t.error ? { error: t.error.message } : {}),
+	...(t.error?.code === "PERF_BUDGET" ? { kind: "perf_budget" as const } : {}),
 	...(t.artifacts ? { artifacts: t.artifacts.dir } : {}),
+	...(t.artifacts?.files.includes(PERF_REPORT_FILE) ? { perf: join(t.artifacts.dir, PERF_ARTIFACT_DIR) } : {}),
 });
 
 /** Reads and parses each `results.jsonl` once (several specs of a shard share one). */

@@ -1,0 +1,92 @@
+---
+title: How warden e2e works
+description: A spec file, a suite in warden.config.ts and one command, warden e2e, that leases devices, installs the build and runs the specs in parallel.
+icon: FlaskConical
+---
+
+An e2e test in warden is a `*.e2e.ts` file; `warden e2e <suite>` runs a suite of them across leased simulators or emulators and writes a report. Read this page first, then follow the links for each piece.
+
+```bash
+warden e2e example-dev --all
+```
+
+## The pieces
+
+| Piece | What it is | Where it lives |
+|---|---|---|
+| Spec | One file of tests for a user flow: `test("…", async ({ app, device, screen }) => { … })`, written with `@delacour/warden-e2e` | `e2e/*.e2e.ts` ([Write specs](/docs/e2e/specs)) |
+| Suite | A named set of specs plus how to run them: devices, build, Metro, timeouts | `e2e.<name>` in `warden.config.ts` ([Suites](/docs/e2e/suites)) |
+| Run | `warden e2e <suite>`: leases devices, installs, starts Metro, runs, reports | one command |
+| Evidence | `results.jsonl` per worker, `e2e-report.json` per run, artifacts per failed test | the batch dir ([Debugging](/docs/e2e/debugging)) |
+
+A spec's id is its path under `specsDir` without the extension (`e2e/todos.e2e.ts` is `todos`).
+
+## What one run does
+
+<Steps>
+<Step>
+### Pick the specs
+
+`--all` runs every spec, `--specs a,b` exactly those, otherwise warden selects the specs the git diff needs ([Affected](/docs/e2e/affected)). Nothing selected exits 0 without claiming a device.
+</Step>
+<Step>
+### Lease N devices
+
+`--count N` (or the suite's `count`) claims N simulators or emulators from the machine-wide lease registry, queueing up to 30 minutes when none is free. warden never touches a device it did not create or lease ([Leases](/docs/devices/leases)).
+</Step>
+<Step>
+### Install the build
+
+With `app: true` (or `--app`), each device gets the project's app: already installed, else cached, else EAS, else a local build, keyed on the Expo fingerprint ([App builds](/docs/devices/app-builds)).
+</Step>
+<Step>
+### Start Metro (dev-client suites)
+
+With `metro: {}` warden leases a port, runs `expo start --dev-client` on it, and calls it ready only once that port is proven to serve this checkout. Every `app.open()` then launches against that Metro.
+</Step>
+<Step>
+### Run one `bun test` per device
+
+Each device gets one `bun test --preload @delacour/warden-e2e/preload` process over its share of the specs (sharded round-robin by spec id). Start-up, preload and driver connect are paid once per device. `isolate: "spec"` runs one process per spec instead.
+</Step>
+<Step>
+### Report and release
+
+Every test appends a line to `results.jsonl`; warden folds them into `e2e-report.json`, prints the failed specs, and releases the leases (Ctrl-C included). Exit 0 if every required spec passed, 1 if one failed, 130 if interrupted.
+</Step>
+</Steps>
+
+```text
+warden e2e example-dev --all
+  │
+  ├─ select specs ─────────────► 7 specs
+  ├─ lease devices ────────────► sim A, sim B
+  ├─ install build, start Metro (one port, leased)
+  │
+  ├─ sim A: bun test  specs 1, 3, 5, 7 ──► results.jsonl
+  ├─ sim B: bun test  specs 2, 4, 6    ──► results.jsonl
+  │
+  └─ e2e-report.json, release leases
+```
+
+Wall time is the slowest device's share, not the sum. A parallel run of 37 offline specs across 5 leased simulators took 3m25s against 13m55s serially on one (4.1x).
+
+## Where agents fit
+
+Your agent drives the app by hand with [`warden ui`](/docs/agents/ui) on a simulator it claimed. Then it writes what it checked as a spec under `e2e/`. `warden ui` and the spec runner share one driver and one selector grammar, so a selector that worked by hand works in a test. After that, `warden e2e` is the same command for you, your agent and CI ([CI](/docs/e2e/ci)).
+
+## When a spec fails
+
+The failing test writes `failure.png`, `screen-at-failure.txt` (the full accessibility tree) and `trace.jsonl` next to its results. A retry (`--retry N`, or a test's own `retry`) reruns only the specs that did not pass. A spec fails when any test failed or timed out, or its process exited non-zero; a process that hangs past `jobTimeoutMs` per spec is killed (exit 124). On a failed run the devices stay booted so you can inspect them. See [Debugging](/docs/e2e/debugging).
+
+## Limits
+
+- iOS needs macOS and Xcode; Android needs the SDK. There is no Windows support.
+- Specs read the accessibility tree, so a view must be `accessible` to be found by `testID`.
+- `@delacour/warden-e2e` and `warden` must be the same version; the preload exits 2 otherwise.
+
+<Cards>
+<Card title="Your first test" href="/docs/e2e/first-test" />
+<Card title="Write specs" href="/docs/e2e/specs" />
+<Card title="Suites" href="/docs/e2e/suites" />
+</Cards>

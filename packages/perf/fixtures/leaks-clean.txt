@@ -1,0 +1,2 @@
+Process 845: 217998 nodes malloced for 61700 KB
+Process 845: 0 leaks for 0 total leaked bytes.

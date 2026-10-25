@@ -154,14 +154,26 @@ async function doctor(ctx: RunContext, deps: WardenDeps): Promise<Doctor> {
 	return { ok: true, version: `bun ${bun.stdout.trim()} + warden-e2e`, notes };
 }
 
+/** Snapshot attempts in `prepare`: the first one also injects the in-sim bridge, which on a cold hosted worker can
+ * outlast one request's 10 s budget, and prepare time is outside the headline. */
+const PREPARE_SNAPSHOT_ATTEMPTS = 3;
+/** The per-request budget of those warm-up snapshots (`WARDEN_SIMD_TIMEOUT`): the suite itself runs on the default. */
+const PREPARE_SNAPSHOT_TIMEOUT = "60s";
+
 /** Starts the resident helper the way `warden e2e` does (a snapshot makes the in-sim bridge resident). */
 async function prepare(ctx: RunContext): Promise<Result<void>> {
 	if (ctx.platform !== "ios") return ok(undefined);
-	const ran = await runOk(ctx.exec, bunOf(ctx), [cliOf(ctx), "ui", "snapshot", "--udid", ctx.udid, "--json"], {
-		env: { ...ctx.env, WARDEN_HELPER_DIR: helperDirOf(ctx) },
-		onLine: (_s, line) => ctx.log(line),
-	});
-	return ran.success ? ok(undefined) : err(ran.error);
+	let last: Result<void> = ok(undefined);
+	for (let attempt = 1; attempt <= PREPARE_SNAPSHOT_ATTEMPTS; attempt++) {
+		const ran = await runOk(ctx.exec, bunOf(ctx), [cliOf(ctx), "ui", "snapshot", "--udid", ctx.udid, "--json"], {
+			env: { ...ctx.env, WARDEN_HELPER_DIR: helperDirOf(ctx), WARDEN_SIMD_TIMEOUT: PREPARE_SNAPSHOT_TIMEOUT },
+			onLine: (_s, line) => ctx.log(line),
+		});
+		if (ran.success) return ok(undefined);
+		last = err(ran.error);
+		ctx.log(`prepare: snapshot attempt ${attempt}/${PREPARE_SNAPSHOT_ATTEMPTS} failed`);
+	}
+	return last;
 }
 
 async function teardown(ctx: RunContext): Promise<Result<void>> {

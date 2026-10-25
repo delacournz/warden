@@ -7,6 +7,7 @@ import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
 import type { Result } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import {
+	type ConnectOptions,
 	ensureHelper,
 	type HelperDeps,
 	helperStatus,
@@ -125,6 +126,39 @@ describe("socketPathFor", () => {
 });
 
 describe("ensureHelper", () => {
+	test("the per-request timeout reaches the client: $WARDEN_SIMD_TIMEOUT or the option, a duration; none by default", async () => {
+		const { s, socketPath, host } = setup();
+		s.up.value = true;
+		const seen: Array<ConnectOptions | undefined> = [];
+		const deps: HelperDeps = {
+			...s.deps,
+			connect: async (path, options) => {
+				seen.push(options);
+				return s.deps.connect(path);
+			},
+		};
+		expect((await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps })).success).toBe(true);
+		expect(seen).toEqual([undefined]);
+		seen.length = 0;
+		host.env.WARDEN_SIMD_TIMEOUT = "60s";
+		expect((await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps })).success).toBe(true);
+		expect(seen).toEqual([{ defaultTimeoutMs: 60_000 }]);
+		seen.length = 0;
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps, requestTimeout: "3s" });
+		expect(res.success).toBe(true);
+		expect(seen).toEqual([{ defaultTimeoutMs: 3000 }]);
+	});
+
+	test("an unparsable $WARDEN_SIMD_TIMEOUT is a usage error before anything connects", async () => {
+		const { s, socketPath, host } = setup();
+		s.up.value = true;
+		host.env.WARDEN_SIMD_TIMEOUT = "soon";
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error.message).toContain("WARDEN_SIMD_TIMEOUT");
+		expect(s.connects.total).toBe(0);
+	});
+
 	test("already listening: no spawn, no row left behind", async () => {
 		const { s, socketPath, host, c } = setup();
 		s.up.value = true;

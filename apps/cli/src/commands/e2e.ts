@@ -18,13 +18,14 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { resolveHeadless } from "@delacour/warden-core/headless";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { selfCommand } from "../autogc";
 import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
 import { realPath, type TrackedSpec } from "../batch/spec-progress";
 import type { WarmConnect } from "../batch/warm-drivers";
 import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { findBun, runnerArgv, type SpecEnvOptions, specEnv } from "../e2e/bun-runner";
+import { findBun, parsePerfFlag, runnerArgv, type SpecEnvOptions, specEnv } from "../e2e/bun-runner";
 import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
 import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
@@ -69,6 +70,8 @@ export type E2eOpts = ClaimFlagValues &
 		shutdown: boolean;
 		/** false = `--no-warm` (default true) */
 		warm?: boolean;
+		/** `--perf[=captures]`: record a perf session around every attempt */
+		perf?: string | true;
 	};
 
 export type E2eReport = {
@@ -194,10 +197,19 @@ function failedTests(spec: SpecVerdict): string[] {
 	return (spec.tests ?? [])
 		.filter((t) => t.status === "failed" || t.status === "timed-out")
 		.map((t) => {
-			const error = t.error?.split("\n")[0];
-			const parts = [t.title.join(" › "), error, t.artifacts ? `artifacts ${t.artifacts}` : undefined].filter(
-				(part) => part !== undefined && part !== ""
-			);
+			const error =
+				t.kind === "perf_budget"
+					? t.error
+							?.split("\n")
+							.map((line) => line.trim())
+							.join("; ")
+					: t.error?.split("\n")[0];
+			const parts = [
+				t.title.join(" › "),
+				error,
+				t.artifacts ? `artifacts ${t.artifacts}` : undefined,
+				t.perf ? `perf ${t.perf}` : undefined,
+			].filter((part) => part !== undefined && part !== "");
 			return `  ✗ ${parts.join(" — ")}`;
 		});
 }
@@ -357,7 +369,7 @@ async function preparedRun(
 	passed: ReadonlySet<string>
 ): AsyncResult<RunPlan & { spec: SpecPlan }> {
 	if (suite.config.slim && platform !== "ios") note(ctx, `warden e2e: slim is iOS-only; skipped on ${platform}`);
-	const spec = await specPlan(ctx, deps, suite, platform);
+	const spec = await specPlan(ctx, deps, suite, platform, opts);
 	if (!spec.success) return spec;
 	const run = await runPlan(ctx, suite, platform, specs, spec.data, opts, passed);
 	return run.success ? ok({ ...run.data, spec: spec.data }) : run;
@@ -537,7 +549,8 @@ export async function specPlan(
 	ctx: CommandContext,
 	deps: SpecPlanDeps,
 	suite: Suite,
-	platform: Platform
+	platform: Platform,
+	opts: Pick<E2eOpts, "perf"> = {}
 ): AsyncResult<SpecPlan> {
 	const bun = findBun(ctx.env, deps.which);
 	if (!bun.success) return bun;
@@ -552,6 +565,8 @@ export async function specPlan(
 	if (!preload.success) return preload;
 	const bundleId = await specBundleId(ctx, suite, platform);
 	if (!bundleId.success) return bundleId;
+	const perf = parsePerfFlag(opts.perf);
+	if (!perf.success) return perf;
 	const { spec } = suite.config;
 	const timeoutMs = specDuration("timeout", spec?.timeout, DEFAULT_SPEC_TIMEOUT);
 	if (!timeoutMs.success) return timeoutMs;
@@ -577,6 +592,9 @@ export async function specPlan(
 			specsDir: resolve(suite.configDir, suite.config.specsDir),
 			helperDir: ctx.env.WARDEN_HELPER_DIR ?? deps.helperDir(),
 			version,
+			bin: selfCommand(),
+			...(perf.data === undefined ? {} : { perf: perf.data }),
+			...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
 		},
 	});
 }
@@ -642,6 +660,10 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option(
 					"--no-shutdown",
 					"keep the devices running after the gate passes (default: shut down the ones warden created under CI, leave them booted locally; suite shutdown)"
+				)
+				.option(
+					"--perf [captures]",
+					"profile every attempt (bare: metrics, frames, logs; or --perf=react,js | all); reports land in the attempt's perf/ dir"
 				)
 				.option("--no-warm", "skip pre-warming the iOS socket helper per device (default: on; suite warmDrivers)")
 				.addHelpText(

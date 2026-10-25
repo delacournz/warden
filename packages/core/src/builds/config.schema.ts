@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import { e2eSuiteSchema } from "../affected/affected.schema";
+import { e2eSuiteSchema, perfConfigSchema } from "../affected/affected.schema";
 import { batchPresetSchema, RESERVED_PRESET_NAMES } from "../batch/preset.schema";
 import type { AppOption } from "./app-option.schema";
 import { DEFAULT_EAS_PROFILE } from "./builds.defaults";
@@ -38,6 +38,9 @@ const easSchema = z
 	})
 	.strict();
 
+/** `false`: never consult eas-cli for this project / variant, even with an `eas.json` present */
+const easOrOffSchema = z.union([easSchema, z.literal(false)]);
+
 const buildSchema = perPlatform.extend({
 	/** Xcode / Gradle configuration the local build produces; picks the default build command + where the artifact is searched */
 	configuration: z.enum(["Debug", "Release"]).optional(),
@@ -49,7 +52,7 @@ const buildSchema = perPlatform.extend({
 
 /** A named build of the project (`variants.<name>`): each key set here replaces the project's own. */
 export const variantSchema = z
-	.object({ fingerprint: fingerprintSchema.optional(), eas: easSchema.optional(), build: buildSchema.optional() })
+	.object({ fingerprint: fingerprintSchema.optional(), eas: easOrOffSchema.optional(), build: buildSchema.optional() })
 	.strict();
 
 export const projectConfigSchema = z
@@ -59,7 +62,7 @@ export const projectConfigSchema = z
 		root: z.string().min(1).default("."),
 		bundleId: perPlatform,
 		fingerprint: fingerprintSchema.optional(),
-		eas: easSchema.optional(),
+		eas: easOrOffSchema.optional(),
 		build: buildSchema.optional(),
 		/** named builds (`dev`, `e2e`…) picked with `--variant` / `app.variant`; each replaces fingerprint / eas / build wholesale */
 		variants: z.record(z.string().min(1), variantSchema).optional(),
@@ -115,6 +118,8 @@ export const wardenConfigSchema = z
 		e2e: z.record(z.string().min(1), e2eSuiteSchema).optional(),
 		/** default for every `e2e` suite and `batches` preset that doesn't set `headless` */
 		headless: z.boolean().optional(),
+		/** perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key) */
+		perf: perfConfigSchema.optional(),
 		/** Android emulator settings */
 		android: z
 			.object({

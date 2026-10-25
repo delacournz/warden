@@ -106,8 +106,8 @@ final class Session: @unchecked Sendable {
 
     let bootstrap: SimulatorControlBootstrap
     do {
-      bootstrap = try SimulatorControlBootstrap.withConfiguration(
-        SimulatorControlConfiguration(deviceSetPath: nil, logger: nil))
+      bootstrap = try SimulatorControlBootstrap(
+        configuration: SimulatorControlConfiguration(deviceSetPath: nil, logger: nil))
     } catch {
       throw WireError(.internal, "could not load CoreSimulator: \(error.localizedDescription)")
     }
@@ -263,6 +263,8 @@ extension WireError {
       return WireError(.appNotResponding, message, detail: appDetail(pid: pid, bundleID: nil))
     case .assertionFailed:
       return WireError(.noElement, message)
+    case let .guestNotAnswering(after):
+      return WireError(.timeout, message, detail: .object(["afterSeconds": .double(after)]))
     case .bridgeUnavailable, .readerUnavailable, .frontmostUnresolved, .socketPathTooLong, .guestDiedBeforeBinding,
       .guestFailure:
       return WireError(.axUnavailable, message)

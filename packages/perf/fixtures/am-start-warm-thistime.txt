@@ -1,0 +1,8 @@
+Starting: Intent { cmp=com.acme.shop/.MainActivity }
+Status: ok
+LaunchState: WARM
+Activity: com.acme.shop/.MainActivity
+ThisTime: 640
+TotalTime: 702
+WaitTime: 710
+Complete

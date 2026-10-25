@@ -134,6 +134,28 @@ export function pbcopyArgv(udid: string, text: string): string[] {
 	return ["sh", "-c", 'printf %s "$1" | xcrun simctl pbcopy "$2"', "sh", text, udid];
 }
 
+/**
+ * The same text through `devicectl device pasteboard copy`, the CoreDevice side of the simulator pasteboard.
+ * On Xcode 27.1 (iOS 26.5 runtime) `simctl pbcopy` exits 0 without changing the pasteboard, which then still
+ * holds whatever CoreDevice's `dtpasteboardd` last mirrored from the Mac; `devicectl` writes it in ~350 ms.
+ */
+export function devicectlPbcopyArgv(udid: string, text: string): string[] {
+	return [
+		"sh",
+		"-c",
+		'printf %s "$1" | xcrun devicectl device pasteboard copy --quiet --device "$2"',
+		"sh",
+		text,
+		udid,
+	];
+}
+
+/** The channels {@link createSimctl}'s `pbcopy` tries, in order; each write is confirmed with `simctl pbpaste`. */
+export const PBCOPY_CHANNELS: readonly { name: string; argv: (udid: string, text: string) => string[] }[] = [
+	{ name: "devicectl pasteboard copy", argv: devicectlPbcopyArgv },
+	{ name: "simctl pbcopy", argv: pbcopyArgv },
+];
+
 // ---------- parsing ----------
 
 function escapeRegExp(text: string): string {
@@ -194,6 +216,10 @@ export type Simctl = {
 	isInstalled(bundleId: string): DriverResult<boolean>;
 	isRunning(bundleId: string): DriverResult<boolean>;
 	clearData(bundleId: string, opts?: { keychain?: boolean }): DriverResult<void>;
+	/**
+	 * Puts `text` on the simulator pasteboard and confirms it with `pbpaste` before answering, trying every
+	 * {@link PBCOPY_CHANNELS} entry: `E_IO` when none took, so a paste never lands other text.
+	 */
 	pbcopy(text: string): DriverResult<void>;
 	pbpaste(): DriverResult<string>;
 	appearance(set?: "light" | "dark"): DriverResult<"light" | "dark">;
@@ -280,7 +306,26 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			const code = /is not installed/.test(reset.error) ? "E_APP_UNAVAILABLE" : "E_IO";
 			return { success: false, error: driverError(code, reset.error) };
 		},
-		pbcopy: (text) => runVoid(pbcopyArgv(udid, text)),
+		async pbcopy(text) {
+			const outcomes: string[] = [];
+			for (const channel of PBCOPY_CHANNELS) {
+				// not `run`: its failure would carry the argv, and with it the text
+				const copied = await exec(channel.argv(udid, text), { timeoutMs: SHORT_MS });
+				if (copied.exitCode !== 0) {
+					outcomes.push(`${channel.name} exit ${copied.exitCode}`);
+					continue;
+				}
+				const read = await run(pbpasteArgv(udid), SHORT_MS);
+				if (!read.ok) return { success: false, error: read.error };
+				if (read.res.stdout === text) return ok(undefined);
+				// neither the text nor what the pasteboard holds: typeText carries passwords
+				outcomes.push(`${channel.name} exit 0 but pbpaste reads other text`);
+			}
+			return {
+				success: false,
+				error: driverError("E_IO", `simulator pasteboard did not take the text (${outcomes.join("; ")})`),
+			};
+		},
 		async pbpaste() {
 			const result = await run(pbpasteArgv(udid), SHORT_MS);
 			return result.ok ? ok(result.res.stdout) : { success: false, error: result.error };
