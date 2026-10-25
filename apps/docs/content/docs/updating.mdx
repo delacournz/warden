@@ -22,7 +22,7 @@ Flags: `--check` (report only), `--release` (install the latest GitHub release; 
 
 <Steps>
 <Step>A PR into `develop` that changes what `@delacour/warden` ships adds a changeset with `bun changeset`. Pick `@delacour/warden` only; `@delacour/warden-e2e` follows in lock-step. The one-line summary becomes the changelog entry.</Step>
-<Step>Every push to `develop` opens or updates the "chore(release): version packages" PR. It bumps `apps/cli/package.json` and `packages/e2e/package.json`, writes both `CHANGELOG.md` files and consumes the changesets. Its `signoff` status is written automatically.</Step>
+<Step>Every push to `develop` opens or updates the "chore(release): vX.Y.Z" PR, titled with the version it will ship. It bumps `apps/cli/package.json` and `packages/e2e/package.json`, writes both `CHANGELOG.md` files and consumes the changesets. Its `signoff` status is written automatically.</Step>
 <Step>Merge the version PR. `.github/workflows/promote.yml` fast-forwards `main` to that commit and pushes tag `v<version>`. The docs site deploys from `main`.</Step>
 <Step>The tag runs `.github/workflows/release.yml`. It checks the tag matches the version and is on `main`, runs typecheck / check / test, builds `warden-{darwin,linux}-{arm64,x64}`, the `warden-simd` iOS driver helper and `checksums.txt`, and publishes the GitHub release.</Step>
 <Step>The same workflow stages the npm packages (`bun run --cwd apps/cli build:npm`) and publishes `@delacour/warden-<os>-<arch>`, then `@delacour/warden`, then `@delacour/warden-e2e`, with public access, provenance and repository links. Publishing uses npm trusted publishing (OIDC) from the `release` environment, so no token is stored. Versions already on npm are skipped.</Step>
