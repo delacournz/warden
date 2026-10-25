@@ -1,10 +1,20 @@
 ---
-title: Drive a device (warden ui)
-description: warden ui - the agent CLI for looking at and driving a leased iOS simulator or Android emulator - snapshot, @refs, selectors, actions, waits, devtools, exit codes, the --json envelope and lease rules.
+title: warden ui
+description: "Look at and drive a leased iOS simulator or Android emulator from the command line: snapshot, refs, selectors, actions, waits, devtools, exit codes and lease rules."
 icon: Smartphone
 ---
 
-`warden ui` is how an agent looks at a device and drives it: read the screen as text, tap, type, scroll, wait, read the app's console and React tree. It runs on the same driver as [`@delacour/warden-e2e`](/docs/guides/specs) (see [iOS driver helper](/docs/reference/e2e-driver)), so there is nothing to install on the device and no daemon to manage. For checks that must keep passing, write a [spec](/docs/guides/specs); use `warden ui` to explore, reproduce a bug, or to get the selectors for a spec.
+`warden ui` is how your agent looks at a device and drives it: read the screen as text, tap, type, scroll, wait, read the app's console and React tree. Use it to explore, reproduce a bug, verify a change, or get the selectors for a spec.
+
+```bash
+warden claim ios --json                       # lease a sim, keep the udid
+warden ui open com.example.app --udid $UDID   # launch
+warden ui snapshot -i --udid $UDID            # the screen as @eN lines
+warden ui press @e3 --settle --udid $UDID     # act, print what changed
+warden ui close --release --udid $UDID        # stop the helper, release the lease
+```
+
+It runs on the same driver as [`@delacour/warden-e2e`](/docs/e2e/specs) (see [iOS driver helper](/docs/reference/e2e-driver)), so there is nothing to install on the device and no daemon to manage. For checks that must keep passing, write a [spec](/docs/e2e/specs).
 
 Every call is stateless on the command line: the last snapshot and the Metro URL live under `$WARDEN_HOME/ui/<udid>/`.
 
@@ -20,7 +30,7 @@ warden ui close --release --udid $UDID                  # 6. stop the helper and
 ```
 
 1. **Claim.** `warden claim ios --json` (or `android`); keep the returned `udid` (Android: the serial). Pass it on every call as `--udid <udid>` (`--serial` / `--lease <id>` also work), or export `WARDEN_UDID` once. With none of those, `warden ui` uses the single device you already lease.
-2. **Open.** A bundle id launches the app; a URL opens through the system. For a dev client, run `warden dev` or `warden app ensure` first, then `open <bundleId> --metro <metroUrl>` (iOS; on Android see [Android](#android)).
+2. **Open.** A bundle id launches the app; a URL opens through the system. For a dev client, run [`warden dev`](/docs/agents/dev) or `warden app ensure` first, then `open <bundleId> --metro <metroUrl>` (iOS; on Android see [Android](#android)).
 3. **Snapshot.** `snapshot -i` lists only interactive elements and anything with a `testID`. The `@eN` refs it prints are valid until the next `snapshot`, `find` or `--settle`.
 4. **Act on a ref or a selector.** Prefer `id=` selectors for anything you will touch twice: refs go stale when the screen changes.
 5. **Verify** with `wait`, `is` and `get`. A bare screenshot is not verification.
@@ -134,6 +144,7 @@ Two things to know:
 - A collector started before the app was restarted (`open --relaunch`, a crash, a rebuild) gives up after a 30 s reconnect budget and ends as `lost`. Run `logs start` again after the restart.
 - The collector also stops by itself after 60 s without a console line or `fetch` call. Run `logs start` again before the next action.
 
+
 ## Exit codes and `--json`
 
 | Exit | Meaning | Error codes |
@@ -178,6 +189,7 @@ What differs from iOS:
 | `--udid <udid>` · `--serial <serial>` · `--lease <id>` | the device. Otherwise `WARDEN_UDID`, a single `WARDEN_UDIDS` entry, then your only device lease |
 | `--claim` | take a device when none is leased (`--platform ios\|android`, `--profile`, `--runtime` choose it), or take over a stale lease |
 | `--timeout <ms>` | per-command deadline (default 5000) |
+
 | `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`) holds your lease on it. Without it every subcommand but `status` exits 2 (`device_busy`) naming the owner, pid and label. Not needed for your own `warden dev` device (see [Lease rules](#lease-rules)) |
 | `--json` | the envelope above |
 
@@ -198,7 +210,7 @@ Release only what you leased: `warden ui close --release`, or `warden release <l
 ## Failure and speed
 
 - A command that fails prints a hint. Read it before retrying; `stale_ref` means snapshot again, `target_not_found` means the selector matched nothing (run `find`, or `snapshot --all`).
-- If a view is missing from the snapshot, mark it `accessible` and give it a `testID` in the app (the accessibility tree only exposes accessible views; see [Write e2e specs](/docs/guides/specs)), or use `tree` to find the React component.
+- If a view is missing from the snapshot, mark it `accessible` and give it a `testID` in the app (the accessibility tree only exposes accessible views; see [Write e2e specs](/docs/e2e/specs)), or use `tree` to find the React component.
 - The first call on a device starts its helper; later calls reuse it until it has been idle for 10 minutes. `warden e2e` and `warden batch` pre-warm it for their devices.
 
 ### Speed targets

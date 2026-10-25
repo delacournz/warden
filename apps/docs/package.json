@@ -17,8 +17,8 @@
 	},
 	"dependencies": {
 		"@delacour/warden-e2e-bench": "workspace:*",
-		"@fontsource-variable/onest": "^5.3.1",
-		"@fontsource-variable/red-hat-mono": "^5.3.0",
+		"@fontsource-variable/martian-mono": "5.3.0",
+		"@fontsource-variable/mona-sans": "5.3.0",
 		"@tanstack/react-router": "1.170.27",
 		"@tanstack/react-start": "1.168.44",
 		"fumadocs-core": "16.15.1",
@@ -33,8 +33,8 @@
 		"@delacournz/otel-start": "0.1.0"
 	},
 	"devDependencies": {
-		"@fontsource/onest": "^5.2.0",
-		"@fontsource/red-hat-mono": "^5.2.0",
+		"@fontsource/martian-mono": "5.3.0",
+		"@fontsource/mona-sans": "5.3.0",
 		"@resvg/resvg-wasm": "^2.6.2",
 		"@tailwindcss/vite": "^4.3.3",
 		"@types/mdx": "^2.0.14",

@@ -4,6 +4,8 @@ description: Variables warden reads, and the ones warden run sets.
 icon: Variable
 ---
 
+Every environment variable warden reads, and the ones `warden run`, `batch` and `e2e` set for your commands; look here when a setting needs to apply to a whole shell or CI job instead of one flag.
+
 ## Read by warden
 
 | Variable | Effect |
@@ -12,11 +14,11 @@ icon: Variable
 | `WARDEN_SESSION_ID`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID` | treat the caller as this agent session (first one set wins; a CI owner outranks them) |
 | `CI` (`true` / `1`), `GITHUB_ACTIONS=true` | detected as a CI owner; run id from `GITHUB_RUN_ID`, `CI_PIPELINE_ID` or `BUILDKITE_BUILD_ID`. `CI` also flips the e2e `shutdown` default to `always` |
 | `WARDEN_GOLDEN=0` | don't clone new sims from golden images |
-| `WARDEN_ANDROID_SNAPSHOT=0` | Android: cold-boot claimed emulators instead of launching them from warden's quick-boot snapshot of the AVD, and never build one; `=1` turns it on over a config `android.snapshot: false`. Only `0/1/true/false/on/off/yes/no` count; another value is warned about and the config decides ([Golden images](/docs/guides/golden-images#android-wardens-quick-boot-snapshot)) |
+| `WARDEN_ANDROID_SNAPSHOT=0` | Android: cold-boot claimed emulators instead of launching them from warden's quick-boot snapshot of the AVD, and never build one; `=1` turns it on over a config `android.snapshot: false`. Only `0/1/true/false/on/off/yes/no` count; another value is warned about and the config decides ([Golden images](/docs/devices/golden-images#android-wardens-quick-boot-snapshot)) |
 | `WARDEN_EMULATOR_AUDIO=1` | Android: keep the emulator's audio (claimed emulators run `-no-audio` otherwise) |
 | `WARDEN_ARRANGE=0` | don't tile Simulator.app windows after iOS claims |
-| `WARDEN_HEADLESS=1` (or `true`) | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/guides/headless)); `warden dev` ignores it |
-| `WARDEN_PRIORITY` | boot queue priority (`interactive\|high\|normal\|low\|N`) when no `--priority` is given ([Capacity & queue](/docs/guides/capacity)) |
+| `WARDEN_HEADLESS=1` (or `true`) | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/devices/headless)); `warden dev` ignores it |
+| `WARDEN_PRIORITY` | boot queue priority (`interactive\|high\|normal\|low\|N`) when no `--priority` is given ([Capacity & queue](/docs/devices/capacity)) |
 | `WARDEN_CAPACITY=off` | skip the capacity gate and boot queue |
 | `WARDEN_CAPACITY_MAX` | hard cap on weighted cpu units booted machine-wide (1 per iOS sim, 2 per Android emulator) |
 | `WARDEN_CAPACITY_HEADROOM_GB` | RAM held back from the budget (default `max(8, 25% of RAM)`) |
@@ -24,6 +26,7 @@ icon: Variable
 | `WARDEN_MAX_CACHE_SIZE` | build cache cap (e.g. `50G`, default `20G`) for `warden gc` (`--max-cache-size`), `warden builds prune` (`--max-size`) and auto-gc, which runs when the cache is over it |
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | Android SDK location (`adb`, `emulator`); without them warden falls back to `PATH` and cannot build the Android snapshot |
 | `NO_COLOR`, `FORCE_COLOR` | output colour (a non-empty `NO_COLOR` turns it off) |
+
 | `WARDEN_ANDROID_UIAD=0` | Android: don't use the resident UiAutomation server (`warden-uiad`); snapshots, settle and input go through `uiautomator dump` and `input` ([Android driver](/docs/reference/e2e-driver#android-driver)) |
 | `WARDEN_ANDROID_SETTEXT=1` | Android: `fill` over a field that already holds text replaces it with one `warden-uiad` `setText` call instead of select-all and typing (specs, `warden ui fill`); off by default until the server re-reads focus before setting ([Android driver](/docs/reference/e2e-driver#android-driver)) |
 | `WARDEN_BACKGROUND=0` | turn off every detached worker (auto-gc, SessionEnd shutdown) |
@@ -65,7 +68,7 @@ export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ }
 
 ## Set for batch jobs
 
-`warden batch` and `warden e2e` add these to every job, on top of the `warden run` variables above (details in [e2e scripts](/docs/guides/e2e)):
+`warden batch` and `warden e2e` add these to every job, on top of the `warden run` variables above (details in [e2e scripts](/docs/devices/scripts)):
 
 | Variable | Value |
 |---|---|
@@ -77,7 +80,7 @@ export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ }
 
 ## Set for spec processes
 
-`warden e2e` starts each run of `*.e2e.ts` specs as `bun test` with these set. Setting `WARDEN_UDID` yourself runs a spec by hand ([Write e2e specs](/docs/guides/specs#run-a-spec-by-hand)); without it the `@delacour/warden-e2e` preload does nothing.
+`warden e2e` starts each run of `*.e2e.ts` specs as `bun test` with these set. Setting `WARDEN_UDID` yourself runs a spec by hand ([Write e2e specs](/docs/e2e/specs#run-a-spec-by-hand)); without it the `@delacour/warden-e2e` preload does nothing.
 
 | Variable | Value |
 |---|---|

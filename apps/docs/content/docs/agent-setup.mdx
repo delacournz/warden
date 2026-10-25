@@ -1,0 +1,77 @@
+---
+title: Set up your agent
+description: Install the warden skill and hooks into your coding agent, or paste a prompt that does it for you.
+icon: Bot
+---
+
+Your coding agent needs the warden skill to know the claim, drive, release rules. Run `warden install`, or paste the prompt below into the agent.
+
+```bash
+warden install    # skill + rule + SessionEnd hook for every detected agent; shows a diff, asks first
+```
+
+## Paste this into your agent
+
+````text
+Set up warden for mobile device work in this repo.
+1. Run `npm i -g @delacour/warden && warden install` (or `bunx @delacour/warden install`). Approve the diff.
+2. Run `warden doctor` and fix anything it reports.
+3. Run `warden skill show` and read it. Follow its rules from now on:
+   claim a device with `warden claim ios --json`, pass the returned udid on every call,
+   drive it with `warden ui`, never touch a device you did not claim,
+   and release with `warden ui close --release`.
+4. In an Expo app, run `warden init --bundle-id <id>` and install the packages it names.
+````
+
+## What gets installed
+
+| Piece | Where | Agents |
+|---|---|---|
+| Skill | `skills/warden/`: `SKILL.md` + `references/{ui,specs,suites,troubleshooting}.md`, embedded in the binary | anything the [`skills`](https://github.com/vercel-labs/skills) CLI installs into |
+| Rule | `~/.claude/rules/warden.md`, written directly | Claude Code |
+| SessionEnd hook | `warden hook session-end` | Claude Code, Codex |
+
+The skill loads into Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, OpenCode, Windsurf, Zed and the other agents the `skills` CLI supports. Hooks exist only for Claude Code and Codex.
+
+Agents are detected from `~/.claude` / `claude` on `PATH` and `$CODEX_HOME` (`~/.codex`) / `codex` on `PATH`; with none found, only the binary is installed. The skill is placed by the `skills` CLI, which may prompt (`--yes` is passed through).
+
+## Per agent
+
+```bash
+warden install --claude   # Claude Code only: skill (via `skills add`) + rule + SessionEnd hook
+warden install --codex    # Codex only: hooks in $CODEX_HOME/hooks.json
+warden skill install      # the skill, into any agent the skills CLI offers
+```
+
+Every agent-config change shows a diff and asks first. `--yes` skips the prompt, `--dry-run` only prints, and a non-TTY without `--yes` skips.
+
+<Tabs items={["Claude Code", "Codex", "Other agents"]}>
+<Tab value="Claude Code">
+`warden install --claude` installs the skill, the rule and the SessionEnd hook. It also removes the `PreToolUse` hook (`warden hook pretool`) that older versions installed. Details: [Agent rules](/docs/agents/rules#claude-code).
+</Tab>
+<Tab value="Codex">
+`warden install --codex` merges the SessionEnd hook into `$CODEX_HOME/hooks.json`. Run `/hooks` in Codex once to trust it. Codex does not set a session id, so set `WARDEN_SESSION_ID`, or leases count as your shell's user leases. Details: [Agent rules](/docs/agents/rules#codex).
+</Tab>
+<Tab value="Other agents">
+```bash
+warden skill install                               # global, this binary's copy
+warden skill install --from github                 # delacournz/warden, updatable via `skills update`
+warden skill install --project -a cursor -y        # into the current project, one agent
+warden skill show | pbcopy                         # raw SKILL.md to paste by hand
+```
+There is no session hook for these agents. Their leases expire by TTL (5 min for a bare claim) and `warden gc` reclaims them, so tell the agent to run `warden ui close --release` when it is done.
+</Tab>
+</Tabs>
+
+## Verify
+
+```bash
+warden doctor
+```
+
+`doctor` checks hooks, the skill and the rule among other things. Then ask the agent to run `warden claim ios --json` and `warden ui snapshot -i`.
+
+<Cards>
+  <Card title="Agents drive devices" href="/docs/agents" />
+  <Card title="Agent rules" href="/docs/agents/rules" />
+</Cards>

@@ -1,10 +1,10 @@
 ---
-title: Write e2e specs
+title: Write specs
 description: The @delacour/warden-e2e spec API - test, describe and hooks, screen queries, locator actions and reads, the nine matchers, app and device, failure artifacts and running a spec by hand.
 icon: FlaskConical
 ---
 
-`@delacour/warden-e2e` is warden's own mobile test runner. A spec is a `*.e2e.ts` file run by `bun test`; [`warden e2e`](/docs/guides/run-e2e) leases the simulators, installs the build, starts Metro and runs the specs against them. The package drives iOS simulators and Android emulators directly (see [iOS driver helper](/docs/reference/e2e-driver)), so there is no daemon and no other test runner to install.
+A spec is a `*.e2e.ts` file that drives the app on a simulator or emulator with `@delacour/warden-e2e`; you write one per user flow. [`warden e2e`](/docs/e2e/suites) leases the devices, installs the build, starts Metro and runs the specs against them. The package drives iOS simulators and Android emulators directly (see [iOS driver helper](/docs/reference/e2e-driver)), so there is no daemon and no other test runner to install.
 
 ```bash
 bun add -d @delacour/warden-e2e
@@ -36,6 +36,98 @@ test("add a todo", async ({ device, screen }) => {
 | `retry` | extra attempts after a failure; only the last attempt is reported |
 
 `test.skip`, `test.only`, `test.skipIf(condition)` and `test.todo(title)` work as in `bun:test` (a `test.todo` fails when bun runs with `--todo`). A test without a body throws `INVALID_ARGUMENT`.
+
+
+## Find elements
+
+Queries live on `screen`. They do not touch the device until you act or assert, and the same queries back `warden ui`, so a selector you proved by hand works in a spec.
+
+`screen.getBy…` returns a lazy `Locator`. Nothing is read until you act on it or assert on it, so a locator can be created before the element exists.
+
+| Query | Matches |
+|---|---|
+| `getByTestId(id, { visible? })` | the `testID` of the view |
+| `getByText(text, { exact?, visible? })` | the visible text (innermost match) |
+| `getByLabel(text, opts?)` / `getByPlaceholder(text, opts?)` / `getByValue(text, opts?)` | accessibility label, field placeholder, field value; `opts` is `{ exact?, visible? }` as for `getByText` |
+| `getByRole(role, name?, { exact?, checked?, disabled?, selected?, visible? })` | a role with an optional name (a string or `RegExp`, or `{ name }` in the options). Roles: `button`, `link`, `textbox`, `searchbox`, `checkbox`, `radio`, `switch`, `slider`, `image`, `heading`, `text`, `tab`, `tablist`, `menu`, `menuitem`, `list`, `listitem`, `row`, `alert`, `dialog`, `navigation`, `group`, `other`; anything else is `INVALID_LOCATOR` |
+| `locator("id=sign-in-submit role=button")` | the selector grammar of [`warden ui`](/docs/agents/ui#targets-and-selectors) |
+
+A string matches the whole text after whitespace is collapsed (case-sensitive); `{ exact: false }` makes it a case-insensitive substring; a `RegExp` is tested as written (its `g` and `y` flags are ignored). `getByTestId` takes a `RegExp` too. Refine a locator with `.filter({ hasText, has })` (at least one of the two; `has` is another locator), `.first()`, `.last()` and `.nth(i)` (a non-negative integer); a bad refinement is `INVALID_LOCATOR`.
+
+Role queries and `visible: true` drop hidden elements. Actions and reads need exactly one match: none gives `LOCATOR_NOT_FOUND`, several give `LOCATOR_AMBIGUOUS` (narrow the query, or use `.first()`).
+
+Whole-screen gestures live on `screen`: `tapAt({ x, y })`, `swipe({ direction, momentum? })` or `swipe({ from, to, durationMs? })` (not a mix), and `scrollUntilVisible(locator, { direction?, momentum?, maxSwipes?, timeout? })`. `direction` is the way the content moves (`"down"` reveals what is below), `momentum` is `"none"` (default, a plain drag), `"slow"` or `"fast"` (a fling). `scrollUntilVisible` defaults to `direction: "down"` and `maxSwipes: 10`, and fails when the target is still off screen after that many swipes.
+
+Multi-touch lives on `screen.gesture`:
+
+| Call | |
+|---|---|
+| `screen.gesture.pinch({ scale, center?, radius?, durationMs? })` | two fingers around `center` (default the screen centre); `scale` above 1 zooms in; 0.1 to 10, not 1; default 500 ms |
+| `screen.gesture.rotate({ degrees, center?, radius?, durationMs? })` | two fingers turn around `center`; positive is clockwise; `degrees` not 0, at most 720 either way; default 500 ms |
+| `screen.gesture.path({ paths, durationMs? })` | 1-2 finger paths (`paths: Point[][]`), down and lifted together; not observed; default 600 ms |
+| `screen.gesture.swipe(...)` | the same as `screen.swipe` |
+
+A scale or degrees out of range, a `paths` count other than 1-2, or a path with no point or a non-finite coordinate throws `E2eError` `INVALID_ARGUMENT`, as does a gesture the device cannot do: `pinch` and `rotate` need `capabilities.pinch`, a path needs as many `capabilities.maxPointers` as it has fingers (Android without `warden-uiad`: no pinch or rotate, 1-finger paths only on API 26+). Skip such a test with `test({ platforms: ["ios"] })`.
+
+<Callout>
+Specs read the accessibility tree. A `testID` is only exposed when the native view is `accessible`, so mark every view a spec taps or asserts as accessible. In a dev client, a plain `getByTestId` that finds nothing in the accessibility tree falls back to the React tree, but only `tap()` and `boundingBox()` work on such a component; anything else fails with `NOT_ACTIONABLE`. When a query finds nothing, fix the component (`accessible` plus `testID`); retries and longer timeouts do not help. See [Debugging](/docs/e2e/debugging).
+</Callout>
+
+## Act on elements
+
+Actions wait for the element (up to `actionTimeout`) and then act. Every action takes `timeout` (ms) to override `actionTimeout` for that call, and an option an action does not know is `INVALID_ARGUMENT`:
+
+| Action | |
+|---|---|
+| `tap({ position?, until?, retries?, windowMs?, pollMs?, timeout? })`, `longPress({ durationMs?, timeout? })` | touch the element's centre, or `position` (an offset from its top-left corner). `until` makes the tap retrying (below). The element must be enabled and its tap point on screen, and its frame must have held still across two looks |
+| `fill(text)` | replace the field's text (focus with the caret at the end, empty it, type the whole string), then poll until the field holds it on consecutive reads, since the accessibility value lags the keys by 100-200 ms; a mismatch is retried once with a fresh clear and retype, then fails with what the field holds. Emptying is select all on iOS and on Android 13+, then the typed text replaces the selection (no Backspace; on Android with `WARDEN_ANDROID_SETTEXT=1`, a field that holds text is replaced in one `setText` call instead); older Android and the retry press one Backspace per character, and a field that is empty or shows its placeholder gets no keys. Secure fields skip the check |
+| `type(text)`, `clear()`, `press(key, { modifiers? })` | keyboard input; the field is tapped first unless it already has focus. `key` is `Enter`, `Backspace`, `Tab`, `Space`, `Escape`, `Delete`, `Up`, `Down`, `Left` or `Right`; `modifiers` is a list of `shift`, `cmd`, `alt`, `ctrl` (Android before 13 cannot send them). `clear()` checks the field is empty afterwards, with one counted retry (secure fields skip the check) |
+| `swipe({ direction, momentum? })`, `scrollTo({ direction?, momentum?, maxSwipes? })` | scroll the element, or scroll the screen until it is visible (same defaults as `screen.scrollUntilVisible`) |
+| `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` | two fingers around the element's centre, kept inside its visible rect (defaults 500 ms); `rotate` is clockwise for positive degrees. Same `scale` and `degrees` limits and `INVALID_ARGUMENT` as `screen.gesture` |
+
+Reads never wait; they answer from the screen as it is now:
+
+`text()` · `value()` · `count()` · `all()` · `allTexts()` · `isVisible()` · `isHidden()` · `isEnabled()` · `isChecked()` · `boundingBox()` · `waitFor({ state?: "visible" | "hidden" | "attached" | "detached", timeout? })`
+
+`waitFor` is the one read that polls: `state` defaults to `"visible"` and `timeout` to `actionTimeout`, and it fails with `TIMEOUT` carrying the screen as text.
+
+`text()` falls back to the text of the descendants when iOS leaves a container's own label empty (a `Badge`, a `Chip`), so asserting on the container works.
+
+`read()` answers several of those from one look at the screen: `{ visible, text?, value?, checked? }`. Nothing matching gives `{ visible: false }`; `text` and `value` are there when the element has them, `checked` only for a switch or checkbox. It is cheaper than `text()` plus `value()` plus `isChecked()`, which each look at the screen. Like the other reads it fails with `LOCATOR_AMBIGUOUS` for several matches.
+
+### Tap until something shows
+
+A tap can land before the screen is ready to take it. Give `tap` the thing the tap should lead to and it checks, and taps again when that is not there:
+
+```ts
+await screen.getByTestId("tab-settings").tap({ until: screen.getByTestId("settings-email") });
+await screen.getByTestId("sync").tap({ until: async () => (await screen.getByTestId("sync").read()).text === "Synced" });
+```
+
+`until` is a locator (visible) or an async function returning a boolean. After the tap it waits up to `windowMs` (default 4000), checking every `pollMs` (default 250), and taps again when the window passes without the check holding, at most `retries` times (default 2, so three taps in all). The last tap is not waited on: when it did not work either, `tap` returns and the next assertion reports what is missing. A locator `until` is checked on the same look at the screen as the poll, so a check costs one snapshot, and that look is also compared with the screen the tap aimed from: once the screen changed (a spinner, a disabled button, the target gone) the tap landed and is never sent again, however late `until` is, and `tap` returns at the end of the window; a screen that has not changed at all is tapped again from 750 ms on instead of after the whole window. A function `until` always gets the whole window. `retries`, `windowMs` and `pollMs` are `INVALID_ARGUMENT` without `until`. Use it for taps that are known to be lost sometimes (a tab bar still animating in); a plain `tap()` is one tap.
+
+### Fewer snapshots
+
+Every read, action and `expect` looks at the screen. The runner keeps the last look for a moment and reuses it when nothing you did since can have changed the screen: a tap, a key, a launch, a settle, any call it does not know all drop it, and it is dropped when it is older than 150 ms on iOS or 1 s on Android. Only the first look of a read or an `expect` may reuse it (later polls are real looks). Anything that aims at an element does not reuse it as it is: `tap`, `longPress`, `fill`, `type`, `clear`, `press`, `scrollTo` and `boundingBox` take a new snapshot, because a snapshot taken while a screen was still sliding in has the element somewhere else, and the tap would land on its neighbour (the one exception, a plain `tap` on iOS that checks the kept look with a hit-test, is below). The confirmation reads that check a `fill` took are real as well, and so are `device.snapshot()` and `device.screenshot()`. So `isVisible()` then `text()` then `expect(...)` is one snapshot, and `expect(a).toBeVisible()` followed by `a.tap()` is two. On iOS, where a hit-test costs a fraction of a snapshot, a plain `tap()` within 150 ms of the look that saw its element, with no input since, takes no second snapshot: it hit-tests its tap point and taps when the hit is the same element in the same place (same role, identifier, label, enabled state and frame), and otherwise looks again as usual. A `tap({ until })` and a test with `systemAlerts` set always take the fresh look. Changes the runner cannot see (the app's own timers, `devtools.evaluate`) show up within that age at most.
+
+## Assert
+
+`expect(locator)` polls every 100 ms for the first second, then every 250 ms, until the check holds or `assertionTimeout` (default 5 s) runs out. Pass `{ timeout }` to override one check. Every matcher takes `timeout`, and an option it does not know is `INVALID_ARGUMENT`. All but `toHaveCount` need exactly one match: none keeps polling, several fail at once with `ASSERTION`.
+
+| Matcher | Holds when |
+|---|---|
+| `toBeVisible()` / `toBeHidden()` | the element is on screen / absent or off screen |
+| `toHaveText(text, { exact? })` | the text equals `text` after whitespace is collapsed; `{ exact: false }`: a case-insensitive substring. A `RegExp` is tested as written |
+| `toContainText(text, { ignoreCase? })` | the text contains `text`, case-sensitively unless `ignoreCase: true` (a `RegExp` is tested as written) |
+| `toHaveValue(text)` | the field's value equals `text` (a `RegExp` is tested as written) |
+| `toBeChecked({ checked? })` | a switch or checkbox is on (`{ checked: false }`: off) |
+| `toHaveCount(n)` | exactly `n` elements match |
+| `toBeEnabled()` / `toBeDisabled()` | the element accepts / refuses input |
+
+`.not` inverts any matcher: `await expect(row).not.toBeVisible()`. A negated matcher passes once its condition has held for 1 s without a break (or the whole timeout, if shorter). Where the driver can tell the app went quiet (iOS with the accessibility bridge, Android with `warden-uiad`), it asks once after the first poll that holds, provided no action reached the driver in the last second (any call that is not a read counts: a tap, typing, a key press, a settle, an orientation or appearance change); if the screen is quiet (250 ms without activity), one more fresh look that still holds passes, usually within about 300 ms. Right after an action the full second is held (the matcher's own settle counts, so a second `.not` straight after one that ended early holds the full second too): an app waiting on the network is quiet until the reply comes, so `submit.tap()` then `expect(error).not.toBeVisible()` still sees an error that arrives within that second (a slower reply needs an explicit wait either way). A screen that is quiet but about to change by itself long after the last input (a toast on a timer) can pass before the change; wait for that change explicitly. `device.devtools.evaluate` and `reloadJs` go to Metro, not the driver, so they do not count as an action: a `.not` right after one may end early, so tap, `wait` or assert something positive first. `expect.soft(locator)` records a failure and carries on; the test fails at the end if any soft check failed. For anything that is not a locator, `expect` is bun's own `expect`.
+
+
+## Organize specs
 
 ### describe, hooks and settings
 
@@ -75,93 +167,7 @@ export const test = base.extend<{ email: string }>({
 });
 ```
 
-## screen: queries
-
-`screen.getBy…` returns a lazy `Locator`. Nothing is read until you act on it or assert on it, so a locator can be created before the element exists.
-
-| Query | Matches |
-|---|---|
-| `getByTestId(id, { visible? })` | the `testID` of the view |
-| `getByText(text, { exact?, visible? })` | the visible text (innermost match) |
-| `getByLabel(text, opts?)` / `getByPlaceholder(text, opts?)` / `getByValue(text, opts?)` | accessibility label, field placeholder, field value; `opts` is `{ exact?, visible? }` as for `getByText` |
-| `getByRole(role, name?, { exact?, checked?, disabled?, selected?, visible? })` | a role with an optional name (a string or `RegExp`, or `{ name }` in the options). Roles: `button`, `link`, `textbox`, `searchbox`, `checkbox`, `radio`, `switch`, `slider`, `image`, `heading`, `text`, `tab`, `tablist`, `menu`, `menuitem`, `list`, `listitem`, `row`, `alert`, `dialog`, `navigation`, `group`, `other`; anything else is `INVALID_LOCATOR` |
-| `locator("id=sign-in-submit role=button")` | the selector grammar of [`warden ui`](/docs/guides/agent-ui#targets-and-selectors) |
-
-A string matches the whole text after whitespace is collapsed (case-sensitive); `{ exact: false }` makes it a case-insensitive substring; a `RegExp` is tested as written (its `g` and `y` flags are ignored). `getByTestId` takes a `RegExp` too. Refine a locator with `.filter({ hasText, has })` (at least one of the two; `has` is another locator), `.first()`, `.last()` and `.nth(i)` (a non-negative integer); a bad refinement is `INVALID_LOCATOR`.
-
-Role queries and `visible: true` drop hidden elements. Actions and reads need exactly one match: none gives `LOCATOR_NOT_FOUND`, several give `LOCATOR_AMBIGUOUS` (narrow the query, or use `.first()`).
-
-Whole-screen gestures live on `screen`: `tapAt({ x, y })`, `swipe({ direction, momentum? })` or `swipe({ from, to, durationMs? })` (not a mix), and `scrollUntilVisible(locator, { direction?, momentum?, maxSwipes?, timeout? })`. `direction` is the way the content moves (`"down"` reveals what is below), `momentum` is `"none"` (default, a plain drag), `"slow"` or `"fast"` (a fling). `scrollUntilVisible` defaults to `direction: "down"` and `maxSwipes: 10`, and fails when the target is still off screen after that many swipes.
-
-Multi-touch lives on `screen.gesture`:
-
-| Call | |
-|---|---|
-| `screen.gesture.pinch({ scale, center?, radius?, durationMs? })` | two fingers around `center` (default the screen centre); `scale` above 1 zooms in; 0.1 to 10, not 1; default 500 ms |
-| `screen.gesture.rotate({ degrees, center?, radius?, durationMs? })` | two fingers turn around `center`; positive is clockwise; `degrees` not 0, at most 720 either way; default 500 ms |
-| `screen.gesture.path({ paths, durationMs? })` | 1-2 finger paths (`paths: Point[][]`), down and lifted together; not observed; default 600 ms |
-| `screen.gesture.swipe(...)` | the same as `screen.swipe` |
-
-A scale or degrees out of range, a `paths` count other than 1-2, or a path with no point or a non-finite coordinate throws `E2eError` `INVALID_ARGUMENT`, as does a gesture the device cannot do: `pinch` and `rotate` need `capabilities.pinch`, a path needs as many `capabilities.maxPointers` as it has fingers (Android without `warden-uiad`: no pinch or rotate, 1-finger paths only on API 26+). Skip such a test with `test({ platforms: ["ios"] })`.
-
-<Callout>
-Specs read the accessibility tree. A `testID` is only exposed when the native view is `accessible`, so mark every view a spec taps or asserts as accessible. In a dev client, a plain `getByTestId` that finds nothing in the accessibility tree falls back to the React tree, but only `tap()` and `boundingBox()` work on such a component; anything else fails with `NOT_ACTIONABLE`.
-</Callout>
-
-## locator: actions and reads
-
-Actions wait for the element (up to `actionTimeout`) and then act. Every action takes `timeout` (ms) to override `actionTimeout` for that call, and an option an action does not know is `INVALID_ARGUMENT`:
-
-| Action | |
-|---|---|
-| `tap({ position?, until?, retries?, windowMs?, pollMs?, timeout? })`, `longPress({ durationMs?, timeout? })` | touch the element's centre, or `position` (an offset from its top-left corner). `until` makes the tap retrying (below). The element must be enabled and its tap point on screen, and its frame must have held still across two looks |
-| `fill(text)` | replace the field's text (focus with the caret at the end, empty it, type the whole string), then poll until the field holds it on consecutive reads, since the accessibility value lags the keys by 100-200 ms; a mismatch is retried once with a fresh clear and retype, then fails with what the field holds. Emptying is select all on iOS and on Android 13+, then the typed text replaces the selection (no Backspace; on Android with `WARDEN_ANDROID_SETTEXT=1`, a field that holds text is replaced in one `setText` call instead); older Android and the retry press one Backspace per character, and a field that is empty or shows its placeholder gets no keys. Secure fields skip the check |
-| `type(text)`, `clear()`, `press(key, { modifiers? })` | keyboard input; the field is tapped first unless it already has focus. `key` is `Enter`, `Backspace`, `Tab`, `Space`, `Escape`, `Delete`, `Up`, `Down`, `Left` or `Right`; `modifiers` is a list of `shift`, `cmd`, `alt`, `ctrl` (Android before 13 cannot send them). `clear()` checks the field is empty afterwards, with one counted retry (secure fields skip the check) |
-| `swipe({ direction, momentum? })`, `scrollTo({ direction?, momentum?, maxSwipes? })` | scroll the element, or scroll the screen until it is visible (same defaults as `screen.scrollUntilVisible`) |
-| `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` | two fingers around the element's centre, kept inside its visible rect (defaults 500 ms); `rotate` is clockwise for positive degrees. Same `scale` and `degrees` limits and `INVALID_ARGUMENT` as `screen.gesture` |
-
-Reads never wait; they answer from the screen as it is now:
-
-`text()` · `value()` · `count()` · `all()` · `allTexts()` · `isVisible()` · `isHidden()` · `isEnabled()` · `isChecked()` · `boundingBox()` · `waitFor({ state?: "visible" | "hidden" | "attached" | "detached", timeout? })`
-
-`waitFor` is the one read that polls: `state` defaults to `"visible"` and `timeout` to `actionTimeout`, and it fails with `TIMEOUT` carrying the screen as text.
-
-`text()` falls back to the text of the descendants when iOS leaves a container's own label empty (a `Badge`, a `Chip`), so asserting on the container works.
-
-`read()` answers several of those from one look at the screen: `{ visible, text?, value?, checked? }`. Nothing matching gives `{ visible: false }`; `text` and `value` are there when the element has them, `checked` only for a switch or checkbox. It is cheaper than `text()` plus `value()` plus `isChecked()`, which each look at the screen. Like the other reads it fails with `LOCATOR_AMBIGUOUS` for several matches.
-
-### Tap until something shows
-
-A tap can land before the screen is ready to take it. Give `tap` the thing the tap should lead to and it checks, and taps again when that is not there:
-
-```ts
-await screen.getByTestId("tab-settings").tap({ until: screen.getByTestId("settings-email") });
-await screen.getByTestId("sync").tap({ until: async () => (await screen.getByTestId("sync").read()).text === "Synced" });
-```
-
-`until` is a locator (visible) or an async function returning a boolean. After the tap it waits up to `windowMs` (default 4000), checking every `pollMs` (default 250), and taps again when the window passes without the check holding, at most `retries` times (default 2, so three taps in all). The last tap is not waited on: when it did not work either, `tap` returns and the next assertion reports what is missing. A locator `until` is checked on the same look at the screen as the poll, so a check costs one snapshot, and that look is also compared with the screen the tap aimed from: once the screen changed (a spinner, a disabled button, the target gone) the tap landed and is never sent again, however late `until` is, and `tap` returns at the end of the window; a screen that has not changed at all is tapped again from 750 ms on instead of after the whole window. A function `until` always gets the whole window. `retries`, `windowMs` and `pollMs` are `INVALID_ARGUMENT` without `until`. Use it for taps that are known to be lost sometimes (a tab bar still animating in); a plain `tap()` is one tap.
-
-### Fewer snapshots
-
-Every read, action and `expect` looks at the screen. The runner keeps the last look for a moment and reuses it when nothing you did since can have changed the screen: a tap, a key, a launch, a settle, any call it does not know all drop it, and it is dropped when it is older than 150 ms on iOS or 1 s on Android. Only the first look of a read or an `expect` may reuse it (later polls are real looks). Anything that aims at an element does not reuse it as it is: `tap`, `longPress`, `fill`, `type`, `clear`, `press`, `scrollTo` and `boundingBox` take a new snapshot, because a snapshot taken while a screen was still sliding in has the element somewhere else, and the tap would land on its neighbour (the one exception, a plain `tap` on iOS that checks the kept look with a hit-test, is below). The confirmation reads that check a `fill` took are real as well, and so are `device.snapshot()` and `device.screenshot()`. So `isVisible()` then `text()` then `expect(...)` is one snapshot, and `expect(a).toBeVisible()` followed by `a.tap()` is two. On iOS, where a hit-test costs a fraction of a snapshot, a plain `tap()` within 150 ms of the look that saw its element, with no input since, takes no second snapshot: it hit-tests its tap point and taps when the hit is the same element in the same place (same role, identifier, label, enabled state and frame), and otherwise looks again as usual. A `tap({ until })` and a test with `systemAlerts` set always take the fresh look. Changes the runner cannot see (the app's own timers, `devtools.evaluate`) show up within that age at most.
-
-## expect: the nine matchers
-
-`expect(locator)` polls every 100 ms for the first second, then every 250 ms, until the check holds or `assertionTimeout` (default 5 s) runs out. Pass `{ timeout }` to override one check. Every matcher takes `timeout`, and an option it does not know is `INVALID_ARGUMENT`. All but `toHaveCount` need exactly one match: none keeps polling, several fail at once with `ASSERTION`.
-
-| Matcher | Holds when |
-|---|---|
-| `toBeVisible()` / `toBeHidden()` | the element is on screen / absent or off screen |
-| `toHaveText(text, { exact? })` | the text equals `text` after whitespace is collapsed; `{ exact: false }`: a case-insensitive substring. A `RegExp` is tested as written |
-| `toContainText(text, { ignoreCase? })` | the text contains `text`, case-sensitively unless `ignoreCase: true` (a `RegExp` is tested as written) |
-| `toHaveValue(text)` | the field's value equals `text` (a `RegExp` is tested as written) |
-| `toBeChecked({ checked? })` | a switch or checkbox is on (`{ checked: false }`: off) |
-| `toHaveCount(n)` | exactly `n` elements match |
-| `toBeEnabled()` / `toBeDisabled()` | the element accepts / refuses input |
-
-`.not` inverts any matcher: `await expect(row).not.toBeVisible()`. A negated matcher passes once its condition has held for 1 s without a break (or the whole timeout, if shorter). Where the driver can tell the app went quiet (iOS with the accessibility bridge, Android with `warden-uiad`), it asks once after the first poll that holds, provided no action reached the driver in the last second (any call that is not a read counts: a tap, typing, a key press, a settle, an orientation or appearance change); if the screen is quiet (250 ms without activity), one more fresh look that still holds passes, usually within about 300 ms. Right after an action the full second is held (the matcher's own settle counts, so a second `.not` straight after one that ended early holds the full second too): an app waiting on the network is quiet until the reply comes, so `submit.tap()` then `expect(error).not.toBeVisible()` still sees an error that arrives within that second (a slower reply needs an explicit wait either way). A screen that is quiet but about to change by itself long after the last input (a toast on a timer) can pass before the change; wait for that change explicitly. `device.devtools.evaluate` and `reloadJs` go to Metro, not the driver, so they do not count as an action: a `.not` right after one may end early, so tap, `wait` or assert something positive first. `expect.soft(locator)` records a failure and carries on; the test fails at the end if any soft check failed. For anything that is not a locator, `expect` is bun's own `expect`.
-
-## app and device
+## App and device
 
 `app` is the app under test (`spec.bundleId`):
 
@@ -214,7 +220,8 @@ Every test attempt writes `trace.jsonl`; when a test fails, the runner adds the 
   screenshots/           device.screenshot() images (any test)
 ```
 
-Read `screen-at-failure.txt` first: a query that found nothing is almost always an element that is missing or not `accessible` there. `<spec>` is the spec's path under the suite's `specsDir` without `.e2e.ts`, `<test-title>` a slug of the describe and test titles. Under `warden e2e`, `<out>` is `<batchDir>/e2e/<worker>-<seq>/` (`<worker>-<seq>-p<pass>` on a later pass) and every test (skipped ones too; with `retry`, only the final attempt) also appends one line to `results.jsonl` there with `file`, `title`, `status` (`passed`, `failed`, `skipped` or `timed-out`), `durationMs`, `startedAt`, `error`, `artifacts` and `device`; see [Run e2e](/docs/guides/run-e2e#where-to-look-when-it-fails).
+Read `screen-at-failure.txt` first: a query that found nothing is almost always an element that is missing or not `accessible` there. `<spec>` is the spec's path under the suite's `specsDir` without `.e2e.ts`; `<test-title>` is a slug of the describe and test titles. Under `warden e2e`, `<out>` is `<batchDir>/e2e/<worker>-<seq>/` (`<worker>-<seq>-p<pass>` on a later pass) and every test (skipped ones too; with `retry`, only the final attempt) also appends one line to `results.jsonl` there with `file`, `title`, `status` (`passed`, `failed`, `skipped` or `timed-out`), `durationMs`, `startedAt`, `error`, `artifacts` and `device`; see [Debugging](/docs/e2e/debugging).
+
 
 ## Run a spec by hand
 
