@@ -31,9 +31,9 @@ const summary = (runId: string, platform: string, date: string, startedAt: strin
 describe("orderSummaries", () => {
 	test("platforms in order, then the newest run first, even on the same date", () => {
 		const ordered = orderSummaries([
-			summary("old", "ios", "2026-10-16", "2026-10-16T05:00:00.000Z"),
+			summary("old", "ios", "2026-10-20", "2026-10-20T05:00:00.000Z"),
 			summary("droid", "android", "2026-10-17", "2026-10-17T05:00:00.000Z"),
-			summary("new", "ios", "2026-10-16", "2026-10-16T11:00:00.000Z"),
+			summary("new", "ios", "2026-10-20", "2026-10-20T11:00:00.000Z"),
 			summary("older", "ios", "2026-10-15", "2026-10-15T23:00:00.000Z"),
 		]);
 		expect(ordered.map((e) => e.summary.runId)).toEqual(["new", "old", "older", "droid"]);
@@ -41,16 +41,16 @@ describe("orderSummaries", () => {
 });
 
 describe("runLabel", () => {
-	const perf = { runId: "perf-ios-r1", platform: "ios", date: "2026-10-16" };
-	const base = { runId: "v1-ios-r2", platform: "ios", date: "2026-10-16" };
+	const perf = { runId: "ios-r2", platform: "ios", date: "2026-10-20" };
+	const base = { runId: "ios-r1", platform: "ios", date: "2026-10-20" };
 	const earlier = { runId: "v0-ios", platform: "ios", date: "2026-10-15" };
-	const droid = { runId: "v1-android", platform: "android", date: "2026-10-16" };
+	const droid = { runId: "v1-android", platform: "android", date: "2026-10-20" };
 	const runs = [perf, base, earlier, droid];
 	test("a date alone when it is the only run of that platform that day", () => {
 		expect(runLabel(earlier, runs)).toBe("2026-10-15");
-		expect(runLabel(droid, runs)).toBe("2026-10-16");
+		expect(runLabel(droid, runs)).toBe("2026-10-20");
 	});
 	test("the run id too when the platform has two runs that day", () => {
-		expect(runLabel(perf, runs)).toBe("2026-10-16 · perf-ios-r1");
+		expect(runLabel(perf, runs)).toBe("2026-10-20 · ios-r2");
 	});
 });
