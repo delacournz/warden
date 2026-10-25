@@ -4,6 +4,11 @@
 	"tasks": {
 		"build": {
 			"dependsOn": ["^build"],
+			// Turbo 2 runs tasks in strict env mode: a variable not listed here is
+			// stripped before the task starts. `apps/docs` reads its PostHog values as
+			// `VITE_*` at build time; without this Railway's `turbo build` inlines
+			// `undefined` and production ships with no analytics and no error.
+			"env": ["VITE_*"],
 			"cache": false,
 			"outputs": ["dist/**"]
 		},

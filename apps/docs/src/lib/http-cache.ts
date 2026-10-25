@@ -8,6 +8,7 @@ const staticCache = "public, max-age=86400, s-maxage=604800, stale-while-revalid
 export const routeRules = {
 	"/": { headers: { "Cache-Control": pageCache } },
 	"/docs/**": { headers: { "Cache-Control": pageCache } },
+	"/privacy": { headers: { "Cache-Control": pageCache } },
 	"/llms.txt": { headers: { "Cache-Control": pageCache } },
 	"/llms-full.txt": { headers: { "Cache-Control": pageCache } },
 	"/robots.txt": { headers: { "Cache-Control": staticCache } },

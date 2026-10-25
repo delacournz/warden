@@ -1,5 +1,6 @@
 import { Check, Copy } from "lucide-react";
 import { type ReactElement, useState } from "react";
+import { track } from "@/lib/analytics/track";
 
 /** A multi-line block to paste somewhere else (an agent prompt), on a flat sheet with a copy button in its tab. */
 export function CopyBlock({ text, label }: { text: string; label: string }): ReactElement {
@@ -9,6 +10,7 @@ export function CopyBlock({ text, label }: { text: string; label: string }): Rea
 		try {
 			await navigator.clipboard.writeText(text);
 			setCopied(true);
+			track({ name: "copy", what: "agent-prompt" });
 			window.setTimeout(() => setCopied(false), 1600);
 		} catch {
 			setCopied(false);

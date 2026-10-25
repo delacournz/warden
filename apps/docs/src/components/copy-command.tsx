@@ -1,5 +1,6 @@
 import { Check, Copy } from "lucide-react";
 import { type ReactElement, useState } from "react";
+import { track } from "@/lib/analytics/track";
 
 /** A shell command on one line with a copy button; the command is the label, so it is never truncated away. */
 export function CopyCommand({ command }: { command: string }): ReactElement {
@@ -9,6 +10,7 @@ export function CopyCommand({ command }: { command: string }): ReactElement {
 		try {
 			await navigator.clipboard.writeText(command);
 			setCopied(true);
+			track({ name: "copy", what: "command" });
 			window.setTimeout(() => setCopied(false), 1600);
 		} catch {
 			setCopied(false);
