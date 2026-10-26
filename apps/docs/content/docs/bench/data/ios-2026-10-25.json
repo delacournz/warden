@@ -2,7 +2,7 @@
 	"summaryVersion": 2,
 	"runId": "bench-2026-10-25-ios-eas",
 	"date": "2026-10-25",
-	"startedAt": "2026-10-25T12:16:03.510Z",
+	"startedAt": "2026-10-25T23:39:37.573Z",
 	"platform": "ios",
 	"host": {
 		"model": "VirtualMac2,1",
@@ -11,8 +11,8 @@
 		"memBytes": 42949672960,
 		"macos": "26.5.2",
 		"bun": "1.3.14",
-		"warden": "0.1.1",
-		"loadAvgAtStart": 3.85
+		"warden": "0.3.1",
+		"loadAvgAtStart": 2.87
 	},
 	"device": {
 		"name": "warden-iphone-17-1",
@@ -20,8 +20,8 @@
 	},
 	"app": {
 		"bundleId": "nz.co.delacour.warden.example",
-		"hash": "import:2d356",
-		"sha256": "2d35643eda49",
+		"hash": "import:c283e",
+		"sha256": "c283eae41c7a",
 		"bytes": 101124443
 	},
 	"options": {
@@ -36,238 +36,211 @@
 			"version": "bun 1.3.14 + warden-e2e",
 			"suite": {
 				"n": 4,
-				"median": 97041,
-				"p95": 98632,
-				"min": 95816,
-				"max": 98632,
-				"cvPct": 1.3
+				"median": 86296,
+				"p95": 86712,
+				"min": 85571,
+				"max": 86712,
+				"cvPct": 0.5
 			},
-			"ratio": 1.06,
-			"fastest": false,
+			"ratio": 1,
+			"fastest": true,
 			"failing": false,
-			"coldRep1Ms": 98327,
-			"coldStartMs": 1938,
-			"prepareMs": 652,
-			"teardownMs": 85,
-			"overheadMs": 80,
+			"coldRep1Ms": 71978,
+			"coldStartMs": -13722,
+			"prepareMs": 596,
+			"teardownMs": 72,
+			"overheadMs": 67,
 			"passRate": 1,
 			"flakeRate": 0,
 			"stepLatency": {
 				"n": 504,
-				"median": 170,
-				"p95": 3930,
+				"median": 85,
+				"p95": 3626,
 				"min": 0,
-				"max": 5004,
-				"cvPct": 191.4
+				"max": 4977,
+				"cvPct": 203.7
 			},
-			"cpuSecondsPerRep": 9.12,
+			"cpuSecondsPerRep": 2.97,
 			"processes": [
 				{
 					"name": "warden-simd",
 					"scope": "host",
-					"cpuSeconds": 7.03,
-					"rssAvgBytes": 58615518,
-					"rssPeakBytes": 58703872,
+					"cpuSeconds": 1.76,
+					"rssAvgBytes": 59249526,
+					"rssPeakBytes": 59424768,
 					"spawnCount": 1,
-					"shareOfScopePct": 77.2
+					"shareOfScopePct": 60
 				},
 				{
 					"name": "bun test",
 					"scope": "host",
-					"cpuSeconds": 1.15,
-					"rssAvgBytes": 96684043,
-					"rssPeakBytes": 112345088,
+					"cpuSeconds": 1.16,
+					"rssAvgBytes": 94525524,
+					"rssPeakBytes": 106217472,
 					"spawnCount": 1,
-					"shareOfScopePct": 12.6
+					"shareOfScopePct": 39.5
 				},
 				{
 					"name": "bun test (exit charge)",
 					"scope": "host",
-					"cpuSeconds": 0.69,
+					"cpuSeconds": 0.01,
 					"rssAvgBytes": 0,
 					"rssPeakBytes": 0,
 					"spawnCount": 0,
-					"shareOfScopePct": 7.5
+					"shareOfScopePct": 0.5
+				},
+				{
+					"name": "bun cli.ts",
+					"scope": "host",
+					"cpuSeconds": 0,
+					"rssAvgBytes": 0,
+					"rssPeakBytes": 0,
+					"spawnCount": 0,
+					"shareOfScopePct": 0
 				},
 				{
 					"name": "simctl",
 					"scope": "host",
-					"cpuSeconds": 0.24,
-					"rssAvgBytes": 284018,
-					"rssPeakBytes": 21659648,
-					"spawnCount": 3,
-					"shareOfScopePct": 2.7
-				},
-				{
-					"name": "(PlistBuddy)",
-					"scope": "host",
 					"cpuSeconds": 0,
 					"rssAvgBytes": 0,
 					"rssPeakBytes": 0,
 					"spawnCount": 0,
 					"shareOfScopePct": 0
-				},
-				{
-					"name": "(bash)",
-					"scope": "host",
-					"cpuSeconds": 0,
-					"rssAvgBytes": 0,
-					"rssPeakBytes": 0,
-					"spawnCount": 0,
-					"shareOfScopePct": 0
-				},
-				{
-					"name": "(simctl)",
-					"scope": "host",
-					"cpuSeconds": 0,
-					"rssAvgBytes": 0,
-					"rssPeakBytes": 0,
-					"spawnCount": 0,
-					"shareOfScopePct": 0
-				},
-				{
-					"name": "bun cli.ts",
-					"scope": "host",
-					"cpuSeconds": 0,
-					"rssAvgBytes": 0,
-					"rssPeakBytes": 0,
-					"spawnCount": 0,
-					"shareOfScopePct": 0
-				},
-				{
-					"name": "iOS",
-					"scope": "sim",
-					"cpuSeconds": 75.3,
-					"rssAvgBytes": 37357954354,
-					"rssPeakBytes": 37400297472,
-					"spawnCount": 286,
-					"shareOfScopePct": 64.7
 				},
 				{
 					"name": "wardenexample",
 					"scope": "sim",
-					"cpuSeconds": 30.57,
-					"rssAvgBytes": 393132107,
-					"rssPeakBytes": 453804032,
+					"cpuSeconds": 32.07,
+					"rssAvgBytes": 391250303,
+					"rssPeakBytes": 449757184,
 					"spawnCount": 8,
-					"shareOfScopePct": 26.3
+					"shareOfScopePct": 48.8
+				},
+				{
+					"name": "iOS",
+					"scope": "sim",
+					"cpuSeconds": 25.41,
+					"rssAvgBytes": 10368465219,
+					"rssPeakBytes": 10428710912,
+					"spawnCount": 108,
+					"shareOfScopePct": 38.6
 				},
 				{
 					"name": "SimulatorFrameworkBridge-iOS serve",
 					"scope": "sim",
-					"cpuSeconds": 6.04,
-					"rssAvgBytes": 207338062,
-					"rssPeakBytes": 220413952,
-					"spawnCount": 12,
-					"shareOfScopePct": 5.2
+					"cpuSeconds": 3.53,
+					"rssAvgBytes": 194631381,
+					"rssPeakBytes": 209502208,
+					"spawnCount": 13,
+					"shareOfScopePct": 5.4
 				},
 				{
 					"name": "bun cli.ts",
 					"scope": "sim",
-					"cpuSeconds": 2.01,
-					"rssAvgBytes": 246435604,
-					"rssPeakBytes": 253444096,
+					"cpuSeconds": 2.28,
+					"rssAvgBytes": 239376372,
+					"rssPeakBytes": 240664576,
 					"spawnCount": 1,
-					"shareOfScopePct": 1.7
+					"shareOfScopePct": 3.5
 				},
 				{
 					"name": "CoreSimulatorBridge",
 					"scope": "sim",
-					"cpuSeconds": 0.94,
-					"rssAvgBytes": 87803314,
-					"rssPeakBytes": 87965696,
+					"cpuSeconds": 1.25,
+					"rssAvgBytes": 89005649,
+					"rssPeakBytes": 89161728,
 					"spawnCount": 1,
-					"shareOfScopePct": 0.8
-				},
-				{
-					"name": "launchd_sim",
-					"scope": "sim",
-					"cpuSeconds": 0.39,
-					"rssAvgBytes": 54712095,
-					"rssPeakBytes": 54722560,
-					"spawnCount": 1,
-					"shareOfScopePct": 0.3
-				},
-				{
-					"name": "xpcproxy_sim",
-					"scope": "sim",
-					"cpuSeconds": 0.26,
-					"rssAvgBytes": 399907,
-					"rssPeakBytes": 11943936,
-					"spawnCount": 8,
-					"shareOfScopePct": 0.2
-				},
-				{
-					"name": "mlhostd",
-					"scope": "sim",
-					"cpuSeconds": 0.24,
-					"rssAvgBytes": 132788,
-					"rssPeakBytes": 15138816,
-					"spawnCount": 2,
-					"shareOfScopePct": 0.2
+					"shareOfScopePct": 1.9
 				},
 				{
 					"name": "ps",
 					"scope": "sim",
-					"cpuSeconds": 0.15,
-					"rssAvgBytes": 1966080,
-					"rssPeakBytes": 1966080,
-					"spawnCount": 191,
-					"shareOfScopePct": 0.1
+					"cpuSeconds": 0.69,
+					"rssAvgBytes": 1835008,
+					"rssPeakBytes": 1835008,
+					"spawnCount": 171,
+					"shareOfScopePct": 1
+				},
+				{
+					"name": "launchd_sim",
+					"scope": "sim",
+					"cpuSeconds": 0.33,
+					"rssAvgBytes": 38601471,
+					"rssPeakBytes": 38617088,
+					"spawnCount": 1,
+					"shareOfScopePct": 0.5
+				},
+				{
+					"name": "xpcproxy_sim",
+					"scope": "sim",
+					"cpuSeconds": 0.22,
+					"rssAvgBytes": 421289,
+					"rssPeakBytes": 13893632,
+					"spawnCount": 7,
+					"shareOfScopePct": 0.3
+				},
+				{
+					"name": "pkd",
+					"scope": "sim",
+					"cpuSeconds": 0,
+					"rssAvgBytes": 61784064,
+					"rssPeakBytes": 61784064,
+					"spawnCount": 1,
+					"shareOfScopePct": 0
+				},
+				{
+					"name": "aslmanager",
+					"scope": "sim",
+					"cpuSeconds": 0,
+					"rssAvgBytes": 22200320,
+					"rssPeakBytes": 22200320,
+					"spawnCount": 1,
+					"shareOfScopePct": 0
+				},
+				{
+					"name": "caffeinate",
+					"scope": "sim",
+					"cpuSeconds": 0,
+					"rssAvgBytes": 7651328,
+					"rssPeakBytes": 7651328,
+					"spawnCount": 1,
+					"shareOfScopePct": 0
 				},
 				{
 					"name": "(launchctl)",
 					"scope": "sim",
-					"cpuSeconds": 0.14,
-					"rssAvgBytes": 95473,
-					"rssPeakBytes": 18235392,
-					"spawnCount": 1,
-					"shareOfScopePct": 0.1
-				},
-				{
-					"name": "storekitd",
-					"scope": "sim",
-					"cpuSeconds": 0.14,
-					"rssAvgBytes": 134119424,
-					"rssPeakBytes": 134119424,
-					"spawnCount": 1,
-					"shareOfScopePct": 0.1
-				},
-				{
-					"name": "triald",
-					"scope": "sim",
-					"cpuSeconds": 0.13,
-					"rssAvgBytes": 101283658,
-					"rssPeakBytes": 101318656,
-					"spawnCount": 1,
-					"shareOfScopePct": 0.1
+					"cpuSeconds": 0,
+					"rssAvgBytes": 0,
+					"rssPeakBytes": 0,
+					"spawnCount": 0,
+					"shareOfScopePct": 0
 				},
 				{
 					"name": "other",
 					"scope": "sim",
 					"cpuSeconds": 0,
-					"rssAvgBytes": 465436672,
-					"rssPeakBytes": 465436672,
-					"spawnCount": 6,
+					"rssAvgBytes": 0,
+					"rssPeakBytes": 0,
+					"spawnCount": 0,
 					"shareOfScopePct": 0
 				}
 			],
 			"resources": {
 				"host": {
-					"cpuAvgPct": 8.1,
-					"cpuPeakPct": 59.4,
-					"rssAvgBytes": 154960397,
-					"rssPeakBytes": 193921024,
-					"cpuSeconds": 46.25,
-					"cpuRatePct": 9.5
+					"cpuAvgPct": 3,
+					"cpuPeakPct": 38.8,
+					"rssAvgBytes": 153023872,
+					"rssPeakBytes": 166330368,
+					"cpuSeconds": 15.36,
+					"cpuRatePct": 3.7
 				},
 				"sim": {
-					"cpuAvgPct": 102.7,
-					"cpuPeakPct": 292.5,
-					"rssAvgBytes": 39057262897,
-					"rssPeakBytes": 39178141696,
-					"cpuSeconds": 563.94,
-					"cpuRatePct": 115.7
+					"cpuAvgPct": 74.3,
+					"cpuPeakPct": 282.8,
+					"rssAvgBytes": 11388839894,
+					"rssPeakBytes": 11512332288,
+					"cpuSeconds": 329.55,
+					"cpuRatePct": 78.9
 				}
 			},
 			"residue": {
@@ -279,7 +252,7 @@
 				"loc": 379,
 				"sourceBytes": 17892,
 				"depsBytes": 0,
-				"binaryBytes": 6430720
+				"binaryBytes": 7913472
 			}
 		},
 		{
@@ -288,61 +261,61 @@
 			"version": "0.30.1",
 			"suite": {
 				"n": 4,
-				"median": 131813,
-				"p95": 132142,
-				"min": 131038,
-				"max": 132142,
-				"cvPct": 0.3
+				"median": 134318,
+				"p95": 134647,
+				"min": 133770,
+				"max": 134647,
+				"cvPct": 0.2
 			},
-			"ratio": 1.44,
+			"ratio": 1.56,
 			"fastest": false,
 			"failing": false,
-			"coldRep1Ms": 132431,
-			"coldStartMs": 2351,
-			"prepareMs": 1733,
-			"teardownMs": 511,
-			"overheadMs": 168,
+			"coldRep1Ms": 133610,
+			"coldStartMs": 1010,
+			"prepareMs": 1718,
+			"teardownMs": 293,
+			"overheadMs": 163,
 			"passRate": 1,
 			"flakeRate": 0,
 			"stepLatency": {
 				"n": 1192,
-				"median": 318,
-				"p95": 1816,
+				"median": 321,
+				"p95": 1821,
 				"min": 0,
-				"max": 2821,
-				"cvPct": 140.2
+				"max": 2823,
+				"cvPct": 139.4
 			},
-			"cpuSecondsPerRep": 2.79,
+			"cpuSecondsPerRep": 4.13,
 			"processes": [
 				{
 					"name": "simulator-server",
 					"scope": "host",
-					"cpuSeconds": 2.5,
-					"rssAvgBytes": 101287841,
-					"rssPeakBytes": 101351424,
+					"cpuSeconds": 3.92,
+					"rssAvgBytes": 100646851,
+					"rssPeakBytes": 100712448,
 					"spawnCount": 1,
-					"shareOfScopePct": 92
+					"shareOfScopePct": 95.6
 				},
 				{
 					"name": "node argent",
 					"scope": "host",
-					"cpuSeconds": 0.21,
-					"rssAvgBytes": 89852818,
-					"rssPeakBytes": 92209152,
+					"cpuSeconds": 0.18,
+					"rssAvgBytes": 89830711,
+					"rssPeakBytes": 92340224,
 					"spawnCount": 1,
-					"shareOfScopePct": 7.8
+					"shareOfScopePct": 4.3
 				},
 				{
 					"name": "node argent (exit charge)",
 					"scope": "host",
-					"cpuSeconds": 0.01,
+					"cpuSeconds": 0,
 					"rssAvgBytes": 0,
 					"rssPeakBytes": 0,
 					"spawnCount": 0,
-					"shareOfScopePct": 0.2
+					"shareOfScopePct": 0.1
 				},
 				{
-					"name": "(node)",
+					"name": "(simctl)",
 					"scope": "host",
 					"cpuSeconds": 0,
 					"rssAvgBytes": 0,
@@ -378,139 +351,139 @@
 					"shareOfScopePct": 0
 				},
 				{
-					"name": "iOS",
-					"scope": "sim",
-					"cpuSeconds": 98.77,
-					"rssAvgBytes": 37392415130,
-					"rssPeakBytes": 37435736064,
-					"spawnCount": 287,
-					"shareOfScopePct": 74
-				},
-				{
 					"name": "wardenexample",
 					"scope": "sim",
-					"cpuSeconds": 29.5,
-					"rssAvgBytes": 393699454,
-					"rssPeakBytes": 456228864,
+					"cpuSeconds": 33.67,
+					"rssAvgBytes": 392947474,
+					"rssPeakBytes": 455966720,
 					"spawnCount": 8,
-					"shareOfScopePct": 22.1
+					"shareOfScopePct": 52.9
+				},
+				{
+					"name": "iOS",
+					"scope": "sim",
+					"cpuSeconds": 24.31,
+					"rssAvgBytes": 10366310699,
+					"rssPeakBytes": 10410377216,
+					"spawnCount": 106,
+					"shareOfScopePct": 38.2
 				},
 				{
 					"name": "bun cli.ts",
 					"scope": "sim",
-					"cpuSeconds": 2.78,
-					"rssAvgBytes": 313088536,
-					"rssPeakBytes": 322928640,
+					"cpuSeconds": 3.34,
+					"rssAvgBytes": 236178919,
+					"rssPeakBytes": 240418816,
 					"spawnCount": 1,
-					"shareOfScopePct": 2.1
+					"shareOfScopePct": 5.2
+				},
+				{
+					"name": "ps",
+					"scope": "sim",
+					"cpuSeconds": 1.07,
+					"rssAvgBytes": 1851760,
+					"rssPeakBytes": 1884160,
+					"spawnCount": 267,
+					"shareOfScopePct": 1.7
+				},
+				{
+					"name": "CoreSimulatorBridge",
+					"scope": "sim",
+					"cpuSeconds": 0.48,
+					"rssAvgBytes": 123494983,
+					"rssPeakBytes": 123895808,
+					"spawnCount": 1,
+					"shareOfScopePct": 0.8
 				},
 				{
 					"name": "simctl",
 					"scope": "sim",
 					"cpuSeconds": 0.41,
-					"rssAvgBytes": 372484,
-					"rssPeakBytes": 21512192,
-					"spawnCount": 7,
-					"shareOfScopePct": 0.3
-				},
-				{
-					"name": "CoreSimulatorBridge",
-					"scope": "sim",
-					"cpuSeconds": 0.4,
-					"rssAvgBytes": 123566994,
-					"rssPeakBytes": 123912192,
-					"spawnCount": 1,
-					"shareOfScopePct": 0.3
+					"rssAvgBytes": 360325,
+					"rssPeakBytes": 21446656,
+					"spawnCount": 5,
+					"shareOfScopePct": 0.6
 				},
 				{
 					"name": "launchd_sim",
 					"scope": "sim",
-					"cpuSeconds": 0.37,
-					"rssAvgBytes": 54754320,
-					"rssPeakBytes": 54771712,
+					"cpuSeconds": 0.21,
+					"rssAvgBytes": 38670229,
+					"rssPeakBytes": 38699008,
 					"spawnCount": 1,
 					"shareOfScopePct": 0.3
 				},
 				{
-					"name": "ps",
+					"name": "xpcproxy_sim",
 					"scope": "sim",
-					"cpuSeconds": 0.29,
-					"rssAvgBytes": 1983409,
-					"rssPeakBytes": 2080768,
-					"spawnCount": 260,
+					"cpuSeconds": 0.15,
+					"rssAvgBytes": 159483,
+					"rssPeakBytes": 12730368,
+					"spawnCount": 4,
 					"shareOfScopePct": 0.2
 				},
 				{
-					"name": "(mlhostd)",
+					"name": "(wardenexample)",
 					"scope": "sim",
-					"cpuSeconds": 0.26,
-					"rssAvgBytes": 227864,
-					"rssPeakBytes": 42467328,
-					"spawnCount": 2,
-					"shareOfScopePct": 0.2
-				},
-				{
-					"name": "triald",
-					"scope": "sim",
-					"cpuSeconds": 0.2,
-					"rssAvgBytes": 101351424,
-					"rssPeakBytes": 101351424,
+					"cpuSeconds": 0.04,
+					"rssAvgBytes": 1552614,
+					"rssPeakBytes": 414547968,
 					"spawnCount": 1,
 					"shareOfScopePct": 0.1
 				},
 				{
-					"name": "storekitd",
+					"name": "pkd",
 					"scope": "sim",
-					"cpuSeconds": 0.19,
-					"rssAvgBytes": 134628714,
-					"rssPeakBytes": 134660096,
+					"cpuSeconds": 0,
+					"rssAvgBytes": 61849600,
+					"rssPeakBytes": 61849600,
 					"spawnCount": 1,
-					"shareOfScopePct": 0.1
+					"shareOfScopePct": 0
 				},
 				{
-					"name": "(managedappdistri)",
+					"name": "aslmanager",
 					"scope": "sim",
-					"cpuSeconds": 0.14,
-					"rssAvgBytes": 219609,
-					"rssPeakBytes": 57098240,
+					"cpuSeconds": 0,
+					"rssAvgBytes": 22151168,
+					"rssPeakBytes": 22151168,
 					"spawnCount": 1,
-					"shareOfScopePct": 0.1
+					"shareOfScopePct": 0
 				},
 				{
-					"name": "mlhostd",
+					"name": "caffeinate",
 					"scope": "sim",
-					"cpuSeconds": 0.13,
-					"rssAvgBytes": 122187,
-					"rssPeakBytes": 16433152,
-					"spawnCount": 2,
-					"shareOfScopePct": 0.1
+					"cpuSeconds": 0,
+					"rssAvgBytes": 7585792,
+					"rssPeakBytes": 7585792,
+					"spawnCount": 1,
+					"shareOfScopePct": 0
 				},
 				{
 					"name": "other",
 					"scope": "sim",
-					"cpuSeconds": 0.05,
-					"rssAvgBytes": 466094301,
-					"rssPeakBytes": 475201536,
-					"spawnCount": 9,
+					"cpuSeconds": 0,
+					"rssAvgBytes": 0,
+					"rssPeakBytes": 0,
+					"spawnCount": 0,
 					"shareOfScopePct": 0
 				}
 			],
 			"resources": {
 				"host": {
-					"cpuAvgPct": 1.7,
-					"cpuPeakPct": 39.7,
-					"rssAvgBytes": 190841681,
-					"rssPeakBytes": 274497536,
-					"cpuSeconds": 14.69,
-					"cpuRatePct": 2.2
+					"cpuAvgPct": 2.7,
+					"cpuPeakPct": 41.8,
+					"rssAvgBytes": 190213446,
+					"rssPeakBytes": 248184832,
+					"cpuSeconds": 21.38,
+					"cpuRatePct": 3.2
 				},
 				"sim": {
-					"cpuAvgPct": 131.3,
-					"cpuPeakPct": 788.2,
-					"rssAvgBytes": 38948171555,
-					"rssPeakBytes": 39173636096,
-					"cpuSeconds": 956.48,
-					"cpuRatePct": 144.7
+					"cpuAvgPct": 44.5,
+					"cpuPeakPct": 209.9,
+					"rssAvgBytes": 11231123630,
+					"rssPeakBytes": 11339776000,
+					"cpuSeconds": 325.71,
+					"cpuRatePct": 48.4
 				}
 			},
 			"residue": {
@@ -531,85 +504,85 @@
 			"version": "agent-device 0.21.31",
 			"suite": {
 				"n": 4,
-				"median": 91769,
-				"p95": 91933,
-				"min": 91476,
-				"max": 91933,
+				"median": 91611,
+				"p95": 91704,
+				"min": 91153,
+				"max": 91704,
 				"cvPct": 0.2
 			},
-			"ratio": 1,
-			"fastest": true,
-			"failing": false,
-			"coldRep1Ms": 92861,
-			"coldStartMs": 18414,
-			"prepareMs": 17322,
-			"teardownMs": 322,
-			"overheadMs": 223,
-			"passRate": 1,
-			"flakeRate": 0,
+			"ratio": 1.06,
+			"fastest": false,
+			"failing": true,
+			"coldRep1Ms": 87465,
+			"coldStartMs": 12226,
+			"prepareMs": 16372,
+			"teardownMs": 315,
+			"overheadMs": 213,
+			"passRate": 0.975,
+			"flakeRate": 0.025,
 			"stepLatency": {
 				"n": 632,
-				"median": 479,
-				"p95": 1617,
+				"median": 471,
+				"p95": 1621,
 				"min": 37,
-				"max": 1904,
-				"cvPct": 81.8
+				"max": 1887,
+				"cvPct": 81.6
 			},
-			"cpuSecondsPerRep": 10.3,
+			"cpuSecondsPerRep": 11.18,
 			"processes": [
 				{
 					"name": "xcodebuild",
 					"scope": "host",
-					"cpuSeconds": 7.5,
-					"rssAvgBytes": 228551489,
-					"rssPeakBytes": 229294080,
+					"cpuSeconds": 7.97,
+					"rssAvgBytes": 230247520,
+					"rssPeakBytes": 231129088,
 					"spawnCount": 1,
-					"shareOfScopePct": 73.3
+					"shareOfScopePct": 71.9
 				},
 				{
 					"name": "bun cli.ts",
 					"scope": "host",
-					"cpuSeconds": 1.77,
-					"rssAvgBytes": 281724320,
-					"rssPeakBytes": 286588928,
+					"cpuSeconds": 1.93,
+					"rssAvgBytes": 251463895,
+					"rssPeakBytes": 257212416,
 					"spawnCount": 1,
-					"shareOfScopePct": 17.3
+					"shareOfScopePct": 17.4
 				},
 				{
 					"name": "snapshot-bridge",
 					"scope": "host",
-					"cpuSeconds": 0.77,
-					"rssAvgBytes": 121981221,
-					"rssPeakBytes": 122044416,
+					"cpuSeconds": 0.78,
+					"rssAvgBytes": 122219480,
+					"rssPeakBytes": 122339328,
 					"spawnCount": 1,
-					"shareOfScopePct": 7.5
-				},
-				{
-					"name": "node agent-device",
-					"scope": "host",
-					"cpuSeconds": 0.15,
-					"rssAvgBytes": 63971418,
-					"rssPeakBytes": 70008832,
-					"spawnCount": 1,
-					"shareOfScopePct": 1.5
+					"shareOfScopePct": 7
 				},
 				{
 					"name": "ps",
 					"scope": "host",
-					"cpuSeconds": 0.02,
-					"rssAvgBytes": 1982554,
-					"rssPeakBytes": 1998848,
-					"spawnCount": 182,
-					"shareOfScopePct": 0.2
+					"cpuSeconds": 0.22,
+					"rssAvgBytes": 1901449,
+					"rssPeakBytes": 1949696,
+					"spawnCount": 181,
+					"shareOfScopePct": 2
+				},
+				{
+					"name": "node agent-device",
+					"scope": "host",
+					"cpuSeconds": 0.14,
+					"rssAvgBytes": 64051573,
+					"rssPeakBytes": 69959680,
+					"spawnCount": 1,
+					"shareOfScopePct": 1.3
 				},
 				{
 					"name": "simctl",
 					"scope": "host",
-					"cpuSeconds": 0.02,
-					"rssAvgBytes": 21348352,
-					"rssPeakBytes": 21348352,
+					"cpuSeconds": 0.04,
+					"rssAvgBytes": 21250048,
+					"rssPeakBytes": 21250048,
 					"spawnCount": 1,
-					"shareOfScopePct": 0.2
+					"shareOfScopePct": 0.4
 				},
 				{
 					"name": "node agent-device (exit charge)",
@@ -621,20 +594,11 @@
 					"shareOfScopePct": 0.1
 				},
 				{
-					"name": "(simctl)",
-					"scope": "host",
-					"cpuSeconds": 0,
-					"rssAvgBytes": 99204,
-					"rssPeakBytes": 18055168,
-					"spawnCount": 1,
-					"shareOfScopePct": 0
-				},
-				{
 					"name": "DTServiceHub",
 					"scope": "host",
 					"cpuSeconds": 0,
-					"rssAvgBytes": 17547264,
-					"rssPeakBytes": 17547264,
+					"rssAvgBytes": 17203200,
+					"rssPeakBytes": 17203200,
 					"spawnCount": 1,
 					"shareOfScopePct": 0
 				},
@@ -642,13 +606,13 @@
 					"name": "caffeinate",
 					"scope": "host",
 					"cpuSeconds": 0,
-					"rssAvgBytes": 7618560,
-					"rssPeakBytes": 7618560,
+					"rssAvgBytes": 7438336,
+					"rssPeakBytes": 7438336,
 					"spawnCount": 1,
 					"shareOfScopePct": 0
 				},
 				{
-					"name": "(bash)",
+					"name": "(clang)",
 					"scope": "host",
 					"cpuSeconds": 0,
 					"rssAvgBytes": 0,
@@ -657,7 +621,16 @@
 					"shareOfScopePct": 0
 				},
 				{
-					"name": "(clang)",
+					"name": "(ps)",
+					"scope": "host",
+					"cpuSeconds": 0,
+					"rssAvgBytes": 0,
+					"rssPeakBytes": 0,
+					"spawnCount": 0,
+					"shareOfScopePct": 0
+				},
+				{
+					"name": "(simctl)",
 					"scope": "host",
 					"cpuSeconds": 0,
 					"rssAvgBytes": 0,
@@ -677,137 +650,137 @@
 				{
 					"name": "iOS",
 					"scope": "sim",
-					"cpuSeconds": 89.31,
-					"rssAvgBytes": 38107912169,
-					"rssPeakBytes": 38160334848,
-					"spawnCount": 291,
-					"shareOfScopePct": 65.7
+					"cpuSeconds": 37.64,
+					"rssAvgBytes": 10830766940,
+					"rssPeakBytes": 10872455168,
+					"spawnCount": 110,
+					"shareOfScopePct": 44.2
 				},
 				{
 					"name": "wardenexample",
 					"scope": "sim",
-					"cpuSeconds": 35.81,
-					"rssAvgBytes": 389975929,
-					"rssPeakBytes": 459636736,
+					"cpuSeconds": 36,
+					"rssAvgBytes": 393425552,
+					"rssPeakBytes": 459882496,
 					"spawnCount": 8,
-					"shareOfScopePct": 26.3
+					"shareOfScopePct": 42.3
 				},
 				{
 					"name": "AgentDeviceRunnerUITests-Runner",
 					"scope": "sim",
-					"cpuSeconds": 9.14,
-					"rssAvgBytes": 281177707,
-					"rssPeakBytes": 281264128,
+					"cpuSeconds": 10,
+					"rssAvgBytes": 282784491,
+					"rssPeakBytes": 282886144,
 					"spawnCount": 1,
-					"shareOfScopePct": 6.7
-				},
-				{
-					"name": "CoreSimulatorBridge",
-					"scope": "sim",
-					"cpuSeconds": 0.51,
-					"rssAvgBytes": 84527307,
-					"rssPeakBytes": 84606976,
-					"spawnCount": 1,
-					"shareOfScopePct": 0.4
+					"shareOfScopePct": 11.7
 				},
 				{
 					"name": "simctl",
 					"scope": "sim",
-					"cpuSeconds": 0.48,
-					"rssAvgBytes": 692989,
-					"rssPeakBytes": 21512192,
-					"spawnCount": 7,
-					"shareOfScopePct": 0.4
+					"cpuSeconds": 0.55,
+					"rssAvgBytes": 767242,
+					"rssPeakBytes": 21708800,
+					"spawnCount": 8,
+					"shareOfScopePct": 0.6
+				},
+				{
+					"name": "CoreSimulatorBridge",
+					"scope": "sim",
+					"cpuSeconds": 0.54,
+					"rssAvgBytes": 85551545,
+					"rssPeakBytes": 85639168,
+					"spawnCount": 1,
+					"shareOfScopePct": 0.6
 				},
 				{
 					"name": "launchd_sim",
 					"scope": "sim",
-					"cpuSeconds": 0.31,
-					"rssAvgBytes": 54941403,
-					"rssPeakBytes": 54951936,
+					"cpuSeconds": 0.21,
+					"rssAvgBytes": 38838317,
+					"rssPeakBytes": 38862848,
 					"spawnCount": 1,
 					"shareOfScopePct": 0.2
 				},
 				{
-					"name": "triald",
-					"scope": "sim",
-					"cpuSeconds": 0.13,
-					"rssAvgBytes": 101384192,
-					"rssPeakBytes": 101384192,
-					"spawnCount": 1,
-					"shareOfScopePct": 0.1
-				},
-				{
-					"name": "storekitd",
-					"scope": "sim",
-					"cpuSeconds": 0.13,
-					"rssAvgBytes": 134543157,
-					"rssPeakBytes": 134561792,
-					"spawnCount": 1,
-					"shareOfScopePct": 0.1
-				},
-				{
 					"name": "xpcproxy_sim",
 					"scope": "sim",
-					"cpuSeconds": 0.09,
-					"rssAvgBytes": 180224,
-					"rssPeakBytes": 9568256,
-					"spawnCount": 4,
-					"shareOfScopePct": 0.1
+					"cpuSeconds": 0.16,
+					"rssAvgBytes": 263683,
+					"rssPeakBytes": 13271040,
+					"spawnCount": 6,
+					"shareOfScopePct": 0.2
 				},
 				{
-					"name": "mlhostd",
+					"name": "launchctl",
 					"scope": "sim",
 					"cpuSeconds": 0.08,
-					"rssAvgBytes": 35019,
-					"rssPeakBytes": 6373376,
+					"rssAvgBytes": 25436,
+					"rssPeakBytes": 4603904,
 					"spawnCount": 1,
 					"shareOfScopePct": 0.1
 				},
 				{
-					"name": "(wardenexample)",
+					"name": "pkd",
 					"scope": "sim",
 					"cpuSeconds": 0,
-					"rssAvgBytes": 2495679,
-					"rssPeakBytes": 454213632,
+					"rssAvgBytes": 61997056,
+					"rssPeakBytes": 61997056,
 					"spawnCount": 1,
 					"shareOfScopePct": 0
 				},
 				{
-					"name": "assetsd",
+					"name": "aslmanager",
 					"scope": "sim",
 					"cpuSeconds": 0,
-					"rssAvgBytes": 171163648,
-					"rssPeakBytes": 171163648,
+					"rssAvgBytes": 22183936,
+					"rssPeakBytes": 22183936,
 					"spawnCount": 1,
+					"shareOfScopePct": 0
+				},
+				{
+					"name": "(launchctl)",
+					"scope": "sim",
+					"cpuSeconds": 0,
+					"rssAvgBytes": 0,
+					"rssPeakBytes": 0,
+					"spawnCount": 0,
+					"shareOfScopePct": 0
+				},
+				{
+					"name": "(managedappdistri)",
+					"scope": "sim",
+					"cpuSeconds": 0,
+					"rssAvgBytes": 0,
+					"rssPeakBytes": 0,
+					"spawnCount": 0,
 					"shareOfScopePct": 0
 				},
 				{
 					"name": "other",
 					"scope": "sim",
 					"cpuSeconds": 0,
-					"rssAvgBytes": 287653888,
-					"rssPeakBytes": 287653888,
-					"spawnCount": 4,
+					"rssAvgBytes": 0,
+					"rssPeakBytes": 0,
+					"spawnCount": 0,
 					"shareOfScopePct": 0
 				}
 			],
 			"resources": {
 				"host": {
-					"cpuAvgPct": 12.9,
-					"cpuPeakPct": 532.8,
-					"rssAvgBytes": 782082851,
-					"rssPeakBytes": 2596175872,
-					"cpuSeconds": 73.33,
-					"cpuRatePct": 15.4
+					"cpuAvgPct": 13.6,
+					"cpuPeakPct": 611.5,
+					"rssAvgBytes": 746451602,
+					"rssPeakBytes": 2620375040,
+					"cpuSeconds": 78.73,
+					"cpuRatePct": 16.8
 				},
 				"sim": {
-					"cpuAvgPct": 125.8,
-					"cpuPeakPct": 380,
-					"rssAvgBytes": 39556350142,
-					"rssPeakBytes": 39698415616,
-					"cpuSeconds": 683.96,
-					"cpuRatePct": 143.3
+					"cpuAvgPct": 86,
+					"cpuPeakPct": 248.7,
+					"rssAvgBytes": 11643514854,
+					"rssPeakBytes": 11780030464,
+					"cpuSeconds": 433.5,
+					"cpuRatePct": 92.3
 				}
 			},
 			"residue": {
@@ -828,85 +801,76 @@
 			"version": "e2e 0.20.0",
 			"suite": {
 				"n": 4,
-				"median": 132336,
-				"p95": 133427,
-				"min": 131774,
-				"max": 133427,
-				"cvPct": 0.5
+				"median": 132519,
+				"p95": 132886,
+				"min": 132236,
+				"max": 132886,
+				"cvPct": 0.2
 			},
-			"ratio": 1.44,
+			"ratio": 1.54,
 			"fastest": false,
 			"failing": false,
-			"coldRep1Ms": 151025,
-			"coldStartMs": 18689,
+			"coldRep1Ms": 150631,
+			"coldStartMs": 18112,
 			"prepareMs": 0,
-			"teardownMs": 523,
-			"overheadMs": 2205,
+			"teardownMs": 495,
+			"overheadMs": 2239,
 			"passRate": 1,
 			"flakeRate": 0,
 			"stepLatency": {
 				"n": 592,
-				"median": 494,
-				"p95": 3176,
-				"min": 52,
-				"max": 3979,
-				"cvPct": 116.6
+				"median": 481,
+				"p95": 3207,
+				"min": 46,
+				"max": 4013,
+				"cvPct": 117.7
 			},
-			"cpuSecondsPerRep": 17.01,
+			"cpuSecondsPerRep": 17.74,
 			"processes": [
 				{
 					"name": "xcodebuild",
 					"scope": "host",
-					"cpuSeconds": 14.26,
-					"rssAvgBytes": 227519375,
-					"rssPeakBytes": 228802560,
+					"cpuSeconds": 14.7,
+					"rssAvgBytes": 232393345,
+					"rssPeakBytes": 233783296,
 					"spawnCount": 1,
-					"shareOfScopePct": 84
+					"shareOfScopePct": 83
 				},
 				{
 					"name": "node entry.js",
 					"scope": "host",
-					"cpuSeconds": 1.05,
-					"rssAvgBytes": 88995957,
-					"rssPeakBytes": 97288192,
+					"cpuSeconds": 1.18,
+					"rssAvgBytes": 89317188,
+					"rssPeakBytes": 98942976,
 					"spawnCount": 1,
-					"shareOfScopePct": 6.2
+					"shareOfScopePct": 6.7
+				},
+				{
+					"name": "node e2e (exit charge)",
+					"scope": "host",
+					"cpuSeconds": 0.76,
+					"rssAvgBytes": 0,
+					"rssPeakBytes": 0,
+					"spawnCount": 0,
+					"shareOfScopePct": 4.3
 				},
 				{
 					"name": "snapshot-bridge",
 					"scope": "host",
-					"cpuSeconds": 0.63,
-					"rssAvgBytes": 121895153,
-					"rssPeakBytes": 121946112,
-					"spawnCount": 1,
-					"shareOfScopePct": 3.7
-				},
-				{
-					"name": "(node) (exit charge)",
-					"scope": "host",
 					"cpuSeconds": 0.62,
-					"rssAvgBytes": 0,
-					"rssPeakBytes": 0,
-					"spawnCount": 0,
-					"shareOfScopePct": 3.7
+					"rssAvgBytes": 122093693,
+					"rssPeakBytes": 122273792,
+					"spawnCount": 1,
+					"shareOfScopePct": 3.5
 				},
 				{
 					"name": "node e2e",
 					"scope": "host",
-					"cpuSeconds": 0.35,
-					"rssAvgBytes": 114694417,
-					"rssPeakBytes": 138690560,
+					"cpuSeconds": 0.43,
+					"rssAvgBytes": 109928010,
+					"rssPeakBytes": 140476416,
 					"spawnCount": 1,
-					"shareOfScopePct": 2.1
-				},
-				{
-					"name": "(node)",
-					"scope": "host",
-					"cpuSeconds": 0.03,
-					"rssAvgBytes": 0,
-					"rssPeakBytes": 0,
-					"spawnCount": 0,
-					"shareOfScopePct": 0.2
+					"shareOfScopePct": 2.4
 				},
 				{
 					"name": "other (exit charge)",
@@ -918,20 +882,11 @@
 					"shareOfScopePct": 0.2
 				},
 				{
-					"name": "(ps)",
-					"scope": "host",
-					"cpuSeconds": 0.01,
-					"rssAvgBytes": 28594,
-					"rssPeakBytes": 1769472,
-					"spawnCount": 5,
-					"shareOfScopePct": 0.1
-				},
-				{
 					"name": "simctl",
 					"scope": "host",
 					"cpuSeconds": 0,
-					"rssAvgBytes": 21544960,
-					"rssPeakBytes": 21544960,
+					"rssAvgBytes": 21479424,
+					"rssPeakBytes": 21479424,
 					"spawnCount": 1,
 					"shareOfScopePct": 0
 				},
@@ -939,9 +894,27 @@
 					"name": "DTServiceHub",
 					"scope": "host",
 					"cpuSeconds": 0,
-					"rssAvgBytes": 17563648,
-					"rssPeakBytes": 17563648,
+					"rssAvgBytes": 17580032,
+					"rssPeakBytes": 17580032,
 					"spawnCount": 1,
+					"shareOfScopePct": 0
+				},
+				{
+					"name": "(ps)",
+					"scope": "host",
+					"cpuSeconds": 0,
+					"rssAvgBytes": 5128,
+					"rssPeakBytes": 1343488,
+					"spawnCount": 1,
+					"shareOfScopePct": 0
+				},
+				{
+					"name": "(clang)",
+					"scope": "host",
+					"cpuSeconds": 0,
+					"rssAvgBytes": 0,
+					"rssPeakBytes": 0,
+					"spawnCount": 0,
 					"shareOfScopePct": 0
 				},
 				{
@@ -954,7 +927,7 @@
 					"shareOfScopePct": 0
 				},
 				{
-					"name": "(simctl)",
+					"name": "(plutil)",
 					"scope": "host",
 					"cpuSeconds": 0,
 					"rssAvgBytes": 0,
@@ -972,139 +945,139 @@
 					"shareOfScopePct": 0
 				},
 				{
-					"name": "iOS",
-					"scope": "sim",
-					"cpuSeconds": 107.48,
-					"rssAvgBytes": 37726085587,
-					"rssPeakBytes": 37769068544,
-					"spawnCount": 289,
-					"shareOfScopePct": 60.4
-				},
-				{
 					"name": "wardenexample",
 					"scope": "sim",
-					"cpuSeconds": 49.85,
-					"rssAvgBytes": 398899317,
-					"rssPeakBytes": 463241216,
+					"cpuSeconds": 50.77,
+					"rssAvgBytes": 400172196,
+					"rssPeakBytes": 462733312,
 					"spawnCount": 9,
-					"shareOfScopePct": 28
+					"shareOfScopePct": 41.4
+				},
+				{
+					"name": "iOS",
+					"scope": "sim",
+					"cpuSeconds": 50.7,
+					"rssAvgBytes": 10830400254,
+					"rssPeakBytes": 10874241024,
+					"spawnCount": 112,
+					"shareOfScopePct": 41.4
 				},
 				{
 					"name": "AgentDeviceRunnerUITests-Runner",
 					"scope": "sim",
-					"cpuSeconds": 15.86,
-					"rssAvgBytes": 284192129,
-					"rssPeakBytes": 284360704,
+					"cpuSeconds": 16.4,
+					"rssAvgBytes": 284137581,
+					"rssPeakBytes": 284229632,
 					"spawnCount": 1,
-					"shareOfScopePct": 8.9
+					"shareOfScopePct": 13.4
 				},
 				{
 					"name": "bun cli.ts",
 					"scope": "sim",
-					"cpuSeconds": 2.56,
-					"rssAvgBytes": 266313946,
-					"rssPeakBytes": 277250048,
+					"cpuSeconds": 2.46,
+					"rssAvgBytes": 277372115,
+					"rssPeakBytes": 284098560,
 					"spawnCount": 1,
-					"shareOfScopePct": 1.4
+					"shareOfScopePct": 2
 				},
 				{
 					"name": "CoreSimulatorBridge",
 					"scope": "sim",
-					"cpuSeconds": 0.57,
-					"rssAvgBytes": 84468927,
-					"rssPeakBytes": 84541440,
+					"cpuSeconds": 0.62,
+					"rssAvgBytes": 85495214,
+					"rssPeakBytes": 85573632,
 					"spawnCount": 1,
-					"shareOfScopePct": 0.3
+					"shareOfScopePct": 0.5
 				},
 				{
 					"name": "simctl",
 					"scope": "sim",
-					"cpuSeconds": 0.54,
-					"rssAvgBytes": 546902,
-					"rssPeakBytes": 21790720,
-					"spawnCount": 8,
-					"shareOfScopePct": 0.3
+					"cpuSeconds": 0.61,
+					"rssAvgBytes": 577004,
+					"rssPeakBytes": 21692416,
+					"spawnCount": 9,
+					"shareOfScopePct": 0.5
 				},
 				{
 					"name": "launchd_sim",
 					"scope": "sim",
-					"cpuSeconds": 0.46,
-					"rssAvgBytes": 54279756,
-					"rssPeakBytes": 54296576,
+					"cpuSeconds": 0.42,
+					"rssAvgBytes": 39480000,
+					"rssPeakBytes": 39501824,
 					"spawnCount": 1,
 					"shareOfScopePct": 0.3
 				},
 				{
-					"name": "mlhostd",
+					"name": "(launchctl)",
 					"scope": "sim",
-					"cpuSeconds": 0.24,
-					"rssAvgBytes": 138548,
-					"rssPeakBytes": 14958592,
-					"spawnCount": 3,
-					"shareOfScopePct": 0.1
-				},
-				{
-					"name": "triald",
-					"scope": "sim",
-					"cpuSeconds": 0.16,
-					"rssAvgBytes": 101339214,
-					"rssPeakBytes": 101351424,
-					"spawnCount": 1,
-					"shareOfScopePct": 0.1
-				},
-				{
-					"name": "storekitd",
-					"scope": "sim",
-					"cpuSeconds": 0.15,
-					"rssAvgBytes": 134381568,
-					"rssPeakBytes": 134381568,
-					"spawnCount": 1,
-					"shareOfScopePct": 0.1
-				},
-				{
-					"name": "launchctl",
-					"scope": "sim",
-					"cpuSeconds": 0.1,
-					"rssAvgBytes": 37627,
-					"rssPeakBytes": 9895936,
+					"cpuSeconds": 0.14,
+					"rssAvgBytes": 63597,
+					"rssPeakBytes": 16662528,
 					"spawnCount": 1,
 					"shareOfScopePct": 0.1
 				},
 				{
 					"name": "ps",
 					"scope": "sim",
-					"cpuSeconds": 0.06,
-					"rssAvgBytes": 2015668,
-					"rssPeakBytes": 2031616,
-					"spawnCount": 263,
-					"shareOfScopePct": 0
+					"cpuSeconds": 0.14,
+					"rssAvgBytes": 1835758,
+					"rssPeakBytes": 1851392,
+					"spawnCount": 262,
+					"shareOfScopePct": 0.1
+				},
+				{
+					"name": "(managedappdistri)",
+					"scope": "sim",
+					"cpuSeconds": 0.13,
+					"rssAvgBytes": 70289,
+					"rssPeakBytes": 18415616,
+					"spawnCount": 1,
+					"shareOfScopePct": 0.1
+				},
+				{
+					"name": "xpcproxy_sim",
+					"scope": "sim",
+					"cpuSeconds": 0.11,
+					"rssAvgBytes": 121879,
+					"rssPeakBytes": 14073856,
+					"spawnCount": 4,
+					"shareOfScopePct": 0.1
+				},
+				{
+					"name": "launchctl",
+					"scope": "sim",
+					"cpuSeconds": 0.07,
+					"rssAvgBytes": 10693,
+					"rssPeakBytes": 2801664,
+					"spawnCount": 1,
+					"shareOfScopePct": 0.1
 				},
 				{
 					"name": "other",
 					"scope": "sim",
-					"cpuSeconds": 0.07,
-					"rssAvgBytes": 468035748,
-					"rssPeakBytes": 913129472,
-					"spawnCount": 8,
+					"cpuSeconds": 0,
+					"rssAvgBytes": 91456113,
+					"rssPeakBytes": 91471872,
+					"spawnCount": 3,
 					"shareOfScopePct": 0
 				}
 			],
 			"resources": {
 				"host": {
-					"cpuAvgPct": 13.9,
-					"cpuPeakPct": 508.1,
-					"rssAvgBytes": 628673150,
-					"rssPeakBytes": 2160508928,
-					"cpuSeconds": 107.19,
-					"cpuRatePct": 15.7
+					"cpuAvgPct": 13.8,
+					"cpuPeakPct": 611.2,
+					"rssAvgBytes": 627266586,
+					"rssPeakBytes": 2661957632,
+					"cpuSeconds": 110.24,
+					"cpuRatePct": 16.2
 				},
 				"sim": {
-					"cpuAvgPct": 118.9,
-					"cpuPeakPct": 560.4,
-					"rssAvgBytes": 39496675576,
-					"rssPeakBytes": 39675101184,
-					"cpuSeconds": 914.59,
-					"cpuRatePct": 134.3
+					"cpuAvgPct": 84.1,
+					"cpuPeakPct": 248.1,
+					"rssAvgBytes": 11946704666,
+					"rssPeakBytes": 12205211648,
+					"cpuSeconds": 619.5,
+					"cpuRatePct": 91
 				}
 			},
 			"residue": {
@@ -1126,29 +1099,29 @@
 			"title": "onboarding steps through to sign-in",
 			"cells": {
 				"warden": {
-					"medianMs": 3136,
+					"medianMs": 2929,
 					"ratio": 1,
 					"passRate": 1,
 					"fastest": true,
 					"failing": false
 				},
 				"argent": {
-					"medianMs": 8220,
-					"ratio": 2.62,
+					"medianMs": 8301,
+					"ratio": 2.83,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"agent-device": {
-					"medianMs": 3867,
-					"ratio": 1.23,
+					"medianMs": 3830,
+					"ratio": 1.31,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"tester-army": {
-					"medianMs": 6032,
-					"ratio": 1.92,
+					"medianMs": 5964,
+					"ratio": 2.04,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
@@ -1160,29 +1133,29 @@
 			"title": "invalid email and short password show field errors",
 			"cells": {
 				"warden": {
-					"medianMs": 17987,
-					"ratio": 1.09,
-					"passRate": 1,
-					"fastest": false,
-					"failing": false
-				},
-				"argent": {
-					"medianMs": 17962,
-					"ratio": 1.09,
-					"passRate": 1,
-					"fastest": false,
-					"failing": false
-				},
-				"agent-device": {
-					"medianMs": 16549,
+					"medianMs": 16054,
 					"ratio": 1,
 					"passRate": 1,
 					"fastest": true,
 					"failing": false
 				},
+				"argent": {
+					"medianMs": 18221,
+					"ratio": 1.13,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"agent-device": {
+					"medianMs": 16579,
+					"ratio": 1.03,
+					"passRate": 0.8,
+					"fastest": false,
+					"failing": true
+				},
 				"tester-army": {
-					"medianMs": 20867,
-					"ratio": 1.26,
+					"medianMs": 21119,
+					"ratio": 1.32,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
@@ -1194,29 +1167,29 @@
 			"title": "a locked account shows the form alert",
 			"cells": {
 				"warden": {
-					"medianMs": 11046,
-					"ratio": 1.14,
+					"medianMs": 10096,
+					"ratio": 1.04,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"argent": {
-					"medianMs": 14040,
-					"ratio": 1.45,
+					"medianMs": 14442,
+					"ratio": 1.49,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"agent-device": {
-					"medianMs": 9671,
+					"medianMs": 9673,
 					"ratio": 1,
 					"passRate": 1,
 					"fastest": true,
 					"failing": false
 				},
 				"tester-army": {
-					"medianMs": 12799,
-					"ratio": 1.32,
+					"medianMs": 12914,
+					"ratio": 1.34,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
@@ -1228,28 +1201,28 @@
 			"title": "valid credentials land on todos",
 			"cells": {
 				"warden": {
-					"medianMs": 10937,
-					"ratio": 1.12,
+					"medianMs": 9788,
+					"ratio": 1,
 					"passRate": 1,
-					"fastest": false,
+					"fastest": true,
 					"failing": false
 				},
 				"argent": {
-					"medianMs": 14982,
-					"ratio": 1.53,
+					"medianMs": 15416,
+					"ratio": 1.58,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"agent-device": {
-					"medianMs": 9771,
+					"medianMs": 9784,
 					"ratio": 1,
 					"passRate": 1,
 					"fastest": true,
 					"failing": false
 				},
 				"tester-army": {
-					"medianMs": 14889,
+					"medianMs": 14850,
 					"ratio": 1.52,
 					"passRate": 1,
 					"fastest": false,
@@ -1262,29 +1235,29 @@
 			"title": "add, complete and filter todos",
 			"cells": {
 				"warden": {
-					"medianMs": 16997,
-					"ratio": 1.1,
-					"passRate": 1,
-					"fastest": false,
-					"failing": false
-				},
-				"argent": {
-					"medianMs": 20867,
-					"ratio": 1.35,
-					"passRate": 1,
-					"fastest": false,
-					"failing": false
-				},
-				"agent-device": {
-					"medianMs": 15503,
+					"medianMs": 14494,
 					"ratio": 1,
 					"passRate": 1,
 					"fastest": true,
 					"failing": false
 				},
+				"argent": {
+					"medianMs": 21110,
+					"ratio": 1.46,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
+				"agent-device": {
+					"medianMs": 15470,
+					"ratio": 1.07,
+					"passRate": 1,
+					"fastest": false,
+					"failing": false
+				},
 				"tester-army": {
-					"medianMs": 21196,
-					"ratio": 1.37,
+					"medianMs": 21230,
+					"ratio": 1.46,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
@@ -1296,29 +1269,29 @@
 			"title": "open a todo, mark it done, then delete it",
 			"cells": {
 				"warden": {
-					"medianMs": 12015,
+					"medianMs": 11089,
 					"ratio": 1,
 					"passRate": 1,
 					"fastest": true,
 					"failing": false
 				},
 				"argent": {
-					"medianMs": 18881,
-					"ratio": 1.57,
+					"medianMs": 19105,
+					"ratio": 1.72,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"agent-device": {
-					"medianMs": 12491,
-					"ratio": 1.04,
+					"medianMs": 12422,
+					"ratio": 1.12,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"tester-army": {
-					"medianMs": 18171,
-					"ratio": 1.51,
+					"medianMs": 18121,
+					"ratio": 1.63,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
@@ -1330,28 +1303,28 @@
 			"title": "deep link opens a todo by id",
 			"cells": {
 				"warden": {
-					"medianMs": 11791,
-					"ratio": 1.13,
+					"medianMs": 10656,
+					"ratio": 1.02,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"argent": {
-					"medianMs": 17367,
-					"ratio": 1.67,
+					"medianMs": 17811,
+					"ratio": 1.7,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"agent-device": {
-					"medianMs": 10417,
+					"medianMs": 10483,
 					"ratio": 1,
 					"passRate": 1,
 					"fastest": true,
 					"failing": false
 				},
 				"tester-army": {
-					"medianMs": 18056,
+					"medianMs": 18094,
 					"ratio": 1.73,
 					"passRate": 1,
 					"fastest": false,
@@ -1364,29 +1337,29 @@
 			"title": "settings shows the account, toggles switches and signs out",
 			"cells": {
 				"warden": {
-					"medianMs": 13018,
+					"medianMs": 10945,
 					"ratio": 1,
 					"passRate": 1,
 					"fastest": true,
 					"failing": false
 				},
 				"argent": {
-					"medianMs": 19116,
-					"ratio": 1.47,
+					"medianMs": 19616,
+					"ratio": 1.79,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"agent-device": {
-					"medianMs": 13228,
-					"ratio": 1.02,
+					"medianMs": 13136,
+					"ratio": 1.2,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
 				},
 				"tester-army": {
-					"medianMs": 18070,
-					"ratio": 1.39,
+					"medianMs": 18075,
+					"ratio": 1.65,
 					"passRate": 1,
 					"fastest": false,
 					"failing": false
