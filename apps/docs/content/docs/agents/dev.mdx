@@ -17,9 +17,10 @@ warden dev ios --json       # one line { udid, port, metroUrl, leaseIds } once M
 
 1. Checks the bundle id and `expo-dev-client`.
 2. Claims a device and leases a Metro port (default range `8081:100`).
-3. Installs the build for this fingerprint: installed, cache, EAS, then local build.
-4. Starts Metro on the leased port.
-5. Opens the dev client once the port is verified to serve this checkout.
+3. Shows the simulator (iOS, macOS): brings its window to the front, launching Device Hub (Xcode 27) or Simulator.app (Xcode ≤ 26) when no viewer is running. `--headless` skips this. Android emulators stay windowless.
+4. Installs the build for this fingerprint: installed, cache, EAS, then local build.
+5. Starts Metro on the leased port.
+6. Opens the dev client once the port is verified to serve this checkout.
 
 `warden dev` owns its Metro. A Metro left running by another worktree is refused, never attached to. It holds the device and the port until Metro exits; Ctrl-C releases both. The `--json` line is printed first, so an agent can read the `udid` and `metroUrl` and pass them to `warden ui open <bundleId> --metro <metroUrl>`.
 
@@ -48,7 +49,7 @@ Metro gets `WARDEN_WORKTREE` (the checkout directory name) and `WARDEN_BRANCH` (
 | `--install-mode clean\|reinstall` | `clean`: fresh app data each run without reinstalling an unchanged build; `reinstall`: uninstall + install each run. `--reset-keychain` also resets the simulator keychain |
 | `--no-open` | start Metro and take the leases only |
 | `--wait <duration>` · `--no-wait` · `--priority <p>` | boot-queue behaviour (default `--wait 30m`) |
-| `--headless` · `--no-headless` | close or keep the Simulator.app windows |
+| `--headless` · `--no-headless` | `--headless`: don't show the simulator and close its Simulator.app windows; the default shows it |
 | `--count <n>` · `--max <n>` · `--ttl <duration>` · `--label <label>` · `--adopt` | as for `warden claim` |
 
 ## Variants

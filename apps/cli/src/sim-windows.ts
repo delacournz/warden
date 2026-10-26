@@ -321,6 +321,37 @@ export async function reopenSimWindows(deps: AutoArrangeDeps, udids: readonly st
 	return opened;
 }
 
+/** Which viewer `revealSimWindow` brought to the front. */
+export type Revealed = { viewer: "device-hub" | "simulator" };
+
+const OPEN_TIMEOUT_MS = 10_000;
+
+/**
+ * Bring one sim's window to the front for a person who wants to watch it (`warden dev`). Unlike a
+ * claim, this launches a viewer when none is running — showing the app is the point. Device Hub
+ * (Xcode 27) is asked through its deep link without `-g`, which opens or focuses the device's
+ * window and launches Device Hub itself when it is down; Simulator.app (Xcode ≤ 26) is opened with
+ * the device current. With no viewer running the deep link is tried first and, when nothing on
+ * the Mac handles `devices://` (no Xcode 27), Simulator.app is launched instead. macOS only.
+ */
+export async function revealSimWindow(deps: Pick<AutoArrangeDeps, "exec" | "os">, udid: string): AsyncResult<Revealed> {
+	if ((deps.os ?? process.platform) !== "darwin") return err("showing a simulator window needs macOS");
+	const opts = { timeoutMs: OPEN_TIMEOUT_MS };
+	const hub = () => deps.exec(["open", deviceHubUrl(udid)], opts);
+	const simulator = () => deps.exec(["open", "-a", "Simulator", "--args", "-CurrentDeviceUDID", udid], opts);
+	const { kind } = await detectSimViewer(deps.exec);
+	if (kind === "simulator") {
+		const out = await simulator();
+		return out.exitCode === 0 ? ok({ viewer: "simulator" }) : err(`Simulator: ${execError(["open"], out)}`);
+	}
+	const viaHub = await hub();
+	if (viaHub.exitCode === 0) return ok({ viewer: "device-hub" });
+	if (kind === "device-hub") return err(`Device Hub: ${execError(["open"], viaHub)}`);
+	const viaSimulator = await simulator();
+	if (viaSimulator.exitCode === 0) return ok({ viewer: "simulator" });
+	return err(`Device Hub: ${execError(["open"], viaHub)}; Simulator: ${execError(["open"], viaSimulator)}`);
+}
+
 /** A device this run leased: closing windows is limited to these names. */
 export type LeasedSim = { udid: string; name: string };
 

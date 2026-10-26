@@ -44,6 +44,7 @@ import {
 } from "../metro";
 import { emit, heading, note, reportError, warn } from "../output";
 import { projectContextFor } from "../project-context";
+import { revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 
@@ -177,6 +178,19 @@ type EarlyMetro = {
 	aborted: () => boolean;
 };
 
+/**
+ * Show the leased sim (iOS, not `--headless`, macOS): bring its viewer window to the front, launching
+ * the viewer when none runs. Best effort: a viewer that can't be opened is a warning, never a failure.
+ */
+async function showDevice(ctx: CommandContext, platform: Platform, deviceId: string, headless: boolean): Promise<void> {
+	if (platform !== "ios" || headless || process.platform !== "darwin") return;
+	const shown = await revealSimWindow(ctx, deviceId);
+	if (shown.success) {
+		const viewer = shown.data.viewer === "device-hub" ? "Device Hub" : "Simulator";
+		note(ctx, `warden dev: showing ${deviceId} in ${viewer}`);
+	} else warn(ctx, `warden dev: couldn't show ${deviceId} (${shown.error}); --headless skips this`);
+}
+
 /** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
 async function openSession(
 	ctx: CommandContext,
@@ -201,6 +215,7 @@ async function openSession(
 		);
 		if (!flags.success) return flags;
 		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
+		let showing: Promise<void> | undefined;
 		const session = await claimAll(
 			ctx,
 			deps,
@@ -213,12 +228,18 @@ async function openSession(
 					const first = leased[0]?.port;
 					if (first !== undefined) early.start(first, undefined);
 				},
-				// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`
-				onLeased: (outcome) => ctx.store().markShared(outcome.claimed.map((c) => c.lease.id)),
+				// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`,
+				// and the person sees the sim come up
+				onLeased: (outcome) => {
+					ctx.store().markShared(outcome.claimed.map((c) => c.lease.id));
+					const first = outcome.claimed[0]?.device.id;
+					if (first !== undefined) showing = showDevice(ctx, platform, first, opts.headless === true);
+				},
 				aborted: early.aborted,
 			},
 			"dev"
 		);
+		await showing;
 		if (!session.success) return session;
 		const { outcome, ports, leaseIds, release } = session.data;
 		const deviceId = outcome.claimed[0]?.device.id;
@@ -240,7 +261,9 @@ async function openSession(
 		return err("no Metro port leased");
 	}
 	early.start(port, deviceId);
+	const showing = showDevice(ctx, platform, deviceId, opts.headless === true);
 	const ensured = await deps.ensureApp(ctx, owner, platform, deviceId, app);
+	await showing;
 	if (!ensured.success) {
 		await release();
 		return err(`app on ${deviceId}: ${ensured.error}`);

@@ -16,6 +16,7 @@ import {
 	layoutWindows,
 	openDeviceHubWindows,
 	reopenSimWindows,
+	revealSimWindow,
 	type SimWindow,
 	startHideSimWindows,
 } from "./sim-windows";
@@ -1244,6 +1245,67 @@ describe("reopenSimWindows", () => {
 		expect(await reopenSimWindows({ exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin" }, ["U1"])).toEqual([]);
 		expect(await reopenSimWindows({ exec, env: {}, os: "linux" }, ["U1"])).toEqual([]);
 		expect(await reopenSimWindows({ exec, env: {}, os: "darwin" }, [])).toEqual([]);
+		expect(calls).toEqual([]);
+	});
+});
+
+describe("revealSimWindow", () => {
+	const opens = (calls: string[][]) => calls.filter((c) => c[0] === "open");
+	const simulatorOpen = ["open", "-a", "Simulator", "--args", "-CurrentDeviceUDID", "U1"];
+	const hubOpen = ["open", "devices://device/open?id=U1"];
+
+	test("Device Hub running → its deep link without -g (the window comes to the front)", async () => {
+		const calls: string[][] = [];
+		const r = await revealSimWindow({ exec: viewerExec("device-hub", calls), os: "darwin" }, "U1");
+		expect(r).toEqual({ success: true, data: { viewer: "device-hub" } });
+		expect(opens(calls)).toEqual([hubOpen]);
+	});
+
+	test("Simulator.app running → Simulator with the device current", async () => {
+		const calls: string[][] = [];
+		const r = await revealSimWindow({ exec: viewerExec("simulator", calls), os: "darwin" }, "U1");
+		expect(r).toEqual({ success: true, data: { viewer: "simulator" } });
+		expect(opens(calls)).toEqual([simulatorOpen]);
+	});
+
+	test("no viewer running → the deep link launches Device Hub (Xcode 27)", async () => {
+		const calls: string[][] = [];
+		const r = await revealSimWindow({ exec: viewerExec("none", calls), os: "darwin" }, "U1");
+		expect(r).toEqual({ success: true, data: { viewer: "device-hub" } });
+		expect(opens(calls)).toEqual([hubOpen]);
+	});
+
+	test("no viewer and no devices:// handler (Xcode ≤ 26) → Simulator.app is launched instead", async () => {
+		const calls: string[][] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push([...cmd]);
+			if (cmd[0] === "pgrep") return { exitCode: 1, stdout: "", stderr: "" };
+			if (cmd[1]?.startsWith("devices://"))
+				return { exitCode: 1, stdout: "", stderr: "no application knows how to open URL" };
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const r = await revealSimWindow({ exec, os: "darwin" }, "U1");
+		expect(r).toEqual({ success: true, data: { viewer: "simulator" } });
+		expect(opens(calls)).toEqual([hubOpen, simulatorOpen]);
+	});
+
+	test("neither viewer can be opened → the error names both", async () => {
+		const exec: Exec = async (cmd) => {
+			if (cmd[0] === "pgrep") return { exitCode: 1, stdout: "", stderr: "" };
+			return { exitCode: 1, stdout: "", stderr: "nope" };
+		};
+		const r = await revealSimWindow({ exec, os: "darwin" }, "U1");
+		expect(r.success).toBe(false);
+		if (!r.success) {
+			expect(r.error).toContain("Device Hub");
+			expect(r.error).toContain("Simulator");
+		}
+	});
+
+	test("not macOS → nothing runs", async () => {
+		const calls: string[][] = [];
+		const r = await revealSimWindow({ exec: viewerExec("device-hub", calls), os: "linux" }, "U1");
+		expect(r.success).toBe(false);
 		expect(calls).toEqual([]);
 	});
 });

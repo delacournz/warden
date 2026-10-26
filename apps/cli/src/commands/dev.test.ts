@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { devClientLaunchArgv, type MetroProc } from "../metro";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { scriptedUi, type TestContext, testContext } from "../testing";
 import type { EnsureOptions } from "./app";
 import { createDevCommand, type DevDeps, devClientUrl } from "./dev";
 
@@ -84,6 +84,52 @@ describe("devClientUrl", () => {
 		expect(devClientUrl("exp+demo", 8082)).toBe(
 			"exp+demo://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8082"
 		);
+	});
+});
+
+describe("warden dev: showing the simulator", () => {
+	const hubRunning: Array<[string, { stdout?: string; exitCode?: number }]> = [
+		["pgrep -xq Simulator", { exitCode: 1 }],
+		["pgrep -xq DeviceHub", { exitCode: 0 }],
+		["open", {}],
+	];
+	const shown = (calls: string[][]) => calls.filter((cmd) => cmd[0] === "open");
+
+	test("the leased sim's window is brought to the front once it is held, before the dev client opens", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, hubRunning);
+		const ui = scriptedUi();
+		c.ui = ui;
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		expect(shown(calls)).toEqual([["open", "devices://device/open?id=U1"]]);
+		expect(calls.findIndex((cmd) => cmd[0] === "open")).toBeLessThan(calls.findIndex((cmd) => cmd.includes("launch")));
+		expect(ui.events.some((e) => e.includes("showing U1 in Device Hub"))).toBe(true);
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	test("--headless → no window is shown", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios", "--headless"], calls, hubRunning);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		expect(shown(calls)).toEqual([]);
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	test("a device already held (--udid) is shown too", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios", "--udid", "U1"], calls, hubRunning);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		expect(shown(calls)).toEqual([["open", "devices://device/open?id=U1"]]);
+		h.finish(0);
+		expect(await running).toBe(0);
 	});
 });
 
