@@ -143,6 +143,17 @@ describe("warden run", () => {
 		expect("WARDEN_HEADLESS" in (await childEnv(["ios", "--", "x"]))).toBe(false);
 	});
 
+	test("forwards SIGHUP (the terminal went away) to the child", async () => {
+		const c = setup(["ios", "--", "sleep", "60"]);
+		const h = harness();
+		const running = createRunCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0);
+		h.signals.get("SIGHUP")?.();
+		expect(h.kills).toEqual(["SIGHUP"]);
+		h.finish(129);
+		await running;
+	});
+
 	test("forwards SIGINT/SIGTERM to the child", async () => {
 		const c = setup(["ios", "--", "sleep", "60"]);
 		const h = harness();

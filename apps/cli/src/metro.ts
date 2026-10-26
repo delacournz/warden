@@ -12,7 +12,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
  * port can answer for another worktree's Metro), prewarm the bundle, stop it on exit.
  */
 
-export type MetroSignal = "SIGINT" | "SIGTERM" | "SIGKILL";
+export type MetroSignal = "SIGINT" | "SIGTERM" | "SIGHUP" | "SIGKILL";
 
 export type MetroProc = { exited: Promise<number>; kill: (signal: MetroSignal) => void };
 

@@ -8,13 +8,14 @@ import { bunExec } from "@delacour/warden-core/exec";
 import { readGitFactsSync } from "@delacour/warden-core/git-facts";
 import { isPortFree } from "@delacour/warden-core/ports";
 import { PRIORITY } from "@delacour/warden-core/queue";
-import type { Owner, Platform } from "@delacour/warden-core/types";
+import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, parsePlatform, resolveOwner, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
+import { shutdownReleasedDevices } from "../device-shutdown";
 import { missingPackages } from "../expo-app";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import {
@@ -22,6 +23,7 @@ import {
 	claimAll,
 	claimRunPorts,
 	exitCodeOf,
+	FORWARDED_SIGNALS,
 	holdLeases,
 	INTERRUPTED,
 	intervalEvery,
@@ -44,6 +46,7 @@ import {
 } from "../metro";
 import { emit, heading, note, reportError, warn } from "../output";
 import { projectContextFor } from "../project-context";
+import { closeSimWindows, revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 
@@ -90,6 +93,8 @@ type DevOpts = ClaimFlagValues & {
 	json?: true;
 	/** false = `--no-open` */
 	open: boolean;
+	/** false = `--no-shutdown`: leave the sim dev leased booted when dev ends */
+	shutdown: boolean;
 };
 
 /** The dev-client deep link that points `scheme`'s app at the Metro on `port`. */
@@ -177,6 +182,37 @@ type EarlyMetro = {
 	aborted: () => boolean;
 };
 
+/**
+ * Show the leased sim (iOS, not `--headless`, macOS): bring its viewer window to the front, launching
+ * the viewer when none runs. Best effort: a viewer that can't be opened is a warning, never a failure.
+ */
+async function showDevice(ctx: CommandContext, platform: Platform, deviceId: string, headless: boolean): Promise<void> {
+	if (platform !== "ios" || headless || process.platform !== "darwin") return;
+	const shown = await revealSimWindow(ctx, deviceId);
+	if (shown.success) {
+		const viewer = shown.data.viewer === "device-hub" ? "Device Hub" : "Simulator";
+		note(ctx, `warden dev: showing ${deviceId} in ${viewer}`);
+	} else warn(ctx, `warden dev: couldn't show ${deviceId} (${shown.error}); --headless skips this`);
+}
+
+/**
+ * Shut the session's own devices down while their leases are still held, and close the viewer
+ * windows of the iOS sims that went down (a Device Hub page stays open otherwise, offering "Start").
+ * Problems are warnings, never failures.
+ */
+async function shutdownDevices(ctx: CommandContext, owner: Owner, leases: Lease[]): Promise<void> {
+	const outcome = await shutdownReleasedDevices(ctx, leases, owner);
+	for (const id of outcome.shutdown) note(ctx, `warden dev: shut down ${id}`);
+	for (const line of outcome.notes) warn(ctx, `warden dev: ${line}`);
+	const sims = leases.flatMap((l) =>
+		l.resource.kind === "device" && l.resource.platform === "ios" && outcome.shutdown.includes(l.resource.id)
+			? [{ udid: l.resource.id, name: l.resource.name }]
+			: []
+	);
+	const closed = await closeSimWindows(ctx, sims);
+	if (!closed.success) warn(ctx, `warden dev: couldn't close the simulator window (${closed.error})`);
+}
+
 /** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
 async function openSession(
 	ctx: CommandContext,
@@ -201,6 +237,7 @@ async function openSession(
 		);
 		if (!flags.success) return flags;
 		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
+		let showing: Promise<void> | undefined;
 		const session = await claimAll(
 			ctx,
 			deps,
@@ -213,14 +250,31 @@ async function openSession(
 					const first = leased[0]?.port;
 					if (first !== undefined) early.start(first, undefined);
 				},
-				// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`
-				onLeased: (outcome) => ctx.store().markShared(outcome.claimed.map((c) => c.lease.id)),
+				// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`,
+				// and the person sees the sim come up
+				onLeased: (outcome) => {
+					ctx.store().markShared(outcome.claimed.map((c) => c.lease.id));
+					const first = outcome.claimed[0]?.device.id;
+					if (first !== undefined) showing = showDevice(ctx, platform, first, opts.headless === true);
+				},
 				aborted: early.aborted,
 			},
 			"dev"
 		);
+		await showing;
 		if (!session.success) return session;
-		const { outcome, ports, leaseIds, release } = session.data;
+		const { outcome, ports, leaseIds } = session.data;
+		// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
+		// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
+		const release = async () => {
+			if (opts.shutdown)
+				await shutdownDevices(
+					ctx,
+					owner,
+					outcome.claimed.map((c) => c.lease)
+				);
+			await session.data.release();
+		};
 		const deviceId = outcome.claimed[0]?.device.id;
 		const port = ports[0]?.port;
 		if (deviceId === undefined || port === undefined) {
@@ -240,7 +294,9 @@ async function openSession(
 		return err("no Metro port leased");
 	}
 	early.start(port, deviceId);
+	const showing = showDevice(ctx, platform, deviceId, opts.headless === true);
 	const ensured = await deps.ensureApp(ctx, owner, platform, deviceId, app);
+	await showing;
 	if (!ensured.success) {
 		await release();
 		return err(`app on ${deviceId}: ${ensured.error}`);
@@ -492,7 +548,7 @@ async function dev(
 
 	const run: DevRun = { aborted: { now: false }, launch: undefined, metroFailed: false };
 	const early = earlyMetro(ctx, deps, opts, project.data.project.root, timeout.data, run);
-	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
+	const offSignals = FORWARDED_SIGNALS.map((signal) =>
 		deps.onSignal(signal, () => {
 			run.aborted.now = true;
 			void run.launch?.stop();
@@ -553,6 +609,10 @@ export function createDevCommand(deps: DevDeps): Command {
 				.option("--reset-keychain", "--install-mode: also reset the iOS simulator's keychain")
 				.addOption(legacyCleanOption())
 				.option("--no-open", "don't open the dev client (Metro + the leases only)")
+				.option(
+					"--no-shutdown",
+					"leave the simulator booted when dev ends (default: shut down the one dev leased, unless it was already running)"
+				)
 				.addHelpText("after", "\nExamples:\n  warden dev\n  warden dev android -- --clear")
 				.action(async (platform, _expoArgs, opts) => done(await dev(ctx, deps, platform, opts)));
 		},
