@@ -208,3 +208,18 @@ Run 2026-10-26 on this Mac (Bun 1.4.3, Expo CLI 57.0.27, `@xterm/headless` 6.0.0
   - TUI-4: Expo does not repaint on resize; the pane is a log, not a screen. Plan the cursor: Expo's cursor sits on the row after the last output, usually blank.
   - TUI-6: fix the sampler's per-sample cost first (above); HUD interval stays 1 s.
 - **Go / no-go: GO** for TUI-1..7 with the changes above (own row serialiser, pid-cached sampler, `CI` removed). No blocker found.
+
+## TUI-6 results
+
+Real run: `warden dev ios` (compiled binary, example app, 120x40 PTY, sim cold-booted by the run), window of 60 s after a 15 s settle. Self = the warden process (`ps` cputime delta). Total = user+sys of warden plus every child it waited for (Metro, `ps`, `simctl`) over the whole ~79 s run, from `/usr/bin/time -l`.
+
+| mode | warden self CPU, 60 s | total CPU, ~79 s run |
+|---|---|---|
+| HUD on, 1 s | 0.23 s | 8.45 s |
+| `--no-hud` | 0.04 s | 7.64 s |
+| HUD cost | +0.19 s (~0.3% of a core) | +0.81 s (~1%, within run-to-run noise of Metro) |
+
+Findings from the follow-up run:
+- Metro's `Bundled …` line never reached the HUD (`pane.bundleInfo()` was not read): `hud:bundle` now carries it; the metro row reads `metro bundled 7.1 s · 4452 mods`.
+- The HUD's cpu/mem reading worked from source and the compiled binary on a cold-booted sim; a frozen "waiting" could not be reproduced. A tick is now bounded (15 s) and reports `app not running` plus the sampler's reason on a dim line.
+- `show simulator`, `dev build` and `Metro` rows now start and end with real outcomes (Metro's time is the time to ready).
