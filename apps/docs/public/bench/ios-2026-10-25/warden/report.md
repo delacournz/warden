@@ -1,10 +1,10 @@
 # e2e framework benchmark — ios 2026-10-25
 
 - **Host:** VirtualMac2,1, Apple M4 Pro (Virtual), 10 cores, 40.0 GB RAM, macOS 26.5.2
-- **Toolchain:** Xcode 26.6, Java 17.0.19, Node 22.23.1, bun 1.3.14, warden 0.1.1
-- **Host load at start:** 3.85
-- **Device:** warden-iphone-17-1 (ios, iOS 26.5), udid `07FBA7CD-07EC-40FA-8ADF-5EC275C0C571`
-- **App:** `nz.co.delacour.warden.example`, hash `import:2d35643eda49`, sha256 `2d35643eda49`, 96.4 MB
+- **Toolchain:** Xcode 26.6, Java 17.0.19, Node 22.23.1, bun 1.3.14, warden 0.3.1
+- **Host load at start:** 2.87
+- **Device:** warden-iphone-17-1 (ios, iOS 26.5), udid `733DA5E8-BA9B-4E4A-98FD-6CD76BA8C161`
+- **App:** `nz.co.delacour.warden.example`, hash `import:c283eae41c7a`, sha256 `c283eae41c7a`, 96.4 MB
 - **Options:** runs 5, retries 0, reboot between no, caffeinated yes
 - **Frameworks:** warden bun 1.3.14 + warden-e2e
 
@@ -29,26 +29,26 @@
 
 | Framework | Status | Version | Suite median (warm) | p95 | Ratio | Cold rep 1 | Cold-start cost | Prepare | Teardown | Overhead | Pass rate | Flake | Residue | Footprint (LOC / deps) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| warden | ok | bun 1.3.14 + warden-e2e | **97.04 s** | 98.63 s | 1.00× | 98.33 s | 1.94 s | 652 ms | 85 ms | 80 ms | 100% | 0% | 0 proc / 0 app / 0 path | 379 LOC / 0 B |
+| warden | ok | bun 1.3.14 + warden-e2e | **86.30 s** | 86.71 s | 1.00× | 71.98 s | none (rep 1 not slower, -13.72 s) | 596 ms | 72 ms | 67 ms | 100% | 0% | 0 proc / 0 app / 0 path | 379 LOC / 0 B |
 
 ## Per-test medians (ms)
 
 | Test | warden |
 | --- | --- |
-| onboarding steps through to sign-in | **3136 (1.00×)** |
-| invalid email and short password show field errors | **17987 (1.00×)** |
-| a locked account shows the form alert | **11046 (1.00×)** |
-| valid credentials land on todos | **10937 (1.00×)** |
-| add, complete and filter todos | **16997 (1.00×)** |
-| open a todo, mark it done, then delete it | **12015 (1.00×)** |
-| deep link opens a todo by id | **11791 (1.00×)** |
-| settings shows the account, toggles switches and signs out | **13018 (1.00×)** |
+| onboarding steps through to sign-in | **2929 (1.00×)** |
+| invalid email and short password show field errors | **16054 (1.00×)** |
+| a locked account shows the form alert | **10096 (1.00×)** |
+| valid credentials land on todos | **9788 (1.00×)** |
+| add, complete and filter todos | **14494 (1.00×)** |
+| open a todo, mark it done, then delete it | **11089 (1.00×)** |
+| deep link opens a todo by id | **10656 (1.00×)** |
+| settings shows the account, toggles switches and signs out | **10945 (1.00×)** |
 
 ## Per-step latency
 
 | Framework | Steps | Median | p95 | Max |
 | --- | --- | --- | --- | --- |
-| warden | 504 | 170 ms | 3.93 s | 5.00 s |
+| warden | 504 | 85 ms | 3.63 s | 4.98 s |
 
 ### Where step time goes
 
@@ -58,15 +58,15 @@ Step scopes differ per tool: warden's one `fill` step spans the focus tap, selec
 
 | Verb | n | Share | Median | p95 | Max |
 | --- | --- | --- | --- | --- | --- |
-| fill | 68 | 76.5% | 3.69 s | 4.62 s | 5.00 s |
-| tap | 180 | 12.2% | 154 ms | 378 ms | 605 ms |
-| expect | 256 | 11.4% | 33 ms | 629 ms | 655 ms |
+| fill | 68 | 80.4% | 3.38 s | 4.20 s | 4.98 s |
+| tap | 180 | 10.6% | 75 ms | 333 ms | 620 ms |
+| expect | 256 | 9.1% | 21 ms | 558 ms | 578 ms |
 
 ## Untraced time
 
 | Framework | Untraced / rep | Share of test time | Largest (test) |
 | --- | --- | --- | --- |
-| warden | 3.35 s | 3.5% | settings/account-switches-sign-out (718 ms) |
+| warden | 3.17 s | 3.7% | todo-detail/deep-link (716 ms) |
 
 Test wall time that no step and no span of the framework's own trace covers (warden: `trace.jsonl`; nested steps and spans count once). Runner overhead, hooks, sleeps and calls nobody wrapped end up here.
 
@@ -74,8 +74,8 @@ Test wall time that no step and no span of the framework's own trace covers (war
 
 | Framework | Scope | CPU-s / rep | CPU-s (whole) | CPU avg | CPU peak | RSS avg | RSS peak |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| warden | host | 9.12 s | 46.25 s | 8.1% | 59.4% | 147.8 MB | 184.9 MB |
-| warden | sim | — | 563.94 s | 102.7% | 292.5% | 36.4 GB | 36.5 GB |
+| warden | host | 2.97 s | 15.36 s | 3.0% | 38.8% | 145.9 MB | 158.6 MB |
+| warden | sim | — | 329.55 s | 74.3% | 282.8% | 10.6 GB | 10.7 GB |
 
 Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim` = every process of the simulator's `launchd_sim` tree, or on Android the app under test plus every framework's on-device helpers from `top` (every 2 s). RSS is a per-process sum, so shared framework pages are counted once per process: compare the numbers across frameworks, not against physical memory.
 
@@ -85,10 +85,10 @@ Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim`
 
 | Framework | Group | CPU-s (whole) | RSS avg | RSS peak |
 | --- | --- | --- | --- | --- |
-| warden | bun-test | 10.27 s | 92.0 MB | 129.3 MB |
-| warden | warden-simd | 35.39 s | 55.7 MB | 56.2 MB |
-| warden | warden-cli | 0.13 s | 82.2 KB | 77.7 MB |
-| warden | other | 0.47 s | 21.7 KB | 20.5 MB |
+| warden | bun-test | 6.21 s | 89.6 MB | 102.2 MB |
+| warden | warden-simd | 8.61 s | 56.2 MB | 56.7 MB |
+| warden | warden-cli | 0.11 s | 131.6 KB | 78.8 MB |
+| warden | other | 0.43 s | 0 B | 0 B |
 
 `bun-test` the spec process, `warden-simd` the resident iOS helper, `warden-cli` the `warden` commands the bench spawned, `adb` / `emulator` the Android tools, `other` the rest (another framework's runner, `xcrun`, java). Each group's RSS average counts 0 for ticks without a process, so the groups add up to the host.
 
@@ -98,27 +98,24 @@ Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim`
 
 | Process | Scope | CPU-s | Share | RSS avg | RSS peak | Spawns |
 | --- | --- | --- | --- | --- | --- | --- |
-| warden-simd | host | 7.03 s | 77.2% | 55.9 MB | 56.0 MB | 1 |
-| bun test | host | 1.15 s | 12.6% | 92.2 MB | 107.1 MB | 1 |
-| bun test (exit charge) | host | 0.69 s | 7.5% | 0 B | 0 B | 0 |
-| simctl | host | 0.24 s | 2.7% | 277.4 KB | 20.7 MB | 3 |
-| (PlistBuddy) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
-| (bash) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
-| (simctl) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| warden-simd | host | 1.76 s | 60.0% | 56.5 MB | 56.7 MB | 1 |
+| bun test | host | 1.16 s | 39.5% | 90.1 MB | 101.3 MB | 1 |
+| bun test (exit charge) | host | 0.01 s | 0.5% | 0 B | 0 B | 0 |
 | bun cli.ts | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
-| iOS | sim | 75.30 s | 64.7% | 34.8 GB | 34.8 GB | 286 |
-| wardenexample | sim | 30.57 s | 26.3% | 374.9 MB | 432.8 MB | 8 |
-| SimulatorFrameworkBridge-iOS serve | sim | 6.04 s | 5.2% | 197.7 MB | 210.2 MB | 12 |
-| bun cli.ts | sim | 2.01 s | 1.7% | 235.0 MB | 241.7 MB | 1 |
-| CoreSimulatorBridge | sim | 0.94 s | 0.8% | 83.7 MB | 83.9 MB | 1 |
-| launchd_sim | sim | 0.39 s | 0.3% | 52.2 MB | 52.2 MB | 1 |
-| xpcproxy_sim | sim | 0.26 s | 0.2% | 390.5 KB | 11.4 MB | 8 |
-| mlhostd | sim | 0.24 s | 0.2% | 129.7 KB | 14.4 MB | 2 |
-| ps | sim | 0.15 s | 0.1% | 1.9 MB | 1.9 MB | 191 |
-| (launchctl) | sim | 0.14 s | 0.1% | 93.2 KB | 17.4 MB | 1 |
-| storekitd | sim | 0.14 s | 0.1% | 127.9 MB | 127.9 MB | 1 |
-| triald | sim | 0.13 s | 0.1% | 96.6 MB | 96.6 MB | 1 |
-| other | sim | 0.00 s | 0.0% | 443.9 MB | 443.9 MB | 6 |
+| simctl | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| wardenexample | sim | 32.07 s | 48.8% | 373.1 MB | 428.9 MB | 8 |
+| iOS | sim | 25.41 s | 38.6% | 9.7 GB | 9.7 GB | 108 |
+| SimulatorFrameworkBridge-iOS serve | sim | 3.53 s | 5.4% | 185.6 MB | 199.8 MB | 13 |
+| bun cli.ts | sim | 2.28 s | 3.5% | 228.3 MB | 229.5 MB | 1 |
+| CoreSimulatorBridge | sim | 1.25 s | 1.9% | 84.9 MB | 85.0 MB | 1 |
+| ps | sim | 0.69 s | 1.0% | 1.8 MB | 1.8 MB | 171 |
+| launchd_sim | sim | 0.33 s | 0.5% | 36.8 MB | 36.8 MB | 1 |
+| xpcproxy_sim | sim | 0.22 s | 0.3% | 411.4 KB | 13.3 MB | 7 |
+| pkd | sim | 0.00 s | 0.0% | 58.9 MB | 58.9 MB | 1 |
+| aslmanager | sim | 0.00 s | 0.0% | 21.2 MB | 21.2 MB | 1 |
+| caffeinate | sim | 0.00 s | 0.0% | 7.3 MB | 7.3 MB | 1 |
+| (launchctl) | sim | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| other | sim | 0.00 s | 0.0% | 0 B | 0 B | 0 |
 
 One table per framework, from the warm-median rep's timed run (the rep whose host CPU-seconds is the lower median). Rows are processes grouped by label (top 12 per scope, the rest in `other`); `host` is the framework's own process tree, `sim` the simulator's `launchd_sim` tree (iOS only). `Share` is of the scope's CPU-seconds. `RSS` is the label's summed RSS per 500 ms tick (0 where it had no process). `Spawns` counts distinct pids a tick saw: a process that lives between two ticks is only seen through the `(exit charge)` rows (CPU of a child the bench ran, booked at its exit), so many short-lived `xcrun simctl` calls read low in `Spawns` and in CPU.
 

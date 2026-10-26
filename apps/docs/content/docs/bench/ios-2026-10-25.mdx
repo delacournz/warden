@@ -1,30 +1,36 @@
 ---
 title: iOS run 2026-10-25 on EAS
-description: The four-framework iOS run of 2026-10-25, one EAS macos-large worker per framework, 5 runs each, with how it was run, the full tables and every artifact.
+description: The four-framework iOS run of 2026-10-25 at warden 0.3.1, one EAS macos-large worker per framework, 5 runs each, with how it was run, the full tables and every artifact.
 icon: FlaskConical
 ---
 
 The run behind the 2026-10-25 iOS dataset on the [comparison page](/docs/bench/comparison). Everything below comes from the four workers' artifacts, merged into one report; nothing was measured on a developer machine.
 
+## Headline
+
+warden ran the warm 8-test suite in 86.30 s. That is 1.56× faster than Argent (134.32 s), 1.06× faster than agent-device (91.61 s, one failed test) and 1.54× faster than tester.army (132.52 s). Per step, warden's median is 85 ms against 321 ms (Argent, 3.8×), 471 ms (agent-device, 5.5×) and 481 ms (tester.army, 5.7×). Its host CPU is 2.97 CPU-s per rep against 4.13 (Argent, 1.4×), 11.18 (agent-device, 3.8×) and 17.74 (tester.army, 6.0×).
+
 ## How it was run
 
 | | |
 |---|---|
-| Workflow | `apps/example/.eas/workflows/bench-baseline.yml`, EAS Workflows run [`01a172f5-fdee-7992-b66c-a2173338eb32`](https://expo.dev/accounts/delacour/projects/warden/workflows/01a172f5-fdee-7992-b66c-a2173338eb32), inputs `runs=5`, `frameworks=warden,argent,agent-device,tester-army`, `max_minutes=55` |
-| Code | warden commit `5ffd64f2` (branch `feature/devboxes`), every suite under `packages/e2e-bench/suites/` |
-| Workers | One EAS `macos-large` worker per framework, four in all, two at a time on this plan. VM template `macos-tahoe-26.5-xcode-26.6`: VirtualMac2,1, Apple M4 Pro (Virtual), 10 cores, 40 GB, macOS 26.5.2 (25F84), Xcode 26.6 (17F113) |
+| Workflow | `apps/example/.eas/workflows/bench-baseline.yml`, EAS Workflows run [`01a1756a-abaa-7940-95ba-336e7d9160e9`](https://expo.dev/accounts/delacour/projects/warden/workflows/01a1756a-abaa-7940-95ba-336e7d9160e9), inputs `runs=5`, `frameworks=warden,argent,agent-device,tester-army`, `max_minutes=55` |
+| Code | warden commit `51bb4cee` (branch `develop`, warden 0.3.1), every suite under `packages/e2e-bench/suites/` |
+| Workers | One EAS `macos-large` worker per framework, four in all. VM template `macos-tahoe-26.5-xcode-26.6`: VirtualMac2,1, Apple M4 Pro (Virtual), 10 cores, 40 GB, macOS 26.5.2 (25F84), Xcode 26.6 (17F113) |
 | Simulator | Each worker claims its own headless simulator with `warden claim ios --headless` (iPhone 17, iOS 26.5, named `warden-iphone-17-1`), created fresh for the job and shut down at the end. Nothing one framework leaves behind can reach another |
-| App | The same build on every worker: `nz.co.delacour.warden.example`, EAS `bench` profile (Release, simulator), sha256 `2d35643eda49`, 101.1 MB, reused by fingerprint (`build_ios` skipped), installed with `simctl install` before the bench |
+| App | The same build on every worker: `nz.co.delacour.warden.example`, EAS `bench` profile (Release, simulator), sha256 `c283eae41c7a`, 101.1 MB, reused by fingerprint (`build_ios` skipped), installed with `simctl install` before the bench |
 | Runs | 5 runs of the 8-test suite per framework. Run 1 is cold; warm numbers are the median of runs 2 to 5. `retries=0`, fresh app launch per test, `caffeinate -dims` held |
 | Before the bench | `bun install`, `warden-simd` built from source (Swift release), the framework installed (`bun add -g @swmansion/argent@0.30.1` / `agent-device@0.21.31`; tester.army's `e2e` 0.20.0 comes with `bun install`, Node 22.23.1), then the job waits for the 1-minute load average to drop under the core count and records a 60 s idle control of the simulator with the app in the foreground |
 | Deep-link sheet | iOS shows "Open in …?" for the first custom-scheme link after a boot and never again, so the harness opens one link and answers the sheet before every framework's prepare. No suite handles the sheet itself |
-| Hard stop | A watchdog stops the bench at `max_minutes`; it did not fire on any worker (the longest job ran 28 min) |
+| Hard stop | A watchdog stops the bench at `max_minutes`; it did not fire on any worker (the longest job, agent-device, ran 28 min) |
 | Isolation per framework | Helpers of every framework stopped, driver apps uninstalled before the run (cold cost measured), residue listed after teardown |
 | Sampling | Host and simulator processes sampled every 500 ms from `ps`; the CPU headline is CPU-seconds of the framework's own process tree during the timed run, warm median |
 | Evidence on exit | Each job screenshots the simulator and lists the apps still running, releases the lease even when a step failed, and uploads an `eas-ios-<framework>` artifact |
-| Versions | bun 1.3.14, warden 0.1.1, Argent 0.30.1, agent-device 0.21.31, tester.army e2e 0.20.0 (bundled agent-device 0.21.25), Node 22.23.1 |
+| Versions | bun 1.3.14, warden 0.3.1, Argent 0.30.1, agent-device 0.21.31, tester.army e2e 0.20.0 (bundled agent-device 0.21.25), Node 22.23.1 |
 
 Hosted workers idle hotter than a Mac and share their host, so these numbers compare only with other `macos-large` runs, never with runs on other hardware.
+
+agent-device dropped one test in run 1 (`sign-in/field-errors`: its `fill` read back an empty field after typing), so its pass rate is 97.5% and, by the fairness rules, it cannot be called fastest even where a per-test median is lower. Its other 39 tests passed.
 
 ## Results
 
@@ -32,32 +38,32 @@ Hosted workers idle hotter than a Mac and share their host, so these numbers com
 
 | Framework | Status | Version | Suite median (warm) | p95 | Ratio | Cold rep 1 | Cold-start cost | Prepare | Teardown | Overhead | Pass rate | Flake | Residue | Footprint (LOC / deps) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| warden | ok | bun 1.3.14 + warden-e2e | 97.04 s | 98.63 s | 1.06× | 98.33 s | 1.94 s | 652 ms | 85 ms | 80 ms | 100% | 0% | 0 proc / 0 app / 0 path | 379 LOC / 0 B |
-| argent | ok | 0.30.1 | 131.81 s | 132.14 s | 1.44× | 132.43 s | 2.35 s | 1.73 s | 511 ms | 168 ms | 100% | 0% | 0 proc / 0 app / 1 path | 161 LOC / 0 B |
-| agent-device | ok | agent-device 0.21.31 | **91.77 s** | 91.93 s | 1.00× | 92.86 s | 18.41 s | 17.32 s | 322 ms | 223 ms | 100% | 0% | 0 proc / 1 app / 1 path | 158 LOC / 0 B |
-| tester-army | ok | e2e 0.20.0 | 132.34 s | 133.43 s | 1.44× | 151.03 s | 18.69 s | 0 ms | 523 ms | 2.21 s | 100% | 0% | 0 proc / 1 app / 1 path | 307 LOC / 0 B |
+| warden | ok | bun 1.3.14 + warden-e2e | **86.30 s** | 86.71 s | 1.00× | 71.98 s | none (rep 1 not slower, -13.72 s) | 596 ms | 72 ms | 67 ms | 100% | 0% | 0 proc / 0 app / 0 path | 379 LOC / 0 B |
+| argent | ok | 0.30.1 | 134.32 s | 134.65 s | 1.56× | 133.61 s | 1.01 s | 1.72 s | 293 ms | 163 ms | 100% | 0% | 0 proc / 0 app / 1 path | 161 LOC / 0 B |
+| agent-device | ok | agent-device 0.21.31 | 91.61 s ✗ | 91.70 s | 1.06× | 87.46 s | 12.23 s | 16.37 s | 315 ms | 213 ms | 97.5% | 2.5% | 0 proc / 1 app / 1 path | 158 LOC / 0 B |
+| tester-army | ok | e2e 0.20.0 | 132.52 s | 132.89 s | 1.54× | 150.63 s | 18.11 s | 0 ms | 495 ms | 2.24 s | 100% | 0% | 0 proc / 1 app / 1 path | 307 LOC / 0 B |
 
 ### Per-test medians (ms)
 
 | Test | warden | argent | agent-device | tester-army |
 | --- | --- | --- | --- | --- |
-| onboarding steps through to sign-in | **3136 (1.00×)** | 8220 (2.62×) | 3867 (1.23×) | 6032 (1.92×) |
-| invalid email and short password show field errors | 17987 (1.09×) | 17962 (1.09×) | **16549 (1.00×)** | 20867 (1.26×) |
-| a locked account shows the form alert | 11046 (1.14×) | 14040 (1.45×) | **9671 (1.00×)** | 12799 (1.32×) |
-| valid credentials land on todos | 10937 (1.12×) | 14982 (1.53×) | **9771 (1.00×)** | 14889 (1.52×) |
-| add, complete and filter todos | 16997 (1.10×) | 20867 (1.35×) | **15503 (1.00×)** | 21196 (1.37×) |
-| open a todo, mark it done, then delete it | **12015 (1.00×)** | 18881 (1.57×) | 12491 (1.04×) | 18171 (1.51×) |
-| deep link opens a todo by id | 11791 (1.13×) | 17367 (1.67×) | **10417 (1.00×)** | 18056 (1.73×) |
-| settings shows the account, toggles switches and signs out | **13018 (1.00×)** | 19116 (1.47×) | 13228 (1.02×) | 18070 (1.39×) |
+| onboarding steps through to sign-in | **2929 (1.00×)** | 8301 (2.83×) | 3830 (1.31×) | 5964 (2.04×) |
+| invalid email and short password show field errors | **16054 (1.00×)** | 18221 (1.13×) | 16579 ✗ (1.03×) | 21119 (1.32×) |
+| a locked account shows the form alert | 10096 (1.04×) | 14442 (1.49×) | **9673 (1.00×)** | 12914 (1.34×) |
+| valid credentials land on todos | **9788 (1.00×)** | 15416 (1.58×) | **9784 (1.00×)** | 14850 (1.52×) |
+| add, complete and filter todos | **14494 (1.00×)** | 21110 (1.46×) | 15470 (1.07×) | 21230 (1.46×) |
+| open a todo, mark it done, then delete it | **11089 (1.00×)** | 19105 (1.72×) | 12422 (1.12×) | 18121 (1.63×) |
+| deep link opens a todo by id | 10656 (1.02×) | 17811 (1.70×) | **10483 (1.00×)** | 18094 (1.73×) |
+| settings shows the account, toggles switches and signs out | **10945 (1.00×)** | 19616 (1.79×) | 13136 (1.20×) | 18075 (1.65×) |
 
 ### Per-step latency
 
 | Framework | Steps | Median | p95 | Max |
 | --- | --- | --- | --- | --- |
-| warden | 504 | 170 ms | 3.93 s | 5.00 s |
-| argent | 1192 | 318 ms | 1.82 s | 2.82 s |
-| agent-device | 632 | 479 ms | 1.62 s | 1.90 s |
-| tester-army | 592 | 494 ms | 3.18 s | 3.98 s |
+| warden | 504 | 85 ms | 3.63 s | 4.98 s |
+| argent | 1192 | 321 ms | 1.82 s | 2.82 s |
+| agent-device | 632 | 471 ms | 1.62 s | 1.89 s |
+| tester-army | 592 | 481 ms | 3.21 s | 4.01 s |
 
 #### Where step time goes
 
@@ -67,50 +73,50 @@ Step scopes differ per tool: warden's one `fill` step spans the focus tap, selec
 
 | Verb | n | Share | Median | p95 | Max |
 | --- | --- | --- | --- | --- | --- |
-| fill | 68 | 76.5% | 3.69 s | 4.62 s | 5.00 s |
-| tap | 180 | 12.2% | 154 ms | 378 ms | 605 ms |
-| expect | 256 | 11.4% | 33 ms | 629 ms | 655 ms |
+| fill | 68 | 80.4% | 3.38 s | 4.20 s | 4.98 s |
+| tap | 180 | 10.6% | 75 ms | 333 ms | 620 ms |
+| expect | 256 | 9.1% | 21 ms | 558 ms | 578 ms |
 
 **argent**
 
 | Verb | n | Share | Median | p95 | Max |
 | --- | --- | --- | --- | --- | --- |
-| into | 68 | 28.2% | 2.12 s | 2.78 s | 2.82 s |
-| idle | 232 | 26.6% | 890 ms | 1.00 s | 1.16 s |
-| visible | 320 | 18.7% | 16 ms | 1.02 s | 1.03 s |
-| id= | 380 | 12.7% | 318 ms | 343 ms | 354 ms |
-| launch | 32 | 11.2% | 1.82 s | 1.86 s | 1.91 s |
-| hidden | 32 | 2.5% | 15 ms | 1.03 s | 1.04 s |
-| open-url | 4 | 0.1% | 113 ms | 116 ms | 116 ms |
-| next-test.yaml | 28 | 0% | 2 ms | 5 ms | 5 ms |
-| other | 96 | 0% | 1 ms | 2 ms | 6 ms |
+| into | 68 | 27.9% | 2.15 s | 2.81 s | 2.82 s |
+| idle | 232 | 27.5% | 925 ms | 1.04 s | 1.24 s |
+| visible | 320 | 18.3% | 13 ms | 1.03 s | 1.04 s |
+| id= | 380 | 12.8% | 322 ms | 352 ms | 372 ms |
+| launch | 32 | 10.9% | 1.80 s | 1.82 s | 1.83 s |
+| hidden | 32 | 2.4% | 16 ms | 1.05 s | 1.05 s |
+| open-url | 4 | 0.1% | 116 ms | 124 ms | 124 ms |
+| next-test.yaml | 28 | 0% | 4 ms | 6 ms | 6 ms |
+| other | 96 | 0% | 1 ms | 5 ms | 6 ms |
 
 **agent-device**
 
 | Verb | n | Share | Median | p95 | Max |
 | --- | --- | --- | --- | --- | --- |
-| press | 244 | 40.6% | 531 ms | 1.02 s | 1.07 s |
-| type | 64 | 23.8% | 1.25 s | 1.87 s | 1.90 s |
-| wait | 276 | 20.8% | 54 ms | 961 ms | 1.07 s |
-| open | 36 | 9.3% | 1.06 s | 1.10 s | 1.12 s |
-| fill | 12 | 5.5% | 1.70 s | 1.73 s | 1.73 s |
+| press | 244 | 40.6% | 520 ms | 1.02 s | 1.09 s |
+| type | 64 | 23.9% | 1.26 s | 1.86 s | 1.89 s |
+| wait | 276 | 20.9% | 55 ms | 969 ms | 1.08 s |
+| open | 36 | 9% | 1.02 s | 1.07 s | 1.10 s |
+| fill | 12 | 5.5% | 1.69 s | 1.75 s | 1.75 s |
 
 **tester-army**
 
 | Verb | n | Share | Median | p95 | Max |
 | --- | --- | --- | --- | --- | --- |
-| getbytestid | 496 | 69.2% | 273 ms | 3.19 s | 3.98 s |
-| dismiss | 52 | 22.5% | 2.26 s | 2.31 s | 2.31 s |
-| (unlabelled) | 32 | 6.3% | 1.02 s | 1.08 s | 1.16 s |
-| accept | 4 | 1.7% | 2.03 s | 2.30 s | 2.30 s |
-| warden-example | 4 | 0.2% | 290 ms | 297 ms | 297 ms |
-| getbytext | 4 | 0.1% | 70 ms | 76 ms | 76 ms |
+| getbytestid | 496 | 69.5% | 267 ms | 3.23 s | 4.01 s |
+| dismiss | 52 | 22.3% | 2.26 s | 2.33 s | 2.33 s |
+| (unlabelled) | 32 | 6.3% | 1.03 s | 1.05 s | 1.06 s |
+| accept | 4 | 1.6% | 2.02 s | 2.03 s | 2.03 s |
+| warden-example | 4 | 0.2% | 290 ms | 295 ms | 295 ms |
+| getbytext | 4 | 0.1% | 65 ms | 66 ms | 66 ms |
 
 ### Untraced time
 
 | Framework | Untraced / rep | Share of test time | Largest (test) |
 | --- | --- | --- | --- |
-| warden | 3.35 s | 3.5% | settings/account-switches-sign-out (718 ms) |
+| warden | 3.17 s | 3.7% | todo-detail/deep-link (716 ms) |
 
 Test wall time that no step and no span of the framework's own trace covers (warden: `trace.jsonl`; nested steps and spans count once). Runner overhead, hooks, sleeps and calls nobody wrapped end up here.
 
@@ -118,14 +124,14 @@ Test wall time that no step and no span of the framework's own trace covers (war
 
 | Framework | Scope | CPU-s / rep | CPU-s (whole) | CPU avg | CPU peak | RSS avg | RSS peak |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| warden | host | 9.12 s | 46.25 s | 8.1% | 59.4% | 147.8 MB | 184.9 MB |
-| warden | sim | — | 563.94 s | 102.7% | 292.5% | 36.4 GB | 36.5 GB |
-| argent | host | 2.79 s | 14.69 s | 1.7% | 39.7% | 182.0 MB | 261.8 MB |
-| argent | sim | — | 956.48 s | 131.3% | 788.2% | 36.3 GB | 36.5 GB |
-| agent-device | host | 10.30 s | 73.33 s | 12.9% | 532.8% | 745.9 MB | 2.4 GB |
-| agent-device | sim | — | 683.96 s | 125.8% | 380.0% | 36.8 GB | 37.0 GB |
-| tester-army | host | 17.01 s | 107.19 s | 13.9% | 508.1% | 599.5 MB | 2.0 GB |
-| tester-army | sim | — | 914.59 s | 118.9% | 560.4% | 36.8 GB | 37.0 GB |
+| warden | host | 2.97 s | 15.36 s | 3.0% | 38.8% | 145.9 MB | 158.6 MB |
+| warden | sim | — | 329.55 s | 74.3% | 282.8% | 10.6 GB | 10.7 GB |
+| argent | host | 4.13 s | 21.38 s | 2.7% | 41.8% | 181.4 MB | 236.7 MB |
+| argent | sim | — | 325.71 s | 44.5% | 209.9% | 10.5 GB | 10.6 GB |
+| agent-device | host | 11.18 s | 78.73 s | 13.6% | 611.5% | 711.9 MB | 2.4 GB |
+| agent-device | sim | — | 433.50 s | 86.0% | 248.7% | 10.8 GB | 11.0 GB |
+| tester-army | host | 17.74 s | 110.24 s | 13.8% | 611.2% | 598.2 MB | 2.5 GB |
+| tester-army | sim | — | 619.50 s | 84.1% | 248.1% | 11.1 GB | 11.4 GB |
 
 Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim` = every process of the simulator's `launchd_sim` tree, or on Android the app under test plus every framework's on-device helpers from `top` (every 2 s). RSS is a per-process sum, so shared framework pages are counted once per process: compare the numbers across frameworks, not against physical memory.
 
@@ -135,13 +141,13 @@ Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim`
 
 | Framework | Group | CPU-s (whole) | RSS avg | RSS peak |
 | --- | --- | --- | --- | --- |
-| warden | bun-test | 10.27 s | 92.0 MB | 129.3 MB |
-| warden | warden-simd | 35.39 s | 55.7 MB | 56.2 MB |
-| warden | warden-cli | 0.13 s | 82.2 KB | 77.7 MB |
-| warden | other | 0.47 s | 21.7 KB | 20.5 MB |
-| argent | other | 14.69 s | 182.0 MB | 261.8 MB |
-| agent-device | other | 73.33 s | 745.9 MB | 2.4 GB |
-| tester-army | other | 107.19 s | 599.5 MB | 2.0 GB |
+| warden | bun-test | 6.21 s | 89.6 MB | 102.2 MB |
+| warden | warden-simd | 8.61 s | 56.2 MB | 56.7 MB |
+| warden | warden-cli | 0.11 s | 131.6 KB | 78.8 MB |
+| warden | other | 0.43 s | 0 B | 0 B |
+| argent | other | 21.38 s | 181.4 MB | 236.7 MB |
+| agent-device | other | 78.73 s | 711.9 MB | 2.4 GB |
+| tester-army | other | 110.24 s | 598.2 MB | 2.5 GB |
 
 `bun-test` the spec process, `warden-simd` the resident iOS helper, `warden-cli` the `warden` commands the bench spawned, `adb` / `emulator` the Android tools, `other` the rest (another framework's runner, `xcrun`, java). Each group's RSS average counts 0 for ticks without a process, so the groups add up to the host.
 
@@ -151,114 +157,111 @@ Sampled every 500 ms from `ps`. `host` = the framework's own process tree; `sim`
 
 | Process | Scope | CPU-s | Share | RSS avg | RSS peak | Spawns |
 | --- | --- | --- | --- | --- | --- | --- |
-| warden-simd | host | 7.03 s | 77.2% | 55.9 MB | 56.0 MB | 1 |
-| bun test | host | 1.15 s | 12.6% | 92.2 MB | 107.1 MB | 1 |
-| bun test (exit charge) | host | 0.69 s | 7.5% | 0 B | 0 B | 0 |
-| simctl | host | 0.24 s | 2.7% | 277.4 KB | 20.7 MB | 3 |
-| (PlistBuddy) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
-| (bash) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
-| (simctl) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| warden-simd | host | 1.76 s | 60.0% | 56.5 MB | 56.7 MB | 1 |
+| bun test | host | 1.16 s | 39.5% | 90.1 MB | 101.3 MB | 1 |
+| bun test (exit charge) | host | 0.01 s | 0.5% | 0 B | 0 B | 0 |
 | bun cli.ts | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
-| iOS | sim | 75.30 s | 64.7% | 34.8 GB | 34.8 GB | 286 |
-| wardenexample | sim | 30.57 s | 26.3% | 374.9 MB | 432.8 MB | 8 |
-| SimulatorFrameworkBridge-iOS serve | sim | 6.04 s | 5.2% | 197.7 MB | 210.2 MB | 12 |
-| bun cli.ts | sim | 2.01 s | 1.7% | 235.0 MB | 241.7 MB | 1 |
-| CoreSimulatorBridge | sim | 0.94 s | 0.8% | 83.7 MB | 83.9 MB | 1 |
-| launchd_sim | sim | 0.39 s | 0.3% | 52.2 MB | 52.2 MB | 1 |
-| xpcproxy_sim | sim | 0.26 s | 0.2% | 390.5 KB | 11.4 MB | 8 |
-| mlhostd | sim | 0.24 s | 0.2% | 129.7 KB | 14.4 MB | 2 |
-| ps | sim | 0.15 s | 0.1% | 1.9 MB | 1.9 MB | 191 |
-| (launchctl) | sim | 0.14 s | 0.1% | 93.2 KB | 17.4 MB | 1 |
-| storekitd | sim | 0.14 s | 0.1% | 127.9 MB | 127.9 MB | 1 |
-| triald | sim | 0.13 s | 0.1% | 96.6 MB | 96.6 MB | 1 |
-| other | sim | 0.00 s | 0.0% | 443.9 MB | 443.9 MB | 6 |
+| simctl | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| wardenexample | sim | 32.07 s | 48.8% | 373.1 MB | 428.9 MB | 8 |
+| iOS | sim | 25.41 s | 38.6% | 9.7 GB | 9.7 GB | 108 |
+| SimulatorFrameworkBridge-iOS serve | sim | 3.53 s | 5.4% | 185.6 MB | 199.8 MB | 13 |
+| bun cli.ts | sim | 2.28 s | 3.5% | 228.3 MB | 229.5 MB | 1 |
+| CoreSimulatorBridge | sim | 1.25 s | 1.9% | 84.9 MB | 85.0 MB | 1 |
+| ps | sim | 0.69 s | 1.0% | 1.8 MB | 1.8 MB | 171 |
+| launchd_sim | sim | 0.33 s | 0.5% | 36.8 MB | 36.8 MB | 1 |
+| xpcproxy_sim | sim | 0.22 s | 0.3% | 411.4 KB | 13.3 MB | 7 |
+| pkd | sim | 0.00 s | 0.0% | 58.9 MB | 58.9 MB | 1 |
+| aslmanager | sim | 0.00 s | 0.0% | 21.2 MB | 21.2 MB | 1 |
+| caffeinate | sim | 0.00 s | 0.0% | 7.3 MB | 7.3 MB | 1 |
+| (launchctl) | sim | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| other | sim | 0.00 s | 0.0% | 0 B | 0 B | 0 |
 
 #### argent
 
 | Process | Scope | CPU-s | Share | RSS avg | RSS peak | Spawns |
 | --- | --- | --- | --- | --- | --- | --- |
-| simulator-server | host | 2.50 s | 92.0% | 96.6 MB | 96.7 MB | 1 |
-| node argent | host | 0.21 s | 7.8% | 85.7 MB | 87.9 MB | 1 |
-| node argent (exit charge) | host | 0.01 s | 0.2% | 0 B | 0 B | 0 |
-| (node) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| simulator-server | host | 3.92 s | 95.6% | 96.0 MB | 96.0 MB | 1 |
+| node argent | host | 0.18 s | 4.3% | 85.7 MB | 88.1 MB | 1 |
+| node argent (exit charge) | host | 0.00 s | 0.1% | 0 B | 0 B | 0 |
+| (simctl) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
 | node tool-server.cjs | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
 | simctl | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
 | system_profiler | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
-| iOS | sim | 98.77 s | 74.0% | 34.8 GB | 34.9 GB | 287 |
-| wardenexample | sim | 29.50 s | 22.1% | 375.5 MB | 435.1 MB | 8 |
-| bun cli.ts | sim | 2.78 s | 2.1% | 298.6 MB | 308.0 MB | 1 |
-| simctl | sim | 0.41 s | 0.3% | 363.8 KB | 20.5 MB | 7 |
-| CoreSimulatorBridge | sim | 0.40 s | 0.3% | 117.8 MB | 118.2 MB | 1 |
-| launchd_sim | sim | 0.37 s | 0.3% | 52.2 MB | 52.2 MB | 1 |
-| ps | sim | 0.29 s | 0.2% | 1.9 MB | 2.0 MB | 260 |
-| (mlhostd) | sim | 0.26 s | 0.2% | 222.5 KB | 40.5 MB | 2 |
-| triald | sim | 0.20 s | 0.1% | 96.7 MB | 96.7 MB | 1 |
-| storekitd | sim | 0.19 s | 0.1% | 128.4 MB | 128.4 MB | 1 |
-| (managedappdistri) | sim | 0.14 s | 0.1% | 214.5 KB | 54.5 MB | 1 |
-| mlhostd | sim | 0.13 s | 0.1% | 119.3 KB | 15.7 MB | 2 |
-| other | sim | 0.05 s | 0.0% | 444.5 MB | 453.2 MB | 9 |
+| wardenexample | sim | 33.67 s | 52.9% | 374.7 MB | 434.8 MB | 8 |
+| iOS | sim | 24.31 s | 38.2% | 9.7 GB | 9.7 GB | 106 |
+| bun cli.ts | sim | 3.34 s | 5.2% | 225.2 MB | 229.3 MB | 1 |
+| ps | sim | 1.07 s | 1.7% | 1.8 MB | 1.8 MB | 267 |
+| CoreSimulatorBridge | sim | 0.48 s | 0.8% | 117.8 MB | 118.2 MB | 1 |
+| simctl | sim | 0.41 s | 0.6% | 351.9 KB | 20.5 MB | 5 |
+| launchd_sim | sim | 0.21 s | 0.3% | 36.9 MB | 36.9 MB | 1 |
+| xpcproxy_sim | sim | 0.15 s | 0.2% | 155.7 KB | 12.1 MB | 4 |
+| (wardenexample) | sim | 0.04 s | 0.1% | 1.5 MB | 395.3 MB | 1 |
+| pkd | sim | 0.00 s | 0.0% | 59.0 MB | 59.0 MB | 1 |
+| aslmanager | sim | 0.00 s | 0.0% | 21.1 MB | 21.1 MB | 1 |
+| caffeinate | sim | 0.00 s | 0.0% | 7.2 MB | 7.2 MB | 1 |
+| other | sim | 0.00 s | 0.0% | 0 B | 0 B | 0 |
 
 #### agent-device
 
 | Process | Scope | CPU-s | Share | RSS avg | RSS peak | Spawns |
 | --- | --- | --- | --- | --- | --- | --- |
-| xcodebuild | host | 7.50 s | 73.3% | 218.0 MB | 218.7 MB | 1 |
-| bun cli.ts | host | 1.77 s | 17.3% | 268.7 MB | 273.3 MB | 1 |
-| snapshot-bridge | host | 0.77 s | 7.5% | 116.3 MB | 116.4 MB | 1 |
-| node agent-device | host | 0.15 s | 1.5% | 61.0 MB | 66.8 MB | 1 |
-| ps | host | 0.02 s | 0.2% | 1.9 MB | 1.9 MB | 182 |
-| simctl | host | 0.02 s | 0.2% | 20.4 MB | 20.4 MB | 1 |
+| xcodebuild | host | 7.97 s | 71.9% | 219.6 MB | 220.4 MB | 1 |
+| bun cli.ts | host | 1.93 s | 17.4% | 239.8 MB | 245.3 MB | 1 |
+| snapshot-bridge | host | 0.78 s | 7.0% | 116.6 MB | 116.7 MB | 1 |
+| ps | host | 0.22 s | 2.0% | 1.8 MB | 1.9 MB | 181 |
+| node agent-device | host | 0.14 s | 1.3% | 61.1 MB | 66.7 MB | 1 |
+| simctl | host | 0.04 s | 0.4% | 20.3 MB | 20.3 MB | 1 |
 | node agent-device (exit charge) | host | 0.01 s | 0.1% | 0 B | 0 B | 0 |
-| (simctl) | host | 0.00 s | 0.0% | 96.9 KB | 17.2 MB | 1 |
-| DTServiceHub | host | 0.00 s | 0.0% | 16.7 MB | 16.7 MB | 1 |
-| caffeinate | host | 0.00 s | 0.0% | 7.3 MB | 7.3 MB | 1 |
-| (bash) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| DTServiceHub | host | 0.00 s | 0.0% | 16.4 MB | 16.4 MB | 1 |
+| caffeinate | host | 0.00 s | 0.0% | 7.1 MB | 7.1 MB | 1 |
 | (clang) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| (ps) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| (simctl) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
 | other | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
-| iOS | sim | 89.31 s | 65.7% | 35.5 GB | 35.5 GB | 291 |
-| wardenexample | sim | 35.81 s | 26.3% | 371.9 MB | 438.3 MB | 8 |
-| AgentDeviceRunnerUITests-Runner | sim | 9.14 s | 6.7% | 268.2 MB | 268.2 MB | 1 |
-| CoreSimulatorBridge | sim | 0.51 s | 0.4% | 80.6 MB | 80.7 MB | 1 |
-| simctl | sim | 0.48 s | 0.4% | 676.7 KB | 20.5 MB | 7 |
-| launchd_sim | sim | 0.31 s | 0.2% | 52.4 MB | 52.4 MB | 1 |
-| triald | sim | 0.13 s | 0.1% | 96.7 MB | 96.7 MB | 1 |
-| storekitd | sim | 0.13 s | 0.1% | 128.3 MB | 128.3 MB | 1 |
-| xpcproxy_sim | sim | 0.09 s | 0.1% | 176.0 KB | 9.1 MB | 4 |
-| mlhostd | sim | 0.08 s | 0.1% | 34.2 KB | 6.1 MB | 1 |
-| (wardenexample) | sim | 0.00 s | 0.0% | 2.4 MB | 433.2 MB | 1 |
-| assetsd | sim | 0.00 s | 0.0% | 163.2 MB | 163.2 MB | 1 |
-| other | sim | 0.00 s | 0.0% | 274.3 MB | 274.3 MB | 4 |
+| iOS | sim | 37.64 s | 44.2% | 10.1 GB | 10.1 GB | 110 |
+| wardenexample | sim | 36.00 s | 42.3% | 375.2 MB | 438.6 MB | 8 |
+| AgentDeviceRunnerUITests-Runner | sim | 10.00 s | 11.7% | 269.7 MB | 269.8 MB | 1 |
+| simctl | sim | 0.55 s | 0.6% | 749.3 KB | 20.7 MB | 8 |
+| CoreSimulatorBridge | sim | 0.54 s | 0.6% | 81.6 MB | 81.7 MB | 1 |
+| launchd_sim | sim | 0.21 s | 0.2% | 37.0 MB | 37.1 MB | 1 |
+| xpcproxy_sim | sim | 0.16 s | 0.2% | 257.5 KB | 12.7 MB | 6 |
+| launchctl | sim | 0.08 s | 0.1% | 24.8 KB | 4.4 MB | 1 |
+| pkd | sim | 0.00 s | 0.0% | 59.1 MB | 59.1 MB | 1 |
+| aslmanager | sim | 0.00 s | 0.0% | 21.2 MB | 21.2 MB | 1 |
+| (launchctl) | sim | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| (managedappdistri) | sim | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| other | sim | 0.00 s | 0.0% | 0 B | 0 B | 0 |
 
 #### tester-army
 
 | Process | Scope | CPU-s | Share | RSS avg | RSS peak | Spawns |
 | --- | --- | --- | --- | --- | --- | --- |
-| xcodebuild | host | 14.26 s | 84.0% | 217.0 MB | 218.2 MB | 1 |
-| node entry.js | host | 1.05 s | 6.2% | 84.9 MB | 92.8 MB | 1 |
-| snapshot-bridge | host | 0.63 s | 3.7% | 116.2 MB | 116.3 MB | 1 |
-| (node) (exit charge) | host | 0.62 s | 3.7% | 0 B | 0 B | 0 |
-| node e2e | host | 0.35 s | 2.1% | 109.4 MB | 132.3 MB | 1 |
-| (node) | host | 0.03 s | 0.2% | 0 B | 0 B | 0 |
+| xcodebuild | host | 14.70 s | 83.0% | 221.6 MB | 223.0 MB | 1 |
+| node entry.js | host | 1.18 s | 6.7% | 85.2 MB | 94.4 MB | 1 |
+| node e2e (exit charge) | host | 0.76 s | 4.3% | 0 B | 0 B | 0 |
+| snapshot-bridge | host | 0.62 s | 3.5% | 116.4 MB | 116.6 MB | 1 |
+| node e2e | host | 0.43 s | 2.4% | 104.8 MB | 134.0 MB | 1 |
 | other (exit charge) | host | 0.03 s | 0.2% | 0 B | 0 B | 0 |
-| (ps) | host | 0.01 s | 0.1% | 27.9 KB | 1.7 MB | 5 |
 | simctl | host | 0.00 s | 0.0% | 20.5 MB | 20.5 MB | 1 |
 | DTServiceHub | host | 0.00 s | 0.0% | 16.8 MB | 16.8 MB | 1 |
+| (ps) | host | 0.00 s | 0.0% | 5.0 KB | 1.3 MB | 1 |
+| (clang) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
 | (pgrep) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
-| (simctl) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
+| (plutil) | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
 | other | host | 0.00 s | 0.0% | 0 B | 0 B | 0 |
-| iOS | sim | 107.48 s | 60.4% | 35.1 GB | 35.2 GB | 289 |
-| wardenexample | sim | 49.85 s | 28.0% | 380.4 MB | 441.8 MB | 9 |
-| AgentDeviceRunnerUITests-Runner | sim | 15.86 s | 8.9% | 271.0 MB | 271.2 MB | 1 |
-| bun cli.ts | sim | 2.56 s | 1.4% | 254.0 MB | 264.4 MB | 1 |
-| CoreSimulatorBridge | sim | 0.57 s | 0.3% | 80.6 MB | 80.6 MB | 1 |
-| simctl | sim | 0.54 s | 0.3% | 534.1 KB | 20.8 MB | 8 |
-| launchd_sim | sim | 0.46 s | 0.3% | 51.8 MB | 51.8 MB | 1 |
-| mlhostd | sim | 0.24 s | 0.1% | 135.3 KB | 14.3 MB | 3 |
-| triald | sim | 0.16 s | 0.1% | 96.6 MB | 96.7 MB | 1 |
-| storekitd | sim | 0.15 s | 0.1% | 128.2 MB | 128.2 MB | 1 |
-| launchctl | sim | 0.10 s | 0.1% | 36.7 KB | 9.4 MB | 1 |
-| ps | sim | 0.06 s | 0.0% | 1.9 MB | 1.9 MB | 263 |
-| other | sim | 0.07 s | 0.0% | 446.4 MB | 870.8 MB | 8 |
+| wardenexample | sim | 50.77 s | 41.4% | 381.6 MB | 441.3 MB | 9 |
+| iOS | sim | 50.70 s | 41.4% | 10.1 GB | 10.1 GB | 112 |
+| AgentDeviceRunnerUITests-Runner | sim | 16.40 s | 13.4% | 271.0 MB | 271.1 MB | 1 |
+| bun cli.ts | sim | 2.46 s | 2.0% | 264.5 MB | 270.9 MB | 1 |
+| CoreSimulatorBridge | sim | 0.62 s | 0.5% | 81.5 MB | 81.6 MB | 1 |
+| simctl | sim | 0.61 s | 0.5% | 563.5 KB | 20.7 MB | 9 |
+| launchd_sim | sim | 0.42 s | 0.3% | 37.7 MB | 37.7 MB | 1 |
+| (launchctl) | sim | 0.14 s | 0.1% | 62.1 KB | 15.9 MB | 1 |
+| ps | sim | 0.14 s | 0.1% | 1.8 MB | 1.8 MB | 262 |
+| (managedappdistri) | sim | 0.13 s | 0.1% | 68.6 KB | 17.6 MB | 1 |
+| xpcproxy_sim | sim | 0.11 s | 0.1% | 119.0 KB | 13.4 MB | 4 |
+| launchctl | sim | 0.07 s | 0.1% | 10.4 KB | 2.7 MB | 1 |
+| other | sim | 0.00 s | 0.0% | 87.2 MB | 87.2 MB | 3 |
 
 One table per framework, from the warm-median rep's timed run (the rep whose host CPU-seconds is the lower median). Rows are processes grouped by label (top 12 per scope, the rest in `other`); `host` is the framework's own process tree, `sim` the simulator's `launchd_sim` tree (iOS only). `Share` is of the scope's CPU-seconds. `RSS` is the label's summed RSS per 500 ms tick (0 where it had no process). `Spawns` counts distinct pids a tick saw: a process that lives between two ticks is only seen through the `(exit charge)` rows (CPU of a child the bench ran, booked at its exit), so many short-lived `xcrun simctl` calls read low in `Spawns` and in CPU.
 
@@ -268,6 +271,29 @@ One table per framework, from the warm-median rep's timed run (the rep whose hos
 - **argent:** paths: /Users/expo/.argent (328.0 KB)
 - **agent-device:** driver apps: com.callstack.agentdevice.runner.uitests.xctrunner; paths: /Users/expo/.agent-device-bench/agent-device (2.9 MB)
 - **tester-army:** driver apps: com.callstack.agentdevice.runner.uitests.xctrunner; paths: /Users/expo/.agent-device-bench/tester-army (4.9 MB)
+
+### Unsupported / failed
+
+None.
+
+
+## Change since the previous run
+
+The previous four-framework run on the same workflow and worker class, [`01a172f5`](https://expo.dev/accounts/delacour/projects/warden/workflows/01a172f5-fdee-7992-b66c-a2173338eb32) at warden 0.1.1, is replaced by this one. Between them warden's resident helper took over launch, terminate and open-URL from `simctl`, reads fewer trees after an input, links idb 1.7.7 with its single-pass frame decoder, and boots simulators slim. The other frameworks are at the same versions on both runs.
+
+| warden, warm | 0.1.1 (`01a172f5`) | 0.3.1 (`01a1756a`) | Delta |
+| --- | --- | --- | --- |
+| Suite median | 97.04 s | 86.30 s | -10.74 s (-11 %) |
+| Step median | 170 ms | 85 ms | -85 ms (-50 %) |
+| Host CPU-seconds per rep | 9.12 s | 2.97 s | -6.15 s (-67 %) |
+| of which `warden-simd` | 7.03 s | 1.76 s | -5.27 s (-75 %) |
+| Host RSS peak | 184.9 MB | 158.6 MB | -26.3 MB |
+| Ratio to Argent | 1.36× | 1.56× | |
+| Ratio to agent-device | 0.95× | 1.06× | |
+| Ratio to tester.army | 1.36× | 1.54× | |
+| Pass rate / flakes | 100 % / 0 | 100 % / 0 | |
+
+Argent, agent-device and tester.army moved by less than 2 % between the two runs (131.81 → 134.32 s, 91.77 → 91.61 s, 132.34 → 132.52 s), which is the worker-to-worker noise to read every ratio against.
 
 ## Artifacts
 
@@ -283,11 +309,12 @@ Worker job `bench_warden`, bun 1.3.14 + warden-e2e (this commit). [Download the 
 
 - [report.html](/bench/ios-2026-10-25/warden/report.html) (self-contained, with charts) and [report.md](/bench/ios-2026-10-25/warden/report.md)
 - [bench-results.json](/bench/ios-2026-10-25/warden/bench-results.json) (schema v1, every rep, every test, every step, the 500 ms resource ticks per rep are in the archive) and [summary.json](/bench/ios-2026-10-25/warden/summary.json)
-- [bench-run.log](/bench/ios-2026-10-25/warden/bench-run.log) (the harness), [fw-install.log](/bench/ios-2026-10-25/warden/fw-install.log), [simd-build.log](/bench/ios-2026-10-25/warden/simd-build.log), [host-facts.txt](/bench/ios-2026-10-25/warden/host-facts.txt)
+- [bench-run.log](/bench/ios-2026-10-25/warden/bench-run.log) (the harness), [simd-build.log](/bench/ios-2026-10-25/warden/simd-build.log), [host-facts.txt](/bench/ios-2026-10-25/warden/host-facts.txt)
 - Framework logs: [bench.log](/bench/ios-2026-10-25/warden/logs/bench.log), [warden.prepare.log](/bench/ios-2026-10-25/warden/logs/warden.prepare.log), [warden.rep-1.log](/bench/ios-2026-10-25/warden/logs/warden.rep-1.log), [warden.rep-2.log](/bench/ios-2026-10-25/warden/logs/warden.rep-2.log), [warden.rep-3.log](/bench/ios-2026-10-25/warden/logs/warden.rep-3.log), [warden.rep-4.log](/bench/ios-2026-10-25/warden/logs/warden.rep-4.log), [warden.rep-5.log](/bench/ios-2026-10-25/warden/logs/warden.rep-5.log), [warden.teardown.log](/bench/ios-2026-10-25/warden/logs/warden.teardown.log)
 - The simulator as the job left it, after teardown:
 
 ![The warden worker's simulator at exit](/bench/ios-2026-10-25/warden/sim-final.png)
+
 ### Argent
 
 Worker job `bench_argent`, @swmansion/argent 0.30.1. [Download the whole artifact](/bench/ios-2026-10-25/argent.tar.gz) (the EAS `eas-ios-argent` archive, unpacks to `Users/expo/bench-results`).
@@ -299,6 +326,7 @@ Worker job `bench_argent`, @swmansion/argent 0.30.1. [Download the whole artifac
 - The simulator as the job left it, after teardown:
 
 ![The Argent worker's simulator at exit](/bench/ios-2026-10-25/argent/sim-final.png)
+
 ### agent-device
 
 Worker job `bench_agent_device`, agent-device 0.21.31. [Download the whole artifact](/bench/ios-2026-10-25/agent-device.tar.gz) (the EAS `eas-ios-agent-device` archive, unpacks to `Users/expo/bench-results`).
@@ -310,37 +338,15 @@ Worker job `bench_agent_device`, agent-device 0.21.31. [Download the whole artif
 - The simulator as the job left it, after teardown:
 
 ![The agent-device worker's simulator at exit](/bench/ios-2026-10-25/agent-device/sim-final.png)
+
 ### tester.army
 
 Worker job `bench_tester_army`, e2e 0.20.0, bundling agent-device 0.21.25. [Download the whole artifact](/bench/ios-2026-10-25/tester-army.tar.gz) (the EAS `eas-ios-tester-army` archive, unpacks to `Users/expo/bench-results`).
 
 - [report.html](/bench/ios-2026-10-25/tester-army/report.html) (self-contained, with charts) and [report.md](/bench/ios-2026-10-25/tester-army/report.md)
 - [bench-results.json](/bench/ios-2026-10-25/tester-army/bench-results.json) (schema v1, every rep, every test, every step, the 500 ms resource ticks per rep are in the archive) and [summary.json](/bench/ios-2026-10-25/tester-army/summary.json)
-- [bench-run.log](/bench/ios-2026-10-25/tester-army/bench-run.log) (the harness), [fw-install.log](/bench/ios-2026-10-25/tester-army/fw-install.log), [simd-build.log](/bench/ios-2026-10-25/tester-army/simd-build.log), [host-facts.txt](/bench/ios-2026-10-25/tester-army/host-facts.txt)
+- [bench-run.log](/bench/ios-2026-10-25/tester-army/bench-run.log) (the harness), [simd-build.log](/bench/ios-2026-10-25/tester-army/simd-build.log), [host-facts.txt](/bench/ios-2026-10-25/tester-army/host-facts.txt)
 - Framework logs: [bench.log](/bench/ios-2026-10-25/tester-army/logs/bench.log), [tester-army.rep-1.log](/bench/ios-2026-10-25/tester-army/logs/tester-army.rep-1.log), [tester-army.rep-2.log](/bench/ios-2026-10-25/tester-army/logs/tester-army.rep-2.log), [tester-army.rep-3.log](/bench/ios-2026-10-25/tester-army/logs/tester-army.rep-3.log), [tester-army.rep-4.log](/bench/ios-2026-10-25/tester-army/logs/tester-army.rep-4.log), [tester-army.rep-5.log](/bench/ios-2026-10-25/tester-army/logs/tester-army.rep-5.log), [tester-army.teardown.log](/bench/ios-2026-10-25/tester-army/logs/tester-army.teardown.log)
 - The simulator as the job left it, after teardown:
 
 ![The tester.army worker's simulator at exit](/bench/ios-2026-10-25/tester-army/sim-final.png)
-
-## Follow-up: warden after the helper fix
-
-The profile in [`docs/bench/cpu-profile-2026-10-25.md`](https://github.com/delacournz/warden/blob/main/docs/bench/cpu-profile-2026-10-25.md) put 74 % of `warden-simd`'s CPU in idb's generic `Codable` decode of every accessibility frame. The helper now links idb with a single-pass frame decoder (fork commit [`1768a0d`](https://github.com/UrbanChrisy/idb/commit/1768a0d1006ff528c2fd78f335d9e3ee2f01596d) on v1.7.2, library package [`idb-v1.7.2-warden.1`](https://github.com/delacournz/warden/releases/tag/idb-v1.7.2-warden.1)). Same workflow, same worker type and simulator, warden only, 5 runs: run [`01a1739d`](https://expo.dev/accounts/delacour/projects/warden/workflows/01a1739d-2f5f-70bb-9c22-715197980e70) at commit `a87b04cc`. The bench app was rebuilt by EAS for this run (sha256 `c283eae41c7a`, same source as the run above), so the comparison page keeps the four-framework run above as its dataset and this run stands beside it.
-
-| warden, per rep (warm) | Run above (`01a172f5`) | After (`01a1739d`) | Delta |
-| --- | --- | --- | --- |
-| Host CPU-seconds | 9.12 s | 3.79 s | -5.33 s (-58 %) |
-| of which `warden-simd` | 7.03 s | 1.83 s | -5.20 s (-74 %) |
-| Host RSS peak | 184.9 MB | 177.6 MB | -7.3 MB |
-| Suite median | 97.04 s | 91.89 s | -5.15 s (-5 %) |
-| Pass rate / flakes | 100 % / 0 | 100 % / 0 | |
-
-The simulator's own CPU over the whole job (every process under `launchd_sim`, prepare and all five reps) read higher on this worker (821 CPU-s against 564 CPU-s) while both simulators idled alike before the run (idle control in the artifacts); the host is now out of the way, so the in-simulator readers are the next thing to profile.
-
-Worker job `bench_warden`. [Download the whole artifact](/bench/ios-2026-10-25/warden-after/warden.tar.gz) (the EAS `eas-ios-warden` archive, unpacks to `Users/expo/bench-results`).
-
-- [report.html](/bench/ios-2026-10-25/warden-after/report.html) and [report.md](/bench/ios-2026-10-25/warden-after/report.md)
-- [bench-results.json](/bench/ios-2026-10-25/warden-after/bench-results.json) and [summary.json](/bench/ios-2026-10-25/warden-after/summary.json)
-- [host-facts.txt](/bench/ios-2026-10-25/warden-after/host-facts.txt), harness and framework logs under [`logs/`](/bench/ios-2026-10-25/warden-after/logs/bench.log)
-- The simulator as the job left it, after teardown:
-
-![The warden worker's simulator at exit, after the helper fix](/bench/ios-2026-10-25/warden-after/sim-final.png)

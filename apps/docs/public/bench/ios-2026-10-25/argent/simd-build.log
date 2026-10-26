@@ -1,7 +1,7 @@
 $ bun native/scripts/deps.ts
-deps: downloading https://github.com/facebook/idb/releases/download/v1.7.2/idb-libraries.macos-arm64.tar.gz
-deps: downloaded idb-libraries.macos-arm64.tar.gz (v1.7.2) -> /Users/expo/Library/Caches/warden-idb/490eb31569678a463b02ad9901750d24f99ff120991317b0560ae2485d3c5d02.tar.gz
-deps: extracted v1.7.2 -> /Users/expo/workingdir/build/packages/e2e/native/idb-libraries
+deps: downloading https://github.com/facebook/idb/releases/download/v1.7.7/idb-libraries.macos-arm64.tar.gz
+deps: downloaded idb-libraries.macos-arm64.tar.gz (v1.7.7) -> /Users/expo/Library/Caches/warden-idb/be92d3888c4a1be264aac28b87cbacd593b23763dd5ffcaf607169fe87caf8b4.tar.gz
+deps: extracted v1.7.7 -> /Users/expo/workingdir/build/packages/e2e/native/idb-libraries
 $ bun native/scripts/build.ts
 build: swift build -c release
-build: dist/: warden-simd 0.1.0 (protocol 1, idb v1.7.2); AccessibilityPlatformTranslationStub.framework, CoreSimulatorStub.framework; xcode 26.6 (17F113)
+build: dist/: warden-simd 0.1.0 (protocol 1, idb v1.7.7); AccessibilityPlatformTranslationStub.framework, CoreSimulatorStub.framework; xcode 26.6 (17F113)

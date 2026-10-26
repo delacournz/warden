@@ -9,6 +9,8 @@ icon: ChartBar
 
 Every framework runs the same 8 parity tests against the same `.app`, with no LLM involved. Every run happens on EAS Workflows, one `macos-large` worker and one fresh simulator per framework (see [iOS run 2026-10-25 on EAS](/docs/bench/ios-2026-10-25) for how, and for every artifact). See [Benchmark e2e frameworks](/docs/bench/run) to run it yourself.
 
+On the 2026-10-25 run (warden 0.3.1) warden finished the warm suite in 86.30 s: 1.56× faster than Argent, 1.06× faster than agent-device (which dropped one test) and 1.54× faster than tester.army. Per step its median was 85 ms against 321 to 481 ms (3.8× to 5.7×), on 2.97 host CPU-seconds per rep against 4.13 to 17.74 (1.4× to 6.0×).
+
 <BenchProvider>
 
 <BenchHero />
@@ -83,7 +85,7 @@ Residue is what is left on the machine after teardown. Footprint is how much sui
 |---|---|
 | warden | Copied from the example app, retries written with warden's own options: `tap({ until })`, a deep-link retry, `systemAlerts: "dismiss"`. The hand-rolled helpers it replaced ran the published headline numbers; the idiomatic run is reported beside them. |
 | Argent | Retries are nested `when:` guards capped at two retaps. Flow selectors read only the app's view hierarchy, never SpringBoard, so the flow cannot answer the "Open in …?" sheet itself. A checkbox's checked state is not readable, so the remaining-count assertion covers the effect. |
-| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`, so the deep-link script cannot answer a sheet that may or may not show. Needs a runner prepare step and a daemon. |
+| agent-device | `.ad` scripts have no retry or conditional, only `wait` and `press`, so the deep-link script cannot answer a sheet that may or may not show. Needs a runner prepare step and a daemon. On the 2026-10-25 run its `fill` read back an empty field once (run 1, `sign-in/field-errors`), so it is not clean and never sets the pace. |
 | tester.army | Has its own copy of the hand-rolled helpers warden used before. Runs with a private agent-device state dir and Node 24 on `PATH`. |
 
 Each run is a snapshot on one machine class with few warm repetitions: read the ratios as a guide, not a verdict. The full Markdown report for each run is in `docs/bench/` in the repo; the EAS runs also publish every worker's artifact on their run page.
