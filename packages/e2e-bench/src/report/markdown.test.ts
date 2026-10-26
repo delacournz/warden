@@ -54,6 +54,22 @@ describe("renderMarkdown", () => {
 		}
 		expect(renderMarkdown(bare, manifest)).not.toContain("Untraced");
 	});
+	test("where step time goes: a verb table per framework with steps, plus the scope note", () => {
+		expect(md).toContain("### Where step time goes");
+		expect(md).toContain("Step scopes differ per tool");
+		expect(md).toContain("| Verb | n | Share | Median | p95 | Max |");
+		expect(md.split("### Where step time goes")[1]).toMatch(
+			/\*\*warden\*\*[\s\S]*\| (assert|open) \| \d+ \| [\d.]+% \|/
+		);
+		expect(md.split("### Where step time goes")[1]).not.toContain("**argent**");
+		const bare = structuredClone(run);
+		for (const f of bare.frameworks) {
+			if (f.status !== "ok") continue;
+			for (const rep of f.reps) for (const t of rep.tests) delete t.steps;
+			delete f.stats.stepLatency;
+		}
+		expect(renderMarkdown(bare, manifest)).not.toContain("Where step time goes");
+	});
 	test("NaN renders as a dash and the output is pure", () => {
 		const nan = structuredClone(run);
 		const first = nan.frameworks[0];

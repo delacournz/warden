@@ -134,6 +134,21 @@ describe("recording schema", () => {
 		expect(fill({ value: "x" }).success).toBe(false);
 	});
 
+	test("a fill may carry via: type, nothing else", () => {
+		const fill = (via: unknown) =>
+			stepSchema.safeParse({
+				i: 0,
+				at: 1,
+				kind: "fill",
+				text: "x",
+				via,
+				target: { kind: "coords", x: 1, y: 2, warning: "w" },
+			});
+		expect(fill("type").success).toBe(true);
+		expect(fill(undefined).success).toBe(true);
+		expect(fill("paste").success).toBe(false);
+	});
+
 	test("a gesture path is one or two fingers of at least two points", () => {
 		const finger = [pt(0, 0), pt(1, 1)];
 		expect(gesture({ type: "path", paths: [finger] }).success).toBe(true);

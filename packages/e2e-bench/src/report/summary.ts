@@ -11,6 +11,7 @@ import {
 	processRowSchema,
 	type Series,
 } from "../results/schema";
+import { stepGroups } from "../results/stats";
 import { perTestMatrix, processesPerRep, type SummaryRow, summaryRows } from "./tables";
 
 /**
@@ -51,6 +52,26 @@ const summaryFrameworkIdSchema = z.union([frameworkIdSchema, z.enum(RETIRED_FRAM
 const processSummarySchema = processRowSchema;
 export type ProcessSummary = z.infer<typeof processSummarySchema>;
 
+const stepGroupStatsShape = {
+	n: z.number().int().nonnegative(),
+	totalMs: z.number(),
+	share: z.number(),
+	median: z.number(),
+	p95: z.number(),
+	max: z.number(),
+};
+
+/** One verb's share of a framework's step time (mirrors `StepGroup`); `other` folds the verbs outside the top 8. */
+const stepGroupSummarySchema = z.discriminatedUnion("kind", [
+	z.object({ kind: z.literal("verb"), verb: z.string(), ...stepGroupStatsShape }),
+	z.object({
+		kind: z.literal("other"),
+		verb: z.literal("other"),
+		verbs: z.number().int().positive(),
+		...stepGroupStatsShape,
+	}),
+]);
+
 const okFrameworkSchema = z.object({
 	framework: summaryFrameworkIdSchema,
 	status: z.literal("ok"),
@@ -67,6 +88,8 @@ const okFrameworkSchema = z.object({
 	passRate: z.number(),
 	flakeRate: z.number(),
 	stepLatency: distSummarySchema.optional(),
+	/** where step time goes, by normalised verb (optional: summaries written before it lack it; no version bump) */
+	stepGroups: z.array(stepGroupSummarySchema).optional(),
 	/** host CPU-seconds per rep (warm median of the timed runs): the CPU headline; optional, see `seriesSummarySchema` */
 	cpuSecondsPerRep: z.number().optional(),
 	/** the warm-median rep's per-process table (summary version 2; absent in version 1 files and old runs) */
@@ -199,6 +222,7 @@ function frameworkSummary(f: FrameworkResult, row: SummaryRow | undefined): Summ
 		};
 	}
 	const s = f.stats;
+	const groups = stepGroups(f.reps);
 	return {
 		framework: f.framework,
 		status: "ok",
@@ -215,6 +239,7 @@ function frameworkSummary(f: FrameworkResult, row: SummaryRow | undefined): Summ
 		passRate: round(s.passRate, 3),
 		flakeRate: round(s.flakeRate, 3),
 		...(s.stepLatency !== undefined ? { stepLatency: distSummary(s.stepLatency) } : {}),
+		...(groups.length > 0 ? { stepGroups: groups } : {}),
 		...opt("cpuSecondsPerRep", roundOpt(row?.cpuSecondsPerRep, 2)),
 		...opt("processes", processesSummary(processesPerRep(f))),
 		resources: { host: seriesSummary(f.resources.host), sim: seriesSummary(f.resources.sim) },

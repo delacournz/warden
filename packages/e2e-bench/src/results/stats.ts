@@ -105,6 +105,92 @@ export function sumTests(rep: RepResult): number {
 	return rep.tests.reduce((acc, t) => acc + (t.durationMs ?? 0), 0);
 }
 
+const UNLABELLED = "(unlabelled)";
+const STEP_GROUP_TOP = 8;
+
+/**
+ * The normalised verb of a step label: the first whitespace-separated token, lower-cased, so frameworks that
+ * word steps differently still group (`fill getByTestId(…)`, `type "x"`, `id=welcome-next`, `getByTestId(…)`).
+ * `key=value` tokens collapse to `key=`; a call or path head is cut at `(`, `"` or `/`; trailing punctuation goes.
+ */
+export function stepVerb(label: string): string {
+	const token =
+		label
+			.trim()
+			.split(/\s+/)[0]
+			?.toLowerCase()
+			.replace(/^["'`]+/, "") ?? "";
+	const eq = token.indexOf("=");
+	if (eq > 0) return `${token.slice(0, eq)}=`;
+	const head = token.split(/["'`(/]/)[0] ?? "";
+	const verb = head.replace(/[^a-z0-9]+$/, "");
+	return verb === "" ? UNLABELLED : verb;
+}
+
+/** One verb's share of a framework's step time; `other` folds every verb outside the top 8. */
+export type StepGroup =
+	| ({ kind: "verb"; verb: string } & StepGroupStats)
+	| ({ kind: "other"; verb: "other"; verbs: number } & StepGroupStats);
+
+type StepGroupStats = {
+	n: number;
+	totalMs: number;
+	/** of the framework's total step ms, 0..1 */
+	share: number;
+	median: number;
+	p95: number;
+	max: number;
+};
+
+function groupStats(values: readonly number[], grand: number): StepGroupStats {
+	const sorted = [...values].sort((a, b) => a - b);
+	const total = sorted.reduce((a, b) => a + b, 0);
+	return {
+		n: sorted.length,
+		totalMs: round1(total),
+		share: grand > 0 ? Math.round((total / grand) * 1000) / 1000 : 0,
+		median: round1(median(sorted)),
+		p95: round1(percentile(sorted, 0.95)),
+		max: round1(sorted[sorted.length - 1] ?? Number.NaN),
+	};
+}
+
+/**
+ * Where a framework's step time goes: warm-rep steps (the population of `stepLatency`) grouped by `stepVerb`,
+ * largest total first, top 8 kept and the rest folded into one `other`. Empty when no step was reported.
+ */
+export function stepGroups(reps: readonly RepResult[]): StepGroup[] {
+	const byVerb = new Map<string, number[]>();
+	for (const rep of repsForMedians(reps)) {
+		for (const test of rep.tests) {
+			for (const step of test.steps ?? []) {
+				const verb = stepVerb(step.label);
+				byVerb.set(verb, [...(byVerb.get(verb) ?? []), step.ms]);
+			}
+		}
+	}
+	const sum = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
+	const ranked = [...byVerb.entries()].sort((a, b) => sum(b[1]) - sum(a[1]) || a[0].localeCompare(b[0]));
+	const grand = sum(ranked.flatMap(([, xs]) => xs));
+	const top = ranked
+		.slice(0, STEP_GROUP_TOP)
+		.map(([verb, xs]): StepGroup => ({ kind: "verb", verb, ...groupStats(xs, grand) }));
+	const rest = ranked.slice(STEP_GROUP_TOP);
+	if (rest.length === 0) return top;
+	return [
+		...top,
+		{
+			kind: "other",
+			verb: "other",
+			verbs: rest.length,
+			...groupStats(
+				rest.flatMap(([, xs]) => xs),
+				grand
+			),
+		},
+	];
+}
+
 export type FrameworkStatsInput = {
 	reps: readonly RepResult[];
 	prepareMs: number;

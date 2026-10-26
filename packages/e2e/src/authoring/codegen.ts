@@ -296,7 +296,7 @@ function interaction(step: RecordedStep, gen: Gen): string[] | undefined {
 		}
 		case "fill":
 			return located(step.target, gen, "fill without an element", (l) => [
-				`await ${l}.fill(${textOf(step.text, gen)});`,
+				`await ${l}.${call("fill", textOf(step.text, gen), step.via === undefined ? "" : `{ via: ${lit(step.via)} }`)};`,
 			]);
 		case "type":
 			return located(step.target, gen, "typing without a target field", (l) => [

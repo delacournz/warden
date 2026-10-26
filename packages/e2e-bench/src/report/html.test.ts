@@ -57,6 +57,12 @@ describe("renderHtml", () => {
 		expect(withSteps).toBeGreaterThan(0);
 		expect(count('<rect class="box"')).toBe(8 * 3 + withSteps);
 	});
+	test("where step time goes: a verb table per framework with steps, escaped and self-contained", () => {
+		expect(html).toContain("<h3>Where step time goes</h3>");
+		expect(html).toContain('aria-label="Where step time goes: warden"');
+		expect(html).not.toContain('aria-label="Where step time goes: argent"');
+		expect(html).toContain("Step scopes differ per tool");
+	});
 	test("failed and unsupported frameworks are explained", () => {
 		expect(html).toContain("failed in phase <code>run</code>");
 		const unsupported = renderHtml(

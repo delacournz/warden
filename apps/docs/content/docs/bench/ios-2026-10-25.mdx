@@ -59,6 +59,53 @@ Hosted workers idle hotter than a Mac and share their host, so these numbers com
 | agent-device | 632 | 479 ms | 1.62 s | 1.90 s |
 | tester-army | 592 | 494 ms | 3.18 s | 3.98 s |
 
+#### Where step time goes
+
+Step scopes differ per tool: warden's one `fill` step spans the focus tap, select-all, typing and read-back confirm, argent reports a separate `idle` step and `into …`, agent-device reports `fill` and `type` separately, and tester.army reports locator steps. Compare a verb's share within a tool, not its median across tools.
+
+**warden**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| fill | 68 | 76.5% | 3.69 s | 4.62 s | 5.00 s |
+| tap | 180 | 12.2% | 154 ms | 378 ms | 605 ms |
+| expect | 256 | 11.4% | 33 ms | 629 ms | 655 ms |
+
+**argent**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| into | 68 | 28.2% | 2.12 s | 2.78 s | 2.82 s |
+| idle | 232 | 26.6% | 890 ms | 1.00 s | 1.16 s |
+| visible | 320 | 18.7% | 16 ms | 1.02 s | 1.03 s |
+| id= | 380 | 12.7% | 318 ms | 343 ms | 354 ms |
+| launch | 32 | 11.2% | 1.82 s | 1.86 s | 1.91 s |
+| hidden | 32 | 2.5% | 15 ms | 1.03 s | 1.04 s |
+| open-url | 4 | 0.1% | 113 ms | 116 ms | 116 ms |
+| next-test.yaml | 28 | 0% | 2 ms | 5 ms | 5 ms |
+| other | 96 | 0% | 1 ms | 2 ms | 6 ms |
+
+**agent-device**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| press | 244 | 40.6% | 531 ms | 1.02 s | 1.07 s |
+| type | 64 | 23.8% | 1.25 s | 1.87 s | 1.90 s |
+| wait | 276 | 20.8% | 54 ms | 961 ms | 1.07 s |
+| open | 36 | 9.3% | 1.06 s | 1.10 s | 1.12 s |
+| fill | 12 | 5.5% | 1.70 s | 1.73 s | 1.73 s |
+
+**tester-army**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| getbytestid | 496 | 69.2% | 273 ms | 3.19 s | 3.98 s |
+| dismiss | 52 | 22.5% | 2.26 s | 2.31 s | 2.31 s |
+| (unlabelled) | 32 | 6.3% | 1.02 s | 1.08 s | 1.16 s |
+| accept | 4 | 1.7% | 2.03 s | 2.30 s | 2.30 s |
+| warden-example | 4 | 0.2% | 290 ms | 297 ms | 297 ms |
+| getbytext | 4 | 0.1% | 70 ms | 76 ms | 76 ms |
+
 ### Untraced time
 
 | Framework | Untraced / rep | Share of test time | Largest (test) |

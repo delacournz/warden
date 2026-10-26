@@ -291,6 +291,17 @@ describe("recording", () => {
 		expect(press?.snapshotHash).toBeDefined();
 	});
 
+	test("a fill typed with --via type is journaled with via, a pasted one is not", async () => {
+		const h = harness();
+		expect(await h.run("record", "start", "via")).toBe(0);
+		expect(await h.run("snapshot", "-i")).toBe(0);
+		expect(await h.run("fill", "id=email", "a@b.co", "--no-verify")).toBe(0);
+		expect(await h.run("fill", "id=email", "c@d.co", "--no-verify", "--via", "type")).toBe(0);
+		const [pasted, typed] = recordingSchema.parse(JSON.parse(h.journal())).steps;
+		expect(pasted?.kind === "fill" && pasted.via).toBeUndefined();
+		expect(typed?.kind === "fill" && typed.via).toBe("type");
+	});
+
 	test("--no-record skips one action; nothing is journaled when no recording is active", async () => {
 		const h = harness();
 		expect(await h.run("press", "id=sign-in-submit")).toBe(0);

@@ -27,6 +27,8 @@ Warm median per canonical test. Compare these before the step numbers.
 
 ## Step latency
 
+Steps are not the same size in every tool. warden's `fill` is one step covering the focus tap, select-all, typing and the read-back confirm, so its long tail is the typing cost of a text field (the per-test totals above are the like-for-like number). argent reports a separate `idle` step and `into …`, agent-device reports `fill` and `type` separately, and tester.army reports locator steps. The table under the chart shows which verbs the step time goes to.
+
 <BenchSteps />
 
 ## Cold start, prepare, teardown

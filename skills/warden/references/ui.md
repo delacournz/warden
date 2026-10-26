@@ -72,7 +72,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `find` | `<selector>` | matches with fresh `@eN` |
 | `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted |
 | `press` / `tap` | `<@eN\|selector\|x y> [--verify] [--settle]` | |
-| `fill` | `<target> <text> [--secure] [--no-verify] [--settle]` | `--` before text starting with `-`; reads back, retries once; `--secure` skips read-back and never echoes the text |
+| `fill` | `<target> <text> [--secure] [--no-verify] [--via paste\|type] [--settle]` | `--` before text starting with `-`; iOS pastes by default (`--via type` types per key; the retry always types); reads back, retries once; `--secure` skips read-back and never echoes the text |
 | `type` | `<text> [--submit] [--settle]` | into whatever has focus |
 | `key` | `Enter\|Backspace\|Tab\|Space\|Escape\|Delete\|Up\|Down\|Left\|Right [--settle]` | |
 | `scroll` | `<dir> [amount=0.5] [--until <sel>] [--in <target>] [--max 10] [--settle]` | content direction: `scroll down` reveals what is below; amount 0-1; `--until` prints the fresh ref |

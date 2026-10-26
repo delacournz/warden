@@ -118,7 +118,7 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 - **Wait:** `waitFor({ state: "attached" | "detached" | "visible" | "hidden", timeout? })`. Default state is `visible`.
 - **Actions** wait for exactly one visible match. Several matches fail with `LOCATOR_AMBIGUOUS`.
   - `tap({ position?, timeout?, until?, retries = 2, windowMs = 4000, pollMs = 250 })`, `longPress({ durationMs? })`. `until` (a locator that must be visible, or `async () => boolean`) makes the tap retrying: after each tap it polls for `windowMs`, re-taps when `until` did not hold. With a locator `until` a screen that changed after the tap counts as landed (no re-tap, however late `until` is), and an unchanged screen is re-tapped from 750 ms on. The last tap is not waited on (the next assertion reports what is missing). `retries`/`windowMs`/`pollMs` without `until` are `INVALID_ARGUMENT`. Replaces hand-written `tapUntil` helpers.
-  - `fill(text)` backspaces, types, verifies on two reads, retries once. Secure fields are not verified.
+  - `fill(text, { via? })` empties the field, puts the text in, verifies on two reads, retries once. `via` is `"paste"` (default: iOS pastes with one Cmd+V instead of typing per key; falls back to typing if the pasteboard write fails) or `"type"`. The retry always types. Android always types. Secure fields are pasted but not verified.
   - `clear()`, `type(text)` (at the caret)
   - `press(key, { modifiers? })` sends a KEY (`Enter Backspace Tab Space Escape Delete Up Down Left Right`), it is not a tap. Use `tap()` to tap.
   - `swipe({ direction, momentum? })`, `scrollTo()`

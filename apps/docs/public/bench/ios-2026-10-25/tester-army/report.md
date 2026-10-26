@@ -50,6 +50,21 @@
 | --- | --- | --- | --- | --- |
 | tester-army | 592 | 494 ms | 3.18 s | 3.98 s |
 
+### Where step time goes
+
+Step scopes differ per tool: warden's one `fill` step spans the focus tap, select-all, typing and read-back confirm, argent reports a separate `idle` step and `into …`, agent-device reports `fill` and `type` separately, and tester.army reports locator steps. Compare a verb's share within a tool, not its median across tools.
+
+**tester-army**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| getbytestid | 496 | 69.2% | 273 ms | 3.19 s | 3.98 s |
+| dismiss | 52 | 22.5% | 2.26 s | 2.31 s | 2.31 s |
+| (unlabelled) | 32 | 6.3% | 1.02 s | 1.08 s | 1.16 s |
+| accept | 4 | 1.7% | 2.03 s | 2.30 s | 2.30 s |
+| warden-example | 4 | 0.2% | 290 ms | 297 ms | 297 ms |
+| getbytext | 4 | 0.1% | 70 ms | 76 ms | 76 ms |
+
 ## Resources
 
 | Framework | Scope | CPU-s / rep | CPU-s (whole) | CPU avg | CPU peak | RSS avg | RSS peak |

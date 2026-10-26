@@ -60,6 +60,38 @@
 				"max": 5004,
 				"cvPct": 191.4
 			},
+			"stepGroups": [
+				{
+					"kind": "verb",
+					"verb": "fill",
+					"n": 68,
+					"totalMs": 240450,
+					"share": 0.765,
+					"median": 3689.5,
+					"p95": 4619,
+					"max": 5004
+				},
+				{
+					"kind": "verb",
+					"verb": "tap",
+					"n": 180,
+					"totalMs": 38244,
+					"share": 0.122,
+					"median": 154,
+					"p95": 378,
+					"max": 605
+				},
+				{
+					"kind": "verb",
+					"verb": "expect",
+					"n": 256,
+					"totalMs": 35717,
+					"share": 0.114,
+					"median": 33,
+					"p95": 629,
+					"max": 655
+				}
+			],
 			"cpuSecondsPerRep": 9.12,
 			"processes": [
 				{

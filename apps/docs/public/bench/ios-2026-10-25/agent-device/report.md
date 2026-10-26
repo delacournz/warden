@@ -50,6 +50,20 @@
 | --- | --- | --- | --- | --- |
 | agent-device | 632 | 479 ms | 1.62 s | 1.90 s |
 
+### Where step time goes
+
+Step scopes differ per tool: warden's one `fill` step spans the focus tap, select-all, typing and read-back confirm, argent reports a separate `idle` step and `into …`, agent-device reports `fill` and `type` separately, and tester.army reports locator steps. Compare a verb's share within a tool, not its median across tools.
+
+**agent-device**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| press | 244 | 40.6% | 531 ms | 1.02 s | 1.07 s |
+| type | 64 | 23.8% | 1.25 s | 1.87 s | 1.90 s |
+| wait | 276 | 20.8% | 54 ms | 961 ms | 1.07 s |
+| open | 36 | 9.3% | 1.06 s | 1.10 s | 1.12 s |
+| fill | 12 | 5.5% | 1.70 s | 1.73 s | 1.73 s |
+
 ## Resources
 
 | Framework | Scope | CPU-s / rep | CPU-s (whole) | CPU avg | CPU peak | RSS avg | RSS peak |

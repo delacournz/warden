@@ -3,7 +3,7 @@
  * Hand-run smoke test of the iOS driver against a real, booted simulator (never part of `bun test`):
  *
  *   bun native/scripts/smoke.ts --udid <udid> [--bundle nz.co.delacour.warden.example] [--scheme warden-example] [--out <dir>] [--fills <n>]
- *     [--focus-types <n> [--focus-mode cold|switch|same] [--other-field <testID>] [--raw-tap]] [--kill-bridge] [--kill-helper]
+ *     [--focus-types <n> [--focus-mode cold|switch|same] [--other-field <testID>] [--raw-tap]] [--skip-unicode] [--via paste|type] [--kill-bridge] [--kill-helper]
  *
  * open → health → launch → lifecycle leg (relaunch with args+env, keep-running launch, terminate twice, open a link of the
  * app's scheme; see `lifecycleLeg`) → settle → snapshot → tap first button → fill a textfield (if present; `--fills <n>` then
@@ -143,6 +143,10 @@ const FILL_TEXTS = ["ada@example.com", "grace@example.com", "password1"];
  * all, then the typed text replaces the selection, on a driver that has it), reading each result back. Any read that is not exactly the text is a
  * lost or extra character.
  */
+/** `--via paste` measures the pasteboard fill; the default `type` exercises the keyboard pacing this script is mostly used to tune. */
+function fillVia(): "paste" | "type" {
+	return arg("via") === "paste" ? "paste" : "type";
+}
 async function fillLoop(driver: Driver, identifier: string | undefined, fills: number): Promise<void> {
 	let lost = 0;
 	let totalMs = 0;
@@ -158,7 +162,16 @@ async function fillLoop(driver: Driver, identifier: string | undefined, fills: n
 			continue;
 		}
 		const started = performance.now();
-		const typed = await focusClearType(driver, (ms) => Bun.sleep(ms), focusPoint(entry.element.frame), entry, text);
+		const typed = await focusClearType(
+			driver,
+			(ms) => Bun.sleep(ms),
+			focusPoint(entry.element.frame),
+			entry,
+			text,
+			"auto",
+			process.env,
+			fillVia()
+		);
 		const back = typed.success ? await readBack(driver, identifier, (value) => value === text) : undefined;
 		totalMs += Math.round(performance.now() - started);
 		if (back?.value !== text) {
@@ -281,9 +294,11 @@ async function typeIntoField(driver: Driver, field: Element): Promise<void> {
 	);
 	const typed = await readBack(driver, field.identifier, (v) => v.includes(TYPED));
 	reportReadBack("read back value    ", typed.value?.includes(TYPED) === true, typed);
-	await step("typeText (unicode)", () => driver.typeText("caf\u00e9"));
-	const pasted = await readBack(driver, field.identifier, (v) => v.endsWith("caf\u00e9"));
-	reportReadBack("read back (paste) ", pasted.value?.endsWith("caf\u00e9") === true, pasted);
+	if (!process.argv.includes("--skip-unicode")) {
+		await step("typeText (unicode)", () => driver.typeText("caf\u00e9"));
+		const pasted = await readBack(driver, field.identifier, (v) => v.endsWith("caf\u00e9"));
+		reportReadBack("read back (paste) ", pasted.value?.endsWith("caf\u00e9") === true, pasted);
+	}
 	const fills = Number(arg("fills") ?? 0);
 	if (fills > 0) await fillLoop(driver, field.identifier, fills);
 	const focusTypes = Number(arg("focus-types") ?? 0);
