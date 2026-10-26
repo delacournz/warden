@@ -47,7 +47,7 @@ const psPidArgs = (pid: number): string[] => ["ps", "-o", "pid,ppid,rss,%cpu,tim
  * Cost: at a 1 s interval the old per-sample `simctl spawn launchctl list` (~95 ms CPU) plus host-wide
  * `ps -axo` (~53 ms) used ~16% of a core. The pid is now resolved once and each sample is a pid-scoped
  * `ps -p` (~2 ms); it is re-resolved only when `ps` has no row for it (process gone) or the row's `lstart`
- * differs from the one recorded at resolution (pid reused). Measured 60 s watch at 1 s: MEASURED_LINE
+ * differs from the one recorded at resolution (pid reused). Measured 60 s watch at 1 s: before ~16% of a core, after 0.70 CPU-s over 60.5 s (~1.2%, children included; warden itself 0.24 s).
  */
 function iosSampler(ctx: CommandContext, target: MetricsTarget, bundle: IosAppBundle, startMs: number): MetricsSampler {
 	const prev: CpuReadings = new Map();
