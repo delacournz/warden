@@ -1,11 +1,16 @@
+import { join } from "node:path";
+import { wardenHome } from "@delacour/warden-core/store";
 import type { DevMetroMode, DevReady, DevTaskHandle, DevTaskId, DevUi, MetroTerminal } from "../commands/dev-ui";
 import type { CommandContext } from "../context";
+import type { MetricsTarget } from "../perf/metrics-sampler";
 import type { Spinner } from "../ui";
+import { type HudDeps, startHud } from "./hud";
 import { createKeyParser } from "./keys";
 import { initialState, type Size } from "./model";
 import { reduce, type TuiEvent } from "./reducer";
 import { listWidth, render } from "./render";
 import { createScreen, type ScreenInput, type ScreenOutput, type ScreenProcess } from "./screen";
+import { openSessionLog } from "./session-log";
 
 export type DevTuiDeps = {
 	/** the command context; the returned `ctx` is a copy whose output lands in the task rows */
@@ -16,6 +21,10 @@ export type DevTuiDeps = {
 	/** terminal size now; default reads `stdout.columns/rows` */
 	size?: () => Size;
 	now?: () => number;
+	/** the perf HUD (`--no-hud`, `--hud-interval`); absent = no HUD and no ticker */
+	hud?: { enabled: boolean; intervalMs: number };
+	/** test seams for the HUD ticker: the sampler, frame source and scheduler */
+	hudSeams?: Pick<HudDeps, "sampler" | "fps" | "schedule" | "fpsEvery">;
 };
 
 /** `DevUi` plus what the Metro pane (TUI-4) and the actions (TUI-5) plug into. */
@@ -94,8 +103,40 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		const before = state;
 		state = reduce(state, event);
 		if (!before.quitting && state.quitting) quitHandler?.();
+		recordEvent(event);
 		schedule();
 	};
+
+	// TUI-6 begin: the HUD ticker and the session log on disk (`$WARDEN_HOME/dev/<leaseId>/`)
+	const sessionLog = openSessionLog(undefined, { now });
+	let hudTarget: MetricsTarget | undefined;
+	const hudEnabled = deps.hud?.enabled === true;
+	state = { ...state, hud: { ...state.hud, visible: hudEnabled } };
+	const hudTicker = hudEnabled
+		? startHud({
+				ctx: deps.ctx,
+				target: () => hudTarget,
+				intervalMs: deps.hud?.intervalMs ?? 1000,
+				onSample: (sample, fps) => dispatch({ type: "hud:sample", sample, fps, at: now() }),
+				now,
+				...deps.hudSeams,
+			})
+		: undefined;
+	function recordEvent(event: TuiEvent): void {
+		if (event.type === "task:log") sessionLog.line(event.id, event.line);
+		else if (event.type === "task:fail") sessionLog.line(event.id, `failed: ${event.error}`);
+		else if (event.type === "task:ok" && event.detail) sessionLog.line(event.id, event.detail);
+	}
+	function sessionReady(info: DevReady): void {
+		const lease = info.leaseIds[0];
+		if (lease !== undefined) sessionLog.attach(join(wardenHome(deps.ctx.env), "dev", lease));
+		if (info.bundleId !== undefined) hudTarget = { udid: info.deviceId, platform: info.platform, app: info.bundleId };
+	}
+	function stopSessionExtras(): void {
+		hudTicker?.stop();
+		sessionLog.close();
+	}
+	// TUI-6 end
 
 	const parser = createKeyParser((key) => dispatch({ type: "key", key, at: now() }));
 	screen.onInput((chunk) => parser.feed(chunk));
@@ -141,6 +182,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		},
 		onData: (chunk) => {
 			metroChunks.push(chunk);
+			sessionLog.metro(chunk);
 		},
 		attach: (terminal, exited) => {
 			metroTerminal = terminal;
@@ -176,6 +218,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		},
 		ready(info: DevReady): void {
 			dispatch({ type: "ready", info, at: now() });
+			sessionReady(info);
 		},
 		onQuit(handler) {
 			quitHandler = handler;
@@ -184,6 +227,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 			if (closed) return;
 			if (timer !== undefined) clearTimeout(timer);
 			closed = true;
+			stopSessionExtras();
 			screen.close();
 		},
 	};
