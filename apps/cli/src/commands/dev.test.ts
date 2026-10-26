@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { main } from "../cli";
@@ -65,7 +65,7 @@ function harness(): Harness {
 function setup(
 	argv: string[],
 	calls: string[][],
-	extra: Array<[string, { stdout?: string; exitCode?: number }]> = [],
+	extra: Array<[string, { stdout?: string; stderr?: string; exitCode?: number }]> = [],
 	state: "Booted" | "Shutdown" = "Booted"
 ): TestContext {
 	ctx = testContext(argv, {
@@ -1187,5 +1187,103 @@ describe("selectDevUi", () => {
 		expect(code).toBe(0);
 		expect(text).toContain("--no-tui");
 		expect(text).toContain("WARDEN_TUI=0");
+	});
+});
+
+describe("warden dev: what is checked before the dashboard opens", () => {
+	const EXPO_CONFIG = "bunx expo config --json --type public";
+
+	/** an app whose only config is a dynamic app.config.ts (no app.json), with a package.json */
+	function dynamicApp(c: TestContext, packageJson: unknown = { dependencies: { "expo-dev-client": "1" } }): string {
+		const app = c.cwd;
+		rmSync(join(app, "app.json"));
+		writeFileSync(join(app, "app.config.ts"), "export default {}");
+		writeFileSync(join(app, "package.json"), JSON.stringify(packageJson));
+		return app;
+	}
+
+	test("a project that cannot be resolved is one error line on the terminal; the dashboard never opens", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [[EXPO_CONFIG, { exitCode: 1, stderr: "Cannot find module 'expo/config'" }]]);
+		dynamicApp(c);
+		const h = harness();
+		let uiAsked = 0;
+		h.deps.selectUi = () => {
+			uiAsked++;
+			return plainDevUi(c);
+		};
+		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(uiAsked).toBe(0);
+		expect(h.spawned).toEqual([]);
+		const line = c.stderr.find((l) => l.includes("app.config.ts is dynamic"));
+		expect(line).toContain("--bundle-id");
+		expect(line).toContain("Cannot find module 'expo/config'");
+	});
+
+	test("a dynamic app.config.ts is resolved through expo config: bundle id, slug and no second expo config for the scheme", async () => {
+		const calls: string[][] = [];
+		const config = { slug: "ctna-wallet", scheme: "ctnawallet", ios: { bundleIdentifier: "com.x.dev" } };
+		const c = setup(["ios"], calls, [[EXPO_CONFIG, { stdout: JSON.stringify(config) }]]);
+		dynamicApp(c);
+		const readies: DevReady[] = [];
+		const h = harness();
+		h.deps.selectUi = () => ({ ...plainDevUi(c), ready: (info) => void readies.push(info) });
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => readies.length > 0);
+		expect(readies[0]).toMatchObject({ bundleId: "com.x.dev", projectName: "ctna-wallet" });
+		expect(h.ensured[0]?.opts.bundleId).toBeUndefined();
+		expect(calls.filter((cmd) => cmd.join(" ").startsWith("bunx expo config"))).toHaveLength(1);
+		h.finish(0);
+		await running;
+		// a run with the id on the command line never asks Expo
+		const flagged = setup(["ios", "--bundle-id", "com.flag"], calls, [[EXPO_CONFIG, { stdout: "{}" }]]);
+		dynamicApp(flagged);
+		const h2 = harness();
+		const r2 = createDevCommand(h2.deps).run(flagged);
+		await waitFor(() => h2.spawned.length > 0);
+		h2.finish(0);
+		await r2;
+		expect(calls.filter((cmd) => cmd.join(" ").startsWith("bunx expo config"))).toHaveLength(1);
+	});
+
+	test("a missing expo-dev-client: a person is offered the install and dev goes on; a pipe gets the command as the error", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [["yarn expo install expo-dev-client", {}]]);
+		const app = dynamicApp(c, { dependencies: { expo: "58" } });
+		writeFileSync(
+			join(app, "app.json"),
+			JSON.stringify({ expo: { slug: "demo", ios: { bundleIdentifier: "com.demo" } } })
+		);
+		writeFileSync(join(app, "yarn.lock"), "");
+		const h = harness();
+		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(c.stderr.some((l) => l.includes("run: yarn expo install expo-dev-client"))).toBe(true);
+		expect(h.spawned).toEqual([]);
+
+		const asked = setup(["ios"], calls, [["yarn expo install expo-dev-client", { stdout: "" }]]);
+		const app2 = dynamicApp(asked, { dependencies: { expo: "58" } });
+		writeFileSync(
+			join(app2, "app.json"),
+			JSON.stringify({ expo: { slug: "demo", ios: { bundleIdentifier: "com.demo" } } })
+		);
+		writeFileSync(join(app2, "yarn.lock"), "");
+		asked.ui = scriptedUi({ interactive: true, confirm: [true] });
+		// the fake installer "adds" the package the way the real one would
+		const exec = asked.exec;
+		asked.exec = async (cmd, opts) => {
+			if (cmd.join(" ") === "yarn expo install expo-dev-client")
+				writeFileSync(
+					join(app2, "package.json"),
+					JSON.stringify({ dependencies: { expo: "58", "expo-dev-client": "1" } })
+				);
+			return exec(cmd, opts);
+		};
+		const h2 = harness();
+		const running = createDevCommand(h2.deps).run(asked);
+		await waitFor(() => h2.spawned.length > 0);
+		expect(calls.some((cmd) => cmd.join(" ") === "yarn expo install expo-dev-client")).toBe(true);
+		expect((asked.ui as ScriptedUi).events.some((e) => e.startsWith("confirm: expo-dev-client isn't in"))).toBe(true);
+		h2.finish(0);
+		expect(await running).toBe(0);
 	});
 });

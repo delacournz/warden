@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
+import type { ProjectContext } from "@delacour/warden-core/builds/ensure";
 import {
 	DEFAULT_METRO_PORT_SPEC,
 	DEFAULT_METRO_READY_TIMEOUT,
@@ -58,6 +59,7 @@ import { closeSimWindows, revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
+import { diagnoseDev, offerDevSetup } from "./dev-setup";
 import type { DevActionHost, DevUi } from "./dev-ui";
 import { plainDevUi } from "./dev-ui.plain";
 
@@ -153,9 +155,15 @@ function parseJson(text: string): unknown {
 	}
 }
 
-/** `--scheme`, else `exp+<slug>` (the scheme expo-dev-client registers) from app.json or `expo config`. */
-async function devScheme(ctx: CommandContext, project: Project, override: string | undefined): AsyncResult<string> {
+/** `--scheme`, else `exp+<slug>` (the scheme expo-dev-client registers) from app.json, the resolved app config, or `expo config`. */
+async function devScheme(
+	ctx: CommandContext,
+	context: ProjectContext,
+	override: string | undefined
+): AsyncResult<string> {
 	if (override !== undefined) return ok(override);
+	if (context.appConfig?.slug !== undefined) return ok(`exp+${context.appConfig.slug}`);
+	const { project } = context;
 	const appJson = join(project.root, "app.json");
 	if (existsSync(appJson)) {
 		const slug = slugOf(field(parseJson(readFileSync(appJson, "utf8")), "expo"));
@@ -172,7 +180,7 @@ async function devScheme(ctx: CommandContext, project: Project, override: string
 /** The dev-client scheme, resolved on first ask and then shared: `devScheme` can spend 1-3 s in `expo config`. */
 type SchemeOf = () => AsyncResult<string>;
 
-function lazyScheme(ctx: CommandContext, project: Project, override: string | undefined): SchemeOf {
+function lazyScheme(ctx: CommandContext, project: ProjectContext, override: string | undefined): SchemeOf {
 	let pending: AsyncResult<string> | undefined;
 	return () => {
 		pending ??= devScheme(ctx, project, override).catch((error: unknown) =>
@@ -742,6 +750,13 @@ async function dev(
 		reportError(rawCtx, "dev", `--hud-interval: ${hudInterval.error}`);
 		return 1;
 	}
+	// everything that can be wrong with the request or the app is found (and offered a fix) on the plain
+	// terminal, before the dashboard takes the screen: a failure there is a line, not a flash
+	const prepared = await prepareDev(rawCtx, platformArg, opts);
+	if (!prepared.success) {
+		reportError(rawCtx, "dev", prepared.error);
+		return 1;
+	}
 	const uiOpts: DevUiOpts = {
 		json: opts.json,
 		tui: opts.tui,
@@ -749,10 +764,60 @@ async function dev(
 	};
 	const ui = deps.selectUi?.(rawCtx, uiOpts) ?? (await selectDevUi(rawCtx, uiOpts, deps.loadTui));
 	try {
-		return await devWithUi(ui, deps, platformArg, opts);
+		return await devWithUi(ui, deps, prepared.data, opts);
 	} finally {
 		await ui.close();
 	}
+}
+
+/** The request and the app, resolved and checked before anything is leased, built or drawn. */
+type Prepared = {
+	platform: Platform;
+	timeoutMs: number;
+	owner: Owner;
+	/** `--project` dir or cwd */
+	start: string;
+	variant: string;
+	project: ProjectContext;
+	app: EnsureOptions;
+};
+
+/**
+ * Validate the flags, find the project (a dynamic `app.config.*` through `expo config`), then what the app is
+ * missing for a dev-client run: with a person at the terminal each fix is offered (`dev-setup.ts`) and the
+ * project is read again once one was applied; otherwise the missing pieces are the error, with their commands.
+ */
+async function prepareDev(ctx: CommandContext, platformArg: string | undefined, opts: DevOpts): AsyncResult<Prepared> {
+	const platform = parsePlatform(platformArg ?? "ios");
+	if (!platform.success) return platform;
+	const timeout = parseDuration(opts.readyTimeout);
+	if (!timeout.success) return err(`--ready-timeout: ${timeout.error}`);
+	const owner = resolveOwner(ctx);
+	const start = projectStart(ctx, opts.project);
+	if (!start.success) return start;
+	const variant = opts.variant ?? "dev";
+	let project = await devProjectContext(ctx, platform.data, opts, start.data, variant);
+	if (!project.success) return project;
+	const interactive = ctx.ui.interactive && opts.json !== true;
+	const setup = await offerDevSetup(ctx, diagnoseDev(project.data), { interactive });
+	if (!setup.success) return setup;
+	if (setup.data === "changed") {
+		project = await devProjectContext(ctx, platform.data, opts, start.data, variant);
+		if (!project.success) return project;
+	}
+	const ready = preflight(project.data.project, platform.data);
+	if (!ready.success) return ready;
+	const app = ensureOptions(start.data, variant, opts);
+	if (!app.success) return app;
+	return ok({
+		platform: platform.data,
+		timeoutMs: timeout.data,
+		owner,
+		start: start.data,
+		variant,
+		project: project.data,
+		app: app.data,
+	});
 }
 
 /**
@@ -796,33 +861,21 @@ async function claimDevice(
 }
 
 /** `dev`'s session logic, talking to a `DevUi`; everything the person sees goes through `ui`. */
-async function devWithUi(ui: DevUi, deps: DevDeps, platformArg: string | undefined, opts: DevOpts): Promise<number> {
+async function devWithUi(ui: DevUi, deps: DevDeps, prepared: Prepared, opts: DevOpts): Promise<number> {
 	const ctx = ui.ctx;
 	const fail = (message: string) => {
 		reportError(ctx, "dev", message);
 		return 1;
 	};
-	const platform = parsePlatform(platformArg ?? "ios");
-	if (!platform.success) return fail(platform.error);
-	const timeout = parseDuration(opts.readyTimeout);
-	if (!timeout.success) return fail(`--ready-timeout: ${timeout.error}`);
-	const owner = resolveOwner(ctx);
-	const start = projectStart(ctx, opts.project);
-	if (!start.success) return fail(start.error);
-	const variant = opts.variant ?? "dev";
-	const project = await devProjectContext(ctx, platform.data, opts, start.data, variant);
-	if (!project.success) return fail(project.error);
-	const ready = preflight(project.data.project, platform.data);
-	if (!ready.success) return fail(ready.error);
+	const { owner, project, app } = prepared;
+	const platform = { data: prepared.platform };
 	// only Android's deep link needs it, so it is read next to the claim + install, and never for iOS or --no-open
-	const scheme = lazyScheme(ctx, project.data.project, opts.scheme);
+	const scheme = lazyScheme(ctx, project, opts.scheme);
 	const schemeNeeded = needsScheme(opts, platform.data);
 	if (schemeNeeded) void scheme();
-	const app = ensureOptions(start.data, variant, opts);
-	if (!app.success) return fail(app.error);
 
 	const run: DevRun = { aborted: { now: false }, launch: undefined, metroFailed: false };
-	const early = earlyMetro(ui, deps, opts, project.data.project.root, timeout.data, run);
+	const early = earlyMetro(ui, deps, opts, project.project.root, prepared.timeoutMs, run);
 	// the ui asking to quit ends the session as SIGINT does
 	ui.onQuit(() => {
 		run.aborted.now = true;
@@ -835,8 +888,8 @@ async function devWithUi(ui: DevUi, deps: DevDeps, platformArg: string | undefin
 			void run.launch?.stop();
 		})
 	);
-	if (!opts.json) heading(ctx, "dev", `${platform.data} · ${project.data.project.name}`);
-	const session = await claimDevice(ui, deps, { owner, platform: platform.data, opts, app: app.data, early });
+	if (!opts.json) heading(ctx, "dev", `${platform.data} · ${project.project.name}`);
+	const session = await claimDevice(ui, deps, { owner, platform: platform.data, opts, app, early });
 	// after the claim: its own lease keeps the background gc off the device it just took (16-1)
 	maybeAutoGc(ctx);
 	for (const off of offSignals) off();
@@ -848,12 +901,12 @@ async function devWithUi(ui: DevUi, deps: DevDeps, platformArg: string | undefin
 	return runMetro(ui, deps, opts, {
 		session: session.data,
 		platform: platform.data,
-		project: project.data.project,
+		project: project.project,
 		scheme,
 		launch,
 		aborted: run.aborted,
 		owner,
-		app: app.data,
+		app,
 		run,
 		early,
 	});

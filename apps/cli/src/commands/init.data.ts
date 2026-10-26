@@ -13,17 +13,27 @@ function bundleIds({ ios, android }: InitApp["bundleId"]): string {
 	return `{ ${ids.filter((id) => id !== undefined).join(", ")} }`;
 }
 
-/** The starter `warden.config.ts`: the project and the suite `warden e2e` otherwise assumes, spelled out to edit. */
-export function wardenConfigSource(app: InitApp): string {
+/**
+ * The starter `warden.config.ts`: the project and the suite `warden e2e` otherwise assumes, spelled out to edit.
+ * `{ e2e: false }` (what `warden dev` offers to write) keeps it to the project: the ids warden would otherwise
+ * have to ask Expo for on every start.
+ */
+export function wardenConfigSource(app: InitApp, options: { e2e?: boolean } = {}): string {
 	const name = str(app.name);
-	return `/**
+	const header = `/**
  * warden config.
  * - \`warden dev\`: the dev client on a leased simulator, on a Metro port of its own.
  * - \`warden e2e\`: the \`*.e2e.ts\` specs in ${DEFAULT_SPECS_DIR}/ (\`@delacour/warden-e2e\`) on the dev client, one
  *   \`bun test\` process per leased simulator (\`--count N\`).
  * For autocompletion: \`bun add -d @delacour/warden\` and wrap this in \`defineConfig\` from "@delacour/warden/config".
  */
-export default {
+`;
+	if (options.e2e === false)
+		return `${header}export default {
+	projects: [{ name: ${name}, bundleId: ${bundleIds(app.bundleId)} }],
+};
+`;
+	return `${header}export default {
 	projects: [{ name: ${name}, bundleId: ${bundleIds(app.bundleId)} }],
 	e2e: {
 		[${name}]: {
