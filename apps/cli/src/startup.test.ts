@@ -112,7 +112,8 @@ describe("cold start: the commands agents call most", () => {
 });
 
 describe("cold start: the dev dashboard is lazy", () => {
-	const TUI = ["/src/dev-tui/", "/node_modules/@xterm/"];
+	// dev.ts imports hud.ts for --hud-interval (small, no xterm); the dashboard itself loads only on the TUI path
+	const TUI = ["/src/dev-tui/tui.ts", "/src/dev-tui/metro-pane.ts", "/src/dev-tui/render.ts", "/node_modules/@xterm/"];
 
 	for (const args of [
 		["version"],
