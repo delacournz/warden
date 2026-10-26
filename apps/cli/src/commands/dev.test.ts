@@ -810,6 +810,22 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
+	test("a held device (--udid) gets its name from warden's device record", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios", "--udid", "U1"], calls);
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-1" }, 0);
+		const fake = fakeUi(c);
+		const readies: DevReady[] = [];
+		fake.ui.ready = (info) => void readies.push(info);
+		const h = ptyHarness();
+		h.deps.selectUi = () => fake.ui;
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => readies.length > 0);
+		expect(readies[0]?.deviceName).toBe("warden-iphone-1");
+		h.finish(0);
+		await running;
+	});
+
 	test("ready carries the device name and the app's source and hash; no spinner runs in PTY mode", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls);

@@ -200,7 +200,7 @@ function heldDevice(ctx: CommandContext, owner: Owner, platform: Platform, opts:
 
 type Session = {
 	deviceId: string;
-	/** the device's name when warden claimed it (a held `--udid`/`--lease` device has none to hand) */
+	/** the device's name: from the claim, or warden's device record for a held `--udid`/`--lease` device */
 	deviceName: string | undefined;
 	/** the ensured dev build: where it came from and its fingerprint */
 	app: { source: string; hash: string } | undefined;
@@ -363,7 +363,11 @@ async function openSession(
 		return err(`app on ${deviceId}: ${ensured.error}`);
 	}
 	ctx.err(`warden dev: app ${ensured.data.source} on ${deviceId} [${ensured.data.hash}]`);
-	return ok({ deviceId, deviceName: undefined, app: installed(), port, leaseIds, release });
+	const deviceName = ctx
+		.store()
+		.listDevices(platform)
+		.find((d) => d.id === deviceId)?.name;
+	return ok({ deviceId, deviceName, app: installed(), port, leaseIds, release });
 }
 
 /**
