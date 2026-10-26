@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
-import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
+import { appChoices, bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
 import type { ProjectContext } from "@delacour/warden-core/builds/ensure";
+import { overlayDirUnlessRepoConfig } from "@delacour/warden-core/builds/overlay";
 import {
 	DEFAULT_METRO_PORT_SPEC,
 	DEFAULT_METRO_READY_TIMEOUT,
@@ -10,7 +11,7 @@ import {
 } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { bunExec } from "@delacour/warden-core/exec";
-import { readGitFactsSync } from "@delacour/warden-core/git-facts";
+import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts";
 import { isPortFree } from "@delacour/warden-core/ports";
 import { PRIORITY } from "@delacour/warden-core/queue";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
@@ -42,6 +43,7 @@ import {
 } from "../lease-session";
 import {
 	adbReverseArgv,
+	bareAppLaunchArgvs,
 	devClientLaunchArgv,
 	launchMetro,
 	type Metro,
@@ -51,6 +53,7 @@ import {
 	metroOwner,
 	metroUrl,
 	resolveExpoBin,
+	resolveNodeBin,
 } from "../metro";
 import { emit, heading, note, reportError, warn } from "../output";
 import { projectContextFor } from "../project-context";
@@ -87,6 +90,8 @@ export type DevDeps = Omit<LeaseSessionDeps, "ensureApp"> & {
 	ensureApp: RunEnsureApp;
 	/** the project's own `expo` bin to run directly (default: `bunx expo`) */
 	expoBin?: (projectRoot: string) => string | undefined;
+	/** a bare app's own `react-native` bin to run directly (default: `npx react-native`) */
+	reactNativeBin?: (projectRoot: string) => string | undefined;
 	/** test seam: the ui to run with (default: `selectDevUi`) */
 	selectUi?: (ctx: CommandContext, opts: DevUiOpts) => DevUi;
 	/** test seam: how the dashboard module is loaded (default: a lazy `import("../dev-tui/tui")`) */
@@ -399,6 +404,13 @@ async function openDevClient(
 	};
 	const bundle = bundleIdFor(project, platform);
 	if (!bundle.success) return bundle;
+	if (project.framework === "react-native") {
+		for (const argv of bareAppLaunchArgvs(platform, deviceId, bundle.data, port)) {
+			const step = await run(argv);
+			if (!step.success) return step;
+		}
+		return ok(undefined);
+	}
 	if (platform === "ios") return run(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port)));
 	const reverse = await run(adbReverseArgv(deviceId, port));
 	if (!reverse.success) return reverse;
@@ -427,7 +439,7 @@ async function openDevClient(
 function preflight(project: Project, platform: Platform): Result<void> {
 	const bundle = bundleIdFor(project, platform);
 	if (!bundle.success) return bundle;
-	if (missingPackages(project.root, ["expo-dev-client"]).length > 0)
+	if (project.framework === "expo" && missingPackages(project.root, ["expo-dev-client"]).length > 0)
 		return err(`expo-dev-client isn't installed in ${project.root} — run: bunx expo install expo-dev-client`);
 	return ok(undefined);
 }
@@ -525,8 +537,10 @@ async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap): A
 	try {
 		ctx.err("stopping Metro");
 		await r.run.launch?.stop();
-		ctx.err(`starting Metro --clear on :${port}`);
-		r.early.start(port, deviceId, ["--clear"]);
+		// Expo's `--clear` is `--reset-cache` for the community CLI
+		const clear = r.project.framework === "react-native" ? "--reset-cache" : "--clear";
+		ctx.err(`starting Metro ${clear} on :${port}`);
+		r.early.start(port, deviceId, [clear]);
 		const started = await r.run.launch?.pending;
 		if (started?.success !== true) {
 			settle(undefined);
@@ -651,10 +665,11 @@ function earlyMetro(
 	ui: DevUi,
 	deps: DevDeps,
 	opts: DevOpts,
-	projectRoot: string,
+	project: Project,
 	readyTimeoutMs: number,
 	run: DevRun
 ): EarlyMetro {
+	const projectRoot = project.root;
 	const ctx = ui.ctx;
 	const json = opts.json === true;
 	return {
@@ -668,6 +683,7 @@ function earlyMetro(
 					sleep: deps.sleep,
 					spawn: (cmd, metroEnv, cwd) => spawnMetro(ui, deps, cmd, metroEnv, cwd, json),
 					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
+					...(deps.reactNativeBin ? { reactNativeBin: deps.reactNativeBin } : {}),
 					git: (root) => readGitFactsSync(root, { cache: ctx.git }),
 				},
 				{
@@ -677,6 +693,7 @@ function earlyMetro(
 					args: [...base, ...extraArgs.filter((arg) => !base.includes(arg))],
 					readyTimeoutMs,
 					aborted: () => run.aborted.now,
+					...(project.framework === "react-native" ? { framework: "react-native" as const } : {}),
 				}
 			);
 			run.launch = handle;
@@ -697,6 +714,39 @@ async function sessionFailureMessage(error: string, launch: MetroLaunchHandle | 
 	await launch?.stop();
 	const metro = error === INTERRUPTED ? await launch?.pending : undefined;
 	return metro !== undefined && !metro.success ? metro.error : error;
+}
+
+/** Is `target` `dir` or inside it? */
+function within(dir: string, target: string): boolean {
+	const rel = relative(dir, target);
+	return !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/** An app found below where dev was started (a monorepo root): say which one it is. */
+function noteAppBelow(ctx: CommandContext, start: string, project: Project): void {
+	if (project.root !== start && within(start, project.root))
+		note(ctx, `app ${relative(start, project.root)} (${project.name})`);
+}
+
+/**
+ * Started at a monorepo root with several apps below it and nothing above: a person picks one, anyone
+ * else gets `start` back (the project lookup then names the apps and `--project`). One app below is
+ * used without asking.
+ */
+async function pickApp(ctx: CommandContext, start: string, opts: DevOpts): AsyncResult<string> {
+	const stopAt = (await readGitFacts(ctx.exec, start, ctx.git))?.toplevel;
+	const overlay = await overlayDirUnlessRepoConfig(ctx.exec, start, stopAt, ctx.env, ctx.git);
+	const choices = appChoices(start, stopAt, overlay);
+	if (choices.length === 0 || !ctx.ui.interactive || opts.json === true) return ok(start);
+	const answer = await ctx.ui.select(
+		`Which app? (several under ${start}; --project <dir> skips this)`,
+		choices.map((dir) => ({ value: dir, label: relative(start, dir) }))
+	);
+	if (answer === undefined) {
+		ctx.ui.cancelled("Aborted.");
+		return err("no app picked");
+	}
+	return ok(answer);
 }
 
 /** The project the dev build is for: the `--bundle-id` override applies to this platform, an unset `--variant` is optional. */
@@ -728,9 +778,9 @@ async function unreadyReason(
 	return undefined;
 }
 
-/** Only Android's deep link needs the dev-client scheme, and only when the client is opened. */
-function needsScheme(opts: DevOpts, platform: Platform): boolean {
-	return opts.open && platform === "android";
+/** Only Android's dev-client deep link needs the scheme, and only when the client is opened (a bare app has none). */
+function needsScheme(opts: DevOpts, platform: Platform, project: Project): boolean {
+	return opts.open && platform === "android" && project.framework === "expo";
 }
 
 /**
@@ -795,14 +845,17 @@ async function prepareDev(ctx: CommandContext, platformArg: string | undefined, 
 	const owner = resolveOwner(ctx);
 	const start = projectStart(ctx, opts.project);
 	if (!start.success) return start;
+	const picked = opts.project === undefined ? await pickApp(ctx, start.data, opts) : ok(start.data);
+	if (!picked.success) return picked;
 	const variant = opts.variant ?? "dev";
-	let project = await devProjectContext(ctx, platform.data, opts, start.data, variant);
+	let project = await devProjectContext(ctx, platform.data, opts, picked.data, variant);
 	if (!project.success) return project;
+	noteAppBelow(ctx, start.data, project.data.project);
 	const interactive = ctx.ui.interactive && opts.json !== true;
 	const setup = await offerDevSetup(ctx, diagnoseDev(project.data), { interactive });
 	if (!setup.success) return setup;
 	if (setup.data === "changed") {
-		project = await devProjectContext(ctx, platform.data, opts, start.data, variant);
+		project = await devProjectContext(ctx, platform.data, opts, picked.data, variant);
 		if (!project.success) return project;
 	}
 	const ready = preflight(project.data.project, platform.data);
@@ -871,11 +924,11 @@ async function devWithUi(ui: DevUi, deps: DevDeps, prepared: Prepared, opts: Dev
 	const platform = { data: prepared.platform };
 	// only Android's deep link needs it, so it is read next to the claim + install, and never for iOS or --no-open
 	const scheme = lazyScheme(ctx, project, opts.scheme);
-	const schemeNeeded = needsScheme(opts, platform.data);
+	const schemeNeeded = needsScheme(opts, platform.data, project.project);
 	if (schemeNeeded) void scheme();
 
 	const run: DevRun = { aborted: { now: false }, launch: undefined, metroFailed: false };
-	const early = earlyMetro(ui, deps, opts, project.project.root, prepared.timeoutMs, run);
+	const early = earlyMetro(ui, deps, opts, project.project, prepared.timeoutMs, run);
 	// the ui asking to quit ends the session as SIGINT does
 	ui.onQuit(() => {
 		run.aborted.now = true;
@@ -1006,6 +1059,7 @@ export const defaultDevDeps: DevDeps = {
 	ensureApp: (ctx, owner, platform, deviceId, opts) =>
 		ensureAppFor(ctx, defaultAppDeps, owner, platform, deviceId, opts),
 	expoBin: (projectRoot) => resolveExpoBin(projectRoot, (cmd) => Bun.which(cmd)),
+	reactNativeBin: (projectRoot) => resolveNodeBin(projectRoot, "react-native", (cmd) => Bun.which(cmd)),
 };
 
 export const devCommand: Command = createDevCommand(defaultDevDeps);

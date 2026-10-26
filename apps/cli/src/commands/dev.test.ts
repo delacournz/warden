@@ -1246,6 +1246,85 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 		expect(calls.filter((cmd) => cmd.join(" ").startsWith("bunx expo config"))).toHaveLength(1);
 	});
 
+	test("from a monorepo root: one app below is used and named; several are a pick for a person and an error for a pipe", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const root = join(c.cwd, "..", "mono");
+		mkdirSync(join(root, "apps", "mobile"), { recursive: true });
+		writeFileSync(join(root, "package.json"), JSON.stringify({ workspaces: ["apps/*"] }));
+		writeFileSync(
+			join(root, "apps", "mobile", "app.json"),
+			JSON.stringify({ expo: { slug: "wallet", ios: { bundleIdentifier: "com.w" } } })
+		);
+		writeFileSync(
+			join(root, "apps", "mobile", "package.json"),
+			JSON.stringify({ dependencies: { "expo-dev-client": "1" } })
+		);
+		c.cwd = root;
+		const readies: DevReady[] = [];
+		const h = harness();
+		h.deps.selectUi = () => ({ ...plainDevUi(c), ready: (info) => void readies.push(info) });
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => readies.length > 0);
+		expect(readies[0]).toMatchObject({ bundleId: "com.w", projectName: "wallet" });
+		expect(c.stderr.some((l) => l.includes("apps/mobile"))).toBe(true);
+		h.finish(0);
+		await running;
+
+		mkdirSync(join(root, "apps", "admin"), { recursive: true });
+		writeFileSync(
+			join(root, "apps", "admin", "app.json"),
+			JSON.stringify({ expo: { slug: "admin", ios: { bundleIdentifier: "com.a" } } })
+		);
+		writeFileSync(
+			join(root, "apps", "admin", "package.json"),
+			JSON.stringify({ dependencies: { "expo-dev-client": "1" } })
+		);
+		const piped = setup(["ios"], calls);
+		piped.cwd = root;
+		expect(await createDevCommand(harness().deps).run(piped)).toBe(1);
+		expect(piped.stderr.some((l) => l.includes("apps/admin, apps/mobile"))).toBe(true);
+
+		const asked = setup(["ios"], calls);
+		asked.cwd = root;
+		asked.ui = scriptedUi({ interactive: true, select: [join(root, "apps", "admin")] });
+		const readies2: DevReady[] = [];
+		const h2 = harness();
+		h2.deps.selectUi = () => ({ ...plainDevUi(asked), ready: (info) => void readies2.push(info) });
+		const r2 = createDevCommand(h2.deps).run(asked);
+		await waitFor(() => readies2.length > 0);
+		expect((asked.ui as ScriptedUi).events.some((e) => e.startsWith("select: Which app"))).toBe(true);
+		expect(readies2[0]).toMatchObject({ bundleId: "com.a", projectName: "admin" });
+		h2.finish(0);
+		expect(await r2).toBe(0);
+	});
+
+	test("a bare React Native app runs without a warden config: react-native start, no dev client, the app pointed at Metro", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const app = c.cwd;
+		rmSync(join(app, "app.json"));
+		writeFileSync(join(app, "app.json"), JSON.stringify({ name: "Wallet", displayName: "Wallet" }));
+		writeFileSync(join(app, "package.json"), JSON.stringify({ dependencies: { "react-native": "0.80" } }));
+		mkdirSync(join(app, "ios", "Wallet.xcodeproj"), { recursive: true });
+		writeFileSync(join(app, "ios", "Wallet.xcodeproj", "project.pbxproj"), 'PRODUCT_BUNDLE_IDENTIFIER = "com.x.bare";');
+		const readies: DevReady[] = [];
+		const h = harness();
+		h.deps.selectUi = () => ({ ...plainDevUi(c), ready: (info) => void readies.push(info) });
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => readies.length > 0);
+		expect(readies[0]).toMatchObject({ bundleId: "com.x.bare", projectName: "Wallet" });
+		const metro = h.spawned[0]?.cmd ?? [];
+		expect(metro.slice(0, 3)).toEqual(["npx", "react-native", "start"]);
+		expect(metro).not.toContain("--dev-client");
+		const launch = calls.find((cmd) => cmd.join(" ").startsWith("xcrun simctl launch --terminate-running-process"));
+		expect(launch).toContain("-RCT_jsLocation");
+		expect(launch).toContain("com.x.bare");
+		expect(c.stderr.some((l) => l.includes("expo-dev-client"))).toBe(false);
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
 	test("a missing expo-dev-client: a person is offered the install and dev goes on; a pipe gets the command as the error", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls, [["yarn expo install expo-dev-client", {}]]);
