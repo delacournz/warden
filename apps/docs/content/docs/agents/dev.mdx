@@ -15,7 +15,7 @@ warden dev ios --json       # one line { udid, port, metroUrl, leaseIds } once M
 
 ## What it does
 
-1. Checks the bundle id and `expo-dev-client`.
+1. Finds the app and checks what a dev-client run needs (see [Before it starts](#before-it-starts)).
 2. Claims a device and leases a Metro port (default range `8081:100`).
 3. Shows the simulator (iOS, macOS): brings its window to the front, launching Device Hub (Xcode 27) or Simulator.app (Xcode ≤ 26) when no viewer is running. `--headless` skips this. Android emulators stay windowless.
 4. Installs the build for this fingerprint: installed, cache, EAS, then local build.
@@ -25,6 +25,22 @@ warden dev ios --json       # one line { udid, port, metroUrl, leaseIds } once M
 `warden dev` owns its Metro. A Metro left running by another worktree is refused, never attached to. It holds the device and the port until Metro exits; `q` or Ctrl-C in the dashboard (Ctrl-C in plain output), a kill or the terminal closing (SIGHUP) stops Metro and releases both. In the dashboard's interact mode Ctrl-C goes to Expo, which exits and ends the session. The simulator dev booted is shut down with the session and its Device Hub / Simulator.app window is closed, so nothing is left running or showing; one that was already booted when dev leased it, or one you passed with `--udid` / `--lease`, is left on. `--no-shutdown` keeps dev's own sim booted for the next run (a boot is 10-30 s). A hard kill (`kill -9`, a crashed terminal app) skips all of this; `warden gc` shuts the sim down once its lease has gone stale. The `--json` line is printed first, so an agent can read the `udid` and `metroUrl` and pass them to `warden ui open <bundleId> --metro <metroUrl>`.
 
 Metro gets `WARDEN_WORKTREE` (the checkout directory name) and `WARDEN_BRANCH` (absent on a detached HEAD) in its environment, so `app.config.ts` can name the dev server after the worktree. Native builds never see them, so the fingerprint is unchanged.
+
+## Before it starts
+
+Everything that can be wrong with the request or the app is found on the plain terminal, before a device is leased, anything is built or the dashboard takes the screen. A failure there is one line with the fix, never a dashboard that flashes and closes.
+
+- **The project.** The nearest `warden.config.ts`, else the app's `app.json`. An app whose config is code (`app.config.ts` / `.js` / `.mjs` / `.cjs`) with no bundle id in `app.json` is resolved the way Expo does it: `warden dev` runs `expo config --json --type public` in the app directory once and takes the bundle id, slug and scheme from the result. `--bundle-id` still overrides it, and a `warden.config.ts` skips the call.
+- **`expo-dev-client`.** Metro is started with `--dev-client`, so the app has to list it.
+
+With a person at the terminal each missing piece is offered as a fix:
+
+- a package that is not in `package.json`: *Add and install it now?* runs `expo install <package>` through the package manager the checkout uses (`yarn`, `pnpm`, `bunx` or `npx`, from the nearest lockfile) in the app directory, then checks again;
+- an app read through `expo config`: *Write warden.config.ts?* writes a `warden.config.ts` next to the app with the project name and the resolved bundle id, so later starts skip the call (`warden init` writes the same file plus a first e2e spec).
+
+Declining a blocking fix ends the run with the command to run yourself. Without a terminal (`--json`, a pipe, CI) nothing is asked: the blocking issues are the error, each with its command, and the optional ones a note.
+
+When a failure happens after the dashboard opened (the claim, the build, Metro dying), its lines are printed to the terminal once the dashboard has closed, followed by the session log directory, so the reason is never lost with the screen.
 
 ## Dashboard
 
