@@ -173,6 +173,11 @@ export function hudLines(state: TuiState, cols: number): string[] | undefined {
 
 function footer(state: TuiState, cols: number): string {
 	if (state.quitting) return fit(dim("stopping… waiting for Metro and the device to release"), cols);
+	if (state.mode === "prompt" && state.prompt)
+		return fit(
+			`${bold(`${state.prompt.label}:`)} ${state.prompt.text}${cyan("▏")}  ${dim(footerHint("prompt"))}`,
+			cols
+		);
 	const task = state.tasks[state.selected];
 	const scrolled = state.mode === "log" && task && task.scroll > 0 ? ` · ↑${task.scroll}` : "";
 	return fit(dim(`${footerHint(state.mode)}${scrolled}`), cols);

@@ -3,7 +3,7 @@ import type { DevReady } from "../commands/dev-ui";
 export type TaskStatus = "pending" | "running" | "ok" | "fail";
 
 export type Task = {
-	/** `DevTaskId` or an action row id (TUI-5) */
+	/** `DevTaskId` or an action row id (`action:<name>`, see `actions.ts`) */
 	id: string;
 	title: string;
 	status: TaskStatus;
@@ -14,8 +14,27 @@ export type Task = {
 	scroll: number;
 };
 
-/** list: warden's keys; log: the log pane has focus; interact: every key goes to Metro (TUI-4); help: overlay. */
-export type Mode = "list" | "log" | "interact" | "help";
+/** list: warden's keys; log: the log pane has focus; interact: every key goes to Metro (TUI-4); help: overlay; prompt: the footer takes a line of text (`m` asks for a mark label). */
+export type Mode = "list" | "log" | "interact" | "help" | "prompt";
+
+/** What a list-mode key runs (`actions.ts`); each has its own task row, except `reload` which logs on the Metro row. */
+export type ActionId =
+	| "reload"
+	| "show"
+	| "open"
+	| "screenshot"
+	| "reinstall"
+	| "restart-sim"
+	| "metro-clear"
+	| "logs"
+	| "perf"
+	| "perf-all"
+	| "mark"
+	| "frames"
+	| "report";
+
+/** The footer's one-line input while `mode` is `prompt`. */
+export type Prompt = { label: string; text: string };
 
 export type Size = { cols: number; rows: number };
 
@@ -60,6 +79,8 @@ export type TuiState = {
 	/** false once the person moved the selection: until then it follows the newest running task */
 	autoFollow: boolean;
 	mode: Mode;
+	/** set while `mode` is `prompt` */
+	prompt: Prompt | undefined;
 	size: Size;
 	ready: DevReady | undefined;
 	hud: HudState;
@@ -92,6 +113,7 @@ export function initialState(size: Size, now: number): TuiState {
 		selected: 0,
 		autoFollow: true,
 		mode: "list",
+		prompt: undefined,
 		size,
 		ready: undefined,
 		hud: {

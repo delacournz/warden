@@ -157,6 +157,33 @@ describe("render", () => {
 		expect(quitting).toContain("stopping…");
 	});
 
+	test("the prompt shows its label and the typed text in the footer", () => {
+		const state = stateAt(80, 24, [
+			{ type: "prompt:open", label: "mark" },
+			{ type: "prompt:edit", edit: { op: "char", char: "s" } },
+			{ type: "prompt:edit", edit: { op: "char", char: "x" } },
+		]);
+		const frame = render(state, 80, 24);
+		expectExactWidth(frame, 80, 24);
+		const footer = text(frame).split("\n").at(-1) ?? "";
+		expect(footer).toContain("mark: sx");
+		expect(footer).toContain("esc cancel");
+	});
+
+	test("the help overlay lists the action keys", () => {
+		const frame = text(render(stateAt(120, 40, [press("?")]), 120, 40));
+		for (const desc of [
+			"reload app",
+			"show sim",
+			"screenshot",
+			"reinstall app",
+			"restart sim",
+			"perf mark",
+			"perf report",
+		])
+			expect(frame).toContain(desc);
+	});
+
 	test("long text never overflows a row", () => {
 		const state = stateAt(60, 16, [
 			{ type: "ready", info: { ...READY, metroUrl: `http://${"x".repeat(200)}` }, at: 0 },

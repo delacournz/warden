@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { actionFor, createKeyParser, ESC_TIMEOUT_MS, EXPO_KEYS, type Key, type KeyTimers, LIST_BINDINGS } from "./keys";
+import {
+	actionFor,
+	createKeyParser,
+	ESC_TIMEOUT_MS,
+	EXPO_KEYS,
+	type Key,
+	type KeyTimers,
+	LIST_BINDINGS,
+	promptEdit,
+} from "./keys";
+import type { ActionId } from "./model";
 
 function fakeTimers() {
 	const pending: Array<{ fn: () => void; ms: number; live: boolean }> = [];
@@ -125,9 +135,24 @@ describe("actionFor", () => {
 		expect(actionFor("list", press("tab"))).toEqual({ type: "mode", mode: "log" });
 	});
 
-	test("every action key in the plan's map is bound, built or not", () => {
-		for (const name of ["r", "d", "o", "s", "R", "x", "c", "l", "p", "P", "m", "f", "g"]) {
-			expect(actionFor("list", press(name))?.type).toBe("unavailable");
+	test("every action key in the plan's map runs its action", () => {
+		const map: Record<string, ActionId> = {
+			r: "reload",
+			d: "show",
+			o: "open",
+			s: "screenshot",
+			R: "reinstall",
+			x: "restart-sim",
+			c: "metro-clear",
+			l: "logs",
+			p: "perf",
+			P: "perf-all",
+			m: "mark",
+			f: "frames",
+			g: "report",
+		};
+		for (const [name, action] of Object.entries(map)) {
+			expect(actionFor("list", press(name, { shift: name === name.toUpperCase() }))).toEqual({ type: "run", action });
 		}
 		expect(actionFor("list", press("h"))).toEqual({ type: "hud" });
 		expect(actionFor("list", press("l", { ctrl: true }))).toEqual({ type: "redraw" });
@@ -190,5 +215,29 @@ describe("help text sources", () => {
 		expect(labels).toContain("q ctrl-c");
 		expect(labels).toContain("?");
 		expect(EXPO_KEYS.map((k) => k.label)).toEqual(["a", "i", "w", "j", "r", "m", "shift+m", "o", "?"]);
+	});
+});
+
+describe("promptEdit", () => {
+	test("printable keys type, space is a space, backspace deletes", () => {
+		expect(promptEdit(press("a"))).toEqual({ op: "char", char: "a" });
+		expect(promptEdit(press("A", { shift: true }))).toEqual({ op: "char", char: "A" });
+		expect(promptEdit(press("space"))).toEqual({ op: "char", char: " " });
+		expect(promptEdit(press("backspace"))).toEqual({ op: "backspace" });
+	});
+
+	test("Enter submits; Esc and Ctrl-C cancel", () => {
+		expect(promptEdit(press("enter"))).toEqual({ op: "submit" });
+		expect(promptEdit(press("escape"))).toEqual({ op: "cancel" });
+		expect(promptEdit(press("c", { ctrl: true }))).toEqual({ op: "cancel" });
+	});
+
+	test("arrows, other Ctrl keys and named keys are ignored", () => {
+		for (const k of [press("up"), press("tab"), press("pgup"), press("l", { ctrl: true })])
+			expect(promptEdit(k)).toBeUndefined();
+	});
+
+	test("list mode has no binding while the prompt is open", () => {
+		expect(actionFor("prompt", press("q"))).toBeUndefined();
 	});
 });

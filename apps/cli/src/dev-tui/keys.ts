@@ -1,4 +1,4 @@
-import type { Mode } from "./model";
+import type { ActionId, Mode } from "./model";
 
 /** One decoded key press. `name` is the character itself for printable keys (`R` has `shift`), else a word. */
 export type Key = { name: string; ctrl: boolean; shift: boolean; seq: string };
@@ -135,7 +135,8 @@ export type Action =
 	| { type: "quit" }
 	| { type: "hud" }
 	| { type: "redraw" }
-	| { type: "unavailable"; label: string };
+	/** run a warden action; the host does the work (`actions.ts`), the reducer ignores it */
+	| { type: "run"; action: ActionId };
 
 export type Binding = {
 	/** keycaps for the help overlay */
@@ -164,29 +165,29 @@ const QUIT: Binding = {
 };
 const REDRAW: Binding = { label: "ctrl-l", desc: "redraw", match: ctrl("l"), action: { type: "redraw" } };
 
-function todo(keyName: string, desc: string): Binding {
-	return { label: keyName, desc, match: named(keyName), action: { type: "unavailable", label: desc } };
+function run(keyName: string, desc: string, action: ActionId): Binding {
+	return { label: keyName, desc, match: named(keyName), action: { type: "run", action } };
 }
 
-/** List mode. Entries not built yet log "not available yet" so the map is complete (TUI-4/5 replace the actions). */
+/** List mode. */
 export const LIST_BINDINGS: readonly Binding[] = [
 	{ label: "↑ ↓ j k", desc: "select task", match: named("up", "k"), action: { type: "select", delta: -1 } },
 	{ label: "", desc: "", match: named("down", "j"), action: { type: "select", delta: 1 }, hidden: true },
 	{ label: "enter i", desc: "interact Metro", match: named("enter", "i"), action: { type: "interact" } },
 	{ label: "tab", desc: "focus log", match: named("tab"), action: { type: "mode", mode: "log" } },
-	todo("r", "reload app"),
-	todo("d", "show sim"),
-	todo("o", "open client"),
-	todo("s", "screenshot"),
-	todo("R", "reinstall app"),
-	todo("x", "restart sim"),
-	todo("c", "Metro --clear"),
-	todo("l", "device logs"),
-	todo("p", "perf on/off"),
-	todo("P", "perf all"),
-	todo("m", "perf mark"),
-	todo("f", "frames"),
-	todo("g", "perf report"),
+	run("r", "reload app", "reload"),
+	run("d", "show sim", "show"),
+	run("o", "open client", "open"),
+	run("s", "screenshot", "screenshot"),
+	run("R", "reinstall app", "reinstall"),
+	run("x", "restart sim", "restart-sim"),
+	run("c", "Metro --clear", "metro-clear"),
+	run("l", "device logs", "logs"),
+	run("p", "perf on/off", "perf"),
+	run("P", "perf all", "perf-all"),
+	run("m", "perf mark", "mark"),
+	run("f", "frames", "frames"),
+	run("g", "perf report", "report"),
 	{ label: "h", desc: "toggle HUD", match: named("h"), action: { type: "hud" } },
 	{ label: "?", desc: "help", match: named("?"), action: { type: "mode", mode: "help" } },
 	QUIT,
@@ -235,10 +236,25 @@ const BINDINGS: Record<Mode, readonly Binding[]> = {
 	log: LOG_BINDINGS,
 	help: HELP_BINDINGS,
 	interact: INTERACT_BINDINGS,
+	prompt: [],
 };
 
 export function actionFor(mode: Mode, k: Key): Action | undefined {
 	return BINDINGS[mode].find((b) => b.match(k))?.action;
+}
+
+/** One edit of the footer's input line. */
+export type PromptEdit = { op: "char"; char: string } | { op: "backspace" } | { op: "submit" } | { op: "cancel" };
+
+/** What a key does to the prompt: Enter submits, Esc / Ctrl-C cancel, printable keys type. Anything else is ignored. */
+export function promptEdit(k: Key): PromptEdit | undefined {
+	if (k.ctrl) return k.name === "c" ? { op: "cancel" } : undefined;
+	if (k.name === "enter") return { op: "submit" };
+	if (k.name === "escape") return { op: "cancel" };
+	if (k.name === "backspace") return { op: "backspace" };
+	if (k.name === "space") return { op: "char", char: " " };
+	if ([...k.name].length === 1) return { op: "char", char: k.name };
+	return undefined;
 }
 
 /** Expo's own keys, shown next to warden's in the help overlay (they apply in interact mode). */
@@ -265,5 +281,7 @@ export function footerHint(mode: Mode): string {
 			return "Esc back · keys go to Expo · Shift+PgUp/PgDn scroll";
 		case "help":
 			return "esc close · ctrl-c quit";
+		case "prompt":
+			return "enter add · esc cancel";
 	}
 }

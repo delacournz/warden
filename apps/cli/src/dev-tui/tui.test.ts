@@ -187,11 +187,24 @@ describe("createDevTui", () => {
 		await ui.close();
 	});
 
-	test("an unbuilt action key logs 'not available yet'", async () => {
+	test("an action key before the session is ready fails its row with why", async () => {
 		const { ui, stdin, screen } = setup();
-		stdin.press("r");
+		stdin.press("s");
 		await settle();
-		expect((await screen()).join("\n")).toContain("reload app: not available yet");
+		const text = (await screen()).join("\n");
+		expect(text).toContain("screenshot");
+		expect(text).toContain("not ready");
+		await ui.close();
+	});
+
+	test("m without a recording perf session fails its row and opens no prompt", async () => {
+		const { ui, stdin, screen } = setup();
+		ui.ready(READY);
+		stdin.press("m");
+		await settle();
+		const text = (await screen()).join("\n");
+		expect(text).toContain("p starts one");
+		expect(text).not.toContain("esc cancel");
 		await ui.close();
 	});
 
@@ -328,7 +341,7 @@ describe("Metro pane and key passthrough", () => {
 		m.stdin.press("\x1b");
 		await Bun.sleep(60);
 		m.advance(1000);
-		m.stdin.press("r");
+		m.stdin.press("h");
 		m.stdin.press("q");
 		await settle();
 		expect(m.written).toEqual([]);
@@ -415,12 +428,71 @@ describe("Metro pane and key passthrough", () => {
 		await m.ui.close();
 	});
 
+	test("r in list mode sends r to Metro and logs it on the metro row", async () => {
+		const m = withMetro();
+		m.stdin.press("r");
+		await settle();
+		expect(m.written).toEqual(["r"]);
+		for (let i = 0; i < 3; i++) m.stdin.press("j");
+		await settle();
+		expect((await m.screen()).join("\n")).toContain("reload sent (r)");
+		await m.ui.close();
+	});
+
+	test("o runs the host's openClient into its own row", async () => {
+		const m = withMetro();
+		const opened: string[] = [];
+		m.ui.ready({
+			...READY,
+			actions: {
+				openClient: async (log) => {
+					opened.push("open");
+					log("pointed at Metro");
+					return { success: true, data: undefined };
+				},
+				reinstall: async () => ({ success: true, data: { source: "cache", hash: "h" } }),
+				restartSim: async () => ({ success: true, data: undefined }),
+				restartMetro: async () => ({ success: true, data: "http://127.0.0.1:8101" }),
+			},
+		});
+		m.stdin.press("o");
+		await settle();
+		expect(opened).toEqual(["open"]);
+		const text = (await m.screen()).join("\n");
+		expect(text).toContain("✓ open dev client");
+		expect(text).toContain("pointed at Metro");
+		await m.ui.close();
+	});
+
+	test("the old Metro's exit during c is not the session's exit", async () => {
+		const m = withMetro();
+		m.ui.ready({
+			...READY,
+			actions: {
+				openClient: async () => ({ success: true, data: undefined }),
+				reinstall: async () => ({ success: true, data: { source: "cache", hash: "h" } }),
+				restartSim: async () => ({ success: true, data: undefined }),
+				restartMetro: async () => {
+					m.finish(0);
+					await Bun.sleep(0);
+					return { success: true, data: "http://127.0.0.1:8101" };
+				},
+			},
+		});
+		m.stdin.press("c");
+		await settle();
+		const text = (await m.screen()).join("\n");
+		expect(text).toContain("✓ Metro --clear");
+		expect(text).not.toContain("metro exited");
+		await m.ui.close();
+	});
+
 	test("after Metro exits interact mode ends and keys stay with warden", async () => {
 		const m = withMetro();
 		m.stdin.press("i");
 		m.finish(2);
 		await settle();
-		m.stdin.press("r");
+		m.stdin.press("h");
 		await settle();
 		expect(m.written).toEqual([]);
 		await m.ui.close();

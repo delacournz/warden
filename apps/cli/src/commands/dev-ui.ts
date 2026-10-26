@@ -1,8 +1,9 @@
 import type { Platform } from "@delacour/warden-core/types";
+import type { AsyncResult } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { MetroTerminal } from "../metro";
 
-/** The steps a person watches in `warden dev`, in order; action keys add more rows later (TUI-5). */
+/** The steps a person watches in `warden dev`, in order; the action keys add `action:<name>` rows (`dev-tui/actions.ts`). */
 export type DevTaskId = "claim" | "show" | "app" | "metro" | "client" | "session";
 
 /** A running task: end it once, with an outcome; `log` adds a line under it meanwhile. */
@@ -15,6 +16,21 @@ export type DevTaskHandle = {
 /** Defined next to `MetroProc` (which carries it); re-exported so the seam keeps its names. */
 export type { MetroTerminal };
 
+/**
+ * What the dashboard's action keys call back into `warden dev` for: the parts only the command knows (project, scheme,
+ * port, lease, the install options). Each takes `log`, where its progress lines go (the action's own row).
+ */
+export type DevActionHost = {
+	/** point the dev client at Metro again */
+	openClient(log: (line: string) => void): AsyncResult<void>;
+	/** uninstall + install the dev build; Metro stays */
+	reinstall(log: (line: string) => void): AsyncResult<{ source: string; hash: string }>;
+	/** iOS: shut the sim down, boot it, bring its window back */
+	restartSim(log: (line: string) => void): AsyncResult<void>;
+	/** stop Metro and start it again with `--clear` on the same leased port; resolves with its URL */
+	restartMetro(log: (line: string) => void): AsyncResult<string>;
+};
+
 /** What the ui shows once the session is up. */
 export type DevReady = {
 	platform: Platform;
@@ -25,8 +41,10 @@ export type DevReady = {
 	leaseIds: string[];
 	app: { source: string; hash: string } | undefined;
 	projectName: string;
-	/** the dev client's bundle id / package: the HUD samples this app */
+	/** the dev client's bundle id / package: the HUD samples this app, the perf keys profile it */
 	bundleId?: string;
+	/** what the action keys call back into; the plain ui ignores it */
+	actions?: DevActionHost;
 };
 
 /** How `warden dev` should run Metro: on the user's terminal, or in a PTY the ui renders. */

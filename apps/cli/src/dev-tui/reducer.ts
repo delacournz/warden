@@ -1,7 +1,16 @@
 import type { DevReady } from "../commands/dev-ui";
 import { sanitizeLine } from "./ansi";
-import { type Action, actionFor, type Key } from "./keys";
-import { type HudFps, type HudSample, type Mode, newTask, type Size, type Task, type TuiState } from "./model";
+import { type Action, actionFor, type Key, type PromptEdit } from "./keys";
+import {
+	type HudFps,
+	type HudPerf,
+	type HudSample,
+	type Mode,
+	newTask,
+	type Size,
+	type Task,
+	type TuiState,
+} from "./model";
 
 export type TuiEvent =
 	| { type: "task:start"; id: string; title: string; at: number }
@@ -14,7 +23,12 @@ export type TuiEvent =
 	| { type: "mode"; mode: Mode }
 	| { type: "ready"; info: DevReady; at: number }
 	| { type: "metro:exit"; code: number; at: number }
-	| { type: "hud:sample"; sample: HudSample; fps: HudFps | undefined; at: number };
+	| { type: "hud:sample"; sample: HudSample; fps: HudFps | undefined; at: number }
+	/** a perf session started (or ended: undefined); the HUD shows it */
+	| { type: "hud:perf"; perf: HudPerf | undefined }
+	| { type: "prompt:open"; label: string }
+	| { type: "prompt:edit"; edit: PromptEdit }
+	| { type: "prompt:close" };
 
 /** Lines kept per task; older ones drop off the front. */
 export const MAX_LOG_LINES = 5000;
@@ -104,10 +118,8 @@ function applyAction(state: TuiState, action: Action): TuiState {
 			return { ...state, hud: { ...state.hud, visible: !state.hud.visible } };
 		case "redraw":
 			return { ...state, redraw: state.redraw + 1 };
-		case "unavailable": {
-			const id = state.tasks[state.selected]?.id ?? "";
-			return withLog(state, id, `${action.label}: not available yet`);
-		}
+		case "run":
+			return state;
 		case "quit": {
 			if (state.quitting) return state;
 			const stopped = ensureTask({ ...state, quitting: true }, "session", "session");
@@ -184,6 +196,20 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 			}));
 			return follow(running, "session");
 		}
+		case "hud:perf":
+			return { ...state, hud: { ...state.hud, perf: event.perf } };
+		case "prompt:open":
+			return { ...state, mode: "prompt", prompt: { label: event.label, text: "" } };
+		case "prompt:edit": {
+			const { prompt } = state;
+			if (!prompt) return state;
+			if (event.edit.op === "char") return { ...state, prompt: { ...prompt, text: prompt.text + event.edit.char } };
+			if (event.edit.op === "backspace")
+				return { ...state, prompt: { ...prompt, text: [...prompt.text].slice(0, -1).join("") } };
+			return state;
+		}
+		case "prompt:close":
+			return { ...state, mode: "list", prompt: undefined };
 		case "hud:sample":
 			return { ...state, now: event.at, hud: { ...state.hud, sample: event.sample, fps: event.fps } };
 		case "metro:exit": {

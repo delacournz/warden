@@ -4,8 +4,10 @@ import type { DevMetroMode, DevReady, DevTaskHandle, DevTaskId, DevUi, MetroTerm
 import type { CommandContext } from "../context";
 import type { MetricsTarget } from "../perf/metrics-sampler";
 import type { Spinner } from "../ui";
+import { createActions } from "./actions";
+import { createActionEffects } from "./actions.effects";
 import { type HudDeps, startHud } from "./hud";
-import { actionFor, createKeyParser, type Key } from "./keys";
+import { actionFor, createKeyParser, type Key, promptEdit } from "./keys";
 import { createMetroPane } from "./metro-pane";
 import { initialState, type Size } from "./model";
 import { reduce, type TuiEvent } from "./reducer";
@@ -147,6 +149,21 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		} else leftInteractAt = undefined;
 		dispatch({ type: "key", key, at });
 	};
+
+	/** TUI-5: the footer prompt takes every key; in list mode an action key runs its action. Anything else is TUI-4's. */
+	const routeKey = (key: Key): void => {
+		if (state.mode === "prompt") {
+			promptKey(key);
+			return;
+		}
+		const action = state.mode === "list" ? actionFor("list", key) : undefined;
+		if (action?.type !== "run") {
+			handleKey(key);
+			return;
+		}
+		leftInteractAt = undefined;
+		void actions.run(action.action);
+	};
 	// --- end TUI-4 ---
 
 	const paint = (): void => {
@@ -207,7 +224,56 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 	}
 	// TUI-6 end
 
-	const parser = createKeyParser(handleKey);
+	// TUI-5 begin: the warden action keys (`actions.ts`), with real effects and a footer prompt for `m`
+	let metroSwap = false;
+	const effects = createActionEffects({
+		ctx: deps.ctx,
+		host: () => state.ready?.actions,
+		metroTerminal: () => metroTerminal,
+		shotsDir: () => sessionLog.shotsDir(),
+	});
+	const actions = createActions({
+		now,
+		ready: () => state.ready,
+		sink: {
+			start: (id, title) => dispatch({ type: "task:start", id, title, at: now() }),
+			log: (id, line) => dispatch({ type: "task:log", id, line }),
+			title: (id, title) => dispatch({ type: "task:title", id, title }),
+			ok: (id, detail) => dispatch({ type: "task:ok", id, detail, at: now() }),
+			fail: (id, error) => dispatch({ type: "task:fail", id, error, at: now() }),
+			hudPerf: (perf) => dispatch({ type: "hud:perf", perf }),
+			prompt: (label) => dispatch({ type: "prompt:open", label }),
+		},
+		fx: {
+			...effects,
+			restartMetro: async (log) => {
+				metroSwap = true;
+				try {
+					return await effects.restartMetro(log);
+				} finally {
+					metroSwap = false;
+				}
+			},
+		},
+		every: (fn, ms) => {
+			const handle = setInterval(fn, ms);
+			return () => clearInterval(handle);
+		},
+	});
+	function promptKey(key: Key): void {
+		const edit = promptEdit(key);
+		if (edit === undefined) return;
+		if (edit.op === "submit" || edit.op === "cancel") {
+			const text = state.prompt?.text ?? "";
+			dispatch({ type: "prompt:close" });
+			if (edit.op === "submit") void actions.submitMark(text);
+			return;
+		}
+		dispatch({ type: "prompt:edit", edit });
+	}
+	// TUI-5 end
+
+	const parser = createKeyParser(routeKey);
 	screen.onInput((chunk) => parser.feed(chunk));
 	screen.onResize((size) => {
 		dispatch({ type: "resize", size });
@@ -253,9 +319,14 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		},
 		attach: (terminal, exited) => {
 			metroTerminal = terminal;
+			// a restart (`c`) ends the old Metro on purpose: that exit is not the session's
 			void exited.then(
-				(code) => dispatch({ type: "metro:exit", code, at: now() }),
-				() => dispatch({ type: "metro:exit", code: 1, at: now() })
+				(code) => {
+					if (!metroSwap) dispatch({ type: "metro:exit", code, at: now() });
+				},
+				() => {
+					if (!metroSwap) dispatch({ type: "metro:exit", code: 1, at: now() });
+				}
 			);
 		},
 	};
@@ -294,6 +365,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 			if (closed) return;
 			if (timer !== undefined) clearTimeout(timer);
 			closed = true;
+			actions.dispose();
 			stopSessionExtras();
 			pane.dispose();
 			screen.close();

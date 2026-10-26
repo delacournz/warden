@@ -101,9 +101,41 @@ describe("keys", () => {
 		expect(task(state, "claim")?.scroll).toBe(2);
 	});
 
-	test("an unbuilt action logs 'not available yet' on the selected row", () => {
+	test("an action key changes nothing in the reducer: the host runs it", () => {
+		const before = fresh();
 		const state = run([press("r")]);
-		expect(task(state, "claim")?.log).toEqual(["reload app: not available yet"]);
+		expect({ ...state, now: before.now }).toEqual(before);
+	});
+
+	test("hud:perf sets and clears the recording session", () => {
+		let state = run([{ type: "hud:perf", perf: { startedAt: 500, marks: 1 } }]);
+		expect(state.hud.perf).toEqual({ startedAt: 500, marks: 1 });
+		state = run([{ type: "hud:perf", perf: undefined }], state);
+		expect(state.hud.perf).toBeUndefined();
+	});
+
+	test("the prompt opens in prompt mode, types, deletes and closes back to the list", () => {
+		let state = run([{ type: "prompt:open", label: "mark" }]);
+		expect(state.mode).toBe("prompt");
+		expect(state.prompt).toEqual({ label: "mark", text: "" });
+		state = run(
+			[
+				{ type: "prompt:edit", edit: { op: "char", char: "a" } },
+				{ type: "prompt:edit", edit: { op: "char", char: "b" } },
+				{ type: "prompt:edit", edit: { op: "backspace" } },
+				{ type: "prompt:edit", edit: { op: "char", char: "c" } },
+			],
+			state
+		);
+		expect(state.prompt?.text).toBe("ac");
+		state = run([{ type: "prompt:close" }], state);
+		expect(state.mode).toBe("list");
+		expect(state.prompt).toBeUndefined();
+	});
+
+	test("prompt edits without an open prompt are ignored", () => {
+		const state = run([{ type: "prompt:edit", edit: { op: "char", char: "a" } }]);
+		expect(state.prompt).toBeUndefined();
 	});
 
 	test("? opens help, Esc closes it", () => {
