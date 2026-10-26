@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_BUILD_COMMAND, defaultBuildCommand } from "./builds.defaults";
 import {
+	appDirsBelow,
+	appStart,
 	bundleIdFor,
 	CONFIG_FILE,
 	dynamicAppConfigDir,
@@ -220,6 +222,7 @@ describe("loadProject", () => {
 			name: "salient",
 			root: join(dir, "apps/salient/app"),
 			bundleId: { ios: "nz.x.salient", android: "nz.x.salient" },
+			framework: "expo",
 			fingerprintCommand: "bun run --silent fingerprint:{platform}",
 			eas: { profile: "development-simulator", workflow: ".eas/workflows/dev-build.yml", trigger: false },
 			build: { ios: "bun ios", android: DEFAULT_BUILD_COMMAND.android },
@@ -537,5 +540,118 @@ describe("dynamicAppConfigDir / appName", () => {
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.name).toBe("wallet");
 		expect(res.data.origin).toBe("app.config");
+	});
+});
+
+describe("an app below a monorepo root", () => {
+	function monorepo(workspaces: unknown): void {
+		write("package.json", { name: "root", private: true, workspaces });
+		write("yarn.lock", "");
+	}
+
+	test("appDirsBelow follows package.json workspaces (literal dirs and * segments) and keeps only app dirs", () => {
+		monorepo(["apps/api", "apps/mobile", "packages/*"]);
+		write("apps/api/package.json", { name: "api" });
+		write("apps/mobile/package.json", { name: "mobile" });
+		writeFileSync(join(dir, "apps/mobile/app.config.ts"), "export default {}");
+		write("packages/ui/package.json", { name: "ui" });
+		write("packages/native/package.json", { name: "native", dependencies: { "react-native": "0.80" } });
+		expect(appDirsBelow(dir)).toEqual([join(dir, "apps/mobile"), join(dir, "packages/native")]);
+	});
+
+	test("workspaces as { packages } and no workspaces at all (apps/* is looked at)", () => {
+		monorepo({ packages: ["apps/*"] });
+		write("apps/mobile/app.json", { expo: { slug: "m" } });
+		expect(appDirsBelow(dir)).toEqual([join(dir, "apps/mobile")]);
+		rmSync(join(dir, "package.json"));
+		expect(appDirsBelow(dir)).toEqual([join(dir, "apps/mobile")]);
+	});
+
+	test("node_modules and dot dirs are never searched, negated patterns are skipped", () => {
+		monorepo(["*", "!apps"]);
+		write("node_modules/x/app.json", { expo: {} });
+		write(".expo/app.json", { expo: {} });
+		expect(appDirsBelow(dir)).toEqual([]);
+	});
+
+	test("loadProject from the monorepo root uses the one app below it", () => {
+		monorepo(["apps/*"]);
+		write("apps/mobile/app.json", { expo: { slug: "wallet", ios: { bundleIdentifier: "com.w" } } });
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.root).toBe(join(dir, "apps/mobile"));
+		expect(res.data.name).toBe("wallet");
+		expect(appStart(dir, dir)).toBe(join(dir, "apps/mobile"));
+	});
+
+	test("several apps below: the error names them and --project", () => {
+		monorepo(["apps/*"]);
+		write("apps/a/app.json", { expo: { slug: "a" } });
+		write("apps/b/app.json", { expo: { slug: "b" } });
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		expect(res.success).toBe(false);
+		if (!res.success) {
+			expect(res.error).toContain("apps/a, apps/b");
+			expect(res.error).toContain("--project");
+		}
+		expect(appStart(dir, dir)).toBe(dir);
+	});
+
+	test("an app or a warden config above wins: nothing below is looked at", () => {
+		write("app.json", { expo: { slug: "top", ios: { bundleIdentifier: "com.top" } } });
+		write("apps/mobile/app.json", { expo: { slug: "below" } });
+		expect(appStart(dir, dir)).toBe(dir);
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.name).toBe("top");
+	});
+});
+
+describe("a bare React Native app", () => {
+	function bareApp(): void {
+		write("package.json", { name: "wallet-app", dependencies: { "react-native": "0.80" } });
+		write("app.json", { name: "Wallet", displayName: "Wallet" });
+		write("ios/Wallet.xcodeproj/project.pbxproj", 'PRODUCT_BUNDLE_IDENTIFIER = "com.x.wallet";');
+		write("android/app/build.gradle", 'applicationId "com.x.wallet"');
+	}
+
+	test("is detected without a warden config: ids from the native projects, react-native build commands", () => {
+		bareApp();
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.framework).toBe("react-native");
+		expect(res.data.name).toBe("Wallet");
+		expect(res.data.bundleId).toEqual({ ios: "com.x.wallet", android: "com.x.wallet" });
+		expect(res.data.origin).toBe("react-native");
+		expect(res.data.build.ios).toContain("react-native build-ios --mode Debug");
+		expect(res.data.build.android).toContain("react-native build-android --mode debug");
+		expect(res.data.build.ios).not.toContain("expo");
+	});
+
+	test("no app.json is fine too, and --bundle-id still wins", () => {
+		bareApp();
+		rmSync(join(dir, "app.json"));
+		const res = loadProject({ start: dir, env, stopAt: dir, bundleId: { ios: "com.flag" } });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.name).toBe("wallet-app");
+		expect(res.data.bundleId.ios).toBe("com.flag");
+	});
+
+	test("an Expo app stays expo; a warden config can say framework: react-native", () => {
+		write("app.json", { expo: { slug: "e", ios: { bundleIdentifier: "com.e" } } });
+		write("package.json", { dependencies: { expo: "58", "react-native": "0.80" } });
+		const expo = loadProject({ start: dir, env, stopAt: dir });
+		if (!expo.success) throw new Error(expo.error);
+		expect(expo.data.framework).toBe("expo");
+		write(JSON_CONFIG_FILE, { projects: [{ name: "a", bundleId: { ios: "com.a" }, framework: "react-native" }] });
+		const configured = loadProject({ start: dir, env, stopAt: dir });
+		if (!configured.success) throw new Error(configured.error);
+		expect(configured.data.framework).toBe("react-native");
+		expect(configured.data.build.ios).toContain("react-native build-ios");
+	});
+
+	test("Release builds for react-native", () => {
+		expect(defaultBuildCommand("ios", "Release", "react-native")).toContain("--mode Release");
+		expect(defaultBuildCommand("android", "Release", "react-native")).toContain("--mode release");
 	});
 });

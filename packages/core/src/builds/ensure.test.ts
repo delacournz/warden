@@ -703,6 +703,27 @@ describe("projectContext with a dynamic app.config.*", () => {
 		expect(calls.find((c) => c.cmd.startsWith("bunx expo config"))?.cwd).toBe(join(repo, "apps", "mobile"));
 	});
 
+	test("from a monorepo root, the one app below it is resolved through `expo config` in its own dir", async () => {
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, "apps", "mobile"), { recursive: true });
+		mkdirSync(join(repo, "apps", "api"), { recursive: true });
+		writeFileSync(join(repo, "package.json"), JSON.stringify({ workspaces: ["apps/api", "apps/mobile"] }));
+		writeFileSync(join(repo, "apps", "api", "package.json"), JSON.stringify({ name: "api" }));
+		writeFileSync(join(repo, "apps", "mobile", "app.config.ts"), "export default {}");
+		const calls: Array<{ cmd: string; cwd: string | undefined }> = [];
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: cmd.join(" "), cwd: opts?.cwd });
+			if (cmd.join(" ") === EXPO_CONFIG_ARGV.join(" "))
+				return { exitCode: 0, stdout: JSON.stringify(expoConfig), stderr: "" };
+			return gitAnswers(repo, cmd) ?? { exitCode: 1, stdout: "", stderr: "" };
+		};
+		const res = await projectContext({ exec, env, start: repo });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.project.root).toBe(join(repo, "apps", "mobile"));
+		expect(res.data.project.bundleId).toEqual({ ios: "com.x.dev" });
+		expect(calls.find((c) => c.cmd.startsWith("bunx expo config"))?.cwd).toBe(join(repo, "apps", "mobile"));
+	});
+
 	test("a failing `expo config` keeps the original error and adds expo's", async () => {
 		const repo = join(dir, "repo");
 		mkdirSync(join(repo, "apps", "mobile"), { recursive: true });

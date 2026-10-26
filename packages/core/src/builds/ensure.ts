@@ -17,7 +17,7 @@ import {
 	recordInstall,
 	storeArtifact,
 } from "./cache";
-import { bundleIdFor, dynamicAppConfigDir, type EasSettings, loadProject, type Project } from "./config";
+import { appStart, bundleIdFor, dynamicAppConfigDir, type EasSettings, loadProject, type Project } from "./config";
 import { type Download, resolveFromEas } from "./eas";
 import {
 	appMatchesArtifact,
@@ -68,8 +68,10 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 	const facts = await readGitFacts(input.exec, input.start, input.git);
 	const stopAt = facts?.toplevel;
 	const overlay = await overlayDirUnlessRepoConfig(input.exec, input.start, stopAt, input.env, input.git);
+	// a monorepo root with one app below it: look the project up from that app
+	const start = appStart(input.start, stopAt, overlay);
 	const load = {
-		start: input.start,
+		start,
 		env: input.env,
 		...(stopAt ? { stopAt } : {}),
 		...(overlay ? { overlayDir: overlay } : {}),
@@ -81,7 +83,7 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 	let appConfig: ProjectContext["appConfig"];
 	let project = loadProject(load);
 	if (!project.success) {
-		const dynamicDir = dynamicAppConfigDir(input.start, stopAt, input.bundleId, overlay);
+		const dynamicDir = dynamicAppConfigDir(start, stopAt, input.bundleId, overlay);
 		if (dynamicDir === undefined) return project;
 		// the app's config is code: only Expo can resolve it, so ask Expo once and detect again with its answer
 		const read = await readExpoConfig(input.exec, dynamicDir);
