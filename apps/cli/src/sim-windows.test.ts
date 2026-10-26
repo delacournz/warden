@@ -9,6 +9,7 @@ import { openStore } from "@delacour/warden-core/store";
 import {
 	arrangeSimWindows,
 	autoArrangeSimWindows,
+	closeSimWindows,
 	DETACH_PREF_META,
 	detectSimViewer,
 	deviceName,
@@ -1307,5 +1308,53 @@ describe("revealSimWindow", () => {
 		const r = await revealSimWindow({ exec: viewerExec("device-hub", calls), os: "linux" }, "U1");
 		expect(r.success).toBe(false);
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("closeSimWindows", () => {
+	const sims = [
+		{ udid: "U1", name: "warden-iphone-17-1" },
+		{ udid: "U2", name: "warden-iphone-17-2" },
+	];
+	const closes = (calls: string[][]) =>
+		calls.filter((c) => c[0] === "osascript" && (c[4] ?? "").includes("AXCloseButton"));
+
+	test.each([
+		["device-hub", "DeviceHub"],
+		["simulator", "Simulator"],
+	] as const)("%s running → one close script over its windows, named by device", async (running, proc) => {
+		const calls: string[][] = [];
+		const r = await closeSimWindows({ exec: viewerExec(running, calls), os: "darwin" }, sims);
+		expect(r).toEqual({ success: true, data: undefined });
+		const close = closes(calls);
+		expect(close).toHaveLength(1);
+		expect(close[0]?.[4]).toContain(`"${proc}"`);
+		expect(JSON.parse(close[0]?.[5] ?? "")).toEqual(["warden-iphone-17-1", "warden-iphone-17-2"]);
+	});
+
+	test("no viewer running → nothing to close, no osascript", async () => {
+		const calls: string[][] = [];
+		expect(await closeSimWindows({ exec: viewerExec("none", calls), os: "darwin" }, sims)).toEqual({
+			success: true,
+			data: undefined,
+		});
+		expect(calls.filter((c) => c[0] === "osascript")).toEqual([]);
+	});
+
+	test("not macOS or no sims → nothing runs", async () => {
+		const calls: string[][] = [];
+		await closeSimWindows({ exec: viewerExec("device-hub", calls), os: "linux" }, sims);
+		await closeSimWindows({ exec: viewerExec("device-hub", calls), os: "darwin" }, []);
+		expect(calls).toEqual([]);
+	});
+
+	test("the script failing → an error with the Accessibility hint", async () => {
+		const exec: Exec = async (cmd) => {
+			if (cmd[0] === "pgrep") return { exitCode: cmd[2] === "DeviceHub" ? 0 : 1, stdout: "", stderr: "" };
+			return { exitCode: 1, stdout: "", stderr: "osascript is not allowed assistive access" };
+		};
+		const r = await closeSimWindows({ exec, os: "darwin" }, sims);
+		expect(r.success).toBe(false);
+		if (!r.success) expect(r.error).toContain("Accessibility");
 	});
 });

@@ -150,6 +150,53 @@ describe("warden dev: the simulator when dev ends", () => {
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
+	test("the shut-down sim's viewer window is closed too (Device Hub running)", async () => {
+		const calls: string[][] = [];
+		const c = setup(
+			["ios"],
+			calls,
+			[
+				["pgrep -xq Simulator", { exitCode: 1 }],
+				["pgrep -xq DeviceHub", { exitCode: 0 }],
+				["open", {}],
+				["osascript", {}],
+			],
+			"Shutdown"
+		);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		expect(await running).toBe(0);
+		const closes = calls.filter((cmd) => cmd[0] === "osascript" && (cmd[4] ?? "").includes("AXCloseButton"));
+		expect(closes).toHaveLength(1);
+		expect(JSON.parse(closes[0]?.[5] ?? "")).toEqual(["warden-iphone-17-1"]);
+		expect(calls.indexOf(closes[0] as string[])).toBeGreaterThan(
+			calls.findIndex((cmd) => cmd[1] === "simctl" && cmd[2] === "shutdown")
+		);
+	});
+
+	test("--no-shutdown → the window stays with the sim", async () => {
+		const calls: string[][] = [];
+		const c = setup(
+			["ios", "--no-shutdown"],
+			calls,
+			[
+				["pgrep -xq Simulator", { exitCode: 1 }],
+				["pgrep -xq DeviceHub", { exitCode: 0 }],
+				["open", {}],
+				["osascript", {}],
+			],
+			"Shutdown"
+		);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		expect(await running).toBe(0);
+		expect(calls.filter((cmd) => cmd[0] === "osascript" && (cmd[4] ?? "").includes("AXCloseButton"))).toEqual([]);
+	});
+
 	test("a sim that was already running when dev leased it is left running", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls, [], "Booted");
