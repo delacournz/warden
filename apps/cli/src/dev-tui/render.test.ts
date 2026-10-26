@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { DevReady } from "../commands/dev-ui";
 import { stripAnsi, visibleWidth } from "./ansi";
 import type { Key } from "./keys";
-import { initialState, type TuiState } from "./model";
+import { type HudFps, type HudSample, initialState, type TuiState } from "./model";
 import { reduce, type TuiEvent } from "./reducer";
-import { formatDuration, listWidth, render } from "./render";
+import { formatDuration, HUD_WIDTH, hudLines, listWidth, render } from "./render";
 
 const READY: DevReady = {
 	platform: "ios",
@@ -170,5 +170,84 @@ describe("formatDuration", () => {
 		expect(formatDuration(412)).toBe("412ms");
 		expect(formatDuration(1300)).toBe("1.3s");
 		expect(formatDuration(125_000)).toBe("2m05s");
+	});
+});
+
+describe("HUD", () => {
+	const okSample = (over: Partial<Extract<HudSample, { kind: "ok" }>> = {}): HudSample => ({
+		kind: "ok",
+		cpuPct: 14,
+		cpuHistory: [3, 8, 14, 9, 4, 2, 5, 14],
+		memKb: 182_000,
+		memKind: "rss",
+		...over,
+	});
+	const sample = (s: HudSample, fps?: HudFps): TuiEvent => ({ type: "hud:sample", sample: s, fps, at: 745_000 });
+	const base: TuiEvent[] = [...threeTasks, { type: "ready", info: READY, at: 4000 }, press("h")];
+	const withBundle = (state: TuiState): TuiState => ({
+		...state,
+		hud: { ...state.hud, bundle: { ms: 1300, modules: 412 } },
+	});
+
+	test("120x40 with the HUD on", () => {
+		const state = withBundle(stateAt(120, 40, [...base, sample(okSample())]));
+		const frame = render(state, 120, 40);
+		expectExactWidth(frame, 120, 40);
+		expect(text(frame)).toMatchSnapshot();
+	});
+
+	test("120x40 with the HUD off", () => {
+		const state = stateAt(120, 40, [...threeTasks, { type: "ready", info: READY, at: 4000 }]);
+		const frame = render(state, 120, 40);
+		expectExactWidth(frame, 120, 40);
+		expect(text(frame)).not.toContain("cpu");
+		expect(text(frame)).toMatchSnapshot();
+	});
+
+	test("nothing is drawn at 80 columns, on or off", () => {
+		const state = stateAt(80, 24, [...base, sample(okSample())]);
+		expect(hudLines(state, 80)).toBeUndefined();
+		expect(text(render(state, 80, 24))).not.toContain("cpu");
+	});
+
+	test("it covers the top right of the pane and leaves the task list alone", () => {
+		const state = stateAt(120, 40, [...base, sample(okSample())]);
+		const rows = render(state, 120, 40).map(stripAnsi);
+		expect(rows[1]?.slice(120 - HUD_WIDTH)).toMatch(/^┌ warden-iphone-17-5 ── 00:12:21 ─*┐$/);
+		expect(rows[1]?.slice(0, 32)).toContain("claim device");
+	});
+
+	test("iOS shows rss and no fps", () => {
+		const lines = (hudLines(stateAt(120, 40, [...base, sample(okSample())]), 120) ?? []).map(stripAnsi);
+		expect(lines.join("\n")).toContain("cpu  14% ▂▄▆▄▂▂▃▆  rss 178 MB");
+		expect(lines.join("\n")).toContain("fps —  (iOS sim: no frame API)");
+	});
+
+	test("Android shows pss, fps and jank", () => {
+		const android = stateAt(120, 40, [{ type: "ready", info: { ...READY, platform: "android" }, at: 0 }, press("h")]);
+		const done = reduce(android, sample(okSample({ memKind: "pss", memKb: 150_000 }), { fps: 59.4, jankPct: 2.1 }));
+		const text = (hudLines(done, 120) ?? []).map(stripAnsi).join("\n");
+		expect(text).toContain("pss 146 MB");
+		expect(text).toContain("fps 59  jank 2%");
+	});
+
+	test("waiting, not running and the metro and perf rows", () => {
+		const waiting = (hudLines(stateAt(120, 40, [...threeTasks, press("h")]), 120) ?? []).map(stripAnsi).join("\n");
+		expect(waiting).toContain("waiting for the app");
+		const gone = reduce(stateAt(120, 40, [...base]), sample({ kind: "not-running" }));
+		expect((hudLines(gone, 120) ?? []).map(stripAnsi).join("\n")).toContain("app not running");
+		const recording: TuiState = {
+			...withBundle(stateAt(120, 40, [...base, sample(okSample())])),
+			now: 745_000,
+		};
+		recording.hud = { ...recording.hud, perf: { startedAt: 726_000, marks: 2 } };
+		const rec = (hudLines(recording, 120) ?? []).map(stripAnsi).join("\n");
+		expect(rec).toContain("metro bundled 1.3 s · 412 mods");
+		expect(rec).toContain("perf ● rec 00:19  marks 2");
+	});
+
+	test("every row is exactly the box width", () => {
+		for (const line of hudLines(withBundle(stateAt(120, 40, [...base, sample(okSample())])), 120) ?? [])
+			expect(visibleWidth(line)).toBe(HUD_WIDTH);
 	});
 });

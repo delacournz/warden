@@ -19,6 +19,41 @@ export type Mode = "list" | "log" | "interact" | "help";
 
 export type Size = { cols: number; rows: number };
 
+/** One HUD reading: the app is not up yet, not running, or sampled. Memory is RSS on iOS, PSS on Android. */
+export type HudSample =
+	| { kind: "waiting" }
+	| { kind: "not-running" }
+	| {
+			kind: "ok";
+			cpuPct: number | undefined;
+			/** the last CPU readings, oldest first, at most `HUD_HISTORY` */
+			cpuHistory: number[];
+			memKb: number;
+			memKind: "rss" | "pss";
+	  };
+
+/** Android frame stats from `dumpsys gfxinfo`; the iOS simulator has none. */
+export type HudFps = { fps: number; jankPct: number };
+
+/** Metro's last bundle: set by the Metro pane from its output. */
+export type HudBundle = { ms: number; modules: number };
+
+/** A recording `warden perf` session: set by the perf keys (TUI-5) while one records. */
+export type HudPerf = { startedAt: number; marks: number };
+
+export type HudState = {
+	visible: boolean;
+	sample: HudSample | undefined;
+	fps: HudFps | undefined;
+	bundle: HudBundle | undefined;
+	/** when `ready` arrived: the HUD's session clock counts from here */
+	sessionStartedAt: number | undefined;
+	perf: HudPerf | undefined;
+};
+
+/** CPU readings kept for the sparkline. */
+export const HUD_HISTORY = 30;
+
 export type TuiState = {
 	tasks: Task[];
 	selected: number;
@@ -27,7 +62,7 @@ export type TuiState = {
 	mode: Mode;
 	size: Size;
 	ready: DevReady | undefined;
-	hud: boolean;
+	hud: HudState;
 	/** set once `q` / Ctrl-C asked to stop; the host reacts to the false to true edge */
 	quitting: boolean;
 	/** exit code once Metro's PTY has exited */
@@ -59,7 +94,14 @@ export function initialState(size: Size, now: number): TuiState {
 		mode: "list",
 		size,
 		ready: undefined,
-		hud: false,
+		hud: {
+			visible: false,
+			sample: undefined,
+			fps: undefined,
+			bundle: undefined,
+			sessionStartedAt: undefined,
+			perf: undefined,
+		},
 		quitting: false,
 		metroExit: undefined,
 		redraw: 0,

@@ -115,8 +115,27 @@ describe("keys", () => {
 
 	test("h toggles the HUD flag; Ctrl-L bumps redraw", () => {
 		const state = run([press("h"), press("l", { ctrl: true })]);
-		expect(state.hud).toBe(true);
+		expect(state.hud.visible).toBe(true);
 		expect(state.redraw).toBe(1);
+	});
+
+	test("ready starts the HUD clock and hud:sample stores the reading and advances now", () => {
+		let state = run([{ type: "ready", info: READY, at: 10 }]);
+		expect(state.hud.sessionStartedAt).toBe(10);
+		state = run(
+			[
+				{
+					type: "hud:sample",
+					sample: { kind: "ok", cpuPct: 3, cpuHistory: [3], memKb: 2048, memKind: "rss" },
+					fps: { fps: 60, jankPct: 0 },
+					at: 1010,
+				},
+			],
+			state
+		);
+		expect(state.hud.sample).toMatchObject({ kind: "ok", cpuPct: 3 });
+		expect(state.hud.fps).toEqual({ fps: 60, jankPct: 0 });
+		expect(state.now).toBe(1010);
 	});
 
 	test("q sets quitting once and shows stopping… in the session row", () => {

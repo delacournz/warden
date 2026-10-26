@@ -19,6 +19,9 @@ export function listWidth(cols: number): number {
 /** The HUD slot (TUI-6 fills it) shows from this width. */
 export const HUD_MIN_COLS = 100;
 
+/** The HUD box, borders included. */
+export const HUD_WIDTH = 34;
+
 /** `412ms`, `1.3s`, `2m05s`. */
 export function formatDuration(ms: number): string {
 	if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
@@ -76,13 +79,72 @@ function logWindow(task: Task | undefined, width: number, height: number): strin
 function header(state: TuiState, cols: number): string {
 	const { ready } = state;
 	const left = `${bold("warden dev")}${dim(ready ? ` · ${ready.platform} · ${ready.projectName}` : "")}`;
-	const hud = cols >= HUD_MIN_COLS ? dim(`hud ${state.hud ? "on" : "off"}`) : "";
+	const hud = cols >= HUD_MIN_COLS ? dim(`hud ${state.hud.visible ? "on" : "off"}`) : "";
 	const hudWidth = hud ? visibleWidth(hud) + 1 : 0;
 	const info = ready ? dim([ready.deviceName ?? ready.deviceId, `:${ready.port}`, ready.metroUrl].join(" · ")) : "";
 	const room = cols - visibleWidth(left) - 2 - hudWidth;
 	const infoCut = info && room > 0 ? truncate(info, room) : "";
 	const gap = Math.max(1, cols - visibleWidth(left) - visibleWidth(infoCut) - hudWidth);
 	return fit(`${left}${" ".repeat(gap)}${infoCut}${hud ? ` ${hud}` : ""}`, cols);
+}
+
+const SPARK = "▁▂▃▄▅▆▇█";
+/** CPU readings shown in the box (the ticker keeps 30; the box only has room for the latest). */
+const SPARK_WIDTH = 10;
+/** A window that never passes this still draws low bars, so an idle app does not look busy. */
+const SPARK_FLOOR_PCT = 20;
+
+function sparkline(values: readonly number[]): string {
+	const shown = values.slice(-SPARK_WIDTH);
+	const top = Math.max(SPARK_FLOOR_PCT, ...shown);
+	return shown
+		.map((v) => SPARK[Math.max(0, Math.min(SPARK.length - 1, Math.round((Math.max(0, v) / top) * (SPARK.length - 1))))])
+		.join("");
+}
+
+function clock(ms: number, withHours: boolean): string {
+	const total = Math.max(0, Math.floor(ms / 1000));
+	const pad = (n: number): string => String(n).padStart(2, "0");
+	const seconds = pad(total % 60);
+	const minutes = Math.floor(total / 60);
+	return withHours ? `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}:${seconds}` : `${pad(minutes)}:${seconds}`;
+}
+
+function hudBody(state: TuiState): string[] {
+	const { sample, fps, bundle, perf } = state.hud;
+	const lines: string[] = [];
+	if (sample === undefined || sample.kind === "waiting") lines.push(dim("waiting for the app"));
+	else if (sample.kind === "not-running") lines.push(dim("app not running"));
+	else {
+		const pct = sample.cpuPct === undefined ? "  —" : `${String(Math.round(sample.cpuPct)).padStart(3)}%`;
+		const mb = `${Math.round(sample.memKb / 1024)} MB`;
+		lines.push(`cpu ${pct.padStart(4)} ${cyan(sparkline(sample.cpuHistory))}  ${sample.memKind} ${mb}`);
+		if (state.ready?.platform === "android" && fps) {
+			lines.push(`fps ${Math.round(fps.fps)}  jank ${Math.round(fps.jankPct)}%`);
+		} else if (state.ready?.platform === "android") lines.push("fps —");
+		else lines.push(dim("fps —  (iOS sim: no frame API)"));
+	}
+	lines.push(bundle ? `metro bundled ${(bundle.ms / 1000).toFixed(1)} s · ${bundle.modules} mods` : dim("metro —"));
+	if (perf) lines.push(`perf ${red("●")} rec ${clock(state.now - perf.startedAt, false)}  marks ${perf.marks}`);
+	return lines;
+}
+
+/**
+ * The HUD box (34 columns wide) the top right of the right pane is overlaid with, or undefined when it is off
+ * or the terminal is under `HUD_MIN_COLS`. Everything comes from `state.hud`; nothing here reads a clock.
+ */
+export function hudLines(state: TuiState, cols: number): string[] | undefined {
+	if (!state.hud.visible || cols < HUD_MIN_COLS) return undefined;
+	const inner = HUD_WIDTH - 2;
+	const device = state.ready ? (state.ready.deviceName ?? state.ready.deviceId) : "warden";
+	const started = state.hud.sessionStartedAt;
+	const time = clock(started === undefined ? 0 : state.now - started, true);
+	const name = truncate(device, inner - time.length - 6);
+	const head = ` ${name} ── ${time} `;
+	const top = dim(`┌${head}${"─".repeat(Math.max(0, inner - visibleWidth(head)))}┐`);
+	const side = dim("│");
+	const body = hudBody(state).map((line) => `${side}${fit(` ${line}`, inner)}${side}`);
+	return [top, ...body, dim(`└${"─".repeat(inner)}┘`)].map((line) => fit(line, HUD_WIDTH));
 }
 
 function footer(state: TuiState, cols: number): string {
@@ -132,6 +194,14 @@ export function render(state: TuiState, cols: number, rows: number): string[] {
 		const listCell = task ? taskRow(task, y === state.selected, left) : " ".repeat(left);
 		return `${listCell}${divider}${fit(` ${log[y] ?? ""}`, right)}`;
 	});
+	const hudBox = hudLines(state, cols);
+	if (hudBox) {
+		const x = cols - HUD_WIDTH;
+		body = body.map((line, y) => {
+			const boxRow = hudBox[y];
+			return boxRow === undefined ? line : `${sliceColumns(line, 0, x)}${boxRow}`;
+		});
+	}
 	if (state.mode === "help") {
 		const box = helpBox(cols, bodyHeight);
 		body = body.map((line, y) => {

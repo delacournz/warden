@@ -1,7 +1,7 @@
 import type { DevReady } from "../commands/dev-ui";
 import { sanitizeLine } from "./ansi";
 import { type Action, actionFor, type Key } from "./keys";
-import { newTask, type Size, type Task, type TuiState } from "./model";
+import { type HudFps, type HudSample, newTask, type Size, type Task, type TuiState } from "./model";
 
 export type TuiEvent =
 	| { type: "task:start"; id: string; title: string; at: number }
@@ -12,7 +12,8 @@ export type TuiEvent =
 	| { type: "key"; key: Key; at: number }
 	| { type: "resize"; size: Size }
 	| { type: "ready"; info: DevReady; at: number }
-	| { type: "metro:exit"; code: number; at: number };
+	| { type: "metro:exit"; code: number; at: number }
+	| { type: "hud:sample"; sample: HudSample; fps: HudFps | undefined; at: number };
 
 /** Lines kept per task; older ones drop off the front. */
 export const MAX_LOG_LINES = 5000;
@@ -92,7 +93,7 @@ function applyAction(state: TuiState, action: Action): TuiState {
 		case "mode":
 			return { ...state, mode: action.mode };
 		case "hud":
-			return { ...state, hud: !state.hud };
+			return { ...state, hud: { ...state.hud, visible: !state.hud.visible } };
 		case "redraw":
 			return { ...state, redraw: state.redraw + 1 };
 		case "unavailable": {
@@ -159,7 +160,11 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 		case "resize":
 			return { ...state, size: event.size };
 		case "ready": {
-			const base = ensureTask({ ...state, ready: event.info, now: event.at }, "session", "session");
+			const base = ensureTask(
+				{ ...state, ready: event.info, now: event.at, hud: { ...state.hud, sessionStartedAt: event.at } },
+				"session",
+				"session"
+			);
 			const running = updateTask(base, "session", (task) => ({
 				...appendLines(task, readyLines(event.info).join("\n")),
 				title: state.quitting ? "stopping…" : "session",
@@ -169,6 +174,8 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 			}));
 			return follow(running, "session");
 		}
+		case "hud:sample":
+			return { ...state, now: event.at, hud: { ...state.hud, sample: event.sample, fps: event.fps } };
 		case "metro:exit": {
 			const noted = withLog({ ...state, now: event.at }, "metro", `metro exited (code ${event.code})`);
 			return { ...noted, metroExit: event.code };
