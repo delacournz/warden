@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
@@ -6,14 +6,16 @@ import { devClientLaunchArgv, type MetroProc } from "../metro";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import type { EnsureOptions } from "./app";
-import { createDevCommand, type DevDeps, devClientUrl } from "./dev";
+import { createDevCommand, type DevDeps, type DevSpawnOutput, defaultDevDeps, devClientUrl } from "./dev";
+import type { DevMetroMode, DevUi, MetroTerminal } from "./dev-ui";
+import { plainDevUi } from "./dev-ui.plain";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 type Harness = {
 	deps: DevDeps;
-	spawned: Array<{ cmd: string[]; cwd: string; env: Record<string, string | undefined>; stdout: string }>;
+	spawned: Array<{ cmd: string[]; cwd: string; env: Record<string, string | undefined>; stdout: DevSpawnOutput }>;
 	ensured: Array<{ deviceId: string; opts: EnsureOptions }>;
 	finish: (code: number) => void;
 };
@@ -650,5 +652,187 @@ describe("warden dev auto-gc (16-1)", () => {
 		expect(autoGcConsidered(c.db)).toBe(true);
 		h.finish(0);
 		expect(await running).toBe(0);
+	});
+});
+
+describe("warden dev: Metro in a PTY (default spawn)", () => {
+	type SpawnOpts = {
+		cwd: string;
+		env: Record<string, string | undefined>;
+		terminal: { cols: number; rows: number; data(terminal: unknown, chunk: Uint8Array): void };
+	};
+
+	test("passes cols / rows, drops CI, sets TERM, forwards raw chunks, write and resize", async () => {
+		const seen: SpawnOpts[] = [];
+		const writes: Array<string | Uint8Array> = [];
+		const resizes: Array<[number, number]> = [];
+		const fake = {
+			exited: Promise.resolve(0),
+			signalCode: null,
+			kill: () => {},
+			terminal: {
+				write: (data: string | Uint8Array) => void writes.push(data),
+				resize: (cols: number, rows: number) => void resizes.push([cols, rows]),
+			},
+		};
+		const spy = spyOn(Bun, "spawn").mockImplementation(((_cmd: unknown, opts: SpawnOpts) => {
+			seen.push(opts);
+			return fake;
+		}) as unknown as typeof Bun.spawn);
+		try {
+			const chunks: Uint8Array[] = [];
+			const proc = defaultDevDeps.spawn(["expo", "start"], { CI: "1", PATH: "/bin", EXPO_NO_TELEMETRY: "1" }, "/proj", {
+				kind: "pty",
+				cols: 80,
+				rows: 24,
+				onData: (chunk) => void chunks.push(chunk),
+			});
+			const opts = seen[0];
+			expect(opts?.cwd).toBe("/proj");
+			expect(opts?.terminal.cols).toBe(80);
+			expect(opts?.terminal.rows).toBe(24);
+			expect(opts?.env).toEqual({ PATH: "/bin", EXPO_NO_TELEMETRY: "1", TERM: "xterm-256color" });
+			expect(opts?.env && "CI" in opts.env).toBe(false);
+			const bytes = new Uint8Array([0xe2, 0x96]);
+			opts?.terminal.data(undefined, bytes);
+			expect(chunks[0]).toBe(bytes);
+			proc.terminal?.write("r");
+			proc.terminal?.resize(100, 30);
+			expect(writes).toEqual(["r"]);
+			expect(resizes).toEqual([[100, 30]]);
+			expect(await proc.exited).toBe(0);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	test("the other modes keep the parent env (CI included) and have no terminal", () => {
+		const seen: Array<{ env: Record<string, string | undefined>; terminal?: unknown }> = [];
+		const spy = spyOn(Bun, "spawn").mockImplementation(((
+			_cmd: unknown,
+			opts: { env: Record<string, string | undefined> }
+		) => {
+			seen.push(opts);
+			return { exited: Promise.resolve(0), signalCode: null, kill: () => {} };
+		}) as unknown as typeof Bun.spawn);
+		try {
+			const proc = defaultDevDeps.spawn(["x"], { CI: "1" }, "/p", "inherit");
+			expect(seen[0]?.env).toEqual({ CI: "1" });
+			expect(seen[0]?.terminal).toBeUndefined();
+			expect(proc.terminal).toBeUndefined();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+});
+
+describe("warden dev: a ui that runs Metro in a PTY", () => {
+	type Fake = {
+		ui: DevUi;
+		attached: Array<{ terminal: MetroTerminal; exited: Promise<number> }>;
+		quit: () => void;
+		closes: string[];
+	};
+	function fakeUi(c: TestContext): Fake {
+		const attached: Fake["attached"] = [];
+		let onQuit: () => void = () => {};
+		const closes: string[] = [];
+		const metro: DevMetroMode = {
+			kind: "pty",
+			size: () => ({ cols: 90, rows: 30 }),
+			onData: () => {},
+			attach: (terminal, exited) => void attached.push({ terminal, exited }),
+		};
+		return {
+			ui: {
+				...plainDevUi(c),
+				metro,
+				onQuit: (handler) => {
+					onQuit = handler;
+				},
+				close: async () => {
+					closes.push("close");
+				},
+			},
+			attached,
+			quit: () => onQuit(),
+			closes,
+		};
+	}
+
+	/** harness whose spawned Metro has a PTY terminal and records how it was killed */
+	function ptyHarness(): Harness & { writes: string[]; kills: string[] } {
+		const h = harness() as Harness & { writes: string[]; kills: string[] };
+		h.writes = [];
+		h.kills = [];
+		const spawn = h.deps.spawn;
+		h.deps.spawn = (cmd, env, cwd, stdout) => {
+			const child = spawn(cmd, env, cwd, stdout);
+			return {
+				exited: child.exited,
+				kill: (signal) => {
+					h.kills.push(signal);
+					h.finish(130);
+				},
+				terminal: { write: (data) => void h.writes.push(String(data)), resize: () => {} },
+			};
+		};
+		return h;
+	}
+
+	test("Metro is spawned in PTY mode at the ui's size and the ui gets its terminal and exit", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const fake = fakeUi(c);
+		const h = ptyHarness();
+		h.deps.selectUi = () => fake.ui;
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		const out = h.spawned[0]?.stdout;
+		expect(typeof out === "object" && out.kind === "pty" ? [out.cols, out.rows] : undefined).toEqual([90, 30]);
+		expect(fake.attached).toHaveLength(1);
+		fake.attached[0]?.terminal.write("r");
+		expect(h.writes).toEqual(["r"]);
+		h.finish(7);
+		expect(await fake.attached[0]?.exited).toBe(7);
+		expect(await running).toBe(7);
+		expect(fake.closes.length).toBeGreaterThan(0);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("the ui quitting ends the session like SIGINT: Metro killed, sim shut down, leases released", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [], "Shutdown");
+		const fake = fakeUi(c);
+		const h = ptyHarness();
+		h.deps.selectUi = () => fake.ui;
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		fake.quit();
+		expect(await running).toBe(130);
+		expect(h.kills).toEqual(["SIGINT"]);
+		expect(calls.filter((cmd) => cmd[1] === "simctl" && cmd[2] === "shutdown")).toEqual([
+			["xcrun", "simctl", "shutdown", "U1"],
+		]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("ui.close runs before the leases are released", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const fake = fakeUi(c);
+		const leasesAtClose: number[] = [];
+		const close = fake.ui.close;
+		fake.ui.close = async () => {
+			leasesAtClose.push(c.db.listLeases().length);
+			await close();
+		};
+		const h = ptyHarness();
+		h.deps.selectUi = () => fake.ui;
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		await running;
+		expect(leasesAtClose[0]).toBeGreaterThan(0);
 	});
 });

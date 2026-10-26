@@ -49,6 +49,8 @@ import { projectContextFor } from "../project-context";
 import { closeSimWindows, revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
+import type { DevUi } from "./dev-ui";
+import { plainDevUi } from "./dev-ui.plain";
 
 /** Default label on the leases `warden dev` takes (`--label` overrides it). */
 const DEV_LEASE_LABEL = "warden dev";
@@ -58,21 +60,24 @@ export const DEV_PORT_SPEC = DEFAULT_METRO_PORT_SPEC;
 /** How long to wait for Metro's `/status` before giving up. */
 export const DEV_READY_TIMEOUT = DEFAULT_METRO_READY_TIMEOUT;
 
+/** Where Metro's output goes: the user's terminal, stderr (`--json`), or a PTY whose raw bytes the ui renders. */
+export type DevSpawnOutput =
+	| "inherit"
+	| "stderr"
+	| { kind: "pty"; cols: number; rows: number; onData(chunk: Uint8Array): void };
+
 /** Side effects of `warden dev`, injectable for tests. */
 export type DevDeps = Omit<LeaseSessionDeps, "ensureApp"> & {
-	/** Metro on the user's terminal; `stdout: "stderr"` keeps stdout clean for `--json` */
-	spawn: (
-		cmd: string[],
-		env: Record<string, string | undefined>,
-		cwd: string,
-		stdout: "inherit" | "stderr"
-	) => MetroProc;
+	/** Metro on the user's terminal; `stdout: "stderr"` keeps stdout clean for `--json`; `{ kind: "pty" }` runs it in a PTY */
+	spawn: (cmd: string[], env: Record<string, string | undefined>, cwd: string, stdout: DevSpawnOutput) => MetroProc;
 	/** who serves the Metro port (must be this project root before the dev client is opened) */
 	probe: (port: number, projectRoot: string) => Promise<MetroOwner>;
 	sleep: (ms: number) => Promise<void>;
 	ensureApp: RunEnsureApp;
 	/** the project's own `expo` bin to run directly (default: `bunx expo`) */
 	expoBin?: (projectRoot: string) => string | undefined;
+	/** test seam: the ui to run with (default: `selectDevUi`) */
+	selectUi?: (ctx: CommandContext) => DevUi;
 };
 
 type DevOpts = ClaimFlagValues & {
@@ -384,23 +389,31 @@ type Running = {
 };
 
 /** Metro (started early, verified to serve this project) with the dev client opened on it; resolves with Metro's exit code. */
-async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Running): Promise<number> {
+async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Promise<number> {
+	const ctx = ui.ctx;
 	const { deviceId, port, leaseIds, release } = r.session;
 	const json = opts.json === true;
 	const stop = holdLeases(ctx, deps, leaseIds, (signal) => {
 		r.aborted.now = true;
 		r.launch.started?.proc.kill(signal);
 	});
+	const metroTask = ui.task("metro", "Metro");
 	try {
 		const metro = await r.launch.pending;
 		if (!metro.success) {
+			metroTask.fail(metro.error);
 			reportError(ctx, "dev", metro.error);
 			return 1;
 		}
+		metroTask.ok(metro.data.url);
 		if (opts.open) {
+			const clientTask = ui.task("client", "dev client");
 			const opened = await openDevClient(ctx, r.platform, deviceId, r.project, r.scheme, port);
-			if (opened.success) note(ctx, `warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`);
-			else {
+			if (opened.success) {
+				clientTask.ok(metro.data.url);
+				note(ctx, `warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`);
+			} else {
+				clientTask.fail(opened.error);
 				const scheme = await r.scheme();
 				const link = scheme.success ? ` — open ${devClientUrl(scheme.data, port)} yourself` : "";
 				warn(ctx, `warden dev: couldn't open the dev client (${opened.error})${link}`);
@@ -408,10 +421,21 @@ async function runMetro(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Ru
 		}
 		if (json)
 			emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }, "");
-		else note(ctx, `warden dev: holding ${deviceId} + :${port} until Metro exits (WARDEN_UDID=${deviceId})`);
+		else
+			ui.ready({
+				platform: r.platform,
+				deviceId,
+				deviceName: undefined,
+				port,
+				metroUrl: metro.data.url,
+				leaseIds,
+				app: undefined,
+				projectName: r.project.name,
+			});
 		return await metro.data.proc.exited;
 	} finally {
 		stop();
+		await ui.close();
 		await release();
 	}
 }
@@ -431,15 +455,36 @@ function earlyMetroEnv(ctx: CommandContext, port: number, deviceId: string | und
 	return env;
 }
 
+/**
+ * Spawn Metro the way the ui wants it: in a PTY it renders (handing the ui the terminal and its
+ * exit), else on the terminal / stderr. Metro is gone when `exited` resolves, never because a key was sent.
+ */
+function spawnMetro(
+	ui: DevUi,
+	deps: DevDeps,
+	cmd: string[],
+	env: Record<string, string | undefined>,
+	cwd: string,
+	json: boolean
+): MetroProc {
+	const mode = ui.metro;
+	if (mode.kind === "inherit") return deps.spawn(cmd, env, cwd, json ? "stderr" : "inherit");
+	const { cols, rows } = mode.size();
+	const proc = deps.spawn(cmd, env, cwd, { kind: "pty", cols, rows, onData: (chunk) => mode.onData(chunk) });
+	if (proc.terminal) mode.attach(proc.terminal, proc.exited);
+	return proc;
+}
+
 /** Metro started the moment its port is leased, while the device is still being claimed. */
 function earlyMetro(
-	ctx: CommandContext,
+	ui: DevUi,
 	deps: DevDeps,
 	opts: DevOpts,
 	projectRoot: string,
 	readyTimeoutMs: number,
 	run: DevRun
 ): EarlyMetro {
+	const ctx = ui.ctx;
 	const json = opts.json === true;
 	return {
 		start: (port, deviceId) => {
@@ -448,7 +493,7 @@ function earlyMetro(
 					probe: deps.probe,
 					now: ctx.now,
 					sleep: deps.sleep,
-					spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, json ? "stderr" : "inherit"),
+					spawn: (cmd, metroEnv, cwd) => spawnMetro(ui, deps, cmd, metroEnv, cwd, json),
 					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
 					git: (root) => readGitFactsSync(root, { cache: ctx.git }),
 				},
@@ -518,11 +563,30 @@ function needsScheme(opts: DevOpts, platform: Platform): boolean {
  * Gradle entirely; then starts Metro on a leased port and opens the dev client on the device.
  */
 async function dev(
-	ctx: CommandContext,
+	rawCtx: CommandContext,
 	deps: DevDeps,
 	platformArg: string | undefined,
 	opts: DevOpts
 ): Promise<number> {
+	const ui = deps.selectUi?.(rawCtx) ?? selectDevUi(rawCtx, opts);
+	try {
+		return await devWithUi(ui, deps, platformArg, opts);
+	} finally {
+		await ui.close();
+	}
+}
+
+/**
+ * The ui for this run. Plain (spinner + notes, Metro on the terminal) until TUI-3's merge adds the
+ * dashboard here: `tui` when the terminal is interactive and rich, and not `--json` / `--no-tui` / `WARDEN_TUI=0`.
+ */
+export function selectDevUi(ctx: CommandContext, _opts: Pick<DevOpts, "json">): DevUi {
+	return plainDevUi(ctx);
+}
+
+/** `dev`'s session logic, talking to a `DevUi`; everything the person sees goes through `ui`. */
+async function devWithUi(ui: DevUi, deps: DevDeps, platformArg: string | undefined, opts: DevOpts): Promise<number> {
+	const ctx = ui.ctx;
 	const fail = (message: string) => {
 		reportError(ctx, "dev", message);
 		return 1;
@@ -547,7 +611,13 @@ async function dev(
 	if (!app.success) return fail(app.error);
 
 	const run: DevRun = { aborted: { now: false }, launch: undefined, metroFailed: false };
-	const early = earlyMetro(ctx, deps, opts, project.data.project.root, timeout.data, run);
+	const early = earlyMetro(ui, deps, opts, project.data.project.root, timeout.data, run);
+	// the ui asking to quit ends the session as SIGINT does
+	ui.onQuit(() => {
+		run.aborted.now = true;
+		if (run.launch?.started) run.launch.started.proc.kill("SIGINT");
+		else void run.launch?.stop();
+	});
 	const offSignals = FORWARDED_SIGNALS.map((signal) =>
 		deps.onSignal(signal, () => {
 			run.aborted.now = true;
@@ -555,10 +625,16 @@ async function dev(
 		})
 	);
 	if (!opts.json) heading(ctx, "dev", `${platform.data} · ${project.data.project.name}`);
+	const claimTask = ui.task("claim", `preparing the ${platform.data} dev build`);
 	const session = await withSpinner(ctx, `preparing the ${platform.data} dev build…`, async (sctx, spinner) => {
 		const result = await openSession(sctx, deps, owner, platform.data, opts, app.data, early);
-		if (result.success) spinner.succeed(`${platform.data} dev build on ${result.data.deviceId}`);
-		else spinner.fail(`${platform.data} dev build not ready`);
+		if (result.success) {
+			spinner.succeed(`${platform.data} dev build on ${result.data.deviceId}`);
+			claimTask.ok(result.data.deviceId);
+		} else {
+			spinner.fail(`${platform.data} dev build not ready`);
+			claimTask.fail(result.error);
+		}
 		return result;
 	});
 	// after the claim: its own lease keeps the background gc off the device it just took (16-1)
@@ -569,7 +645,7 @@ async function dev(
 	const unready = await unreadyReason(session.data, launch, schemeNeeded ? scheme : undefined);
 	if (unready !== undefined) return fail(unready);
 	if (launch === undefined) return fail("Metro was not started");
-	return runMetro(ctx, deps, opts, {
+	return runMetro(ui, deps, opts, {
 		session: session.data,
 		platform: platform.data,
 		project: project.data.project,
@@ -619,10 +695,38 @@ export function createDevCommand(deps: DevDeps): Command {
 	});
 }
 
+/** Metro's env in a PTY: no `CI` (Expo drops its menu and QR under it), a terminal type xterm understands. */
+export function ptyEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+	const { CI: _ci, ...rest } = env;
+	return { ...rest, TERM: "xterm-256color" };
+}
+
 export const defaultDevDeps: DevDeps = {
 	pid: process.pid,
 	isPortFree: (port) => isPortFree(port),
 	spawn(cmd, env, cwd, stdout) {
+		if (typeof stdout === "object") {
+			const { cols, rows, onData } = stdout;
+			const proc = Bun.spawn(cmd, {
+				cwd,
+				env: ptyEnv(env),
+				terminal: {
+					cols,
+					rows,
+					data(_terminal, chunk) {
+						onData(chunk);
+					},
+				},
+			});
+			const { terminal } = proc;
+			return {
+				exited: proc.exited.then((code) => exitCodeOf(proc, code)),
+				kill: (signal) => proc.kill(signal),
+				...(terminal
+					? { terminal: { write: (data) => terminal.write(data), resize: (c, r) => terminal.resize(c, r) } }
+					: {}),
+			};
+		}
 		const proc = Bun.spawn(cmd, {
 			cwd,
 			env,
