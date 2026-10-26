@@ -1,5 +1,5 @@
 import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ProjectContext } from "@delacour/warden-core/builds/ensure";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -49,6 +49,45 @@ export function describeIssue(issue: DevIssue): string {
 }
 
 const blocking = (issue: DevIssue): boolean => issue.kind === "package";
+
+const PRETTIER_CONFIGS = [
+	".prettierrc",
+	".prettierrc.json",
+	".prettierrc.yaml",
+	".prettierrc.yml",
+	".prettierrc.js",
+	".prettierrc.cjs",
+	".prettierrc.mjs",
+	"prettier.config.js",
+	"prettier.config.cjs",
+	"prettier.config.mjs",
+];
+
+/** Does a prettier config govern `root` (there or in a parent)? File names only. */
+export function usesPrettier(root: string): boolean {
+	for (let dir = root; ; dir = dirname(dir)) {
+		if (PRETTIER_CONFIGS.some((f) => existsSync(join(dir, f)))) return true;
+		if (dirname(dir) === dir) return false;
+	}
+}
+
+/**
+ * A file warden writes into a checkout that formats with prettier is run through the checkout's prettier
+ * (via its package manager), so the repo's own format check stays green. Best effort: a missing or failing
+ * prettier leaves the file as written.
+ */
+async function formatWithPrettier(ctx: CommandContext, root: string, file: string): Promise<void> {
+	if (!usesPrettier(root)) return;
+	const [runner] = expoInstallCommand(root, []);
+	const command = [runner ?? "bunx", "prettier", "--write", file];
+	try {
+		const res = await ctx.exec(command, { cwd: root, timeoutMs: 60_000 });
+		if (res.exitCode !== 0)
+			note(ctx, `warden dev: ${command.join(" ")} failed (exit ${res.exitCode}); the file is unformatted`);
+	} catch {
+		// prettier is a courtesy
+	}
+}
 
 export type DevSetupDeps = {
 	/** writes a file (default: the filesystem) */
@@ -114,11 +153,10 @@ async function applyIssue(ctx: CommandContext, issue: DevIssue, deps: DevSetupDe
 				true
 			);
 			if (answer !== true) return ok(false);
-			write(
-				join(issue.root, "warden.config.ts"),
-				wardenConfigSource({ name: issue.name, bundleId: issue.bundleId }, { e2e: false })
-			);
-			success(ctx, `warden dev: wrote ${issue.root}/warden.config.ts`);
+			const file = join(issue.root, "warden.config.ts");
+			write(file, wardenConfigSource({ name: issue.name, bundleId: issue.bundleId }, { e2e: false }));
+			await formatWithPrettier(ctx, issue.root, file);
+			success(ctx, `warden dev: wrote ${file}`);
 			return ok(true);
 		}
 	}

@@ -36,7 +36,7 @@ Everything that can be wrong with the request or the app is found on the plain t
 With a person at the terminal each missing piece is offered as a fix:
 
 - a package that is not in `package.json`: *Add and install it now?* runs `expo install <package>` through the package manager the checkout uses (`yarn`, `pnpm`, `bunx` or `npx`, from the nearest lockfile) in the app directory, then checks again;
-- an app read through `expo config`: *Write warden.config.ts?* writes a `warden.config.ts` next to the app with the project name and the resolved bundle id, so later starts skip the call (`warden init` writes the same file plus a first e2e spec).
+- an app read through `expo config`: *Write warden.config.ts?* writes a `warden.config.ts` next to the app with the project name and the resolved bundle id, so later starts skip the call (`warden init` writes the same file plus a first e2e spec). In a checkout that formats with prettier the file is run through the checkout's prettier, so its format check stays green.
 
 Declining a blocking fix ends the run with the command to run yourself. Without a terminal (`--json`, a pipe, CI) nothing is asked: the blocking issues are the error, each with its command, and the optional ones a note.
 

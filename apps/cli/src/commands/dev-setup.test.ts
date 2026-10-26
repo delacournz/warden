@@ -100,7 +100,8 @@ describe("offerDevSetup", () => {
 
 	test("accepting the config offer writes a warden.config.ts with the project and no e2e block", async () => {
 		const root = app({ dependencies: { "expo-dev-client": "1" } });
-		const c = testContext([]);
+		const calls: string[][] = [];
+		const c = testContext([], { exec: fakeExec([], calls) });
 		c.ui = scriptedUi({ interactive: true, confirm: [true] });
 		const res = await offerDevSetup(c, diagnoseDev(context(root, { appConfig: { slug: "wallet" } })), {
 			interactive: true,
@@ -110,11 +111,35 @@ describe("offerDevSetup", () => {
 		expect(written).toContain('name: "wallet"');
 		expect(written).toContain('ios: "com.x.dev"');
 		expect(written).not.toContain("e2e:");
+		expect(calls.filter((cmd) => cmd[1] === "prettier")).toEqual([]);
 		const again = testContext([]);
 		again.ui = scriptedUi({ interactive: true, confirm: [false] });
 		expect(await offerDevSetup(again, diagnoseDev(context(root, { appConfig: {} })), { interactive: true })).toEqual({
 			success: true,
 			data: "unchanged",
 		});
+	});
+});
+
+describe("formatting the written config", () => {
+	test("a checkout with a prettier config gets the file run through its prettier; errors are a note only", async () => {
+		const root = app({ dependencies: { "expo-dev-client": "1" } });
+		writeFileSync(join(root, "..", "..", ".prettierrc.json"), "{}");
+		const calls: string[][] = [];
+		const cwds: Array<string | undefined> = [];
+		const c = testContext([], {
+			exec: async (cmd, opts) => {
+				calls.push([...cmd]);
+				cwds.push(opts?.cwd);
+				return { exitCode: 2, stdout: "", stderr: "boom" };
+			},
+		});
+		c.ui = scriptedUi({ interactive: true, confirm: [true] });
+		const res = await offerDevSetup(c, diagnoseDev(context(root, { appConfig: {} })), { interactive: true });
+		expect(res).toEqual({ success: true, data: "changed" });
+		expect(calls).toEqual([["yarn", "prettier", "--write", join(root, "warden.config.ts")]]);
+		expect(cwds).toEqual([root]);
+		expect(c.stderr.some((l) => l.includes("prettier --write") && l.includes("exit 2"))).toBe(true);
+		expect(readFileSync(join(root, "warden.config.ts"), "utf8")).toContain('name: "wallet"');
 	});
 });
