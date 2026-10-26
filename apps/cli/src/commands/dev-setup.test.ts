@@ -26,6 +26,7 @@ function context(root: string, over: Partial<ProjectContext> = {}): ProjectConte
 			name: "wallet",
 			root,
 			bundleId: { ios: "com.x.dev" },
+			framework: "expo",
 			build: { ios: "b", android: "b" },
 			buildConfiguration: "Debug",
 			cacheDirs: [],

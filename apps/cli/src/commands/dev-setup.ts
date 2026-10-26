@@ -21,7 +21,8 @@ export const DEV_SETUP_INSTALL_TIMEOUT_MS = 10 * 60_000;
 export function diagnoseDev(context: ProjectContext): DevIssue[] {
 	const { project } = context;
 	const issues: DevIssue[] = [];
-	const missing = missingPackages(project.root, ["expo-dev-client"]);
+	// a bare React Native app runs itself against Metro: no dev client to install
+	const missing = project.framework === "expo" ? missingPackages(project.root, ["expo-dev-client"]) : [];
 	if (missing.length > 0)
 		issues.push({
 			kind: "package",

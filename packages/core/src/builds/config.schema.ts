@@ -62,6 +62,8 @@ export const projectConfigSchema = z
 		/** project dir relative to the config file */
 		root: z.string().min(1).default("."),
 		bundleId: perPlatform,
+		/** `expo` (expo start + a dev client) or bare `react-native`; default from the app's package.json */
+		framework: z.enum(["expo", "react-native"]).optional(),
 		fingerprint: fingerprintSchema.optional(),
 		eas: easOrOffSchema.optional(),
 		build: buildSchema.optional(),

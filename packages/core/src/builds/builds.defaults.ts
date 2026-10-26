@@ -1,4 +1,5 @@
 import type { Platform } from "../types";
+import type { AppFramework } from "./native-ids";
 
 /** EAS build profile searched when the project config names none. */
 export const DEFAULT_EAS_PROFILE = "development-simulator";
@@ -15,8 +16,27 @@ export const IOS_NATIVE_PREPARE =
 	"{ [ -f ios/Podfile ] || bunx expo prebuild --platform ios --no-install; } && " +
 	"{ diff -q ios/Podfile.lock ios/Pods/Manifest.lock >/dev/null 2>&1 || pod install --project-directory=ios; }";
 
+/**
+ * A bare React Native app: CocoaPods when the sandbox is out of sync, then the community CLI's
+ * build-only commands. `RCT_NO_LAUNCH_PACKAGER` stops the template's Xcode phase starting its own Metro on 8081.
+ */
+function reactNativeBuildCommand(platform: Platform, configuration: BuildConfiguration): string {
+	const env = "RCT_NO_LAUNCH_PACKAGER=1";
+	if (platform === "ios") {
+		const pods =
+			"{ diff -q ios/Podfile.lock ios/Pods/Manifest.lock >/dev/null 2>&1 || pod install --project-directory=ios; }";
+		return `${pods} && ${env} npx react-native build-ios --mode ${configuration}`;
+	}
+	return `${env} npx react-native build-android --mode ${configuration.toLowerCase()}`;
+}
+
 /** Local build command (run in the project root) when `build.<platform>` is not configured. */
-export function defaultBuildCommand(platform: Platform, configuration: BuildConfiguration): string {
+export function defaultBuildCommand(
+	platform: Platform,
+	configuration: BuildConfiguration,
+	framework: AppFramework = "expo"
+): string {
+	if (framework === "react-native") return reactNativeBuildCommand(platform, configuration);
 	const flags = "--no-install --no-bundler";
 	if (platform === "ios") {
 		return `${IOS_NATIVE_PREPARE} && bunx expo run:ios ${configuration === "Release" ? "--configuration Release " : ""}${flags}`;

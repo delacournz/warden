@@ -1,5 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
+import type { AppFramework } from "@delacour/warden-core/builds/native-ids";
 import { type Exec, execError } from "@delacour/warden-core/exec";
 import type { GitFacts } from "@delacour/warden-core/git-facts";
 import { findNodeBin } from "@delacour/warden-core/node-bin";
@@ -36,6 +37,8 @@ export type MetroDeps = {
 	spawn: (cmd: string[], env: Record<string, string | undefined>, cwd: string) => MetroProc;
 	/** the project's own `expo` bin, when it can be run directly (default: none, so `bunx expo`) */
 	expoBin?: (projectRoot: string) => string | undefined;
+	/** the project's own `react-native` bin, for a bare app (default: none, so `npx react-native`) */
+	reactNativeBin?: (projectRoot: string) => string | undefined;
 	/** git facts of the project root, for `worktreeEnv` (default: none, so no `WARDEN_WORKTREE`) */
 	git?: (projectRoot: string) => GitFacts | undefined;
 };
@@ -66,12 +69,22 @@ export function metroUrl(port: number): string {
 }
 
 /**
- * `expo start` for a dev client on `port`, plus the caller's extra args. `expoBin` (the project's own
- * `node_modules/.bin/expo`) runs directly; without it `bunx expo` resolves the bin first.
+ * `expo start` for a dev client on `port`, plus the caller's extra args; `react-native start` for a bare
+ * React Native app. `bin` (the project's own `node_modules/.bin/expo` / `react-native`) runs directly;
+ * without it `bunx expo` / `npx react-native` resolves the bin first.
  */
-export function metroArgv(port: number, extra: readonly string[] = [], expoBin?: string): string[] {
+export function metroArgv(
+	port: number,
+	extra: readonly string[] = [],
+	bin?: string,
+	framework: AppFramework = "expo"
+): string[] {
+	if (framework === "react-native") {
+		const start = ["start", "--port", String(port), ...extra];
+		return bin === undefined ? ["npx", "react-native", ...start] : [bin, ...start];
+	}
 	const start = ["start", "--dev-client", "--port", String(port), ...extra];
-	return expoBin === undefined ? ["bunx", "expo", ...start] : [expoBin, ...start];
+	return bin === undefined ? ["bunx", "expo", ...start] : [bin, ...start];
 }
 
 /**
@@ -84,6 +97,16 @@ export function resolveExpoBin(
 	exists: (path: string) => boolean = existsSync
 ): string | undefined {
 	return which("node") ? findNodeBin(root, "expo", exists) : undefined;
+}
+
+/** `resolveExpoBin` for any package bin (`react-native` for a bare app). */
+export function resolveNodeBin(
+	root: string,
+	name: string,
+	which: (cmd: string) => string | null | undefined,
+	exists: (path: string) => boolean = existsSync
+): string | undefined {
+	return which("node") ? findNodeBin(root, name, exists) : undefined;
 }
 
 function real(path: string): string {
@@ -143,6 +166,8 @@ export type MetroOptions = {
 	env: Record<string, string | undefined>;
 	/** extra `expo start` args */
 	args?: readonly string[];
+	/** `react-native` = a bare app: `react-native start` instead of `expo start --dev-client` (default expo) */
+	framework?: AppFramework;
 	readyTimeoutMs: number;
 	/** checked while waiting (SIGINT) */
 	aborted?: () => boolean;
@@ -218,7 +243,9 @@ export async function startMetro(deps: MetroDeps, o: MetroOptions): AsyncResult<
 	let proc: MetroProc;
 	try {
 		proc = deps.spawn(
-			metroArgv(o.port, o.args, deps.expoBin?.(o.projectRoot)),
+			o.framework === "react-native"
+				? metroArgv(o.port, o.args, deps.reactNativeBin?.(o.projectRoot), "react-native")
+				: metroArgv(o.port, o.args, deps.expoBin?.(o.projectRoot)),
 			{ ...o.env, ...worktreeEnv(deps.git?.(o.projectRoot)), EXPO_NO_TELEMETRY: "1" },
 			o.projectRoot
 		);
@@ -351,6 +378,34 @@ export function devClientLaunchArgv(
 }
 
 /** Android: make the host's Metro port reachable as 127.0.0.1 on the device. */
+/**
+ * Point a bare React Native app (no dev client) at the Metro on `port`. iOS: relaunch it with
+ * `-RCT_jsLocation host:port`, which `RCTBundleURLProvider` reads from the defaults argument domain.
+ * Android: the debug app asks for 8081, so the device's 8081 is reversed to `port`, then the app is
+ * restarted through its launcher activity.
+ */
+export function bareAppLaunchArgvs(platform: Platform, deviceId: string, bundleId: string, port: number): string[][] {
+	if (platform === "ios")
+		return [
+			[
+				"xcrun",
+				"simctl",
+				"launch",
+				"--terminate-running-process",
+				deviceId,
+				bundleId,
+				"-RCT_jsLocation",
+				`127.0.0.1:${port}`,
+			],
+		];
+	const adb = ["adb", "-s", deviceId];
+	return [
+		[...adb, "reverse", "tcp:8081", `tcp:${port}`],
+		[...adb, "shell", "am", "force-stop", bundleId],
+		[...adb, "shell", "monkey", "-p", bundleId, "-c", "android.intent.category.LAUNCHER", "1"],
+	];
+}
+
 export function adbReverseArgv(serial: string, port: number): string[] {
 	return ["adb", "-s", serial, "reverse", `tcp:${port}`, `tcp:${port}`];
 }
