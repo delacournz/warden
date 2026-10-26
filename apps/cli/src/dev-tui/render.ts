@@ -138,11 +138,13 @@ function hudBody(state: TuiState): string[] {
 	const { sample, fps, bundle, perf } = state.hud;
 	const lines: string[] = [];
 	if (sample === undefined || sample.kind === "waiting") lines.push(dim("waiting for the app"));
-	else if (sample.kind === "not-running") lines.push(dim("app not running"));
-	else {
+	else if (sample.kind === "not-running") {
+		lines.push(dim("app not running"));
+		if (sample.reason) lines.push(dim(sample.reason));
+	} else {
 		const pct = sample.cpuPct === undefined ? "  —" : `${String(Math.round(sample.cpuPct)).padStart(3)}%`;
 		const mb = `${Math.round(sample.memKb / 1024)} MB`;
-		lines.push(`cpu ${pct.padStart(4)} ${cyan(sparkline(sample.cpuHistory))}  ${sample.memKind} ${mb}`);
+		lines.push(`cpu ${pct.padStart(4)} ${cyan(sparkline(sample.cpuHistory))} ${sample.memKind} ${mb}`);
 		if (state.ready?.platform === "android" && fps) {
 			lines.push(`fps ${Math.round(fps.fps)}  jank ${Math.round(fps.jankPct)}%`);
 		} else if (state.ready?.platform === "android") lines.push("fps —");

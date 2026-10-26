@@ -81,6 +81,18 @@ describe("createDevTui: the HUD", () => {
 		await ui.close();
 	});
 
+	test("Metro's bundled line fills the metro row of the HUD", async () => {
+		const { ui, tick, screen } = setup({ enabled: true, intervalMs: 1000 });
+		ui.ready(READY);
+		await tick();
+		expect((await screen()).join("\n")).toContain("metro —");
+		if (ui.metro.kind === "pty")
+			ui.metro.onData(new TextEncoder().encode(" iOS Bundled 1234ms index.ts (412 modules)\r\n"));
+		await settle();
+		expect((await screen()).join("\n")).toContain("metro bundled 1.2 s · 412 mods");
+		await ui.close();
+	});
+
 	test("disabled: no ticker, no box, header says hud off", async () => {
 		const { ui, tick, screen, targets } = setup({ enabled: false, intervalMs: 1000 });
 		ui.ready(READY);

@@ -309,13 +309,23 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		ui: { ...ui, interactive: false, rich: false, spinner },
 	};
 
+	/** The pane's latest `Bundled …` line to the HUD, once per change. */
+	let lastBundle: { ms: number; modules: number } | undefined;
+	const publishBundle = (): void => {
+		if (closed) return;
+		const info = pane.bundleInfo();
+		if (!info || (info.ms === lastBundle?.ms && info.modules === lastBundle.modules)) return;
+		lastBundle = { ms: info.ms, modules: info.modules };
+		dispatch({ type: "hud:bundle", bundle: lastBundle });
+	};
+
 	const metro: DevMetroMode = {
 		kind: "pty",
 		size: paneSize,
 		onData: (chunk) => {
 			metroChunks.push(chunk);
 			sessionLog.metro(chunk);
-			if (!closed) void pane.write(chunk).then(schedule);
+			if (!closed) void pane.write(chunk).then(publishBundle).then(schedule);
 		},
 		attach: (terminal, exited) => {
 			metroTerminal = terminal;

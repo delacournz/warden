@@ -17,6 +17,8 @@ function rig(opts: {
 	fps?: (target: MetricsTarget) => Promise<HudFps | undefined>;
 	fpsEvery?: number;
 	intervalMs?: number;
+	tickTimeoutMs?: number;
+	hang?: boolean;
 }) {
 	const samples: Array<{ sample: HudSample; fps: HudFps | undefined }> = [];
 	const delays: number[] = [];
@@ -30,12 +32,14 @@ function rig(opts: {
 		intervalMs: opts.intervalMs ?? 1000,
 		onSample: (sample, fps) => samples.push({ sample, fps }),
 		now: () => 5000,
+		...(opts.tickTimeoutMs !== undefined ? { tickTimeoutMs: opts.tickTimeoutMs } : {}),
 		...(opts.fps ? { fps: (_ctx, target) => opts.fps?.(target) ?? Promise.resolve(undefined) } : {}),
 		...(opts.fpsEvery !== undefined ? { fpsEvery: opts.fpsEvery } : {}),
 		sampler: async (_ctx, target) => {
 			created.push(target);
 			const sampler: MetricsSampler = {
 				sample: async () => {
+					if (opts.hang) return new Promise<never>(() => undefined);
 					const next = opts.readings[Math.min(reads++, opts.readings.length - 1)];
 					if (!next) return { success: false, error: uiError("failed", "no reading") };
 					return next.success ? ok({ wallMs: 0, atMs: 0, pid: 1, ...next.data }) : next;
@@ -124,7 +128,7 @@ describe("startHud", () => {
 		const r = rig({ target: () => IOS, readings: [reading(5), gone, reading(7)] });
 		await r.tick();
 		await r.tick();
-		expect(r.samples.at(-1)?.sample).toEqual({ kind: "not-running" });
+		expect(r.samples.at(-1)?.sample).toEqual({ kind: "not-running", reason: "nz.example is not running" });
 		expect(r.hasPending()).toBe(true);
 		await r.tick();
 		expect(r.samples.at(-1)?.sample).toMatchObject({ kind: "ok", cpuHistory: [5, 7] });
@@ -134,7 +138,7 @@ describe("startHud", () => {
 	test("a sampler that throws never escapes the ticker", async () => {
 		const r = rig({ target: () => IOS, readings: [] });
 		await r.tick();
-		expect(r.samples.at(-1)?.sample).toEqual({ kind: "not-running" });
+		expect(r.samples.at(-1)?.sample).toEqual({ kind: "not-running", reason: "no reading" });
 		expect(r.hasPending()).toBe(true);
 		r.hud.stop();
 	});
@@ -200,5 +204,34 @@ describe("startHud", () => {
 		await r.tick();
 		expect(r.delays.at(-1)).toBe(HUD_MIN_INTERVAL_MS);
 		r.hud.stop();
+	});
+
+	test("a sampler that never answers times out as not running and the ticker carries on", async () => {
+		const r = rig({ target: () => IOS, readings: [], hang: true, tickTimeoutMs: 20 });
+		await r.tick();
+		expect(r.samples.at(-1)?.sample).toEqual({ kind: "not-running", reason: "no reading within 20 ms" });
+		expect(r.hasPending()).toBe(true);
+		r.hud.stop();
+	});
+
+	test("a sampler that cannot be built reports why", async () => {
+		const samples: HudSample[] = [];
+		let first = true;
+		const hud = startHud({
+			ctx: testContext([]),
+			target: () => IOS,
+			intervalMs: 1000,
+			onSample: (sample) => samples.push(sample),
+			now: () => 0,
+			sampler: async () => ({ success: false, error: uiError("app_not_found", "nz.example is not installed") }),
+			schedule: (fn) => {
+				if (first) void fn();
+				first = false;
+				return () => undefined;
+			},
+		});
+		await Bun.sleep(5);
+		hud.stop();
+		expect(samples.at(-1)).toEqual({ kind: "not-running", reason: "nz.example is not installed" });
 	});
 });

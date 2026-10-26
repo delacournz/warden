@@ -9,6 +9,8 @@ type SamplerResult = Awaited<ReturnType<typeof import("../perf/metrics-sampler")
 /** The HUD never samples faster than this, whatever `--hud-interval` says. */
 export const HUD_MIN_INTERVAL_MS = 200;
 export const HUD_DEFAULT_INTERVAL_MS = 1000;
+/** One tick (sampler build + reading + frame stats) gets this long before it is reported as not running. */
+export const HUD_TICK_TIMEOUT_MS = 15_000;
 
 /** `--hud-interval 750ms` → 750; under the 200 ms floor is an error rather than a silent raise. */
 export function parseHudInterval(raw: string): Result<number> {
@@ -31,11 +33,15 @@ export type HudDeps = {
 	fpsEvery?: number;
 	/** test seam: the sampler for a target (default: the `perf metrics` sampler, loaded on first use) */
 	sampler?: (ctx: CommandContext, target: MetricsTarget, startMs: number) => Promise<SamplerResult>;
+	/** a reading that takes longer than this counts as `not-running` (default 15 s); the ticker never waits on a hung tool */
+	tickTimeoutMs?: number;
 	/** test seam: run `fn` after `ms`; returns a cancel (default: `setTimeout`) */
 	schedule?: (fn: () => Promise<void>, ms: number) => () => void;
 };
 
 export type Hud = { stop(): void };
+
+const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 const sameTarget = (a: MetricsTarget, b: MetricsTarget): boolean =>
 	a.udid === b.udid && a.platform === b.platform && a.app === b.app;
@@ -82,15 +88,15 @@ export function startHud(deps: HudDeps): Hud {
 		}
 	};
 
-	const samplerFor = async (target: MetricsTarget): Promise<MetricsSampler | undefined> => {
-		if (current && sameTarget(current.target, target)) return current.sampler;
+	const samplerFor = async (target: MetricsTarget): Promise<Result<MetricsSampler, string>> => {
+		if (current && sameTarget(current.target, target)) return ok(current.sampler);
 		const made = await makeSampler(deps.ctx, target, deps.now());
-		if (!made.success) return undefined;
+		if (!made.success) return err(made.error.message);
 		current = { target, sampler: made.data };
 		history = [];
 		fps = undefined;
 		ticks = 0;
-		return made.data;
+		return ok(made.data);
 	};
 
 	const frameStats = async (target: MetricsTarget): Promise<void> => {
@@ -103,9 +109,9 @@ export function startHud(deps: HudDeps): Hud {
 		const target = deps.target();
 		if (target === undefined) return emit({ kind: "waiting" });
 		const sampler = await samplerFor(target);
-		if (sampler === undefined) return emit({ kind: "not-running" });
-		const read = await sampler.sample();
-		if (!read.success) return emit({ kind: "not-running" });
+		if (!sampler.success) return emit({ kind: "not-running", reason: sampler.error });
+		const read = await sampler.data.sample();
+		if (!read.success) return emit({ kind: "not-running", reason: read.error.message });
 		const { cpuPct, rssKb, pssKb } = read.data;
 		if (cpuPct !== undefined) history = [...history, cpuPct].slice(-HUD_HISTORY);
 		await frameStats(target);
@@ -119,12 +125,21 @@ export function startHud(deps: HudDeps): Hud {
 		});
 	};
 
+	const timeoutMs = deps.tickTimeoutMs ?? HUD_TICK_TIMEOUT_MS;
+	const timedOut = (): Promise<"timeout"> =>
+		new Promise((resolve) => {
+			const timer = setTimeout(() => resolve("timeout"), timeoutMs);
+			// a finished tick must not keep the process (or a test) waiting on the watchdog
+			timer.unref?.();
+		});
+
 	const run = async (): Promise<void> => {
 		if (stopped) return;
 		try {
-			await tick();
-		} catch {
-			emit({ kind: "not-running" });
+			const outcome = await Promise.race([tick(), timedOut()]);
+			if (outcome === "timeout") emit({ kind: "not-running", reason: `no reading within ${timeoutMs} ms` });
+		} catch (error) {
+			emit({ kind: "not-running", reason: message(error) });
 		}
 		if (!stopped) cancel = schedule(run, interval);
 	};

@@ -233,3 +233,10 @@ describe("session", () => {
 		expect(task(state, "metro")?.log).toEqual(["metro exited (code 2)"]);
 	});
 });
+
+describe("reduce: hud:bundle", () => {
+	test("stores Metro's last bundle for the HUD", () => {
+		const state = run([{ type: "hud:bundle", bundle: { ms: 1234, modules: 412 } }]);
+		expect(state.hud.bundle).toEqual({ ms: 1234, modules: 412 });
+	});
+});

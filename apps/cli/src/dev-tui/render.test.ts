@@ -318,7 +318,7 @@ describe("HUD", () => {
 
 	test("iOS shows rss and no fps", () => {
 		const lines = (hudLines(stateAt(120, 40, [...base, sample(okSample())]), 120) ?? []).map(stripAnsi);
-		expect(lines.join("\n")).toContain("cpu  14% ▂▄▆▄▂▂▃▆  rss 178 MB");
+		expect(lines.join("\n")).toContain("cpu  14% ▂▄▆▄▂▂▃▆ rss 178 MB");
 		expect(lines.join("\n")).toContain("fps —  (iOS sim: no frame API)");
 	});
 
@@ -335,6 +335,13 @@ describe("HUD", () => {
 		expect(waiting).toContain("waiting for the app");
 		const gone = reduce(stateAt(120, 40, [...base]), sample({ kind: "not-running" }));
 		expect((hudLines(gone, 120) ?? []).map(stripAnsi).join("\n")).toContain("app not running");
+		const why = reduce(
+			stateAt(120, 40, [...base]),
+			sample({ kind: "not-running", reason: "nz.example is not installed on U1" })
+		);
+		const whyText = (hudLines(why, 120) ?? []).map(stripAnsi).join("\n");
+		expect(whyText).toContain("app not running");
+		expect(whyText).toContain("nz.example is not installed");
 		const recording: TuiState = {
 			...withBundle(stateAt(120, 40, [...base, sample(okSample())])),
 			now: 745_000,

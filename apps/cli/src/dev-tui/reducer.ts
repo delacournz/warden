@@ -2,6 +2,7 @@ import type { DevReady } from "../commands/dev-ui";
 import { sanitizeLine } from "./ansi";
 import { type Action, actionFor, type Key, type PromptEdit } from "./keys";
 import {
+	type HudBundle,
 	type HudFps,
 	type HudPerf,
 	type HudSample,
@@ -26,6 +27,7 @@ export type TuiEvent =
 	| { type: "hud:sample"; sample: HudSample; fps: HudFps | undefined; at: number }
 	/** a perf session started (or ended: undefined); the HUD shows it */
 	| { type: "hud:perf"; perf: HudPerf | undefined }
+	| { type: "hud:bundle"; bundle: HudBundle }
 	| { type: "prompt:open"; label: string }
 	| { type: "prompt:edit"; edit: PromptEdit }
 	| { type: "prompt:close" };
@@ -212,6 +214,8 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 			return { ...state, mode: "list", prompt: undefined };
 		case "hud:sample":
 			return { ...state, now: event.at, hud: { ...state.hud, sample: event.sample, fps: event.fps } };
+		case "hud:bundle":
+			return { ...state, hud: { ...state.hud, bundle: event.bundle } };
 		case "metro:exit": {
 			const noted = withLog({ ...state, now: event.at }, "metro", `metro exited (code ${event.code})`);
 			return { ...noted, metroExit: event.code, mode: state.mode === "interact" ? "list" : state.mode };

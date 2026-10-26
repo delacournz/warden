@@ -41,7 +41,7 @@ export type Size = { cols: number; rows: number };
 /** One HUD reading: the app is not up yet, not running, or sampled. Memory is RSS on iOS, PSS on Android. */
 export type HudSample =
 	| { kind: "waiting" }
-	| { kind: "not-running" }
+	| { kind: "not-running" /** why the reading failed, one short line */; reason?: string }
 	| {
 			kind: "ok";
 			cpuPct: number | undefined;
