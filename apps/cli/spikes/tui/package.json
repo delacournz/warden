@@ -1,0 +1,9 @@
+{
+	"name": "tui-spike",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"@xterm/addon-serialize": "^0.14.0",
+		"@xterm/headless": "6"
+	}
+}
