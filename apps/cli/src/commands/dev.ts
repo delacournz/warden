@@ -13,6 +13,7 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { bunExec } from "@delacour/warden-core/exec";
 import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts";
 import { isPortFree } from "@delacour/warden-core/ports";
+import type { DeviceProvider } from "@delacour/warden-core/providers/provider.types";
 import { PRIORITY } from "@delacour/warden-core/queue";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
@@ -195,6 +196,55 @@ function lazyScheme(ctx: CommandContext, project: ProjectContext, override: stri
 	};
 }
 
+/**
+ * A held device (`--udid`, `--lease`, the caller's own device lease) is used as is, so a sim an earlier
+ * session left Shut down would get the install and fail ("Unable to lookup in current state: Shutdown").
+ * Boot it and wait until it is ready, but only under this owner's lease: a device that isn't ours is
+ * never booted, the error says so.
+ */
+async function bootHeldDevice(
+	ctx: CommandContext,
+	ui: DevUi,
+	owner: Owner,
+	platform: Platform,
+	deviceId: string
+): AsyncResult<void> {
+	const provider = providerFor(platform, ctx, owner);
+	const inventory = await provider.inventory();
+	// only a device known to be off is booted; anything else goes on as before (the install reports it)
+	const device = inventory.success ? inventory.data.find((d) => d.id === deviceId) : undefined;
+	if (device === undefined || device.state !== "shutdown") return ok(undefined);
+	const lease = ctx
+		.store()
+		.listLeasesByOwner(owner)
+		.find((l) => l.resource.kind === "device" && l.resource.id === deviceId);
+	if (lease === undefined)
+		return err(`${deviceId} is shut down and not leased by this session — boot it, or drop --udid to claim one`);
+	// the held path has no claim of its own: the boot is this session's "claim device" row
+	const task = ui.task("claim", `boot ${device.name}`);
+	await provider.prepareBoot?.(deviceId);
+	const ready = await bootAndWait(provider, deviceId);
+	if (!ready.success) {
+		task.fail(ready.error);
+		return err(`booting ${deviceId}: ${ready.error}`);
+	}
+	// booted for this lease, so it is the owner's to shut down on release
+	ctx.store().markBootedByOwner(lease.id);
+	await provider.afterReady?.(deviceId);
+	task.ok("ready");
+	return ok(undefined);
+}
+
+/** `bootReady` where the provider has it (iOS `bootstatus -b`), else `boot` + `waitReady`. */
+async function bootAndWait(provider: DeviceProvider, deviceId: string): AsyncResult<void> {
+	if (provider.bootReady) {
+		const r = await provider.bootReady(deviceId, DEFAULT_READY_TIMEOUT_MS);
+		return r.kind === "ready" ? ok(undefined) : err(r.error);
+	}
+	const boot = await provider.boot(deviceId);
+	return boot.success ? provider.waitReady(deviceId, DEFAULT_READY_TIMEOUT_MS) : boot;
+}
+
 /** `--udid` / `--lease` / the caller's single device lease of `platform`; undefined = claim one. */
 function heldDevice(ctx: CommandContext, owner: Owner, platform: Platform, opts: DevOpts): Result<string | undefined> {
 	if (opts.udid !== undefined) return ok(opts.udid);
@@ -368,6 +418,11 @@ async function openSession(
 		return err("no Metro port leased");
 	}
 	early.start(port, deviceId);
+	const booted = await bootHeldDevice(ctx, ui, owner, platform, deviceId);
+	if (!booted.success) {
+		await release();
+		return booted;
+	}
 	const showing = showDevice(ctx, ui, platform, deviceId, opts.headless === true);
 	const ensured = await noteInstall(ctx, owner, platform, deviceId, app);
 	await showing;
@@ -509,15 +564,8 @@ async function restartDevice(
 	if (!down.success) return down;
 	await stopHelperAfter(ctx)(deviceId);
 	log("booting");
-	if (provider.bootReady) {
-		const booted = await provider.bootReady(deviceId, DEFAULT_READY_TIMEOUT_MS);
-		if (booted.kind !== "ready") return err(booted.error);
-	} else {
-		const boot = await provider.boot(deviceId);
-		if (!boot.success) return boot;
-		const ready = await provider.waitReady(deviceId, DEFAULT_READY_TIMEOUT_MS);
-		if (!ready.success) return ready;
-	}
+	const ready = await bootAndWait(provider, deviceId);
+	if (!ready.success) return ready;
 	await provider.afterReady?.(deviceId);
 	await showDevice(ctx, ui, r.platform, deviceId, headless);
 	return ok(undefined);

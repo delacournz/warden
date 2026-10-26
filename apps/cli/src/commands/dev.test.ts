@@ -2,6 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
+import { resolveOwner } from "../claim-flags";
 import { main } from "../cli";
 import type { CommandContext } from "../context";
 import { devClientLaunchArgv, type MetroProc } from "../metro";
@@ -808,6 +809,37 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		expect(await running).toBe(7);
 		expect(fake.closes.length).toBeGreaterThan(0);
 		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("a held device lease whose sim is Shutdown is booted and waited for before the app is installed", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [], "Shutdown");
+		c.store().insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
+				owner: resolveOwner(c),
+				ttlMs: 60_000,
+			},
+			c.now()
+		);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && h.ensured.length > 0);
+		const boot = calls.findIndex((cmd) => cmd.join(" ").startsWith("xcrun simctl bootstatus U1"));
+		expect(boot).toBeGreaterThanOrEqual(0);
+		expect(h.ensured[0]?.deviceId).toBe("U1");
+		h.finish(0);
+		expect(await running).toBe(0);
+	});
+
+	test("a Shutdown --udid device that is not this session's is never booted: the error says so", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios", "--udid", "U1"], calls, [], "Shutdown");
+		const h = harness();
+		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(calls.some((cmd) => cmd.join(" ").startsWith("xcrun simctl boot"))).toBe(false);
+		expect(c.stderr.some((l) => l.includes("U1 is shut down"))).toBe(true);
+		expect(h.ensured).toEqual([]);
 	});
 
 	test("a held device (--udid) gets its name from warden's device record", async () => {
