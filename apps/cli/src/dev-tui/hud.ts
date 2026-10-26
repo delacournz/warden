@@ -1,3 +1,5 @@
+import { parseDuration } from "@delacour/warden-core/duration";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { MetricsSampler, MetricsTarget } from "../perf/metrics-sampler";
 import { HUD_HISTORY, type HudFps, type HudSample } from "./model";
@@ -7,6 +9,14 @@ type SamplerResult = Awaited<ReturnType<typeof import("../perf/metrics-sampler")
 /** The HUD never samples faster than this, whatever `--hud-interval` says. */
 export const HUD_MIN_INTERVAL_MS = 200;
 export const HUD_DEFAULT_INTERVAL_MS = 1000;
+
+/** `--hud-interval 750ms` → 750; under the 200 ms floor is an error rather than a silent raise. */
+export function parseHudInterval(raw: string): Result<number> {
+	const parsed = parseDuration(raw);
+	if (!parsed.success) return parsed;
+	if (parsed.data < HUD_MIN_INTERVAL_MS) return err(`${raw} is under the ${HUD_MIN_INTERVAL_MS}ms minimum`);
+	return ok(parsed.data);
+}
 
 export type HudDeps = {
 	ctx: CommandContext;
@@ -83,6 +93,12 @@ export function startHud(deps: HudDeps): Hud {
 		return made.data;
 	};
 
+	const frameStats = async (target: MetricsTarget): Promise<void> => {
+		if (target.platform !== "android") return;
+		if (ticks % fpsEvery === 0) fps = (await readFps(deps.ctx, target)) ?? fps;
+		ticks++;
+	};
+
 	const tick = async (): Promise<void> => {
 		const target = deps.target();
 		if (target === undefined) return emit({ kind: "waiting" });
@@ -92,17 +108,14 @@ export function startHud(deps: HudDeps): Hud {
 		if (!read.success) return emit({ kind: "not-running" });
 		const { cpuPct, rssKb, pssKb } = read.data;
 		if (cpuPct !== undefined) history = [...history, cpuPct].slice(-HUD_HISTORY);
-		if (target.platform === "android") {
-			if (ticks % fpsEvery === 0) fps = (await readFps(deps.ctx, target)) ?? fps;
-			ticks++;
-		}
-		const android = target.platform === "android" && pssKb !== undefined;
+		await frameStats(target);
+		const pss = target.platform === "android" ? pssKb : undefined;
 		emit({
 			kind: "ok",
 			cpuPct,
 			cpuHistory: history,
-			memKb: android ? pssKb : rssKb,
-			memKind: android ? "pss" : "rss",
+			memKb: pss ?? rssKb,
+			memKind: pss === undefined ? "rss" : "pss",
 		});
 	};
 

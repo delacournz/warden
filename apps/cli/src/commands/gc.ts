@@ -162,29 +162,34 @@ function newestMtime(path: string): number {
  */
 function sweepDevDirs(ctx: CommandContext, now: number): string[] {
 	const root = join(wardenHome(ctx.env), "dev");
+	const leased = new Set(
+		ctx
+			.store()
+			.listLeases()
+			.map((l) => l.id)
+	);
+	let entries: string[];
 	try {
-		const leased = new Set(
-			ctx
-				.store()
-				.listLeases()
-				.map((l) => l.id)
-		);
-		let removed = 0;
-		for (const entry of readdirSync(root, { withFileTypes: true })) {
-			if (!entry.isDirectory() || leased.has(entry.name)) continue;
-			const dir = join(root, entry.name);
-			try {
-				if (now - newestMtime(dir) < DEV_DIR_IDLE_MS) continue;
-				rmSync(dir, { recursive: true, force: true });
-				removed++;
-			} catch {
-				// one unreadable dir must not stop the others
-			}
-		}
-		return removed === 0 ? [] : [`removed ${plural(removed, "old dev session dir")}`];
+		entries = readdirSync(root, { withFileTypes: true })
+			.filter((e) => e.isDirectory() && !leased.has(e.name))
+			.map((e) => e.name);
 	} catch (e) {
-		const missing = e instanceof Error && "code" in e && e.code === "ENOENT";
-		return missing ? [] : [`dev session dirs sweep failed: ${e instanceof Error ? e.message : String(e)}`];
+		return isMissing(e) ? [] : [`dev session dirs sweep failed: ${e instanceof Error ? e.message : String(e)}`];
+	}
+	const removed = entries.filter((name) => removeIfIdle(join(root, name), now)).length;
+	return removed === 0 ? [] : [`removed ${plural(removed, "old dev session dir")}`];
+}
+
+const isMissing = (e: unknown): boolean => e instanceof Error && "code" in e && e.code === "ENOENT";
+
+/** Remove `dir` when its newest file is over 24 h old; one unreadable dir must not stop the others. */
+function removeIfIdle(dir: string, now: number): boolean {
+	try {
+		if (now - newestMtime(dir) < DEV_DIR_IDLE_MS) return false;
+		rmSync(dir, { recursive: true, force: true });
+		return true;
+	} catch {
+		return false;
 	}
 }
 
