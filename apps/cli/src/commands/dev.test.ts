@@ -49,14 +49,15 @@ function harness(): Harness {
 	return h;
 }
 
-/** A context whose cwd holds an Expo app (`app.json`, slug `demo`). */
+/** A context whose cwd holds an Expo app (`app.json`, slug `demo`); the one warden sim is `state` (booted by default). */
 function setup(
 	argv: string[],
 	calls: string[][],
-	extra: Array<[string, { stdout?: string; exitCode?: number }]> = []
+	extra: Array<[string, { stdout?: string; exitCode?: number }]> = [],
+	state: "Booted" | "Shutdown" = "Booted"
 ): TestContext {
 	ctx = testContext(argv, {
-		exec: fakeSimctl([wardenSim(1, "Booted")], calls, [
+		exec: fakeSimctl([wardenSim(1, state)], calls, [
 			["git rev-parse --show-toplevel", { stdout: "" }],
 			["git config --get remote.origin.url", { stdout: "git@github.com:o/r.git" }],
 			["xcrun simctl launch", {}],
@@ -130,6 +131,90 @@ describe("warden dev: showing the simulator", () => {
 		expect(shown(calls)).toEqual([["open", "devices://device/open?id=U1"]]);
 		h.finish(0);
 		expect(await running).toBe(0);
+	});
+});
+
+describe("warden dev: the simulator when dev ends", () => {
+	const shutdowns = (calls: string[][]) => calls.filter((cmd) => cmd[1] === "simctl" && cmd[2] === "shutdown");
+
+	test("Metro exits → the sim dev booted is shut down before its lease goes", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [], "Shutdown");
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		expect(shutdowns(calls)).toEqual([]);
+		h.finish(0);
+		expect(await running).toBe(0);
+		expect(shutdowns(calls)).toEqual([["xcrun", "simctl", "shutdown", "U1"]]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("a sim that was already running when dev leased it is left running", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [], "Booted");
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		expect(await running).toBe(0);
+		expect(shutdowns(calls)).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("--no-shutdown → released, left booted", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios", "--no-shutdown"], calls, [], "Shutdown");
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		expect(await running).toBe(0);
+		expect(shutdowns(calls)).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("a device dev did not lease itself (--udid) is left running", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios", "--udid", "U1"], calls);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		expect(await running).toBe(0);
+		expect(shutdowns(calls)).toEqual([]);
+	});
+
+	test("the terminal goes away (SIGHUP) → Metro stopped, sim shut down, leases released", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [], "Shutdown");
+		const h = harness();
+		const signals = new Map<string, () => void>();
+		h.deps.onSignal = (signal, handler) => {
+			signals.set(signal, handler);
+			return () => signals.delete(signal);
+		};
+		const kills: string[] = [];
+		const spawn = h.deps.spawn;
+		h.deps.spawn = (cmd, env, cwd, stdout) => {
+			const child = spawn(cmd, env, cwd, stdout);
+			return {
+				exited: child.exited,
+				kill: (signal) => {
+					kills.push(signal);
+					h.finish(129);
+				},
+			};
+		};
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		const hup = signals.get("SIGHUP");
+		expect(hup).toBeDefined();
+		hup?.();
+		expect(await running).toBe(129);
+		expect(kills).toEqual(["SIGHUP"]);
+		expect(shutdowns(calls)).toEqual([["xcrun", "simctl", "shutdown", "U1"]]);
+		expect(c.db.listLeases()).toEqual([]);
 	});
 });
 

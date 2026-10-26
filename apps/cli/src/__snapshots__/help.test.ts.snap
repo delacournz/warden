@@ -267,6 +267,9 @@ Options:
                               keychain
   --no-open                   don't open the dev client (Metro + the leases
                               only)
+  --no-shutdown               leave the simulator booted when dev ends (default:
+                              shut down the one dev leased, unless it was
+                              already running)
   -h, --help                  display help for command
 
 Examples:

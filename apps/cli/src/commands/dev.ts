@@ -8,13 +8,14 @@ import { bunExec } from "@delacour/warden-core/exec";
 import { readGitFactsSync } from "@delacour/warden-core/git-facts";
 import { isPortFree } from "@delacour/warden-core/ports";
 import { PRIORITY } from "@delacour/warden-core/queue";
-import type { Owner, Platform } from "@delacour/warden-core/types";
+import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, parsePlatform, resolveOwner, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
+import { shutdownReleasedDevices } from "../device-shutdown";
 import { missingPackages } from "../expo-app";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import {
@@ -22,6 +23,7 @@ import {
 	claimAll,
 	claimRunPorts,
 	exitCodeOf,
+	FORWARDED_SIGNALS,
 	holdLeases,
 	INTERRUPTED,
 	intervalEvery,
@@ -91,6 +93,8 @@ type DevOpts = ClaimFlagValues & {
 	json?: true;
 	/** false = `--no-open` */
 	open: boolean;
+	/** false = `--no-shutdown`: leave the sim dev leased booted when dev ends */
+	shutdown: boolean;
 };
 
 /** The dev-client deep link that points `scheme`'s app at the Metro on `port`. */
@@ -191,6 +195,13 @@ async function showDevice(ctx: CommandContext, platform: Platform, deviceId: str
 	} else warn(ctx, `warden dev: couldn't show ${deviceId} (${shown.error}); --headless skips this`);
 }
 
+/** Shut the session's own devices down while their leases are still held; problems are warnings, never failures. */
+async function shutdownDevices(ctx: CommandContext, owner: Owner, leases: Lease[]): Promise<void> {
+	const outcome = await shutdownReleasedDevices(ctx, leases, owner);
+	for (const id of outcome.shutdown) note(ctx, `warden dev: shut down ${id}`);
+	for (const line of outcome.notes) warn(ctx, `warden dev: ${line}`);
+}
+
 /** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
 async function openSession(
 	ctx: CommandContext,
@@ -241,7 +252,18 @@ async function openSession(
 		);
 		await showing;
 		if (!session.success) return session;
-		const { outcome, ports, leaseIds, release } = session.data;
+		const { outcome, ports, leaseIds } = session.data;
+		// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
+		// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
+		const release = async () => {
+			if (opts.shutdown)
+				await shutdownDevices(
+					ctx,
+					owner,
+					outcome.claimed.map((c) => c.lease)
+				);
+			await session.data.release();
+		};
 		const deviceId = outcome.claimed[0]?.device.id;
 		const port = ports[0]?.port;
 		if (deviceId === undefined || port === undefined) {
@@ -515,7 +537,7 @@ async function dev(
 
 	const run: DevRun = { aborted: { now: false }, launch: undefined, metroFailed: false };
 	const early = earlyMetro(ctx, deps, opts, project.data.project.root, timeout.data, run);
-	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
+	const offSignals = FORWARDED_SIGNALS.map((signal) =>
 		deps.onSignal(signal, () => {
 			run.aborted.now = true;
 			void run.launch?.stop();
@@ -576,6 +598,10 @@ export function createDevCommand(deps: DevDeps): Command {
 				.option("--reset-keychain", "--install-mode: also reset the iOS simulator's keychain")
 				.addOption(legacyCleanOption())
 				.option("--no-open", "don't open the dev client (Metro + the leases only)")
+				.option(
+					"--no-shutdown",
+					"leave the simulator booted when dev ends (default: shut down the one dev leased, unless it was already running)"
+				)
 				.addHelpText("after", "\nExamples:\n  warden dev\n  warden dev android -- --clear")
 				.action(async (platform, _expoArgs, opts) => done(await dev(ctx, deps, platform, opts)));
 		},
