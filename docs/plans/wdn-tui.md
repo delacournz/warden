@@ -11,7 +11,7 @@ Goal (user, 2026-10-26): a TUI in the spirit of Turborepo's: task list left, the
 ## Decisions (user, 2026-10-26)
 
 - Renderer: **hand-rolled ANSI renderer** in `apps/cli/src/dev-tui/` (no React, no native code). `@opentui/core` was the first pick and was researched (below), then dropped: it needs ESM bytecode and the user chose to keep the CLI's CommonJS bytecode build. `ink` fails the same way (`await import('./devtools.js')` at top level). Verified 2026-10-26 in a scratch compile.
-- Metro pane: **full VT emulation** with `@xterm/headless` 6.0.0 + `@xterm/addon-serialize` (pure JS; compiles under `--compile --minify --bytecode`; +0.7 MB on a 67.6 MB binary; verified: `\e[2J\e[H` + SGR colours round-trip through `serialize()`).
+- Metro pane: **full VT emulation** with `@xterm/headless` 6.0.0 only (pure JS; compiles under `--compile --minify --bytecode`; +0.7 MB on a 67.6 MB binary). Rows are serialised by our own ~40-line `serializeRow` over `IBufferCell` attributes: `@xterm/addon-serialize` drops DIM when BOLD ends (TUI-0 result 2), so it is not used.
 - Keys: **two modes, Turborepo-style**: list mode = warden's lowercase keys; `Enter`/`i` on the Metro row = interact mode, every key to Expo until `Esc`.
 - **On by default** on an interactive terminal; `--no-tui` / `WARDEN_TUI=0` opt out. `--json`, pipes, CI and agents keep today's plain output.
 - Full key set + perf keys + **HUD top-right** (below).
@@ -103,6 +103,9 @@ Interact mode: everything to Expo (`a i w s j r m shift+m o ? Ctrl-C …`), `Esc
 - Off with `h`, `--no-hud`, or hidden when the terminal is narrower than 100 columns; shows `app not running` when the sampler finds no process. Sampling is host `ps` (iOS) / `top` + `dumpsys` (Android); cost measured in TUI-0 and shown as `hud 0.3%` if it is not negligible.
 - Honest about iOS: no fps. Optional later: JS event-loop lag via the dev client's devtools as a proxy (out of this plan).
 
+## Seam contract
+`apps/cli/src/commands/dev-ui.ts` (types only, committed before wave 2): `DevUi { ctx, task(id,label) → {ok,fail,log}, metro: {kind:"inherit"} | {kind:"pty", size(), onData(chunk), attach(terminal, exited)}, ready(info), onQuit(handler), close() }`. TUI-2 implements `plainDevUi` and makes `dev.ts` talk only to it; TUI-3 implements `createDevTui(): DevUi`. Neither phase edits the other's files; wiring `tui` into `dev()` is the last step of TUI-3's merge.
+
 ## Phases
 
 ### TUI-0 — 🔍 spike: Expo in a Bun PTY + xterm pane + harness (½ day)
@@ -113,13 +116,14 @@ Interact mode: everything to Expo (`a i w s j r m shift+m o ? Ctrl-C …`), `Esc
 5. Write **TUI-0 results** at the bottom of this plan. Gate for everything below.
 
 ### TUI-1 — 📦 `@xterm/headless` dependency + build guard
-- `bun add @xterm/headless @xterm/addon-serialize` in `apps/cli` (pure JS; `source-build.test.ts` keeps proving the bundle has no top-level await).
+- `bun add @xterm/headless` in `apps/cli` (pure JS; no serialize addon; `source-build.test.ts` keeps proving the bundle has no top-level await).
 - `startup.test.ts`: `dev-tui/*` and xterm are imported lazily (`await import("../dev-tui/tui")`) only in TUI mode, so `version`/`claim`/`heartbeat`/`gc`/`release`/`ui` load none of it. Measure `dist/warden` size delta (expected ≈ +0.7 MB).
 
 ### TUI-2 — ♻️ Metro in a PTY + `DevUi` seam
 - `metro.ts`: `MetroProc` gains optional `terminal: { write, resize }`; `launchMetro`'s `spawn` may return it. `e2e` unchanged.
-- `dev.ts` `defaultDevDeps.spawn`: third mode `{ kind: "pty", cols, rows, onData }`. Extract today's output into `DevUi.plain`; `dev()` picks `plain`/`tui`.
-- Tests: plain unchanged; PTY mode passes size and forwards writes.
+- `dev.ts` `defaultDevDeps.spawn`: third mode `{ kind: "pty", cols, rows, onData }` → `Bun.spawn({ terminal })`, env = parent env minus `CI`, `TERM=xterm-256color` (TUI-0 result 1). Extract today's output into `plainDevUi(ctx)`; `dev()` picks `plain`/`tui` and talks only to the `DevUi` seam (`apps/cli/src/commands/dev-ui.ts`, committed with the plan: types only).
+- Metro is gone when the PTY `exited` resolves, never because Ctrl-C was sent (Ctrl-C can only cancel an Expo prompt).
+- Tests: plain unchanged; PTY mode passes size, forwards writes, drops `CI`.
 
 ### TUI-3 — ✨ dashboard shell
 - `dev-tui/{model,reducer,keys,render,screen,tui}.ts`: header, task list, log pane, footer hints, help overlay, `q`/Ctrl-C quit, list/log focus; per-row diff rendering, synchronized updates, restore on exit/throw/signal. `ctx.err`/`note`/`warn`/`reportError` → current task's log; `withSpinner` text → running label.
@@ -135,6 +139,7 @@ Interact mode: everything to Expo (`a i w s j r m shift+m o ? Ctrl-C …`), `Esc
 - Guard rails: one perf session per device (`session_active` → explain), `x`/`R` disabled while a perf session records, `c` restarts Metro on the same leased port.
 
 ### TUI-6 — 📊 HUD + session log on disk
+- First `metrics-sampler.ts`: resolve the app pid once (`launchctl list` path), then `ps -p <pid>` per sample, re-resolving when the pid is gone or its start time changes (TUI-0 result 4: 16% of a core at 1 s today → ~0.3%); test "pid cached, re-resolved on exit". `perf metrics` benefits too.
 - `hud.ts` as specified; `h`, `--no-hud`, `--hud-interval`.
 - `$WARDEN_HOME/dev/<leaseId>/{warden.log, metro.log, shots/}`: every task line and the raw Metro stream, so a crash or closed terminal leaves evidence; `warden gc` removes dirs whose lease is gone (> 1 day).
 
