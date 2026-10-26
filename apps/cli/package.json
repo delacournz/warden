@@ -35,6 +35,7 @@
 	},
 	"devDependencies": {
 		"@delacour/warden-tsconfig": "workspace:*",
+		"@xterm/headless": "6",
 		"typescript": "^5.9.3"
 	}
 }
