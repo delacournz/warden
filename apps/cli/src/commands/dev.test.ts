@@ -865,6 +865,143 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 	});
 });
 
+describe("warden dev: what the action keys call back into", () => {
+	type Proc = { finish: (code: number) => void; kills: string[] };
+
+	/** a ui that keeps the `ready` payload; every Metro spawn gets a PTY terminal and its own exit */
+	function actionHarness() {
+		const readies: DevReady[] = [];
+		const procs: Proc[] = [];
+		const h = harness();
+		h.deps.sleep = () => new Promise<void>(() => undefined);
+		h.deps.spawn = (cmd, env, cwd, stdout): MetroProc => {
+			h.spawned.push({ cmd, env, cwd, stdout });
+			let finish: (code: number) => void = () => undefined;
+			const exited = new Promise<number>((resolve) => {
+				finish = resolve;
+			});
+			const proc: Proc = { finish, kills: [] };
+			procs.push(proc);
+			return {
+				exited,
+				kill: (signal) => {
+					proc.kills.push(signal);
+					finish(143);
+				},
+				terminal: { write: () => {}, resize: () => {} },
+			};
+		};
+		const make = (c: TestContext): DevUi => {
+			const metro: DevMetroMode = {
+				kind: "pty",
+				size: () => ({ cols: 90, rows: 30 }),
+				onData: () => {},
+				attach: () => {},
+			};
+			return { ...plainDevUi(c), metro, ready: (info) => void readies.push(info) };
+		};
+		return { h, readies, procs, make };
+	}
+
+	test("ready carries the actions; reinstall asks ensureApp for installMode reinstall and reports source and hash", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const a = actionHarness();
+		a.h.deps.selectUi = () => a.make(c);
+		const running = createDevCommand(a.h.deps).run(c);
+		await waitFor(() => a.readies.length > 0);
+		const actions = a.readies[0]?.actions;
+		expect(actions).toBeDefined();
+		const lines: string[] = [];
+		const done = await actions?.reinstall((line) => lines.push(line));
+		expect(done).toEqual({ success: true, data: { source: "cache", hash: "H" } });
+		expect(a.h.ensured.at(-1)?.opts).toMatchObject({ installMode: "reinstall" });
+		expect(a.h.ensured.at(-1)?.deviceId).toBe("U1");
+		a.procs[0]?.finish(0);
+		await running;
+	});
+
+	test("openClient relaunches the dev client on the same Metro URL", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const a = actionHarness();
+		a.h.deps.selectUi = () => a.make(c);
+		const running = createDevCommand(a.h.deps).run(c);
+		await waitFor(() => a.readies.length > 0);
+		const before = calls.filter((cmd) => cmd.includes("launch")).length;
+		const done = await a.readies[0]?.actions?.openClient(() => {});
+		expect(done?.success).toBe(true);
+		expect(calls.filter((cmd) => cmd.includes("launch")).length).toBe(before + 1);
+		a.procs[0]?.finish(0);
+		await running;
+	});
+
+	test("restartSim shuts the leased sim down and boots it again, keeping the lease", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const a = actionHarness();
+		a.h.deps.selectUi = () => a.make(c);
+		const running = createDevCommand(a.h.deps).run(c);
+		await waitFor(() => a.readies.length > 0);
+		const done = await a.readies[0]?.actions?.restartSim(() => {});
+		const sim = calls.filter((cmd) => cmd[1] === "simctl").map((cmd) => cmd[2]);
+		expect(sim.indexOf("shutdown")).toBeGreaterThan(-1);
+		expect(sim.indexOf("bootstatus")).toBeGreaterThan(sim.indexOf("shutdown"));
+		expect(done?.success).toBe(true);
+		expect(c.db.listLeases().length).toBeGreaterThan(0);
+		a.procs[0]?.finish(0);
+		await running;
+	});
+
+	test("restartMetro starts a second Metro with --clear on the same port; the session outlives the first one", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const a = actionHarness();
+		a.h.deps.selectUi = () => a.make(c);
+		let code: number | undefined;
+		const running = createDevCommand(a.h.deps)
+			.run(c)
+			.then((value) => {
+				code = value;
+				return value;
+			});
+		await waitFor(() => a.readies.length > 0);
+		const restarted = await a.readies[0]?.actions?.restartMetro(() => {});
+		expect(restarted?.success).toBe(true);
+		expect(a.h.spawned).toHaveLength(2);
+		const [first, second] = a.h.spawned;
+		expect(first?.cmd).not.toContain("--clear");
+		expect(second?.cmd).toContain("--clear");
+		const port = (cmd: string[] | undefined) => cmd?.[cmd.indexOf("--port") + 1];
+		expect(port(second?.cmd)).toBe(port(first?.cmd));
+		expect(a.procs[0]?.kills).toContain("SIGTERM");
+		await Bun.sleep(5);
+		expect(code).toBeUndefined();
+		a.procs[1]?.finish(4);
+		expect(await running).toBe(4);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("a Metro that does not come back ends the session with the old exit code", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const a = actionHarness();
+		a.h.deps.selectUi = () => a.make(c);
+		const spawn = a.h.deps.spawn;
+		let spawns = 0;
+		a.h.deps.spawn = (cmd, env, cwd, stdout) => {
+			spawns++;
+			if (spawns === 2) throw new Error("expo missing");
+			return spawn(cmd, env, cwd, stdout);
+		};
+		const running = createDevCommand(a.h.deps).run(c);
+		await waitFor(() => a.readies.length > 0);
+		const restarted = await a.readies[0]?.actions?.restartMetro(() => {});
+		expect(restarted?.success).toBe(false);
+		expect(await running).toBe(143);
+	});
+});
+
 describe("warden dev: HUD options", () => {
 	async function runWith(argv: string[]) {
 		const calls: string[][] = [];

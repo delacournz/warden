@@ -2,7 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import { bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
-import { DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "@delacour/warden-core/config.defaults";
+import {
+	DEFAULT_METRO_PORT_SPEC,
+	DEFAULT_METRO_READY_TIMEOUT,
+	DEFAULT_READY_TIMEOUT_MS,
+} from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { bunExec } from "@delacour/warden-core/exec";
 import { readGitFactsSync } from "@delacour/warden-core/git-facts";
@@ -10,6 +14,7 @@ import { isPortFree } from "@delacour/warden-core/ports";
 import { PRIORITY } from "@delacour/warden-core/queue";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, parsePlatform, resolveOwner, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
@@ -38,6 +43,7 @@ import {
 	adbReverseArgv,
 	devClientLaunchArgv,
 	launchMetro,
+	type Metro,
 	type MetroLaunchHandle,
 	type MetroOwner,
 	type MetroProc,
@@ -47,11 +53,12 @@ import {
 } from "../metro";
 import { emit, heading, note, reportError, warn } from "../output";
 import { projectContextFor } from "../project-context";
+import { providerFor } from "../providers";
 import { closeSimWindows, revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
-import type { DevUi } from "./dev-ui";
+import type { DevActionHost, DevUi } from "./dev-ui";
 import { plainDevUi } from "./dev-ui.plain";
 
 /** Default label on the leases `warden dev` takes (`--label` overrides it). */
@@ -204,8 +211,8 @@ type Session = {
 
 /** What `openSession` needs from `dev()`: start Metro once the port is known, and stop waiting on a signal / dead Metro. */
 type EarlyMetro = {
-	/** called with the leased port, and the device when it is already known, before the app install */
-	start: (port: number, deviceId: string | undefined) => void;
+	/** called with the leased port, and the device when it is already known, before the app install; `extraArgs` follow the command's own `expo start` args */
+	start: (port: number, deviceId: string | undefined, extraArgs?: readonly string[]) => void;
 	aborted: () => boolean;
 };
 
@@ -416,16 +423,112 @@ type Running = {
 	scheme: SchemeOf;
 	launch: MetroLaunchHandle;
 	aborted: { now: boolean };
+	owner: Owner;
+	/** what `ensureApp` is asked for (`R` reinstalls with the same options) */
+	app: EnsureOptions;
+	/** the live run state: `run.launch` is the current Metro, replaced by `c` */
+	run: DevRun;
+	early: EarlyMetro;
 };
+
+/** A Metro restart in flight: `runMetro` waits for the replacement's exit, not the old one's. */
+type MetroSwap = { pending: Promise<Metro | undefined> | undefined };
+
+/** Metro's exit code; a restart (`c`) hands over to the replacement, whose exit ends the session instead. */
+async function metroExit(first: MetroProc, swap: MetroSwap): Promise<number> {
+	let code = await first.exited;
+	while (swap.pending) {
+		const next = await swap.pending;
+		swap.pending = undefined;
+		if (next === undefined) break;
+		code = await next.proc.exited;
+	}
+	return code;
+}
+
+/** `ctx` with its lines going to `log`: an action key's progress lands in its own row. */
+function scopedCtx(ctx: CommandContext, log: (line: string) => void): CommandContext {
+	return { ...ctx, out: log, err: log };
+}
+
+/** iOS: shut the leased sim down, boot it again, bring its window back. The lease stays. */
+async function restartDevice(ctx: CommandContext, r: Running, headless: boolean, log: (line: string) => void) {
+	const { deviceId } = r.session;
+	const provider = providerFor(r.platform, ctx, r.owner);
+	log(`shutting down ${deviceId}`);
+	const down = await provider.shutdown(deviceId);
+	if (!down.success) return down;
+	await stopHelperAfter(ctx)(deviceId);
+	log("booting");
+	if (provider.bootReady) {
+		const booted = await provider.bootReady(deviceId, DEFAULT_READY_TIMEOUT_MS);
+		if (booted.kind !== "ready") return err(booted.error);
+	} else {
+		const boot = await provider.boot(deviceId);
+		if (!boot.success) return boot;
+		const ready = await provider.waitReady(deviceId, DEFAULT_READY_TIMEOUT_MS);
+		if (!ready.success) return ready;
+	}
+	await provider.afterReady?.(deviceId);
+	await showDevice(ctx, r.platform, deviceId, headless);
+	return ok(undefined);
+}
+
+/**
+ * Stop the current Metro and start another with `--clear` on the same leased port. `swap` tells `runMetro` to follow
+ * the replacement; a replacement that does not come up leaves no Metro, and the session ends as when Metro dies.
+ */
+async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap): AsyncResult<string> {
+	if (swap.pending) return err("Metro is already restarting");
+	let settle: (metro: Metro | undefined) => void = () => undefined;
+	swap.pending = new Promise<Metro | undefined>((resolve) => {
+		settle = resolve;
+	});
+	const { deviceId, port } = r.session;
+	try {
+		ctx.err("stopping Metro");
+		await r.run.launch?.stop();
+		ctx.err(`starting Metro --clear on :${port}`);
+		r.early.start(port, deviceId, ["--clear"]);
+		const started = await r.run.launch?.pending;
+		if (started?.success !== true) {
+			settle(undefined);
+			return err(started?.error ?? "Metro was not restarted");
+		}
+		settle(started.data);
+		return ok(started.data.url);
+	} catch (error) {
+		settle(undefined);
+		return err(error instanceof Error ? error.message : String(error));
+	}
+}
+
+/** What the dashboard's action keys call back into, for this run. */
+function devActions(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Running, swap: MetroSwap): DevActionHost {
+	const { deviceId, port } = r.session;
+	return {
+		openClient: (log) => openDevClient(scopedCtx(ctx, log), r.platform, deviceId, r.project, r.scheme, port),
+		reinstall: async (log) => {
+			const ensured = await deps.ensureApp(scopedCtx(ctx, log), r.owner, r.platform, deviceId, {
+				...r.app,
+				installMode: "reinstall",
+			});
+			return ensured.success ? ok({ source: ensured.data.source, hash: ensured.data.hash }) : err(ensured.error);
+		},
+		restartSim: (log) => restartDevice(scopedCtx(ctx, log), r, opts.headless === true, log),
+		restartMetro: (log) => restartMetro(scopedCtx(ctx, log), r, swap),
+	};
+}
 
 /** Metro (started early, verified to serve this project) with the dev client opened on it; resolves with Metro's exit code. */
 async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Promise<number> {
 	const ctx = ui.ctx;
 	const { deviceId, deviceName, app, port, leaseIds, release } = r.session;
 	const json = opts.json === true;
+	const swap: MetroSwap = { pending: undefined };
 	const stop = holdLeases(ctx, deps, leaseIds, (signal) => {
 		r.aborted.now = true;
-		r.launch.started?.proc.kill(signal);
+		r.run.launch?.started?.proc.kill(signal);
 	});
 	const metroTask = ui.task("metro", "Metro");
 	try {
@@ -463,8 +566,9 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 				app,
 				projectName: r.project.name,
 				...(bundle.success ? { bundleId: bundle.data } : {}),
+				actions: devActions(ctx, deps, opts, r, swap),
 			});
-		return await metro.data.proc.exited;
+		return await metroExit(metro.data.proc, swap);
 	} finally {
 		stop();
 		await ui.close();
@@ -519,7 +623,8 @@ function earlyMetro(
 	const ctx = ui.ctx;
 	const json = opts.json === true;
 	return {
-		start: (port, deviceId) => {
+		start: (port, deviceId, extraArgs = []) => {
+			const base = splitCommand(ctx.argv).cmd;
 			const handle = launchMetro(
 				{
 					probe: deps.probe,
@@ -533,7 +638,7 @@ function earlyMetro(
 					projectRoot,
 					port,
 					env: earlyMetroEnv(ctx, port, deviceId, opts.headless === true),
-					args: splitCommand(ctx.argv).cmd,
+					args: [...base, ...extraArgs.filter((arg) => !base.includes(arg))],
 					readyTimeoutMs,
 					aborted: () => run.aborted.now,
 				}
@@ -715,6 +820,10 @@ async function devWithUi(ui: DevUi, deps: DevDeps, platformArg: string | undefin
 		scheme,
 		launch,
 		aborted: run.aborted,
+		owner,
+		app: app.data,
+		run,
+		early,
 	});
 }
 
