@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
 import { openStore, type Store } from "../store";
+import { EXPO_CONFIG_ARGV } from "./app-config";
 import { fakeApp, testProject } from "./builds.testing";
 import { cachedBuild, getBuild, getInstall, recordInstall, storeArtifact } from "./cache";
 import { JSON_CONFIG_FILE } from "./config";
@@ -663,5 +664,84 @@ describe("ensureApp: one build per session", () => {
 		expect(builds(s.calls)).toBe(1);
 		expect(sleeps).toBe(0);
 		expect(s.calls.filter((c) => c.startsWith("xcrun simctl install"))).toHaveLength(2);
+	});
+});
+
+describe("projectContext with a dynamic app.config.*", () => {
+	const gitAnswers = (repo: string, cmd: readonly string[]): ExecResult | undefined => {
+		const joined = cmd.join(" ");
+		if (joined === "git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD")
+			return { exitCode: 0, stdout: `${repo}\n${repo}/.git\nrefs/heads/main\n`, stderr: "" };
+		if (joined === "git config --get remote.origin.url")
+			return { exitCode: 0, stdout: "git@github.com:o/r.git", stderr: "" };
+		return undefined;
+	};
+	const expoConfig = {
+		slug: "ctna-wallet",
+		name: "CTNA Wallet",
+		scheme: "ctnawallet",
+		ios: { bundleIdentifier: "com.x.dev" },
+	};
+
+	test("reads the bundle id, slug and scheme through `expo config` when nothing else supplies them", async () => {
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, "apps", "mobile"), { recursive: true });
+		writeFileSync(join(repo, "apps", "mobile", "app.config.ts"), "export default { ios: { bundleIdentifier: 'x' } }");
+		const calls: Array<{ cmd: string; cwd: string | undefined }> = [];
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: cmd.join(" "), cwd: opts?.cwd });
+			if (cmd.join(" ") === EXPO_CONFIG_ARGV.join(" "))
+				return { exitCode: 0, stdout: JSON.stringify(expoConfig), stderr: "" };
+			return gitAnswers(repo, cmd) ?? { exitCode: 1, stdout: "", stderr: "" };
+		};
+		const res = await projectContext({ exec, env, start: join(repo, "apps", "mobile") });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.project.bundleId).toEqual({ ios: "com.x.dev" });
+		expect(res.data.project.name).toBe("ctna-wallet");
+		expect(res.data.project.origin).toBe("app.config");
+		expect(res.data.appConfig).toEqual({ slug: "ctna-wallet", scheme: "ctnawallet" });
+		expect(calls.find((c) => c.cmd.startsWith("bunx expo config"))?.cwd).toBe(join(repo, "apps", "mobile"));
+	});
+
+	test("a failing `expo config` keeps the original error and adds expo's", async () => {
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, "apps", "mobile"), { recursive: true });
+		writeFileSync(join(repo, "apps", "mobile", "app.config.ts"), "export default {}");
+		const exec: Exec = async (cmd) => {
+			if (cmd.join(" ") === EXPO_CONFIG_ARGV.join(" "))
+				return { exitCode: 1, stdout: "", stderr: "Cannot find module 'expo/config'" };
+			return gitAnswers(repo, cmd) ?? { exitCode: 1, stdout: "", stderr: "" };
+		};
+		const res = await projectContext({ exec, env, start: join(repo, "apps", "mobile") });
+		expect(res.success).toBe(false);
+		if (!res.success) {
+			expect(res.error).toContain("--bundle-id");
+			expect(res.error).toContain("Cannot find module 'expo/config'");
+		}
+	});
+
+	test("never runs `expo config` when --bundle-id or a warden config supplies the id", async () => {
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, "apps", "mobile"), { recursive: true });
+		writeFileSync(join(repo, "apps", "mobile", "app.config.ts"), "export default {}");
+		const spawned: string[] = [];
+		const exec: Exec = async (cmd) => {
+			spawned.push(cmd.join(" "));
+			return gitAnswers(repo, cmd) ?? { exitCode: 1, stdout: "", stderr: "" };
+		};
+		const flagged = await projectContext({
+			exec,
+			env,
+			start: join(repo, "apps", "mobile"),
+			bundleId: { ios: "com.f" },
+		});
+		expect(flagged.success).toBe(true);
+		writeFileSync(
+			join(repo, JSON_CONFIG_FILE),
+			JSON.stringify({ projects: [{ name: "m", root: "apps/mobile", bundleId: { ios: "com.c" } }] })
+		);
+		const configured = await projectContext({ exec, env, start: join(repo, "apps", "mobile") });
+		expect(configured.success).toBe(true);
+		expect(spawned.some((c) => c.startsWith("bunx expo config"))).toBe(false);
 	});
 });

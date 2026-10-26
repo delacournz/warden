@@ -3,7 +3,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_BUILD_COMMAND, defaultBuildCommand } from "./builds.defaults";
-import { bundleIdFor, CONFIG_FILE, findWardenConfig, JSON_CONFIG_FILE, loadProject, parseWardenConfig } from "./config";
+import {
+	bundleIdFor,
+	CONFIG_FILE,
+	dynamicAppConfigDir,
+	findWardenConfig,
+	JSON_CONFIG_FILE,
+	loadProject,
+	parseWardenConfig,
+} from "./config";
 
 let dir: string;
 const env = { HOME: "/home/me" };
@@ -497,5 +505,37 @@ export default { batches: { smoke: { platform: "ios", cmd: ["true"] } } } satisf
 			expect(res.success).toBe(false);
 			if (!res.success) expect(res.error).toContain(message);
 		}
+	});
+});
+
+describe("dynamicAppConfigDir / appName", () => {
+	test("names the app dir whose only config is a dynamic app.config.* without a bundle id", () => {
+		mkdirSync(join(dir, "apps", "mobile"), { recursive: true });
+		writeFileSync(join(dir, "apps", "mobile", "app.config.ts"), "export default {}");
+		expect(dynamicAppConfigDir(join(dir, "apps", "mobile"), dir)).toBe(join(dir, "apps", "mobile"));
+	});
+
+	test("undefined when app.json already carries a bundle id, when --bundle-id is given, or when a warden config exists", () => {
+		writeFileSync(join(dir, "app.config.ts"), "export default {}");
+		expect(dynamicAppConfigDir(dir, dir, { ios: "com.flag" })).toBeUndefined();
+		write("app.json", { expo: { slug: "a", ios: { bundleIdentifier: "com.a" } } });
+		expect(dynamicAppConfigDir(dir, dir)).toBeUndefined();
+		rmSync(join(dir, "app.json"));
+		write(JSON_CONFIG_FILE, { projects: [{ name: "a", root: ".", bundleId: { ios: "com.a" } }] });
+		expect(dynamicAppConfigDir(dir, dir)).toBeUndefined();
+	});
+
+	test("undefined for a plain app.json app and for no app at all", () => {
+		expect(dynamicAppConfigDir(dir, dir)).toBeUndefined();
+		write("app.json", { expo: { slug: "a" } });
+		expect(dynamicAppConfigDir(dir, dir)).toBeUndefined();
+	});
+
+	test("appName names an app.config.* project when app.json has no slug", () => {
+		writeFileSync(join(dir, "app.config.ts"), "export default {}");
+		const res = loadProject({ start: dir, env, stopAt: dir, bundleId: { ios: "com.x" }, appName: "wallet" });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.name).toBe("wallet");
+		expect(res.data.origin).toBe("app.config");
 	});
 });

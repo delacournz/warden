@@ -183,7 +183,8 @@ function readAppJson(path: string): Result<AppJsonInfo> {
 function autoDetect(
 	dir: string,
 	env: Record<string, string | undefined>,
-	bundleOverride: Project["bundleId"]
+	bundleOverride: Project["bundleId"],
+	appName?: string
 ): Result<Project> | undefined {
 	const appJsonPath = join(dir, "app.json");
 	const hasAppJson = existsSync(appJsonPath);
@@ -198,7 +199,7 @@ function autoDetect(
 			`${join(dir, dynamic)} is dynamic — warden can't read its bundle id. Add ${CONFIG_FILE} (projects[].bundleId) or pass --bundle-id`
 		);
 	}
-	const name = info.data.name ?? dir.split(sep).at(-1) ?? "app";
+	const name = info.data.name ?? appName ?? dir.split(sep).at(-1) ?? "app";
 	const project = fromConfig({ name, root: ".", bundleId }, dir, env);
 	project.origin = hasAppJson ? "app.json" : "app.config";
 	project.source = "auto";
@@ -220,6 +221,8 @@ export type LoadProjectInput = {
 	variantOptional?: boolean;
 	/** `<WARDEN_HOME>/projects/<key>/` (see `overlay.ts`): its config is used when the repo has none */
 	overlayDir?: string;
+	/** the app's slug when `app.json` has none (read from `expo config` for a dynamic `app.config.*`) */
+	appName?: string;
 };
 
 /** `entry` with `variants.<name>` applied: each key the variant sets replaces the project's own. */
@@ -361,7 +364,7 @@ export function loadProject(input: LoadProjectInput): Result<Project> {
 		return project.success ? ok({ ...project.data, bundleId: { ...project.data.bundleId, ...override } }) : project;
 	}
 	for (const dir of dirs) {
-		const detected = autoDetect(dir, input.env, override);
+		const detected = autoDetect(dir, input.env, override, input.appName);
 		if (!detected) continue;
 		if (input.variant !== undefined && input.variantOptional !== true && detected.success) {
 			return err(`variant "${input.variant}" needs projects[].variants in a ${CONFIG_FILE}`);
@@ -369,6 +372,34 @@ export function loadProject(input: LoadProjectInput): Result<Project> {
 		return detected;
 	}
 	return err(`no ${CONFIG_FILE} (or ${JSON_CONFIG_FILE}), app.json or app.config.* found from ${start}`);
+}
+
+/**
+ * The app dir `loadProject` would autodetect from `start` whose bundle id only Expo can read: no warden
+ * config in reach, a dynamic `app.config.*`, and neither `app.json` nor `bundleOverride` names a bundle id.
+ * Undefined otherwise. File names and `app.json` only: nothing is evaluated.
+ */
+export function dynamicAppConfigDir(
+	start: string,
+	stopAt: string | undefined,
+	bundleOverride: Project["bundleId"] = {},
+	overlayDir?: string
+): string | undefined {
+	if (hasRepoConfig(start, stopAt)) return undefined;
+	if (overlayDir !== undefined && CONFIG_FILES.some((f) => existsSync(join(overlayDir, f)))) return undefined;
+	if (bundleOverride.ios !== undefined || bundleOverride.android !== undefined) return undefined;
+	for (const dir of ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined)) {
+		const dynamic = APP_CONFIG_FILES.find((f) => existsSync(join(dir, f)));
+		const appJsonPath = join(dir, "app.json");
+		const hasAppJson = existsSync(appJsonPath);
+		if (!hasAppJson && dynamic === undefined) continue;
+		if (dynamic === undefined) return undefined;
+		const info = hasAppJson ? readAppJson(appJsonPath) : undefined;
+		if (info !== undefined && !info.success) return undefined;
+		const ids = info?.data.bundleId ?? {};
+		return ids.ios === undefined && ids.android === undefined ? dir : undefined;
+	}
+	return undefined;
 }
 
 /** `start` and its parents, up to and including `stop` (or the filesystem root). */
