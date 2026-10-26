@@ -134,22 +134,22 @@ function clock(ms: number, withHours: boolean): string {
 	return withHours ? `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}:${seconds}` : `${pad(minutes)}:${seconds}`;
 }
 
+function hudReading(state: TuiState): string[] {
+	const { sample, fps } = state.hud;
+	if (sample === undefined || sample.kind === "waiting") return [dim("waiting for the app")];
+	if (sample.kind === "not-running")
+		return sample.reason ? [dim("app not running"), dim(sample.reason)] : [dim("app not running")];
+	const pct = sample.cpuPct === undefined ? "  —" : `${String(Math.round(sample.cpuPct)).padStart(3)}%`;
+	const mb = `${Math.round(sample.memKb / 1024)} MB`;
+	const lines = [`cpu ${pct.padStart(4)} ${cyan(sparkline(sample.cpuHistory))} ${sample.memKind} ${mb}`];
+	if (state.ready?.platform !== "android") lines.push(dim("fps —  (iOS sim: no frame API)"));
+	else lines.push(fps ? `fps ${Math.round(fps.fps)}  jank ${Math.round(fps.jankPct)}%` : "fps —");
+	return lines;
+}
+
 function hudBody(state: TuiState): string[] {
-	const { sample, fps, bundle, perf } = state.hud;
-	const lines: string[] = [];
-	if (sample === undefined || sample.kind === "waiting") lines.push(dim("waiting for the app"));
-	else if (sample.kind === "not-running") {
-		lines.push(dim("app not running"));
-		if (sample.reason) lines.push(dim(sample.reason));
-	} else {
-		const pct = sample.cpuPct === undefined ? "  —" : `${String(Math.round(sample.cpuPct)).padStart(3)}%`;
-		const mb = `${Math.round(sample.memKb / 1024)} MB`;
-		lines.push(`cpu ${pct.padStart(4)} ${cyan(sparkline(sample.cpuHistory))} ${sample.memKind} ${mb}`);
-		if (state.ready?.platform === "android" && fps) {
-			lines.push(`fps ${Math.round(fps.fps)}  jank ${Math.round(fps.jankPct)}%`);
-		} else if (state.ready?.platform === "android") lines.push("fps —");
-		else lines.push(dim("fps —  (iOS sim: no frame API)"));
-	}
+	const { bundle, perf } = state.hud;
+	const lines = hudReading(state);
 	lines.push(bundle ? `metro bundled ${(bundle.ms / 1000).toFixed(1)} s · ${bundle.modules} mods` : dim("metro —"));
 	if (perf) lines.push(`perf ${red("●")} rec ${clock(state.now - perf.startedAt, false)}  marks ${perf.marks}`);
 	return lines;
