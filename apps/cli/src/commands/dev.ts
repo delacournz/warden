@@ -49,6 +49,7 @@ import { emit, heading, note, reportError, warn } from "../output";
 import { projectContextFor } from "../project-context";
 import { closeSimWindows, revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
+import type { Spinner } from "../ui";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 import type { DevUi } from "./dev-ui";
 import { plainDevUi } from "./dev-ui.plain";
@@ -79,7 +80,14 @@ export type DevDeps = Omit<LeaseSessionDeps, "ensureApp"> & {
 	expoBin?: (projectRoot: string) => string | undefined;
 	/** test seam: the ui to run with (default: `selectDevUi`) */
 	selectUi?: (ctx: CommandContext, opts: DevUiOpts) => DevUi;
+	/** test seam: how the dashboard module is loaded (default: a lazy `import("../dev-tui/tui")`) */
+	loadTui?: LoadTui;
 };
+
+/** The dashboard module; imported only on the TUI path so no other command pays for it (nor for xterm). */
+type LoadTui = () => Promise<{
+	createDevTui: (deps: { ctx: CommandContext; hud: DevUiOpts["hud"] }) => DevUi;
+}>;
 
 type DevOpts = ClaimFlagValues & {
 	udid?: string;
@@ -97,6 +105,8 @@ type DevOpts = ClaimFlagValues & {
 	clean?: true;
 	/** `--json`: one line `{ udid, port, metroUrl, leaseIds, source }` on stdout once Metro is ready */
 	json?: true;
+	/** false = `--no-tui` */
+	tui?: boolean;
 	/** false = `--no-open` */
 	open: boolean;
 	/** false = `--no-hud`: no perf HUD in the dev TUI */
@@ -108,7 +118,7 @@ type DevOpts = ClaimFlagValues & {
 };
 
 /** What `selectDevUi` reads from the options; `hud` is validated (the interval is at least 200 ms). */
-export type DevUiOpts = Pick<DevOpts, "json"> & { hud: { enabled: boolean; intervalMs: number } };
+export type DevUiOpts = Pick<DevOpts, "json" | "tui"> & { hud: { enabled: boolean; intervalMs: number } };
 
 /** The dev-client deep link that points `scheme`'s app at the Metro on `port`. */
 export function devClientUrl(scheme: string, port: number): string {
@@ -183,6 +193,10 @@ function heldDevice(ctx: CommandContext, owner: Owner, platform: Platform, opts:
 
 type Session = {
 	deviceId: string;
+	/** the device's name when warden claimed it (a held `--udid`/`--lease` device has none to hand) */
+	deviceName: string | undefined;
+	/** the ensured dev build: where it came from and its fingerprint */
+	app: { source: string; hash: string } | undefined;
 	port: number;
 	leaseIds: string[];
 	release: () => Promise<void>;
@@ -238,6 +252,14 @@ async function openSession(
 ): AsyncResult<Session> {
 	const held = heldDevice(ctx, owner, platform, opts);
 	if (!held.success) return held;
+	// the ui shows what was installed; claimAll runs the install, so its result is read off the way in
+	let installedApp: Session["app"];
+	const installed = () => installedApp;
+	const noteInstall: RunEnsureApp = async (...args) => {
+		const result = await deps.ensureApp(...args);
+		if (result.success) installedApp = { source: result.data.source, hash: result.data.hash };
+		return result;
+	};
 	if (held.data === undefined) {
 		// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
 		// the device lease names its holder in `warden ls` and `warden ui`'s busy / sharing messages
@@ -253,7 +275,7 @@ async function openSession(
 		let showing: Promise<void> | undefined;
 		const session = await claimAll(
 			ctx,
-			deps,
+			{ ...deps, ensureApp: noteInstall },
 			owner,
 			{
 				flags: flags.data,
@@ -294,7 +316,7 @@ async function openSession(
 			await release();
 			return err("claim returned no device / port");
 		}
-		return ok({ deviceId, port, leaseIds, release });
+		return ok({ deviceId, deviceName: outcome.claimed[0]?.device.name, app: installed(), port, leaseIds, release });
 	}
 	const deviceId = held.data;
 	const ports = await claimRunPorts(ctx, owner, [opts.port], deps.pid, deps.isPortFree, "warden dev");
@@ -308,14 +330,14 @@ async function openSession(
 	}
 	early.start(port, deviceId);
 	const showing = showDevice(ctx, platform, deviceId, opts.headless === true);
-	const ensured = await deps.ensureApp(ctx, owner, platform, deviceId, app);
+	const ensured = await noteInstall(ctx, owner, platform, deviceId, app);
 	await showing;
 	if (!ensured.success) {
 		await release();
 		return err(`app on ${deviceId}: ${ensured.error}`);
 	}
 	ctx.err(`warden dev: app ${ensured.data.source} on ${deviceId} [${ensured.data.hash}]`);
-	return ok({ deviceId, port, leaseIds, release });
+	return ok({ deviceId, deviceName: undefined, app: installed(), port, leaseIds, release });
 }
 
 /**
@@ -399,7 +421,7 @@ type Running = {
 /** Metro (started early, verified to serve this project) with the dev client opened on it; resolves with Metro's exit code. */
 async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Promise<number> {
 	const ctx = ui.ctx;
-	const { deviceId, port, leaseIds, release } = r.session;
+	const { deviceId, deviceName, app, port, leaseIds, release } = r.session;
 	const json = opts.json === true;
 	const stop = holdLeases(ctx, deps, leaseIds, (signal) => {
 		r.aborted.now = true;
@@ -434,11 +456,11 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 			ui.ready({
 				platform: r.platform,
 				deviceId,
-				deviceName: undefined,
+				deviceName,
 				port,
 				metroUrl: metro.data.url,
 				leaseIds,
-				app: undefined,
+				app,
 				projectName: r.project.name,
 				...(bundle.success ? { bundleId: bundle.data } : {}),
 			});
@@ -583,8 +605,12 @@ async function dev(
 		reportError(rawCtx, "dev", `--hud-interval: ${hudInterval.error}`);
 		return 1;
 	}
-	const uiOpts: DevUiOpts = { json: opts.json, hud: { enabled: opts.hud, intervalMs: hudInterval.data } };
-	const ui = deps.selectUi?.(rawCtx, uiOpts) ?? selectDevUi(rawCtx, uiOpts);
+	const uiOpts: DevUiOpts = {
+		json: opts.json,
+		tui: opts.tui,
+		hud: { enabled: opts.hud, intervalMs: hudInterval.data },
+	};
+	const ui = deps.selectUi?.(rawCtx, uiOpts) ?? (await selectDevUi(rawCtx, uiOpts, deps.loadTui));
 	try {
 		return await devWithUi(ui, deps, platformArg, opts);
 	} finally {
@@ -593,11 +619,43 @@ async function dev(
 }
 
 /**
- * The ui for this run. Plain (spinner + notes, Metro on the terminal) until TUI-3's merge adds the
- * dashboard here: `tui` when the terminal is interactive and rich, and not `--json` / `--no-tui` / `WARDEN_TUI=0`.
+ * The ui for this run: the dashboard when the terminal is interactive and rich, and not `--json` / `--no-tui` /
+ * `WARDEN_TUI=0`; else plain (spinner + notes, Metro on the terminal). The dashboard module (and xterm) load
+ * only on that path.
  */
-export function selectDevUi(ctx: CommandContext, _opts: DevUiOpts): DevUi {
-	return plainDevUi(ctx);
+export async function selectDevUi(
+	ctx: CommandContext,
+	opts: DevUiOpts,
+	load: LoadTui = () => import("../dev-tui/tui")
+): Promise<DevUi> {
+	const tui =
+		ctx.ui.interactive && ctx.ui.rich && opts.json !== true && opts.tui !== false && ctx.env.WARDEN_TUI !== "0";
+	if (!tui) return plainDevUi(ctx);
+	const { createDevTui } = await load();
+	return createDevTui({ ctx, hud: opts.hud });
+}
+
+/** The `claim` step: lease the device + port and install the build, reported on the claim row (plain: under a spinner). */
+async function claimDevice(
+	ui: DevUi,
+	deps: DevDeps,
+	a: { owner: Owner; platform: Platform; opts: DevOpts; app: EnsureOptions; early: EarlyMetro }
+): AsyncResult<Session> {
+	const claimTask = ui.task("claim", `preparing the ${a.platform} dev build`);
+	const claim = async (sctx: CommandContext, spinner?: Spinner) => {
+		const result = await openSession(sctx, deps, a.owner, a.platform, a.opts, a.app, a.early);
+		if (result.success) {
+			spinner?.succeed(`${a.platform} dev build on ${result.data.deviceId}`);
+			claimTask.ok(result.data.deviceId);
+		} else {
+			spinner?.fail(`${a.platform} dev build not ready`);
+			claimTask.fail(result.error);
+		}
+		return result;
+	};
+	// the dashboard's claim row is the progress: an ora spinner would be a second line for the same step
+	if (ui.metro.kind === "pty") return claim(ui.ctx);
+	return withSpinner(ui.ctx, `preparing the ${a.platform} dev build…`, claim);
 }
 
 /** `dev`'s session logic, talking to a `DevUi`; everything the person sees goes through `ui`. */
@@ -641,18 +699,7 @@ async function devWithUi(ui: DevUi, deps: DevDeps, platformArg: string | undefin
 		})
 	);
 	if (!opts.json) heading(ctx, "dev", `${platform.data} · ${project.data.project.name}`);
-	const claimTask = ui.task("claim", `preparing the ${platform.data} dev build`);
-	const session = await withSpinner(ctx, `preparing the ${platform.data} dev build…`, async (sctx, spinner) => {
-		const result = await openSession(sctx, deps, owner, platform.data, opts, app.data, early);
-		if (result.success) {
-			spinner.succeed(`${platform.data} dev build on ${result.data.deviceId}`);
-			claimTask.ok(result.data.deviceId);
-		} else {
-			spinner.fail(`${platform.data} dev build not ready`);
-			claimTask.fail(result.error);
-		}
-		return result;
-	});
+	const session = await claimDevice(ui, deps, { owner, platform: platform.data, opts, app: app.data, early });
 	// after the claim: its own lease keeps the background gc off the device it just took (16-1)
 	maybeAutoGc(ctx);
 	for (const off of offSignals) off();
@@ -703,6 +750,10 @@ export function createDevCommand(deps: DevDeps): Command {
 				.option("--no-hud", "no perf HUD in the dev TUI")
 				.option("--hud-interval <duration>", "HUD sampling interval, at least 200ms", "1s")
 				.option("--no-open", "don't open the dev client (Metro + the leases only)")
+				.option(
+					"--no-tui",
+					"plain output: Metro on this terminal, no dashboard (also WARDEN_TUI=0; --json and pipes are always plain)"
+				)
 				.option(
 					"--no-shutdown",
 					"leave the simulator booted when dev ends (default: shut down the one dev leased, unless it was already running)"

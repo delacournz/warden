@@ -2,9 +2,11 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
+import { main } from "../cli";
+import type { CommandContext } from "../context";
 import { devClientLaunchArgv, type MetroProc } from "../metro";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import type { EnsureOptions } from "./app";
 import {
 	createDevCommand,
@@ -13,8 +15,9 @@ import {
 	type DevUiOpts,
 	defaultDevDeps,
 	devClientUrl,
+	selectDevUi,
 } from "./dev";
-import type { DevMetroMode, DevUi, MetroTerminal } from "./dev-ui";
+import type { DevMetroMode, DevReady, DevUi, MetroTerminal } from "./dev-ui";
 import { plainDevUi } from "./dev-ui.plain";
 
 let ctx: TestContext | undefined;
@@ -807,6 +810,24 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
+	test("ready carries the device name and the app's source and hash; no spinner runs in PTY mode", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const events = (c.ui as ScriptedUi).events;
+		const fake = fakeUi(c);
+		const readies: DevReady[] = [];
+		fake.ui.ready = (info) => void readies.push(info);
+		const h = ptyHarness();
+		h.deps.selectUi = () => fake.ui;
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => readies.length > 0);
+		expect(readies[0]).toMatchObject({ platform: "ios", deviceId: "U1", app: { source: "cache", hash: "H" } });
+		expect(readies[0]?.deviceName).toEqual(expect.any(String));
+		expect(events.filter((e) => e.startsWith("spin:"))).toEqual([]);
+		h.finish(0);
+		await running;
+	});
+
 	test("the ui quitting ends the session like SIGINT: Metro killed, sim shut down, leases released", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls, [], "Shutdown");
@@ -887,5 +908,90 @@ describe("warden dev: HUD options", () => {
 		const c = setup(["ios", "--hud-interval", "soon"], []);
 		expect(await createDevCommand(harness().deps).run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--hud-interval");
+	});
+});
+
+describe("selectDevUi", () => {
+	type Loaded = { createDevTui: (deps: { ctx: CommandContext; hud: DevUiOpts["hud"] }) => DevUi };
+
+	function loader() {
+		const created: CommandContext[] = [];
+		const huds: Array<DevUiOpts["hud"]> = [];
+		const fake: DevUi = {
+			ctx: testContext([]),
+			task: () => ({ ok: () => {}, fail: () => {}, log: () => {} }),
+			metro: { kind: "inherit" },
+			ready: () => {},
+			onQuit: () => {},
+			close: async () => {},
+		};
+		const load = async (): Promise<Loaded> => ({
+			createDevTui: ({ ctx: made, hud }) => {
+				created.push(made);
+				huds.push(hud);
+				return fake;
+			},
+		});
+		return { load, created, huds, fake };
+	}
+
+	const HUD = { enabled: true, intervalMs: 1000 };
+	const opts = (o: Partial<DevUiOpts> = {}): DevUiOpts => ({ hud: HUD, ...o });
+
+	function context(env: Record<string, string> = {}, ui = scriptedUi({ interactive: true, rich: true })) {
+		ctx = testContext([], { ui, env: { ...testContext([]).env, ...env } });
+		return ctx;
+	}
+
+	test("an interactive rich terminal gets the dashboard, loaded lazily", async () => {
+		const l = loader();
+		const c = context();
+		const ui = await selectDevUi(c, opts({ tui: true }), l.load);
+		expect(ui).toBe(l.fake);
+		expect(l.created).toEqual([c]);
+		expect(l.huds).toEqual([HUD]);
+	});
+
+	test("the dashboard is the default when --no-tui is not given (opts.tui undefined)", async () => {
+		const l = loader();
+		expect(await selectDevUi(context(), opts(), l.load)).toBe(l.fake);
+	});
+
+	test("plain for --json, --no-tui, WARDEN_TUI=0, pipes and non-rich terminals; the dashboard is never loaded", async () => {
+		const cases: Array<[string, CommandContext, DevUiOpts]> = [
+			["--json", context(), opts({ json: true })],
+			["--no-tui", context(), opts({ tui: false })],
+			["WARDEN_TUI=0", context({ WARDEN_TUI: "0" }), opts()],
+			["not interactive", context({}, scriptedUi({ interactive: false, rich: true })), opts()],
+			["not rich", context({}, scriptedUi({ interactive: true, rich: false })), opts()],
+		];
+		for (const [name, c, opts] of cases) {
+			let loaded = false;
+			const l = loader();
+			const ui = await selectDevUi(c, opts, () => {
+				loaded = true;
+				return l.load();
+			});
+			expect([name, loaded, ui.metro.kind]).toEqual([name, false, "inherit"]);
+		}
+	});
+
+	test("WARDEN_TUI=1 does not switch the dashboard on for a pipe", async () => {
+		const l = loader();
+		const ui = await selectDevUi(context({ WARDEN_TUI: "1" }, scriptedUi()), opts(), l.load);
+		expect(ui.metro.kind).toBe("inherit");
+	});
+
+	test("--no-tui is documented in dev's help", async () => {
+		let run: TestContext | undefined;
+		const code = await main(["dev", "--help"], (rest) => {
+			run = testContext(rest);
+			return run;
+		});
+		const text = (run?.stdout ?? []).join("\n");
+		run?.cleanup();
+		expect(code).toBe(0);
+		expect(text).toContain("--no-tui");
+		expect(text).toContain("WARDEN_TUI=0");
 	});
 });

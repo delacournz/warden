@@ -111,6 +111,24 @@ describe("cold start: the commands agents call most", () => {
 	}
 });
 
+describe("cold start: the dev dashboard is lazy", () => {
+	const TUI = ["/src/dev-tui/", "/node_modules/@xterm/"];
+
+	for (const args of [
+		["version"],
+		["claim", "--help"],
+		["heartbeat"],
+		["gc", "--json"],
+		["release", "--help"],
+		["ui", "--help"],
+		["dev", "--help"],
+	]) {
+		test(`\`warden ${args.join(" ")}\` loads neither the dashboard nor xterm`, async () => {
+			expect(loaded(await loadedBy(args), TUI)).toEqual([]);
+		});
+	}
+});
+
 describe("cold start: gc and release", () => {
 	const HEAVY = [
 		"/packages/e2e/",

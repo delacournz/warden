@@ -270,6 +270,9 @@ Options:
                               "1s")
   --no-open                   don't open the dev client (Metro + the leases
                               only)
+  --no-tui                    plain output: Metro on this terminal, no dashboard
+                              (also WARDEN_TUI=0; --json and pipes are always
+                              plain)
   --no-shutdown               leave the simulator booted when dev ends (default:
                               shut down the one dev leased, unless it was
                               already running)
