@@ -220,13 +220,27 @@ type EarlyMetro = {
  * Show the leased sim (iOS, not `--headless`, macOS): bring its viewer window to the front, launching
  * the viewer when none runs. Best effort: a viewer that can't be opened is a warning, never a failure.
  */
-async function showDevice(ctx: CommandContext, platform: Platform, deviceId: string, headless: boolean): Promise<void> {
-	if (platform !== "ios" || headless || process.platform !== "darwin") return;
+async function showDevice(
+	ctx: CommandContext,
+	ui: DevUi,
+	platform: Platform,
+	deviceId: string,
+	headless: boolean
+): Promise<void> {
+	const task = ui.task("show", "show simulator");
+	if (platform !== "ios" || headless || process.platform !== "darwin") {
+		task.ok(platform !== "ios" ? "not needed" : headless ? "headless" : "skipped");
+		return;
+	}
 	const shown = await revealSimWindow(ctx, deviceId);
 	if (shown.success) {
 		const viewer = shown.data.viewer === "device-hub" ? "Device Hub" : "Simulator";
 		note(ctx, `warden dev: showing ${deviceId} in ${viewer}`);
-	} else warn(ctx, `warden dev: couldn't show ${deviceId} (${shown.error}); --headless skips this`);
+		task.ok(viewer);
+	} else {
+		warn(ctx, `warden dev: couldn't show ${deviceId} (${shown.error}); --headless skips this`);
+		task.fail(shown.error);
+	}
 }
 
 /**
@@ -250,6 +264,7 @@ async function shutdownDevices(ctx: CommandContext, owner: Owner, leases: Lease[
 /** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
 async function openSession(
 	ctx: CommandContext,
+	ui: DevUi,
 	deps: DevDeps,
 	owner: Owner,
 	platform: Platform,
@@ -263,8 +278,12 @@ async function openSession(
 	let installedApp: Session["app"];
 	const installed = () => installedApp;
 	const noteInstall: RunEnsureApp = async (...args) => {
+		const appTask = ui.task("app", "dev build");
 		const result = await deps.ensureApp(...args);
-		if (result.success) installedApp = { source: result.data.source, hash: result.data.hash };
+		if (result.success) {
+			installedApp = { source: result.data.source, hash: result.data.hash };
+			appTask.ok(`${result.data.source} ${result.data.hash.slice(0, 8)}`);
+		} else appTask.fail(result.error);
 		return result;
 	};
 	if (held.data === undefined) {
@@ -297,7 +316,7 @@ async function openSession(
 				onLeased: (outcome) => {
 					ctx.store().markShared(outcome.claimed.map((c) => c.lease.id));
 					const first = outcome.claimed[0]?.device.id;
-					if (first !== undefined) showing = showDevice(ctx, platform, first, opts.headless === true);
+					if (first !== undefined) showing = showDevice(ctx, ui, platform, first, opts.headless === true);
 				},
 				aborted: early.aborted,
 			},
@@ -336,7 +355,7 @@ async function openSession(
 		return err("no Metro port leased");
 	}
 	early.start(port, deviceId);
-	const showing = showDevice(ctx, platform, deviceId, opts.headless === true);
+	const showing = showDevice(ctx, ui, platform, deviceId, opts.headless === true);
 	const ensured = await noteInstall(ctx, owner, platform, deviceId, app);
 	await showing;
 	if (!ensured.success) {
@@ -530,15 +549,12 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 		r.aborted.now = true;
 		r.run.launch?.started?.proc.kill(signal);
 	});
-	const metroTask = ui.task("metro", "Metro");
 	try {
 		const metro = await r.launch.pending;
 		if (!metro.success) {
-			metroTask.fail(metro.error);
 			reportError(ctx, "dev", metro.error);
 			return 1;
 		}
-		metroTask.ok(metro.data.url);
 		if (opts.open) {
 			const clientTask = ui.task("client", "dev client");
 			const opened = await openDevClient(ctx, r.platform, deviceId, r.project, r.scheme, port);
@@ -625,6 +641,7 @@ function earlyMetro(
 	return {
 		start: (port, deviceId, extraArgs = []) => {
 			const base = splitCommand(ctx.argv).cmd;
+			const metroTask = ui.task("metro", "Metro");
 			const handle = launchMetro(
 				{
 					probe: deps.probe,
@@ -645,7 +662,11 @@ function earlyMetro(
 			);
 			run.launch = handle;
 			void handle.pending.then((result) => {
-				if (!result.success) run.metroFailed = true;
+				if (result.success) metroTask.ok(result.data.url);
+				else {
+					run.metroFailed = true;
+					metroTask.fail(result.error);
+				}
 			});
 		},
 		aborted: () => run.aborted.now || run.metroFailed,
@@ -748,7 +769,7 @@ async function claimDevice(
 ): AsyncResult<Session> {
 	const claimTask = ui.task("claim", `preparing the ${a.platform} dev build`);
 	const claim = async (sctx: CommandContext, spinner?: Spinner) => {
-		const result = await openSession(sctx, deps, a.owner, a.platform, a.opts, a.app, a.early);
+		const result = await openSession(sctx, ui, deps, a.owner, a.platform, a.opts, a.app, a.early);
 		if (result.success) {
 			spinner?.succeed(`${a.platform} dev build on ${result.data.deviceId}`);
 			claimTask.ok(result.data.deviceId);

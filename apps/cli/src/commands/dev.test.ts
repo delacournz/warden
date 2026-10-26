@@ -828,6 +828,47 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		await running;
 	});
 
+	test("every row gets a real outcome: claim, show, app, metro and client end ok, then ready", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [
+			["pgrep -xq Simulator", { exitCode: 1 }],
+			["pgrep -xq DeviceHub", { exitCode: 0 }],
+			["open", {}],
+		]);
+		const fake = fakeUi(c);
+		const trace: string[] = [];
+		fake.ui.task = (id) => {
+			trace.push(`start ${id}`);
+			return {
+				ok: (detail) => void trace.push(`ok ${id}${detail ? ` ${detail}` : ""}`),
+				fail: (error) => void trace.push(`fail ${id} ${error}`),
+				log: () => {},
+			};
+		};
+		fake.ui.ready = () => void trace.push("ready");
+		const h = ptyHarness();
+		h.deps.selectUi = () => fake.ui;
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => trace.includes("ready"));
+		const ends = trace.filter((e) => !e.startsWith("start "));
+		expect(
+			ends.map((e) => (e.split(" ")[0] === "ready" ? "ready" : e.split(" ").slice(0, 2).join(" "))).sort()
+		).toEqual(["ok app", "ok claim", "ok client", "ok metro", "ok show", "ready"].sort());
+		expect(trace.at(-1)).toBe("ready");
+		expect(trace.indexOf("start show")).toBeLessThan(trace.findIndex((e) => e.startsWith("ok show")));
+		expect(trace.find((e) => e.startsWith("ok show"))).toBe("ok show Device Hub");
+		expect(trace.find((e) => e.startsWith("ok app"))).toBe("ok app cache H");
+		expect(trace.find((e) => e.startsWith("ok metro"))).toMatch(/^ok metro http:/);
+		expect(trace.findIndex((e) => e.startsWith("ok app"))).toBeLessThan(
+			trace.findIndex((e) => e.startsWith("ok claim"))
+		);
+		expect(trace.findIndex((e) => e.startsWith("ok metro"))).toBeLessThan(
+			trace.findIndex((e) => e.startsWith("ok client"))
+		);
+		h.finish(0);
+		await running;
+	});
+
 	test("the ui quitting ends the session like SIGINT: Metro killed, sim shut down, leases released", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls, [], "Shutdown");
