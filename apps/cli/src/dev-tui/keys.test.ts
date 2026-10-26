@@ -126,11 +126,31 @@ describe("actionFor", () => {
 	});
 
 	test("every action key in the plan's map is bound, built or not", () => {
-		for (const name of ["r", "d", "o", "s", "R", "x", "c", "l", "p", "P", "m", "f", "g", "enter", "i"]) {
+		for (const name of ["r", "d", "o", "s", "R", "x", "c", "l", "p", "P", "m", "f", "g"]) {
 			expect(actionFor("list", press(name))?.type).toBe("unavailable");
 		}
 		expect(actionFor("list", press("h"))).toEqual({ type: "hud" });
 		expect(actionFor("list", press("l", { ctrl: true }))).toEqual({ type: "redraw" });
+	});
+
+	test("enter and i interact with Metro", () => {
+		for (const name of ["enter", "i"]) expect(actionFor("list", press(name))).toEqual({ type: "interact" });
+	});
+
+	test("interact mode: Esc leaves, Shift+PgUp/PgDn scroll the pane, everything else goes to Expo", () => {
+		expect(actionFor("interact", press("escape"))).toEqual({ type: "mode", mode: "list" });
+		expect(actionFor("interact", press("pgup", { shift: true }))).toEqual({ type: "pane-scroll", dir: 1 });
+		expect(actionFor("interact", press("pgdn", { shift: true }))).toEqual({ type: "pane-scroll", dir: -1 });
+		for (const k of [
+			press("r"),
+			press("?"),
+			press("up"),
+			press("c", { ctrl: true }),
+			press("q"),
+			press("pgup"),
+			press("l", { ctrl: true }),
+		])
+			expect(actionFor("interact", k)).toEqual({ type: "forward" });
 	});
 
 	test("plain letters do not fire on Ctrl", () => {
@@ -150,6 +170,17 @@ describe("actionFor", () => {
 			expect(actionFor("help", press(name))).toEqual({ type: "mode", mode: "list" });
 		expect(actionFor("help", press("c", { ctrl: true }))).toEqual({ type: "quit" });
 		expect(actionFor("help", press("j"))).toBeUndefined();
+	});
+});
+
+describe("Shift+PgUp / PgDn", () => {
+	test("the parser marks a modified ~ sequence shift", () => {
+		const { keys } = parse("\x1b[5;2~", "\x1b[6;2~", "\x1b[5~");
+		expect(keys.map((k) => [k.name, k.shift])).toEqual([
+			["pgup", true],
+			["pgdn", true],
+			["pgup", false],
+		]);
 	});
 });
 

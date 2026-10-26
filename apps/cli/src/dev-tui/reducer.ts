@@ -1,7 +1,7 @@
 import type { DevReady } from "../commands/dev-ui";
 import { sanitizeLine } from "./ansi";
 import { type Action, actionFor, type Key } from "./keys";
-import { type HudFps, type HudSample, newTask, type Size, type Task, type TuiState } from "./model";
+import { type HudFps, type HudSample, type Mode, newTask, type Size, type Task, type TuiState } from "./model";
 
 export type TuiEvent =
 	| { type: "task:start"; id: string; title: string; at: number }
@@ -11,6 +11,7 @@ export type TuiEvent =
 	| { type: "task:title"; id: string; title: string }
 	| { type: "key"; key: Key; at: number }
 	| { type: "resize"; size: Size }
+	| { type: "mode"; mode: Mode }
 	| { type: "ready"; info: DevReady; at: number }
 	| { type: "metro:exit"; code: number; at: number }
 	| { type: "hud:sample"; sample: HudSample; fps: HudFps | undefined; at: number };
@@ -92,6 +93,13 @@ function applyAction(state: TuiState, action: Action): TuiState {
 		}
 		case "mode":
 			return { ...state, mode: action.mode };
+		case "interact": {
+			const metro = state.tasks.findIndex((t) => t.id === "metro");
+			return metro === -1 ? state : { ...state, selected: metro, autoFollow: false, mode: "interact" };
+		}
+		case "forward":
+		case "pane-scroll":
+			return state;
 		case "hud":
 			return { ...state, hud: { ...state.hud, visible: !state.hud.visible } };
 		case "redraw":
@@ -159,6 +167,8 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 		}
 		case "resize":
 			return { ...state, size: event.size };
+		case "mode":
+			return { ...state, mode: event.mode };
 		case "ready": {
 			const base = ensureTask(
 				{ ...state, ready: event.info, now: event.at, hud: { ...state.hud, sessionStartedAt: event.at } },
@@ -178,7 +188,7 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 			return { ...state, now: event.at, hud: { ...state.hud, sample: event.sample, fps: event.fps } };
 		case "metro:exit": {
 			const noted = withLog({ ...state, now: event.at }, "metro", `metro exited (code ${event.code})`);
-			return { ...noted, metroExit: event.code };
+			return { ...noted, metroExit: event.code, mode: state.mode === "interact" ? "list" : state.mode };
 		}
 	}
 }

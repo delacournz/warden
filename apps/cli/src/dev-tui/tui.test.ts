@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { DevReady } from "../commands/dev-ui";
 import { testContext } from "../testing";
 import { fakeProcess, fakeStdin, fakeStdout, replay } from "./fakes.testing";
+import { listWidth } from "./render";
 import { createDevTui, FRAME_MS } from "./tui";
 
 const READY: DevReady = {
@@ -17,9 +18,9 @@ const READY: DevReady = {
 
 const settle = () => Bun.sleep(FRAME_MS * 3);
 
-function setup() {
+function setup(cols = 80, rows = 24) {
 	const stdin = fakeStdin();
-	const stdout = fakeStdout(80, 24);
+	const stdout = fakeStdout(cols, rows);
 	const process = fakeProcess();
 	let clock = 1000;
 	const ui = createDevTui({
@@ -37,7 +38,7 @@ function setup() {
 		advance: (ms: number) => {
 			clock += ms;
 		},
-		screen: () => replay(stdout.all(), 80, 24),
+		screen: () => replay(stdout.all(), stdout.output.columns, stdout.output.rows),
 	};
 }
 
@@ -277,5 +278,151 @@ describe("createDevTui", () => {
 		expect(text).toContain("Metro output appears here");
 		expect(text).toContain("metro exited (code 3)");
 		await ui.close();
+	});
+});
+
+describe("Metro pane and key passthrough", () => {
+	const fixture = Bun.file(`${import.meta.dir}/fixtures/expo-start.bin`).arrayBuffer();
+
+	function withMetro(cols = 80, rows = 24) {
+		const base = setup(cols, rows);
+		const { ui } = base;
+		if (ui.metro.kind !== "pty") throw new Error("expected pty");
+		const written: Array<string | Uint8Array> = [];
+		const resizes: Array<[number, number]> = [];
+		let finish: (code: number) => void = () => undefined;
+		const exited = new Promise<number>((resolve) => {
+			finish = resolve;
+		});
+		ui.metro.attach({ write: (d) => written.push(d), resize: (c, r) => resizes.push([c, r]) }, exited);
+		let quits = 0;
+		ui.onQuit(() => {
+			quits++;
+		});
+		return { ...base, metro: ui.metro, written, resizes, finish, quits: () => quits };
+	}
+
+	test("Enter on the metro row enters interact mode and shows the hint", async () => {
+		const m = withMetro();
+		m.stdin.press("i");
+		await settle();
+		const rows = await m.screen();
+		expect(rows.at(-1)).toContain("Esc back · keys go to Expo · Shift+PgUp/PgDn scroll");
+		expect(rows.some((r) => r.includes("metro"))).toBe(true);
+		await m.ui.close();
+	});
+
+	test("in interact mode every key reaches the terminal, Ctrl-C included, and Ctrl-C does not quit", async () => {
+		const m = withMetro();
+		m.stdin.press("i");
+		for (const seq of ["r", "?", "\x1b[A", "\x03", "q", "\x0c", "\r"]) m.stdin.press(seq);
+		await settle();
+		expect(m.written).toEqual(["r", "?", "\x1b[A", "\x03", "q", "\x0c", "\r"]);
+		expect(m.quits()).toBe(0);
+		await m.ui.close();
+	});
+
+	test("Esc goes back to the list: keys stop reaching Metro and q quits again", async () => {
+		const m = withMetro();
+		m.stdin.press("i");
+		m.stdin.press("\x1b");
+		await Bun.sleep(60);
+		m.advance(1000);
+		m.stdin.press("r");
+		m.stdin.press("q");
+		await settle();
+		expect(m.written).toEqual([]);
+		expect(m.quits()).toBe(1);
+		await m.ui.close();
+	});
+
+	test("Esc Esc inside 300 ms sends a literal Esc to Metro and stays in interact mode", async () => {
+		const m = withMetro();
+		m.stdin.press("i");
+		m.stdin.press("\x1b\x1b");
+		await Bun.sleep(80);
+		expect(m.written).toEqual(["\x1b"]);
+		m.stdin.press("r");
+		await settle();
+		expect(m.written).toEqual(["\x1b", "r"]);
+		await m.ui.close();
+	});
+
+	test("a second Esc after 300 ms is not a literal Esc", async () => {
+		const m = withMetro();
+		m.stdin.press("i");
+		m.stdin.press("\x1b");
+		await Bun.sleep(60);
+		m.advance(400);
+		m.stdin.press("\x1b");
+		await Bun.sleep(60);
+		expect(m.written).toEqual([]);
+		await m.ui.close();
+	});
+
+	test("Metro's output renders in the pane with its colours, QR and menu", async () => {
+		const m = withMetro(120, 40);
+		const bytes = new Uint8Array(await fixture);
+		for (let i = 0; i < bytes.length; i += 1024) m.metro.onData(bytes.slice(i, i + 1024));
+		m.stdin.press("i");
+		await Bun.sleep(100);
+		const rows = await m.screen();
+		const text = rows.join("\n");
+		expect(text).toContain("Press w │ open web");
+		expect(text).not.toContain("Metro output appears here");
+		await m.ui.close();
+	});
+
+	test("the real cursor is shown at the pane's cursor in interact mode and hidden after Esc", async () => {
+		const m = withMetro();
+		m.metro.onData(new TextEncoder().encode("ab\r\ncd"));
+		m.stdin.press("i");
+		await Bun.sleep(80);
+		const col = listWidth(80) + 2 + 2 + 1;
+		expect(m.stdout.all()).toContain(`\x1b[${1 + 1 + 1};${col}H\x1b[?25h`);
+		m.stdout.clear();
+		m.stdin.press("\x1b");
+		await Bun.sleep(80);
+		expect(m.stdout.all()).toContain("\x1b[?25l");
+		await m.ui.close();
+	});
+
+	test("Shift+PgUp scrolls the pane into its history without reaching Metro; a key snaps back", async () => {
+		const m = withMetro();
+		m.metro.onData(new TextEncoder().encode(Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\r\n")));
+		m.stdin.press("i");
+		await Bun.sleep(80);
+		expect((await m.screen()).join("\n")).toContain("line 99");
+		m.stdin.press("\x1b[5;2~");
+		await Bun.sleep(80);
+		const scrolled = (await m.screen()).join("\n");
+		expect(scrolled).not.toContain("line 99");
+		expect(scrolled).toContain("line 7");
+		expect(m.written).toEqual([]);
+		m.stdin.press("x");
+		await Bun.sleep(80);
+		expect((await m.screen()).join("\n")).toContain("line 99");
+		expect(m.written).toEqual(["x"]);
+		await m.ui.close();
+	});
+
+	test("a terminal resize resizes the Metro PTY to the pane size", async () => {
+		const m = withMetro();
+		m.stdout.resize(120, 40);
+		m.process.emit("SIGWINCH");
+		await settle();
+		expect(m.resizes).toEqual([[120 - 32 - 3, 38]]);
+		await m.ui.close();
+	});
+
+	test("after Metro exits interact mode ends and keys stay with warden", async () => {
+		const m = withMetro();
+		m.stdin.press("i");
+		m.finish(2);
+		await settle();
+		m.stdin.press("r");
+		await settle();
+		expect(m.written).toEqual([]);
+		await m.ui.close();
 	});
 });

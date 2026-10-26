@@ -49,7 +49,11 @@ function csiStep(buf: string): Step {
 	const params = buf.slice(2, end);
 	const used = end + 1;
 	if (final === "Z") return { key: key("tab", seq, { shift: true }), used };
-	if (final === "~") return { key: key(TILDE_NAMES[params.split(";")[0] ?? ""] ?? "unknown", seq), used };
+	if (final === "~")
+		return {
+			key: key(TILDE_NAMES[params.split(";")[0] ?? ""] ?? "unknown", seq, { shift: params.endsWith(";2") }),
+			used,
+		};
 	return { key: key(CSI_NAMES[final] ?? "unknown", seq, { shift: params.endsWith(";2") }), used };
 }
 
@@ -122,6 +126,12 @@ export type Action =
 	| { type: "select"; delta: 1 | -1 }
 	| { type: "scroll"; kind: ScrollKind; dir: 1 | -1 }
 	| { type: "mode"; mode: Mode }
+	/** select the Metro row and send every key to Expo until Esc */
+	| { type: "interact" }
+	/** interact mode: this key belongs to Expo (the host writes its bytes to the Metro PTY) */
+	| { type: "forward" }
+	/** interact mode: scroll the Metro pane into its history (`dir` 1) or back (`dir` -1); the host applies it */
+	| { type: "pane-scroll"; dir: 1 | -1 }
 	| { type: "quit" }
 	| { type: "hud" }
 	| { type: "redraw" }
@@ -162,12 +172,7 @@ function todo(keyName: string, desc: string): Binding {
 export const LIST_BINDINGS: readonly Binding[] = [
 	{ label: "↑ ↓ j k", desc: "select task", match: named("up", "k"), action: { type: "select", delta: -1 } },
 	{ label: "", desc: "", match: named("down", "j"), action: { type: "select", delta: 1 }, hidden: true },
-	{
-		label: "enter i",
-		desc: "interact Metro",
-		match: named("enter", "i"),
-		action: { type: "unavailable", label: "interact Metro" },
-	},
+	{ label: "enter i", desc: "interact Metro", match: named("enter", "i"), action: { type: "interact" } },
 	{ label: "tab", desc: "focus log", match: named("tab"), action: { type: "mode", mode: "log" } },
 	todo("r", "reload app"),
 	todo("d", "show sim"),
@@ -212,9 +217,17 @@ export const HELP_BINDINGS: readonly Binding[] = [
 	{ label: "ctrl-c", desc: "quit, release", match: ctrl("c"), action: { type: "quit" } },
 ];
 
-/** Interact mode (Metro pane, TUI-4): only Esc is ours. */
+const shifted =
+	(name: string) =>
+	(k: Key): boolean =>
+		k.shift && k.name === name;
+
+/** Interact mode (Metro pane): Esc and Shift+PgUp/PgDn are ours, every other key (Ctrl-C too) is Expo's. */
 export const INTERACT_BINDINGS: readonly Binding[] = [
 	{ label: "esc", desc: "back to list", match: named("escape"), action: { type: "mode", mode: "list" } },
+	{ label: "shift+pgup", desc: "scroll pane up", match: shifted("pgup"), action: { type: "pane-scroll", dir: 1 } },
+	{ label: "shift+pgdn", desc: "scroll pane down", match: shifted("pgdn"), action: { type: "pane-scroll", dir: -1 } },
+	{ label: "any", desc: "to Expo", match: () => true, action: { type: "forward" } },
 ];
 
 const BINDINGS: Record<Mode, readonly Binding[]> = {
@@ -249,7 +262,7 @@ export function footerHint(mode: Mode): string {
 		case "log":
 			return "↑↓ scroll · pgup/pgdn page · g/G top/bottom · tab back · q quit";
 		case "interact":
-			return "esc back · every other key goes to Metro";
+			return "Esc back · keys go to Expo · Shift+PgUp/PgDn scroll";
 		case "help":
 			return "esc close · ctrl-c quit";
 	}

@@ -46,8 +46,11 @@ export type ScreenDeps = {
 
 export type Screen = {
 	size(): Size;
-	/** write the rows that differ from the last frame; no-op once closed */
-	draw(rows: string[]): void;
+	/**
+	 * write the rows that differ from the last frame; no-op once closed. `cursor` (0-based column and row) shows the real
+	 * terminal cursor there after the frame; without it the cursor stays hidden.
+	 */
+	draw(rows: string[], cursor?: { x: number; y: number }): void;
 	/** forget the last frame and clear: the next `draw` repaints everything */
 	invalidate(): void;
 	onInput(listener: (chunk: Uint8Array | string) => void): void;
@@ -68,6 +71,7 @@ export function createScreen(deps: ScreenDeps): Screen {
 	let rawSet = false;
 	let last: string[] = [];
 	let clearNext = false;
+	let cursorSeq = `${ESC}[?25l`;
 	const inputListeners: Array<(chunk: Uint8Array | string) => void> = [];
 	const resizeListeners: Array<(size: Size) => void> = [];
 
@@ -131,7 +135,7 @@ export function createScreen(deps: ScreenDeps): Screen {
 
 	return {
 		size: readSize,
-		draw(rows) {
+		draw(rows, cursor) {
 			if (closed) return;
 			const { rows: height } = readSize();
 			let out = clearNext ? `${ESC}[2J` : "";
@@ -142,7 +146,11 @@ export function createScreen(deps: ScreenDeps): Screen {
 				out += `${ESC}[${y + 1};1H${row}${ESC}[0m`;
 				last[y] = row;
 			}
-			if (out) stdout.write(`${BEGIN_SYNC}${out}${END_SYNC}`);
+			const wanted = cursor ? `${ESC}[${cursor.y + 1};${cursor.x + 1}H${ESC}[?25h` : `${ESC}[?25l`;
+			if (out || wanted !== cursorSeq) {
+				cursorSeq = wanted;
+				stdout.write(`${BEGIN_SYNC}${out}${wanted}${END_SYNC}`);
+			}
 		},
 		invalidate() {
 			if (closed) return;

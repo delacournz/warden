@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test";
 import type { DevReady } from "../commands/dev-ui";
 import { stripAnsi, visibleWidth } from "./ansi";
 import type { Key } from "./keys";
+import { createMetroPane } from "./metro-pane";
 import { type HudFps, type HudSample, initialState, type TuiState } from "./model";
 import { reduce, type TuiEvent } from "./reducer";
-import { formatDuration, HUD_WIDTH, hudLines, listWidth, render } from "./render";
+import { formatDuration, HUD_WIDTH, hudLines, listWidth, paneCursor, render } from "./render";
 
 const READY: DevReady = {
 	platform: "ios",
@@ -162,6 +163,77 @@ describe("render", () => {
 			{ type: "task:log", id: "claim", line: "界".repeat(3) + "y".repeat(300) },
 		]);
 		expectExactWidth(render(state, 60, 16), 60, 16);
+	});
+});
+
+describe("Metro pane", () => {
+	const fixture = Bun.file(`${import.meta.dir}/fixtures/expo-start.bin`).arrayBuffer();
+	const toMetro = [press("down"), press("down"), press("down")];
+
+	async function paneAt(cols: number, rows: number) {
+		const pane = createMetroPane({ cols: cols - listWidth(cols) - 3, rows: rows - 2 });
+		const bytes = new Uint8Array(await fixture);
+		for (let i = 0; i < bytes.length; i += 1024) await pane.write(bytes.slice(i, i + 1024));
+		return pane;
+	}
+
+	test("the selected metro row shows the pane's rows at 120x40", async () => {
+		const pane = await paneAt(120, 40);
+		const state = stateAt(120, 40, toMetro);
+		const frame = render(state, 120, 40, { rows: pane.rows(), cursor: pane.cursor() });
+		expectExactWidth(frame, 120, 40);
+		const shown = text(frame);
+		expect(shown).not.toContain("Metro output appears here");
+		expect(shown).toContain("Press w │ open web");
+		expect(shown).toMatchSnapshot();
+		pane.dispose();
+	});
+
+	test("pane colours reach the frame", async () => {
+		const pane = await paneAt(120, 40);
+		const state = stateAt(120, 40, toMetro);
+		const raw = render(state, 120, 40, { rows: pane.rows(), cursor: pane.cursor() }).join("\n");
+		expect(raw).toContain(`${String.fromCharCode(27)}[0;`);
+		pane.dispose();
+	});
+
+	test("an empty pane keeps the placeholder", () => {
+		const state = stateAt(80, 24, toMetro);
+		const frame = text(render(state, 80, 24, { rows: Array(22).fill(""), cursor: { x: 0, y: 0, visible: true } }));
+		expect(frame).toContain("Metro output appears here");
+	});
+
+	test("after Metro exits the pane's last rows are followed by the exit note", async () => {
+		const pane = await paneAt(80, 24);
+		const state = stateAt(80, 24, [...toMetro, { type: "metro:exit", code: 3, at: 9 }]);
+		const frame = text(render(state, 80, 24, { rows: pane.rows(), cursor: pane.cursor() }));
+		expect(frame).toContain("metro exited (code 3)");
+		pane.dispose();
+	});
+
+	test("other rows ignore the pane", async () => {
+		const pane = await paneAt(80, 24);
+		const frame = text(render(stateAt(80, 24, []), 80, 24, { rows: pane.rows(), cursor: pane.cursor() }));
+		expect(frame).not.toContain("open web");
+		pane.dispose();
+	});
+
+	test("the cursor sits at the pane's cursor only while interacting with the metro row", () => {
+		const cursor = { x: 4, y: 7, visible: true };
+		const interact = stateAt(120, 40, [...toMetro, press("i")]);
+		expect(paneCursor(interact, 120, cursor)).toEqual({ x: listWidth(120) + 2 + 4, y: 1 + 7 });
+		expect(paneCursor(stateAt(120, 40, toMetro), 120, cursor)).toBeUndefined();
+		expect(paneCursor(interact, 120, { ...cursor, visible: false })).toBeUndefined();
+		const exited = [...toMetro, press("i"), { type: "metro:exit", code: 0, at: 1 } satisfies TuiEvent];
+		expect(paneCursor(stateAt(120, 40, exited), 120, cursor)).toBeUndefined();
+	});
+
+	test("the interact footer names the keys", () => {
+		const last =
+			text(render(stateAt(120, 40, [...toMetro, press("i")]), 120, 40))
+				.split("\n")
+				.at(-1) ?? "";
+		expect(last).toContain("Esc back · keys go to Expo · Shift+PgUp/PgDn scroll");
 	});
 });
 

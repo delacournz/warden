@@ -113,6 +113,31 @@ describe("keys", () => {
 		expect(state.mode).toBe("list");
 	});
 
+	test("enter and i select the metro row and enter interact mode", () => {
+		for (const name of ["enter", "i"]) {
+			const state = run([press(name)]);
+			expect(state.mode).toBe("interact");
+			expect(state.tasks[state.selected]?.id).toBe("metro");
+			expect(state.autoFollow).toBe(false);
+		}
+	});
+
+	test("interact mode ignores forwarded keys; Esc returns to the list; a mode event sets it", () => {
+		let state = run([press("i"), press("r")]);
+		expect(state.mode).toBe("interact");
+		expect(task(state, "metro")?.log).toEqual([]);
+		state = run([press("escape")], state);
+		expect(state.mode).toBe("list");
+		state = run([{ type: "mode", mode: "interact" }], state);
+		expect(state.mode).toBe("interact");
+	});
+
+	test("Metro exiting while interacting drops back to the list", () => {
+		const state = run([press("i"), { type: "metro:exit", code: 0, at: 5 }]);
+		expect(state.mode).toBe("list");
+		expect(state.metroExit).toBe(0);
+	});
+
 	test("h toggles the HUD flag; Ctrl-L bumps redraw", () => {
 		const state = run([press("h"), press("l", { ctrl: true })]);
 		expect(state.hud.visible).toBe(true);

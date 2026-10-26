@@ -310,3 +310,46 @@ exports[`HUD 120x40 with the HUD off 1`] = `
                                 │
 ↑↓ select · enter interact · tab log · ? help · q quit"
 `;
+
+exports[`Metro pane the selected metro row shows the pane's rows at 120x40 1`] = `
+"warden dev                                                                                                       hud off
+  · claim device                │ █▄▄▄▄▄▄▄█▄▄███▄█▄████▄█▄▄▄▄█▄▄▄█▄██
+  · show simulator              │
+  · dev build                   │ › Scan the QR code above to open in a development build.
+› · metro                       │ (Learn more)
+  · dev client                  │ › Metro:
+  · session                     │ exp+warden://expo-development-client/?url=http%3A%2F%2F192.168.1.207%3A8101
+                                │
+                                │ › Using development build (Press s to switch to Expo Go)
+                                │ › Press ? │ show all commands
+                                │
+                                │ An update for expo is available: 57.0.26 → ~57.0.31
+                                │ 4 other packages may need updating. Run npx expo install --check for details.
+                                │ Logs for your project will appear below. Press Ctrl+C to exit.
+                                │
+                                │ › Using development build
+                                │ › Press s │ switch to Expo Go
+                                │
+                                │ › Press a │ open Android
+                                │ › shift+a │ select an Android device or emulator
+                                │ › Press i │ open iOS simulator
+                                │ › shift+i │ select an iOS simulator
+                                │ › Press w │ open web
+                                │
+                                │ › Press r │ reload app
+                                │ › Press j │ open debugger
+                                │ › Press m │ toggle menu
+                                │ › shift+m │ more tools
+                                │ › Press o │ open project code in your editor
+                                │ › Press c │ show project QR
+                                │
+                                │ › Toggling dev menu
+                                │ No apps connected. Sending "devMenu" to all React Native apps failed. Make sure your
+                                │ app is running in the simulator or on a phone connected via USB.
+                                │ › Reloading apps
+                                │ No apps connected. Sending "reload" to all React Native apps failed. Make sure your a
+                                │ pp is running in the simulator or on a phone connected via USB.
+                                │ › Stopped server
+                                │
+↑↓ select · enter interact · tab log · ? help · q quit"
+`;

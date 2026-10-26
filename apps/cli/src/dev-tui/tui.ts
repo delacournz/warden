@@ -5,10 +5,11 @@ import type { CommandContext } from "../context";
 import type { MetricsTarget } from "../perf/metrics-sampler";
 import type { Spinner } from "../ui";
 import { type HudDeps, startHud } from "./hud";
-import { createKeyParser } from "./keys";
+import { actionFor, createKeyParser, type Key } from "./keys";
+import { createMetroPane } from "./metro-pane";
 import { initialState, type Size } from "./model";
 import { reduce, type TuiEvent } from "./reducer";
-import { listWidth, render } from "./render";
+import { listWidth, paneCursor, type RenderPane, render } from "./render";
 import { createScreen, type ScreenInput, type ScreenOutput, type ScreenProcess } from "./screen";
 import { openSessionLog } from "./session-log";
 
@@ -40,6 +41,10 @@ export const FRAME_MS = 16;
 
 /** Smallest PTY Metro is given, however small the terminal is. */
 const MIN_PTY = { cols: 20, rows: 5 };
+
+/** Esc twice inside this window sends a literal Esc to Expo. */
+const DOUBLE_ESC_MS = 300;
+const LITERAL_ESC = String.fromCharCode(27);
 
 function processAdapter(): ScreenProcess {
 	return {
@@ -84,6 +89,66 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 	const metroChunks: Uint8Array[] = [];
 	let metroTerminal: MetroTerminal | undefined;
 
+	// --- TUI-4: Metro pane + key passthrough (the pane, interact-mode keys, resize) ---
+	const paneSize = (): { cols: number; rows: number } => {
+		const { cols, rows } = screen.size();
+		return {
+			cols: Math.max(MIN_PTY.cols, cols - listWidth(cols) - 3),
+			rows: Math.max(MIN_PTY.rows, rows - 2),
+		};
+	};
+	const pane = createMetroPane(paneSize());
+	let leftInteractAt: number | undefined;
+
+	/** The pane as the renderer takes it; only built while the metro row is on screen. */
+	const livePane = (): RenderPane | undefined =>
+		state.tasks[state.selected]?.id === "metro" ? { rows: pane.rows(), cursor: pane.cursor() } : undefined;
+
+	const resizePane = (): void => {
+		const size = paneSize();
+		pane.resize(size.cols, size.rows);
+		metroTerminal?.resize(size.cols, size.rows);
+	};
+
+	/** A key in interact mode that belongs to Expo or the pane; false when it is warden's (Esc). */
+	const interactKey = (key: Key): boolean => {
+		const action = actionFor("interact", key);
+		if (action?.type === "forward") {
+			pane.scrollToBottom();
+			metroTerminal?.write(key.seq);
+		} else if (action?.type === "pane-scroll") {
+			pane.scroll(-action.dir * Math.max(1, paneSize().rows - 1));
+		} else return false;
+		schedule();
+		return true;
+	};
+
+	/** Esc right after leaving interact mode: a literal Esc for Expo when it comes inside the double-Esc window. */
+	const literalEsc = (at: number): boolean => {
+		const quick = leftInteractAt !== undefined && at - leftInteractAt <= DOUBLE_ESC_MS;
+		leftInteractAt = undefined;
+		if (!quick) return false;
+		metroTerminal?.write(LITERAL_ESC);
+		dispatch({ type: "mode", mode: "interact" });
+		return true;
+	};
+
+	/**
+	 * Interact mode hands every key but Esc and Shift+PgUp/PgDn to Expo (Ctrl-C included: only the PTY's exit ends
+	 * Metro). Esc leaves; a second Esc inside the window sends a literal Esc to Expo and stays in interact mode.
+	 */
+	const handleKey = (key: Key): void => {
+		const at = now();
+		if (state.mode === "interact") {
+			if (interactKey(key)) return;
+			leftInteractAt = at;
+		} else if (key.name === "escape" && state.mode === "list") {
+			if (literalEsc(at)) return;
+		} else leftInteractAt = undefined;
+		dispatch({ type: "key", key, at });
+	};
+	// --- end TUI-4 ---
+
 	const paint = (): void => {
 		timer = undefined;
 		if (closed) return;
@@ -92,7 +157,11 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 			drawnRedraw = state.redraw;
 			screen.invalidate();
 		}
-		screen.draw(render(state, size.cols, size.rows));
+		const metro = livePane();
+		screen.draw(
+			render(state, size.cols, size.rows, metro),
+			metro ? paneCursor(state, size.cols, metro.cursor) : undefined
+		);
 	};
 	const schedule = (): void => {
 		if (timer !== undefined || closed) return;
@@ -138,9 +207,12 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 	}
 	// TUI-6 end
 
-	const parser = createKeyParser((key) => dispatch({ type: "key", key, at: now() }));
+	const parser = createKeyParser(handleKey);
 	screen.onInput((chunk) => parser.feed(chunk));
-	screen.onResize((size) => dispatch({ type: "resize", size }));
+	screen.onResize((size) => {
+		dispatch({ type: "resize", size });
+		resizePane();
+	});
 	paint();
 
 	const currentTask = (): string => {
@@ -173,16 +245,11 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 
 	const metro: DevMetroMode = {
 		kind: "pty",
-		size: () => {
-			const { cols, rows } = screen.size();
-			return {
-				cols: Math.max(MIN_PTY.cols, cols - listWidth(cols) - 3),
-				rows: Math.max(MIN_PTY.rows, rows - 2),
-			};
-		},
+		size: paneSize,
 		onData: (chunk) => {
 			metroChunks.push(chunk);
 			sessionLog.metro(chunk);
+			if (!closed) void pane.write(chunk).then(schedule);
 		},
 		attach: (terminal, exited) => {
 			metroTerminal = terminal;
@@ -228,6 +295,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 			if (timer !== undefined) clearTimeout(timer);
 			closed = true;
 			stopSessionExtras();
+			pane.dispose();
 			screen.close();
 		},
 	};

@@ -1,5 +1,5 @@
 import { SYMBOLS } from "../ui";
-import { fit, sliceColumns, truncate, visibleWidth, wrap } from "./ansi";
+import { fit, sliceColumns, stripAnsi, truncate, visibleWidth, wrap } from "./ansi";
 import { EXPO_KEYS, footerHint, LIST_BINDINGS } from "./keys";
 import { MIN_COLS, MIN_ROWS, type Task, type TuiState } from "./model";
 
@@ -65,6 +65,30 @@ function paneLines(task: Task | undefined): string[] {
 	const lines = task.id === "metro" ? [dim("Metro output appears here"), ...task.log] : task.log;
 	if (lines.length > 0) return lines;
 	return [dim(task.status === "pending" ? "waiting" : "no output")];
+}
+
+/** The Metro pane as the renderer sees it: styled rows (at most the pane's width) and the cursor in them. */
+export type RenderPane = { rows: readonly string[]; cursor: { x: number; y: number; visible: boolean } };
+
+/** Rows of the live Metro pane, or undefined while it has nothing to show (the placeholder path then applies). */
+function metroPaneRows(task: Task | undefined, state: TuiState, pane: RenderPane | undefined, height: number) {
+	if (task?.id !== "metro" || !pane) return undefined;
+	let used = pane.rows.length;
+	while (used > 0 && stripAnsi(pane.rows[used - 1] ?? "").trim() === "") used--;
+	if (used === 0) return undefined;
+	if (state.metroExit !== undefined) return [...pane.rows.slice(0, used), ...task.log].slice(-height);
+	return Array.from({ length: height }, (_, y) => pane.rows[y] ?? "");
+}
+
+/** Where the real cursor goes (0-based screen column and row): the pane's cursor while interacting with a live Metro. */
+export function paneCursor(
+	state: TuiState,
+	cols: number,
+	cursor: RenderPane["cursor"]
+): { x: number; y: number } | undefined {
+	if (state.mode !== "interact" || !cursor.visible || state.metroExit !== undefined) return undefined;
+	if (state.tasks[state.selected]?.id !== "metro") return undefined;
+	return { x: Math.min(cols - 1, listWidth(cols) + 2 + cursor.x), y: 1 + cursor.y };
 }
 
 /** The last `height` wrapped rows of the selected task's log, `scroll` rows above the tail. */
@@ -179,7 +203,7 @@ function helpBox(cols: number, bodyHeight: number): { rows: string[]; x: number;
 }
 
 /** Pure: the whole frame as `rows` strings of exactly `cols` visible columns. */
-export function render(state: TuiState, cols: number, rows: number): string[] {
+export function render(state: TuiState, cols: number, rows: number, pane?: RenderPane): string[] {
 	if (cols < MIN_COLS || rows < MIN_ROWS) {
 		return [fit("terminal too small", cols), ...Array.from({ length: Math.max(0, rows - 1) }, () => " ".repeat(cols))];
 	}
@@ -187,7 +211,7 @@ export function render(state: TuiState, cols: number, rows: number): string[] {
 	const left = listWidth(cols);
 	const right = cols - left - 1;
 	const selectedTask = state.tasks[state.selected];
-	const log = logWindow(selectedTask, right - 1, bodyHeight);
+	const log = metroPaneRows(selectedTask, state, pane, bodyHeight) ?? logWindow(selectedTask, right - 1, bodyHeight);
 	const divider = state.mode === "log" ? cyan("│") : dim("│");
 	let body = Array.from({ length: bodyHeight }, (_, y) => {
 		const task = state.tasks[y];
