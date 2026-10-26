@@ -25,6 +25,8 @@ export type DevReady = {
 	leaseIds: string[];
 	app: { source: string; hash: string } | undefined;
 	projectName: string;
+	/** the dev client's bundle id / package: the HUD samples this app */
+	bundleId?: string;
 };
 
 /** How `warden dev` should run Metro: on the user's terminal, or in a PTY the ui renders. */

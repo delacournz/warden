@@ -14,6 +14,7 @@ import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, parsePlatform, resolveOwner, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { parseHudInterval } from "../dev-tui/hud";
 import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { missingPackages } from "../expo-app";
@@ -77,7 +78,7 @@ export type DevDeps = Omit<LeaseSessionDeps, "ensureApp"> & {
 	/** the project's own `expo` bin to run directly (default: `bunx expo`) */
 	expoBin?: (projectRoot: string) => string | undefined;
 	/** test seam: the ui to run with (default: `selectDevUi`) */
-	selectUi?: (ctx: CommandContext) => DevUi;
+	selectUi?: (ctx: CommandContext, opts: DevUiOpts) => DevUi;
 };
 
 type DevOpts = ClaimFlagValues & {
@@ -98,9 +99,16 @@ type DevOpts = ClaimFlagValues & {
 	json?: true;
 	/** false = `--no-open` */
 	open: boolean;
+	/** false = `--no-hud`: no perf HUD in the dev TUI */
+	hud: boolean;
+	/** `--hud-interval`: how often the HUD samples the dev client (min 200ms) */
+	hudInterval: string;
 	/** false = `--no-shutdown`: leave the sim dev leased booted when dev ends */
 	shutdown: boolean;
 };
+
+/** What `selectDevUi` reads from the options; `hud` is validated (the interval is at least 200 ms). */
+export type DevUiOpts = Pick<DevOpts, "json"> & { hud: { enabled: boolean; intervalMs: number } };
 
 /** The dev-client deep link that points `scheme`'s app at the Metro on `port`. */
 export function devClientUrl(scheme: string, port: number): string {
@@ -419,6 +427,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 				warn(ctx, `warden dev: couldn't open the dev client (${opened.error})${link}`);
 			}
 		}
+		const bundle = bundleIdFor(r.project, r.platform);
 		if (json)
 			emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }, "");
 		else
@@ -431,6 +440,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 				leaseIds,
 				app: undefined,
 				projectName: r.project.name,
+				...(bundle.success ? { bundleId: bundle.data } : {}),
 			});
 		return await metro.data.proc.exited;
 	} finally {
@@ -568,7 +578,13 @@ async function dev(
 	platformArg: string | undefined,
 	opts: DevOpts
 ): Promise<number> {
-	const ui = deps.selectUi?.(rawCtx) ?? selectDevUi(rawCtx, opts);
+	const hudInterval = parseHudInterval(opts.hudInterval);
+	if (!hudInterval.success) {
+		reportError(rawCtx, "dev", `--hud-interval: ${hudInterval.error}`);
+		return 1;
+	}
+	const uiOpts: DevUiOpts = { json: opts.json, hud: { enabled: opts.hud, intervalMs: hudInterval.data } };
+	const ui = deps.selectUi?.(rawCtx, uiOpts) ?? selectDevUi(rawCtx, uiOpts);
 	try {
 		return await devWithUi(ui, deps, platformArg, opts);
 	} finally {
@@ -580,7 +596,7 @@ async function dev(
  * The ui for this run. Plain (spinner + notes, Metro on the terminal) until TUI-3's merge adds the
  * dashboard here: `tui` when the terminal is interactive and rich, and not `--json` / `--no-tui` / `WARDEN_TUI=0`.
  */
-export function selectDevUi(ctx: CommandContext, _opts: Pick<DevOpts, "json">): DevUi {
+export function selectDevUi(ctx: CommandContext, _opts: DevUiOpts): DevUi {
 	return plainDevUi(ctx);
 }
 
@@ -684,6 +700,8 @@ export function createDevCommand(deps: DevDeps): Command {
 				.addOption(installModeOption())
 				.option("--reset-keychain", "--install-mode: also reset the iOS simulator's keychain")
 				.addOption(legacyCleanOption())
+				.option("--no-hud", "no perf HUD in the dev TUI")
+				.option("--hud-interval <duration>", "HUD sampling interval, at least 200ms", "1s")
 				.option("--no-open", "don't open the dev client (Metro + the leases only)")
 				.option(
 					"--no-shutdown",

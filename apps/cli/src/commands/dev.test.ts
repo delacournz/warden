@@ -6,7 +6,14 @@ import { devClientLaunchArgv, type MetroProc } from "../metro";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import type { EnsureOptions } from "./app";
-import { createDevCommand, type DevDeps, type DevSpawnOutput, defaultDevDeps, devClientUrl } from "./dev";
+import {
+	createDevCommand,
+	type DevDeps,
+	type DevSpawnOutput,
+	type DevUiOpts,
+	defaultDevDeps,
+	devClientUrl,
+} from "./dev";
 import type { DevMetroMode, DevUi, MetroTerminal } from "./dev-ui";
 import { plainDevUi } from "./dev-ui.plain";
 
@@ -834,5 +841,51 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		h.finish(0);
 		await running;
 		expect(leasesAtClose[0]).toBeGreaterThan(0);
+	});
+});
+
+describe("warden dev: HUD options", () => {
+	async function runWith(argv: string[]) {
+		const calls: string[][] = [];
+		const c = setup(argv, calls);
+		const h = harness();
+		const seen: DevUiOpts[] = [];
+		h.deps.selectUi = (rawCtx, opts) => {
+			seen.push(opts);
+			return plainDevUi(rawCtx);
+		};
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		return { code: await running, seen, c };
+	}
+
+	test("the HUD is on at a 1 s interval by default", async () => {
+		const { code, seen } = await runWith(["ios"]);
+		expect(code).toBe(0);
+		expect(seen[0]?.hud).toEqual({ enabled: true, intervalMs: 1000 });
+	});
+
+	test("--no-hud and --hud-interval reach the ui", async () => {
+		const { code, seen } = await runWith(["ios", "--no-hud", "--hud-interval", "500ms"]);
+		expect(code).toBe(0);
+		expect(seen[0]?.hud).toEqual({ enabled: false, intervalMs: 500 });
+	});
+
+	test("--hud-interval under 200ms fails naming the floor, before anything is claimed", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios", "--hud-interval", "50ms"], calls);
+		const h = harness();
+		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--hud-interval");
+		expect(c.stderr.join("\n")).toContain("200ms");
+		expect(h.spawned).toHaveLength(0);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("an unparsable --hud-interval fails too", async () => {
+		const c = setup(["ios", "--hud-interval", "soon"], []);
+		expect(await createDevCommand(harness().deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--hud-interval");
 	});
 });

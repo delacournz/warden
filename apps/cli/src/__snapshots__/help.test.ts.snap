@@ -265,6 +265,9 @@ Options:
                               "reinstall")
   --reset-keychain            --install-mode: also reset the iOS simulator's
                               keychain
+  --no-hud                    no perf HUD in the dev TUI
+  --hud-interval <duration>   HUD sampling interval, at least 200ms (default:
+                              "1s")
   --no-open                   don't open the dev client (Metro + the leases
                               only)
   --no-shutdown               leave the simulator booted when dev ends (default:
