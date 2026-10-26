@@ -144,7 +144,7 @@ A terminal under 60 columns or 16 rows shows `terminal too small` until it is re
 | Flag | Effect |
 |---|---|
 | `--profile <slug>` · `--runtime <runtime>` | device profile (`iphone-17`, `pixel-10`) and runtime (`latest`, `26.5`) |
-| `--udid <udid>` · `--lease <id>` | use this device instead of claiming one |
+| `--udid <udid>` · `--lease <id>` | use this device instead of claiming one (also the default when this session already holds one device lease). A held sim that is shut down is booted and waited for first, but only under this session's own lease; a foreign one is never booted |
 | `--port <from:span>` | Metro port range to lease from (default `8081:100`) |
 | `--project <dir>` · `--bundle-id <id>` | project directory (default cwd); override the bundle id / package |
 | `--variant <name>` | `projects[].variants` build (default `dev` when the project has one) |
