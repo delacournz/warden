@@ -471,7 +471,13 @@ function scopedCtx(ctx: CommandContext, log: (line: string) => void): CommandCon
 }
 
 /** iOS: shut the leased sim down, boot it again, bring its window back. The lease stays. */
-async function restartDevice(ctx: CommandContext, r: Running, headless: boolean, log: (line: string) => void) {
+async function restartDevice(
+	ctx: CommandContext,
+	ui: DevUi,
+	r: Running,
+	headless: boolean,
+	log: (line: string) => void
+) {
 	const { deviceId } = r.session;
 	const provider = providerFor(r.platform, ctx, r.owner);
 	log(`shutting down ${deviceId}`);
@@ -489,7 +495,7 @@ async function restartDevice(ctx: CommandContext, r: Running, headless: boolean,
 		if (!ready.success) return ready;
 	}
 	await provider.afterReady?.(deviceId);
-	await showDevice(ctx, r.platform, deviceId, headless);
+	await showDevice(ctx, ui, r.platform, deviceId, headless);
 	return ok(undefined);
 }
 
@@ -523,7 +529,8 @@ async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap): A
 }
 
 /** What the dashboard's action keys call back into, for this run. */
-function devActions(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Running, swap: MetroSwap): DevActionHost {
+function devActions(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running, swap: MetroSwap): DevActionHost {
+	const ctx = ui.ctx;
 	const { deviceId, port } = r.session;
 	return {
 		openClient: (log) => openDevClient(scopedCtx(ctx, log), r.platform, deviceId, r.project, r.scheme, port),
@@ -534,7 +541,7 @@ function devActions(ctx: CommandContext, deps: DevDeps, opts: DevOpts, r: Runnin
 			});
 			return ensured.success ? ok({ source: ensured.data.source, hash: ensured.data.hash }) : err(ensured.error);
 		},
-		restartSim: (log) => restartDevice(scopedCtx(ctx, log), r, opts.headless === true, log),
+		restartSim: (log) => restartDevice(scopedCtx(ctx, log), ui, r, opts.headless === true, log),
 		restartMetro: (log) => restartMetro(scopedCtx(ctx, log), r, swap),
 	};
 }
@@ -582,7 +589,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 				app,
 				projectName: r.project.name,
 				...(bundle.success ? { bundleId: bundle.data } : {}),
-				actions: devActions(ctx, deps, opts, r, swap),
+				actions: devActions(ui, deps, opts, r, swap),
 			});
 		return await metroExit(metro.data.proc, swap);
 	} finally {
