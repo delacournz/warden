@@ -14,7 +14,18 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 
 export type MetroSignal = "SIGINT" | "SIGTERM" | "SIGHUP" | "SIGKILL";
 
-export type MetroProc = { exited: Promise<number>; kill: (signal: MetroSignal) => void };
+/** The Metro PTY, as a ui drives it: keys in, size changes. */
+export type MetroTerminal = {
+	write(data: string | Uint8Array): void;
+	resize(cols: number, rows: number): void;
+};
+
+/** A spawned Metro. `terminal` is set only when it runs in a PTY (`warden dev` TUI); pipe-based spawns (`warden e2e`) have none. */
+export type MetroProc = {
+	exited: Promise<number>;
+	kill: (signal: MetroSignal) => void;
+	terminal?: MetroTerminal;
+};
 
 /** Side effects of the Metro helper, injectable for tests (HTTP goes through `fetch`). */
 export type MetroDeps = {

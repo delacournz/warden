@@ -1,5 +1,6 @@
 import type { Platform } from "@delacour/warden-core/types";
 import type { CommandContext } from "../context";
+import type { MetroTerminal } from "../metro";
 
 /** The steps a person watches in `warden dev`, in order; action keys add more rows later (TUI-5). */
 export type DevTaskId = "claim" | "show" | "app" | "metro" | "client" | "session";
@@ -11,11 +12,8 @@ export type DevTaskHandle = {
 	log(line: string): void;
 };
 
-/** The Metro PTY, as the ui drives it: keys in, size changes. */
-export type MetroTerminal = {
-	write(data: string | Uint8Array): void;
-	resize(cols: number, rows: number): void;
-};
+/** Defined next to `MetroProc` (which carries it); re-exported so the seam keeps its names. */
+export type { MetroTerminal };
 
 /** What the ui shows once the session is up. */
 export type DevReady = {
