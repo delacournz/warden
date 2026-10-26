@@ -161,3 +161,45 @@ Each agent: TDD, `bun test <path>`, biome, typecheck, commit per phase with gitm
 
 ## Unresolved questions
 None open. Q1 (build) answered "reconsider renderer" → hand-rolled + xterm, CJS bytecode kept. Q2 two modes, Q3 two PRs, Q4 logs on disk: all yes (2026-10-26).
+
+## TUI-0 results
+
+Run 2026-10-26 on this Mac (Bun 1.4.3, Expo CLI 57.0.27, `@xterm/headless` 6.0.0, `@xterm/addon-serialize` 0.14.0). Spike code: `apps/cli/spikes/tui/`. Fixture: `apps/cli/src/dev-tui/fixtures/expo-start.bin` (+ README).
+
+- **1. Expo in a PTY: works.** Menu, QR and colours render. Startup: first output at ~0.2 s, QR at ~1.2 s, `Press ? │ show all commands` hint at ~1.2 s.
+  - Expo prints only the hint line at start; `?` prints the full menu (699 bytes). Pressing `?` again prints it again, it does not collapse.
+  - `r` ("Reloading apps"), `m` ("Toggling dev menu") and `?` are handled through `terminal.write`. With no app connected, `r`/`m` also print a yellow "No apps connected" warning.
+  - `shift+m` opens an interactive prompt (prompts hide the cursor, `\e[?25l`). `\x03` while a prompt is open cancels only the prompt (`\e[2K\e[1A` x6, red "✖", cursor shown); a second `\x03` exits. The TUI must not treat Ctrl-C in interact mode as "Expo is gone"; only the PTY `exited` promise says that.
+  - `\x03` at the menu: spinner "Stopping server", then "Stopped server", exit code 0 in ~0.2 s.
+  - **`terminal.resize` makes Expo print nothing.** No redraw on SIGWINCH; the old menu stays as it was. A resize needs no special handling beyond `term.resize`, and the pane keeps its old lines (xterm reflows them).
+  - **Env:** `CI` must be unset. With `CI=1` Expo drops the QR and the key menu ("Metro is running in CI mode, reloads are disabled") and keys are only echoed; the PTY child must get `CI` removed, `warden dev` should delete it for Metro. `EXPO_NO_TELEMETRY` and `TERM` made no visible difference (`TERM=dumb` still draws the menu, only without colour); set `TERM=xterm-256color` explicitly, a TUI host may run under another TERM. Chosen env for the Metro PTY: parent env minus `CI`, `TERM=xterm-256color`, `EXPO_NO_TELEMETRY=1` kept as today.
+  - **PTY chunks split multi-byte UTF-8** (a 1024-byte chunk ended inside a half-block character). Pass raw `Uint8Array` chunks to `term.write`; never `decode()` per chunk.
+- **2. xterm pane: works, with one caveat on the serialize addon.**
+  - Options that worked: `new Terminal({ cols, rows, allowProposedApi: true, scrollback: 5000 })`; write via `term.write(data, cb)` (async, resolve on the callback).
+  - The pane is drawn per row at an offset: `CSI r;c H`, `│`, `CSI 0m`, `CSI <w> X` (erase, keeps the box clean), the row, `CSI 0m`, `CSI r;c+w+1 H`, `│`, whole frame wrapped in `?2026h/l`. Cursor is placed at `ox+1+cursorX, oy+1+cursorY` when focused (`cursorX/Y` are viewport-relative, `buffer.active.baseY` is the scrollback length). Tested: 60x20, 60x50 (QR in view, columns line up, 35-wide), and `term.resize(70,24 | 70,50)` + more output + full repaint.
+  - Cell-by-cell comparison of the real terminal against the xterm buffer (char, fg/bg mode+colour, bold, dim, underline, italic): **0 mismatches with our own row serialiser; 0 cells leaked outside the box; borders intact; cursor exactly where expected** (all four runs).
+  - **Caveat: `SerializeAddon.serialize({ range })` drops DIM when BOLD turns off** (`\e[2m…\e[1m…\e[22m` loses the dim for the rest of the row; 11 cells wrong on the Expo menu, e.g. the `│ open web` part). Cause: it emits SGR 22 (clears both). Decision for TUI-4: **drop the addon, hand-roll `serializeRow(line, cols)` from `IBufferCell` attributes** (`spikes/tui/xterm-pane.ts`, ~40 lines; 16-colour mode must emit 30-37/90-97 not `38;5;n`; trailing blanks trimmed). Removes `@xterm/addon-serialize` from TUI-1's dependency list; only `@xterm/headless` is needed. The addon still works for whole-buffer dumps in tests but is not needed.
+  - Cost: `write` of the whole 3.9 KB transcript 1.3 ms; of 389 KB (100x) 12-15 ms. Serialising one 60x20 viewport with the own serialiser: 0.15 ms cold, 0.09 ms warm (addon: 0.24 / 0.04 ms). The pane is far below any render budget; 5000 lines of scrollback add nothing to a frame.
+- **3. Harness: works, no stripping needed.** `harness.ts` spawns the binary compiled with `bun build --compile --minify --bytecode` (35-line `spike-bin.ts`, 129 ms to compile, no TLA) under `Bun.spawn(..., { terminal: { cols: 80, rows: 24, data } })`, feeds every chunk to a second `@xterm/headless` (`scrollback: 0`), and reads rows with `buffer.active.getLine(baseY + y).translateToString(true)`.
+  - Tolerated by xterm headless as-is: `?1049h/l`, `?25l/h`, `?2026h/l`, `CSI 2J`, SGR incl. truecolor and 256-colour, `CSI r;c H`. Nothing to strip. Do not strip `?1049`: xterm switches to the alternate buffer and `buffer.active.type` is `alternate` while the app runs.
+  - **A frame must be read before the process exits**: on `?1049l` xterm returns to the normal buffer, which is blank, so the final frame is gone. Harness API to build: `waitFor(predicate)` on the current frame, then send keys, then assert exit code and restore sequences (`?25h`, `?1049l`).
+  - Writes are async: serialise reads behind a promise chain of `term.write` callbacks (done in `harness.ts`).
+  - `resize(cols, rows)` = `proc.terminal.resize` + `term.resize`; the child saw SIGWINCH and `process.stdout.columns/rows` updated (100x30 verified).
+  - Keys: `proc.terminal.write("q")` reached raw-mode stdin; exit code 0 and `?25h` + `?1049l` emitted.
+- **4. HUD cost: the plan's sampler is too expensive at 1 s; fix before TUI-6.** Device: leased `warden-iphone-17-5`, cached dev build installed with `warden app ensure ios --udid` (fingerprint cache hit), app launched, `warden perf metrics --watch --interval 1s --duration 60s --json` with the compiled binary; released with `warden release <id> --shutdown`.
+
+  | Interval | warden CPU incl. children, 60 s | share of one core | warden process alone (RSS) |
+  |---|---|---|---|
+  | 1 s | 9.7 s (4.1 user + 5.8 sys) | ~16% | 0.45 s CPU = 0.7%, 54 MB |
+  | 200 ms | 28.5 s | ~47% | not measured |
+
+  - Breakdown per sample (measured on the 1512-process host): `xcrun simctl spawn <udid> launchctl list` (pid lookup, `appPid`) ~95 ms CPU; host `ps -axo pid,ppid,rss,%cpu,time,lstart,command` ~53 ms CPU; a pid-only `ps -o pid,rss,time -p <pid>` ~2 ms.
+  - **Change for TUI-6:** the sampler resolves the pid once (the `launchctl` path), then reads `ps -p <pid>` only, re-resolving when that pid is gone or its start time changes. Expected ~2 ms/sample ≈ 0.2-0.4% of a core at 1 s. That change belongs in `metrics-sampler.ts` (`perf metrics` benefits too), with a test for "pid cached, re-resolved on exit". Until then do not ship an always-on 1 s HUD; with the fix show no `hud x%` label by default.
+  - Android was not measured (no emulator in this spike); it uses `adb shell top -n 1 -p` + `dumpsys meminfo` per sample, expect a higher cost, measure in TUI-6.
+- **Surprises that change later phases**
+  - TUI-1: only `@xterm/headless` is needed; drop `@xterm/addon-serialize` (dim bug; own serialiser is simpler and faster).
+  - TUI-2/4: remove `CI` from the Metro PTY env; keep raw `Uint8Array` chunks; `exited` (not Ctrl-C) decides that Metro is gone, since Ctrl-C can only cancel an Expo prompt.
+  - TUI-3 harness: capture frames while the app runs, never after exit.
+  - TUI-4: Expo does not repaint on resize; the pane is a log, not a screen. Plan the cursor: Expo's cursor sits on the row after the last output, usually blank.
+  - TUI-6: fix the sampler's per-sample cost first (above); HUD interval stays 1 s.
+- **Go / no-go: GO** for TUI-1..7 with the changes above (own row serialiser, pid-cached sampler, `CI` removed). No blocker found.

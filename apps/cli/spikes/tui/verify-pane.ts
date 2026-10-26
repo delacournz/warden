@@ -45,8 +45,8 @@ async function check(tall: boolean) {
 	const rowsN = tall ? 50 : 20;
 	const results: Record<string, unknown> = { tall };
 	for (const [name, bytes, cols, rows] of [
-		["stage1 60x" + rowsN, stage1, 60, rowsN],
-		["stage2 70x" + (tall ? 50 : 24), stage2, 70, tall ? 50 : 24],
+		[`stage1 60x${rowsN}`, stage1, 60, rowsN],
+		[`stage2 70x${tall ? 50 : 24}`, stage2, 70, tall ? 50 : 24],
 	] as const) {
 		const outer = new Terminal({ cols: OW, rows: OH, allowProposedApi: true });
 		await feed(outer, bytes);
