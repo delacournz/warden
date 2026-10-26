@@ -30,8 +30,10 @@ Metro gets `WARDEN_WORKTREE` (the checkout directory name) and `WARDEN_BRANCH` (
 
 Everything that can be wrong with the request or the app is found on the plain terminal, before a device is leased, anything is built or the dashboard takes the screen. A failure there is one line with the fix, never a dashboard that flashes and closes.
 
+- **No config needed.** `warden dev` runs with or without a `warden.config.ts`. Started at a monorepo root (nothing found upwards), it looks below it: the package.json `workspaces`, else `apps/*` and `packages/*`. One app there is used and named (`app apps/mobile (wallet)`). With several, a person picks one, and a pipe gets the list and `--project <dir>`.
+- **Expo or bare React Native.** Read from the app's package.json: `expo` means `expo start --dev-client` and the dev client. Only `react-native` means a bare app: the bundle ids come from `ios/*.xcodeproj` (`PRODUCT_BUNDLE_IDENTIFIER`) and `android/app/build.gradle` (`applicationId`), Metro is `react-native start` on the leased port, the default local build is `react-native build-ios` / `build-android`, and the app itself is relaunched against Metro (iOS: `-RCT_jsLocation 127.0.0.1:<port>`; Android: the device's 8081 reversed to the port). `projects[].framework` in a `warden.config.ts` overrides the guess. `warden e2e` stays Expo-only.
 - **The project.** The nearest `warden.config.ts`, else the app's `app.json`. An app whose config is code (`app.config.ts` / `.js` / `.mjs` / `.cjs`) with no bundle id in `app.json` is resolved the way Expo does it: `warden dev` runs `expo config --json --type public` in the app directory once and takes the bundle id, slug and scheme from the result. `--bundle-id` still overrides it, and a `warden.config.ts` skips the call.
-- **`expo-dev-client`.** Metro is started with `--dev-client`, so the app has to list it.
+- **`expo-dev-client`.** Metro is started with `--dev-client`, so an Expo app has to list it. A bare app needs none.
 
 With a person at the terminal each missing piece is offered as a fix:
 
