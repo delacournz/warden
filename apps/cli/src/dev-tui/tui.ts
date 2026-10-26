@@ -39,6 +39,10 @@ export type DevTui = DevUi & {
 };
 
 /** Frames are painted at most this often; events in between coalesce. */
+/** warden lines the dashboard keeps for the terminal after a failure; the tail of them after a Metro death. */
+const TRANSCRIPT_LINES = 400;
+const TRANSCRIPT_TAIL = 20;
+
 export const FRAME_MS = 16;
 
 /** Smallest PTY Metro is given, however small the terminal is. */
@@ -213,9 +217,13 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		else if (event.type === "task:fail") sessionLog.line(event.id, `failed: ${event.error}`);
 		else if (event.type === "task:ok" && event.detail) sessionLog.line(event.id, event.detail);
 	}
+	let logDir: string | undefined;
 	function sessionReady(info: DevReady): void {
 		const lease = info.leaseIds[0];
-		if (lease !== undefined) sessionLog.attach(join(wardenHome(deps.ctx.env), "dev", lease));
+		if (lease !== undefined) {
+			logDir = join(wardenHome(deps.ctx.env), "dev", lease);
+			sessionLog.attach(logDir);
+		}
 		if (info.bundleId !== undefined) hudTarget = { udid: info.deviceId, platform: info.platform, app: info.bundleId };
 	}
 	function stopSessionExtras(): void {
@@ -285,7 +293,12 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		if (state.quitting || state.ready) return "session";
 		return running[running.length - 1] ?? lastStarted ?? "claim";
 	};
-	const lineTo = (line: string): void => dispatch({ type: "task:log", id: currentTask(), line });
+	/** warden's own lines, for the terminal after the dashboard closes on a failure (they lived only in the alt screen) */
+	const transcript: string[] = [];
+	const lineTo = (line: string): void => {
+		if (transcript.push(line) > TRANSCRIPT_LINES) transcript.shift();
+		dispatch({ type: "task:log", id: currentTask(), line });
+	};
 
 	const ui = deps.ctx.ui;
 	const spinner = (text: string): Spinner => {
@@ -379,6 +392,21 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 			stopSessionExtras();
 			pane.dispose();
 			screen.close();
+			replayFailure();
 		},
 	};
+
+	/**
+	 * The dashboard closing on a failure (the session never came up, or Metro died) would take every message
+	 * with it: print warden's lines (all of them before `ready`, the tail after) to the real stderr, then the log dir.
+	 */
+	function replayFailure(): void {
+		const quit = state.quitting;
+		const metroDied = state.metroExit !== undefined && state.metroExit !== 0;
+		const neverReady = state.ready === undefined;
+		if (quit || (!neverReady && !metroDied)) return;
+		const lines = neverReady ? transcript : transcript.slice(-TRANSCRIPT_TAIL);
+		for (const line of lines) deps.ctx.err(line);
+		if (logDir !== undefined) deps.ctx.err(`session log: ${logDir}`);
+	}
 }

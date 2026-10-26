@@ -498,3 +498,55 @@ describe("Metro pane and key passthrough", () => {
 		await m.ui.close();
 	});
 });
+
+describe("createDevTui: failures reach the terminal after the dashboard closes", () => {
+	function setupWithCtx(cols = 80, rows = 24) {
+		const ctx = testContext([]);
+		const stdin = fakeStdin();
+		const stdout = fakeStdout(cols, rows);
+		const process = fakeProcess();
+		const ui = createDevTui({ ctx, stdin: stdin.input, stdout: stdout.output, proc: process.proc, now: () => 1000 });
+		return { ui, ctx, stdin };
+	}
+
+	test("a session that never came up replays every warden line to stderr once the alt screen is gone", async () => {
+		const { ui, ctx } = setupWithCtx();
+		const claim = ui.task("claim", "preparing the ios dev build");
+		ui.ctx.err("warden dev: resolving the project");
+		claim.fail("app.config.ts is dynamic");
+		ui.ctx.err("✗ warden dev: app.config.ts is dynamic — pass --bundle-id");
+		expect(ctx.stderr).toEqual([]);
+		await ui.close();
+		expect(ctx.stderr).toEqual([
+			"warden dev: resolving the project",
+			"✗ warden dev: app.config.ts is dynamic — pass --bundle-id",
+		]);
+	});
+
+	test("Metro dying after ready replays the tail and names the session log", async () => {
+		const { ui, ctx } = setupWithCtx();
+		ui.task("claim", "claiming").ok("U1");
+		ui.ready(READY);
+		ui.ctx.err("warden dev: Metro exited (code 1)");
+		if (ui.metro.kind === "pty") {
+			const exited = Promise.resolve(1);
+			ui.metro.attach({ write: () => {}, resize: () => {} }, exited);
+			await exited;
+			await Bun.sleep(FRAME_MS);
+		}
+		await ui.close();
+		expect(ctx.stderr.some((l) => l.includes("Metro exited (code 1)"))).toBe(true);
+		expect(ctx.stderr.some((l) => l.startsWith("session log: "))).toBe(true);
+	});
+
+	test("a clean quit prints nothing", async () => {
+		const { ui, ctx, stdin } = setupWithCtx();
+		ui.task("claim", "claiming").ok("U1");
+		ui.ready(READY);
+		ui.ctx.err("holding the device");
+		stdin.press("q");
+		await Bun.sleep(FRAME_MS);
+		await ui.close();
+		expect(ctx.stderr).toEqual([]);
+	});
+});
