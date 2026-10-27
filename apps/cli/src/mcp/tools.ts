@@ -12,6 +12,7 @@ import {
 	reloadApp,
 } from "../agent-ui/broker-client";
 import { parseSince } from "../commands/dev-logs";
+import { profileStatus, startProfile, stopProfile } from "../dev-broker/profile-client";
 import { listDevSessions } from "../dev-session";
 import { METRO_LOG_KINDS } from "../dev-tui/metro-log";
 import { parseMetroLogKinds, readMetroLogs } from "../metro-logs";
@@ -41,6 +42,7 @@ function tool<S extends z.ZodRawShape>(def: ToolDef<S>): ToolDef {
 
 const udid = z.string().optional().describe("device udid/serial; default = the only live `warden dev` session");
 const sinceArg = z.string().optional().describe("duration (30s, 5m) or ISO time");
+const profileKind = z.enum(["cpu", "heap", "react"]);
 const limit = z.number().int().positive().optional().describe("newest N (default 200)");
 
 /** The broker target of a tool call: an explicit udid, else the only live dev session. */
@@ -188,6 +190,31 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 				"Reattach the broker after it yielded to Chrome DevTools. On a single-debugger Metro this disconnects DevTools.",
 			input: { udid },
 			run: async (env, { udid: id }) => devtoolsResume(target(env, id)),
+		}),
+		tool({
+			name: "profile_start",
+			description:
+				"Start recording in the running app: cpu (JS sampling profile), heap (allocation sampling) or react (commits). Stop with profile_stop.",
+			input: {
+				udid,
+				kind: profileKind,
+				samplingIntervalUs: z.number().int().positive().optional().describe("cpu only (default 100)"),
+			},
+			run: async (env, { udid: id, kind, samplingIntervalUs }) =>
+				startProfile(env, { kind, ...defined({ udid: id, samplingIntervalUs }) }),
+		}),
+		tool({
+			name: "profile_stop",
+			description:
+				"Stop a recording and get its summary (cpu: top self-time functions; heap: top allocation sites; react: slowest commits/components) plus the artifact path.",
+			input: { udid, kind: profileKind },
+			run: async (env, { udid: id, kind }) => stopProfile(env, { kind, ...defined({ udid: id }) }),
+		}),
+		tool({
+			name: "profile_status",
+			description: "Which recordings are running.",
+			input: { udid },
+			run: async (env, { udid: id }) => profileStatus(env, defined({ udid: id })),
 		}),
 	];
 }
