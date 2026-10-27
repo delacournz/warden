@@ -1,4 +1,5 @@
 import type { Broker, BrokerOptions } from "./broker";
+import { symbolicateExtension } from "./symbolicate";
 
 /** What an extension may read about the session it is installed into. */
 export type BrokerExtensionContext = { metroUrl: string; logDir: string; log: (line: string) => void };
@@ -7,7 +8,7 @@ export type BrokerExtensionContext = { metroUrl: string; logDir: string; log: (l
 export type BrokerExtension = (broker: Broker, context: BrokerExtensionContext) => () => void;
 
 /** Every extension `warden dev` installs, in order: symbolication (DBG-4), logpoints (DBG-5), profiles (DBG-6). */
-export const BROKER_EXTENSIONS: readonly BrokerExtension[] = [];
+export const BROKER_EXTENSIONS: readonly BrokerExtension[] = [symbolicateExtension];
 
 /**
  * Installs `extensions` into `broker`; `close()` on the result tears them down before the broker itself closes.
