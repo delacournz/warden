@@ -457,6 +457,7 @@ async function bootDevice(
 ): Promise<{ booted: "ready" | "booted" } | { failed: Realised }> {
 	const { provider, store } = input;
 	const readyMs = input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+	input.log?.(`${device.name} (${device.id}): booting`);
 	if (!provider.bootReady) {
 		const booted = await provider.boot(device.id);
 		if (!booted.success) return { failed: { ok: booted, leaseId } };
@@ -486,6 +487,7 @@ async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 	let lease = item.lease;
 	let device: InventoryDevice;
 	if (item.action === "create") {
+		input.log?.(`creating ${item.name} (${request.profile})`);
 		const created = await provider.create(item.name, request.profile, request.runtime);
 		if (!created.success) return { ok: created, leaseId: lease.id };
 		device = created.data;
@@ -554,6 +556,7 @@ async function checkReady(
 		return { ok: ok({ lease, device, action: item.action }), leaseId: lease.id };
 	}
 	const readyMs = input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+	input.log?.(`${device.name} (${device.id}): waiting until it is ready`);
 	const ready = await provider.waitReady(device.id, readyMs);
 	if (!ready.success) {
 		// Never ready is unhealthy too: quarantine (or skip) it and claim another, so it is not picked first next time.

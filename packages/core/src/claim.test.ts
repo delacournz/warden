@@ -132,6 +132,29 @@ describe("claimDevices", () => {
 		expect(result.success && result.data.claimed[0]?.lease.bootedByOwner).toBe(true);
 	});
 
+	test("says what it is doing while a device boots: booting, then waiting until it is ready", async () => {
+		const provider = fakeProvider([sim("1")]);
+		const logs: string[] = [];
+		await claimDevices(input(provider, { log: (l) => logs.push(l) }));
+		expect(logs).toEqual(["warden-iphone-17-1 (1): booting", "warden-iphone-17-1 (1): waiting until it is ready"]);
+	});
+
+	test("says it is creating a device before the create, then boots it", async () => {
+		const provider = fakeProvider([]);
+		const logs: string[] = [];
+		await claimDevices(input(provider, { log: (l) => logs.push(l) }));
+		expect(logs[0]).toBe("creating warden-iphone-17-1 (iphone-17)");
+		expect(logs).toContain("warden-iphone-17-1 (NEW1): booting");
+	});
+
+	test("a warm booted device is claimed without a progress line", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		provider.verifyWarm = async () => ok(undefined);
+		const logs: string[] = [];
+		await claimDevices(input(provider, { log: (l) => logs.push(l) }));
+		expect(logs).toEqual([]);
+	});
+
 	test("boots every claimed device at once, not one by one", async () => {
 		const provider = fakeProvider([sim("1"), sim("2"), sim("3")]);
 		let inFlight = 0;
@@ -938,8 +961,9 @@ describe("claim capacity queue", () => {
 		);
 		expect(result.success).toBe(true);
 		expect(polls).toBe(1);
-		expect(logs).toHaveLength(1);
-		expect(logs[0]).toMatch(/^queued #1 of 1 \(normal\) — no room, cpu binds/);
+		const queued = logs.filter((l) => l.startsWith("queued"));
+		expect(queued).toHaveLength(1);
+		expect(queued[0]).toMatch(/^queued #1 of 1 \(normal\) — no room, cpu binds/);
 		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
 		expect(store.listQueue()).toEqual([]);
 	});
