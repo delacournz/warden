@@ -167,7 +167,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "builds",
 		group: "Builds",
-		summary: "list, prune (LRU) and import cached native app builds",
+		summary: "list, remove, prune (LRU) and import cached native app builds",
 		load: async () => (await import("./builds")).buildsCommand,
 	},
 	{

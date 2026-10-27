@@ -4,6 +4,7 @@ import { type BuildRecord, listBuilds, storeArtifact } from "@delacour/warden-co
 import { ccacheCleanup } from "@delacour/warden-core/builds/compiler-cache";
 import { LOCAL_PROFILE } from "@delacour/warden-core/builds/ensure";
 import { cacheCap, formatSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
+import { removeBuilds } from "@delacour/warden-core/builds/remove";
 import { formatDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { wardenHome } from "@delacour/warden-core/store";
@@ -116,6 +117,50 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 	return 0;
 }
 
+type RmOpts = { platform?: string; dryRun?: true; yes?: true; json?: true };
+
+/**
+ * Remove the named cached builds (a hash or unique prefix each), their aliases, and the install records at
+ * their hashes: a bad build (made from a stale native dir) is dropped and the next `ensure` builds it again.
+ */
+async function rmCmd(ctx: CommandContext, prefixes: string[], opts: RmOpts): Promise<number> {
+	const { color } = ctx.ui;
+	let platform: Platform | undefined;
+	if (opts.platform !== undefined) {
+		const parsed = parsePlatform(opts.platform);
+		if (!parsed.success) return fail(ctx, "rm", parsed.error);
+		platform = parsed.data;
+	}
+	const dryRun = opts.dryRun === true;
+	const remove = (dry: boolean) =>
+		removeBuilds({
+			store: ctx.store(),
+			env: ctx.env,
+			prefixes,
+			...(platform !== undefined ? { platform } : {}),
+			now: ctx.now(),
+			pidAlive: processAlive,
+			dryRun: dry,
+		});
+	const preview = remove(true);
+	if (!preview.success) return fail(ctx, "rm", preview.error);
+	if (!opts.json)
+		heading(ctx, "builds rm", `${plural(preview.data.remove.length, "build")}${dryRun ? " · dry run" : ""}`);
+	if (!dryRun && ctx.ui.interactive && !opts.yes && !(await confirmPrune(ctx, preview.data.remove))) return 1;
+	const done = dryRun ? preview : remove(false);
+	if (!done.success) return fail(ctx, "rm", done.error);
+	const { remove: removed, forgotInstalls } = done.data;
+	const verb = dryRun ? "would remove" : "removed";
+	const text = [
+		...removed.map((b) => (dryRun ? color.yellow : color.green)(`${verb} ${describeBuild(b)}`)),
+		color.dim(
+			`${dryRun ? "would forget" : "forgot"} ${plural(forgotInstalls, "install record")}: the next ensure reinstalls there`
+		),
+	].join("\n");
+	emit(ctx, opts.json === true, { dryRun, removed, forgotInstalls }, text);
+	return 0;
+}
+
 /** `.app` → ios, `.apk` → android, unless `--platform` says otherwise. */
 export function inferPlatform(path: string, flag: string | undefined): Result<Platform> {
 	if (flag !== undefined) return parsePlatform(flag);
@@ -173,7 +218,7 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 export const buildsCommand = defineCommand({
 	name: "builds",
 	group: "Builds",
-	summary: "list, prune (LRU) and import cached native app builds",
+	summary: "list, remove, prune (LRU) and import cached native app builds",
 	register: (cmd, ctx, done) => {
 		cmd
 			.command("ls", { isDefault: true })
@@ -191,6 +236,16 @@ export const buildsCommand = defineCommand({
 			.option("--yes", "don't ask before removing")
 			.option("--json", "machine-readable output")
 			.action(async (opts) => done(await pruneCmd(ctx, opts)));
+		cmd
+			.command("rm")
+			.alias("remove")
+			.description("remove cached builds by hash (or a unique prefix) and forget the installs at that hash")
+			.argument("<hash...>", "hash or unique prefix (at least 6 characters), as `warden builds` shows it")
+			.option("--platform <platform>", "ios | android: only builds of this platform")
+			.option("--dry-run", "only show what would be removed")
+			.option("--yes", "don't ask before removing")
+			.option("--json", "machine-readable output")
+			.action(async (hashes, opts) => done(await rmCmd(ctx, hashes, opts)));
 		cmd
 			.command("import")
 			.description("copy a local .app / .apk into the cache under a fingerprint hash")

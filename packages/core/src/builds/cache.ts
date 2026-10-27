@@ -313,3 +313,15 @@ export function forgetInstall(store: Store, platform: Platform, deviceId: string
 		.query("DELETE FROM installs WHERE platform = ? AND device_id = ? AND bundle_id = ?")
 		.run(platform, deviceId, bundleId);
 }
+
+/** Forget every install record of `platform` at one of `hashes` (their build is gone); how many there were. */
+export function forgetInstallsAt(store: Store, platform: Platform, hashes: readonly string[], dryRun = false): number {
+	if (hashes.length === 0) return 0;
+	const marks = hashes.map(() => "?").join(", ");
+	const where = `WHERE platform = ? AND hash IN (${marks})`;
+	const count =
+		store.db.query<{ n: number }, string[]>(`SELECT COUNT(*) AS n FROM installs ${where}`).get(platform, ...hashes)
+			?.n ?? 0;
+	if (!dryRun) store.db.query(`DELETE FROM installs ${where}`).run(platform, ...hashes);
+	return count;
+}
