@@ -1,0 +1,87 @@
+---
+title: Debug the running app
+description: Metro bundler output, the app's console and exceptions, network, eval, logpoints and profiles of a warden dev session, from the CLI or over MCP.
+icon: Bug
+---
+
+`warden dev` keeps two records of the app it runs, and agents can read both:
+
+| Source | What only it has |
+|---|---|
+| **Metro's output** | bundle and transform failures (syntax errors, unresolved imports) with file, line and code frame, HMR rebuilds. The app never got that bundle, so nothing reaches the app's console. |
+| **The app over CDP** | `console.*` calls, uncaught exceptions, `fetch` calls, evaluating JavaScript, the React tree, the route, logpoints, CPU / heap / React profiles |
+
+## The devtools broker
+
+Every `warden dev` session holds one Chrome DevTools Protocol connection to the app through Metro's inspector proxy: the **broker**. It attaches as soon as the dev client opens, keeps the newest 5 000 console lines and 1 000 requests in memory, and writes them to `console.jsonl` / `network.jsonl` in the session directory (`$WARDEN_HOME/dev/<leaseId>/`). The dashboard's `devtools` row shows its state.
+
+`warden ui` devtools verbs and `warden mcp` read from it, so nothing that happened before you asked is missed and no tool opens a second debugger connection. Without a dev session they connect directly, as before.
+
+Stacks are symbolicated through Metro: a console line or exception points at `src/app/welcome.tsx:21`, not a bundle offset, with Metro's code frame when it has one. React Native's own frames are kept but flagged `collapsed`.
+
+## From the CLI
+
+```bash
+warden dev logs --kind bundle_failed,error     # does it build? (Metro's output, classified)
+warden dev logs --since 5m --follow            # stream it
+warden ui exceptions                           # uncaught errors, symbolicated
+warden ui logs --level warn --since 2m         # console, warnings and up
+warden ui network --status 4xx                 # failed requests
+warden ui eval 'useStore.getState().todos.length'
+warden ui tree --max 40                        # components on screen, with testIDs
+warden ui route                                # (tabs)/todos
+warden ui reload
+```
+
+Every command takes `--udid` (default: the only live dev session) and `--json`.
+
+`warden dev logs` reads Metro's terminal output, which only the dashboard records. A `--json` or `--no-tui` run answers `metro_log_unavailable`.
+
+## Logpoints
+
+A logpoint logs a value every time a source line runs, without pausing the app and without editing code. It is a conditional breakpoint whose condition logs and returns false.
+
+```bash
+warden ui logpoint add src/app/welcome.tsx:21 '({ step, title: current.title })'
+# reproduce the bug, then
+warden ui logpoint hits                       # each hit's value, e.g. {step: 0, title: "Welcome"}
+warden ui logpoint add src/api.ts:88 'res.status' --hits 5   # removed after 5 hits
+warden ui logpoint list
+warden ui logpoint clear
+```
+
+- The location is a path suffix inside the bundle and a 1-based line, optionally `:col`. The bundle's source map places it; a line with no code moves to the next one that has some, and `list` shows where it landed.
+- Logpoints are re-set after a reload or a reconnect, and removed when the dev session ends.
+- They need the Fusebox debugger (React Native 0.76 and later). On a legacy target `add` fails with `logpoints_unsupported`.
+
+## Profiles
+
+```bash
+warden perf js --duration 10s     # through the broker when warden dev runs
+```
+
+Over MCP, `profile_start` / `profile_stop` record `cpu` (sampling profile: top self-time functions), `heap` (allocation sampling: top allocation sites) or `react` (slowest commits and components). Artifacts are written under the session's `profiles/` directory. A JS reload ends a recording.
+
+## MCP
+
+`warden mcp` is an MCP server on stdio with the same functions as the CLI:
+
+```bash
+claude mcp add warden -- warden mcp
+```
+
+| Tool | Does |
+|---|---|
+| `dev_sessions` | live dev sessions: device, Metro URL, session directory |
+| `metro_logs` | Metro's output, classified and filtered |
+| `app_console` · `app_exceptions` · `app_network` | what the broker captured |
+| `app_eval` · `app_tree` · `app_route` · `app_reload` | read or reload the running app |
+| `logpoint_add` · `logpoint_hits` · `logpoint_list` · `logpoint_remove` | logpoints |
+| `profile_start` · `profile_stop` · `profile_status` | CPU, heap and React profiles |
+| `devtools_status` · `devtools_resume` | broker state |
+
+Each tool takes an optional `udid`; with one dev session running it is not needed.
+
+## Chrome DevTools at the same time
+
+An interactive `warden dev` lets several debuggers attach, so the broker and Chrome DevTools (`j` in Expo) work side by side. A headless Expo run allows one: opening DevTools disconnects the broker, which then waits (`warden ui devtools status` shows `yielded`) instead of taking the page back. Devtools calls answer `devtools_unavailable` until `warden ui devtools resume`, which disconnects DevTools in turn.

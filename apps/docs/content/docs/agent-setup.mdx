@@ -63,6 +63,16 @@ There is no session hook for these agents. Their leases expire by TTL (5 min for
 </Tab>
 </Tabs>
 
+## MCP (optional)
+
+The skill drives everything through the `warden` CLI. For an agent that prefers MCP tools, `warden mcp` serves the debugging side of a running `warden dev` session (Metro output, the app's console, exceptions, network, eval, logpoints, profiles) over stdio:
+
+```bash
+claude mcp add warden -- warden mcp
+```
+
+See [Debug the running app](/docs/agents/debug) for the tools.
+
 ## Verify
 
 ```bash
