@@ -1158,7 +1158,14 @@ export function ptyEnv(env: Record<string, string | undefined>): Record<string, 
 
 export const defaultDevDeps: DevDeps = {
 	pid: process.pid,
-	startBroker: async (options) => (await import("../dev-broker/broker")).startBroker(options),
+	startBroker: async (options) => {
+		const [{ startBroker }, { withExtensions }] = await Promise.all([
+			import("../dev-broker/broker"),
+			import("../dev-broker/extensions"),
+		]);
+		const started = await startBroker(options);
+		return started.success ? ok(withExtensions(started.data, options)) : started;
+	},
 	isPortFree: (port) => isPortFree(port),
 	spawn(cmd, env, cwd, stdout) {
 		if (typeof stdout === "object") {
