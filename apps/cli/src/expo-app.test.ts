@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { missingPackages } from "./expo-app";
+import { expoInstallCommand, missingPackages } from "./expo-app";
 
 let dir: string | undefined;
 afterEach(() => {
@@ -24,5 +24,23 @@ describe("missingPackages", () => {
 		expect(missingPackages(dir, ["expo-dev-client"])).toEqual([]);
 		writeFileSync(join(dir, "package.json"), "{ nope");
 		expect(missingPackages(dir, ["expo-dev-client"])).toEqual([]);
+	});
+});
+
+describe("expoInstallCommand", () => {
+	test("picks the package manager from the nearest lockfile, walking up", () => {
+		dir = mkdtempSync(join(tmpdir(), "warden-expo-app-"));
+		const app = join(dir, "apps", "mobile");
+		mkdirSync(app, { recursive: true });
+		expect(expoInstallCommand(app, ["expo-dev-client"])).toEqual(["bunx", "expo", "install", "expo-dev-client"]);
+		writeFileSync(join(dir, "yarn.lock"), "");
+		expect(expoInstallCommand(app, ["expo-dev-client"])).toEqual(["yarn", "expo", "install", "expo-dev-client"]);
+		writeFileSync(join(app, "pnpm-lock.yaml"), "");
+		expect(expoInstallCommand(app, ["a", "b"])).toEqual(["pnpm", "expo", "install", "a", "b"]);
+		rmSync(join(app, "pnpm-lock.yaml"));
+		writeFileSync(join(app, "package-lock.json"), "");
+		expect(expoInstallCommand(app, ["a"])).toEqual(["npx", "expo", "install", "a"]);
+		writeFileSync(join(app, "bun.lock"), "");
+		expect(expoInstallCommand(app, ["a"])).toEqual(["bunx", "expo", "install", "a"]);
 	});
 });

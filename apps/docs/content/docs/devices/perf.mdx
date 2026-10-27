@@ -70,6 +70,10 @@ Lease rules:
 | device logs (redacted) | `warden perf logs --level W --since 5m` |
 | crashes and ANRs | `warden perf crashes --since 1h` |
 
+`perf metrics --watch` on iOS costs about 1% of a core instead of 16%: the app's pid is resolved once and each sample is one pid-scoped `ps`.
+
+`warden dev`'s dashboard drives the same sessions: `p` starts and stops one, `P` records every capture, `m` adds a mark, `f` reads frames and `g` shows the report ([dashboard keys](/docs/agents/dev#keys)). There is one session per device, so a session started there blocks `warden perf start` on that device and the reverse. Its HUD uses the `metrics` sampler.
+
 Run `warden perf doctor` first: it also tells you whether an Android app is debuggable or `<profileable android:shell="true"/>`, which native profiling needs (`not_profileable` otherwise).
 
 ## trace_processor download

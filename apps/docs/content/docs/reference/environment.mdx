@@ -10,7 +10,7 @@ Every environment variable warden reads, and the ones `warden run`, `batch` and 
 
 | Variable | Effect |
 |---|---|
-| `WARDEN_HOME` | state directory (default `~/.warden`): `warden.db`, `builds`, `batches`, `ccache`, `affected`, `logs`, `skill`, `ui`, `simd`, `android`, `perf`, `tools` |
+| `WARDEN_HOME` | state directory (default `~/.warden`): `warden.db`, `builds`, `batches`, `ccache`, `affected`, `dev`, `logs`, `skill`, `ui`, `simd`, `android`, `perf`, `tools` |
 | `WARDEN_SESSION_ID`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID` | treat the caller as this agent session (first one set wins; a CI owner outranks them) |
 | `CI` (`true` / `1`), `GITHUB_ACTIONS=true` | detected as a CI owner; run id from `GITHUB_RUN_ID`, `CI_PIPELINE_ID` or `BUILDKITE_BUILD_ID`. `CI` also flips the e2e `shutdown` default to `always` |
 | `WARDEN_TRACE_PROCESSOR` | path to a `trace_processor_shell` for `warden perf` Android native analysis, instead of the pinned copy in `$WARDEN_HOME/tools/` ([profile an app](/docs/devices/perf)) |
@@ -23,6 +23,7 @@ Every environment variable warden reads, and the ones `warden run`, `batch` and 
 | `WARDEN_CAPACITY=off` | skip the capacity gate and boot queue |
 | `WARDEN_CAPACITY_MAX` | hard cap on weighted cpu units booted machine-wide (1 per iOS sim, 2 per Android emulator) |
 | `WARDEN_CAPACITY_HEADROOM_GB` | RAM held back from the budget (default `max(8, 25% of RAM)`) |
+| `WARDEN_TUI=0` | `warden dev`: plain output instead of the dashboard, like `--no-tui` ([dashboard](/docs/agents/dev#dashboard)) |
 | `WARDEN_AUTO_GC=0` | turn off background auto-gc |
 | `WARDEN_MAX_CACHE_SIZE` | build cache cap (e.g. `50G`, default `20G`) for `warden gc` (`--max-cache-size`), `warden builds prune` (`--max-size`) and auto-gc, which runs when the cache is over it |
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | Android SDK location (`adb`, `emulator`); without them warden falls back to `PATH` and cannot build the Android snapshot |

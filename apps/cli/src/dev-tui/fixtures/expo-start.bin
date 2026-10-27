@@ -1,0 +1,59 @@
+[90mStarting project at /work/example[39m
+[90mUsing src/app as the root directory for Expo Router.[39m
+[90mReact Compiler enabled[39m
+[90mExpo Autolinking module resolution enabled[39m
+[2mStarting Metro Bundler[22m
+
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+█ ▄▄▄▄▄ ██▀ ▄▄▄██▄▄███▀ ███ ▄▄▄▄▄ █
+█ █   █ █▀███▄▀ ▀ ▀▄▀▀ ██▀█ █   █ █
+█ █▄▄▄█ █▄▄█▄ ▀ ████▄ ▄ ▄██ █▄▄▄█ █
+█▄▄▄▄▄▄▄█▄█ █ █▄▀▄█ █ █▄█▄█▄▄▄▄▄▄▄█
+█▄ █▀█▄▄▄▀ █▀▀ █  ▄█  ▀▀ ▄▀█▀  ▀▀██
+█▀▀▄█▄█▄▄█▀▄█▀██▄▄█ █▀▄ █ ██▄▀ ▀ ▀█
+█▀█████▄▀█▄█ ▀▀▄▀██ ▀ ██ ██ ▀█▄▀▄▀█
+█ ▀█▄▄▄▄█▀ ▄█ ▄ ▄ ██▀▀██▀█ ▄▀▀  █▀█
+█▀▀█▀█▀▄█▀▀▀ ▀▄▀ ▄▄▄▀ ▀▄ ▄█▀ ▄▄▀▀▀█
+█ ▄▄ ▀▄▄█▄▀▄▄▀▄   █▄▄▀▄█▄▄▀█▀▀ ▀█▄█
+█▀▄▀ ▀█▄  █ █▄ ▀▄██▀▀▄▀  ▄▄█▄ ▀▀▀▄█
+█ █▄ ▄▀▄▄   ▀▀▄▄ ██▄▀ ▄▀██▄█▀ ▀  ██
+█▄▄█▄▄▄▄▄▀ ▀ ▀█  ██ ▀███▄ ▄▄▄  ▀█ █
+█ ▄▄▄▄▄ █  ███▄▀▄▄██▀▄▄▄  █▄█    ██
+█ █   █ ██  ▀ ▄▀ █▄▄ █▀▄█▄ ▄▄ ▀██▄█
+█ █▄▄▄█ █▀▀▄ █▄▄  █ ▄ ██▀▄ █▄ ▄▀█▄█
+█▄▄▄▄▄▄▄█▄▄███▄█▄████▄█▄▄▄▄█▄▄▄█▄██
+
+[2m› Scan the QR code above to open in a [1mdevelopment build[22m[2m.[22m
+[2m([2m]8;;https://expo.fyi/startLearn more]8;;[22m[2m)[22m
+› Metro:
+[4mexp+warden://expo-development-client/?url=http%3A%2F%2F192.168.1.207%3A8101[24m
+
+› Using [36mdevelopment build[39m [2m(Press [22m[2m[1ms[22m[22m[2m to switch to Expo Go)[22m
+› Press [1m?[22m [2m│[22m show all commands
+
+[33mAn update for [33m[1mexpo[22m[39m[33m is available: [33m[31m57.0.26[39m[33m[39m[33m [33m[2m→[22m[39m[33m [33m[32m~57.0.31[39m[33m[39m[33m[39m
+[33m4 other packages may need updating. Run [33m[1mnpx expo install --check[22m[39m[33m for details.[39m
+Logs for your project will appear below.[2m Press Ctrl+C to exit.[22m
+
+› Using [36mdevelopment build[39m
+› Press [1ms[22m [2m│[22m switch to Expo Go
+
+› Press [1ma[22m [2m│[22m open Android
+› [1mshift+a[22m [2m│[22m select an Android device or emulator
+› Press [1mi[22m [2m│[22m open iOS simulator
+› [1mshift+i[22m [2m│[22m select an iOS simulator
+[2m› Press [1mw[22m[2m [2m│[22m[2m open web[22m
+
+› Press [1mr[22m [2m│[22m reload app
+› Press [1mj[22m [2m│[22m open debugger
+› Press [1mm[22m [2m│[22m toggle menu
+› [1mshift+m[22m [2m│[22m more tools
+› Press [1mo[22m [2m│[22m open project code in your editor
+› Press [1mc[22m [2m│[22m show project QR
+
+› Toggling dev menu
+[33mNo apps connected. Sending "devMenu" to all React Native apps failed. Make sure your app is running in the simulator or on a phone connected via USB.[39m
+› Reloading apps
+[33mNo apps connected. Sending "reload" to all React Native apps failed. Make sure your app is running in the simulator or on a phone connected via USB.[39m
+[?25l[37m⠋[39m Stopping server[2K[1G[37m⠙[39m Stopping server[2K[1G[37m⠹[39m Stopping server[2K[1G[?25h› Stopped server
+[?25h

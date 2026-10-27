@@ -147,6 +147,13 @@ export interface WardenProject {
 	root?: string | undefined;
 	/** Bundle id / package per platform. Required when the project has a dynamic `app.config.*`. */
 	bundleId: WardenPerPlatform;
+	/**
+	 * How the app is run: `"expo"` (`expo start` + a dev client) or bare `"react-native"` (`react-native start`,
+	 * `react-native build-ios` / `build-android`, the app itself pointed at Metro).
+	 *
+	 * @default `"expo"` when the project's package.json depends on `expo`, `"react-native"` when only on `react-native`
+	 */
+	framework?: "expo" | "react-native" | undefined;
 	/** How the build cache key is computed. */
 	fingerprint?: WardenFingerprint | undefined;
 	/**

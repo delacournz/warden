@@ -1,0 +1,355 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`render three tasks at 80x24 1`] = `
+"warden dev
+  ✓ claim device      1.3s│ fingerprint abc123
+  · show simulator        │ a very long line that has to wrap because the log pa
+› ▶ dev build             │ ne is narrower than it: /Users/chris/project/node_mo
+  · metro                 │ dules/.bin/expo
+  · dev client            │
+  · session               │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+↑↓ select · enter interact · tab log · ? help · q quit"
+`;
+
+exports[`render session ready with the header filled at 80x24 1`] = `
+"warden dev · ios · example    warden-iphone-17-5 · :8101 · http://localhost:8101
+  ✓ claim device      1.3s│ ios · warden-iphone-17-5 (8F2A-1C3D)
+  · show simulator        │ metro  http://localhost:8101
+  ▶ dev build             │ app    cache abc123
+  · metro                 │
+  · dev client            │ holding the device and port until you quit
+› ▶ session               │ q or ctrl-c stops Metro and releases · ? for keys
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+                          │
+↑↓ select · enter interact · tab log · ? help · q quit"
+`;
+
+exports[`render help overlay at 80x24 1`] = `
+"warden dev
+  ✓ claim device      1.3s│ fingerprint abc123
+  · show simulator        │ a very long line that has to wrap because the log pa
+› ▶ dev build             │ ne is narrower than it: /Users/chris/project/node_mo
+  · metro                 │ dules/.bin/expo
+ ┌ keys ──────────────────────────────────────────────────────────────────────┐
+ │ warden                                            Expo (interact)          │
+ │ ↑ ↓ j k  select task     l        device logs     a        open Android    │
+ │ enter i  interact Metro  p        perf on/off     i        open iOS sim    │
+ │ tab      focus log       P        perf all        w        open web        │
+ │ r        reload app      m        perf mark       j        open debugger   │
+ │ d        show sim        f        frames          r        reload app      │
+ │ o        open client     g        perf report     m        dev menu        │
+ │ s        screenshot      h        toggle HUD      shift+m  more tools      │
+ │ R        reinstall app   ?        help            o        open in editor  │
+ │ x        restart sim     q ctrl-c quit, release   ?        all commands    │
+ │ c        Metro --clear   ctrl-l   redraw                                   │
+ │ tab: scroll the log                               esc ? q close            │
+ └────────────────────────────────────────────────────────────────────────────┘
+                          │
+                          │
+                          │
+                          │
+esc close · ctrl-c quit"
+`;
+
+exports[`render three tasks at 120x40 1`] = `
+"warden dev                                                                                                       hud off
+  ✓ claim device            1.3s│ fingerprint abc123
+  · show simulator              │ a very long line that has to wrap because the log pane is narrower than it: /Users/chr
+› ▶ dev build                   │ is/project/node_modules/.bin/expo
+  · metro                       │
+  · dev client                  │
+  · session                     │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+↑↓ select · enter interact · tab log · ? help · q quit"
+`;
+
+exports[`render session ready with the header filled at 120x40 1`] = `
+"warden dev · ios · example                                    warden-iphone-17-5 · :8101 · http://localhost:8101 hud off
+  ✓ claim device            1.3s│ ios · warden-iphone-17-5 (8F2A-1C3D)
+  · show simulator              │ metro  http://localhost:8101
+  ▶ dev build                   │ app    cache abc123
+  · metro                       │
+  · dev client                  │ holding the device and port until you quit
+› ▶ session                     │ q or ctrl-c stops Metro and releases · ? for keys
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+↑↓ select · enter interact · tab log · ? help · q quit"
+`;
+
+exports[`render help overlay at 120x40 1`] = `
+"warden dev                                                                                                       hud off
+  ✓ claim device            1.3s│ fingerprint abc123
+  · show simulator              │ a very long line that has to wrap because the log pane is narrower than it: /Users/chr
+› ▶ dev build                   │ is/project/node_modules/.bin/expo
+  · metro                       │
+  · dev client                  │
+  · session                     │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+            ┌ keys ────────────────────────────────────────────────────────────────────────────────────────┐
+            │ warden                                                        Expo (interact)                │
+            │ ↑ ↓ j k  select task           l        device logs           a        open Android          │
+            │ enter i  interact Metro        p        perf on/off           i        open iOS sim          │
+            │ tab      focus log             P        perf all              w        open web              │
+            │ r        reload app            m        perf mark             j        open debugger         │
+            │ d        show sim              f        frames                r        reload app            │
+            │ o        open client           g        perf report           m        dev menu              │
+            │ s        screenshot            h        toggle HUD            shift+m  more tools            │
+            │ R        reinstall app         ?        help                  o        open in editor        │
+            │ x        restart sim           q ctrl-c quit, release         ?        all commands          │
+            │ c        Metro --clear         ctrl-l   redraw                                               │
+            │ tab: scroll the log                                           esc ? q close                  │
+            └──────────────────────────────────────────────────────────────────────────────────────────────┘
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+esc close · ctrl-c quit"
+`;
+
+exports[`render too small shows one line 1`] = `
+"terminal too small
+
+
+
+
+
+
+
+
+
+
+"
+`;
+
+exports[`HUD 120x40 with the HUD on 1`] = `
+"warden dev · ios · example                                     warden-iphone-17-5 · :8101 · http://localhost:8101 hud on
+  ✓ claim device            1.3s│ ios · warden-iphone-17-5 (8F2A-1C3D)                ┌ warden-iphone-17-5 ── 00:12:21 ┐
+  · show simulator              │ metro  http://localhost:8101                        │ cpu  14% ▂▄▆▄▂▂▃▆ rss 178 MB   │
+  ▶ dev build                   │ app    cache abc123                                 │ fps —  (iOS sim: no frame API) │
+  · metro                       │                                                     │ metro bundled 1.3 s · 412 mods │
+  · dev client                  │ holding the device and port until you quit          └────────────────────────────────┘
+› ▶ session                     │ q or ctrl-c stops Metro and releases · ? for keys
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+↑↓ select · enter interact · tab log · ? help · q quit"
+`;
+
+exports[`HUD 120x40 with the HUD off 1`] = `
+"warden dev · ios · example                                    warden-iphone-17-5 · :8101 · http://localhost:8101 hud off
+  ✓ claim device            1.3s│ ios · warden-iphone-17-5 (8F2A-1C3D)
+  · show simulator              │ metro  http://localhost:8101
+  ▶ dev build                   │ app    cache abc123
+  · metro                       │
+  · dev client                  │ holding the device and port until you quit
+› ▶ session                     │ q or ctrl-c stops Metro and releases · ? for keys
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+                                │
+↑↓ select · enter interact · tab log · ? help · q quit"
+`;
+
+exports[`Metro pane the selected metro row shows the pane's rows at 120x40 1`] = `
+"warden dev                                                                                                       hud off
+  · claim device                │ █▄▄▄▄▄▄▄█▄▄███▄█▄████▄█▄▄▄▄█▄▄▄█▄██
+  · show simulator              │
+  · dev build                   │ › Scan the QR code above to open in a development build.
+› · metro                       │ (Learn more)
+  · dev client                  │ › Metro:
+  · session                     │ exp+warden://expo-development-client/?url=http%3A%2F%2F192.168.1.207%3A8101
+                                │
+                                │ › Using development build (Press s to switch to Expo Go)
+                                │ › Press ? │ show all commands
+                                │
+                                │ An update for expo is available: 57.0.26 → ~57.0.31
+                                │ 4 other packages may need updating. Run npx expo install --check for details.
+                                │ Logs for your project will appear below. Press Ctrl+C to exit.
+                                │
+                                │ › Using development build
+                                │ › Press s │ switch to Expo Go
+                                │
+                                │ › Press a │ open Android
+                                │ › shift+a │ select an Android device or emulator
+                                │ › Press i │ open iOS simulator
+                                │ › shift+i │ select an iOS simulator
+                                │ › Press w │ open web
+                                │
+                                │ › Press r │ reload app
+                                │ › Press j │ open debugger
+                                │ › Press m │ toggle menu
+                                │ › shift+m │ more tools
+                                │ › Press o │ open project code in your editor
+                                │ › Press c │ show project QR
+                                │
+                                │ › Toggling dev menu
+                                │ No apps connected. Sending "devMenu" to all React Native apps failed. Make sure your
+                                │ app is running in the simulator or on a phone connected via USB.
+                                │ › Reloading apps
+                                │ No apps connected. Sending "reload" to all React Native apps failed. Make sure your a
+                                │ pp is running in the simulator or on a phone connected via USB.
+                                │ › Stopped server
+                                │
+↑↓ select · enter interact · tab log · ? help · q quit"
+`;

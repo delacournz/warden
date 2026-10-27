@@ -29,6 +29,7 @@
 		"@delacour/warden-e2e": "workspace:*",
 		"@delacour/warden-perf": "workspace:*",
 		"@delacour/warden-types": "workspace:*",
+		"@xterm/headless": "6",
 		"chalk": "^6.0.1",
 		"commander": "^15.0.0",
 		"ora": "^9.4.1"

@@ -4,6 +4,7 @@ import { type GitFactsCache, readGitFacts } from "../git-facts";
 import type { PidAlive } from "../liveness";
 import type { Store } from "../store";
 import type { Owner, Platform } from "../types";
+import { readExpoConfig } from "./app-config";
 import type { InstallMode } from "./app-option.schema";
 import {
 	aliasBuild,
@@ -16,7 +17,7 @@ import {
 	recordInstall,
 	storeArtifact,
 } from "./cache";
-import { bundleIdFor, type EasSettings, loadProject, type Project } from "./config";
+import { appStart, bundleIdFor, dynamicAppConfigDir, type EasSettings, loadProject, type Project } from "./config";
 import { type Download, resolveFromEas } from "./eas";
 import {
 	appMatchesArtifact,
@@ -40,7 +41,12 @@ import { type EnsureResult, type ResolveSteps, resolveApp } from "./resolve";
 /** Cache `profile` for builds with no EAS profile (local / imported only). */
 export const LOCAL_PROFILE = "local";
 
-export type ProjectContext = { project: Project; projectKey: string };
+export type ProjectContext = {
+	project: Project;
+	projectKey: string;
+	/** set when a dynamic `app.config.*` was resolved through `expo config`: the slug and scheme it reported */
+	appConfig?: { slug?: string; scheme?: string };
+};
 
 export type ProjectContextInput = {
 	exec: Exec;
@@ -62,8 +68,10 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 	const facts = await readGitFacts(input.exec, input.start, input.git);
 	const stopAt = facts?.toplevel;
 	const overlay = await overlayDirUnlessRepoConfig(input.exec, input.start, stopAt, input.env, input.git);
-	const project = loadProject({
-		start: input.start,
+	// a monorepo root with one app below it: look the project up from that app
+	const start = appStart(input.start, stopAt, overlay);
+	const load = {
+		start,
 		env: input.env,
 		...(stopAt ? { stopAt } : {}),
 		...(overlay ? { overlayDir: overlay } : {}),
@@ -71,11 +79,29 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 		...(input.bundleId ? { bundleId: input.bundleId } : {}),
 		...(input.variant !== undefined ? { variant: input.variant } : {}),
 		...(input.variantOptional ? { variantOptional: true } : {}),
-	});
-	if (!project.success) return project;
+	};
+	let appConfig: ProjectContext["appConfig"];
+	let project = loadProject(load);
+	if (!project.success) {
+		const dynamicDir = dynamicAppConfigDir(start, stopAt, input.bundleId, overlay);
+		if (dynamicDir === undefined) return project;
+		// the app's config is code: only Expo can resolve it, so ask Expo once and detect again with its answer
+		const read = await readExpoConfig(input.exec, dynamicDir);
+		if (!read.success) return err(`${project.error}; ${read.error}`);
+		appConfig = {
+			...(read.data.slug ? { slug: read.data.slug } : {}),
+			...(read.data.scheme ? { scheme: read.data.scheme } : {}),
+		};
+		project = loadProject({
+			...load,
+			bundleId: { ...read.data.bundleId, ...input.bundleId },
+			...(read.data.slug ? { appName: read.data.slug } : {}),
+		});
+		if (!project.success) return project;
+	}
 	const key = await readProjectKey(input.exec, project.data.root, input.git);
 	if (!key.success) return key;
-	return ok({ project: project.data, projectKey: key.data });
+	return ok({ project: project.data, projectKey: key.data, ...(appConfig ? { appConfig } : {}) });
 }
 
 export type EnsureInput = ProjectContext & {

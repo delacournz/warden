@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
 import type { Exec } from "@delacour/warden-core/exec";
@@ -413,5 +413,53 @@ describe("warden gc: a device claimed while the pass runs (16-1, 12-2)", () => {
 		expect(await gcCommand.run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).toContain("shutdown U1 failed");
 		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	describe("dev session dirs", () => {
+		const DAY = 24 * 60 * 60_000;
+		const NOW_DEV = 40 * DAY;
+
+		function devDir(c: TestContext, leaseId: string, ageMs: number, files = ["warden.log"]): string {
+			const dir = join(c.env.WARDEN_HOME ?? "", "dev", leaseId);
+			mkdirSync(join(dir, "shots"), { recursive: true });
+			for (const file of files) {
+				const path = join(dir, file);
+				writeFileSync(path, "x");
+				const at = (NOW_DEV - ageMs) / 1000;
+				utimesSync(path, at, at);
+			}
+			return dir;
+		}
+
+		function run(): TestContext {
+			ctx = testContext(["--json"], { now: () => NOW_DEV, exec: fakeExec([]) });
+			return ctx;
+		}
+
+		test("removes dirs of leases that are gone and idle for over 24 h, keeps the rest", async () => {
+			const c = run();
+			const live = c.db.insertLease({ resource: { kind: "port", port: 9 }, owner: agent, ttlMs: DAY * 365 }, NOW_DEV);
+			const old = devDir(c, "gone-old", 25 * 60 * 60_000);
+			const fresh = devDir(c, "gone-fresh", 23 * 60 * 60_000);
+			const held = devDir(c, "held", 30 * 60 * 60_000);
+			const mixed = devDir(c, "gone-mixed", 48 * 60 * 60_000, ["warden.log", "shots/new.png"]);
+			const touched = join(mixed, "shots", "new.png");
+			const recent = (NOW_DEV - 60_000) / 1000;
+			utimesSync(touched, recent, recent);
+			const liveDir = devDir(c, live.id, 30 * 60 * 60_000);
+			expect(await gcCommand.run(c)).toBe(0);
+			expect(existsSync(old)).toBe(false);
+			expect(existsSync(fresh)).toBe(true);
+			expect(existsSync(held)).toBe(false);
+			expect(existsSync(mixed)).toBe(true);
+			expect(existsSync(liveDir)).toBe(true);
+			expect(JSON.parse(c.stdout.join("\n")).notes).toContain("removed 2 old dev session dirs");
+		});
+
+		test("nothing to sweep adds no note", async () => {
+			const c = run();
+			expect(await gcCommand.run(c)).toBe(0);
+			expect(JSON.parse(c.stdout.join("\n")).notes).toEqual([]);
+		});
 	});
 });

@@ -20,7 +20,9 @@ import type { Spinner } from "./ui";
 
 /** Shared by `warden run` and `warden batch`: claim devices + ports, child env, heartbeat, release. */
 
-export type ForwardedSignal = "SIGINT" | "SIGTERM";
+/** Signals a run forwards to its child and ends on: Ctrl-C, a kill, and the terminal going away. */
+export type ForwardedSignal = "SIGINT" | "SIGTERM" | "SIGHUP";
+export const FORWARDED_SIGNALS: readonly ForwardedSignal[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 export type ChildHandle = { exited: Promise<number>; kill: (signal: ForwardedSignal) => void };
 
@@ -661,7 +663,7 @@ export function holdLeases(
 		// a busy store at start is not fatal: the next tick beats again
 	}
 	const stopHeartbeat = deps.every(HEARTBEAT_INTERVAL_MS, beat);
-	const unsubscribe = (["SIGINT", "SIGTERM"] as const).map((signal) => deps.onSignal(signal, () => onSignal(signal)));
+	const unsubscribe = FORWARDED_SIGNALS.map((signal) => deps.onSignal(signal, () => onSignal(signal)));
 	return () => {
 		stopHeartbeat();
 		for (const off of unsubscribe) off();

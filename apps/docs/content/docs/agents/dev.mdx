@@ -15,15 +15,121 @@ warden dev ios --json       # one line { udid, port, metroUrl, leaseIds } once M
 
 ## What it does
 
-1. Checks the bundle id and `expo-dev-client`.
+1. Finds the app and checks what a dev-client run needs (see [Before it starts](#before-it-starts)).
 2. Claims a device and leases a Metro port (default range `8081:100`).
-3. Installs the build for this fingerprint: installed, cache, EAS, then local build.
-4. Starts Metro on the leased port.
-5. Opens the dev client once the port is verified to serve this checkout.
+3. Shows the simulator (iOS, macOS): brings its window to the front, launching Device Hub (Xcode 27) or Simulator.app (Xcode ≤ 26) when no viewer is running. `--headless` skips this. Android emulators stay windowless.
+4. Installs the build for this fingerprint: installed, cache, EAS, then local build.
+5. Starts Metro on the leased port.
+6. Opens the dev client once the port is verified to serve this checkout.
 
-`warden dev` owns its Metro. A Metro left running by another worktree is refused, never attached to. It holds the device and the port until Metro exits; Ctrl-C releases both. The `--json` line is printed first, so an agent can read the `udid` and `metroUrl` and pass them to `warden ui open <bundleId> --metro <metroUrl>`.
+`warden dev` owns its Metro. A Metro left running by another worktree is refused, never attached to. It holds the device and the port until Metro exits; `q` or Ctrl-C in the dashboard (Ctrl-C in plain output), a kill or the terminal closing (SIGHUP) stops Metro and releases both. In the dashboard's interact mode Ctrl-C goes to Expo, which exits and ends the session. The simulator dev booted is shut down with the session and its Device Hub / Simulator.app window is closed, so nothing is left running or showing; one that was already booted when dev leased it, or one you passed with `--udid` / `--lease`, is left on. `--no-shutdown` keeps dev's own sim booted for the next run (a boot is 10-30 s). A hard kill (`kill -9`, a crashed terminal app) skips all of this; `warden gc` shuts the sim down once its lease has gone stale. The `--json` line is printed first, so an agent can read the `udid` and `metroUrl` and pass them to `warden ui open <bundleId> --metro <metroUrl>`.
 
 Metro gets `WARDEN_WORKTREE` (the checkout directory name) and `WARDEN_BRANCH` (absent on a detached HEAD) in its environment, so `app.config.ts` can name the dev server after the worktree. Native builds never see them, so the fingerprint is unchanged.
+
+## Before it starts
+
+Everything that can be wrong with the request or the app is found on the plain terminal, before a device is leased, anything is built or the dashboard takes the screen. A failure there is one line with the fix, never a dashboard that flashes and closes.
+
+- **No config needed.** `warden dev` runs with or without a `warden.config.ts`. Started at a monorepo root (nothing found upwards), it looks below it: the package.json `workspaces`, else `apps/*` and `packages/*`. One app there is used and named (`app apps/mobile (wallet)`). With several, a person picks one, and a pipe gets the list and `--project <dir>`.
+- **Expo or bare React Native.** Read from the app's package.json: `expo` means `expo start --dev-client` and the dev client. Only `react-native` means a bare app: the bundle ids come from `ios/*.xcodeproj` (`PRODUCT_BUNDLE_IDENTIFIER`) and `android/app/build.gradle` (`applicationId`), Metro is `react-native start` on the leased port, the default local build is `react-native build-ios` / `build-android`, and the app itself is relaunched against Metro (iOS: `-RCT_jsLocation 127.0.0.1:<port>`; Android: the device's 8081 reversed to the port). `projects[].framework` in a `warden.config.ts` overrides the guess. `warden e2e` stays Expo-only.
+- **The project.** The nearest `warden.config.ts`, else the app's `app.json`. An app whose config is code (`app.config.ts` / `.js` / `.mjs` / `.cjs`) with no bundle id in `app.json` is resolved the way Expo does it: `warden dev` runs `expo config --json --type public` in the app directory once and takes the bundle id, slug and scheme from the result. `--bundle-id` still overrides it, and a `warden.config.ts` skips the call.
+- **`expo-dev-client`.** Metro is started with `--dev-client`, so an Expo app has to list it. A bare app needs none.
+
+With a person at the terminal each missing piece is offered as a fix:
+
+- a package that is not in `package.json`: *Add and install it now?* runs `expo install <package>` through the package manager the checkout uses (`yarn`, `pnpm`, `bunx` or `npx`, from the nearest lockfile) in the app directory, then checks again;
+- an app read through `expo config`: *Write warden.config.ts?* writes a `warden.config.ts` next to the app with the project name and the resolved bundle id, so later starts skip the call (`warden init` writes the same file plus a first e2e spec). In a checkout that formats with prettier the file is run through the checkout's prettier, so its format check stays green.
+
+Declining a blocking fix ends the run with the command to run yourself. Without a terminal (`--json`, a pipe, CI) nothing is asked: the blocking issues are the error, each with its command, and the optional ones a note.
+
+When a failure happens after the dashboard opened (the claim, the build, Metro dying), its lines are printed to the terminal once the dashboard has closed, followed by the session log directory, so the reason is never lost with the screen.
+
+## Dashboard
+
+On an interactive terminal `warden dev` draws a dashboard instead of printing lines. Tasks are listed on the left: claim device, show simulator, dev build, metro, dev client, session. Every key you press adds a row of its own (a screenshot, a reinstall). The right side shows the live output of the selected row. The metro row shows Metro's real terminal, so Expo's QR code and key menu look the same as outside warden. When the terminal is at least 100 columns wide a HUD box sits at the top right.
+
+```bash
+warden dev            # dashboard on a terminal
+warden dev --no-tui   # plain output, Metro on this terminal
+```
+
+### Two modes
+
+- **List mode** is the default. Warden's keys apply.
+- **Interact mode** starts with `Enter` or `i` on the metro row. Every key, Ctrl-C included, goes to Expo until you press `Esc`. Expo's own menu keeps its exact bindings (`a`, `i`, `w`, `j`, `r`, `m`, `shift+m`, `o`, `?`). Exiting Expo ends the session the normal way.
+- `Esc Esc` in quick succession sends a literal Esc to Expo.
+- `Shift+PgUp` / `Shift+PgDn` scroll Metro's history.
+
+### Keys
+
+List mode:
+
+| Key | What it does |
+|---|---|
+| `↑` `↓` `j` `k` | select a task |
+| `Enter` `i` | interact with Metro (see above) |
+| `Tab` | focus the log pane |
+| `r` | reload the app: sends `r` to Metro |
+| `d` | show the simulator window (iOS; a note on Android, which has none) |
+| `o` | open the dev client again |
+| `s` | screenshot, saved under the session's `shots/` directory |
+| `R` | reinstall the dev build, then reopen the client. Metro keeps running |
+| `x` | restart the simulator and reopen the client (iOS only) |
+| `c` | restart Metro with `--clear` on the same port |
+| `l` | start or stop streaming device logs into a row |
+| `p` | start a perf session on this device, or stop the one recording |
+| `P` | start a perf session recording every capture |
+| `m` | add a perf mark: asks for a label in the footer (`Enter` adds, `Esc` cancels) |
+| `f` | frame stats (Android; the iOS simulator has no frame API) |
+| `g` | show the report of the last perf session |
+| `h` | show or hide the HUD |
+| `?` | key help |
+| `q` `Ctrl-C` | quit: stops Metro and releases the device and port |
+| `Ctrl-L` | redraw |
+
+Log pane (after `Tab`): `↑` `↓` scroll a line, `PgUp` `PgDn` a page, `g` `G` jump to the top or bottom, `Tab` or `Esc` go back to the list, `q` quits. Help overlay: `Esc`, `?`, `q` or `Enter` close it.
+
+Guard rails:
+
+- Keys wait for the dev client: before it opens they report `not ready` in their row.
+- `R`, `x` and `c` run one at a time, and a key already running reports `still running`.
+- One perf session records per device. `R` and `x` are refused while one records, so the app is not killed under the recording; `p` stops it first. `p` while another process holds a session on the device reports that and names `warden perf stop`.
+- `g` is refused while the session still records. A session that reaches its cap stops itself and `g` shows its report.
+- `m` is refused when nothing records.
+- `x` is iOS only.
+
+### HUD
+
+The HUD box samples the dev client every second:
+
+| | iOS simulator | Android emulator |
+|---|---|---|
+| CPU % with a short history | yes | yes |
+| Memory | RSS | PSS |
+| Frames per second and jank % | no frame API | yes |
+
+It also shows Metro's last bundle time and module count, and a recording clock with the mark count while a perf session records. `h` toggles it, `--no-hud` leaves it off, and `--hud-interval <duration>` sets the sampling interval (default `1s`, minimum `200ms`; a smaller value is an error). The box is hidden below 100 columns.
+
+### Session logs
+
+Everything the dashboard shows is also written to `$WARDEN_HOME/dev/<leaseId>/`:
+
+| File | Holds |
+|---|---|
+| `warden.log` | every task row's lines, one per line with a timestamp and the row name |
+| `metro.log` | Metro's raw terminal output |
+| `shots/` | screenshots from `s` |
+
+`warden gc` removes a session directory once its lease is gone and its newest file is older than 24 hours.
+
+### When the dashboard is off
+
+`warden dev` prints plain lines, with Metro on your terminal, when any of these holds:
+
+- `--json`, or the session is not a plain interactive terminal (pipes, CI).
+- `--no-tui` or `WARDEN_TUI=0`.
+
+A terminal under 60 columns or 16 rows shows `terminal too small` until it is resized; the session keeps running. Agents should keep running `warden dev ios --json`: the dashboard is for people and never changes the `--json` output.
 
 ## Why not `expo run:*`
 
@@ -38,7 +144,7 @@ Metro gets `WARDEN_WORKTREE` (the checkout directory name) and `WARDEN_BRANCH` (
 | Flag | Effect |
 |---|---|
 | `--profile <slug>` · `--runtime <runtime>` | device profile (`iphone-17`, `pixel-10`) and runtime (`latest`, `26.5`) |
-| `--udid <udid>` · `--lease <id>` | use this device instead of claiming one |
+| `--udid <udid>` · `--lease <id>` | use this device instead of claiming one (also the default when this session already holds one device lease). A held sim that is shut down is booted and waited for first, but only under this session's own lease; a foreign one is never booted |
 | `--port <from:span>` | Metro port range to lease from (default `8081:100`) |
 | `--project <dir>` · `--bundle-id <id>` | project directory (default cwd); override the bundle id / package |
 | `--variant <name>` | `projects[].variants` build (default `dev` when the project has one) |
@@ -47,8 +153,11 @@ Metro gets `WARDEN_WORKTREE` (the checkout directory name) and `WARDEN_BRANCH` (
 | `--no-eas` · `--no-build` | skip EAS downloads; do not build locally on a cache miss |
 | `--install-mode clean\|reinstall` | `clean`: fresh app data each run without reinstalling an unchanged build; `reinstall`: uninstall + install each run. `--reset-keychain` also resets the simulator keychain |
 | `--no-open` | start Metro and take the leases only |
+| `--no-tui` | plain output: Metro on this terminal, no dashboard (also `WARDEN_TUI=0`; `--json` and pipes are always plain) |
+| `--no-hud` · `--hud-interval <duration>` | dashboard only: no perf HUD; HUD sampling interval (default `1s`, minimum `200ms`) |
+| `--no-shutdown` | leave the simulator booted when dev ends (default: shut down the one dev booted) |
 | `--wait <duration>` · `--no-wait` · `--priority <p>` | boot-queue behaviour (default `--wait 30m`) |
-| `--headless` · `--no-headless` | close or keep the Simulator.app windows |
+| `--headless` · `--no-headless` | `--headless`: don't show the simulator and close its Simulator.app windows; the default shows it |
 | `--count <n>` · `--max <n>` · `--ttl <duration>` · `--label <label>` · `--adopt` | as for `warden claim` |
 
 ## Variants

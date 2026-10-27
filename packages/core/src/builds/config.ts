@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { z } from "zod";
@@ -11,6 +11,7 @@ import {
 } from "./builds.defaults";
 import type { projectConfigSchema, wardenConfigSchema } from "./config.schema";
 import type { WardenConfigContext } from "./define-config";
+import { type AppFramework, appFramework, nativeBundleIds } from "./native-ids";
 
 /** The preferred config file, named in hints. */
 export const CONFIG_FILE = "warden.config.ts";
@@ -61,8 +62,10 @@ export type Project = {
 	/** the `variants.<name>` this project was resolved with; undefined = the project's own settings */
 	variant?: string;
 	cacheDirs: string[];
-	/** where the project came from */
-	origin: "config" | "app.json" | "app.config";
+	/** `expo` (expo start + a dev client) or bare `react-native` (react-native start, the app itself) */
+	framework: AppFramework;
+	/** where the project came from; `react-native` = autodetected from a bare app's package.json + native projects */
+	origin: "config" | "app.json" | "app.config" | "react-native";
 	/** which lookup found it: the repo's own config, the `~/.warden` overlay config, or autodetected from the app config */
 	source: ConfigSource;
 };
@@ -114,13 +117,15 @@ function within(dir: string, target: string): boolean {
 function fromConfig(entry: ParsedProjectConfig, configDir: string, env: Record<string, string | undefined>): Project {
 	const root = resolve(configDir, entry.root);
 	const configuration = entry.build?.configuration ?? "Debug";
+	const framework = entry.framework ?? appFramework(root) ?? "expo";
 	const project: Project = {
 		name: entry.name,
 		root,
 		bundleId: entry.bundleId,
+		framework,
 		build: {
-			ios: entry.build?.ios ?? defaultBuildCommand("ios", configuration),
-			android: entry.build?.android ?? defaultBuildCommand("android", configuration),
+			ios: entry.build?.ios ?? defaultBuildCommand("ios", configuration, framework),
+			android: entry.build?.android ?? defaultBuildCommand("android", configuration, framework),
 		},
 		buildConfiguration: configuration,
 		cacheDirs: (entry.cacheDirs ?? LEGACY_CACHE_DIRS[entry.name] ?? []).map((d) =>
@@ -183,11 +188,13 @@ function readAppJson(path: string): Result<AppJsonInfo> {
 function autoDetect(
 	dir: string,
 	env: Record<string, string | undefined>,
-	bundleOverride: Project["bundleId"]
+	bundleOverride: Project["bundleId"],
+	appName?: string
 ): Result<Project> | undefined {
 	const appJsonPath = join(dir, "app.json");
 	const hasAppJson = existsSync(appJsonPath);
 	const dynamic = APP_CONFIG_FILES.find((f) => existsSync(join(dir, f)));
+	if (dynamic === undefined && appFramework(dir) === "react-native") return bareReactNative(dir, env, bundleOverride);
 	if (!hasAppJson && dynamic === undefined) return undefined;
 
 	const info = hasAppJson ? readAppJson(appJsonPath) : ok<AppJsonInfo>({ bundleId: {} });
@@ -198,9 +205,33 @@ function autoDetect(
 			`${join(dir, dynamic)} is dynamic — warden can't read its bundle id. Add ${CONFIG_FILE} (projects[].bundleId) or pass --bundle-id`
 		);
 	}
-	const name = info.data.name ?? dir.split(sep).at(-1) ?? "app";
+	const name = info.data.name ?? appName ?? dir.split(sep).at(-1) ?? "app";
 	const project = fromConfig({ name, root: ".", bundleId }, dir, env);
 	project.origin = hasAppJson ? "app.json" : "app.config";
+	project.source = "auto";
+	return ok(project);
+}
+
+/** The app's own name: bare `app.json` `name` (what the template names the native targets), else package.json `name`. */
+function bareAppName(dir: string): string | undefined {
+	for (const file of ["app.json", "package.json"]) {
+		const raw = readJson(join(dir, file));
+		if (raw.success && isRecord(raw.data) && typeof raw.data.name === "string" && raw.data.name !== "")
+			return raw.data.name;
+	}
+	return undefined;
+}
+
+/** A bare React Native app (`react-native` without `expo`): ids from `ios/*.xcodeproj` and `android/app/build.gradle`. */
+function bareReactNative(
+	dir: string,
+	env: Record<string, string | undefined>,
+	bundleOverride: Project["bundleId"]
+): Result<Project> {
+	const name = bareAppName(dir) ?? basename(dir);
+	const bundleId = { ...nativeBundleIds(dir, name), ...bundleOverride };
+	const project = fromConfig({ name, root: ".", bundleId, framework: "react-native" }, dir, env);
+	project.origin = "react-native";
 	project.source = "auto";
 	return ok(project);
 }
@@ -220,6 +251,8 @@ export type LoadProjectInput = {
 	variantOptional?: boolean;
 	/** `<WARDEN_HOME>/projects/<key>/` (see `overlay.ts`): its config is used when the repo has none */
 	overlayDir?: string;
+	/** the app's slug when `app.json` has none (read from `expo config` for a dynamic `app.config.*`) */
+	appName?: string;
 };
 
 /** `entry` with `variants.<name>` applied: each key the variant sets replaces the project's own. */
@@ -361,14 +394,138 @@ export function loadProject(input: LoadProjectInput): Result<Project> {
 		return project.success ? ok({ ...project.data, bundleId: { ...project.data.bundleId, ...override } }) : project;
 	}
 	for (const dir of dirs) {
-		const detected = autoDetect(dir, input.env, override);
+		const detected = autoDetect(dir, input.env, override, input.appName);
 		if (!detected) continue;
 		if (input.variant !== undefined && input.variantOptional !== true && detected.success) {
 			return err(`variant "${input.variant}" needs projects[].variants in a ${CONFIG_FILE}`);
 		}
 		return detected;
 	}
-	return err(`no ${CONFIG_FILE} (or ${JSON_CONFIG_FILE}), app.json or app.config.* found from ${start}`);
+	return projectBelow(input, start);
+}
+
+/** Nothing from `start` upwards: the one app below it (a monorepo root), else an error naming what was looked for. */
+function projectBelow(input: LoadProjectInput, start: string): Result<Project> {
+	const below = appDirsBelow(start);
+	const [only, ...more] = below;
+	if (only !== undefined && more.length === 0) return loadProject({ ...input, start: only });
+	if (only !== undefined) {
+		const names = below.map((d) => relative(start, d)).join(", ");
+		return err(`several apps under ${start} (${names}) — run warden in one of them or pass --project <dir>`);
+	}
+	return err(
+		`no ${CONFIG_FILE} (or ${JSON_CONFIG_FILE}), app.json or app.config.* found from ${start} or its workspaces`
+	);
+}
+
+/** Dirs searched below a root that has no `package.json` workspaces. */
+const DEFAULT_APP_GLOBS = ["apps/*", "packages/*"] as const;
+
+/** `package.json` `workspaces` (an array, or `{ packages }`), when `root` has one. */
+function workspaceGlobs(root: string): string[] | undefined {
+	const raw = readJson(join(root, "package.json"));
+	if (!raw.success || !isRecord(raw.data)) return undefined;
+	const ws = raw.data.workspaces;
+	const list = Array.isArray(ws) ? ws : isRecord(ws) && Array.isArray(ws.packages) ? ws.packages : undefined;
+	return list?.filter((g): g is string => typeof g === "string");
+}
+
+/** Subdirs of `dir`, never `node_modules` or dot dirs. */
+function subdirs(dir: string): string[] {
+	try {
+		return readdirSync(dir, { withFileTypes: true })
+			.filter((e) => e.isDirectory() && e.name !== "node_modules" && !e.name.startsWith("."))
+			.map((e) => join(dir, e.name))
+			.sort();
+	} catch {
+		return [];
+	}
+}
+
+/** The dirs a workspace glob names: literal segments, `*` / `**` = one level of any subdir. */
+function expandGlob(root: string, glob: string): string[] {
+	let dirs = [root];
+	for (const segment of glob.split("/").filter((s) => s !== "" && s !== ".")) {
+		dirs =
+			segment === "*" || segment === "**"
+				? dirs.flatMap(subdirs)
+				: dirs.map((d) => join(d, segment)).filter((d) => existsSync(d));
+	}
+	return dirs;
+}
+
+/** Does `dir` hold a React Native app: an `app.json` / `app.config.*`, or a `react-native` dependency? */
+function isAppDir(dir: string): boolean {
+	if (existsSync(join(dir, "app.json")) || APP_CONFIG_FILES.some((f) => existsSync(join(dir, f)))) return true;
+	const raw = readJson(join(dir, "package.json"));
+	if (!raw.success || !isRecord(raw.data)) return false;
+	const { dependencies, devDependencies } = raw.data;
+	return [dependencies, devDependencies].some((deps) => isRecord(deps) && "react-native" in deps);
+}
+
+/**
+ * The app dirs below `root` (a monorepo root): its `package.json` workspaces, else `apps/*` and
+ * `packages/*`, that hold a React Native app (`isAppDir`). Sorted, no duplicates.
+ */
+export function appDirsBelow(root: string): string[] {
+	const start = resolve(root);
+	const globs = workspaceGlobs(start) ?? [...DEFAULT_APP_GLOBS];
+	const dirs = globs.filter((g) => !g.startsWith("!")).flatMap((g) => expandGlob(start, g));
+	return [...new Set(dirs)].filter((d) => d !== start && isAppDir(d)).sort();
+}
+
+/** Is there a warden config or an app config in `start` or a parent (to `stopAt`), or an overlay config? */
+function projectAbove(start: string, stopAt: string | undefined, overlayDir: string | undefined): boolean {
+	if (hasRepoConfig(start, stopAt)) return true;
+	if (overlayDir !== undefined && CONFIG_FILES.some((f) => existsSync(join(overlayDir, f)))) return true;
+	return ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined).some(
+		(dir) => existsSync(join(dir, "app.json")) || APP_CONFIG_FILES.some((f) => existsSync(join(dir, f)))
+	);
+}
+
+/**
+ * Where the project lookup really starts: `start`, unless nothing is found from there upwards and
+ * exactly one app sits below it (a monorepo root), then that app's dir.
+ */
+export function appStart(start: string, stopAt?: string, overlayDir?: string): string {
+	if (projectAbove(start, stopAt, overlayDir)) return resolve(start);
+	const below = appDirsBelow(start);
+	return below.length === 1 && below[0] !== undefined ? below[0] : resolve(start);
+}
+
+/** The apps below `start` to pick from, when nothing is found upwards and there are several; else empty. */
+export function appChoices(start: string, stopAt?: string, overlayDir?: string): string[] {
+	if (projectAbove(start, stopAt, overlayDir)) return [];
+	const below = appDirsBelow(start);
+	return below.length > 1 ? below : [];
+}
+
+/**
+ * The app dir `loadProject` would autodetect from `start` whose bundle id only Expo can read: no warden
+ * config in reach, a dynamic `app.config.*`, and neither `app.json` nor `bundleOverride` names a bundle id.
+ * Undefined otherwise. File names and `app.json` only: nothing is evaluated.
+ */
+export function dynamicAppConfigDir(
+	start: string,
+	stopAt: string | undefined,
+	bundleOverride: Project["bundleId"] = {},
+	overlayDir?: string
+): string | undefined {
+	if (hasRepoConfig(start, stopAt)) return undefined;
+	if (overlayDir !== undefined && CONFIG_FILES.some((f) => existsSync(join(overlayDir, f)))) return undefined;
+	if (bundleOverride.ios !== undefined || bundleOverride.android !== undefined) return undefined;
+	for (const dir of ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined)) {
+		const dynamic = APP_CONFIG_FILES.find((f) => existsSync(join(dir, f)));
+		const appJsonPath = join(dir, "app.json");
+		const hasAppJson = existsSync(appJsonPath);
+		if (!hasAppJson && dynamic === undefined) continue;
+		if (dynamic === undefined) return undefined;
+		const info = hasAppJson ? readAppJson(appJsonPath) : undefined;
+		if (info !== undefined && !info.success) return undefined;
+		const ids = info?.data.bundleId ?? {};
+		return ids.ios === undefined && ids.android === undefined ? dir : undefined;
+	}
+	return undefined;
 }
 
 /** `start` and its parents, up to and including `stop` (or the filesystem root). */
@@ -386,12 +543,20 @@ const APP_CONFIG_BUNDLE_KEY: Record<Platform, string> = {
 	android: "expo.android.package",
 };
 
+/** Where a bare React Native app keeps each platform's id. */
+const NATIVE_BUNDLE_KEY: Record<Platform, string> = {
+	ios: "PRODUCT_BUNDLE_IDENTIFIER in ios/*.xcodeproj",
+	android: "applicationId in android/app/build.gradle",
+};
+
 export function bundleIdFor(project: Project, platform: Platform): Result<string> {
 	const id = project.bundleId[platform];
 	if (id) return ok(id);
 	const fix =
 		project.origin === "config"
 			? `set bundleId.${platform} in ${CONFIG_FILE}`
-			: `set ${APP_CONFIG_BUNDLE_KEY[platform]} in the app config (\`warden init --bundle-id <id>\` writes it)`;
+			: project.origin === "react-native"
+				? `set ${NATIVE_BUNDLE_KEY[platform]}, add ${CONFIG_FILE} (projects[].bundleId)`
+				: `set ${APP_CONFIG_BUNDLE_KEY[platform]} in the app config (\`warden init --bundle-id <id>\` writes it)`;
 	return err(`project "${project.name}" has no ${platform} bundle id — ${fix} or pass --bundle-id`);
 }

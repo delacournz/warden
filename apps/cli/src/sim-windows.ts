@@ -133,6 +133,27 @@ const CLOSE_SCRIPT = `function run(argv) {
 	return "";
 }`;
 
+/**
+ * JXA: close the viewer's device windows of the named devices (argv[0] = name[] JSON; a window is
+ * `<name> – <runtime>`) with their close button. For a device that is already shut down: nothing
+ * else happens to it, and the viewer stays up. Device Hub's management window is never one of them.
+ */
+function closeByNameScript(viewer: WindowViewer): string {
+	return `function run(argv) {
+	const procs = Application("System Events").processes.whose({ name: "${PROCESS_NAME[viewer]}" });
+	if (procs.length === 0) return "";
+	const names = JSON.parse(argv[0]);
+	const windows = procs[0].windows().filter((w) => ${KEEP_WINDOW[viewer]});
+	for (const w of windows) {
+		const title = String(w.name() || "");
+		if (!names.some((name) => title === name || title.startsWith(name + " – "))) continue;
+		const close = w.buttons.whose({ subrole: "AXCloseButton" });
+		if (close.length > 0) close[0].click();
+	}
+	return "";
+}`;
+}
+
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -167,8 +188,9 @@ const osascript = (exec: Exec, script: string, ...args: string[]) =>
  * The simulator viewer running on this Mac. Xcode ≤ 26: Simulator.app (process `Simulator`), one
  * window per booted device, which warden tiles or closes. Xcode 27 removed it for Device Hub
  * (`Xcode.app/Contents/Applications/DeviceHub.app`, `com.apple.dt.Devices`, process `DeviceHub`),
- * which also has a window per device (System Events sees them; verified on Xcode 27.1). warden does
- * not tile or close those yet: under Device Hub it leaves every window alone.
+ * which also has a window per device (System Events sees them; verified on Xcode 27.1). Headless
+ * never closes those (Device Hub opens none by itself); `warden dev` closes the one it opened once
+ * its sim is shut down (`closeSimWindows`).
  */
 export type SimViewer = { kind: "simulator" } | { kind: "device-hub" } | { kind: "none" };
 
@@ -319,6 +341,54 @@ export async function reopenSimWindows(deps: AutoArrangeDeps, udids: readonly st
 			)
 	);
 	return opened;
+}
+
+/** Which viewer `revealSimWindow` brought to the front. */
+export type Revealed = { viewer: "device-hub" | "simulator" };
+
+const OPEN_TIMEOUT_MS = 10_000;
+
+/**
+ * Bring one sim's window to the front for a person who wants to watch it (`warden dev`). Unlike a
+ * claim, this launches a viewer when none is running — showing the app is the point. Device Hub
+ * (Xcode 27) is asked through its deep link without `-g`, which opens or focuses the device's
+ * window and launches Device Hub itself when it is down; Simulator.app (Xcode ≤ 26) is opened with
+ * the device current. With no viewer running the deep link is tried first and, when nothing on
+ * the Mac handles `devices://` (no Xcode 27), Simulator.app is launched instead. macOS only.
+ */
+export async function revealSimWindow(deps: Pick<AutoArrangeDeps, "exec" | "os">, udid: string): AsyncResult<Revealed> {
+	if ((deps.os ?? process.platform) !== "darwin") return err("showing a simulator window needs macOS");
+	const opts = { timeoutMs: OPEN_TIMEOUT_MS };
+	const hub = () => deps.exec(["open", deviceHubUrl(udid)], opts);
+	const simulator = () => deps.exec(["open", "-a", "Simulator", "--args", "-CurrentDeviceUDID", udid], opts);
+	const { kind } = await detectSimViewer(deps.exec);
+	if (kind === "simulator") {
+		const out = await simulator();
+		return out.exitCode === 0 ? ok({ viewer: "simulator" }) : err(`Simulator: ${execError(["open"], out)}`);
+	}
+	const viaHub = await hub();
+	if (viaHub.exitCode === 0) return ok({ viewer: "device-hub" });
+	if (kind === "device-hub") return err(`Device Hub: ${execError(["open"], viaHub)}`);
+	const viaSimulator = await simulator();
+	if (viaSimulator.exitCode === 0) return ok({ viewer: "simulator" });
+	return err(`Device Hub: ${execError(["open"], viaHub)}; Simulator: ${execError(["open"], viaSimulator)}`);
+}
+
+/**
+ * After a device was shut down: close its viewer window, so a Device Hub device page (which stays
+ * open, showing "Start") or a dark Simulator.app window is not left behind. Both viewers, by device
+ * name; no viewer running → nothing to do. macOS only. Needs Accessibility access like `arrange`.
+ */
+export async function closeSimWindows(
+	deps: Pick<AutoArrangeDeps, "exec" | "os">,
+	sims: readonly { udid: string; name: string }[]
+): AsyncResult<void> {
+	if ((deps.os ?? process.platform) !== "darwin" || sims.length === 0) return ok(undefined);
+	const { kind } = await detectSimViewer(deps.exec);
+	if (kind === "none") return ok(undefined);
+	const names = sims.map((s) => s.name);
+	const closed = await osascript(deps.exec, closeByNameScript(kind), JSON.stringify(names));
+	return closed.exitCode === 0 ? ok(undefined) : err(scriptError("(close windows)", closed));
 }
 
 /** A device this run leased: closing windows is limited to these names. */

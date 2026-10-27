@@ -1,10 +1,12 @@
+import { readdirSync, rmSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
 import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
-import type { DeviceRecord } from "@delacour/warden-core/store";
+import { type DeviceRecord, wardenHome } from "@delacour/warden-core/store";
 import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
@@ -137,6 +139,60 @@ function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[
 	}
 }
 
+/** A `warden dev` session dir (`$WARDEN_HOME/dev/<leaseId>`) is swept once idle this long. */
+const DEV_DIR_IDLE_MS = 24 * 60 * 60_000;
+
+/** The newest file mtime anywhere under `path` (directories' own times move with every create); the dir's own when it holds no file. */
+function newestMtime(path: string): number {
+	const files: number[] = [];
+	const walk = (dir: string): void => {
+		for (const entry of readdirSync(dir, { withFileTypes: true })) {
+			const child = join(dir, entry.name);
+			if (entry.isDirectory()) walk(child);
+			else files.push(statSync(child).mtimeMs);
+		}
+	};
+	walk(path);
+	return files.length > 0 ? Math.max(...files) : statSync(path).mtimeMs;
+}
+
+/**
+ * Remove `$WARDEN_HOME/dev/<leaseId>` dirs (the dev TUI's logs and screenshots) whose lease is gone and whose
+ * newest file is over 24 h old. Returns gc's notes about it.
+ */
+function sweepDevDirs(ctx: CommandContext, now: number): string[] {
+	const root = join(wardenHome(ctx.env), "dev");
+	const leased = new Set(
+		ctx
+			.store()
+			.listLeases()
+			.map((l) => l.id)
+	);
+	let entries: string[];
+	try {
+		entries = readdirSync(root, { withFileTypes: true })
+			.filter((e) => e.isDirectory() && !leased.has(e.name))
+			.map((e) => e.name);
+	} catch (e) {
+		return isMissing(e) ? [] : [`dev session dirs sweep failed: ${e instanceof Error ? e.message : String(e)}`];
+	}
+	const removed = entries.filter((name) => removeIfIdle(join(root, name), now)).length;
+	return removed === 0 ? [] : [`removed ${plural(removed, "old dev session dir")}`];
+}
+
+const isMissing = (e: unknown): boolean => e instanceof Error && "code" in e && e.code === "ENOENT";
+
+/** Remove `dir` when its newest file is over 24 h old; one unreadable dir must not stop the others. */
+function removeIfIdle(dir: string, now: number): boolean {
+	try {
+		if (now - newestMtime(dir) < DEV_DIR_IDLE_MS) return false;
+		rmSync(dir, { recursive: true, force: true });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 type GcOpts = { idle?: string; maxCacheSize?: string; quiet?: true; json?: true };
 
 /** Everything a pass reports. */
@@ -234,6 +290,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			? pruneCache(ctx, cap.bytes.data, now)
 			: [`WARDEN_MAX_CACHE_SIZE: ${cap.bytes.error}; build cache prune skipped`])
 	);
+	notes.push(...sweepDevDirs(ctx, now));
 	store.setMeta("last_gc_at", String(now));
 	if (opts.quiet) return 0;
 	const text = [
