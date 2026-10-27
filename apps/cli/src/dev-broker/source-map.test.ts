@@ -116,6 +116,14 @@ describe("sourceMapLocation", () => {
 		});
 	});
 
+	test("a JSC-safe bundle URL (`//&query`, what React Native loads) maps to the plain .map?query", () => {
+		const jscSafe = "http://localhost:8082/apps/example/index.ts.bundle//&platform=ios&dev=true";
+		expect(sourceMapLocation(jscSafe, undefined, "http://127.0.0.1:8082")).toEqual({
+			kind: "url",
+			url: "http://127.0.0.1:8082/apps/example/index.ts.map?platform=ios&dev=true",
+		});
+	});
+
 	test("uses sourceMapURL, resolved against the bundle, and decodes data URIs", () => {
 		expect(sourceMapLocation(METRO_BUNDLE_URL, "/other.map?x=1", "http://m:1")).toEqual({
 			kind: "url",

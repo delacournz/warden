@@ -40,6 +40,7 @@ import {
 	type MethodHandler,
 	type NetworkQuery,
 } from "./broker.types";
+import { isAppException } from "./exceptions";
 import { type BrokerServer, chooseSocketPath, serveBroker } from "./ipc";
 import { filterTree } from "./tree-filter";
 
@@ -404,7 +405,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 	};
 
 	const queryLines = async (
-		lines: ConsoleLine[],
+		lines: readonly ConsoleLine[],
 		query: { since?: number; level?: ConsoleLevel; grep?: string; limit?: number; kind?: ConsoleLine["kind"] }
 	) => {
 		const grep = query.grep?.toLowerCase();
@@ -446,7 +447,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 		async "exceptions.query"(params) {
 			const parsed = exceptionsQuerySchema.safeParse(params ?? {});
 			if (!parsed.success) return badParams("exceptions.query", parsed.error.message);
-			return ok(await queryLines(consoleCapture.lines(), { ...parsed.data, kind: "exception" }));
+			return ok(await queryLines(consoleCapture.lines().filter(isAppException), parsed.data));
 		},
 		async "network.query"(params) {
 			const parsed = networkQuerySchema.safeParse(params ?? {});

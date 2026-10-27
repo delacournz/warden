@@ -592,12 +592,17 @@ const linesPayload = (device: UiDevice, data: LinesData): Result<UiPayload, UiEr
 	});
 
 /** The collector's console file through `filter`. */
-function linesFromFile(ctx: CommandContext, device: UiDevice, filter: LineFilter): Result<UiPayload, UiError> {
+function linesFromFile(
+	ctx: CommandContext,
+	device: UiDevice,
+	filter: LineFilter,
+	keep: (line: ConsoleLine) => boolean = () => true
+): Result<UiPayload, UiError> {
 	const file = join(uiDir(ctx, device.udid), CONSOLE_FILE);
 	if (!existsSync(file)) {
 		return { success: false, error: uiError("usage", "no console log yet", { hint: COLLECT_HINT }) };
 	}
-	const { total, lines } = filterLines(readJsonl<ConsoleLine>(file), filter);
+	const { total, lines } = filterLines(readJsonl<ConsoleLine>(file).filter(keep), filter);
 	return linesPayload(device, { file, total, lines });
 }
 
@@ -613,7 +618,8 @@ export function uiExceptions(ctx: CommandContext, deps: UiDeps, opts: Exceptions
 			queryExceptions(target, { limit, ...(since === undefined ? {} : { since }) }, devtoolsDeps(deps).broker)
 		);
 		if (via !== undefined) return via.success ? linesPayload(device, via.data) : via;
-		return linesFromFile(ctx, device, { ...filter.data, kind: "exception" });
+		const { isAppException } = await import("../dev-broker/exceptions");
+		return linesFromFile(ctx, device, filter.data, isAppException);
 	});
 }
 

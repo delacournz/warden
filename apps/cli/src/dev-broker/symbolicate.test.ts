@@ -4,7 +4,7 @@ import { ok } from "@delacour/warden-types/result";
 import type { Broker } from "./broker";
 import type { LineProcessor } from "./broker.types";
 import { BROKER_EXTENSIONS } from "./extensions";
-import { createSymbolicator, symbolicateExtension, symbolicateFrames } from "./symbolicate";
+import { createSymbolicator, isBundleFrame, symbolicateExtension, symbolicateFrames } from "./symbolicate";
 
 const BUNDLE = "http://localhost:8081/index.bundle?platform=ios&dev=true";
 
@@ -45,6 +45,14 @@ const exception = (line = 5): ConsoleLine => ({
 		{ file: BUNDLE, line: 99, col: 1 },
 		{ file: "native", line: 1, col: 1 },
 	],
+});
+
+describe("isBundleFrame", () => {
+	test("accepts the JSC-safe `//&` bundle URL React Native reports", () => {
+		const file = "http://127.0.0.1:8082/apps/example/index.ts.bundle//&platform=ios&dev=true";
+		expect(isBundleFrame({ file, line: 1, col: 1 })).toBe(true);
+		expect(isBundleFrame({ file: "InternalBytecode.js", line: 1, col: 1 })).toBe(false);
+	});
 });
 
 describe("symbolicateFrames", () => {

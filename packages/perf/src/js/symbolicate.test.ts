@@ -27,6 +27,16 @@ describe("resolveMapUrl (SSRF guard)", () => {
 		});
 	});
 
+	test("no sourceMapURL on a JSC-safe bundle (`.bundle//&…`, what Hermes reports) maps to the plain .map?…", () => {
+		const jscSafe = "http://127.0.0.1:8081/apps/example/index.ts.bundle//&platform=ios&dev=true";
+		for (const sourceMapURL of [undefined, ""]) {
+			expect(resolveMapUrl(script({ url: jscSafe, sourceMapURL }), METRO)).toEqual({
+				kind: "fetch",
+				url: "http://127.0.0.1:8081/apps/example/index.ts.map?platform=ios&dev=true",
+			});
+		}
+	});
+
 	test("a relative sourceMapURL resolves against the script url", () => {
 		const r = resolveMapUrl(script({ sourceMapURL: "/index.map?x=1" }), METRO);
 		expect(r).toEqual({ kind: "fetch", url: "http://127.0.0.1:8081/index.map?x=1" });

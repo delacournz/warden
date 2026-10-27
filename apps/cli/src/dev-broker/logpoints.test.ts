@@ -193,6 +193,16 @@ describe("re-arming", () => {
 		await until(() => sent(r, "Debugger.setBreakpointByUrl").length === 2, "armed in the second bundle");
 		expect(sent(r, "Debugger.setBreakpointByUrl")[1]?.params.url).toBe("http://localhost:8081/second.bundle?x=1");
 	});
+
+	test("a JSC-safe bundle URL (`.bundle//&query`, what React Native loads) arms too, by its own URL", async () => {
+		const r = await rig();
+		await call(r, "logpoint.add", { location: "src/greet.ts:2", expression: "n", id: "t1" });
+		const jscSafe = "http://localhost:8081/second.bundle//&platform=ios&dev=true";
+		r.metro.emit("Debugger.scriptParsed", { scriptId: "jsc", url: jscSafe });
+		await until(() => sent(r, "Debugger.setBreakpointByUrl").length === 2, "armed in the JSC-safe bundle");
+		expect(sent(r, "Debugger.setBreakpointByUrl")[1]?.params.url).toBe(jscSafe);
+		expect(r.fetched.at(-1)).toContain("/second.map?platform=ios&dev=true");
+	});
 });
 
 describe("hits", () => {

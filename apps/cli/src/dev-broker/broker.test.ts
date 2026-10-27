@@ -178,6 +178,25 @@ describe("capture and queries", () => {
 		expect(result.success && result.data.lines.map((l) => [l.kind, l.text])).toEqual([["exception", "Error: kaboom"]]);
 	});
 
+	test("exceptions.query includes errors React Native reports through ExceptionsManager, not plain console.error", async () => {
+		const s = await start();
+		await attached(s);
+		const frame = (functionName: string) => ({
+			functionName,
+			url: "http://localhost:8081/index.bundle//&platform=ios",
+			lineNumber: 10,
+			columnNumber: 2,
+		});
+		s.metro.emit("Runtime.consoleAPICalled", consoleEvent("just an error log", 1000, "error"));
+		s.metro.emit("Runtime.consoleAPICalled", {
+			...consoleEvent("Error: boom\n    at thrower (:1:58)", 2000, "error"),
+			stackTrace: { callFrames: [frame("methodName"), frame("reactConsoleErrorHandler"), frame("reportException")] },
+		});
+		await until(async () => (await status(s)).console.total === 2, "2 lines");
+		const result = await callBroker(s.broker.socketPath, { method: "exceptions.query", params: {} });
+		expect(result.success && result.data.lines.map((l) => l.text)).toEqual(["Error: boom\n    at thrower (:1:58)"]);
+	});
+
 	test("writes console.jsonl and network.jsonl in the ui logs row shapes", async () => {
 		const s = await start();
 		await attached(s);
