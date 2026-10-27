@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
@@ -32,7 +33,7 @@ import {
 	resetSimKeychain,
 	uninstallApp,
 } from "./install";
-import { runLocalBuild } from "./local";
+import { type PrebuildStamp, runLocalBuild } from "./local";
 import { buildLockKey, withBuildLock } from "./lock";
 import { overlayDirUnlessRepoConfig } from "./overlay";
 import { readProjectKey } from "./project-key";
@@ -164,6 +165,12 @@ function profileOf(project: Project): string {
 	return project.variant === undefined ? profile : `${profile}:${project.variant}`;
 }
 
+/** The store's record of the native fingerprint `<root>/<platform>` was last prebuilt for (a CNG dir is per checkout). */
+export function prebuildStamp(store: Store, root: string, platform: Platform): PrebuildStamp {
+	const key = `prebuild:${platform}:${join(root, platform)}`;
+	return { read: () => store.getMeta(key), write: (native) => store.setMeta(key, native) };
+}
+
 type CacheFn = (path: string, source: BuildSource, move: boolean) => ReturnType<typeof storeArtifact>;
 
 /** The EAS step: JS-aware projects look builds up by (clean) HEAD commit, the rest by fingerprint hash. */
@@ -214,6 +221,7 @@ function buildStep(
 			...(input.buildOutput ? { output: input.buildOutput } : {}),
 			...(project.compilerCache === false ? { compilerCache: false } : {}),
 			...(input.git ? { git: input.git } : {}),
+			prebuildStamp: prebuildStamp(input.store, project.root, input.platform),
 		});
 		if (!built.success) return built;
 		const stored = await cache(built.data.artifact, "build", false);
