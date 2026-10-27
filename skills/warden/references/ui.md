@@ -124,19 +124,31 @@ Values: bare `id=sign-in`, quoted `label="Sign in"`, or regex `text=/^\d+ left$/
 
 ## Devtools (dev client only, else exit 3 `devtools_unavailable`)
 
+While `warden dev` runs for the device, every devtools verb goes through its **broker**: one CDP socket the session holds, capturing console, exceptions and fetches from launch (no `logs start`, nothing missed). Without a dev session they connect directly as before.
+
 | Command | Notes |
 |---|---|
 | `eval <expr> [--await]` | runs in Hermes; an exception is `failed` with details |
 | `tree [--all] [--max n] [--screen name]` | React components with testID, label, rect; shows testIDs the AX tree hides |
-| `logs start [--bodies]` | background collector for console + fetch |
-| `logs [n]` `logs mark <label>` `logs clear` `logs stop` | default 50 lines |
-| `network [n] [--include headers,body] [--id id]` | `--id` = one entry in full |
+| `route` | route key of the screen on show (`(tabs)/todos`) |
+| `logs [n] [--since 5m] [--level warn] [--grep x] [--limit n]` | console lines, stacks symbolicated to source; default 50 |
+| `exceptions [--since] [--limit]` | uncaught errors, incl. the ones React Native reports as `console.error` |
+| `network [n] [--since] [--grep url] [--status 4xx] [--id id]` | `--id` = one entry in full |
 | `reload` | reload the app's JS |
+| `logpoint add <file:line[:col]> '<expr>' [--id x] [--hits n]` | logs `<expr>` each time the line runs, never pauses; needs `warden dev`, Fusebox |
+| `logpoint hits [id] [--since]` · `list` · `rm <id>` · `clear` | values logged; logpoints die with the session, re-arm across reloads |
+| `devtools status` · `devtools resume` | broker state; `resume` after it yielded to Chrome DevTools |
+| `logs start [--bodies]` · `logs mark <label>` · `logs clear` · `logs stop` | collector, only without `warden dev` (a no-op `via: broker` with it) |
 
-`--metro <url>` on each; default order: `WARDEN_METRO_URL`, URL remembered by `open --metro`, your leased ports. Caveats:
-- `logs`/`network` with no collector read the previous run's files, not the live app. `logs start` before the action.
-- A collector started before a restart (`open --relaunch`, crash, rebuild) ends `lost` after a 30 s reconnect budget; it also stops after 60 s with no console or fetch activity. `logs start` again.
+Bundler output is not in CDP: `warden dev logs [--kind bundle_failed,error] [--since 5m] [--grep x] [--follow] [--json]` reads Metro's output, classified (`bundle_start|bundle_done|bundle_failed|hmr|error|warn|info`, errors with file/line/code frame). Recorded only by the dashboard (a terminal); `--json`/`--no-tui` runs return `metro_log_unavailable`.
+
+Debug loop: `warden dev logs --kind bundle_failed,error` (does it build?) → `ui exceptions` / `ui logs --level warn` → `ui logpoint add src/x.tsx:42 '{ a, b }'` + reproduce + `ui logpoint hits` → `ui eval` to read state. Same tools over MCP: `warden mcp` (`metro_logs`, `app_console`, `app_exceptions`, `app_eval`, `logpoint_*`, `profile_*`, …).
+
+`--metro <url>` on each direct call; default order: `WARDEN_METRO_URL`, URL remembered by `open --metro`, your leased ports. Caveats:
+- Chrome DevTools (`j` in Expo) on a single-debugger Metro (headless/CI Expo) takes the page: the broker yields (`devtools status` → `yielded`) and calls fail `devtools_unavailable` until `devtools resume`, which disconnects DevTools. Interactive `warden dev` allows both at once.
+- Without a dev session, `logs`/`network` with no collector read the previous run's files, not the live app. `logs start` before the action. A collector ends `lost` after a 30 s reconnect budget (relaunch, crash, rebuild) and stops after 60 s idle.
 - `reload` falls back to Metro's broadcast `/reload`, which reloads every device on that Metro.
+- A reload drops a running `warden perf js` / profile recording (Hermes ties it to the socket).
 
 ## Exit codes and JSON envelope
 

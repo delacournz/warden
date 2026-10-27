@@ -90,6 +90,9 @@ Setup:
                                 builds) or install the latest release
   version                       print warden's version and build channel (dev /
                                 local / release)
+  mcp                           MCP server on stdio: Metro logs, app console,
+                                network, eval, tree, logpoints, profiles of
+                                \`warden dev\`
   help [command]                display help for command"
 `;
 
@@ -211,7 +214,7 @@ Example:
 
 exports[`help output warden dev --help (and nested subcommands) 1`] = `
 "$ warden dev --help
-Usage: warden dev [options] [platform] [expoArgs...]
+Usage: warden dev [options] [command] [platform] [expoArgs...]
 
 install the cached dev build for this fingerprint, start Metro, open the dev
 client (replaces expo run:*)
@@ -278,9 +281,32 @@ Options:
                               already running)
   -h, --help                  display help for command
 
+Commands:
+  logs                        Metro output of a running \`warden dev\` session,
+                              classified (bundle errors, HMR, warnings)
+
 Examples:
   warden dev
-  warden dev android -- --clear"
+  warden dev android -- --clear
+
+$ warden dev logs --help
+Usage: warden dev logs [options]
+
+Metro output of a running \`warden dev\` session, classified (bundle errors, HMR,
+warnings)
+
+Options:
+  --udid <udid>    the session on this device (default: the only running one)
+  --since <when>   30s | 5m | ISO time: entries seen since (metro.log has no
+                   per-line times, so this only skips a log not written since,
+                   and filters followed entries)
+  --tail <n>       only the last N matching entries
+  --grep <regexp>  entries whose text matches (case-insensitive)
+  --kind <kinds>   comma list of
+                   bundle_start,bundle_done,bundle_failed,hmr,error,warn,info
+  --follow         keep printing new entries until interrupted
+  --json           one JSON object per line
+  -h, --help       display help for command"
 `;
 
 exports[`help output warden batch --help (and nested subcommands) 1`] = `
@@ -1764,8 +1790,15 @@ Commands:
                                screen) with rects
   logs [args...]               app console: logs [n] | start | stop | mark
                                <label> | clear
-  network [n]                  the app's fetch calls recorded by \`logs start\`
+  network [n]                  the app's fetch calls recorded by \`logs start\` or
+                               the dev session
   reload                       reload the app's JavaScript
+  exceptions                   the app's uncaught exceptions
+  route                        the route key of the screen the app is on
+  devtools                     the dev session's devtools broker: status |
+                               resume
+  logpoint                     log a value whenever a source line runs, without
+                               pausing: add | list | rm | clear | hits
   help [command]               display help for command
 
 $ warden ui status --help
@@ -2867,7 +2900,12 @@ Arguments:
   args                   n, or start | stop | mark <label> | clear
 
 Options:
+  --since <when>         only entries from the last <dur> (30s, 5m, 2h) or after
+                         an ISO time
   --bodies               with start: also record request and response bodies
+  --level <level>        at least this level: debug | log | info | warn | error
+  --grep <text>          only lines containing text (case-insensitive)
+  --limit <n>            at most the last n lines
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
@@ -2890,14 +2928,19 @@ Options:
 $ warden ui network --help
 Usage: warden ui network [options] [n]
 
-the app's fetch calls recorded by \`logs start\`
+the app's fetch calls recorded by \`logs start\` or the dev session
 
 Arguments:
   n                      entries to show (default 50)
 
 Options:
+  --since <when>         only entries from the last <dur> (30s, 5m, 2h) or after
+                         an ISO time
   --include <parts>      headers,body
   --id <id>              one entry in full
+  --grep <text>          only URLs containing text (case-insensitive)
+  --status <status>      only this status: 404 | 4xx
+  --limit <n>            at most the last n entries
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
@@ -2938,7 +2981,201 @@ Options:
   --json                 machine-readable output: one JSON document on stdout
   --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
                          this owner's leased ports)
-  -h, --help             display help for command"
+  -h, --help             display help for command
+
+$ warden ui exceptions --help
+Usage: warden ui exceptions [options]
+
+the app's uncaught exceptions
+
+Options:
+  --since <when>         only entries from the last <dur> (30s, 5m, 2h) or after
+                         an ISO time
+  --limit <n>            at most the last n exceptions
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui route --help
+Usage: warden ui route [options]
+
+the route key of the screen the app is on
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
+                         this owner's leased ports)
+  -h, --help             display help for command
+
+$ warden ui devtools --help
+Usage: warden ui devtools [options] [command]
+
+the dev session's devtools broker: status | resume
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  status          what the broker is doing: attached, yielded, lost
+  resume          take the page back after the broker yielded to Chrome DevTools
+  help [command]  display help for command
+
+$ warden ui devtools status --help
+Usage: warden ui devtools status [options]
+
+what the broker is doing: attached, yielded, lost
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui devtools resume --help
+Usage: warden ui devtools resume [options]
+
+take the page back after the broker yielded to Chrome DevTools
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui logpoint --help
+Usage: warden ui logpoint [options] [command]
+
+log a value whenever a source line runs, without pausing: add | list | rm |
+clear | hits
+
+Options:
+  -h, --help                   display help for command
+
+Commands:
+  add <location> <expression>  log <expression> each time <file:line[:col]> runs
+                               (needs \`warden dev\` and a Fusebox debugger)
+  list                         the logpoints and whether they are armed
+  rm <id>                      remove a logpoint
+  clear                        remove every logpoint
+  hits [id]                    the values logged so far
+  help [command]               display help for command
+
+$ warden ui logpoint add --help
+Usage: warden ui logpoint add [options] <location> <expression>
+
+log <expression> each time <file:line[:col]> runs (needs \`warden dev\` and a
+Fusebox debugger)
+
+Arguments:
+  location     src/x.tsx:42 or src/x.tsx:42:7 (path suffix inside the bundle,
+               1-based)
+  expression   JavaScript evaluated in the scope of that line
+
+Options:
+  --id <id>    name for it (default lp1, lp2, ...)
+  --hits <n>   remove it after n hits
+  --udid <id>  which dev session (default: the only one)
+  --json       print one JSON document
+  -h, --help   display help for command
+
+$ warden ui logpoint list --help
+Usage: warden ui logpoint list [options]
+
+the logpoints and whether they are armed
+
+Options:
+  --udid <id>  which dev session (default: the only one)
+  --json       print one JSON document
+  -h, --help   display help for command
+
+$ warden ui logpoint rm --help
+Usage: warden ui logpoint rm [options] <id>
+
+remove a logpoint
+
+Arguments:
+  id           logpoint id
+
+Options:
+  --udid <id>  which dev session (default: the only one)
+  --json       print one JSON document
+  -h, --help   display help for command
+
+$ warden ui logpoint clear --help
+Usage: warden ui logpoint clear [options]
+
+remove every logpoint
+
+Options:
+  --udid <id>  which dev session (default: the only one)
+  --json       print one JSON document
+  -h, --help   display help for command
+
+$ warden ui logpoint hits --help
+Usage: warden ui logpoint hits [options] [id]
+
+the values logged so far
+
+Arguments:
+  id              only this logpoint
+
+Options:
+  --since <when>  30s | 5m | 2h | ISO time
+  --limit <n>     at most the last n hits (default 50)
+  --udid <id>     which dev session (default: the only one)
+  --json          print one JSON document
+  -h, --help      display help for command"
 `;
 
 exports[`help output warden __affected-graph --help (and nested subcommands) 1`] = `
@@ -3212,6 +3449,17 @@ print warden's version and build channel (dev / local / release)
 
 Options:
   --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden mcp --help (and nested subcommands) 1`] = `
+"$ warden mcp --help
+Usage: warden mcp [options]
+
+MCP server on stdio: Metro logs, app console, network, eval, tree, logpoints,
+profiles of \`warden dev\`
+
+Options:
   -h, --help  display help for command"
 `;
 

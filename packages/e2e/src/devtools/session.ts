@@ -1,5 +1,5 @@
 import { ok, type Result } from "@delacour/warden-types/result";
-import { type CdpClient, describeException, openCdp, readEvaluateReply } from "./cdp";
+import { type CdpClient, type CloseInfo, describeException, openCdp, readEvaluateReply } from "./cdp";
 import {
 	type CdpTap,
 	type DevtoolsError,
@@ -56,6 +56,11 @@ export type ConnectDevtoolsOptions = {
 	taps?: readonly CdpTap[];
 	/** how long `reloadJs` waits for the app to start tearing its JS context down (default 5 s) */
 	reloadWaitMs?: number;
+	/**
+	 * Asked when the socket closes on its own. `true` = another debugger took the page: do not reconnect (that would
+	 * kick it in turn), close the session and emit `yielded`. Default: always reconnect.
+	 */
+	yieldOnClose?: (info: CloseInfo) => boolean;
 };
 
 export type DevtoolsSession = {
@@ -86,7 +91,7 @@ export type DevtoolsSession = {
 	/** Tap on every CDP event, handshake events flagged `replay`; survives reconnects. */
 	onEvent: (tap: CdpTap) => () => void;
 	evaluateWithBinding: (script: string, requestId: string, timeoutMs?: number) => Promise<DevtoolsResult<unknown>>;
-	/** `reconnected` (new target attached) and `lost` (gave up reconnecting) */
+	/** `reconnected` (new target attached), `lost` (gave up reconnecting), `yielded` (`yieldOnClose` said stop) */
 	on: <E extends keyof SessionEvents>(event: E, handler: (arg: SessionEvents[E]) => void) => () => void;
 	close: () => void;
 };
@@ -100,7 +105,7 @@ export type ReloadMethod = "expo" | "devsettings" | "http";
 const RELOAD_EXPRESSION =
 	'(function(){var g=globalThis;if(g.expo&&typeof g.expo.reloadAppAsync==="function"){setTimeout(function(){g.expo.reloadAppAsync("warden e2e reloadJs")},0);return "expo"}var m=g.nativeModuleProxy&&g.nativeModuleProxy.DevSettings;if(m&&typeof m.reload==="function"){setTimeout(function(){m.reload()},0);return "devsettings"}return false})()';
 
-export type SessionEvents = { reconnected: SelectedTarget; lost: DevtoolsError };
+export type SessionEvents = { reconnected: SelectedTarget; lost: DevtoolsError; yielded: CloseInfo };
 
 type Attached = { cdp: CdpClient; target: SelectedTarget };
 
@@ -145,6 +150,7 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 	const eventHandlers: { [E in keyof SessionEvents]: Set<(arg: SessionEvents[E]) => void> } = {
 		reconnected: new Set(),
 		lost: new Set(),
+		yielded: new Set(),
 	};
 	let unsubscribeCdp: (() => void)[] = [];
 	let connection = 0;
@@ -193,8 +199,15 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 		for (const [method, handlers] of cdpHandlers) {
 			for (const handler of handlers) unsubscribeCdp.push(attached.cdp.on(method, handler));
 		}
-		attached.cdp.onClose(() => {
-			if (state.kind === "up" && state.attached.cdp === attached.cdp) void reconnect("socket closed");
+		attached.cdp.onClose((info) => {
+			if (state.kind !== "up" || state.attached.cdp !== attached.cdp) return;
+			if (o.yieldOnClose?.(info)) {
+				state = { kind: "closed" };
+				log(`devtools: yielded (${info.code} ${info.reason})`);
+				for (const handler of [...eventHandlers.yielded]) handler(info);
+				return;
+			}
+			void reconnect("socket closed");
 		});
 		attached.cdp.on("Runtime.executionContextsCleared", () => {
 			if (state.kind === "up" && state.attached.cdp === attached.cdp) void reconnect("JS context cleared");

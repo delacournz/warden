@@ -225,4 +225,10 @@ export const COMMANDS: readonly CommandEntry[] = [
 		summary: "print warden's version and build channel (dev / local / release)",
 		load: async () => (await import("./version")).versionCommand,
 	},
+	{
+		name: "mcp",
+		group: "Setup",
+		summary: "MCP server on stdio: Metro logs, app console, network, eval, tree, logpoints, profiles of `warden dev`",
+		load: async () => (await import("./mcp")).mcpCommand,
+	},
 ];

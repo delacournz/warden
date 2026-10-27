@@ -38,6 +38,8 @@ Open the reference file for details before acting; this file only routes.
 | one sim / emulator | `warden claim ios --json` · `warden claim android --json` (`--headless`, `--label x`, `--ttl 30m`) |
 | set a new Expo app up for warden | `warden init --bundle-id <id>` → bundle id into `app.json`, `warden.config.ts`, `e2e/smoke.e2e.ts`; names packages to install (`expo-dev-client`, `@delacour/warden-e2e`), installs nothing |
 | run the app in this worktree (replaces `expo run:ios`) | `warden dev ios --json` (platform defaults to ios) → first stdout line `{ udid, port, metroUrl, leaseIds }`; checks bundle id + `expo-dev-client` first; owns Metro on a leased port, refuses another checkout's Metro, opens the dev client; Ctrl-C releases. Agents run `--json` (plain output, no dashboard); the interactive dashboard is for people, `--no-tui` forces plain output on a TTY |
+| debug the running app | `warden dev logs --kind bundle_failed,error` (Metro) · `warden ui exceptions` · `warden ui logs --level warn` · `warden ui logpoint add src/x.tsx:42 '<expr>'` → `logpoint hits` · `warden ui eval '<expr>'` (see ui.md Devtools) |
+| same over MCP | `warden mcp` (stdio): `metro_logs`, `app_console`, `app_exceptions`, `app_network`, `app_eval`, `app_tree`, `logpoint_*`, `profile_*` |
 | dev build on a device | `warden app ensure ios --udid <udid> --json [--variant dev\|e2e]` |
 | record a `warden ui` session into a spec | `warden ui record start <id> [--helper <module#fn>]` → drive → `record note\|use <module#fn>\|undo\|status\|cancel` → `record stop [--no-verify]` (verifies on the same device) |
 | the specs a change needs | `warden affected [suite] --base main --explain [--strict] [--json]` |
