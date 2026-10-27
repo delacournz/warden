@@ -62,8 +62,8 @@ Devices:
 Builds:
   app                           fingerprint an Expo app and install the matching
                                 build (installed → cache → EAS → local build)
-  builds                        list, prune (LRU) and import cached native app
-                                builds
+  builds                        list, remove, prune (LRU) and import cached
+                                native app builds
 
 Commands:
   ui                            drive a leased simulator / emulator (agents):
@@ -3223,18 +3223,20 @@ exports[`help output warden builds --help (and nested subcommands) 1`] = `
 "$ warden builds --help
 Usage: warden builds [options] [command]
 
-list, prune (LRU) and import cached native app builds
+list, remove, prune (LRU) and import cached native app builds
 
 Options:
-  -h, --help      display help for command
+  -h, --help           display help for command
 
 Commands:
-  ls              list cached builds (the default)
-  prune           remove least-recently-used builds until the cache fits
-                  --max-size (build-locked ones stay)
-  import <path>   copy a local .app / .apk into the cache under a fingerprint
-                  hash
-  help [command]  display help for command
+  ls                   list cached builds (the default)
+  prune                remove least-recently-used builds until the cache fits
+                       --max-size (build-locked ones stay)
+  rm|remove <hash...>  remove cached builds by hash (or a unique prefix) and
+                       forget the installs at that hash
+  import <path>        copy a local .app / .apk into the cache under a
+                       fingerprint hash
+  help [command]       display help for command
 
 $ warden builds ls --help
 Usage: warden builds ls [options]
@@ -3258,6 +3260,23 @@ Options:
   --yes              don't ask before removing
   --json             machine-readable output
   -h, --help         display help for command
+
+$ warden builds rm --help
+Usage: warden builds rm|remove [options] <hash...>
+
+remove cached builds by hash (or a unique prefix) and forget the installs at
+that hash
+
+Arguments:
+  hash                   hash or unique prefix (at least 6 characters), as
+                         \`warden builds\` shows it
+
+Options:
+  --platform <platform>  ios | android: only builds of this platform
+  --dry-run              only show what would be removed
+  --yes                  don't ask before removing
+  --json                 machine-readable output
+  -h, --help             display help for command
 
 $ warden builds import --help
 Usage: warden builds import [options] <path>

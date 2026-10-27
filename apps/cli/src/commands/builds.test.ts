@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
-import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { getInstall, listBuilds, recordInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
 import { buildLockKey, buildResource } from "@delacour/warden-core/builds/lock";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { buildsCommand, inferPlatform } from "./builds";
@@ -182,6 +182,45 @@ describe("warden builds", () => {
 		expect(await buildsCommand.run(c)).toBe(0);
 		expect(ui.events[0]).toStartWith("spin: importing");
 		expect(c.stdout.join("\n")).toContain("imported ios H1");
+	});
+
+	test("rm <prefix> removes that build and forgets its installs; the rest stay", async () => {
+		const c = setup(["rm", "cd8e2d", "--json"]);
+		const bad = await seed(c, "cd8e2dbeae5b", 1);
+		const keep = await seed(c, "aaaa1111bbbb", 2);
+		recordInstall(c.db, { platform: "ios", deviceId: "U1", bundleId: "com.x", hash: "cd8e2dbeae5b", installedAt: 1 });
+		expect(await buildsCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.removed.map((b: { hash: string }) => b.hash)).toEqual(["cd8e2dbeae5b"]);
+		expect(out.forgotInstalls).toBe(1);
+		expect([bad, keep].map((p) => existsSync(p))).toEqual([false, true]);
+		expect(getInstall(c.db, "ios", "U1", "com.x")).toBeUndefined();
+	});
+
+	test("rm --dry-run removes nothing; no match / short prefix → exit 1", async () => {
+		const c = setup(["rm", "cd8e2d", "--dry-run"]);
+		await seed(c, "cd8e2dbeae5b", 1);
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(c.stdout.join("\n")).toContain("would remove k ios cd8e2dbeae5b");
+		expect(listBuilds(c.db)).toHaveLength(1);
+		c.argv = ["rm", "999999"];
+		expect(await buildsCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("no cached build matches 999999");
+		c.argv = ["rm", "cd8"];
+		expect(await buildsCommand.run(c)).toBe(1);
+	});
+
+	test("rm in a terminal asks first; no → exit 1, nothing removed; --yes skips the prompt", async () => {
+		const c = setup(["rm", "cd8e2d"]);
+		const ui = scriptedUi({ interactive: true, confirm: [false] });
+		c.ui = ui;
+		await seed(c, "cd8e2dbeae5b", 1);
+		expect(await buildsCommand.run(c)).toBe(1);
+		expect(ui.events[0]).toBe("confirm: Remove 1 cached build(s) (12B)?");
+		expect(listBuilds(c.db)).toHaveLength(1);
+		c.argv = ["rm", "cd8e2d", "--yes"];
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db)).toEqual([]);
 	});
 
 	test("unknown subcommand → exit 1", async () => {

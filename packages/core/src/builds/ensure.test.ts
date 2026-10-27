@@ -9,7 +9,7 @@ import { EXPO_CONFIG_ARGV } from "./app-config";
 import { fakeApp, testProject } from "./builds.testing";
 import { cachedBuild, getBuild, getInstall, recordInstall, storeArtifact } from "./cache";
 import { JSON_CONFIG_FILE } from "./config";
-import { type EnsureInput, ensureApp, projectContext } from "./ensure";
+import { type EnsureInput, ensureApp, prebuildStamp, projectContext } from "./ensure";
 
 let dir: string;
 let store: Store;
@@ -357,6 +357,26 @@ describe("ensureApp", () => {
 		expect(record?.profile).toBe("development-simulator");
 		expect(res.data.appPath).toBe(record?.path ?? "");
 		expect(calls.some((c) => c.includes("eas"))).toBe(false);
+	});
+
+	test("a local build stamps the native fingerprint its native dir was prebuilt for", async () => {
+		const root = join(dir, "app");
+		const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			if (joined === "sh -c make-ios") {
+				fakeApp(products, "Built.app");
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
+			return { exitCode: 127, stdout: "", stderr: joined };
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		const res = await ensureApp(input(exec, { project, deviceId: undefined, build: true, now: () => Date.now() }));
+		if (!res.success) throw new Error(res.error);
+		expect(prebuildStamp(store, root, "ios").read()).toBe("H");
+		expect(prebuildStamp(store, root, "android").read()).toBeUndefined();
 	});
 
 	test("the local build reads the git toplevel through the git cache projectContext used", async () => {

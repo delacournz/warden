@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, type ExecResult, execError } from "../exec";
@@ -195,7 +204,12 @@ export type LocalBuildDeps = {
 	wardenHome?: string;
 	/** per-command memo of the git facts (default: a short-lived shared one) */
 	git?: GitFactsCache;
+	/** the native fingerprint the git-ignored (CNG) native dir was last prebuilt at; absent = never regenerate it */
+	prebuildStamp?: PrebuildStamp;
 };
+
+/** Where `runLocalBuild` records the native fingerprint a CNG `ios/` / `android/` was generated for. */
+export type PrebuildStamp = { read: () => string | undefined; write: (native: string) => void };
 
 async function probe(deps: LocalBuildDeps, argv: string[], cwd?: string): Promise<string | undefined> {
 	try {
@@ -319,6 +333,37 @@ async function prebuildMovedKey(deps: LocalBuildDeps, before: BeforeBuild, after
 	return now === before.status;
 }
 
+/** a build command that generates a missing native dir: `expo prebuild`, or `expo run:*` (it prebuilds when the dir is absent) */
+const PREBUILDS = /\bexpo\s+(prebuild|run:)/;
+
+/**
+ * Remove a CNG native dir generated for another native fingerprint, so the build command prebuilds it again. A
+ * stale `ios/` keeps its old Podfile and a `Podfile.lock` that matches `Pods/Manifest.lock`, so the default command
+ * skips both prebuild and `pod install`, and the build links none of the new native modules (`Cannot find native
+ * module`) under the new key. Only an Expo app whose native dir is git-ignored (generated output, never hand-edited)
+ * and whose build command prebuilds; a dir with no stamp was generated outside warden, for an unknown fingerprint.
+ */
+async function dropStaleNativeDir(deps: LocalBuildDeps, native: string): Promise<void> {
+	const { project, platform, prebuildStamp } = deps;
+	if (prebuildStamp === undefined || project.framework !== "expo") return;
+	const nativeDir = join(project.root, platform);
+	if (!existsSync(nativeDir) || !PREBUILDS.test(project.build[platform])) return;
+	const stamp = prebuildStamp.read();
+	if (stamp === native) return;
+	try {
+		const ignored = await deps.exec(["git", "check-ignore", "-q", platform], {
+			cwd: project.root,
+			timeoutMs: PROBE_TIMEOUT_MS,
+		});
+		if (ignored.exitCode !== 0) return;
+	} catch {
+		return;
+	}
+	const was = stamp === undefined ? "an unknown native fingerprint" : `native fingerprint ${stamp}`;
+	deps.log(`${platform}/ was prebuilt for ${was} (now ${native}): removing it so the build prebuilds it again`);
+	rmSync(nativeDir, { recursive: true, force: true });
+}
+
 /** The whole output of a failed build, kept for the errors the summary cannot show; best effort. */
 function keepBuildLog(deps: LocalBuildDeps, res: ExecResult): string | undefined {
 	const path = join(
@@ -372,6 +417,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	const command = project.build[platform];
 	const derivedData = derivedDataDir(deps.env);
 	const snapshot = snapshotArtifacts(project.root, platform, derivedData, project.buildConfiguration);
+	await dropStaleNativeDir(deps, deps.native ?? deps.hash);
 	const before = await beforeBuild(deps);
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
 	const argv = ["sh", "-c", command];
@@ -400,6 +446,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 		return err(`local build succeeded but no ${kind} was found (DerivedData / android/app/build/outputs)`);
 	}
 	const artifact = located.path;
+	deps.prebuildStamp?.write(after.data.native);
 	if (located.kind === "up-to-date") deps.log(`build was up to date; reusing ${artifact}`);
 	if (moved)
 		deps.log(`the build created ${platform}/ (prebuild): caching under ${deps.hash}, aliased as ${after.data.key}`);

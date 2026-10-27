@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -814,5 +815,100 @@ describe("runLocalBuild: prebuilt React Native env", () => {
 		expect(seen[1]?.RCT_USE_PREBUILT_RNCORE).toBeUndefined();
 		expect(seen[1]?.RCT_USE_RN_DEP).toBe("1");
 		expect(seen[2]?.RCT_USE_RN_DEP).toBeUndefined();
+	});
+});
+
+describe("runLocalBuild: a stale CNG native dir is regenerated before the build", () => {
+	const EXPO_RUN = "bunx expo run:android --no-install --no-bundler";
+	const apkDir = (root: string) => join(root, "android", "app", "build", "outputs", "apk", "debug");
+
+	/**
+	 * Android CNG host: `android/` exists with a `stale` marker (an old prebuild), `git check-ignore` says
+	 * whether it is git-ignored, the build command records whether the marker was still there, then makes the apk.
+	 */
+	function cng(opts: { ignored?: boolean; command?: string; buildExit?: number } = {}) {
+		const root = join(dir, "app");
+		mkdirSync(join(root, "android"), { recursive: true });
+		writeFileSync(join(root, "android", "stale"), "old prebuild");
+		const command = opts.command ?? EXPO_RUN;
+		const seen = { staleAtBuild: undefined as boolean | undefined };
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			if (cmd[2] === command) {
+				seen.staleAtBuild = existsSync(join(root, "android", "stale"));
+				if ((opts.buildExit ?? 0) !== 0) return { exitCode: opts.buildExit ?? 1, stdout: "", stderr: "BUILD FAILED" };
+				mkdirSync(apkDir(root), { recursive: true });
+				writeFileSync(join(apkDir(root), "app-debug.apk"), "apk");
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (cmd[2] === "fp") return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
+			if (joined === "git check-ignore -q android")
+				return { exitCode: opts.ignored === false ? 1 : 0, stdout: "", stderr: "" };
+			if (joined.startsWith("git status --porcelain")) return { exitCode: 0, stdout: "", stderr: "" };
+			return { exitCode: 127, stdout: "", stderr: joined };
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "x", android: command } });
+		const logs: string[] = [];
+		const run = (stamp: string | undefined) => {
+			const written: string[] = [];
+			const result = runLocalBuild({
+				exec,
+				project,
+				platform: "android",
+				hash: "h1",
+				env: { HOME: "/nope" },
+				log: (line) => logs.push(line),
+				prebuildStamp: { read: () => stamp, write: (native) => written.push(native) },
+			});
+			return { result, written };
+		};
+		return { seen, logs, run };
+	}
+
+	test("prebuilt for another fingerprint → removed before the build, stamped after", async () => {
+		const s = cng();
+		const { result, written } = s.run("h0");
+		expect((await result).success).toBe(true);
+		expect(s.seen.staleAtBuild).toBe(false);
+		expect(written).toEqual(["h1"]);
+		expect(s.logs.join("\n")).toContain("android/ was prebuilt for native fingerprint h0 (now h1)");
+	});
+
+	test("no stamp (prebuilt outside warden) → removed: its fingerprint is unknown", async () => {
+		const s = cng();
+		const { result, written } = s.run(undefined);
+		expect((await result).success).toBe(true);
+		expect(s.seen.staleAtBuild).toBe(false);
+		expect(written).toEqual(["h1"]);
+		expect(s.logs.join("\n")).toContain("unknown native fingerprint");
+	});
+
+	test("prebuilt for this fingerprint → kept", async () => {
+		const s = cng();
+		const { result, written } = s.run("h1");
+		expect((await result).success).toBe(true);
+		expect(s.seen.staleAtBuild).toBe(true);
+		expect(written).toEqual(["h1"]);
+	});
+
+	test("a committed (not git-ignored) native dir is never removed", async () => {
+		const s = cng({ ignored: false });
+		const { result } = s.run("h0");
+		expect((await result).success).toBe(true);
+		expect(s.seen.staleAtBuild).toBe(true);
+	});
+
+	test("a build command that does not prebuild keeps the dir", async () => {
+		const s = cng({ command: "./gradlew assembleDebug" });
+		const { result } = s.run("h0");
+		expect((await result).success).toBe(true);
+		expect(s.seen.staleAtBuild).toBe(true);
+	});
+
+	test("a failed build writes no stamp", async () => {
+		const s = cng({ buildExit: 1 });
+		const { result, written } = s.run("h0");
+		expect((await result).success).toBe(false);
+		expect(written).toEqual([]);
 	});
 });
