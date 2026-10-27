@@ -3,30 +3,56 @@ import { dirname, join, resolve } from "node:path";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { wardenHome } from "@delacour/warden-core/store";
 import { ok, type Result } from "@delacour/warden-types/result";
-import { z } from "zod";
 
-/** What `warden dev` records about a running session so other processes (`dev logs`, the MCP server, `warden ui`) can find it. */
-export const devSessionSchema = z.object({
-	version: z.literal(1),
+/**
+ * What `warden dev` records about a running session so other processes (`dev logs`, the MCP server, `warden ui`) can
+ * find it. Checked by hand, not zod: `warden dev --help` must load no zod (`startup.test.ts`).
+ */
+export type DevSessionRecord = {
+	version: 1;
 	/** the device lease id; also the directory name under `<WARDEN_HOME>/dev` */
-	leaseId: z.string().min(1),
+	leaseId: string;
 	/** the `warden dev` process; a dead pid makes the record stale */
-	pid: z.number().int().positive(),
-	platform: z.enum(["ios", "android"]),
+	pid: number;
+	platform: "ios" | "android";
 	/** simulator udid / emulator serial */
-	deviceId: z.string().min(1),
-	port: z.number().int().positive(),
-	metroUrl: z.string().min(1),
+	deviceId: string;
+	port: number;
+	metroUrl: string;
 	/** where `metro.log` / `warden.log` / broker files live */
-	logDir: z.string().min(1),
-	projectRoot: z.string().min(1),
+	logDir: string;
+	projectRoot: string;
 	/** ISO time the session became ready */
-	startedAt: z.string().min(1),
+	startedAt: string;
 	/** the CDP broker's Unix socket, once it is listening */
-	brokerSocket: z.string().min(1).optional(),
-});
+	brokerSocket?: string;
+};
 
-export type DevSessionRecord = z.infer<typeof devSessionSchema>;
+const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+const positiveInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
+
+/** `value` as a well-formed record, else undefined. */
+export function parseDevSession(value: unknown): DevSessionRecord | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const r = value as Record<string, unknown>;
+	const strings = [r.leaseId, r.deviceId, r.metroUrl, r.logDir, r.projectRoot, r.startedAt];
+	if (r.version !== 1 || !strings.every(nonEmpty) || !positiveInt(r.pid) || !positiveInt(r.port)) return undefined;
+	if (r.platform !== "ios" && r.platform !== "android") return undefined;
+	if (r.brokerSocket !== undefined && !nonEmpty(r.brokerSocket)) return undefined;
+	return {
+		version: 1,
+		leaseId: r.leaseId as string,
+		pid: r.pid,
+		platform: r.platform,
+		deviceId: r.deviceId as string,
+		port: r.port,
+		metroUrl: r.metroUrl as string,
+		logDir: r.logDir as string,
+		projectRoot: r.projectRoot as string,
+		startedAt: r.startedAt as string,
+		...(nonEmpty(r.brokerSocket) ? { brokerSocket: r.brokerSocket } : {}),
+	};
+}
 
 export type DevSessionErrorCode = "no_dev_session" | "ambiguous_dev_session" | "dev_session_io";
 
@@ -58,8 +84,7 @@ export function devSessionPath(env: Env, leaseId: string): string {
 
 function readRecord(path: string): DevSessionRecord | undefined {
 	try {
-		const parsed = devSessionSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
-		return parsed.success ? parsed.data : undefined;
+		return parseDevSession(JSON.parse(readFileSync(path, "utf8")));
 	} catch {
 		return undefined;
 	}

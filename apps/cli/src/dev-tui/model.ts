@@ -100,6 +100,7 @@ const INITIAL_TASKS: ReadonlyArray<{ id: string; title: string }> = [
 	{ id: "app", title: "dev build" },
 	{ id: "metro", title: "metro" },
 	{ id: "client", title: "dev client" },
+	{ id: "devtools", title: "devtools" },
 	{ id: "session", title: "session" },
 ];
 

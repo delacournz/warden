@@ -4,7 +4,7 @@ import type { CommandContext } from "../context";
 import type { MetroTerminal } from "../metro";
 
 /** The steps a person watches in `warden dev`, in order; the action keys add `action:<name>` rows (`dev-tui/actions.ts`). */
-export type DevTaskId = "claim" | "show" | "app" | "metro" | "client" | "session";
+export type DevTaskId = "claim" | "show" | "app" | "metro" | "client" | "devtools" | "session";
 
 /** A running task: end it once, with an outcome; `log` adds a line under it meanwhile. */
 export type DevTaskHandle = {

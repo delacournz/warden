@@ -23,7 +23,9 @@ import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, parsePlatform, resolveOwner, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { removeDevSession, writeDevSession } from "../dev-session";
+import type { Broker, BrokerOptions } from "../dev-broker/broker";
+import type { BrokerResult } from "../dev-broker/broker.types";
+import { removeDevSession, updateDevSession, writeDevSession } from "../dev-session";
 import { parseHudInterval } from "../dev-tui/hud";
 import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
@@ -100,6 +102,8 @@ export type DevDeps = Omit<LeaseSessionDeps, "ensureApp"> & {
 	selectUi?: (ctx: CommandContext, opts: DevUiOpts) => DevUi;
 	/** test seam: how the dashboard module is loaded (default: a lazy `import("../dev-tui/tui")`) */
 	loadTui?: LoadTui;
+	/** the devtools broker for the session (unset = none, as in tests) */
+	startBroker?: (options: BrokerOptions) => Promise<BrokerResult<Broker>>;
 };
 
 /** The dashboard module; imported only on the TUI path so no other command pays for it (nor for xterm). */
@@ -652,6 +656,45 @@ function registerDevSession(ctx: CommandContext, deps: DevDeps, r: Running, metr
 	return () => removeDevSession(ctx.env, leaseId);
 }
 
+/**
+ * Starts the session's devtools broker (one CDP socket shared by `warden ui`, `warden mcp` and the perf keys) and
+ * records its socket in the registry. Best-effort: without it those verbs fall back to their own connection. Resolves
+ * with the function that closes it.
+ */
+async function startDevBroker(
+	ui: DevUi,
+	deps: DevDeps,
+	r: Running,
+	metroUrl: string,
+	appId: string | undefined
+): Promise<() => Promise<void>> {
+	const leaseId = r.session.leaseIds[0];
+	if (deps.startBroker === undefined || leaseId === undefined) return async () => undefined;
+	const task = ui.task("devtools", "devtools");
+	let attached = false;
+	const started = await deps.startBroker({
+		metroUrl,
+		device: {
+			...(r.platform === "ios" ? { deviceName: r.session.deviceName } : {}),
+			...(appId !== undefined ? { appId } : {}),
+		},
+		logDir: join(wardenHome(ui.ctx.env), "dev", leaseId),
+		log: (line) => task.log(line),
+		onState: (state) => {
+			if (state.phase === "attached" && !attached) {
+				attached = true;
+				task.ok(state.deviceName);
+			} else if (state.phase === "yielded") task.log("yielded to another debugger (warden ui devtools resume)");
+		},
+	});
+	if (!started.success) {
+		task.fail(started.error.message);
+		return async () => undefined;
+	}
+	updateDevSession(ui.ctx.env, leaseId, { brokerSocket: started.data.socketPath });
+	return () => started.data.close();
+}
+
 /** Metro (started early, verified to serve this project) with the dev client opened on it; resolves with Metro's exit code. */
 async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Promise<number> {
 	const ctx = ui.ctx;
@@ -663,6 +706,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 		r.run.launch?.started?.proc.kill(signal);
 	});
 	let unregister = () => {};
+	let closeBroker = async (): Promise<void> => undefined;
 	try {
 		const metro = await r.launch.pending;
 		if (!metro.success) {
@@ -684,6 +728,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 			}
 		}
 		const bundle = bundleIdFor(r.project, r.platform);
+		closeBroker = await startDevBroker(ui, deps, r, metro.data.url, bundle.success ? bundle.data : undefined);
 		if (json)
 			emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }, "");
 		else
@@ -701,6 +746,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 			});
 		return await metroExit(metro.data.proc, swap);
 	} finally {
+		await closeBroker();
 		unregister();
 		stop();
 		await ui.close();
@@ -1112,6 +1158,7 @@ export function ptyEnv(env: Record<string, string | undefined>): Record<string, 
 
 export const defaultDevDeps: DevDeps = {
 	pid: process.pid,
+	startBroker: async (options) => (await import("../dev-broker/broker")).startBroker(options),
 	isPortFree: (port) => isPortFree(port),
 	spawn(cmd, env, cwd, stdout) {
 		if (typeof stdout === "object") {
