@@ -56,7 +56,7 @@ const defaultDeps: DevLogsDeps = {
 };
 
 /** `30s` / `5m` ago, or an ISO time, as epoch ms. */
-function parseSince(input: string, now: number): { ok: true; ms: number } | { ok: false; message: string } {
+export function parseSince(input: string, now: number): { ok: true; ms: number } | { ok: false; message: string } {
 	const duration = parseDuration(input);
 	if (duration.success) return { ok: true, ms: now - duration.data };
 	const iso = Date.parse(input);

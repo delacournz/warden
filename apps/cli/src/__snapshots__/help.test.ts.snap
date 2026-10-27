@@ -90,6 +90,9 @@ Setup:
                                 builds) or install the latest release
   version                       print warden's version and build channel (dev /
                                 local / release)
+  mcp                           MCP server on stdio: Metro logs, app console,
+                                network, eval, tree, logpoints, profiles of
+                                \`warden dev\`
   help [command]                display help for command"
 `;
 
@@ -3235,6 +3238,17 @@ print warden's version and build channel (dev / local / release)
 
 Options:
   --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden mcp --help (and nested subcommands) 1`] = `
+"$ warden mcp --help
+Usage: warden mcp [options]
+
+MCP server on stdio: Metro logs, app console, network, eval, tree, logpoints,
+profiles of \`warden dev\`
+
+Options:
   -h, --help  display help for command"
 `;
 
