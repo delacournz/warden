@@ -1,4 +1,4 @@
-import { siteUrl } from "@/lib/shared";
+import { siteUrl, stagingHost } from "@/lib/shared";
 
 /**
  * Which analytics provider this build talks to, read from the environment.
@@ -51,7 +51,7 @@ export function analyticsConfig(env: AnalyticsEnv): AnalyticsConfig {
  * to its own PostHog project. A production build run on `localhost` or reached
  * through Railway's own domain counts nothing.
  */
-const COUNTED_HOSTS: ReadonlySet<string> = new Set([new URL(siteUrl).host, "warden.staging.delacour.co.nz"]);
+const COUNTED_HOSTS: ReadonlySet<string> = new Set([new URL(siteUrl).host, stagingHost]);
 
 export function isCountedHost(host: string): boolean {
 	return COUNTED_HOSTS.has(host);

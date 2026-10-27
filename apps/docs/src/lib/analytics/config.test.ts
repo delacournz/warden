@@ -42,8 +42,13 @@ describe("analyticsConfig", () => {
 
 describe("isCountedHost", () => {
 	test("counts production and staging", () => {
-		expect(isCountedHost("warden.delacour.co.nz")).toBe(true);
-		expect(isCountedHost("warden.staging.delacour.co.nz")).toBe(true);
+		expect(isCountedHost("warden.co.nz")).toBe(true);
+		expect(isCountedHost("staging.warden.co.nz")).toBe(true);
+	});
+
+	test("never counts the old hosts, which only redirect", () => {
+		expect(isCountedHost("warden.delacour.co.nz")).toBe(false);
+		expect(isCountedHost("warden.staging.delacour.co.nz")).toBe(false);
 	});
 
 	test("never counts a build run anywhere else", () => {

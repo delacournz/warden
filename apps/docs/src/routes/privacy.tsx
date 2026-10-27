@@ -4,7 +4,8 @@ import type { ReactElement } from "react";
 import { RichText } from "@/components/rich-text";
 import { baseOptions } from "@/lib/layout.shared";
 import { type Disclosure, PRIVACY, PRIVACY_SECTIONS, type PrivacySection } from "@/lib/privacy";
-import { appName } from "@/lib/shared";
+import { canonicalLink } from "@/lib/seo";
+import { appName, privacyRoute } from "@/lib/shared";
 
 /**
  * `/privacy`: the policy the cookie banner and the footer link to.
@@ -27,7 +28,9 @@ export const Route = createFileRoute("/privacy")({
 			{ name: "description", content: PRIVACY.description },
 			{ property: "og:title", content: `${PRIVACY.title} — ${appName}` },
 			{ property: "og:description", content: PRIVACY.description },
+			{ property: "og:url", content: canonicalLink(privacyRoute).href },
 		],
+		links: [canonicalLink(privacyRoute)],
 	}),
 });
 

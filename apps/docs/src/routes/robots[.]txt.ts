@@ -1,8 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { siteUrl } from "@/lib/shared";
 
-/** Names `/llms.txt` somewhere a crawler already looks. */
+/** Points crawlers at the sitemap, and names `/llms.txt` somewhere they already look. */
 const BODY = `User-agent: *
 Allow: /
+
+Sitemap: ${siteUrl}/sitemap.xml
 
 # Every page on this site, as plain Markdown:
 #   /llms.txt         an index of every page

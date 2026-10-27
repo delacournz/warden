@@ -46,4 +46,16 @@ describe("routeRules", () => {
 		expect(routeRules["/docs/**"].headers["Cache-Control"]).toContain("s-maxage");
 		expect(routeRules["/demo/**"].headers["Cache-Control"]).toContain("max-age=86400");
 	});
+
+	test("the sitemap is cached like robots.txt", () => {
+		expect(routeRules["/sitemap.xml"].headers["Cache-Control"]).toBe(
+			routeRules["/robots.txt"].headers["Cache-Control"]
+		);
+	});
+
+	test("raw bench artifacts and the llms files stay out of the search index", () => {
+		expect(routeRules["/bench/**"].headers["X-Robots-Tag"]).toBe("noindex");
+		expect(routeRules["/llms.txt"].headers["X-Robots-Tag"]).toBe("noindex");
+		expect(routeRules["/llms-full.txt"].headers["X-Robots-Tag"]).toBe("noindex");
+	});
 });

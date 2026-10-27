@@ -214,7 +214,7 @@ Specs are `*.e2e.ts` specs written with `@delacour/warden-e2e` (`bun add -d @del
 
 `packages/e2e-bench` runs the same 8-test suite through warden, Maestro, Detox and the retired Argent, agent-device and tester.army on one leased device and writes a Markdown + HTML report (suite and per-test timings, cold start, resources, residue).
 
-Latest iOS run on EAS (2026-10-25, warden 0.3.1): warden ran the warm suite in 86.30 s, 1.56× faster than Argent, 1.06× faster than agent-device and 1.54× faster than tester.army, with a per-step median of 85 ms against 321 to 481 ms. Full tables and every artifact: [warden.delacour.co.nz/docs/bench/comparison](https://warden.delacour.co.nz/docs/bench/comparison).
+Latest iOS run on EAS (2026-10-25, warden 0.3.1): warden ran the warm suite in 86.30 s, 1.56× faster than Argent, 1.06× faster than agent-device and 1.54× faster than tester.army, with a per-step median of 85 ms against 321 to 481 ms. Full tables and every artifact: [warden.co.nz/docs/bench/comparison](https://warden.co.nz/docs/bench/comparison).
 
 ```bash
 bun run bench doctor && bun run bench run --platform ios --runs 3

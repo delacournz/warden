@@ -10,7 +10,10 @@ export const docsRoute = "/docs";
 export const privacyRoute = "/privacy";
 
 /** The production origin. Social cards need absolute URLs; previews share production's artwork. */
-export const siteUrl = "https://warden.delacour.co.nz";
+export const siteUrl = "https://warden.co.nz";
+
+/** Staging, built from `develop`; it reports to its own PostHog project. */
+export const stagingHost = "staging.warden.co.nz";
 
 /** The landing page's card, and the fallback for any route without its own. */
 export const defaultOgImage = "/og/default.png";
