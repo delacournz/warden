@@ -3,7 +3,7 @@ import { isAbsolute, join, relative } from "node:path";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import { appChoices, bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
 import type { ProjectContext } from "@delacour/warden-core/builds/ensure";
-import { overlayDirUnlessRepoConfig } from "@delacour/warden-core/builds/overlay";
+import { overlayDirFor, overlayDirUnlessRepoConfig } from "@delacour/warden-core/builds/overlay";
 import {
 	DEFAULT_METRO_PORT_SPEC,
 	DEFAULT_METRO_READY_TIMEOUT,
@@ -63,7 +63,7 @@ import { closeSimWindows, revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
-import { diagnoseDev, offerDevSetup } from "./dev-setup";
+import { type DevOverlay, diagnoseDev, offerDevSetup } from "./dev-setup";
 import type { DevActionHost, DevUi } from "./dev-ui";
 import { plainDevUi } from "./dev-ui.plain";
 
@@ -880,6 +880,13 @@ type Prepared = {
 	app: EnsureOptions;
 };
 
+/** The repo's `~/.warden` overlay (shared by its worktrees) and the checkout root an overlay config's `root` is relative to. */
+async function devOverlay(ctx: CommandContext, start: string): Promise<DevOverlay> {
+	const checkoutRoot = (await readGitFacts(ctx.exec, start, ctx.git))?.toplevel;
+	const overlayDir = await overlayDirFor(ctx.exec, start, ctx.env, ctx.git);
+	return { ...(overlayDir ? { overlayDir } : {}), ...(checkoutRoot ? { checkoutRoot } : {}) };
+}
+
 /**
  * Validate the flags, find the project (a dynamic `app.config.*` through `expo config`), then what the app is
  * missing for a dev-client run: with a person at the terminal each fix is offered (`dev-setup.ts`) and the
@@ -900,7 +907,9 @@ async function prepareDev(ctx: CommandContext, platformArg: string | undefined, 
 	if (!project.success) return project;
 	noteAppBelow(ctx, start.data, project.data.project);
 	const interactive = ctx.ui.interactive && opts.json !== true;
-	const setup = await offerDevSetup(ctx, diagnoseDev(project.data), { interactive });
+	const setup = await offerDevSetup(ctx, diagnoseDev(project.data, await devOverlay(ctx, picked.data)), {
+		interactive,
+	});
 	if (!setup.success) return setup;
 	if (setup.data === "changed") {
 		project = await devProjectContext(ctx, platform.data, opts, picked.data, variant);

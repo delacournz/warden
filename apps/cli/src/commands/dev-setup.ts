@@ -1,5 +1,5 @@
-import { existsSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import type { ProjectContext } from "@delacour/warden-core/builds/ensure";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -12,13 +12,26 @@ import { wardenConfigSource } from "./init.data";
 export type DevIssue =
 	/** a package Metro's dev-client mode needs, with the install command for the checkout's package manager */
 	| { kind: "package"; root: string; packages: string[]; command: string[] }
-	/** the app's config is code (`app.config.*`): every start asks Expo for the bundle id unless a warden.config.ts holds it */
-	| { kind: "config"; root: string; name: string; bundleId: { ios?: string; android?: string } };
+	/**
+	 * the app's config is code (`app.config.*`): every start asks Expo for the bundle id unless a warden.config.ts
+	 * holds it. `overlay`: where a declined repo config goes instead (`~/.warden/projects/<key>/`, shared by every
+	 * worktree of the repo), with the app's root relative to the checkout
+	 */
+	| {
+			kind: "config";
+			root: string;
+			name: string;
+			bundleId: { ios?: string; android?: string };
+			overlay?: { dir: string; root: string };
+	  };
+
+/** Where an overlay config would live for this checkout: the overlay dir and the checkout root its `root` is relative to. */
+export type DevOverlay = { overlayDir?: string; checkoutRoot?: string };
 
 export const DEV_SETUP_INSTALL_TIMEOUT_MS = 10 * 60_000;
 
 /** The issues for this project, blocking ones first. */
-export function diagnoseDev(context: ProjectContext): DevIssue[] {
+export function diagnoseDev(context: ProjectContext, where: DevOverlay = {}): DevIssue[] {
 	const { project } = context;
 	const issues: DevIssue[] = [];
 	// a bare React Native app runs itself against Metro: no dev client to install
@@ -35,7 +48,17 @@ export function diagnoseDev(context: ProjectContext): DevIssue[] {
 		project.source === "auto" &&
 		!existsSync(join(project.root, "warden.config.ts"))
 	)
-		issues.push({ kind: "config", root: project.root, name: project.name, bundleId: project.bundleId });
+		issues.push({
+			kind: "config",
+			root: project.root,
+			name: project.name,
+			bundleId: project.bundleId,
+			...(where.overlayDir !== undefined
+				? {
+						overlay: { dir: where.overlayDir, root: relative(where.checkoutRoot ?? project.root, project.root) || "." },
+					}
+				: {}),
+		});
 	return issues;
 }
 
@@ -91,7 +114,7 @@ async function formatWithPrettier(ctx: CommandContext, root: string, file: strin
 }
 
 export type DevSetupDeps = {
-	/** writes a file (default: the filesystem) */
+	/** writes a file, creating its dir (default: the filesystem) */
 	write?: (path: string, content: string) => void;
 };
 
@@ -124,7 +147,12 @@ export async function offerDevSetup(
 
 /** One prompt + fix; true when applied. A declined blocking fix is the error; a declined optional one is skipped. */
 async function applyIssue(ctx: CommandContext, issue: DevIssue, deps: DevSetupDeps): AsyncResult<boolean> {
-	const write = deps.write ?? ((path, content) => writeFileSync(path, content));
+	const write =
+		deps.write ??
+		((path, content) => {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, content);
+		});
 	switch (issue.kind) {
 		case "package": {
 			const what = issue.packages.join(", ");
@@ -147,18 +175,42 @@ async function applyIssue(ctx: CommandContext, issue: DevIssue, deps: DevSetupDe
 			success(ctx, `warden dev: installed ${what} (${issue.command.join(" ")})`);
 			return ok(true);
 		}
-		case "config": {
-			const id = issue.bundleId.ios ?? issue.bundleId.android ?? "?";
-			const answer = await ctx.ui.confirm(
-				`Write ${issue.root}/warden.config.ts (project "${issue.name}", bundle id ${id}) so warden dev starts without asking Expo for the config?`,
-				true
-			);
-			if (answer !== true) return ok(false);
-			const file = join(issue.root, "warden.config.ts");
-			write(file, wardenConfigSource({ name: issue.name, bundleId: issue.bundleId }, { e2e: false }));
-			await formatWithPrettier(ctx, issue.root, file);
-			success(ctx, `warden dev: wrote ${file}`);
-			return ok(true);
-		}
+		case "config":
+			return ok(await applyConfig(ctx, issue, write));
 	}
+}
+
+/**
+ * Yes writes `<app>/warden.config.ts`; no writes it to the repo's overlay instead (outside the repo, under warden's
+ * home: every worktree of the repo reads it, and a repo config still wins), when there is one. True when written.
+ */
+async function applyConfig(
+	ctx: CommandContext,
+	issue: Extract<DevIssue, { kind: "config" }>,
+	write: (path: string, content: string) => void
+): Promise<boolean> {
+	const id = issue.bundleId.ios ?? issue.bundleId.android ?? "?";
+	const elsewhere = issue.overlay ? ` (no: keep it in ${issue.overlay.dir}, outside the repo)` : "";
+	const answer = await ctx.ui.confirm(
+		`Write ${issue.root}/warden.config.ts (project "${issue.name}", bundle id ${id}) so warden dev starts without asking Expo for the config?${elsewhere}`,
+		true
+	);
+	if (answer === false && issue.overlay !== undefined) {
+		const file = join(issue.overlay.dir, "warden.config.ts");
+		write(
+			file,
+			wardenConfigSource({ name: issue.name, root: issue.overlay.root, bundleId: issue.bundleId }, { e2e: false })
+		);
+		success(
+			ctx,
+			`warden dev: wrote ${file} (outside the repo, shared by every worktree; a repo warden.config.ts wins)`
+		);
+		return true;
+	}
+	if (answer !== true) return false;
+	const file = join(issue.root, "warden.config.ts");
+	write(file, wardenConfigSource({ name: issue.name, bundleId: issue.bundleId }, { e2e: false }));
+	await formatWithPrettier(ctx, issue.root, file);
+	success(ctx, `warden dev: wrote ${file}`);
+	return true;
 }

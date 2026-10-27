@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadProject } from "@delacour/warden-core/builds/config";
 import type { ProjectContext } from "@delacour/warden-core/builds/ensure";
 import { fakeExec, type ScriptedUi, scriptedUi, testContext } from "../testing";
 import { describeIssue, diagnoseDev, offerDevSetup } from "./dev-setup";
@@ -119,6 +120,92 @@ describe("offerDevSetup", () => {
 			success: true,
 			data: "unchanged",
 		});
+	});
+});
+
+describe("declining the config offer", () => {
+	const overlayOf = (checkout: string) => ({
+		overlayDir: join(checkout, "..", "home", "projects", "k"),
+		checkoutRoot: checkout,
+	});
+
+	test("the issue carries the overlay dir and the app's root from the checkout", () => {
+		const root = app({ dependencies: { "expo-dev-client": "1" } });
+		const checkout = join(root, "..", "..");
+		const where = overlayOf(checkout);
+		expect(diagnoseDev(context(root, { appConfig: {} }), where)).toEqual([
+			{
+				kind: "config",
+				root,
+				name: "wallet",
+				bundleId: { ios: "com.x.dev" },
+				overlay: { dir: where.overlayDir, root: "apps/mobile" },
+			},
+		]);
+	});
+
+	test("writes the config to the overlay instead, rooted at the app, and reports changed", async () => {
+		const root = app({ dependencies: { "expo-dev-client": "1" } });
+		const checkout = join(root, "..", "..");
+		const where = overlayOf(checkout);
+		const c = testContext([]);
+		c.ui = scriptedUi({ interactive: true, confirm: [false] });
+		const res = await offerDevSetup(c, diagnoseDev(context(root, { appConfig: {} }), where), { interactive: true });
+		expect(res).toEqual({ success: true, data: "changed" });
+		expect(existsSync(join(root, "warden.config.ts"))).toBe(false);
+		const written = readFileSync(join(where.overlayDir, "warden.config.ts"), "utf8");
+		expect(written).toContain('root: "apps/mobile"');
+		expect(written).toContain('ios: "com.x.dev"');
+		expect(c.stderr.some((l) => l.includes(where.overlayDir) && l.includes("worktree"))).toBe(true);
+	});
+
+	test("the overlay config resolves the app from any worktree of the repo; a repo config wins over it", async () => {
+		const root = app({ dependencies: { "expo-dev-client": "1" } });
+		const checkout = join(root, "..", "..");
+		const where = overlayOf(checkout);
+		const c = testContext([]);
+		c.ui = scriptedUi({ interactive: true, confirm: [false] });
+		await offerDevSetup(c, diagnoseDev(context(root, { appConfig: {} }), where), { interactive: true });
+		const worktree = join(checkout, "..", "worktree");
+		mkdirSync(join(worktree, "apps", "mobile"), { recursive: true });
+		const fromWorktree = loadProject({
+			start: join(worktree, "apps", "mobile"),
+			stopAt: worktree,
+			env: {},
+			overlayDir: where.overlayDir,
+		});
+		expect(fromWorktree.success && fromWorktree.data.root).toBe(join(worktree, "apps", "mobile"));
+		expect(fromWorktree.success && fromWorktree.data.source).toBe("overlay");
+		writeFileSync(
+			join(root, "warden.config.ts"),
+			'export default { projects: [{ name: "mine", bundleId: { ios: "com.repo" } }] };'
+		);
+		const repoWins = loadProject({ start: root, stopAt: checkout, env: {}, overlayDir: where.overlayDir });
+		expect(repoWins.success && repoWins.data.name).toBe("mine");
+		expect(repoWins.success && repoWins.data.source).toBe("repo");
+	});
+
+	test("an app at the checkout root gets no root key; no overlay (or a cancel) writes nothing", async () => {
+		dir = mkdtempSync(join(tmpdir(), "warden-dev-setup-"));
+		const where = overlayOf(dir);
+		const c = testContext([]);
+		c.ui = scriptedUi({ interactive: true, confirm: [false] });
+		await offerDevSetup(c, diagnoseDev(context(dir, { appConfig: {} }), where), { interactive: true });
+		expect(readFileSync(join(where.overlayDir, "warden.config.ts"), "utf8")).not.toContain("root:");
+		const bare = mkdtempSync(join(dir, "bare-"));
+		const none = testContext([]);
+		none.ui = scriptedUi({ interactive: true, confirm: [false] });
+		expect(await offerDevSetup(none, diagnoseDev(context(bare, { appConfig: {} })), { interactive: true })).toEqual({
+			success: true,
+			data: "unchanged",
+		});
+		const cancelWhere = overlayOf(bare);
+		const cancel = testContext([]);
+		cancel.ui = scriptedUi({ interactive: true, confirm: [undefined] });
+		expect(
+			await offerDevSetup(cancel, diagnoseDev(context(bare, { appConfig: {} }), cancelWhere), { interactive: true })
+		).toEqual({ success: true, data: "unchanged" });
+		expect(existsSync(cancelWhere.overlayDir)).toBe(false);
 	});
 });
 
