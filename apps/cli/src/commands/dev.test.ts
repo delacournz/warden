@@ -838,6 +838,26 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		await running;
 	});
 
+	test("the claim's progress (a queued claim, capacity notes) lands in the claim row, not the hidden stderr", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		c.env = { ...c.env, WARDEN_CAPACITY: "on", WARDEN_CAPACITY_MAX: "nope" };
+		const fake = fakeUi(c);
+		const logs: Array<[string, string]> = [];
+		const task = fake.ui.task;
+		fake.ui.task = (id, label) => {
+			const handle = task(id, label);
+			return { ...handle, log: (line) => void logs.push([id, line]) };
+		};
+		const h = ptyHarness();
+		h.deps.selectUi = () => fake.ui;
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && h.ensured.length > 0);
+		expect(logs).toContainEqual(["claim", "warden: WARDEN_CAPACITY_MAX=nope must be a number > 0 — ignored"]);
+		h.finish(0);
+		await running;
+	});
+
 	test("a held device lease whose sim is Shutdown is booted and waited for before the app is installed", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls, [], "Shutdown");

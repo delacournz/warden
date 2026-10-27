@@ -1046,8 +1046,9 @@ async function claimDevice(
 		}
 		return result;
 	};
-	// the dashboard's claim row is the progress: an ora spinner would be a second line for the same step
-	if (ui.metro.kind === "pty") return claim(ui.ctx);
+	// the dashboard's claim row is the progress: an ora spinner would be a second line for the same step, and the
+	// claim's stderr lines (`queued #1 of 1 — memory pressure warn`) go under that row, or nobody sees why it waits
+	if (ui.metro.kind === "pty") return claim(scopedCtx(ui.ctx, (line) => claimTask.log(line)));
 	return withSpinner(ui.ctx, `preparing the ${a.platform} dev build…`, claim);
 }
 

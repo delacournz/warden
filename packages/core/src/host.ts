@@ -54,13 +54,23 @@ const CRITICAL_FREE_PERCENT = 10;
 const fromFreePercent = (free: number): MemoryPressure =>
 	free < CRITICAL_FREE_PERCENT ? "critical" : free < WARN_FREE_PERCENT ? "warn" : "normal";
 
+async function macFreePressure(exec: Exec): Promise<MemoryPressure | undefined> {
+	const report = await exec(["memory_pressure"]);
+	const free = report.stdout.match(/memory free percentage:\s*(\d+)%/i)?.[1];
+	return report.exitCode === 0 && free !== undefined ? fromFreePercent(Number(free)) : undefined;
+}
+
+/**
+ * The kernel level, except `warn`: macOS keeps level 2 long after compression and swap have freed memory
+ * (seen at 37% free), so a kernel `warn` is confirmed against `memory_pressure`'s free share when readable.
+ */
 async function macPressure(exec: Exec): AsyncResult<MemoryPressure> {
 	const level = await exec(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"]);
 	const mapped = level.exitCode === 0 ? MAC_LEVELS[level.stdout.trim()] : undefined;
+	if (mapped === "warn") return ok((await macFreePressure(exec)) ?? "warn");
 	if (mapped !== undefined) return ok(mapped);
-	const report = await exec(["memory_pressure"]);
-	const free = report.stdout.match(/memory free percentage:\s*(\d+)%/i)?.[1];
-	if (report.exitCode === 0 && free !== undefined) return ok(fromFreePercent(Number(free)));
+	const free = await macFreePressure(exec);
+	if (free !== undefined) return ok(free);
 	return err("cannot read macOS memory pressure (sysctl kern.memorystatus_vm_pressure_level, memory_pressure)");
 }
 
