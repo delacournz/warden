@@ -1790,8 +1790,13 @@ Commands:
                                screen) with rects
   logs [args...]               app console: logs [n] | start | stop | mark
                                <label> | clear
-  network [n]                  the app's fetch calls recorded by \`logs start\`
+  network [n]                  the app's fetch calls recorded by \`logs start\` or
+                               the dev session
   reload                       reload the app's JavaScript
+  exceptions                   the app's uncaught exceptions
+  route                        the route key of the screen the app is on
+  devtools                     the dev session's devtools broker: status |
+                               resume
   help [command]               display help for command
 
 $ warden ui status --help
@@ -2893,7 +2898,12 @@ Arguments:
   args                   n, or start | stop | mark <label> | clear
 
 Options:
+  --since <when>         only entries from the last <dur> (30s, 5m, 2h) or after
+                         an ISO time
   --bodies               with start: also record request and response bodies
+  --level <level>        at least this level: debug | log | info | warn | error
+  --grep <text>          only lines containing text (case-insensitive)
+  --limit <n>            at most the last n lines
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
@@ -2916,14 +2926,19 @@ Options:
 $ warden ui network --help
 Usage: warden ui network [options] [n]
 
-the app's fetch calls recorded by \`logs start\`
+the app's fetch calls recorded by \`logs start\` or the dev session
 
 Arguments:
   n                      entries to show (default 50)
 
 Options:
+  --since <when>         only entries from the last <dur> (30s, 5m, 2h) or after
+                         an ISO time
   --include <parts>      headers,body
   --id <id>              one entry in full
+  --grep <text>          only URLs containing text (case-insensitive)
+  --status <status>      only this status: 404 | 4xx
+  --limit <n>            at most the last n entries
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
@@ -2964,6 +2979,116 @@ Options:
   --json                 machine-readable output: one JSON document on stdout
   --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
                          this owner's leased ports)
+  -h, --help             display help for command
+
+$ warden ui exceptions --help
+Usage: warden ui exceptions [options]
+
+the app's uncaught exceptions
+
+Options:
+  --since <when>         only entries from the last <dur> (30s, 5m, 2h) or after
+                         an ISO time
+  --limit <n>            at most the last n exceptions
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui route --help
+Usage: warden ui route [options]
+
+the route key of the screen the app is on
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
+                         this owner's leased ports)
+  -h, --help             display help for command
+
+$ warden ui devtools --help
+Usage: warden ui devtools [options] [command]
+
+the dev session's devtools broker: status | resume
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  status          what the broker is doing: attached, yielded, lost
+  resume          take the page back after the broker yielded to Chrome DevTools
+  help [command]  display help for command
+
+$ warden ui devtools status --help
+Usage: warden ui devtools status [options]
+
+what the broker is doing: attached, yielded, lost
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui devtools resume --help
+Usage: warden ui devtools resume [options]
+
+take the page back after the broker yielded to Chrome DevTools
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command"
 `;
 

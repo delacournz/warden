@@ -14,8 +14,16 @@ const withMetro = <
 	cmd: Commander<Args, Opts, Globals>
 ) => cmd.option("--metro <url>", "Metro URL (default: WARDEN_METRO_URL, state.json, then this owner's leased ports)");
 
+const withSince = <
+	Args extends unknown[],
+	Opts extends Record<string, unknown>,
+	Globals extends Record<string, unknown>,
+>(
+	cmd: Commander<Args, Opts, Globals>
+) => cmd.option("--since <when>", "only entries from the last <dur> (30s, 5m, 2h) or after an ISO time");
+
 /**
- * The devtools subcommands of `warden ui`: eval, tree, logs, network, reload. One call from `commands/ui.ts`.
+ * The devtools subcommands of `warden ui`: eval, tree, logs, exceptions, network, route, reload, devtools. One call from `commands/ui.ts`.
  * Only the commander wiring lives here; `devtools-cli.ts` (Metro, the e2e devtools facet) is imported by the
  * subcommand that runs. `deps.devtools` replaces the real Metro / collector side effects in tests.
  */
@@ -52,23 +60,33 @@ export function registerDevtoolsCommands(
 	});
 	withMetro(
 		withUiOptions(
-			cmd
-				.command("logs")
-				.description("app console: logs [n] | start | stop | mark <label> | clear")
-				.argument("[args...]", "n, or start | stop | mark <label> | clear")
+			withSince(
+				cmd
+					.command("logs")
+					.description("app console: logs [n] | start | stop | mark <label> | clear")
+					.argument("[args...]", "n, or start | stop | mark <label> | clear")
+			)
 				.option("--bodies", "with start: also record request and response bodies")
+				.option("--level <level>", "at least this level: debug | log | info | warn | error")
+				.option("--grep <text>", "only lines containing text (case-insensitive)")
+				.option("--limit <n>", "at most the last n lines")
 		)
 	).action(async (words, opts) => {
 		const { uiLogs } = await import("./devtools-cli");
 		done(await uiLogs(ctx, deps, words, opts));
 	});
 	withUiOptions(
-		cmd
-			.command("network")
-			.description("the app's fetch calls recorded by `logs start`")
-			.argument("[n]", `entries to show (default ${DEFAULT_TAIL})`)
+		withSince(
+			cmd
+				.command("network")
+				.description("the app's fetch calls recorded by `logs start` or the dev session")
+				.argument("[n]", `entries to show (default ${DEFAULT_TAIL})`)
+		)
 			.option("--include <parts>", "headers,body")
 			.option("--id <id>", "one entry in full")
+			.option("--grep <text>", "only URLs containing text (case-insensitive)")
+			.option("--status <status>", "only this status: 404 | 4xx")
+			.option("--limit <n>", "at most the last n entries")
 	).action(async (n, opts) => {
 		const { uiNetwork } = await import("./devtools-cli");
 		done(await uiNetwork(ctx, deps, n, opts));
@@ -76,5 +94,33 @@ export function registerDevtoolsCommands(
 	withMetro(withUiOptions(cmd.command("reload").description("reload the app's JavaScript"))).action(async (opts) => {
 		const { uiReload } = await import("./devtools-cli");
 		done(await uiReload(ctx, deps, opts));
+	});
+	withUiOptions(
+		withSince(cmd.command("exceptions").description("the app's uncaught exceptions")).option(
+			"--limit <n>",
+			"at most the last n exceptions"
+		)
+	).action(async (opts) => {
+		const { uiExceptions } = await import("./devtools-cli");
+		done(await uiExceptions(ctx, deps, opts));
+	});
+	withMetro(withUiOptions(cmd.command("route").description("the route key of the screen the app is on"))).action(
+		async (opts) => {
+			const { uiRoute } = await import("./devtools-cli");
+			done(await uiRoute(ctx, deps, opts));
+		}
+	);
+	const devtools = cmd.command("devtools").description("the dev session's devtools broker: status | resume");
+	withUiOptions(devtools.command("status").description("what the broker is doing: attached, yielded, lost")).action(
+		async (opts) => {
+			const { uiDevtoolsStatus } = await import("./devtools-cli");
+			done(await uiDevtoolsStatus(ctx, deps, opts));
+		}
+	);
+	withUiOptions(
+		devtools.command("resume").description("take the page back after the broker yielded to Chrome DevTools")
+	).action(async (opts) => {
+		const { uiDevtoolsResume } = await import("./devtools-cli");
+		done(await uiDevtoolsResume(ctx, deps, opts));
 	});
 }
