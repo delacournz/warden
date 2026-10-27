@@ -1,5 +1,16 @@
 import { ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
+import {
+	devtoolsResume,
+	devtoolsStatus,
+	evalExpr,
+	queryConsole,
+	queryExceptions,
+	queryNetwork,
+	readRoute,
+	readTree,
+	reloadApp,
+} from "../agent-ui/broker-client";
 import { parseSince } from "../commands/dev-logs";
 import { listDevSessions } from "../dev-session";
 import { METRO_LOG_KINDS } from "../dev-tui/metro-log";
@@ -30,6 +41,17 @@ function tool<S extends z.ZodRawShape>(def: ToolDef<S>): ToolDef {
 
 const udid = z.string().optional().describe("device udid/serial; default = the only live `warden dev` session");
 const sinceArg = z.string().optional().describe("duration (30s, 5m) or ISO time");
+const limit = z.number().int().positive().optional().describe("newest N (default 200)");
+
+/** The broker target of a tool call: an explicit udid, else the only live dev session. */
+const target = (env: Env, udid: string | undefined) => ({ env, ...(udid !== undefined ? { udid } : {}) });
+
+/** Copies only the defined keys, so optional query fields stay absent rather than `undefined`. */
+function defined<T extends Record<string, unknown>>(value: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
+	return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as {
+		[K in keyof T]?: Exclude<T[K], undefined>;
+	};
+}
 
 /** `since` as epoch ms, or the `invalid_query` error the tool returns. */
 function since(value: string | undefined, now: number): Result<number | undefined, ToolError> {
@@ -69,14 +91,103 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 				if (!from.success) return from;
 				const kinds = args.kinds === undefined ? undefined : parseMetroLogKinds(args.kinds.join(","));
 				if (kinds !== undefined && !kinds.success) return kinds;
-				return readMetroLogs(env, {
-					...(args.udid !== undefined ? { udid: args.udid } : {}),
-					...(from.data !== undefined ? { sinceMs: from.data } : {}),
-					...(args.tail !== undefined ? { tail: args.tail } : {}),
-					...(args.grep !== undefined ? { grep: args.grep } : {}),
-					...(kinds !== undefined ? { kinds: kinds.data } : {}),
-				});
+				return readMetroLogs(
+					env,
+					defined({ udid: args.udid, sinceMs: from.data, tail: args.tail, grep: args.grep, kinds: kinds?.data })
+				);
 			},
+		}),
+		tool({
+			name: "app_console",
+			description:
+				"The app's console lines (console.* calls, uncaught exceptions, notes) captured over CDP by the dev session's broker. Stacks are symbolicated to source.",
+			input: {
+				udid,
+				since: sinceArg,
+				level: z.enum(["log", "info", "warn", "error", "debug"]).optional(),
+				grep: z.string().optional().describe("case-insensitive substring"),
+				kind: z.enum(["console", "exception", "note"]).optional(),
+				limit,
+			},
+			run: async (env, { udid: id, since: raw, ...rest }) => {
+				const from = since(raw, deps.now());
+				if (!from.success) return from;
+				return queryConsole(target(env, id), defined({ ...rest, since: from.data }));
+			},
+		}),
+		tool({
+			name: "app_exceptions",
+			description: "The app's uncaught JS exceptions with symbolicated stacks and Metro's code frame.",
+			input: { udid, since: sinceArg, limit },
+			run: async (env, { udid: id, since: raw, limit: n }) => {
+				const from = since(raw, deps.now());
+				if (!from.success) return from;
+				return queryExceptions(target(env, id), defined({ since: from.data, limit: n }));
+			},
+		}),
+		tool({
+			name: "app_network",
+			description: "The app's fetch calls (Metro's own traffic excluded): method, url, status, timing.",
+			input: {
+				udid,
+				since: sinceArg,
+				urlGrep: z.string().optional().describe("case-insensitive URL substring"),
+				status: z
+					.union([z.number().int(), z.string().regex(/^[1-5]xx$/)])
+					.optional()
+					.describe("404 or 4xx"),
+				limit,
+			},
+			run: async (env, { udid: id, since: raw, ...rest }) => {
+				const from = since(raw, deps.now());
+				if (!from.success) return from;
+				return queryNetwork(target(env, id), defined({ ...rest, since: from.data }));
+			},
+		}),
+		tool({
+			name: "app_eval",
+			description:
+				"Evaluate a JavaScript expression in the running app (Hermes) and return its JSON value; promises are awaited. Use for reading stores, globals, navigation state.",
+			input: { udid, expression: z.string().min(1), timeoutMs: z.number().int().positive().optional() },
+			run: async (env, { udid: id, expression, timeoutMs }) =>
+				evalExpr(target(env, id), { expression, ...defined({ timeoutMs }) }),
+		}),
+		tool({
+			name: "app_tree",
+			description: "The app's React component tree on screen (names, testIDs, text, rects).",
+			input: {
+				udid,
+				depth: z.number().int().nonnegative().optional(),
+				testID: z.string().optional().describe("only this component's subtree"),
+				max: z.number().int().positive().optional().describe("first N components"),
+			},
+			run: async (env, { udid: id, ...params }) => readTree(target(env, id), defined(params)),
+		}),
+		tool({
+			name: "app_route",
+			description: "The route key of the screen the app is on (Expo Router / React Navigation).",
+			input: { udid },
+			run: async (env, { udid: id }) => readRoute(target(env, id)),
+		}),
+		tool({
+			name: "app_reload",
+			description: "Reload the app's JavaScript bundle.",
+			input: { udid },
+			run: async (env, { udid: id }) => reloadApp(target(env, id)),
+		}),
+		tool({
+			name: "devtools_status",
+			description:
+				"The dev session's CDP broker state: connecting, attached, yielded (Chrome DevTools took the page), lost.",
+			input: { udid },
+			run: async (env, { udid: id }) => devtoolsStatus(target(env, id)),
+		}),
+		tool({
+			name: "devtools_resume",
+			description:
+				"Reattach the broker after it yielded to Chrome DevTools. On a single-debugger Metro this disconnects DevTools.",
+			input: { udid },
+			run: async (env, { udid: id }) => devtoolsResume(target(env, id)),
 		}),
 	];
 }

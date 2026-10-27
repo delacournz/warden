@@ -6,12 +6,16 @@ import { ok } from "@delacour/warden-types/result";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
+import { brokerErr } from "../dev-broker/broker.types";
+import { serveBroker } from "../dev-broker/ipc";
 import { writeDevSession } from "../dev-session";
 import { createWardenMcp, toResponse } from "./server";
 import { type ToolDef, wardenTools } from "./tools";
 
 const homes: string[] = [];
-afterEach(() => {
+const closers: (() => unknown)[] = [];
+afterEach(async () => {
+	for (const close of closers.splice(0)) await close();
 	for (const dir of homes.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -108,5 +112,61 @@ describe("warden mcp", () => {
 		expect(text(none)).toMatchObject({ error: { code: "no_dev_session" } });
 		const bad = await client.callTool({ name: "metro_logs", arguments: { since: "yesterday-ish" } });
 		expect(text(bad)).toMatchObject({ error: { code: "invalid_query" } });
+	});
+});
+
+describe("warden mcp over the dev session's broker", () => {
+	const NOW = 1_700_000_000_000;
+
+	/** A live dev session whose broker stub records what each tool asked for. */
+	async function brokered(): Promise<{ env: Record<string, string>; calls: { method: string; params: unknown }[] }> {
+		const env = home();
+		const calls: { method: string; params: unknown }[] = [];
+		const dir = mkdtempSync(join(tmpdir(), "wmb-"));
+		homes.push(dir);
+		const served = await serveBroker(join(dir, "b.sock"), async (method, params) => {
+			calls.push({ method, params });
+			if (method === "status") return ok({ state: { phase: "attached", targetId: "t", deviceName: "sim" } });
+			if (method === "console.query")
+				return ok({ lines: [{ ts: NOW, level: "error", kind: "console", text: "boom" }], total: 1 });
+			if (method === "eval") return ok({ value: 42 });
+			if (method === "route") return ok({ route: "(tabs)/home" });
+			return brokerErr("unknown_method", method);
+		});
+		if (!served.success) throw new Error(served.error.message);
+		const server = served.data;
+		closers.push(() => server.close());
+		writeDevSession(env, {
+			version: 1,
+			leaseId: "lease-1",
+			pid: process.pid,
+			platform: "ios",
+			deviceId: "UDID-1",
+			port: 8081,
+			metroUrl: "http://127.0.0.1:8081",
+			logDir: join(env.WARDEN_HOME as string, "dev", "lease-1"),
+			projectRoot: "/app",
+			startedAt: new Date(0).toISOString(),
+			brokerSocket: server.socketPath,
+		});
+		return { env, calls };
+	}
+
+	test("app_console passes filters through with since as epoch ms", async () => {
+		const { env, calls } = await brokered();
+		const client = await connect(env, wardenTools({ now: () => NOW }));
+		const result = await client.callTool({ name: "app_console", arguments: { since: "30s", level: "error" } });
+		expect(result.isError).toBeUndefined();
+		expect(text(result)).toMatchObject({ total: 1, lines: [{ text: "boom" }] });
+		expect(calls.find((c) => c.method === "console.query")?.params).toEqual({ level: "error", since: NOW - 30_000 });
+	});
+
+	test("app_eval and app_route answer from the broker", async () => {
+		const { env } = await brokered();
+		const client = await connect(env, wardenTools({ now: () => NOW }));
+		expect(text(await client.callTool({ name: "app_eval", arguments: { expression: "6 * 7" } }))).toEqual({
+			value: 42,
+		});
+		expect(text(await client.callTool({ name: "app_route", arguments: {} }))).toEqual({ route: "(tabs)/home" });
 	});
 });
