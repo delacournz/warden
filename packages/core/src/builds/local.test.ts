@@ -281,6 +281,26 @@ describe("runLocalBuild", () => {
 		expect(s.calls).toContain(`${s.root} sh -c gradle-build`);
 	});
 
+	test("the build command's output lines go to `output`; probes stay quiet", async () => {
+		const s = setup(["h1"]);
+		const seen: string[] = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "gradle-build") opts?.onLine?.("> Task :app:assembleDebug");
+			else if (opts?.onLine) seen.push(`probe got onLine: ${cmd.join(" ")}`);
+			return s.exec(cmd, opts);
+		};
+		const res = await runLocalBuild({
+			...base,
+			exec,
+			project: s.project,
+			platform: "android",
+			hash: "h1",
+			output: (line) => seen.push(line),
+		});
+		expect(res.success).toBe(true);
+		expect(seen).toEqual(["> Task :app:assembleDebug"]);
+	});
+
 	test("fingerprint changed during build, native dir already there → error (a real native edit)", async () => {
 		const s = setup(["h2"]);
 		mkdirSync(join(s.root, "android"), { recursive: true });

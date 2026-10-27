@@ -289,6 +289,8 @@ describe("warden dev", () => {
 		expect(h.ensured).toHaveLength(1);
 		expect(h.ensured[0]?.deviceId).toBe("U1");
 		expect(h.ensured[0]?.opts).toMatchObject({ variant: "dev", variantOptional: true, eas: true, build: true });
+		// plain output (pipes, agents) keeps the build quiet: only the dashboard streams it
+		expect(h.ensured[0]?.opts.buildOutput).toBeUndefined();
 
 		const metro = h.spawned[0];
 		expect(metro?.cwd).toBe(c.cwd);
@@ -811,6 +813,30 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
+	test("the local build's output streams into the dev build row while it runs", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const fake = fakeUi(c);
+		const logs: Array<[string, string]> = [];
+		const task = fake.ui.task;
+		fake.ui.task = (id, label) => {
+			const handle = task(id, label);
+			return { ...handle, log: (line) => void logs.push([id, line]) };
+		};
+		const h = ptyHarness();
+		h.deps.ensureApp = async (_ctx, _owner, _platform, deviceId, opts) => {
+			h.ensured.push({ deviceId, opts });
+			opts.buildOutput?.("› Compiling Demo");
+			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "build", installed: true } };
+		};
+		h.deps.selectUi = () => fake.ui;
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && h.ensured.length > 0);
+		expect(logs).toContainEqual(["app", "› Compiling Demo"]);
+		h.finish(0);
+		await running;
+	});
+
 	test("a held device lease whose sim is Shutdown is booted and waited for before the app is installed", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls, [], "Shutdown");
@@ -1005,6 +1031,8 @@ describe("warden dev: what the action keys call back into", () => {
 		const done = await actions?.reinstall((line) => lines.push(line));
 		expect(done).toEqual({ success: true, data: { source: "cache", hash: "H" } });
 		expect(a.h.ensured.at(-1)?.opts).toMatchObject({ installMode: "reinstall" });
+		a.h.ensured.at(-1)?.opts.buildOutput?.("› Linking Demo");
+		expect(lines).toContain("› Linking Demo");
 		expect(a.h.ensured.at(-1)?.deviceId).toBe("U1");
 		a.procs[0]?.finish(0);
 		await running;

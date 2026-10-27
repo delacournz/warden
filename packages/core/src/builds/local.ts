@@ -186,6 +186,8 @@ export type LocalBuildDeps = {
 	native?: string;
 	env: Record<string, string | undefined>;
 	log: (line: string) => void;
+	/** the build command's own output, line by line, while it runs (default: kept for the failure summary only) */
+	output?: (line: string) => void;
 	timeoutMs?: number;
 	/** inject ccache / Xcode / Gradle caching env (default true); integrator: pass `project.build.cache !== false` */
 	compilerCache?: boolean;
@@ -378,6 +380,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 		cwd: project.root,
 		env: { ...caching, EXPO_NO_TELEMETRY: "1" },
 		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
+		...(deps.output ? { onLine: deps.output } : {}),
 	});
 	if (res.exitCode !== 0) return err(`local build failed: ${describeBuildFailure(deps, argv, res)}`);
 	const after = await computeCacheKey(deps.exec, project, platform, undefined, undefined, deps.env);

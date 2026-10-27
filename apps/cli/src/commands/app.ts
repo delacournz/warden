@@ -44,6 +44,8 @@ export type EnsureOptions = {
 	variant?: string;
 	/** a missing variant falls back to the project's own build (`warden dev`) */
 	variantOptional?: boolean;
+	/** a local build's own output, line by line, while it runs (`warden dev`'s dashboard); unset = only the failure summary */
+	buildOutput?: (line: string) => void;
 };
 
 function log(ctx: CommandContext, line: string): void {
@@ -133,6 +135,7 @@ export async function ensurePreparedApp(
 		now: ctx.now,
 		sleep: deps.sleep,
 		log: (line) => log(ctx, line),
+		...(opts.buildOutput ? { buildOutput: opts.buildOutput } : {}),
 		pidAlive: deps.pidAlive,
 		owner,
 		pid: deps.pid,
