@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { docsHead, type HeadMeta, socialImageMeta } from "./seo";
-import { ogImagePath, siteUrl } from "./shared";
+import {
+	canonicalLink,
+	docsHead,
+	type HeadMeta,
+	markdownHeaders,
+	socialImageMeta,
+	softwareApplicationJsonLd,
+} from "./seo";
+import { githubUrl, ogImagePath, siteUrl } from "./shared";
 
 function property(meta: HeadMeta[], name: string): string | undefined {
 	for (const tag of meta) {
@@ -9,6 +16,48 @@ function property(meta: HeadMeta[], name: string): string | undefined {
 	}
 	return undefined;
 }
+
+describe("siteUrl", () => {
+	test("is the production host, not the old delacour.co.nz one", () => {
+		expect(siteUrl).toBe("https://warden.co.nz");
+	});
+});
+
+describe("canonicalLink", () => {
+	test("absolute on the production host", () => {
+		expect(canonicalLink("/docs/e2e")).toEqual({ rel: "canonical", href: "https://warden.co.nz/docs/e2e" });
+	});
+
+	test("the home page keeps its slash", () => {
+		expect(canonicalLink("/")).toEqual({ rel: "canonical", href: "https://warden.co.nz/" });
+	});
+});
+
+describe("markdownHeaders", () => {
+	test("a page's .md twin names the HTML page as canonical", () => {
+		const headers = markdownHeaders(["e2e", "specs"]);
+		expect(headers["Content-Type"]).toBe("text/markdown; charset=utf-8");
+		expect(headers.Link).toBe('<https://warden.co.nz/docs/e2e/specs>; rel="canonical"');
+	});
+
+	test("the docs root", () => {
+		expect(markdownHeaders([]).Link).toBe('<https://warden.co.nz/docs>; rel="canonical"');
+	});
+});
+
+describe("softwareApplicationJsonLd", () => {
+	test("a free macOS developer tool, tied to its repository", () => {
+		const ld = softwareApplicationJsonLd();
+		expect(ld["@context"]).toBe("https://schema.org");
+		expect(ld["@type"]).toBe("SoftwareApplication");
+		expect(ld.name).toBe("warden");
+		expect(ld.url).toBe("https://warden.co.nz/");
+		expect(ld.applicationCategory).toBe("DeveloperApplication");
+		expect(ld.operatingSystem).toBe("macOS");
+		expect(ld.offers).toEqual({ "@type": "Offer", price: "0", priceCurrency: "USD" });
+		expect(ld.sameAs).toEqual([githubUrl]);
+	});
+});
 
 describe("ogImagePath", () => {
 	test("docs root", () => {
@@ -48,5 +97,19 @@ describe("docsHead", () => {
 		const { meta } = docsHead({ slugs: [], title: "Introduction" });
 		expect(property(meta, "og:image")).toBe(`${siteUrl}/og/docs/index.png`);
 		expect(property(meta, "og:url")).toBe(`${siteUrl}/docs`);
+	});
+
+	test("every page names itself canonical", () => {
+		expect(docsHead({ slugs: ["e2e", "ci"], title: "CI" }).links).toEqual([
+			{ rel: "canonical", href: "https://warden.co.nz/docs/e2e/ci" },
+		]);
+		expect(docsHead({ slugs: [], title: "What is warden" }).links).toEqual([
+			{ rel: "canonical", href: "https://warden.co.nz/docs" },
+		]);
+	});
+
+	test("the docs root title says what warden is", () => {
+		const { meta } = docsHead({ slugs: [], title: "What is warden" });
+		expect(meta).toContainEqual({ title: "warden docs — mobile testing for coding agents" });
 	});
 });

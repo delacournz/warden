@@ -66,7 +66,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		id: "who-we-are",
 		title: "Who we are",
 		body: [
-			`${PRIVACY.controller}, a company registered in New Zealand, runs \`warden.delacour.co.nz\` and the \`warden\` command-line tool, and is responsible for the personal information they handle. Write to ${MAIL} about anything on this page.`,
+			`${PRIVACY.controller}, a company registered in New Zealand, runs \`warden.co.nz\` and the \`warden\` command-line tool, and is responsible for the personal information they handle. Write to ${MAIL} about anything on this page.`,
 			"This page covers warden only. The studio site, `delacour.co.nz`, has [its own policy](https://delacour.co.nz/privacy).",
 		],
 	},
@@ -74,7 +74,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		id: "the-website",
 		title: "The website",
 		body: [
-			"`warden.delacour.co.nz` counts visits with PostHog, reached through our own address, `i.delacour.co.nz`. Until you choose Accept in the banner, PostHog stores nothing on your device and counts you without cookies. Choose Accept and PostHog keeps an identifier in a cookie and your browser's local storage, so a later visit is recognised as yours, and records your session: the pages you see, where you click and scroll, and what you type into search. Anything typed into a form field is masked before it leaves your browser.",
+			"`warden.co.nz` counts visits with PostHog, reached through our own address, `i.delacour.co.nz`. Until you choose Accept in the banner, PostHog stores nothing on your device and counts you without cookies. Choose Accept and PostHog keeps an identifier in a cookie and your browser's local storage, so a later visit is recognised as yours, and records your session: the pages you see, where you click and scroll, and what you type into search. Anything typed into a form field is masked before it leaves your browser.",
 			"The site's fonts are served from our own address, so loading a page involves only the parties below.",
 		],
 		disclosures: [

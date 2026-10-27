@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { plainText } from "@/components/rich-text";
 import { type Disclosure, PRIVACY, PRIVACY_SECTIONS } from "./privacy";
+import { siteUrl } from "./shared";
 
 /**
  * A privacy policy is a list of claims about code, and the code moves without
@@ -64,6 +65,11 @@ describe("the privacy policy's claims", () => {
 		);
 
 		expect(undisclosed).toEqual([]);
+	});
+
+	test("names the site by the host it is served from", () => {
+		expect(EVERYTHING).toContain(new URL(siteUrl).host);
+		expect(EVERYTHING).not.toContain("warden.delacour.co.nz");
 	});
 
 	/**

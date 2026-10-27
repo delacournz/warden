@@ -4,14 +4,21 @@ const pageCache = "public, max-age=0, s-maxage=300, stale-while-revalidate=86400
 /** Static public files that are not content-hashed: a day in browsers, a week at the edge. */
 const staticCache = "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400";
 
-/** Nitro `routeRules`: Cache-Control per route family. Hashed `/assets/**` already ship `immutable` from nitro. */
+/**
+ * Nitro `routeRules`: Cache-Control per route family. `X-Robots-Tag: noindex`
+ * keeps the agent-facing text dumps and the raw bench logs, archives and JSON
+ * out of search results; crawlers and agents still fetch them. Hashed
+ * `/assets/**` already ship `immutable` from nitro.
+ */
 export const routeRules = {
 	"/": { headers: { "Cache-Control": pageCache } },
 	"/docs/**": { headers: { "Cache-Control": pageCache } },
 	"/privacy": { headers: { "Cache-Control": pageCache } },
-	"/llms.txt": { headers: { "Cache-Control": pageCache } },
-	"/llms-full.txt": { headers: { "Cache-Control": pageCache } },
+	"/llms.txt": { headers: { "Cache-Control": pageCache, "X-Robots-Tag": "noindex" } },
+	"/llms-full.txt": { headers: { "Cache-Control": pageCache, "X-Robots-Tag": "noindex" } },
 	"/robots.txt": { headers: { "Cache-Control": staticCache } },
+	"/sitemap.xml": { headers: { "Cache-Control": staticCache } },
+	"/bench/**": { headers: { "Cache-Control": staticCache, "X-Robots-Tag": "noindex" } },
 	"/demo/**": { headers: { "Cache-Control": staticCache } },
 	"/og/**": { headers: { "Cache-Control": staticCache } },
 	"/favicon.svg": { headers: { "Cache-Control": staticCache } },

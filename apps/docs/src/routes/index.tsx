@@ -8,6 +8,7 @@ import { WardenIcon } from "@/components/warden-icon";
 import { ANALYTICS } from "@/lib/analytics/config";
 import { CONSENT_OPEN_EVENT } from "@/lib/analytics/consent";
 import { baseOptions } from "@/lib/layout.shared";
+import { canonicalLink, softwareApplicationJsonLd } from "@/lib/seo";
 import { appDescription, appName, githubUrl, privacyRoute } from "@/lib/shared";
 
 export const Route = createFileRoute("/")({
@@ -16,7 +17,10 @@ export const Route = createFileRoute("/")({
 		meta: [
 			{ title: `${appName} — open-source mobile testing for coding agents` },
 			{ name: "description", content: appDescription },
+			{ property: "og:url", content: canonicalLink("/").href },
 		],
+		links: [canonicalLink("/")],
+		scripts: [{ type: "application/ld+json", children: JSON.stringify(softwareApplicationJsonLd()) }],
 	}),
 });
 

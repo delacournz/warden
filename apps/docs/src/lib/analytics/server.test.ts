@@ -32,7 +32,7 @@ describe("captureUrl", () => {
 
 describe("serverEventBody", () => {
 	test("is the shape PostHog's capture endpoint takes, carrying the caller's agent as a property", () => {
-		const request = new Request("https://warden.delacour.co.nz/llms.txt?x=1", {
+		const request = new Request("https://warden.co.nz/llms.txt?x=1", {
 			headers: { "user-agent": "ClaudeBot/1.0", "accept-language": "en-NZ,en;q=0.9" },
 		});
 
@@ -44,8 +44,8 @@ describe("serverEventBody", () => {
 				path: "/llms.txt",
 				kind: "llms",
 				agent: "ClaudeBot/1.0",
-				$current_url: "https://warden.delacour.co.nz/llms.txt",
-				$host: "warden.delacour.co.nz",
+				$current_url: "https://warden.co.nz/llms.txt",
+				$host: "warden.co.nz",
 				$pathname: "/llms.txt",
 				$browser_language: "en-NZ",
 				$lib: "warden-docs",
@@ -56,8 +56,8 @@ describe("serverEventBody", () => {
 	});
 
 	test("truncates a long user agent and tolerates a missing one", () => {
-		const long = new Request("https://warden.delacour.co.nz/llms.txt", { headers: { "user-agent": "x".repeat(500) } });
-		const none = new Request("https://warden.delacour.co.nz/llms.txt");
+		const long = new Request("https://warden.co.nz/llms.txt", { headers: { "user-agent": "x".repeat(500) } });
+		const none = new Request("https://warden.co.nz/llms.txt");
 
 		expect(serverEventBody(posthog, long, "llms").properties.agent.length).toBe(190);
 		expect(serverEventBody(posthog, long, "llms").distinct_id.length).toBeLessThanOrEqual(200);
@@ -67,7 +67,7 @@ describe("serverEventBody", () => {
 
 	/** The server's own address is the only one PostHog sees; nothing from the reader's request carries theirs. */
 	test("carries no IP address", () => {
-		const request = new Request("https://warden.delacour.co.nz/llms.txt", {
+		const request = new Request("https://warden.co.nz/llms.txt", {
 			headers: { "x-forwarded-for": "203.0.113.7", "x-real-ip": "203.0.113.7" },
 		});
 
@@ -112,8 +112,8 @@ describe("reportAgentFetch", () => {
 	test("sends nothing for a request that did not arrive on a counted host", () => {
 		const sent = capture(() => {
 			reportAgentFetch(new Request("http://localhost:3210/llms.txt"), posthog);
-			reportAgentFetch(new Request("https://warden.delacour.co.nz/llms.txt"), posthog);
-			reportAgentFetch(new Request("https://warden.staging.delacour.co.nz/llms.txt"), posthog);
+			reportAgentFetch(new Request("https://warden.co.nz/llms.txt"), posthog);
+			reportAgentFetch(new Request("https://staging.warden.co.nz/llms.txt"), posthog);
 		});
 
 		expect(sent.map((request) => request.url)).toEqual([
@@ -124,15 +124,15 @@ describe("reportAgentFetch", () => {
 
 	test("sends nothing for a page, or when PostHog is off", () => {
 		const sent = capture(() => {
-			reportAgentFetch(new Request("https://warden.delacour.co.nz/docs/quickstart"), posthog);
-			reportAgentFetch(new Request("https://warden.delacour.co.nz/llms.txt"), { kind: "off" });
+			reportAgentFetch(new Request("https://warden.co.nz/docs/quickstart"), posthog);
+			reportAgentFetch(new Request("https://warden.co.nz/llms.txt"), { kind: "off" });
 		});
 
 		expect(sent).toEqual([]);
 	});
 
 	test("posts JSON as the server's own agent", () => {
-		const [request] = capture(() => reportAgentFetch(new Request("https://warden.delacour.co.nz/llms.txt"), posthog));
+		const [request] = capture(() => reportAgentFetch(new Request("https://warden.co.nz/llms.txt"), posthog));
 
 		expect(request?.init?.method).toBe("POST");
 		expect(request?.init?.headers).toEqual({ "content-type": "application/json", "user-agent": SERVER_USER_AGENT });
