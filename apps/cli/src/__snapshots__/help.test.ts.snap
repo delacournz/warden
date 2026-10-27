@@ -1797,6 +1797,8 @@ Commands:
   route                        the route key of the screen the app is on
   devtools                     the dev session's devtools broker: status |
                                resume
+  logpoint                     log a value whenever a source line runs, without
+                               pausing: add | list | rm | clear | hits
   help [command]               display help for command
 
 $ warden ui status --help
@@ -3089,7 +3091,91 @@ Options:
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
-  -h, --help             display help for command"
+  -h, --help             display help for command
+
+$ warden ui logpoint --help
+Usage: warden ui logpoint [options] [command]
+
+log a value whenever a source line runs, without pausing: add | list | rm |
+clear | hits
+
+Options:
+  -h, --help                   display help for command
+
+Commands:
+  add <location> <expression>  log <expression> each time <file:line[:col]> runs
+                               (needs \`warden dev\` and a Fusebox debugger)
+  list                         the logpoints and whether they are armed
+  rm <id>                      remove a logpoint
+  clear                        remove every logpoint
+  hits [id]                    the values logged so far
+  help [command]               display help for command
+
+$ warden ui logpoint add --help
+Usage: warden ui logpoint add [options] <location> <expression>
+
+log <expression> each time <file:line[:col]> runs (needs \`warden dev\` and a
+Fusebox debugger)
+
+Arguments:
+  location     src/x.tsx:42 or src/x.tsx:42:7 (path suffix inside the bundle,
+               1-based)
+  expression   JavaScript evaluated in the scope of that line
+
+Options:
+  --id <id>    name for it (default lp1, lp2, ...)
+  --hits <n>   remove it after n hits
+  --udid <id>  which dev session (default: the only one)
+  --json       print one JSON document
+  -h, --help   display help for command
+
+$ warden ui logpoint list --help
+Usage: warden ui logpoint list [options]
+
+the logpoints and whether they are armed
+
+Options:
+  --udid <id>  which dev session (default: the only one)
+  --json       print one JSON document
+  -h, --help   display help for command
+
+$ warden ui logpoint rm --help
+Usage: warden ui logpoint rm [options] <id>
+
+remove a logpoint
+
+Arguments:
+  id           logpoint id
+
+Options:
+  --udid <id>  which dev session (default: the only one)
+  --json       print one JSON document
+  -h, --help   display help for command
+
+$ warden ui logpoint clear --help
+Usage: warden ui logpoint clear [options]
+
+remove every logpoint
+
+Options:
+  --udid <id>  which dev session (default: the only one)
+  --json       print one JSON document
+  -h, --help   display help for command
+
+$ warden ui logpoint hits --help
+Usage: warden ui logpoint hits [options] [id]
+
+the values logged so far
+
+Arguments:
+  id              only this logpoint
+
+Options:
+  --since <when>  30s | 5m | 2h | ISO time
+  --limit <n>     at most the last n hits (default 50)
+  --udid <id>     which dev session (default: the only one)
+  --json          print one JSON document
+  -h, --help      display help for command"
 `;
 
 exports[`help output warden __affected-graph --help (and nested subcommands) 1`] = `

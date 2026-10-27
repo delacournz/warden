@@ -1,6 +1,7 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import type { CommandContext } from "../context";
 import type { UiDeps } from "./driver";
+import { registerLogpoint } from "./logpoint-cli";
 import { withUiOptions } from "./ui-options";
 
 /** Default number of lines `logs` / `network` show. */
@@ -123,4 +124,5 @@ export function registerDevtoolsCommands(
 		const { uiDevtoolsResume } = await import("./devtools-cli");
 		done(await uiDevtoolsResume(ctx, deps, opts));
 	});
+	registerLogpoint(cmd, ctx, done);
 }

@@ -11,6 +11,7 @@ import {
 	readTree,
 	reloadApp,
 } from "../agent-ui/broker-client";
+import { addLogpoint, clearLogpoints, listLogpoints, logpointHits, removeLogpoint } from "../agent-ui/logpoint-cli";
 import { parseSince } from "../commands/dev-logs";
 import { profileStatus, startProfile, stopProfile } from "../dev-broker/profile-client";
 import { listDevSessions } from "../dev-session";
@@ -190,6 +191,45 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 				"Reattach the broker after it yielded to Chrome DevTools. On a single-debugger Metro this disconnects DevTools.",
 			input: { udid },
 			run: async (env, { udid: id }) => devtoolsResume(target(env, id)),
+		}),
+		tool({
+			name: "logpoint_add",
+			description:
+				"Log an expression's value every time a source line runs, without pausing or editing code (a conditional breakpoint that never stops). Read values with logpoint_hits.",
+			input: {
+				udid,
+				location: z.string().min(1).describe("src/x.tsx:42 or src/x.tsx:42:7 (path suffix, 1-based)"),
+				expression: z.string().min(1).describe("JavaScript evaluated in that line's scope"),
+				id: z.string().optional(),
+				hits: z.number().int().positive().optional().describe("remove after N hits"),
+			},
+			run: async (env, { udid: device, location, expression, ...rest }) =>
+				addLogpoint(target(env, device), { location, expression, ...defined(rest) }),
+		}),
+		tool({
+			name: "logpoint_hits",
+			description: "Values logged by logpoints, newest last.",
+			input: { udid, id: z.string().optional(), since: sinceArg, limit },
+			run: async (env, { udid: device, since: raw, ...rest }) => {
+				const from = since(raw, deps.now());
+				if (!from.success) return from;
+				return logpointHits(target(env, device), defined({ ...rest, since: from.data }));
+			},
+		}),
+		tool({
+			name: "logpoint_list",
+			description: "The session's logpoints, their hit counts and whether they are armed.",
+			input: { udid },
+			run: async (env, { udid: device }) => listLogpoints(target(env, device)),
+		}),
+		tool({
+			name: "logpoint_remove",
+			description: "Remove one logpoint, or every logpoint when id is omitted.",
+			input: { udid, id: z.string().optional() },
+			run: async (env, { udid: device, id: logpoint }) =>
+				logpoint === undefined
+					? clearLogpoints(target(env, device))
+					: removeLogpoint(target(env, device), { id: logpoint }),
 		}),
 		tool({
 			name: "profile_start",

@@ -16,7 +16,13 @@ import type {
 	treeParamsSchema,
 } from "./broker.schema";
 
-export type BrokerErrorCode = DevtoolsErrorCode | "bad_request" | "unknown_method" | "broker_unreachable" | "timeout";
+export type BrokerErrorCode =
+	| DevtoolsErrorCode
+	| "bad_request"
+	| "unknown_method"
+	| "broker_unreachable"
+	| "timeout"
+	| "logpoints_unsupported";
 
 /** `hint` = what the caller can do about it. */
 export type BrokerError = { code: BrokerErrorCode; message: string; hint?: string };
