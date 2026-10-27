@@ -10,3 +10,6 @@
 # Finish-review captures, regenerated each round
 .impeccable/review/
 .impeccable/questions/
+
+# Release notes page, produced by `bun run release-notes` from apps/cli/CHANGELOG.md + .changeset/
+/content/docs/release-notes.md
