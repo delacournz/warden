@@ -7,6 +7,7 @@ import XCTest
 private final class Recorder: @unchecked Sendable {
   private let lock = NSLock()
   private var storage: [SimulatorHIDEvent] = []
+  private var ordered: [KeyboardMap.KeyStep] = []
   private var concurrent = 0
   private(set) var maxConcurrent = 0
   private(set) var shakes = 0
@@ -14,6 +15,7 @@ private final class Recorder: @unchecked Sendable {
   func record(_ event: SimulatorHIDEvent, holdNs: UInt64 = 0) async {
     lock.withLock {
       storage.append(event)
+      ordered.append(.event(event))
       concurrent += 1
       maxConcurrent = max(maxConcurrent, concurrent)
     }
@@ -21,7 +23,11 @@ private final class Recorder: @unchecked Sendable {
     lock.withLock { concurrent -= 1 }
   }
 
+  func pause(_ milliseconds: Int) { lock.withLock { ordered.append(.pause(milliseconds)) } }
+
   func shake() { lock.withLock { shakes += 1 } }
+  /// Key events and pauses in the order they happened.
+  var steps: [KeyboardMap.KeyStep] { lock.withLock { ordered } }
   var events: [SimulatorHIDEvent] { lock.withLock { storage } }
 }
 
@@ -35,7 +41,8 @@ final class InputTests: XCTestCase {
         screen: { (390, 844) },
         isLandscape: { landscape },
         shake: { recorder.shake() },
-        gate: gate))
+        gate: gate,
+        pause: { recorder.pause($0) }))
   }
 
   private func call(_ engine: InputEngine, _ op: String, _ params: [String: JSON]) async throws -> JSON {
@@ -361,13 +368,19 @@ final class InputTests: XCTestCase {
   func testKeyByUsageWithModifiers() async throws {
     let recorder = Recorder()
     _ = try await call(engine(recorder), "key", ["usage": 0x04, "modifiers": ["cmd", "shift"]])
-    XCTAssertEqual(recorder.events, [KeyboardMap.chord(usage: 0x04, modifiers: [0xE3, 0xE1], paceMs: 30, holdMs: 40)])
+    XCTAssertEqual(
+      recorder.steps,
+      KeyboardMap.chordSteps(
+        usage: 0x04, modifiers: [0xE3, 0xE1], paceMs: KeyboardMap.defaultPaceMs, holdMs: KeyboardMap.defaultHoldMs))
   }
 
   func testKeyByName() async throws {
     let recorder = Recorder()
     _ = try await call(engine(recorder), "key", ["name": "Enter"])
-    XCTAssertEqual(recorder.events, [KeyboardMap.chord(usage: 0x28, modifiers: [], paceMs: 30, holdMs: 40)])
+    XCTAssertEqual(
+      recorder.steps,
+      KeyboardMap.chordSteps(
+        usage: 0x28, modifiers: [], paceMs: KeyboardMap.defaultPaceMs, holdMs: KeyboardMap.defaultHoldMs))
   }
 
   func testKeyRejectsBadUsageNameAndModifier() async {
@@ -389,61 +402,124 @@ final class InputTests: XCTestCase {
   func testSelectAllSendsPacedCmdA() async throws {
     let recorder = Recorder()
     _ = try await call(engine(recorder), "selectAll", [:])
-    XCTAssertEqual(recorder.events, [KeyboardMap.selectAll(paceMs: 30, holdMs: 40)])
+    XCTAssertEqual(recorder.steps, KeyboardMap.selectAll(paceMs: KeyboardMap.defaultPaceMs, holdMs: KeyboardMap.defaultHoldMs))
   }
 
   func testSelectAllTakesPacingOverrides() async throws {
     let recorder = Recorder()
     _ = try await call(engine(recorder), "selectAll", ["paceMs": 0, "holdMs": 0])
-    XCTAssertEqual(recorder.events, [KeyboardMap.selectAll()])
+    XCTAssertEqual(recorder.steps, KeyboardMap.selectAll())
   }
 
   // MARK: typeText
 
-  func testTypeTextSendsOneCompositeAndReportsCount() async throws {
+  func testTypeTextStreamsEveryKeyEventInOrderAndReportsCount() async throws {
     let recorder = Recorder()
-    let result = try await call(engine(recorder), "typeText", ["text": "Hello, World 123!"])
+    let result = try await call(
+      engine(recorder), "typeText", ["text": "Hello, World 123!", "paceMs": 0, "holdMs": 0, "repeatGapMs": 0])
     XCTAssertEqual(result, ["typed": 17])
-    XCTAssertEqual(recorder.events.count, 1)
+    XCTAssertEqual(recorder.steps, KeyboardMap.plan(typing: "Hello, World 123!").steps)
+    XCTAssertFalse(recorder.events.contains { $0.subEvents != nil }, "events are streamed, not one composite")
+  }
+
+  /// The pauses are slept by the helper between the streamed events, in order, not baked into idb `.delay`s.
+  func testTypeTextSleepsBetweenEventsNotInsideThem() async throws {
+    let recorder = Recorder()
+    _ = try await call(engine(recorder), "typeText", ["text": "ab", "paceMs": 7, "holdMs": 9, "repeatGapMs": 0])
+    XCTAssertEqual(
+      recorder.steps,
+      [
+        .event(.keyboard(direction: .down, keyCode: 0x04)), .pause(9),
+        .event(.keyboard(direction: .up, keyCode: 0x04)), .pause(7),
+        .event(.keyboard(direction: .down, keyCode: 0x05)), .pause(9),
+        .event(.keyboard(direction: .up, keyCode: 0x05)), .pause(7),
+      ])
+  }
+
+  func testTypeTextSendsThroughTheStreamSeamWhenThereIsOne() async throws {
+    let recorder = Recorder()
+    let engine = InputEngine(
+      environment: InputEnvironment(
+        send: { _ in XCTFail("a typed string goes through sendStream") },
+        screen: { (390, 844) },
+        isLandscape: { false },
+        shake: {},
+        sendStream: { stream in for try await event in stream { await recorder.record(event) } },
+        pause: { recorder.pause($0) }))
+    _ = try await call(engine, "typeText", ["text": "a", "paceMs": 3, "holdMs": 4, "repeatGapMs": 0])
+    XCTAssertEqual(
+      recorder.steps,
+      [
+        .event(.keyboard(direction: .down, keyCode: 0x04)), .pause(4),
+        .event(.keyboard(direction: .up, keyCode: 0x04)), .pause(3),
+      ])
+  }
+
+  /// An op that times out is cancelled mid-pause: the sleep must end and the op fail, not run out the pause.
+  func testACancelledOpEndsItsPause() async {
+    let recorder = Recorder()
+    let engine = InputEngine(
+      environment: InputEnvironment(
+        send: { await recorder.record($0) },
+        screen: { (390, 844) },
+        isLandscape: { false },
+        shake: {},
+        pause: { _ in try await Task.sleep(nanoseconds: 30_000_000_000) }))
+    let task = Task { try await engine.handle(op: "typeText", params: ["text": "abc", "paceMs": 30, "holdMs": 40]) }
+    try? await Task.sleep(nanoseconds: 100_000_000)
+    task.cancel()
+    let start = ContinuousClock.now
+    do {
+      _ = try await task.value
+      XCTFail("expected a throw")
+    } catch {
+      XCTAssertTrue(error is CancellationError)
+    }
+    XCTAssertLessThan(ContinuousClock.now - start, .seconds(5))
+    XCTAssertEqual(recorder.events, [.keyboard(direction: .down, keyCode: 0x04)], "only the key before the pause")
   }
 
   /// A React Native field drops keys sent back to back ("ada@example", "Helo"), so by default every key is held
-  /// 40 ms, followed by a 30 ms pause, and a repeated key is preceded by 300 ms more.
+  /// and followed by a pause, and a repeated key is preceded by a longer one. Expressed through the defaults so a
+  /// retune only changes `Keyboard.swift`.
   func testTypeTextHoldsAndPacesEveryKeyByDefault() async throws {
     let recorder = Recorder()
     _ = try await call(engine(recorder), "typeText", ["text": "ada@example.com"])
-    let sub = recorder.events.first?.subEvents ?? []
-    XCTAssertEqual(sub.filter { $0 == .delay(0.03) }.count, 15, "a pace per key")
-    XCTAssertEqual(sub.filter { $0 == .delay(0.04) }.count, 15, "a hold per key")
-    XCTAssertTrue(sub.filter { $0 == .delay(0.3) }.isEmpty)
+    let pauses = recorder.steps.compactMap { step -> Int? in
+      if case .pause(let milliseconds) = step { return milliseconds }
+      return nil
+    }
+    XCTAssertEqual(pauses.filter { $0 == KeyboardMap.defaultPaceMs }.count, 15, "a pace per key")
+    XCTAssertEqual(pauses.filter { $0 == KeyboardMap.defaultHoldMs }.count, 15, "a hold per key")
+    XCTAssertFalse(pauses.contains(KeyboardMap.defaultRepeatGapMs))
   }
 
   func testTypeTextWaitsBeforeAnIdenticalConsecutiveKeyByDefault() async throws {
     let recorder = Recorder()
     _ = try await call(engine(recorder), "typeText", ["text": "Hello"])
-    let gaps = (recorder.events.first?.subEvents ?? []).filter { $0 == .delay(0.3) }
+    let gaps = recorder.steps.filter { $0 == .pause(KeyboardMap.defaultRepeatGapMs) }
     XCTAssertEqual(gaps.count, 1, "only the second l")
   }
 
   func testTypeTextPaceHoldAndRepeatGapAreConfigurableAndZeroMeansBackToBack() async throws {
-    let recorder = Recorder()
-    _ = try await call(engine(recorder), "typeText", ["text": "aab", "paceMs": 0, "holdMs": 0, "repeatGapMs": 0])
-    _ = try await call(engine(recorder), "typeText", ["text": "aab", "paceMs": 50, "holdMs": 20, "repeatGapMs": 70])
-    let unpaced = (recorder.events[0].subEvents ?? []).filter { if case .delay = $0 { true } else { false } }
-    let sub = recorder.events[1].subEvents ?? []
-    XCTAssertTrue(unpaced.isEmpty)
-    XCTAssertEqual(sub.filter { $0 == .delay(0.05) }.count, 3)
-    XCTAssertEqual(sub.filter { $0 == .delay(0.02) }.count, 3)
-    XCTAssertEqual(sub.filter { $0 == .delay(0.07) }.count, 1)
+    let unpaced = Recorder()
+    let paced = Recorder()
+    _ = try await call(engine(unpaced), "typeText", ["text": "aab", "paceMs": 0, "holdMs": 0, "repeatGapMs": 0])
+    _ = try await call(engine(paced), "typeText", ["text": "aab", "paceMs": 50, "holdMs": 20, "repeatGapMs": 70])
+    XCTAssertFalse(unpaced.steps.contains { if case .pause = $0 { true } else { false } })
+    XCTAssertEqual(paced.steps.filter { $0 == .pause(50) }.count, 3)
+    XCTAssertEqual(paced.steps.filter { $0 == .pause(20) }.count, 3)
+    XCTAssertEqual(paced.steps.filter { $0 == .pause(70) }.count, 1)
   }
 
   func testKeyIsHeldAndFollowedByAPauseUnlessZero() async throws {
-    let recorder = Recorder()
-    _ = try await call(engine(recorder), "key", ["name": "Backspace"])
-    _ = try await call(engine(recorder), "key", ["name": "Backspace", "paceMs": 0, "holdMs": 0])
-    XCTAssertEqual(recorder.events[0].subEvents?.last, .delay(0.03))
-    XCTAssertTrue((recorder.events[0].subEvents ?? []).contains(.delay(0.03)))
-    XCTAssertEqual(recorder.events[1], KeyboardMap.chord(usage: 0x2A, modifiers: []))
+    let held = Recorder()
+    let bare = Recorder()
+    _ = try await call(engine(held), "key", ["name": "Backspace"])
+    _ = try await call(engine(bare), "key", ["name": "Backspace", "paceMs": 0, "holdMs": 0])
+    XCTAssertEqual(held.steps.last, .pause(KeyboardMap.defaultPaceMs))
+    XCTAssertTrue(held.steps.contains(.pause(KeyboardMap.defaultHoldMs)))
+    XCTAssertEqual(bare.steps, KeyboardMap.chordSteps(usage: 0x2A, modifiers: []))
   }
 
   func testPacingParamsMustBeWholeNumbersWithinRange() async {
@@ -462,7 +538,7 @@ final class InputTests: XCTestCase {
     let error = await failure { try await call(engine(recorder), "typeText", ["text": "ab\u{E9}cd"]) }
     XCTAssertEqual(error?.code, .unsupportedText)
     XCTAssertEqual(error?.detail?["rest"], .string("\u{E9}cd"))
-    XCTAssertEqual(recorder.events.count, 1, "the mappable prefix is still typed")
+    XCTAssertEqual(recorder.events.count, 4, "the mappable prefix is still typed: a down and an up each for a and b")
   }
 
   func testTypeTextOfOnlyUnmappableSendsNothing() async {

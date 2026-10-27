@@ -60,6 +60,68 @@
 				"max": 4013,
 				"cvPct": 117.7
 			},
+			"stepGroups": [
+				{
+					"kind": "verb",
+					"verb": "getbytestid",
+					"n": 496,
+					"totalMs": 351934,
+					"share": 0.695,
+					"median": 266.5,
+					"p95": 3228,
+					"max": 4013
+				},
+				{
+					"kind": "verb",
+					"verb": "dismiss",
+					"n": 52,
+					"totalMs": 113054,
+					"share": 0.223,
+					"median": 2262.5,
+					"p95": 2327,
+					"max": 2334
+				},
+				{
+					"kind": "verb",
+					"verb": "(unlabelled)",
+					"n": 32,
+					"totalMs": 32108,
+					"share": 0.063,
+					"median": 1027.5,
+					"p95": 1055,
+					"max": 1056
+				},
+				{
+					"kind": "verb",
+					"verb": "accept",
+					"n": 4,
+					"totalMs": 8096,
+					"share": 0.016,
+					"median": 2024.5,
+					"p95": 2032,
+					"max": 2032
+				},
+				{
+					"kind": "verb",
+					"verb": "warden-example",
+					"n": 4,
+					"totalMs": 1155,
+					"share": 0.002,
+					"median": 289.5,
+					"p95": 295,
+					"max": 295
+				},
+				{
+					"kind": "verb",
+					"verb": "getbytext",
+					"n": 4,
+					"totalMs": 258,
+					"share": 0.001,
+					"median": 64.5,
+					"p95": 66,
+					"max": 66
+				}
+			],
 			"cpuSecondsPerRep": 17.74,
 			"processes": [
 				{

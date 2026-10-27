@@ -6,7 +6,7 @@ import { Legend, ResourceCharts, StepChart, SuiteChart } from "./bench-chart";
 import { type BenchSummary, cleanFrameworks, isOk, label, PLATFORM_LABEL, reportSlug, SUMMARIES } from "./bench-data";
 import { runLabel } from "./bench-order";
 import { ProcessStacks } from "./bench-process-stacks";
-import { FootprintTable, ResourceTable, StartupTable, TestMatrix, VersionTable } from "./bench-tables";
+import { FootprintTable, ResourceTable, StartupTable, StepGroupTable, TestMatrix, VersionTable } from "./bench-tables";
 
 const BenchContext = createContext<BenchSummary | undefined>(undefined);
 
@@ -172,9 +172,15 @@ export function BenchMatrix(): ReactElement {
 }
 
 export function BenchSteps(): ReactElement {
+	const s = useSummary();
 	return (
 		<div className="bench not-prose">
-			<StepChart summary={useSummary()} />
+			<StepChart summary={s} />
+			<StepGroupTable summary={s} />
+			<p className="text-ink-2 text-xs">
+				Share is of the framework's total step time, from the warm runs. What one step covers differs per tool, so
+				compare a verb's share within a tool, not its median across tools.
+			</p>
 		</div>
 	);
 }

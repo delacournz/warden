@@ -59,6 +59,58 @@
 				"max": 1887,
 				"cvPct": 81.6
 			},
+			"stepGroups": [
+				{
+					"kind": "verb",
+					"verb": "press",
+					"n": 244,
+					"totalMs": 148015,
+					"share": 0.406,
+					"median": 520,
+					"p95": 1025,
+					"max": 1086
+				},
+				{
+					"kind": "verb",
+					"verb": "type",
+					"n": 64,
+					"totalMs": 87233,
+					"share": 0.239,
+					"median": 1263.5,
+					"p95": 1864,
+					"max": 1887
+				},
+				{
+					"kind": "verb",
+					"verb": "wait",
+					"n": 276,
+					"totalMs": 76387,
+					"share": 0.209,
+					"median": 55,
+					"p95": 969,
+					"max": 1080
+				},
+				{
+					"kind": "verb",
+					"verb": "open",
+					"n": 36,
+					"totalMs": 32932,
+					"share": 0.09,
+					"median": 1023,
+					"p95": 1075,
+					"max": 1100
+				},
+				{
+					"kind": "verb",
+					"verb": "fill",
+					"n": 12,
+					"totalMs": 20246,
+					"share": 0.055,
+					"median": 1689,
+					"p95": 1746,
+					"max": 1746
+				}
+			],
 			"cpuSecondsPerRep": 11.18,
 			"processes": [
 				{

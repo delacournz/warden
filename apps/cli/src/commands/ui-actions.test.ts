@@ -293,6 +293,95 @@ describe("fill", () => {
 	});
 });
 
+describe("fill on a driver with pasteText (iOS)", () => {
+	/** a filled email field; a paste or typed text leaves the field showing what it was given */
+	function pasteHarness(onPaste?: (text: string) => string | undefined) {
+		let typed = "";
+		return harness([typingScreen("a@b.co")], {
+			selectAll: true,
+			pasteText: true,
+			onCall: (call, driver) => {
+				if (call.method === "pasteText") {
+					const refused = onPaste?.(call.text);
+					if (refused === "fail") return failWith("E_IO", "pasteboard write not confirmed");
+					typed = call.text;
+					driver.set(typingScreen(typed));
+				}
+				if (call.method === "typeText") {
+					typed += call.text;
+					driver.set(typingScreen(typed));
+				}
+				return undefined;
+			},
+		});
+	}
+	const inputs = (h: ReturnType<typeof pasteHarness>): string[] =>
+		h.driver.calls.map((call) => call.method).filter((m) => m !== "snapshot" && m !== "elementAtPoint");
+
+	test("pastes over the select-all by default and the read-back confirms", async () => {
+		const h = pasteHarness();
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "selectAll", "pasteText", "close"]);
+		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
+	});
+
+	test("--via type types and is recorded", async () => {
+		const h = pasteHarness();
+		expect(await h.run("fill", "id=email", "new@x.co", "--via", "type", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "selectAll", "typeText", "close"]);
+		expect(h.steps[0]?.args).toEqual({ text: "new@x.co", via: "type" });
+	});
+
+	test("--via paste is the default and not recorded", async () => {
+		const h = pasteHarness();
+		expect(await h.run("fill", "id=email", "new@x.co", "--via", "paste", "--json")).toBe(0);
+		expect(h.driver.callsOf("pasteText")).toHaveLength(1);
+		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
+	});
+
+	test("a paste that fails is typed in the same attempt", async () => {
+		const h = pasteHarness(() => "fail");
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "selectAll", "pasteText", "typeText", "close"]);
+	});
+
+	test("a paste the field mangles is retried by typing", async () => {
+		let pastes = 0;
+		const h = harness([typingScreen("a@b.co")], {
+			selectAll: true,
+			pasteText: true,
+			onCall: (call, driver) => {
+				if (call.method === "pasteText") {
+					pastes += 1;
+					driver.set(typingScreen(call.text.slice(0, 3)));
+				}
+				if (call.method === "key") driver.set(typingScreen(""));
+				if (call.method === "typeText") driver.set(typingScreen(call.text));
+				return undefined;
+			},
+		});
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(pastes).toBe(1);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
+	});
+
+	test("an unknown --via is a usage error", async () => {
+		const h = pasteHarness();
+		expect(await h.run("fill", "id=email", "x", "--via", "clipboard", "--json")).toBe(1);
+		expect(doc(h.c).error.code).toBe("usage");
+		expect(h.driver.callsOf("tap")).toEqual([]);
+	});
+
+	test("--secure pastes and records no text", async () => {
+		const h = harness([typingScreen("")], { pasteText: true });
+		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--json")).toBe(0);
+		expect(h.driver.callsOf("pasteText").map((call) => call.text)).toEqual(["hunter2hunter2"]);
+		expect(h.steps[0]?.args).toEqual({ secure: true });
+		expect(h.c.stdout[0]).not.toContain("hunter2");
+	});
+});
+
 describe("fill on a driver with setText (Android warden-uiad)", () => {
 	/** a filled email field; `setText` and `typeText` both leave the field showing what they were given */
 	function setTextHarness(optIn: boolean) {

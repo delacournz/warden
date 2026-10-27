@@ -48,21 +48,24 @@ final class KeyboardTests: XCTestCase {
     XCTAssertNil(plan.rest)
     XCTAssertEqual(plan.typedScalars, 3)
     XCTAssertEqual(
-      plan.event,
-      .composite([
-        .keyboard(direction: .down, keyCode: KeyboardMap.leftShift),
-        .keyboard(direction: .down, keyCode: 0x0B), .keyboard(direction: .up, keyCode: 0x0B),
-        .keyboard(direction: .up, keyCode: KeyboardMap.leftShift),
-        .keyboard(direction: .down, keyCode: 0x0C), .keyboard(direction: .up, keyCode: 0x0C),
-        .keyboard(direction: .down, keyCode: KeyboardMap.leftShift),
-        .keyboard(direction: .down, keyCode: 0x1E), .keyboard(direction: .up, keyCode: 0x1E),
-        .keyboard(direction: .up, keyCode: KeyboardMap.leftShift),
-      ]))
+      plan.steps,
+      [
+        .event(.keyboard(direction: .down, keyCode: KeyboardMap.leftShift)),
+        .event(.keyboard(direction: .down, keyCode: 0x0B)), .event(.keyboard(direction: .up, keyCode: 0x0B)),
+        .event(.keyboard(direction: .up, keyCode: KeyboardMap.leftShift)),
+        .event(.keyboard(direction: .down, keyCode: 0x0C)), .event(.keyboard(direction: .up, keyCode: 0x0C)),
+        .event(.keyboard(direction: .down, keyCode: KeyboardMap.leftShift)),
+        .event(.keyboard(direction: .down, keyCode: 0x1E)), .event(.keyboard(direction: .up, keyCode: 0x1E)),
+        .event(.keyboard(direction: .up, keyCode: KeyboardMap.leftShift)),
+      ])
   }
 
   func testPlanReleasesShiftAtTheEndAndKeepsItAcrossConsecutiveCaps() {
     let plan = KeyboardMap.plan(typing: "AB")
-    let events = plan.event?.subEvents ?? []
+    let events = plan.steps.compactMap { step -> SimulatorHIDEvent? in
+      if case .event(let event) = step { return event }
+      return nil
+    }
     XCTAssertEqual(events.first, .keyboard(direction: .down, keyCode: KeyboardMap.leftShift))
     XCTAssertEqual(events.last, .keyboard(direction: .up, keyCode: KeyboardMap.leftShift))
     XCTAssertEqual(events.filter { $0 == .keyboard(direction: .down, keyCode: KeyboardMap.leftShift) }.count, 1)
@@ -72,21 +75,40 @@ final class KeyboardTests: XCTestCase {
     let plan = KeyboardMap.plan(typing: "caf\u{E9} au lait")
     XCTAssertEqual(plan.typedScalars, 3)
     XCTAssertEqual(plan.rest, "\u{E9} au lait")
-    XCTAssertEqual(
-      plan.event?.subEvents?.count, 6, "c, a, f only: one down and one up each")
+    XCTAssertEqual(plan.steps.count, 6, "c, a, f only: one down and one up each")
   }
 
   func testPlanForOnlyUnmappableTextTypesNothing() {
     let plan = KeyboardMap.plan(typing: "é")
-    XCTAssertNil(plan.event)
+    XCTAssertTrue(plan.steps.isEmpty)
     XCTAssertEqual(plan.rest, "é")
     XCTAssertEqual(plan.typedScalars, 0)
   }
 
   func testEmptyTextIsANoOp() {
     let plan = KeyboardMap.plan(typing: "")
-    XCTAssertNil(plan.event)
+    XCTAssertTrue(plan.steps.isEmpty)
     XCTAssertNil(plan.rest)
+  }
+
+  /// Pauses are plain milliseconds between the key events, never idb `.delay`s: hold between down and up, pace after
+  /// the up, the repeat gap before an identical key.
+  func testPlanPutsHoldPaceAndRepeatGapBetweenTheKeyEvents() {
+    let plan = KeyboardMap.plan(typing: "aa", paceMs: 5, holdMs: 20, repeatGapMs: 50)
+    XCTAssertEqual(
+      plan.steps,
+      [
+        .event(.keyboard(direction: .down, keyCode: 0x04)), .pause(20),
+        .event(.keyboard(direction: .up, keyCode: 0x04)), .pause(5),
+        .pause(50),
+        .event(.keyboard(direction: .down, keyCode: 0x04)), .pause(20),
+        .event(.keyboard(direction: .up, keyCode: 0x04)), .pause(5),
+      ])
+  }
+
+  func testPlanWithZeroPacingHasNoPauses() {
+    let plan = KeyboardMap.plan(typing: "aab")
+    XCTAssertFalse(plan.steps.contains { if case .pause = $0 { true } else { false } })
   }
 
   func testChordPressesModifiersAroundTheKeyAndReleasesInReverse() {
@@ -109,10 +131,22 @@ final class KeyboardTests: XCTestCase {
   }
 
   func testSelectAllIsCmdA() {
-    XCTAssertEqual(KeyboardMap.selectAll(), KeyboardMap.chord(usage: 0x04, modifiers: [0xE3]))
+    XCTAssertEqual(
+      KeyboardMap.selectAll(),
+      [
+        .event(.keyboard(direction: .down, keyCode: 0xE3)),
+        .event(.keyboard(direction: .down, keyCode: 0x04)),
+        .event(.keyboard(direction: .up, keyCode: 0x04)),
+        .event(.keyboard(direction: .up, keyCode: 0xE3)),
+      ])
     XCTAssertEqual(
       KeyboardMap.selectAll(paceMs: 30, holdMs: 40),
-      KeyboardMap.chord(usage: 0x04, modifiers: [0xE3], paceMs: 30, holdMs: 40))
+      [
+        .event(.keyboard(direction: .down, keyCode: 0xE3)),
+        .event(.keyboard(direction: .down, keyCode: 0x04)), .pause(40),
+        .event(.keyboard(direction: .up, keyCode: 0x04)),
+        .event(.keyboard(direction: .up, keyCode: 0xE3)), .pause(30),
+      ])
   }
 
   func testNamedKeysCoverTheTypeScriptKeyNames() {

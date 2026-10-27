@@ -402,7 +402,7 @@ Exit codes: 0 ok · 1 failed or usage (also the `record` errors `no_recording`, 
 | `snapshot` | `-i`/`--interactive` interactive only, `--all` no line cap, `--depth <n>`, `--settle [ms]` quiet-screen diff |
 | `find <selector...>` | elements matching `id=… label=… text=… role=… value=… editable=… nth=…`, with refs |
 | `press <target>` (alias `tap`) | target = `@eN` \| selector \| `x y`; `--verify`, `--settle [ms]` |
-| `fill <target> <text>` · `type <text>` · `key <name>` | `fill`: `--secure`, `--no-verify`; `type`: `--submit` |
+| `fill <target> <text>` · `type <text>` · `key <name>` | `fill`: `--secure`, `--no-verify`, `--via paste|type` (iOS pastes by default); `type`: `--submit` |
 | `scroll <dir> [amount]` | `--until <selector> --in <target> --max <n>` |
 | `wait` · `is` · `get` | poll the live screen: `wait <selector>\|absent <selector>\|text "…"\|stable [ms]`, `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` (exit 0/1), `get <selector> text\|value\|label\|id\|role\|frame\|count` |
 | `alert accept\|dismiss\|get` · `home` · `back` | `back` is Android only. `alert get` with no alert shows an empty button list (exit 0); `alert accept\|dismiss` then fail with `no_alert` (exit 1) |

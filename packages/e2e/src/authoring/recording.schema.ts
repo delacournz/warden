@@ -187,7 +187,14 @@ export const stepSchema = z.discriminatedUnion("kind", [
 		partial: z.literal(true).optional(),
 	}),
 	z.strictObject({ ...base, kind: z.literal("press"), target: targetSchema }),
-	z.strictObject({ ...base, kind: z.literal("fill"), target: targetSchema, text: textSchema }),
+	z.strictObject({
+		...base,
+		kind: z.literal("fill"),
+		target: targetSchema,
+		text: textSchema,
+		/** only `"type"` is written (`warden ui fill --via type`); absent = the default, paste where the driver can */
+		via: z.literal("type").optional(),
+	}),
 	z.strictObject({ ...base, kind: z.literal("type"), target: targetSchema.optional(), text: textSchema }),
 	z.strictObject({
 		...base,

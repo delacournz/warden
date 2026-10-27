@@ -50,6 +50,18 @@
 | --- | --- | --- | --- | --- |
 | warden | 504 | 85 ms | 3.63 s | 4.98 s |
 
+### Where step time goes
+
+Step scopes differ per tool: warden's one `fill` step spans the focus tap, select-all, typing and read-back confirm, argent reports a separate `idle` step and `into …`, agent-device reports `fill` and `type` separately, and tester.army reports locator steps. Compare a verb's share within a tool, not its median across tools.
+
+**warden**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| fill | 68 | 80.4% | 3.38 s | 4.20 s | 4.98 s |
+| tap | 180 | 10.6% | 75 ms | 333 ms | 620 ms |
+| expect | 256 | 9.1% | 21 ms | 558 ms | 578 ms |
+
 ## Untraced time
 
 | Framework | Untraced / rep | Share of test time | Largest (test) |

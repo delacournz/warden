@@ -56,6 +56,53 @@
 | agent-device | 632 | 471 ms | 1.62 s | 1.89 s |
 | tester-army | 592 | 481 ms | 3.21 s | 4.01 s |
 
+### Where step time goes
+
+Step scopes differ per tool: warden's one `fill` step spans the focus tap, select-all, typing and read-back confirm, argent reports a separate `idle` step and `into …`, agent-device reports `fill` and `type` separately, and tester.army reports locator steps. Compare a verb's share within a tool, not its median across tools.
+
+**warden**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| fill | 68 | 80.4% | 3.38 s | 4.20 s | 4.98 s |
+| tap | 180 | 10.6% | 75 ms | 333 ms | 620 ms |
+| expect | 256 | 9.1% | 21 ms | 558 ms | 578 ms |
+
+**argent**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| into | 68 | 27.9% | 2.15 s | 2.81 s | 2.82 s |
+| idle | 232 | 27.5% | 925 ms | 1.04 s | 1.24 s |
+| visible | 320 | 18.3% | 13 ms | 1.03 s | 1.04 s |
+| id= | 380 | 12.8% | 322 ms | 352 ms | 372 ms |
+| launch | 32 | 10.9% | 1.80 s | 1.82 s | 1.83 s |
+| hidden | 32 | 2.4% | 16 ms | 1.05 s | 1.05 s |
+| open-url | 4 | 0.1% | 116 ms | 124 ms | 124 ms |
+| next-test.yaml | 28 | 0% | 4 ms | 6 ms | 6 ms |
+| other | 96 | 0% | 1 ms | 5 ms | 6 ms |
+
+**agent-device**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| press | 244 | 40.6% | 520 ms | 1.02 s | 1.09 s |
+| type | 64 | 23.9% | 1.26 s | 1.86 s | 1.89 s |
+| wait | 276 | 20.9% | 55 ms | 969 ms | 1.08 s |
+| open | 36 | 9% | 1.02 s | 1.07 s | 1.10 s |
+| fill | 12 | 5.5% | 1.69 s | 1.75 s | 1.75 s |
+
+**tester-army**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| getbytestid | 496 | 69.5% | 267 ms | 3.23 s | 4.01 s |
+| dismiss | 52 | 22.3% | 2.26 s | 2.33 s | 2.33 s |
+| (unlabelled) | 32 | 6.3% | 1.03 s | 1.05 s | 1.06 s |
+| accept | 4 | 1.6% | 2.02 s | 2.03 s | 2.03 s |
+| warden-example | 4 | 0.2% | 290 ms | 295 ms | 295 ms |
+| getbytext | 4 | 0.1% | 65 ms | 66 ms | 66 ms |
+
 ## Untraced time
 
 | Framework | Untraced / rep | Share of test time | Largest (test) |

@@ -12,6 +12,7 @@ import {
 	type ClearMethod,
 	confirmFieldValue,
 	confirmReadsFor,
+	type FillVia,
 	focusClearType,
 	hitTestField,
 } from "@delacour/warden-e2e/screen/field";
@@ -47,7 +48,7 @@ export const SWIPE_MS = 350;
 export const DEFAULT_LONGPRESS_MS = 800;
 
 export type PressOptionValues = ActionOptionValues & { verify?: true };
-export type FillOptionValues = ActionOptionValues & { secure?: true; verify: boolean };
+export type FillOptionValues = ActionOptionValues & { secure?: true; verify: boolean; via?: string };
 export type TypeOptionValues = ActionOptionValues & { submit?: true };
 export type SwipeOptionValues = ActionOptionValues & { from?: string };
 export type ScrollOptionValues = ActionOptionValues & { until?: string; in?: string; max?: string };
@@ -199,6 +200,8 @@ type FillPlan = {
 	/** password field: types but never reads back */
 	secure: boolean;
 	verify: boolean;
+	/** how the first attempt puts the text in; the retry always types */
+	via: FillVia;
 	budgetMs: number;
 	maxMs: number;
 };
@@ -224,7 +227,16 @@ async function fillAttempt(
 	const { entry, text } = plan;
 	const method: ClearMethod = attempt === 1 ? "auto" : "counted";
 	const typed = fromDriver(
-		await focusClearType(driver, deps.sleep, caretPoint(resolved), entry, text, method, ctx.env)
+		await focusClearType(
+			driver,
+			deps.sleep,
+			caretPoint(resolved),
+			entry,
+			text,
+			method,
+			ctx.env,
+			attempt === 1 ? plan.via : "type"
+		)
 	);
 	if (!typed.success) return typed;
 	if (!(plan.verify && !plan.secure && entry !== undefined)) return ok(undefined);
@@ -266,12 +278,31 @@ function parseFillWords(words: readonly string[]): Result<{ targetWords: string[
 	return ok({ targetWords: words.slice(0, -1), text });
 }
 
+/** `--via paste|type` (default paste). */
+function parseFillVia(raw: string | undefined): Result<FillVia, UiError> {
+	if (raw === undefined || raw === "paste" || raw === "type") return ok(raw ?? "paste");
+	return {
+		success: false,
+		error: uiError("usage", `unknown --via "${raw}"`, { hint: "paste (default) or type" }),
+	};
+}
+
+/** The `--settle` and `--via` flags of `fill`. */
+function parseFillFlags(opts: FillOptionValues): Result<{ settle: number | undefined; via: FillVia }, UiError> {
+	const settle = parseSettle(opts.settle);
+	if (!settle.success) return settle;
+	const via = parseFillVia(opts.via);
+	if (!via.success) return via;
+	return ok({ settle: settle.data, via: via.data });
+}
+
 /** What `fill` reports once the field holds (or may hold) the text. */
 function fillDone(
 	where: RecordTarget,
 	text: string,
 	secure: boolean,
-	verified: boolean | "unconfirmed" | undefined
+	verified: boolean | "unconfirmed" | undefined,
+	via: FillVia
 ): ActionDone {
 	const shown = secure ? `${[...text].length} characters (secure)` : JSON.stringify(text);
 	return {
@@ -279,7 +310,7 @@ function fillDone(
 		text: `filled ${targetLabel(where)} with ${shown}${verified === "unconfirmed" ? " (unconfirmed)" : ""}`,
 		target: where,
 		...(verified !== undefined ? { verified } : {}),
-		args: secure ? { secure: true } : { text },
+		args: { ...(secure ? { secure: true } : { text }), ...(via === "type" ? { via } : {}) },
 		...(secure ? { secret: text } : {}),
 		extra: { characters: [...text].length, ...(secure ? { secure: true } : {}) },
 	};
@@ -288,12 +319,14 @@ function fillDone(
 /**
  * `warden ui fill <target> <text>`: focus the field, empty it, type, then read it back (retrying once).
  * `--secure` (and fields the OS marks secure) cannot be read back: reported as `unconfirmed`, and the
- * text is neither echoed nor recorded. `--no-verify` skips the read-back.
+ * text is neither echoed nor recorded. `--no-verify` skips the read-back. `--via paste|type` (default paste): on iOS
+ * the text is pasted (one Cmd+V) instead of typed per key; the retry always types. Only `--via type` is recorded.
  */
 export function uiFill(ctx: CommandContext, deps: UiDeps, words: string[], opts: FillOptionValues): Promise<number> {
 	return runUi(ctx, deps, "fill", opts, async (device, env) => {
-		const settle = parseSettle(opts.settle);
-		if (!settle.success) return settle;
+		const flags = parseFillFlags(opts);
+		if (!flags.success) return flags;
+		const { settle, via } = flags.data;
 		const parsed = parseFillWords(words);
 		if (!parsed.success) return parsed;
 		const { text } = parsed.data;
@@ -313,12 +346,13 @@ export function uiFill(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 			secure,
 			text,
 			verify: opts.verify,
+			via,
 			budgetMs: Math.min(FILL_VERIFY_MS, env.timeoutMs),
 			maxMs: env.timeoutMs,
 		});
 		if (!filled.success) return filled;
 		const where = recordTarget(target.data, resolved.data);
-		return finishAction(ctx, deps, env, device, driver.data, settle.data, fillDone(where, text, secure, filled.data));
+		return finishAction(ctx, deps, env, device, driver.data, settle, fillDone(where, text, secure, filled.data, via));
 	});
 }
 

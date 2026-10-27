@@ -60,6 +60,99 @@
 				"max": 2823,
 				"cvPct": 139.4
 			},
+			"stepGroups": [
+				{
+					"kind": "verb",
+					"verb": "into",
+					"n": 68,
+					"totalMs": 147856,
+					"share": 0.279,
+					"median": 2146.5,
+					"p95": 2806,
+					"max": 2823
+				},
+				{
+					"kind": "verb",
+					"verb": "idle",
+					"n": 232,
+					"totalMs": 145791,
+					"share": 0.275,
+					"median": 924.5,
+					"p95": 1039,
+					"max": 1243
+				},
+				{
+					"kind": "verb",
+					"verb": "visible",
+					"n": 320,
+					"totalMs": 96852,
+					"share": 0.183,
+					"median": 12.5,
+					"p95": 1028,
+					"max": 1036
+				},
+				{
+					"kind": "verb",
+					"verb": "id=",
+					"n": 380,
+					"totalMs": 67674,
+					"share": 0.128,
+					"median": 322,
+					"p95": 352,
+					"max": 372
+				},
+				{
+					"kind": "verb",
+					"verb": "launch",
+					"n": 32,
+					"totalMs": 57730,
+					"share": 0.109,
+					"median": 1804,
+					"p95": 1819,
+					"max": 1831
+				},
+				{
+					"kind": "verb",
+					"verb": "hidden",
+					"n": 32,
+					"totalMs": 12830,
+					"share": 0.024,
+					"median": 16,
+					"p95": 1050,
+					"max": 1051
+				},
+				{
+					"kind": "verb",
+					"verb": "open-url",
+					"n": 4,
+					"totalMs": 466,
+					"share": 0.001,
+					"median": 116,
+					"p95": 124,
+					"max": 124
+				},
+				{
+					"kind": "verb",
+					"verb": "next-test.yaml",
+					"n": 28,
+					"totalMs": 108,
+					"share": 0,
+					"median": 4,
+					"p95": 6,
+					"max": 6
+				},
+				{
+					"kind": "other",
+					"verb": "other",
+					"verbs": 5,
+					"n": 96,
+					"totalMs": 146,
+					"share": 0,
+					"median": 1,
+					"p95": 5,
+					"max": 6
+				}
+			],
 			"cpuSecondsPerRep": 4.13,
 			"processes": [
 				{

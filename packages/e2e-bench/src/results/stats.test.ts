@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { CANONICAL_IDS, type RepResult, type TestResult } from "./schema";
-import { dist, flakeRate, frameworkStats, median, passRate, percentile, ratio, withRatios } from "./stats";
+import {
+	dist,
+	flakeRate,
+	frameworkStats,
+	median,
+	passRate,
+	percentile,
+	ratio,
+	stepGroups,
+	stepVerb,
+	withRatios,
+} from "./stats";
 
 const t = (id: TestResult["id"], ms: number, status: TestResult["status"] = "passed"): TestResult => ({
 	id,
@@ -133,5 +144,78 @@ describe("withRatios", () => {
 		expect(ra?.stats.ratioToFastestSuite).toBe(0.25);
 		expect(rb?.stats.perTest["onboarding/steps-to-sign-in"].ratioToFastest).toBe(1);
 		expect(ra?.stats.perTest["onboarding/steps-to-sign-in"].ratioToFastest).toBe(0.33);
+	});
+});
+
+describe("stepVerb", () => {
+	test("first token, lower-cased, quotes and punctuation stripped", () => {
+		expect(stepVerb('fill getByTestId("x")')).toBe("fill");
+		expect(stepVerb("Tap getByTestId(x) until check")).toBe("tap");
+		expect(stepVerb('type "password1"')).toBe("type");
+		expect(stepVerb('"wait" now')).toBe("wait");
+		expect(stepVerb("dismiss.")).toBe("dismiss");
+	});
+	test("id=… collapses to id=", () => {
+		expect(stepVerb("id=welcome-next")).toBe("id=");
+		expect(stepVerb('id=welcome-title equals "Welcome"')).toBe("id=");
+	});
+	test("a call-shaped or path-shaped first token keeps its head", () => {
+		expect(stepVerb('getByTestId("welcome-screen")')).toBe("getbytestid");
+		expect(stepVerb("fragments/next-plan.yaml")).toBe("fragments");
+	});
+	test("an empty label is unlabelled", () => {
+		expect(stepVerb("")).toBe("(unlabelled)");
+		expect(stepVerb("  ")).toBe("(unlabelled)");
+	});
+});
+
+describe("stepGroups", () => {
+	const withSteps = (index: number, cold: boolean, steps: readonly [string, number][]): RepResult => ({
+		...rep(index, cold, 10_000, 3000),
+		tests: [
+			{
+				...t("onboarding/steps-to-sign-in", 3000),
+				steps: steps.map(([label, ms]) => ({ kind: "x", label, ms, status: "passed" as const })),
+			},
+		],
+	});
+
+	test("groups warm steps by verb, sorted by total ms, shares sum to 1", () => {
+		const reps = [
+			withSteps(1, true, [["fill a", 99_999]]),
+			withSteps(2, false, [
+				["fill a", 3000],
+				["tap b", 100],
+				["tap c", 200],
+				["expect d", 100],
+			]),
+			withSteps(3, false, [["fill a", 5000]]),
+		];
+		const groups = stepGroups(reps);
+		expect(groups.map((g) => g.verb)).toEqual(["fill", "tap", "expect"]);
+		expect(groups[0]).toEqual({
+			kind: "verb",
+			verb: "fill",
+			n: 2,
+			totalMs: 8000,
+			share: 0.952,
+			median: 4000,
+			p95: 5000,
+			max: 5000,
+		});
+		expect(groups[1]).toMatchObject({ verb: "tap", n: 2, totalMs: 300, median: 150, max: 200 });
+		expect(groups.reduce((a, g) => a + g.share, 0)).toBeCloseTo(1, 1);
+	});
+	test("keeps the top 8 and folds the rest into other", () => {
+		const labels = Array.from({ length: 10 }, (_, i) => [`v${i} x`, (i + 1) * 10] as [string, number]);
+		const groups = stepGroups([withSteps(2, false, labels)]);
+		expect(groups).toHaveLength(9);
+		const other = groups[8];
+		expect(other).toMatchObject({ kind: "other", verb: "other", n: 2, totalMs: 30, verbs: 2 });
+		expect(groups.slice(0, 8).every((g) => g.kind === "verb")).toBe(true);
+	});
+	test("empty when no steps; falls back to all reps when only a cold one exists", () => {
+		expect(stepGroups([rep(2, false, 1, 1)])).toEqual([]);
+		expect(stepGroups([withSteps(1, true, [["tap a", 10]])])).toHaveLength(1);
 	});
 });

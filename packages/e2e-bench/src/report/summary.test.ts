@@ -35,6 +35,20 @@ describe("benchSummary", () => {
 		expect(summary.app.sha256.length).toBe(12);
 		expect(JSON.stringify(summary).length).toBeLessThan(20_000);
 	});
+	test("ok frameworks with steps carry stepGroups, others omit the field", () => {
+		const warden = summary.frameworks.find((f) => f.framework === "warden");
+		if (warden?.status !== "ok") throw new Error("expected ok");
+		expect(warden.stepGroups?.[0]?.kind).toBe("verb");
+		expect(warden.stepGroups?.reduce((a, g) => a + g.share, 0)).toBeCloseTo(1, 1);
+		const argent = summary.frameworks.find((f) => f.framework === "argent");
+		if (argent?.status !== "ok") throw new Error("expected ok");
+		expect("stepGroups" in argent).toBe(false);
+	});
+	test("a summary written before stepGroups still parses", () => {
+		const old = JSON.parse(JSON.stringify(summary));
+		for (const f of old.frameworks) delete f.stepGroups;
+		expect(benchSummarySchema.safeParse(old).success).toBe(true);
+	});
 	test("is deterministic", () => {
 		expect(JSON.stringify(benchSummary(run, manifest))).toBe(JSON.stringify(summary));
 	});

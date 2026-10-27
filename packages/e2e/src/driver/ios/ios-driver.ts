@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
-import type { Result } from "@delacour/warden-types/result";
+import { ok, type Result } from "@delacour/warden-types/result";
 import type { E2eEnv } from "../../env";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
 import type {
@@ -21,7 +21,7 @@ import { driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
 import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
-import type { SelectsAll } from "../typing";
+import type { PastesText, SelectsAll } from "../typing";
 import { type SwappableClient, swappableClient } from "./ios-session";
 import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
@@ -42,7 +42,7 @@ import { typeTextBudgetMs } from "./type-budget";
 export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir">;
 
 /** The iOS driver is a `Driver` plus the optional capabilities of `driver/alerts.ts`. */
-export type IosDriver = Driver & SelectsAll & ReadsAlertOn & ProbesFrontmost;
+export type IosDriver = Driver & SelectsAll & PastesText & ReadsAlertOn & ProbesFrontmost;
 
 export type OpenIosDriverOptions = {
 	udid: string;
@@ -405,10 +405,21 @@ export function createIosDriver(
 		if (typed.success || typed.error.code !== "E_UNSUPPORTED_TEXT") return typed;
 		const rest = restOf(typed.error, text);
 		if (rest === undefined) return typed;
-		const copied = await simctl.pbcopy(rest);
-		if (!copied.success) return copied;
 		opts.log?.(`[ios] typeText: pasting ${rest.length} unmappable character(s)`);
-		return sendVoid("paste");
+		return pasteText(rest);
+	}
+
+	/**
+	 * Puts `text` on the simulator pasteboard (confirmed by `pbpaste`) and sends one Cmd+V; a pasteboard write that
+	 * cannot be confirmed pastes nothing. A failure is logged (code and message, never the text), because `fill`
+	 * types the text instead and the only other trace of it would be a fill that took per-character time.
+	 */
+	async function pasteText(text: string): DriverResult<void> {
+		if (text === "") return ok(undefined);
+		const copied = await simctl.pbcopy(text);
+		const result = copied.success ? await sendVoid("paste") : copied;
+		if (!result.success) opts.log?.(`[ios] pasteText failed (${result.error.code}): ${result.error.message}`);
+		return result;
 	}
 
 	async function hashSettle(o: { quietMs: number; timeoutMs: number }): DriverResult<SettleDetail> {
@@ -614,6 +625,7 @@ export function createIosDriver(
 		typeText,
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		selectAll: () => sendVoid("selectAll"),
+		pasteText,
 		pressButton,
 		screenshot,
 		orientation,

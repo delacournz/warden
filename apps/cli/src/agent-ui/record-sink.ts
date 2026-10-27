@@ -145,11 +145,20 @@ const pathSteps: StepBuilder = ({ args, base }) => {
 		: [];
 };
 
-/** `fill`: the text (secrets replaced) into the target. */
-const fillSteps: StepBuilder = ({ step, base, target, env }) => {
+/** `fill`: the text (secrets replaced) into the target; `via: "type"` only when it was typed rather than pasted. */
+const fillSteps: StepBuilder = ({ step, args, base, target, env }) => {
 	if (!target) return [];
 	const { text, note } = plainText(step, env);
-	return [{ kind: "fill", ...base, target, text, ...(note ? { note } : {}) }];
+	return [
+		{
+			kind: "fill",
+			...base,
+			target,
+			text,
+			...(str(args, "via") === "type" ? { via: "type" as const } : {}),
+			...(note ? { note } : {}),
+		},
+	];
 };
 
 /** `type`: the text, then Enter when it was submitted. */

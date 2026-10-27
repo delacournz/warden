@@ -27,6 +27,7 @@ import {
 	type ClearMethod,
 	confirmFieldValue,
 	confirmReadsFor,
+	type FillVia,
 	focusAndClear,
 	focusClearType,
 	hitTestField,
@@ -83,6 +84,8 @@ export type TapOptions = ActionOptions & {
 	/** gap between checks of `until`. Default 250 ms. Needs `until`. */
 	pollMs?: number;
 };
+/** `fill` puts the text in by paste where the driver can (iOS) or types it: see `FillVia`. A retry always types. */
+export type FillOptions = ActionOptions & { via?: FillVia };
 export type LongPressOptions = ActionOptions & { durationMs?: number };
 export type PressOptions = ActionOptions & { modifiers?: readonly Modifier[] };
 export type LocatorSwipeOptions = ActionOptions & { direction: SwipeDirection; momentum?: Momentum };
@@ -640,11 +643,14 @@ export class Locator {
 	 * Replaces the content of a text field: focus with the caret at the end, empty it (select all and type over the selection when
 	 * the driver can, nothing for a field that is empty or shows a placeholder), type, then poll until the field holds
 	 * the text on consecutive reads (the accessibility value lags the keys). A mismatch is retried once with one Backspace
-	 * per character and a retype (a field that refuses select-all). Secure fields cannot be read back, so they are not
+	 * per character and a retype (a field that refuses select-all). `via` (default `"paste"`) is how the text goes in on
+	 * the first attempt: a paste on iOS, typing where the driver cannot paste or when the pasteboard write fails; the
+	 * retry always types, so a field that mangles a paste (a mask, a maxLength) still ends up right. Secure fields cannot be read back, so they are not
 	 * verified.
 	 */
-	async fill(text: string, options: ActionOptions = {}): Promise<void> {
-		assertOptions("fill", options, ["timeout"]);
+	async fill(text: string, options: FillOptions = {}): Promise<void> {
+		assertOptions("fill", options, ["via", "timeout"]);
+		const via = fillViaOf(this, options.via);
 		return this.act("fill", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
@@ -653,7 +659,16 @@ export class Locator {
 				const point = focusPoint(target.entry.element.frame);
 				this.rt.drive(
 					"fill",
-					await focusClearType(target.observed.driver, this.pause, point, target.entry, text, clearMethodFor(attempt))
+					await focusClearType(
+						target.observed.driver,
+						this.pause,
+						point,
+						target.entry,
+						text,
+						clearMethodFor(attempt),
+						process.env,
+						viaFor(attempt, via)
+					)
 				);
 				if (target.entry.secure) return;
 				const outcome = await this.confirm(target, text, budget);
@@ -1000,6 +1015,17 @@ function retryPlan(options: TapOptions): RetryPlan | undefined {
 
 function describeUntil(until: TapUntil): string {
 	return typeof until === "function" ? "check" : String(until);
+}
+
+/** The `via` a `fill` asked for (default paste); anything but `paste` / `type` is `INVALID_ARGUMENT`. */
+function fillViaOf(locator: Locator, via: FillVia | undefined): FillVia {
+	if (via === undefined || via === "paste" || via === "type") return via ?? "paste";
+	throw new E2eError("INVALID_ARGUMENT", `${locator}: fill via must be "paste" or "type", got ${JSON.stringify(via)}`);
+}
+
+/** The first attempt puts the text in as asked; a retry means that did not work, so it types. */
+function viaFor(attempt: number, via: FillVia): FillVia {
+	return attempt === 1 ? via : "type";
 }
 
 /** The first attempt empties a field the quick way; a retry means that did not work, so it presses one Backspace per character. */

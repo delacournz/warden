@@ -53,6 +53,18 @@ export function canSetText(driver: Driver): driver is Driver & SetsText {
 	return typeof (driver as Partial<SetsText>).setText === "function";
 }
 
+/**
+ * Optional fast path next to the frozen `Driver`: put `text` on the device pasteboard and paste it into the focused
+ * field with one Cmd+V (iOS `simctl.pbcopy` then `warden-simd` `paste`), replacing the selection. Cost is flat (~400 ms)
+ * where typing is 70-260 ms per character. A pasteboard write that cannot be confirmed is an error (nothing was
+ * pasted) and the caller types the old way.
+ */
+export type PastesText = { pasteText(text: string): DriverResult<void> };
+
+export function canPasteText(driver: Driver): driver is Driver & PastesText {
+	return typeof (driver as Partial<PastesText>).pasteText === "function";
+}
+
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function graphemesOf(text: string): string[] {

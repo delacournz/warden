@@ -7,7 +7,7 @@ import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
 import { settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
-import { canSelectAll } from "../typing";
+import { canPasteText, canSelectAll } from "../typing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
@@ -762,6 +762,52 @@ describe("selectAll", () => {
 		if (!canSelectAll(driver)) throw new Error("expected selectAll");
 		const result = await driver.selectAll();
 		expect(!result.success && result.error.code).toBe("E_BAD_REQUEST");
+	});
+});
+
+describe("pasteText", () => {
+	test("puts the text on the pasteboard, then sends one paste", async () => {
+		const { driver, helper, calls } = await open(() => ({ data: null }), {}, [
+			["sh -c", {}],
+			["xcrun simctl pbpaste", { stdout: "ada@example.com" }],
+		]);
+		expect(canPasteText(driver)).toBe(true);
+		if (!canPasteText(driver)) return;
+		await unwrapped(driver.pasteText("ada@example.com"));
+		expect(calls.find((call) => call.cmd[0] === "sh")?.cmd.slice(3)).toEqual(["sh", "ada@example.com", UDID]);
+		expect(helper.requests.map((request) => request.op)).toEqual(["paste"]);
+	});
+
+	test("a pasteboard write that was not confirmed is E_IO and nothing is pasted", async () => {
+		const { driver, helper } = await open(() => ({ data: null }), {}, [
+			["sh -c", {}],
+			["xcrun simctl pbpaste", { stdout: "whatever the Mac had" }],
+		]);
+		if (!canPasteText(driver)) throw new Error("expected pasteText");
+		const result = await driver.pasteText("ada@example.com");
+		expect(!result.success && result.error.code).toBe("E_IO");
+		expect(helper.of("paste")).toHaveLength(0);
+	});
+
+	test("a failed paste is logged, so a fill that fell back to typing can be told apart", async () => {
+		const { driver, logs } = await open(() => ({ data: null }), {}, [
+			["sh -c", {}],
+			["xcrun simctl pbpaste", { stdout: "whatever the Mac had" }],
+		]);
+		if (!canPasteText(driver)) throw new Error("expected pasteText");
+		await driver.pasteText("ada@example.com");
+		const line = logs.find((entry) => entry.includes("pasteText"));
+		expect(line).toContain("E_IO");
+		expect(line).toContain("pasteboard did not take the text");
+		expect(line).not.toContain("ada@example.com");
+	});
+
+	test("empty text does nothing", async () => {
+		const { driver, helper, calls } = await open(() => ({ data: null }));
+		if (!canPasteText(driver)) throw new Error("expected pasteText");
+		await unwrapped(driver.pasteText(""));
+		expect(helper.requests).toEqual([]);
+		expect(calls.some((call) => call.cmd[0] === "sh")).toBe(false);
 	});
 });
 

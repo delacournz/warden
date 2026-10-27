@@ -1,6 +1,6 @@
 import { ok } from "@delacour/warden-types/result";
 import type { Driver, DriverError, DriverResult, Element, Point } from "../driver/driver.types";
-import { canSelectAll, canSetText, pressKeys, type Sleep, typeText } from "../driver/typing";
+import { canPasteText, canSelectAll, canSetText, pressKeys, type Sleep, typeText } from "../driver/typing";
 import { clearKeyPresses, fieldContent, fieldValue } from "./actions";
 import { entryOfElement, type NodeEntry } from "./nodes";
 
@@ -165,6 +165,13 @@ export function setTextOptedIn(env: Readonly<Record<string, string | undefined>>
 	return env[SETTEXT_ENV] === "1";
 }
 
+/**
+ * How `focusClearType` puts text in. `paste` writes it to the pasteboard and sends one Cmd+V on a driver that offers
+ * `pasteText` (iOS: ~400 ms flat against 70-260 ms per typed character), and types when it does not or when the paste
+ * fails; `type` always types.
+ */
+export type FillVia = "paste" | "type";
+
 /** What `focusAndSelect` left behind: `selection` = the text is selected and the next key replaces it; `none` = already empty or already backspaced away. */
 type Prepared = { pending: "selection" } | { pending: "none" };
 
@@ -234,6 +241,10 @@ export async function focusAndClear(
  * select-all then typing; the read-back after a `fill` checks it took, and the counted retry types. An empty field gains
  * nothing from it, and a secure one cannot be read back, so both are typed as before. A `setText` that fails falls back
  * to select-all and typing, without a second tap.
+ *
+ * With `via: "paste"` (the default) on a driver with `pasteText` (iOS), the text replaces the selection with one paste,
+ * secure fields included (they keep their Backspace-per-dot clearing). A paste that fails (pasteboard write not
+ * confirmed) is typed in the same attempt; nothing was pasted, so the selection is still there to be replaced.
  */
 export async function focusClearType(
 	driver: Driver,
@@ -242,7 +253,8 @@ export async function focusClearType(
 	entry: NodeEntry | undefined,
 	text: string,
 	method: ClearMethod = "auto",
-	env: Readonly<Record<string, string | undefined>> = process.env
+	env: Readonly<Record<string, string | undefined>> = process.env,
+	via: FillVia = "paste"
 ): DriverResult<void> {
 	const wantsSetText = method === "setText" || (method === "auto" && setTextOptedIn(env));
 	if (wantsSetText && entry !== undefined && fieldContent(entry).kind === "text" && canSetText(driver)) {
@@ -250,20 +262,28 @@ export async function focusClearType(
 		if (!focused.success) return focused;
 		const replaced = await driver.setText(text);
 		if (replaced.success) return replaced;
-		return typeOver(driver, sleep, await prepareFocused(driver, sleep, entry, method), text);
+		return typeOver(driver, sleep, await prepareFocused(driver, sleep, entry, method), text, "type");
 	}
-	return typeOver(driver, sleep, await focusAndSelect(driver, sleep, point, entry, method), text);
+	return typeOver(driver, sleep, await focusAndSelect(driver, sleep, point, entry, method), text, via);
 }
 
-/** Types `text` over what `prepared` left: a selection is replaced by it, or deleted by one Backspace for empty text. */
+/**
+ * Puts `text` over what `prepared` left: a selection is replaced by it, or deleted by one Backspace for empty text.
+ * Pasted when `via` says so and the driver can, else (or when the paste fails) typed.
+ */
 async function typeOver(
 	driver: Driver,
 	sleep: Sleep,
 	prepared: Awaited<DriverResult<Prepared>>,
-	text: string
+	text: string,
+	via: FillVia
 ): DriverResult<void> {
 	if (!prepared.success) return prepared;
 	if (text === "")
 		return prepared.data.pending === "selection" ? pressKeys(driver, sleep, "Backspace", 1) : ok(undefined);
+	if (via === "paste" && canPasteText(driver)) {
+		const pasted = await driver.pasteText(text);
+		if (pasted.success) return pasted;
+	}
 	return typeText(driver, sleep, text);
 }

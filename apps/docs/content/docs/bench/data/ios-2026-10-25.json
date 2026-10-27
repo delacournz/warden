@@ -60,6 +60,38 @@
 				"max": 4977,
 				"cvPct": 203.7
 			},
+			"stepGroups": [
+				{
+					"kind": "verb",
+					"verb": "fill",
+					"n": 68,
+					"totalMs": 220683,
+					"share": 0.804,
+					"median": 3379,
+					"p95": 4201,
+					"max": 4977
+				},
+				{
+					"kind": "verb",
+					"verb": "tap",
+					"n": 180,
+					"totalMs": 28995,
+					"share": 0.106,
+					"median": 74.5,
+					"p95": 333,
+					"max": 620
+				},
+				{
+					"kind": "verb",
+					"verb": "expect",
+					"n": 256,
+					"totalMs": 24974,
+					"share": 0.091,
+					"median": 20.5,
+					"p95": 558,
+					"max": 578
+				}
+			],
 			"cpuSecondsPerRep": 2.97,
 			"processes": [
 				{
@@ -285,6 +317,99 @@
 				"max": 2823,
 				"cvPct": 139.4
 			},
+			"stepGroups": [
+				{
+					"kind": "verb",
+					"verb": "into",
+					"n": 68,
+					"totalMs": 147856,
+					"share": 0.279,
+					"median": 2146.5,
+					"p95": 2806,
+					"max": 2823
+				},
+				{
+					"kind": "verb",
+					"verb": "idle",
+					"n": 232,
+					"totalMs": 145791,
+					"share": 0.275,
+					"median": 924.5,
+					"p95": 1039,
+					"max": 1243
+				},
+				{
+					"kind": "verb",
+					"verb": "visible",
+					"n": 320,
+					"totalMs": 96852,
+					"share": 0.183,
+					"median": 12.5,
+					"p95": 1028,
+					"max": 1036
+				},
+				{
+					"kind": "verb",
+					"verb": "id=",
+					"n": 380,
+					"totalMs": 67674,
+					"share": 0.128,
+					"median": 322,
+					"p95": 352,
+					"max": 372
+				},
+				{
+					"kind": "verb",
+					"verb": "launch",
+					"n": 32,
+					"totalMs": 57730,
+					"share": 0.109,
+					"median": 1804,
+					"p95": 1819,
+					"max": 1831
+				},
+				{
+					"kind": "verb",
+					"verb": "hidden",
+					"n": 32,
+					"totalMs": 12830,
+					"share": 0.024,
+					"median": 16,
+					"p95": 1050,
+					"max": 1051
+				},
+				{
+					"kind": "verb",
+					"verb": "open-url",
+					"n": 4,
+					"totalMs": 466,
+					"share": 0.001,
+					"median": 116,
+					"p95": 124,
+					"max": 124
+				},
+				{
+					"kind": "verb",
+					"verb": "next-test.yaml",
+					"n": 28,
+					"totalMs": 108,
+					"share": 0,
+					"median": 4,
+					"p95": 6,
+					"max": 6
+				},
+				{
+					"kind": "other",
+					"verb": "other",
+					"verbs": 5,
+					"n": 96,
+					"totalMs": 146,
+					"share": 0,
+					"median": 1,
+					"p95": 5,
+					"max": 6
+				}
+			],
 			"cpuSecondsPerRep": 4.13,
 			"processes": [
 				{
@@ -528,6 +653,58 @@
 				"max": 1887,
 				"cvPct": 81.6
 			},
+			"stepGroups": [
+				{
+					"kind": "verb",
+					"verb": "press",
+					"n": 244,
+					"totalMs": 148015,
+					"share": 0.406,
+					"median": 520,
+					"p95": 1025,
+					"max": 1086
+				},
+				{
+					"kind": "verb",
+					"verb": "type",
+					"n": 64,
+					"totalMs": 87233,
+					"share": 0.239,
+					"median": 1263.5,
+					"p95": 1864,
+					"max": 1887
+				},
+				{
+					"kind": "verb",
+					"verb": "wait",
+					"n": 276,
+					"totalMs": 76387,
+					"share": 0.209,
+					"median": 55,
+					"p95": 969,
+					"max": 1080
+				},
+				{
+					"kind": "verb",
+					"verb": "open",
+					"n": 36,
+					"totalMs": 32932,
+					"share": 0.09,
+					"median": 1023,
+					"p95": 1075,
+					"max": 1100
+				},
+				{
+					"kind": "verb",
+					"verb": "fill",
+					"n": 12,
+					"totalMs": 20246,
+					"share": 0.055,
+					"median": 1689,
+					"p95": 1746,
+					"max": 1746
+				}
+			],
 			"cpuSecondsPerRep": 11.18,
 			"processes": [
 				{
@@ -825,6 +1002,68 @@
 				"max": 4013,
 				"cvPct": 117.7
 			},
+			"stepGroups": [
+				{
+					"kind": "verb",
+					"verb": "getbytestid",
+					"n": 496,
+					"totalMs": 351934,
+					"share": 0.695,
+					"median": 266.5,
+					"p95": 3228,
+					"max": 4013
+				},
+				{
+					"kind": "verb",
+					"verb": "dismiss",
+					"n": 52,
+					"totalMs": 113054,
+					"share": 0.223,
+					"median": 2262.5,
+					"p95": 2327,
+					"max": 2334
+				},
+				{
+					"kind": "verb",
+					"verb": "(unlabelled)",
+					"n": 32,
+					"totalMs": 32108,
+					"share": 0.063,
+					"median": 1027.5,
+					"p95": 1055,
+					"max": 1056
+				},
+				{
+					"kind": "verb",
+					"verb": "accept",
+					"n": 4,
+					"totalMs": 8096,
+					"share": 0.016,
+					"median": 2024.5,
+					"p95": 2032,
+					"max": 2032
+				},
+				{
+					"kind": "verb",
+					"verb": "warden-example",
+					"n": 4,
+					"totalMs": 1155,
+					"share": 0.002,
+					"median": 289.5,
+					"p95": 295,
+					"max": 295
+				},
+				{
+					"kind": "verb",
+					"verb": "getbytext",
+					"n": 4,
+					"totalMs": 258,
+					"share": 0.001,
+					"median": 64.5,
+					"p95": 66,
+					"max": 66
+				}
+			],
 			"cpuSecondsPerRep": 17.74,
 			"processes": [
 				{

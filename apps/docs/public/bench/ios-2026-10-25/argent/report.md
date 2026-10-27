@@ -50,6 +50,24 @@
 | --- | --- | --- | --- | --- |
 | argent | 1192 | 321 ms | 1.82 s | 2.82 s |
 
+### Where step time goes
+
+Step scopes differ per tool: warden's one `fill` step spans the focus tap, select-all, typing and read-back confirm, argent reports a separate `idle` step and `into …`, agent-device reports `fill` and `type` separately, and tester.army reports locator steps. Compare a verb's share within a tool, not its median across tools.
+
+**argent**
+
+| Verb | n | Share | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- |
+| into | 68 | 27.9% | 2.15 s | 2.81 s | 2.82 s |
+| idle | 232 | 27.5% | 925 ms | 1.04 s | 1.24 s |
+| visible | 320 | 18.3% | 13 ms | 1.03 s | 1.04 s |
+| id= | 380 | 12.8% | 322 ms | 352 ms | 372 ms |
+| launch | 32 | 10.9% | 1.80 s | 1.82 s | 1.83 s |
+| hidden | 32 | 2.4% | 16 ms | 1.05 s | 1.05 s |
+| open-url | 4 | 0.1% | 116 ms | 124 ms | 124 ms |
+| next-test.yaml | 28 | 0% | 4 ms | 6 ms | 6 ms |
+| other | 96 | 0% | 1 ms | 5 ms | 6 ms |
+
 ## Resources
 
 | Framework | Scope | CPU-s / rep | CPU-s (whole) | CPU avg | CPU peak | RSS avg | RSS peak |

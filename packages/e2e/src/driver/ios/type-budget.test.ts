@@ -1,20 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import { TYPE_BASE_MS, typeTextBudgetMs } from "./type-budget";
+import { TYPE_BASE_MS, TYPE_PER_CHAR_MS, TYPE_PER_REPEAT_MS, typeTextBudgetMs } from "./type-budget";
 
 describe("typeTextBudgetMs", () => {
 	test("empty text is the base", () => {
 		expect(typeTextBudgetMs("")).toBe(TYPE_BASE_MS);
 	});
-	test("70 ms per character", () => {
-		expect(typeTextBudgetMs("abc")).toBe(TYPE_BASE_MS + 210);
+	test("100 ms per character", () => {
+		expect(typeTextBudgetMs("abc")).toBe(TYPE_BASE_MS + 300);
 	});
-	test("300 ms more per repeated character", () => {
-		expect(typeTextBudgetMs("aab")).toBe(TYPE_BASE_MS + 210 + 300);
-		expect(typeTextBudgetMs("aaa")).toBe(TYPE_BASE_MS + 210 + 600);
-		expect(typeTextBudgetMs("abab")).toBe(TYPE_BASE_MS + 280);
+	test("200 ms more per repeated character", () => {
+		expect(typeTextBudgetMs("aab")).toBe(TYPE_BASE_MS + 300 + 200);
+		expect(typeTextBudgetMs("aaa")).toBe(TYPE_BASE_MS + 300 + 400);
+		expect(typeTextBudgetMs("abab")).toBe(TYPE_BASE_MS + 400);
+	});
+	test("leaves headroom over the helper's nominal cost on a slow host", () => {
+		const nominalPerChar = 5 + 20;
+		expect(TYPE_PER_CHAR_MS).toBeGreaterThanOrEqual(nominalPerChar * 3.5);
+		expect(TYPE_PER_REPEAT_MS).toBeGreaterThanOrEqual(50 * 3.5);
 	});
 	test("counts code points, not UTF-16 units", () => {
-		expect(typeTextBudgetMs("😀😀")).toBe(TYPE_BASE_MS + 140 + 300);
+		expect(typeTextBudgetMs("😀😀")).toBe(TYPE_BASE_MS + 200 + 200);
 	});
 	test("grows with a long string", () => {
 		expect(typeTextBudgetMs("x".repeat(100))).toBeGreaterThan(typeTextBudgetMs("x".repeat(10)));
