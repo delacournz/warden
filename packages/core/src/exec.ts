@@ -8,6 +8,8 @@ export type ExecOptions = {
 	timeoutMs?: number;
 	/** aborting kills the command (SIGTERM), like a timeout */
 	signal?: AbortSignal;
+	/** each line of stdout and stderr as it arrives (no trailing newline); the result still carries the whole output */
+	onLine?: (line: string) => void;
 };
 
 /** Injectable process runner — providers take this so tests can fake `simctl`/`adb`. */
@@ -17,6 +19,25 @@ export type Exec = (cmd: readonly string[], opts?: ExecOptions) => Promise<ExecR
 function spawnFailure(cmd: readonly string[], cwd: string | undefined, error: unknown): string {
 	if (cwd !== undefined && !existsSync(cwd)) return `cannot run \`${cmd.join(" ")}\`: no such directory ${cwd}`;
 	return `cannot run \`${cmd.join(" ")}\`: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+/** Read a stream to the end, handing each complete line to `onLine` on the way (the last one even without a newline). */
+async function readLines(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void): Promise<string> {
+	const decoder = new TextDecoder();
+	let text = "";
+	let pending = "";
+	for await (const chunk of stream) {
+		const piece = decoder.decode(chunk, { stream: true });
+		text += piece;
+		const lines = (pending + piece).split(/\r?\n/);
+		pending = lines.pop() ?? "";
+		for (const line of lines) onLine(line);
+	}
+	const rest = decoder.decode();
+	text += rest;
+	pending += rest;
+	if (pending !== "") onLine(pending);
+	return text;
 }
 
 /** Never throws: a command that cannot start (missing binary, missing cwd) is exit 127 with the reason on stderr. */
@@ -31,11 +52,10 @@ export const bunExec: Exec = async (cmd, opts = {}) => {
 			timeout: opts.timeoutMs,
 			...(opts.signal !== undefined ? { signal: opts.signal } : {}),
 		});
-		const [stdout, stderr, exitCode] = await Promise.all([
-			new Response(proc.stdout).text(),
-			new Response(proc.stderr).text(),
-			proc.exited,
-		]);
+		const { onLine } = opts;
+		const read = (stream: ReadableStream<Uint8Array>) =>
+			onLine ? readLines(stream, onLine) : new Response(stream).text();
+		const [stdout, stderr, exitCode] = await Promise.all([read(proc.stdout), read(proc.stderr), proc.exited]);
 		return { exitCode, stdout, stderr };
 	} catch (error) {
 		return { exitCode: 127, stdout: "", stderr: spawnFailure(cmd, opts.cwd, error) };

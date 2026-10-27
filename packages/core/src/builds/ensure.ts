@@ -111,6 +111,8 @@ export type EnsureInput = ProjectContext & {
 	now: () => number;
 	sleep: (ms: number) => Promise<void>;
 	log: (line: string) => void;
+	/** a local build's own output, line by line, while it runs (`LocalBuildDeps.output`) */
+	buildOutput?: (line: string) => void;
 	pidAlive: PidAlive;
 	/** owner + pid of the build lock */
 	owner: Owner;
@@ -209,6 +211,7 @@ function buildStep(
 			...(input.native !== undefined ? { native: input.native } : {}),
 			env: input.env,
 			log: input.log,
+			...(input.buildOutput ? { output: input.buildOutput } : {}),
 			...(project.compilerCache === false ? { compilerCache: false } : {}),
 			...(input.git ? { git: input.git } : {}),
 		});

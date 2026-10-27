@@ -19,6 +19,21 @@ describe("bunExec", () => {
 		expect(res.stderr).toContain("/no/such/warden/dir");
 	});
 
+	test("onLine streams each output line as it arrives, stdout and stderr, and still returns the whole output", async () => {
+		const lines: string[] = [];
+		const res = await bunExec(["sh", "-c", "printf 'a\\nb'; echo c >&2; sleep 0.05; printf 'd\\n'"], {
+			onLine: (line) => lines.push(line),
+		});
+		expect(res.stdout).toBe("a\nbd\n");
+		expect(lines.sort()).toEqual(["a", "bd", "c"]);
+	});
+
+	test("onLine flushes a last line without a newline", async () => {
+		const lines: string[] = [];
+		await bunExec(["sh", "-c", "printf 'tail'"], { onLine: (line) => lines.push(line) });
+		expect(lines).toEqual(["tail"]);
+	});
+
 	test("an aborted signal kills the command", async () => {
 		const abort = new AbortController();
 		const started = Date.now();

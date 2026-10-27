@@ -64,7 +64,7 @@ import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 import { type DevOverlay, diagnoseDev, offerDevSetup } from "./dev-setup";
-import type { DevActionHost, DevUi } from "./dev-ui";
+import type { DevActionHost, DevTaskHandle, DevUi } from "./dev-ui";
 import { plainDevUi } from "./dev-ui.plain";
 
 /** Default label on the leases `warden dev` takes (`--label` overrides it). */
@@ -324,6 +324,11 @@ async function shutdownDevices(ctx: CommandContext, owner: Owner, leases: Lease[
 	if (!closed.success) warn(ctx, `warden dev: couldn't close the simulator window (${closed.error})`);
 }
 
+/** The dashboard shows a local build's own output on the task's row; plain output (pipes, agents) keeps only warden's lines. */
+function withBuildOutput(ui: DevUi, opts: EnsureOptions, task: DevTaskHandle): EnsureOptions {
+	return ui.metro.kind === "pty" ? { ...opts, buildOutput: (line) => task.log(line) } : opts;
+}
+
 /** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
 async function openSession(
 	ctx: CommandContext,
@@ -342,6 +347,7 @@ async function openSession(
 	const installed = () => installedApp;
 	const noteInstall: RunEnsureApp = async (...args) => {
 		const appTask = ui.task("app", "dev build");
+		args[4] = withBuildOutput(ui, args[4], appTask);
 		const result = await deps.ensureApp(...args);
 		if (result.success) {
 			installedApp = { source: result.data.source, hash: result.data.hash };
@@ -612,6 +618,7 @@ function devActions(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running, swap: M
 			const ensured = await deps.ensureApp(scopedCtx(ctx, log), r.owner, r.platform, deviceId, {
 				...r.app,
 				installMode: "reinstall",
+				buildOutput: log,
 			});
 			return ensured.success ? ok({ source: ensured.data.source, hash: ensured.data.hash }) : err(ensured.error);
 		},
