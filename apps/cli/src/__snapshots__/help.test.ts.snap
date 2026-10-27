@@ -211,7 +211,7 @@ Example:
 
 exports[`help output warden dev --help (and nested subcommands) 1`] = `
 "$ warden dev --help
-Usage: warden dev [options] [platform] [expoArgs...]
+Usage: warden dev [options] [command] [platform] [expoArgs...]
 
 install the cached dev build for this fingerprint, start Metro, open the dev
 client (replaces expo run:*)
@@ -278,9 +278,32 @@ Options:
                               already running)
   -h, --help                  display help for command
 
+Commands:
+  logs                        Metro output of a running \`warden dev\` session,
+                              classified (bundle errors, HMR, warnings)
+
 Examples:
   warden dev
-  warden dev android -- --clear"
+  warden dev android -- --clear
+
+$ warden dev logs --help
+Usage: warden dev logs [options]
+
+Metro output of a running \`warden dev\` session, classified (bundle errors, HMR,
+warnings)
+
+Options:
+  --udid <udid>    the session on this device (default: the only running one)
+  --since <when>   30s | 5m | ISO time: entries seen since (metro.log has no
+                   per-line times, so this only skips a log not written since,
+                   and filters followed entries)
+  --tail <n>       only the last N matching entries
+  --grep <regexp>  entries whose text matches (case-insensitive)
+  --kind <kinds>   comma list of
+                   bundle_start,bundle_done,bundle_failed,hmr,error,warn,info
+  --follow         keep printing new entries until interrupted
+  --json           one JSON object per line
+  -h, --help       display help for command"
 `;
 
 exports[`help output warden batch --help (and nested subcommands) 1`] = `

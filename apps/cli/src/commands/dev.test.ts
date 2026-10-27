@@ -5,6 +5,7 @@ import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { resolveOwner } from "../claim-flags";
 import { main } from "../cli";
 import type { CommandContext } from "../context";
+import { listDevSessions } from "../dev-session";
 import { devClientLaunchArgv, type MetroProc } from "../metro";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
@@ -900,6 +901,30 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		expect(events.filter((e) => e.startsWith("spin:"))).toEqual([]);
 		h.finish(0);
 		await running;
+	});
+
+	test("a dev session is registered once Metro is ready and removed when the run ends", async () => {
+		const c = setup(["ios"], []);
+		const fake = fakeUi(c);
+		const readies: DevReady[] = [];
+		fake.ui.ready = (info) => void readies.push(info);
+		const h = ptyHarness();
+		h.deps.selectUi = () => fake.ui;
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => readies.length > 0);
+		const live = listDevSessions(c.env, { isAlive: () => true });
+		expect(live.success && live.data).toHaveLength(1);
+		expect(live.success && live.data[0]).toMatchObject({
+			platform: "ios",
+			deviceId: "U1",
+			pid: 777,
+			port: readies[0]?.port,
+			metroUrl: readies[0]?.metroUrl,
+			leaseId: readies[0]?.leaseIds[0],
+		});
+		h.finish(0);
+		await running;
+		expect(listDevSessions(c.env, { isAlive: () => true })).toEqual({ success: true, data: [] });
 	});
 
 	test("every row gets a real outcome: claim, show, app, metro and client end ok, then ready", async () => {

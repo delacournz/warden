@@ -15,6 +15,7 @@ import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts"
 import { isPortFree } from "@delacour/warden-core/ports";
 import type { DeviceProvider } from "@delacour/warden-core/providers/provider.types";
 import { PRIORITY } from "@delacour/warden-core/queue";
+import { wardenHome } from "@delacour/warden-core/store";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
@@ -22,6 +23,7 @@ import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, parsePlatform, resolveOwner, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { removeDevSession, writeDevSession } from "../dev-session";
 import { parseHudInterval } from "../dev-tui/hud";
 import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
@@ -63,6 +65,7 @@ import { closeSimWindows, revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
+import { registerDevLogs } from "./dev-logs";
 import { type DevOverlay, diagnoseDev, offerDevSetup } from "./dev-setup";
 import type { DevActionHost, DevTaskHandle, DevUi } from "./dev-ui";
 import { plainDevUi } from "./dev-ui.plain";
@@ -627,6 +630,28 @@ function devActions(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running, swap: M
 	};
 }
 
+/**
+ * Records the run in the dev-session registry (`warden dev logs` and other processes find it there) and returns the
+ * function that takes it out again. Best-effort: a registry that can't be written costs those lookups, not the run.
+ */
+function registerDevSession(ctx: CommandContext, deps: DevDeps, r: Running, metroUrl: string): () => void {
+	const leaseId = r.session.leaseIds[0];
+	if (leaseId === undefined) return () => undefined;
+	writeDevSession(ctx.env, {
+		version: 1,
+		leaseId,
+		pid: deps.pid,
+		platform: r.platform,
+		deviceId: r.session.deviceId,
+		port: r.session.port,
+		metroUrl,
+		logDir: join(wardenHome(ctx.env), "dev", leaseId),
+		projectRoot: r.project.root,
+		startedAt: new Date(ctx.now()).toISOString(),
+	});
+	return () => removeDevSession(ctx.env, leaseId);
+}
+
 /** Metro (started early, verified to serve this project) with the dev client opened on it; resolves with Metro's exit code. */
 async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Promise<number> {
 	const ctx = ui.ctx;
@@ -637,12 +662,14 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 		r.aborted.now = true;
 		r.run.launch?.started?.proc.kill(signal);
 	});
+	let unregister = () => {};
 	try {
 		const metro = await r.launch.pending;
 		if (!metro.success) {
 			reportError(ctx, "dev", metro.error);
 			return 1;
 		}
+		unregister = registerDevSession(ctx, deps, r, metro.data.url);
 		if (opts.open) {
 			const clientTask = ui.task("client", "dev client");
 			const opened = await openDevClient(ctx, r.platform, deviceId, r.project, r.scheme, port);
@@ -674,6 +701,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 			});
 		return await metroExit(metro.data.proc, swap);
 	} finally {
+		unregister();
 		stop();
 		await ui.close();
 		await release();
@@ -1071,6 +1099,7 @@ export function createDevCommand(deps: DevDeps): Command {
 				)
 				.addHelpText("after", "\nExamples:\n  warden dev\n  warden dev android -- --clear")
 				.action(async (platform, _expoArgs, opts) => done(await dev(ctx, deps, platform, opts)));
+			registerDevLogs(cmd, ctx, done);
 		},
 	});
 }
