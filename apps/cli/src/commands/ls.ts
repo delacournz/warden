@@ -13,6 +13,8 @@ export function describeResource(resource: Resource): string {
 			return `port ${resource.port}`;
 		case "build":
 			return `build ${resource.key}`;
+		case "remote-device":
+			return `remote ${resource.platform} ${resource.name} (${resource.id})`;
 	}
 }
 

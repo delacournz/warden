@@ -70,10 +70,11 @@ const AUTHED: Record<string, Handler> = {
 };
 
 function deviceRoute(server: FakeServer, req: Request): Response | undefined {
-	const id = req.path.match(/^\/v1\/devices\/([^/]+)$/)?.[1];
+	const id = req.path.match(/^\/v1\/devices\/([^/]+)(?:\/heartbeat)?$/)?.[1];
 	if (id === undefined) return undefined;
 	const device = server.devices.get(id);
 	if (!device) return json({ success: false, error: "no such device", code: "NOT_FOUND" }, 404);
+	if (req.method === "POST" && req.path.endsWith("/heartbeat")) return json(device);
 	if (req.method === "DELETE") {
 		device.status = "stopped";
 		return json({ stopped: true });

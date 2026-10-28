@@ -270,3 +270,48 @@ describe("warden claim auto-gc (16-1)", () => {
 		expect(autoGcConsidered(c.db)).toBe(true);
 	});
 });
+
+describe("warden claim --remote", () => {
+	test("leases a hosted device; release stops it", async () => {
+		const { fakeServer } = await import("../remote/api.testing");
+		const { releaseCommand } = await import("./release");
+		const server = fakeServer();
+		const c = testContext(["ios", "--remote", "--json", "--profile", "iphone-17"], {
+			fetch: server.fetch,
+			sleep: async () => {},
+		});
+		try {
+			c.env = { ...c.env, WARDEN_API_URL: "https://api.test", WARDEN_TOKEN: server.token, WARDEN_SESSION_ID: "s1" };
+			expect(await claimCommand.run(c)).toBe(0);
+			const out = JSON.parse(c.stdout.join("\n"));
+			expect(out).toMatchObject({ remoteIds: ["rd1"], leases: [{ remote: true, remoteId: "rd1", name: "iphone-17" }] });
+			expect(c.db.listLeases()[0]?.resource).toEqual({
+				kind: "remote-device",
+				platform: "ios",
+				id: "rd1",
+				name: "iphone-17",
+			});
+
+			c.stdout.length = 0;
+			c.argv = [out.leases[0].leaseId, "--json"];
+			expect(await releaseCommand.run(c)).toBe(0);
+			expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({
+				released: [out.leases[0].leaseId],
+				remoteStopped: ["rd1"],
+			});
+			expect(server.devices.get("rd1")?.status).toBe("stopped");
+		} finally {
+			c.cleanup();
+		}
+	});
+
+	test("--remote without a login fails with the hint", async () => {
+		const c = testContext(["android", "--remote"]);
+		try {
+			expect(await claimCommand.run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("warden login");
+		} finally {
+			c.cleanup();
+		}
+	});
+});

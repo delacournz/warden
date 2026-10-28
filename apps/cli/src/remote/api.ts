@@ -28,6 +28,8 @@ export type WardenApi = {
 	getDevice: (id: string) => AsyncResult<RemoteDevice, ApiError>;
 	listDevices: () => AsyncResult<RemoteDevice[], ApiError>;
 	stopDevice: (id: string) => AsyncResult<{ stopped: boolean }, ApiError>;
+	/** push the device's idle deadline out by its idle timeout (what `warden heartbeat` does for remote leases) */
+	heartbeatDevice: (id: string) => AsyncResult<RemoteDevice, ApiError>;
 };
 
 export type WardenApiOptions = { baseUrl: string; token?: string; fetch?: Fetch };
@@ -238,6 +240,7 @@ export function createWardenApi(options: WardenApiOptions): WardenApi {
 				const devices = b.map(parseDevice);
 				return devices.every((d) => d !== undefined) ? devices.filter((d) => d !== undefined) : undefined;
 			}),
+		heartbeatDevice: (id) => call("POST", `/v1/devices/${encodeURIComponent(id)}/heartbeat`, parseDevice, {}),
 		stopDevice: (id) =>
 			call("DELETE", `/v1/devices/${encodeURIComponent(id)}`, (b) =>
 				isRecord(b) && typeof b.stopped === "boolean" ? { stopped: b.stopped } : undefined
