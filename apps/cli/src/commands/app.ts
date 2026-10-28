@@ -62,6 +62,8 @@ export type EnsureOptions = {
 	variant?: string;
 	/** `--kind`: install this build kind (`simulator` = the repacked sim build) instead of the project's kind-less build; not with `variant` */
 	kind?: BuildKind;
+	/** env the JS is bundled with for the kinds that embed it (`simulator`, `release`): `warden e2e` passes the suite's `metro.env` */
+	bundleEnv?: Record<string, string>;
 	/** `--force` of `warden repack`: rebuild the repack even when this JS is cached */
 	force?: boolean;
 	/** a missing variant falls back to the project's own build (`warden dev`) */
@@ -166,14 +168,17 @@ export function kindAppInput(
 	platform: Platform,
 	project: ProjectContext,
 	kind: BuildKind,
-	opts: Pick<EnsureOptions, "eas" | "build" | "buildOutput" | "installMode" | "resetKeychain" | "force" | "onPhase">
+	opts: Pick<
+		EnsureOptions,
+		"eas" | "build" | "buildOutput" | "installMode" | "resetKeychain" | "force" | "onPhase" | "bundleEnv"
+	>
 ): KindAppInput {
 	return {
 		...project,
 		kind,
 		store: ctx.store(),
 		exec: ctx.exec,
-		env: ctx.env,
+		env: kind !== "dev" && opts.bundleEnv ? { ...ctx.env, ...opts.bundleEnv } : ctx.env,
 		now: ctx.now,
 		sleep: deps.sleep,
 		log: (line) => log(ctx, line),

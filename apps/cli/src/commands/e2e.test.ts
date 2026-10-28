@@ -2119,18 +2119,51 @@ describe("warden e2e", () => {
 		async function run(
 			suite: Record<string, unknown>,
 			argv: string[] = []
-		): Promise<{ code: number; asked: string[]; metro: boolean; stderr: string }> {
+		): Promise<{
+			code: number;
+			asked: string[];
+			bundleEnv: Array<Record<string, string> | undefined>;
+			metro: boolean;
+			stderr: string;
+		}> {
 			await resuite({ project: "app", ...suite }, withVariant);
 			const c = setup(["--files", "src/chat/lazy.tsx", ...argv]);
 			const h = harness();
 			const asked: string[] = [];
+			const bundleEnv: Array<Record<string, string> | undefined> = [];
 			h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
 				asked.push(`${opts.kind ?? "-"}/${opts.variant ?? "-"}`);
+				bundleEnv.push(opts.bundleEnv);
 				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 			};
 			const code = await createE2eCommand(h.deps).run(c);
-			return { code, asked, metro: h.metro() !== undefined, stderr: c.stderr.join("\n") };
+			return { code, asked, bundleEnv, metro: h.metro() !== undefined, stderr: c.stderr.join("\n") };
 		}
+
+		const envMetro = { ...metro, env: { EXPO_PUBLIC_API: "http://127.0.0.1:4599" } };
+
+		test("a repacked run bundles the suite's metro env into the JS (EXPO_PUBLIC_* are inlined at bundle time)", async () => {
+			const r = await run({ app: true, metro: envMetro });
+			expect(r.asked).toEqual(["simulator/-"]);
+			expect(r.bundleEnv).toEqual([{ EXPO_PUBLIC_API: "http://127.0.0.1:4599" }]);
+			expect(r.metro).toBe(false);
+		});
+
+		test("--kind release bundles the suite's metro env too", async () => {
+			const r = await run({ app: true, metro: envMetro }, ["--kind", "release"]);
+			expect(r.bundleEnv).toEqual([{ EXPO_PUBLIC_API: "http://127.0.0.1:4599" }]);
+		});
+
+		test("--dev leaves the env to Metro: no bundle env", async () => {
+			const r = await run({ app: true, metro: envMetro }, ["--dev"]);
+			expect(r.bundleEnv).toEqual([undefined]);
+			expect(r.metro).toBe(true);
+		});
+
+		test("a pinned app.variant keeps its Metro and gets no bundle env", async () => {
+			const r = await run({ app: { variant: "dev" }, metro: envMetro });
+			expect(r.bundleEnv).toEqual([undefined]);
+		});
 
 		test("an app suite installs the repacked simulator build and ignores its metro block", async () => {
 			const r = await run({ app: true, metro });

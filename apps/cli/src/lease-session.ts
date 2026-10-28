@@ -177,6 +177,8 @@ export type AppFlagValues = {
 	variant?: string;
 	/** `--kind <kind>`: a build kind (`simulator` = repacked) instead of the project's kind-less build */
 	kind?: BuildKind;
+	/** not a flag: the env `warden e2e` bundles a `simulator` / `release` build's JS with (the suite's `metro.env`) */
+	bundleEnv?: Record<string, string>;
 	/** false = `--no-eas` */
 	eas: boolean;
 	/** false = `--no-build` */
@@ -209,21 +211,26 @@ export function withLeaseOptions<Args extends unknown[], Opts extends OptionValu
 const kindWithVariant = (opts: Pick<AppFlagValues, "kind" | "variant">): boolean =>
 	opts.kind !== undefined && opts.variant !== undefined;
 
+/** The `--app` sub-flags that pick which app and build, set ones only. */
+function appTarget(
+	opts: AppFlagValues
+): Pick<EnsureOptions, "project" | "bundleId" | "variant" | "kind" | "bundleEnv"> {
+	return {
+		...(opts.project !== undefined ? { project: opts.project } : {}),
+		...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
+		...(opts.variant !== undefined ? { variant: opts.variant } : {}),
+		...(opts.kind !== undefined ? { kind: opts.kind } : {}),
+		...(opts.bundleEnv !== undefined ? { bundleEnv: opts.bundleEnv } : {}),
+	};
+}
+
 /** `--app …` → ensure options (undefined without `--app`); the sub-flags need `--app`. */
 export function parseAppFlags(opts: AppFlagValues): Result<EnsureOptions | undefined> {
 	const install = parseInstallFlags(opts);
 	if (!install.success) return install;
 	if (opts.app) {
 		if (kindWithVariant(opts)) return err("--kind and --variant can't be combined");
-		return ok({
-			eas: opts.eas,
-			build: opts.build,
-			...install.data,
-			...(opts.project !== undefined ? { project: opts.project } : {}),
-			...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
-			...(opts.variant !== undefined ? { variant: opts.variant } : {}),
-			...(opts.kind !== undefined ? { kind: opts.kind } : {}),
-		});
+		return ok({ eas: opts.eas, build: opts.build, ...install.data, ...appTarget(opts) });
 	}
 	const sub = opts.project ?? opts.bundleId ?? opts.variant ?? opts.kind;
 	if (sub !== undefined || !opts.eas || !opts.build || install.data.installMode !== undefined) {
