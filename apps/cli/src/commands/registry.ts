@@ -69,6 +69,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./capacity")).capacityCommand,
 	},
 	{
+		name: "disk",
+		group: "Lease",
+		summary: "host disk health: free space, swap, snapshots, uptime, what warden can reclaim (read-only)",
+		load: async () => (await import("./disk")).diskCommand,
+	},
+	{
 		name: "queue",
 		group: "Lease",
 		summary: "claims waiting for host capacity, head first (position, priority, age, owner)",

@@ -18,6 +18,7 @@ import { fetchHelper, tarExtractHelper } from "../update/fetch-helper";
 import { type InstallOrigin, installOrigin } from "../update/install-origin";
 import type { Fetch } from "../update/npm-registry";
 import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
+import { diskChecks } from "./doctor-disk";
 import { type HelperDeps, helperChecks, realHelperDeps } from "./doctor-helper";
 import { xcodeChecks } from "./doctor-xcode";
 
@@ -204,7 +205,7 @@ export function ccacheProject(cwd: string): Probe {
 export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHelperDeps()): Promise<DoctorCheck[]> {
 	const home = ctx.env.HOME ?? "";
 	const { adb, emulator } = androidTools(ctx.env);
-	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode] = await Promise.all([
+	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode, disk] = await Promise.all([
 		tool(ctx, ["xcrun", "simctl", "help"], "xcrun simctl not available (install Xcode) — iOS disabled"),
 		tool(ctx, [adb, "version"], `${adb} not found (set ANDROID_HOME) — Android disabled`),
 		tool(ctx, [emulator, "-version"], `${emulator} not found (set ANDROID_HOME) — Android disabled`),
@@ -215,6 +216,7 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		),
 		helperChecks(ctx, helper),
 		xcodeChecks(ctx.exec, ctx.env),
+		diskChecks(ctx),
 	]);
 	return [
 		check("home", "core", homeWritable(wardenHome(ctx.env))),
@@ -237,6 +239,7 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		check("skill", "optional", skillProbe(home)),
 		check("rule", "optional", ruleProbe(home)),
 		check("stale-leases", "optional", staleLeases(ctx)),
+		...disk,
 	];
 }
 
@@ -311,7 +314,7 @@ export function createDoctorCommand(deps: DoctorDeps): Command {
 		name: "doctor",
 		group: "Setup",
 		summary:
-			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases",
+			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases, disk space + swap + snapshots",
 		register: (cmd, ctx, done) => {
 			cmd
 				.option("--fetch-helper", "download warden-simd for this version into $WARDEN_HOME/simd/<version>/ first")

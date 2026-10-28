@@ -51,6 +51,7 @@ Open the reference file for details before acting; this file only routes.
 | a free port | `warden port claim --json` (`--from 8091 --span 20`) · `warden port ls` · `warden port release <port…>\|--lease <id…>\|--mine` |
 | who holds what / all devices | `warden ls` · `warden devices` (`list`) |
 | host budget / my place in the boot queue | `warden capacity` · `warden queue` |
+| disk full / swap high / slow host | `warden disk [--json]` (read-only: free space, swap, memory pressure, booted devices, APFS snapshots, uptime, what warden can reclaim, each warning with its one-line fix; `warden doctor` warns `disk-free` / `swap` / `snapshots`). Swap or snapshot warnings first: deleting files will not stop swap refilling the disk, so close idle devices (`warden gc --idle 0`) or reboot. Thresholds: `WARDEN_DISK_FLOOR_GB` (default max 20 GB, 10%), `WARDEN_DISK_CRITICAL_GB` (max 8 GB, 4%), `WARDEN_DISK_SWAP_WARN_GB` (8); `WARDEN_DISK=off` disables the gate |
 | is this device free or mine | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a bare lease alive | `warden heartbeat <leaseId…>` (prefer a wrapper) |
 | device misbehaving | `warden release <leaseId> --bad "<why>"` (undo: `warden sim unquarantine <udid>`) |

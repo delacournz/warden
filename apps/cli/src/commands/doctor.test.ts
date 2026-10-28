@@ -196,6 +196,35 @@ describe("warden doctor", () => {
 		expect(calls.map((x) => x[0])).toContain("/sdk/emulator/emulator");
 	});
 
+	test("disk: unreadable probes read as ok; low free, swap and snapshots warn with their fix", async () => {
+		let c = setup(["--json"]);
+		await doctorCommand.run(c);
+		for (const name of ["disk-free", "swap", "snapshots"]) expect(byName(c)[name]?.status).toBe("ok");
+		c.cleanup();
+		const gb = 1024 ** 2;
+		c = setup(
+			["--json"],
+			fakeExec([
+				[
+					"df -Pk",
+					{
+						stdout: `Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/x ${500 * gb} 1 ${10 * gb} 98% /\n`,
+					},
+				],
+				["sysctl -n vm.swapusage", { stdout: "total = 30.00G  used = 25.00G  free = 5.00G  (encrypted)" }],
+				["tmutil listlocalsnapshots /", { stdout: "com.apple.os.update-ABC\n" }],
+			])
+		);
+		expect(await doctorCommand.run(c)).toBe(0);
+		const r = byName(c);
+		expect(r["disk-free"]).toMatchObject({ status: "warn", level: "optional" });
+		expect(r["disk-free"]?.detail).toContain("warden sims prune");
+		expect(r.swap?.status).toBe("warn");
+		expect(r.swap?.detail).toContain("warden gc --idle 0");
+		expect(r.snapshots?.status).toBe("warn");
+		expect(r.snapshots?.detail).toContain("staged macOS update");
+	});
+
 	test("stale leases are counted", async () => {
 		const c = setup(["--json"]);
 		c.db.insertLease(
