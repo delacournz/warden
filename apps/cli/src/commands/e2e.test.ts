@@ -2045,21 +2045,21 @@ describe("warden e2e", () => {
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("locally a passed gate leaves the devices booted for the next run, and still releases them", async () => {
+		test("locally a passed gate shuts the devices warden created down too, then releases them", async () => {
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--count", "2"], calls);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("shutdown: idle keeps the devices booted locally", async () => {
+			await resuite({ shutdown: "idle" });
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--count", "2"], calls);
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
-		});
-
-		test("CI set to 0, false or empty is a local shell", async () => {
-			for (const ci of ["0", "false", ""]) {
-				const calls: string[][] = [];
-				const c = wardenSetup(["--all", "--count", "2"], calls, ci);
-				expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
-				expect(shutdowns(calls)).toEqual([]);
-			}
 		});
 
 		test("shutdown: always shuts down locally too", async () => {
