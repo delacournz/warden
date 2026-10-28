@@ -33,7 +33,7 @@ Suite settings are defaults. A flag passed on the command line wins.
 
 **Exit codes:** `0` every required spec passed (or nothing affected, or dry-run). `1` the gate failed or an error. `130` interrupted.
 
-**Preflight (fails before any claim):** bun >= 1.3 on PATH (or `WARDEN_BUN`), and `@delacour/warden-e2e` in the project. **What runs:** `bun test --preload @delacour/warden-e2e/preload --timeout <spec timeout + 30s> <files>`.
+**Preflight (fails before any claim):** `@delacour/warden-e2e` resolves (the repo's copy at warden's version, else the one warden ships). No bun install needed: warden runs the specs as bun itself (`BUN_BE_BUN=1`), or with `WARDEN_BUN` when set. **What runs:** `bun test --preload @delacour/warden-e2e/preload --timeout <spec timeout + 30s> <files>`.
 
 - `isolate: device` (default): one `shard-<k>` process per device, specs spread round-robin by sorted id. A crash fails the spec it hit and the ones it never reached; a retry reruns only the specs that did not pass.
 - `isolate: spec`: one process per spec, one worker per device (the default with `passes > 1`).

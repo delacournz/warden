@@ -716,12 +716,12 @@ describe("warden e2e", () => {
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("bun missing: WARDEN_BUN is used, else an error before leasing", async () => {
+		test("no bun on PATH: warden runs the specs as bun itself, unless WARDEN_BUN names one", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const none = harness({ bun: null });
-			expect(await createE2eCommand(none.deps).run(c)).toBe(1);
-			expect(c.stderr.join("\n")).toContain("bun >= 1.3 is required on PATH (or set WARDEN_BUN)");
-			expect(none.jobs()).toEqual([]);
+			const none = harness({ bun: null, execPath: "/usr/local/bin/warden" });
+			expect(await createE2eCommand(none.deps).run(c)).toBe(0);
+			expect(none.jobs()[0]?.cmd[0]).toBe("/usr/local/bin/warden");
+			expect(none.jobs()[0]?.opts.env.BUN_BE_BUN).toBe("1");
 
 			c.env = { ...c.env, WARDEN_BUN: "/opt/bun" };
 			const set = harness({ bun: null });

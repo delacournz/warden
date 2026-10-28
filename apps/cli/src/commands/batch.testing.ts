@@ -72,6 +72,8 @@ export function harness(
 		warm?: "ok" | "fail" | "snapshot-fail";
 		/** `bun` on PATH (default `/usr/bin/bun`; null = not installed) */
 		bun?: string | null;
+		/** this process's executable, what the specs run as when `WARDEN_BUN` is unset (default `/usr/bin/bun`) */
+		execPath?: string;
 		/** where `@delacour/warden-e2e/preload` resolves (default under `/proj/node_modules`; null = not installed) */
 		preload?: string | null;
 		/** the published version of the repo's `@delacour/warden-e2e` (default: undefined = workspace sources) */
@@ -194,6 +196,7 @@ export function harness(
 				return opts.metroOwner ?? { kind: "ours" };
 			},
 			which: (cmd) => (cmd === "bun" ? (opts.bun === undefined ? "/usr/bin/bun" : opts.bun) : null),
+			execPath: () => opts.execPath ?? "/usr/bin/bun",
 			resolveModule: (specifier) => {
 				if (opts.preload === null) throw new Error(`Cannot find package '${specifier}'`);
 				return opts.preload ?? "/proj/node_modules/@delacour/warden-e2e/src/preload.ts";

@@ -109,7 +109,7 @@ export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ }
 | `WARDEN_SIMD_TRACE` | `1`: the helper logs one debug event per quiescence sample (same as `warden-simd --trace`). Set it yourself |
 | `WARDEN_HEADLESS` | `1` on a headless run |
 | `WARDEN_E2E_DEBUG` | `1`: log every helper operation and `simctl` call with its duration to stderr. Set it yourself |
-| `WARDEN_BUN` | read by `warden e2e`: the `bun` to run specs with (default: `bun` on `PATH`) |
+| `WARDEN_BUN` | read by `warden e2e`: the `bun` to run specs with (default: warden itself, run as bun with `BUN_BE_BUN=1`) |
 
 ## Read by `warden ui record`
 

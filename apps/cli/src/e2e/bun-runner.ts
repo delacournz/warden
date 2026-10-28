@@ -37,15 +37,13 @@ export function runnerArgv(o: RunnerArgvOptions): string[] {
 	];
 }
 
-/** `WARDEN_BUN`, else `bun` on PATH. */
-export function findBun(
-	env: Readonly<Record<string, string | undefined>>,
-	which: (cmd: string) => string | null | undefined
-): Result<string> {
+/**
+ * `WARDEN_BUN`, else warden's own executable: a `bun build --compile` binary run with `BUN_BE_BUN=1` (`specEnv`)
+ * is the full bun CLI, `bun test` included, so the specs need no bun install. From source `execPath` is bun.
+ */
+export function findBun(env: Readonly<Record<string, string | undefined>>, execPath: string): string {
 	const set = env.WARDEN_BUN;
-	if (set !== undefined && set !== "") return ok(set);
-	const found = which("bun");
-	return found ? ok(found) : err("bun >= 1.3 is required on PATH (or set WARDEN_BUN)");
+	return set !== undefined && set !== "" ? set : execPath;
 }
 
 /**
@@ -82,7 +80,10 @@ export type SpecEnvOptions = {
 	perfBudgets?: Readonly<Record<string, number>> | undefined;
 };
 
-/** The env contract of one spec process (the per-device `WARDEN_UDID` etc. come from batch). */
+/**
+ * The env contract of one spec process (the per-device `WARDEN_UDID` etc. come from batch). `BUN_BE_BUN=1` makes a
+ * compiled warden act as bun (`findBun`); bun itself ignores it, and the spec preload drops it again.
+ */
 export function specEnv(o: SpecEnvOptions): Record<string, string> {
 	return {
 		[ENV_NAMES.platform]: o.platform,
@@ -100,6 +101,7 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 		...(o.perfBudgets === undefined || Object.keys(o.perfBudgets).length === 0
 			? {}
 			: { [ENV_NAMES.perfBudgets]: JSON.stringify(o.perfBudgets) }),
+		BUN_BE_BUN: "1",
 	};
 }
 

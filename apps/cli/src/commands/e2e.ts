@@ -560,7 +560,7 @@ const specDuration = (field: string, value: string | undefined, fallback: string
 };
 
 /** What `specPlan` needs of `BatchDeps` (`warden ui record stop` resolves the same plan to verify a spec). */
-export type SpecPlanDeps = Pick<BatchDeps, "which" | "resolveModule" | "e2eVersion" | "bundledE2e" | "helperDir">;
+export type SpecPlanDeps = Pick<BatchDeps, "execPath" | "resolveModule" | "e2eVersion" | "bundledE2e" | "helperDir">;
 
 /** `bun` + preload + bundle id + timeouts of the suite's specs; every failure names what to set or install. */
 export async function specPlan(
@@ -570,8 +570,7 @@ export async function specPlan(
 	platform: Platform,
 	opts: Pick<E2eOpts, "perf"> = {}
 ): AsyncResult<SpecPlan> {
-	const bun = findBun(ctx.env, deps.which);
-	if (!bun.success) return bun;
+	const bun = findBun(ctx.env, deps.execPath());
 	const version = currentBuild().version;
 	const preload = await selectPreload({
 		cwd: suite.cwd,
@@ -593,7 +592,7 @@ export async function specPlan(
 	const assertionTimeoutMs = specDuration("assertionTimeout", spec?.assertionTimeout, DEFAULT_SPEC_ASSERTION_TIMEOUT);
 	if (!assertionTimeoutMs.success) return assertionTimeoutMs;
 	return ok({
-		bun: bun.data,
+		bun,
 		preload: preload.data.path,
 		launch: {
 			metroLaunchArgs: suite.config.metro?.enabled ? suite.config.metro.launchArgs : [],
