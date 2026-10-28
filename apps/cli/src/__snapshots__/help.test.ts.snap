@@ -17,13 +17,16 @@ Lease:
                                 repo/worktree, age, heartbeat)
   capacity                      machine capacity: budget, booted devices
                                 (foreign too), per-device cost, memory pressure
+  disk                          host disk health: free space, swap, snapshots,
+                                uptime, what warden can reclaim (read-only)
   queue                         claims waiting for host capacity, head first
                                 (position, priority, age, owner)
   check                         exit 0 if a device is free or yours, 2 if
                                 another owner holds it
   heartbeat [leaseIds...]       refresh lease heartbeats so they don't go stale
   gc                            reclaim stale leases; shut down idle warden
-                                devices (never deletes)
+                                devices; sweep orphaned Xcode DerivedData (never
+                                deletes devices)
   port                          lease TCP ports from a range (bind-probed, never
                                 handed out twice)
 
@@ -51,6 +54,8 @@ Devices:
                                 | unquarantine
   sims                          simulator + runtime disk audit (default), prune
                                 idle warden sims, delete (multi-select)
+  worktrees                     audit git worktrees agents left behind; --apply
+                                removes the clean merged ones
   arrange                       tile warden simulator windows in name order
                                 (macOS; also runs after iOS claims)
   clone <source>                duplicate a shut-down iOS simulator into
@@ -85,7 +90,8 @@ Setup:
                                 install (bunx/npx skills add)
   doctor                        check warden's setup: home, db, device tools,
                                 simulator helper, install method, PATH,
-                                Claude/Codex hooks + skill, stale leases
+                                Claude/Codex hooks + skill, stale leases, disk
+                                space + swap + snapshots
   update                        update warden: rebuild from source (dev/local
                                 builds) or install the latest release
   version                       print warden's version and build channel (dev /
@@ -1316,6 +1322,18 @@ Options:
   -h, --help  display help for command"
 `;
 
+exports[`help output warden disk --help (and nested subcommands) 1`] = `
+"$ warden disk --help
+Usage: warden disk [options]
+
+host disk health: free space, swap, snapshots, uptime, what warden can reclaim
+(read-only)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
 exports[`help output warden queue --help (and nested subcommands) 1`] = `
 "$ warden queue --help
 Usage: warden queue [options]
@@ -1488,6 +1506,25 @@ Options:
   -h, --help          display help for command"
 `;
 
+exports[`help output warden worktrees --help (and nested subcommands) 1`] = `
+"$ warden worktrees --help
+Usage: warden worktrees [options]
+
+audit git worktrees agents left behind; --apply removes the clean merged ones
+
+Options:
+  --root <dir>       also audit this repo, or the repos directly under this
+                     folder (repeatable) (default: [])
+  --idle <duration>  files changed within this make a worktree active (default
+                     3d; 0 turns it off)
+  --apply            remove merged worktrees (git worktree remove, no --force)
+                     and prune dir-less refs
+  --no-fetch         skip git fetch before the merge checks
+  --no-size          skip sizing each worktree (du)
+  --json             machine-readable output
+  -h, --help         display help for command"
+`;
+
 exports[`help output warden arrange --help (and nested subcommands) 1`] = `
 "$ warden arrange --help
 Usage: warden arrange [options]
@@ -1602,7 +1639,8 @@ exports[`help output warden gc --help (and nested subcommands) 1`] = `
 "$ warden gc --help
 Usage: warden gc [options]
 
-reclaim stale leases; shut down idle warden devices (never deletes)
+reclaim stale leases; shut down idle warden devices; sweep orphaned Xcode
+DerivedData (never deletes devices)
 
 Options:
   --idle <duration>        shut down unleased warden devices idle this long
@@ -1610,6 +1648,10 @@ Options:
   --max-cache-size <size>  prune least-recently-used cached builds down to this
                            size, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE or
                            20G; builds used in the last 30 min stay)
+  --no-orphans             keep orphaned Xcode DerivedData and XCTestDevices
+                           clones
+  --dry-run                only list orphaned DerivedData / XCTestDevices with
+                           sizes; change nothing
   --quiet                  print nothing (background auto-gc)
   --json                   machine-readable output
   -h, --help               display help for command"
@@ -3434,7 +3476,7 @@ exports[`help output warden doctor --help (and nested subcommands) 1`] = `
 Usage: warden doctor [options]
 
 check warden's setup: home, db, device tools, simulator helper, install method,
-PATH, Claude/Codex hooks + skill, stale leases
+PATH, Claude/Codex hooks + skill, stale leases, disk space + swap + snapshots
 
 Options:
   --fetch-helper  download warden-simd for this version into

@@ -25,8 +25,9 @@ beforeAll(() => {
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 async function loadedBy(args: string[], home: string = join(scratch, "home")): Promise<string[]> {
+	// a scratch HOME too: `gc` sweeps orphaned Xcode dirs under it, never the real one
 	const proc = Bun.spawn(["bun", "--preload", preload, resolve(SRC, "cli.ts"), ...args], {
-		env: { ...process.env, WARDEN_HOME: home, NO_COLOR: "1", CI: "1" },
+		env: { ...process.env, WARDEN_HOME: home, HOME: join(scratch, "user"), NO_COLOR: "1", CI: "1" },
 		stdout: "ignore",
 		stderr: "pipe",
 		stdin: "ignore",

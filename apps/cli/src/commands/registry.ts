@@ -100,6 +100,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./sims")).simsCommand,
 	},
 	{
+		name: "worktrees",
+		group: "Devices",
+		summary: "audit git worktrees agents left behind; --apply removes the clean merged ones",
+		load: async () => (await import("./worktrees")).worktreesCommand,
+	},
+	{
 		name: "arrange",
 		group: "Devices",
 		summary: "tile warden simulator windows in name order (macOS; also runs after iOS claims)",
@@ -132,7 +138,8 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "gc",
 		group: "Lease",
-		summary: "reclaim stale leases; shut down idle warden devices (never deletes)",
+		summary:
+			"reclaim stale leases; shut down idle warden devices; sweep orphaned Xcode DerivedData (never deletes devices)",
 		load: async () => (await import("./gc")).gcCommand,
 	},
 	{
@@ -216,7 +223,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 		name: "doctor",
 		group: "Setup",
 		summary:
-			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases",
+			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases, disk space + swap + snapshots",
 		load: async () => (await import("./doctor")).doctorCommand,
 	},
 	{
