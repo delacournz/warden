@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { consentReplay, isAutomatedBrowser, posthogOptions } from "./posthog";
+import { consentReplay, isAutomatedBrowser, posthogOptions, SUPER_PROPERTIES } from "./posthog";
 
 const posthog = { kind: "on", token: "phc_test", host: "https://i.delacour.co.nz" } as const;
 
@@ -44,6 +44,16 @@ describe("posthogOptions", () => {
 		expect(options.person_profiles).toBe("identified_only");
 		expect("disable_session_recording" in options).toBe(false);
 		expect("advanced_disable_flags" in options).toBe(false);
+	});
+});
+
+/**
+ * The token is shared with every Delacour site, so one PostHog project holds
+ * them all; `site` is what tells warden's events apart.
+ */
+describe("SUPER_PROPERTIES", () => {
+	test("tags every browser event as warden's, from the web", () => {
+		expect(SUPER_PROPERTIES).toEqual({ site: "warden", surface: "web" });
 	});
 });
 

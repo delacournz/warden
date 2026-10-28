@@ -49,6 +49,8 @@ describe("serverEventBody", () => {
 				$pathname: "/llms.txt",
 				$browser_language: "en-NZ",
 				$lib: "warden-docs",
+				site: "warden",
+				surface: "server",
 				$process_person_profile: false,
 				$geoip_disable: true,
 			},
