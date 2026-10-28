@@ -38,15 +38,10 @@ describe("runnerArgv", () => {
 });
 
 describe("findBun", () => {
-	test("WARDEN_BUN wins, then PATH, else an error naming both", () => {
-		const which = (name: string) => (name === "bun" ? "/usr/bin/bun" : null);
-		expect(findBun({ WARDEN_BUN: "/opt/bun" }, which)).toEqual({ success: true, data: "/opt/bun" });
-		expect(findBun({}, which)).toEqual({ success: true, data: "/usr/bin/bun" });
-		expect(findBun({ WARDEN_BUN: "" }, which)).toEqual({ success: true, data: "/usr/bin/bun" });
-		expect(findBun({}, () => null)).toEqual({
-			success: false,
-			error: "bun >= 1.3 is required on PATH (or set WARDEN_BUN)",
-		});
+	test("WARDEN_BUN wins, else warden's own executable runs as bun: no bun install needed", () => {
+		expect(findBun({ WARDEN_BUN: "/opt/bun" }, "/usr/local/bin/warden")).toBe("/opt/bun");
+		expect(findBun({}, "/usr/local/bin/warden")).toBe("/usr/local/bin/warden");
+		expect(findBun({ WARDEN_BUN: "" }, "/usr/local/bin/warden")).toBe("/usr/local/bin/warden");
 	});
 });
 
@@ -94,6 +89,7 @@ describe("specEnv", () => {
 			WARDEN_E2E_SPECS_DIR: "/repo/specs",
 			WARDEN_HELPER_DIR: "/bin",
 			WARDEN_VERSION: "0.3.0",
+			BUN_BE_BUN: "1",
 		});
 	});
 });

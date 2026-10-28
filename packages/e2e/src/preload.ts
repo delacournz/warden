@@ -78,6 +78,15 @@ export function installPreload(deps: PreloadDeps): void {
 	});
 }
 
+/**
+ * `warden e2e` may run this process as a compiled warden with `BUN_BE_BUN=1`; drop it so a `warden` the spec spawns
+ * (`WARDEN_BIN`, `device.perf`) runs as warden, not bun.
+ */
+export function scrubRunnerEnv(env: Record<string, string | undefined>): void {
+	delete env.BUN_BE_BUN;
+}
+
+scrubRunnerEnv(process.env);
 if (!hasDefaultDriverFactory()) {
 	// a test-installed fake device has no simulator to read a native log from
 	setDefaultDriverFactory(defaultDriverFactory);

@@ -35,7 +35,7 @@ A private fork in `repo` needs a `token` with Contents: read on that repo.
 ## What the runner needs
 
 - macOS for iOS simulators, with Xcode and the iOS runtime installed; Android needs the SDK. There is no Windows support.
-- bun 1.3 or newer on `PATH` (or `WARDEN_BUN`).
+- No bun install: warden runs the specs with the bun built into its own binary, so CI needs no bun install (`WARDEN_BUN` picks a different one).
 - No prior state. The `--profile` is created on claim, cloned from a golden image that is built on first use (about a minute or two); cache `~/Library/Developer/CoreSimulator/Devices` between runs to keep it ([Golden images](/docs/devices/golden-images)). If cloning fails it falls back to `simctl create`.
 
 ## Gate a pull request

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { installPreload, isCi, type PreloadDeps, versionMismatch } from "./preload";
+import { installPreload, isCi, type PreloadDeps, scrubRunnerEnv, versionMismatch } from "./preload";
 import { type Session, setDefaultDriverFactory, setDefaultFixtureFactory } from "./session";
 
 // importing ./preload installs the real driver + fixture factories process-wide; later test files start clean
@@ -127,5 +127,13 @@ describe("isCi", () => {
 		expect(isCi({ CI: "false" })).toBe(false);
 		expect(isCi({ CI: "1" })).toBe(true);
 		expect(isCi({ CI: "true" })).toBe(true);
+	});
+});
+
+describe("scrubRunnerEnv", () => {
+	test("drops BUN_BE_BUN so a warden the spec spawns runs as warden, not bun", () => {
+		const env: Record<string, string | undefined> = { BUN_BE_BUN: "1", WARDEN_UDID: "u" };
+		scrubRunnerEnv(env);
+		expect(env).toEqual({ WARDEN_UDID: "u" });
 	});
 });

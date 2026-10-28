@@ -39,7 +39,7 @@ async function setup(code: number, results: string | undefined) {
 	const spawned: { argv: string[]; opts: SpawnOptions }[] = [];
 	const timers: number[] = [];
 	const deps: VerifyDeps = {
-		which: () => "/bin/bun",
+		execPath: () => "/bin/bun",
 		resolveModule: () => "/repo/node_modules/@delacour/warden-e2e/preload.ts",
 		e2eVersion: () => undefined,
 		bundledE2e: async () => ok("/bundled/preload.mjs"),
@@ -116,11 +116,4 @@ test("exit 0 with no results is not a pass", async () => {
 	const { ctx, deps, suite } = await setup(0, undefined);
 	const ran = await runVerify(ctx, deps, input(suite));
 	expect(ran).toMatchObject({ success: true, data: { passed: false, tests: [] } });
-});
-
-test("a missing bun is an error before anything is spawned", async () => {
-	const { ctx, deps, suite, spawned } = await setup(0, undefined);
-	const ran = await runVerify(ctx, { ...deps, which: () => null }, input(suite));
-	expect(ran.success).toBe(false);
-	expect(spawned).toEqual([]);
 });

@@ -168,6 +168,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	residentSocket?: (ctx: CommandContext) => (udid: string) => Promise<string | undefined>;
 	/** `Bun.which`: where a command is on PATH */
 	which: (cmd: string) => string | null | undefined;
+	/** this process's executable: a compiled warden runs the specs as bun itself (`process.execPath`) */
+	execPath: () => string;
 	/** `Bun.resolveSync`: the file a package specifier resolves to from `from` (throws when it does not) */
 	resolveModule: (specifier: string, from: string) => string;
 	/** the published version of the `@delacour/warden-e2e` that owns a resolved preload (`undefined`: workspace sources) */
@@ -2450,6 +2452,7 @@ export const defaultBatchDeps: BatchDeps = {
 	warmConnect,
 	residentSocket,
 	which: (cmd) => Bun.which(cmd),
+	execPath: () => process.execPath,
 	resolveModule: (specifier, from) => Bun.resolveSync(specifier, from),
 	e2eVersion: readE2ePackageVersion,
 	bundledE2e: (ctx) => stageBundledRuntime(ctx.env, currentBuild()),
