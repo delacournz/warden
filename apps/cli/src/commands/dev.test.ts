@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ok } from "@delacour/warden-types/result";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { resolveOwner } from "../claim-flags";
 import { main } from "../cli";
 import type { CommandContext } from "../context";
+import type { Broker } from "../dev-broker/broker";
+import { callDevControl } from "../dev-control";
 import { listDevSessions } from "../dev-session";
 import { DEV_CLIENT_ARGS, devClientLaunchArgv, type MetroProc } from "../metro";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
@@ -1182,16 +1185,22 @@ describe("warden dev: HUD options", () => {
 		return { code: await running, seen, c };
 	}
 
-	test("the HUD is on at a 1 s interval by default", async () => {
+	test("the HUD is off by default, at a 1 s interval", async () => {
 		const { code, seen } = await runWith(["ios"]);
 		expect(code).toBe(0);
-		expect(seen[0]?.hud).toEqual({ enabled: true, intervalMs: 1000 });
+		expect(seen[0]?.hud).toEqual({ enabled: false, intervalMs: 1000 });
 	});
 
-	test("--no-hud and --hud-interval reach the ui", async () => {
-		const { code, seen } = await runWith(["ios", "--no-hud", "--hud-interval", "500ms"]);
+	test("--hud and --hud-interval reach the ui", async () => {
+		const { code, seen } = await runWith(["ios", "--hud", "--hud-interval", "500ms"]);
 		expect(code).toBe(0);
-		expect(seen[0]?.hud).toEqual({ enabled: false, intervalMs: 500 });
+		expect(seen[0]?.hud).toEqual({ enabled: true, intervalMs: 500 });
+	});
+
+	test("--no-hud is still accepted (old scripts)", async () => {
+		const { code, seen } = await runWith(["ios", "--no-hud"]);
+		expect(code).toBe(0);
+		expect(seen[0]?.hud?.enabled).toBe(false);
 	});
 
 	test("--hud-interval under 200ms fails naming the floor, before anything is claimed", async () => {
@@ -1212,6 +1221,65 @@ describe("warden dev: HUD options", () => {
 	});
 });
 
+describe("warden dev: opt-in extras", () => {
+	async function runWith(argv: string[], onSession?: (socket: string | undefined) => Promise<void>) {
+		const calls: string[][] = [];
+		const c = setup(argv, calls);
+		const h = harness();
+		const brokers: string[] = [];
+		h.deps.startBroker = async (options) => {
+			brokers.push(options.metroUrl);
+			const broker: Broker = {
+				socketPath: join(options.logDir, "broker.sock"),
+				state: () => ({ phase: "connecting", attempt: 0 }),
+				resume: () => {},
+				registerMethod: () => ok(() => {}),
+				addLineProcessor: () => () => {},
+				onAttach: () => () => {},
+				close: async () => void brokers.push("closed"),
+			};
+			return ok(broker);
+		};
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		const socket = (): string | undefined => {
+			const listed = listDevSessions(c.env, { isAlive: () => true });
+			return listed.success ? listed.data[0]?.controlSocket : undefined;
+		};
+		for (let i = 0; i < 500 && socket() === undefined; i++) await Bun.sleep(2);
+		await onSession?.(socket());
+		h.finish(0);
+		return { code: await running, brokers, c };
+	}
+
+	test("no devtools broker by default", async () => {
+		const { code, brokers } = await runWith(["ios"]);
+		expect(code).toBe(0);
+		expect(brokers).toEqual([]);
+	});
+
+	test("--devtools starts the broker with the session and closes it at the end", async () => {
+		const { code, brokers } = await runWith(["ios", "--devtools"]);
+		expect(code).toBe(0);
+		expect(brokers).toHaveLength(2);
+		expect(brokers[1]).toBe("closed");
+	});
+
+	test("the control socket turns devtools on and off while the session runs", async () => {
+		const { code, brokers } = await runWith(["ios"], async (socket) => {
+			expect(socket).toBeDefined();
+			const on = await callDevControl(socket ?? "", { op: "set", feature: "devtools", on: true });
+			expect(on).toEqual(ok({ ok: true, features: { hud: false, devtools: true } }));
+			const off = await callDevControl(socket ?? "", { op: "set", feature: "devtools", on: false });
+			expect(off).toEqual(ok({ ok: true, features: { hud: false, devtools: false } }));
+			const hud = await callDevControl(socket ?? "", { op: "set", feature: "hud", on: true });
+			expect(hud.success && hud.data.ok).toBe(false);
+		});
+		expect(code).toBe(0);
+		expect(brokers).toHaveLength(2);
+	});
+});
+
 describe("selectDevUi", () => {
 	type Loaded = { createDevTui: (deps: { ctx: CommandContext; hud: DevUiOpts["hud"] }) => DevUi };
 
@@ -1224,6 +1292,8 @@ describe("selectDevUi", () => {
 			metro: { kind: "inherit" },
 			ready: () => {},
 			onQuit: () => {},
+			setHud: () => ok(undefined),
+			hudOn: () => false,
 			close: async () => {},
 		};
 		const load = async (): Promise<Loaded> => ({

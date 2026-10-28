@@ -1,5 +1,5 @@
 import type { Platform } from "@delacour/warden-core/types";
-import type { AsyncResult } from "@delacour/warden-types/result";
+import type { AsyncResult, Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { MetroTerminal } from "../metro";
 
@@ -75,6 +75,10 @@ export type DevUi = {
 	ready(info: DevReady): void;
 	/** the ui asks to quit (`q` / Ctrl-C in list mode): the command stops Metro and releases as on a signal */
 	onQuit(handler: () => void): void;
+	/** start (`true`) or stop the perf HUD sampler; a ui without a HUD says why not */
+	setHud(on: boolean): Result<void>;
+	/** whether the HUD sampler is running */
+	hudOn(): boolean;
 	/** restore the terminal; idempotent; always called, also after a failure */
 	close(): Promise<void>;
 };

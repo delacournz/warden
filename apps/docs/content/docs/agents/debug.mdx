@@ -13,9 +13,17 @@ icon: Bug
 
 ## The devtools broker
 
-Every `warden dev` session holds one Chrome DevTools Protocol connection to the app through Metro's inspector proxy: the **broker**. It attaches as soon as the dev client opens, keeps the newest 5 000 console lines and 1 000 requests in memory, and writes them to `console.jsonl` / `network.jsonl` in the session directory (`$WARDEN_HOME/dev/<leaseId>/`). The dashboard's `devtools` row shows its state.
+A `warden dev` session can hold one Chrome DevTools Protocol connection to the app through Metro's inspector proxy: the **broker**. It is off by default, so a session runs only what the agent loop needs (build, Metro, simulator, app). Turn it on when you start debugging:
 
-`warden ui` devtools verbs and `warden mcp` read from it, so nothing that happened before you asked is missed and no tool opens a second debugger connection. Without a dev session they connect directly, as before.
+```bash
+warden dev enable devtools     # the running session; or start with: warden dev ios --devtools
+warden dev status              # <udid>: hud off · devtools on
+warden dev disable devtools    # frees the socket again
+```
+
+Once on, it attaches to the dev client, keeps the newest 5 000 console lines and 1 000 requests in memory, and writes them to `console.jsonl` / `network.jsonl` in the session directory (`$WARDEN_HOME/dev/<leaseId>/`). The dashboard's `devtools` row shows its state.
+
+`warden ui` devtools verbs and `warden mcp` read from it, so nothing that happened after it attached is missed and no tool opens a second debugger connection. Without a broker they connect directly; logpoints and the `profile_*` tools need it.
 
 Stacks are symbolicated through Metro: a console line or exception points at `src/app/welcome.tsx:21`, not a bundle offset, with Metro's code frame when it has one. React Native's own frames are kept but flagged `collapsed`.
 

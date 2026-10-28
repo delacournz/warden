@@ -24,6 +24,7 @@ describe("createScreen", () => {
 		expect(stdout.all()).toBe(ENTER);
 		expect(ENTER).toContain("\x1b[?1049h");
 		expect(ENTER).toContain("\x1b[?25l");
+		expect(ENTER).toContain("\x1b[?1007l");
 		expect(stdin.rawModes).toEqual([true]);
 	});
 
@@ -115,6 +116,7 @@ describe("createScreen", () => {
 		screen.close();
 		expect(stdout.all()).toBe(RESTORE);
 		expect(RESTORE.endsWith("\x1b[?2026l\x1b[?25h\x1b[?1049l")).toBe(true);
+		expect(RESTORE).toContain("\x1b[?1007h");
 		expect(stdin.rawModes).toEqual([true, false]);
 		expect(stdin.listeners()).toBe(0);
 		expect(process.count("exit")).toBe(0);

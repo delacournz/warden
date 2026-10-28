@@ -71,7 +71,7 @@ Mutating device flags (`start`, `startup`, `--relaunch`, `--snapshot`): `--claim
 - e2e budgets: `warden e2e <suite> --perf[=captures]` (bare = metrics,frames,logs; `all`; or e.g. `react,js`) copies each attempt's report to `<attempt>/perf/`. `perf.budgets` in `warden.config.ts` (`startupColdMs`, `jankPct`, `maxCommitMs`, `p95CpuPct`, `peakMemoryMb`; a suite's value replaces the top-level one per key). In a spec: `device.perf.start(opts)`, `.mark(label)`, `.stop({ budgets })`. Breach = `PERF_BUDGET` error, kind `perf_budget` in `e2e-report.json`.
 - Finding kinds: `slow-commit`, `slow-render`, `memo-defeated`, `context-cascade`, `parent-cascade`, `render-storm`, `eager-mount`, `effect-chain`, `startup`, `jank`, `hang`, `cpu-hot`, `memory-growth`, `leak`, `crash`, `anr`, `js-hotspot`, `native-hotspot`. Severity `critical|warn|info`.
 
-People running `warden dev` get the same sessions on keys: `p` start/stop, `P` all captures, `m` mark, `f` frames, `g` report (one session per device, so `session_active` applies). Agents keep to the CLI.
+People running `warden dev` get the same sessions on keys: `p` start/stop, `P` all captures, `m` mark, `f` frames, `g` report (one session per device, so `session_active` applies). Agents keep to the CLI. The dashboard's live HUD (CPU/memory sampler) is off by default: `h`, `--hud`, or `warden dev enable perf` from another shell; JS/React captures go through the session's devtools broker only when `warden dev enable devtools` turned it on (else their own connection).
 
 ## Errors -> action
 
