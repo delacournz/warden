@@ -3,7 +3,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
-import { CLAIM_ABORTED, type ClaimInput, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
+import {
+	CLAIM_ABORTED,
+	type ClaimInput,
+	claimDevices,
+	DISK_LOW,
+	type DiskGateDeps,
+	PENDING_PREFIX,
+	QUARANTINE_TTL_MS,
+} from "./claim";
+import type { DiskVerdict } from "./disk";
 import type { Exec, ExecResult } from "./exec";
 import type { MemoryPressure } from "./host";
 import { createIosProvider } from "./providers/ios";
@@ -1046,6 +1055,65 @@ describe("claim capacity queue", () => {
 		if (!held.success) expect(held.error).toContain("memory pressure warn");
 		const admitted = await claimDevices(capInput(provider, { cpu: 4, pressure: "normal" }));
 		expect(admitted.success).toBe(true);
+	});
+
+	const GB = 1024 ** 3;
+	const diskGate = (verdict: DiskVerdict, reads: { n: number } = { n: 0 }): DiskGateDeps => ({
+		verdict: async () => {
+			reads.n++;
+			return ok(verdict);
+		},
+	});
+	const critical: DiskVerdict = {
+		level: "critical",
+		reasons: [{ kind: "low-free", freeBytes: 6 * GB, floorBytes: 20 * GB, criticalBytes: 8 * GB }],
+	};
+	const swapWarn: DiskVerdict = {
+		level: "warn",
+		reasons: [{ kind: "swap", swapUsedBytes: 14 * GB, warnBytes: 8 * GB }],
+	};
+
+	test("a critically low disk refuses a claim that would boot, naming free space and the fix", async () => {
+		const provider = fakeProvider([sim("1")]);
+		const result = await claimDevices(capInput(provider, { cpu: 4, disk: diskGate(critical) }));
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error).toStartWith(`${DISK_LOW}:`);
+			expect(result.error).toContain("6.0 GB");
+			expect(result.error).toContain("warden disk");
+			expect(result.error).toContain("warden gc");
+		}
+		expect(store.listLeases()).toEqual([]);
+		expect(store.listQueue()).toEqual([]);
+	});
+
+	test("the disk gate refuses without the capacity gate too", async () => {
+		const provider = fakeProvider([sim("1")]);
+		const result = await claimDevices(input(provider, { disk: diskGate(critical) }));
+		expect(result.success).toBe(false);
+	});
+
+	test("a claim that only reuses a booted device is allowed on a critical disk and never reads it", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		const reads = { n: 0 };
+		const result = await claimDevices(capInput(provider, { cpu: 4, disk: diskGate(critical, reads) }));
+		expect(result.success).toBe(true);
+		expect(reads.n).toBe(0);
+	});
+
+	test("swap above the threshold queues a booting claim like memory pressure warn", async () => {
+		const provider = fakeProvider([sim("1")]);
+		const held = await claimDevices(capInput(provider, { cpu: 4, disk: diskGate(swapWarn) }));
+		expect(held.success).toBe(false);
+		if (!held.success) expect(held.error).toContain("swap");
+		const admitted = await claimDevices(capInput(provider, { cpu: 4, disk: diskGate({ level: "ok", reasons: [] }) }));
+		expect(admitted.success).toBe(true);
+	});
+
+	test("an unreadable disk lets the claim through", async () => {
+		const provider = fakeProvider([sim("1")]);
+		const result = await claimDevices(capInput(provider, { cpu: 4, disk: { verdict: async () => err("df failed") } }));
+		expect(result.success).toBe(true);
 	});
 
 	test("rows of dead waiters do not block", async () => {

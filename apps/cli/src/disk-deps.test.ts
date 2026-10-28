@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { diskConfigFromEnv, diskGateEnabled } from "./disk-deps";
+import { buildDiskGate, diskConfigFromEnv, diskGateEnabled } from "./disk-deps";
+import { testContext } from "./testing";
 
 describe("diskGateEnabled", () => {
 	test.each([
@@ -39,5 +40,36 @@ describe("diskConfigFromEnv", () => {
 		expect(result.problems).toHaveLength(2);
 		expect(result.problems[0]).toContain("WARDEN_DISK_FLOOR_GB=0");
 		expect(result.problems[1]).toContain("WARDEN_DISK_CRITICAL_GB=lots");
+	});
+});
+
+describe("buildDiskGate", () => {
+	const DF = "Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/d 500000000 494000000 6000000 99% /";
+	const dfExec = (calls: string[][]) => async (cmd: readonly string[]) => {
+		calls.push([...cmd]);
+		return { exitCode: cmd[0] === "df" ? 0 : 1, stdout: cmd[0] === "df" ? DF : "", stderr: "" };
+	};
+
+	test("is undefined when WARDEN_DISK=off", () => {
+		const ctx = testContext(["claim"]);
+		ctx.env.WARDEN_DISK = "off";
+		expect(buildDiskGate(ctx, "other")).toBeUndefined();
+		ctx.cleanup();
+	});
+
+	test("judges the df read and caches it for a few seconds", async () => {
+		const calls: string[][] = [];
+		let now = 1_000_000;
+		const ctx = testContext(["claim"], { exec: dfExec(calls), now: () => now });
+		const gate = buildDiskGate(ctx, "other");
+		const first = await gate?.verdict();
+		expect(first?.success && first.data.level).toBe("critical");
+		now += 5_000;
+		await gate?.verdict();
+		expect(calls.filter((c) => c[0] === "df")).toHaveLength(1);
+		now += 20_000;
+		await gate?.verdict();
+		expect(calls.filter((c) => c[0] === "df")).toHaveLength(2);
+		ctx.cleanup();
 	});
 });

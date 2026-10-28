@@ -18,6 +18,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import { buildCapacityDeps } from "./capacity-deps";
 import type { CommandContext } from "./context";
+import { buildDiskGate } from "./disk-deps";
 import { providerFor } from "./providers";
 import {
 	autoArrangeSimWindows,
@@ -282,6 +283,7 @@ export async function claimWithFlags(
 		const room = maxConcurrent(request.platform, capacity.budget, capacity.config);
 		request = { ...request, max: Math.max(request.max, room) };
 	}
+	const disk = buildDiskGate(ctx);
 	const slim = resolveSlim({ ...flags.slim, env: ctx.env });
 	if (!slim.success) return slim;
 	const outcome = await claimDevices({
@@ -299,6 +301,7 @@ export async function claimWithFlags(
 		priority: priority.data,
 		...(options.abort ? { abort: options.abort } : {}),
 		...(capacity ? { capacity } : {}),
+		...(disk ? { disk } : {}),
 		log: (line) => ctx.err(`warden: ${line}`),
 	});
 	if (outcome.success && request.platform === "ios") {

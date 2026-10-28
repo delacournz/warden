@@ -4,6 +4,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { allocate } from "./allocate";
 import { addCost, type Budget, type CapacityConfig, type Cost, deviceCost, explain, fits, totalCost } from "./capacity";
 import { DEFAULT_READY_TIMEOUT_MS } from "./config.defaults";
+import type { DiskVerdict } from "./disk";
 import type { MemoryPressure } from "./host";
 import { markWardenDevices } from "./inventory";
 import { isLeaseAlive, type PidAlive } from "./liveness";
@@ -61,6 +62,32 @@ export type ClaimInput = {
 	slim?: boolean;
 	/** polled once per round: true ends the claim with `CLAIM_ABORTED` (nothing stays leased or queued) */
 	abort?: () => boolean;
+	/** disk gate for claims that boot or create; absent = no gate (independent of `capacity`) */
+	disk?: DiskGateDeps;
+};
+
+/** Error prefix of a claim refused because the boot disk is critically low. */
+export const DISK_LOW = "DISK_LOW";
+
+export type DiskGateDeps = {
+	/** read only when a plan would boot or create a device; an error counts as `ok` */
+	verdict: () => AsyncResult<DiskVerdict>;
+};
+
+const GB = 1024 ** 3;
+const OK_DISK: DiskVerdict = { level: "ok", reasons: [] };
+const gbText = (bytes: number): string => `${(bytes / GB).toFixed(1)} GB`;
+
+function diskLowMessage(verdict: DiskVerdict): string {
+	const low = verdict.reasons.find((r) => r.kind === "low-free");
+	const free = low?.kind === "low-free" ? `${gbText(low.freeBytes)} free` : "almost no space free";
+	return `${DISK_LOW}: ${free} on the boot disk — new devices are refused. Run \`warden disk\` to see what to reclaim, then \`warden gc\` (WARDEN_DISK=off bypasses the gate)`;
+}
+
+/** Swap in use above its warn threshold, when the verdict says so. */
+const swapOf = (verdict: DiskVerdict): number | undefined => {
+	const swap = verdict.reasons.find((r) => r.kind === "swap");
+	return swap?.kind === "swap" ? swap.swapUsedBytes : undefined;
 };
 
 /** The error of a claim ended by `ClaimInput.abort`. */
@@ -83,6 +110,8 @@ type CapacityRound = {
 	hostInventory: InventoryDevice[];
 	pressure: MemoryPressure;
 	queueId: string;
+	/** swap in use when the disk verdict warns about it: holds the queue like memory pressure `warn` */
+	swapUsedBytes?: number;
 	/** when this `claimDevices` call began: queue age and place survive health-probe retry rounds */
 	enqueuedAt: number;
 	/** devices whose idle shutdown failed this claim: not tried again */
@@ -164,8 +193,9 @@ function reserve(
 	rawInventory: InventoryDevice[],
 	reclaimed: string[],
 	skip: ReadonlySet<string>,
-	cap?: CapacityRound
-): Reservation {
+	cap?: CapacityRound,
+	disk?: DiskVerdict
+): Attempt {
 	const { store, request, owner } = input;
 	const now = input.now();
 	reclaimed.push(...store.reclaimStale(now, input.pidAlive));
@@ -177,8 +207,11 @@ function reserve(
 	);
 	if (cap) store.reclaimStaleQueue(now, input.pidAlive);
 	const plan = allocate({ inventory, leases, request, now, pidAlive: input.pidAlive, skip });
-	if (cap && plan.kind === "assign") {
-		const gate = admit(input, cap, plan.steps, leases, now);
+	const gated = diskGated(input, plan, cap, disk);
+	if (gated.kind === "refuse") return gated.attempt;
+	const gateCap = gated.cap;
+	if (gateCap && plan.kind === "assign") {
+		const gate = admit(input, gateCap, plan.steps, leases, now);
 		if (gate) return gate;
 	}
 	if (plan.kind === "wait") {
@@ -218,6 +251,27 @@ function reserve(
 	return { kind: "assign", items };
 }
 
+type DiskGated = { kind: "pass"; cap: CapacityRound | undefined } | { kind: "refuse"; attempt: Attempt };
+
+/**
+ * The disk gate, for a plan that boots or creates something: needs the verdict first, refuses at `critical`,
+ * and hands swap over its threshold to the capacity gate as a hold. Reusing booted devices is never gated.
+ */
+function diskGated(
+	input: ClaimInput,
+	plan: ReturnType<typeof allocate>,
+	cap: CapacityRound | undefined,
+	disk: DiskVerdict | undefined
+): DiskGated {
+	if (plan.kind !== "assign" || !input.disk || plan.steps.every((s) => s.action === "reuse")) {
+		return { kind: "pass", cap };
+	}
+	if (!disk) return { kind: "refuse", attempt: { kind: "need-disk" } };
+	if (disk.level === "critical") return { kind: "refuse", attempt: { kind: "error", error: diskLowMessage(disk) } };
+	const swap = swapOf(disk);
+	return { kind: "pass", cap: cap && swap !== undefined ? { ...cap, swapUsedBytes: swap } : cap };
+}
+
 const bootedState = (d: InventoryDevice): boolean => d.state === "booted" || d.state === "booting";
 
 /** Cost of everything booted or booting on the host (foreign included) plus creates not yet visible in it. */
@@ -244,6 +298,13 @@ function slimmedIds(store: Store): Set<string> {
 			.filter((r) => r.slimmedAt !== undefined)
 			.map((r) => r.id)
 	);
+}
+
+/** Why a claim that fits the budget still waits: memory pressure, swap, or the queue order. */
+function holdReason(cap: CapacityRound, held: boolean): string {
+	if (cap.pressure !== "normal") return `memory pressure ${cap.pressure}`;
+	if (held) return `swap ${gbText(cap.swapUsedBytes ?? 0)} in use (disk gate)`;
+	return "waiting behind higher-priority claims";
 }
 
 /**
@@ -294,13 +355,9 @@ function admit(
 	const head = position === 1;
 	const usage = hostUsage(cap, leases, slimmed, slimCreates);
 	const fit = fits(usage, need, budget);
-	const held = cap.pressure !== "normal";
+	const held = cap.pressure !== "normal" || cap.swapUsedBytes !== undefined;
 	if (head && fit.fits && !held) return undefined;
-	const reason = !fit.fits
-		? explain(fit, usage, budget)
-		: held
-			? `memory pressure ${cap.pressure}`
-			: "waiting behind higher-priority claims";
+	const reason = !fit.fits ? explain(fit, usage, budget) : holdReason(cap, held);
 	const evict = head && !fit.fits ? pickEvictions(input, cap, steps, leases, usage, need, now) : [];
 	return { kind: "queued", position, total: entries.length, reason, evict };
 }
@@ -663,14 +720,26 @@ async function claimRounds(input: ClaimInput, queueId: string): AsyncResult<Clai
 }
 
 /** One round's reads (abort, inventory, capacity) and the reservation under the store lock. */
-async function reserveRound(input: ClaimInput, queueId: string, startedAt: number, round: Round): AsyncResult<Attempt> {
+async function reserveRound(input: ClaimInput, queueId: string, startedAt: number, round: Round): AsyncResult<Settled> {
 	if (input.abort?.()) return err(CLAIM_ABORTED);
 	const inventory = await input.provider.inventory();
 	if (!inventory.success) return inventory;
 	const cap = await readCapacity(input, queueId, startedAt, round.noEvict);
 	if (cap && !cap.success) return cap;
 	const skip = new Set([...round.health.skip, ...round.health.skipOnce]);
-	return ok(tryReserve(input, inventory.data, round.reclaimed, skip, cap?.data));
+	const first = tryReserve(input, inventory.data, round.reclaimed, skip, cap?.data);
+	if (first.kind !== "need-disk") return ok(first);
+	// the plan boots something: read the disk once (outside the lock), then reserve again with the verdict
+	const verdict = await input.disk?.verdict();
+	const second = tryReserve(
+		input,
+		inventory.data,
+		round.reclaimed,
+		skip,
+		cap?.data,
+		verdict?.success ? verdict.data : OK_DISK
+	);
+	return ok(second.kind === "need-disk" ? { kind: "error", error: "disk verdict missing" } : second);
 }
 
 async function readCapacity(
@@ -760,17 +829,25 @@ async function evictIdle(input: ClaimInput, evict: Eviction[], noEvict: Set<stri
 	}
 }
 
-type Attempt = Reservation | { kind: "conflict"; error: string } | { kind: "error"; error: string };
+type Attempt =
+	| Reservation
+	| { kind: "conflict"; error: string }
+	| { kind: "error"; error: string }
+	| { kind: "need-disk" };
+
+/** An `Attempt` once the disk verdict, if one was needed, is in. */
+type Settled = Exclude<Attempt, { kind: "need-disk" }>;
 
 function tryReserve(
 	input: ClaimInput,
 	inventory: InventoryDevice[],
 	reclaimed: string[],
 	skip: ReadonlySet<string>,
-	cap?: CapacityRound
+	cap?: CapacityRound,
+	disk?: DiskVerdict
 ): Attempt {
 	try {
-		return input.store.transaction(() => reserve(input, inventory, reclaimed, skip, cap));
+		return input.store.transaction(() => reserve(input, inventory, reclaimed, skip, cap, disk));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { kind: isUniqueConflict(error) ? "conflict" : "error", error: message };
