@@ -36,6 +36,14 @@
 | 30 | `record use` exits 1 `use_failed` / `helper_missing` | The helper failed on the device (its prerequisite does not hold, a missing wait); or the module / export is not where `<module#fn>` says (module is relative to the cwd) | Nothing was recorded. Read the printed `screen-at-failure.txt` under `$WARDEN_HOME/ui/<udid>/use/<ts>/`, bring the device to the helper's prerequisite, run `record use` again |
 | 31 | `record stop` config has `entries: []` and a "fill by hand" hint | Release build (route capture needs a dev client's React DevTools hook through Metro), no `routerRoot` on the suite, or 3 failed route reads in a row ended capture | Record against a dev client (`warden dev`, `ui open --metro`); set `routerRoot` in the suite; or write `entries` by hand. warden never edits `warden.config.ts` |
 | 32 | Dev client crashes at start with `Cannot find native module '<X>'` after a native dependency change | The dev build was made from a stale git-ignored `ios/` / `android/` (prebuild and `pod install` skipped), so it lacks the new module | Current warden regenerates a CNG native dir prebuilt for another fingerprint before a local build (log: `ios/ was prebuilt for …: removing it`). A build cached by an older warden stays: `warden builds rm <hash>` (the hash `warden dev` logs; also forgets its install records), then `warden dev ios` rebuilds. Never via EAS unless the project configures it |
+| 33 | `several e2e suites — name one (…)` / `no e2e suite "x"` / `no e2e suites in warden.config.ts and no e2e/ specs … run warden init` | `[suite]` is optional only with one suite; with none configured the default suite needs an Expo app with `e2e/` | Name the suite, or `warden init` |
+| 34 | `suite "x" runs on ios and android — pass --platform` | The suite sets no `platform` | `--platform ios\|android`, or set `e2e.<suite>.platform` |
+| 35 | `--all and --specs are exclusive`, `--all / --specs select without a diff — drop --files`, `--specs matched no spec` | Selection flags clash, or the ids/globs match nothing | Use one of them, drop `--files`; list ids with `warden e2e <suite> --all --dry-run` |
+| 36 | `--passes N needs isolate "spec"` (flag or suite) | `isolate: device` reruns a whole shard, so it cannot repeat per spec | `isolate: "spec"` in the suite (the default once `passes > 1`), or drop `--passes` |
+| 37 | `--install-mode / --reset-keychain need an app to install, but suite "x" has no app`; `--reset-keychain needs --install-mode` | The suite installs nothing, or the keychain reset has no mode | Set `e2e.<suite>.app` or pass `--app`; add `--install-mode clean\|reinstall`. Refused before any device is claimed |
+| 38 | `--devices needs e2e.<suite>.devices` / `--devices: no leg "x" (…)` | The suite has no `devices` legs, or the profile is not one of them | Use a profile listed in the error, `default`, or `all`. `--profile` / `--count` replace the legs |
+| 39 | Config load fails: `slim is iOS-only`, `slim: <unknown id>`, `serveReady needs serve`, `devices replaces profile / count`, `at least one device leg must be a default one`, `passes > 1 needs isolate "spec"`, `e2e.<suite>.warmRunners was removed` | Suite schema (unknown keys are errors too) | Fix the key named in the message; `warmRunners` is now `warmDrivers`; slim ids come from `warden sim profiles` |
+| 40 | Claim sits on `queued #N of M (priority) — <reason>` | Host capacity or memory pressure holds the boot queue (a macOS kernel `warn` holds it only under 25% free; `critical` always) | `warden capacity` / `warden queue` show why and the order. `--no-wait` fails at once; `--wait <dur>` bounds it (default 30m); `WARDEN_CAPACITY=off` bypasses the gate (own risk) |
 
 ## Code lookup
 
@@ -44,9 +52,9 @@
 | Exit | Error codes |
 |---|---|
 | 0 | ok |
-| 1 | `failed` `usage` `target_not_found` `no_alert` `no_recording` `recording_active` `target_exists` `empty_recording` `verify_failed` `verify_unavailable` `wait_target_absent` `wait_target_hidden` `wait_target_present` `wait_text_absent` `wait_not_stable` |
-| 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` |
-| 3 | `engine_unavailable` `devtools_unavailable` |
+| 1 | `failed` `usage` `target_not_found` `no_alert` `no_recording` `recording_active` `target_exists` `empty_recording` `verify_failed` `verify_unavailable` `helper_missing` `use_failed` `wait_target_absent` `wait_target_hidden` `wait_target_present` `wait_text_absent` `wait_not_stable` `session_active` `session_not_found` `app_not_found` `unsupported` `not_profileable` (perf codes) |
+| 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` `device_unknown` |
+| 3 | `engine_unavailable` `devtools_unavailable` `tool_missing` |
 | 4 | `stale_ref` (snapshot again) |
 | 130 | `interrupted` |
 
@@ -54,7 +62,7 @@ Other codes:
 
 | Code | Meaning |
 |---|---|
-| `E2eError` codes | `LOCATOR_NOT_FOUND` `LOCATOR_AMBIGUOUS` `INVALID_LOCATOR` `ACTION_FAILED` `TIMEOUT` `NOT_ACTIONABLE` `INVALID_ARGUMENT` `SESSION` `DRIVER` `ASSERTION` |
+| `E2eError` codes | `LOCATOR_NOT_FOUND` `LOCATOR_AMBIGUOUS` `INVALID_LOCATOR` `ACTION_FAILED` `TIMEOUT` `NOT_ACTIONABLE` `INVALID_ARGUMENT` `SESSION` `DRIVER` `ASSERTION` `PERF_BUDGET` (a `device.perf.stop()` budget breach; `warden e2e --perf` lists it under the test) |
 | `no driver factory configured` | `bun test` run without `--preload @delacour/warden-e2e/preload` (and no preload in `bunfig.toml`) |
 | `warden e2e` exit | 0 ok, 1 a required spec failed, 130 interrupted |
 | `warden affected --strict` | exit 3 when a changed file reaches no spec |

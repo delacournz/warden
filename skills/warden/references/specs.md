@@ -35,6 +35,8 @@ import { test, expect, describe, beforeEach, afterEach, beforeAll, afterAll, E2e
 import type { App, Device, Screen, Locator, TestFixtures } from "@delacour/warden-e2e";
 ```
 
+Other type exports: `OpenOptions OpenWaitUntil SystemAlerts DevicePerf PerfStartOptions PerfReport PerfBudgets PerfBreach LocatorReading TapOptions TapUntil PinchOptions RotateOptions ScreenGestures ScreenPinchOptions ScreenRotateOptions ScreenPathOptions`; value `WARDEN_E2E_VERSION`.
+
 Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload` are published. (The repo's example helpers use subpaths because the workspace exposes `./*`; copy the root type imports instead.)
 
 ## Test API
@@ -42,12 +44,12 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 - `test(title, [options], async ({ app, device, screen, platform }) => ...)`
 - `options`: `{ timeout, skip, only, platforms: ("ios"|"android")[], retry }`. `retry` is bun's retry; only the last attempt lands in `results.jsonl`.
 - `test.skip`, `test.only`, `test.todo(title)`, `test.skipIf(cond)(title, body)`.
-- `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none", systemAlerts?: "accept" | "dismiss" | "off" })` applies to the file or the enclosing `describe`. `systemAlerts` (default `"off"`): reads, actions and `expect` that see an alert on top answer it (`device.alert(mode)`, 3 answers max per look) and look again. Answers the app's own alerts too. `"dismiss"` answers iOS's "Open in …?" sheet with Open, and nothing is answered while `device.openLink` waits on a link (it owns the sheet).
+- `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none", systemAlerts?: "accept" | "dismiss" | "off" })` applies to the file or the enclosing `describe`; put `timeout` above the tests it is for (after a test in the same scope it warns on stderr and that test keeps its old timeout). `systemAlerts` (default `"off"`): reads, actions and `expect` that see an alert on top answer it (`device.alert(mode)`, 3 answers max per look) and look again. Answers the app's own alerts too. `"dismiss"` answers iOS's "Open in …?" sheet with Open, and nothing is answered while `device.openLink` waits on a link (it owns the sheet).
 - `test.extend<Extra>({ name: async (base, use) => { await use(value) } })` returns a `test` with the extra fixture.
 - `describe(title, [{ serial }], body)`. `serial` is accepted but changes nothing (bun runs a file's tests in order).
 - `beforeEach/afterEach` receive the base fixtures; `it.beforeEach/afterEach` on a `test.extend` result receive its fixtures too and run only for its tests. `beforeAll/afterAll` receive `app`, `device`, `screen`, `platform` only.
 - The runner calls `app.open()` before every test unless `launch: "none"`. A spec starts from a fresh launch.
-- Timeouts: test 120 s, action 30 s, assertion 5 s. Precedence: test option, then `test.use`, then env (`WARDEN_E2E_*`). In a suite, set them under `spec`.
+- Timeouts: test 120 s, action 30 s (`waitFor`, `scrollTo`, actions), assertion 5 s (`expect`). Precedence: test option, then `test.use`, then env (`WARDEN_E2E_*`). In a suite, set them under `spec`.
 
 ## Fixtures
 
@@ -77,17 +79,38 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `snapshot({ interactiveOnly? })` | AX tree as text (same format as `warden ui snapshot`) |
 | `settle({ quietMs = 250, timeout = 3000 })` | wait for a quiet UI; returns `{ quiet, waitedMs }`; hitting the deadline is not an error |
 | `devtools` | `undefined` without `WARDEN_METRO_URL` (release build) |
+| `perf` | `warden perf` from a spec, see below |
 
 ### `device.devtools` (dev client over Metro)
 
 | Member | Does |
 |---|---|
-| `evaluate(expr)` | run JS in the app; returns a result object |
+| `evaluate(expr)` | run JS in the app; returns a result object (`success`, `data` / `error`) |
 | `reloadJs()` | reload the JS bundle |
-| `tree()` | React component tree with rects |
-| `network.entries()` | captured requests |
+| `tree()` | React component tree with rects (`devtools_unavailable` without the DevTools hook) |
+| `network.entries()` / `clear()` | captured requests / drop them |
 | `console.lines()` / `clear()` / `mark(label)` | captured console |
 | `connect()` | the attached facet; throws `SESSION` when unreachable |
+
+### `device.perf` (profile the app from a spec)
+
+Shells out to the `warden` that started the run (`WARDEN_BIN`); by hand it throws `SESSION` ("device.perf unavailable"). One session per device at a time.
+
+| Member | Does |
+|---|---|
+| `start({ js?, react?, native?: boolean \| "perfetto" \| "simpleperf", metrics?, frames?, logs?, all?, relaunch?, reset?, maxDurationMs? })` | open a session; no capture flag = warden's default set; `relaunch` arms captures then launches (startup recorded); `reset` = relaunch after wiping app data; `maxDurationMs` caps it (warden default 30 s, max 5 min). Returns `{ sessionId }` |
+| `mark(label)` | label on the session timeline; commits, hangs and jank are tagged with the last mark |
+| `stop({ budgets? })` | end it, return the `PerfReport` (`metrics`, `findings`, `marks`, `summary`, `reportPath`). Copies `report.json`, `report.md`, `session.json` to `<attemptDir>/perf/`. Throws `PERF_BUDGET` when over budget |
+| `active` | a session this device opened and has not stopped |
+
+Budgets (lower is better, all optional): `startupColdMs jankPct maxCommitMs p95CpuPct peakMemoryMb`. They come from the suite's `perf.budgets` in `warden.config.ts` (`WARDEN_PERF_BUDGETS`); `stop({ budgets })` replaces them per key. A metric whose capture did not run cannot breach. `warden e2e --perf <all|react,js,...>` records the captures for every attempt (`WARDEN_PERF`).
+
+```ts
+await device.perf.start({ react: true, metrics: true, relaunch: true });
+await device.perf.mark("open list");
+// ...drive...
+const report = await device.perf.stop({ budgets: { maxCommitMs: 80 } });
+```
 
 ### `screen` (queries are lazy until an action or assertion)
 
@@ -121,7 +144,7 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
   - `fill(text, { via? })` empties the field, puts the text in, verifies on two reads, retries once. `via` is `"paste"` (default: iOS pastes with one Cmd+V instead of typing per key; falls back to typing if the pasteboard write fails) or `"type"`. The retry always types. Android always types. Secure fields are pasted but not verified.
   - `clear()`, `type(text)` (at the caret)
   - `press(key, { modifiers? })` sends a KEY (`Enter Backspace Tab Space Escape Delete Up Down Left Right`), it is not a tap. Use `tap()` to tap.
-  - `swipe({ direction, momentum? })`, `scrollTo()`
+  - `swipe({ direction, momentum? })`, `scrollTo({ direction = "down", momentum?, maxSwipes = 10, timeout? })`
   - `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` (positive = clockwise). Out-of-range `scale`/`degrees` and unsupported gestures throw `INVALID_ARGUMENT` (no `capabilities.pinch`, or more than `maxPointers` fingers; Android without `warden-uiad`: no pinch/rotate, 1-finger paths only): skip with `test({ platforms: ["ios"] })`.
 
 ## Matchers
@@ -131,9 +154,9 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 `toBeVisible toBeHidden toHaveText(t, { exact? }) toContainText(t, { ignoreCase? }) toHaveValue(v) toBeChecked({ checked? }) toBeEnabled toBeDisabled toHaveCount(n)`. All take `{ timeout? }`.
 
 - Zero matches keep polling. Several matches fail at once (except `toHaveCount`).
-- `.not` passes only after the inverted state held for 1000 ms.
+- `.not` passes only after the inverted state held for 1000 ms (sooner on iOS/Android when the driver reports a quiet screen).
 - `expect.soft(locator)` records the failure and the test fails when its body ends.
-- Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION`.
+- Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION PERF_BUDGET`. `E2eError` also carries `screen` (AX tree text at the failure, when known) and `matches` (count for `LOCATOR_AMBIGUOUS`).
 
 ## Example spec (`apps/example/e2e/todos.e2e.ts`)
 
@@ -204,7 +227,7 @@ WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=<bundleId> \
 ```
 
 - The preload is mandatory unless `bunfig.toml` already has it.
-- Optional env: `WARDEN_PLATFORM=android`, `WARDEN_METRO_URL` and `WARDEN_LAUNCH_ARGS` (JSON array) for a dev client (take both from `warden dev ios --json`), `WARDEN_E2E_OUT`, `WARDEN_E2E_TIMEOUT`, `WARDEN_E2E_ACTION_TIMEOUT`, `WARDEN_E2E_ASSERTION_TIMEOUT` (ms), `WARDEN_E2E_DEBUG=1` (log every helper op with its duration), `WARDEN_APP_PATH`, `WARDEN_SIMD_SOCKET`.
+- Optional env: `WARDEN_PLATFORM=android`, `WARDEN_METRO_URL` and `WARDEN_LAUNCH_ARGS` (JSON array) for a dev client (take both from `warden dev ios --json`), `WARDEN_E2E_OUT`, `WARDEN_E2E_TIMEOUT`, `WARDEN_E2E_ACTION_TIMEOUT`, `WARDEN_E2E_ASSERTION_TIMEOUT` (ms), `WARDEN_BIN` (JSON argv of warden; needed by `device.perf`), `WARDEN_PERF` / `WARDEN_PERF_BUDGETS`, `WARDEN_E2E_DEBUG=1` (log every helper op with its duration), `WARDEN_APP_PATH`, `WARDEN_SIMD_SOCKET`.
 - Release the lease when done: `warden release <leaseId>`.
 
 ## Artifacts
@@ -212,8 +235,10 @@ WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=<bundleId> \
 `<out>/<specId>/<title-slug>-<hash6>/`. `<out>` is `WARDEN_E2E_OUT`, default `.warden-e2e/<ISO time>`. Under `warden e2e` it is `<batchDir>/e2e/<worker>-<seq>/`.
 
 - Always: `trace.jsonl`, `screenshots/`.
-- On failure: `failure.png`, `screen-at-failure.txt`, plus `console.jsonl` and `network.jsonl` with devtools.
-- `<out>/results.jsonl`: one line per test, status `passed | failed | skipped | timed-out`.
+- On failure: `failure.png`, `screen-at-failure.txt`, `native.log` (+ iOS `.ips` crash reports) best effort, plus `console.jsonl` and `network.jsonl` with devtools.
+- With `device.perf` / `--perf`: `perf/report.json`, `perf/report.md`, `perf/session.json`.
+- `<out>/results.jsonl`: one line per test (`file title status durationMs startedAt error? artifacts{dir,files} device`), status `passed | failed | skipped | timed-out`. `files` lists what was written into the attempt dir.
+- Under `warden e2e` the batch dir also holds `e2e-report.json` (verdicts; `--report <file>` copies it).
 - Read `screen-at-failure.txt` first: it is the full AX tree at the failure.
 
 ## Not in the API

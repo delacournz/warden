@@ -39,32 +39,37 @@ Open the reference file for details before acting; this file only routes.
 | set a new Expo app up for warden | `warden init --bundle-id <id>` → bundle id into `app.json`, `warden.config.ts`, `e2e/smoke.e2e.ts`; names packages to install (`expo-dev-client`, `@delacour/warden-e2e`), installs nothing |
 | run the app in this worktree (replaces `expo run:ios`) | `warden dev ios --json` (platform defaults to ios) → first stdout line `{ udid, port, metroUrl, leaseIds }`; checks bundle id + `expo-dev-client` first; installs the dev build matching the native fingerprint (installed → cache → EAS only with `eas.json`/config → local build, which regenerates a git-ignored `ios/`/`android/` prebuilt for another fingerprint; `--no-build` / `--no-eas` to skip); owns Metro on a leased port, refuses another checkout's Metro, opens the dev client; Ctrl-C releases. Agents run `--json` (plain output, no dashboard); the interactive dashboard is for people, `--no-tui` forces plain output on a TTY |
 | debug the running app | `warden dev logs --kind bundle_failed,error` (Metro) · `warden ui exceptions` · `warden ui logs --level warn` · `warden ui logpoint add src/x.tsx:42 '<expr>'` → `logpoint hits` · `warden ui eval '<expr>'` (see ui.md Devtools) |
-| same over MCP | `warden mcp` (stdio): `metro_logs`, `app_console`, `app_exceptions`, `app_network`, `app_eval`, `app_tree`, `logpoint_*`, `profile_*` |
-| dev build on a device | `warden app ensure ios --udid <udid> --json [--variant dev\|e2e]` |
+| same over MCP | `warden mcp` (stdio): `dev_sessions`, `metro_logs`, `app_console`, `app_exceptions`, `app_network`, `app_eval`, `app_tree`, `app_route`, `app_reload`, `devtools_status`/`devtools_resume`, `logpoint_*`, `profile_*` |
+| dev build on a device | `warden app ensure ios --udid <udid> --json [--variant dev\|e2e]` · native hash: `warden app fingerprint [ios\|android]` |
+| cached builds | `warden builds ls` · `builds rm <hash…> [--platform p] [--dry-run] [--yes]` (also forgets installs; fixes a stale dev build) · `builds prune [--max-size 20G]` · `builds import <.app\|.apk>` |
+| profile an app | `warden perf` (`doctor` → `record` → `report` → `query` → `diff`; see perf.md) |
 | record a `warden ui` session into a spec | `warden ui record start <id> [--helper <module#fn>]` → drive → `record note\|use <module#fn>\|undo\|status\|cancel` → `record stop [--no-verify]` (verifies on the same device) |
 | the specs a change needs | `warden affected [suite] --base main --explain [--strict] [--json]` |
 | run them on leased devices | `warden e2e [suite] [--base main\|--all\|--specs a,b] [--count N] [--dry-run] [--devices all] [--no-shutdown] [--no-warm] [--headless] [--report f]` |
 | N devices + ports for a script | `warden run ios --count N --port 8091:20 [--app] -- <cmd>` |
 | independent jobs over N devices | `warden batch ios\|<preset> --count N --jobs-from <file\|-> -- <cmd {job} {udid}>` |
-| a free port | `warden port claim --json` (`--from 8091 --span 20`) |
+| a free port | `warden port claim --json` (`--from 8091 --span 20`) · `warden port ls` · `warden port release <port…>\|--lease <id…>\|--mine` |
 | who holds what / all devices | `warden ls` · `warden devices` (`list`) |
+| host budget / my place in the boot queue | `warden capacity` · `warden queue` |
 | is this device free or mine | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a bare lease alive | `warden heartbeat <leaseId…>` (prefer a wrapper) |
 | device misbehaving | `warden release <leaseId> --bad "<why>"` (undo: `warden sim unquarantine <udid>`) |
 | fewer daemons on a sim | iOS sims warden creates are slim by default (`--no-slim` / `slim: false` / `WARDEN_SLIM=0` opt out; a plain `claim` never restores). By hand: `warden sim slim <udid>\|--booted [--dry-run\|--restore] [--except <ids>] [--keep <labels>]` |
 | slim categories (`--except` ids) | `warden sim profiles`; common: `store` push/StoreKit, `web` universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker |
 | a sim's real memory | `warden sim measure [udid\|--booted]` · `warden devices --mem` |
-| clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` · `warden sims` (`prune --dry-run`, then `--yes`) |
+| clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` (`golden ls`, `golden prune`) · `warden sims` (= `audit`; `prune --dry-run`, then `--yes`; `delete <udid…>`) |
 | reclaim dead leases | `warden gc` (auto every 10 min; never deletes, never touches foreign devices) |
 | setup / helper problems | `warden doctor [--fetch-helper]` |
-| install / update | `npm i -g @delacour/warden && warden install` · `warden update [--check]` · skill: `warden skill install` |
+| version / channel | `warden version [--json]` |
+| install / update | `npm i -g @delacour/warden && warden install` · `warden update [--check]` · skill: `warden skill install` · `warden skill show` |
 
-By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preload <file>`.
+By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preload <file>` (by hand needs bun; `warden e2e` / `ui record stop` don't).
 
 ## Facts
 
 - Lease TTL 30 min; a bare agent claim 5 min.
-- gc shuts a stale sim down 10+ min after it went stale, and never while a non-Apple app is in the foreground.
+- gc shuts a stale sim down 10+ min after it went stale, and never while a non-Apple app is in the foreground. It also shuts down unleased warden devices idle 20 min (`--idle`).
+- A declined `warden.config.ts` offer from `warden dev` is kept in `~/.warden/projects/<key>/`, shared by every worktree; nothing is written to the repo.
 - warden only creates, shuts down and erases `warden-<profile>-N` sims; `--adopt` opts a foreign device in.
 - The SessionEnd hook releases and shuts down what the session booted; `/clear` keeps sims up.
 - Codex: set `WARDEN_SESSION_ID`, or leases count as the shell's user leases.
