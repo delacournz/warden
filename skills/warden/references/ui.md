@@ -123,7 +123,14 @@ Values: bare `id=sign-in`, quoted `label="Sign in"`, or regex `text=/^\d+ left$/
 
 ## Devtools (dev client only, else exit 3 `devtools_unavailable`)
 
-While `warden dev` runs for the device, every devtools verb goes through its **broker**: one CDP socket the session holds, capturing console, exceptions and fetches from launch (no `logs start`, nothing missed). Without a dev session they connect directly as before.
+`warden dev` starts with **no** devtools broker (and no perf HUD): only build, Metro, sim and app. Each devtools verb then connects directly. Turn the broker on when you debug: `warden dev enable devtools` (or `warden dev ios --devtools --json` at start). While it is on, every devtools verb goes through it: one CDP socket the session holds, capturing console, exceptions and fetches from the moment it attached (no `logs start`, nothing missed after that). `warden dev disable devtools` frees the socket.
+
+| Command | Notes |
+|---|---|
+| `warden dev enable <hud\|perf\|devtools\|all…> [--udid u] [--json]` | turns extras on in the running session; `perf` = `hud`; prints `<udid>: hud on · devtools on`, `--json` `{ udid, features }` |
+| `warden dev disable <…>` · `warden dev status` | off again · read the state. `hud` needs the dashboard (a `--json` run: exit 1 "no dashboard", use `warden perf start`) |
+
+A session started by an older warden has no control socket: restart `warden dev`.
 
 | Command | Notes |
 |---|---|
@@ -134,10 +141,10 @@ While `warden dev` runs for the device, every devtools verb goes through its **b
 | `exceptions [--since] [--limit]` | uncaught errors, incl. the ones React Native reports as `console.error` |
 | `network [n] [--since] [--grep url] [--status 404\|4xx] [--limit n] [--include headers,body] [--id id]` | default 50; `--id` = one entry in full; `--include` adds headers/bodies |
 | `reload` | reload the app's JS |
-| `logpoint add <file:line[:col]> '<expr>' [--id x] [--hits n]` | logs `<expr>` each time the line runs, never pauses; needs `warden dev`, Fusebox |
+| `logpoint add <file:line[:col]> '<expr>' [--id x] [--hits n]` | logs `<expr>` each time the line runs, never pauses; needs `warden dev` with devtools on, Fusebox |
 | `logpoint hits [id] [--since]` · `logpoint list` · `logpoint rm <id>` · `logpoint clear` | values logged; logpoints die with the session, re-arm across reloads |
 | `devtools status` · `devtools resume` | broker state (`attached`, `yielded`, `lost`); `resume` after it yielded to Chrome DevTools |
-| `logs start [--bodies]` · `logs mark <label>` · `logs clear` · `logs stop` | collector, only without `warden dev` (a no-op `via: broker` with it) |
+| `logs start [--bodies]` · `logs mark <label>` · `logs clear` · `logs stop` | collector, only without a broker (a no-op `via: broker` with devtools on) |
 
 Bundler output is not in CDP: `warden dev logs [--kind bundle_failed,error] [--since 5m] [--grep x] [--follow] [--json]` reads Metro's output, classified (`bundle_start|bundle_done|bundle_failed|hmr|error|warn|info`, errors with file/line/code frame). Recorded only by the dashboard (a terminal); `--json`/`--no-tui` runs return `metro_log_unavailable`.
 
@@ -145,7 +152,7 @@ Debug loop: `warden dev logs --kind bundle_failed,error` (does it build?) → `u
 
 `--metro <url>` on each direct call; default order: `WARDEN_METRO_URL`, URL remembered by `open --metro`, your leased ports. Caveats:
 - Chrome DevTools (`j` in Expo) on a single-debugger Metro (headless/CI Expo) takes the page: the broker yields (`devtools status` → `yielded`) and calls fail `devtools_unavailable` until `devtools resume`, which disconnects DevTools. Interactive `warden dev` allows both at once.
-- Without a dev session, `logs`/`network` with no collector read the previous run's files, not the live app. `logs start` before the action. A collector ends `lost` after a 30 s reconnect budget (relaunch, crash, rebuild) and stops after 60 s idle.
+- Without a broker, `logs`/`network` with no collector read the previous run's files, not the live app. `logs start` before the action. A collector ends `lost` after a 30 s reconnect budget (relaunch, crash, rebuild) and stops after 60 s idle.
 - `reload` falls back to Metro's broadcast `/reload`, which reloads every device on that Metro.
 - A reload drops a running `warden perf js` / profile recording (Hermes ties it to the socket).
 

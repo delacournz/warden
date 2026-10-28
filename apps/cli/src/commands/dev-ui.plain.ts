@@ -1,3 +1,4 @@
+import { err, ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { note } from "../output";
 import type { DevReady, DevTaskHandle, DevUi } from "./dev-ui";
@@ -26,6 +27,9 @@ export function plainDevUi(ctx: CommandContext): DevUi {
 			);
 		},
 		onQuit: () => {},
+		setHud: (on) =>
+			on ? err("no dashboard to show a HUD (--no-tui / --json): use `warden perf start`") : ok(undefined),
+		hudOn: () => false,
 		close: () => Promise.resolve(),
 	};
 }

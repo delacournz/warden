@@ -24,7 +24,6 @@ export const SKILL_OMITTED_OPTIONS: Readonly<Record<string, string>> = {
 	"gc --quiet": "auto gc's own flag",
 	"dev --scheme": "derived from the Expo slug; only for a custom dev-client scheme",
 	"dev --ready-timeout": TUNING,
-	"dev --no-hud": "dashboard HUD, people only; agents run `--json`",
 	"dev --hud-interval": "dashboard HUD, people only; agents run `--json`",
 	"dev --no-open": TUNING,
 	"dev logs --tail": TUNING,

@@ -268,9 +268,12 @@ Options:
                               "reinstall")
   --reset-keychain            --install-mode: also reset the iOS simulator's
                               keychain
-  --no-hud                    no perf HUD in the dev TUI
+  --hud                       start the perf HUD sampler with the dashboard
+                              (default off: h or \`warden dev enable hud\`)
   --hud-interval <duration>   HUD sampling interval, at least 200ms (default:
                               "1s")
+  --devtools                  start the CDP devtools broker with the session
+                              (default off: \`warden dev enable devtools\`)
   --no-open                   don't open the dev client (Metro + the leases
                               only)
   --no-tui                    plain output: Metro on this terminal, no dashboard
@@ -284,6 +287,12 @@ Options:
 Commands:
   logs                        Metro output of a running \`warden dev\` session,
                               classified (bundle errors, HMR, warnings)
+  enable <features...>        start the perf HUD sampler and/or CDP devtools
+                              broker of a running \`warden dev\` (both start off)
+  disable <features...>       stop the perf HUD sampler and/or CDP devtools
+                              broker of a running \`warden dev\` (both start off)
+  status                      which extras (perf HUD, devtools broker) a running
+                              \`warden dev\` has on
 
 Examples:
   warden dev
@@ -306,7 +315,45 @@ Options:
                    bundle_start,bundle_done,bundle_failed,hmr,error,warn,info
   --follow         keep printing new entries until interrupted
   --json           one JSON object per line
-  -h, --help       display help for command"
+  -h, --help       display help for command
+
+$ warden dev enable --help
+Usage: warden dev enable [options] <features...>
+
+start the perf HUD sampler and/or CDP devtools broker of a running \`warden dev\`
+(both start off)
+
+Arguments:
+  features       hud | perf | devtools | all (comma or space separated)
+
+Options:
+  --udid <udid>  the session on this device (default: the only running one)
+  --json         print { udid, features } as JSON
+  -h, --help     display help for command
+
+$ warden dev disable --help
+Usage: warden dev disable [options] <features...>
+
+stop the perf HUD sampler and/or CDP devtools broker of a running \`warden dev\`
+(both start off)
+
+Arguments:
+  features       hud | perf | devtools | all (comma or space separated)
+
+Options:
+  --udid <udid>  the session on this device (default: the only running one)
+  --json         print { udid, features } as JSON
+  -h, --help     display help for command
+
+$ warden dev status --help
+Usage: warden dev status [options]
+
+which extras (perf HUD, devtools broker) a running \`warden dev\` has on
+
+Options:
+  --udid <udid>  the session on this device (default: the only running one)
+  --json         print { udid, features } as JSON
+  -h, --help     display help for command"
 `;
 
 exports[`help output warden batch --help (and nested subcommands) 1`] = `

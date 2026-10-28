@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
+import { Option } from "@commander-js/extra-typings";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import { appChoices, bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
 import type { ProjectContext } from "@delacour/warden-core/builds/ensure";
@@ -25,6 +26,13 @@ import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import type { Broker, BrokerOptions } from "../dev-broker/broker";
 import type { BrokerResult } from "../dev-broker/broker.types";
+import {
+	controlSocketPath,
+	type DevControlResponse,
+	type DevFeature,
+	type DevFeatures,
+	serveDevControl,
+} from "../dev-control";
 import { removeDevSession, updateDevSession, writeDevSession } from "../dev-session";
 import { parseHudInterval } from "../dev-tui/hud";
 import { releaseDevices } from "../device-lease";
@@ -68,6 +76,7 @@ import { revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
+import { registerDevControl } from "./dev-control";
 import { registerDevLogs } from "./dev-logs";
 import { type DevOverlay, diagnoseDev, offerDevSetup } from "./dev-setup";
 import type { DevActionHost, DevTaskHandle, DevUi } from "./dev-ui";
@@ -132,8 +141,10 @@ type DevOpts = ClaimFlagValues & {
 	tui?: boolean;
 	/** false = `--no-open` */
 	open: boolean;
-	/** false = `--no-hud`: no perf HUD in the dev TUI */
-	hud: boolean;
+	/** `--hud`: start the perf HUD sampler with the TUI (default off; `h` / `warden dev enable hud` later) */
+	hud?: boolean;
+	/** `--devtools`: start the CDP devtools broker with the session (default off; `warden dev enable devtools` later) */
+	devtools?: boolean;
 	/** `--hud-interval`: how often the HUD samples the dev client (min 200ms) */
 	hudInterval: string;
 	/** false = `--no-shutdown`: leave the sim dev leased booted when dev ends */
@@ -652,8 +663,8 @@ function registerDevSession(ctx: CommandContext, deps: DevDeps, r: Running, metr
 
 /**
  * Starts the session's devtools broker (one CDP socket shared by `warden ui`, `warden mcp` and the perf keys) and
- * records its socket in the registry. Best-effort: without it those verbs fall back to their own connection. Resolves
- * with the function that closes it.
+ * records its socket in the registry. Without it those verbs fall back to their own connection. Resolves with the
+ * function that closes it.
  */
 async function startDevBroker(
 	ui: DevUi,
@@ -661,9 +672,9 @@ async function startDevBroker(
 	r: Running,
 	metroUrl: string,
 	appId: string | undefined
-): Promise<() => Promise<void>> {
+): AsyncResult<() => Promise<void>> {
 	const leaseId = r.session.leaseIds[0];
-	if (deps.startBroker === undefined || leaseId === undefined) return async () => undefined;
+	if (deps.startBroker === undefined || leaseId === undefined) return err("no devtools broker for this session");
 	const task = ui.task("devtools", "devtools");
 	let attached = false;
 	const started = await deps.startBroker({
@@ -683,10 +694,93 @@ async function startDevBroker(
 	});
 	if (!started.success) {
 		task.fail(started.error.message);
-		return async () => undefined;
+		return err(started.error.message);
 	}
 	updateDevSession(ui.ctx.env, leaseId, { brokerSocket: started.data.socketPath });
-	return () => started.data.close();
+	return ok(async () => {
+		updateDevSession(ui.ctx.env, leaseId, { brokerSocket: undefined });
+		await started.data.close();
+	});
+}
+
+/** The opt-in extras of a running session: the HUD sampler (the ui's) and the devtools broker (ours). */
+type DevExtras = {
+	features(): DevFeatures;
+	set(feature: DevFeature, on: boolean): Promise<DevControlResponse>;
+	close(): Promise<void>;
+};
+
+/**
+ * Off unless `--hud` / `--devtools` or `warden dev enable` asks: a dev session is build, Metro, sim and app, and
+ * nothing samples or holds a CDP socket the agent did not ask for. Toggles run one at a time (the control socket
+ * queues them).
+ */
+function devExtras(ui: DevUi, deps: DevDeps, r: Running, metroUrl: string, appId: string | undefined): DevExtras {
+	let closeBroker: (() => Promise<void>) | undefined;
+	const features = (): DevFeatures => ({ hud: ui.hudOn(), devtools: closeBroker !== undefined });
+	const answer = (result: Result<void>): DevControlResponse =>
+		result.success ? { ok: true, features: features() } : { ok: false, error: result.error, features: features() };
+	const setDevtools = async (on: boolean): AsyncResult<void> => {
+		if (on && closeBroker === undefined) {
+			const started = await startDevBroker(ui, deps, r, metroUrl, appId);
+			if (!started.success) return started;
+			closeBroker = started.data;
+		} else if (!on && closeBroker !== undefined) {
+			const close = closeBroker;
+			closeBroker = undefined;
+			await close();
+			ui.task("devtools", "devtools").ok("off");
+		}
+		return ok(undefined);
+	};
+	return {
+		features,
+		set: async (feature, on) => answer(feature === "hud" ? ui.setHud(on) : await setDevtools(on)),
+		close: async () => {
+			await setDevtools(false);
+		},
+	};
+}
+
+/**
+ * Serves `warden dev enable|disable|status` for this session on `<logDir>/control.sock` and records the socket in the
+ * registry. Best-effort: without it the extras stay as the flags left them. Resolves with the function that closes it.
+ */
+async function serveDevExtras(ctx: CommandContext, r: Running, extras: DevExtras): Promise<() => Promise<void>> {
+	const leaseId = r.session.leaseIds[0];
+	if (leaseId === undefined) return async () => undefined;
+	const served = await serveDevControl(controlSocketPath(join(wardenHome(ctx.env), "dev", leaseId)), (request) =>
+		request.op === "status"
+			? Promise.resolve({ ok: true, features: extras.features() })
+			: extras.set(request.feature, request.on)
+	);
+	if (!served.success) {
+		warn(ctx, `warden dev: no control socket (${served.error}); warden dev enable|disable won't reach this session`);
+		return async () => undefined;
+	}
+	updateDevSession(ctx.env, leaseId, { controlSocket: served.data.socketPath });
+	return () => served.data.close();
+}
+
+/** The extras and their control socket, with `--devtools` applied; resolves with the function that stops them all. */
+async function startDevExtras(
+	ui: DevUi,
+	deps: DevDeps,
+	opts: DevOpts,
+	r: Running,
+	metroUrl: string,
+	appId: string | undefined
+): Promise<() => Promise<void>> {
+	const extras = devExtras(ui, deps, r, metroUrl, appId);
+	const closeControl = await serveDevExtras(ui.ctx, r, extras);
+	if (opts.devtools === true) {
+		const started = await extras.set("devtools", true);
+		if (!started.ok) warn(ui.ctx, `warden dev: devtools didn't start (${started.error})`);
+	}
+	return async () => {
+		await closeControl();
+		await extras.close();
+	};
 }
 
 /** Metro (started early, verified to serve this project) with the dev client opened on it; resolves with Metro's exit code. */
@@ -700,7 +794,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 		r.run.launch?.started?.proc.kill(signal);
 	});
 	let unregister = () => {};
-	let closeBroker = async (): Promise<void> => undefined;
+	let closeExtras = async (): Promise<void> => undefined;
 	try {
 		const metro = await r.launch.pending;
 		if (!metro.success) {
@@ -722,7 +816,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 			}
 		}
 		const bundle = bundleIdFor(r.project, r.platform);
-		closeBroker = await startDevBroker(ui, deps, r, metro.data.url, bundle.success ? bundle.data : undefined);
+		closeExtras = await startDevExtras(ui, deps, opts, r, metro.data.url, bundle.success ? bundle.data : undefined);
 		if (json)
 			emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }, "");
 		else
@@ -740,7 +834,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 			});
 		return await metroExit(metro.data.proc, swap);
 	} finally {
-		await closeBroker();
+		await closeExtras();
 		unregister();
 		stop();
 		await ui.close();
@@ -933,7 +1027,7 @@ async function dev(
 	const uiOpts: DevUiOpts = {
 		json: opts.json,
 		tui: opts.tui,
-		hud: { enabled: opts.hud, intervalMs: hudInterval.data },
+		hud: { enabled: opts.hud === true, intervalMs: hudInterval.data },
 	};
 	const ui = deps.selectUi?.(rawCtx, uiOpts) ?? (await selectDevUi(rawCtx, uiOpts, deps.loadTui));
 	try {
@@ -1127,8 +1221,13 @@ export function createDevCommand(deps: DevDeps): Command {
 				.addOption(installModeOption())
 				.option("--reset-keychain", "--install-mode: also reset the iOS simulator's keychain")
 				.addOption(legacyCleanOption())
-				.option("--no-hud", "no perf HUD in the dev TUI")
+				.option("--hud", "start the perf HUD sampler with the dashboard (default off: h or `warden dev enable hud`)")
+				.addOption(new Option("--no-hud", "the HUD is off by default; kept for old scripts").hideHelp())
 				.option("--hud-interval <duration>", "HUD sampling interval, at least 200ms", "1s")
+				.option(
+					"--devtools",
+					"start the CDP devtools broker with the session (default off: `warden dev enable devtools`)"
+				)
 				.option("--no-open", "don't open the dev client (Metro + the leases only)")
 				.option(
 					"--no-tui",
@@ -1141,6 +1240,7 @@ export function createDevCommand(deps: DevDeps): Command {
 				.addHelpText("after", "\nExamples:\n  warden dev\n  warden dev android -- --clear")
 				.action(async (platform, _expoArgs, opts) => done(await dev(ctx, deps, platform, opts)));
 			registerDevLogs(cmd, ctx, done);
+			registerDevControl(cmd, ctx, done);
 		},
 	});
 }
