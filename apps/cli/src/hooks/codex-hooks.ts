@@ -15,7 +15,10 @@ type Env = Record<string, string | undefined>;
  * hooks (same stdin JSON, exit 2 + stderr blocks a PreToolUse), but caps SessionEnd at 3 s
  * (codex-rs/hooks/src/events/session_end.rs: default 1 s, max 3 s).
  */
-export const CODEX_HOOKS: readonly WardenHookSpec[] = [{ event: "SessionEnd", name: "session-end", timeout: 3 }];
+export const CODEX_HOOKS: readonly WardenHookSpec[] = [
+	{ event: "SessionEnd", name: "session-end", timeout: 3 },
+	{ event: "SessionStart", name: "session-start", timeout: 3 },
+];
 
 /** Codex's config dir: `$CODEX_HOME`, else `~/.codex`. */
 export function codexHome(env: Env): string | undefined {
@@ -33,9 +36,18 @@ export function codexConfigPath(env: Env): string | undefined {
 	return home ? join(home, "config.toml") : undefined;
 }
 
-/** Add warden's hooks to a Codex `hooks.json` document. Pure + idempotent. */
-export function mergeCodexHooks(existing: unknown, binary: string): Result<MergedSettings> {
-	return mergeWardenHooks(existing, binary, CODEX_HOOKS, "hooks.json");
+/** Add warden's hooks to a Codex `hooks.json` document. Pure + idempotent; `declared` names hooks `config.toml` already has. */
+export function mergeCodexHooks(
+	existing: unknown,
+	binary: string,
+	declared: readonly HookName[] = []
+): Result<MergedSettings> {
+	return mergeWardenHooks(
+		existing,
+		binary,
+		CODEX_HOOKS.filter((h) => !declared.includes(h.name)),
+		"hooks.json"
+	);
 }
 
 /** True when `config.toml` declares the warden hook `name` in its `[[hooks.<Event>]]` tables. */

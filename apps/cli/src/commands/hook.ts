@@ -3,8 +3,10 @@ import { backgroundAllowed, selfCommand, spawnDetached } from "../autogc";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { shutdownReleasedDevices } from "../device-shutdown";
+import { diskGateEnabled, readDiskState } from "../disk-deps";
 import { type HookDeps, type HookResult, handleSessionEnd } from "../hooks/claude-pretool";
 import { errorMessage } from "../hooks/json";
+import { handleSessionStart } from "../hooks/session-start";
 
 function hookDeps(ctx: CommandContext): HookDeps {
 	return {
@@ -45,15 +47,53 @@ async function hook(ctx: CommandContext): Promise<number> {
 	return result.exitCode;
 }
 
+/** Longest the SessionStart hook waits for the hook JSON on stdin: its content is not used. */
+const STDIN_WAIT_MS = 300;
+
+/**
+ * SessionStart: one line for the agent when the disk or swap is under pressure, else nothing. Exits 0 always;
+ * the verdict is cached in the store for a minute.
+ */
+async function sessionStart(ctx: CommandContext): Promise<number> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			ctx.readStdin(),
+			new Promise((resolve) => {
+				timer = setTimeout(resolve, STDIN_WAIT_MS);
+			}),
+		]);
+	} catch {
+		// the hook JSON is not needed
+	} finally {
+		clearTimeout(timer);
+	}
+	const line = await handleSessionStart({
+		store: ctx.store,
+		now: ctx.now,
+		enabled: diskGateEnabled(ctx.env),
+		readDisk: () => readDiskState(ctx),
+	});
+	if (line) ctx.out(line);
+	return 0;
+}
+
 export const hookCommand = defineCommand({
 	name: "hook",
 	group: "Setup",
-	summary: "Claude Code / Codex hook: on session end shut down what the session booted + release its leases",
+	summary:
+		"Claude Code / Codex hooks: on session start hint at low disk or high swap; on session end shut down what the session booted + release its leases",
 	register: (cmd, ctx, done) => {
 		cmd
 			.command("pretool", { hidden: true })
 			.description("No-op, kept so a PreToolUse hook installed by an older warden keeps working")
 			.action(() => done(0));
+		cmd
+			.command("session-start")
+			.description(
+				"SessionStart: print one line when the disk or swap is under pressure, else nothing (always exits 0)"
+			)
+			.action(async () => done(await sessionStart(ctx)));
 		cmd
 			.command("session-end")
 			.description("SessionEnd: shut down what the session booted + release its leases (reads hook JSON on stdin)")

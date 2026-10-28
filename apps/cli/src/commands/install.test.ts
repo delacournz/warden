@@ -355,6 +355,10 @@ describe("warden install", () => {
 				"[[hooks.SessionEnd.hooks]]",
 				'type = "command"',
 				'command = "warden hook session-end"',
+				"[[hooks.SessionStart]]",
+				"[[hooks.SessionStart.hooks]]",
+				'type = "command"',
+				'command = "warden hook session-start"',
 				"",
 			].join("\n")
 		);

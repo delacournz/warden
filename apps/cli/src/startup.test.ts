@@ -93,6 +93,7 @@ describe("cold start: the commands agents call most", () => {
 	/** `--help` where a real call would touch a device or a toolchain; the module graph is the same up to dispatch. */
 	const CASES: { args: string[]; forbid: string[] }[] = [
 		{ args: ["hook", "pretool"], forbid: FORBID },
+		{ args: ["hook", "session-start", "--help"], forbid: FORBID },
 		{ args: ["heartbeat"], forbid: FORBID },
 		{ args: ["claim", "--help"], forbid: FORBID },
 		{ args: ["ls", "--json"], forbid: FORBID },

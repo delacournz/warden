@@ -16,9 +16,10 @@ describe("mergeClaudeSettings", () => {
 		expect(settings).toEqual({
 			hooks: {
 				SessionEnd: [{ hooks: [{ type: "command", command: `${BIN} hook session-end`, timeout: 30 }] }],
+				SessionStart: [{ hooks: [{ type: "command", command: `${BIN} hook session-start`, timeout: 5 }] }],
 			},
 		});
-		expect(WARDEN_HOOKS.map((h) => h.event)).toEqual(["SessionEnd"]);
+		expect(WARDEN_HOOKS.map((h) => h.event)).toEqual(["SessionEnd", "SessionStart"]);
 	});
 
 	test("preserves other settings and existing hooks, appends without clobbering", () => {
@@ -53,8 +54,9 @@ describe("mergeClaudeSettings", () => {
 			hooks: { SessionEnd: [{ hooks: [{ type: "command", command: "warden hook session-end" }] }] },
 		};
 		const { settings, changed } = ok(existing);
-		expect(changed).toBe(false);
+		expect(changed).toBe(true);
 		expect((settings.hooks as Record<string, unknown[]>).SessionEnd).toHaveLength(1);
+		expect(ok(settings).changed).toBe(false);
 	});
 
 	test("the retired PreToolUse hook of older versions is removed, other PreToolUse hooks stay", () => {
@@ -88,7 +90,7 @@ describe("mergeClaudeSettings", () => {
 			hooks: { PreToolUse: [{ matcher: "x", hooks: [{ type: "command", command: "warden hook pretool" }] }] },
 		};
 		const { settings } = ok(existing);
-		expect(Object.keys(settings.hooks as object)).toEqual(["SessionEnd"]);
+		expect(Object.keys(settings.hooks as object)).toEqual(["SessionEnd", "SessionStart"]);
 	});
 
 	test("rejects non-object settings / hooks", () => {
@@ -102,6 +104,10 @@ describe("mergeClaudeSettings", () => {
 describe("hasWardenHook", () => {
 	test("detects the session-end hook", () => {
 		expect(hasWardenHook(ok({}).settings, "session-end")).toBe(true);
+		expect(hasWardenHook(ok({}).settings, "session-start")).toBe(true);
+		expect(
+			hasWardenHook({ hooks: { SessionEnd: [{ hooks: [{ command: "warden hook session-end" }] }] } }, "session-start")
+		).toBe(false);
 		expect(hasWardenHook({}, "session-end")).toBe(false);
 		expect(hasWardenHook({ hooks: { SessionEnd: [{ hooks: [{ command: "other" }] }] } }, "session-end")).toBe(false);
 	});

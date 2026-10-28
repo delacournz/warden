@@ -10,7 +10,6 @@ const TUNING = "long-tail tuning; `--help` has it";
 
 /** Command paths as typed after `warden` (`"hook session-end"`). */
 export const SKILL_OMITTED_COMMANDS: Readonly<Record<string, string>> = {
-	hook: HOOK,
 	"hook session-end": HOOK,
 	completion: "shell completion, set up by `warden install`",
 };

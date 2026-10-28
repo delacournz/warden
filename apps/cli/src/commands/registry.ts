@@ -186,7 +186,8 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "hook",
 		group: "Setup",
-		summary: "Claude Code / Codex hook: on session end shut down what the session booted + release its leases",
+		summary:
+			"Claude Code / Codex hooks: on session start hint at low disk or high swap; on session end shut down what the session booted + release its leases",
 		load: async () => (await import("./hook")).hookCommand,
 	},
 	{

@@ -121,7 +121,7 @@ function claudeHook(home: string): Probe {
 	const path = join(home, ".claude", "settings.json");
 	return attempt(() => {
 		const settings: unknown = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
-		const missing = (["session-end"] as const).filter((name) => !hasWardenHook(settings, name));
+		const missing = (["session-end", "session-start"] as const).filter((name) => !hasWardenHook(settings, name));
 		return missing.length === 0
 			? { ok: true, detail: path }
 			: { ok: false, detail: `missing warden hook ${missing.join(", ")} — run \`warden install --claude\`` };
@@ -137,7 +137,7 @@ function codexHook(ctx: CommandContext): Probe {
 	return attempt(() => {
 		const hooks: unknown = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
 		const toml = existsSync(configPath) ? readFileSync(configPath, "utf8") : undefined;
-		const missing = (["session-end"] as const).filter(
+		const missing = (["session-end", "session-start"] as const).filter(
 			(name) => !hasWardenHook(hooks, name) && !codexTomlHasWardenHook(toml, name)
 		);
 		return missing.length === 0

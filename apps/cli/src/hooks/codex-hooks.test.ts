@@ -23,15 +23,22 @@ describe("codexHome / codexHooksPath", () => {
 });
 
 describe("mergeCodexHooks", () => {
-	test("empty → hooks.json with SessionEnd (3 s cap)", () => {
+	test("empty → hooks.json with SessionEnd and SessionStart (3 s cap)", () => {
 		const { settings, changed } = merged(undefined);
 		expect(changed).toBe(true);
 		expect(settings).toEqual({
 			hooks: {
 				SessionEnd: [{ hooks: [{ type: "command", command: `${BIN} hook session-end`, timeout: 3 }] }],
+				SessionStart: [{ hooks: [{ type: "command", command: `${BIN} hook session-start`, timeout: 3 }] }],
 			},
 		});
-		expect(CODEX_HOOKS.every((h) => h.event !== "SessionEnd" || h.timeout <= 3)).toBe(true);
+		expect(CODEX_HOOKS.every((h) => h.timeout <= 3)).toBe(true);
+	});
+
+	test("hooks config.toml already declares are left out of hooks.json", () => {
+		const result = mergeCodexHooks(undefined, BIN, ["session-end"]);
+		if (!result.success) throw new Error(result.error);
+		expect(Object.keys(result.data.settings.hooks as object)).toEqual(["SessionStart"]);
 	});
 
 	test("preserves other keys + hooks, idempotent", () => {

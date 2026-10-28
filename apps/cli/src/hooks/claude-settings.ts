@@ -1,20 +1,23 @@
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { isJsonObject, isRecord, type Json, type JsonObject } from "./json";
 
-export type HookName = "pretool" | "session-end";
+export type HookName = "pretool" | "session-end" | "session-start";
 
 /** Hooks older versions installed that `warden install` now removes (`warden hook pretool` is a no-op). */
 export const RETIRED_HOOKS: readonly HookName[] = ["pretool"];
 
 export type WardenHookSpec = {
-	event: "SessionEnd";
+	event: "SessionEnd" | "SessionStart";
 	name: HookName;
 	matcher?: string;
 	timeout: number;
 };
 
 /** Hooks `warden install --claude` adds to `~/.claude/settings.json`. */
-export const WARDEN_HOOKS: readonly WardenHookSpec[] = [{ event: "SessionEnd", name: "session-end", timeout: 30 }];
+export const WARDEN_HOOKS: readonly WardenHookSpec[] = [
+	{ event: "SessionEnd", name: "session-end", timeout: 30 },
+	{ event: "SessionStart", name: "session-start", timeout: 5 },
+];
 
 /** Matches `warden hook <name>` in any hook command (bare `warden` or a path to the binary). */
 function commandPattern(name: HookName): RegExp {

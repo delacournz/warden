@@ -7,7 +7,13 @@ import { type CompletionShell, completionScript, shellFromEnv } from "../complet
 import type { CommandContext } from "../context";
 import { type Agent, detectAgents } from "../hooks/agents";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
-import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook, mergeCodexHooks } from "../hooks/codex-hooks";
+import {
+	CODEX_HOOKS,
+	codexConfigPath,
+	codexHooksPath,
+	codexTomlHasWardenHook,
+	mergeCodexHooks,
+} from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
 import { lineDiff } from "../hooks/text-diff";
 import { heading, reportError } from "../output";
@@ -262,13 +268,14 @@ async function installCodexHooks(
 	configPath: string
 ): Promise<StepReport> {
 	const toml = readIfExists(configPath);
-	if (codexTomlHasWardenHook(toml, "session-end")) {
+	const declared = CODEX_HOOKS.filter((h) => codexTomlHasWardenHook(toml, h.name)).map((h) => h.name);
+	if (declared.length === CODEX_HOOKS.length) {
 		return report("codex-hooks", "unchanged", configPath);
 	}
 	const before = readIfExists(path);
 	const parsed = parseJson(before);
 	if (!parsed.success) return report("codex-hooks", "error", path, parsed.error);
-	const merged = mergeCodexHooks(parsed.data, HOOK_BINARY);
+	const merged = mergeCodexHooks(parsed.data, HOOK_BINARY, declared);
 	if (!merged.success) return report("codex-hooks", "error", path, merged.error);
 	if (!merged.data.changed) return report("codex-hooks", "unchanged", path);
 	return guardedWrite(ctx, flags, "codex-hooks", path, before ?? "", formatJson(merged.data.settings, before));
