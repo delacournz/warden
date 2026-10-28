@@ -40,7 +40,7 @@ The package is a small node shim plus one prebuilt binary per platform (`@delaco
 
 ```bash
 warden install            # binary + skill, rule and hooks for every detected agent
-warden install --claude   # force Claude Code only: skill (via `skills add`) + rule + SessionEnd hook in ~/.claude/settings.json
+warden install --claude   # force Claude Code only: skill (via `skills add`) + rule + SessionStart/SessionEnd hooks in ~/.claude/settings.json
 warden install --codex    # force Codex only: hooks in $CODEX_HOME/hooks.json
 ```
 

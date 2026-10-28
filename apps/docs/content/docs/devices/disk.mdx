@@ -1,0 +1,100 @@
+---
+title: Disk hygiene
+description: What fills the disk when agents run in parallel, how warden reports it, what it cleans up, and when it refuses new boots.
+icon: HardDrive
+---
+
+When many agents run in parallel, each task gets its own git worktree and its own Xcode or Gradle build, test runs clone simulators, and booted devices push memory into swap, which lives on the boot disk. Free space can fall by tens of gigabytes in minutes, and most of it is not in `~/Library/Caches`. warden checks the memory side first, then cleans up only what it can prove is safe to delete.
+
+```bash
+warden disk                      # what is filling the disk, and what warden can give back (read-only)
+warden gc --dry-run              # orphaned DerivedData / XCTest clones gc would remove
+warden worktrees                 # leftover git worktrees, with state and size
+warden worktrees --apply         # remove the clean, merged ones
+```
+
+## `warden disk`
+
+A read-only report on the volume holding `$HOME`:
+
+| Row | Source | Warns when |
+|---|---|---|
+| disk | `df -Pk $HOME` | free space under the floor; critical under the critical threshold |
+| swap | `sysctl vm.swapusage` · `/proc/meminfo` | more than 8 GB in use |
+| pressure | the same signal the [capacity gate](/docs/devices/capacity) reads | |
+| devices | booted sims and emulators, with their estimated memory | |
+| snapshots | `tmutil listlocalsnapshots /` (macOS) | any OS-update or Time Machine local snapshot |
+| uptime | `kern.boottime` · `/proc/uptime` | 7 days or more |
+
+Every warning has a one-line fix. Swap and snapshot warnings come first, because deleting files won't stop swap refilling the disk:
+
+- **Swap:** release or shut down idle devices (`warden gc --idle 0`); swap fully clears only on a reboot.
+- **OS-update snapshots:** a staged macOS update keeps every block deleted since it was downloaded. Install the update (reboot) to release them.
+- **Time Machine snapshots:** `sudo tmutil deletelocalsnapshots /`. warden prints the command and never runs `sudo`.
+- **Low free space:** `warden gc`, `warden builds rm`, `warden sims prune`.
+
+It then lists what warden itself can give back: the [build cache](/docs/devices/app-builds) against its cap, deletable simulators (`warden sims prune`), orphaned DerivedData and XCTest clones (`warden gc`), and removable worktrees (`warden worktrees`). A probe that fails is shown as unknown, never as a warning. `--json` prints the same report as one document.
+
+`warden doctor` runs the same checks as its `disk-free`, `swap` and `snapshots` rows.
+
+### Thresholds
+
+```
+floor    = max(20 GB, 10% of the volume)    free space under it warns
+critical = max(8 GB, 4% of the volume)      free space under it refuses new boots
+swap     = 8 GB                             swap in use above it warns
+```
+
+| | |
+|---|---|
+| `WARDEN_DISK_FLOOR_GB=<n>` | floor in GB |
+| `WARDEN_DISK_CRITICAL_GB=<n>` | critical threshold in GB (never above the floor) |
+| `WARDEN_DISK_SWAP_WARN_GB=<n>` | swap warning in GB |
+| `WARDEN_DISK=off` | turn off the claim gate, the low-disk gc trigger and the session-start hint (the report still runs) |
+
+## What `warden gc` sweeps
+
+Besides stale leases, idle devices and the build cache, `warden gc` removes two kinds of Xcode leftovers on macOS:
+
+- **DerivedData of deleted projects.** Each worktree's Xcode build gets its own `~/Library/Developer/Xcode/DerivedData/<name>-<hash>`, and it stays after the worktree is gone. Xcode records the workspace in that folder's `info.plist` (`WorkspacePath`); gc removes the folder only when that workspace no longer exists. A folder that records no workspace, a workspace on an unmounted volume, or a folder a running `xcodebuild` is using is kept. There is no idle-time guessing.
+- **XCTest device clones.** Parallel `xcodebuild test` runs clone simulators into `~/Library/Developer/XCTestDevices`. gc deletes the set when no `xcodebuild` is running and nothing in it has changed for an hour.
+
+If running processes can't be inspected, nothing is removed. Symlinks are never followed, and only folders under your home that you own are touched. `--dry-run` lists the orphans with their sizes and changes nothing; `--no-orphans` skips the sweep.
+
+With `WARDEN_GC_WORKTREES=merged`, gc also removes clean, merged worktrees, as `warden worktrees --apply` does. It is off by default.
+
+## `warden worktrees`
+
+Audits the linked worktrees of every repo warden has leased devices for, plus the current repo and any `--root <dir>` (a repo, or a folder scanned one level down). Each worktree gets one state:
+
+| State | Meaning | `--apply` |
+|---|---|---|
+| `merged` | clean, and its PR is merged (the PR's head is the worktree's HEAD) or its branch is in origin's default branch | removed |
+| `review` | uncommitted changes, or commits that exist on no remote | kept |
+| `unmerged` | clean and pushed, no merge found | kept |
+| `active` | files changed within `--idle` (default `3d`) | kept |
+| `in-use` | a process has its working directory inside, or a live lease belongs to it | kept |
+| `locked` | `git worktree lock`ed | kept |
+| `stale-ref` | registered, but the folder is gone | pruned |
+
+`--apply` runs `git worktree remove` (never `--force`, so git itself refuses a dirty tree) on `merged` worktrees and `git worktree prune` for `stale-ref`. It never deletes a branch, and refuses to remove the worktree you are standing in. A merged worktree touched within `--idle` counts as `active`; `--idle 0` turns that check off. `--no-fetch` skips `git fetch` before the merge checks, `--no-size` skips sizing, and `--json` prints the audit as one document.
+
+When a worktree goes, its DerivedData becomes an orphan, so the next `warden gc` removes that too.
+
+## Low-disk guards
+
+- **Claims.** A claim that would boot or create a device fails when free space is under the critical threshold:
+
+  ```
+  DISK_LOW: 6.0 GB free on the boot disk — new devices are refused. Run `warden disk` to see what to reclaim, then `warden gc` (WARDEN_DISK=off bypasses the gate)
+  ```
+
+  Reusing an already booted device is always allowed. Swap over its threshold holds new boots in the [queue](/docs/devices/capacity#queue), the same way memory pressure does.
+- **Background gc.** Every `claim`, `run`, `batch` and `dev` checks free space with one `statfs`. Under the floor, it starts a background `warden gc` at once instead of waiting for the usual 10-minute interval (at most once a minute).
+- **Session start.** `warden install` adds a `SessionStart` hook for Claude Code and Codex (`warden hook session-start`). When the disk is low or swap is high, the agent starts with one line:
+
+  ```
+  warden: swap 14.0G, disk 6.0G free — reuse booted devices, avoid parallel builds; see `warden disk`
+  ```
+
+  Otherwise it prints nothing. It reuses a result for up to 60 s and always exits 0.

@@ -7,7 +7,7 @@ icon: Bot
 Your coding agent needs the warden skill to know the claim, drive, release rules. Run `warden install`, or paste the prompt below into the agent.
 
 ```bash
-warden install    # skill + rule + SessionEnd hook for every detected agent; shows a diff, asks first
+warden install    # skill + rule + SessionStart/SessionEnd hooks for every detected agent; shows a diff, asks first
 ```
 
 ## Paste this into your agent
@@ -29,6 +29,7 @@ Set up warden for mobile device work in this repo.
 |---|---|---|
 | Skill | `skills/warden/`: `SKILL.md` + `references/{ui,specs,suites,troubleshooting}.md`, embedded in the binary | anything the [`skills`](https://github.com/vercel-labs/skills) CLI installs into |
 | Rule | `~/.claude/rules/warden.md`, written directly | Claude Code |
+| SessionStart hook | `warden hook session-start`: one line when the disk is low or swap is high ([Disk hygiene](/docs/devices/disk#low-disk-guards)) | Claude Code, Codex |
 | SessionEnd hook | `warden hook session-end` | Claude Code, Codex |
 
 The skill loads into Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, OpenCode, Windsurf, Zed and the other agents the `skills` CLI supports. Hooks exist only for Claude Code and Codex.
@@ -38,7 +39,7 @@ Agents are detected from `~/.claude` / `claude` on `PATH` and `$CODEX_HOME` (`~/
 ## Per agent
 
 ```bash
-warden install --claude   # Claude Code only: skill (via `skills add`) + rule + SessionEnd hook
+warden install --claude   # Claude Code only: skill (via `skills add`) + rule + SessionStart/SessionEnd hooks
 warden install --codex    # Codex only: hooks in $CODEX_HOME/hooks.json
 warden skill install      # the skill, into any agent the skills CLI offers
 ```
@@ -47,10 +48,10 @@ Every agent-config change shows a diff and asks first. `--yes` skips the prompt,
 
 <Tabs items={["Claude Code", "Codex", "Other agents"]}>
 <Tab value="Claude Code">
-`warden install --claude` installs the skill, the rule and the SessionEnd hook. It also removes the `PreToolUse` hook (`warden hook pretool`) that older versions installed. Details: [Agent rules](/docs/agents/rules#claude-code).
+`warden install --claude` installs the skill, the rule and the SessionStart and SessionEnd hooks. It also removes the `PreToolUse` hook (`warden hook pretool`) that older versions installed. Details: [Agent rules](/docs/agents/rules#claude-code).
 </Tab>
 <Tab value="Codex">
-`warden install --codex` merges the SessionEnd hook into `$CODEX_HOME/hooks.json`. Run `/hooks` in Codex once to trust it. Codex does not set a session id, so set `WARDEN_SESSION_ID`, or leases count as your shell's user leases. Details: [Agent rules](/docs/agents/rules#codex).
+`warden install --codex` merges the SessionStart and SessionEnd hooks into `$CODEX_HOME/hooks.json`. Run `/hooks` in Codex once to trust it. Codex does not set a session id, so set `WARDEN_SESSION_ID`, or leases count as your shell's user leases. Details: [Agent rules](/docs/agents/rules#codex).
 </Tab>
 <Tab value="Other agents">
 ```bash

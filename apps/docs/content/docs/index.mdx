@@ -41,7 +41,7 @@ Underneath, every device, port and app build on the Mac is leased machine-wide. 
 
 ## Works with
 
-The skill installs into any agent the [`skills`](https://github.com/vercel-labs/skills) CLI supports. Claude Code and Codex also get a SessionEnd hook that releases what a session leased. See [Set up your agent](/docs/agent-setup).
+The skill installs into any agent the [`skills`](https://github.com/vercel-labs/skills) CLI supports. Claude Code and Codex also get a SessionEnd hook that releases what a session leased, and a SessionStart hook that warns when the disk is low. See [Set up your agent](/docs/agent-setup).
 
 ## Limits
 

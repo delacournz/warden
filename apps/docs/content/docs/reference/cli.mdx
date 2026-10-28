@@ -30,6 +30,8 @@ This is the exhaustive list of `warden` commands and flags; use it to look up an
 | is this device free / mine? | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a long lease alive | `warden heartbeat --mine` |
 | reclaim dead leases | `warden gc` |
+| disk filling up? | `warden disk` ([guide](/docs/devices/disk)) |
+| leftover git worktrees | `warden worktrees` · `warden worktrees --apply` (merged + clean only) |
 | sim + runtime disk usage, what can go | `warden sims` · `warden sims prune --dry-run` |
 | pick sims to delete (any owner) | `warden sims delete` (`--suggested -y` off a terminal) |
 | is the agent loop fast enough? | `warden ui bench [--runs n] [--json]` |
@@ -331,7 +333,17 @@ Refresh heartbeats so leases don't go stale. Same selectors as `release`.
 
 ### `warden gc`
 
-Reclaim stale leases and shut down unleased warden devices idle for `--idle` (default `20m`). Never deletes devices — use `warden sims prune` to free sim disk. Then prunes the build cache, least-recently-used first, down to `--max-cache-size` (else `WARDEN_MAX_CACHE_SIZE`, default `20G`; the same cap as `warden builds prune --max-size`); builds used in the last 30 min and builds being fetched or built stay, and the notes list what was pruned. A bad `WARDEN_MAX_CACHE_SIZE` only skips the prune, with a note; a bad `--max-cache-size` exits 1. Background auto-gc also runs when the cache is over that cap. `--quiet` prints nothing (used by background auto-gc).
+Reclaim stale leases and shut down unleased warden devices idle for `--idle` (default `20m`). Never deletes devices — use `warden sims prune` to free sim disk. Then prunes the build cache, least-recently-used first, down to `--max-cache-size` (else `WARDEN_MAX_CACHE_SIZE`, default `20G`; the same cap as `warden builds prune --max-size`); builds used in the last 30 min and builds being fetched or built stay, and the notes list what was pruned. A bad `WARDEN_MAX_CACHE_SIZE` only skips the prune, with a note; a bad `--max-cache-size` exits 1. Background auto-gc also runs when the cache is over that cap, and at once when free space is under the [disk floor](/docs/devices/disk#low-disk-guards). `--quiet` prints nothing (used by background auto-gc).
+
+On macOS it also removes Xcode DerivedData whose recorded workspace no longer exists and the `XCTestDevices` clone set when no `xcodebuild` is running ([what counts](/docs/devices/disk#what-warden-gc-sweeps)). `--dry-run` lists those orphans with sizes and changes nothing; `--no-orphans` skips the sweep. `WARDEN_GC_WORKTREES=merged` also removes clean, merged git worktrees, like `warden worktrees --apply`.
+
+### `warden disk`
+
+Read-only report on the volume holding `$HOME`: free space, swap, memory pressure, booted devices, APFS local snapshots and uptime, each warning with its fix, then what warden can reclaim (build cache, deletable sims, orphaned DerivedData / XCTest clones, merged worktrees). Thresholds and `WARDEN_DISK*` overrides: [Disk hygiene](/docs/devices/disk#thresholds). `--json`.
+
+### `warden worktrees`
+
+Audit the linked git worktrees of every repo warden has leased for, the current repo and each `--root <dir>`: `merged`, `review`, `unmerged`, `active` (changed within `--idle`, default `3d`), `in-use`, `locked`, `stale-ref`, with size and evidence. `--apply` runs `git worktree remove` on `merged` ones only and prunes `stale-ref`; branches are never deleted. `--no-fetch`, `--no-size`, `--json`. See [Disk hygiene](/docs/devices/disk#warden-worktrees).
 
 ## Ports
 
@@ -742,13 +754,17 @@ Every tab asks `warden __complete -- <words…>`, which walks the same command t
 
 `install` runs `bunx skills add` (npx fallback): `--from local|github` (default `local`: this binary's embedded copy; `github` is the updatable release repo), `--project` (default: global), `-a/--agent <agent...>`, `--copy` (copy instead of symlink), `-y`, `--dry-run` (print the command, run nothing), `--json`.
 
+### `warden hook session-start`
+
+The SessionStart hook entrypoint: prints one line for the agent when the disk is low or swap is high, and nothing otherwise; always exits 0. Called by Claude Code / Codex, not by hand. See [Disk hygiene](/docs/devices/disk#low-disk-guards).
+
 ### `warden hook session-end`
 
 The SessionEnd hook entrypoint: shuts down what the session booted and releases its leases. Called by Claude Code / Codex, not by hand. There is no PreToolUse hook any more: `warden install` removes the `PreToolUse` hook an older warden wrote, and a hidden `warden hook pretool` no-op keeps a PreToolUse hook written by an older warden from erroring.
 
 ### `warden doctor`
 
-Check home, db, device tools, the iOS simulator helper, install method (and its upgrade command), `PATH`, Claude/Codex hooks + skill, rule, and stale leases. `--fetch-helper` first downloads `warden-simd` for this version into `$WARDEN_HOME/simd/<version>/`. See [iOS driver helper](/docs/reference/e2e-driver).
+Check home, db, device tools, the iOS simulator helper, install method (and its upgrade command), `PATH`, Claude/Codex hooks + skill, rule, stale leases, and disk space, swap and snapshots. `--fetch-helper` first downloads `warden-simd` for this version into `$WARDEN_HOME/simd/<version>/`. See [iOS driver helper](/docs/reference/e2e-driver).
 
 ### `warden update`
 

@@ -32,6 +32,7 @@ Mixed loads share the budget: on the 48 GB host, 4 iOS + 1 Android fills it. CPU
 - **Foreign devices count, never get touched.** Every booted device on the host (warden's and not) uses budget. Foreign ones are never shut down, erased or installed on.
 - **Reuse is free.** Reusing an already-booted free device needs no slot. Only `boot` and `create` do.
 - **Memory pressure gate.** Before admitting a boot warden reads the OS memory pressure (macOS `kern.memorystatus_vm_pressure_level`, Linux `/proc/meminfo`). Anything but `normal` holds new boots even when the budget fits. An unreadable signal counts as `normal`.
+- **Disk gate.** A boot or create is refused with `DISK_LOW` when free space is under the critical threshold, and swap over its threshold holds boots like memory pressure. See [Disk hygiene](/docs/devices/disk#low-disk-guards).
 
 ## Queue
 
@@ -73,7 +74,8 @@ warden queue [--json]      # waiting claims: position, effective priority, age, 
 | `--priority <interactive\|high\|normal\|low\|N>` | priority of this claim; `WARDEN_PRIORITY` sets it for the shell |
 | `--wait <duration>` | queue timeout, default `30m` |
 | `--no-wait` | fail fast instead of queueing |
-| `WARDEN_CAPACITY=off` | skip the capacity gate and queue (old behaviour: only `--max` limits the pool) |
+| `WARDEN_CAPACITY=off` | skip the capacity gate and queue (old behaviour: only `--max` limits the pool); the `DISK_LOW` refusal still applies |
+| `WARDEN_DISK=off` | skip the disk gate |
 | `WARDEN_CAPACITY_MAX=<n>` | hard cap on weighted cpu units |
 | `WARDEN_CAPACITY_HEADROOM_GB=<n>` | RAM held back instead of `max(8 GB, 25%)` |
 
