@@ -4,14 +4,14 @@ import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { type ChildHandle, splitCommand, splitOperands } from "../lease-session";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { createRunCommand, type RunDeps } from "./run";
+import { createRunCommand, type RunChildStdout, type RunDeps } from "./run";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 type Harness = {
 	deps: RunDeps;
-	spawned: Array<{ cmd: string[]; env: Record<string, string | undefined> }>;
+	spawned: Array<{ cmd: string[]; env: Record<string, string | undefined>; stdout: RunChildStdout }>;
 	kills: string[];
 	signals: Map<string, () => void>;
 	tick: () => void;
@@ -32,9 +32,9 @@ function harness(opts: { spawnThrows?: boolean } = {}): Harness {
 		deps: {
 			pid: 777,
 			isPortFree: async (port) => port !== 8091,
-			spawn: (cmd, env): ChildHandle => {
+			spawn: (cmd, env, stdout): ChildHandle => {
 				if (opts.spawnThrows) throw new Error("ENOENT: nope");
-				h.spawned.push({ cmd, env });
+				h.spawned.push({ cmd, env, stdout });
 				return {
 					exited: new Promise<number>((resolve) => {
 						resolveExit = resolve;
@@ -292,16 +292,20 @@ describe("warden run", () => {
 		const running = createRunCommand(h.deps).run(c);
 		await waitFor(() => h.spawned.length > 0);
 		expect(c.db.listLeases().map((l) => l.label)).toEqual(["x", "x"]);
+		expect(h.spawned[0]?.stdout).toBe("inherit");
 		h.finish(0);
 		expect(await running).toBe(0);
 	});
 
-	test("--json: one JSON document on stdout", async () => {
+	test("--json: one JSON line on stdout; the child's stdout goes to stderr", async () => {
 		const c = setup(["ios", "--json", "--", "true"]);
 		const h = harness();
 		const running = createRunCommand(h.deps).run(c);
 		await waitFor(() => h.spawned.length > 0);
-		const out = JSON.parse(c.stdout.join("\n"));
+		const lines = c.stdout.join("\n").split("\n");
+		expect(lines).toHaveLength(1);
+		expect(h.spawned[0]?.stdout).toBe("stderr");
+		const out = JSON.parse(lines[0] ?? "");
 		expect(out).toMatchObject({ cmd: ["true"], ports: [] });
 		expect(out.leases).toHaveLength(1);
 		h.finish(0);
@@ -314,9 +318,9 @@ describe("warden run", () => {
 		c.ui = ui;
 		const h = harness();
 		const spawn = h.deps.spawn;
-		h.deps.spawn = (cmd, env) => {
+		h.deps.spawn = (cmd, env, stdout) => {
 			ui.events.push("spawn");
-			return spawn(cmd, env);
+			return spawn(cmd, env, stdout);
 		};
 		const running = createRunCommand(h.deps).run(c);
 		await waitFor(() => h.spawned.length > 0);

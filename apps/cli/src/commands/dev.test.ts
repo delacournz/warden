@@ -518,7 +518,10 @@ describe("warden dev", () => {
 		const running = createDevCommand(h.deps).run(c);
 		await waitFor(() => c.stdout.length > 0);
 		const leaseIds = c.db.listLeases().map((l) => l.id);
-		const doc = JSON.parse(c.stdout.join("\n"));
+		// warden dev keeps running, so a reader takes the document from the first line alone
+		const lines = c.stdout.join("\n").split("\n");
+		expect(lines).toHaveLength(1);
+		const doc = JSON.parse(lines[0] ?? "");
 		expect(doc).toMatchObject({ udid: "U1", port: 8081, metroUrl: "http://127.0.0.1:8081" });
 		expect([...doc.leaseIds].sort()).toEqual([...leaseIds].sort());
 		expect(h.spawned[0]?.stdout).toBe("stderr");

@@ -30,12 +30,15 @@ import {
 	splitOperands,
 	withLeaseOptions,
 } from "../lease-session";
-import { emit, heading, note, reportError } from "../output";
+import { heading, note, reportError } from "../output";
 import { withSpinner } from "../spinner-context";
+
+/** Where the child's stdout goes: the terminal, or stderr under `--json` so stdout stays the one JSON line. */
+export type RunChildStdout = "inherit" | "stderr";
 
 /** Side effects of `warden run`, injectable for tests. */
 export type RunDeps = LeaseSessionDeps & {
-	spawn: (cmd: string[], env: Record<string, string | undefined>) => ChildHandle;
+	spawn: (cmd: string[], env: Record<string, string | undefined>, stdout: RunChildStdout) => ChildHandle;
 };
 
 /** Commander option values of `warden run` (claim options + `--port` / `--app` family). */
@@ -65,11 +68,12 @@ async function supervise(
 	cmd: string[],
 	env: Record<string, string | undefined>,
 	leaseIds: string[],
-	release: () => Promise<void>
+	release: () => Promise<void>,
+	stdout: RunChildStdout
 ): Promise<number> {
 	let child: ChildHandle;
 	try {
-		child = deps.spawn(cmd, env);
+		child = deps.spawn(cmd, env, stdout);
 	} catch (error) {
 		await release();
 		reportError(ctx, "run", error instanceof Error ? error.message : String(error));
@@ -126,9 +130,10 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	if (!claimed.success) return fail(claimed.error);
 	const { outcome, ports, env, release, leaseIds } = claimed.data;
 	const summary = { leases: claimedJson(outcome), ports, cmd };
-	if (args.data.json) emit(ctx, true, summary, "");
+	// one line: the child runs on, so a reader takes the summary from the first stdout line
+	if (args.data.json) ctx.out(JSON.stringify(summary));
 	else note(ctx, `warden run: leased ${summary.leases.map((l) => `${l.udid} (${l.leaseId})`).join(", ")}`);
-	return supervise(ctx, deps, cmd, env, leaseIds, release);
+	return supervise(ctx, deps, cmd, env, leaseIds, release, args.data.json ? "stderr" : "inherit");
 }
 
 /** `warden run [platform] [claim options] [--port …] [--app …] -- <cmd…>` with injectable effects. */
@@ -156,8 +161,13 @@ export function createRunCommand(deps: RunDeps): Command {
 export const defaultRunDeps: RunDeps = {
 	pid: process.pid,
 	isPortFree: (port) => isPortFree(port),
-	spawn(cmd, env) {
-		const proc = Bun.spawn(cmd, { env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+	spawn(cmd, env, stdout) {
+		const proc = Bun.spawn(cmd, {
+			env,
+			stdin: "inherit",
+			stdout: stdout === "stderr" ? 2 : "inherit",
+			stderr: "inherit",
+		});
 		return {
 			exited: proc.exited.then((code) => exitCodeOf(proc, code)),
 			kill: (signal) => proc.kill(signal),

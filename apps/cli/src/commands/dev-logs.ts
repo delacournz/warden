@@ -65,7 +65,7 @@ export function parseSince(input: string, now: number): { ok: true; ms: number }
 }
 
 function fail(ctx: CommandContext, json: boolean, error: MetroLogsError): number {
-	if (json) ctx.out(JSON.stringify({ error }));
+	if (json) ctx.out(JSON.stringify({ ok: false, command: "dev logs", error }));
 	else reportError(ctx, "dev logs", error.hint === undefined ? error.message : `${error.message} (${error.hint})`);
 	return 1;
 }

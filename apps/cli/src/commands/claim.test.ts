@@ -79,7 +79,7 @@ describe("warden claim", () => {
 		expect(c.stderr.join("\n")).toContain("all 1 warden-iphone-17 devices leased; max 1");
 	});
 
-	test("a full host queues: the progress line is on stderr and --json stdout stays empty on failure", async () => {
+	test("a full host queues: the progress line is on stderr and --json stdout is the failure envelope", async () => {
 		const c = setup(
 			["ios", "--json", "--no-wait", "--priority", "high"],
 			fakeSimctl([wardenSim(1, "Booted"), wardenSim(2)])
@@ -94,7 +94,8 @@ describe("warden claim", () => {
 			c.now()
 		);
 		expect(await claimCommand.run(c)).toBe(1);
-		expect(c.stdout).toEqual([]);
+		expect(c.stdout).toHaveLength(1);
+		expect(JSON.parse(c.stdout[0] ?? "")).toMatchObject({ ok: false, command: "claim", error: { code: "failed" } });
 		// withSpinner routes ctx.err progress through spinner.log, which the real UI writes to stderr
 		expect((c.ui as ScriptedUi).events.join("\n")).toMatch(/log: warden: queued #1 of 1 \(high\) — no room, /);
 		expect(c.db.listQueue()).toEqual([]);
