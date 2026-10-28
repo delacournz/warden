@@ -4,7 +4,7 @@ import { storeArtifact } from "@delacour/warden-core/builds/cache";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { markAndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { Owner } from "@delacour/warden-core/types";
-import { AUTO_GC_INTERVAL_MS, maybeAutoGc, niceCommand } from "./autogc";
+import { AUTO_GC_INTERVAL_MS, LOW_DISK_GC_INTERVAL_MS, maybeAutoGc, niceCommand } from "./autogc";
 import { type TestContext, testContext } from "./testing";
 
 let ctx: TestContext | undefined;
@@ -172,5 +172,55 @@ describe("niceCommand", () => {
 		expect(niceCommand(() => "/usr/bin/nice")).toEqual(NICE);
 		expect(niceCommand(() => null)).toEqual([]);
 		expect(niceCommand(() => undefined)).toEqual([]);
+	});
+});
+
+describe("maybeAutoGc on a low disk", () => {
+	const GB = 1024 ** 3;
+	const TOTAL = 500 * GB;
+	const low = { freeBytes: 10 * GB, totalBytes: TOTAL };
+	const roomy = { freeBytes: 200 * GB, totalBytes: TOTAL };
+
+	test("spawns gc at once, bypassing the 10 min throttle, even with nothing else to do", () => {
+		const clock = 5 * AUTO_GC_INTERVAL_MS;
+		ctx = testContext([], { now: () => clock });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		ctx.db.setMeta("auto_gc_checked_at", String(clock - 1000));
+		const spawned: string[][] = [];
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: () => low });
+		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
+	});
+
+	test("at most once per minute", () => {
+		let clock = 5 * AUTO_GC_INTERVAL_MS;
+		ctx = testContext([], { now: () => clock });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		const spawned: string[][] = [];
+		const run = (cmd: string[]) => spawned.push(cmd);
+		maybeAutoGc(ctx, ["warden"], run, { nice: NICE, volume: () => low });
+		clock += LOW_DISK_GC_INTERVAL_MS - 1;
+		maybeAutoGc(ctx, ["warden"], run, { nice: NICE, volume: () => low });
+		expect(spawned).toHaveLength(1);
+		clock += 1;
+		maybeAutoGc(ctx, ["warden"], run, { nice: NICE, volume: () => low });
+		expect(spawned).toHaveLength(2);
+	});
+
+	test("plenty of free space leaves the normal throttle and checks alone", () => {
+		ctx = testContext([], { now: () => 5 * AUTO_GC_INTERVAL_MS });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		const spawned: string[][] = [];
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: () => roomy });
+		expect(spawned).toEqual([]);
+	});
+
+	test("WARDEN_DISK=off and an unreadable volume do not trigger", () => {
+		ctx = testContext([], { now: () => 5 * AUTO_GC_INTERVAL_MS });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", WARDEN_DISK: "off" };
+		const spawned: string[][] = [];
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: () => low });
+		ctx.env = { ...ctx.env, WARDEN_DISK: undefined };
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: () => undefined });
+		expect(spawned).toEqual([]);
 	});
 });
