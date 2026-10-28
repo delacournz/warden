@@ -66,9 +66,9 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 
 | Command | Args / flags | Notes |
 |---|---|---|
-| `status` | | device, lease, helper |
+| `status` | | device, lease, helper, recording in progress (name, target, step count) |
 | `close` | `[--app [bundleId]] [--release]` | stops this device's helper; `--app` quits the app (default: the one `open` launched); `--release` frees the lease |
-| `snapshot` | `[-i] [--all] [--depth n] [--settle [ms]]` | `--settle` ends with a `-`/`+` diff and `= N unchanged` |
+| `snapshot` | `[-i\|--interactive] [--all] [--depth n] [--settle [ms]]` | `--settle` ends with a `-`/`+` diff and `= N unchanged` |
 | `find` | `<selector>` | matches with fresh `@eN` |
 | `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted |
 | `press` / `tap` | `<@eN\|selector\|x y> [--verify] [--settle]` | |
@@ -88,18 +88,17 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `gesture pinch` | `[target] <scale> [--duration 500] [--radius px] [--verify] [--settle]` | 2 fingers; scale > 1 zooms in, 0.1-10 and not 1; no target = screen centre |
 | `gesture rotate` | `[target] <degrees> [--duration 500] [--radius px] [--verify] [--settle]` | 2 fingers; positive = clockwise, `-45` works (`gesture rotate @e3 -45`); not 0, max 720 |
 | `gesture path` | `--path 'x,y x,y ...' [--path ...] [--duration ms] [--settle]` | 1-2 fingers, each >= 2 points, default 600 ms, down and lift together; points in pt (iOS) / px (Android) |
-
-| `wait` | `<sel>` / `absent <sel>` / `text "..."` / `stable [ms=250]` | polls 100 ms for 1 s, then 250 ms, up to `--timeout` |
+| `wait` | `<sel>` / `absent <sel>` / `text "..."` / `stable [ms=250]` | polls 100 ms for 1 s, then 250 ms, up to `--timeout` (default 5000); `stable` keeps 100 ms |
 | `is` | `<sel> visible\|hittable\|enabled\|checked\|selected\|focused` | exit 0 true, 1 false (JSON still `ok:true`) |
 | `get` | `<sel> text\|value\|label\|id\|role\|frame\|count` | `frame` = `x y w h`; `count` 0 is success |
-| `record start` | `<name> [--to <spec> \| --helper <module#fn> [--prerequisite <text>]] [--ids <module>] [--title <t>] [--suite <n>] [--overwrite]` | from now on every action is journaled; see `authoring.md` |
+| `record start` | `<name> [--to <spec> \| --helper <module#fn> [--prerequisite <text>]] [--ids <module>] [--options <module#name>] [--title <t>] [--suite <n>] [--overwrite]` | from now on every action is journaled; default file `<suite specsDir>/<name>.e2e.ts` (`e2e/<name>.e2e.ts` without a suite); `--options` = shared `test.use` options (default detected, `none` passes none); see `authoring.md` |
 | `record note` | `"<text>"` | user-visible step; comment above the next action |
 | `record use` | `<module#fn> [--suite <n>]` | run an exported helper on this device; on a pass record `await fn(fixtures)`, on failure record nothing (`use_failed`); see `authoring.md` |
 | `record undo` | `[n=1]` | drop the last n steps (notes count) |
 | `record status` | | target, step count, last 5 steps, lints so far |
 | `record cancel` | | drop the journal; a spec already written stays |
 | `record stop` | `[--no-verify] [--suite <n>] [--overwrite]` | write spec/helper, merge ids, print lints, run the spec once on this device (helpers are not run); exit 1 keeps file and journal |
-| `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets; stops the device's helper: unshared device only |
+| `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets (default 20 runs; cold start, settle and open capped at 3-5); `--metro` for the tree metric; stops the device's helper: unshared device only |
 | `eval` `tree` `logs` `network` `reload` | see Devtools | dev client only |
 
 `screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
@@ -133,11 +132,11 @@ While `warden dev` runs for the device, every devtools verb goes through its **b
 | `route` | route key of the screen on show (`(tabs)/todos`) |
 | `logs [n] [--since 5m] [--level warn] [--grep x] [--limit n]` | console lines, stacks symbolicated to source; default 50 |
 | `exceptions [--since] [--limit]` | uncaught errors, incl. the ones React Native reports as `console.error` |
-| `network [n] [--since] [--grep url] [--status 4xx] [--id id]` | `--id` = one entry in full |
+| `network [n] [--since] [--grep url] [--status 404\|4xx] [--limit n] [--include headers,body] [--id id]` | default 50; `--id` = one entry in full; `--include` adds headers/bodies |
 | `reload` | reload the app's JS |
 | `logpoint add <file:line[:col]> '<expr>' [--id x] [--hits n]` | logs `<expr>` each time the line runs, never pauses; needs `warden dev`, Fusebox |
-| `logpoint hits [id] [--since]` · `list` · `rm <id>` · `clear` | values logged; logpoints die with the session, re-arm across reloads |
-| `devtools status` · `devtools resume` | broker state; `resume` after it yielded to Chrome DevTools |
+| `logpoint hits [id] [--since]` · `logpoint list` · `logpoint rm <id>` · `logpoint clear` | values logged; logpoints die with the session, re-arm across reloads |
+| `devtools status` · `devtools resume` | broker state (`attached`, `yielded`, `lost`); `resume` after it yielded to Chrome DevTools |
 | `logs start [--bodies]` · `logs mark <label>` · `logs clear` · `logs stop` | collector, only without `warden dev` (a no-op `via: broker` with it) |
 
 Bundler output is not in CDP: `warden dev logs [--kind bundle_failed,error] [--since 5m] [--grep x] [--follow] [--json]` reads Metro's output, classified (`bundle_start|bundle_done|bundle_failed|hmr|error|warn|info`, errors with file/line/code frame). Recorded only by the dashboard (a terminal); `--json`/`--no-tui` runs return `metro_log_unavailable`.
@@ -155,8 +154,8 @@ Debug loop: `warden dev logs --kind bundle_failed,error` (does it build?) → `u
 | Exit | Codes |
 |---|---|
 | 0 | ok |
-| 1 | `failed` `usage` `target_not_found` `no_alert` `wait_*` `no_recording` `recording_active` `target_exists` `empty_recording` `verify_failed` `verify_unavailable` |
-| 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` |
+| 1 | `failed` `usage` `target_not_found` `no_alert` `wait_*` `no_recording` `recording_active` `target_exists` `empty_recording` `verify_failed` `verify_unavailable` `helper_missing` `use_failed` |
+| 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` `device_unknown` |
 | 3 | `engine_unavailable` `devtools_unavailable` |
 | 4 | `stale_ref` |
 | 130 | `interrupted` |

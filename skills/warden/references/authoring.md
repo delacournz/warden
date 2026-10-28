@@ -16,7 +16,7 @@ Use when asked to "create / write / record an e2e test for X". You drive the app
    - `warden ui record note "<user-visible step>"` before each group of actions (comment above the next step, e.g. `enter credentials`).
 6. Snapshot shows `[no-id]` on an interactive element (JSON: `noId: true`): stop driving. Add `testID` + `accessible` to the component, reload (`warden ui reload` or `open --relaunch`), `warden ui record undo` back to before the step, redo it by `id=`. Never keep a text selector or coordinates when you can add a testID.
 7. Misstep (wrong tap, typo): `warden ui record undo [n]` (notes count as steps), redo. Exploring without recording a step: add `--no-record` to that call (read-only queries you don't want as `expect`).
-8. `warden ui record stop --udid $UDID`: writes `<specsDir>/<id>.e2e.ts` (default `e2e/<id>.e2e.ts` with no suite), merges ids, prints lints, then runs the spec once on this device.
+8. `warden ui record stop --udid $UDID` (`--no-verify` writes without the run; always so for `--helper`): writes `<specsDir>/<id>.e2e.ts` (default `e2e/<id>.e2e.ts` with no suite), merges ids, prints lints, then runs the spec once on this device.
 9. Verify failed (exit 1, `verify_failed`): file and journal are kept. Read `screen-at-failure.txt` (path printed, under `$WARDEN_HOME/ui/<udid>/verify/<ts>/`). Fix the app (testID, missing wait) or `record undo` + redo, then `record stop` again (`--overwrite` is not needed: the file is yours). `record cancel` drops the journal; the written file stays.
 10. Fix every lint and FIXME in the file (below). Then run it the real way: `warden e2e <suite> --specs <id>`.
 11. `stop` prints the `specs.<id>` entry to paste into `warden.config.ts`; warden never edits the config. Paste it so `warden affected` selects the spec. See "Route capture" for what fills `entries`.
@@ -62,7 +62,7 @@ A coordinate target also leaves a `// FIXME` in the spec (it throws until fixed)
 
 ## What is recorded
 
-Every `warden ui` action and query while recording unless `--no-record`: `open`, `press`/`tap`, `fill`, `type`, `key`, `scroll`, `alert`, `home`, `back`, `gesture *`, `screen rotate|appearance|screenshot`; `wait <sel>` / `is` / `get` become `expect(...)`. Not recorded: `wait absent|text|stable`, `find`, `eval`, `tree`, `logs`, `network`, `status`. Selectors are stored, never `@eN`. `record status` shows target, step count, last 5 steps and lints so far; `ui status` shows `recording`.
+Every `warden ui` action and query while recording unless `--no-record`: `open`, `press`/`tap`, `fill`, `type`, `key`, `scroll`, `alert`, `home`, `back`, `gesture *`, `screen rotate|appearance|screenshot`; `wait <sel>` / `is` / `get` become `expect(...)` (`is` states: visible hidden enabled disabled checked unchecked; `get` only `text` / `value`). Not recorded: `wait absent|text|stable`, `snapshot`, `reload`, `find`, `eval`, `tree`, `logs`, `network`, `status`. Selectors are stored, never `@eN`. `record status` shows target, step count, last 5 steps and lints so far; `ui status` shows `recording`.
 
 ## Good spec checklist
 

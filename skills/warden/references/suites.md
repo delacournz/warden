@@ -4,7 +4,7 @@ Read this to run, select, configure or debug a suite. Spec authoring is in `spec
 
 ## `warden e2e [suite]`
 
-Selects the specs a change needs, leases devices, runs one `bun test` per spec (or per device), gates on the result. `[suite]` is optional with one suite. With no suite configured (and none named), an Expo app with an `e2e/` dir gets a default suite: every spec there, no git diff, 2 devices, iOS unless `--platform android`, the dev client on warden's Metro (`warden init` writes it out to edit). `--install-mode` / `--reset-keychain` / `--clean` need the suite to install an app (`app` in its config, or `--app`); otherwise refused before any device is claimed.
+Selects the specs a change needs, leases devices, runs one `bun test` per spec (or per device), gates on the result. `[suite]` is optional with one suite. With no suite configured (and none named), an Expo app with an `e2e/` dir gets a default suite: every spec there, no git diff, 2 devices, iOS unless `--platform android`, the dev client on warden's Metro (`warden init` writes it out to edit). `--install-mode` / `--reset-keychain` (and the deprecated hidden `--clean` = `--install-mode reinstall`) need the suite to install an app (`app` in its config, or `--app`); otherwise refused before any device is claimed.
 
 ```bash
 warden e2e example --dry-run --explain     # what would run and why, nothing leased
@@ -16,7 +16,7 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | Flag | Meaning |
 |---|---|
 | `--base <ref>` | diff against merge-base with this ref (suite `base`, default `main`) |
-| `--platform ios\|android` | default: the suite's platform |
+| `--platform ios\|android` | default: the suite's platform. A suite with no `platform` runs both: `e2e` refuses without it (`warden affected` reports both) |
 | `--files <list>` | comma-separated changed files instead of git |
 | `--all` / `--specs <ids\|globs>` | skip the diff. Exclusive with each other, and neither combines with `--files` |
 | `--required-only` | only specs with `required: true` |
@@ -25,7 +25,8 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | `--devices default\|all\|<profile,...>` | which `devices` legs run |
 | `--no-shutdown` | keep devices up after a pass (default: shut down those warden created under CI; locally they stay booted and `warden gc` reaps them when idle; suite `shutdown`) |
 | `--no-warm` | skip the iOS driver warm-up |
-| claim flags | `--profile --runtime --count --max --wait --ttl --label --adopt --headless --no-headless --json` (`--json` prints the e2e report) |
+| `--perf [captures]` | profile every attempt: bare = metrics, frames, logs; or `--perf=react,js`, `all` (names: `all js react native metrics frames logs`). Reports land in the attempt's `perf/` dir; suite/top-level `perf.budgets` make a breach fail the test (`PERF_BUDGET`) |
+| claim flags | `--profile --runtime --count --max --wait --no-wait --priority --ttl --label --adopt --headless --no-headless --slim --no-slim --json` (`--json` prints the e2e report) |
 | lease flags | `--port <from:span>` (repeatable), `--app --install-mode clean\|reinstall --reset-keychain --project --bundle-id --variant --no-eas --no-build` |
 | batch flags | `--retry --passes --serve --serve-ready --serve-timeout --job-timeout --record <dir> --logs <dir> --no-tui` |
 
@@ -76,7 +77,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `devices` | none | `[{ profile, count = 1, env?, default = true }]`. Replaces `profile` / `count`. At least one leg must be default |
 | `count`, `profile` | claim defaults | single pool |
 | `metro` | none | `{ enabled = true, port = "8081:100", launchArgs = [], open = true, env, prewarm = true, readyTimeout = "2m" }`. warden starts one Metro for the run and points the dev client at it |
-| `headless` | off | keep Simulator.app windows closed |
+| `headless` | off | keep Simulator.app windows closed (top-level `headless` is the default; `--headless` / `--no-headless` win) |
 | `slim` | on | iOS only: simulator daemons specs never need are off from first boot. `false` leaves them running; `true` is the default profile; `{ except?: string[]; keep?: string[] }`: `except` keeps whole categories running (ids from `warden sim profiles`, e.g. `store` for push/StoreKit, `web` for universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker), `keep` keeps single `com.apple.*` labels. Unknown ids fail config load. `--no-slim` / `WARDEN_SLIM=0` opt out. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
 | `warmDrivers` | on | iOS: start every device's driver helper before the specs |
 
@@ -98,7 +99,8 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `shutdown` | `idle` locally, `always` under CI | `always`: shut down warden's devices after a passed gate. `idle`: leave them booted for the next run (`warden gc` reaps idle ones). A failed run always leaves them up |
 | `jobTimeoutMs` | `600000` | per spec: a process past this for each spec it runs is killed and counts as failed |
 | `passes` | `1` | consecutive green runs needed per spec. `isolate: device` with `passes > 1` is an error |
-| `retry` | `0` | re-run a failed job on the same device |
+| `retry` | `0` | re-run a failed job on the same device. Under `isolate: device` a retry reruns only the specs that did not pass |
+| `perf` | none | `{ budgets: { startupColdMs, jankPct, maxCommitMs, p95CpuPct, peakMemoryMb } }` ceilings (lower is better) for `device.perf.stop()`; each key replaces the top-level `perf.budgets` one |
 
 Removed: `warmRunners` (use `warmDrivers`).
 
@@ -160,6 +162,8 @@ Set by warden. Never export these for a suite run.
 | batch job | `WARDEN_WORKER WARDEN_JOB WARDEN_JOB_SEQ WARDEN_PASS WARDEN_BATCH_DIR WARDEN_PORT` (first leased port; the e2e package does not read it) `WARDEN_METRO_URL` (with `metro`) `WARDEN_LEG` (with `devices`) |
 | lease | `WARDEN_UDIDS WARDEN_UDID_<i> WARDEN_PORTS WARDEN_PORT_<i> WARDEN_LEASE_IDS WARDEN_HEADLESS` |
 | app / log | `WARDEN_APP_PATH WARDEN_APP_HASH` (with `app`) `WARDEN_LOG_TIMESTAMPS` |
+| runner | `BUN_BE_BUN=1` (a compiled warden runs as bun; the preload drops it, so a `warden` a spec spawns stays warden) |
+| perf | `WARDEN_BIN` (argv `device.perf` shells out to) `WARDEN_PERF` (with `--perf`) `WARDEN_PERF_BUDGETS` (with budgets) |
 
 ## Batch dir
 
@@ -167,10 +171,10 @@ Set by warden. Never export these for a suite run.
 
 ```
 batch.json  tui.cast  metro.log  e2e-report.json
-logs/<w>-<seq>-<job>[.passN].log     (+ .png of the device on failure)
+logs/<w>-<seq>-<job>[.passN].log     (+ .png of the device on failure; `<job>` is `shard-<k>` under isolate device)
 logs/setup-<w>.log  logs/warm-<w>.log
-e2e/<w>-<seq>/results.jsonl
-e2e/<w>-<seq>/<specId>/<title>-<hash6>/   trace.jsonl screenshots/ failure.png screen-at-failure.txt console.jsonl network.jsonl
+e2e/<w>-<seq>[-p<N>]/results.jsonl        (-pN: pass N+1 of an attempt, with passes > 1)
+e2e/<w>-<seq>[-p<N>]/<specId>/<title>-<hash6>/   trace.jsonl screenshots/ failure.png screen-at-failure.txt console.jsonl network.jsonl perf/ (with --perf)
 ```
 
 `e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup? }`. Each spec has `verdict`, `attempts`, `tests[]`.
@@ -193,7 +197,9 @@ A failed run leaves sims booted (so does a passed local one, until `warden gc` r
 | Command | Env and behavior |
 |---|---|
 | `warden run <platform> -- <cmd>` | child gets `WARDEN_UDIDS WARDEN_UDID_<i> WARDEN_LEASE_IDS WARDEN_PORTS WARDEN_PORT_<i>`, `WARDEN_HEADLESS=1` when headless, `WARDEN_APP_PATH WARDEN_APP_HASH` with `--app` |
-| `warden batch <platform> --jobs a,b -- <cmd>` | per job `WARDEN_UDID WARDEN_WORKER WARDEN_DEVICE_NAME WARDEN_JOB WARDEN_JOB_SEQ WARDEN_PASS WARDEN_BATCH_DIR WARDEN_PORT`. `{job} {udid} {worker} {seq}` are substituted in the command; `{port} {metroUrl}` in `serve` and `serveReady`. A job killed by `--job-timeout` exits `124` |
+| `warden batch <platform\|preset> --jobs a,b -- <cmd>` | per job `WARDEN_UDID WARDEN_WORKER WARDEN_DEVICE_NAME WARDEN_JOB WARDEN_JOB_SEQ WARDEN_PASS WARDEN_BATCH_DIR WARDEN_PORT`. `{job} {udid} {worker} {seq}` are substituted in the command; `{port} {metroUrl}` in `serve` and `serveReady`. Jobs also come from `--jobs-from <file\|->` (one per line). A job killed by `--job-timeout` exits `124` |
+
+`warden batch <name>` runs the `batches.<name>` preset of `warden.config.ts` (`ios` / `android` are reserved names); flags passed alongside override it. Preset keys: `platform` (required) `cmd` (required) `project count max profile runtime label ttl wait ports app headless slim retry passes env serve serveReady serveTimeout jobs jobsFrom record logs`. At most one of `jobs` / `jobsFrom` (`jobsFrom`: a file, `-`, or `{ command }`).
 
 ## Headless, slim, warm, versions
 
