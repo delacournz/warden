@@ -664,7 +664,7 @@ describe("open", () => {
 		expect(doc(h.c).result).toMatchObject({ action: "open", bundleId: "com.example.app", relaunch: false });
 	});
 
-	test("--relaunch terminates first (driver relaunch); --metro launches the dev client with --initialUrl and stores the url", async () => {
+	test("--relaunch terminates first (driver relaunch); --metro launches the dev client with --initialUrl, no dev menu onboarding, and stores the url", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(
 			await h.run("open", "com.example.app", "--relaunch", "--metro", "http://localhost:8081", "--args", "--foo", "bar")
@@ -673,7 +673,19 @@ describe("open", () => {
 			{
 				method: "app.launch",
 				bundleId: "com.example.app",
-				opts: { args: ["--initialUrl", "http://localhost:8081", "--foo", "bar"], relaunch: true },
+				opts: {
+					args: [
+						"--initialUrl",
+						"http://localhost:8081",
+						"-EXDevMenuIsOnboardingFinished",
+						"YES",
+						"-EXDevMenuShowsAtLaunch",
+						"NO",
+						"--foo",
+						"bar",
+					],
+					relaunch: true,
+				},
 			},
 		]);
 		expect(readState(h.c, UDID)).toMatchObject({ app: "com.example.app", metroUrl: "http://localhost:8081" });
