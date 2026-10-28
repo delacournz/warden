@@ -51,7 +51,7 @@ Open the reference file for details before acting; this file only routes.
 | a free port | `warden port claim --json` (`--from 8091 --span 20`) · `warden port ls` · `warden port release <port…>\|--lease <id…>\|--mine` |
 | who holds what / all devices | `warden ls` · `warden devices` (`list`) |
 | host budget / my place in the boot queue | `warden capacity` · `warden queue` |
-| disk full / swap high / slow host | `warden disk [--json]` (read-only: free space, swap, memory pressure, booted devices, APFS snapshots, uptime, what warden can reclaim, each warning with its one-line fix; `warden doctor` warns `disk-free` / `swap` / `snapshots`). Swap or snapshot warnings first: deleting files will not stop swap refilling the disk, so close idle devices (`warden gc --idle 0`) or reboot. Thresholds: `WARDEN_DISK_FLOOR_GB` (default max 20 GB, 10%), `WARDEN_DISK_CRITICAL_GB` (max 8 GB, 4%), `WARDEN_DISK_SWAP_WARN_GB` (8); `WARDEN_DISK=off` disables the gate |
+| disk full / swap high / slow host | `warden disk [--json]` (read-only: free space, swap, memory pressure, booted devices, APFS snapshots, uptime, what warden can reclaim, each warning with its one-line fix; `warden doctor` warns `disk-free` / `swap` / `snapshots`). Swap or snapshot warnings first: deleting files will not stop swap refilling the disk, so close idle devices (`warden gc --idle 0`) or reboot. Thresholds: `WARDEN_DISK_FLOOR_GB` (default max 20 GB, 10%), `WARDEN_DISK_CRITICAL_GB` (max 8 GB, 4%), `WARDEN_DISK_SWAP_WARN_GB` (8); `WARDEN_DISK=off` disables the gate. The gate: a claim that would boot or create a device fails `DISK_LOW` when free space is under the critical threshold, and waits in the boot queue while swap is over its warn threshold (reusing a booted device is always allowed); the same switch turns off the low-disk auto-gc (free space under the floor starts a background gc at once, at most once a minute). `warden disk` also lists merged `worktrees` as reclaimable |
 | is this device free or mine | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a bare lease alive | `warden heartbeat <leaseId…>` (prefer a wrapper) |
 | device misbehaving | `warden release <leaseId> --bad "<why>"` (undo: `warden sim unquarantine <udid>`) |
@@ -61,6 +61,7 @@ Open the reference file for details before acting; this file only routes.
 | clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` (`golden ls`, `golden prune`) · `warden sims` (= `audit`; `prune --dry-run`, then `--yes`; `delete <udid…>`) |
 | reclaim dead leases | `warden gc` (auto every 10 min; never deletes devices, never touches foreign ones) |
 | orphaned Xcode disk | `warden gc --dry-run` lists orphaned DerivedData (workspace gone) + stale `XCTestDevices` clones with sizes, changes nothing; `warden gc` removes them, `--no-orphans` keeps them |
+| merged worktrees in gc | opt-in, off by default: `WARDEN_GC_WORKTREES=merged` (env only, no config file) makes `warden gc` remove clean `merged` worktrees like `warden worktrees --apply`, reported as a `worktrees` bucket in `--json`; `--dry-run` lists them |
 | leftover git worktrees | `warden worktrees [--root <dir>…] [--idle 3d] [--no-fetch] [--no-size] [--json]` audits linked worktrees (STATE, SIZE, BRANCH, PATH, EVIDENCE); states `merged` (clean, PR merged or ancestor of the default branch), `review` (uncommitted or unpushed commits), `unmerged`, `active` (files changed within `--idle`), `in-use` (process cwd inside, live lease, or lsof unreadable), `locked`, `stale-ref`. Dry run by default; `--apply` runs `git worktree remove` (no `--force`) on `merged` only and `git worktree prune` for `stale-ref`; never deletes branches, refuses from inside the target |
 | setup / helper problems | `warden doctor [--fetch-helper]` |
 | version / channel | `warden version [--json]` |
@@ -74,7 +75,7 @@ By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preloa
 - gc shuts a stale sim down 10+ min after it went stale, and never while a non-Apple app is in the foreground. It also shuts down unleased warden devices idle 20 min (`--idle`).
 - A declined `warden.config.ts` offer from `warden dev` is kept in `~/.warden/projects/<key>/`, shared by every worktree; nothing is written to the repo.
 - warden only creates, shuts down and erases `warden-<profile>-N` sims; `--adopt` opts a foreign device in.
-- The SessionEnd hook releases and shuts down what the session booted; `/clear` keeps sims up.
+- The SessionEnd hook releases and shuts down what the session booted; `/clear` keeps sims up. The SessionStart hook (`warden hook session-start`) prints one line (free space, swap) when the disk or swap is under pressure, else nothing: reuse booted devices and avoid parallel builds then.
 - Codex: set `WARDEN_SESSION_ID`, or leases count as the shell's user leases.
 - A failed `warden e2e` leaves sims booted for inspection.
 

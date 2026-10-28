@@ -44,6 +44,7 @@
 | 38 | `--devices needs e2e.<suite>.devices` / `--devices: no leg "x" (…)` | The suite has no `devices` legs, or the profile is not one of them | Use a profile listed in the error, `default`, or `all`. `--profile` / `--count` replace the legs |
 | 39 | Config load fails: `slim is iOS-only`, `slim: <unknown id>`, `serveReady needs serve`, `devices replaces profile / count`, `at least one device leg must be a default one`, `passes > 1 needs isolate "spec"`, `e2e.<suite>.warmRunners was removed` | Suite schema (unknown keys are errors too) | Fix the key named in the message; `warmRunners` is now `warmDrivers`; slim ids come from `warden sim profiles` |
 | 40 | Claim sits on `queued #N of M (priority) — <reason>` | Host capacity or memory pressure holds the boot queue (a macOS kernel `warn` holds it only under 25% free; `critical` always) | `warden capacity` / `warden queue` show why and the order. `--no-wait` fails at once; `--wait <dur>` bounds it (default 30m); `WARDEN_CAPACITY=off` bypasses the gate (own risk) |
+| 41 | Claim fails `DISK_LOW: <n> GB free on the boot disk` | Free space is under the critical threshold, so no device is booted or created (reusing a booted one still works) | `warden disk` shows what to reclaim, then `warden gc` (orphans, build cache, idle devices) · `warden worktrees --apply`. `WARDEN_DISK_CRITICAL_GB` moves the threshold; `WARDEN_DISK=off` bypasses the gate (own risk). High swap instead queues the claim (`queued … swap <n> in use`): close idle devices or reboot |
 
 ## Code lookup
 
