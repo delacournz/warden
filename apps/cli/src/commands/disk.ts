@@ -40,7 +40,7 @@ export function fixFor(reason: DiskReason): string {
 		case "os-update-snapshots":
 			return "install the staged macOS update (reboot) to release them";
 		case "tm-snapshots":
-			return "run `sudo tmutil thinlocalsnapshots / 9999999999999 4` yourself (warden never runs sudo)";
+			return "run `sudo tmutil deletelocalsnapshots /` yourself (warden never runs sudo)";
 		case "low-free":
 			return "`warden gc` · `warden builds rm <hash…>` · `warden sims prune`";
 		case "uptime":
