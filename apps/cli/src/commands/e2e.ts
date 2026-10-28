@@ -123,6 +123,7 @@ function suiteOpts(
 		...merged,
 		...(run.kind !== undefined ? { kind: run.kind } : {}),
 		...(run.variant !== undefined ? { variant: run.variant } : {}),
+		...(run.bundleEnv !== undefined ? { bundleEnv: run.bundleEnv } : {}),
 	};
 }
 
@@ -132,8 +133,24 @@ function suiteOpts(
  *   `simulator`, the repacked sim build). A suite that installs no app (no `app`, no `--app`) keeps `suite`.
  * - `metro`: `off` (the suite's `metro` block applies only with the dev client), `dev` (the block, else the defaults),
  *   `suite` (as the suite wrote it: a pinned `app.variant`, or a suite with no app to install).
+ * - `bundleEnv`: with `metro: "off"` on a kind that embeds the JS, the dropped block's `env`. `EXPO_PUBLIC_*` values are
+ *   inlined at bundle time, so without it the build would get `.env*` / the shell's values instead of the suite's.
  */
-export type RunKind = { kind?: BuildKind; variant?: string; metro: "off" | "dev" | "suite" };
+export type RunKind = {
+	kind?: BuildKind;
+	variant?: string;
+	metro: "off" | "dev" | "suite";
+	bundleEnv?: Record<string, string>;
+};
+
+/** `kind` with its Metro decision, carrying the suite's `metro.env` into the bundle when Metro is off. */
+function kindRun(suite: Suite, kind: BuildKind): RunKind {
+	if (kind === "dev") return { kind, metro: "dev" };
+	const env = suite.config.metro?.env;
+	return env !== undefined && Object.keys(env).length > 0
+		? { kind, metro: "off", bundleEnv: env }
+		: { kind, metro: "off" };
+}
 
 /** The run's kind from `--dev` / `--kind` / `--variant` and the suite's `app` (see {@link RunKind}). */
 export function resolveRunKind(suite: Suite, opts: E2eOpts, passed: ReadonlySet<string>): Result<RunKind> {
@@ -143,13 +160,12 @@ export function resolveRunKind(suite: Suite, opts: E2eOpts, passed: ReadonlySet<
 	const app = appSwitches(suite.config.app);
 	if (cliKind !== undefined) {
 		if (passed.has("variant")) return err("--kind / --dev and --variant can't be combined");
-		return ok({ kind: cliKind, metro: cliKind === "dev" ? "dev" : "off" });
+		return ok(kindRun(suite, cliKind));
 	}
 	if (!app.app && !opts.app) return ok({ metro: "suite" });
 	const variant = passed.has("variant") ? opts.variant : app.variant;
 	if (variant !== undefined) return ok({ variant, metro: "suite" });
-	const kind = app.kind ?? DEFAULT_E2E_KIND;
-	return ok({ kind, metro: kind === "dev" ? "dev" : "off" });
+	return ok(kindRun(suite, app.kind ?? DEFAULT_E2E_KIND));
 }
 
 /** `suite` with its Metro as the run decides: dropped, defaulted or as written. */

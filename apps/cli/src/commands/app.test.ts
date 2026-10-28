@@ -2,12 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
+import { fakeApp, testProject } from "@delacour/warden-core/builds/builds.testing";
 import { getInstall, recordInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
 import type { ExecResult } from "@delacour/warden-core/exec";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
-import { type AppDeps, createAppCommand } from "./app";
+import { type AppDeps, createAppCommand, kindAppInput } from "./app";
 
 let ctx: TestContext | undefined;
 let deviceDir: string | undefined;
@@ -348,5 +348,24 @@ describe("warden app ensure", () => {
 		c.argv = ["fingerprint", "ios", "--project", "apps/nope"];
 		expect(await createAppCommand(deps).run(c)).toBe(1);
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("kindAppInput bundle env", () => {
+	const project = { project: testProject(), projectKey: "k" };
+	const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;
+	const bundleEnv = { EXPO_PUBLIC_API: "http://fake" };
+	const input = (kind: "dev" | "simulator" | "release") => {
+		const c = testContext([], { env: { HOME: "/h", EXPO_PUBLIC_API: "http://real" } });
+		return kindAppInput(c, deps, owner, "ios", project, kind, { eas: false, build: true, bundleEnv }).env;
+	};
+
+	test("the kinds that bundle JS take it over the process env", () => {
+		expect(input("simulator")).toEqual({ HOME: "/h", EXPO_PUBLIC_API: "http://fake" });
+		expect(input("release")).toEqual({ HOME: "/h", EXPO_PUBLIC_API: "http://fake" });
+	});
+
+	test("dev ignores it: Metro bundles with its own env", () => {
+		expect(input("dev")).toEqual({ HOME: "/h", EXPO_PUBLIC_API: "http://real" });
 	});
 });
