@@ -58,6 +58,7 @@ Open the reference file for details before acting; this file only routes.
 | slim categories (`--except` ids) | `warden sim profiles`; common: `store` push/StoreKit, `web` universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker |
 | a sim's real memory | `warden sim measure [udid\|--booted]` · `warden devices --mem` |
 | clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` (`golden ls`, `golden prune`) · `warden sims` (= `audit`; `prune --dry-run`, then `--yes`; `delete <udid…>`) |
+| leftover git worktrees | `warden worktrees [--root <dir>…] [--idle 3d] [--no-fetch] [--no-size] [--json]` audits linked worktrees (STATE, SIZE, BRANCH, PATH, EVIDENCE); states `merged` (clean, PR merged or ancestor of the default branch), `review` (uncommitted or unpushed commits), `unmerged`, `active` (files changed within `--idle`), `in-use` (process cwd inside, live lease, or lsof unreadable), `locked`, `stale-ref`. Dry run by default; `--apply` runs `git worktree remove` (no `--force`) on `merged` only and `git worktree prune` for `stale-ref`; never deletes branches, refuses from inside the target |
 | reclaim dead leases | `warden gc` (auto every 10 min; never deletes, never touches foreign devices) |
 | setup / helper problems | `warden doctor [--fetch-helper]` |
 | version / channel | `warden version [--json]` |

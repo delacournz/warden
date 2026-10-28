@@ -51,6 +51,8 @@ Devices:
                                 | unquarantine
   sims                          simulator + runtime disk audit (default), prune
                                 idle warden sims, delete (multi-select)
+  worktrees                     audit git worktrees agents left behind; --apply
+                                removes the clean merged ones
   arrange                       tile warden simulator windows in name order
                                 (macOS; also runs after iOS claims)
   clone <source>                duplicate a shut-down iOS simulator into
@@ -1486,6 +1488,25 @@ Options:
   --dry-run           only show what would be deleted
   --json              machine-readable output
   -h, --help          display help for command"
+`;
+
+exports[`help output warden worktrees --help (and nested subcommands) 1`] = `
+"$ warden worktrees --help
+Usage: warden worktrees [options]
+
+audit git worktrees agents left behind; --apply removes the clean merged ones
+
+Options:
+  --root <dir>       also audit this repo, or the repos directly under this
+                     folder (repeatable) (default: [])
+  --idle <duration>  files changed within this make a worktree active (default
+                     3d; 0 turns it off)
+  --apply            remove merged worktrees (git worktree remove, no --force)
+                     and prune dir-less refs
+  --no-fetch         skip git fetch before the merge checks
+  --no-size          skip sizing each worktree (du)
+  --json             machine-readable output
+  -h, --help         display help for command"
 `;
 
 exports[`help output warden arrange --help (and nested subcommands) 1`] = `

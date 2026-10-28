@@ -94,6 +94,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./sims")).simsCommand,
 	},
 	{
+		name: "worktrees",
+		group: "Devices",
+		summary: "audit git worktrees agents left behind; --apply removes the clean merged ones",
+		load: async () => (await import("./worktrees")).worktreesCommand,
+	},
+	{
 		name: "arrange",
 		group: "Devices",
 		summary: "tile warden simulator windows in name order (macOS; also runs after iOS claims)",
