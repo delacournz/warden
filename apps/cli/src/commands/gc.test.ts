@@ -59,6 +59,23 @@ describe("warden gc", () => {
 		expect(c.db.listLeases().map((l) => l.resource)).toMatchObject([{ id: "U2" }]);
 	});
 
+	test("an idle sim it shut down loses its viewer window too (Device Hub keeps a page open)", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["--json"], {
+			now: () => NOW,
+			exec: fakeSimctl([wardenSim(1, "Booted")], calls, [
+				["pgrep -xq Simulator", { exitCode: 1 }],
+				["pgrep -xq DeviceHub", { exitCode: 0 }],
+				["osascript", {}],
+			]),
+		});
+		ctx.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
+		expect(await gcCommand.run(ctx)).toBe(0);
+		const closes = calls.filter((x) => x[0] === "osascript" && (x[4] ?? "").includes("AXCloseButton"));
+		expect(closes.map((x) => JSON.parse(x[5] ?? ""))).toEqual([["warden-iphone-17-1"]]);
+		expect(calls.indexOf(closes[0] as string[])).toBeGreaterThan(calls.findIndex((x) => x[2] === "shutdown"));
+	});
+
 	test("--idle shortens the idle window", async () => {
 		const calls: string[][] = [];
 		const c = setup(["--idle", "30s"], calls);

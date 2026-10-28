@@ -1,6 +1,7 @@
 import { shouldShutdown } from "@delacour/warden-core/shutdown-policy";
 import type { Lease, Owner } from "@delacour/warden-core/types";
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
+import { closeSimWindowsAfter, type ShutDownSim } from "./close-sim-windows-after";
 import type { CommandContext } from "./context";
 import { errorMessage } from "./hooks/json";
 import { providerFor } from "./providers";
@@ -16,12 +17,12 @@ type DeviceShutdown =
 	| { kind: "skipped" }
 	| { kind: "foreign"; note: string }
 	| { kind: "kept"; id: string; note: string }
-	| { kind: "shutdown"; id: string }
+	| { kind: "shutdown"; id: string; sim?: ShutDownSim }
 	| { kind: "failed"; note: string };
 
 /**
  * Shut down the devices behind `leases` that `shouldShutdown` allows: warden-created ones and ones
- * the lease owner booted; each shut-down iOS device's `warden-simd` is stopped with it. A device that was already running when leased (e.g. the user's own
+ * the lease owner booted; each shut-down iOS device's `warden-simd` is stopped with it, and its viewer window closed. A device that was already running when leased (e.g. the user's own
  * Simulator.app sim) is left running. Call while the leases are still held, so nobody is handed a
  * device mid-shutdown. Failures become notes — releasing must still go ahead. `guard` (gc's stale
  * grace + running-app check) can veto a shutdown the policy would allow. Devices shut down
@@ -52,7 +53,7 @@ export async function shutdownReleasedDevices(
 			if (result.success) {
 				// a resident `warden-simd` is bound to the boot that just ended
 				await stopHelperAfter(ctx)(r.id);
-				return { kind: "shutdown", id: r.id };
+				return { kind: "shutdown", id: r.id, ...(r.platform === "ios" ? { sim: { udid: r.id, name: r.name } } : {}) };
 			}
 			return { kind: "failed", note: `shutdown ${r.id} failed: ${result.error}` };
 		} catch (error) {
@@ -60,12 +61,17 @@ export async function shutdownReleasedDevices(
 		}
 	};
 	const outcome: ShutdownOutcome = { shutdown: [], notes: [], kept: [] };
+	const sims: ShutDownSim[] = [];
 	for (const done of await Promise.all(leases.map(one))) {
-		if (done.kind === "shutdown") outcome.shutdown.push(done.id);
-		else if (done.kind === "kept") {
+		if (done.kind === "shutdown") {
+			outcome.shutdown.push(done.id);
+			if (done.sim) sims.push(done.sim);
+		} else if (done.kind === "kept") {
 			outcome.kept.push(done.id);
 			outcome.notes.push(done.note);
 		} else if (done.kind !== "skipped") outcome.notes.push(done.note);
 	}
+	const unclosed = await closeSimWindowsAfter(ctx, sims);
+	if (unclosed !== undefined) outcome.notes.push(`couldn't close the simulator window (${unclosed})`);
 	return outcome;
 }

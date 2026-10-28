@@ -30,6 +30,45 @@ describe("shutdownReleasedDevices", () => {
 		expect(calls.filter((c) => c[2] === "shutdown").map((c) => c[3])).toEqual(["W", "BOOTED-BY-ME"]);
 	});
 
+	test("closes the viewer windows of the iOS sims it shut down, once, by name (Device Hub keeps a page open)", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], {
+			exec: fakeSimctl([], calls, [
+				["pgrep -xq Simulator", { exitCode: 1 }],
+				["pgrep -xq DeviceHub", { exitCode: 0 }],
+				["osascript", {}],
+			]),
+		});
+		ctx.db.recordDevice({ platform: "ios", id: "W", name: "W" }, 0);
+		const result = await shutdownReleasedDevices(
+			ctx,
+			[lease(ctx, "W"), lease(ctx, "B", true), lease(ctx, "USERS")],
+			owner
+		);
+		expect(result.shutdown).toEqual(["W", "B"]);
+		const closes = calls.filter((c) => c[0] === "osascript" && (c[4] ?? "").includes("AXCloseButton"));
+		expect(closes).toHaveLength(1);
+		expect(JSON.parse(closes[0]?.[5] ?? "")).toEqual(["W", "B"]);
+		expect(calls.indexOf(closes[0] as string[])).toBeGreaterThan(calls.map((c) => c[2]).lastIndexOf("shutdown"));
+	});
+
+	test("a window that won't close is a note; the shutdown still counts", async () => {
+		ctx = testContext([], {
+			exec: fakeSimctl(
+				[],
+				[],
+				[
+					["pgrep -xq Simulator", { exitCode: 1 }],
+					["pgrep -xq DeviceHub", { exitCode: 0 }],
+					["osascript", { exitCode: 1, stderr: "kaput" }],
+				]
+			),
+		});
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "A", true)], owner);
+		expect(result.shutdown).toEqual(["A"]);
+		expect(result.notes.join("\n")).toContain("couldn't close");
+	});
+
 	test("shuts devices down concurrently, reporting in lease order", async () => {
 		const started: string[] = [];
 		let release: () => void = () => {};
