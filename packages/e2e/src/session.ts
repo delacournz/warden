@@ -35,7 +35,10 @@ export function devtoolsTarget(env: E2eEnv): { appId: string; deviceName?: strin
 	return { appId: env.bundleId, ...(env.deviceName === undefined ? {} : { deviceName: env.deviceName }) };
 }
 
-/** Metro's inspector for this env's app (`WARDEN_METRO_URL`), pinned by {@link devtoolsTarget}. */
+/**
+ * Metro's inspector for this env's app (`WARDEN_METRO_URL`), pinned by {@link devtoolsTarget}. LogBox is kept off:
+ * its toasts and inspector cover the app and take taps, while the logs still reach the console capture.
+ */
 export const openDevtools: DevtoolsOpener = (env) =>
 	openDevtoolsFacet({
 		env: { metroUrl: env.metroUrl },
@@ -44,6 +47,7 @@ export const openDevtools: DevtoolsOpener = (env) =>
 		WebSocket,
 		timeoutMs: 5_000,
 		log: (line) => process.stderr.write(`[devtools] ${line}\n`),
+		muteLogBox: true,
 	});
 
 export type Session = {

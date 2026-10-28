@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "./app";
+import { devtoolsErr } from "./devtools/devtools.types";
 import { type ElementSpec, el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "./driver/driver.testing";
 import type { Platform, Snapshot } from "./driver/driver.types";
 import { cacheObservations } from "./driver/observation-cache";
@@ -53,6 +54,36 @@ function launchingDriver(
 }
 
 describe("app.open", () => {
+	test("with Metro, attaches devtools after the launch so LogBox is turned off", async () => {
+		const driver = fakeDriver({ screens: [CONTENT] });
+		let attaches = 0;
+		const session = {
+			out: "/tmp/out",
+			devtools: () => {
+				attaches++;
+				expect(driver.callsOf("app.launch")).toHaveLength(1);
+				return Promise.resolve(devtoolsErr("devtools_unavailable", "not under test"));
+			},
+		};
+		const app = createApp({ session, driver, env: { ...baseEnv, metroUrl: "http://localhost:8081" } });
+		await app.open();
+		expect(attaches).toBe(1);
+	});
+
+	test("without Metro (a release build) devtools are not attached", async () => {
+		const driver = fakeDriver({ screens: [CONTENT] });
+		let attaches = 0;
+		const session = {
+			out: "/tmp/out",
+			devtools: () => {
+				attaches++;
+				return Promise.resolve(devtoolsErr("devtools_unavailable", "not under test"));
+			},
+		};
+		await createApp({ session, driver, env: baseEnv }).open();
+		expect(attaches).toBe(0);
+	});
+
 	test("passes WARDEN_LAUNCH_ARGS then call args and env, relaunching", async () => {
 		const { driver, app } = setup();
 		await app.open({ args: ["--flag"], env: { A: "1" } });

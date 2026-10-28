@@ -83,6 +83,8 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 
 ### `device.devtools` (dev client over Metro)
 
+With `WARDEN_METRO_URL` set, `app.open()` attaches devtools in the background and keeps React Native's LogBox off (no warning/error toasts, no error inspector, fatals included) in every JS context, after relaunches and reloads too. Logs still land in `console.jsonl` and Metro's terminal. Assert on the app's own UI, never on a LogBox toast.
+
 | Member | Does |
 |---|---|
 | `evaluate(expr)` | run JS in the app; returns a result object (`success`, `data` / `error`) |
