@@ -12,6 +12,8 @@ afterEach(() => ctx?.cleanup());
 
 const agent: Owner = { kind: "agent", sessionId: "a", cwd: "/" };
 const NICE = ["nice", "-n", "10"];
+/** the host volume is never read: a machine short on disk must not make these tests spawn a low-disk gc */
+const NO_VOLUME = () => undefined;
 
 /** A context at `clock` whose store holds a lease nobody will ever heartbeat again. */
 function withStaleLease(clock: () => number): TestContext {
@@ -30,10 +32,10 @@ describe("maybeAutoGc", () => {
 		ctx = withStaleLease(() => clock);
 		const spawned: string[][] = [];
 		const spawn = (cmd: string[]) => spawned.push(cmd);
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE, volume: NO_VOLUME });
+		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE, volume: NO_VOLUME });
 		clock += AUTO_GC_INTERVAL_MS;
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toEqual([
 			[...NICE, "warden", "gc", "--quiet"],
 			[...NICE, "warden", "gc", "--quiet"],
@@ -50,14 +52,14 @@ describe("maybeAutoGc", () => {
 		);
 		ctx.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2" }, clock - 60_000);
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toEqual([]);
 		expect(ctx.db.getMeta("auto_gc_checked_at")).toBe(String(clock));
 		ctx.db.insertLease({ resource: { kind: "port", port: 9 }, owner: agent, ttlMs: 1 }, 0);
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toEqual([]);
 		clock += AUTO_GC_INTERVAL_MS;
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toHaveLength(1);
 	});
 
@@ -67,7 +69,11 @@ describe("maybeAutoGc", () => {
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
 		ctx.db.insertLease({ resource: { kind: "port", port: 9 }, owner: agent, ttlMs: 1, pid: 4242 }, 0);
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, pidAlive: (pid) => pid === 4242 });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), {
+			nice: NICE,
+			pidAlive: (pid) => pid === 4242,
+			volume: NO_VOLUME,
+		});
 		expect(spawned).toEqual([]);
 	});
 
@@ -78,15 +84,15 @@ describe("maybeAutoGc", () => {
 		ctx.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, clock - DEFAULT_IDLE_MS);
 		const spawned: string[][] = [];
 		const spawn = (cmd: string[]) => spawned.push(cmd);
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toHaveLength(1);
 		ctx.db.setMeta("last_gc_at", String(clock));
 		clock += AUTO_GC_INTERVAL_MS;
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toHaveLength(1);
 		ctx.db.touchDevice("ios", "U1", clock);
 		clock += DEFAULT_IDLE_MS;
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toHaveLength(2);
 	});
 
@@ -107,7 +113,7 @@ describe("maybeAutoGc", () => {
 		});
 		expect(stored.success).toBe(true);
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
 	});
 
@@ -127,10 +133,10 @@ describe("maybeAutoGc", () => {
 			now: clock,
 		});
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		clock += AUTO_GC_INTERVAL_MS;
 		ctx.env = { ...ctx.env, WARDEN_MAX_CACHE_SIZE: "tiny" };
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toEqual([]);
 	});
 
@@ -140,11 +146,11 @@ describe("maybeAutoGc", () => {
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", CI: "1" };
 		markAndroidSnapshotPending(ctx.db, "Pixel_10");
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toEqual([]);
 		ctx.db.deleteMeta("auto_gc_checked_at");
 		ctx.env = { ...ctx.env, CI: undefined };
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
 	});
 
@@ -152,9 +158,9 @@ describe("maybeAutoGc", () => {
 		ctx = withStaleLease(() => 5 * AUTO_GC_INTERVAL_MS);
 		ctx.env = { ...ctx.env, WARDEN_AUTO_GC: "0" };
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		ctx.env = { ...ctx.env, WARDEN_AUTO_GC: "1", WARDEN_BACKGROUND: "0" };
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toEqual([]);
 		expect(ctx.db.getMeta("auto_gc_checked_at")).toBeUndefined();
 	});
@@ -162,7 +168,7 @@ describe("maybeAutoGc", () => {
 	test("no `nice` on this machine: the pass is spawned as it was", () => {
 		ctx = withStaleLease(() => 5 * AUTO_GC_INTERVAL_MS);
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: [] });
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: [], volume: NO_VOLUME });
 		expect(spawned).toEqual([["warden", "gc", "--quiet"]]);
 	});
 });
