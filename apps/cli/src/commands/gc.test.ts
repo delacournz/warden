@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
-import type { Exec } from "@delacour/warden-core/exec";
+import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import type { Owner } from "@delacour/warden-core/types";
+import { execWithFakes, type Fixture, fixtureRepo } from "@delacour/warden-core/worktrees/audit.testing";
 import { fakeSimctl, wardenSim } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { gcCommand } from "./gc";
@@ -537,5 +538,63 @@ describe("warden gc: orphaned Xcode disk", () => {
 		]);
 		expect(await gcCommand.run(c)).toBe(0);
 		expect(existsSync(dir)).toBe(true);
+	});
+});
+
+describe("warden gc: merged worktrees (WARDEN_GC_WORKTREES=merged)", () => {
+	let fx: Fixture | undefined;
+	afterEach(() => fx?.cleanup());
+
+	function context(argv: string[], env: Record<string, string> = { WARDEN_GC_WORKTREES: "merged" }): TestContext {
+		const f = fixtureRepo();
+		fx = f;
+		ctx = testContext(argv, { now: () => NOW, cwd: f.repo, exec: execWithFakes(bunExec, { lsof: "", gh: {} }) });
+		ctx.env = { ...ctx.env, ...env };
+		return ctx;
+	}
+
+	/** A worktree whose files are all years old, so the audit calls it idle rather than `active`. */
+	function idleWorktree(branch: string): string {
+		const path = fx?.addWorktree(branch) ?? "";
+		Bun.spawnSync(["find", path, "-exec", "touch", "-t", "200001010000", "{}", "+"]);
+		return path;
+	}
+
+	test("off by default: a merged worktree stays and the report has no worktrees bucket", async () => {
+		const c = context(["--no-orphans", "--json"], {});
+		const wt = idleWorktree("done");
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(existsSync(wt)).toBe(true);
+		expect(JSON.parse(c.stdout.join("\n")).worktrees).toBeUndefined();
+	});
+
+	test("on: removes the merged one, keeps the dirty one, and reports both", async () => {
+		const c = context(["--no-orphans", "--json"]);
+		const merged = idleWorktree("done");
+		const dirty = idleWorktree("wip");
+		writeFileSync(join(dirty, "x"), "x");
+		expect(await gcCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.worktrees.removed).toMatchObject([{ path: merged, branch: "done" }]);
+		expect(out.worktrees.freed).toBeGreaterThan(0);
+		expect(existsSync(merged)).toBe(false);
+		expect(existsSync(dirty)).toBe(true);
+	});
+
+	test("--dry-run lists them and removes nothing", async () => {
+		const c = context(["--dry-run", "--json"]);
+		const merged = idleWorktree("done");
+		expect(await gcCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.worktrees.found).toMatchObject([{ path: merged }]);
+		expect(existsSync(merged)).toBe(true);
+	});
+
+	test("a value other than merged is ignored with a note", async () => {
+		const c = context(["--no-orphans", "--json"], { WARDEN_GC_WORKTREES: "all" });
+		const wt = idleWorktree("done");
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(existsSync(wt)).toBe(true);
+		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).toContain("WARDEN_GC_WORKTREES");
 	});
 });

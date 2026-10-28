@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExecResult } from "@delacour/warden-core/exec";
+import { bunExec, type ExecResult } from "@delacour/warden-core/exec";
 import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
+import { execWithFakes, fixtureRepo } from "@delacour/warden-core/worktrees/audit.testing";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { diskCommand } from "./disk";
 
@@ -168,6 +169,28 @@ describe("warden disk", () => {
 			expect(orphans.fix).toContain("warden gc");
 		} finally {
 			rmSync(home, { recursive: true, force: true });
+		}
+	});
+
+	test("reclaimable: merged worktrees, counted without a fetch; no row when there are none", async () => {
+		const f = fixtureRepo();
+		try {
+			const host = hostExec({});
+			const real = execWithFakes(bunExec, { lsof: "", gh: {} });
+			const exec = async (cmd: readonly string[], opts?: Parameters<typeof bunExec>[1]) =>
+				["git", "du", "find", "lsof", "gh"].includes(cmd[0] ?? "") ? real(cmd, opts) : host(cmd, opts);
+			ctx = testContext(["--json"], { exec, now: () => NOW, cwd: f.repo });
+			expect(await diskCommand.run(ctx)).toBe(0);
+			expect(json(ctx).reclaimable.some((r: { kind: string }) => r.kind === "worktrees")).toBe(false);
+			ctx.stdout.length = 0;
+			Bun.spawnSync(["find", f.addWorktree("done"), "-exec", "touch", "-t", "200001010000", "{}", "+"]);
+			expect(await diskCommand.run(ctx)).toBe(0);
+			const row = json(ctx).reclaimable.find((r: { kind: string }) => r.kind === "worktrees");
+			expect(row).toMatchObject({ kind: "worktrees", removable: 1, total: 1 });
+			expect(row.bytes).toBeGreaterThan(0);
+			expect(row.fix).toContain("warden worktrees");
+		} finally {
+			f.cleanup();
 		}
 	});
 

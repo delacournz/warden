@@ -18,6 +18,7 @@ import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
+import { type GcWorktrees, gcWorktreesMode, previewWorktrees, sweepWorktrees } from "../gc-worktrees";
 import { androidSnapshotPass } from "../golden-deps";
 import { emit, heading, plural, reportError } from "../output";
 import { providerFor } from "../providers";
@@ -248,8 +249,38 @@ async function previewOrphans(ctx: CommandContext, opts: GcOpts): Promise<number
 					`${plural(found.length, "orphan")} (${formatSize(total)}), nothing removed`,
 					...found.map((e) => `${formatSize(e.bytes)}  ${describeOrphan(e)}`),
 				].join("\n");
-	emit(ctx, opts.json === true, { dryRun: true, orphans: { found, total } }, text);
+	const { mode, problems } = gcWorktreesMode(ctx.env);
+	const worktrees = mode ? await previewWorktrees(ctx) : undefined;
+	const worktreeText = worktrees
+		? [
+				"",
+				worktrees.found.length === 0
+					? ctx.ui.color.dim("no merged worktrees")
+					: [
+							`${plural(worktrees.found.length, "merged worktree")} (${formatSize(worktrees.total)}), nothing removed`,
+							...worktrees.found.map((e) => `${formatSize(e.bytes ?? 0)}  ${e.path}`),
+						].join("\n"),
+			]
+		: [];
+	emit(
+		ctx,
+		opts.json === true,
+		{ dryRun: true, orphans: { found, total }, ...(worktrees ? { worktrees } : {}) },
+		[text, ...worktreeText, ...problems.map((p) => ctx.ui.color.yellow(`warden: ${p}`))].join("\n")
+	);
 	return 0;
+}
+
+/** The opt-in merged-worktree sweep (`WARDEN_GC_WORKTREES=merged`): its JSON bucket, text lines and notes. */
+async function worktreePass(ctx: CommandContext): Promise<{ bucket?: GcWorktrees; lines: string[]; notes: string[] }> {
+	const { mode, problems } = gcWorktreesMode(ctx.env);
+	const notes = problems.map((p) => `warden: ${p}`);
+	if (!mode) return { lines: [], notes };
+	const swept = await sweepWorktrees(ctx);
+	const { removed, freed } = swept.bucket;
+	const lines =
+		removed.length > 0 ? [`removed ${plural(removed.length, "merged worktree")} (${formatSize(freed)})`] : [];
+	return { bucket: swept.bucket, lines, notes: [...notes, ...swept.notes] };
 }
 
 /**
@@ -346,9 +377,14 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			: [`WARDEN_MAX_CACHE_SIZE: ${cap.bytes.error}; build cache prune skipped`])
 	);
 	notes.push(...sweepDevDirs(ctx, now));
-	const swept = opts.orphans === false ? undefined : await sweepOrphans(ctx, now);
-	notes.push(...(swept?.notes ?? []));
-	const orphans = swept?.outcome ?? { removed: [], skipped: [], freed: 0 };
+	const swept =
+		opts.orphans === false
+			? { outcome: { removed: [], skipped: [], freed: 0 } satisfies OrphanOutcome, notes: [] }
+			: await sweepOrphans(ctx, now);
+	notes.push(...swept.notes);
+	const orphans = swept.outcome;
+	const worktrees = await worktreePass(ctx);
+	notes.push(...worktrees.notes);
 	store.setMeta("last_gc_at", String(now));
 	if (opts.quiet) return 0;
 	const text = [
@@ -359,9 +395,15 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		...(forgotten.length > 0
 			? [color.yellow(`forgot exited emulators ${forgotten.map((d) => d.name).join(" ")}`)]
 			: []),
+		...worktrees.lines.map((l) => color.green(l)),
 		...notes.map((n) => color.yellow(n)),
 	].join("\n");
-	emit(ctx, opts.json === true, { reclaimed, shutdown, forgotten, orphans, notes }, text);
+	emit(
+		ctx,
+		opts.json === true,
+		{ reclaimed, shutdown, forgotten, orphans, ...(worktrees.bucket ? { worktrees: worktrees.bucket } : {}), notes },
+		text
+	);
 	return 0;
 }
 
@@ -381,7 +423,10 @@ export const gcCommand = defineCommand({
 				`prune least-recently-used cached builds down to this size, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE or ${DEFAULT_MAX_CACHE_SIZE}; builds used in the last 30 min stay)`
 			)
 			.option("--no-orphans", "keep orphaned Xcode DerivedData and XCTestDevices clones")
-			.option("--dry-run", "only list orphaned DerivedData / XCTestDevices with sizes; change nothing")
+			.option(
+				"--dry-run",
+				"only list orphaned DerivedData / XCTestDevices (and merged worktrees with WARDEN_GC_WORKTREES=merged) with sizes; change nothing"
+			)
 			.option("--quiet", "print nothing (background auto-gc)")
 			.option("--json", "machine-readable output")
 			.action(async (opts) => done(await gc(ctx, opts)));

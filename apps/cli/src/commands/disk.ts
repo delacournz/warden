@@ -26,12 +26,14 @@ import type { CommandContext } from "../context";
 import { diskConfigFromEnv, diskGateEnabled } from "../disk-deps";
 import { emit, table } from "../output";
 import { simsDeps } from "./sims-audit";
+import { summarizeWorktrees } from "./worktrees";
 
 /** Space warden itself can give back, one entry per source; each carries the one-line `fix` the report prints. */
 export type DiskReclaimable =
 	| { kind: "builds"; bytes: number; capBytes: number | null; overCapBytes: number; fix: string }
 	| { kind: "sims"; bytes: number; count: number; fix: string }
-	| { kind: "orphans"; bytes: number; derivedData: number; xctestDevices: number; fix: string };
+	| { kind: "orphans"; bytes: number; derivedData: number; xctestDevices: number; fix: string }
+	| { kind: "worktrees"; bytes: number; removable: number; total: number; fix: string };
 
 export type DiskReasonRow = DiskReason & { fix: string };
 
@@ -109,8 +111,23 @@ async function orphansOf(ctx: CommandContext, os: HostOs): Promise<DiskReclaimab
 	];
 }
 
+/** Merged git worktrees `warden worktrees --apply` removes: no fetch, only those sized. Nothing to say when there are no worktrees. */
+async function worktreesOf(ctx: CommandContext): Promise<DiskReclaimable[]> {
+	const { summary } = await summarizeWorktrees(ctx);
+	if (summary.total === 0) return [];
+	return [
+		{
+			kind: "worktrees",
+			bytes: summary.removableBytes,
+			removable: summary.removable,
+			total: summary.total,
+			fix: "`warden worktrees` to review, `--apply` removes merged",
+		},
+	];
+}
+
 async function reclaimableOf(ctx: CommandContext, os: HostOs): Promise<DiskReclaimable[]> {
-	const list: DiskReclaimable[] = await orphansOf(ctx, os);
+	const list: DiskReclaimable[] = [...(await orphansOf(ctx, os)), ...(await worktreesOf(ctx))];
 	const total = cacheTotal(ctx.store());
 	if (total > 0) {
 		const cap = cacheCap(undefined, ctx.env).bytes;
@@ -218,6 +235,8 @@ function reclaimableNote(item: DiskReclaimable): string {
 				: `cap ${formatSize(item.capBytes)}, ${formatSize(item.overCapBytes)} over`;
 		case "sims":
 			return `${item.count} deletable sim${item.count === 1 ? "" : "s"}`;
+		case "worktrees":
+			return `${item.removable} merged of ${item.total} worktree${item.total === 1 ? "" : "s"}`;
 		case "orphans":
 			return `${item.derivedData} DerivedData of deleted projects · ${item.xctestDevices} XCTest clone set`;
 	}
