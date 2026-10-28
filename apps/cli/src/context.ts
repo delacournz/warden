@@ -2,6 +2,7 @@ import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-core/git-facts";
 import type { HostFacts } from "@delacour/warden-core/host";
 import { openStore, type Store } from "@delacour/warden-core/store";
+import type { Fetch } from "./remote/api";
 import { terminalUi, type Ui } from "./ui";
 
 /** Everything a command touches from the outside world — injectable for tests. */
@@ -27,6 +28,10 @@ export type CommandContext = {
 	hostFacts?: () => Promise<HostFacts>;
 	/** where `reportError` records a failure, for the `--json` error envelope `runProgram` prints */
 	failure?: FailureSink;
+	/** HTTP for warden-api; unset = global fetch (tests inject a fake) */
+	fetch?: Fetch;
+	/** wall-clock wait (polling loops); unset = `Bun.sleep` */
+	sleep?: (ms: number) => Promise<void>;
 };
 
 /** Collects the failures a command reports; `runProgram` keeps the first. */
