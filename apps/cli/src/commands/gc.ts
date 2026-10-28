@@ -1,6 +1,7 @@
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
+import { findOrphans, type OrphanEntry, removeOrphans } from "@delacour/warden-core/builds/orphans";
 import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
@@ -193,10 +194,63 @@ function removeIfIdle(dir: string, now: number): boolean {
 	}
 }
 
-type GcOpts = { idle?: string; maxCacheSize?: string; quiet?: true; json?: true };
+type GcOpts = {
+	idle?: string;
+	maxCacheSize?: string;
+	/** false = `--no-orphans` */
+	orphans?: boolean;
+	dryRun?: true;
+	quiet?: true;
+	json?: true;
+};
 
 /** Everything a pass reports. */
 type GcOutcome = PlatformOutcome & { reclaimed: string[] };
+
+/** What the orphan sweep did: removed, left alone (with why), and bytes freed. */
+type OrphanOutcome = { removed: OrphanEntry[]; skipped: { entry: OrphanEntry; reason: string }[]; freed: number };
+
+const orphanDeps = (ctx: CommandContext, now: number) => ({ home: ctx.env.HOME ?? "", exec: ctx.exec, now });
+
+const describeOrphan = (e: OrphanEntry): string =>
+	e.kind === "derived-data" ? `DerivedData ${e.path} (workspace ${e.workspace} gone)` : `XCTestDevices ${e.path}`;
+
+/**
+ * Remove orphaned Xcode DerivedData dirs and the stale XCTestDevices clone set. Never throws: a
+ * failed scan is a note, so lease reclaim and device shutdown are not held up by it.
+ */
+async function sweepOrphans(ctx: CommandContext, now: number): Promise<{ outcome: OrphanOutcome; notes: string[] }> {
+	const outcome: OrphanOutcome = { removed: [], skipped: [], freed: 0 };
+	if (!ctx.env.HOME) return { outcome, notes: [] };
+	try {
+		const deps = orphanDeps(ctx, now);
+		const result = await removeOrphans(await findOrphans(deps), deps);
+		outcome.removed = result.removed;
+		outcome.skipped = result.skipped;
+		outcome.freed = result.removed.reduce((sum, e) => sum + e.bytes, 0);
+	} catch (e) {
+		return { outcome, notes: [`orphan sweep failed: ${e instanceof Error ? e.message : String(e)}`] };
+	}
+	const notes = outcome.skipped.map((s) => `kept ${describeOrphan(s.entry)}: ${s.reason}`);
+	if (outcome.removed.length > 0)
+		notes.unshift(`removed ${plural(outcome.removed.length, "orphan")} (${formatSize(outcome.freed)})`);
+	return { outcome, notes };
+}
+
+/** `--dry-run`: list the orphans and their sizes; nothing is removed, shut down or reclaimed. */
+async function previewOrphans(ctx: CommandContext, opts: GcOpts): Promise<number> {
+	const found = opts.orphans === false || !ctx.env.HOME ? [] : await findOrphans(orphanDeps(ctx, ctx.now()));
+	const total = found.reduce((sum, e) => sum + e.bytes, 0);
+	const text =
+		found.length === 0
+			? ctx.ui.color.dim("no orphans")
+			: [
+					`${plural(found.length, "orphan")} (${formatSize(total)}), nothing removed`,
+					...found.map((e) => `${formatSize(e.bytes)}  ${describeOrphan(e)}`),
+				].join("\n");
+	emit(ctx, opts.json === true, { dryRun: true, orphans: { found, total } }, text);
+	return 0;
+}
 
 /**
  * Stale leases (owner died without releasing, e.g. a Claude session killed before SessionEnd) are
@@ -223,6 +277,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		reportError(ctx, "gc", `--max-cache-size: ${cap.bytes.error}`);
 		return 1;
 	}
+	if (opts.dryRun) return previewOrphans(ctx, opts);
 	const store = ctx.store();
 	const now = ctx.now();
 	const owner = resolveOwner(ctx);
@@ -291,6 +346,9 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			: [`WARDEN_MAX_CACHE_SIZE: ${cap.bytes.error}; build cache prune skipped`])
 	);
 	notes.push(...sweepDevDirs(ctx, now));
+	const swept = opts.orphans === false ? undefined : await sweepOrphans(ctx, now);
+	notes.push(...(swept?.notes ?? []));
+	const orphans = swept?.outcome ?? { removed: [], skipped: [], freed: 0 };
 	store.setMeta("last_gc_at", String(now));
 	if (opts.quiet) return 0;
 	const text = [
@@ -303,14 +361,15 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			: []),
 		...notes.map((n) => color.yellow(n)),
 	].join("\n");
-	emit(ctx, opts.json === true, { reclaimed, shutdown, forgotten, notes }, text);
+	emit(ctx, opts.json === true, { reclaimed, shutdown, forgotten, orphans, notes }, text);
 	return 0;
 }
 
 export const gcCommand = defineCommand({
 	name: "gc",
 	group: "Lease",
-	summary: "reclaim stale leases; shut down idle warden devices (never deletes)",
+	summary:
+		"reclaim stale leases; shut down idle warden devices; sweep orphaned Xcode DerivedData (never deletes devices)",
 	register: (cmd, ctx, done) => {
 		cmd
 			.option(
@@ -321,6 +380,8 @@ export const gcCommand = defineCommand({
 				"--max-cache-size <size>",
 				`prune least-recently-used cached builds down to this size, e.g. 20G (default: $WARDEN_MAX_CACHE_SIZE or ${DEFAULT_MAX_CACHE_SIZE}; builds used in the last 30 min stay)`
 			)
+			.option("--no-orphans", "keep orphaned Xcode DerivedData and XCTestDevices clones")
+			.option("--dry-run", "only list orphaned DerivedData / XCTestDevices with sizes; change nothing")
 			.option("--quiet", "print nothing (background auto-gc)")
 			.option("--json", "machine-readable output")
 			.action(async (opts) => done(await gc(ctx, opts)));

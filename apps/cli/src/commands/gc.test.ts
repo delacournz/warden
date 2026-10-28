@@ -463,3 +463,79 @@ describe("warden gc: a device claimed while the pass runs (16-1, 12-2)", () => {
 		});
 	});
 });
+
+describe("warden gc: orphaned Xcode disk", () => {
+	const mac = process.platform === "darwin" ? test : test.skip;
+
+	/** A DerivedData dir under the context's temp HOME whose workspace is gone. */
+	function orphan(c: TestContext): string {
+		const dir = join(c.env.HOME ?? "", "Library", "Developer", "Xcode", "DerivedData", "App-abc");
+		mkdirSync(dir, { recursive: true });
+		const ws = join(c.env.HOME ?? "", "deleted", "App.xcworkspace");
+		writeFileSync(
+			join(dir, "info.plist"),
+			`<plist><dict><key>WorkspacePath</key><string>${ws}</string></dict></plist>`
+		);
+		return dir;
+	}
+
+	function context(argv: string[]): TestContext {
+		ctx = testContext(argv, {
+			now: () => NOW,
+			exec: fakeExec([
+				["pgrep", { exitCode: 1 }],
+				["du -sk", { stdout: "4096\tx\n" }],
+			]),
+		});
+		return ctx;
+	}
+
+	mac("removes orphaned DerivedData and reports it", async () => {
+		const c = context(["--json"]);
+		const dir = orphan(c);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(existsSync(dir)).toBe(false);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.orphans.removed).toMatchObject([{ kind: "derived-data", path: dir }]);
+		expect(out.orphans.freed).toBe(4096 * 1024);
+	});
+
+	mac("--no-orphans keeps it", async () => {
+		const c = context(["--no-orphans", "--json"]);
+		const dir = orphan(c);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(existsSync(dir)).toBe(true);
+		expect(JSON.parse(c.stdout.join("\n")).orphans.removed).toEqual([]);
+	});
+
+	mac("--dry-run lists sizes and changes nothing", async () => {
+		const c = context(["--dry-run", "--json"]);
+		const dir = orphan(c);
+		c.db.insertLease({ resource: { kind: "port", port: 9 }, owner: agent, ttlMs: 1 }, 0);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(existsSync(dir)).toBe(true);
+		expect(c.db.listLeases()).toHaveLength(1);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.dryRun).toBe(true);
+		expect(out.orphans.found).toMatchObject([{ kind: "derived-data", path: dir, bytes: 4096 * 1024 }]);
+		expect(out.orphans.total).toBe(4096 * 1024);
+	});
+
+	mac("--dry-run text names the dir and size", async () => {
+		const c = context(["--dry-run"]);
+		const dir = orphan(c);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(c.stdout.join("\n")).toContain(dir);
+	});
+
+	mac("a busy xcodebuild leaves it with a note", async () => {
+		const c = context(["--json"]);
+		const dir = orphan(c);
+		c.exec = fakeExec([
+			["pgrep -fl xcodebuild", { stdout: `5 xcodebuild -derivedDataPath ${dir}\n` }],
+			["du -sk", { stdout: "1\tx\n" }],
+		]);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(existsSync(dir)).toBe(true);
+	});
+});

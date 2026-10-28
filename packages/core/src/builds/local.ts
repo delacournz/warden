@@ -19,6 +19,7 @@ import type { BuildConfiguration } from "./builds.defaults";
 import { LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
 import { compilerCacheEnv } from "./compiler-cache";
 import type { Project } from "./config";
+import { derivedDataWorkspace } from "./derived-data";
 import { formatBuildFailure, parseBuildDiagnostics } from "./diagnostics";
 import { type CacheKey, computeCacheKey } from "./fingerprint";
 import { combineKey, readFileOrUndefined } from "./js-inputs";
@@ -126,19 +127,6 @@ function samePath(a: string, b: string): boolean {
 function isInside(path: string, root: string): boolean {
 	const rel = relative(real(root), real(path));
 	return rel !== "" && !rel.startsWith("..") && !rel.startsWith(sep);
-}
-
-const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
-
-/** Xcode records the workspace a DerivedData dir belongs to in its `info.plist` (`WorkspacePath`). */
-function derivedDataWorkspace(projectDir: string): string | undefined {
-	try {
-		const plist = readFileSync(join(projectDir, "info.plist"), "utf8");
-		const raw = /<key>WorkspacePath<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
-		return raw?.replace(/&(amp|lt|gt|quot|apos);/g, (_, name: string) => XML_ENTITIES[name] ?? "");
-	} catch {
-		return undefined;
-	}
 }
 
 /**
