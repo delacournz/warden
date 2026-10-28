@@ -559,8 +559,8 @@ Options:
   --devices <legs>            which e2e.<suite>.devices legs run: default | all
                               | <profile,…>
   --no-shutdown               keep the devices running after the gate passes
-                              (default: shut down the ones warden created under
-                              CI, leave them booted locally; suite shutdown)
+                              (default: shut down the ones warden created; suite
+                              shutdown)
   --perf [captures]           profile every attempt (bare: metrics, frames,
                               logs; or --perf=react,js | all); reports land in
                               the attempt's perf/ dir
