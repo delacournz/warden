@@ -97,7 +97,8 @@ describe("warden dev logs", () => {
 	test("no metro.log: metro_log_unavailable with the TUI hint", async () => {
 		const c = withSession(undefined);
 		expect(await devLogs(c, { json: true }, deps())).toBe(1);
-		const { error } = JSON.parse(c.stdout[0] ?? "");
+		const { ok, command, error } = JSON.parse(c.stdout[0] ?? "");
+		expect({ ok, command }).toEqual({ ok: false, command: "dev logs" });
 		expect(error.code).toBe("metro_log_unavailable");
 		expect(error.hint).toContain("warden dev");
 	});

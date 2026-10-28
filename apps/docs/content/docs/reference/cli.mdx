@@ -6,6 +6,8 @@ icon: Terminal
 
 This is the exhaustive list of `warden` commands and flags; use it to look up an option, and `warden <command> --help` for the version you have installed.
 
+With `--json`, stdout holds exactly one JSON document, success or failure, and everything else (progress, Metro, a child command's output) goes to stderr. A failure that has no report of its own prints `{"ok":false,"command":"<command>","error":{"code":"usage"|"failed","message":"…"}}`, with the exit code unchanged: `usage` for an unknown option or a missing argument, `failed` for the rest. `warden ui` and `warden perf` failures carry their own codes (`stale_ref`, `device_not_leased`, …). `warden dev` and `warden run` keep running, so their document is the first stdout line.
+
 ## Quick reference
 
 | Need | Command |
