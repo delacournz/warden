@@ -62,6 +62,8 @@ export function serverEventBody(posthog: OnConfig, request: Request, kind: Agent
 			$pathname: url.pathname,
 			$browser_language: language,
 			$lib: "warden-docs",
+			site: "warden",
+			surface: "server",
 			$process_person_profile: false,
 			$geoip_disable: true,
 		},

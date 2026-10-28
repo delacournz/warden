@@ -7,7 +7,9 @@ import { siteUrl, stagingHost } from "@/lib/shared";
  * off rather than throwing, so `bun run dev` and CI, which set neither, render
  * a page with no analytics at all. The values are `VITE_*` and therefore
  * inlined at build time, into the client bundle and the server one alike,
- * which is why Railway sets them per environment.
+ * which is why Railway sets them per environment: the same token and
+ * `i.delacour.co.nz` proxy as every Delacour site (delacour-monorepo's
+ * `wardenAnalyticsEnv`).
  *
  * The validation is not pedantry: the values go into the SDK's config and a
  * server-side URL, so a value that is not the shape it claims to be is refused

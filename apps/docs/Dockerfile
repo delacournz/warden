@@ -16,9 +16,15 @@ RUN bun install --frozen-lockfile
 # Vite inlines these into the client bundle (src/lib/analytics), so each is an ARG: a Dockerfile
 # build sees only declared variables. Unset, the site renders no analytics. Declared after the
 # install so changing one rebuilds the app, not the dependency layer.
+#
+# DEPLOY_ENV is the image-reuse guard, not a build input: Railway's skipped builds ignore
+# variables, so one commit could ship staging's inlined token to production. Railway sets it
+# (delacour-monorepo `apps/warden/infra/railway.ts`); a local `docker build` without it still works.
+ARG DEPLOY_ENV
 ARG VITE_POSTHOG_HOST
 ARG VITE_POSTHOG_TOKEN
-RUN NODE_ENV=production bun run --filter=@delacour/warden-docs build
+RUN echo "building warden-docs for ${DEPLOY_ENV:-local}" \
+	&& NODE_ENV=production bun run --filter=@delacour/warden-docs build
 # `start`'s preload and src/server.ts both load `@delacournz/otel-start` by a computed specifier, so
 # neither Vite nor Nitro bundles it; Bun resolves it from node_modules at runtime. Vendor it as one
 # self-contained bundle (its two entries share a chunk, so one copy of the OpenTelemetry API) at

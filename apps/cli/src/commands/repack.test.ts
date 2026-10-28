@@ -89,12 +89,16 @@ describe("warden repack", () => {
 		});
 	});
 
-	test("an error is reported on stderr, exit 1, no JSON", async () => {
+	test("an error is reported on stderr, exit 1, and as the --json failure envelope", async () => {
 		const c = setup(["ios", "--json"]);
 		const code = await createRepackCommand(deps, async () => err("repack: metro exploded")).run(c);
 		expect(code).toBe(1);
 		expect(c.stderr.join("\n")).toContain("warden repack: repack: metro exploded");
-		expect(c.stdout).toEqual([]);
+		expect(JSON.parse(c.stdout[0] ?? "")).toMatchObject({
+			ok: false,
+			command: "repack",
+			error: { code: "failed", message: "repack: metro exploded" },
+		});
 	});
 
 	test("an unknown platform is refused", async () => {
