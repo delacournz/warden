@@ -82,7 +82,7 @@ function lede(text: string): ReactElement {
 	return <div style={{ fontSize: 31, lineHeight: 1.4, color: INK_2, maxWidth: "940px" }}>{clamp(text, 150)}</div>;
 }
 
-/** Landing card: the hero headline in the display voice, "coding agents." in the accent, over the one-sentence pitch. */
+/** Landing card: the hero headline in the display voice, "own simulator." in the accent, over the one-sentence pitch. */
 export function renderDefaultCard({ host, pitch }: { host: string; pitch: string }): ReactElement {
 	return (
 		<Card url={host}>
@@ -96,8 +96,8 @@ export function renderDefaultCard({ host, pitch }: { host: string; pitch: string
 					letterSpacing: "-0.04em",
 				}}
 			>
-				<span>Mobile testing for</span>
-				<span style={{ color: LAMP }}>coding agents.</span>
+				<span>Every agent gets its</span>
+				<span style={{ color: LAMP }}>own simulator.</span>
 			</div>
 			{lede(pitch)}
 		</Card>

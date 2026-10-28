@@ -8,14 +8,14 @@ import { WardenIcon } from "@/components/warden-icon";
 import { ANALYTICS } from "@/lib/analytics/config";
 import { CONSENT_OPEN_EVENT } from "@/lib/analytics/consent";
 import { baseOptions } from "@/lib/layout.shared";
-import { canonicalLink, softwareApplicationJsonLd } from "@/lib/seo";
+import { canonicalLink, softwareApplicationJsonLd, tagline } from "@/lib/seo";
 import { appDescription, appName, githubUrl, privacyRoute } from "@/lib/shared";
 
 export const Route = createFileRoute("/")({
 	component: Home,
 	head: () => ({
 		meta: [
-			{ title: `${appName} — open-source mobile testing for coding agents` },
+			{ title: `${appName} — ${tagline}` },
 			{ name: "description", content: appDescription },
 			{ property: "og:url", content: canonicalLink("/").href },
 		],
@@ -41,6 +41,69 @@ const AGENTS: readonly { name: string; mark: string; hook: boolean }[] = [
 	{ name: "Zed", mark: "zedindustries", hook: false },
 ];
 
+/**
+ * Illustrative: five agents on one Mac, each row what warden leases to it. Three worktrees share a
+ * native fingerprint, so one cached build serves them; the fifth claim waits for a boot slot.
+ */
+const BOARD: readonly {
+	agent: string;
+	worktree: string;
+	device: string;
+	port: string;
+	build: string;
+	state: "leased" | "queued";
+}[] = [
+	{
+		agent: "Claude Code",
+		worktree: "feature/checkout",
+		device: "iPhone 17",
+		port: ":8081",
+		build: "3f9a1c · cache",
+		state: "leased",
+	},
+	{
+		agent: "Codex",
+		worktree: "fix/login-crash",
+		device: "iPhone 17",
+		port: ":8082",
+		build: "3f9a1c · cache",
+		state: "leased",
+	},
+	{
+		agent: "Cursor",
+		worktree: "feature/dark-mode",
+		device: "Pixel 9 emulator",
+		port: ":8083",
+		build: "b72e04 · local",
+		state: "leased",
+	},
+	{
+		agent: "you",
+		worktree: "main",
+		device: "iPhone 17 Pro",
+		port: ":8084",
+		build: "3f9a1c · installed",
+		state: "leased",
+	},
+	{ agent: "Gemini CLI", worktree: "feature/search", device: "next boot slot", port: "—", build: "—", state: "queued" },
+];
+
+const DEV_SAMPLE = `# worktree 1: feature/checkout
+$ warden dev ios --json
+# worktree 2: fix/login-crash, at the same time
+$ warden dev ios --json
+# each gets its own simulator and Metro port,
+# and the cached build for its native fingerprint`;
+
+const DEBUG_SAMPLE = `# what broke, from the running app
+$ warden dev logs --kind bundle_failed,error
+$ warden ui exceptions
+$ warden ui network --status 4xx
+# why it is slow
+$ warden perf record --all --duration 15s --udid $UDID
+# or all of it over MCP
+$ claude mcp add warden -- warden mcp`;
+
 const DRIVE_SAMPLE = `# your agent, on its own simulator
 $ warden claim ios --json
 $ warden ui open com.example.app
@@ -61,7 +124,7 @@ test("add a todo", async ({ screen }) => {
 });`;
 
 const AGENT_PROMPT = `Install warden (npm i -g @delacour/warden && warden install) and set this Expo app up with warden init.
-Claim an iOS simulator, open the app with warden ui and check the home screen renders.
+Run the app from this worktree with warden dev, then drive it with warden ui and check the home screen renders.
 Save what you checked as an e2e spec under e2e/, run it with warden e2e, and release the simulator when you're done.`;
 
 /** Measured on Salient's 37 offline specs, iPhone 17 simulators, Oct 2026: job phase after the serve step is ready. */
@@ -71,12 +134,14 @@ const RUNS = [
 ] as const;
 
 /**
- * The landing in the familiar agent dev-tool frame: a centered hero with one
- * install command and the recorded run, a centered "Works with" row of agent
- * marks, then the loop as three alternating feature blocks (copy beside a
- * working sample), the lease rules, the first-prompt block, use-case cards,
- * the FAQ and a closing call to action that repeats the install. Every
- * heading uses the one display voice, Mona Sans wide and heavy.
+ * The landing in the familiar agent dev-tool frame, told around one promise:
+ * every agent gets its own simulator. A centered hero with one install command
+ * and the recorded run, a "Works with" row of agent marks, the lease board
+ * (five agents on one Mac and what each holds), the lease rules, then what an
+ * agent does on its simulator as five alternating feature blocks (run, drive,
+ * debug, keep, run the suite), the first-prompt block, use-case cards, the FAQ
+ * and a closing call to action that repeats the install. Every heading uses
+ * the one display voice, Mona Sans wide and heavy.
  */
 function Home(): ReactElement {
 	return (
@@ -93,11 +158,11 @@ function Home(): ReactElement {
 						open source · MIT · iOS + Android
 					</a>
 					<h1 className={`max-w-5xl text-balance text-[clamp(2.6rem,6.4vw,5.4rem)] text-ink leading-[0.95] ${DISPLAY}`}>
-						Mobile testing for <span className="text-accent">coding agents.</span>
+						Every agent gets its own <span className="text-accent">simulator.</span>
 					</h1>
 					<p className="max-w-2xl text-balance text-ink-2 text-lg leading-relaxed sm:text-xl">
-						warden gives your agent its own iOS simulator or Android emulator. It drives your app, keeps what it
-						verified as an e2e test, and runs the whole suite across every simulator on your Mac.
+						warden leases iOS simulators, Android emulators, ports and app builds across every worktree on your Mac, so
+						parallel agents build, run and test your app without stepping on each other.
 					</p>
 					<div className="flex w-full max-w-xl flex-col items-center gap-3">
 						<InstallCommand className="w-full items-center text-start" setup />
@@ -139,51 +204,10 @@ function Home(): ReactElement {
 				</section>
 
 				<Section
-					lede="Your agent runs your iOS or Android app, sees what happened, and keeps going in the same session. Then it keeps what it checked, and the suite runs everywhere at once."
-					title="Let your agent take it from here."
+					lede="Each agent works in its own worktree. warden hands each one a simulator, a Metro port and the build for its fingerprint, and never hands the same one to two owners."
+					title="One Mac. Every branch at once."
 				>
-					<div className="flex flex-col gap-20 sm:gap-28">
-						<Feature
-							label="Drive it"
-							link={{ to: "agents/ui", text: "Drive a device" }}
-							points={[
-								"Claims a simulator or emulator no one else holds",
-								"Reads the screen as @e refs: role, name, testID, state",
-								"Presses, fills, scrolls, waits and checks",
-								"Every call checks the lease and heartbeats it",
-							]}
-							title="Simulator control for agents"
-						>
-							<Terminal code={DRIVE_SAMPLE} label="terminal" />
-						</Feature>
-						<Feature
-							flip
-							label="Keep it"
-							link={{ to: "e2e/first-test", text: "Write your first test" }}
-							points={[
-								"The testIDs warden ui found become the spec's locators",
-								"Specs are TypeScript on bun test with nine matchers",
-								"warden ui and specs share one driver, so a check that passed by hand passes in the spec",
-								"The warden skill tells the agent when a check belongs in a spec",
-							]}
-							title="What it verified becomes a test"
-						>
-							<Terminal code={KEEP_SAMPLE} label="e2e/add-todo.e2e.ts" />
-						</Feature>
-						<Feature
-							label="Run it"
-							link={{ to: "e2e", text: "How e2e works" }}
-							points={[
-								"warden e2e leases N simulators and installs the build",
-								"Starts Metro on its own port, one bun test per device",
-								"warden affected runs only the specs a diff reaches",
-								"Failures leave a screenshot, the screen tree and a trace",
-							]}
-							title="The suite on every simulator at once"
-						>
-							<RunChart />
-						</Feature>
-					</div>
+					<LeaseBoard />
 				</Section>
 
 				<Section
@@ -208,9 +232,85 @@ function Home(): ReactElement {
 						<Card command="warden capacity" title="Boots wait their turn">
 							Claims queue by host RAM, CPU and priority, so ten agents don't boot ten simulators at once.
 						</Card>
-						<Card command="warden dev" title="A Metro port per worktree">
-							Each worktree gets its own simulator and Metro port, and never attaches to another checkout's Metro.
+						<Card command="warden app ensure" title="One build, every worktree">
+							Builds are cached by native fingerprint and shared by every worktree of the repo. A native change builds
+							once.
 						</Card>
+					</div>
+				</Section>
+
+				<Section
+					lede="Once it holds a simulator, your agent runs the app, drives it, reads what went wrong and keeps what it checked as a test. Every step stays on its own device."
+					title="Everything it needs on that simulator."
+				>
+					<div className="flex flex-col gap-20 sm:gap-28">
+						<Feature
+							label="Run it"
+							link={{ to: "agents/dev", text: "Dev client per worktree" }}
+							points={[
+								"Claims a device and leases a Metro port per worktree",
+								"Installs the cached build: installed, cache, EAS, then local",
+								"Never attaches to another checkout's Metro",
+								"Expo or bare React Native, with or without a config",
+							]}
+							title="warden dev in every worktree"
+						>
+							<Terminal code={DEV_SAMPLE} label="terminal" />
+						</Feature>
+						<Feature
+							flip
+							label="Drive it"
+							link={{ to: "agents/ui", text: "Drive a device" }}
+							points={[
+								"Reads the screen as @e refs: role, name, testID, state",
+								"Presses, fills, scrolls, waits and checks",
+								"Every call checks the lease and heartbeats it",
+								"Another agent's simulator is never a valid target",
+							]}
+							title="Simulator control for agents"
+						>
+							<Terminal code={DRIVE_SAMPLE} label="terminal" />
+						</Feature>
+						<Feature
+							label="Debug it"
+							link={{ to: "agents/debug", text: "Debug the running app" }}
+							points={[
+								"Metro's bundle failures, with file, line and code frame",
+								"The app's console, exceptions and network, symbolicated",
+								"CPU, memory, frames, startup and React profiles with warden perf",
+								"The same functions as MCP tools with warden mcp",
+							]}
+							title="Logs, network and profiles"
+						>
+							<Terminal code={DEBUG_SAMPLE} label="terminal" />
+						</Feature>
+						<Feature
+							flip
+							label="Keep it"
+							link={{ to: "e2e/first-test", text: "Write your first test" }}
+							points={[
+								"The testIDs warden ui found become the spec's locators",
+								"Specs are TypeScript on bun test with nine matchers",
+								"warden ui and specs share one driver, so a check that passed by hand passes in the spec",
+								"The warden skill tells the agent when a check belongs in a spec",
+							]}
+							title="What it verified becomes a test"
+						>
+							<Terminal code={KEEP_SAMPLE} label="e2e/add-todo.e2e.ts" />
+						</Feature>
+						<Feature
+							label="Run the suite"
+							link={{ to: "e2e", text: "How e2e works" }}
+							points={[
+								"warden e2e leases N simulators and installs the build",
+								"Starts Metro on its own port, one bun test per device",
+								"warden affected runs only the specs a diff reaches",
+								"Failures leave a screenshot, the screen tree and a trace",
+							]}
+							title="The suite on every simulator at once"
+						>
+							<RunChart />
+						</Feature>
 					</div>
 				</Section>
 
@@ -239,6 +339,9 @@ function Home(): ReactElement {
 					title="What agents build with it."
 				>
 					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+						<Card command="warden dev" title="Parallel worktrees">
+							Five agents, five worktrees, five simulators and five Metro ports, side by side on one Mac.
+						</Card>
 						<Card command="warden ui wait" title="Verify a UI change">
 							The agent changes a screen, opens it on its own simulator and checks it before it says done.
 						</Card>
@@ -248,22 +351,23 @@ function Home(): ReactElement {
 						<Card command="warden affected" title="Gate every pull request">
 							Only the specs a diff reaches run, in CI or a pre-push hook, across leased simulators.
 						</Card>
-						<Card command="warden dev" title="Parallel worktrees">
-							Five agents, five worktrees, five simulators and five Metro ports, side by side on one Mac.
-						</Card>
 					</div>
 				</Section>
 
 				<Section lede="Short answers. The docs have the long ones." title="Questions.">
 					<div className="faq mx-auto flex w-full max-w-3xl flex-col border-hairline border-t text-start">
 						<Faq q="What is warden?">
-							An open-source CLI and e2e framework. It lets coding agents drive iOS simulators and Android emulators,
-							save what they verify as tests, and run suites in parallel, with every device leased to one owner at a
-							time.
+							An open-source CLI and e2e framework that gives every coding agent its own iOS simulator or Android
+							emulator, Metro port and app build, so agents in parallel worktrees never collide. On that device the
+							agent runs, drives and debugs the app, saves what it verified as a test, and runs suites in parallel.
 						</Faq>
 						<Faq q="How do I install it?">
 							<Code>npm i -g @delacour/warden && warden install</Code>. The second command wires the skill and hooks for
 							the agents it finds, showing a diff and asking first.
+						</Faq>
+						<Faq q="Can two agents end up on the same simulator?">
+							No. Every claim is a transaction in one registry on the Mac, so a device or port has one owner at a time.
+							<Code>warden ui</Code> checks the lease on every call.
 						</Faq>
 						<Faq q="Does it work on Android?">
 							Yes. warden leases Android emulators (launched <Code>-read-only</Code>), and <Code>warden ui</Code> and
@@ -272,6 +376,10 @@ function Home(): ReactElement {
 						<Faq q="Which agents does it support?">
 							Any agent the skills CLI installs into gets the warden skill: Claude Code, Codex, Cursor, GitHub Copilot,
 							Gemini CLI, OpenCode, Windsurf, Zed and more. Claude Code and Codex also get the SessionEnd cleanup hook.
+						</Faq>
+						<Faq q="Is there an MCP server?">
+							Yes. <Code>warden mcp</Code> serves a <Code>warden dev</Code> session's Metro output, console, exceptions,
+							network, eval, logpoints and profiles over stdio. Devices, specs and suites stay on the CLI.
 						</Faq>
 						<Faq q="What does my app need?">
 							Build, dev-client and Metro handling target Expo and React Native. <Code>warden ui</Code> and specs drive
@@ -290,7 +398,7 @@ function Home(): ReactElement {
 				<section className={`${PAGE} pt-28 sm:pt-36`}>
 					<div className="flex flex-col items-center gap-8 rounded-[var(--radius-group)] border border-hairline bg-surface px-6 py-16 text-center sm:py-20">
 						<h2 className={`max-w-3xl text-balance text-[clamp(2.2rem,5vw,4rem)] text-ink leading-[0.95] ${DISPLAY}`}>
-							Give your agent a simulator of its own.
+							Give every agent a simulator of its own.
 						</h2>
 						<div className="flex w-full max-w-xl flex-col items-center gap-4">
 							<InstallCommand className="w-full items-center text-start" setup />
@@ -416,6 +524,64 @@ function Terminal({ code, label }: { code: string; label: string }): ReactElemen
 					))}
 				</code>
 			</pre>
+		</figure>
+	);
+}
+
+const BOARD_COLUMNS = "sm:grid sm:grid-cols-[1.1fr_1.3fr_1.1fr_0.6fr_1.1fr] sm:items-center sm:gap-6";
+
+/**
+ * Five agents on one Mac and what each one holds: a device, a Metro port and a build. A leased
+ * row carries the lamp from the warden mark; the queued row is a hollow ring in Ink 2. Below
+ * `sm` each row folds to two lines, agent and worktree over device, port and build.
+ */
+function LeaseBoard(): ReactElement {
+	return (
+		<figure className="flex flex-col overflow-hidden rounded-[var(--radius-group)] border border-hairline bg-surface">
+			<div
+				aria-hidden="true"
+				className={`hidden border-hairline border-b px-6 py-2.5 font-mono text-[11px] text-ink-2 ${BOARD_COLUMNS}`}
+			>
+				<span className="ps-5">agent</span>
+				<span>worktree</span>
+				<span>device</span>
+				<span>metro</span>
+				<span>build</span>
+			</div>
+			<ul className="flex flex-col">
+				{BOARD.map((row) => {
+					const queued = row.state === "queued";
+					return (
+						<li
+							className={`flex flex-col gap-1.5 border-hairline border-b px-4 py-4 last:border-b-0 sm:px-6 ${BOARD_COLUMNS} ${queued ? "text-ink-2" : "text-ink"}`}
+							key={row.agent}
+						>
+							<span className="flex items-center gap-3 [font-variation-settings:'wdth'_112,'wght'_620]">
+								<span
+									className={`size-2 shrink-0 rounded-full ${queued ? "border border-ink-2" : "bg-accent"}`}
+									title={row.state}
+								/>
+								{row.agent}
+								<span className="sr-only">{queued ? ", queued" : ", leased"}</span>
+							</span>
+							<span className="ps-5 font-mono text-[12.5px] sm:ps-0">{row.worktree}</span>
+							<span className="flex flex-wrap gap-x-3 ps-5 text-ink-2 text-sm sm:contents">
+								<span className={queued ? "" : "sm:text-ink"}>{row.device}</span>
+								<span className={`font-mono text-[12.5px] tabular-nums ${queued ? "hidden sm:inline" : ""}`}>
+									{row.port}
+								</span>
+								<span className={`font-mono text-[12.5px] tabular-nums ${queued ? "hidden sm:inline" : ""}`}>
+									{row.build}
+								</span>
+							</span>
+						</li>
+					);
+				})}
+			</ul>
+			<figcaption className="border-hairline border-t px-4 py-3 font-mono text-[11px] text-ink-2 leading-relaxed sm:px-6">
+				Illustrative. Three worktrees share a native fingerprint, so one cached build serves all three; the fifth claim
+				waits for a boot slot.
+			</figcaption>
 		</figure>
 	);
 }

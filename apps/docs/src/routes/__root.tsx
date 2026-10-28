@@ -5,7 +5,7 @@ import { ConsentBanner } from "@/components/consent-banner";
 import { TrackedSearchDialog } from "@/components/search-dialog";
 import { startPosthog } from "@/lib/analytics/posthog";
 import { installClickTracking } from "@/lib/analytics/track";
-import { socialImageMeta } from "@/lib/seo";
+import { socialImageMeta, tagline } from "@/lib/seo";
 import { appDescription, appName, defaultOgImage } from "@/lib/shared";
 import { themeHeadScript } from "@/lib/theme";
 import appCss from "@/styles/app.css?url";
@@ -15,13 +15,13 @@ export const Route = createRootRoute({
 		meta: [
 			{ charSet: "utf-8" },
 			{ name: "viewport", content: "width=device-width, initial-scale=1" },
-			{ title: `${appName} — mobile testing for coding agents` },
+			{ title: `${appName} — ${tagline}` },
 			{ name: "description", content: appDescription },
 			{ property: "og:type", content: "website" },
 			{ property: "og:site_name", content: appName },
-			{ property: "og:title", content: `${appName} — mobile testing for coding agents` },
+			{ property: "og:title", content: `${appName} — ${tagline}` },
 			{ property: "og:description", content: appDescription },
-			...socialImageMeta(defaultOgImage, `${appName} — mobile testing for coding agents`),
+			...socialImageMeta(defaultOgImage, `${appName} — ${tagline}`),
 		],
 		links: [
 			{ rel: "stylesheet", href: appCss },
@@ -41,8 +41,8 @@ const DIRECTION_CONTRACT = `<!--
 impeccable direction contract · seed 2f6f6e25, re-steered: familiar agent dev-tool frame, one wide heavy display voice
 THESIS: the familiar agent dev-tool landing (centered hero, install, demo, Works with row, alternating feature blocks), carried by one display voice. Refuses the dark terminal hero, condensed-light cuts and giant-word beats.
 OWN-WORLD: flat paper #f5f4ef / #0f0f0e, one ink, one accent #ff4f1a for large marks; Mona Sans at wdth 125 / wght 800 for every heading, Martian Mono at 11-12px for commands and readouts; hairline rules, 6px sheets, no shadows.
-STORY: a mobile dev with agents reads "Mobile testing for coding agents.", copies the install, watches the recorded 5-sim run, finds their agent in the Works with row, follows drive / keep / run, pastes the first prompt, installs.
-FIRST VIEWPORT: centered pill, wide heavy headline (coding agents. in accent), one-sentence lede, install tabs, Get started + Watch the demo; recorded run below.
+STORY: a mobile dev running agents in parallel worktrees reads "Every agent gets its own simulator.", copies the install, watches the recorded 5-sim run, finds their agent in the Works with row, sees five agents on one Mac in the lease board, reads the lease rules, follows run / drive / debug / keep / run the suite, pastes the first prompt, installs.
+FIRST VIEWPORT: centered pill, wide heavy headline (simulator. in accent), one-sentence lede, install tabs, Get started + Watch the demo; recorded run below.
 FORM: canon, seed 2f6f6e25.
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance.
 -->`;

@@ -110,6 +110,6 @@ describe("docsHead", () => {
 
 	test("the docs root title says what warden is", () => {
 		const { meta } = docsHead({ slugs: [], title: "What is warden" });
-		expect(meta).toContainEqual({ title: "warden docs — mobile testing for coding agents" });
+		expect(meta).toContainEqual({ title: "warden docs — every agent gets its own simulator" });
 	});
 });

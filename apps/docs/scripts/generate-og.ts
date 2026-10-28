@@ -21,7 +21,7 @@ const CONTENT = join(HERE, "../content/docs");
 const HOST = new URL(siteUrl).host;
 /** The landing headline already says the first half of `appDescription`; the card carries the rest. */
 const PITCH =
-	"Your coding agent gets its own simulator, keeps what it verified as an e2e test, and runs the suite on every simulator at once.";
+	"Simulators, emulators, ports and app builds, leased across every worktree on your Mac, so parallel agents never collide.";
 
 const require = createRequire(import.meta.url);
 

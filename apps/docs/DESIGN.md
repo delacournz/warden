@@ -117,7 +117,7 @@ components:
 
 **Creative North Star: "One Voice, Familiar Frame"**
 
-The landing follows the familiar agent dev-tool frame: a centered hero with a pill, headline, one-sentence lede, install command and two buttons; the recorded run; a centered "Works with" row of agent marks; the loop as three alternating feature blocks (copy beside a working sample); the lease rules as cards; the first prompt; use-case cards; FAQ; a closing install sheet. What makes it warden's is one display voice: Mona Sans at wdth 125 / wght 800 with tight tracking on every heading, on flat paper with one ink and one orange. Martian Mono at 11-12.5px carries whatever a machine prints.
+The landing follows the familiar agent dev-tool frame: a centered hero with a pill, headline, one-sentence lede, install command and two buttons; the recorded run; a centered "Works with" row of agent marks; the lease board (five agents on one Mac and what each holds); the lease rules as cards; what an agent does on its simulator as five alternating feature blocks (run, drive, debug, keep, run the suite: copy beside a working sample); the first prompt; use-case cards; FAQ; a closing install sheet. What makes it warden's is one display voice: Mona Sans at wdth 125 / wght 800 with tight tracking on every heading, on flat paper with one ink and one orange. Martian Mono at 11-12.5px carries whatever a machine prints.
 
 The docs (Fumadocs) wear the same tokens so the chrome is one world. Docs pages are quiet prose on the same paper.
 
@@ -134,7 +134,7 @@ The docs (Fumadocs) wear the same tokens so the chrome is one world. Docs pages 
 Warm paper and warm ink with a single saturated foundry orange. Dark mode keeps the same roles on near-black with a lifted accent. Values are the Tailwind `@theme` tokens in `src/styles/app.css`; dark values override under `.dark` (class toggle, not OS).
 
 ### Primary
-- **Foundry Orange** (accent `#ff4f1a`, dark `#ff6a3d`): the hero's "coding agents.", the accelerated-run bar and time, the caret, text selection tint, the lamp in the warden mark, the closing period of the wordmark, and the primary button hover. About 3.2:1 on paper, so it is for large marks only.
+- **Foundry Orange** (accent `#ff4f1a`, dark `#ff6a3d`): the hero's "simulator.", the lamps on the lease board, the accelerated-run bar and time, the caret, text selection tint, the lamp in the warden mark, the closing period of the wordmark, and the primary button hover. About 3.2:1 on paper, so it is for large marks only.
 - **Orange Text** (accent-text `#b8360a`, dark `#ff8a63`): the only orange allowed at small sizes (+hook tags, FAQ hover). Passes body contrast.
 
 ### Neutral
@@ -206,6 +206,9 @@ Mono orange-text label, Display H3, verb-first points as hairline rows, a mono u
 ### Card
 A Sheet with hairline border: a mono command chip on Fill, a card-title heading, one Ink 2 sentence.
 
+### Lease board
+A Sheet listing agents on one Mac, one hairline row each: agent (sans, wdth 112 wght 620) behind a lamp, worktree, device, Metro port and build (mono 12.5px, tabular). A leased row's lamp is a filled 8px Foundry Orange dot; a queued row is a hollow Ink 2 ring with the whole row in Ink 2. Mono column labels sit over the rows from `sm`; below it each row folds to agent and worktree over device, port and build. A mono caption says it is illustrative.
+
 ### Run chart
 Two flat bars on one time axis, width proportional to seconds: serial in Ink, parallel in Orange, each labelled in a Display number with a mono caption naming the measurement and date.
 
@@ -219,7 +222,7 @@ Agents are a centered row of 36px marks over mono names, +hook in accent-text un
 Fumadocs tokens are re-pointed at these colors. Sidebar active row is Fill with wght 550; prose links are Ink with an Ink 2 underline (3px offset); tables are one 6px Sheet group with hairline rows; the toggle is `.dark` on `<html>`.
 
 ### Social cards
-1200x630, dark tokens only: one 12px-radius Sheet on Paper, the warden mark and name top-left, the landing card sets "Mobile testing for / coding agents." at 800 weight, 96px, the second line in the accent, URL in mono under a hairline. Docs cards set the page title at 600 weight.
+1200x630, dark tokens only: one 12px-radius Sheet on Paper, the warden mark and name top-left, the landing card sets "Every agent gets its / own simulator." at 800 weight, 96px, the second line in the accent, URL in mono under a hairline. Docs cards set the page title at 600 weight.
 
 ## Do's and Don'ts
 
