@@ -5,7 +5,7 @@ export type HeadMeta = { title: string } | { name: string; content: string } | {
 export type HeadLink = { rel: "canonical"; href: string };
 
 /** The site's tagline, after the name in the landing and docs-root titles. */
-export const tagline = "mobile testing for coding agents";
+export const tagline = "every agent gets its own simulator";
 
 /** The preferred URL for `path` on the production host, so every host and the `.md` twins consolidate to it. */
 export function canonicalLink(path: string): HeadLink {

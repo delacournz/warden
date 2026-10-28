@@ -26,6 +26,8 @@ Success: an agent proves its own UI change on a real simulator in the same sessi
 
 ## Positioning
 
+Tagline: **"Every agent gets its own simulator."** Lead with isolation for parallel agents across worktrees (devices, ports, builds), then what the agent does on that device; testing is one capability, not the headline.
+
 Agent device control and an e2e test framework in one tool, on one shared driver, made parallel-safe by machine-level leasing. One sqlite lease registry (`~/.warden/warden.db`, `BEGIN IMMEDIATE` as the cross-process mutex) is shared by every agent session, worktree, repo, CI job and user shell on the Mac. `warden ui` and the spec runner use the same driver, so `warden ui record` … `export` turns an exploration into a spec. It never touches devices it didn't create or lease.
 
 ## Operating Context
