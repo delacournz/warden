@@ -2,7 +2,7 @@ import { androidTools } from "@delacour/warden-core/providers/android";
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { adbReverseArgv, devClientLaunchArgs } from "../metro";
+import { adbReverseArgv, DEV_CLIENT_ARGS, devClientLaunchArgs } from "../metro";
 import { type ActionOptionValues, finishAction, parseSettle } from "./act";
 import { deviceFacade, viaFacade } from "./controls";
 import { sharedNote, type UiDevice } from "./device";
@@ -13,7 +13,7 @@ import { updateState } from "./state";
 
 export type OpenOptionValues = ActionOptionValues & {
 	relaunch?: true;
-	/** Metro URL: launch the dev client with `--initialUrl <url>` and remember it */
+	/** Metro URL: launch the dev client with `--initialUrl <url>` (iOS: and `DEV_CLIENT_ARGS`) and remember it */
 	metro?: string;
 	/** extra launch arguments */
 	args?: string[];
@@ -44,7 +44,9 @@ export async function launchBundle(
 ) {
 	const extra = opts.args ?? [];
 	if (opts.metro !== undefined) await reverseMetro(ctx, device, opts.metro);
-	const args = opts.metro === undefined ? extra : devClientLaunchArgs(opts.metro, extra);
+	// an iOS dev client opens as `warden dev` opens it: no dev menu onboarding sheet or menu at launch
+	const devClient = device.platform === "ios" ? [...DEV_CLIENT_ARGS, ...extra] : extra;
+	const args = opts.metro === undefined ? extra : devClientLaunchArgs(opts.metro, devClient);
 	const wasRunning = opts.relaunch === true ? false : await isRunning(driver, bundleId);
 	const launched = fromDriver(
 		await driver.app.launch(bundleId, {
