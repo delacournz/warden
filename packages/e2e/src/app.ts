@@ -195,6 +195,8 @@ export function createApp({ session, driver, env, log = stderrLog, clock = syste
 		};
 		if (options.env !== undefined) opts.env = options.env;
 		await unwrap(() => driver.app.launch(bundleId, opts), `launch ${bundleId}`, session.signal);
+		// a dev client: attach devtools in the background, which keeps LogBox off in every JS context from now on
+		if (env.metroUrl !== undefined) void session.devtools?.();
 		if (options.url !== undefined) {
 			const url = options.url;
 			await unwrap(() => driver.app.openUrl(url), `open ${url}`, session.signal);

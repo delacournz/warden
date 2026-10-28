@@ -10,6 +10,7 @@ import {
 	type NetworkEntry,
 	type Sleep,
 } from "./devtools.types";
+import { muteLogBox } from "./logbox";
 import { attachNetwork } from "./network";
 import { connectDevtools, type DevtoolsDevice } from "./session";
 import { fetchTree } from "./tree";
@@ -31,6 +32,8 @@ export type OpenDevtoolsFacetOptions = {
 	/** called with each console line / network entry as it is recorded (the collector's files) */
 	consoleSink?: (line: ConsoleLine) => void;
 	networkSink?: (entry: NetworkEntry) => void;
+	/** keep React Native's LogBox (toasts and the error inspector) off in the app, across reloads (default false) */
+	muteLogBox?: boolean;
 };
 
 /**
@@ -70,6 +73,7 @@ export async function openDevtoolsFacet(o: OpenDevtoolsFacetOptions): Promise<De
 		return attached;
 	}
 	const network = attached.data;
+	const logbox = o.muteLogBox ? muteLogBox(session, { log: o.log }) : undefined;
 
 	return ok({
 		evaluate: (expression, options) => session.evaluate(expression, options),
@@ -96,6 +100,7 @@ export async function openDevtoolsFacet(o: OpenDevtoolsFacetOptions): Promise<De
 			return ok(paths);
 		},
 		close() {
+			logbox?.stop();
 			network.stop();
 			session.close();
 		},
