@@ -134,7 +134,7 @@ describe("recording schema", () => {
 		expect(fill({ value: "x" }).success).toBe(false);
 	});
 
-	test("a fill may carry via: type, nothing else", () => {
+	test("a fill may carry via: paste, or type from journals written before typing was the default", () => {
 		const fill = (via: unknown) =>
 			stepSchema.safeParse({
 				i: 0,
@@ -146,7 +146,8 @@ describe("recording schema", () => {
 			});
 		expect(fill("type").success).toBe(true);
 		expect(fill(undefined).success).toBe(true);
-		expect(fill("paste").success).toBe(false);
+		expect(fill("paste").success).toBe(true);
+		expect(fill("clipboard").success).toBe(false);
 	});
 
 	test("a gesture path is one or two fingers of at least two points", () => {
