@@ -82,11 +82,32 @@ function usageError(ui: Ui, argv: readonly string[], names: ReadonlySet<string>,
 }
 
 /**
+ * What a failed `--json` run prints when the command left stdout empty, in the `warden ui` envelope's shape:
+ * `usage` for commander's errors (unknown option, missing argument), `failed` for the rest.
+ */
+export type JsonFailure = { ok: false; command: string; error: { code: "usage" | "failed"; message: string } };
+
+/** `ui snapshot` from `["ui", "snapshot", "--json"]`: the command words of `argv`, as registered. */
+function commandPath(program: CommandUnknownOpts, argv: readonly string[]): string {
+	const path: string[] = [];
+	let node = program;
+	for (const word of argv) {
+		const next = node.commands.find((c) => c.name() === word || c.aliases().includes(word));
+		if (!next) break;
+		path.push(next.name());
+		node = next;
+	}
+	return path.join(" ");
+}
+
+/**
  * Build a fresh commander program (option values persist on a program between parses) with
  * `commands`, parse `argv`, run the matching action. Help → 0; usage errors → 1 (commander has
  * already printed them, in red, to ctx.err); otherwise the action's exit code.
  * `known` is every command name the CLI has (defaults to `commands`): a lazily loaded program registers
  * only the dispatched command but still scopes its usage errors as `warden <command>`.
+ * A `--json` run that fails with nothing on stdout gets a `JsonFailure` there, carrying the first
+ * `reportError` message, so every failure is one JSON document too (the red line stays on stderr).
  */
 export async function runProgram(
 	commands: readonly Command[],
@@ -95,14 +116,44 @@ export async function runProgram(
 	known: readonly Pick<Command, "name" | "aliases">[] = commands
 ): Promise<number> {
 	let code = 0;
-	const program = buildProgram(commands, argv, ctx, known, (n) => {
+	let json = false;
+	let wrote = false;
+	let failure: JsonFailure["error"] | undefined;
+	const tracked: CommandContext = {
+		...ctx,
+		out: (line) => {
+			wrote = true;
+			ctx.out(line);
+		},
+		failure: {
+			record: (message) => {
+				failure ??= { code: "failed", message };
+				ctx.failure?.record(message);
+			},
+		},
+	};
+	const program = buildProgram(commands, argv, tracked, known, (n) => {
 		code = n;
+	});
+	program.hook("preAction", (_root, action) => {
+		json = action.opts().json === true;
 	});
 	try {
 		await program.parseAsync(argv, { from: "user" });
 	} catch (error) {
-		if (error instanceof CommanderError) return error.exitCode === 0 ? 0 : 1;
-		throw error;
+		if (!(error instanceof CommanderError)) throw error;
+		if (error.exitCode === 0) return 0;
+		code = 1;
+		// no action ran, so `--json` is read off argv: before `--`, past it the words are a child's
+		const end = argv.indexOf("--");
+		json = (end === -1 ? argv : argv.slice(0, end)).includes("--json");
+		failure = { code: "usage", message: error.message.replace(/^error: /, "") };
+	}
+	if (code !== 0 && json && !wrote) {
+		const command = commandPath(program, argv);
+		const error = failure ?? { code: "failed", message: `warden ${command} exited ${code}` };
+		const doc: JsonFailure = { ok: false, command, error };
+		ctx.out(JSON.stringify(doc));
 	}
 	return code;
 }

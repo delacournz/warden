@@ -25,7 +25,12 @@ export type CommandContext = {
 	ui: Ui;
 	/** RAM + cores the capacity budget is sized from; unset = read the host (`readHostFacts`) */
 	hostFacts?: () => Promise<HostFacts>;
+	/** where `reportError` records a failure, for the `--json` error envelope `runProgram` prints */
+	failure?: FailureSink;
 };
+
+/** Collects the failures a command reports; `runProgram` keeps the first. */
+export type FailureSink = { record: (message: string) => void };
 
 /** Line writes to a process stream that remember backpressure, so the process can wait for them before exiting. */
 export type LineWriter = {

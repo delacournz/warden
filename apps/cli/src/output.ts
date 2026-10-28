@@ -33,6 +33,7 @@ function say(ctx: CommandContext, paint: (text: string) => string, glyph: string
 
 /** A command's error: red `warden <scope>: <message>`. */
 export function reportError(ctx: CommandContext, scope: string, message: string): void {
+	ctx.failure?.record(message);
 	say(ctx, ctx.ui.color.red, SYMBOLS.fail, `warden ${scope}: ${message}`);
 }
 
