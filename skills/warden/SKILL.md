@@ -58,7 +58,8 @@ Open the reference file for details before acting; this file only routes.
 | slim categories (`--except` ids) | `warden sim profiles`; common: `store` push/StoreKit, `web` universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker |
 | a sim's real memory | `warden sim measure [udid\|--booted]` · `warden devices --mem` |
 | clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` (`golden ls`, `golden prune`) · `warden sims` (= `audit`; `prune --dry-run`, then `--yes`; `delete <udid…>`) |
-| reclaim dead leases | `warden gc` (auto every 10 min; never deletes, never touches foreign devices) |
+| reclaim dead leases | `warden gc` (auto every 10 min; never deletes devices, never touches foreign ones) |
+| orphaned Xcode disk | `warden gc --dry-run` lists orphaned DerivedData (workspace gone) + stale `XCTestDevices` clones with sizes, changes nothing; `warden gc` removes them, `--no-orphans` keeps them |
 | setup / helper problems | `warden doctor [--fetch-helper]` |
 | version / channel | `warden version [--json]` |
 | install / update | `npm i -g @delacour/warden && warden install` · `warden update [--check]` · skill: `warden skill install` · `warden skill show` |
