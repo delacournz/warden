@@ -1,5 +1,23 @@
 # @delacour/warden
 
+## 0.6.0
+
+### Minor Changes
+
+- [#111](https://github.com/delacournz/warden/pull/111) [`28085a6`](https://github.com/delacournz/warden/commit/28085a66a50170c91e1dc0d72ff12da632f2251e) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `fill` (`locator.fill`, `warden ui fill`) types the text key by key by default again; `via: "paste"` / `--via paste` keeps the one-Cmd+V paste on iOS as an opt-in. On Xcode 27 every simulator's pasteboard is synced with the Mac clipboard in both directions, so a paste put e2e values (emails, passwords) into the Mac clipboard and clipboard managers, and during a parallel `warden e2e` / `warden batch` run onto the other simulators' pasteboards, where another test could paste them.
+  - `warden ui record` journals `via: "paste"` when a fill was pasted and nothing when it was typed; the generated spec passes `{ via: "paste" }` only. Recordings with `via: "type"` still load and generate a plain `fill`.
+
+- [#107](https://github.com/delacournz/warden/pull/107) [`81c409a`](https://github.com/delacournz/warden/commit/81c409ab1bba1426eea8b64e4d41fa8e06828878) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Every command run with `--json` now prints one JSON document on stdout when it fails, too: `{"ok":false,"command":"<command>","error":{"code":"usage"|"failed","message":"…"}}`. `usage` is an unknown option or a missing argument, `failed` the rest; the exit code and the red line on stderr are unchanged. Commands that already print their own failure document (`warden ui`, `warden perf`, `warden release`) keep it.
+  - `warden dev logs --json` failures add `"ok": false` and `"command": "dev logs"` beside `error`.
+
+### Patch Changes
+
+- [#107](https://github.com/delacournz/warden/pull/107) [`81c409a`](https://github.com/delacournz/warden/commit/81c409ab1bba1426eea8b64e4d41fa8e06828878) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `--json` output larger than 64 KB is no longer cut off when the reader is slow to start (an agent, `jq` behind another step): warden waits for stdout to flush before it exits
+  - `warden dev --json` prints its `{ udid, port, metroUrl, leaseIds, source }` document on one line, so the first stdout line is the whole document as documented
+  - `warden run --json` prints its summary on one line and sends the child's stdout to stderr, so stdout holds only the JSON document
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes
