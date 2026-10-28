@@ -2,18 +2,25 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import type { CommandContext } from "../context";
-import { simdDir, uiDir, uiRoot } from "./paths";
+import { androidHostDir, simdDir, uiDir, uiRoot } from "./paths";
 
 type Host = Pick<CommandContext, "env" | "now">;
 
-/** The pid of the helper `state.json` records, read as plain JSON: any other shape is no record. */
-function recordedPid(host: Pick<CommandContext, "env">, udid: string): number | undefined {
+/** The `state.json` fields that record a resident helper: iOS's `warden-simd`, Android's host. */
+type HelperField = "helper" | "androidHost";
+
+/** The pid of the helper `state.json` records under `field`, read as plain JSON: any other shape is no record. */
+function recordedPid(
+	host: Pick<CommandContext, "env">,
+	udid: string,
+	field: HelperField = "helper"
+): number | undefined {
 	try {
 		const state: unknown = JSON.parse(readFileSync(join(uiDir(host, udid), "state.json"), "utf8"));
-		if (typeof state !== "object" || state === null || !("helper" in state)) return undefined;
-		const { helper } = state;
-		if (typeof helper !== "object" || helper === null || !("pid" in helper)) return undefined;
-		return typeof helper.pid === "number" ? helper.pid : undefined;
+		if (typeof state !== "object" || state === null || !(field in state)) return undefined;
+		const record: unknown = Reflect.get(state, field);
+		if (typeof record !== "object" || record === null || !("pid" in record)) return undefined;
+		return typeof record.pid === "number" ? record.pid : undefined;
 	} catch {
 		return undefined;
 	}
@@ -22,8 +29,8 @@ function recordedPid(host: Pick<CommandContext, "env">, udid: string): number | 
 /** Every device that has a socket under `simd/` or a dir under `ui/`. */
 export function knownUdids(host: Pick<CommandContext, "env">): string[] {
 	const udids = new Set<string>();
-	const sockets = simdDir(host);
-	if (existsSync(sockets)) {
+	for (const sockets of [simdDir(host), androidHostDir(host)]) {
+		if (!existsSync(sockets)) continue;
 		for (const name of readdirSync(sockets)) if (name.endsWith(".sock")) udids.add(basename(name, ".sock"));
 	}
 	const root = uiRoot(host);
@@ -33,10 +40,12 @@ export function knownUdids(host: Pick<CommandContext, "env">): string[] {
 
 /** Devices whose `state.json` records a helper pid that no longer runs (plain file reads: no schema, no driver). */
 export function findDeadHelpers(host: Pick<CommandContext, "env">, pidAlive: PidAlive = processAlive): string[] {
-	return knownUdids(host).filter((udid) => {
-		const pid = recordedPid(host, udid);
-		return pid !== undefined && !pidAlive(pid);
-	});
+	return knownUdids(host).filter((udid) =>
+		(["helper", "androidHost"] as const).some((field) => {
+			const pid = recordedPid(host, udid, field);
+			return pid !== undefined && !pidAlive(pid);
+		})
+	);
 }
 
 export type SweepDeps = {
@@ -54,4 +63,25 @@ export async function sweepDeadHelpersLazily(host: Host, deps: SweepDeps = {}): 
 	if (findDeadHelpers(host, pidAlive).length === 0) return [];
 	const { sweepDeadHelpers } = await (deps.load ?? (() => import("./helper")))();
 	return sweepDeadHelpers(host, { pidAlive });
+}
+
+/**
+ * Stop the resident Android host of each serial that has one recorded, before something else drives the emulator
+ * (a `warden batch` / `warden e2e` job opens its own driver, and two `warden-uiad` clients evict each other). Records
+ * are read as plain JSON; `./helper` is imported only when one exists, so a run with no host loads nothing.
+ */
+export async function stopAndroidHostsLazily(
+	host: Host & Partial<Pick<CommandContext, "store">>,
+	serials: readonly string[],
+	deps: { load?: () => Promise<Pick<typeof import("./helper"), "stopAndroidHost">> } = {}
+): Promise<string[]> {
+	const recorded = serials.filter((serial) => recordedPid(host, serial, "androidHost") !== undefined);
+	if (recorded.length === 0) return [];
+	const { stopAndroidHost } = await (deps.load ?? (() => import("./helper")))();
+	const warnings: string[] = [];
+	for (const serial of recorded) {
+		const { warning } = await stopAndroidHost(host, serial);
+		if (warning !== undefined) warnings.push(warning);
+	}
+	return warnings;
 }

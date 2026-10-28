@@ -31,3 +31,8 @@ export function helperRoutesFile(ctx: Pick<CommandContext, "env">, module: strin
 		`${createHash("sha1").update(`${module}#${fn}`).digest("hex").slice(0, 16)}.json`
 	);
 }
+
+/** `$WARDEN_HOME/android-host`: the resident `warden __android-host` processes' sockets and logs. */
+export function androidHostDir(host: Pick<CommandContext, "env">): string {
+	return join(wardenHome(host.env), "android-host");
+}

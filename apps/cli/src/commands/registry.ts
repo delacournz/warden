@@ -153,6 +153,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./affected-graph")).affectedGraphCommand,
 	},
 	{
+		name: "__android-host",
+		summary: "resident Android driver host behind `warden ui` (internal)",
+		hidden: true,
+		load: async () => (await import("./android-host")).androidHostCommand,
+	},
+	{
 		name: "ui-collect",
 		summary: "background console + network collector for `warden ui logs start` (internal)",
 		hidden: true,

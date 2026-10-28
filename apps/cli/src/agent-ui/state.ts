@@ -58,6 +58,8 @@ export type UiState = {
 	app?: string;
 	recording?: RecordingPointer;
 	helper?: HelperRecord;
+	/** the device's resident `warden __android-host` (Android): same record as `helper`, the binary being warden itself */
+	androidHost?: HelperRecord;
 	/** the running `logs start` collector (`warden ui-collect`): host pid, start time and (newer warden) its `--out` dir */
 	collector?: { pid: number; startedAt: number; out?: string };
 	/** the running `video start` recorder: host pid, output file, and (Android) the file on the device */
@@ -127,6 +129,15 @@ const storedSnapshotSchema = z.object({
 	}),
 });
 
+const helperRecordSchema = z.object({
+	pid: z.number(),
+	socket: z.string(),
+	owner: z.string().optional(),
+	binary: z.object({ path: z.string(), mtimeMs: z.number() }).optional(),
+	env: z.string().optional(),
+	lease: z.string().optional(),
+});
+
 const stateSchema = z.object({
 	generation: z.number(),
 	metroUrl: z.string().optional(),
@@ -155,16 +166,8 @@ const stateSchema = z.object({
 				.optional(),
 		})
 		.optional(),
-	helper: z
-		.object({
-			pid: z.number(),
-			socket: z.string(),
-			owner: z.string().optional(),
-			binary: z.object({ path: z.string(), mtimeMs: z.number() }).optional(),
-			env: z.string().optional(),
-			lease: z.string().optional(),
-		})
-		.optional(),
+	helper: helperRecordSchema.optional(),
+	androidHost: helperRecordSchema.optional(),
 	collector: z.object({ pid: z.number(), startedAt: z.number(), out: z.string().optional() }).optional(),
 	video: z
 		.object({ pid: z.number(), path: z.string(), remote: z.string().optional(), startedAt: z.number() })

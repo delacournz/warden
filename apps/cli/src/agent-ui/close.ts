@@ -5,7 +5,7 @@ import { releaseDevices } from "../device-lease";
 import { releaseAfter } from "../perf/release-after";
 import type { UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
-import { stopHelper } from "./helper";
+import { stopAndroidHost, stopHelper } from "./helper";
 import { type UiError, uiError } from "./output";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { readState } from "./state";
@@ -28,7 +28,7 @@ async function endHelper(
 	device: UiDevice,
 	release: boolean
 ): Promise<{ stopped: boolean; how: string; warning?: string }> {
-	if (!release) return stopHelper(ctx, device.udid);
+	if (!release) return (device.platform === "android" ? stopAndroidHost : stopHelper)(ctx, device.udid);
 	await releaseDevices(ctx, [device.lease.id], { after: releaseAfter(ctx, { helper: true }) });
 	return { stopped: true, how: "release" };
 }

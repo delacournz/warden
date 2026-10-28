@@ -3,7 +3,7 @@ import { ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
 import type { UiDeps } from "./driver";
-import { helperStatus } from "./helper";
+import { ANDROID_HOST_KIND, defaultHelperDeps, helperStatus, SIMD_KIND } from "./helper";
 import { recordingFile } from "./paths";
 import { runUi, type UiOptionValues } from "./run";
 import { readState } from "./state";
@@ -22,7 +22,12 @@ export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues
 				ttlMs: lease.ttlMs,
 				heartbeatAt: lease.heartbeatAt,
 			},
-			helper: helperStatus(ctx, device.udid),
+			helper: helperStatus(
+				ctx,
+				device.udid,
+				defaultHelperDeps,
+				device.platform === "android" ? ANDROID_HOST_KIND : SIMD_KIND
+			),
 			recording: await recordingOf(ctx, device.udid),
 		};
 		const { color } = ctx.ui;
