@@ -151,7 +151,7 @@ export const e2eSuiteSchema = z
 		spec: e2eSpecSchema.optional(),
 		/** device (default): one `bun test` process per device runs its shard of the specs (round-robin by spec id). spec: one process per spec, one worker per device */
 		isolate: z.enum(["device", "spec"]).optional(),
-		/** `always`: shut down the devices warden booted once the gate passes. `idle`: leave them booted for the next run and let `warden gc` reap them when idle. Default: `idle` locally, `always` under CI. `--no-shutdown` wins */
+		/** `always`: shut down the devices warden booted once the gate passes. `idle`: leave them booted for the next run and let `warden gc` reap them when idle. Default: `always`. `--no-shutdown` wins */
 		shutdown: z.enum(["always", "idle"]).optional(),
 		/** per spec: a spec process still going after this long for each spec it runs is killed and counts as failed */
 		jobTimeoutMs: z.number().int().min(1_000).default(DEFAULT_JOB_TIMEOUT_MS),

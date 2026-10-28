@@ -458,7 +458,7 @@ export interface WardenE2eSuite {
 	 * `"idle"`: leave them booted, so the next run skips the 10-30 s boot, and let `warden gc` shut
 	 * them down once they have sat idle. A failed run always leaves them up. `--no-shutdown` wins.
 	 *
-	 * @default "idle" locally, "always" when the `CI` environment variable is set
+	 * @default "always"
 	 */
 	shutdown?: "always" | "idle" | undefined;
 	/**

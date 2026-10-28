@@ -241,14 +241,13 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 const inCi = (env: Record<string, string | undefined>): boolean => !["", "0", "false", undefined].includes(env.CI);
 
 /**
- * Whether a passed gate shuts the devices warden booted down before their leases are released:
- * the suite's `shutdown`, else yes under CI (the runner is thrown away, free the RAM at once) and
- * no locally (the next run reuses the booted sims instead of paying a 10-30 s boot; `warden gc`
- * shuts them down once they have sat idle). `--no-shutdown` always wins.
+ * Whether a passed gate shuts the devices warden booted down (closing their windows) before their
+ * leases are released: the suite's `shutdown`, else yes, locally and under CI. `shutdown: "idle"`
+ * keeps them booted for the next run (`warden gc` reaps them once idle). `--no-shutdown` always wins.
  */
-function shutsDownOnPass(ctx: CommandContext, suite: Suite, opts: E2eOpts): boolean {
+function shutsDownOnPass(suite: Suite, opts: E2eOpts): boolean {
 	if (!opts.shutdown) return false;
-	return (suite.config.shutdown ?? (inCi(ctx.env) ? "always" : "idle")) === "always";
+	return (suite.config.shutdown ?? "always") === "always";
 }
 
 /** `--headless` / `--no-headless` > the suite's (else top-level) `headless` > `WARDEN_HEADLESS`. */
@@ -278,9 +277,9 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 
 /**
  * `warden e2e [suite]`: the specs the change needs (see `warden affected`), run on leased devices
- * like `warden batch`, each `passes` times. Once the gate passes under CI (or `shutdown: "always"`),
- * the devices warden created (or booted) are shut down before their leases are released; locally
- * they stay booted for the next run, and a failed run always leaves them up. Exit 0 when every
+ * like `warden batch`, each `passes` times. Once the gate passes, the devices warden created (or
+ * booted) are shut down before their leases are released (`shutdown: "idle"` keeps them booted for
+ * the next run), and a failed run always leaves them up. Exit 0 when every
  * required spec passed (optional failures are reported, not fatal), 1 otherwise, 130 when interrupted.
  */
 async function e2e(
@@ -328,7 +327,7 @@ async function e2e(
 		jobs.argvs.get(jobs.jobs[0] ?? "") ?? [],
 		sessionHooks(suite, specs, shape, spec, runs, {
 			platform: selection.platform,
-			shutdown: shutsDownOnPass(ctx, suite, opts),
+			shutdown: shutsDownOnPass(suite, opts),
 			...warmHooks(ctx, deps, suite, opts),
 		})
 	);
@@ -676,7 +675,7 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--devices <legs>", "which e2e.<suite>.devices legs run: default | all | <profile,…>")
 				.option(
 					"--no-shutdown",
-					"keep the devices running after the gate passes (default: shut down the ones warden created under CI, leave them booted locally; suite shutdown)"
+					"keep the devices running after the gate passes (default: shut down the ones warden created; suite shutdown)"
 				)
 				.option(
 					"--perf [captures]",

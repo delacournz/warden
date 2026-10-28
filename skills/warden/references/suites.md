@@ -23,7 +23,7 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | `--explain` / `--dry-run` | print why each spec was selected / select, run nothing |
 | `--report <file>` | also write `e2e-report.json` there |
 | `--devices default\|all\|<profile,...>` | which `devices` legs run |
-| `--no-shutdown` | keep devices up after a pass (default: shut down those warden created under CI; locally they stay booted and `warden gc` reaps them when idle; suite `shutdown`) |
+| `--no-shutdown` | keep devices up after a pass (default: shut down those warden created, locally and under CI; suite `shutdown`) |
 | `--no-warm` | skip the iOS driver warm-up |
 | `--perf [captures]` | profile every attempt: bare = metrics, frames, logs; or `--perf=react,js`, `all` (names: `all js react native metrics frames logs`). Reports land in the attempt's `perf/` dir; suite/top-level `perf.budgets` make a breach fail the test (`PERF_BUDGET`) |
 | claim flags | `--profile --runtime --count --max --wait --no-wait --priority --ttl --label --adopt --headless --no-headless --slim --no-slim --json` (`--json` prints the e2e report) |
@@ -96,7 +96,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 |---|---|---|
 | `spec` | `{}` | `{ bundleId, launchArgs, timeout = "2m", actionTimeout = "30s", assertionTimeout = "5s" }`. `bundleId` defaults to the project's |
 | `isolate` | `device` | `device` or `spec` (`spec` when `passes > 1`) |
-| `shutdown` | `idle` locally, `always` under CI | `always`: shut down warden's devices after a passed gate. `idle`: leave them booted for the next run (`warden gc` reaps idle ones). A failed run always leaves them up |
+| `shutdown` | `always` | `always`: shut down warden's devices (and close their windows) after a passed gate. `idle`: leave them booted for the next run (`warden gc` reaps idle ones). A failed run always leaves them up |
 | `jobTimeoutMs` | `600000` | per spec: a process past this for each spec it runs is killed and counts as failed |
 | `passes` | `1` | consecutive green runs needed per spec. `isolate: device` with `passes > 1` is an error |
 | `retry` | `0` | re-run a failed job on the same device. Under `isolate: device` a retry reruns only the specs that did not pass |
@@ -190,7 +190,7 @@ e2e/<w>-<seq>[-p<N>]/<specId>/<title>-<hash6>/   trace.jsonl screenshots/ failur
 5. `metro.log`, `logs/warm-*.log`, `logs/setup-*.log`.
 6. A crash: `~/Library/Logs/DiagnosticReports/<app>-*.ips`.
 
-A failed run leaves sims booted (so does a passed local one, until `warden gc` reaps them as idle). Clean up with `warden release <leaseId> --shutdown` (a parent session: `--mine --shutdown`). A device that keeps failing: `warden release <id> --bad "<why>"`.
+A failed run leaves sims booted (so does a passed one with `shutdown: "idle"`, until `warden gc` reaps them as idle). Clean up with `warden release <leaseId> --shutdown` (a parent session: `--mine --shutdown`). A device that keeps failing: `warden release <id> --bad "<why>"`.
 
 ## `warden run` and `warden batch`
 

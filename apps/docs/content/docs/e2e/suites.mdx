@@ -92,7 +92,7 @@ Exit 0: every required spec passed (or nothing was selected, in which case no de
 
 With no `e2e` suites configured and none named, `warden e2e` runs every `e2e/*.e2e.ts` spec of the Expo app around the current directory on the dev client with warden's Metro (2 sims). `warden init` scaffolds it.
 
-After a pass, devices warden created stay booted locally (the next run skips the 10-30 s boot; `warden gc` shuts them down after 20 min idle) and are shut down under `CI`. A failed run always leaves them booted. `shutdown: "always" | "idle"` on the suite overrides this.
+After a pass, devices warden created are shut down and their windows closed, locally and under `CI`. A failed run always leaves them booted. `shutdown: "idle"` on the suite keeps them booted after a pass instead (the next run skips the 10-30 s boot; `warden gc` shuts them down after 20 min idle).
 
 ## What a run prints
 
