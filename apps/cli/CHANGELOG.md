@@ -1,5 +1,39 @@
 # @delacour/warden
 
+## 0.5.0
+
+### Minor Changes
+
+- [#56](https://github.com/delacournz/warden/pull/56) [`d97701e`](https://github.com/delacournz/warden/commit/d97701e96ab61b5598ecb6ddfe9ae817346f3f91) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden ui` on Android keeps one resident host per emulator, which holds the adb shell, `warden-uiad` and animations-off open between calls: `snapshot -i` takes about 90 ms (was 0.6-6 s) and `press` about 120 ms (was about 570 ms). The host starts on the first call and exits after 10 idle minutes, on `warden ui close`, or when the device is released. `warden ui status` shows it as the helper.
+  - `WARDEN_ANDROID_HOST_IDLE_TIMEOUT` sets the host's idle exit (`2m`-style). `WARDEN_ANDROID_HOST=0` drives the emulator in-process, as before. A host that cannot start falls back to in-process with a note on stderr.
+  - `warden batch` stops a resident host before it prepares its emulators.
+
+- [#109](https://github.com/delacournz/warden/pull/109) [`2120021`](https://github.com/delacournz/warden/commit/2120021f8b7c505d2c0723163a5c34cd5258c689) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - New `warden repack ios|android [--project <dir>] [--force] [--json]`: bundles this worktree's JS into the cached simulator build in seconds (the native base is built once per native fingerprint) and prints the base hash, `jsKey`, artifact, `reused` / `repacked`, bundle time or the fallback reason. Exit 1 when Android images changed and no repack is possible.
+  - Build kinds: `projects[].kinds.<dev|simulator|release>` (`build`, `env`, `jsInputs`) and `app: { kind }` in an e2e suite. `simulator` is a Release build with no JS embedded plus a per-JS repack keyed by content, not branch; `release` embeds the JS; `dev` is the Debug dev client.
+  - `warden e2e` now defaults to the repacked simulator build, repacked once before the devices install: a JS edit no longer rebuilds native. A suite's `metro` block applies only with `--dev` (or when the suite pins `app.kind: "dev"` / `app.variant`). Suites with `app.variant` behave as before.
+  - `warden e2e --dev` runs the dev client on a Metro warden starts (the suite's `metro` block, or the defaults); `--kind dev|simulator|release` picks the build. They can't be combined with each other or with `--variant`.
+  - `warden app ensure`, `run`, `batch` (`--app`) and `warden ui open` take `--kind`; `warden ui open --kind simulator|release` installs that build, relaunches when it changed and launches without Metro. Defaults are unchanged without the flag.
+  - A project's `fingerprint.include: "native+js"` now warns once on stderr when a run asks for `--kind dev` or `simulator`, which key on the native fingerprint.
+  - `warden builds ls` shows each build's kind, base, jsKey, worktree, branch, size and age; `--json` carries them.
+  - The claim spinner of `warden e2e`, `batch` and `run --app` now says what the app is really doing (building the ios app (fingerprint …), fetching the EAS build, repacking JS, waiting for another device's build) and only says installing once an install actually starts.
+  - Android repacks sign with the project's `android/app/debug.keystore` when present.
+
+- [#103](https://github.com/delacournz/warden/pull/103) [`2052caa`](https://github.com/delacournz/warden/commit/2052caa0f3706f815bb1f5e967b4cbab232ccc5e) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden dev` now runs only what the agent loop needs (dev build, Metro, simulator, app): the perf HUD sampler and the CDP devtools broker are off by default. `--hud` and `--devtools` start them with the session; `--no-hud` is still accepted.
+  - New `warden dev enable <hud|perf|devtools|all>`, `warden dev disable …` and `warden dev status [--udid] [--json]` turn those extras on and off in a running `warden dev` from another shell.
+  - The dashboard's `h` key now starts and stops the HUD sampler instead of only hiding the box.
+  - The mouse wheel no longer moves the task selection in the `warden dev` dashboard.
+  - `warden ui` devtools verbs on a session without a broker hint `warden dev enable devtools`.
+
+- [#105](https://github.com/delacournz/warden/pull/105) [`4e918b5`](https://github.com/delacournz/warden/commit/4e918b51602251b9a554783d49f651285fb22f04) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e`: a passed gate now shuts down the sims / emulators warden created (and closes their windows) locally too, not only under `CI`. Set the suite's `shutdown: "idle"` to keep them booted for the next run, or pass `--no-shutdown`.
+
+### Patch Changes
+
+- [#102](https://github.com/delacournz/warden/pull/102) [`89f56fe`](https://github.com/delacournz/warden/commit/89f56fe2bab718926872e9f5d2bea2a02eadbb5b) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e` specs on a dev client (`WARDEN_METRO_URL`) run with React Native's LogBox off: no warning/error toasts and no error inspector cover the app or take taps, fatals included, after every relaunch and JS reload too. Logs still reach `console.jsonl` and Metro's terminal.
+
+- [#110](https://github.com/delacournz/warden/pull/110) [`ba0c2cc`](https://github.com/delacournz/warden/commit/ba0c2cca86cb48eadcdf61b10351077f44aaaa10) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e` bundles a `simulator` / `release` run's JS with the suite's `metro.env`, so `EXPO_PUBLIC_*` values such as a fake backend URL reach the repacked build (and its cache key) instead of `.env*` or the shell's values
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
