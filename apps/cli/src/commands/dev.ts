@@ -49,6 +49,7 @@ import {
 import {
 	adbReverseArgv,
 	bareAppLaunchArgvs,
+	DEV_CLIENT_ARGS,
 	devClientLaunchArgv,
 	launchMetro,
 	type Metro,
@@ -479,7 +480,7 @@ async function openDevClient(
 		}
 		return ok(undefined);
 	}
-	if (platform === "ios") return run(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port)));
+	if (platform === "ios") return run(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port), DEV_CLIENT_ARGS));
 	const reverse = await run(adbReverseArgv(deviceId, port));
 	if (!reverse.success) return reverse;
 	const resolved = await scheme();
