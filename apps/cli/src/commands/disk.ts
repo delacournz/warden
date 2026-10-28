@@ -1,3 +1,4 @@
+import { findOrphans } from "@delacour/warden-core/builds/orphans";
 import { cacheCap, cacheTotal, formatSize } from "@delacour/warden-core/builds/prune";
 import { totalCost } from "@delacour/warden-core/capacity";
 import {
@@ -9,7 +10,13 @@ import {
 	judgeDisk,
 	readDiskFacts,
 } from "@delacour/warden-core/disk";
-import { type HostFacts, type MemoryPressure, memoryPressure, readHostFacts } from "@delacour/warden-core/host";
+import {
+	type HostFacts,
+	type HostOs,
+	type MemoryPressure,
+	memoryPressure,
+	readHostFacts,
+} from "@delacour/warden-core/host";
 import { auditMachineSims } from "@delacour/warden-core/sims/prune";
 import { DEFAULT_SIM_IDLE_MS, DEFAULT_SIM_STALE_MS } from "@delacour/warden-core/sims/sims.defaults";
 import { capacityConfigFromEnv, hostInventoryOf } from "../capacity-deps";
@@ -20,13 +27,11 @@ import { diskConfigFromEnv, diskGateEnabled } from "../disk-deps";
 import { emit, table } from "../output";
 import { simsDeps } from "./sims-audit";
 
-/**
- * Space warden itself can give back, one entry per source. Later phases add `orphans` (DerivedData / XCTest
- * clones) and `worktrees`; each carries the one-line `fix` the report prints.
- */
+/** Space warden itself can give back, one entry per source; each carries the one-line `fix` the report prints. */
 export type DiskReclaimable =
 	| { kind: "builds"; bytes: number; capBytes: number | null; overCapBytes: number; fix: string }
-	| { kind: "sims"; bytes: number; count: number; fix: string };
+	| { kind: "sims"; bytes: number; count: number; fix: string }
+	| { kind: "orphans"; bytes: number; derivedData: number; xctestDevices: number; fix: string };
 
 export type DiskReasonRow = DiskReason & { fix: string };
 
@@ -87,8 +92,25 @@ async function bootedDevices(ctx: CommandContext): Promise<Devices> {
 	return { booted: live.length, estMemMb: Math.round(used.memMb) };
 }
 
-async function reclaimableOf(ctx: CommandContext): Promise<DiskReclaimable[]> {
-	const list: DiskReclaimable[] = [];
+/** DerivedData of deleted projects and stale XCTest clones: what `warden gc` sweeps. macOS only. */
+async function orphansOf(ctx: CommandContext, os: HostOs): Promise<DiskReclaimable[]> {
+	const home = ctx.env.HOME;
+	if (os !== "darwin" || !home) return [];
+	const found = await findOrphans({ home, exec: ctx.exec, now: ctx.now(), platform: "darwin" });
+	if (found.length === 0) return [];
+	return [
+		{
+			kind: "orphans",
+			bytes: found.reduce((sum, e) => sum + e.bytes, 0),
+			derivedData: found.filter((e) => e.kind === "derived-data").length,
+			xctestDevices: found.filter((e) => e.kind === "xctest-devices").length,
+			fix: "`warden gc --dry-run` to list, then `warden gc`",
+		},
+	];
+}
+
+async function reclaimableOf(ctx: CommandContext, os: HostOs): Promise<DiskReclaimable[]> {
+	const list: DiskReclaimable[] = await orphansOf(ctx, os);
 	const total = cacheTotal(ctx.store());
 	if (total > 0) {
 		const cap = cacheCap(undefined, ctx.env).bytes;
@@ -196,6 +218,8 @@ function reclaimableNote(item: DiskReclaimable): string {
 				: `cap ${formatSize(item.capBytes)}, ${formatSize(item.overCapBytes)} over`;
 		case "sims":
 			return `${item.count} deletable sim${item.count === 1 ? "" : "s"}`;
+		case "orphans":
+			return `${item.derivedData} DerivedData of deleted projects · ${item.xctestDevices} XCTest clone set`;
 	}
 }
 
@@ -207,7 +231,7 @@ async function disk(ctx: CommandContext, json: boolean): Promise<number> {
 		readDiskFacts(ctx.exec, { os: host.os, home: ctx.env.HOME ?? "", now: ctx.now() }),
 		memoryPressure(ctx.exec, host.os),
 		bootedDevices(ctx),
-		reclaimableOf(ctx),
+		reclaimableOf(ctx, host.os),
 	]);
 	const report = buildReport(ctx, facts, {
 		pressure: pressure.success ? pressure.data : "unknown",

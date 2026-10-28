@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-core/exec";
 import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { fakeExec, type TestContext, testContext } from "../testing";
@@ -32,6 +35,8 @@ function hostExec(host: Host) {
 		["sysctl -n kern.boottime", { stdout: `{ sec = ${(NOW - (host.bootDays ?? 1) * DAY_MS) / 1000}, usec = 0 }` }],
 		["sysctl -n kern.memorystatus_vm_pressure_level", { stdout: "1\n" }],
 		["xcrun simctl list devices", { stdout: sims }],
+		["pgrep", { exitCode: 1 }],
+		["du -sk", { stdout: "2048\tx\n" }],
 	];
 	return fakeExec(handlers);
 }
@@ -144,6 +149,26 @@ describe("warden disk", () => {
 		const sims = reclaimable.find((r: { kind: string }) => r.kind === "sims");
 		expect(sims).toMatchObject({ kind: "sims", count: 1 });
 		expect(sims.bytes).toBeGreaterThan(0);
+	});
+
+	test.skipIf(process.platform !== "darwin")("reclaimable: DerivedData whose workspace is gone", async () => {
+		const c = setup(["--json"], {});
+		const home = mkdtempSync(join(tmpdir(), "warden-disk-home-"));
+		const dd = join(home, "Library", "Developer", "Xcode", "DerivedData", "App-abc");
+		mkdirSync(dd, { recursive: true });
+		writeFileSync(
+			join(dd, "info.plist"),
+			`<plist><dict><key>WorkspacePath</key>\n<string>${join(home, "gone", "App.xcworkspace")}</string></dict></plist>`
+		);
+		c.env = { ...c.env, HOME: home };
+		try {
+			expect(await diskCommand.run(c)).toBe(0);
+			const orphans = json(c).reclaimable.find((r: { kind: string }) => r.kind === "orphans");
+			expect(orphans).toMatchObject({ kind: "orphans", derivedData: 1, xctestDevices: 0 });
+			expect(orphans.fix).toContain("warden gc");
+		} finally {
+			rmSync(home, { recursive: true, force: true });
+		}
 	});
 
 	test("a host whose probes all fail still reports, with nothing to warn about", async () => {
