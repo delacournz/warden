@@ -196,7 +196,7 @@ A failed run leaves sims booted (so does a passed one with `shutdown: "idle"`, u
 
 | Command | Env and behavior |
 |---|---|
-| `warden run <platform> -- <cmd>` | child gets `WARDEN_UDIDS WARDEN_UDID_<i> WARDEN_LEASE_IDS WARDEN_PORTS WARDEN_PORT_<i>`, `WARDEN_HEADLESS=1` when headless, `WARDEN_APP_PATH WARDEN_APP_HASH` with `--app` |
+| `warden run <platform> -- <cmd>` | child gets `WARDEN_UDIDS WARDEN_UDID_<i> WARDEN_LEASE_IDS WARDEN_PORTS WARDEN_PORT_<i>`, `WARDEN_HEADLESS=1` when headless, `WARDEN_APP_PATH WARDEN_APP_HASH` with `--app`. `--json`: first stdout line `{ leases, ports, cmd }`, the child's stdout goes to stderr |
 | `warden batch <platform\|preset> --jobs a,b -- <cmd>` | per job `WARDEN_UDID WARDEN_WORKER WARDEN_DEVICE_NAME WARDEN_JOB WARDEN_JOB_SEQ WARDEN_PASS WARDEN_BATCH_DIR WARDEN_PORT`. `{job} {udid} {worker} {seq}` are substituted in the command; `{port} {metroUrl}` in `serve` and `serveReady`. Jobs also come from `--jobs-from <file\|->` (one per line). A job killed by `--job-timeout` exits `124` |
 
 `warden batch <name>` runs the `batches.<name>` preset of `warden.config.ts` (`ios` / `android` are reserved names); flags passed alongside override it. Preset keys: `platform` (required) `cmd` (required) `project count max profile runtime label ttl wait ports app headless slim retry passes env serve serveReady serveTimeout jobs jobsFrom record logs`. At most one of `jobs` / `jobsFrom` (`jobsFrom`: a file, `-`, or `{ command }`).

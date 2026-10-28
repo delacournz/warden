@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { type CommandEntry, runLazyProgram } from "./command";
 import { COMMANDS } from "./commands/registry";
-import { type CommandContext, defaultContext } from "./context";
+import { type CommandContext, defaultContext, STDERR, STDOUT } from "./context";
 
 /**
  * Run warden with `argv` (without `bun cli.ts`). Returns the exit code. Only the dispatched command's module is
@@ -17,7 +17,13 @@ export async function main(
 	return runLazyProgram(entries, normalised, makeContext(normalised));
 }
 
-/** `.then`, not top-level `await`: `bun build --bytecode` emits CommonJS, which has no top-level await. */
+/**
+ * `.then`, not top-level `await`: `bun build --bytecode` emits CommonJS, which has no top-level await. Exit only
+ * once stdout and stderr have flushed: `process.exit` drops queued writes.
+ */
 if (import.meta.main) {
-	main(process.argv.slice(2)).then((code) => process.exit(code));
+	main(process.argv.slice(2)).then(async (code) => {
+		await Promise.all([STDOUT.drained(), STDERR.drained()]);
+		process.exit(code);
+	});
 }

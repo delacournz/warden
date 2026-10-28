@@ -69,7 +69,7 @@ import {
 	resolveExpoBin,
 	resolveNodeBin,
 } from "../metro";
-import { emit, heading, note, reportError, warn } from "../output";
+import { heading, note, reportError, warn } from "../output";
 import { projectContextFor } from "../project-context";
 import { providerFor } from "../providers";
 import { revealSimWindow } from "../sim-windows";
@@ -817,8 +817,9 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 		}
 		const bundle = bundleIdFor(r.project, r.platform);
 		closeExtras = await startDevExtras(ui, deps, opts, r, metro.data.url, bundle.success ? bundle.data : undefined);
+		// one line, not `emit`'s indented document: warden dev keeps running, so readers take the first stdout line
 		if (json)
-			emit(ctx, true, { udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }, "");
+			ctx.out(JSON.stringify({ udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }));
 		else
 			ui.ready({
 				platform: r.platform,
