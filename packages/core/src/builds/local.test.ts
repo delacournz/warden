@@ -524,6 +524,20 @@ describe("runLocalBuild compiler cache env", () => {
 		});
 		expect(s.envs[0]).toEqual({ EXPO_NO_TELEMETRY: "1" });
 	});
+
+	test("a kind's env (project.buildEnv) reaches the build command", async () => {
+		const s = iosSetup();
+		await runLocalBuild({
+			...common,
+			exec: s.exec,
+			project: { ...s.project, buildEnv: { EXPO_PUBLIC_API: "x" } },
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			compilerCache: false,
+		});
+		expect(s.envs[0]).toEqual({ EXPO_PUBLIC_API: "x", EXPO_NO_TELEMETRY: "1" });
+	});
 });
 
 describe("runLocalBuild: a fresh checkout's prebuild moves the fingerprint (17-1)", () => {

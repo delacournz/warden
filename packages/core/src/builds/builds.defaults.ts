@@ -44,6 +44,46 @@ export function defaultBuildCommand(
 	return `bunx expo run:android ${configuration === "Release" ? "--variant release " : ""}${flags}`;
 }
 
+/** Android twin of `IOS_NATIVE_PREPARE`: generate `android/` when a CNG checkout has none. */
+export const ANDROID_NATIVE_PREPARE =
+	"{ [ -f android/gradlew ] || bunx expo prebuild --platform android --no-install; }";
+
+/** Gradle's `reactNativeArchitectures` for the host's emulators: arm64 on Apple silicon, else x86_64 (one ABI, not four). */
+const ANDROID_HOST_ABI = '"$([ "$(uname -m)" = arm64 ] && echo arm64-v8a || echo x86_64)"';
+
+/**
+ * Local build command of the `simulator` kind: the Release configuration for a simulator / emulator; a repack swaps the
+ * JS in. iOS: Xcode's bundling phase is skipped with `SKIP_BUNDLING=1`. Android: plain `assembleRelease`. Excluding
+ * `createBundleReleaseJsAndAssets` (`-x`) fails on RN 0.86 / AGP 9 ("Querying the mapped value ... before task ... has
+ * completed"), and the bundler's `drawable-*` / `raw` images are compiled into the APK's resource table by that task:
+ * without them the Android repack finds no image in the base and always falls back to a full build.
+ */
+export function simulatorBuildCommand(platform: Platform, framework: AppFramework = "expo"): string {
+	if (platform === "ios") {
+		if (framework === "react-native") {
+			const pods =
+				"{ diff -q ios/Podfile.lock ios/Pods/Manifest.lock >/dev/null 2>&1 || pod install --project-directory=ios; }";
+			return `${pods} && RCT_NO_LAUNCH_PACKAGER=1 SKIP_BUNDLING=1 npx react-native build-ios --mode Release`;
+		}
+		return `${IOS_NATIVE_PREPARE} && SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler`;
+	}
+	const gradle = `cd android && ./gradlew app:assembleRelease -PreactNativeArchitectures=${ANDROID_HOST_ABI}`;
+	return framework === "react-native" ? gradle : `${ANDROID_NATIVE_PREPARE} && ${gradle}`;
+}
+
+/**
+ * What a kind's JS key (and a `release` kind's build key) covers when `kinds.<kind>.jsInputs` is not set: every file git
+ * tracks (or would) under the project root except the native projects and dependencies. A monorepo workspace package the
+ * bundle embeds is not under the root: list it (`../../packages/ui/src/**`) in `jsInputs`.
+ */
+export const DEFAULT_JS_INPUTS: readonly string[] = [
+	"**",
+	"!ios/**",
+	"!android/**",
+	"!node_modules/**",
+	"!**/node_modules/**",
+];
+
 /** The Debug defaults. */
 export const DEFAULT_BUILD_COMMAND: Record<Platform, string> = {
 	ios: defaultBuildCommand("ios", "Debug"),

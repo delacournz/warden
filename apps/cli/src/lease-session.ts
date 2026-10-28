@@ -1,19 +1,28 @@
 import { constants } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
-import type { EnsureResult } from "@delacour/warden-core/builds/resolve";
+import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
+import type { BuildKind } from "@delacour/warden-core/builds/kinds";
+import type { AppPhase, EnsureResult } from "@delacour/warden-core/builds/resolve";
 import { CLAIM_ABORTED, type ClaimOutcome } from "@delacour/warden-core/claim";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { claimPorts, parsePortSpec } from "@delacour/warden-core/ports";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { phaseTracker } from "./app-phase";
 import { selfCommand } from "./autogc";
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
 import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
 import type { CommandContext } from "./context";
 import { releaseDevices } from "./device-lease";
-import { installModeOption, legacyCleanOption, parseInstallFlags, RESET_KEYCHAIN_HELP } from "./install-flags";
+import {
+	installModeOption,
+	kindOption,
+	legacyCleanOption,
+	parseInstallFlags,
+	RESET_KEYCHAIN_HELP,
+} from "./install-flags";
 import { reportError } from "./output";
 import type { HideStart } from "./sim-windows";
 import type { Spinner } from "./ui";
@@ -32,7 +41,7 @@ export type RunEnsureApp = (
 	platform: Platform,
 	deviceId: string,
 	opts: EnsureOptions
-) => AsyncResult<EnsureResult>;
+) => AsyncResult<EnsureResult & { kindApp?: KindApp }>;
 
 /** Effects a lease session needs (a subset of `RunDeps` / `BatchDeps`). */
 export type LeaseSessionDeps = {
@@ -166,6 +175,8 @@ export type AppFlagValues = {
 	bundleId?: string;
 	/** `--variant <name>`: a `projects[].variants` build */
 	variant?: string;
+	/** `--kind <kind>`: a build kind (`simulator` = repacked) instead of the project's kind-less build */
+	kind?: BuildKind;
 	/** false = `--no-eas` */
 	eas: boolean;
 	/** false = `--no-build` */
@@ -190,15 +201,20 @@ export function withLeaseOptions<Args extends unknown[], Opts extends OptionValu
 		.option("--project <dir>", "--app: project directory (default: cwd)")
 		.option("--bundle-id <id>", "--app: override the bundle id / package")
 		.option("--variant <name>", "--app: install this projects[].variants build (dev, e2e…)")
+		.addOption(kindOption("--app: "))
 		.option("--no-eas", "--app: don't download EAS builds")
 		.option("--no-build", "--app: don't build locally on a cache miss");
 }
+
+const kindWithVariant = (opts: Pick<AppFlagValues, "kind" | "variant">): boolean =>
+	opts.kind !== undefined && opts.variant !== undefined;
 
 /** `--app …` → ensure options (undefined without `--app`); the sub-flags need `--app`. */
 export function parseAppFlags(opts: AppFlagValues): Result<EnsureOptions | undefined> {
 	const install = parseInstallFlags(opts);
 	if (!install.success) return install;
 	if (opts.app) {
+		if (kindWithVariant(opts)) return err("--kind and --variant can't be combined");
 		return ok({
 			eas: opts.eas,
 			build: opts.build,
@@ -206,12 +222,13 @@ export function parseAppFlags(opts: AppFlagValues): Result<EnsureOptions | undef
 			...(opts.project !== undefined ? { project: opts.project } : {}),
 			...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
 			...(opts.variant !== undefined ? { variant: opts.variant } : {}),
+			...(opts.kind !== undefined ? { kind: opts.kind } : {}),
 		});
 	}
-	const sub = opts.project ?? opts.bundleId ?? opts.variant;
+	const sub = opts.project ?? opts.bundleId ?? opts.variant ?? opts.kind;
 	if (sub !== undefined || !opts.eas || !opts.build || install.data.installMode !== undefined) {
 		return err(
-			"--project / --no-eas / --no-build / --bundle-id / --variant / --install-mode / --reset-keychain / --clean need --app"
+			"--project / --no-eas / --no-build / --bundle-id / --variant / --kind / --install-mode / --reset-keychain / --clean need --app"
 		);
 	}
 	return ok(undefined);
@@ -228,6 +245,8 @@ export type LeaseArgs = {
 	app?: EnsureOptions;
 	/** the ports are leased (before the device claim, which can boot simulators for a while) */
 	onPorts?: (ports: RunPort[]) => void;
+	/** `--app` progress: what each source (`prepare:<platform>`, a device id) is doing, for the claim spinner */
+	onAppPhase?: (source: string, phase: AppPhase) => void;
 	/** a leg's devices are held — once per leg (`leg` is its index in `legFlags`), before its `--app` install, which can take minutes */
 	onLeased?: (outcome: ClaimOutcome, leg: number) => void;
 	/** checked before each device claim and before the installs: true → everything is released, `interrupted` */
@@ -260,13 +279,15 @@ async function installLegApp(
 	owner: Owner,
 	claim: ClaimOutcome,
 	opts: EnsureOptions,
-	ready: (udid: string) => Promise<boolean> = async () => true
+	ready: (udid: string) => Promise<boolean> = async () => true,
+	onPhase?: (source: string, phase: AppPhase) => void
 ): AsyncResult<InstalledApp[]> {
 	const results = await Promise.all(
 		claim.claimed.map(async (c) => {
 			// a device the hide could not boot again is not installed on (batch-pipeline R5)
 			if (!(await ready(c.device.id))) return undefined;
-			return ensure(ctx, owner, c.device.platform, c.device.id, opts);
+			const own = onPhase ? { ...opts, onPhase: (phase: AppPhase) => onPhase(c.device.id, phase) } : opts;
+			return ensure(ctx, owner, c.device.platform, c.device.id, own);
 		})
 	);
 	const apps: InstalledApp[] = [];
@@ -378,8 +399,10 @@ function warmSessionApp(
 ): SessionApp | undefined {
 	if (!args.app || deps.ensureApp !== undefined) return undefined;
 	const app = sessionEnsureApp();
-	for (const platform of new Set((args.legFlags ?? [args.flags]).map((f) => f.request.platform)))
-		app.warm(ctx, args.app, platform);
+	for (const platform of new Set((args.legFlags ?? [args.flags]).map((f) => f.request.platform))) {
+		const onPhase = args.onAppPhase;
+		app.warm(ctx, onPhase ? { ...args.app, onPhase: (p) => onPhase(`prepare:${platform}`, p) } : args.app, platform);
+	}
 	return app;
 }
 
@@ -455,7 +478,7 @@ async function runLeg(
 			if (!install) return undefined;
 			if (args.aborted?.()) return err(INTERRUPTED);
 			try {
-				return await installLegApp(ctx, install.ensure, owner, outcome, install.opts, ready);
+				return await installLegApp(ctx, install.ensure, owner, outcome, install.opts, ready, args.onAppPhase);
 			} catch (error) {
 				return failure(error);
 			}
@@ -616,8 +639,8 @@ export async function claimAll(
 export const leasedText = (outcome: ClaimOutcome) => `leased ${outcome.claimed.map((c) => c.device.name).join(", ")}`;
 
 /**
- * With `--app` the installs run under the claim spinner: report the lease the moment it is held,
- * so the install lines that follow read as happening on leased devices.
+ * With `--app` the app work runs under the claim spinner: report the lease the moment it is held,
+ * so the lines that follow read as happening on leased devices. The spinner text itself comes from `appPhaseProgress`.
  */
 export function leasedProgress(
 	spinner: Spinner,
@@ -627,8 +650,12 @@ export function leasedProgress(
 	if (!app) return undefined;
 	return (outcome) => {
 		spinner.log(`${color.green("✔")} ${leasedText(outcome)}`);
-		spinner.update(`installing the app on ${outcome.claimed.length} device(s)…`);
 	};
+}
+
+/** With `--app`, the claim spinner follows what the app is really doing (see `appPhaseText`): building, fetching, repacking, installing. */
+export function appPhaseProgress(spinner: Spinner, app: boolean): LeaseArgs["onAppPhase"] {
+	return app ? phaseTracker((text) => spinner.update(text)) : undefined;
 }
 
 /** Why a run stops when its heartbeat finds some of its leases gone. */

@@ -24,10 +24,12 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | `--report <file>` | also write `e2e-report.json` there |
 | `--devices default\|all\|<profile,...>` | which `devices` legs run |
 | `--no-shutdown` | keep devices up after a pass (default: shut down those warden created, locally and under CI; suite `shutdown`) |
+| `--dev` | the dev client (kind `dev`) on a Metro warden starts: the suite's `metro` block, or the defaults when it has none. Not with `--kind` / `--variant` |
+| `--kind dev\|simulator\|release` | build kind the devices get (default: the suite's `app.kind`, else `simulator`). `dev` starts Metro like `--dev` |
 | `--no-warm` | skip the iOS driver warm-up |
 | `--perf [captures]` | profile every attempt: bare = metrics, frames, logs; or `--perf=react,js`, `all` (names: `all js react native metrics frames logs`). Reports land in the attempt's `perf/` dir; suite/top-level `perf.budgets` make a breach fail the test (`PERF_BUDGET`) |
 | claim flags | `--profile --runtime --count --max --wait --no-wait --priority --ttl --label --adopt --headless --no-headless --slim --no-slim --json` (`--json` prints the e2e report) |
-| lease flags | `--port <from:span>` (repeatable), `--app --install-mode clean\|reinstall --reset-keychain --project --bundle-id --variant --no-eas --no-build` |
+| lease flags | `--port <from:span>` (repeatable), `--app --install-mode clean\|reinstall --reset-keychain --project --bundle-id --variant --kind --no-eas --no-build` |
 | batch flags | `--retry --passes --serve --serve-ready --serve-timeout --job-timeout --record <dir> --logs <dir> --no-tui` |
 
 Suite settings are defaults. A flag passed on the command line wins.
@@ -76,7 +78,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 |---|---|---|
 | `devices` | none | `[{ profile, count = 1, env?, default = true }]`. Replaces `profile` / `count`. At least one leg must be default |
 | `count`, `profile` | claim defaults | single pool |
-| `metro` | none | `{ enabled = true, port = "8081:100", launchArgs = [], open = true, env, prewarm = true, readyTimeout = "2m" }`. warden starts one Metro for the run and points the dev client at it |
+| `metro` | none | `{ enabled = true, port = "8081:100", launchArgs = [], open = true, env, prewarm = true, readyTimeout = "2m" }`. warden starts one Metro for the run and points the dev client at it. Applies only with `--dev` / kind `dev`, unless the suite pins `app.variant` or `app.kind: "dev"`, or installs no app |
 | `headless` | off | keep Simulator.app windows closed (top-level `headless` is the default; `--headless` / `--no-headless` win) |
 | `slim` | on | iOS only: simulator daemons specs never need are off from first boot. `false` leaves them running; `true` is the default profile; `{ except?: string[]; keep?: string[] }`: `except` keeps whole categories running (ids from `warden sim profiles`, e.g. `store` for push/StoreKit, `web` for universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker), `keep` keeps single `com.apple.*` labels. Unknown ids fail config load. `--no-slim` / `WARDEN_SLIM=0` opt out. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
 | `warmDrivers` | on | iOS: start every device's driver helper before the specs |
@@ -84,7 +86,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 ### App, ports, serve, setup
 | Key | Default | Meaning |
 |---|---|---|
-| `app` | none | `true` or `{ installMode, resetKeychain, variant }`: install the project's app on each device first |
+| `app` | none | `true` or `{ installMode, resetKeychain, variant \| kind }`: install the project's app on each device first. `kind` (`dev` \| `simulator` \| `release`, default `simulator`) picks the build; `variant` keeps the old variant build and its `metro` (not together with `kind`) |
 | `project` | config dir | `projects[].name`; specs, serve and setup run in its root |
 | `ports` | none | `["<from>[:<span>]"]`, exported as `WARDEN_PORT_<i>` and `WARDEN_PORTS` |
 | `env` | none | added to serve, setup and spec env |
@@ -103,6 +105,22 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `perf` | none | `{ budgets: { startupColdMs, jankPct, maxCommitMs, p95CpuPct, peakMemoryMb } }` ceilings (lower is better) for `device.perf.stop()`; each key replaces the top-level `perf.budgets` one |
 
 Removed: `warmRunners` (use `warmDrivers`).
+
+## Build kinds and the repack
+
+`app: true` installs the `simulator` kind: a Release build with no JS embedded, built once per native fingerprint (`kinds.simulator` config, built-in command by default), then this worktree's JS is bundled (Hermes-compiled, ad-hoc re-signed) into a clone of it: a repack keyed by the JS content (`jsKey`: `kinds.simulator.jsInputs` + bundle env + native fingerprint), not by branch. Same JS in two worktrees = one repack. The run repacks once before the first device installs, not per device. `--dev` / `--kind dev` runs the dev client on Metro; `--kind release` the JS-embedded build.
+
+| `projects[].kinds.<kind>` | Meaning |
+|---|---|
+| `build` | `{ ios?, android? }` build command replacing the kind's built-in one |
+| `env` | env of the build and of the JS bundle step (`EXPO_PUBLIC_*`, `NODE_ENV`); part of the `jsKey` |
+| `jsInputs` | globs of the JS sources `simulator` / `release` key on (default: every tracked file but `ios/`, `android/`, `node_modules`) |
+
+- `warden repack ios|android` makes (or finds) the repack and prints `baseHash`, `jsKey`, `artifact`, `reused|repacked`, `bundleMs`; `--force` rebuilds a cached one.
+- Android repack needs the SDK build-tools (`zipalign`, `apksigner`, `aapt2`) and system `zip` / `unzip`. It signs with the project's `android/app/debug.keystore` when present (the base's signer), else the default debug keystore. The Android simulator base is a plain `assembleRelease` whose embedded bundle is stale on purpose: the repack replaces it.
+- Android can't repack new image / raw resources (they live in the compiled resource table): that run builds the `release` kind instead and logs why (`new Android resource(s): … needs a full build`; `fallbackReason` in `--json`). A changed vector drawable is not detected: the base's copy is kept.
+- A project's `fingerprint.include: "native+js"` / `fingerprint.jsInputs` belong to the kind-less flow (variants, `warden app ensure` with no `--kind`): `--kind dev|simulator` warns once on stderr that they are ignored. Move them into `kinds.simulator.jsInputs`.
+- `warden builds ls` shows each build's kind, base (native fingerprint), jsKey, worktree and branch.
 
 ## Example config (`apps/example/warden.config.ts`)
 
@@ -131,22 +149,16 @@ const AFFECTED = {
 	},
 } satisfies Partial<WardenE2eSuite>;
 
-// `example`: Release build, one process per spec. `example-dev`: dev client on warden's Metro, one process per device
+// project: kinds: { simulator: { env: { EXPO_PUBLIC_E2E: "1" }, jsInputs: ["src/**", "assets/**", ...] } }
+// `warden e2e example`: the repacked simulator build. `warden e2e example --dev`: dev client on the suite's `metro`
 e2e: {
 	example: {
 		count: 2,
 		app: true,
 		slim: true,
 		spec: SPEC,
-		...AFFECTED,
-	},
-	"example-dev": {
-		count: 2,
-		app: { variant: "dev" },
 		metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
 		jobTimeoutMs: 15 * 60_000,
-		slim: true,
-		spec: SPEC,
 		...AFFECTED,
 	},
 },

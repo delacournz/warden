@@ -2,6 +2,7 @@ import type { PidAlive } from "@delacour/warden-core/liveness";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import type { RunEnsureApp } from "../lease-session";
 import type { AuthoringDeps } from "./authoring-command";
 import type { BenchDeps } from "./bench";
 import type { UiDevice } from "./device";
@@ -27,6 +28,8 @@ export type UiDeps = {
 	bench?: BenchDeps;
 	/** pid liveness for the busy-device check (default: `kill(pid, 0)`) */
 	pidAlive?: PidAlive;
+	/** `open --kind`: install a build kind on the device (default: `ensureAppFor`) */
+	ensureApp?: RunEnsureApp;
 };
 
 const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code"]>([

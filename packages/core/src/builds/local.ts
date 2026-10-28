@@ -424,7 +424,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	const caching = await cacheEnv(deps);
 	const res = await deps.exec(argv, {
 		cwd: project.root,
-		env: { ...caching, EXPO_NO_TELEMETRY: "1" },
+		env: { ...caching, ...project.buildEnv, EXPO_NO_TELEMETRY: "1" },
 		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
 		...(deps.output ? { onLine: deps.output } : {}),
 	});

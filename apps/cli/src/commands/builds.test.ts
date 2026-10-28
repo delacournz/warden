@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
-import { getInstall, listBuilds, recordInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { getInstall, listBuilds, recordInstall, recordRepack, storeArtifact } from "@delacour/warden-core/builds/cache";
 import { buildLockKey, buildResource } from "@delacour/warden-core/builds/lock";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { buildsCommand, inferPlatform } from "./builds";
@@ -74,6 +74,43 @@ describe("warden builds", () => {
 		expect(text).toContain("github.com/o/r:.");
 		expect(text).toContain("H1");
 		expect(text).toContain("total 12B");
+	});
+
+	test("ls shows kind, base, jsKey, worktree, branch; --json carries them, legacy rows say legacy", async () => {
+		const c = setup(["ls"]);
+		await seed(c, "legacyhash0001", 1000);
+		recordRepack(c.db, {
+			kind: "simulator-repack",
+			projectKey: "k",
+			platform: "ios",
+			profile: "local:simulator",
+			hash: "nativefp1:jsabcdef12345",
+			path: join(c.cwd, "repack", "App.app"),
+			source: "build",
+			size: 20,
+			createdAt: 1000,
+			lastUsedAt: 1000,
+			baseHash: "nativefp1:base",
+			jsKey: "jsabcdef12345",
+			worktree: "/work/trees/feature-x",
+			branch: "feature/x",
+		});
+		expect(await buildsCommand.run(c)).toBe(0);
+		const text = c.stdout.join("\n");
+		expect(text).toMatch(/KIND\s+BASE\s+JSKEY\s+WORKTREE\s+BRANCH/);
+		expect(text).toMatch(/simulator-repack\s+nativefp\s+jsabcdef\s+feature-x\s+feature\/x/);
+		c.stdout.length = 0;
+		c.argv = ["ls", "--json"];
+		expect(await buildsCommand.run(c)).toBe(0);
+		const { builds } = JSON.parse(c.stdout.join("\n"));
+		const repack = builds.find((b: { kind: string }) => b.kind === "simulator-repack");
+		expect(repack).toMatchObject({
+			base: "nativefp1",
+			jsKey: "jsabcdef12345",
+			worktree: "/work/trees/feature-x",
+			branch: "feature/x",
+		});
+		expect(builds.find((b: { hash: string }) => b.hash === "legacyhash0001")).toMatchObject({ kind: "legacy" });
 	});
 
 	test("import without --hash → exit 1", async () => {

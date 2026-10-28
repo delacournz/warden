@@ -289,3 +289,43 @@ describe("resolveApp decision table", () => {
 			expect(res.error).toBe("no build for fingerprint H: EAS skipped; local build skipped (--no-build)");
 	});
 });
+
+describe("resolveApp phases", () => {
+	async function phasesOf(world: World, tweak: (s: ResolveSteps) => void = () => {}): Promise<string[]> {
+		const { s } = steps(world);
+		const seen: string[] = [];
+		s.onPhase = (p) => seen.push(p.phase);
+		tweak(s);
+		await resolveApp(s);
+		return seen;
+	}
+
+	test("installing is reported only when an install runs, then ready", async () => {
+		expect(await phasesOf({ cache: "/c/A.app" })).toEqual(["installing", "ready"]);
+	});
+
+	test("an app already on the device is ready without installing", async () => {
+		expect(await phasesOf({ installedHash: "H", onDevice: true, cache: "/c/A.app" })).toEqual(["ready"]);
+	});
+
+	test("no device: nothing installs", async () => {
+		expect(await phasesOf({ cache: "/c/A.app", device: false })).toEqual(["ready"]);
+	});
+
+	test("a failed resolve never says ready", async () => {
+		expect(await phasesOf({ build: "error" })).toEqual([]);
+	});
+
+	test("a second device on the same flight key waits", async () => {
+		const first = steps({ build: "/c/A.app", device: false });
+		const second = steps({ build: "/c/A.app", device: false });
+		first.s.flightKey = "same";
+		second.s.flightKey = "same";
+		const seen: string[] = [];
+		second.s.onPhase = (p) => seen.push(p.phase);
+		const one = resolveApp(first.s);
+		const two = resolveApp(second.s);
+		await Promise.all([one, two]);
+		expect(seen).toEqual(["waiting", "ready"]);
+	});
+});

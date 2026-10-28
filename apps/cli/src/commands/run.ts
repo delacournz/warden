@@ -15,6 +15,7 @@ import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import {
 	type AppFlagValues,
+	appPhaseProgress,
 	type ChildHandle,
 	claimAll,
 	exitCodeOf,
@@ -108,7 +109,12 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 		async (sctx, spinner) => {
 			const app = args.data.app !== undefined;
 			const onLeased = leasedProgress(spinner, ctx.ui.color, app);
-			const result = await claimAll(sctx, deps, owner, { ...args.data, ...(onLeased ? { onLeased } : {}) });
+			const onAppPhase = appPhaseProgress(spinner, app);
+			const result = await claimAll(sctx, deps, owner, {
+				...args.data,
+				...(onLeased ? { onLeased } : {}),
+				...(onAppPhase ? { onAppPhase } : {}),
+			});
 			if (!result.success) spinner.fail(app ? "claim / app install failed" : "claim failed");
 			else if (app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
 			else spinner.succeed(leasedText(result.data.outcome));

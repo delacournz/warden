@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getInstall, recordInstall } from "./builds/cache";
+import { getInstall, listBuilds, recordInstall } from "./builds/cache";
 import { MIGRATIONS, openStore, QUEUE_TTL_MS, type Store, wardenHome } from "./store";
 import type { Owner, QueueEntry } from "./types";
 
@@ -285,6 +285,59 @@ describe("lease heartbeat period migration", () => {
 		expect(migrated.getLease("l_old")).toMatchObject({ id: "l_old", pid: 7 });
 		expect(migrated.getLease("l_old")?.heartbeatMs).toBeUndefined();
 		expect(migrated.reclaimStale(59_000, () => false)).toEqual([]);
+		migrated.close();
+	});
+});
+
+describe("build kinds migration", () => {
+	test("a database from before kinds keeps its builds as legacy, with empty kind columns", () => {
+		const old = join(dir, "old-builds.db");
+		const db = new Database(old, { create: true });
+		for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql);
+		db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`);
+		db.exec("INSERT INTO builds VALUES ('k', 'ios', 'p', 'H', '/c/H/A.app', 'build', 5, 1, 2)");
+		db.close();
+		const migrated = openStore(old);
+		const columns = migrated.db
+			.query<{ name: string }, []>("PRAGMA table_info(builds)")
+			.all()
+			.map((c) => c.name);
+		expect(columns).toEqual([
+			"project_key",
+			"platform",
+			"profile",
+			"hash",
+			"path",
+			"source",
+			"size",
+			"created_at",
+			"last_used_at",
+			"kind",
+			"base_hash",
+			"js_key",
+			"worktree",
+			"branch",
+		]);
+		expect(migrated.db.query("SELECT kind, base_hash, js_key, worktree, branch FROM builds").get()).toEqual({
+			kind: "legacy",
+			base_hash: null,
+			js_key: null,
+			worktree: null,
+			branch: null,
+		});
+		expect(listBuilds(migrated)).toEqual([
+			{
+				projectKey: "k",
+				platform: "ios",
+				profile: "p",
+				hash: "H",
+				path: "/c/H/A.app",
+				source: "build",
+				size: 5,
+				createdAt: 1,
+				lastUsedAt: 2,
+			},
+		]);
 		migrated.close();
 	});
 });

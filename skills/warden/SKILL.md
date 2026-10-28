@@ -24,7 +24,7 @@ Open the reference file for details before acting; this file only routes.
 
 | You want to | Read |
 |---|---|
-| explore / verify an app by hand (snapshot, tap, type, wait) | [references/ui.md](references/ui.md) |
+| explore / verify an app by hand (snapshot, tap, type, wait; `ui open --kind simulator` for the repacked build) | [references/ui.md](references/ui.md) |
 | create / write / record an e2e test for a journey ("an e2e test for onboarding and sign in") | [references/authoring.md](references/authoring.md) |
 | write or fix a `*.e2e.ts` spec, helpers, testIDs, read failure artifacts | [references/specs.md](references/specs.md) |
 | run specs (`warden e2e`, `affected`), suite config, batch dir, `run`/`batch` scripts | [references/suites.md](references/suites.md) |
@@ -40,12 +40,13 @@ Open the reference file for details before acting; this file only routes.
 | run the app in this worktree (replaces `expo run:ios`) | `warden dev ios --json` (platform defaults to ios) → first stdout line `{ udid, port, metroUrl, leaseIds }`; checks bundle id + `expo-dev-client` first; installs the dev build matching the native fingerprint (installed → cache → EAS only with `eas.json`/config → local build, which regenerates a git-ignored `ios/`/`android/` prebuilt for another fingerprint; `--no-build` / `--no-eas` to skip); owns Metro on a leased port, refuses another checkout's Metro, opens the dev client; Ctrl-C releases. Agents run `--json` (plain output, no dashboard); the interactive dashboard is for people, `--no-tui` forces plain output on a TTY |
 | debug the running app | `warden dev enable devtools` first (dev starts without the CDP broker or perf HUD; `disable` / `status`) · `warden dev logs --kind bundle_failed,error` (Metro) · `warden ui exceptions` · `warden ui logs --level warn` · `warden ui logpoint add src/x.tsx:42 '<expr>'` → `logpoint hits` · `warden ui eval '<expr>'` (see ui.md Devtools) |
 | same over MCP | `warden mcp` (stdio): `dev_sessions`, `metro_logs`, `app_console`, `app_exceptions`, `app_network`, `app_eval`, `app_tree`, `app_route`, `app_reload`, `devtools_status`/`devtools_resume`, `logpoint_*`, `profile_*` |
-| dev build on a device | `warden app ensure ios --udid <udid> --json [--variant dev\|e2e]` · native hash: `warden app fingerprint [ios\|android]` |
+| a build on a device | `warden app ensure ios --udid <udid> --json [--kind dev\|simulator\|release \| --variant dev\|e2e]` · native hash: `warden app fingerprint [ios\|android]` |
+| this worktree's JS in the cached sim build (seconds) | `warden repack ios\|android [--project <dir>] [--force] [--json]` → `{ result: reused\|repacked\|fallback, baseHash, jsKey, artifact, bundleMs }`; exit 1 on `fallback` (Android images changed) or an error. Never installs. `app ensure --kind simulator` / `e2e` / `ui open --kind simulator` run it for you |
 | cached builds | `warden builds ls` · `builds rm <hash…> [--platform p] [--dry-run] [--yes]` (also forgets installs; fixes a stale dev build) · `builds prune [--max-size 20G]` · `builds import <.app\|.apk>` |
 | profile an app | `warden perf` (`doctor` → `record` → `report` → `query` → `diff`; see perf.md) |
 | record a `warden ui` session into a spec | `warden ui record start <id> [--helper <module#fn>]` → drive → `record note\|use <module#fn>\|undo\|status\|cancel` → `record stop [--no-verify]` (verifies on the same device) |
 | the specs a change needs | `warden affected [suite] --base main --explain [--strict] [--json]` |
-| run them on leased devices | `warden e2e [suite] [--base main\|--all\|--specs a,b] [--count N] [--dry-run] [--devices all] [--no-shutdown] [--no-warm] [--headless] [--report f]` |
+| run them on leased devices | `warden e2e [suite] [--base main\|--all\|--specs a,b] [--count N] [--dry-run] [--devices all] [--dev \| --kind dev\|simulator\|release] [--no-shutdown] [--no-warm] [--headless] [--report f]`. Default build: the repacked `simulator` kind, no Metro. `--dev`: dev client + warden's Metro |
 | N devices + ports for a script | `warden run ios --count N --port 8091:20 [--app] -- <cmd>` |
 | independent jobs over N devices | `warden batch ios\|<preset> --count N --jobs-from <file\|-> -- <cmd {job} {udid}>` |
 | a free port | `warden port claim --json` (`--from 8091 --span 20`) · `warden port ls` · `warden port release <port…>\|--lease <id…>\|--mine` |
@@ -74,6 +75,7 @@ By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preloa
 - The SessionEnd hook releases and shuts down what the session booted; `/clear` keeps sims up.
 - Codex: set `WARDEN_SESSION_ID`, or leases count as the shell's user leases.
 - A failed `warden e2e` leaves sims booted for inspection.
+- Build kinds: `dev` (Debug, Metro), `simulator` (Release, no JS embedded: built once per native fingerprint, this worktree's JS repacked into a clone per JS content hash `jsKey`), `release` (JS embedded, keyed on native + JS). `warden e2e` and `warden repack` default to `simulator`; `warden ui open` / `warden dev` stay on `dev`. A repack that cannot be applied builds `release` instead and says why.
 
 ## Done
 

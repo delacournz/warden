@@ -4,11 +4,13 @@ import {
 	type E2eDeviceLeg,
 	type E2eIsolation,
 	type E2eSuiteConfig,
+	e2eMetroSchema,
 	suiteIsolation,
 } from "@delacour/warden-core/affected/affected.schema";
 import type { SelectedSpec, Selection } from "@delacour/warden-core/affected/select";
 import { readySpec } from "@delacour/warden-core/batch/preset";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
+import { type BuildKind, DEFAULT_E2E_KIND } from "@delacour/warden-core/builds/kinds";
 import {
 	DEFAULT_SPEC_ACTION_TIMEOUT,
 	DEFAULT_SPEC_ASSERTION_TIMEOUT,
@@ -73,6 +75,8 @@ export type E2eOpts = ClaimFlagValues &
 		warm?: boolean;
 		/** `--perf[=captures]`: record a perf session around every attempt */
 		perf?: string | true;
+		/** `--dev`: the dev client (kind `dev`) on warden's Metro */
+		dev?: true;
 	};
 
 export type E2eReport = {
@@ -93,7 +97,12 @@ export type E2eReport = {
 };
 
 /** The suite's run settings as option values (CLI flags passed explicitly win). */
-function suiteOpts({ config: suite, cwd, projectRoot }: Suite, opts: E2eOpts, passed: ReadonlySet<string>): E2eOpts {
+function suiteOpts(
+	{ config: suite, cwd, projectRoot }: Suite,
+	opts: E2eOpts,
+	passed: ReadonlySet<string>,
+	run: RunKind
+): E2eOpts {
 	const app = appSwitches(suite.app);
 	const fromSuite: Partial<E2eOpts> = {
 		retry: String(suite.retry),
@@ -107,10 +116,48 @@ function suiteOpts({ config: suite, cwd, projectRoot }: Suite, opts: E2eOpts, pa
 		...(app.app ? { app: true as const, ...(projectRoot ? { project: projectRoot } : {}) } : {}),
 		...(app.installMode !== undefined ? { installMode: app.installMode } : {}),
 		...(app.resetKeychain ? { resetKeychain: true as const } : {}),
-		...(app.variant !== undefined ? { variant: app.variant } : {}),
 	};
 	const cli = Object.fromEntries(Object.entries(opts).filter(([key]) => passed.has(key)));
-	return { ...opts, ...fromSuite, ...cli };
+	const { kind: _kind, variant: _variant, ...merged } = { ...opts, ...fromSuite, ...cli };
+	return {
+		...merged,
+		...(run.kind !== undefined ? { kind: run.kind } : {}),
+		...(run.variant !== undefined ? { variant: run.variant } : {}),
+	};
+}
+
+/**
+ * What a run installs and how its Metro is decided:
+ * - `kind` / `variant`: the build the devices get (`--dev` / `--kind` > the suite's `app.variant` > its `app.kind` >
+ *   `simulator`, the repacked sim build). A suite that installs no app (no `app`, no `--app`) keeps `suite`.
+ * - `metro`: `off` (the suite's `metro` block applies only with the dev client), `dev` (the block, else the defaults),
+ *   `suite` (as the suite wrote it: a pinned `app.variant`, or a suite with no app to install).
+ */
+export type RunKind = { kind?: BuildKind; variant?: string; metro: "off" | "dev" | "suite" };
+
+/** The run's kind from `--dev` / `--kind` / `--variant` and the suite's `app` (see {@link RunKind}). */
+export function resolveRunKind(suite: Suite, opts: E2eOpts, passed: ReadonlySet<string>): Result<RunKind> {
+	const passedKind = passed.has("kind") ? opts.kind : undefined;
+	if (opts.dev && passedKind !== undefined) return err("--dev and --kind can't be combined");
+	const cliKind = opts.dev ? "dev" : passedKind;
+	const app = appSwitches(suite.config.app);
+	if (cliKind !== undefined) {
+		if (passed.has("variant")) return err("--kind / --dev and --variant can't be combined");
+		return ok({ kind: cliKind, metro: cliKind === "dev" ? "dev" : "off" });
+	}
+	if (!app.app && !opts.app) return ok({ metro: "suite" });
+	const variant = passed.has("variant") ? opts.variant : app.variant;
+	if (variant !== undefined) return ok({ variant, metro: "suite" });
+	const kind = app.kind ?? DEFAULT_E2E_KIND;
+	return ok({ kind, metro: kind === "dev" ? "dev" : "off" });
+}
+
+/** `suite` with its Metro as the run decides: dropped, defaulted or as written. */
+function withRunMetro(suite: Suite, run: RunKind): Suite {
+	if (run.metro === "suite") return suite;
+	const { metro, ...config } = suite.config;
+	if (run.metro === "off") return { ...suite, config };
+	return { ...suite, config: { ...config, metro: metro ?? e2eMetroSchema.parse({}) } };
 }
 
 function onePlatform(affected: Affected): Result<Selection> {
@@ -296,7 +343,9 @@ async function e2e(
 	const planned = await plan(ctx, suiteName, opts);
 	if (!planned.success) return fail(planned.error);
 	const { affected, selection, specs } = planned.data;
-	const { suite } = affected;
+	const kind = resolveRunKind(affected.suite, opts, passed);
+	if (!kind.success) return fail(kind.error);
+	const suite = withRunMetro(affected.suite, kind.data);
 	const headless = suiteHeadless(ctx, suite, opts, passed);
 	const base = {
 		suite: suite.name,
@@ -315,7 +364,7 @@ async function e2e(
 		});
 		return 0;
 	}
-	const run = await preparedRun(ctx, deps, suite, selection.platform, specs, { ...opts, headless }, passed);
+	const run = await preparedRun(ctx, deps, suite, selection.platform, specs, { ...opts, headless }, passed, kind.data);
 	if (!run.success) return fail(run.error);
 	const { args, shape, plan: jobs, argvOf, spec } = run.data;
 	const runs = shardRuns(jobs, { argvOf, readFile: deps.readFile });
@@ -372,7 +421,8 @@ async function preparedRun(
 	platform: Platform,
 	specs: readonly SelectedSpec[],
 	opts: E2eOpts,
-	passed: ReadonlySet<string>
+	passed: ReadonlySet<string>,
+	kind: RunKind
 ): AsyncResult<RunPlan & { spec: SpecPlan }> {
 	if (suite.config.slim && platform !== "ios") note(ctx, `warden e2e: slim is iOS-only; skipped on ${platform}`);
 	if (slimsDevices(suite.config, platform) && suite.config.slim !== undefined) {
@@ -381,7 +431,7 @@ async function preparedRun(
 	}
 	const spec = await specPlan(ctx, deps, suite, platform, opts);
 	if (!spec.success) return spec;
-	const run = await runPlan(ctx, suite, platform, specs, spec.data, opts, passed);
+	const run = await runPlan(ctx, suite, platform, specs, spec.data, opts, passed, kind);
 	return run.success ? ok({ ...run.data, spec: spec.data }) : run;
 }
 
@@ -453,7 +503,8 @@ async function runPlan(
 	specs: readonly SelectedSpec[],
 	spec: SpecPlan,
 	opts: E2eOpts,
-	passed: ReadonlySet<string>
+	passed: ReadonlySet<string>,
+	kind: RunKind
 ): AsyncResult<RunPlan> {
 	const { config } = suite;
 	const picked = selectLegs(config, opts, passed);
@@ -461,7 +512,7 @@ async function runPlan(
 	const metro = await metroPlan(suite, spec.env.bundleId);
 	if (!metro.success) return metro;
 	// --json is the e2e report here, not batch.json
-	const { json: _json, ...merged } = suiteOpts(suite, opts, passed);
+	const { json: _json, ...merged } = suiteOpts(suite, opts, passed, kind);
 	const needsApp = appFlagsWithoutApp(suite, merged);
 	if (needsApp !== undefined) return err(needsApp);
 	const batchOpts = { ...merged, ...(config.metro?.enabled ? { port: [config.metro.port, ...merged.port] } : {}) };
@@ -681,10 +732,14 @@ export function createE2eCommand(deps: BatchDeps): Command {
 					"--perf [captures]",
 					"profile every attempt (bare: metrics, frames, logs; or --perf=react,js | all); reports land in the attempt's perf/ dir"
 				)
+				.option(
+					"--dev",
+					"run on the dev client (kind dev) against a Metro warden starts, not the repacked simulator build"
+				)
 				.option("--no-warm", "skip pre-warming the iOS socket helper per device (default: on; suite warmDrivers)")
 				.addHelpText(
 					"after",
-					"\nExamples:\n  warden e2e mobile --base origin/main --count 2\n  warden e2e --dry-run --files src/modules/chat/api.ts"
+					"\nExamples:\n  warden e2e mobile --base origin/main --count 2\n  warden e2e mobile --dev --all\n  warden e2e --dry-run --files src/modules/chat/api.ts"
 				)
 				.action(async (suite, opts, command) => {
 					const passed = new Set(Object.keys(opts).filter((key) => command.getOptionValueSource(key) === "cli"));

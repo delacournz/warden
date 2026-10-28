@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
 import { type BuildRecord, listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
 import { ccacheCleanup } from "@delacour/warden-core/builds/compiler-cache";
@@ -23,30 +23,65 @@ function fail(ctx: CommandContext, sub: string, message: string): number {
 	return 1;
 }
 
+/** What a cached build is, flattened for `builds ls`: its kind, the native fingerprint it is keyed on, and a repack's / release's JS key and origin. */
+export type BuildFacts = { kind: string; base?: string; jsKey?: string; worktree?: string; branch?: string };
+
+/** The kind / base / jsKey / worktree / branch of `b`; a pre-kind (legacy) row has only `kind: "legacy"`. */
+export function buildFacts(b: BuildRecord): BuildFacts {
+	switch (b.kind) {
+		case undefined:
+		case "legacy":
+			return { kind: "legacy" };
+		case "dev":
+		case "simulator-base":
+			return { kind: b.kind, base: b.hash.split(":")[0] ?? b.hash };
+		case "release":
+			return { kind: b.kind, base: b.hash.split(":")[0] ?? b.hash, jsKey: b.jsKey };
+		case "simulator-repack":
+			return {
+				kind: b.kind,
+				base: b.baseHash.split(":")[0] ?? b.baseHash,
+				jsKey: b.jsKey,
+				...(b.worktree !== undefined ? { worktree: b.worktree } : {}),
+				...(b.branch !== undefined ? { branch: b.branch } : {}),
+			};
+	}
+}
+
 function lsCmd(ctx: CommandContext, json: boolean): number {
 	const { color } = ctx.ui;
 	const builds = listBuilds(ctx.store());
 	const now = ctx.now();
-	const rows = builds.map((b) => [
-		b.projectKey,
-		b.platform,
-		color.bold(b.hash.slice(0, 12)),
-		b.source,
-		b.profile,
-		formatSize(b.size),
-		`${formatDuration(Math.max(0, now - b.lastUsedAt))} ago`,
-		color.dim(b.path),
-	]);
+	const short = (value: string | undefined, length = 8) => (value === undefined ? "-" : value.slice(0, length));
+	const rows = builds.map((b) => {
+		const facts = buildFacts(b);
+		return [
+			b.projectKey,
+			b.platform,
+			color.bold(b.hash.slice(0, 12)),
+			facts.kind,
+			short(facts.base),
+			short(facts.jsKey),
+			facts.worktree === undefined ? "-" : basename(facts.worktree),
+			facts.branch ?? "-",
+			formatSize(b.size),
+			`${formatDuration(Math.max(0, now - b.lastUsedAt))} ago`,
+			color.dim(b.path),
+		];
+	});
 	const total = builds.reduce((s, b) => s + b.size, 0);
+	const columns = ["PROJECT", "PLATFORM", "HASH", "KIND", "BASE", "JSKEY", "WORKTREE", "BRANCH", "SIZE", "AGE", "PATH"];
 	const text =
 		builds.length === 0
 			? color.dim("no cached builds")
-			: `${table(ctx, ["PROJECT", "PLATFORM", "HASH", "SOURCE", "PROFILE", "SIZE", "LAST USED", "PATH"], rows, [
-					{ column: 7, keep: "end", min: 20 },
+			: `${table(ctx, columns, rows, [
+					{ column: 10, keep: "end", min: 20 },
 					{ column: 0, keep: "end", min: 20 },
-					{ column: 4, min: 12 },
+					{ column: 7, min: 12 },
+					{ column: 6, min: 12 },
 				])}\n\ntotal ${color.bold(formatSize(total))}`;
-	emit(ctx, json, { builds, totalBytes: total }, text, {
+	const listed = builds.map((b) => ({ ...b, ...buildFacts(b) }));
+	emit(ctx, json, { builds: listed, totalBytes: total }, text, {
 		scope: "builds",
 		detail: `${plural(builds.length, "build")} · ${formatSize(total)}`,
 	});

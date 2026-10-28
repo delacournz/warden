@@ -67,6 +67,25 @@ Why not share DerivedData? Its build database and dependency files hold absolute
 <Step>**Local build** — verified against the fingerprint. Debug by default; set `build.configuration: "Release"` to build and find a Release simulator build (the JS bundle is embedded, so no Metro is needed at test time). The artifact is the `.app` / `.apk` the build wrote; when Gradle or Xcode was up to date and rewrote nothing, it is this project's existing one (`android/app/build/outputs`, `ios/build`, or the DerivedData dir whose workspace is `<root>/ios`). Two unchanged candidates (e.g. two Release flavors) are refused rather than guessed: delete the stale one. A git-ignored (CNG) `ios/` / `android/` that was prebuilt for another native fingerprint, or one warden has no record of, is removed first so the build command prebuilds it again (and runs `pod install`): an old native dir would otherwise build without the new native modules. A committed native dir and a custom `build` command that runs neither `expo prebuild` nor `expo run:*` are left alone.</Step>
 </Steps>
 
+## Build kinds and repack
+
+`--kind dev|simulator|release` (on `warden app ensure`, `run|batch --app`, `warden e2e`, `warden ui open`) picks what is built; `projects[].kinds.<kind>` overrides its `build` command, `env` and (`simulator` / `release`) `jsInputs`.
+
+| Kind | Native config | JS | Cache key |
+|---|---|---|---|
+| `dev` | Debug | Metro at runtime | native fingerprint |
+| `simulator` | Release for a simulator, no JS embedded (the **base**) | repacked per JS content | base: native fingerprint; repack: native fingerprint + `jsKey` |
+| `release` | Release | embedded at build | native fingerprint + JS content |
+
+```bash
+warden repack ios                     # this worktree's JS into the cached simulator base (builds the base once)
+warden repack ios --json              # { result, baseHash, jsKey, artifact, bundleMs }
+warden app ensure ios --kind simulator --udid <udid>
+warden builds ls                      # kind, base, jsKey, worktree, branch, size, age
+```
+
+`jsKey` is a hash of the `jsInputs` files, the bundle env (`kinds.<kind>.env`, `EXPO_PUBLIC_*`, `NODE_ENV`), the bundler flags and the native fingerprint, so a repack is never stale and never keyed by branch; worktree and branch are metadata only. A repack is an APFS clone of the base with the new bundle (iOS: `main.jsbundle` and assets, re-signed ad hoc; Android: the apk's `assets/index.android.bundle`, zipaligned and re-signed with the base's key) and ships its source map. Repacks are simulator-only. On Android, new or renamed images cannot be repacked (they live in the compiled resource table): that run builds the `release` kind and says why. `warden repack` exits 1 in that case. `fingerprint.include` / `fingerprint.jsInputs` belong to the kind-less flow and warn when set with `--kind dev|simulator`.
+
 ## Release builds and JS changes
 
 A Release build embeds its JS bundle, but the native fingerprint doesn't change when only JS does — so a JS edit would count as "already installed" and keep running stale code. Opt in to a JS-aware key:

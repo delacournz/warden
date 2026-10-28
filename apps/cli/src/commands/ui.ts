@@ -4,6 +4,7 @@ import { registerDevtoolsCommands } from "../agent-ui/devtools-register";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { withUiOptions } from "../agent-ui/ui-options";
 import { type Command, defineCommand } from "../command";
+import { kindOption } from "../install-flags";
 
 /**
  * `warden ui <subcommand>`: drive a leased device for agents. Every subcommand is one `cmd.command(...)`
@@ -65,11 +66,15 @@ export function createUiCommand(deps: UiDeps): Command {
 			withUiOptions(
 				cmd
 					.command("open")
-					.description("launch an app (bundle id) or open a URL; --metro starts the dev client on that Metro")
+					.description(
+						"launch an app (bundle id) or open a URL; --metro starts the dev client on that Metro; --kind installs that build first"
+					)
 					.argument("<target>", "bundle id or URL")
 					.option("--relaunch", "terminate a running app first")
 					.option("--metro <url>", "Metro URL: launch with --initialUrl and remember it")
 					.option("--args <args...>", "extra launch arguments")
+					.addOption(kindOption())
+					.option("--project <dir>", "--kind: the app's project directory (default: cwd)")
 					.option("--settle [ms]", SETTLE)
 			).action(async (target, opts) => {
 				const { uiOpen } = await import("../agent-ui/open");

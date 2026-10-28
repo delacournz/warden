@@ -62,6 +62,9 @@ Devices:
 Builds:
   app                           fingerprint an Expo app and install the matching
                                 build (installed → cache → EAS → local build)
+  repack [platform]             bundle this worktree's JS into the cached
+                                simulator build (seconds; builds the base once
+                                per native fingerprint)
   builds                        list, remove, prune (LRU) and import cached
                                 native app builds
 
@@ -204,6 +207,10 @@ Options:
   --bundle-id <id>       --app: override the bundle id / package
   --variant <name>       --app: install this projects[].variants build (dev,
                          e2e…)
+  --kind <kind>          --app: install this build kind: dev (Debug, Metro),
+                         simulator (Release + this worktree's JS repacked in
+                         seconds), release (JS embedded at build) (choices:
+                         "dev", "simulator", "release")
   --no-eas               --app: don't download EAS builds
   --no-build             --app: don't build locally on a cache miss
   -h, --help             display help for command
@@ -412,6 +419,10 @@ Options:
   --bundle-id <id>            --app: override the bundle id / package
   --variant <name>            --app: install this projects[].variants build
                               (dev, e2e…)
+  --kind <kind>               --app: install this build kind: dev (Debug,
+                              Metro), simulator (Release + this worktree's JS
+                              repacked in seconds), release (JS embedded at
+                              build) (choices: "dev", "simulator", "release")
   --no-eas                    --app: don't download EAS builds
   --no-build                  --app: don't build locally on a cache miss
   --retry <n>                 re-run a failed job up to N times on the same
@@ -523,6 +534,10 @@ Options:
   --bundle-id <id>            --app: override the bundle id / package
   --variant <name>            --app: install this projects[].variants build
                               (dev, e2e…)
+  --kind <kind>               --app: install this build kind: dev (Debug,
+                              Metro), simulator (Release + this worktree's JS
+                              repacked in seconds), release (JS embedded at
+                              build) (choices: "dev", "simulator", "release")
   --no-eas                    --app: don't download EAS builds
   --no-build                  --app: don't build locally on a cache miss
   --retry <n>                 re-run a failed job up to N times on the same
@@ -564,12 +579,15 @@ Options:
   --perf [captures]           profile every attempt (bare: metrics, frames,
                               logs; or --perf=react,js | all); reports land in
                               the attempt's perf/ dir
+  --dev                       run on the dev client (kind dev) against a Metro
+                              warden starts, not the repacked simulator build
   --no-warm                   skip pre-warming the iOS socket helper per device
                               (default: on; suite warmDrivers)
   -h, --help                  display help for command
 
 Examples:
   warden e2e mobile --base origin/main --count 2
+  warden e2e mobile --dev --all
   warden e2e --dry-run --files src/modules/chat/api.ts"
 `;
 
@@ -1759,6 +1777,10 @@ Options:
   --reset-keychain       --install-mode: also reset the iOS simulator's keychain
   --bundle-id <id>       override the bundle id / package
   --variant <name>       use this projects[].variants build (dev, e2e…)
+  --kind <kind>          install this build kind: dev (Debug, Metro), simulator
+                         (Release + this worktree's JS repacked in seconds),
+                         release (JS embedded at build) (choices: "dev",
+                         "simulator", "release")
   --json                 machine-readable output
   -h, --help             display help for command
 
@@ -1776,6 +1798,23 @@ Options:
   --variant <name>  fingerprint this projects[].variants build
   --json            machine-readable output
   -h, --help        display help for command"
+`;
+
+exports[`help output warden repack --help (and nested subcommands) 1`] = `
+"$ warden repack --help
+Usage: warden repack [options] [platform]
+
+bundle this worktree's JS into the cached simulator build (seconds; builds the
+base once per native fingerprint)
+
+Arguments:
+  platform         ios | android (asked for when omitted in a terminal)
+
+Options:
+  --project <dir>  project directory (default: cwd)
+  --force          repack even when this JS is already cached
+  --json           machine-readable output
+  -h, --help       display help for command"
 `;
 
 exports[`help output warden ui --help (and nested subcommands) 1`] = `
@@ -1797,7 +1836,8 @@ Commands:
   find <selector...>           elements matching a selector, with @eN refs
                                (bumps the generation)
   open <target>                launch an app (bundle id) or open a URL; --metro
-                               starts the dev client on that Metro
+                               starts the dev client on that Metro; --kind
+                               installs that build first
   press <target...>            tap an element or point; an @eN older than 30 s
                                is re-verified first
   tap <target...>              tap an element or point; an @eN older than 30 s
@@ -1956,7 +1996,7 @@ $ warden ui open --help
 Usage: warden ui open [options] <target>
 
 launch an app (bundle id) or open a URL; --metro starts the dev client on that
-Metro
+Metro; --kind installs that build first
 
 Arguments:
   target                 bundle id or URL
@@ -1965,6 +2005,11 @@ Options:
   --relaunch             terminate a running app first
   --metro <url>          Metro URL: launch with --initialUrl and remember it
   --args <args...>       extra launch arguments
+  --kind <kind>          install this build kind: dev (Debug, Metro), simulator
+                         (Release + this worktree's JS repacked in seconds),
+                         release (JS embedded at build) (choices: "dev",
+                         "simulator", "release")
+  --project <dir>        --kind: the app's project directory (default: cwd)
   --settle [ms]          wait for a quiet screen afterwards (default budget 3000
                          ms) and print what changed
   --udid <udid>          device udid (iOS) / serial (Android)

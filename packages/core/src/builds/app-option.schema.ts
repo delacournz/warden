@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BUILD_KINDS, type BuildKind } from "./kinds";
 
 /**
  * What to do with the app's installed state before a run:
@@ -14,7 +15,8 @@ export type InstallMode = z.infer<typeof installModeSchema>;
  * `app` on a batch preset / e2e suite: `true` installs the project's app on every device first;
  * `{ installMode }` also resets the installed app (see {@link InstallMode}); `{ resetKeychain: true }`
  * (needs `installMode`) also resets the iOS simulator's keychain;
- * `{ variant }` installs that `projects[].variants` build instead of the project's default one.
+ * `{ variant }` installs that `projects[].variants` build instead of the project's default one;
+ * `{ kind }` installs that build kind (`dev` | `simulator` | `release`) instead (not together with `variant`).
  * `{ clean: true }` is the deprecated spelling of `{ installMode: "reinstall" }`.
  */
 export const appOptionSchema = z.union([
@@ -26,8 +28,12 @@ export const appOptionSchema = z.union([
 			/** @deprecated use `installMode: "reinstall"` */
 			clean: z.boolean().optional(),
 			variant: z.string().min(1).optional(),
+			kind: z.enum(BUILD_KINDS).optional(),
 		})
 		.strict()
+		.refine((app) => !(app.kind !== undefined && app.variant !== undefined), {
+			message: "set kind or variant, not both",
+		})
 		.refine((app) => !(app.clean === true && app.installMode !== undefined), {
 			message: "clean is the deprecated spelling of installMode: reinstall; don't set both",
 		})
@@ -38,7 +44,13 @@ export const appOptionSchema = z.union([
 
 export type AppOption = z.infer<typeof appOptionSchema>;
 
-export type AppSwitches = { app: boolean; installMode?: InstallMode; resetKeychain?: true; variant?: string };
+export type AppSwitches = {
+	app: boolean;
+	installMode?: InstallMode;
+	resetKeychain?: true;
+	variant?: string;
+	kind?: BuildKind;
+};
 
 /** The switches `app` stands for. An object means install (`app: {}` = `app: true`). */
 export function appSwitches(app: AppOption | undefined): AppSwitches {
@@ -50,5 +62,6 @@ export function appSwitches(app: AppOption | undefined): AppSwitches {
 		...(installMode !== undefined ? { installMode } : {}),
 		...(installMode !== undefined && app.resetKeychain === true ? { resetKeychain: true as const } : {}),
 		...(app.variant !== undefined ? { variant: app.variant } : {}),
+		...(app.kind !== undefined ? { kind: app.kind } : {}),
 	};
 }

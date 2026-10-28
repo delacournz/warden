@@ -584,8 +584,16 @@ describe("warden batch", () => {
 		const ui = scriptedUi();
 		c.ui = ui;
 		const h = harness();
-		h.deps.ensureApp = async (ctx, _owner, _platform, deviceId) => {
+		let asked = 0;
+		h.deps.ensureApp = async (ctx, _owner, _platform, deviceId, opts) => {
+			// the first device builds; the second waits on that build; both install once it is done
+			if (asked++ === 0) {
+				opts.onPhase?.({ phase: "building", platform: "ios", hash: "b1fee19abc" });
+			} else opts.onPhase?.({ phase: "waiting" });
+			await Bun.sleep(5);
+			opts.onPhase?.({ phase: "installing" });
 			ctx.err(`installing on ${deviceId}`);
+			opts.onPhase?.({ phase: "ready" });
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
 		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
@@ -593,7 +601,11 @@ describe("warden batch", () => {
 		const install = ui.events.findIndex((e) => e.includes("installing on"));
 		expect(leased).toBeGreaterThan(-1);
 		expect(leased).toBeLessThan(install);
-		expect(ui.events).toContain("spin: installing the app on 2 device(s)…");
+		const building = ui.events.findIndex((e) => e === "spin: building the ios app (fingerprint b1fee19)…");
+		const installing = ui.events.findIndex((e) => e.startsWith("spin: installing the app on"));
+		expect(building).toBeGreaterThan(leased);
+		expect(installing).toBeGreaterThan(building);
+		expect(ui.events).not.toContain("spin: installing the app on 2 device(s)…");
 	});
 
 	test("--install-mode / --reset-keychain are passed to the ensure step; they need --app", async () => {
