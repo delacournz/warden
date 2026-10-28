@@ -63,7 +63,7 @@ import {
 import { emit, heading, note, reportError, warn } from "../output";
 import { projectContextFor } from "../project-context";
 import { providerFor } from "../providers";
-import { closeSimWindows, revealSimWindow } from "../sim-windows";
+import { revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
@@ -314,21 +314,14 @@ async function showDevice(
 }
 
 /**
- * Shut the session's own devices down while their leases are still held, and close the viewer
- * windows of the iOS sims that went down (a Device Hub page stays open otherwise, offering "Start").
+ * Shut the session's own devices down while their leases are still held; `shutdownReleasedDevices` closes the
+ * viewer windows of the iOS sims that went down (a Device Hub page stays open otherwise, offering "Start").
  * Problems are warnings, never failures.
  */
 async function shutdownDevices(ctx: CommandContext, owner: Owner, leases: Lease[]): Promise<void> {
 	const outcome = await shutdownReleasedDevices(ctx, leases, owner);
 	for (const id of outcome.shutdown) note(ctx, `warden dev: shut down ${id}`);
 	for (const line of outcome.notes) warn(ctx, `warden dev: ${line}`);
-	const sims = leases.flatMap((l) =>
-		l.resource.kind === "device" && l.resource.platform === "ios" && outcome.shutdown.includes(l.resource.id)
-			? [{ udid: l.resource.id, name: l.resource.name }]
-			: []
-	);
-	const closed = await closeSimWindows(ctx, sims);
-	if (!closed.success) warn(ctx, `warden dev: couldn't close the simulator window (${closed.error})`);
 }
 
 /** The dashboard shows a local build's own output on the task's row; plain output (pipes, agents) keeps only warden's lines. */

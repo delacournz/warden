@@ -13,6 +13,7 @@ import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { mapBounded } from "../bounded";
 import { resolveOwner } from "../claim-flags";
+import { closeSimWindowsAfter } from "../close-sim-windows-after";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
@@ -57,6 +58,16 @@ function holdForShutdown(ctx: CommandContext, owner: Owner, record: DeviceRecord
 			ctx.now()
 		);
 	});
+}
+
+/** The viewer windows of the sims gc just shut down: a Device Hub page stays open otherwise, offering "Start". */
+async function closeShutDownWindows(ctx: CommandContext, platform: Platform, outcome: PlatformOutcome): Promise<void> {
+	if (platform !== "ios") return;
+	const unclosed = await closeSimWindowsAfter(
+		ctx,
+		outcome.shutdown.map((d) => ({ udid: d.id, name: d.name }))
+	);
+	if (unclosed !== undefined) outcome.notes.push(`couldn't close the simulator window (${unclosed})`);
 }
 
 /**
@@ -107,6 +118,7 @@ async function gcPlatform(
 		else if (result.success) outcome.shutdown.push({ platform, id: record.id, name: record.name });
 		else outcome.notes.push(`shutdown ${record.id} failed: ${result.error}`);
 	}
+	await closeShutDownWindows(ctx, platform, outcome);
 	return outcome;
 }
 
