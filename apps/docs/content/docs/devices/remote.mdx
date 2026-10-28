@@ -1,0 +1,39 @@
+---
+title: Remote devices
+description: Lease hosted iOS simulators and Android emulators from warden cloud with the same claim / release flow as local ones.
+icon: Cloud
+---
+
+warden cloud runs simulators and emulators for you, so a Linux CI runner or a busy laptop can still claim a device. You log in once, and `warden claim --remote` leases a hosted device the same way `warden claim` leases a local one.
+
+## Log in
+
+```bash
+warden login            # opens the browser: sign in, pick or create an organization, approve the code
+warden whoami           # account, organization, and whether hosted devices are ready for it
+warden org list         # your organizations; * marks the active one
+warden org use acme     # hosted devices are billed to the active organization
+warden logout
+```
+
+The session token is saved to `~/.warden/auth.json`, and only you can read it. In CI, set `WARDEN_TOKEN` instead. `WARDEN_API_URL` points the CLI at another warden cloud, such as staging. A saved token is only ever sent to the server that issued it.
+
+## Claim and release
+
+```bash
+warden claim ios --remote --json
+# { "leases": [{ "leaseId": "…", "remote": true, "remoteId": "rd_…", "name": "iphone-17", "action": "remote" }], "remoteIds": ["rd_…"] }
+
+warden claim android --remote --profile pixel-10 --runtime 16 --ttl 30m
+warden heartbeat --mine     # keeps local and hosted leases alive
+warden release <leaseId>    # also stops the hosted device
+```
+
+- `--profile` picks the device model and `--runtime` picks the OS version. Leave them out to get warden cloud's default for the platform.
+- A hosted device stops on its own once it has idled for the lease TTL, so a forgotten lease doesn't keep running.
+- `--wait` caps how long the claim waits for the device to boot (default 5 minutes). A device that never comes up is stopped and not leased.
+- `warden ls` lists hosted leases as `remote ios iphone-17 (rd_…)`.
+
+## What is not remote (yet)
+
+`warden ui`, `warden e2e` and `warden dev` drive local devices. Driving a hosted device through them is next.

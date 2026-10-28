@@ -180,4 +180,13 @@ describe("the privacy policy page", () => {
 		expect(ids).toContain("the-website");
 		expect(read("components", "consent-banner.tsx")).toContain('hash="the-website"');
 	});
+
+	test("names warden cloud's server and device provider while the CLI calls them", () => {
+		const credentials = readFileSync(join(REPO, "apps/cli/src/remote/credentials.ts"), "utf8");
+		const host = credentials.match(/DEFAULT_API_URL = "https:\/\/([^"]+)"/)?.[1];
+		expect(host).toBeDefined();
+		expect(EVERYTHING).toContain(host as string);
+		expect(EVERYTHING).toContain("Revyl");
+		expect(EVERYTHING).toContain("~/.warden/auth.json");
+	});
 });

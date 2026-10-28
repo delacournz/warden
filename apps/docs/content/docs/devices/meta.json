@@ -1,4 +1,14 @@
 {
 	"title": "Devices & parallel",
-	"pages": ["leases", "scripts", "ports", "capacity", "golden-images", "perf", "headless", "app-builds"]
+	"pages": [
+		"leases",
+		"remote",
+		"scripts",
+		"ports",
+		"capacity",
+		"golden-images",
+		"perf",
+		"headless",
+		"app-builds"
+	]
 }
