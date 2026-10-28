@@ -168,6 +168,8 @@ With no `e2e` suite configured (and none named), the Expo app around the cwd get
 | `--job-timeout <duration>` | overrides the suite's `jobTimeoutMs` (default 10 min) |
 | `--no-shutdown` | keep the devices running after the gate passes (the default locally; under CI they are shut down. Suite `shutdown` sets it, the flag wins) |
 | `--perf[=captures]` | profile every attempt: a [perf session](/docs/devices/perf) wraps each test and its report is copied to the attempt's `perf/` dir (`report.json`, `report.md`, `session.json`). Bare `--perf` records metrics, frames and logs; `--perf=react,js` picks captures (`js`, `react`, `native`, `metrics`, `frames`, `logs`, or `all`). `perf.budgets` apply, and a breach fails the test with a `PERF_BUDGET` error (kind `perf_budget` in `e2e-report.json`); `e2e-report.json` links each test's `perf` dir |
+| `--dev` | run on the dev client (kind `dev`) against a Metro warden starts: the suite's `metro` block, else the defaults. Not with `--kind` / `--variant` |
+| `--kind <kind>` | `dev`, `simulator` (default: the suite's `app.kind`, else the repacked simulator build) or `release` |
 | `--no-warm` | skip the iOS driver-helper warm-up (the suite's `warmDrivers: false`) |
 
 The suite's `count`, `profile`, `retry`, `passes`, `app`, `ports`, `env`, `serve`, `serveReady` and `serveTimeout` apply unless the flag is passed; `project` sets the cwd. With [`metro`](/docs/reference/configuration#e2e) warden starts and verifies its own Metro before any spec and stops it last. With `devices`, every picked leg claims its own pool and runs the specs concurrently (`--profile` / `--count` replace the legs with one claim); the report then has one verdict per spec and leg. By default (`isolate: "device"`) one spec process per device runs its share of the specs (round-robin by spec id) and every spec still gets its own verdict; `--retry` reruns only the specs that did not pass, and `--job-timeout` / `jobTimeoutMs` is per spec. With `isolate: "spec"` every spec is its own process. 
@@ -355,7 +357,7 @@ Print the project's native fingerprint (both platforms by default). `--project`,
 
 ### `warden app ensure [platform]`
 
-Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--install-mode clean|reinstall` resets the installed app first (`clean`: fresh data, no reinstall of an unchanged build; `reinstall`: uninstall + install), `--reset-keychain` also resets the iOS sim keychain, `--clean` is a deprecated alias of `--install-mode reinstall`; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`. See [App builds](/docs/devices/app-builds).
+Install the build matching the fingerprint on a device (`--lease <id>` or `--udid`). `--no-install` only resolves into the cache; `--install-mode clean|reinstall` resets the installed app first (`clean`: fresh data, no reinstall of an unchanged build; `reinstall`: uninstall + install), `--reset-keychain` also resets the iOS sim keychain, `--clean` is a deprecated alias of `--install-mode reinstall`; `--no-eas`, `--no-build`, `--project`, `--bundle-id`, `--variant <name>`, `--kind dev|simulator|release` (the repacked simulator build for the current JS; not with `--variant`). See [App builds](/docs/devices/app-builds).
 
 ### `warden dev [platform] [-- <expo start args>]`
 
@@ -371,7 +373,13 @@ On an interactive terminal it draws a dashboard (task rows, live output, Metro's
 
 Set an Expo app up for `warden dev` / `warden e2e`, in the app's root (`--project <dir>`). Writes a starter `warden.config.ts` (the project and a dev-client e2e suite) and an `@delacour/warden-e2e` spec `e2e/smoke.e2e.ts` when the app has no specs. `--bundle-id <id>` fills in `expo.ios.bundleIdentifier` / `expo.android.package` in `app.json` when they are missing (required for an app with no id). Existing files are kept unless `--force`; a warden config in another format is never replaced. Missing packages (`expo-dev-client`, `@delacour/warden-e2e` pinned to this warden's version) are named, not installed. `--dry-run`, `--json` (`{ root, written, skipped, install }`).
 
+### `warden repack <ios|android>`
+
+Bundle this worktree's JS into the cached simulator build (building that base once per native fingerprint) without installing it. `--project <dir>`, `--force` (repack even when this JS is cached), `--json` → `{ result: "reused" | "repacked" | "fallback", platform, baseHash, hash, jsKey, artifact, bundleMs }` (`fallback` carries `reason`). Exit 0 on a repack, 1 on an error or a fallback (Android images changed). See [App builds](/docs/devices/app-builds).
+
 ### `warden builds ls | rm | prune | import`
+
+- `ls [--json]` — one row per cached build: project, platform, hash, kind (`dev`, `simulator-base`, `simulator-repack`, `release`, or `legacy` for a build cached before kinds), base (native fingerprint), jsKey, worktree, branch, size, age, path. `--json` adds `kind`, `base`, `jsKey`, `worktree`, `branch` to each build.
 
 - `rm <hash…> [--platform ios|android] [--dry-run] [--yes]` (alias `remove`) — remove cached builds by hash or a unique prefix (at least 6 characters, as `warden builds` shows it), with their aliases, and forget the install records at those hashes so the next ensure reinstalls. A prefix matching several builds, or a build being fetched or built, is an error. Asks first in a terminal unless `--yes`; `--json` → `{ dryRun, removed, forgotInstalls }`.
 - `prune [--max-size 20G] [--dry-run] [--yes]` — remove least-recently-used builds until the cache fits; build-locked ones stay. `--max-size` defaults to `WARDEN_MAX_CACHE_SIZE`, else `20G` (the cap `warden gc --max-cache-size` uses).

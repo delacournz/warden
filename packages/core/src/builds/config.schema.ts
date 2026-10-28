@@ -56,6 +56,20 @@ export const variantSchema = z
 	.object({ fingerprint: fingerprintSchema.optional(), eas: easOrOffSchema.optional(), build: buildSchema.optional() })
 	.strict();
 
+/** One kind's overrides (`kinds.<kind>`): see `kinds.ts` for the built-in defaults they replace. */
+const kindSchema = z
+	.object({
+		/** replaces the kind's built-in build command, per platform */
+		build: perPlatform.optional(),
+		/** env of the build and the JS bundle step; part of the JS key */
+		env: z.record(z.string().min(1), z.string()).optional(),
+		/** globs (`!` excludes) of the JS sources the JS key covers; default: every tracked file but ios/ android/ node_modules */
+		jsInputs: z.array(z.string().min(1)).min(1).optional(),
+	})
+	.strict();
+
+const kindsSchema = z.object({ dev: kindSchema, simulator: kindSchema, release: kindSchema }).partial().strict();
+
 export const projectConfigSchema = z
 	.object({
 		name: z.string().min(1),
@@ -69,6 +83,8 @@ export const projectConfigSchema = z
 		build: buildSchema.optional(),
 		/** named builds (`dev`, `e2e`…) picked with `--variant` / `app.variant`; each replaces fingerprint / eas / build wholesale */
 		variants: z.record(z.string().min(1), variantSchema).optional(),
+		/** per-kind overrides of the built-in `dev` / `simulator` / `release` builds (`app.kind`, `--kind`) */
+		kinds: kindsSchema.optional(),
 		/** extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand */
 		cacheDirs: z.array(z.string().min(1)).optional(),
 	})

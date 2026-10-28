@@ -142,6 +142,13 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./app")).appCommand,
 	},
 	{
+		name: "repack",
+		group: "Builds",
+		summary:
+			"bundle this worktree's JS into the cached simulator build (seconds; builds the base once per native fingerprint)",
+		load: async () => (await import("./repack")).repackCommand,
+	},
+	{
 		name: "ui",
 		summary: "drive a leased simulator / emulator (agents): status, snapshot, find, open, press, fill, scroll, …",
 		load: async () => (await import("./ui")).uiCommand,

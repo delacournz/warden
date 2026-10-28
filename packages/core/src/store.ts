@@ -97,6 +97,11 @@ export const MIGRATIONS: readonly string[] = [
 	);
 	CREATE INDEX boot_queue_order ON boot_queue(priority, enqueued_at);`,
 	`ALTER TABLE leases ADD COLUMN shared INTEGER;`,
+	`ALTER TABLE builds ADD COLUMN kind TEXT NOT NULL DEFAULT 'legacy';
+	ALTER TABLE builds ADD COLUMN base_hash TEXT;
+	ALTER TABLE builds ADD COLUMN js_key TEXT;
+	ALTER TABLE builds ADD COLUMN worktree TEXT;
+	ALTER TABLE builds ADD COLUMN branch TEXT;`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */

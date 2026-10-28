@@ -71,6 +71,7 @@ import { residentSocket, warmConnect } from "../e2e/warm-connect";
 import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "../elastic";
 import {
 	type AppFlagValues,
+	appPhaseProgress,
 	claimAll,
 	exitCodeOf,
 	type ForwardedSignal,
@@ -2255,11 +2256,13 @@ export async function runSession(
 		const legFlags = lease.legs?.map((leg) => leg.flags);
 		const progress = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
 		const onLeased = sessionOnLeased(progress, warm, slim);
+		const onAppPhase = appPhaseProgress(spinner, lease.app !== undefined);
 		const onPorts = sessionOnPorts(ctx, sctx, deps, lease, run, batchDir, controller);
 		const claimArgs = {
 			...lease,
 			...(legFlags ? { legFlags } : {}),
 			...(onLeased ? { onLeased } : {}),
+			...(onAppPhase ? { onAppPhase } : {}),
 			...(onPorts ? { onPorts } : {}),
 			aborted: () => interrupted() || run.launch?.state === "failed",
 			// a device the headless hide could not boot again is dropped, as one that cannot reach Metro is (12-7, R5)

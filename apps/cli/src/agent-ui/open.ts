@@ -1,6 +1,8 @@
+import type { BuildKind } from "@delacour/warden-core/builds/kinds";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
 import type { Result } from "@delacour/warden-types/result";
+import { resolveOwner } from "../claim-flags";
 import type { CommandContext } from "../context";
 import { adbReverseArgv, DEV_CLIENT_ARGS, devClientLaunchArgs } from "../metro";
 import { type ActionOptionValues, finishAction, parseSettle } from "./act";
@@ -17,6 +19,10 @@ export type OpenOptionValues = ActionOptionValues & {
 	metro?: string;
 	/** extra launch arguments */
 	args?: string[];
+	/** `--kind`: install this build kind on the device first (`simulator` = this worktree's repacked JS), launch without Metro */
+	kind?: BuildKind;
+	/** `--project`: the app's project dir for `--kind` (default: cwd) */
+	project?: string;
 };
 
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -81,7 +87,7 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 		if (isUrl && hasLaunchOptions(opts)) {
 			return {
 				success: false,
-				error: uiError("usage", "--metro, --relaunch and --args apply to a bundle id, not a URL", {
+				error: uiError("usage", "--metro, --relaunch, --args, --kind and --project apply to a bundle id, not a URL", {
 					hint: "open the bundle id first, then the URL",
 				}),
 			};
@@ -95,7 +101,13 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 
 /** Whether any flag that only a bundle-id launch understands is set. */
 function hasLaunchOptions(opts: OpenOptionValues): boolean {
-	return opts.metro !== undefined || opts.relaunch === true || (opts.args?.length ?? 0) > 0;
+	return (
+		opts.metro !== undefined ||
+		opts.relaunch === true ||
+		(opts.args?.length ?? 0) > 0 ||
+		opts.kind !== undefined ||
+		opts.project !== undefined
+	);
 }
 
 /** Everything one `warden ui open` needs once the device, driver and settle budget are resolved. */
@@ -125,20 +137,73 @@ async function openUrl(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
 }
 
 /** The one-line summary of a bundle launch, with the attach hint and the shared-device note when they apply. */
-function bundleText(run: OpenRun, attached: boolean): string {
+function bundleText(run: OpenRun, attached: boolean, installed?: KindInstall): string {
 	const { what, opts, device } = run;
 	const metro = opts.metro ? ` (metro ${opts.metro})` : "";
+	const build = installed
+		? ` (${installed.kind} build${installed.jsKey ? ` ${installed.jsKey.slice(0, 12)}` : ""}${installed.fallbackReason ? `, repack fallback: ${installed.fallbackReason}` : ""})`
+		: "";
 	const hint = attached ? " (already running: attached, state kept; --relaunch starts it fresh)" : "";
 	return [
-		`${launchVerb(opts.relaunch === true, attached)} ${what}${metro}${hint}`,
+		`${launchVerb(opts.relaunch === true, attached)} ${what}${metro}${build}${hint}`,
 		...(device.action === "attached" ? [sharedNote(device.lease)] : []),
 	].join("\n");
+}
+
+/** What `--kind` put on the device: the build kind, its repack key and whether the device already ran it. */
+type KindInstall = { kind: BuildKind; jsKey?: string; fresh: boolean; fallbackReason?: string };
+
+/** `--kind`: make sure the kind's build is on the device (cached → repacked → built, then installed). */
+async function installKind(run: OpenRun, kind: BuildKind): Promise<Result<KindInstall, UiError>> {
+	const { ctx, deps, device, opts } = run;
+	const ensure =
+		deps.ensureApp ??
+		(async (...args: Parameters<NonNullable<UiDeps["ensureApp"]>>) => {
+			const { defaultAppDeps, ensureAppFor } = await import("../commands/app");
+			return ensureAppFor(args[0], defaultAppDeps, args[1], args[2], args[3], args[4]);
+		});
+	const done = await ensure(ctx, resolveOwner(ctx), device.platform, device.udid, {
+		eas: true,
+		build: true,
+		kind,
+		...(opts.project !== undefined ? { project: opts.project } : {}),
+	});
+	if (!done.success) return { success: false, error: uiError("failed", `--kind ${kind}: ${done.error}`) };
+	const app = "kindApp" in done.data ? done.data.kindApp : undefined;
+	return {
+		success: true,
+		data: {
+			kind: app?.kind ?? kind,
+			fresh: done.data.source !== "installed",
+			...(app?.kind === "simulator" ? { jsKey: app.repack.jsKey } : {}),
+			...(app?.kind !== "simulator" && app?.fallbackReason !== undefined ? { fallbackReason: app.fallbackReason } : {}),
+		},
+	};
+}
+
+/** `--kind`, when given: refuse `--metro` on a build with no dev client, then install the kind. */
+async function installRequestedKind(run: OpenRun): Promise<Result<KindInstall | undefined, UiError>> {
+	const { kind, metro } = run.opts;
+	if (kind === undefined) return { success: true, data: undefined };
+	if (metro !== undefined && kind !== "dev") {
+		return {
+			success: false,
+			error: uiError("usage", `--metro needs the dev client: --kind ${kind} runs without Metro`),
+		};
+	}
+	return installKind(run, kind);
 }
 
 /** `open <bundleId>`: launch (or attach to) the app and remember it, and the Metro URL, in `state.json`. */
 async function openBundle(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
 	const { ctx, deps, env, device, driver, settle, what, opts } = run;
-	const launched = await launchBundle(ctx, driver, device, what, opts);
+	const kinded = await installRequestedKind(run);
+	if (!kinded.success) return kinded;
+	const installed = kinded.data;
+	// a build installed over a running app leaves the old process up: start the new one
+	const relaunch = opts.relaunch === true || installed?.fresh === true;
+	const launchOpts = { ...opts, ...(relaunch ? { relaunch: true as const } : {}) };
+	const launched = await launchBundle(ctx, driver, device, what, launchOpts);
 	if (!launched.success) return launched;
 	const attached = launched.data.attached;
 	updateState(ctx, device.udid, (state) => ({
@@ -148,17 +213,20 @@ async function openBundle(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
 	}));
 	return finishAction(ctx, deps, env, device, driver, settle, {
 		action: "open",
-		text: bundleText(run, attached),
+		text: bundleText({ ...run, opts: launchOpts }, attached, installed),
 		args: {
 			bundleId: what,
-			relaunch: opts.relaunch === true,
+			relaunch,
 			...(opts.metro !== undefined ? { metro: opts.metro } : {}),
+			...(opts.kind !== undefined ? { kind: opts.kind } : {}),
 		},
 		extra: {
 			bundleId: what,
-			relaunch: opts.relaunch === true,
+			relaunch,
 			attached,
 			...(opts.metro !== undefined ? { metroUrl: opts.metro } : {}),
+			...(installed ? { kind: installed.kind, ...(installed.jsKey ? { jsKey: installed.jsKey } : {}) } : {}),
+			...(installed?.fallbackReason !== undefined ? { fallbackReason: installed.fallbackReason } : {}),
 		},
 	});
 }

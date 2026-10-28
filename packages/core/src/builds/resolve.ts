@@ -1,4 +1,5 @@
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import type { Platform } from "../types";
 import type { InstallMode } from "./app-option.schema";
 
 /** Where `ensure` found the app. */
@@ -12,6 +13,19 @@ export type EnsureResult = {
 	/** the app is on the device at `hash` (false when no device was given) */
 	installed: boolean;
 };
+
+/**
+ * What a resolve is doing right now, for a progress display: `fetching` the EAS build, `waiting` on another device's
+ * (or process's) fetch / build of the same hash, `building` locally, `repacking` JS into the simulator base,
+ * `installing` on a device (only while an install really runs), `ready` when the resolve is done.
+ */
+export type AppPhase =
+	| { phase: "fetching"; source: "eas" }
+	| { phase: "waiting" }
+	| { phase: "building"; platform: Platform; hash: string }
+	| { phase: "repacking"; platform: Platform; jsKey: string }
+	| { phase: "installing" }
+	| { phase: "ready" };
 
 export type EasStepOutcome = { kind: "hit"; path: string } | { kind: "miss"; reason: string };
 
@@ -60,6 +74,8 @@ export type ResolveSteps = {
 	/** local build into the cache; path */
 	build?: () => AsyncResult<string>;
 	log: (line: string) => void;
+	/** progress: where this resolve is (see `AppPhase`) */
+	onPhase?: (phase: AppPhase) => void;
 };
 
 type Found = { path: string; source: Exclude<ResolveSource, "installed"> };
@@ -107,6 +123,7 @@ function fetchOrBuildOnce(steps: ResolveSteps): AsyncResult<Found> {
 	const running = inFlight.get(key);
 	if (running) {
 		steps.log("this fetch/build is already running for another device — waiting for it");
+		steps.onPhase?.({ phase: "waiting" });
 		return running;
 	}
 	const started = steps.lock(() => fetchOrBuild(steps));
@@ -184,6 +201,12 @@ async function reinstallFound(steps: ResolveSteps, device: DeviceSteps): AsyncRe
  * misses 1–3 by construction, so it never gets a stale binary.
  */
 export async function resolveApp(steps: ResolveSteps): AsyncResult<EnsureResult> {
+	const resolved = await resolveInner(steps);
+	if (resolved.success) steps.onPhase?.({ phase: "ready" });
+	return resolved;
+}
+
+async function resolveInner(steps: ResolveSteps): AsyncResult<EnsureResult> {
 	const { device, hash } = steps;
 	if (device && steps.installMode !== "reinstall") {
 		const installed = await alreadyInstalled(steps, device);
@@ -193,6 +216,7 @@ export async function resolveApp(steps: ResolveSteps): AsyncResult<EnsureResult>
 	const found = await locate(steps);
 	if (!found.success) return found;
 	if (device) {
+		steps.onPhase?.({ phase: "installing" });
 		const done = await installOnDevice(steps, device, found.data.path);
 		if (!done.success) return done;
 	}

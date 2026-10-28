@@ -22,7 +22,7 @@ Every call is stateless on the command line: the last snapshot and the Metro URL
 
 ```bash
 warden claim ios --json                                 # 1. a device: use the returned udid on every call
-warden ui open com.example.app --udid $UDID             # 2. launch (add --metro <url> for a dev client)
+warden ui open com.example.app --udid $UDID             # 2. launch (add --metro <url> for a dev client; --kind simulator installs the repacked sim build first, no Metro)
 warden ui snapshot -i --udid $UDID                      # 3. what is on screen, as @eN lines
 warden ui press @e3 --settle --udid $UDID               # 4. act; --settle prints what changed
 warden ui wait id=todos-screen --udid $UDID             # 5. verify with wait / is / get, not a screenshot

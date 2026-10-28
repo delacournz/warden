@@ -30,6 +30,7 @@ export type WardenPlatform = "ios" | "android";
  * - `{ installMode, resetKeychain: true }` also resets the iOS simulator's keychain (`--reset-keychain`); needs `installMode`.
  * - `{ clean: true }` is the deprecated spelling of `{ installMode: "reinstall" }`.
  * - `{ variant: "e2e" }` installs that {@link WardenProject.variants} build instead of the project's own.
+ * - `{ kind: "simulator" }` installs that {@link WardenBuildKind} instead (not together with `variant`).
  * - `{}` is the same as `true`.
  */
 export type WardenAppOption =
@@ -40,6 +41,7 @@ export type WardenAppOption =
 			/** @deprecated use `installMode: "reinstall"` */
 			clean?: boolean | undefined;
 			variant?: string | undefined;
+			kind?: WardenBuildKind | undefined;
 	  };
 
 /** A value per platform, e.g. a bundle id or a build command. */
@@ -135,6 +137,49 @@ export interface WardenVariant {
 	build?: WardenBuild | undefined;
 }
 
+/**
+ * What a cached build is for.
+ *
+ * - `"dev"`: Debug, JS from Metro at runtime. The default of `warden ui open` / `warden dev`.
+ * - `"simulator"`: Release for a simulator / emulator whose JS is swapped by a repack (iOS `SKIP_BUNDLING=1`, Android
+ *   plain `assembleRelease`; its embedded bundle is replaced). The app's JS is repacked into a clone of this build, keyed by the content
+ *   of the JS sources, so a JS edit costs seconds, not a native rebuild. The default of `warden e2e`.
+ * - `"release"`: Release with the JS bundle embedded at build time; the key also covers the JS sources.
+ */
+export type WardenBuildKind = "dev" | "simulator" | "release";
+
+/** Overrides of one {@link WardenBuildKind}'s built-in defaults. */
+export interface WardenKind {
+	/**
+	 * Replaces the kind's built-in build command, per platform. The project's own top-level `build` is not read
+	 * for a kind.
+	 *
+	 * @example { ios: "SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler" }
+	 */
+	build?: WardenPerPlatform | undefined;
+	/**
+	 * Env of the build and of the JS bundle step (`EXPO_PUBLIC_*`, `NODE_ENV`…). Part of the repack key: another
+	 * value is another repack.
+	 */
+	env?: Record<string, string> | undefined;
+	/**
+	 * Globs, relative to the project root, of the JS sources the JS key covers (`simulator`: the repack key,
+	 * `release`: the build key). A `!` prefix excludes (`"!docs/**"`); a glob starting with `../` reaches a workspace
+	 * package the bundle embeds. Ignored by `dev`.
+	 *
+	 * @default every file git tracks (or would) under the project root except `ios/`, `android/` and `node_modules`
+	 * @example ["src/**", "assets/**", "app.config.ts", "../../packages/ui/src/**"]
+	 */
+	jsInputs?: string[] | undefined;
+}
+
+/** Per-kind overrides, `projects[].kinds`. */
+export interface WardenKinds {
+	dev?: WardenKind | undefined;
+	simulator?: WardenKind | undefined;
+	release?: WardenKind | undefined;
+}
+
 /** An app warden builds, caches and installs. */
 export interface WardenProject {
 	/** Project name, used in the cache key and referenced by `batches.*.project` / `e2e.*.project`. */
@@ -172,6 +217,11 @@ export interface WardenProject {
 	 * every worktree with the same fingerprint reuses one build per variant.
 	 */
 	variants?: Record<string, WardenVariant> | undefined;
+	/**
+	 * Per-kind overrides of the built-in `dev` / `simulator` / `release` builds, picked with `app: { kind }` or
+	 * `--kind`. Kinds sit on top of {@link WardenProject.variants}: both keep working, but a build is one or the other.
+	 */
+	kinds?: WardenKinds | undefined;
 	/** Extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand. `~` expands to `$HOME`. */
 	cacheDirs?: string[] | undefined;
 }

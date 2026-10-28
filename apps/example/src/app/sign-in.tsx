@@ -17,7 +17,7 @@ const SIGN_IN_DELAY_MS = 400;
  * e2e builds opt both fields out of iOS credential AutoFill: otherwise iOS offers to save the password in a
  * "Save Password?" sheet that appears seconds after sign-in (the system sheet is hosted by SafariViewService,
  * cold-launched, so how late it shows varies with load) and swallows the keystrokes of whatever the flow does
- * next: on `example-dev` the dev client reloaded its JS in the middle of that typing.
+ * next: on the `--dev` run the dev client reloaded its JS in the middle of that typing.
  */
 const NO_AUTOFILL = IS_E2E ? ({ autoComplete: "off", textContentType: "oneTimeCode" } as const) : {};
 

@@ -168,6 +168,19 @@ describe("git facts of one command", () => {
 });
 
 describe("warden app ensure", () => {
+	test("--kind with --variant is refused before anything is built", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--no-install", "--kind", "simulator", "--variant", "dev"], [], calls);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--kind and --variant can't be combined");
+		expect(calls.some((cmd) => cmd.includes("make-ios"))).toBe(false);
+	});
+
+	test("--kind takes dev, simulator or release only", async () => {
+		const c = setup(["ensure", "ios", "--no-install", "--kind", "debug"]);
+		expect(await createAppCommand(deps).run(c)).not.toBe(0);
+	});
+
 	test("--udid: cache hit → simctl install, then installed on the second run", async () => {
 		const calls: string[][] = [];
 		const c = setup(

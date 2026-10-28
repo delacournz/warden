@@ -2,15 +2,25 @@ import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
 import { type EnsureInput, ensureApp, type ProjectContext } from "@delacour/warden-core/builds/ensure";
+import {
+	installKindApp,
+	type KindApp,
+	type KindAppInput,
+	kindWarnings,
+	prepareKindApp,
+	projectRepackers,
+} from "@delacour/warden-core/builds/ensure-kind";
 import { type CacheKey, computeCacheKey } from "@delacour/warden-core/builds/fingerprint";
-import type { EnsureResult } from "@delacour/warden-core/builds/resolve";
+import { BUILD_KINDS, type BuildKind } from "@delacour/warden-core/builds/kinds";
+import type { ApplyRepack } from "@delacour/warden-core/builds/repack.types";
+import type { AppPhase, EnsureResult } from "@delacour/warden-core/builds/resolve";
 import { processAlive } from "@delacour/warden-core/liveness";
 import type { Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { parsePlatform, resolveOwner, resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
+import { installModeOption, kindOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import { emit, heading, reportError } from "../output";
 import { projectContextFor } from "../project-context";
 import { withSpinner } from "../spinner-context";
@@ -23,9 +33,17 @@ export type AppDeps = {
 	pidAlive: (pid: number) => boolean;
 	easPollMs?: number;
 	lockPollMs?: number;
+	/** the platform halves of a repack (default: the real iOS / Android repackers) */
+	repackers?: Record<Platform, ApplyRepack>;
 };
 
 export const defaultAppDeps: AppDeps = { pid: process.pid, sleep: (ms) => Bun.sleep(ms), pidAlive: processAlive };
+
+/** `--kind <dev|simulator|release>` values. */
+export function parseKind(value: string): Result<BuildKind> {
+	const kind = BUILD_KINDS.find((k) => k === value);
+	return kind ? ok(kind) : err(`--kind ${value}: expected ${BUILD_KINDS.join(" | ")}`);
+}
 
 /** Project + cache options shared by `app ensure` and `run --app`. */
 export type EnsureOptions = {
@@ -42,8 +60,14 @@ export type EnsureOptions = {
 	resetKeychain?: boolean;
 	/** `--variant`: a `projects[].variants.<name>` build */
 	variant?: string;
+	/** `--kind`: install this build kind (`simulator` = the repacked sim build) instead of the project's kind-less build; not with `variant` */
+	kind?: BuildKind;
+	/** `--force` of `warden repack`: rebuild the repack even when this JS is cached */
+	force?: boolean;
 	/** a missing variant falls back to the project's own build (`warden dev`) */
 	variantOptional?: boolean;
+	/** progress for a spinner: what the resolve is doing (`AppPhase`) */
+	onPhase?: (phase: AppPhase) => void;
 	/** a local build's own output, line by line, while it runs (`warden dev`'s dashboard); unset = only the failure summary */
 	buildOutput?: (line: string) => void;
 };
@@ -101,19 +125,117 @@ async function fingerprint(ctx: CommandContext, project: ProjectContext, platfor
 	return hash;
 }
 
-/** A project with its cache key for one platform: what every device of a run installs. */
-export type PreparedApp = { project: ProjectContext; hash: CacheKey };
+/**
+ * A project resolved for one platform: what every device of a run installs. A kind-less app is its cache key; a
+ * `--kind` app is already in the cache (built, or repacked once for the run) at `kindApp.hash`.
+ */
+export type PreparedApp = { project: ProjectContext } & (
+	| { hash: CacheKey; kindApp?: undefined }
+	| { kindApp: KindApp; hash?: undefined }
+);
+
+/** The warnings already printed by this process, so a two-platform run says each once. */
+const warned = new Set<string>();
+
+/** `fingerprint.include` / jsInputs that contradict the requested kind, on stderr once. */
+function warnKind(ctx: CommandContext, project: ProjectContext, kind: BuildKind): void {
+	for (const message of kindWarnings(project.project, kind)) {
+		if (warned.has(message)) continue;
+		warned.add(message);
+		ctx.err(ctx.ui.color.yellow(`[warden] warning: ${message}`));
+	}
+}
+
+/** The one-line account of what a kind resolved to. */
+function describeKindApp(app: KindApp): string {
+	if (app.kind === "simulator") {
+		const { repack } = app;
+		const took = repack.bundleMs !== undefined ? ` in ${(repack.bundleMs / 1000).toFixed(1)}s` : "";
+		return `simulator repack ${repack.jsKey.slice(0, 12)} ${repack.reused ? "reused" : `built${took}`}`;
+	}
+	return app.fallbackReason !== undefined
+		? `release build (repack fallback: ${app.fallbackReason})`
+		: `${app.kind} build`;
+}
+
+/** The input of `prepareKindApp` / `installKindApp` for one platform of a loaded project. */
+export function kindAppInput(
+	ctx: CommandContext,
+	deps: AppDeps,
+	owner: Owner,
+	platform: Platform,
+	project: ProjectContext,
+	kind: BuildKind,
+	opts: Pick<EnsureOptions, "eas" | "build" | "buildOutput" | "installMode" | "resetKeychain" | "force" | "onPhase">
+): KindAppInput {
+	return {
+		...project,
+		kind,
+		store: ctx.store(),
+		exec: ctx.exec,
+		env: ctx.env,
+		now: ctx.now,
+		sleep: deps.sleep,
+		log: (line) => log(ctx, line),
+		...(opts.buildOutput ? { buildOutput: opts.buildOutput } : {}),
+		...(opts.onPhase ? { onPhase: opts.onPhase } : {}),
+		pidAlive: deps.pidAlive,
+		owner,
+		pid: deps.pid,
+		platform,
+		eas: opts.eas,
+		build: opts.build,
+		...(opts.installMode !== undefined ? { installMode: opts.installMode } : {}),
+		...(opts.resetKeychain ? { resetKeychain: true } : {}),
+		...(opts.force ? { force: true } : {}),
+		...(deps.easPollMs !== undefined ? { easPollMs: deps.easPollMs } : {}),
+		...(deps.lockPollMs !== undefined ? { lockPollMs: deps.lockPollMs } : {}),
+		git: ctx.git,
+		repackers: deps.repackers ?? projectRepackers(project.project.root),
+	};
+}
 
 /** Load the project and fingerprint it for `platform` (the slow, device-independent half of an ensure). */
 export async function prepareApp(
 	ctx: CommandContext,
 	opts: EnsureOptions,
-	platform: Platform
+	platform: Platform,
+	deps: AppDeps = defaultAppDeps
 ): AsyncResult<PreparedApp> {
+	if (opts.kind !== undefined && opts.variant !== undefined) return err("--kind and --variant can't be combined");
 	const project = await loadContext(ctx, opts, platform);
 	if (!project.success) return project;
+	if (opts.kind !== undefined) return prepareKind(ctx, deps, platform, project.data, opts.kind, opts);
 	const hash = await fingerprint(ctx, project.data, platform);
 	return hash.success ? ok({ project: project.data, hash: hash.data }) : hash;
+}
+
+/** `--kind`: build, find or repack the kind's app into the cache (once per platform for a run), no device yet. */
+async function prepareKind(
+	ctx: CommandContext,
+	deps: AppDeps,
+	platform: Platform,
+	project: ProjectContext,
+	kind: BuildKind,
+	opts: EnsureOptions
+): AsyncResult<PreparedApp> {
+	warnKind(ctx, project, kind);
+	const input = kindAppInput(ctx, deps, resolveOwner(ctx), platform, project, kind, opts);
+	const app = await prepareKindApp(input);
+	if (!app.success) return app;
+	log(ctx, `${platform}: ${describeKindApp(app.data)} [${app.data.hash}]`);
+	return ok({ project, kindApp: app.data });
+}
+
+/** A kind build as the `EnsureResult` every caller of `ensureApp` reads (a repack counts as built). */
+function kindResult(app: KindApp): EnsureResult & { kindApp: KindApp } {
+	return {
+		appPath: app.artifact,
+		hash: app.hash,
+		source: app.source === "repack" ? "build" : app.source,
+		installed: app.installed,
+		kindApp: app,
+	};
 }
 
 /** Make sure the prepared app is installed on `deviceId` (or just resolved into the cache when it is undefined). */
@@ -125,8 +247,15 @@ export async function ensurePreparedApp(
 	deviceId: string | undefined,
 	opts: EnsureOptions,
 	prepared: PreparedApp
-): AsyncResult<EnsureResult> {
+): AsyncResult<EnsureResult & { kindApp?: KindApp }> {
 	const { project, hash } = prepared;
+	if (prepared.kindApp !== undefined) {
+		if (deviceId === undefined) return ok(kindResult(prepared.kindApp));
+		const kindInput = kindAppInput(ctx, deps, owner, platform, project, prepared.kindApp.requested, opts);
+		const installed = await installKindApp({ ...kindInput, deviceId }, prepared.kindApp);
+		return installed.success ? ok(kindResult(installed.data)) : installed;
+	}
+	if (hash === undefined) return err("prepared app has neither a cache key nor a kind build");
 	const input: EnsureInput = {
 		...project,
 		store: ctx.store(),
@@ -136,6 +265,7 @@ export async function ensurePreparedApp(
 		sleep: deps.sleep,
 		log: (line) => log(ctx, line),
 		...(opts.buildOutput ? { buildOutput: opts.buildOutput } : {}),
+		...(opts.onPhase ? { onPhase: opts.onPhase } : {}),
 		pidAlive: deps.pidAlive,
 		owner,
 		pid: deps.pid,
@@ -165,8 +295,8 @@ export async function ensureAppFor(
 	platform: Platform,
 	deviceId: string | undefined,
 	opts: EnsureOptions
-): AsyncResult<EnsureResult> {
-	const prepared = await prepareApp(ctx, opts, platform);
+): AsyncResult<EnsureResult & { kindApp?: KindApp }> {
+	const prepared = await prepareApp(ctx, opts, platform, deps);
 	if (!prepared.success) return prepared;
 	return ensurePreparedApp(ctx, deps, owner, platform, deviceId, opts, prepared.data);
 }
@@ -200,7 +330,7 @@ export function pickDevice(
 	);
 }
 
-type ProjectOpts = { project?: string; bundleId?: string; variant?: string; json?: true };
+type ProjectOpts = { project?: string; bundleId?: string; variant?: string; kind?: string; json?: true };
 
 type EnsureOpts = ProjectOpts & {
 	lease?: string;
@@ -221,9 +351,41 @@ function projectOptions(opts: ProjectOpts): Pick<EnsureOptions, "project" | "bun
 	};
 }
 
+/** The `--json` facts of a kind build: the kind it became, the repack's key and, after a fallback, why. */
+export function kindJson(app: KindApp): Record<string, unknown> {
+	return {
+		kind: app.kind,
+		requestedKind: app.requested,
+		...(app.kind === "simulator"
+			? {
+					jsKey: app.repack.jsKey,
+					baseHash: app.repack.baseHash,
+					reused: app.repack.reused,
+					bundleMs: app.repack.bundleMs,
+				}
+			: {}),
+		...(app.kind !== "simulator" && app.fallbackReason !== undefined ? { fallbackReason: app.fallbackReason } : {}),
+	};
+}
+
 function fail(ctx: CommandContext, sub: string, message: string): number {
 	reportError(ctx, `app ${sub}`, message);
 	return 1;
+}
+
+/** `app ensure`'s install flags and `--kind`, checked against the device the command targets. */
+function ensureFlags(
+	opts: EnsureOpts,
+	device: string | undefined
+): Result<{ install: { installMode?: InstallMode; resetKeychain?: true }; kind?: BuildKind }> {
+	const install = parseInstallFlags(opts);
+	if (!install.success) return install;
+	const kind = opts.kind === undefined ? undefined : parseKind(opts.kind);
+	if (kind && !kind.success) return kind;
+	if (install.data.installMode !== undefined && device === undefined) {
+		return err("--install-mode needs a device (drop --no-install)");
+	}
+	return ok({ install: install.data, ...(kind ? { kind: kind.data } : {}) });
 }
 
 /** Fingerprint → installed / cache / EAS / local build, under a spinner (can take minutes). */
@@ -243,30 +405,29 @@ async function ensureCmd(
 		noInstall: !opts.install,
 	});
 	if (!device.success) return fail(ctx, "ensure", device.error);
-	const install = parseInstallFlags(opts);
-	if (!install.success) return fail(ctx, "ensure", install.error);
-	if (install.data.installMode !== undefined && device.data === undefined) {
-		return fail(ctx, "ensure", "--install-mode needs a device (drop --no-install)");
-	}
+	const flags = ensureFlags(opts, device.data);
+	if (!flags.success) return fail(ctx, "ensure", flags.error);
+	const { install, kind } = flags.data;
 	if (!opts.json) heading(ctx, "app ensure", `${platform.data}${device.data ? ` · ${device.data}` : ""}`);
 	const res = await withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {
 		const result = await ensureAppFor(sctx, deps, owner, platform.data, device.data, {
 			...projectOptions(opts),
+			...(kind !== undefined ? { kind } : {}),
 			eas: opts.eas,
 			build: opts.build,
-			...install.data,
+			...install,
 		});
 		if (result.success) spinner.succeed(`${platform.data} app ready (${result.data.source})`);
 		else spinner.fail(`${platform.data} app not ready`);
 		return result;
 	});
 	if (!res.success) return fail(ctx, "ensure", res.error);
-	const r = res.data;
+	const { kindApp, ...r } = res.data;
 	const where = device.data ? ` → ${r.installed ? "installed on" : "not installed on"} ${device.data}` : "";
 	emit(
 		ctx,
 		opts.json === true,
-		r,
+		kindApp === undefined ? r : { ...r, ...kindJson(kindApp) },
 		`${color.green(r.source)}: ${r.appPath || "(already installed)"} ${color.dim(`[${r.hash}]`)}${where}`
 	);
 	return 0;
@@ -338,6 +499,7 @@ export function createAppCommand(deps: AppDeps): Command {
 				.addOption(legacyCleanOption())
 				.option("--bundle-id <id>", "override the bundle id / package")
 				.option("--variant <name>", "use this projects[].variants build (dev, e2e…)")
+				.addOption(kindOption())
 				.option("--json", "machine-readable output")
 				.action(async (platform, opts) => done(await ensureCmd(ctx, deps, platform, opts)));
 			cmd

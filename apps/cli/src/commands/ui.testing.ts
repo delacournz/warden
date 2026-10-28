@@ -56,6 +56,8 @@ export type HarnessOptions = {
 	lease?: { pid?: number; label?: string; shared?: boolean };
 	/** the pid liveness probe `warden ui` uses (default: the real one) */
 	pidAlive?: PidAlive;
+	/** what `open --kind` installs with (default: the real ensure) */
+	ensureApp?: UiDeps["ensureApp"];
 };
 
 const live: TestContext[] = [];
@@ -93,6 +95,7 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 		},
 		...(options.video ? { video: options.video } : {}),
 		...(options.pidAlive ? { pidAlive: options.pidAlive } : {}),
+		...(options.ensureApp ? { ensureApp: options.ensureApp } : {}),
 	};
 	const c = testContext([], { now: () => clock.t });
 	live.push(c);

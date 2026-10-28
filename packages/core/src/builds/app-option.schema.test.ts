@@ -29,6 +29,22 @@ describe("appOptionSchema", () => {
 		expect(appOptionSchema.safeParse({ clean: true, installMode: "clean" }).success).toBe(false);
 	});
 
+	test("kind is dev | simulator | release, and excludes variant", () => {
+		for (const kind of ["dev", "simulator", "release"]) {
+			expect(appOptionSchema.safeParse({ kind }).success).toBe(true);
+		}
+		expect(appOptionSchema.safeParse({ kind: "debug" }).success).toBe(false);
+		const both = appOptionSchema.safeParse({ kind: "simulator", variant: "e2e" });
+		expect(both.success).toBe(false);
+		expect(JSON.stringify(both.error?.issues)).toContain("kind or variant");
+		expect(appSwitches({ kind: "release", installMode: "clean" })).toEqual({
+			app: true,
+			installMode: "clean",
+			kind: "release",
+		});
+		expect(appSwitches(true)).not.toHaveProperty("kind");
+	});
+
 	test("appSwitches", () => {
 		expect(appSwitches(undefined)).toEqual({ app: false });
 		expect(appSwitches(false)).toEqual({ app: false });

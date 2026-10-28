@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
+import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
 import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import type { UiDeps } from "../agent-ui/driver";
@@ -652,6 +653,73 @@ const OPEN_SHEET = snapshotOf([
 		],
 	}),
 ]);
+
+describe("open --kind", () => {
+	type Asked = { platform: string; deviceId: string; kind: string | undefined; project: string | undefined };
+
+	/** an ensure that records what it was asked for and answers with `source` */
+	function ensure(asked: Asked[], source: "build" | "installed", kindApp?: KindApp): NonNullable<UiDeps["ensureApp"]> {
+		return async (_ctx, _owner, platform, deviceId, opts) => {
+			asked.push({ platform, deviceId, kind: opts.kind, project: opts.project });
+			return {
+				success: true,
+				data: { appPath: "/c/A.app", hash: "H", source, installed: true, ...(kindApp ? { kindApp } : {}) },
+			};
+		};
+	}
+
+	const built = { requested: "simulator", artifact: "/c/A.app", hash: "H", source: "build", installed: true } as const;
+
+	test("installs the kind on the leased device, then launches (relaunch: a new build must not leave the old process) without Metro", async () => {
+		const asked: Asked[] = [];
+		const h = harness([snapshotOf(LOGIN)], { ensureApp: ensure(asked, "build") });
+		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--project", "app", "--json")).toBe(0);
+		expect(asked).toEqual([{ platform: "ios", deviceId: UDID, kind: "simulator", project: "app" }]);
+		expect(h.driver.callsOf("app.launch")).toEqual([
+			{ method: "app.launch", bundleId: "com.example.app", opts: { relaunch: true } },
+		]);
+		expect(doc(h.c).result).toMatchObject({ bundleId: "com.example.app", relaunch: true, kind: "simulator" });
+	});
+
+	test("a device that already runs the build is attached to, not relaunched", async () => {
+		const h = harness([snapshotOf(LOGIN)], { ensureApp: ensure([], "installed") });
+		expect(await h.run("open", "com.example.app", "--kind", "release", "--json")).toBe(0);
+		expect(h.driver.callsOf("app.launch")).toEqual([
+			{ method: "app.launch", bundleId: "com.example.app", opts: { relaunch: false } },
+		]);
+	});
+
+	test("the repack's jsKey and a fallback's reason are reported", async () => {
+		const repack: KindApp = {
+			...built,
+			kind: "simulator",
+			repack: { jsKey: "abcdef0123456789", baseHash: "b", reused: false },
+		};
+		const h = harness([snapshotOf(LOGIN)], { ensureApp: ensure([], "build", repack) });
+		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--json")).toBe(0);
+		expect(doc(h.c).result).toMatchObject({ kind: "simulator", jsKey: "abcdef0123456789" });
+		const fell: KindApp = { ...built, kind: "release", fallbackReason: "images changed" };
+		const g = harness([snapshotOf(LOGIN)], { ensureApp: ensure([], "build", fell) });
+		expect(await g.run("open", "com.example.app", "--kind", "simulator", "--json")).toBe(0);
+		expect(doc(g.c).result).toMatchObject({ kind: "release", fallbackReason: "images changed" });
+	});
+
+	test("an install failure is the command's error and nothing is launched", async () => {
+		const h = harness([snapshotOf(LOGIN)], {
+			ensureApp: async () => ({ success: false, error: "repack: metro exploded" }),
+		});
+		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--json")).toBe(1);
+		expect(h.driver.callsOf("app.launch")).toEqual([]);
+		expect(h.c.stdout.join("\n")).toContain("--kind simulator: repack: metro exploded");
+	});
+
+	test("--metro with a build that has no dev client is a usage error; --kind with a URL too", async () => {
+		const h = harness([snapshotOf(LOGIN)], { ensureApp: ensure([], "build") });
+		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--metro", "http://localhost:8081")).toBe(1);
+		expect(await h.run("open", "myapp://x", "--kind", "simulator")).toBe(1);
+		expect(h.driver.callsOf("app.launch")).toEqual([]);
+	});
+});
 
 describe("open", () => {
 	test("a bundle id launches the app and is remembered for `close --app`", async () => {

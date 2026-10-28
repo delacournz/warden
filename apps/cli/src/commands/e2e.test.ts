@@ -460,7 +460,7 @@ describe("warden e2e", () => {
 		} as const;
 
 		test("Metro starts and prewarms while the app is still installing; stopped last", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			const install = Promise.withResolvers<void>();
@@ -483,7 +483,7 @@ describe("warden e2e", () => {
 		});
 
 		test("the install fails → the early Metro is stopped, no spec runs, nothing stays leased", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			h.deps.ensureApp = async () => ({ success: false, error: "no build" });
@@ -495,7 +495,7 @@ describe("warden e2e", () => {
 		});
 
 		test("the device claim fails → the early Metro is stopped and the port lease released", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			// no warden sim exists and none may be created: the device claim fails after the port lease
 			const sim = fakeSimctl([]);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
@@ -512,7 +512,7 @@ describe("warden e2e", () => {
 		});
 
 		test("Metro turns out foreign while the app installs → exit 1 naming the other checkout, no spec", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			const probe = Promise.withResolvers<void>();
@@ -536,7 +536,7 @@ describe("warden e2e", () => {
 		});
 
 		test("SIGINT during the install → exit 130, the early Metro is stopped, nothing stays leased", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			const install = Promise.withResolvers<void>();
@@ -555,7 +555,7 @@ describe("warden e2e", () => {
 		});
 
 		test("SIGINT while the bundle still builds → exit 130 without waiting for it; Metro is stopped (12-5)", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness({ prewarm: "hang" });
 			const install = Promise.withResolvers<void>();
@@ -575,7 +575,7 @@ describe("warden e2e", () => {
 		});
 
 		test("a claim that fails while the bundle still builds is reported without waiting for it (12-5)", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness({ prewarm: "hang" });
 			h.deps.ensureApp = async () => {
@@ -589,7 +589,7 @@ describe("warden e2e", () => {
 		});
 
 		test("Metro's readiness is announced once, under the claim spinner when it is up before the app", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const ui = scriptedUi();
 			c.ui = ui;
@@ -2108,6 +2108,83 @@ describe("warden e2e", () => {
 			c.env = { ...c.env, CI: "true" };
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
+		});
+	});
+	describe("build kind", () => {
+		const projects = { projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] };
+		const withVariant = { projects: [{ ...projects.projects[0], variants: { dev: {} } }] };
+		const metro = { launchArgs: ["-E2E", "YES"] };
+
+		/** run the suite, return the kind / variant every device's ensure was asked for, and whether Metro started */
+		async function run(
+			suite: Record<string, unknown>,
+			argv: string[] = []
+		): Promise<{ code: number; asked: string[]; metro: boolean; stderr: string }> {
+			await resuite({ project: "app", ...suite }, withVariant);
+			const c = setup(["--files", "src/chat/lazy.tsx", ...argv]);
+			const h = harness();
+			const asked: string[] = [];
+			h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+				asked.push(`${opts.kind ?? "-"}/${opts.variant ?? "-"}`);
+				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+			};
+			const code = await createE2eCommand(h.deps).run(c);
+			return { code, asked, metro: h.metro() !== undefined, stderr: c.stderr.join("\n") };
+		}
+
+		test("an app suite installs the repacked simulator build and ignores its metro block", async () => {
+			const r = await run({ app: true, metro });
+			expect(r.code).toBe(0);
+			expect(r.asked).toEqual(["simulator/-"]);
+			expect(r.metro).toBe(false);
+		});
+
+		test("the suite's app.kind picks the kind", async () => {
+			const r = await run({ app: { kind: "release" } });
+			expect(r.asked).toEqual(["release/-"]);
+		});
+
+		test("--dev installs the dev kind and starts Metro from the suite's block", async () => {
+			const r = await run({ app: true, metro }, ["--dev"]);
+			expect(r.asked).toEqual(["dev/-"]);
+			expect(r.metro).toBe(true);
+		});
+
+		test("--dev on a suite with no metro block starts Metro with the defaults", async () => {
+			const r = await run({ app: true }, ["--dev"]);
+			expect(r.asked).toEqual(["dev/-"]);
+			expect(r.metro).toBe(true);
+		});
+
+		test("--kind simulator beats the suite's app.kind dev and drops its Metro", async () => {
+			const r = await run({ app: { kind: "dev" }, metro }, ["--kind", "simulator"]);
+			expect(r.asked).toEqual(["simulator/-"]);
+			expect(r.metro).toBe(false);
+		});
+
+		test("a suite pinning app.kind dev keeps its Metro without --dev", async () => {
+			const r = await run({ app: { kind: "dev" }, metro });
+			expect(r.asked).toEqual(["dev/-"]);
+			expect(r.metro).toBe(true);
+		});
+
+		test("a suite pinning app.variant keeps the variant build and its Metro (no kind)", async () => {
+			const r = await run({ app: { variant: "dev" }, metro });
+			expect(r.asked).toEqual(["-/dev"]);
+			expect(r.metro).toBe(true);
+		});
+
+		test("--dev and --kind together are refused before any device is claimed", async () => {
+			const r = await run({ app: true }, ["--dev", "--kind", "release"]);
+			expect(r.code).toBe(1);
+			expect(r.asked).toEqual([]);
+			expect(r.stderr).toContain("--dev and --kind can't be combined");
+		});
+
+		test("a suite with no app to install keeps its metro block as written", async () => {
+			const r = await run({ app: false, metro });
+			expect(r.asked).toEqual([]);
+			expect(r.metro).toBe(true);
 		});
 	});
 });

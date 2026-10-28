@@ -3,7 +3,7 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { PidAlive } from "../liveness";
 import type { Store } from "../store";
 import { DEFAULT_MAX_CACHE_SIZE } from "./builds.defaults";
-import { type BuildRecord, listBuilds, removeBuild } from "./cache";
+import { type BuildRecord, listBuilds, removeBuild, repacksOf, type SimulatorRepackRecord } from "./cache";
 import { buildLockKey, liveBuildLocks } from "./lock";
 
 const UNITS: Record<string, number> = { "": 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 };
@@ -54,15 +54,40 @@ export type PruneGrace = { now: number; graceMs: number };
 /** `warden gc`'s grace window: a build used this recently may be being installed (17-11). */
 export const GC_PRUNE_GRACE_MS = 30 * 60_000;
 
-/** A row registered by `aliasBuild`: it points into another hash's dir and owns no bytes. */
+const isKinded = (b: BuildRecord) => b.kind !== undefined && b.kind !== "legacy";
+
+/**
+ * A row registered by `aliasBuild`: it points at another hash's files and owns no bytes. A legacy row's files sit in its
+ * own `<hash>` dir, so an alias is a path under another dir; a kind row's dir is named for the kind, so an alias is
+ * recognised by its size 0.
+ */
 export function isAlias(b: BuildRecord): boolean {
+	if (isKinded(b)) return b.size === 0;
 	return basename(dirname(b.path)) !== b.hash;
+}
+
+/** The newest repack (by creation) of each (project, platform, worktree): the one a checkout is running against now. */
+function newestRepackPerWorktree(builds: readonly BuildRecord[]): Set<BuildRecord> {
+	const newest = new Map<string, SimulatorRepackRecord>();
+	for (const b of builds) {
+		if (b.kind !== "simulator-repack" || b.worktree === undefined) continue;
+		const id = `${b.projectKey}|${b.platform}|${b.worktree}`;
+		const best = newest.get(id);
+		if (!best || b.createdAt > best.createdAt || (b.createdAt === best.createdAt && b.lastUsedAt > best.lastUsedAt)) {
+			newest.set(id, b);
+		}
+	}
+	return new Set(newest.values());
 }
 
 /**
  * LRU: drop least-recently-used builds until the total fits `maxBytes`. Builds whose build lock is
  * held (being fetched / built right now) and, with `grace`, builds used within its window (a cache
  * hit being installed) are never removed. Alias rows are not candidates; they go with their primary.
+ *
+ * Kinds: a repack is seconds to rebuild, a base minutes, so repacks go first (LRU among them, which is LRU per base),
+ * then everything else. The newest repack of each worktree always stays, and so does its base. A `simulator-base` is
+ * only removed with all its repacks (a repack of a removed base is dead), so it needs every one of them to be removable.
  */
 export function planPrune(
 	builds: readonly BuildRecord[],
@@ -71,17 +96,38 @@ export function planPrune(
 	grace?: PruneGrace
 ): PrunePlan {
 	const total = builds.reduce((s, b) => s + b.size, 0);
-	const lru = [...builds].sort((a, b) => a.lastUsedAt - b.lastUsedAt || a.createdAt - b.createdAt);
+	const keepNewest = newestRepackPerWorktree(builds);
+	const kidsOf = (b: BuildRecord) =>
+		b.kind === "simulator-base" ? repacksOf(builds, b.projectKey, b.platform, b.hash) : [];
+	const busy = (b: BuildRecord) => {
+		const jsKey = b.kind === "simulator-repack" || b.kind === "release" ? b.jsKey : undefined;
+		if (locked.has(buildLockKey(b.projectKey, b.platform, b.hash))) return true;
+		if (jsKey !== undefined && locked.has(buildLockKey(b.projectKey, b.platform, jsKey))) return true;
+		return grace !== undefined && grace.now - b.lastUsedAt < grace.graceMs;
+	};
+	const removable = (b: BuildRecord) => !isAlias(b) && !keepNewest.has(b) && !busy(b);
+	const lru = [...builds].sort(
+		(a, b) =>
+			Number(b.kind === "simulator-repack") - Number(a.kind === "simulator-repack") ||
+			a.lastUsedAt - b.lastUsedAt ||
+			a.createdAt - b.createdAt
+	);
+	const gone = new Set<BuildRecord>();
 	const remove: BuildRecord[] = [];
 	let after = total;
 	for (const b of lru) {
 		if (after <= maxBytes) break;
-		if (isAlias(b) || locked.has(buildLockKey(b.projectKey, b.platform, b.hash))) continue;
-		if (grace && grace.now - b.lastUsedAt < grace.graceMs) continue;
-		remove.push(b, ...builds.filter((a) => a !== b && a.path === b.path && isAlias(a)));
-		after -= b.size;
+		if (gone.has(b) || !removable(b)) continue;
+		const kids = kidsOf(b).filter((k) => !gone.has(k));
+		if (kids.some((k) => !removable(k))) continue;
+		for (const owner of [b, ...kids]) {
+			const aliases = builds.filter((a) => a !== owner && a.path === owner.path && isAlias(a));
+			remove.push(owner, ...aliases);
+			for (const row of [owner, ...aliases]) gone.add(row);
+			after -= owner.size;
+		}
 	}
-	return { remove, keep: builds.filter((b) => !remove.includes(b)), total, after };
+	return { remove, keep: builds.filter((b) => !gone.has(b)), total, after };
 }
 
 export type PruneInput = {

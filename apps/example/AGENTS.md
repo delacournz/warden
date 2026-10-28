@@ -71,15 +71,13 @@ Specs are `bun test` specs driven by `@delacour/warden-e2e`; `warden e2e` leases
 - Deep links: `device.openLink(url)` answers iOS's "Open in warden-example?" sheet itself; `openDeepLink` opens it again (3 links, 6 s each) when the target screen did not show.
 - `Badge` / `Chip` text: assert on the container (`expect(locator).toHaveText("2 left")`); `locator.text()` falls back to the descendant text when iOS leaves the container's own label empty.
 - `warden.config.ts` defines:
-  - project `example`: a Release build keyed on native + JS;
-  - variant `dev`: the Debug dev client, keyed on native only;
-  - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the spec → screen `entries` that `warden affected` uses;
-  - suite `example-dev`: the same specs on the dev client. warden starts and verifies its own Metro (`metro`, which also sets `--initialUrl` and turns the Expo dev menu off), and one spec process per device runs its share of the specs (the default `isolate: "device"`);
-  - both suites set `spec.bundleId`, the app the specs drive (`app.open()` launches it with `WARDEN_LAUNCH_ARGS`).
+  - project `example`: build kinds. `simulator` (the default of `warden e2e`) is a Release build with no JS embedded, built once per native fingerprint, and this worktree's JS (`EXPO_PUBLIC_E2E=1` baked in) is repacked into it in seconds (`warden repack ios`); `dev` is the Debug dev client; variant `bench` is the benchmark's Release build with the JS embedded;
+  - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the spec → screen `entries` that `warden affected` uses. `--dev` runs the same suite on the dev client: warden starts and verifies its own Metro (the suite's `metro`, which also sets `--initialUrl` and turns the Expo dev menu off), and one spec process per device runs its share of the specs (the default `isolate: "device"`). `metro` applies only with `--dev`;
+  - `spec.bundleId` is the app the specs drive (`app.open()` launches it with `WARDEN_LAUNCH_ARGS`).
 
 ```bash
 bun run e2e --all                    # warden e2e example (this checkout's warden); drop --all for the specs this branch needs
-bun run e2e:dev -- --all             # warden e2e example-dev: dev client + warden's Metro
+bun run e2e:dev -- --all             # warden e2e example --dev: dev client + warden's Metro
 bun run e2e:affected -- --explain    # which specs this branch needs
 bun run e2e:spec todos               # one spec
 WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=nz.co.delacour.warden.example bun test --preload @delacour/warden-e2e/preload e2e/todos.e2e.ts   # by hand, on an installed build
@@ -96,4 +94,4 @@ Specs read the accessibility (AX) tree, not the React tree: a `testID` is only e
 ### Simulator-only crash and sheets
 
 - `react-native-pulsar` (haptics) is patched (`patches/react-native-pulsar@1.7.0.patch`, a root `patchedDependencies` entry): on `TARGET_OS_SIMULATOR` its native module no longer creates the `Pulsar` object. That object starts an AVAudioEngine whose AURemoteIO RPC times out at random on a simulator, aborting the app (SIGABRT on thread `com.pulsar.audio`, crash reports `wardenexample-*.ips`) and sending a running spec back to the welcome screen. JS needs no gate: every call is a no-op on a simulator, which has no haptics anyway. A real device is unaffected. Gating the JS `import` alone does not help, the native module starts at launch. Drop the patch when upstream (software-mansion/pulsar) stops starting the engine on a simulator. Changing it changes the native fingerprint, so the next `warden e2e` rebuilds.
-- The sign-in fields opt out of iOS credential AutoFill in e2e builds (`NO_AUTOFILL` in `src/app/sign-in.tsx`: `autoComplete="off"`, `textContentType="oneTimeCode"`; `EXPO_PUBLIC_E2E=1`). Without it iOS raised a "Save Password?" sheet (hosted by SafariViewService, cold-launched) anywhere from 1 to 6 s after sign-in. A spec that typed meanwhile (`fill(todo-input)`) sent its keys to no focused field and the dev client reloaded its JS, back to the welcome screen: the `example-dev` `todos` flake (about 40% of runs, never on Release). Do not remove it, and do not wait for the sheet: it is gone.
+- The sign-in fields opt out of iOS credential AutoFill in e2e builds (`NO_AUTOFILL` in `src/app/sign-in.tsx`: `autoComplete="off"`, `textContentType="oneTimeCode"`; `EXPO_PUBLIC_E2E=1`). Without it iOS raised a "Save Password?" sheet (hosted by SafariViewService, cold-launched) anywhere from 1 to 6 s after sign-in. A spec that typed meanwhile (`fill(todo-input)`) sent its keys to no focused field and the dev client reloaded its JS, back to the welcome screen: the dev-client (`--dev`) `todos` flake (about 40% of runs, never on Release). Do not remove it, and do not wait for the sheet: it is gone.

@@ -11,11 +11,11 @@ import { defineConfig } from "@delacour/warden/config";
 
 export default defineConfig({
   e2e: {
-    "example-dev": {
+    example: {
       project: "example",
       specsDir: "e2e",
       platform: "ios",
-      app: { variant: "dev" },
+      app: true,
       metro: { env: { EXPO_PUBLIC_E2E: "1" } },
       spec: { bundleId: "com.example.app" },
       count: 2,
@@ -26,10 +26,15 @@ export default defineConfig({
 ```
 
 ```bash
-warden e2e example-dev --all
+warden e2e example --all          # the repacked simulator build, no Metro
+warden e2e example --all --dev    # the dev client on a Metro warden starts (the suite's metro block)
 ```
 
-No device to pick, no port to export, no bundler to start first. warden claims the simulators, installs the cached build, starts and verifies its own Metro when the suite has one, runs the specs and releases everything on exit (Ctrl-C included).
+No device to pick, no port to export, no bundler to start first. warden claims the simulators, installs the cached build, starts and verifies its own Metro with `--dev`, runs the specs and releases everything on exit (Ctrl-C included).
+
+## Build kinds
+
+`app: true` installs the `simulator` kind: a Release build with no JS bundle embedded, built once per native fingerprint and shared by every worktree. This worktree's JS is then bundled, Hermes-compiled and ad-hoc re-signed into a clone of it (a **repack**, seconds instead of a native rebuild), once per run before any device installs. Repacks are keyed by the JS content, so two worktrees with identical JS share one. Pass `--dev` (or `--kind dev`) for the dev client, `--kind release` for a build with the JS embedded at build time. A suite can pin one with `app: { kind }`; `app: { variant }` keeps the old variant build (back-compat). `metro` applies only with `--dev` unless the suite pins `app.kind: "dev"` or an `app.variant`.
 
 ## What a suite needs
 

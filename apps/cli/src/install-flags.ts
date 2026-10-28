@@ -1,5 +1,6 @@
 import { Option } from "@commander-js/extra-typings";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
+import { BUILD_KINDS } from "@delacour/warden-core/builds/kinds";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 
 export const INSTALL_MODES = ["clean", "reinstall"] as const satisfies readonly InstallMode[];
@@ -36,4 +37,12 @@ export function parseInstallFlags(
 		...(installMode !== undefined ? { installMode } : {}),
 		...(opts.resetKeychain ? { resetKeychain: true as const } : {}),
 	});
+}
+
+/** `--kind <dev|simulator|release>`; `prefix` scopes the help text (`"--app: "`). */
+export function kindOption(prefix = "") {
+	return new Option(
+		"--kind <kind>",
+		`${prefix}install this build kind: dev (Debug, Metro), simulator (Release + this worktree's JS repacked in seconds), release (JS embedded at build)`
+	).choices(BUILD_KINDS);
 }

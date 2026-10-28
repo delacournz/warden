@@ -30,6 +30,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 - `--metro <url>` launches the dev client on that Metro and remembers it for the devtools commands. iOS adds the same two dev-menu flags as `warden dev`, before your `--args`.
 - `--relaunch` without `--metro` gives no `--initialUrl`: expo-dev-client reopens the sim's most recent Metro, often another worktree's dead port → launcher home. Relaunch with `--metro <metroUrl from warden dev>`.
 - warden's Metro gets `WARDEN_WORKTREE` / `WARDEN_BRANCH`; `app.config.ts` can append them to `name` so the launcher lists each worktree's server by name.
+- No Metro / fastest JS loop for a Release-like app: `warden ui open <bundleId> --kind simulator --udid $UDID` (repack, install, launch). Re-run it after a JS edit; the dev client (`warden dev`) stays the default for feature work.
 - Android: `open <bundleId>` takes `--metro`/`--args` in the CLI but the driver rejects them. `warden dev android` opens the dev client via `adb reverse` + `exp+<slug>://expo-development-client/?url=...`. By hand, `open <url>` with that deep link.
 - `--relaunch`, `--metro`, `--args` apply to a bundle id, not a URL (`usage`).
 
@@ -70,7 +71,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `close` | `[--app [bundleId]] [--release]` | stops this device's helper; `--app` quits the app (default: the one `open` launched); `--release` frees the lease |
 | `snapshot` | `[-i\|--interactive] [--all] [--depth n] [--settle [ms]]` | `--settle` ends with a `-`/`+` diff and `= N unchanged` |
 | `find` | `<selector>` | matches with fresh `@eN` |
-| `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted |
+| `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--kind dev\|simulator\|release] [--project dir] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted. `--kind` installs that build first (`simulator` = the cached sim build with this worktree's JS repacked in, seconds; no Metro, so no `--metro`), relaunches when the build changed, and reports `kind` / `jsKey` (a repack fallback adds `fallbackReason`). Without `--kind` nothing is installed |
 | `press` / `tap` | `<@eN\|selector\|x y> [--verify] [--settle]` | |
 | `fill` | `<target> <text> [--secure] [--no-verify] [--via paste\|type] [--settle]` | `--` before text starting with `-`; iOS pastes by default (`--via type` types per key; the retry always types); reads back, retries once; `--secure` skips read-back and never echoes the text |
 | `type` | `<text> [--submit] [--settle]` | into whatever has focus |
