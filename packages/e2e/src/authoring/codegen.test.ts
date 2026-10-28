@@ -267,15 +267,17 @@ describe("steps", () => {
 		expect(spec).toContain(".fill(passwordSecret);");
 	});
 
-	test("a fill recorded with via type passes it on; a plain fill has no options", () => {
+	test("a fill recorded with via paste passes it on; a plain or typed fill has no options", () => {
 		const { source: spec } = generateSpec(
 			recordingOf([
 				{ kind: "fill", at: 1, target, text: "a@b.co" },
-				{ kind: "fill", at: 2, target, text: "c@d.co", via: "type" },
+				{ kind: "fill", at: 2, target, text: "c@d.co", via: "paste" },
+				{ kind: "fill", at: 3, target, text: "e@f.co", via: "type" },
 			])
 		);
 		expect(spec).toContain('.fill("a@b.co");');
-		expect(spec).toContain('.fill("c@d.co", { via: "type" });');
+		expect(spec).toContain('.fill("c@d.co", { via: "paste" });');
+		expect(spec).toContain('.fill("e@f.co");');
 	});
 
 	test("one declaration per secret, reused across steps", () => {

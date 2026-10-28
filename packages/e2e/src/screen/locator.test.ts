@@ -225,10 +225,10 @@ describe("fill", () => {
 				.map((call) => call.text)
 				.join("");
 
-		test("pastes by default over a select-all and verifies the value", async () => {
+		test("via paste pastes over a select-all and verifies the value", async () => {
 			const { driver, state } = fieldFixture({ value: "old", selectAll: true, pasteText: true });
 			const { screen } = setup(driver);
-			await screen.getByTestId("field").fill("ada@example.test");
+			await screen.getByTestId("field").fill("ada@example.test", { via: "paste" });
 			expect(pasted(driver)).toBe("ada@example.test");
 			expect(driver.callsOf("typeText")).toEqual([]);
 			expect(driver.callsOf("key")).toEqual([]);
@@ -236,10 +236,10 @@ describe("fill", () => {
 			expect(driver.calls.at(-1)?.method).toBe("elementAtPoint");
 		});
 
-		test("via type types even when the driver can paste", async () => {
+		test("types by default even when the driver can paste", async () => {
 			const { driver, state } = fieldFixture({ pasteText: true });
 			const { screen } = setup(driver);
-			await screen.getByTestId("field").fill("hello", { via: "type" });
+			await screen.getByTestId("field").fill("hello");
 			expect(driver.callsOf("pasteText")).toEqual([]);
 			expect(typed(driver)).toBe("hello");
 			expect(state.value).toBe("hello");
@@ -248,7 +248,7 @@ describe("fill", () => {
 		test("a failed paste is typed in the same attempt, no retry needed", async () => {
 			const { driver, state } = fieldFixture({ pasteText: "refused" });
 			const { screen } = setup(driver);
-			await screen.getByTestId("field").fill("hello");
+			await screen.getByTestId("field").fill("hello", { via: "paste" });
 			expect(driver.callsOf("tap")).toHaveLength(1);
 			expect(typed(driver)).toBe("hello");
 			expect(state.value).toBe("hello");
@@ -257,7 +257,7 @@ describe("fill", () => {
 		test("a paste the field mangles is retried by typing after counted Backspaces", async () => {
 			const { driver, state } = fieldFixture({ pasteText: true, pasteKeeps: 3 });
 			const { screen } = setup(driver);
-			await screen.getByTestId("field").fill("hello");
+			await screen.getByTestId("field").fill("hello", { via: "paste" });
 			expect(pasted(driver)).toBe("hello");
 			expect(typed(driver)).toBe("hello");
 			expect(driver.callsOf("tap")).toHaveLength(2);
@@ -268,15 +268,15 @@ describe("fill", () => {
 		test("a secure field is pasted into and not read back", async () => {
 			const { driver } = fieldFixture({ secure: true, pasteText: true });
 			const { screen } = setup(driver);
-			await screen.getByTestId("field").fill("password1");
+			await screen.getByTestId("field").fill("password1", { via: "paste" });
 			expect(pasted(driver)).toBe("password1");
 			expect(driver.calls.at(-1)?.method).toBe("pasteText");
 		});
 
-		test("a driver without pasteText (Android) types as before", async () => {
+		test("a driver without pasteText (Android) types even with via paste", async () => {
 			const { driver } = fieldFixture();
 			const { screen } = setup(driver);
-			await screen.getByTestId("field").fill("hello");
+			await screen.getByTestId("field").fill("hello", { via: "paste" });
 			expect(driver.callsOf("pasteText")).toEqual([]);
 			expect(typed(driver)).toBe("hello");
 		});

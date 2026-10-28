@@ -643,8 +643,9 @@ export class Locator {
 	 * Replaces the content of a text field: focus with the caret at the end, empty it (select all and type over the selection when
 	 * the driver can, nothing for a field that is empty or shows a placeholder), type, then poll until the field holds
 	 * the text on consecutive reads (the accessibility value lags the keys). A mismatch is retried once with one Backspace
-	 * per character and a retype (a field that refuses select-all). `via` (default `"paste"`) is how the text goes in on
-	 * the first attempt: a paste on iOS, typing where the driver cannot paste or when the pasteboard write fails; the
+	 * per character and a retype (a field that refuses select-all). `via` (default `"type"`) is how the text goes in on
+	 * the first attempt: `"paste"` pastes on iOS (through the simulator pasteboard, which Xcode syncs with the Mac
+	 * clipboard and so with every other sim) and types where the driver cannot paste or the pasteboard write fails; the
 	 * retry always types, so a field that mangles a paste (a mask, a maxLength) still ends up right. Secure fields cannot be read back, so they are not
 	 * verified.
 	 */
@@ -1017,9 +1018,9 @@ function describeUntil(until: TapUntil): string {
 	return typeof until === "function" ? "check" : String(until);
 }
 
-/** The `via` a `fill` asked for (default paste); anything but `paste` / `type` is `INVALID_ARGUMENT`. */
+/** The `via` a `fill` asked for (default type); anything but `paste` / `type` is `INVALID_ARGUMENT`. */
 function fillViaOf(locator: Locator, via: FillVia | undefined): FillVia {
-	if (via === undefined || via === "paste" || via === "type") return via ?? "paste";
+	if (via === undefined || via === "paste" || via === "type") return via ?? "type";
 	throw new E2eError("INVALID_ARGUMENT", `${locator}: fill via must be "paste" or "type", got ${JSON.stringify(via)}`);
 }
 

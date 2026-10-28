@@ -100,7 +100,10 @@ export function createUiCommand(deps: UiDeps): Command {
 					.argument("<args...>", "<target> <text>: the last word is the text")
 					.option("--secure", "password field: skip the read-back, never echo or record the text")
 					.option("--no-verify", "skip the read-back")
-					.option("--via <mode>", "paste (default; iOS pastes the text, else types) or type (one key per character)")
+					.option(
+						"--via <mode>",
+						"type (default; one key per character) or paste (iOS pastes through the pasteboard Xcode syncs with the Mac clipboard)"
+					)
 					.option("--settle [ms]", SETTLE)
 			).action(async (words, opts) => {
 				const { uiFill } = await import("../agent-ui/actions");

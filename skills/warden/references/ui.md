@@ -73,7 +73,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `find` | `<selector>` | matches with fresh `@eN` |
 | `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--kind dev\|simulator\|release] [--project dir] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted. `--kind` installs that build first (`simulator` = the cached sim build with this worktree's JS repacked in, seconds; no Metro, so no `--metro`), relaunches when the build changed, and reports `kind` / `jsKey` (a repack fallback adds `fallbackReason`). Without `--kind` nothing is installed |
 | `press` / `tap` | `<@eN\|selector\|x y> [--verify] [--settle]` | |
-| `fill` | `<target> <text> [--secure] [--no-verify] [--via paste\|type] [--settle]` | `--` before text starting with `-`; iOS pastes by default (`--via type` types per key; the retry always types); reads back, retries once; `--secure` skips read-back and never echoes the text |
+| `fill` | `<target> <text> [--secure] [--no-verify] [--via type\|paste] [--settle]` | `--` before text starting with `-`; types per key by default; `--via paste` pastes on iOS (one Cmd+V; Xcode 27 syncs every sim's pasteboard with the Mac clipboard both ways, so a paste lands in clipboard history and on other sims; the retry always types); reads back, retries once; `--secure` skips read-back and never echoes the text |
 | `type` | `<text> [--submit] [--settle]` | into whatever has focus |
 | `key` | `Enter\|Backspace\|Tab\|Space\|Escape\|Delete\|Up\|Down\|Left\|Right [--settle]` | |
 | `scroll` | `<dir> [amount=0.5] [--until <sel>] [--in <target>] [--max 10] [--settle]` | content direction: `scroll down` reveals what is below; amount 0-1; `--until` prints the fresh ref |

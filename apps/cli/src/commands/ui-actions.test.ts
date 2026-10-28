@@ -319,31 +319,31 @@ describe("fill on a driver with pasteText (iOS)", () => {
 	const inputs = (h: ReturnType<typeof pasteHarness>): string[] =>
 		h.driver.calls.map((call) => call.method).filter((m) => m !== "snapshot" && m !== "elementAtPoint");
 
-	test("pastes over the select-all by default and the read-back confirms", async () => {
+	test("--via paste pastes over the select-all, the read-back confirms, and it is recorded", async () => {
 		const h = pasteHarness();
-		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(await h.run("fill", "id=email", "new@x.co", "--via", "paste", "--json")).toBe(0);
 		expect(inputs(h)).toEqual(["tap", "selectAll", "pasteText", "close"]);
 		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+		expect(h.steps[0]?.args).toEqual({ text: "new@x.co", via: "paste" });
+	});
+
+	test("types by default, even where the driver can paste, and records no via", async () => {
+		const h = pasteHarness();
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "selectAll", "typeText", "close"]);
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
 
-	test("--via type types and is recorded", async () => {
+	test("--via type is the default and not recorded", async () => {
 		const h = pasteHarness();
 		expect(await h.run("fill", "id=email", "new@x.co", "--via", "type", "--json")).toBe(0);
-		expect(inputs(h)).toEqual(["tap", "selectAll", "typeText", "close"]);
-		expect(h.steps[0]?.args).toEqual({ text: "new@x.co", via: "type" });
-	});
-
-	test("--via paste is the default and not recorded", async () => {
-		const h = pasteHarness();
-		expect(await h.run("fill", "id=email", "new@x.co", "--via", "paste", "--json")).toBe(0);
-		expect(h.driver.callsOf("pasteText")).toHaveLength(1);
+		expect(h.driver.callsOf("pasteText")).toHaveLength(0);
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
 
 	test("a paste that fails is typed in the same attempt", async () => {
 		const h = pasteHarness(() => "fail");
-		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(await h.run("fill", "id=email", "new@x.co", "--via", "paste", "--json")).toBe(0);
 		expect(inputs(h)).toEqual(["tap", "selectAll", "pasteText", "typeText", "close"]);
 	});
 
@@ -362,7 +362,7 @@ describe("fill on a driver with pasteText (iOS)", () => {
 				return undefined;
 			},
 		});
-		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(await h.run("fill", "id=email", "new@x.co", "--via", "paste", "--json")).toBe(0);
 		expect(pastes).toBe(1);
 		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
 	});
@@ -374,11 +374,11 @@ describe("fill on a driver with pasteText (iOS)", () => {
 		expect(h.driver.callsOf("tap")).toEqual([]);
 	});
 
-	test("--secure pastes and records no text", async () => {
+	test("--secure --via paste pastes and records no text", async () => {
 		const h = harness([typingScreen("")], { pasteText: true });
-		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--json")).toBe(0);
+		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--via", "paste", "--json")).toBe(0);
 		expect(h.driver.callsOf("pasteText").map((call) => call.text)).toEqual(["hunter2hunter2"]);
-		expect(h.steps[0]?.args).toEqual({ secure: true });
+		expect(h.steps[0]?.args).toEqual({ secure: true, via: "paste" });
 		expect(h.c.stdout[0]).not.toContain("hunter2");
 	});
 });

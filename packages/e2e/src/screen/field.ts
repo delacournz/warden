@@ -242,9 +242,11 @@ export async function focusAndClear(
  * nothing from it, and a secure one cannot be read back, so both are typed as before. A `setText` that fails falls back
  * to select-all and typing, without a second tap.
  *
- * With `via: "paste"` (the default) on a driver with `pasteText` (iOS), the text replaces the selection with one paste,
- * secure fields included (they keep their Backspace-per-dot clearing). A paste that fails (pasteboard write not
- * confirmed) is typed in the same attempt; nothing was pasted, so the selection is still there to be replaced.
+ * The text is typed by default. With `via: "paste"` on a driver with `pasteText` (iOS), it replaces the selection with
+ * one paste, secure fields included (they keep their Backspace-per-dot clearing). A paste that fails (pasteboard write
+ * not confirmed) is typed in the same attempt; nothing was pasted, so the selection is still there to be replaced.
+ * Paste is opt-in because CoreDevice (Xcode 27) syncs every simulator's pasteboard with the Mac clipboard both ways:
+ * pasted text lands in the user's clipboard history and, with several sims, on the other sims' pasteboards too.
  */
 export async function focusClearType(
 	driver: Driver,
@@ -254,7 +256,7 @@ export async function focusClearType(
 	text: string,
 	method: ClearMethod = "auto",
 	env: Readonly<Record<string, string | undefined>> = process.env,
-	via: FillVia = "paste"
+	via: FillVia = "type"
 ): DriverResult<void> {
 	const wantsSetText = method === "setText" || (method === "auto" && setTextOptedIn(env));
 	if (wantsSetText && entry !== undefined && fieldContent(entry).kind === "text" && canSetText(driver)) {
