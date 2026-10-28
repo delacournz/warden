@@ -6,7 +6,7 @@ import { resolveOwner } from "../claim-flags";
 import { main } from "../cli";
 import type { CommandContext } from "../context";
 import { listDevSessions } from "../dev-session";
-import { devClientLaunchArgv, type MetroProc } from "../metro";
+import { DEV_CLIENT_ARGS, devClientLaunchArgv, type MetroProc } from "../metro";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import type { EnsureOptions } from "./app";
@@ -300,7 +300,9 @@ describe("warden dev", () => {
 		expect(metro?.env.WARDEN_PORT_0).toBe("8081");
 		expect(metro?.env.WARDEN_PORT).toBeUndefined();
 		expect(metro?.stdout).toBe("inherit");
-		expect(calls).toContainEqual(devClientLaunchArgv("U1", "com.demo", "http://127.0.0.1:8081"));
+		expect(calls).toContainEqual(devClientLaunchArgv("U1", "com.demo", "http://127.0.0.1:8081", DEV_CLIENT_ARGS));
+		// the dev menu stays reachable, but no onboarding sheet or menu covers the app at launch
+		expect(DEV_CLIENT_ARGS).toEqual(["-EXDevMenuIsOnboardingFinished", "YES", "-EXDevMenuShowsAtLaunch", "NO"]);
 		expect(calls.some((cmd) => cmd.includes("openurl"))).toBe(false);
 		expect(
 			c.db
@@ -321,7 +323,7 @@ describe("warden dev", () => {
 		const running = createDevCommand(h.deps).run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(h.ensured[0]?.deviceId).toBe("U1");
-		expect(calls).toContainEqual(devClientLaunchArgv("U1", "com.demo", "http://127.0.0.1:8081"));
+		expect(calls).toContainEqual(devClientLaunchArgv("U1", "com.demo", "http://127.0.0.1:8081", DEV_CLIENT_ARGS));
 		h.finish(0);
 		expect(await running).toBe(0);
 	});
@@ -392,7 +394,7 @@ describe("warden dev", () => {
 		const running = createDevCommand(h.deps).run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(h.ensured[0]?.deviceId).toBe("U9");
-		expect(calls).toContainEqual(devClientLaunchArgv("U9", "com.demo", "http://127.0.0.1:8081"));
+		expect(calls).toContainEqual(devClientLaunchArgv("U9", "com.demo", "http://127.0.0.1:8081", DEV_CLIENT_ARGS));
 		expect(c.db.listLeases().map((l) => l.resource.kind)).toEqual(["port"]);
 		h.finish(0);
 		expect(await running).toBe(0);

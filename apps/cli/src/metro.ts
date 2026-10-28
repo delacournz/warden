@@ -359,6 +359,12 @@ export function devClientLaunchArgs(url: string, launchArgs: readonly string[] =
 	return ["--initialUrl", url, ...launchArgs];
 }
 
+/**
+ * Launch arguments `warden dev` opens the iOS dev client with: no first-run dev menu onboarding sheet
+ * and no dev menu at launch. The menu itself (shake, ⌃D, floating button) stays reachable.
+ */
+export const DEV_CLIENT_ARGS = ["-EXDevMenuIsOnboardingFinished", "YES", "-EXDevMenuShowsAtLaunch", "NO"] as const;
+
 /** Relaunch the iOS dev client pointed at Metro (see `devClientLaunchArgs`). */
 export function devClientLaunchArgv(
 	udid: string,
