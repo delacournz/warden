@@ -5,13 +5,19 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>warden viewer</title>
 		<style>
-			html {
+			/* Before the stylesheet lands the rounded surface is already painted, so the transparent window never flashes. Matches apogee's dark --background. */
+			html,
+			body {
+				background: transparent;
+			}
+			#root {
 				background-color: #121212;
+				border-radius: 14px;
 			}
 		</style>
 	</head>
 	<body>
-		<div id="root" class="isolate relative flex h-svh flex-col"></div>
+		<div id="root" class="isolate relative flex h-svh flex-col overflow-hidden"></div>
 		<script type="module" src="/src/main.tsx"></script>
 	</body>
 </html>

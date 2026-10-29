@@ -1,2 +1,28 @@
 @import "@delacournz/apogee/styles.css";
 @source "./**/*.{ts,tsx}";
+
+html,
+body {
+	background: transparent;
+}
+
+@keyframes tap-ripple {
+	from {
+		opacity: 1;
+		transform: translate(-50%, -50%) scale(0.3);
+	}
+	to {
+		opacity: 0;
+		transform: translate(-50%, -50%) scale(1.4);
+	}
+}
+
+.tap-ripple {
+	animation: tap-ripple 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tap-ripple {
+		display: none;
+	}
+}

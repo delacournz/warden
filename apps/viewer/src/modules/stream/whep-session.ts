@@ -1,13 +1,19 @@
-import { whepCandidate, whepClose, whepOffer } from "../../core/api/device.api.ts";
+import { DeviceError, whepCandidate, whepClose, whepOffer } from "../../core/api/device.api.ts";
 import { backoffDelay, candidateFragment } from "./whep.ts";
 
-export type StreamStatus = "connecting" | "streaming" | "reconnecting";
+export type StreamStatus = "connecting" | "streaming" | "reconnecting" | "expired";
+export type StreamError = { code: string; message: string };
 
 const DISCONNECT_GRACE_MS = 2000;
 
+function toStreamError(e: unknown): StreamError {
+	if (e instanceof DeviceError) return { code: e.code, message: e.message };
+	return { code: "UNKNOWN", message: e instanceof Error ? e.message : String(e) };
+}
+
 type SessionHooks = {
 	onStatus: (status: StreamStatus) => void;
-	onError: (message: string | null) => void;
+	onError: (error: StreamError | null) => void;
 };
 
 /**
@@ -101,7 +107,13 @@ export function startWhepSession(video: HTMLVideoElement, hooks: SessionHooks): 
 			markAnswered();
 		} catch (e) {
 			if (stopped) return;
-			hooks.onError(e instanceof Error ? e.message : String(e));
+			const error = toStreamError(e);
+			hooks.onError(error);
+			if (error.code === "EXPIRED") {
+				hooks.onStatus("expired");
+				void teardown();
+				return;
+			}
 			scheduleRetry();
 		}
 	};

@@ -41,7 +41,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 
 export const viewerInfo = () => call<ViewerInfo>("viewer_info");
 export const viewerStreaming = () => call<void>("viewer_streaming");
-export const fitWindow = (aspect: number, chromeHeight: number) => call<void>("fit_window", { aspect, chromeHeight });
+export const fitWindow = (aspect: number, chromeHeight: number, padX: number) =>
+	call<void>("fit_window", { aspect, chromeHeight, padX });
 
 export const whepOffer = (sdp: string) => call<{ sdp: string }>("whep_offer", { sdp });
 export const whepCandidate = (fragment: string) => call<void>("whep_candidate", { fragment });
